@@ -42,7 +42,9 @@ func (s *Stub) authorize(w http.ResponseWriter, r *http.Request) {
 	v.Set("code", code)
 	v.Set("state", q.Get("state"))
 	back.RawQuery = v.Encode()
-	http.Redirect(w, r, back.String(), http.StatusFound)
+	// Any redirect_uri is followed: the stub is a throwaway cluster's test issuer, with no client registry.
+	http.Redirect(w, r, back.String(), http.StatusFound) //nolint:gosec // G710: a test-only issuer redirects where the scenario asks
+
 }
 
 // redeemCode answers the token endpoint's authorization_code grant: the ID token for the code's

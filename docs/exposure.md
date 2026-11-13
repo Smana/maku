@@ -159,7 +159,15 @@ People then reach the web through a port-forward, or through a front door of the
 k3d: agentgateway v1.6.0 on Gateway API v1.2.1, k3s's Traefik, and oauth2-proxy v7.15.5 against the
 e2e stub issuer.
 
-PROBE_RESULTS
+| | What was asserted | Result |
+|---|---|---|
+| X1 | The Slack route answers only `POST /slack/events` | agentgateway answers 404 to `GET /slack/events`, `/slack/eventsx`, `/slack/events/x`, `/slack` and `/`. Traefik's `Exact` path answers 404 to the other paths, and passes `GET /slack/events`: Ingress has no method match, so the App's 405 is the guard |
+| X2 | The web route removes each of the ten identity headers | all ten removed |
+| X3 | `/v1/ws`, pinged every 30 s, stays open 6 minutes | through agentgateway with and without `timeouts`, through Traefik, and through agentgateway then oauth2-proxy |
+| X4 | oauth2-proxy never forwards a client's `X-Forwarded-Access-Token` | with a CLI bearer it is overwritten with the bearer (both headers equal: never a web session); with a session it is the session's own access token; on a skip-auth route it is stripped. A client's other nine identity headers pass oauth2-proxy unchanged, so in `ingress` mode they reach the broker as sent: the broker reads only `Authorization` and `X-Forwarded-Access-Token` |
+| X4 | The skip-auth routes and the cookies | `GET /.well-known/roomctl` and `GET /link/github/callback?…` pass without a session; `POST /link/github/callback`, `GET /link/github` and `/link/github/callbackx` redirect to sign in. The cookies are `Secure`, `HttpOnly`, `SameSite=Strict`. A bearer in no agents group is 403 |
+| X5 | `oidc-groups-claim` with a nested claim (`realm_access.roles`) | not read: a member's bearer is 403. So the chart sets `allowed-group` only for a top-level roles claim |
+| X6 | `HTTPRoute.spec.rules[].timeouts` on the v1.2.1 standard CRDs | kept, and agentgateway accepts the route |
 
 `task chart:expose:k3d` then installs the chart that way, by HTTPRoute and by Ingress, and signs in
 through it.

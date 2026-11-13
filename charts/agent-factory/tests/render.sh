@@ -580,11 +580,11 @@ helm template af . -n maku "${exw[@]}" --set-json 'expose.httproute.parentRefs=[
 bad 'expose.web.className and expose.ingress.className are empty: name the IngressClass the web Ingress uses' "${exw[@]}" --set expose.mode=ingress
 helm template af . -n maku "${exw[@]}" --set expose.mode=ingress --set expose.web.className=traefik >/dev/null ||
   { echo 'FAIL: expose.mode ingress with expose.web.className does not render' >&2; fail=1; }
-bad 'expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local)' "${exw[@]}" --set maku.broker.human.mode=local
+bad 'expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local)' "${exw[@]}" --set maku.broker.human.mode=local --set maku.broker.publicURL=http://localhost:8080 --set maku.broker.oidc.existingSecret=
 bad "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" "${exw[@]}" --set webProxy.enabled=false
 bad 'expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller' "${exw[@]}" --set-json 'expose.networkPolicy.from=[]'
 bad "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" "${exw[@]}" --set maku.networkPolicies.mode=none
-bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
+bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
 bad 'expose.web needs maku.enabled: the web surface is the broker' "${exw[@]}" --set maku.enabled=false
 helm template af . -n maku "${exw[@]}" --set expose.web.enabled=false >/dev/null || { echo 'FAIL: expose.web.enabled false does not render' >&2; fail=1; }
 bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" --set slack.enabled=true

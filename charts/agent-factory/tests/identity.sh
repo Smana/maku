@@ -34,6 +34,11 @@ NS=maku
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 VALUES=charts/agent-factory/tests/identity-values.yaml
 STUB=charts/agent-factory/tests/e2e-stub.yaml
+# The images this run builds and loads. The expose leg adds the run-controller: networkPolicies.mode
+# kubernetes is the run-controller's (its egress proxy), so the chart refuses it without one. No run
+# starts, so the harness and the bridge are never pulled.
+images=(maku-broker maku-e2e-stub)
+[[ -z ${EXPOSE:-} ]] || images+=(maku-run-controller)
 EXPOSE="${EXPOSE:-}"
 case "$EXPOSE" in
   "" | httproute | ingress) ;;
@@ -64,7 +69,7 @@ onexit() {
     step "delete the cluster $NAME"
     k3d cluster delete "$NAME" >/dev/null || true
   fi
-  for image in maku-broker maku-e2e-stub; do docker rmi "ghcr.io/smana/$image:$TAG" >/dev/null 2>&1 || true; done
+  for image in "${images[@]}"; do docker rmi "ghcr.io/smana/$image:$TAG" >/dev/null 2>&1 || true; done
   rm -rf "$work"
   exit "$rc"
 }
@@ -72,6 +77,7 @@ trap onexit EXIT
 
 step "build the broker and the stub from this checkout, tag $TAG"
 docker build -q -f images/maku-broker/Dockerfile -t "ghcr.io/smana/maku-broker:$TAG" . >/dev/null
+[[ -z $EXPOSE ]] || docker build -q -f images/maku-run-controller/Dockerfile -t "ghcr.io/smana/maku-run-controller:$TAG" . >/dev/null
 docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG" . >/dev/null
 
 step "create the k3d cluster $NAME"
@@ -83,7 +89,7 @@ k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" 
   --kubeconfig-update-default=false --kubeconfig-switch-context=false >/dev/null
 k3d kubeconfig get "$NAME" >"$KUBECONFIG"
 # k3d reports success even when the node fails to ingest the tarball: the image counts once containerd lists it.
-for image in maku-broker maku-e2e-stub; do
+for image in "${images[@]}"; do
   for _ in 1 2 3; do
     k3d image import -c "$NAME" "ghcr.io/smana/$image:$TAG" >/dev/null
     docker exec "k3d-$NAME-server-0" ctr -n k8s.io images ls -q | grep -qxF "ghcr.io/smana/$image:$TAG" && continue 2
@@ -114,6 +120,7 @@ if [[ -n $EXPOSE ]]; then
   step "expose ($EXPOSE): the front door's Secret, the client pod, the gateway"
   k -n "$NS" create secret generic e2e-rooms-proxy --from-literal=client-id=rooms-web --from-literal=client-secret=e2e-throwaway \
     --from-literal=cookie-secret="$(openssl rand -base64 32 | tr -- '+/' '-_')" >/dev/null
+  k -n "$NS" create secret generic e2e-github-link --from-literal=client_id=e2e-gh --from-literal=client_secret=e2e-throwaway >/dev/null
   k -n e2e create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
   k -n e2e create configmap e2e-client --from-file=charts/agent-factory/tests/expose-probe/client.py >/dev/null
   k apply -f - >/dev/null <<YAML
@@ -133,7 +140,8 @@ spec:
     - {name: app, configMap: {name: e2e-client}}
     - {name: ca, secret: {secretName: e2e-stub-ca, defaultMode: 0440}}
 YAML
-  expose=(-f charts/agent-factory/tests/expose-values.yaml --set "expose.mode=$EXPOSE")
+  expose=(-f charts/agent-factory/tests/expose-values.yaml --set "expose.mode=$EXPOSE"
+    --set "maku.runController.image.tag=$TAG" --set "maku.runController.images.harness.tag=$TAG" --set "maku.runController.images.bridge.tag=$TAG")
   if [[ $EXPOSE == httproute ]]; then
     curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
       k apply --server-side -f - >/dev/null
@@ -169,7 +177,7 @@ helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity-crds
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity charts/agent-factory -n "$NS" \
   -f charts/agent-factory/values-demo.yaml -f "$VALUES" "${expose[@]}" \
   --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
-  --set maku.runController.enabled=false --set maku-factory.enabled=false \
+  --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled=false \
   --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
   --set demo.githubApp.id=1 --set demo.githubApp.privateKey=e2e-throwaway --timeout 5m >/dev/null
 k -n "$NS" rollout status sts/rooms-db --timeout=180s

@@ -136,7 +136,8 @@ def cmd_ws():
     try:
         sock = socket.create_connection((target.hostname, target.port or 80), timeout=90)
         key = base64.b64encode(os.urandom(16)).decode()
-        lines = [f"GET {u.path or '/'} HTTP/1.1", f"Host: {u.netloc}", "Upgrade: websocket", "Connection: Upgrade",
+        target_path = (u.path or "/") + ("?" + u.query if u.query else "")
+        lines = [f"GET {target_path} HTTP/1.1", f"Host: {u.netloc}", "Upgrade: websocket", "Connection: Upgrade",
                  f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
         lines += [f"{k}: {v}" for k, v in headers_of(ARGS.headers).items()]
         sock.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())

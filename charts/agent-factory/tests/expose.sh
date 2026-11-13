@@ -35,8 +35,9 @@ jkind() {
 }
 render() { out="$(helm template af . -n maku "$@")" || { echo "FAIL: the render failed: $*" >&2; fail=1; out=''; }; }
 args() { yq ea -r 'select(.kind == "Deployment" and .metadata.name == "rooms-web-proxy") | .spec.template.spec.containers[0].args[]' - <<<"$out"; }
-has_arg() { args | grep -qxF -- "$1" || { echo "FAIL: oauth2-proxy lacks $1 ($2)" >&2; fail=1; }; }
-no_arg() { ! args | grep -qE -- "$1" || { echo "FAIL: oauth2-proxy has $1 ($2)" >&2; fail=1; }; }
+# grep reads the whole list (a here-string): with pipefail, grep -q closing a pipe early fails it.
+has_arg() { grep -qxF -- "$1" <<<"$(args)" || { echo "FAIL: oauth2-proxy lacks $1 ($2)" >&2; fail=1; }; }
+no_arg() { ! grep -qE -- "$1" <<<"$(args)" || { echo "FAIL: oauth2-proxy has $1 ($2)" >&2; fail=1; }; }
 env_of() { yq ea -r "select(.kind == \"Deployment\" and .metadata.name == \"rooms-web-proxy\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | $2" - <<<"$out"; }
 
 # off by default: nothing of the front door renders, and the broker opens :8080 to nobody
@@ -80,7 +81,7 @@ jkind ServiceAccount 'select(.metadata.name == "rooms-web-proxy") | .automountSe
 jkind Service 'select(.metadata.name == "rooms-web-proxy") | ([.spec.ports[] | .name + ":" + (.port | tostring)] | join(",")) == "http:80,metrics:44180"' 'the Service: http 80, metrics 44180'
 jkind PodDisruptionBudget 'select(.metadata.name == "rooms-web-proxy") | .spec.maxUnavailable == 1' 'a PDB'
 render "${wp[@]}" --set webProxy.replicas=1
-ynone 'select(.kind == "PodDisruptionBudget") | .metadata.name' 'one replica renders a PDB'
+ynone 'select(.kind == "PodDisruptionBudget" and .metadata.name == "rooms-web-proxy") | .metadata.name' 'one replica renders a PDB'
 
 # the GitHub account link adds exactly its callback, GET only (by the broker's Secret, or set directly)
 for gl in '--set maku.broker.githubLink.existingSecret=gh-link' '--set maku.broker.human.githubLink.clientIDFile=/a'; do
@@ -115,7 +116,7 @@ bad 'webProxy.existingSecret is empty: name the Secret holding the web client an
 bad 'maku.broker.webProxy (false) must equal webProxy.enabled (true)' "${wp[@]}" --set maku.broker.webProxy=false
 bad 'maku.broker.webProxy (true) must equal webProxy.enabled (false)' "${wp[@]}" --set webProxy.enabled=false
 bad 'webProxy.enabled needs maku.broker.publicURL, https' "${wp[@]}" --set maku.broker.publicURL=http://rooms.e2e.test
-bad 'webProxy.enabled needs maku.broker.human.mode oidc' "${wp[@]}" --set maku.broker.human.mode=local
+bad 'webProxy.enabled needs maku.broker.human.mode oidc' "${wp[@]}" --set maku.broker.human.mode=local --set maku.broker.publicURL=http://localhost:8080 --set maku.broker.oidc.existingSecret=
 bad 'webProxy.enabled needs maku.broker.oidc.existingSecret' "${wp[@]}" --set maku.broker.oidc.existingSecret=
 bad 'webProxy.enabled needs maku.networkPolicies.mode cilium or kubernetes' "${wp[@]}" --set maku.networkPolicies.mode=none
 
@@ -131,7 +132,7 @@ jkind NetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | .spec.egress[
 # mode cilium: the ingress entity, the host's probes, the IdP by name
 render "${wp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true
 jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | (.spec.ingress[0].fromEntities == ["ingress"] and .spec.ingress[1].fromEntities == ["host"] and (.spec.ingress | length) == 2)' 'cilium: the proxy admits the ingress entity and the probes'
-jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | (.spec.egress[2].toEndpoints[0].matchLabels."app.kubernetes.io/name" == "room-broker" and .spec.egress[3] == {"toFQDNs": [{"matchName": "e2e-stub.e2e.svc.cluster.local"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]})' "cilium: the proxy reaches the broker's :8080 and the issuer's host on 443"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | (.spec.egress[1].toEndpoints[0].matchLabels."app.kubernetes.io/name" == "room-broker" and .spec.egress[2] == {"toFQDNs": [{"matchName": "e2e-stub.e2e.svc.cluster.local"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]})' "cilium: the proxy reaches the broker's :8080 and the issuer's host on 443"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] | length == 1' "cilium: the broker's :8080 admits one rule, the web proxy's"
 ynone 'select(.kind == "NetworkPolicy" and .metadata.name == "rooms-web-proxy") | .kind' 'cilium mode renders a NetworkPolicy'
 

@@ -8,6 +8,10 @@ maku:
     mode: kubernetes
   broker:
     webProxy: true
+    # The GitHub account link (step 5 PR C), so its callback's skip-auth route is proved; the script
+    # creates the throwaway client.
+    githubLink:
+      existingSecret: e2e-github-link
     networkPolicy:
       # The broker verifies against the stub issuer's keys.
       extraEgress:

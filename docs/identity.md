@@ -195,7 +195,7 @@ oauth2-proxy sets the same:
 | `cookie-name`, `cookie-secure`, `cookie-httponly`, `cookie-samesite` | `_rooms`, `true`, `true`, `strict` (`webProxy.cookieSameSite`) |
 | `cookie-refresh` | below the ID token's lifetime (`webProxy.cookieRefresh`, `1h`) |
 | `reverse-proxy`, `skip-provider-button` | `true` |
-| `skip-auth-route` | `GET=^/\.well-known/roomctl$`, plus `GET=^/link/github/callback$` with the GitHub account link (`broker.githubLink`) |
+| `skip-auth-route` | `GET=^/\.well-known/roomctl$`, plus `GET=^/link/github/callback$` with the [GitHub account link](github-link.md) |
 
 ## The IdPs
 

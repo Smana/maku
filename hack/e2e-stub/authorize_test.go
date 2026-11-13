@@ -22,31 +22,32 @@ func TestAuthorizationCodeFlow(t *testing.T) {
 	}
 	client := ts.Client()
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	get := func(q string) *http.Response {
+	// get answers the authorization endpoint's status and Location for the query q.
+	get := func(q string) (int, string) {
 		t.Helper()
 		req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/oauth/v2/authorize?"+q, nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_ = resp.Body.Close()
-		return resp
+		defer func() { _ = resp.Body.Close() }()
+		return resp.StatusCode, resp.Header.Get("Location")
 	}
-	resp := get("response_type=code&client_id=rooms-web&redirect_uri=https%3A%2F%2Frooms.e2e.test%2Foauth2%2Fcallback&state=s1&nonce=n1")
-	if resp.StatusCode != http.StatusFound {
-		t.Fatalf("authorize status %d", resp.StatusCode)
+	status, location := get("response_type=code&client_id=rooms-web&redirect_uri=https%3A%2F%2Frooms.e2e.test%2Foauth2%2Fcallback&state=s1&nonce=n1")
+	if status != http.StatusFound {
+		t.Fatalf("authorize status %d", status)
 	}
-	loc, err := url.Parse(resp.Header.Get("Location"))
+	loc, err := url.Parse(location)
 	if err != nil || loc.Host != "rooms.e2e.test" || loc.Path != "/oauth2/callback" || loc.Query().Get("state") != "s1" || loc.Query().Get("code") == "" {
-		t.Fatalf("redirect %q", resp.Header.Get("Location"))
+		t.Fatalf("redirect %q", location)
 	}
 	for _, q := range []string{
 		"response_type=code&redirect_uri=https%3A%2F%2Fx.test%2Fcb&state=s",              // no client
 		"response_type=code&client_id=c&state=s",                                         // no redirect
 		"response_type=token&client_id=c&redirect_uri=https%3A%2F%2Fx.test%2Fcb&state=s", // not the code flow
 	} {
-		if resp := get(q); resp.StatusCode != http.StatusBadRequest {
-			t.Errorf("%s: status %d, want 400", q, resp.StatusCode)
+		if status, _ := get(q); status != http.StatusBadRequest {
+			t.Errorf("%s: status %d, want 400", q, status)
 		}
 	}
 
