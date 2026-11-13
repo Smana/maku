@@ -42,8 +42,9 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
-            "source": {"type": "string", "enum": ["url", "apiserver"]},
+            "source": {"type": "string", "enum": ["url", "apiserver", "inline"]},
             "url": {"type": "string"},
+            "inline": {"description": "source inline: the issuer's public JWKS (JSON), refreshed on key rotation.", "type": "string"},
             "allowAnonymousDiscovery": {"type": "boolean"}
           }
         }

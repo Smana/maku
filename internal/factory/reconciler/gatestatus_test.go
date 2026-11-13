@@ -13,7 +13,9 @@ func TestStatusFor(t *testing.T) {
 		class, state, descrp string
 	}{
 		{ArmDecision{Verdict: "arm"}, "docs-links", "success", "docs-links: merging"},
-		{ArmDecision{Verdict: "shadow", Reason: "shadow_would_arm"}, "docs-links", "success", "docs-links, shadow: would merge"},
+		// PR10: a success on a shadow pull request would let any writer merge what the gate
+		// handed to a human, once branch protection requires maku/merge-gate.
+		{ArmDecision{Verdict: "shadow", Reason: "shadow_would_arm"}, "docs-links", "pending", "docs-links, shadow: would merge; a maintainer merges"},
 		{ArmDecision{Verdict: "wait", Reason: "ci_pending"}, "docs-links", "pending", "docs-links: waiting, ci_pending"},
 		{ArmDecision{Verdict: "human", Reason: "not_owned"}, "docs-links", "pending", "docs-links: a human decides, not_owned"},
 		{ArmDecision{Verdict: "ci_red", Reason: "ci_red"}, "docs-links", "failure", "docs-links: ci_red"},

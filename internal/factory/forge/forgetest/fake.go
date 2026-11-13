@@ -31,50 +31,53 @@ type Fake struct {
 	// App's, ogenki-agent-factory[bot]; a fake standing for the publisher sets the agents App's.
 	Author string
 
-	mu            sync.Mutex
-	labeled       map[string][]forge.Item
-	events        map[int][]forge.LabelEvent
-	issues        map[int]forge.Issue
-	prs           map[int]forge.PR
-	branches      map[string]int
-	comments      map[int][]forge.Comment
-	added         map[int][]string
-	removed       map[int][]string
-	cut           map[int]bool
-	closed        map[int]bool
-	agentPulls    []forge.AgentPull
-	checks        map[int]forge.Checks
-	checksErr     map[int]error
-	commitChecks  map[string][]forge.Check
-	annotations   map[int64][]forge.Annotation
-	annotationErr map[int64]error
-	ancestors     map[string][]string
-	commits       map[int][]forge.Commit
-	commitsCut    map[int]bool
-	bySHA         map[string]forge.Commit
-	changed       map[string]changedFiles
-	activity      map[string][]forge.Push
-	activityErr   map[string]error
-	filesBase     map[string]string
-	filesHead     map[string]string
-	fileStats     []forge.FileStat
-	runs          []forge.WorkflowRun
-	artifacts     map[int64][]byte
-	mainFiles     map[string]string
-	diffErr       error
-	open          []forge.PRSummary
-	created       []string
-	armed         []string
-	reruns        []int64
-	statuses      map[string][]forge.Status
-	statusErr     error
-	rerunFail     map[int64]error
-	disarmed      []string
-	reverts       []string
-	refused       map[string]error
-	labelErr      error
-	labelErrFor   map[string]error
-	files         map[string]string // default-branch files by path; "!" fails the read
+	mu              sync.Mutex
+	labeled         map[string][]forge.Item
+	events          map[int][]forge.LabelEvent
+	issues          map[int]forge.Issue
+	prs             map[int]forge.PR
+	branches        map[string]int
+	comments        map[int][]forge.Comment
+	added           map[int][]string
+	removed         map[int][]string
+	cut             map[int]bool
+	closed          map[int]bool
+	agentPulls      []forge.AgentPull
+	checks          map[int]forge.Checks
+	checksErr       map[int]error
+	commitChecks    map[string][]forge.Check
+	annotations     map[int64][]forge.Annotation
+	annotationErr   map[int64]error
+	ancestors       map[string][]string
+	commits         map[int][]forge.Commit
+	commitsCut      map[int]bool
+	bySHA           map[string]forge.Commit
+	changed         map[string]changedFiles
+	activity        map[string][]forge.Push
+	activityErr     map[string]error
+	filesBase       map[string]string
+	filesHead       map[string]string
+	fileStats       []forge.FileStat
+	runs            []forge.WorkflowRun
+	artifacts       map[int64][]byte
+	mainFiles       map[string]string
+	diffErr         error
+	open            []forge.PRSummary
+	created         []string
+	armed           []string
+	reruns          []int64
+	statuses        map[string][]forge.Status
+	statusErr       error
+	gateSeq         []string // "status <sha> <state>" and "merge <nodeID> <sha>", in call order
+	branchRules     map[string]branchRules
+	branchRuleReads int
+	rerunFail       map[int64]error
+	disarmed        []string
+	reverts         []string
+	refused         map[string]error
+	labelErr        error
+	labelErrFor     map[string]error
+	files           map[string]string // default-branch files by path; "!" fails the read
 	// atCommit is the files at exact commits, keyed "<sha>:<path>"; fileReads the reads, in order.
 	atCommit     map[string]forge.FileContent
 	fileReads    []string
@@ -948,7 +951,16 @@ func (f *Fake) Merge(_ context.Context, nodeID, head string) error {
 		break
 	}
 	f.armed = append(f.armed, nodeID+" "+head)
+	f.gateSeq = append(f.gateSeq, "merge "+nodeID+" "+head)
 	return nil
+}
+
+// GateSequence is the successful SetStatus and Merge calls, in order: "status <sha> <state>" and
+// "merge <nodeID> <sha>", for tests of what the gate posts before it merges.
+func (f *Fake) GateSequence() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.gateSeq)
 }
 
 // PullRequestChecks implements the Merger's PullRequestChecks.
@@ -989,6 +1001,7 @@ func (f *Fake) SetStatus(_ context.Context, sha, state, statusContext, descripti
 		f.statuses = map[string][]forge.Status{}
 	}
 	f.statuses[sha] = append(f.statuses[sha], forge.Status{Context: statusContext, State: state, Description: description})
+	f.gateSeq = append(f.gateSeq, "status "+sha+" "+state)
 	return nil
 }
 
@@ -1375,6 +1388,37 @@ func (f *Fake) Public(context.Context) (bool, error) {
 		return false, f.publicErr
 	}
 	return !f.private, nil
+}
+
+// SetBranchRules sets the status checks BranchRules answers for branch, or its error.
+func (f *Fake) SetBranchRules(branch string, rules []forge.RequiredStatus, err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.branchRules == nil {
+		f.branchRules = map[string]branchRules{}
+	}
+	f.branchRules[branch] = branchRules{rules: slices.Clone(rules), err: err}
+}
+
+// BranchRules implements the forge's BranchRules: a branch SetBranchRules never named has none.
+func (f *Fake) BranchRules(_ context.Context, branch string) ([]forge.RequiredStatus, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.branchRuleReads++
+	r := f.branchRules[branch]
+	return slices.Clone(r.rules), r.err
+}
+
+// BranchRuleReads is how many times BranchRules was called.
+func (f *Fake) BranchRuleReads() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.branchRuleReads
+}
+
+type branchRules struct {
+	rules []forge.RequiredStatus
+	err   error
 }
 
 // SetRepositoryInfo sets what RepositoryInfo answers.

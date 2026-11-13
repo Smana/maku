@@ -1,0 +1,10 @@
+{{- /* agentgateway v1.6.0's CRDs (AgentgatewayBackend, AgentgatewayPolicy, AgentgatewayParameters,
+AgentgatewayModel), for the umbrella's model gateway. Vendored in files/agentgateway by
+hack/agentgateway-vendor.sh and pinned in charts/agentgateway.sha256, so no install needs the network;
+never edit them by hand. Kept on uninstall like the six maku.ogenki.io CRDs. */}}
+{{- if (index .Values "agentgateway-crds").enabled }}
+{{- range $path, $_ := .Files.Glob "files/agentgateway/*.yaml" }}
+---
+{{ include "afcrds.crd" (dict "crd" ($.Files.Get $path | fromYaml) "root" $) }}
+{{- end }}
+{{- end }}

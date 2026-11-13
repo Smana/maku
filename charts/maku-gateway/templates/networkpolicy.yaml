@@ -112,6 +112,30 @@ spec:
       toPorts:
         - ports:
             - {port: {{ $v.listeners.clients | quote }}, protocol: TCP}
+    {{- with $v.metrics.allowFrom }}
+    # metrics.allowFrom's NetworkPolicy peers as Cilium endpoint selectors: namespace labels under
+    # io.cilium.k8s.namespace.labels, pod labels as they are, a peer without a namespaceSelector in
+    # the release namespace.
+    - fromEndpoints:
+        {{- range $i, $peer := . }}
+        {{- if or $peer.ipBlock (and $peer.namespaceSelector $peer.namespaceSelector.matchExpressions) (and $peer.podSelector $peer.podSelector.matchExpressions) }}
+        {{- fail (printf "metrics.allowFrom[%d]: mode cilium translates namespaceSelector and podSelector matchLabels only; use mode kubernetes, or select the scraper by labels" $i) }}
+        {{- end }}
+        {{- $sel := dict }}
+        {{- if $peer.namespaceSelector }}
+        {{- range $k, $val := $peer.namespaceSelector.matchLabels }}{{ $_ := set $sel (printf "k8s:io.cilium.k8s.namespace.labels.%s" $k) $val }}{{ end }}
+        {{- else }}
+        {{- $_ := set $sel "k8s:io.kubernetes.pod.namespace" $.Release.Namespace }}
+        {{- end }}
+        {{- if $peer.podSelector }}
+        {{- range $k, $val := $peer.podSelector.matchLabels }}{{ $_ := set $sel (printf "k8s:%s" $k) $val }}{{ end }}
+        {{- end }}
+        - matchLabels: {{- toYaml $sel | nindent 12 }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - {port: "15020", protocol: TCP}
+    {{- end }}
   egress:
     - toEndpoints:
         - matchLabels:

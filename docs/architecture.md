@@ -72,7 +72,7 @@ flowchart LR
 | Human → broker | oauth2-proxy → `:8080`, for the web UI and `maku` alike | ZITADEL SSO, agent groups, re-validated ID and access tokens; the web UI adds an `Origin` check and a `SameSite=Strict` cookie, `maku` sends a bearer token |
 | Agent tools → broker | `agent-router` → `:8090` | The gateway authenticates the run and injects a key; the broker derives the run from `x-ar-agent` and its role from the `AgentRun`, never from a header |
 | System callers → broker | `:8443` system API | Audience `rooms-system`, and `sub` in an explicit allowlist |
-| Factory → GitHub | The factory App and the merger App, each a key in `agents-secrets` | The factory merges only as the merger App, squash, at the head it decided on. The repository's ruleset blocks a plain merge; the merger App and a repository admin bypass it |
+| Factory → GitHub | Two Apps (D12), each a key in a Secret: the factory App, with the merger App beside it or folded into it, and the agents App, whose key mints the runs' tokens | The factory merges only as the merger App, squash, at the head it decided on. Under policy-bot, the repository's ruleset blocks a plain merge, and the merger App and a repository admin bypass it. Without it, the ruleset requires `maku/merge-gate` from the App that posts it, `success` only when the factory merges ([branch protection](factory.md#branch-protection-for-the-merge-gate)). The minter's role table never grants a run or the publisher `statuses`, `workflows` or `administration` |
 | Broker → database | Postgres `:5432` | The `rooms_broker` role: append and read events; no update or delete |
 | Broker → Kubernetes | The API server | Read and delete `AgentRun`s, never create; CRUD on `Room`s; no cluster-admin |
 
