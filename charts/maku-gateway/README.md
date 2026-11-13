@@ -11,8 +11,8 @@ Off by default (`enabled: false`): an install that does not turn it on renders n
 ## Prerequisites
 
 - Kubernetes ≥ 1.30 and Gateway API's standard CRDs ≥ v1.2.
-- The agentgateway controller and its CRDs, v1.6: the umbrella's `agentgateway` subchart and
-  `agent-factory-crds`' `agentgateway-crds`, or your own.
+- The agentgateway controller and its CRDs, v1.6: the umbrella's `agentgateway` subchart and the
+  vendored CRDs in `config/agentgateway` (`kubectl apply --server-side`), or your own.
 - One Secret per provider in the release namespace, holding its API key. The chart names it
   (`providers.<name>.existingSecret`, `key`) and never renders it.
 

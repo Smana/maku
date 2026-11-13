@@ -1,5 +1,6 @@
-{{- /* files/ is written by `task crd:gen` from config/crd; never edit it by hand. */}}
-{{- range $path, $_ := .Files.Glob "files/*.yaml" }}
+{{- /* files/ is written by `task crd:gen` from config/crd; never edit it by hand. The glob names the
+six maku.ogenki.io CRDs only, so nothing else that lands in files/ renders. */}}
+{{- range $path, $_ := .Files.Glob "files/maku.ogenki.io_*.yaml" }}
 ---
 {{ include "afcrds.crd" (dict "crd" ($.Files.Get $path | fromYaml) "root" $) }}
 {{- end }}

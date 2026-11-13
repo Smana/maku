@@ -1,7 +1,7 @@
 # maku-gateway: the factory's model gateway, rendered as objects for an agentgateway controller
 # (docs/gateway.md). Off by default: an install that does not set `enabled: true` renders nothing.
 # The controller and its CRDs are a cluster prerequisite (the umbrella's `agentgateway` and
-# agent-factory-crds' `agentgateway-crds` subcharts, or your own), and so are Gateway API's standard
+# the vendored CRDs in config/agentgateway, applied with `kubectl apply --server-side`, or your own), and so are Gateway API's standard
 # CRDs, v1.2 or later.
 enabled: false
 

@@ -20,7 +20,7 @@ dependencies:
     repository: file://../maku-gateway
     condition: maku-gateway.enabled
   # The upstream controller, off by default and where the cluster already runs one. Vendored by
-  # hack/agentgateway-vendor.sh and pinned in charts/agentgateway.sha256 (`task chart:deps`), so
+  # hack/agentgateway-vendor.sh and pinned in hack/agentgateway.sha256 (`task chart:deps`), so
   # building the umbrella needs no network.
   - name: agentgateway
     version: v1.6.0

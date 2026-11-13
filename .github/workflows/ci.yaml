@@ -231,8 +231,8 @@ jobs:
           publish charts/maku-factory maku-factory
           # the model gateway's objects (D7), consumed alone or through the umbrella.
           publish charts/maku-gateway maku-gateway
-          # the CRDs, installed before agent-factory, with agentgateway's vendored CRDs (optional),
-          # checked against their pins.
+          # the CRDs, installed before agent-factory. The vendored agentgateway (its CRDs in
+          # config/agentgateway, its controller chart under the umbrella) is checked against its pins.
           bash hack/agentgateway-vendor.sh check
           publish charts/agent-factory-crds agent-factory-crds
           # The umbrella carries its subcharts at $v: on a copy (never committed), the sibling subcharts
@@ -243,6 +243,6 @@ jobs:
           for c in maku maku-factory maku-gateway; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
           yq -i '(.dependencies[] | select(.repository | test("^file://\.\./"))).version = env(v)' "$work/agent-factory/Chart.yaml"
           rm -f "$work/agent-factory/Chart.lock"
-          bash hack/agentgateway-vendor.sh check "$work"
+          bash hack/agentgateway-vendor.sh check-copy "$work"
           helm dependency build "$work/agent-factory"
           publish "$work/agent-factory" agent-factory

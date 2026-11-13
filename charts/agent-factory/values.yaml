@@ -20,8 +20,9 @@ maku-factory:
 # The model gateway (D7; docs/gateway.md), off by default. maku-gateway renders the Gateway, its
 # policies, a backend and a route per model alias; its `runs` must equal maku's, and its broker
 # ServiceAccount the broker's (room-broker). agentgateway is the upstream controller (v1.6.0): leave
-# it off where the cluster already runs one. Its CRDs come with agent-factory-crds
-# (`agentgateway-crds.enabled`); Gateway API's standard CRDs (v1.2 or later) are a cluster prerequisite.
+# it off where the cluster already runs one. Its CRDs are applied first, apart from any Helm release
+# (`kubectl apply --server-side -f config/agentgateway`, docs/gateway.md); Gateway API's standard CRDs
+# (v1.2 or later) are a cluster prerequisite.
 maku-gateway:
   enabled: false
 agentgateway:
