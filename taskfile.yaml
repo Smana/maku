@@ -217,6 +217,11 @@ tasks:
       - EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
       - EXPOSE=ingress bash charts/agent-factory/tests/identity.sh
 
+  chart:slack:k3d:
+    desc: The Slack App from its subchart behind the Gateway, the factory and both default-deny policies, enforced on throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - SLACK=1 EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
+
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)
     cmds:

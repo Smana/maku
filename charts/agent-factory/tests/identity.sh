@@ -31,6 +31,14 @@
 #   - the room is now theirs to read, through the link;
 #   - an admin's unlink makes them unlinked again.
 #
+# SLACK=1 (with EXPOSE=httproute; task chart:slack:k3d; plan v4 step 6, Task 16) adds the Slack App from
+# its subchart (values-slack.example.yaml), the factory, and both default-deny policies, all in mode
+# kubernetes:
+#   - a Slack-signed url_verification through the Gateway's POST /slack/events reaches the App, a
+#     badly signed one is 401, and GET /slack/events is the gateway's 404;
+#   - the App's :8081 admits the broker's pods and nobody else;
+#   - a pod under the factory's policy reaches DNS but not a private address outside its peers.
+#
 # The cluster, its kubeconfig and the images' tag are this run's own: the current kubectl context
 # is never read or changed.
 set -euo pipefail
@@ -48,6 +56,9 @@ STUB=charts/agent-factory/tests/e2e-stub.yaml
 # starts, so the harness and the bridge are never pulled.
 images=(maku-broker maku-e2e-stub)
 [[ -z ${EXPOSE:-} ]] || images+=(maku-run-controller)
+SLACK="${SLACK:-}"
+[[ -z $SLACK || ${EXPOSE:-} == httproute ]] || { echo "FAIL: SLACK=1 needs EXPOSE=httproute" >&2; exit 2; }
+[[ -z $SLACK ]] || images+=(maku-slack maku-factory)
 EXPOSE="${EXPOSE:-}"
 case "$EXPOSE" in
   "" | httproute | ingress) ;;
@@ -87,6 +98,10 @@ trap onexit EXIT
 step "build the broker and the stub from this checkout, tag $TAG"
 docker build -q -f images/maku-broker/Dockerfile -t "ghcr.io/smana/maku-broker:$TAG" . >/dev/null
 [[ -z $EXPOSE ]] || docker build -q -f images/maku-run-controller/Dockerfile -t "ghcr.io/smana/maku-run-controller:$TAG" . >/dev/null
+if [[ -n $SLACK ]]; then
+  docker build -q -f images/maku-slack/Dockerfile -t "ghcr.io/smana/maku-slack:$TAG" . >/dev/null
+  docker build -q -f images/maku-factory/Dockerfile -t "ghcr.io/smana/maku-factory:$TAG" . >/dev/null
+fi
 docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG" . >/dev/null
 
 step "create the k3d cluster $NAME"
@@ -175,6 +190,21 @@ YAML
     expose+=(--set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
       --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]')
     front=http://edge.edge.svc.cluster.local:8080
+    if [[ -n $SLACK ]]; then
+      # The App's three Secrets (throwaway), its subchart, the factory, both default-deny policies.
+      k -n "$NS" create secret generic factory-slack-app --from-literal=signing-secret=e2e-slack-signing \
+        --from-literal=bot-token=xoxb-e2e --from-literal=bot-user-id=U0E2EBOT >/dev/null
+      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=slack-app --from-literal=client-secret=e2e-throwaway >/dev/null
+      k -n "$NS" create secret generic room-broker-webhook-slack-app --from-literal=signing-key=e2e-webhook-key >/dev/null
+      expose+=(-f charts/agent-factory/values-slack.example.yaml --set slack.e2e.unpinnedImages=true --set "slack.image.tag=$TAG"
+        --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.roomsURL=https://rooms.e2e.test --set slack.preset=generic
+        --set slack.networkPolicy.mode=kubernetes
+        --set-json 'slack.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
+        --set-json 'expose.slack.hostnames=["factory-slack.e2e.test"]'
+        --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/cli-client-id'
+        --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG"
+        --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+    fi
   else
     expose+=(--set expose.ingress.className=traefik
       --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"traefik"}}}]')
@@ -188,7 +218,7 @@ helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity-crds
 helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity charts/agent-factory -n "$NS" \
   -f charts/agent-factory/values-demo.yaml -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" \
   --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
-  --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled=false \
+  --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled="$([[ -n $SLACK ]] && echo true || echo false)" \
   --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
   --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem" --timeout 5m >/dev/null
 k -n "$NS" rollout status sts/rooms-db --timeout=180s
@@ -367,4 +397,51 @@ if [[ -n $EXPOSE ]]; then
 fi
 
 
-echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}"
+if [[ -n $SLACK ]]; then
+  step "the Slack App through the Gateway, and both default-deny policies"
+  k -n "$NS" rollout status deploy/factory-slack-app --timeout=180s
+  # slack_post SIGN BODY: POST /slack/events through the Gateway, signed with SIGN (Slack's v0 scheme).
+  slack_post() {
+    k -n e2e exec e2e-client -- python3 -c '
+import hashlib, hmac, http.client, json, sys, time
+secret, body = sys.argv[1].encode(), sys.argv[2].encode()
+ts = str(int(time.time()))
+sig = "v0=" + hmac.new(secret, b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
+c = http.client.HTTPConnection("edge.edge.svc.cluster.local", 8080, timeout=30)
+c.request("POST", "/slack/events", body, {"Host": "factory-slack.e2e.test", "Content-Type": "application/json",
+  "X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig})
+r = c.getresponse(); print(r.status, r.read().decode()[:200])' "$1" "$2"
+  }
+  out=''
+  for _ in $(seq 40); do out="$(slack_post e2e-slack-signing '{"type":"url_verification","challenge":"e2e-challenge"}')"; [[ $out == 200* ]] && break; sleep 3; done
+  [[ $out == 200* && $out == *e2e-challenge* ]] || die "a signed url_verification through the Gateway: $out"
+  echo "ok   a Slack-signed POST /slack/events reaches the App through the Gateway (its challenge back)"
+  out="$(slack_post wrong-secret '{"type":"url_verification","challenge":"x"}')"
+  [[ $out == 401* ]] || die "a badly signed event: $out, want 401"
+  echo "ok   a badly signed event is 401"
+  out="$(c http GET http://factory-slack.e2e.test/slack/events)"
+  [[ $(status "$out") == 404 ]] || die "GET /slack/events: $out, want the gateway's 404"
+  echo "ok   GET /slack/events is the gateway's 404"
+  # stand-ins under each policy: a pod labelled as the broker (the broker's egress, the App's ingress),
+  # an unlabelled one, and one labelled as the factory (the factory's egress).
+  for p in broker-standin:room-broker plain:none factory-standin:agent-factory; do
+    k -n "$NS" run "${p%%:*}" --image="$PY_IMAGE" --restart=Never --labels="app.kubernetes.io/name=${p#*:}" \
+      --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$PY_IMAGE"'","command":["sleep","infinity"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
+  done
+  for p in broker-standin plain factory-standin; do k -n "$NS" wait --for=condition=Ready "pod/$p" --timeout=180s >/dev/null; done
+  # reach POD HOST PORT: "open" or "closed" (a TCP connect within 5 s)
+  reach() { k -n "$NS" exec "$1" -- python3 -c 'import socket,sys
+try: socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5); print("open")
+except OSError: print("closed")' "$2" "$3"; }
+  app=factory-slack-app.$NS.svc.cluster.local
+  [[ $(reach broker-standin "$app" 8081) == open ]] || die "the broker's pods cannot reach the App's :8081"
+  [[ $(reach plain "$app" 8081) == closed ]] || die "a pod that is not the broker reached the App's :8081"
+  echo "ok   the App's :8081 admits the broker's pods, and no other"
+  [[ $(reach factory-standin e2e-stub.e2e.svc.cluster.local 443) == closed ]] || die "a pod under the factory's policy reached a private address outside its peers"
+  [[ $(reach plain e2e-stub.e2e.svc.cluster.local 443) == open ]] || die "the control pod cannot reach the stub: the check above proves nothing"
+  [[ $(k -n "$NS" exec factory-standin -- python3 -c 'import socket; print(socket.gethostbyname("kubernetes.default.svc.cluster.local"))') =~ ^[0-9.]+$ ]] ||
+    die "a pod under the factory's policy cannot resolve names"
+  echo "ok   the factory's policy refuses a private address outside its peers, and allows DNS"
+fi
+
+echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}${SLACK:+ (slack)}"
