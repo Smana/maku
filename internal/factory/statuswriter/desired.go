@@ -443,6 +443,14 @@ func (d *desirer) fileConditions(cs *[]metav1.Condition, gen int64, repository s
 		both(metav1.ConditionUnknown, "NotRead")
 		return
 	}
+	if snap.Err == nil && !snap.HasClasses && !d.authoritative(repository) {
+		// A fence-only file (factory: alone) is all a central-bound repository's file needs: the
+		// central classes decide, so it is valid, and nothing in it can diverge from them.
+		const msg = "the file names this factory only: the central classes decide"
+		d.set(cs, gen, ConditionRepositoryFileValid, metav1.ConditionTrue, "FenceOnly", msg)
+		d.set(cs, gen, ConditionInSync, metav1.ConditionTrue, "FenceOnly", msg)
+		return
+	}
 	switch {
 	case snap.Err != nil:
 		d.set(cs, gen, ConditionRepositoryFileValid, metav1.ConditionFalse, "Invalid", snap.Err.Error())
@@ -464,6 +472,12 @@ func (d *desirer) fileConditions(cs *[]metav1.Condition, gen int64, repository s
 	default:
 		d.set(cs, gen, ConditionInSync, metav1.ConditionTrue, "InSync", "")
 	}
+}
+
+// authoritative is whether repository's own file is its policy (cut over to repository authority).
+func (d *desirer) authoritative(repository string) bool {
+	rc, ok := d.served[strings.ToLower(repository)]
+	return ok && d.in.Config != nil && d.in.Config.RepositoryAuthoritative(&rc)
 }
 
 // fileNotes is a valid file's message (B15, plan PR4): the bindings that do not resolve, in file

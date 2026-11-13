@@ -85,8 +85,8 @@ config migrate`).
    `changed:` line for each difference.
 3. Commit the converted manifests in one pull request per repository: the policies it is the first
    to need, its `Repository` with `merge` and `mergePolicies`, and its per-repository `MergePolicy`
-   deleted. Flux applies the new objects, then prunes the old one; between the two the `Repository`
-   is refused `DefinedTwice` and the previous version keeps serving.
+   deleted. Flux applies the new objects, then prunes the old one; between the two the per-repository
+   `MergePolicy` is refused `DefinedTwice` and the `Repository` is already served from its bindings.
 4. Check what the factory serves:
 
    ```bash

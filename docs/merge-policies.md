@@ -1131,7 +1131,7 @@ the binding shape (`mergePolicies:`, [above](#a-binding)) resolves the same way.
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
-| `DefinedTwice` | a `Repository` and a per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object: the previous `Repository` version serves until then |
+| `DefinedTwice` | the per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object. The `Repository` is served from its bindings meanwhile |
 
 **The per-repository shape** (`spec.repositoryRef`, `classes`, `merge` on one `MergePolicy` per
 repository) is still read in this release, with one warning per object at every start, and removed
@@ -1189,8 +1189,8 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 | `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid`. A class `MergePolicy` refused with a generation still serving reads `serving generation 3; generation 4 refused: …` |
 | `BindingsValid` | a `Repository` with bindings | `True` `BindingsValid`; `False` `BindingsRefused`, the message naming each refused binding: `refused: dead-links (MissingParameter)` |
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
-| `RepositoryFileValid` | `Repository`, and a per-repository `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
-| `InSync` | `Repository`, and a per-repository `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
+| `RepositoryFileValid` | `Repository`, and a per-repository `MergePolicy` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central classes decide); `False` `Invalid` (the file does not parse, or, under repository authority, declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
+| `InSync` | `Repository`, and a per-repository `MergePolicy` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
 | `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](factory.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
