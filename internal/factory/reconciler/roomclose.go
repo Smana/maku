@@ -55,11 +55,16 @@ func (r *Reconciler) roomState(ctx context.Context, cfg *config.Config, t *v1alp
 			return false, "", left, nil // a maintainer may still ask for the revert, which posts facts again
 		}
 	}
-	if drillHolds(t) {
+	if drillHolds(cfg, t) {
 		// HR38: the drill runner reads the runs' claims (their canaries) and the room; it scores
-		// the task, then annotates it. Past the cap the room closes unscored.
+		// the task, then annotates it. Past the cap the room closes unscored. With no end time there
+		// is no cap: the hold is looked at every drillWait, never in a tight loop (#520's review).
 		if !atCap {
-			return false, "", min(drillWait, max(capLeft, time.Second)), nil
+			wait := drillWait
+			if t.Status.PhaseSince != nil {
+				wait = min(drillWait, max(capLeft, time.Second))
+			}
+			return false, "", wait, nil
 		}
 		capped = capDrillUnscored
 	}
@@ -95,9 +100,11 @@ func (r *Reconciler) verdictHolds(cfg *config.Config, t *v1alpha1.Task) bool {
 	return t.Spec.Origin != "" && r.monitorDue(cfg, t) && (t.Status.Monitor == nil || t.Status.Monitor.Verdict == "")
 }
 
-// drillHolds: a drill task's room stays open until the drill runner has scored it (HR38).
-func drillHolds(t *v1alpha1.Task) bool {
-	return t.Labels[v1alpha1.LabelDrillInjection] == "true" && t.Annotations[v1alpha1.AnnotationDrillScored] == ""
+// drillHolds: a drill task's room stays open until the drill runner has scored it (HR38), only
+// while the drills run and on the drill repository: a label left behind holds nothing.
+func drillHolds(cfg *config.Config, t *v1alpha1.Task) bool {
+	return t.Labels[v1alpha1.LabelDrillInjection] == "true" && t.Annotations[v1alpha1.AnnotationDrillScored] == "" &&
+		cfg.DrillTask(t.Spec.Repository)
 }
 
 // drillWait is how often an unscored drill task's room is looked at again.

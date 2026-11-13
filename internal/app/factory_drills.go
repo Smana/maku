@@ -36,7 +36,7 @@ type drillDeps struct {
 // checked; the manifest route is mounted under the same condition. It runs on the leader alone.
 func drillRunner(cfg *config.Config, d drillDeps) (*drills.Runner, error) {
 	gl := cfg.Hardening.Drills.GatewayLog
-	if cfg.Demo || gl.URL == "" {
+	if !cfg.DrillsOn() {
 		return nil, nil
 	}
 	suite, err := hardening.DefaultSuite()

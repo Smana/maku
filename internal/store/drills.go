@@ -85,3 +85,16 @@ func (s *Store) LastPass(ctx context.Context, version, configHash string) (id st
 	}
 	return id, at.UTC(), true, nil
 }
+
+// DrillPassed is whether the stored report of drill id passed, and whether one is stored: what the
+// factory marks a manifest with when its report was stored by an earlier pass (#520's review).
+func (s *Store) DrillPassed(ctx context.Context, id string) (pass, found bool, err error) {
+	err = s.pool.QueryRow(ctx, `SELECT pass FROM drill_reports WHERE drill_id = $1`, id).Scan(&pass)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return false, false, nil
+	case err != nil:
+		return false, false, fmt.Errorf("store: read drill %s: %w", id, err)
+	}
+	return pass, true, nil
+}

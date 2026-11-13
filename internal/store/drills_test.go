@@ -36,6 +36,11 @@ func TestStoreDrillReport(t *testing.T) {
 	if got := query(t, super, `SELECT count(*)::text FROM drill_reports`); got != "3" {
 		t.Fatalf("%s rows, want 3", got)
 	}
+	for id, want := range map[string][2]bool{"drill-2": {true, true}, "drill-3": {false, true}, "drill-9": {false, false}} {
+		if pass, found, err := s.DrillPassed(ctx, id); err != nil || pass != want[0] || found != want[1] {
+			t.Errorf("%s: pass %v found %v, %v", id, pass, found, err)
+		}
+	}
 	id, at, ok, err := s.LastPass(ctx, "v0.45.0", strings.Repeat("c", 64))
 	if err != nil || !ok || id != "drill-2" || !at.Equal(day.Add(48*time.Hour)) {
 		t.Fatalf("last pass %q %v %v %v", id, at, ok, err)

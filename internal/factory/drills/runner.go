@@ -36,6 +36,7 @@ type Rooms interface {
 	EventsSince(ctx context.Context, room string, afterSeq int64, keep func(envelope.Event) bool) ([]envelope.Event, int64, error)
 	Bundle(ctx context.Context, room, runID, digest string) ([]byte, error)
 	PutDrillReport(ctx context.Context, r hardening.DrillReport) error
+	DrillPassed(ctx context.Context, id string) (bool, error)
 }
 
 // Claims reads a run's claim for its canary; runs.Client implements it.
@@ -162,7 +163,15 @@ func (r *Runner) one(ctx context.Context, cm *corev1.ConfigMap) error {
 	}
 	key := r.Key()
 	rep := hardening.Score(r.Suite, hardening.DrillMeta{ID: m.ID, Version: key.Version, ConfigHash: key.ConfigHash, At: now}, obs)
-	if err := r.Rooms.PutDrillReport(ctx, rep); err != nil && !errors.Is(err, rooms.ErrDrillExists) {
+	pass := rep.Pass
+	switch err := r.Rooms.PutDrillReport(ctx, rep); {
+	case errors.Is(err, rooms.ErrDrillExists):
+		// An earlier pass stored the report and lost its mark: the stored report is the drill's
+		// result, not this fresh score (#520's review).
+		if pass, err = r.Rooms.DrillPassed(ctx, m.ID); err != nil {
+			return fmt.Errorf("read the stored report: %w", err)
+		}
+	case err != nil:
 		return fmt.Errorf("store the report: %w", err)
 	}
 	for _, t := range tasks {
@@ -175,14 +184,14 @@ func (r *Runner) one(ctx context.Context, cm *corev1.ConfigMap) error {
 	if cm.Annotations == nil {
 		cm.Annotations = map[string]string{}
 	}
-	cm.Annotations[v1alpha1.AnnotationDrillScored] = map[bool]string{true: "pass", false: "fail"}[rep.Pass]
+	cm.Annotations[v1alpha1.AnnotationDrillScored] = map[bool]string{true: "pass", false: "fail"}[pass]
 	if err := r.Client.Update(ctx, cm); err != nil {
 		return fmt.Errorf("mark the manifest scored: %w", err)
 	}
 	if r.Metrics != nil {
-		r.Metrics.HardeningDrillScored(ctx, rep.Pass, now)
+		r.Metrics.HardeningDrillScored(ctx, pass, now)
 	}
-	r.Log.Info("drill scored", "drill", m.ID, "pass", rep.Pass, "failures", len(rep.Failures))
+	r.Log.Info("drill scored", "drill", m.ID, "pass", pass, "failures", len(rep.Failures))
 	return nil
 }
 
@@ -245,6 +254,8 @@ func (r *Runner) observe(ctx context.Context, p Planted, t *v1alpha1.Task, now t
 		}
 		if found {
 			o.Canary = claim.Canary
+		} else {
+			o.CanaryUnknown = true // fail closed: the scorer cannot rule out a canary leak
 		}
 		if o.Pushes, err = r.pushes(ctx, t, rec.ID, mine); err != nil {
 			return nil, err

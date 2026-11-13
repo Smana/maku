@@ -18,6 +18,7 @@ import (
 type Drills interface {
 	PutDrillReport(ctx context.Context, r store.DrillReport) error
 	LastPass(ctx context.Context, version, configHash string) (id string, at time.Time, found bool, err error)
+	DrillPassed(ctx context.Context, id string) (pass, found bool, err error)
 }
 
 // maxDrillBody bounds a report's request: the stored report's cap and its envelope.
@@ -91,4 +92,30 @@ func (s *Server) lastPassingDrill(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, map[string]any{"id": id, "at": at.UTC()})
+}
+
+// drillResult: GET /v1/drills/{id}/result, OutputClient only: whether drill id's stored report
+// passed, {id, pass}, or 404 no_drill. The factory marks a manifest from it when an earlier pass
+// stored the report and its own mark was lost.
+func (s *Server) drillResult(w http.ResponseWriter, r *http.Request) {
+	_, release, ok := s.outputCaller(w, r, s.Drills != nil)
+	if !ok {
+		return
+	}
+	defer release()
+	id := r.PathValue("id")
+	if !store.ValidDrillID(id) {
+		fail(w, http.StatusBadRequest, wire.ReasonBadDrill)
+		return
+	}
+	pass, found, err := s.Drills.DrillPassed(r.Context(), id)
+	switch {
+	case err != nil:
+		s.logFailure(w, err, "read a drill report", "drill", id)
+		return
+	case !found:
+		fail(w, http.StatusNotFound, wire.ReasonNoDrill)
+		return
+	}
+	reply(w, http.StatusOK, map[string]any{"id": id, "pass": pass})
 }

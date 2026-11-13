@@ -2238,19 +2238,24 @@ hardening:
     gatewayLog:
       url: http://victoria-logs.observability.svc:9428
       timeout: 10s
+    repository: Smana/maku-drills   # optional: only this repository's tasks are drill tasks
 ```
 
 - **On.** The drill runner, on the leader, and the manifest route `POST /v1/hardening/drills`
   (`system:drill` alone) are on while `drills.gatewayLog.url` is set, outside the demo. Neither
   `timeout` nor `gatewayLog` enters the hardening hash a drill proves.
-- **Drill tasks.** An issue labelled `factory/drill-injection` becomes a task labelled
-  `agents.ogenki.io/drill-injection`. The manifest route accepts only such tasks. Their room stays
+- **Drill tasks.** While the drills are on, an issue labelled `factory/drill-injection` (of
+  `drills.repository`, when set) becomes a task labelled `agents.ogenki.io/drill-injection`. With
+  the drills off, or off the drill repository, the label holds no room and marks no T5 call. The manifest route accepts only such tasks. Their room stays
   open until the runner scores them, then the runner annotates them `agents.ogenki.io/drill-scored`.
 - **The report.** The runner stores it through the broker's `POST /v1/drills`
   ([API](api.md#drill-reports)), which only `system:factory` may call, and readiness reads the
   newest pass with `GET /v1/drills/last-pass`.
-- **T5 measured.** The applier runs T5 in audit on text outputs another layer refused too, and
-  counts every call in `maku_factory_hardening_t5_total{type,result,drill}`: T5's false positives
+- **T5 measured.** The applier also runs T5 in audit on an output refused at T1 for its target, or a
+  push refused at T4, once T3's scan of the same text finds no secret and no canary. A T3 refusal,
+  a cap refusal, a T2 withholding or a payload the broker redacted never reaches the classifier:
+  T5 is reached through agentgateway, so a refusal must not send what it protects. It counts every
+  call in `maku_factory_hardening_t5_total{type,result,drill}`: T5's false positives
   are hits on applied outputs of non-drill tasks.
 
 ## Reference

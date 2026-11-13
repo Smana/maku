@@ -744,22 +744,30 @@ func TestThePassThatEngagesTheStopCreatesNoTask(t *testing.T) {
 	}
 }
 
-// HR38: an issue a drill planter labelled factory/drill-injection makes a drill task, which the
-// drill manifest route and the room's close read; any other issue's task carries no such label.
+// HR38: an issue a drill planter labelled factory/drill-injection makes a drill task while the
+// drills run, on the drill repository when one is named (#520's review); any other issue's task, or
+// any task while drills are off, carries no such label.
 func TestADrillIssueMakesADrillTask(t *testing.T) {
 	for name, tc := range map[string]struct {
-		labels []string
-		want   string
+		labels   []string
+		logs     string
+		drillRep string
+		want     string
 	}{
-		"planted":   {[]string{"factory/ready", "factory/drill-injection"}, "true"},
-		"an issue":  {[]string{"factory/ready"}, ""},
-		"lookalike": {[]string{"factory/drill"}, ""},
+		"planted":            {[]string{"factory/ready", "factory/drill-injection"}, "http://logs:9428", "", "true"},
+		"on the drill repo":  {[]string{"factory/ready", "factory/drill-injection"}, "http://logs:9428", "Smana/cloud-native-ref", "true"},
+		"off the drill repo": {[]string{"factory/ready", "factory/drill-injection"}, "http://logs:9428", "Smana/maku-drills", ""},
+		"drills off":         {[]string{"factory/ready", "factory/drill-injection"}, "", "", ""},
+		"an issue":           {[]string{"factory/ready"}, "http://logs:9428", "", ""},
+		"lookalike":          {[]string{"factory/drill"}, "http://logs:9428", "", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
 			labelled(f, 7, "Smana")
 			f.SetIssue(forge.Issue{Number: 7, Title: "Fix the link", Body: "docs/a.md links to a moved page.", Labels: tc.labels})
 			p, c := poller(t, f)
+			cfg := p.Cfg.(*config.Config)
+			cfg.Hardening.Drills.GatewayLog.URL, cfg.Hardening.Drills.Repository = tc.logs, tc.drillRep
 			if err := p.Poll(t.Context()); err != nil {
 				t.Fatal(err)
 			}

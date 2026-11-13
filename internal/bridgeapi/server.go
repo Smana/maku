@@ -170,6 +170,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /v1/approvals/{id}", s.bounded(0, s.outputApproval))
 	mux.HandleFunc("POST /v1/drills", s.bounded(maxDrillBody, s.putDrill))
 	mux.HandleFunc("GET /v1/drills/last-pass", s.bounded(0, s.lastPassingDrill))
+	mux.HandleFunc("GET /v1/drills/{id}/result", s.bounded(0, s.drillResult))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue", s.bounded(maxMessageBytes, s.queueRoute(s.enqueue)))
 	mux.HandleFunc("GET /v1/rooms/{id}/queue", s.bounded(0, s.queueRoute(s.listQueue)))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))

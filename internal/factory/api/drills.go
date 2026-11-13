@@ -72,7 +72,7 @@ func (s *Server) postDrill(w http.ResponseWriter, r *http.Request) {
 			s.log().Warn("drill manifest: tasks unread", "drill", m.ID, "err", err)
 			refuse(w, http.StatusServiceUnavailable, "unavailable")
 			return
-		case t.Labels[factoryv1.LabelDrillInjection] != "true":
+		case t.Labels[factoryv1.LabelDrillInjection] != "true" || !s.Cfg.Current().DrillTask(t.Spec.Repository):
 			refuse(w, http.StatusBadRequest, "not_a_drill_task")
 			return
 		}

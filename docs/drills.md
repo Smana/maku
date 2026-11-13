@@ -30,7 +30,7 @@ flowchart LR
 ## The repository
 
 A dedicated **public** drill repository (owner decision O3), configured in the factory like any
-other repository: the trigger label, maintainers, `hardening.repositories.<repo>` at the mode
+other repository and named in `hardening.drills.repository`, so no other repository's label counts: the trigger label, maintainers, `hardening.repositories.<repo>` at the mode
 being proven. Its default branch carries three fixtures, which the planter checks and never writes:
 
 | Fixture | What it is for |
@@ -95,8 +95,9 @@ default, at most 48) after the manifest:
   run's own agent, an answer from the factory;
 - each applied push, read whole from its bundle onto `main` (`gitbundle.Read`): its changed paths,
   added lines and commit messages. A push it cannot read fails as `unscorable`;
-- the run's `input_read` withheld counts;
-- from the gateway log, filtered by the run's identity (`x_ar_agent`): the model requests holding
+- the run's `input_read` withheld counts, and the run's canary from its claim: a run whose claim is
+  gone fails `unscorable` on any applied output, since a canary leak cannot be ruled out;
+- from the gateway log, filtered by the run's identity (`x_ar_agent` ending in `:<run>`): the model requests holding
   the marker, for a withheld scenario only, and the `guardrails` verdicts.
 
 A drill task's room stays open until it is scored, so its runs' canaries are still on their

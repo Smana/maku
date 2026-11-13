@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -24,6 +25,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/gitbundle"
+	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
 )
@@ -53,6 +55,7 @@ type fakeRooms struct {
 	events  map[string][]envelope.Event
 	bundles map[string][]byte
 	reports []hardening.DrillReport
+	stored  []hardening.DrillReport // reports an earlier pass stored: a put answers ErrDrillExists
 }
 
 func (f *fakeRooms) EventsSince(_ context.Context, room string, after int64, keep func(envelope.Event) bool) ([]envelope.Event, int64, error) {
@@ -78,8 +81,24 @@ func (f *fakeRooms) Bundle(_ context.Context, _, run, digest string) ([]byte, er
 func (f *fakeRooms) PutDrillReport(_ context.Context, r hardening.DrillReport) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	for _, x := range f.stored {
+		if x.ID == r.ID {
+			return rooms.ErrDrillExists
+		}
+	}
 	f.reports = append(f.reports, r)
 	return nil
+}
+
+func (f *fakeRooms) DrillPassed(_ context.Context, id string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, r := range f.stored {
+		if r.ID == id {
+			return r.Pass, nil
+		}
+	}
+	return false, errors.New("no such drill")
 }
 
 type fakeClaims map[string]string // run → canary
@@ -198,7 +217,7 @@ func newRunner(t *testing.T, objs ...client.Object) *rig {
 	g := &rig{c: fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).WithInterceptorFuncs(noCMPatch).Build(), rooms: &fakeRooms{events: map[string][]envelope.Event{},
 		bundles: map[string][]byte{}}, gateway: &fakeGateway{hits: map[string]int{}}, reader: &fakeReader{}, metrics: &scored{},
 		logs: &bytes.Buffer{}, now: t0.Add(2 * time.Hour)}
-	g.r = &Runner{Client: g.c, Namespace: ns, Rooms: g.rooms, Claims: fakeClaims{"run1aaaa": "mkc-00000000000000000001"},
+	g.r = &Runner{Client: g.c, Namespace: ns, Rooms: g.rooms, Claims: fakeClaims{"run1aaaa": "mkc-00000000000000000001", "run2aaaa": "", "run3aaaa": "mkc-00000000000000000003"},
 		Readers: func(context.Context, string) (BundleReader, error) { return g.reader, nil },
 		Gateway: g.gateway, Suite: testSuite(t),
 		Key: func() hardening.DrillKey {
@@ -397,5 +416,41 @@ func TestDrillManifest(t *testing.T) {
 	m.Scenarios[0].Marker = markerB
 	if _, err := Accept(t.Context(), g.c, ns, m); !errors.Is(err, ErrManifestExists) {
 		t.Fatalf("another manifest: %v", err)
+	}
+}
+
+// #520's review: a run whose claim is gone has no canary to seek, so its applied output fails
+// unscorable; and a report an earlier pass stored marks the manifest, not a fresh score.
+func TestDrillRunnerFailsClosed(t *testing.T) {
+	room := &log{room: "rooma234"}
+	room.withheld("run9aaaa", 1)
+	room.applied("run9aaaa", "0000000000000001", hardening.Comment, hardening.CommentPayload{Target: "pr", Body: "done"},
+		"https://github.com/Smana/drill/pull/1#issuecomment-1")
+	m := Manifest{ID: "drill-4", Scenarios: []Planted{{Scenario: "stranger-comment", Task: "taska234", Marker: markerA}}}
+	g := newRunner(t, manifestMap(t, m, t0),
+		drillTask("taska234", "rooma234", v1alpha1.PhaseDone, v1alpha1.RunRecord{ID: "run9aaaa", Role: "implementer"}))
+	g.rooms.events["rooma234"] = room.evs
+	if err := g.r.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f := g.rooms.reports[0].Failures
+	if !slices.Contains(f, hardening.Failure{Scenario: "stranger-comment", Role: "implementer", Reason: hardening.FailUnscorable}) {
+		t.Fatalf("a run with no claim: %+v", f)
+	}
+
+	// The broker already holds a passing report for the id: the manifest is marked pass, though
+	// this pass's own score fails.
+	g = newRunner(t, manifestMap(t, Manifest{ID: "drill-5", Scenarios: m.Scenarios}, t0),
+		drillTask("taska234", "rooma234", v1alpha1.PhaseDone, v1alpha1.RunRecord{ID: "run9aaaa", Role: "implementer"}))
+	g.rooms.events["rooma234"] = room.evs
+	g.rooms.stored = []hardening.DrillReport{{DrillMeta: hardening.DrillMeta{ID: "drill-5"}, Pass: true}}
+	if err := g.r.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if a := annotation(t, g.c, &corev1.ConfigMap{}, "drill-drill-5"); a != "pass" {
+		t.Fatalf("manifest annotation %q, want the stored report's pass", a)
+	}
+	if len(g.metrics.results) != 1 || !g.metrics.results[0] {
+		t.Fatalf("metric %v", g.metrics.results)
 	}
 }

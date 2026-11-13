@@ -362,6 +362,13 @@ func (m *memDrills) LastPass(_ context.Context, version, hash string) (string, t
 	return "", time.Time{}, false, nil
 }
 
+func (m *memDrills) DrillPassed(_ context.Context, id string) (bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.rows[id]
+	return r.Pass, ok, nil
+}
+
 // HR38: the report the factory posts is one the broker takes, and the pass it reads back is the
 // one it stored.
 func TestTheDrillClientSpeaksTheBrokersDrillRoutes(t *testing.T) {
@@ -391,5 +398,11 @@ func TestTheDrillClientSpeaksTheBrokersDrillRoutes(t *testing.T) {
 	got, ok, err := c.LastPass(t.Context(), key)
 	if err != nil || !ok || got.ID != "drill-1" || !got.At.Equal(at) {
 		t.Fatalf("%+v %v %v", got, ok, err)
+	}
+	if pass, err := c.DrillPassed(t.Context(), "drill-1"); err != nil || !pass {
+		t.Fatalf("result %v %v", pass, err)
+	}
+	if _, err := c.DrillPassed(t.Context(), "drill-9"); err == nil {
+		t.Fatal("no stored report read as one")
 	}
 }

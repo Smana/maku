@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -61,7 +62,7 @@ func TestMarkerHits(t *testing.T) {
 		t.Fatalf("%d queries", len(vl.queries))
 	}
 	q := vl.queries[0]
-	want := `x_ar_agent:~"cf4ato2x|7f3cq2xz" "` + marker + `" | stats count() hits`
+	want := `x_ar_agent:~"(^|:)(cf4ato2x|7f3cq2xz)$" "` + marker + `" | stats count() hits`
 	if q.Get("query") != want || q.Get("start") != "2026-11-13T06:00:00Z" || q.Get("end") != "2026-11-13T12:00:00Z" {
 		t.Fatalf("query %v", q)
 	}
@@ -83,7 +84,7 @@ func TestGuardrails(t *testing.T) {
 	if err != nil || got["allow"] != 12 || got["block"] != 2 || got["other"] != 1 || len(got) != 3 {
 		t.Fatalf("%v %v", got, err)
 	}
-	if q := vl.queries[0].Get("query"); q != `x_ar_agent:~"cf4ato2x|7f3cq2xz" guardrails:* | stats by (guardrails) count() hits` {
+	if q := vl.queries[0].Get("query"); q != `x_ar_agent:~"(^|:)(cf4ato2x|7f3cq2xz)$" guardrails:* | stats by (guardrails) count() hits` {
 		t.Fatalf("query %q", q)
 	}
 }
@@ -130,5 +131,29 @@ func TestGatewayLogUnset(t *testing.T) {
 	var g *GatewayLog
 	if _, err := g.MarkerHits(t.Context(), runIDs, marker, logFrom, logTo); !errors.Is(err, ErrNoGatewayLog) {
 		t.Fatalf("%v", err)
+	}
+}
+
+// #520's review: the identity filter is anchored, so it matches the run's own subject and nothing
+// that merely contains its id.
+func TestGatewayRunFilterIsAnchored(t *testing.T) {
+	vl := &victoriaLogs{reply: func(string) (int, string) { return http.StatusOK, `{"hits":"0"}` }}
+	g := NewGatewayLog(vl.server(t).URL, 5*time.Second, nil)
+	if _, err := g.MarkerHits(t.Context(), runIDs, marker, logFrom, logTo); err != nil {
+		t.Fatal(err)
+	}
+	q := vl.queries[0].Get("query")
+	pattern := q[strings.Index(q, `~"`)+2 : strings.Index(q, `$"`)+1]
+	re := regexp.MustCompile(pattern)
+	for subject, want := range map[string]bool{
+		"system:serviceaccount:agent-system:cf4ato2x": true,
+		"7f3cq2xz": true,
+		"system:serviceaccount:agent-system:xcf4ato2x": false,
+		"system:serviceaccount:agent-system:cf4ato2xy": false,
+		"system:serviceaccount:cf4ato2x:other":         false,
+	} {
+		if re.MatchString(subject) != want {
+			t.Errorf("%s: match %v, want %v", subject, !want, want)
+		}
 	}
 }

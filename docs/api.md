@@ -380,12 +380,15 @@ cannot forge a report.
 that Maku version and hardening configuration hash (readiness R6): `{"id": …, "at": …}`, or
 `404 no_drill`.
 
+`GET /v1/drills/{id}/result` answers whether drill `id`'s stored report passed, `{"id": …, "pass": …}`,
+or `404 no_drill`: the factory marks a drill scored from it when an earlier pass stored the report.
+
 | Status | `error` | When |
 |---|---|---|
 | `400` | `bad_drill` | A bad body, id, version, hash, time or report |
 | `401` | `unauthenticated` | No valid system token |
 | `403` | `not_permitted` | Any system principal but the factory, or a broker with no drill store |
-| `404` | `no_drill` | No passing drill for that version and hash |
+| `404` | `no_drill` | No passing drill for that version and hash, or no report under that id |
 | `409` | `drill_exists` | A report for that id is already stored |
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable` | The database refused it |

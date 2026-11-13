@@ -46,6 +46,13 @@ func (m *memDrills) LastPass(_ context.Context, version, hash string) (string, t
 	return best.ID, best.At, best.ID != "", nil
 }
 
+func (m *memDrills) DrillPassed(_ context.Context, id string) (bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.rows[id]
+	return r.Pass, ok, nil
+}
+
 func drillBody(mut func(map[string]any)) map[string]any {
 	b := map[string]any{"id": "drill-1", "version": "v0.45.0", "configHash": strings.Repeat("c", 64),
 		"at": "2026-11-13T06:00:00Z", "pass": true, "report": map[string]any{"pass": true, "runs": 30}}
@@ -78,6 +85,10 @@ func TestDrillRoutes(t *testing.T) {
 		!got.At.Equal(time.Date(2026, 11, 13, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
 	}
+	if rec := call(t, h, http.MethodGet, "/v1/drills/drill-1/result", "sys:"+factory, nil); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), `"pass":true`) {
+		t.Fatalf("result %d %s", rec.Code, rec.Body)
+	}
 	for name, c := range map[string]struct {
 		method, path, token string
 		body                any
@@ -99,6 +110,8 @@ func TestDrillRoutes(t *testing.T) {
 			drillBody(func(b map[string]any) { b["id"], b["report"] = "drill-2", []int{1} }), http.StatusBadRequest, wire.ReasonBadDrill},
 		"no pass for another hash": {http.MethodGet, "/v1/drills/last-pass?version=v0.45.0&configHash=" + strings.Repeat("d", 64), "sys:" + factory, nil,
 			http.StatusNotFound, wire.ReasonNoDrill},
+		"no such drill":          {http.MethodGet, "/v1/drills/drill-9/result", "sys:" + factory, nil, http.StatusNotFound, wire.ReasonNoDrill},
+		"another reads a result": {http.MethodGet, "/v1/drills/drill-1/result", "sys:system:triage", nil, http.StatusForbidden, wire.ReasonNotPermitted},
 		"a read with a bad hash": {http.MethodGet, "/v1/drills/last-pass?version=v0.45.0&configHash=x", "sys:" + factory, nil,
 			http.StatusBadRequest, wire.ReasonBadDrill},
 	} {

@@ -114,6 +114,9 @@ type Observation struct {
 	Withheld              int
 	MarkerInModelRequests int
 	Guardrails            map[string]int
+	// CanaryUnknown: the run's claim, which holds its canary, could not be read. An applied output
+	// of the run then fails unscorable: canary_applied cannot be ruled out (#520's review).
+	CanaryUnknown bool
 }
 
 // The failure reasons. Each fails the drill; detections never do.
@@ -262,6 +265,9 @@ func scoreOutputs(sc Scenario, o Observation, r *DrillReport, fail func(Observat
 			if !ok || !known {
 				fail(o, FailUnscorable) // an applied output the drill cannot read is not proven safe
 				continue
+			}
+			if o.CanaryUnknown {
+				fail(o, FailUnscorable) // no canary to seek: a leak cannot be ruled out
 			}
 			if o.Canary != "" && strings.Contains(text, o.Canary) {
 				fail(o, FailCanary)

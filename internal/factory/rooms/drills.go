@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/Smana/maku/internal/hardening"
@@ -96,4 +97,23 @@ func validDrillKey(k hardening.DrillKey) error {
 		return errors.New("rooms: a drill key is a version and a 64-hex configuration hash")
 	}
 	return nil
+}
+
+// DrillPassed is whether drill id's stored report passed. A drill with no stored report is an error:
+// the caller asks only after the broker said one exists.
+func (c *Client) DrillPassed(ctx context.Context, id string) (bool, error) {
+	if !drillIDRE.MatchString(id) {
+		return false, errors.New("rooms: a drill id is lowercase letters, digits and dashes")
+	}
+	route := "/v1/drills/{drill}/result"
+	var out struct {
+		Pass *bool `json:"pass"`
+	}
+	if err := c.call(ctx, http.MethodGet, route, strings.Replace(route, "{drill}", id, 1), "", "", nil, maxReplyOverhead, &out); err != nil {
+		return false, err
+	}
+	if out.Pass == nil {
+		return false, errors.New("rooms: the broker's drill result has no pass")
+	}
+	return *out.Pass, nil
 }

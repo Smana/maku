@@ -293,7 +293,7 @@ func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (stri
 // issueTask is the Task of issue n's snapshot, requested by requestedBy.
 func (p *IssuePoller) issueTask(cfg *config.Config, n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
 	labels := map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}
-	if slices.Contains(iss.Labels, hardening.DrillInjectionLabel) { // a planted drill issue (HR38)
+	if slices.Contains(iss.Labels, hardening.DrillInjectionLabel) && cfg.DrillTask(p.repo(cfg).Name) { // a planted drill issue (HR38)
 		labels[v1alpha1.LabelDrillInjection] = "true"
 	}
 	return &v1alpha1.Task{

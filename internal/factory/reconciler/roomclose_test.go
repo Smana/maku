@@ -269,12 +269,24 @@ func TestARegressionReleasesAnOriginRoomAtOnce(t *testing.T) {
 	}
 }
 
+// drillsOn turns the drills on in g's config.
+func drillsOn(g *rig) {
+	c := cfg()
+	c.Hardening.Drills.GatewayLog.URL = "http://logs:9428"
+	g.r.Cfg = c
+}
+
+func drillTask() *v1alpha1.Task {
+	tk := endedTask(v1alpha1.PhaseDone)
+	tk.Labels = map[string]string{v1alpha1.LabelDrillInjection: "true"}
+	return tk
+}
+
 // HR38: a drill task's room, and with it the runs' claims and canaries, stays open until the drill
 // runner has scored it; then it closes as any other. The cap still bounds the wait.
 func TestADrillTasksRoomWaitsForItsScore(t *testing.T) {
-	tk := endedTask(v1alpha1.PhaseDone)
-	tk.Labels = map[string]string{v1alpha1.LabelDrillInjection: "true"}
-	g := newRig(t, tk)
+	g := newRig(t, drillTask())
+	drillsOn(g)
 	withRoom(t, g)
 	res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}})
 	if err != nil {
@@ -297,13 +309,46 @@ func TestADrillTasksRoomWaitsForItsScore(t *testing.T) {
 	}
 
 	// Never scored: the room closes at the cap, counted.
-	tk = endedTask(v1alpha1.PhaseDone)
-	tk.Labels = map[string]string{v1alpha1.LabelDrillInjection: "true"}
-	g = newRig(t, tk)
+	g = newRig(t, drillTask())
+	drillsOn(g)
 	withRoom(t, g)
 	g.r.Now = func() time.Time { return now.Add(-time.Hour + roomCloseCap + time.Minute) }
 	g.reconcile(t, "3buqdlot", 1)
 	if !roomGone(t, g) || !slices.Contains(g.metrics.recorded, "room_closed_at_cap drill_unscored") {
 		t.Fatalf("an unscored drill room past the cap: gone %v, %v", roomGone(t, g), g.metrics.recorded)
+	}
+}
+
+// #520's review: with the drills off, or off the drill repository, a drill label holds no room;
+// and a hold with no end time to cap it waits drillWait, never a tight loop.
+func TestADrillHoldIsGatedAndBounded(t *testing.T) {
+	g := newRig(t, drillTask())
+	withRoom(t, g)
+	g.reconcile(t, "3buqdlot", 1)
+	if !roomGone(t, g) {
+		t.Fatal("drills off: a drill label held the room")
+	}
+
+	g = newRig(t, drillTask())
+	c := cfg()
+	c.Hardening.Drills.GatewayLog.URL, c.Hardening.Drills.Repository = "http://logs:9428", "Smana/maku-drills"
+	g.r.Cfg = c
+	withRoom(t, g)
+	g.reconcile(t, "3buqdlot", 1)
+	if !roomGone(t, g) {
+		t.Fatal("off the drill repository: a drill label held the room")
+	}
+
+	tk := drillTask()
+	tk.Status.PhaseSince = nil
+	g = newRig(t, tk)
+	drillsOn(g)
+	withRoom(t, g)
+	res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if roomGone(t, g) || res.RequeueAfter < drillWait {
+		t.Fatalf("a hold with no end time: gone %v, requeue %s", roomGone(t, g), res.RequeueAfter)
 	}
 }

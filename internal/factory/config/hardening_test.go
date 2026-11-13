@@ -631,3 +631,35 @@ func TestGatewayLogConfig(t *testing.T) {
 		})
 	}
 }
+
+// #520's review: a drill label counts only while the drills run, and only on the drill repository
+// when one is named; the named repository must be configured.
+func TestDrillTask(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := c.Repos()[0].Name
+	if c.DrillsOn() || c.DrillTask(repo) {
+		t.Fatal("drills on with no gateway log")
+	}
+	c.Hardening.Drills.GatewayLog.URL = "http://logs:9428"
+	if !c.DrillsOn() || !c.DrillTask(repo) {
+		t.Fatal("drills off with a gateway log")
+	}
+	c.Hardening.Drills.Repository = "Smana/maku-drills"
+	if c.DrillTask(repo) || !c.DrillTask("smana/MAKU-drills") {
+		t.Fatal("the drill repository does not bound drill tasks")
+	}
+	c.Demo = true
+	if c.DrillsOn() || c.DrillTask("Smana/maku-drills") {
+		t.Fatal("drills on in the demo")
+	}
+	if _, err := Parse([]byte(good + "hardening: {drills: {repository: Smana/elsewhere}}\n")); err == nil ||
+		!strings.Contains(err.Error(), "hardening.drills.repository") {
+		t.Fatalf("an unconfigured drill repository: %v", err)
+	}
+	if _, err := Parse([]byte(good + "hardening: {drills: {repository: " + repo + "}}\n")); err != nil {
+		t.Fatal(err)
+	}
+}

@@ -130,6 +130,9 @@ type HardeningDrills struct {
 	// guardrail verdicts (AC5). With no URL the drill runner is off, since withheld text reaching a
 	// model could not be checked.
 	GatewayLog GatewayLog
+	// Repository is the drill repository, owner/name: when set, only its tasks are drill tasks. Empty,
+	// any repository's issue labelled factory/drill-injection makes one while the drills are on.
+	Repository string
 }
 
 // GatewayLog is a VictoriaLogs base URL and how long one query may take (10s by default, at most
@@ -169,6 +172,7 @@ type hardeningFile struct {
 			URL     string    `json:"url,omitempty"`
 			Timeout *Duration `json:"timeout,omitempty"`
 		} `json:"gatewayLog,omitzero"`
+		Repository string `json:"repository,omitempty"`
 	} `json:"drills,omitzero"`
 	AgentGuard struct {
 		URL     string    `json:"url,omitempty"`
@@ -214,7 +218,7 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	*h = Hardening{Mode: hardening.ModeOff, MinAuthorTrust: f.MinAuthorTrust, BlockedUsers: f.BlockedUsers,
 		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}, EnforceOutputs: f.EnforceOutputs,
 		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS), Minter: f.Publisher.Minter}}
-	h.Drills.GatewayLog.URL = f.Drills.GatewayLog.URL
+	h.Drills.GatewayLog.URL, h.Drills.Repository = f.Drills.GatewayLog.URL, f.Drills.Repository
 	if f.Drills.Timeout != nil {
 		h.Drills.Timeout = explicitZero(f.Drills.Timeout)
 	}
@@ -384,6 +388,18 @@ func (c *Config) TrustPolicy(repository string, floor hardening.Level) hardening
 	return pol
 }
 
+// DrillsOn reports whether injection drills run (HR38): a gateway log to score them from, outside
+// the demo. The drill runner, the manifest route and every effect of a drill label hang on it.
+func (c *Config) DrillsOn() bool { return !c.Demo && c.Hardening.Drills.GatewayLog.URL != "" }
+
+// DrillTask reports whether a drill-labelled task of repository is a drill task: the drills are on,
+// and repository is the drill repository when one is configured. Otherwise the label is ignored: it
+// neither holds a room nor marks a T5 call as a drill's, which would hide a false positive (AC6).
+func (c *Config) DrillTask(repository string) bool {
+	r := c.Hardening.Drills.Repository
+	return c.DrillsOn() && (r == "" || strings.EqualFold(r, repository))
+}
+
 // DrillPrincipal is the drill planter's system principal on the factory API: the
 // api.systemPrincipals value the drill manifest route admits (HR38).
 const DrillPrincipal = "system:drill"
@@ -432,6 +448,9 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 		bad("hardening.drills.maxAge must be positive")
 	}
 	h.Drills.validate(bad)
+	if r := h.Drills.Repository; r != "" && c.RepositoryFor(r) == nil {
+		bad("hardening.drills.repository %q is not a configured repository", r)
+	}
 	h.AgentGuard.validate(bad)
 	repos := c.Repos()
 	reserved := map[string]bool{}

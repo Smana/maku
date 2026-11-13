@@ -121,7 +121,9 @@ func (g *GatewayLog) query(ctx context.Context, runIDs []string, rest string, fr
 			return nil, errors.New("drills: a run id is a C2 id")
 		}
 	}
-	q := GatewayRunField + `:~"` + strings.Join(runIDs, "|") + `" ` + rest
+	// Anchored at the end, after a colon or at the start: the subject is
+	// system:serviceaccount:<namespace>:<run>, so a run id inside another name never matches.
+	q := GatewayRunField + `:~"(^|:)(` + strings.Join(runIDs, "|") + `)$" ` + rest
 	form := url.Values{"query": {q}, "start": {from.UTC().Format(time.RFC3339)}, "end": {to.UTC().Format(time.RFC3339)}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, g.url, strings.NewReader(form.Encode()))
 	if err != nil {
