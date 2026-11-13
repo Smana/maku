@@ -129,6 +129,63 @@ func TestReadinessH0(t *testing.T) {
 	}
 }
 
+// countingFiles counts every policy read.
+type countingFiles struct {
+	fakeFiles
+	reads int
+}
+
+func (c *countingFiles) DefaultBranchFile(ctx context.Context, repo, path string) ([]byte, bool, error) {
+	c.reads++
+	return c.fakeFiles.DefaultBranchFile(ctx, repo, path)
+}
+
+// Plan PR8 (HR42, option A): R2 and R3 read the token source runs actually get. The XR reads the
+// octo-sts policies; the minter reads its role table through Grants and no policy file; a shared
+// token makes R2 missing whatever the policies say.
+func TestReadinessTokenSource(t *testing.T) {
+	readRoles := map[string]map[string]string{}
+	for _, r := range SandboxRoles() {
+		readRoles[r] = map[string]string{"contents": "read", "pull_requests": "read", "metadata": "read"}
+	}
+	writeRoles := map[string]map[string]string{"implementer": {"contents": "write", "pull_requests": "read"}}
+	pub := map[string]string{"contents": "read", "pull_requests": "write", "issues": "write"}
+	grants := func(roles map[string]map[string]string, p map[string]string) func(string) (map[string]map[string]string, map[string]string) {
+		return func(string) (map[string]map[string]string, map[string]string) { return roles, p }
+	}
+	for name, tc := range map[string]struct {
+		src       TokenSource
+		pubMinter bool
+		grants    func(string) (map[string]map[string]string, map[string]string)
+		want      []Missing
+		reads     int
+	}{
+		"the XR, as today":                  {TokenSourceXR, false, nil, nil, 5},
+		"no source reads as the XR":         {"", false, nil, nil, 5},
+		"the minter, read-only roles":       {TokenSourceMinter, true, grants(readRoles, pub), nil, 0},
+		"the minter, a writing role":        {TokenSourceMinter, true, grants(writeRoles, pub), []Missing{MissingWriteToken}, 0},
+		"the minter, a read-only publisher": {TokenSourceMinter, true, grants(readRoles, map[string]string{"contents": "read"}), []Missing{MissingPublisher}, 0},
+		"the minter with no grants":         {TokenSourceMinter, true, nil, []Missing{MissingWriteToken, MissingPublisher}, 0},
+		"the minter, octo-sts publishes":    {TokenSourceMinter, false, grants(readRoles, nil), nil, 1},
+		"shared":                            {TokenSourceShared, true, grants(readRoles, pub), []Missing{MissingWriteToken}, 0},
+	} {
+		t.Run(name, func(t *testing.T) {
+			s, f, d := hardened()
+			s.TokenSource, s.PublisherMinter = tc.src, tc.pubMinter
+			files := &countingFiles{fakeFiles: f}
+			e := eval(s, files, d)
+			e.Grants = tc.grants
+			r, err := e.Hardened(t.Context(), "o/r")
+			if err != nil || !slices.Equal(r.Missing, tc.want) || r.Hardened != (len(tc.want) == 0) {
+				t.Fatalf("%+v %v, want missing %v", r, err, tc.want)
+			}
+			if files.reads != tc.reads {
+				t.Fatalf("%d policy reads, want %d", files.reads, tc.reads)
+			}
+		})
+	}
+}
+
 func TestPolicyGrantsWrite(t *testing.T) {
 	for in, want := range map[string]bool{readOnly: false, writeable: true, publisher: true, "issuer: x\n": false,
 		"permissions: {issues: Write}\n": true, "permissions: {checks: none}\n": false} {
