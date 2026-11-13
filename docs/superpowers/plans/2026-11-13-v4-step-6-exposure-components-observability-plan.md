@@ -96,19 +96,35 @@ Every existing install keeps working (D25):
   Not merged: step 4 PR D and all of step 5. PR D (web front door) and PR G (production gate) below name the step 5 seams they read.
 - ANR `origin/main` `1529b3b`.
 
-**Branch:** seven PRs, each from `origin/main` once its dependencies merge.
+**Branch:** eight PRs, each from `origin/main` once its dependencies merge and its rulings (below) are given.
 
 | PR | Branch | Tasks | Size | Order |
 |---|---|---|---|---|
-| A, traces end to end (D21) | `feat/v4-obs-traces` | 1–3 | M | any time |
-| B, scrape objects and alerts (D21) | `feat/v4-obs-alerts` | 4–6 | M | any time |
+| A, traces end to end (D21) | `feat/v4-obs-traces` | 1–3 | M | **blocked on R1** |
+| B, scrape objects and alerts (D21) | `feat/v4-obs-alerts` | 4–6 | M | any time (without the `maku-gateway` group, which is B2) |
+| B2, the model-gateway alert group (D21) | `feat/v4-obs-gateway-alerts` | 22 | S | after B and step 4 PR D (Maku #518: agentgateway's native metric names) |
 | C, dashboards (D21) | `feat/v4-obs-dashboards` | 7–8 | L | after B (it extends B's `monitoring` block) |
-| D, exposure and the web front door (D19) | `feat/v4-expose` | 9–12 | L | after step 5 PR B (it reads `human.preset`, `rolesClaim`, `scopes`, `broker.oidc`) |
-| E, the Slack subchart, broker parity, component egress (D20, D6) | `feat/v4-slack-subchart` | 13–16 | L | after D (its route is D's `slack` surface) |
-| F, RunLore's MCP endpoint (D20) | `feat/v4-runlore-mcp` | 17–18 | M | any time |
-| G, `profile: production` renders | `feat/v4-profile-production` | 19–21 | M | last; needs D, E and step 5 PR D (DSN Secrets) |
+| D, exposure and the web front door (D19) | `feat/v4-expose` | 9–12 | L | **blocked on R2 and R4**; after step 5 PR B (it reads `human.preset`, `rolesClaim`, `scopes`, `broker.oidc`) and step 5 PR C (it reads `human.githubLink` for the `/link/github/callback` skip route) |
+| E, the Slack subchart, broker parity, component egress (D20, D6) | `feat/v4-slack-subchart` | 13–16 | L | **blocked on R3**; after D (its route is D's `slack` surface) |
+| F, RunLore's MCP endpoint (D20) | `feat/v4-runlore-mcp` | 17–18 | M | **blocked on R5** |
+| G, `profile: production` renders | `feat/v4-profile-production` | 19–21 | M | **blocked on R6**; last; needs D, E and step 5 PR D (DSN Secrets) |
 
-The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim minors.
+The step's v0.4x minor is cut after PR G. A, B, B2, C and F may also ship in interim minors.
+
+## Rulings needed before PR A
+
+These are owner rulings, not the plan's. The plan recommends an answer for each, but no PR that depends on one starts until the owner has given it. A "no" sends the dependent PR back to planning; it does not block the others.
+
+| # | Ruling (yes/no) | Recommendation | Blocks |
+|---|---|---|---|
+| R1 | May D6's run egress widen to the OTLP collector when `runController.tracing` is configured (EX15; EX17's D6 line)? | Yes: it exists only when configured, and it is the only way a run's span reaches a collector | PR A |
+| R2 | May D19 be amended to "only the Slack events path must be public; the factory polls GitHub and needs no public path" (EX3; EX17's D19 line)? | Yes: the factory has no GitHub webhook endpoint today | PR D |
+| R3 | May D20 be amended to "the minimal install is the three core Deployments plus Postgres and agentgateway; the egress proxy (D6) and the web front door (D19, oidc) come with their seams" (EX17's D20 line)? | Yes: it states what the chart already installs | PR E |
+| R4 | May the oauth2-proxy web front door be an umbrella template rather than the subchart step 5's PR11 named (EX4)? | Yes: its arguments derive from `maku.broker.human`, and Helm cannot compute a subchart's values | PR D |
+| R5 | May RunLore's knowledge tools reach runs through a broker pass-through on `:8090` rather than MCP federation in `maku-gateway` (EX11)? | Yes: D6's run egress and the harness's single MCP entry stay unchanged | PR F |
+| R6 | May `profile: production` render in step 6 rather than step 7 (EX16)? | Yes: D22's shrink needs cnref on the umbrella, and step 1's PR3 named steps 2 to 6 | PR G |
+
+PRs B, B2 and C depend on no ruling.
 
 ## Global Constraints
 
@@ -207,7 +223,9 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - **Per-surface attachment is the point.** cnref attaches the web to its tailnet Gateway and the Slack events to its public one.
   - **HTTPRoute, web:**
     - `PathPrefix /`;
-    - a `RequestHeaderModifier` removing `Authorization`-adjacent identity headers: `X-Forwarded-Access-Token`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Groups`, `X-Forwarded-Preferred-Username`, `X-Auth-Request-*`;
+    - a `RequestHeaderModifier` removing the identity headers oauth2-proxy sets, by exact name (Gateway API's `remove` takes no wildcards):
+      - `X-Forwarded-Access-Token`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Groups`, `X-Forwarded-Preferred-Username`;
+      - `X-Auth-Request-User`, `X-Auth-Request-Email`, `X-Auth-Request-Preferred-Username`, `X-Auth-Request-Groups`, `X-Auth-Request-Access-Token`;
     - the backend `rooms-web-proxy:80`;
     - `timeouts` when set.
   - **HTTPRoute, Slack:** `Exact /slack/events` with `method: POST`, to `factory-slack-app:8080`.
@@ -374,7 +392,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
     | `maku-factory` | `AgentFactoryIntakeErrors`, `AgentFactoryAutoMergeReverted`, `AgentFactoryMergeRegression`, `AgentFactoryClassPausedLong` (any class, not cnref's two), `AgentFactoryDailyBudgetHigh`, `AgentPersonCapShadowRefusal`, `AgentFactoryTaskStuck`, `AgentFactoryKillSwitchEngaged`, `FactoryGitHubUnreachable`, `AgentFactoryMeterBlind`, `AgentFactoryRepositoryNotOwned`, the four `AgentFactoryCoordination*`, `AgentModelUnpriced`, `AgentMeterInputExcludesCache`; and, first shipped here, `FactoryAgentMerged`, `FactoryMergeGateNotRequired`, `FactoryMergeGateRulesUnread` (as `docs/operations.md` states them) | `vmrule-agent-factory.yaml`, `docs/operations.md` |
     | `maku-run-path` | new: `RunControllerPreflightFailing` (`min by (check) (maku_run_controller_preflight_passed) == 0`, 10 min), `RunControllerDown`, `EgressProxyDown` (kubernetes mode); with `kubeStateMetrics`: `AgentSandboxPodPending` on `__RUNS_NAMESPACE__` | `vmrule.yaml` (generalized) |
     | `maku-slack` | `SlackDecisionsSpike`, `SlackCardUpdatesFailing` | `vmrule-agent-factory.yaml` |
-    | `maku-gateway` | `AgentGateway5xxRatioHigh`, `AgentGatewayModelErrorRatioHigh`, `AgentGatewayUnauthorizedBurst`, `AgentRouterMetricContractBroken` (step 4's promise, on `__GATEWAY_NAME__`), `AgentGatewayCostUnpriced`, the record `agent_cost:gateway_run_usd` and `AgentCostCrossCheckMismatch` (on `__RUN_SUBJECT__`, not `xplane-run-`), all on agentgateway's native names (step 4 PR D) | `vmrule.yaml`, `vmrule-agent-factory.yaml` |
+    | `maku-gateway` | `AgentGateway5xxRatioHigh`, `AgentGatewayModelErrorRatioHigh`, `AgentGatewayUnauthorizedBurst`, `AgentRouterMetricContractBroken` (step 4's promise, on `__GATEWAY_NAME__`), `AgentGatewayCostUnpriced`, the record `agent_cost:gateway_run_usd` and `AgentCostCrossCheckMismatch` (on `__RUN_SUBJECT__`, not `xplane-run-`), all on agentgateway's native names (step 4 PR D, Maku #518, so this group ships in PR B2 after it) | `vmrule.yaml`, `vmrule-agent-factory.yaml` |
 
   - **Stays in ANR** (cnref's platform or thresholds):
     - `AgentGvisorPoolNearLimit` (Karpenter);
@@ -427,7 +445,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
       - `broker.human.mode: oidc` with an issuer;
       - `broker.database.brokerSecret` (step 5's DSN Secrets);
       - `broker.publicURL`;
-      - a sandbox: `sandbox.runtimeClassName`, or `sandbox.unsafeAllowRunc`, which is a banner;
+      - a sandbox: `sandbox.runtimeClassName`. `sandbox.unsafeAllowRunc: true` is refused (D18: demo and kind only);
       - with `runController.gitTokens: perRun`, `maku-factory.runTokens.perRun` (step 3's rule).
     - `maku-factory`:
       - a pinned image;
@@ -436,11 +454,11 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
     - `slack`: EX8's agreement and its three Secrets.
     - `webProxy`: `existingSecret`.
     - `expose`: EX2's rules.
-  - **Unsafe settings are allowed.** `networkPolicies.mode` none, `factoryInsecure` and `unsafeAllowRunc` stay allowed in production and appear on the banner (owner ruling PR9).
+  - **Unsafe settings:** `networkPolicies.mode` none and `factoryInsecure` stay allowed in production and appear on the banner (owner ruling PR9). `sandbox.unsafeAllowRunc` does not: D18 limits it to the demo and kind, so production refuses it.
   - **The message** lists every missing seam on its own line, with the key and the doc.
   - **Staged adoption:** `maku.enabled: false` with `maku-factory.enabled: true` is a valid production render. That is cnref's first follow-up: one component, one seam, at a time (D25).
 
-- **EX17 (spec amendments, one line each, in the PR that makes them true):**
+- **EX17 (spec amendments, one line each, in the PR that makes them true, once the owner has given the matching ruling: R1, R2, R3):**
   - **D19 (PR D):** "only the Slack events path must be public; the factory polls GitHub and needs no public path".
   - **D20 (PR E):** "the minimal install is the three core Deployments plus Postgres and agentgateway; the egress proxy (D6) and the web front door (D19, oidc) come with their seams".
   - **D6 (PR A):** "and the OTLP collector, when tracing is configured".
@@ -454,7 +472,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 **Files:**
 - Modify:
   - `internal/runctl/config.go`: `Tracing{OTLPEndpoint string; Collector struct{Namespace string; Labels map[string]string}}`. `Validate` requires an `http`/`https` URL with a host, and a collector selector when the endpoint is set;
-  - `internal/runctl/pod.go`: in the harness env, `OTEL_EXPORTER_OTLP_ENDPOINT`, and `TRACEPARENT` from `runs.AnnTraceparent` when it matches the factory's W3C pattern (reuse `internal/factory/runs`' validator, exported). The bridge's `MCP_READ_ONLY_TOOLS` gains the two knowledge tools here, ahead of PR F (EX11);
+  - `internal/runctl/pod.go`: in the harness env, `OTEL_EXPORTER_OTLP_ENDPOINT`, and `TRACEPARENT` from `runs.AnnTraceparent` when it matches the factory's W3C pattern (reuse `internal/factory/runs`' validator, exported);
   - `internal/runctl/netpol.go` and `internal/runctl/cnp.go`: an egress rule to the collector's port, with namespace and labels;
   - `internal/runctl/config_test.go`, `internal/runctl/objects_test.go`, `internal/runctl/netpol_test.go`, `internal/runctl/render_test.go`.
 
@@ -463,8 +481,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - with an endpoint, the harness has `OTEL_EXPORTER_OTLP_ENDPOINT` and, for an AgentRun annotated `00-<32 hex>-<16 hex>-01`, `TRACEPARENT`;
   - an all-zero or malformed annotation gives no `TRACEPARENT`, and the run still starts;
   - the run's NetworkPolicy (kubernetes mode) and CNP (cilium mode) allow the collector's port to its selector and nothing more;
-  - an endpoint without `collector` fails `Validate` with `tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it`;
-  - `MCP_READ_ONLY_TOOLS` holds `room-broker__kb_search,room-broker__kb_get`.
+  - an endpoint without `collector` fails `Validate` with `tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it`.
 
   Run `systemd-run --user --scope -q -p MemoryMax=6G go test -race -count=1 ./internal/runctl/ -run 'Trac|Pod|NetPol|CNP|Config'`. Expected: FAIL.
 - [ ] **Step 2: implement.** Rerun. Expected: PASS.
@@ -529,7 +546,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 
 **Files:**
 - Create:
-  - `charts/agent-factory/files/rules/{rooms,factory,run-path,slack,gateway}.yaml` (EX13's groups, ported from ANR's VMRules at `1529b3b`, plus the step 3 alerts from `docs/operations.md`);
+  - `charts/agent-factory/files/rules/{rooms,factory,run-path,slack}.yaml` (EX13's groups but `maku-gateway`, which is PR B2's, ported from ANR's VMRules at `1529b3b`, plus the step 3 alerts from `docs/operations.md`);
   - `charts/agent-factory/templates/monitoring-rules.yaml` (one `PrometheusRule`, `maku`, its groups read with `.Files.Get` and `replace`, each group gated on its component, then `disabled` applied by name).
 
   Every rule carries `runbook_url` (`__DOCS__/operations.md#<anchor>`) and `dashboard` (`/d/<uid>`).
@@ -538,7 +555,8 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 - [ ] **Step 1: failing render cases:**
   - off renders nothing;
   - on with the demo values, the groups are `maku-rooms`, `maku-factory` and `maku-run-path`;
-  - `slack.enabled` (once PR E lands; until then, a fixture flag) adds `maku-slack`, and `maku-gateway.enabled` adds `maku-gateway`;
+  - `slack.enabled` (once PR E lands; until then, a fixture flag) adds `maku-slack`;
+  - `maku-gateway.enabled` adds no group yet (PR B2);
   - no rendered expression contains `agent-system`, `xplane-` or `${`;
   - `disabled: [AgentFactoryClassPausedLong]` removes exactly that rule;
   - every rule has both annotations;
@@ -553,7 +571,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 **Files:**
 - Create:
   - `charts/agent-factory/tests/monitoring.sh`: it renders the rule with production-shaped values, extracts `.spec` to a rules file and runs `promtool check rules`, then `promtool test rules` on `tests/monitoring/*.test.yaml`;
-  - `tests/monitoring/*.test.yaml`, ported from ANR's `test-room-webhook-alerts.sh`, `test-agent-factory-slack-alerts.sh`, `test-agent-coordination-alerts.sh`, `test-agent-factory-budget-alerts.sh`, `test-agent-merge-regression-alert.sh`, `test-agent-class-paused-alert.sh` and `test-agent-cost-crosscheck-alerts.sh`, with the same synthetic series and boundaries, plus one case per new rule;
+  - `tests/monitoring/*.test.yaml`, ported from ANR's `test-room-webhook-alerts.sh`, `test-agent-factory-slack-alerts.sh`, `test-agent-coordination-alerts.sh`, `test-agent-factory-budget-alerts.sh`, `test-agent-merge-regression-alert.sh`, and `test-agent-class-paused-alert.sh` (the cost cross-check's is PR B2's), with the same synthetic series and boundaries, plus one case per new rule;
   - `charts/agent-factory/tests/promql-only.sh`: it fails on any MetricsQL-only function in `files/`.
 - Modify:
   - `mise.toml` (`promtool = "3.15.0"`);
@@ -566,6 +584,28 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 - [ ] **Step 1: run** `bash charts/agent-factory/tests/monitoring.sh`. Expected: FAIL until the tests are ported.
 - [ ] **Step 2: port and fix.** Rerun, then `task chart:check`. Expected: PASS.
 - [ ] **Step 3: commit** `test(charts): every product alert evaluated by promtool`. Open PR B with EX12 and EX13 in the body.
+
+## PR B2: the model-gateway alert group (D21)
+
+Starts after PR B and step 4 PR D (Maku #518) merge: its expressions use agentgateway's native metric names, which step 4 PR D introduces.
+
+### Task 22: the `maku-gateway` group (S)
+
+**Files:**
+- Create: `charts/agent-factory/files/rules/gateway.yaml` (EX13's `maku-gateway` row, on the names step 4 PR D merged), and `tests/monitoring/gateway.test.yaml`, ported from ANR's `test-agent-cost-crosscheck-alerts.sh`, plus one case per new rule.
+- Modify:
+  - `charts/agent-factory/templates/monitoring-rules.yaml` (the group, gated on `maku-gateway.enabled`);
+  - `tests/render.sh`;
+  - `docs/operations.md` (the group's alerts and anchors).
+
+- [ ] **Step 1: failing cases:**
+  - `maku-gateway.enabled` adds the `maku-gateway` group, and without it the rule is byte-identical to PR B's;
+  - every metric `gateway.yaml` reads is one step 4 PR D merged under that name (`docs/operations.md`'s gateway metrics), checked by hand in the PR body;
+  - `bash charts/agent-factory/tests/monitoring.sh` evaluates the new cases.
+
+  Expected: FAIL.
+- [ ] **Step 2: implement.** Rerun, then `task chart:check`. Expected: PASS.
+- [ ] **Step 3: commit** `feat(charts): the model-gateway alert group`. Open PR B2 with EX13's gateway row in the body.
 
 ## PR C: dashboards (D21)
 
@@ -591,15 +631,21 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 ### Task 8: the dashboard queries under promtool, and the docs (M)
 
 **Files:**
-- Create: `charts/agent-factory/tests/monitoring/dashboards.sh`. It extracts every `expr` from the rendered dashboards, checks each parses (`promtool query`-free: a rule file of records, then `promtool check rules`), and evaluates the queries ANR's `test-agent-dashboard-queries.sh`, `test-agent-identity-queries.sh` and `test-agent-identity-dashboard.py` cover, on their synthetic series.
+- Create: `charts/agent-factory/tests/monitoring/dashboards.sh`. It extracts every `expr` from the rendered dashboards, substitutes Grafana's variables (below), checks each parses (`promtool query`-free: a rule file of records, then `promtool check rules`), and evaluates the queries ANR's `test-agent-dashboard-queries.sh`, `test-agent-identity-queries.sh` and `test-agent-identity-dashboard.py` cover, on their synthetic series.
 - Modify:
   - `taskfile.yaml`;
   - `docs/observability.md` (each dashboard, the folder annotation, grafana-operator's `configMapRef`, and what was dropped and why);
   - `docs/web-ui.md` (`human.dashboards` links by uid).
 
-- [ ] **Step 1: run it.** Expected: FAIL until the translations hold.
-- [ ] **Step 2: fix**, then `task chart:check` and `task check`. Expected: PASS.
-- [ ] **Step 3: commit** `test(charts): the dashboards' queries evaluated by promtool`. Open PR C with EX14 and the list of dropped panels in the body.
+- [ ] **Step 1: substitute Grafana's variables before promtool.** A dashboard `expr` is not PromQL until its variables are replaced, so the script rewrites each one first:
+  - `$__rate_interval`, `$__interval` and `$__range` → `5m`;
+  - `$namespace` and `${namespace}` → `.*` (the label matchers are regexes, `=~`); every other template variable the dashboards define → `.*`, read from each dashboard's `templating.list`;
+  - `${datasource}` appears only in `datasource` fields, never in an `expr`; the script asserts so.
+
+  It then asserts that no `$` remains in any substituted `expr`, and fails naming the dashboard, the panel and the variable when one does.
+- [ ] **Step 2: run it.** Expected: FAIL until the translations hold.
+- [ ] **Step 3: fix**, then `task chart:check` and `task check`. Expected: PASS.
+- [ ] **Step 4: commit** `test(charts): the dashboards' queries evaluated by promtool`. Open PR C with EX14 and the list of dropped panels in the body.
 
 ## PR D: exposure and the web front door (D19)
 
@@ -650,7 +696,8 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 - Modify: `tests/render.sh`, `tests/golden/expose-httproute.yaml`, `tests/golden/expose-ingress.yaml`.
 
 - [ ] **Step 1: failing cases:**
-  - **httproute:** the web route has `PathPrefix /`, the header removal, the backend `rooms-web-proxy:80`, and `timeouts` only when set;
+  - **httproute:** the web route has `PathPrefix /`, the backend `rooms-web-proxy:80`, and `timeouts` only when set;
+  - its `RequestHeaderModifier.remove` holds each of EX2's ten names exactly, one assertion per name (`X-Forwarded-Access-Token`, `X-Forwarded-User`, `X-Forwarded-Email`, `X-Forwarded-Groups`, `X-Forwarded-Preferred-Username`, `X-Auth-Request-User`, `X-Auth-Request-Email`, `X-Auth-Request-Preferred-Username`, `X-Auth-Request-Groups`, `X-Auth-Request-Access-Token`), and no entry contains `*`;
   - per-surface `parentRefs` replace the shared ones;
   - **ingress:** `Prefix /` and `Exact /slack/events`, `ingressClassName`, merged annotations, `tls` passed through, and no Certificate object anywhere in the render (EX5);
   - the `slack` surface renders nothing without `slack.enabled`;
@@ -683,7 +730,8 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - **render, zitadel preset:**
     - the args carry the project scope through `$(PROJECT_ID)`;
     - `EXTRA_JWT_ISSUERS` is built from the CLI Secret;
-    - `skip-auth-strip-headers=true`, `cookie-samesite=strict`, and `skip-auth-route` for roomctl.
+    - `skip-auth-strip-headers=true`, `cookie-samesite=strict`, and `skip-auth-route` for roomctl;
+    - with `maku.broker.human.githubLink` set, `skip-auth-route` also holds `GET=^/link/github/callback$`; without it, that route is absent.
   - **render, generic preset:** the scopes are `human.scopes`; `allowed-group` is present only for a top-level claim (X5).
   - **render, overrides:** `extraArgs.upstream` fails, naming it.
   - **render, the broker:** its kubernetes-mode policy admits the proxy on `:8080`.
@@ -691,6 +739,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
     - `GET /` through the Gateway redirects to the stub issuer;
     - a stub ID token cookie session lists rooms;
     - `GET /.well-known/roomctl` answers without a session;
+    - with `human.githubLink` set, `GET /link/github/callback?code=x&state=y` reaches the broker without a session (the broker's own state refusal, not a redirect to the issuer), while `POST /link/github/callback` and `GET /link/github` still redirect to sign in;
     - a CLI bearer reads `/api/rooms`;
     - the same bearer plus a forged `X-Forwarded-Access-Token` is refused a decision (P18);
     - `/v1/ws` stays open 6 minutes.
@@ -757,7 +806,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - an unpinned tag fails.
 
   Run `bash charts/maku-slack/tests/render.sh`. Expected: FAIL.
-- [ ] **Step 2: implement.** Rerun, then `helm lint --strict charts/maku-slack --set image.tag=v0.0.0@sha256:0000`. Expected: PASS.
+- [ ] **Step 2: implement.** Rerun, then `helm lint --strict charts/maku-slack --set image.tag=v0.0.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef`. Expected: PASS.
 - [ ] **Step 3: commit** `feat(charts): maku-slack, the Slack App as a chart`.
 
 ### Task 15: the umbrella wiring: alias, agreements, route and alerts (M)
@@ -839,7 +888,8 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
     - `maxBytes` is at most 256 KiB;
   - `internal/config/config_test.go`;
   - `internal/app/broker.go` (register when set);
-  - `internal/metrics/metrics.go` (`rooms_knowledge_calls_total`, served as `maku_rooms_knowledge_calls_total`).
+  - `internal/metrics/metrics.go` (`rooms_knowledge_calls_total`, served as `maku_rooms_knowledge_calls_total`);
+  - `internal/runctl/pod.go` and `internal/runctl/objects_test.go`: the bridge's `MCP_READ_ONLY_TOOLS` gains `room-broker__kb_search,room-broker__kb_get` (EX11).
 
 - [ ] **Step 1: failing tests** against an `httptest` MCP server:
   - a triager's `kb_search` returns the upstream text, and the call carries no `Authorization`;
@@ -848,9 +898,10 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - an answer over `maxBytes` is clipped with a marker (`clipped`);
   - a JSON-RPC error answer gives `upstream_error`, and its message is not echoed past 200 bytes;
   - `tools: [kb_delete]` and `url: http://runlore.example.com/mcp` are refused by `Validate`, each with its key named;
-  - unset, `tools/list` is unchanged.
+  - unset, `tools/list` is unchanged;
+  - `MCP_READ_ONLY_TOOLS` holds `room-broker__kb_search,room-broker__kb_get`.
 
-  Run `systemd-run --user --scope -q -p MemoryMax=6G go test -race -count=1 ./internal/mcp/ ./internal/config/ ./internal/app/ -run 'Knowledge|RoomTools'`. Expected: FAIL.
+  Run `systemd-run --user --scope -q -p MemoryMax=6G go test -race -count=1 ./internal/mcp/ ./internal/config/ ./internal/app/ ./internal/runctl/ -run 'Knowledge|RoomTools|Pod'`. Expected: FAIL.
 - [ ] **Step 2: implement.** Rerun. Expected: PASS.
 - [ ] **Step 3: commit** `feat(broker): a configured knowledge MCP endpoint, kb_search and kb_get for triagers`.
 
@@ -890,7 +941,8 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
   - `networkPolicies.plain` fails;
   - an empty production values file with `maku.enabled` lists every missing maku seam in one message: the human mode, the issuer, the broker DSN, the public URL, the sandbox and the images;
   - `maku.enabled: false`, `maku-factory.enabled: true` with its seams renders the factory only;
-  - `sandbox.unsafeAllowRunc: true` renders, and the broker's `install.unsafe` lists it (PR9);
+  - `sandbox.unsafeAllowRunc: true` fails, naming the key and D18 ("demo and kind only");
+  - `networkPolicies.mode` none renders, and the broker's `install.unsafe` lists it (PR9);
   - `--set profile=demo` without `values-demo.yaml` still fails as today.
 
   Expected: FAIL.
@@ -922,7 +974,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 
 **Files:**
 - Modify:
-  - `charts/agent-factory/tests/install.sh` (`PROFILE=production`: the stub as generic OIDC issuer, step 5's external Postgres container, kubernetes mode, httproute through agentgateway, monitoring objects with the prometheus-operator CRDs applied only);
+  - `charts/agent-factory/tests/install.sh` (`PROFILE=production`: a test-only RuntimeClass `gvisor` with handler `runc` applied to k3d so `sandbox.runtimeClassName` resolves without `unsafeAllowRunc`, which production refuses (no run starts in this test); the stub as generic OIDC issuer, step 5's external Postgres container, kubernetes mode, httproute through agentgateway, monitoring objects with the prometheus-operator CRDs applied only);
   - `taskfile.yaml` (`chart:production:k3d`);
   - `docs/upgrading.md` ("from the demo to production; adopting the umbrella from `maku-factory`": the same release name, `maku.enabled: false` first);
   - `docs/quickstart.md` (a pointer);
@@ -939,11 +991,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 
 ## After this step (not in these PRs)
 
-- **Owner decisions:**
-  - **`profile: production` in step 6, not step 7:** recommended (EX16), because D22's shrink needs cnref on the umbrella, and step 1 named steps 2 to 6.
-  - **The web front door as an umbrella template** rather than step 5's "subchart" (EX4).
-  - **RunLore through the broker** rather than gateway MCP federation (EX11).
-  - **The three spec amendments of EX17**, in particular D6's collector egress and D20's Deployment count.
+- **Owner decisions** (the ones PRs build on are R1 to R6, before PR A):
   - **Renaming `factory_slack_*` to `maku_slack_app_*`:** a breaking metric rename, so before v4.0.0 or never.
 - **ANR follow-ups** (D22; each its own PR after the step's Maku minor, each recorded with a gcp-0 live check in the session ledger, aws-0 after). They adopt the umbrella one component at a time:
   1. **The factory under the umbrella.**
@@ -1024,7 +1072,7 @@ The step's v0.4x minor is cut after PR G. A, B, C and F may also ship in interim
 - **D21:**
   - `/metrics` on every component, inventoried (EX12);
   - OTLP traces from the factory and now from runs, off when unset (EX15, Tasks 1–2);
-  - opt-in ServiceMonitors and PodMonitors (Task 4), the PrometheusRule with ANR's product alerts plus the step 3 ones (EX13, Tasks 5–6), and dashboard ConfigMaps with the sidecar label (EX14, Tasks 7–8);
+  - opt-in ServiceMonitors and PodMonitors (Task 4), the PrometheusRule with ANR's product alerts plus the step 3 ones (EX13, Tasks 5–6; the gateway group in Task 22, after step 4 PR D), and dashboard ConfigMaps with the sidecar label (EX14, Tasks 7–8);
   - all in PromQL, tested by promtool.
 - **D22:** the chart now renders everything ANR's broker, Slack App, routes, front door, VMRules, scrapes and dashboards did. The `profile: production` gate allows staged adoption (EX16). ANR follow-ups 1–8 delete the duplicates in order.
 - **D6:**
