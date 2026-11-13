@@ -23,12 +23,14 @@ func (s *Stub) jwks(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (s *Stub) activeUser(w http.ResponseWriter, _ *http.Request) {
+	s.oauth.zitadelRead()
 	writeJSON(w, http.StatusOK, map[string]any{"user": map[string]any{
 		"id": "dev", "state": "USER_STATE_ACTIVE",
 	}})
 }
 
 func (s *Stub) gitHubLink(w http.ResponseWriter, r *http.Request) {
+	s.oauth.zitadelRead()
 	var body map[string]any
 	if !decodeBody(w, r, &body) {
 		return

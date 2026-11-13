@@ -202,6 +202,11 @@ key to the gateway.
 */}}
 {{- define "ap.human" -}}
 {{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
+{{- with include "ap.githubLink" . | fromJson -}}
+{{- $l := deepCopy ($h.githubLink | default dict) -}}
+{{- range $k, $v := . }}{{ if not (hasKey $l $k) }}{{ $_ := set $l $k $v }}{{ end }}{{ end -}}
+{{- $_ := set $h "githubLink" $l -}}
+{{- end -}}
 {{- $g := include "ap.modelGateway" . | fromJson -}}
 {{- if $g.service -}}
 {{- $plan := dig "intake" "plan" dict $h -}}
@@ -258,3 +263,36 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
 {{- fail (printf "runController.model.mode %q must be secret or gateway" $mode) -}}
 {{- end -}}
 {{- end -}}
+
+{{/* The GitHub account link from broker.githubLink (v4 D8), as JSON: {} when existingSecret is unset,
+else the human.githubLink keys the Secret's mount fills. Read it with
+`include "ap.githubLink" . | fromJson`. */}}
+{{- define "ap.githubLink" -}}
+{{- $g := .Values.broker.githubLink | default dict -}}
+{{- if $g.existingSecret -}}
+{{- if eq (.Values.broker.human.mode | default "oidc") "local" -}}
+{{- fail "broker.githubLink.existingSecret: mode local has no GitHub account to link" -}}
+{{- end -}}
+{{- $keys := $g.keys | default dict -}}
+{{- $out := dict "clientIDFile" (printf "/etc/room-broker/github-link/%s" ($keys.clientID | default "client_id"))
+  "clientSecretFile" (printf "/etc/room-broker/github-link/%s" ($keys.clientSecret | default "client_secret"))
+  "activeWindow" ($g.activeWindow | default "168h") -}}
+{{- with $g.webURL }}{{ $_ := set $out "webURL" (trimSuffix "/" .) }}{{ end -}}
+{{- toJson $out -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end }}
+
+{{/* The hosts the GitHub account link calls, as a JSON list: GitHub's site and API (github.com and
+api.github.com), or a GHES's one host. Empty without the link. */}}
+{{- define "ap.githubLinkHosts" -}}
+{{- $l := include "ap.githubLink" . | fromJson -}}
+{{- if $l -}}
+{{- $web := dig "githubLink" "webURL" "" (.Values.broker.human | default dict) | default ($l.webURL | default "https://github.com") -}}
+{{- $host := (urlParse $web).hostname -}}
+{{- if eq $host "github.com" }}{{ toJson (list "github.com" "api.github.com") }}{{ else }}{{ toJson (list $host) }}{{ end -}}
+{{- else -}}
+[]
+{{- end -}}
+{{- end }}

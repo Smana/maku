@@ -21,6 +21,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Merge policies](merge-policies.md) | A repository's own merge classes: the model, the six rollout switches, every field, recipes, checking and promoting, grants, reasons, rollback |
 | [maku](cli.md) | Install and verify, configure, every command, the factory-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
+| [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, moving off the ZITADEL reader |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
 | [Event envelope](event-envelope.md) | The C4 envelope, its payloads and limits |
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |

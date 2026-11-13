@@ -375,10 +375,16 @@ func (s *Server) linkCode(w http.ResponseWriter, r *http.Request, p authn.Princi
 	}
 	if login == "" {
 		s.linkCounted(ctx, linkNoGitHub)
+		if s.GitHubLink != nil {
+			return c, "", refusalNoGitHubLink, true
+		}
 		return c, "", "Your account has no GitHub link: link GitHub in your ZITADEL profile, then open this link again.", true
 	}
 	return c, login, "", true
 }
+
+// refusalNoGitHubLink sends a human with no GitHub account link to /link/github (v4 D8).
+const refusalNoGitHubLink = "Your account has no GitHub link: link your GitHub account on /link/github, then open this link again."
 
 const refusalCodeInvalid = "This link expired or was already used: mention @factory link in Slack for a new one."
 
