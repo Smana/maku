@@ -366,6 +366,25 @@ out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.git
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .model.gateway.url == "http://agentgateway.ai.svc.cluster.local"' 'an external gateway by service and namespace'
 ynone 'select(.kind == "Gateway")' 'an external gateway renders no Gateway'
 
+# v4 D9: the bundled Postgres is the demo's alone. The demo gains exactly the third DSN Secret, the
+# retention CronJob reading it, and the job's ingress to rooms-db. postgres.enabled=false with the demo
+# values renders no database and no DSN Secret, and the broker reads the Secrets it names; any other
+# profile with the bundled Postgres on fails, naming D9.
+demo="$(helm template af . -n maku "${args[@]}")"
+out="$demo"
+ykind Secret 'select(.metadata.name == "rooms-retention-dsn") | .stringData.uri | test("^postgresql://rooms_retention:[A-Za-z0-9]{32}@rooms-db[.]maku[.]svc:5432/rooms[?]sslmode=disable$")' 'demo: the retention DSN Secret, as rooms_retention'
+ykind CronJob 'select(.metadata.name == "room-broker-retention") | .spec.jobTemplate.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name == "rooms-retention-dsn"' 'demo: the retention CronJob reads rooms-retention-dsn'
+ykind NetworkPolicy 'select(.metadata.name == "rooms-db") | (.spec.ingress[0].from | map(.podSelector.matchLabels."app.kubernetes.io/name") | join(",")) == "room-broker,room-broker-retention"' 'demo: rooms-db admits the broker and the retention job'
+out="$(helm template af . -n maku "${args[@]}" --set postgres.enabled=false)"
+ynone 'select(.kind == "StatefulSet" or .kind == "Service" and .metadata.name == "rooms-db" or .kind == "ConfigMap" and .metadata.name == "rooms-db-init" or .kind == "NetworkPolicy" and .metadata.name == "rooms-db" or .kind == "Secret" and (.metadata.name | test("^rooms-")))' 'postgres.enabled=false still renders the bundled database or its Secrets'
+got=$(yq ea '[select(.kind == "Deployment" and .metadata.name == "room-broker") | .spec.template.spec | (.initContainers[0].env[0].valueFrom.secretKeyRef.name, .containers[0].env[] | select(.name == "ROOMS_DATABASE_URL") | .valueFrom.secretKeyRef.name)] + [select(.kind == "CronJob") | .spec.jobTemplate.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name] | join(",")' - <<<"$out")
+[[ $got == "rooms-owner-dsn,rooms-broker-dsn,rooms-retention-dsn" ]] || { echo "FAIL: postgres.enabled=false: the broker and the job read '$got', want the three named Secrets" >&2; fail=1; }
+for p in production ""; do
+  msg="$(helm template af . -n maku "${img[@]}" --set profile="$p" --set postgres.enabled=true 2>&1 >/dev/null || true)"
+  grep -qF 'the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets' <<<"$msg" || { echo "FAIL: profile '$p' with postgres.enabled does not fail naming D9 (got: $msg)" >&2; fail=1; }
+done
+yq -e '.postgres.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not turn the bundled Postgres off" >&2; fail=1; }
+
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
 mine="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }

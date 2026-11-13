@@ -67,7 +67,7 @@ func TestRunBrokerRefuses(t *testing.T) {
 		{"intent-samples with no days", []string{"intent-samples", "--days", "0"}, env(), "--days is at least 1"},
 		{"intent-samples with an argument", []string{"intent-samples", "extra"}, env(), `unexpected argument "extra"`},
 		{"retention with a database that does not answer", []string{"retention"},
-			env("ROOMS_DATABASE_URL", "postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1"), "list expired rooms"},
+			env("ROOMS_DATABASE_URL", "postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1"), "room-broker retention: store: database check"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -75,6 +75,82 @@ func TestRunBrokerRefuses(t *testing.T) {
 			err := RunBroker(ctx, slog.New(slog.DiscardHandler), c.args, c.getenv)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("RunBroker = %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+// The retention job retries a database it cannot reach, until its wait ends, and names the last
+// failure: a new pod's first connections can be refused while the CNI admits its address.
+func TestOpenRetrying(t *testing.T) {
+	var buf strings.Builder
+	start := time.Now()
+	_, err := openRetrying(t.Context(), slog.New(slog.NewTextHandler(&buf, nil)),
+		"postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1", store.RoleRetention, 6*time.Second)
+	if !errors.Is(err, store.ErrUnavailable) {
+		t.Fatalf("openRetrying = %v, want store.ErrUnavailable", err)
+	}
+	if n := strings.Count(buf.String(), "database unavailable, retrying"); n < 1 || time.Since(start) < 5*time.Second {
+		t.Fatalf("retried %d times in %s, want at least once over the wait", n, time.Since(start))
+	}
+}
+
+// A plain database connection is said once and set on rooms_db_tls{role}, never refused: the demo's
+// in-cluster hop is plain. An encrypted one says nothing.
+func TestWarnPlainDB(t *testing.T) {
+	for _, tls := range []bool{false, true} {
+		var buf strings.Builder
+		log := slog.New(slog.NewTextHandler(&buf, nil))
+		var got []string
+		warnPlainDB(log, store.Server{User: "rooms_broker", TLS: tls}, func(role string, on bool) { got = append(got, fmt.Sprint(role, on)) })
+		if want := fmt.Sprint("rooms_broker", tls); len(got) != 1 || got[0] != want {
+			t.Fatalf("tls %v: gauge set %v, want once to %q", tls, got, want)
+		}
+		if n := strings.Count(buf.String(), "not encrypted"); n != map[bool]int{false: 1, true: 0}[tls] {
+			t.Fatalf("tls %v: warned %d times:\n%s", tls, n, buf.String())
+		}
+	}
+	// the retention job has no metrics: it logs only
+	var buf strings.Builder
+	warnPlainDB(slog.New(slog.NewTextHandler(&buf, nil)), store.Server{User: "rooms_retention"}, nil)
+	if !strings.Contains(buf.String(), "role=rooms_retention") {
+		t.Fatalf("no warning for the retention job: %s", buf.String())
+	}
+}
+
+type schemaFunc func(context.Context) error
+
+func (f schemaFunc) SchemaCurrent(ctx context.Context) error { return f(ctx) }
+
+// serve refuses a schema it was not built for. One it cannot read (the Atlas operator's ledger,
+// before ANR sets ownerSecret) is a bridge: served with a warning and maku_rooms_schema_unverified
+// at 1, which RoomBrokerSchemaUnverified alerts on.
+func TestServeSchemaCurrent(t *testing.T) {
+	behind := errors.New("the schema is at 1, this broker needs 2: run migrate (broker.database.ownerSecret)")
+	for _, c := range []struct {
+		name    string
+		err     error
+		refused string
+		warn    bool
+		gauge   string
+	}{
+		{"current", nil, "", false, "false"},
+		{"behind", behind, "run migrate", false, ""},
+		{"unverified", store.ErrSchemaUnverified, "", true, "true"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var buf strings.Builder
+			gauge := ""
+			err := schemaCurrent(t.Context(), schemaFunc(func(context.Context) error { return c.err }),
+				slog.New(slog.NewTextHandler(&buf, nil)), func(on bool) { gauge = fmt.Sprint(on) })
+			if (c.refused == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.refused)) {
+				t.Fatalf("schemaCurrent = %v, want refused %q", err, c.refused)
+			}
+			if got := strings.Contains(buf.String(), "schema version unverified"); got != c.warn {
+				t.Fatalf("warned %v, want %v: %s", got, c.warn, buf.String())
+			}
+			if gauge != c.gauge {
+				t.Fatalf("gauge = %q, want %q", gauge, c.gauge)
 			}
 		})
 	}

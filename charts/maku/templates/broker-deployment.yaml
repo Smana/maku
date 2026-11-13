@@ -2,6 +2,7 @@
 {{- $local := include "ap.local" . -}}
 {{- $img := include "ap.image" (dict "root" . "image" $b.image) -}}
 {{- $mg := include "ap.modelGateway" . | fromJson -}}
+{{- $dbKey := $b.database.secretKey | default "uri" -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,8 +43,12 @@ spec:
           env:
             - name: ROOMS_MIGRATION_DATABASE_URL
               valueFrom:
-                secretKeyRef: {name: {{ $b.database.ownerSecret }}, key: uri}
+                secretKeyRef: {name: {{ $b.database.ownerSecret }}, key: {{ $dbKey }}}
           securityContext: {{- include "ap.containerSecurityContext" . | nindent 12 }}
+          {{- if $b.database.caSecret }}
+          volumeMounts:
+            - {name: db-ca, mountPath: /etc/room-broker/db-ca, readOnly: true}
+          {{- end }}
           resources:
             requests: {cpu: 50m, memory: 64Mi}
             limits: {cpu: 250m, memory: 128Mi}
@@ -58,7 +63,7 @@ spec:
             {{- if $b.database.brokerSecret }}
             - name: ROOMS_DATABASE_URL
               valueFrom:
-                secretKeyRef: {name: {{ $b.database.brokerSecret }}, key: uri}
+                secretKeyRef: {name: {{ $b.database.brokerSecret }}, key: {{ $dbKey }}}
             {{- end }}
             - name: POD_NAMESPACE
               valueFrom:
@@ -93,6 +98,9 @@ spec:
             {{- if dig "oidc" "existingSecret" "" $b }}
             - {name: oidc, mountPath: /etc/room-broker/oidc, readOnly: true}
             {{- end }}
+            {{- if $b.database.caSecret }}
+            - {name: db-ca, mountPath: /etc/room-broker/db-ca, readOnly: true}
+            {{- end }}
             {{- with $mg.tokens }}
             - {name: model-gateway, mountPath: {{ . }}, readOnly: true}
             {{- end }}
@@ -117,6 +125,11 @@ spec:
         # The OIDC client ids (v4 D8), read at use: a rotated Secret needs no restart.
         - name: oidc
           secret: {secretName: {{ . }}, defaultMode: 0440}
+        {{- end }}
+        {{- with $b.database.caSecret }}
+        # The database's CA (broker.database.caSecret), for sslmode=verify-full in the DSNs.
+        - name: db-ca
+          secret: {secretName: {{ . }}, items: [{key: ca.crt, path: ca.crt}]}
         {{- end }}
         {{- if $mg.service }}
         # The model gateway's clients (GW8): one token per client, each audience its own route's, so

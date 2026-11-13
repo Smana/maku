@@ -10,9 +10,13 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "afumbrella.caSecret" -}}{{ .Values.maku.broker.tls.caSecretName | default "room-broker-ca" }}{{- end }}
 {{- define "afumbrella.factoryCASecret" -}}{{ index .Values "maku-factory" "brokerCASecret" | default "openbao-ca" }}{{- end }}
 
-{{/* The profile gate, included first by every umbrella template (the skeleton values hold no tls:, postgres: or networkPolicies:). The demo is the only profile until stage 2 adds production's values, and it needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo` alone would render half a demo. */}}
+{{/* The profile gate, included first by every umbrella template (the skeleton values hold no tls: or networkPolicies:, and postgres: only its enabled: false). The demo is the only profile until stage 2 adds production's values, and it needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo` alone would render half a demo. */}}
 {{- define "afumbrella.profile" -}}
 {{- $profile := .Values.profile | default "" -}}
+{{- /* v4 D9: the bundled single-replica Postgres has no backup, no HA and no TLS. */ -}}
+{{- if and (dig "enabled" false (.Values.postgres | default dict)) (ne $profile "demo") -}}
+{{- fail "the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
+{{- end -}}
 {{- if eq $profile "production" -}}
 {{- fail "profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo" -}}
 {{- end -}}

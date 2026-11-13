@@ -46,9 +46,10 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 		return 0, fmt.Errorf("migrate: connect: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	// The role first: nothing below may touch the schema as anyone but its owner.
-	if err := requireOwner(ctx, conn); err != nil {
-		return 0, err
+	// The server and the role first: nothing below may touch the schema on a server below 16, as
+	// anyone but its owner, or before the roles the files GRANT to exist.
+	if _, err := Check(ctx, conn, RoleOwner); err != nil {
+		return 0, fmt.Errorf("migrate: %w", err)
 	}
 	if err := lock(ctx, conn, log); err != nil {
 		return 0, err
@@ -57,6 +58,11 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 	// An invalid index of an embedded txmode-none file is the residue of a build that did not
 	// finish, and CREATE INDEX CONCURRENTLY would leave it there while the log grows.
 	if err := refuseInvalidIndexes(ctx, conn, files); err != nil {
+		return 0, err
+	}
+	// A database the Atlas operator migrated is adopted first: its revisions become ours, so
+	// nothing below applies a file twice.
+	if err := adopt(ctx, conn, files, log); err != nil {
 		return 0, err
 	}
 	applied, err := recorded(ctx, conn)
@@ -70,6 +76,11 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 	if _, err := conn.Exec(ctx, createRevisions); err != nil {
 		return 0, fmt.Errorf("migrate: revisions table: %w", err)
 	}
+	// The broker reads which files ran (SchemaCurrent), on the version column alone: it never
+	// writes the ledger, nor reads anything else in it.
+	if _, err := conn.Exec(ctx, grantRevisions); err != nil {
+		return 0, fmt.Errorf("migrate: revisions grant: %w", err)
+	}
 	n := 0
 	for _, f := range pending {
 		if err := apply(ctx, conn, f); err != nil {
@@ -79,21 +90,6 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 		n++
 	}
 	return n, nil
-}
-
-// requireOwner refuses a connection whose role is not the schema's owner. Every migration would
-// fail on it a statement later, having left whatever the earlier files created behind; and a
-// ledger written by a role that does not own the migrations hides which side is wrong.
-func requireOwner(ctx context.Context, conn *pgx.Conn) error {
-	var user string
-	if err := conn.QueryRow(ctx, "SELECT current_user").Scan(&user); err != nil {
-		return fmt.Errorf("migrate: current_user: %w", err)
-	}
-	if user != ownerRole {
-		return fmt.Errorf("migrate: connected as %q: the migrations run as %s, which owns every table, "+
-			"policy and index they create, so give the migrate DSN %s's credentials", user, ownerRole, ownerRole)
-	}
-	return nil
 }
 
 // lock takes the advisory lock by polling. A blocking pg_advisory_lock would leave the waiter
@@ -159,8 +155,12 @@ func checksum(body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-const createRevisions = `CREATE TABLE IF NOT EXISTS room_broker_revisions (
+// The ledger is always public.room_broker_revisions, as the files' own objects are public's: a
+// table of that name earlier in a role's search_path is never written nor read.
+const createRevisions = `CREATE TABLE IF NOT EXISTS public.room_broker_revisions (
 	version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`
+
+const grantRevisions = `GRANT SELECT (version) ON public.room_broker_revisions TO rooms_broker`
 
 // recorded reads the ledger, which a database that was never migrated does not have yet: an
 // absent table is an empty history, never an error.
@@ -173,7 +173,7 @@ func recorded(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
 	if !exists {
 		return applied, nil
 	}
-	rows, err := conn.Query(ctx, "SELECT version, checksum FROM room_broker_revisions")
+	rows, err := conn.Query(ctx, "SELECT version, checksum FROM public.room_broker_revisions")
 	if err != nil {
 		return nil, fmt.Errorf("migrate: revisions: %w", err)
 	}
@@ -191,7 +191,7 @@ func recorded(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
 	return applied, nil
 }
 
-const recordSQL = "INSERT INTO room_broker_revisions (version, checksum) VALUES ($1, $2)"
+const recordSQL = "INSERT INTO public.room_broker_revisions (version, checksum) VALUES ($1, $2)"
 
 // apply runs a file and records it. A transactional file records inside its own transaction, so a
 // SIGTERM or a lost COMMIT ack cannot leave it applied but unrecorded (no file is idempotent). A
