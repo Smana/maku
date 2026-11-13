@@ -177,3 +177,4 @@ For the demo, build it with `bash web/scripts/demo-site.sh "${TMPDIR:-/tmp}/ui-d
 with `SERVE_ROOT="${TMPDIR:-/tmp}/ui-demo" PORT=4181 node web/preview/serve.mjs`, and capture
 `http://127.0.0.1:4181/?theme=light` the same way with `--virtual-time-budget=180000`, so the
 replay reaches its last frame.
+
