@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku/skill"
 )
@@ -123,7 +124,7 @@ func Discover(ctx context.Context, hc *http.Client, base string) (Config, error)
 	case u.Scheme == "http":
 		return Config{}, fmt.Errorf("%s answers at plain http but reports humanMode %q: "+
 			"only a local broker is reached without TLS", base, got.HumanMode)
-	case got.ClientID == "" || got.ProjectID == "":
+	case got.ClientID == "" || got.EffectivePreset() == PresetZITADEL && got.ProjectID == "":
 		return Config{}, fmt.Errorf("%s has no maku client yet: ask an admin to finish the broker's setup", base)
 	}
 	got.URL = base
@@ -219,6 +220,16 @@ func (d Doctor) Run(ctx context.Context, out io.Writer) error {
 		default:
 			reachable = true
 			report(true, "tls", "the certificate chain is trusted")
+		}
+	}
+
+	// Any OIDC issuer (v4 D8): maku reads its endpoints from the discovery document.
+	if !local && d.Config.EffectivePreset() == PresetGeneric {
+		if _, err := authn.Discover(ctx, d.HC, d.Config.Issuer); err != nil {
+			report(false, "issuer", fmt.Sprintf("%s: its discovery document cannot be read (%v): check the broker's human.issuer and your network",
+				d.Config.Issuer, Cause(err)))
+		} else {
+			report(true, "issuer", d.Config.Issuer+" serves its discovery document")
 		}
 	}
 

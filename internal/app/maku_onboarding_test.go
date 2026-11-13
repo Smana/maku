@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -36,7 +37,7 @@ func TestMakuConfigureDiscoversTheRest(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 	if got := r.Err.(*strings.Builder).String(); !strings.Contains(got, "maku login") || out.Len() != 0 {
@@ -132,7 +133,7 @@ func TestMakuConfigureFrom(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 	if err := r.Run(t.Context(), []string{"configure", "--from", "http://rooms.priv.example", "--yes"}); err == nil || !strings.Contains(err.Error(), "https") {
@@ -174,7 +175,7 @@ func TestMakuConfigureFromShowsAndAsks(t *testing.T) {
 	asked := 0
 	r.Ask = func(string) (bool, error) { asked++; return false, nil }
 	// The broker's issuer (auth.example) is not under the broker's host: it needs --yes whatever the terminal says.
-	if err := r.Run(t.Context(), []string{"configure", "--from", b.srv.URL}); err == nil || !strings.Contains(err.Error(), "domain") || asked != 0 || load() != stale {
+	if err := r.Run(t.Context(), []string{"configure", "--from", b.srv.URL}); err == nil || !strings.Contains(err.Error(), "domain") || asked != 0 || !reflect.DeepEqual(load(), stale) {
 		t.Fatalf("another domain: %v asked %d %+v", err, asked, load())
 	}
 	// --yes: no question, and the four values and the old ones are shown.
@@ -191,7 +192,7 @@ func TestMakuConfigureFromShowsAndAsks(t *testing.T) {
 	save()
 	r.Dir = dir
 	same := maku.Config{URL: "https://rooms.ogenki.io", Issuer: "https://auth.ogenki.io", ClientID: "cli", ProjectID: "1"}
-	if err := r.ConfirmConfig(same, stale, false); err == nil || load() != stale {
+	if err := r.ConfirmConfig(same, stale, false); err == nil || !reflect.DeepEqual(load(), stale) {
 		t.Fatalf("a refused question writes nothing: %v", err)
 	}
 	if asked != 1 {
@@ -336,7 +337,7 @@ func TestMakuConfigureLocal(t *testing.T) {
 	}
 	var cfg maku.Config
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil ||
-		cfg != (maku.Config{URL: b.srv.URL, HumanMode: maku.HumanModeLocal}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: b.srv.URL, HumanMode: maku.HumanModeLocal}) {
 		t.Fatalf("%+v %v", cfg, err)
 	}
 
@@ -368,7 +369,7 @@ func TestMakuConfigureLocal(t *testing.T) {
 	}
 	var got maku.Config
 	if err := maku.LoadJSON(filepath.Join(httpsDir, "config.json"), &got); err != nil ||
-		got != (maku.Config{URL: tls.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(got, maku.Config{URL: tls.srv.URL, Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v", got, err)
 	}
 }

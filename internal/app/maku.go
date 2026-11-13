@@ -25,6 +25,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 	"golang.org/x/term"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/maku/skill"
@@ -220,7 +221,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := maku.SaveJSON(tokPath, tok); err != nil {
+		if err := maku.SaveToken(tokPath, tok); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(r.Out, "logged in; maku rooms lists the rooms you can read, maku doctor checks the setup")
@@ -349,11 +350,11 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		return fmt.Errorf("configure: url %q: a plain-http broker is only a local install's loopback listener "+
 			"(http://localhost:<port>): use the https rooms URL", cfg.URL)
 	}
+	hc := r.HC
+	if hc == nil {
+		hc = httpx.New(makuTimeout, nil)
+	}
 	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.ProjectID == "" {
-		hc := r.HC
-		if hc == nil {
-			hc = httpx.New(makuTimeout, nil)
-		}
 		found, err := maku.Discover(ctx, hc, cfg.URL)
 		if err != nil {
 			return fmt.Errorf("configure: %w", err)
@@ -361,6 +362,19 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		cfg.Issuer, cfg.ClientID, cfg.ProjectID = cmp.Or(cfg.Issuer, found.Issuer), cmp.Or(cfg.ClientID, found.ClientID), cmp.Or(cfg.ProjectID, found.ProjectID)
 		cfg.FactoryLogin = cmp.Or(cfg.FactoryLogin, found.FactoryLogin)
 		cfg.HumanMode = found.HumanMode
+		cfg.Preset, cfg.TokenUse, cfg.Scopes, cfg.Audience = found.Preset, found.TokenUse, found.Scopes, found.Audience
+	}
+	// Any OIDC issuer (v4 D8): its device and token endpoints are where its discovery document says,
+	// read once here and stored. The zitadel preset keeps ZITADEL's fixed paths.
+	if cfg.HumanMode != maku.HumanModeLocal && cfg.EffectivePreset() == maku.PresetGeneric {
+		d, err := authn.Discover(ctx, hc, cfg.Issuer)
+		if err != nil {
+			return fmt.Errorf("configure: the issuer %s: %w", maku.SafeText(cfg.Issuer), err)
+		}
+		if d.DeviceAuthorizationEndpoint == "" || d.TokenEndpoint == "" {
+			return fmt.Errorf("configure: the issuer %s serves no device authorization endpoint: maku cannot sign in to it", maku.SafeText(cfg.Issuer))
+		}
+		cfg.DeviceAuthURL, cfg.TokenURL = d.DeviceAuthorizationEndpoint, d.TokenEndpoint
 	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("configure: %w", err)
