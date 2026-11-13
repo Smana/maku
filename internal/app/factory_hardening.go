@@ -16,6 +16,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -40,6 +41,12 @@ type applierDeps struct {
 	// Tokens is the publisher's token source; nil is the minter's with hardening.publisher.minter,
 	// else octo-sts from hardening.publisher.octoSTS.
 	Tokens applier.PublisherTokens
+	// PushRooms is the broker's bundle and approval routes, and Tasks the writer a push's intent is
+	// recorded with (H3); both are used only while a repository enforces push.
+	PushRooms applier.PushRooms
+	Tasks     client.Writer
+	// Getenv reads MAKU_GIT_CACHE, the push applier's mirror root (os.Getenv when nil).
+	Getenv func(string) string
 	// Minter is the agents App's minter the publisher mints from; nil builds one from cfg.
 	Minter *minter.Minter
 }
@@ -81,7 +88,7 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 	base := forge.Options{APIURL: githubAPIURL(), UserAgent: "agent-factory-publisher/" + version.Version,
 		HTTP: httpx.New(githubTimeout, nil), Now: time.Now}
 	ports := d.Hardened
-	return &applier.Applier{Reader: d.Reader, Namespace: d.Namespace, Rooms: d.Rooms, Runs: d.Runs,
+	a := &applier.Applier{Reader: d.Reader, Namespace: d.Namespace, Rooms: d.Rooms, Runs: d.Runs,
 		Publisher: applier.ConnectPublishers(tokens, base), Factory: d.Factory,
 		Checker: func(repo string) hardening.Checker {
 			c, h := ports.Checker, d.Live().Hardening
@@ -95,7 +102,70 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },
 		AgentsLogin: cfg.AgentsLogin, FactoryLogin: cfg.FactoryLogin,
 		Interval: cfg.Hardening.Applier.Interval.Duration, AnswerWait: cfg.Hardening.Applier.AnswerWait.Duration,
-		Now: time.Now, Metrics: d.Metrics, Log: d.Log}, nil
+		Now: time.Now, Metrics: d.Metrics, Log: d.Log}
+	if err := wirePush(cfg, d, tokens, a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// pushCaps are the task's class caps on a push (HR25). A class the repository does not declare
+// never means no cap (#513's review): each dimension, files and lines alone, takes the strictest
+// cap any declared class sets for it, and -1 when no class caps that dimension. The applier
+// refuses a push push_size when either dimension is -1, so a dimension no class caps refuses it.
+func pushCaps(cfg *config.Config, t *v1alpha1.Task) (files, lines int) {
+	r := cfg.RepositoryFor(t.Spec.Repository)
+	if cl, ok := r.Class(t.Spec.PredictedClass); ok {
+		return cl.MaxPatchFiles, cl.MaxModifiedLines
+	}
+	files, lines = -1, -1
+	if r == nil {
+		return files, lines
+	}
+	strictest := func(cur, v int) int {
+		if v > 0 && (cur < 0 || v < cur) {
+			return v
+		}
+		return cur
+	}
+	for _, cl := range r.Classes {
+		files, lines = strictest(files, cl.MaxPatchFiles), strictest(lines, cl.MaxModifiedLines)
+	}
+	return files, lines
+}
+
+// gitCacheEnv is the factory's mirror root, which the chart sets with hardening.gitCache.sizeLimit.
+const gitCacheEnv = "MAKU_GIT_CACHE"
+
+// wirePush gives the applier its push half (H3, HR24 to HR27) while any repository enforces push:
+// a gitbundle mirror per repository under MAKU_GIT_CACHE, git sending the publisher's token; the
+// broker's bundle and approval routes; the task writer that records a push's intent before git
+// push; the class caps on the push's cumulative change; and the approval TTL. A repository that
+// enforces push with no MAKU_GIT_CACHE, no broker or no task writer refuses the start: every push
+// would otherwise wait unanswered for its run's whole answerWait. Without push nothing is built.
+func wirePush(cfg *config.Config, d applierDeps, tokens applier.PublisherTokens, a *applier.Applier) error {
+	if !cfg.Hardening.EnforcesPush() {
+		return nil
+	}
+	getenv := d.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	root := getenv(gitCacheEnv)
+	switch {
+	case root == "" || !filepath.IsAbs(root):
+		return fmt.Errorf("a repository enforces push but %s is not an absolute path: set the chart's hardening.gitCache.sizeLimit, "+
+			"or take push out of enforceOutputs", gitCacheEnv)
+	case d.PushRooms == nil:
+		return errors.New("a repository enforces push but the factory has no broker system client: set broker.url and the system token")
+	case d.Tasks == nil:
+		return errors.New("a repository enforces push but the applier has no task writer")
+	}
+	a.Pushers = applier.ConnectPushers(tokens, root, cfg.Hardening.Applier.MirrorMaxBytes)
+	a.PushRooms, a.Tasks = d.PushRooms, d.Tasks
+	a.ApprovalTTL = cfg.Hardening.Applier.ApprovalTTL.Duration
+	a.Caps = func(t *v1alpha1.Task) (files, lines int) { return pushCaps(d.Live(), t) }
+	return nil
 }
 
 // policyReader reads a repository's default-branch file; *forge.GitHub implements it.
@@ -128,31 +198,45 @@ func tableGrants(live func() *config.Config, table minter.Table) tokenGrants {
 
 // roleTableWarning is HR13's warning under per-run tokens (plan PR13): the enforced repositories in
 // which table leaves the implementer pull_requests: write although the factory publishes its pull
-// requests, comments or labels (D10 as written), so a run could still write them directly. Empty
+// requests, comments or labels (D10 as written), and those enforcing push in which it leaves the
+// implementer or the tester contents: write (H3), so a run could still write them directly. Empty
 // under any other token source, or a table that takes the write away (HR12, the owner's ruling). It
 // lives here, not in the config's warnings, because the config cannot import the minter's table.
 func roleTableWarning(cfg *config.Config, table minter.Table) string {
 	if cfg.TokenSource() != hardening.TokenSourceMinter {
 		return ""
 	}
-	var repos []string
+	var prs, pushes []string
 	for _, r := range cfg.Repos() {
 		enforced := cfg.Hardening.EnforcedFor(r.Name)
-		if !slices.ContainsFunc(enforced, func(t hardening.OutputType) bool {
+		if slices.ContainsFunc(enforced, func(t hardening.OutputType) bool {
 			return t == hardening.PR || t == hardening.Comment || t == hardening.Labels
 		}) {
-			continue
+			if p, err := table.For(minter.Implementer, enforced); err != nil || p["pull_requests"] == "write" {
+				prs = append(prs, r.Name)
+			}
 		}
-		if p, err := table.For(minter.Implementer, enforced); err != nil || p["pull_requests"] == "write" {
-			repos = append(repos, r.Name)
+		// H3: with push enforced, neither writer role may keep contents: write (#509's note).
+		if slices.Contains(enforced, hardening.Push) {
+			for _, role := range []string{minter.Implementer, minter.Tester} {
+				if p, err := table.For(role, enforced); err != nil || p["contents"] == "write" {
+					pushes = append(pushes, r.Name+" ("+role+")")
+				}
+			}
 		}
 	}
-	if len(repos) == 0 {
-		return ""
+	var out []string
+	if len(prs) > 0 {
+		out = append(out, fmt.Sprintf("runTokens.perRun: the role table leaves the implementer pull_requests: write in %s although the factory publishes "+
+			"its pull requests, comments or labels, so that enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
+			strings.Join(prs, ", ")))
 	}
-	return fmt.Sprintf("runTokens.perRun: the role table leaves the implementer pull_requests: write in %s although the factory publishes "+
-		"its pull requests, comments or labels, so that enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
-		strings.Join(repos, ", "))
+	if len(pushes) > 0 {
+		out = append(out, fmt.Sprintf("runTokens.perRun: the role table leaves contents: write in %s although the factory publishes "+
+			"its pushes, so push enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
+			strings.Join(pushes, ", ")))
+	}
+	return strings.Join(out, "; ")
 }
 
 // sandboxPermissionObserver is a fence observer that, on each pass over a repository with an

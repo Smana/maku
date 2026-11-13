@@ -168,6 +168,21 @@ func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch,
 	return in, err
 }
 
+// Discard deletes the ref in's bundle was fetched into, for a push the applier refuses or holds
+// after the inspection (#505's review); Push and Inspect's own refusals delete it themselves. It
+// holds the mirror's lock, and is a no-op for a ref already gone.
+func (m *Mirror) Discard(ctx context.Context, in Inspection) {
+	if in.outRef == "" {
+		return
+	}
+	m.lock.Lock()
+	defer m.lock.Unlock()
+	if _, err := os.Stat(m.dir); err != nil {
+		return
+	}
+	m.dropOut(ctx, in.outRef)
+}
+
 // dropOut deletes the ref a refused or pushed bundle's objects were fetched into; its objects go
 // with the mirror's size limit.
 func (m *Mirror) dropOut(ctx context.Context, outRef string) {
@@ -358,8 +373,12 @@ func (m *Mirror) readChange(ctx context.Context, tok string, args ...string) ([]
 	return out, err
 }
 
-// checkBlobs refuses a change from..to with a blob, old or new, over MaxBlob (push_size), sized by
-// cat-file --batch-check from its header: never inflated.
+// checkBlobs refuses a change from..to with a new-side blob over MaxBlob (push_size), sized by
+// cat-file --batch-check from its header: never inflated. Only the new side is sized, and with lazy
+// fetching off: the bundle carries every new blob it changes, so sizing one never reaches the
+// remote. A new-side blob the bundle leaves out (content the remote holds already, a revert) and
+// every old-side blob are the remote's own: core.bigFileThreshold and the binary refusal bound
+// them when the diff reads them, in one batched fetch rather than one per file (#505's review).
 func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
 	out, err := m.readChange(ctx, tok, "diff", "--raw", "-z", "--no-renames", "--no-abbrev", from, to, "--")
 	if err != nil {
@@ -372,17 +391,14 @@ func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
 		if len(parts) != 5 {
 			return fmt.Errorf("gitbundle: diff --raw: unexpected entry")
 		}
-		for j, sha := range parts[2:4] {
-			mode := parts[j]
-			if isSHA(sha) && strings.Trim(sha, "0") != "" && mode != "160000" && mode != "040000" {
-				shas = append(shas, sha)
-			}
+		if sha, mode := parts[3], parts[1]; isSHA(sha) && strings.Trim(sha, "0") != "" && mode != "160000" && mode != "040000" {
+			shas = append(shas, sha)
 		}
 	}
 	if len(shas) == 0 {
 		return nil
 	}
-	sizes, err := m.runIn(ctx, tok, nil, nil, []byte(strings.Join(shas, "\n")+"\n"),
+	sizes, err := m.runIn(ctx, tok, []string{"GIT_NO_LAZY_FETCH=1"}, nil, []byte(strings.Join(shas, "\n")+"\n"),
 		"cat-file", "--batch-check=%(objecttype) %(objectsize)")
 	if errors.Is(err, errOutputCap) {
 		return refuse(hardening.RefusePushSize, "change too large to read")
@@ -392,6 +408,9 @@ func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(sizes)), "\n") {
 		typ, size, _ := strings.Cut(line, " ")
+		if isSHA(typ) && size == "missing" {
+			continue // not in the bundle: the remote's own object
+		}
 		n, err := strconv.ParseInt(size, 10, 64)
 		if typ != "blob" || err != nil {
 			return fmt.Errorf("gitbundle: cat-file --batch-check: unexpected entry")

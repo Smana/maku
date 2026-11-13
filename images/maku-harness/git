@@ -1,0 +1,79 @@
+#!/bin/sh
+# git, first on PATH (hardening H3, HR23). When the factory applies this run's pushes (SAFE_OUTPUTS
+# names push, set from the claim), `git push` is handed to agent-push, which requests the run's
+# branch as a push output (output_push) and prints the factory's answer. Every other subcommand, and
+# every push of a run without it, runs the real git unchanged.
+#
+# This is advisory, as the gh wrapper is: /usr/bin/git, a remote helper or curl with a token go round
+# it. The run's read-only token is the boundary, and the factory checks every bundle it is handed.
+real="${REAL_GIT:-/usr/bin/git}"
+case ",$SAFE_OUTPUTS," in
+  *",push,"*) ;;
+  *) exec "$real" "$@" ;;
+esac
+# The subcommand is the first argument past git's global options; n counts the options before it.
+n=0
+value=
+sub=
+for a in "$@"; do
+  if [ -n "$value" ]; then
+    value=
+    n=$((n + 1))
+    continue
+  fi
+  case "$a" in
+    -C | -c | --git-dir | --work-tree | --namespace | --config-env) value=1 ;;
+    -*) ;;
+    *)
+      sub="$a"
+      break
+      ;;
+  esac
+  n=$((n + 1))
+done
+[ "$sub" = push ] || exec "$real" "$@"
+# The options that say where the repository is are replayed here, for agent-push to find it. -c and
+# the others are dropped: a push's configuration is the factory's.
+while [ "$n" -gt 0 ]; do
+  case "$1" in
+    -C)
+      if [ -n "$2" ]; then cd "$2" || exit 128; fi
+      shift 2
+      n=$((n - 2))
+      ;;
+    --git-dir)
+      GIT_DIR="$2"
+      export GIT_DIR
+      shift 2
+      n=$((n - 2))
+      ;;
+    --work-tree)
+      GIT_WORK_TREE="$2"
+      export GIT_WORK_TREE
+      shift 2
+      n=$((n - 2))
+      ;;
+    --git-dir=*)
+      GIT_DIR="${1#--git-dir=}"
+      export GIT_DIR
+      shift
+      n=$((n - 1))
+      ;;
+    --work-tree=*)
+      GIT_WORK_TREE="${1#--work-tree=}"
+      export GIT_WORK_TREE
+      shift
+      n=$((n - 1))
+      ;;
+    -c | --namespace | --config-env)
+      shift 2
+      n=$((n - 2))
+      ;;
+    *)
+      shift
+      n=$((n - 1))
+      ;;
+  esac
+done
+shift
+exec "${AGENT_PUSH:-/usr/local/bin/agent-push}" "$@"

@@ -41,7 +41,7 @@ type OutputConfig struct {
 	Answers        OutputAnswers // nil: output_status is not served
 	// PushRepositories are the repositories the broker's own config serves output_push to
 	// (roomTools.pushRepositories): a second gate beside the run's annotation, so a claim alone
-	// never opens push. Config refuses every entry until push is enforced (stage H3, PR 6).
+	// never opens push (stage H3).
 	PushRepositories []string
 }
 

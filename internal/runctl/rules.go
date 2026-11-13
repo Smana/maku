@@ -26,7 +26,7 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 	s := r.Spec
 	branch := Branch(r, runID)
 	outputs := safeOutputs(r)
-	viaPR := slices.Contains(outputs, "pr")
+	viaPR, viaPush := slices.Contains(outputs, "pr"), slices.Contains(outputs, "push")
 	out := fmt.Sprintf("Platform rules for run %s (%s) on %s. Follow each of them.\n"+
 		"1. Work in /workspace/repo, cloned from %s at %s.\n", runID, s.Role, s.Repository, s.Repository, s.BaseRef)
 	if s.Role == "implementer" {
@@ -35,7 +35,13 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 			rule3 = fmt.Sprintf("3. Request the pull request with the output_pr tool: the factory opens it from %s into %s, or updates it, "+
 				"and writes the footer. Never open, edit, close or reopen it with gh.\n", branch, s.BaseRef)
 		}
-		out += fmt.Sprintf("2. Push only to %s. Never push to any other branch, and never merge.\n", branch) + rule3 +
+		rule2 := fmt.Sprintf("2. Push only to %s. Never push to any other branch, and never merge.\n", branch)
+		if viaPush {
+			rule2 = fmt.Sprintf("2. Push only to %s, with git push: the factory checks the push and applies it. "+
+				"A change to a protected path waits for a maintainer's approval; check it with output_status. "+
+				"Never force-push another branch, and never merge.\n", branch)
+		}
+		out += rule2 + rule3 +
 			fmt.Sprintf("4. Every commit carries the trailer \"Agent-Run: %s\". The commit hook adds it.\n"+
 				"5. Never modify .github/workflows/, .github/chainguard/ or .github/agent-factory.yaml.\n", runID)
 		if rule6 := outputsRule(outputs); rule6 != "" {
@@ -44,8 +50,14 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 	} else {
 		out += "2. Your repository access is read-only. Do not push. Your final message is your report.\n" +
 			"3. Never modify .github/workflows/, .github/chainguard/ or .github/agent-factory.yaml.\n"
+		n := 4
 		if rule4 := outputsRule(outputs); rule4 != "" && s.Role == "tester" { // the tester is served the output tools too
-			out += "4. " + rule4 + "\n"
+			out += fmt.Sprintf("%d. %s\n", n, rule4)
+			n++
+		}
+		if viaPush && s.Role == "tester" {
+			out += fmt.Sprintf("%d. Never push yourself: the platform pushes your committed tests through the factory, "+
+				"which checks the push and applies it.\n", n)
 		}
 	}
 	if s.RoomRef == "" {

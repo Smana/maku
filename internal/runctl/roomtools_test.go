@@ -162,11 +162,11 @@ func TestRunctlReadOnlyTools(t *testing.T) {
 	if v, ok := harnessEnv(p)["SAFE_OUTPUTS"]; ok {
 		t.Fatalf("not enforced: SAFE_OUTPUTS=%q", v)
 	}
-	// A type the factory never writes is not served: push stays in the sandbox (H3).
+	// A type the factory never writes is not served; push is, from stage H3.
 	pushed := run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
-		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "push,pr"}
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "push,pr,review"}
 	})
-	if got := harnessEnv(Pod(pushed, withRoomTools(t), testModel, "abcdefgh"))["SAFE_OUTPUTS"]; got != "pr" {
+	if got := harnessEnv(Pod(pushed, withRoomTools(t), testModel, "abcdefgh"))["SAFE_OUTPUTS"]; got != "pr,push" {
 		t.Fatalf("SAFE_OUTPUTS %q", got)
 	}
 }

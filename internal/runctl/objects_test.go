@@ -112,3 +112,47 @@ func TestServiceAccountIsNamedLikeTheRun(t *testing.T) {
 		t.Fatalf("sa %+v", sa)
 	}
 }
+
+// H3: a run whose claim names push is told that git push requests a push the factory checks and
+// applies, that a protected path waits for a maintainer, and never to force-push another branch;
+// the tester, that the platform's push of its tests goes through the factory. Without push the
+// rules are H2's byte for byte.
+func TestRulesPushOutput(t *testing.T) {
+	h2 := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,issue,labels,pr"}
+	}), "abcdefgh")
+	got := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,issue,labels,pr,push"}
+	}), "abcdefgh")
+	const rule2 = "2. Push only to agent/abcdefgh, with git push: the factory checks the push and applies it. " +
+		"A change to a protected path waits for a maintainer's approval; check it with output_status. " +
+		"Never force-push another branch, and never merge.\n"
+	if !strings.Contains(got, rule2) {
+		t.Fatalf("implementer rules:\n%s", got)
+	}
+	if strings.Replace(got, rule2, "2. Push only to agent/abcdefgh. Never push to any other branch, and never merge.\n", 1) != h2 {
+		t.Fatalf("push changed more than rule 2:\n%s\nH2:\n%s", got, h2)
+	}
+	if strings.Contains(h2, "output_status") || strings.Contains(h2, "factory checks the push") {
+		t.Fatalf("H2's rules name the push output:\n%s", h2)
+	}
+	tester := Rules(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Spec.Role = "tester"
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "push"}
+	}), "abcdefgh")
+	if !strings.Contains(tester, "4. Never push yourself: the platform pushes your committed tests through the factory, "+
+		"which checks the push and applies it.\n") {
+		t.Fatalf("tester rules:\n%s", tester)
+	}
+	// SAFE_OUTPUTS names push, so the harness's shim turns git push into the push output.
+	p := Pod(run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "pr,push"}
+	}), withRoomTools(t), testModel, "abcdefgh")
+	if got := harnessEnv(p)["SAFE_OUTPUTS"]; got != "pr,push" {
+		t.Fatalf("SAFE_OUTPUTS %q", got)
+	}
+	// The rules name output_status: the bridge passes it as a read beside the push output.
+	if got := bridgeEnvOf(p)["MCP_READ_ONLY_TOOLS"]; !strings.HasSuffix(got, ",room-broker__output_pr,room-broker__output_push,room-broker__output_status") {
+		t.Fatalf("MCP_READ_ONLY_TOOLS %q", got)
+	}
+}
