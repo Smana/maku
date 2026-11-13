@@ -376,9 +376,9 @@ cannot forge a report.
 `id` is lowercase letters, digits and dashes, at most 63; `report` is a JSON object of at most
 256 KiB: counts, scenario ids, roles and reasons, never planted text. Response `201`: `{"id": …}`.
 
-`GET /v1/drills/last-pass?version=<version>&configHash=<64-hex>` answers the newest passing report of
-that Maku version and hardening configuration hash (readiness R6): `{"id": …, "at": …}`, or
-`404 no_drill`.
+`GET /v1/drills/last-pass?version=<version>&configHash=<64-hex>` answers the newest report of that
+Maku version and hardening configuration hash when it passed (readiness R6): `{"id": …, "at": …}`,
+or `404 no_drill` when there is none or the newest failed, even with an older pass.
 
 `GET /v1/drills/{id}/result` answers whether drill `id`'s stored report passed, `{"id": …, "pass": …}`,
 or `404 no_drill`: the factory marks a drill scored from it when an earlier pass stored the report.

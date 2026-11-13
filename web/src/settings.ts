@@ -36,11 +36,24 @@ export interface MergePolicyStatus {
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
   evidenceAt?: string; evidenceError?: string;
+  // The repository's hardening readiness (H5), present at hardening mode audit or above.
+  hardening?: Readiness;
   file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
   // Set when the repository is served from a MergePolicy object: its name, its manifest as the
   // factory renders it, the file name to save that under, and its classes in the file's shape.
   mergePolicy?: string; mergePolicyStatus?: MergePolicyStatus; manifest?: string; manifestPath?: string; served?: PolicyFile;
+}
+
+// One repository's hardening readiness: hardened, and the facts that do not hold.
+export interface Readiness { repository: string; hardened: boolean; missing?: string[]; drill?: string }
+
+// hardeningLine is the repository's readiness as one sentence (H5). The page shows a reader ready,
+// not ready or error only: which facts are missing stays on the operators' route.
+export function hardeningLine(h: Readiness): string {
+  if (h.missing?.includes("error")) return "Hardening readiness could not be read just now.";
+  if (h.hardened) return "Hardened: every readiness fact holds.";
+  return "Not hardened: an operator can see which readiness facts are missing.";
 }
 
 export interface Step2 { row: string; status: string; detail?: string }
@@ -331,6 +344,11 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   fl.dataset.prominent = String(file.prominent);
   main.append(fl);
 
+  if (r.hardening) {
+    const h = el("p", hardeningLine(r.hardening), "hardening-readiness");
+    h.dataset.hardened = String(r.hardening.hardened);
+    main.append(h);
+  }
   main.append(el("h2", "Classes"));
   const guard = el("ul", undefined, "guardrails");
   for (const g of describeGuardrails(r.guardrails)) guard.append(el("li", g));

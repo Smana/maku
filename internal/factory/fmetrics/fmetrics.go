@@ -163,6 +163,8 @@ type Set struct {
 	hardeningApproval    metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
 	hardeningDrillLast   metric.Int64Gauge
+	hardeningReady       metric.Int64Gauge
+	hardeningMissing     metric.Int64Gauge
 	hardeningT5          metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
@@ -253,6 +255,9 @@ type Set struct {
 	// perPerson: a task's payer is its person (budgets.perPerson.enabled), else the fleet.
 	perPerson bool
 
+	// missing are the readiness facts at 1, by repository (HardeningReady).
+	missingMu sync.Mutex
+	missing   map[string]map[string]bool
 	// permissions are the sandbox permission gauge's pairs at 1, by repository (SandboxPermissions).
 	permMu      sync.Mutex
 	permissions map[string]map[[3]string]bool
@@ -382,6 +387,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.hardeningDrillLast, err = meter.Int64Gauge("agent_factory_hardening_drill_last",
 		metric.WithDescription("Unix time of the last injection drill the factory scored, by result (pass or fail) (hardening HR38): a fail newer than the last pass blocks readiness R6."))
+	check(err)
+	s.hardeningReady, err = meter.Int64Gauge("agent_factory_hardening_ready",
+		metric.WithDescription("1 when the repository's hardening readiness (R1 to R7) held at the last report, else 0 (hardening H5, HR41). Reported only: execute's admission computes its own answer."))
+	check(err)
+	s.hardeningMissing, err = meter.Int64Gauge("agent_factory_hardening_missing",
+		metric.WithDescription("1 for each readiness fact that did not hold at the last report, by repository and fact (R1 to R7's Missing, or error when a fact could not be read), else 0."))
 	check(err)
 	s.hardeningT5, err = meter.Int64Counter("agent_factory_hardening_t5_total",
 		metric.WithDescription("T5 classifier calls on text outputs, refused ones included (hardening HR39, AC6), by repository, output type, result (hit, pass, unavailable) and whether the task is a drill: false positives are hits on applied outputs of non-drill tasks."))
@@ -1101,6 +1112,39 @@ func (s *Set) HardeningDrillScored(ctx context.Context, pass bool, at time.Time)
 		result = "pass"
 	}
 	s.hardeningDrillLast.Record(ctx, at.Unix(), metric.WithAttributes(attribute.String("result", result)))
+}
+
+// readinessMissing is the missing gauge's closed set: hardening.Missing's values, and error.
+var readinessMissing = []string{"mode_not_enforce", "sandbox_write_token", "publisher_policy", "layer_not_enforced",
+	"read_filter_off", "drill_stale_or_failed", "demo_profile", "error"}
+
+// HardeningReady records one readiness report of repository (HR41): ready, and each missing fact
+// at 1; a fact an earlier report named and this one does not goes to 0.
+func (s *Set) HardeningReady(ctx context.Context, repository string, ready bool, missing []string) {
+	repo := s.repository(repository)
+	v := int64(0)
+	if ready {
+		v = 1
+	}
+	s.hardeningReady.Record(ctx, v, metric.WithAttributes(attribute.String("repository", repo)))
+	s.missingMu.Lock()
+	defer s.missingMu.Unlock()
+	if s.missing == nil {
+		s.missing = map[string]map[string]bool{}
+	}
+	next := map[string]bool{}
+	for _, m := range missing {
+		next[oneOf(m, readinessMissing)] = true
+	}
+	for m := range s.missing[repo] {
+		if !next[m] {
+			s.hardeningMissing.Record(ctx, 0, metric.WithAttributes(attribute.String("repository", repo), attribute.String("missing", m)))
+		}
+	}
+	for m := range next {
+		s.hardeningMissing.Record(ctx, 1, metric.WithAttributes(attribute.String("repository", repo), attribute.String("missing", m)))
+	}
+	s.missing[repo] = next
 }
 
 // t5Results is the T5 counter's closed result set.

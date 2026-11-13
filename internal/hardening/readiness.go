@@ -95,7 +95,8 @@ type DrillRecord struct {
 	At time.Time
 }
 
-// Drills is the factory's store of drill reports.
+// Drills is the factory's store of drill reports. LastPass answers the newest report of key only
+// when it passed: a newer fail hides an older pass (R6).
 type Drills interface {
 	LastPass(ctx context.Context, key DrillKey) (DrillRecord, bool, error)
 }

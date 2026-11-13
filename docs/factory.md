@@ -2258,6 +2258,72 @@ hardening:
   call in `maku_factory_hardening_t5_total{type,result,drill}`: T5's false positives
   are hits on applied outputs of non-drill tasks.
 
+## Hardening, ready
+
+Stage H5. Readiness answers, per repository, whether every run reads through author trust and
+writes only through enforced safe outputs, right now. It changes no behaviour: it is reported, and
+coordination's execute admission reads it ([prerequisites](#execution-prerequisites)).
+
+| Fact | Holds when | Read from |
+|---|---|---|
+| R1 | The repository's mode is `enforce` | The live config |
+| R2 | No sandbox role's token can write | The XR: each role's octo-sts policy on the default branch, read with the repository's factory App. The run-controller: the minter's role table for the repository's enforced outputs (`runTokens.perRun`). A shared writer token never holds |
+| R3 | The publisher can write | The octo-sts publisher policy, or the minter's publisher grant with `hardening.publisher.minter` |
+| R4 | T1 to T4 all enforce | The live config. T5 is not a readiness fact |
+| R5 | Reads are filtered | The live config ([reads filtered](#hardening-reads-filtered)) |
+| R6 | The newest drill for this Maku version and hardening hash passed, within `drills.maxAge`: a newer fail hides an older pass | The broker's drill reports ([drills](#hardening-drills)) |
+| R7 | Not the laptop demo | The live config |
+
+Every fact is read afresh on every call; a fact that cannot be read is a refusal (`error`).
+
+- **Reported.** The leader computes readiness every five minutes for each repository at mode
+  audit or above, and sets `maku_factory_hardening_ready{repository}` and
+  `maku_factory_hardening_missing{repository,missing}`. A change is logged once. The gauge is never
+  read as an answer.
+- **The API.** `GET /v1/hardening/readiness` answers an operator, a human in the admin group:
+  `{"repositories": [{repository, hardened, missing, drill}]}`. Anyone else gets 403.
+- **The Evidence page** shows any reader of the repository whether it is hardened, not hardened,
+  or could not be read: never which facts are missing, which stay on the operators' route.
+- **One read a minute.** A readiness read costs up to five GitHub reads with the factory App, and
+  the Evidence page polls: the page and the route share one read per repository for 60 seconds,
+  concurrent views included. Coordination's admission never uses it: it reads afresh.
+- **On the run-controller** R2 reads the minter's role table, which v4 step 3 ships (owner ruling
+  HR42, option A). Without `runTokens.perRun`, R2 answers `sandbox_write_token`.
+
+### Promoting T5, one output type at a time
+
+```yaml
+hardening:
+  agentGuard: {url: http://agent-guard.agent-system.svc:8080}
+  layers:
+    classifierEnforce: [pr, comment]
+  repositories:
+    Smana/ai-native-ref: {mode: enforce, enforceOutputs: [comment, issue, labels, pr, push]}
+```
+
+`layers.classifierEnforce` promotes T5 to enforce for the types it names, on repositories at mode
+`enforce` only. A hit on a promoted type refuses `injection_suspected`, and an unreachable
+classifier refuses `classifier_unavailable`. Every other type keeps T5 in audit. The list needs
+`agentGuard.url`, `layers.classifier` not off, and a repository at mode `enforce`. It enters the
+hardening hash, so a promotion needs a new passing drill before R6 holds again; so does pointing
+`agentGuard.url` at another classifier. `layers.classifier: enforce` stays refused.
+
+The list is global: promoting a type promotes it on every repository at mode `enforce`. A type
+whose numbers hold on one repository but not another is not promoted.
+
+Promote a type only on its numbers, read from the drill reports and
+`maku_factory_hardening_t5_total`:
+
+- **False positives** below 2%: `result="hit"` over all calls, with `drill="false"`, over 30 days.
+- **Detection on the drills** above the pattern layers': the type's `detectionsByType` in the
+  drill reports against T5's `drill="true"` hits.
+- **What T5 never sees.** T5 never reads an output refused at T3 (a secret or the canary), a cap
+  refusal, a T2 withholding or a payload the broker redacted: T5 is reached through agentgateway,
+  and a refusal must not send what it protects. So T5's drill detection cannot be compared with
+  T3's on the same outputs. Compare what T5 catches among the outputs T1 to T3 let through, and on
+  target and T4 refusals, with T2 and T3's detections on their own outputs. Readiness never
+  assumes T5 saw an output: R4 covers T1 to T4 only.
+
 ## Reference
 
 ### The Task CRD
@@ -2664,12 +2730,14 @@ other `maxChildren` are refused.
 Every execute-time filing, child admission or resume, and integration admission calls
 `ExecutionPrerequisites.Ready(ctx, repository)` for each repository involved. It must prove
 repository-declared class authority (v4 item 3) and hardened safe outputs with threat checks for
-every child and integration input (v4 item 4). Neither capability has shipped, so production
-wires no port (`Prerequisites: nil` in `internal/app/factory.go`):
+every child and integration input (v4 item 4). Production wires `coordination.Prerequisites`: the
+live config's class authority (`RepositoryAuthoritative`) and [hardening
+readiness](#hardening-ready), both asked afresh (AC9):
 
-- `execute` refuses with `coordination_prerequisites`, files no issue and creates no child,
-  integration Task or AgentRun; the parent keeps that reason and `plan` keeps working.
-- Nothing is cached: once a port exists, a regression refuses the next admission.
+- A repository that is not both refuses with `coordination_prerequisites`: no issue is filed, and
+  no child, integration Task or AgentRun is created; the parent keeps that reason and `plan` keeps
+  working.
+- Nothing is cached: a regression refuses the next admission.
 - The merge-policy stage-1 observer (`mergepolicy.Watch`) and the release version are never
   evidence.
 

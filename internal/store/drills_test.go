@@ -15,7 +15,7 @@ func drillReport(id string, at time.Time, pass bool) DrillReport {
 		Report: json.RawMessage(`{"pass":` + map[bool]string{true: "true", false: "false"}[pass] + `}`)}
 }
 
-// HR38: a drill report is stored once per id, and LastPass answers the newest passing report of
+// HR38: a drill report is stored once per id, and LatestDrill answers the newest report of
 // one version and configuration hash; the broker's role can neither rewrite nor delete one.
 func TestStoreDrillReport(t *testing.T) {
 	ctx := t.Context()
@@ -41,15 +41,22 @@ func TestStoreDrillReport(t *testing.T) {
 			t.Errorf("%s: pass %v found %v, %v", id, pass, found, err)
 		}
 	}
-	id, at, ok, err := s.LastPass(ctx, "v0.45.0", strings.Repeat("c", 64))
-	if err != nil || !ok || id != "drill-2" || !at.Equal(day.Add(48*time.Hour)) {
-		t.Fatalf("last pass %q %v %v %v", id, at, ok, err)
+	// R6 reads the newest report of the key: drill-3, a fail newer than drill-2's pass (#531's review).
+	id, at, pass, ok, err := s.LatestDrill(ctx, "v0.45.0", strings.Repeat("c", 64))
+	if err != nil || !ok || id != "drill-3" || pass || !at.Equal(day.Add(72*time.Hour)) {
+		t.Fatalf("latest %q %v pass %v found %v %v", id, at, pass, ok, err)
+	}
+	if err := s.PutDrillReport(ctx, drillReport("drill-4", day.Add(96*time.Hour), true)); err != nil {
+		t.Fatal(err)
+	}
+	if id, _, pass, ok, err := s.LatestDrill(ctx, "v0.45.0", strings.Repeat("c", 64)); err != nil || !ok || id != "drill-4" || !pass {
+		t.Fatalf("a newer pass: %q %v %v %v", id, pass, ok, err)
 	}
 	for name, key := range map[string][2]string{
 		"another version": {"v0.46.0", strings.Repeat("c", 64)},
 		"another hash":    {"v0.45.0", strings.Repeat("d", 64)},
 	} {
-		if _, _, ok, err := s.LastPass(ctx, key[0], key[1]); err != nil || ok {
+		if _, _, _, ok, err := s.LatestDrill(ctx, key[0], key[1]); err != nil || ok {
 			t.Errorf("%s: found %v, %v", name, ok, err)
 		}
 	}

@@ -117,9 +117,22 @@ type Report struct {
 	Served       *mergepolicy.File `json:"served,omitempty"`
 	// MergePolicyStatus is the object's stored status, nil when there is none to read.
 	MergePolicyStatus *PolicyStatus `json:"mergePolicyStatus,omitempty"`
+	// Hardening is the repository's hardening readiness (H5, HR41), computed afresh by the API for a
+	// repository at mode audit or above; nil otherwise.
+	Hardening *Readiness `json:"hardening,omitempty"`
 	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
 	Namespace     string `json:"-"`
 	RepositoryRef string `json:"-"`
+}
+
+// Readiness is one repository's hardening readiness. The operators' route shows it whole: hardened,
+// the facts that do not hold (hardening.Missing, or error), and the passing drill it relied on. The
+// Evidence page shows a reader hardened, and error alone.
+type Readiness struct {
+	Repository string   `json:"repository"`
+	Hardened   bool     `json:"hardened"`
+	Missing    []string `json:"missing,omitempty"`
+	Drill      string   `json:"drill,omitempty"`
 }
 
 var (

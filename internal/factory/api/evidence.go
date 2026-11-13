@@ -15,6 +15,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/hardening"
 )
 
 // EvidenceSource is each repository's promotion evidence (merge policy stage 6); *evidence.Service
@@ -95,6 +96,10 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 		}
 		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
+	}
+	if s.Readiness != nil && cfg.Hardening.ModeFor(repo).AtLeast(hardening.ModeAudit) { // H5: the readiness row
+		h := readerView(s.readinessOf(r.Context(), repo))
+		rep.Hardening = &h
 	}
 	reply(w, http.StatusOK, rep)
 }
