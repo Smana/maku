@@ -148,11 +148,12 @@ export const previewRule = (req: RuleRequest, get: typeof fetch = fetch) => post
 export const createRule = (req: RuleRequest, get: typeof fetch = fetch) => postRule("/api/approval-memory/grants", req, get);
 
 // ruleFromQuery reads a rule request from the page's query, so a pull request's decision can link
-// to "merge and create rule" prefilled: ?repository=&class=&pr=&policy=&file=…&file=…
+// to "merge and create rule" prefilled: ?repository=&class=&pr=&resolved=&file=…&file=…. resolved= is
+// the decision record's class definition hash (B13); policy=, its name before, is read for one release.
 export function ruleFromQuery(search: string): Partial<RuleRequest> {
   const q = new URLSearchParams(search);
   const pr = Number(q.get("pr"));
-  return { repository: q.get("repository") ?? "", class: q.get("class") ?? "", policyHash: q.get("policy") ?? "",
+  return { repository: q.get("repository") ?? "", class: q.get("class") ?? "", policyHash: q.get("resolved") ?? q.get("policy") ?? "",
     pullRequest: Number.isInteger(pr) && pr > 0 ? pr : 0, caughtFiles: q.getAll("file") };
 }
 
@@ -234,7 +235,7 @@ function mountRule(root: HTMLElement, get: typeof fetch, saved: () => Promise<vo
   const repository = el("input", { name: "repository", placeholder: "owner/name", value: pre.repository ?? "" });
   const klass = el("input", { name: "class", placeholder: "docs-broad", value: pre.class ?? "" });
   const pr = el("input", { name: "pr", type: "number", min: "1", value: pre.pullRequest ? String(pre.pullRequest) : "" });
-  const policy = el("input", { name: "policy", placeholder: "the decision record's policy=", value: pre.policyHash ?? "" });
+  const policy = el("input", { name: "policy", placeholder: "the decision record's resolved=", value: pre.policyHash ?? "" });
   const files = el("textarea", { name: "files", rows: 3, placeholder: "the files the approval subset caught, one a line", value: (pre.caughtFiles ?? []).join("\n") });
   const shape = el("select", { name: "diffShape" });
   shape.append(...["", "links-only", "semver-patch", "semver-minor"].map((v) => el("option", { value: v, textContent: v || "any diff shape" })));

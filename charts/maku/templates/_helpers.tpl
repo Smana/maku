@@ -171,6 +171,9 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 {{- if and (eq ($b.human.mode | default "oidc") "local") $b.publicURL (not (regexMatch "^http://(localhost|127\\.0\\.0\\.1|\\[::1\\]):[0-9]{1,5}$" $b.publicURL)) -}}
 {{- fail (printf "broker.publicURL %q in local mode: it is http://localhost:<the port you forward>" $b.publicURL) -}}
 {{- end -}}
+{{- if and (eq ($b.human.mode | default "oidc") "local") (dig "oidc" "existingSecret" "" $b) -}}
+{{- fail "broker.oidc.existingSecret: mode local has no IdP, so no client id to mount" -}}
+{{- end -}}
 {{- if not (has ($b.human.mode | default "oidc") (list "oidc" "local")) -}}
 {{- fail (printf "broker.human.mode %q is not oidc or local" $b.human.mode) -}}
 {{- end -}}
@@ -275,6 +278,13 @@ key to the gateway.
 */}}
 {{- define "ap.human" -}}
 {{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
+{{- with .Values.broker.oidc -}}
+{{- if .existingSecret -}}
+{{- if not $h.clientIDFile }}{{ $_ := set $h "clientIDFile" (printf "/etc/room-broker/oidc/%s" .keys.web) }}{{ end -}}
+{{- if not $h.roomctlClientIDFile }}{{ $_ := set $h "roomctlClientIDFile" (printf "/etc/room-broker/oidc/%s" .keys.cli) }}{{ end -}}
+{{- if and (has ($h.preset | default "zitadel") (list "zitadel")) (not $h.projectIDFile) }}{{ $_ := set $h "projectIDFile" (printf "/etc/room-broker/oidc/%s" .keys.project) }}{{ end -}}
+{{- end -}}
+{{- end -}}
 {{- $g := include "ap.modelGateway" . | fromJson -}}
 {{- if $g.service -}}
 {{- $plan := dig "intake" "plan" dict $h -}}

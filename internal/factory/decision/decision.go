@@ -35,6 +35,11 @@ type Rows struct {
 	// from the file, and then nothing prints). It prints as policygen=<n>, not policy=, which
 	// already carries the policy's hash.
 	Generation int64
+	// RepoGeneration and Resolved are a bound class's (B12, B13): the Repository generation that
+	// holds the binding (its mode and parameters), and the first 12 hex digits of the resolved
+	// class's hash. 0 and "" print nothing.
+	RepoGeneration int64
+	Resolved       string
 }
 
 // Marker is the hidden one-line record appended to the decision's comment. It is a line of its
@@ -55,6 +60,12 @@ func Marker(head, class, verdict, reason string, r Rows) string {
 	}
 	if r.Generation > 0 {
 		dual += " policygen=" + strconv.FormatInt(r.Generation, 10)
+	}
+	if r.RepoGeneration > 0 {
+		dual += " repogen=" + strconv.FormatInt(r.RepoGeneration, 10)
+	}
+	if r.Resolved != "" {
+		dual += " resolved=" + r.Resolved
 	}
 	return fmt.Sprintf("<!-- agent-factory-decision head=%s class=%s decision=%s:%s files=%s/%d lines=%s/%d shape=%s holdout=%s oracle=%s age=%s evidence=%s paused=%s capped=%s%s reviewer=%s -->",
 		dash(head), dash(class), dash(verdict), dash(reason), count(r.Files, r.Counted), r.MaxFiles, count(r.Lines, r.Counted), r.MaxLines,

@@ -175,10 +175,12 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			return ferr
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
-			if policy.on && policy.err == nil && r.grantsOn(cfg) && needsGrants(in, policy.snap, true) {
-				// Stages 4 and 5: the policy that decides is the repository's, so its grants are read
-				// here, immediately before the decision, under that policy's hash.
-				in.Grants = r.grantRead(ctx, cfg, t, policy.snap.Hash)
+			if r.grantsOn(cfg) && needsGrantsUnder(in, cfg, policy) {
+				// Stages 4 and 5, and B13 under central authority: the grants of the class that
+				// decides are read here, immediately before the decision, under its resolved hash.
+				if hash, ok := r.grantHash(cfg, t, policy); ok {
+					in.Grants = r.grantRead(ctx, cfg, t, hash)
+				}
 			}
 			d = decideUnder(in, policy)
 			evaluated = d
@@ -394,8 +396,26 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 // the would-arm or the arm. It is a marker line of its own (R-m11), so the event's marker, and the
 // tally that reads it, are unchanged.
 func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
-	_, _, gen := cfg.GenerationsFor(t.Spec.Repository)
+	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, t.Spec.PredictedClass)
+	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
+		// Repository authority: the class that decided is the file's, so are its generations: the
+		// policy its binding resolved against (a last resolved one's included), none for a class
+		// the file defines itself. Never the central config's for the class.
+		res, ok := p.snap.Classes[t.Spec.PredictedClass]
+		gen, bound = res.PolicyGeneration, ok && p.err == nil && res.PolicyGeneration > 0
+		if !bound {
+			gen = 0
+		}
+	}
 	d.Rows.Generation = gen
+	if bound { // PR13: repogen= marks a decision of a bound class
+		d.Rows.RepoGeneration = repo
+	}
+	// B13: the hash grants of this class bind to, the deciding class's, so a rule made from the
+	// record holds: the central class's, or a cut-over repository's snapshot class's.
+	if h, ok := r.decidingHash(cfg, t); ok {
+		d.Rows.Resolved = config.ShortHash(h)
+	}
 	reason := cmp.Or(d.Reason, "armed")
 	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, reason, d.Rows)
 	if r.Decisions != nil {

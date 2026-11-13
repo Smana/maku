@@ -7,6 +7,7 @@ package catalogue
 import (
 	"maps"
 	"slices"
+	"strings"
 
 	"github.com/Smana/maku/internal/factory/config"
 )
@@ -52,6 +53,9 @@ type Generations struct {
 	Factory     int64                 `json:"factory"`
 	Repository  int64                 `json:"repository"`
 	MergePolicy MergePolicyGeneration `json:"mergePolicy"`
+	// MergePolicies are a bound repository's per-class policy generations (B19); MergePolicy is
+	// then 0. Absent for a repository served from the per-repository shape.
+	MergePolicies map[string]int64 `json:"mergePolicies,omitempty"`
 }
 
 // MergePolicyGeneration is the generation of the repository's MergePolicy object; zero means the
@@ -84,6 +88,18 @@ type Escalation struct {
 	NotConverged string `json:"notConverged"`
 }
 
+// generations are the repository's, with each bound class's own policy generation (B19).
+func generations(cfg *config.Config, repository string, factory, repo, policy int64) Generations {
+	g := Generations{Factory: factory, Repository: repo, MergePolicy: MergePolicyGeneration(policy)}
+	for class, cg := range cfg.Generations.Repos[strings.ToLower(repository)].Classes {
+		if g.MergePolicies == nil {
+			g.MergePolicies = map[string]int64{}
+		}
+		g.MergePolicies[class] = cg.Policy
+	}
+	return g
+}
+
 // Profile is one harness profile, with the roles its template runs.
 type Profile struct {
 	Template    string   `json:"template"`
@@ -114,7 +130,7 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 	}
 	c := Catalogue{
 		Repository:     rc.Name,
-		Generations:    Generations{Factory: factory, Repository: repo, MergePolicy: MergePolicyGeneration(policy)},
+		Generations:    generations(cfg, rc.Name, factory, repo, policy),
 		Evaluation:     Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent},
 		ApproveToMerge: gateOn && rc.Merge.ApproveToMerge,
 		Maintainer:     maintainer,

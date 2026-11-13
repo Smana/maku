@@ -123,6 +123,10 @@ describe("approval memory", () => {
       repository: "smana/x", class: "docs-broad", pullRequest: 12, policyHash: "0123456789ab", caughtFiles: ["a.md", "b.md"] });
     expect(ruleFromQuery("?pr=-3").pullRequest).toBe(0);
   });
+  it("prefills the class definition from the decision record's resolved= (B13), policy= kept one release", () => {
+    expect(ruleFromQuery("?repository=smana/x&class=docs-broad&pr=12&resolved=abcdef012345").policyHash).toBe("abcdef012345");
+    expect(ruleFromQuery("?resolved=abcdef012345&policy=0123456789ab").policyHash).toBe("abcdef012345");
+  });
   it("shows the exact rule, the future pull requests it matches, what stays outside, expiry, revocation and merge once", () => {
     const p: Proposal = { predicate: { repository: "smana/x", class: "docs-broad", files: ["docs/a\\.md"], policyHash: "0123456789ab" },
       matches: "a future pull request of smana/x …", outside: ["the breaker and the daily caps"], expiresAt: "2027-02-06T00:00:00Z",

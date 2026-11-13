@@ -34,6 +34,8 @@ const (
 )
 
 // Grant is one saved approval grant as stored. LastUsedAt is zero and LastUsedPR 0 until it is used.
+// PolicyHash (column policy_hash, wire key policyHash) carries the resolved class's hash since B13:
+// the class definition, the policy and the repository's binding together, not the file's hash.
 type Grant struct {
 	ID, Repository, Class string
 	Version               int
@@ -71,8 +73,8 @@ type NewGrant struct {
 }
 
 // GrantMove is one move of a grant: its event, the version it was read at (0 for whichever is
-// current), who made it and why. PolicyHash is the policy a reconfirmation binds to, or the one a
-// suspension was found under; Lifetime is a renewal's, from now; PR and Head are a use's.
+// current), who made it and why. PolicyHash is the class definition a reconfirmation binds to, or
+// the one a suspension was found under (the resolved class's hash, B13); Lifetime is a renewal's, from now; PR and Head are a use's.
 type GrantMove struct {
 	Event, Actor, Reason string
 	Version              int

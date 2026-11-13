@@ -125,7 +125,13 @@ type Server struct {
 	Issuer        string
 	RoomctlClient func() string
 	ProjectID     func() string
-	Rooms         client.Reader
+	// Preset, TokenUse, Scopes and Audience are the human block's (v4 D8): maku signs in to any
+	// OIDC issuer from them. An empty Preset or TokenUse reads as zitadel's, access.
+	Preset   string
+	TokenUse string
+	Scopes   []string
+	Audience func() string
+	Rooms    client.Reader
 	// FactoryPrincipal is the system principal whose task facts name a closed room's repository,
 	// once the factory has deleted its Room; "" leaves a closed room unreadable.
 	FactoryPrincipal string
