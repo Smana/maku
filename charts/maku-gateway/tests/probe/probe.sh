@@ -9,9 +9,12 @@
 #   P1  JWKS: a run-like ServiceAccount's projected token is verified with the issuer's keys fetched
 #       from the in-cluster apiserver (source: apiserver), without and then with the anonymous
 #       discovery binding; a token for another audience from the same ServiceAccount is refused.
-#   P2  CEL over jwt.aud, a list: `exists(... startsWith ...)` on the listener, `in` on the route.
-#   P3  path and model: /m/<alias>/v1/chat/completions reaches the provider at its own path, the model
-#       is the alias's mapped model whatever the body said, and the token never reaches the provider.
+#   P2  CEL over jwt.aud, a list: `exists(... startsWith ...)` on the listener, `in` on the route; the
+#       listener's subject Require holds beside the route's: a non-run ServiceAccount with the right
+#       audience is refused.
+#   P3  path and model: /m/<alias>/v1/chat/completions, matched exactly, reaches the provider at its own
+#       path and nothing else does; the model is the alias's mapped model whatever the body said, and
+#       the token never reaches the provider.
 #   P4  presets: reasoning_effort "none" on a mistral backend, temperature 1 and no top_p on moonshot.
 #   P5  metrics: the token-usage histogram carries ar_agent (the sub), the mapped model and its token
 #       types; a 429 shows on a request counter carrying ar_agent.
@@ -64,7 +67,7 @@ for ns in maku agents; do
 done
 issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
 sed "s#__ISSUER__#$issuer#" manifests.yaml | kubectl apply -f - >/dev/null
-kubectl -n agents wait --for=condition=Ready pod/caller --timeout=180s >/dev/null
+kubectl -n agents wait --for=condition=Ready pod/caller pod/bystander --timeout=180s >/dev/null
 kubectl -n maku rollout status deploy/echo-llm --timeout=180s >/dev/null
 kubectl -n maku wait --for=condition=Programmed gateway/model-gateway --timeout=180s >/dev/null
 kubectl -n maku rollout status deploy/model-gateway --timeout=180s >/dev/null
@@ -115,8 +118,13 @@ out="$(call "$INT/m/tier-light/v1/chat/completions" /tokens/internal-tier-light 
 [[ ${out%% *} == 200 ]] && pass "P2 exists/startsWith: an internal token on the internal listener is 200" || fail "P2 an internal token on internal: ${out:0:200}"
 out="$(call "$PUB/m/tier-frontier/v1/chat/completions" /tokens/public-tier-light tier-frontier)"
 [[ ${out%% *} == 403 ]] && pass "P2 in: a tier-light token on the tier-frontier route is 403" || fail "P2 a tier-light token on tier-frontier: ${out:0:200}"
+out="$(kubectl -n agents exec bystander -- python3 /app/client.py "$PUB/m/tier-light/v1/chat/completions" /tokens/public-tier-light tier-light)"
+[[ ${out%% *} == 403 ]] && pass "P2 the listener's subject Require holds beside the route's: a non-run ServiceAccount with the right audience is 403" \
+  || fail "P2 a non-run ServiceAccount with maku-gateway.public.tier-light: ${out:0:200}"
 
 echo "==> P3: path and model"
+out="$(call "$PUB/m/tier-light/v1/embeddings" /tokens/public-tier-light tier-light)"
+[[ ${out%% *} == 404 ]] && pass "P3 exact paths: another path under the alias is 404, never sent to the provider" || fail "P3 /m/tier-light/v1/embeddings answered ${out:0:200}"
 out="$(call "$PUB/m/tier-light/v1/chat/completions" /tokens/public-tier-light kimi-frontier)"
 r="$(report "$out")"
 [[ ${out%% *} == 200 ]] || fail "P3 the call answered ${out:0:200}"
