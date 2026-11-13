@@ -1,0 +1,63 @@
+# Source: agent-factory/templates/expose.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rooms-web
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  parentRefs:
+    - name: gw
+      namespace: infra
+      sectionName: https
+  hostnames:
+    - rooms.example.test
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      filters:
+        # oauth2-proxy sets the identity headers, so a client may not bring its own. Gateway API's
+        # remove takes exact names, no wildcards; oauth2-proxy strips them again behind this route.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - X-Forwarded-Access-Token
+              - X-Forwarded-User
+              - X-Forwarded-Email
+              - X-Forwarded-Groups
+              - X-Forwarded-Preferred-Username
+              - X-Auth-Request-User
+              - X-Auth-Request-Email
+              - X-Auth-Request-Preferred-Username
+              - X-Auth-Request-Groups
+              - X-Auth-Request-Access-Token
+      backendRefs:
+        - name: rooms-web-proxy
+          port: 80
+---
+# Source: agent-factory/templates/expose.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: factory-slack-events
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  parentRefs:
+    - name: public
+      namespace: infra
+      sectionName: factory-slack
+  hostnames:
+    - factory-slack.example.test
+  rules:
+    # Exactly POST /slack/events: every other path and method on this host is the gateway's 404.
+    - matches:
+        - path: {type: Exact, value: /slack/events}
+          method: POST
+      backendRefs:
+        - name: factory-slack-app
+          port: 8080

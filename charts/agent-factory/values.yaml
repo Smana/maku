@@ -103,6 +103,92 @@ monitoring:
     annotations: {}
 
 # The Slack App (D20). Its subchart arrives in a later v4 step 6 PR; until then, true only adds the
-# maku-slack alert group, for a Slack App installed outside this chart.
+# maku-slack alert group and the expose.slack route, for a Slack App installed outside this chart
+# (its Service factory-slack-app, port 8080).
 slack:
   enabled: false
+
+# Exposure (D19; docs/exposure.md), through the Gateway or Ingress the cluster already runs. none, the
+# default, renders nothing. Two surfaces, each with its own hosts and its own parentRefs or ingress class,
+# so the Slack events path can be public while the web stays on a private gateway:
+#   web    the broker's human listener (the rooms UI, /api, /v1/ws, /mcp, /.well-known/roomctl,
+#          /link/*), always through the web front door (webProxy, Service rooms-web-proxy);
+#   slack  POST /slack/events only, to the Slack App's Service factory-slack-app (with slack.enabled).
+# The factory polls GitHub and needs no public path. TLS is the gateway's or the Ingress's: the chart
+# issues no certificate. In-cluster hops are plain HTTP inside the default-deny policies.
+expose:
+  mode: none                # none | httproute | ingress
+  httproute:
+    # Every surface's parentRefs, unless the surface sets its own: [{name, namespace, sectionName}].
+    parentRefs: []
+    # Rendered on the web route only when set, e.g. {request: 0s} where the gateway's default
+    # request timeout would cut /v1/ws (Envoy-based gateways).
+    timeouts: {}
+  ingress:
+    className: ""
+    # Every surface's, e.g. cert-manager.io/cluster-issuer (the chart itself issues nothing).
+    annotations: {}
+  web:
+    enabled: true           # with mode other than none
+    hostnames: []
+    parentRefs: []          # httproute: replaces expose.httproute.parentRefs for this surface
+    className: ""           # ingress: replaces expose.ingress.className
+    annotations: {}         # ingress: merged over expose.ingress.annotations
+    tls: []                 # ingress only: [{secretName, hosts}], the user's Secret
+  slack:
+    enabled: true           # with mode other than none and slack.enabled
+    hostnames: []
+    parentRefs: []
+    className: ""
+    annotations: {}
+    tls: []
+  # Who may reach the exposed pods (the web proxy, the Slack App), in maku.networkPolicies' mode.
+  networkPolicy:
+    # mode kubernetes: NetworkPolicy peers of your gateway's or ingress controller's pods. Required.
+    from: []
+    cilium:
+      # mode cilium: the Cilium identity of the gateway or ingress (Cilium's own Gateway and Ingress
+      # are the ingress entity).
+      fromEntities: [ingress]
+
+# The web front door (D19, EX4; docs/exposure.md): oauth2-proxy (Deployment, Service and PDB
+# rooms-web-proxy, and its policies) in front of the broker's :8080, its arguments derived from
+# maku.broker.human: the issuer, the preset's scopes, the roles claim and groups, publicURL's
+# callback, and the CLI client (maku.broker.oidc.existingSecret's cli key) as an extra JWT issuer, so
+# `maku` bearers pass. It overwrites X-Forwarded-Access-Token on every request and strips it on its
+# skip-auth routes (GET /.well-known/roomctl, and GET /link/github/callback with the GitHub account
+# link). Required by expose.web in oidc mode; set maku.broker.webProxy to the same value, which opens
+# the broker's :8080 to this proxy alone.
+webProxy:
+  enabled: false
+  # oauth2-proxy v7.15.5, the version cloud-native-ref's chart (10.7.1) runs, by digest.
+  image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
+  replicas: 2
+  # The Secret holding the web client and the cookie secret (D14), keys below. Required. The cookie
+  # secret is 32 random bytes, base64url: openssl rand -base64 32 | tr -- '+/' '-_'.
+  existingSecret: ""
+  keys: {clientID: client-id, clientSecret: client-secret, cookieSecret: cookie-secret}
+  # Under the ID token's lifetime: the only path on which oauth2-proxy checks a session's expiry.
+  cookieRefresh: 1h
+  # strict (the default) keeps the session off every cross-site request. It needs the IdP on the same
+  # site as the web host, or the sign-in's return from the IdP arrives without its CSRF cookie: lax
+  # for an IdP on another site (the broker still checks each request's Origin).
+  cookieSameSite: strict
+  metrics: {port: 44180}
+  # Appended as --key=value. A key the chart derives may not be set here: the render fails naming it.
+  extraArgs: {}
+  # e.g. a private IdP CA: SSL_CERT_FILE plus a volume. Secrets only through valueFrom.secretKeyRef.
+  extraEnv: []
+  extraVolumes: []
+  extraVolumeMounts: []
+  networkPolicy:
+    # The IdP's egress, on the issuer's port. Empty: in mode cilium, toFQDNs on the issuer's host; in
+    # mode kubernetes, every public address (maku.networkPolicies.kubernetes.privateCIDRs excepted).
+    # Set: in mode cilium, whole Cilium peers ({toFQDNs: ...}, {toEndpoints: ...}, {toCIDRSet: ...});
+    # in mode kubernetes, NetworkPolicy peers (an in-cluster IdP: namespaceSelector, podSelector).
+    idp:
+      to: []
+      port: 0               # 0: the issuer URL's (443 for https); a pod port when it differs
+  resources:
+    requests: {cpu: 50m, memory: 64Mi}
+    limits: {cpu: 200m, memory: 128Mi}

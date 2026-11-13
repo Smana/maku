@@ -1,0 +1,54 @@
+# Source: agent-factory/templates/expose.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: rooms-web
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    a: web
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - rooms.example.test
+      secretName: rooms-tls
+  rules:
+    - host: rooms.example.test
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: rooms-web-proxy
+                port: {number: 80}
+---
+# Source: agent-factory/templates/expose.yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: factory-slack-events
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    a: common
+    cert-manager.io/cluster-issuer: letsencrypt
+spec:
+  ingressClassName: public
+  rules:
+    - host: factory-slack.example.test
+      http:
+        paths:
+          # Ingress has no method match: the Slack App answers anything but POST with 405.
+          - path: /slack/events
+            pathType: Exact
+            backend:
+              service:
+                name: factory-slack-app
+                port: {number: 8080}
