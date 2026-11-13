@@ -120,7 +120,12 @@ type Server struct {
 	Editor PolicyEditor
 	// Readers reads a repository's issues, pull requests and checks with the factory App for the
 	// broker's forge_read (HR35); nil, or nil for a repository, answers forge_unavailable.
-	Readers func(repository string) ForgeThreads
+	// Readiness is each repository's hardening readiness (H5, HR41), served to operators and on the
+	// Evidence page; nil serves neither.
+	Readiness hardening.Readiness
+	// readinessCache serves the page's and the route's readiness for readinessTTL.
+	readinessCache *readinessCache
+	Readers        func(repository string) ForgeThreads
 	// Trust is each repository's fence-file hardening block, its trust floor; nil reads the floor
 	// and the central minAuthorTrust.
 	Trust *hardening.RepositoryPolicies
@@ -173,11 +178,17 @@ func (s *Server) Handler() http.Handler {
 	if s.forgeReads == nil {
 		s.forgeReads = &forgeReadCache{}
 	}
+	if s.readinessCache == nil {
+		s.readinessCache = &readinessCache{}
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
 	// HR35: the broker's forge_read; it admits system:broker alone and refuses a repository that is
 	// not in hardening mode enforce, so it reads nothing while H4 is off.
 	mux.HandleFunc(ForgeReadRoute, s.forgeRead)
+	if s.Readiness != nil {
+		mux.HandleFunc(ReadinessRoute, s.hardeningReadiness)
+	}
 	if cfg.DrillsOn() { // HR38: served while the drill runner is on
 		mux.HandleFunc(DrillsRoute, s.postDrill)
 	}

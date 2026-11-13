@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"slices"
 	"strings"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
@@ -160,7 +159,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 			continue
 		}
 		for j := range i {
-			if entries[j].ok && ambiguous(entries[j].cl, entries[i].cl) {
+			if entries[j].ok && config.Ambiguous(entries[j].cl, entries[i].cl) {
 				entries[i].ok = false
 				entries[i].out = config.BindingRefusal{Reason: config.ReasonAmbiguousAdoption, Message: fmt.Sprintf(
 					"class %s adopts the pull requests class %s adopts: the same diffShape %s, an overlapping login and branch prefix; bind one of them (B6)",
@@ -191,7 +190,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 			// D5: the last resolved class, unless it is the ambiguity refused, or would make one. It is
 			// checked again under today's catalogue and merge (B9, B14): one that no longer holds
 			// would refuse the whole Repository at Parse, so it is dropped.
-			if last, ok := opts.LastResolved[k]; ok && e.out.Reason != config.ReasonAmbiguousAdoption && !ambiguousWithAny(last.Class, classes) {
+			if last, ok := opts.LastResolved[k]; ok && e.out.Reason != config.ReasonAmbiguousAdoption && !config.AmbiguousWithAny(last.Class, classes) {
 				if cl, refusal := config.Recheck(b.Name, last.Class, ctx, merge); refusal != nil {
 					o.Message += "; its last resolved class no longer holds: " + refusal.Message
 				} else {
@@ -203,34 +202,6 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 		res.bindings = append(res.bindings, o)
 	}
 	return classes
-}
-
-func ambiguousWithAny(cl config.Class, classes map[string]config.Class) bool {
-	for _, other := range classes {
-		if ambiguous(cl, other) {
-			return true
-		}
-	}
-	return false
-}
-
-// ambiguous reports whether two adopted classes could both adopt one pull request (B6, plan PR9):
-// the same diffShape, a login in common (GitHub logins compare case-insensitively), and a branch
-// prefix of one that is a prefix of one of the other's.
-func ambiguous(a, b config.Class) bool {
-	if !a.Adopted() || !b.Adopted() || a.DiffShape != b.DiffShape {
-		return false
-	}
-	login := slices.ContainsFunc(a.Author.Adopt.Logins, func(x string) bool {
-		return slices.ContainsFunc(b.Author.Adopt.Logins, func(y string) bool { return strings.EqualFold(x, y) })
-	})
-	branch := slices.ContainsFunc(a.Author.Adopt.Branches, func(x string) bool {
-		return slices.ContainsFunc(b.Author.Adopt.Branches, func(y string) bool {
-			x, y := strings.TrimPrefix(x, "^"), strings.TrimPrefix(y, "^")
-			return strings.HasPrefix(x, y) || strings.HasPrefix(y, x)
-		})
-	})
-	return login && branch
 }
 
 func mustJSON(v any) []byte {

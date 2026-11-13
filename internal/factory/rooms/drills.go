@@ -68,8 +68,8 @@ func (c *Client) PutDrillReport(ctx context.Context, r hardening.DrillReport) er
 	return err
 }
 
-// LastPass is the newest passing drill of key's version and configuration hash (R6):
-// hardening.Drills. No passing drill is (DrillRecord{}, false, nil).
+// LastPass is the newest drill of key's version and configuration hash when it passed (R6):
+// hardening.Drills. None, or a newest report that failed, is (DrillRecord{}, false, nil).
 func (c *Client) LastPass(ctx context.Context, key hardening.DrillKey) (hardening.DrillRecord, bool, error) {
 	if err := validDrillKey(key); err != nil {
 		return hardening.DrillRecord{}, false, err

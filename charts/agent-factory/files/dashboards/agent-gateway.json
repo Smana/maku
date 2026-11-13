@@ -1,0 +1,263 @@
+{
+  "title": "Agent gateway (agentgateway)",
+  "uid": "agent-gateway",
+  "tags": [
+    "agents"
+  ],
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Agents",
+      "type": "dashboards",
+      "tags": [
+        "agents"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "dashboard",
+      "tooltip": "Every dashboard of the Agents folder: overview, fleet, factory, gateway, identity, room, run"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Requests by status",
+      "description": "Requests per second through the model gateway, by HTTP status.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{status}}",
+          "expr": "sum by (status) (rate(agentgateway_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "5xx ratio by route",
+      "description": "5xx responses over all responses, per route. A route that served requests and no 5xx reads 0; a route with no traffic in the window has no line.",
+      "gridPos": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{route}}",
+          "expr": "(sum by (route) (rate(agentgateway_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", status=~\"5..\"}[$__rate_interval])) or sum by (route) (rate(agentgateway_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval])) * 0) / sum by (route) (rate(agentgateway_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Refusals and failures by reason",
+      "description": "Non-2xx answers per second by status and reason: UpstreamFailure or Timeout is the provider or an MCP server, Internal is the proxy.",
+      "gridPos": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{status}} {{reason}}",
+          "expr": "sum by (status, reason) (rate(agentgateway_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", status!~\"2..\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Model call error ratio (error_type)",
+      "description": "Model calls that ended in an error, over all model calls. 1.6 labels every failure _OTHER: the causes are in the panel on the left and the access log.",
+      "gridPos": {
+        "x": 0,
+        "y": 8,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{gen_ai_request_model}}",
+          "expr": "sum by (gen_ai_request_model) (rate(agentgateway_gen_ai_server_request_duration_count{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", error_type=~\".+\"}[$__rate_interval])) / sum by (gen_ai_request_model) (rate(agentgateway_gen_ai_server_request_duration_count{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Model latency p50 / p95",
+      "description": "Time to answer a model call, median and 95th percentile, over all agents.",
+      "gridPos": {
+        "x": 8,
+        "y": 8,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "p50",
+          "expr": "histogram_quantile(0.5, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval])))"
+        },
+        {
+          "refId": "B",
+          "legendFormat": "p95",
+          "expr": "histogram_quantile(0.95, sum by (le) (rate(agentgateway_gen_ai_server_request_duration_bucket{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval])))"
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Tokens by type (as the run meter reads them)",
+      "description": "Tokens per second by type as the factory's meter counts them: input, output, input_cache_read, input_cache_write.",
+      "gridPos": {
+        "x": 16,
+        "y": 8,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{gen_ai_token_type}}",
+          "expr": "sum by (gen_ai_token_type) (rate(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Tokens per agent (top 10)",
+      "description": "Token rate of the ten busiest agents (run service accounts). Capacity view: it ranks runs, not people.",
+      "gridPos": {
+        "x": 0,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{ar_agent}}",
+          "expr": "topk(10, sum by (ar_agent) (rate(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", gen_ai_token_type=~\"input|output\"}[$__rate_interval])))"
+        }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "MCP calls by method and server",
+      "description": "MCP requests per second by method and target server.",
+      "gridPos": {
+        "x": 12,
+        "y": 16,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{server}} {{method}}",
+          "expr": "sum by (server, method) (rate(agentgateway_mcp_requests_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\"}[$__rate_interval]))"
+        }
+      ]
+    }
+  ]
+}

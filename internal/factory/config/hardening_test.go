@@ -236,7 +236,8 @@ func TestAgentGuardConfig(t *testing.T) {
 }
 
 // T5 runs only where a classifier is configured, and the hash a drill binds says which: the URL's
-// presence moves it, its host does not.
+// presence moves it, and so does the URL itself (#531's review: pointing at another classifier
+// needs a new drill; this edit reverses the earlier "its host does not").
 func TestHashCoversClassifierPresence(t *testing.T) {
 	parse := func(block string) Hardening {
 		t.Helper()
@@ -255,8 +256,11 @@ func TestHashCoversClassifierPresence(t *testing.T) {
 	if none.Hash() == one.Hash() {
 		t.Fatal("the classifier's presence does not move the hash")
 	}
-	if one.Hash() != other.Hash() {
-		t.Fatal("the classifier's host moves the hash")
+	if one.Hash() == other.Hash() {
+		t.Fatal("another classifier keeps the hash: a drill would prove a classifier that no longer runs")
+	}
+	if again := parse("hardening: {mode: audit, agentGuard: {url: \"http://agent-guard.agent-system.svc:8080\"}}\n"); again.Hash() != one.Hash() {
+		t.Fatal("the same classifier moved the hash")
 	}
 	c, _ := Parse([]byte(good + "hardening: {mode: audit}\n"))
 	if s := c.HardeningSettings("Smana/cloud-native-ref", ""); s.Layers != hardening.LayersFor(hardening.ModeAudit, hardening.ModeOff) {
@@ -661,5 +665,61 @@ func TestDrillTask(t *testing.T) {
 	}
 	if _, err := Parse([]byte(good + "hardening: {drills: {repository: " + repo + "}}\n")); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// HR40: layers.classifierEnforce promotes T5 per output type. It needs agentGuard.url and a
+// repository at mode enforce, applies only to repositories at enforce, and enters the hash, so a
+// promotion needs a new passing drill. layers.classifier: enforce stays refused.
+func TestClassifierEnforcePerType(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := c.Repos()[0].Name
+	h := c.Hardening
+	h.AgentGuard.URL = "http://agent-guard:8080"
+	h.Repositories = map[string]HardeningRepository{repo: {Mode: hardening.ModeEnforce}}
+	base := h.Hash()
+	h.Layers.ClassifierEnforce = []hardening.OutputType{hardening.PR, hardening.Comment}
+	if h.Hash() == base {
+		t.Fatal("the promoted list is not in the hash")
+	}
+	if got := h.ClassifierEnforceFor(repo); !slices.Equal(got, []hardening.OutputType{hardening.Comment, hardening.PR}) {
+		t.Fatalf("%v", got)
+	}
+	h.Repositories = map[string]HardeningRepository{repo: {Mode: hardening.ModeAudit}}
+	if got := h.ClassifierEnforceFor(repo); len(got) != 0 {
+		t.Fatalf("a repository at audit: %v", got)
+	}
+	for name, tc := range map[string]struct {
+		block string
+		want  string
+	}{
+		"no agent-guard":         {"hardening: {layers: {classifierEnforce: [pr]}, repositories: {" + repo + ": {mode: audit}}}\n", "agentGuard.url"},
+		"no repository enforces": {"hardening: {agentGuard: {url: \"http://g:8080\"}, layers: {classifierEnforce: [pr]}}\n", "mode enforce"},
+		"an unknown type":        {"hardening: {agentGuard: {url: \"http://g:8080\"}, layers: {classifierEnforce: [wiki]}}\n", "classifierEnforce"},
+		"the whole layer":        {"hardening: {layers: {classifier: enforce}}\n", "classifierEnforce"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(good + tc.block)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// #531's review: classifierEnforce is refused while layers.classifier is off: a promotion there
+// would promote nothing.
+func TestClassifierEnforceNeedsTheLayer(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := c.Repos()[0].Name
+	block := "hardening: {agentGuard: {url: \"http://g:8080\"}, layers: {classifier: off, classifierEnforce: [pr]}, repositories: {" +
+		repo + ": {mode: enforce, enforceOutputs: [comment, issue, labels, pr, push]}}}\n"
+	if _, err := Parse([]byte(good + block)); err == nil || !strings.Contains(err.Error(), "layers.classifier is off") {
+		t.Fatalf("%v", err)
 	}
 }

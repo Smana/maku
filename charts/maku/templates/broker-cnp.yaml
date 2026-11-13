@@ -87,6 +87,30 @@ spec:
       toPorts:
         - ports: [{port: {{ .port | quote }}, protocol: TCP}]
     {{- end }}
+    {{- with include "ap.knowledge" . | fromJson }}
+    {{- $kport := .port }}
+    {{- $selectors := list }}
+    {{- $peers := list }}
+    {{- range .to }}
+    {{- if or (hasKey . "toFQDNs") (hasKey . "toCIDR") (hasKey . "toCIDRSet") (hasKey . "toEntities") (hasKey . "toEndpoints") }}
+    {{- $peers = append $peers . }}
+    {{- else }}
+    {{- $selectors = append $selectors . }}
+    {{- end }}
+    {{- end }}
+    {{- with $selectors }}
+    # The knowledge MCP endpoint (broker.roomTools.knowledge): its port, to the named endpoints only.
+    - toEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ $kport | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- range $peers }}
+    # The knowledge MCP endpoint (broker.roomTools.knowledge): its port, to this peer only.
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $kport | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

@@ -135,6 +135,18 @@ type Checker struct {
 	Secrets        SecretScanner
 	Classifier     Classifier
 	LabelAllowlist []string
+	// ClassifierEnforce are the output types T5 is promoted to enforce for (HR40): a hit refuses
+	// injection_suspected and an unreachable classifier classifier_unavailable. Every other type
+	// runs T5 at Layers.Classifier. With T5 off, nothing is promoted.
+	ClassifierEnforce []OutputType
+}
+
+// classifierMode is T5's mode for an output of type t.
+func (c Checker) classifierMode(t OutputType) Mode {
+	if c.Layers.Classifier != ModeOff && slices.Contains(c.ClassifierEnforce, t) {
+		return ModeEnforce
+	}
+	return c.Layers.Classifier
 }
 
 // Check runs the layers in order on req, counting it against n once T1's schema passes. The first
@@ -166,10 +178,10 @@ func (c Checker) Check(ctx context.Context, n *Counts, req Request) Verdict {
 	if req.Type == Push && refuse(LayerPaths, c.Layers.Paths, c.paths(req)) {
 		return v
 	}
-	if c.Layers.Classifier != ModeOff {
+	if mode := c.classifierMode(req.Type); mode != ModeOff {
 		r := c.classify(ctx, texts)
 		v.T5 = t5Result(r)
-		refuse(LayerClassifier, c.Layers.Classifier, r)
+		refuse(LayerClassifier, mode, r)
 	}
 	return v
 }

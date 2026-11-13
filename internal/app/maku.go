@@ -84,9 +84,10 @@ const makuUsage = `usage: maku <command>
                                   manifests on stdout, offline; --residual keeps the rest of the file
   config validate --config FILE MANIFEST...
                                   check manifests against a config file the way the factory would, offline
-  policy export|check|simulate|diff
+  policy export|check|simulate|diff --config FILE [--manifests FILE]... --repository owner/name
                                   write, check, simulate or diff a repository's merge policy file, offline;
-                                  simulate and diff need policyManagement.simulation
+                                  export writes a bound repository's bindings (mergePolicies), from the
+                                  manifests; simulate and diff need policyManagement.simulation
   drill plant --repo owner/name --factory URL --stranger-token-file F --maintainer-token-file F
               --factory-token-file F [--id ID] [--runlore-hook X --tool-result-hook X --room-hook X]
                                   plant an injection drill in the drill repository and hand its manifest to the

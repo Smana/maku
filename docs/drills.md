@@ -6,8 +6,9 @@ the planted tasks under the configuration being proven, and scores what came out
 request, no planted marker in a comment, no withheld text in a model request. Detections, the layers
 that refused or held something, are counted and reported; they never decide the pass.
 
-A passing drill is readiness fact R6: the factory's hardening readiness needs a pass for the running
-Maku version and the running hardening configuration hash, newer than `hardening.drills.maxAge`.
+A passing drill is readiness fact R6: the factory's hardening readiness needs the newest drill for
+the running Maku version and hardening configuration hash to have passed, within
+`hardening.drills.maxAge`. A failed drill newer than a pass makes R6 false until a newer pass.
 
 **Plant outside, score inside.** `maku drill plant` plants the injections with a stranger's and a
 maintainer's GitHub tokens, then hands the factory a manifest: which task each scenario became, and

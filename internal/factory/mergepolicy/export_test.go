@@ -34,7 +34,7 @@ func TestRealClassesRoundTrip(t *testing.T) {
 		t.Run(file, func(t *testing.T) {
 			rc, c := repoFrom(t, file), central()
 			c.Factory = "aws-0"
-			f, err := Export(rc, c)
+			f, err := ExportClasses(rc, c)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -62,7 +62,7 @@ func TestRealClassesRoundTrip(t *testing.T) {
 func TestExportNeedsAProfile(t *testing.T) {
 	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{"docs-links": {Checks: true}}}
 	c := &config.Config{Factory: "aws-0", HarnessProfiles: map[string]config.HarnessProfile{"plain": {}}}
-	if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), "no harness profile") {
+	if _, err := ExportClasses(rc, c); err == nil || !strings.Contains(err.Error(), "no harness profile") {
 		t.Fatalf("got %v", err)
 	}
 }
@@ -185,7 +185,7 @@ func TestExportCarriesTheVariants(t *testing.T) {
 		"varied": {Harness: "z-floor", HarnessAllowed: []string{"richer"}, Escalation: esc},
 		"plain":  {Shadow: true},
 	}}
-	f, err := Export(rc, c)
+	f, err := ExportClasses(rc, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,12 +225,12 @@ func TestExportRefusesAFloorThatDropsChecks(t *testing.T) {
 		"testFirst": {config.Class{Harness: "checked", Checks: true, TestFirst: true, HarnessAllowed: []string{"tested"}}, `harness "checked" drops testFirst the class sets; name a harness with testFirst`},
 	} {
 		rc.Classes["review-ish"] = tc.class
-		if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), "class review-ish: "+tc.want) {
+		if _, err := ExportClasses(rc, c); err == nil || !strings.Contains(err.Error(), "class review-ish: "+tc.want) {
 			t.Fatalf("%s: got %v", name, err)
 		}
 	}
 	rc.Classes["review-ish"] = config.Class{Harness: "checked", Checks: true, HarnessAllowed: []string{"checked"}}
-	f, err := Export(rc, c)
+	f, err := ExportClasses(rc, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -253,7 +253,7 @@ func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
 		Escalation: &config.Escalation{OutOfBudget: "review-search"}}
 	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
 		"docs-links": {Live: true}, "revert": {Live: true}, "review": review}}
-	f, err := Export(rc, c)
+	f, err := ExportClasses(rc, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +290,7 @@ func TestReviewEvaluationSurvivesTheCutover(t *testing.T) {
 	}
 	// Review without the evaluation stays implicit, as before.
 	rc.Classes["review"] = config.Class{Checks: true}
-	f, err = Export(rc, c)
+	f, err = ExportClasses(rc, c)
 	if _, ok := f.Classes["review"]; err != nil || ok {
 		t.Fatalf("%v %+v", err, f.Classes["review"])
 	}
@@ -303,7 +303,7 @@ func TestClassDescriptionTravels(t *testing.T) {
 	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{
 		"plain": {Shadow: true, Description: "Keep links working"},
 	}}
-	f, err := Export(rc, c)
+	f, err := ExportClasses(rc, c)
 	if err != nil {
 		t.Fatal(err)
 	}
