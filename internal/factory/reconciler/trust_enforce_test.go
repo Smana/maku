@@ -5,6 +5,7 @@ package reconciler
 import (
 	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
@@ -19,7 +20,12 @@ import (
 // enforcingReads puts repo at mode enforce with all five types (HR34).
 func (g *rig) enforcingReads(repo string) {
 	g.enforcing()
-	h := &g.r.Cfg.Current().Hardening
+	g.enforcingReadsOn(g.r.Cfg.Current(), repo)
+}
+
+// enforcingReadsOn puts repo at mode enforce in c, with all five types.
+func (g *rig) enforcingReadsOn(c *config.Config, repo string) {
+	h := &c.Hardening
 	h.Repositories = map[string]config.HardeningRepository{repo: {Mode: hardening.ModeEnforce,
 		EnforceOutputs: []hardening.OutputType{hardening.Comment, hardening.Issue, hardening.Labels, hardening.PR, hardening.Push}}}
 }
@@ -81,5 +87,31 @@ func TestInputTrustEnforce(t *testing.T) {
 	if rec == nil || rec.Mode != "enforce" || rec.Min != "approved" || rec.Withheld["comment"] != 3 ||
 		!slices.Contains(rec.Sources, v1alpha1.TrustSource{Kind: "comment", Level: "approved"}) {
 		t.Fatalf("%+v", rec)
+	}
+}
+
+// HR37: on a repository in mode enforce the CI repair names forge_read, since gh's reads are closed
+// to the run; elsewhere it is as before.
+func TestCIFailedTextForgeRead(t *testing.T) {
+	for _, enforce := range []bool{false, true} {
+		g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+		if enforce {
+			c := g.r.Cfg.Current()
+			c.Hardening = config.Hardening{Mode: hardening.ModeAudit}
+			c.Hardening.ApplyDefaults()
+			g.r.Hardening = &HardeningPorts{Policies: &hardening.RepositoryPolicies{}, Checker: hardening.Checker{Secrets: noSecrets{}}}
+			g.enforcingReadsOn(c, g.get(t).Spec.Repository)
+		}
+		red := green("SUCCESS")
+		red.Runs[1].State = "FAILURE"
+		g.f.SetChecks(12, red)
+		g.reconcile(t, "3buqdlot", 2)
+		if len(g.log.queue) == 0 {
+			t.Fatal("no repair queued")
+		}
+		text := g.log.queue[len(g.log.queue)-1].Text
+		if got := strings.Contains(text, "Read the failing jobs with forge_read (target checks)"); got != enforce || strings.Contains(text, "gh pr checks") == enforce {
+			t.Fatalf("enforce %v: %q", enforce, text)
+		}
 	}
 }

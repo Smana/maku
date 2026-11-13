@@ -8,6 +8,32 @@
 # gh-real with a token from git-credential-agent go round it. The role policy's
 # pull_requests: read is the boundary, and the factory's tracer reports any direct write. Without
 # SAFE_OUTPUTS nothing here applies.
+#
+# Under hardening H4 (FORGE_READ=1, a run of a repository in mode enforce, HR37) the run reads its
+# issue, pull request and checks through forge_read, filtered by the factory: gh's forge reads and
+# `gh api` exit 3 and name the tool. Advisory too: the sandbox has no api.github.com egress, which
+# is what holds.
+if [ "$FORGE_READ" = 1 ]; then
+  case "$2" in
+    -R | --repo) sub="$4" ;;
+    -R?* | --repo=*) sub="$3" ;;
+    *) sub="$2" ;;
+  esac
+  case "$1 $sub" in
+    "issue view" | "issue list" | "pr view" | "pr checks" | "pr list" | "run view" | "run list" | api\ *)
+      echo "gh $1 $sub: use forge_read (target issue, pr or checks)" >&2
+      exit 3
+      ;;
+    "pr diff")
+      echo "gh pr diff: use git diff origin/<base>...HEAD" >&2
+      exit 3
+      ;;
+  esac
+  if [ "$1" = api ]; then
+    echo "gh api: use forge_read (target issue, pr or checks)" >&2
+    exit 3
+  fi
+fi
 if [ -n "$SAFE_OUTPUTS" ]; then
   refuse() {
     case ",$SAFE_OUTPUTS," in

@@ -47,3 +47,19 @@ func TestFQDNsForgeAPIDeny(t *testing.T) {
 		t.Fatal("FORGE_READ without the annotation")
 	}
 }
+
+// HR37: under forge-api: deny the reviewer's rules name forge_read and git diff for the pull
+// request's diff; without it the rules are as before.
+func TestRulesReviewerDiff(t *testing.T) {
+	reviewer := func(r *v1alpha1.AgentRun) { r.Spec.Role = "reviewer" }
+	denied := run("run-abcdefgh", reviewer, func(r *v1alpha1.AgentRun) {
+		r.Annotations = map[string]string{runwatch.ForgeAPIAnnotation: runwatch.ForgeAPIDeny}
+	})
+	got := Rules(denied, "abcdefgh")
+	if !strings.Contains(got, "git diff origin/"+denied.Spec.BaseRef+"...HEAD") || !strings.Contains(got, "forge_read tool (target issue, pr or checks)") {
+		t.Fatalf("reviewer rules:\n%s", got)
+	}
+	if plain := Rules(run("run-abcdefgh", reviewer), "abcdefgh"); strings.Contains(plain, "forge_read") {
+		t.Fatalf("rules without the annotation:\n%s", plain)
+	}
+}

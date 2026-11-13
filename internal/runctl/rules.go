@@ -60,6 +60,10 @@ func Rules(r *v1alpha1.AgentRun, runID string) string {
 				"which checks the push and applies it.\n", n)
 		}
 	}
+	if forgeAPIDenied(r) { // hardening H4 (HR37): no api.github.com egress, forge text through forge_read
+		out += fmt.Sprintf("Forge reads: read your task's issue, pull request and checks with the forge_read tool (target issue, pr or checks); "+
+			"gh's reads and api.github.com are closed to this run. Read the pull request's diff with git diff origin/%s...HEAD.\n", s.BaseRef)
+	}
 	if s.RoomRef == "" {
 		return out
 	}
