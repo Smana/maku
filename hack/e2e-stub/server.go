@@ -32,6 +32,8 @@ type Stub struct {
 	received   []ModelRequest
 	// traces are the trace ids the OTLP sink received, each once (plan v4 step 6, Task 2).
 	traces []string
+	// codes are the authorization codes issued and not yet redeemed (plan v4 step 6, Task 9).
+	codes codeStore
 }
 
 // New builds a stub with one throwaway signing key. It never contacts an external service.
@@ -60,6 +62,7 @@ func New() *Stub {
 	mux.HandleFunc("GET /.well-known/openid-configuration", s.discovery)
 	mux.HandleFunc("GET /test/id-token", s.testIDToken)
 	mux.HandleFunc("POST /token", s.token)
+	mux.HandleFunc("GET /oauth/v2/authorize", s.authorize)
 	mux.HandleFunc("GET /v2/users/dev", s.activeUser)
 	mux.HandleFunc("POST /v2/users/dev/links/_search", s.gitHubLink)
 	mux.HandleFunc("GET /app", gitHubApp)

@@ -43,11 +43,13 @@ func (s *Stub) gitHubLink(w http.ResponseWriter, r *http.Request) {
 // discovery is the stub's OpenID Provider Configuration (v4 D8): a generic issuer's endpoints.
 func (s *Stub) discovery(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"issuer": stubIssuer, "jwks_uri": stubIssuer + "/oauth/v2/keys",
-		"token_endpoint": stubIssuer + "/token", "id_token_signing_alg_values_supported": []string{"RS256"}})
+		"token_endpoint":         stubIssuer + "/token",
+		"authorization_endpoint": stubIssuer + "/oauth/v2/authorize", "id_token_signing_alg_values_supported": []string{"RS256"}})
 }
 
 // testIDToken mints a generic ID token for the scenario: sub, aud (one client) and groups
-// (comma-separated, omitted when empty), as any OIDC issuer's ID token without azp. Test-only: the
+// (comma-separated, omitted when empty), as any OIDC issuer's ID token without azp. email adds a
+// verified email; groupsClaim (a dotted path, e.g. realm_access.roles) nests the groups there. Test-only: the
 // stub is a throwaway cluster's issuer, and this route is how the scenario signs a person in.
 func (s *Stub) testIDToken(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
@@ -58,8 +60,21 @@ func (s *Stub) testIDToken(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	body := map[string]any{"iss": stubIssuer, "sub": q.Get("sub"), "aud": q.Get("aud"),
 		"iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(10 * time.Minute).Unix()}
+	if e := q.Get("email"); e != "" {
+		body["email"], body["email_verified"] = e, true
+	}
 	if g := q.Get("groups"); g != "" {
-		body["groups"] = strings.Split(g, ",")
+		path := strings.Split(q.Get("groupsClaim"), ".")
+		if path[0] == "" {
+			path = []string{"groups"}
+		}
+		at := body
+		for _, p := range path[:len(path)-1] {
+			next := map[string]any{}
+			at[p] = next
+			at = next
+		}
+		at[path[len(path)-1]] = strings.Split(g, ",")
 	}
 	raw, err := signJWT(s.key, body)
 	if err != nil {

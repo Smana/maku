@@ -18,8 +18,14 @@ const stubIssuer = "https://e2e-stub.e2e.svc.cluster.local"
 func (s *Stub) token(w http.ResponseWriter, r *http.Request) {
 	// v4 D8: client credentials with an audience are a generic issuer's (Auth0's shape): a JWT
 	// naming the client in azp and holding the audience. Every other request keeps the ZITADEL
-	// shaped access token the existing scenarios read.
-	if err := r.ParseForm(); err == nil && r.PostForm.Get("grant_type") == "client_credentials" && r.PostForm.Get("audience") != "" {
+	// shaped access token the existing scenarios read. A code from the authorization endpoint
+	// redeems for an ID token (plan v4 step 6, Task 9).
+	_ = r.ParseForm()
+	if r.PostForm.Get("grant_type") == "authorization_code" {
+		s.redeemCode(w, r.PostForm.Get("code"))
+		return
+	}
+	if r.PostForm.Get("grant_type") == "client_credentials" && r.PostForm.Get("audience") != "" {
 		client, _, ok := r.BasicAuth()
 		if !ok {
 			client = r.PostForm.Get("client_id")
