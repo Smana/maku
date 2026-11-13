@@ -1,0 +1,44 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, for Grafana's dashboard
+sidecar (or a grafana-operator GrafanaDashboard's configMapRef). The JSON is a plain file
+(files/dashboards/<uid>.json) read with .Files.Get and replace, never tpl, so Grafana's {{label}}
+legends and ${var} references reach Grafana as written. The uids are cloud-native-ref's, so links
+by uid (broker.human.dashboards, the dashboards' own) keep resolving. */}}
+{{- $d := .Values.monitoring.dashboards -}}
+{{- if $d.enabled }}
+{{- $maku := .Values.maku -}}
+{{- $runsNS := dig "runs" "namespace" "agents" $maku -}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- /* The runs' subject, as the gateway sees it (monitoring-rules.yaml's): maku-gateway.runs first.
+Kubernetes names carry no regex metacharacter, so it reads the same under = and =~. */ -}}
+{{- $gwRuns := $gw.runs | default dict -}}
+{{- $subject := printf "system:serviceaccount:%s:%s" ($gwRuns.namespace | default $runsNS) ($gwRuns.namePrefix | default (dig "runs" "namePrefix" "run-" $maku)) -}}
+{{- /* labels replace the sidecar's label rather than merge with it: empty, grafana_dashboard: "1". */ -}}
+{{- $labels := $d.labels | default (dict "grafana_dashboard" "1") -}}
+{{- $rooms := dig "broker" "publicURL" "" $maku | default "http://localhost:8080" | trimSuffix "/" -}}
+{{- $uids := list "agents-overview" "agent-factory" "agent-room" "agent-run" "agent-identity" "agent-fleet" -}}
+{{- if $gw.enabled }}{{ $uids = append $uids "agent-gateway" }}{{ end -}}
+{{- range $uid := $uids }}
+{{- $text := $.Files.Get (printf "files/dashboards/%s.json" $uid)
+  | replace "__NAMESPACE__" $.Release.Namespace
+  | replace "__RUNS_NAMESPACE__" $runsNS
+  | replace "__RUN_SUBJECT__" $subject
+  | replace "__GATEWAY_NAME__" ($gw.name | default "model-gateway")
+  | replace "__ROOMS_URL__" $rooms }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-{{ $uid }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "afumbrella.labels" $ | nindent 4 }}
+    {{- toYaml $labels | nindent 4 }}
+  {{- with $d.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+data:
+  {{ $uid }}.json: |-
+{{ $text | trimSuffix "\n" | indent 4 }}
+{{- end }}
+{{- end }}

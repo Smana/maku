@@ -451,8 +451,8 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomStalled") |
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .expr == "absent(up{job=\"room-broker\", namespace=\"maku\"} == 1)"' 'RoomBrokerDown reads the release namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | (.annotations.runbook_url | test("^https://github.com/Smana/maku/blob/v[^/]+/docs/operations.md#room-alerts$"))' 'runbook_url defaults to the release docs'
 all="$(alerts)"
-for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending; do
-  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics)" >&2; fail=1; }
+for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending RoomKnowledgeFailing; do
+  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics, no knowledge endpoint)" >&2; fail=1; }
 done
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["AgentFactoryClassPausedLong"]')"
 want="$(sed 's/ AgentFactoryClassPausedLong / /' <<<" $all ")"
@@ -466,6 +466,9 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanI
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations.md#room-alerts"' 'docsURL replaces the docs base'
+# a knowledge endpoint brings RoomKnowledgeFailing (EX11)
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp)"
+ykind PrometheusRule '.spec.groups[] | select(.name == "maku-rooms") | .rules[] | select(.alert == "RoomKnowledgeFailing") | (.expr | test("maku_rooms_knowledge_calls_total"))' 'roomTools.knowledge.url: RoomKnowledgeFailing'
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
 ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
@@ -503,6 +506,45 @@ grep -qE 'AgentCostCrossCheckMismatch|agent_cost:gateway_run_usd' <<<"$(alerts)"
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runController.enabled=false --set maku-factory.enabled=false \
   --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
+
+# v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, rendered only when asked.
+# The files name the runs and the gateway only through placeholders.
+lit="$(grep -noE 'system:serviceaccount:[a-z0-9]|namespace=\\"(agents|agent-gateway|agent-system|maku)\\"' files/dashboards/*.json || true)"
+[[ -z $lit ]] || { echo "FAIL: a dashboard names a runs, gateway or release namespace literally (use __RUN_SUBJECT__, __RUNS_NAMESPACE__, __NAMESPACE__): $lit" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name' 'dashboards off renders a dashboard ConfigMap'
+dash=(--set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.annotations={"grafana_folder":"Agents"}')
+uids='agent-factory,agent-fleet,agent-identity,agent-room,agent-run,agents-overview'
+dashboards() { yq ea -r '[select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name | sub("^maku-dashboard-"; "")] | sort | join(",")' - <<<"$out"; }
+dashcheck() { # dashcheck WANT_UIDS: every dashboard ConfigMap holds <uid>.json, parses, keeps its uid, and is clean
+  [[ "$(dashboards)" == "$1" ]] || { echo "FAIL: dashboards '$(dashboards)', want '$1'" >&2; fail=1; }
+  ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.grafana_dashboard == "1" and .metadata.annotations.grafana_folder == "Agents" and .metadata.namespace == "maku")' 'each dashboard ConfigMap has the sidecar label and the annotations'
+  local u body
+  for u in ${1//,/ }; do
+    body="$(yq ea -r "select(.kind == \"ConfigMap\" and .metadata.name == \"maku-dashboard-$u\") | .data.\"$u.json\"" - <<<"$out")"
+    [[ "$(jq -r .uid <<<"$body" 2>/dev/null)" == "$u" ]] || { echo "FAIL: maku-dashboard-$u does not hold $u.json with uid $u" >&2; fail=1; continue; }
+    ! grep -qE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|cached_input|cache_creation_input|Envoy|__[A-Z_]+__|\$\{private_domain_name\}' <<<"$body" ||
+      { echo "FAIL: maku-dashboard-$u keeps a Flux escape, a cloud-native-ref name, a logs or traces panel or a placeholder: $(grep -oE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|cached_input|cache_creation_input|Envoy|__[A-Z_]+__' <<<"$body" | sort -u | tr '\n' ' ')" >&2; fail=1; }
+    (( $(wc -c <<<"$body") < 900 * 1024 )) || { echo "FAIL: maku-dashboard-$u is 900 KiB or more" >&2; fail=1; }
+  done
+}
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}")" || { echo "FAIL: monitoring.dashboards.enabled does not render" >&2; fail=1; out=''; }
+dashcheck "$uids"
+ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | .metadata.labels.grafana_dashboard == "1"' 'monitoring.dashboards.labels empty: the sidecar label grafana_dashboard: "1"'
+grep -qF 'job=\"agent-factory\"' <<<"$out" || { echo "FAIL: the overview reads the factory's job" >&2; fail=1; }
+grep -qF 'ar_agent=\"system:serviceaccount:agents:run-${run}\"' <<<"$out" || { echo "FAIL: the run dashboard reads the run's subject (runs.namespace, runs.namePrefix)" >&2; fail=1; }
+# the runs' subject is the gateway's: maku-gateway.runs first, as the rules read it
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku-gateway.runs.namespace=xr-runs --set maku-gateway.runs.namePrefix=agt-)"
+dsub="$(yq ea -r '[select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .data[]] | join("")' - <<<"$out")"
+grep -qF 'system:serviceaccount:xr-runs:agt-' <<<"$dsub" && ! grep -qF 'system:serviceaccount:agents:run-' <<<"$dsub" ||
+  { echo "FAIL: the dashboards' run subject does not follow maku-gateway.runs" >&2; fail=1; }
+out="$(helm template af . -n maku "${gwd[@]}" "${dash[@]}")" || { echo "FAIL: dashboards with maku-gateway do not render" >&2; fail=1; out=''; }
+dashcheck "agent-factory,agent-fleet,agent-gateway,agent-identity,agent-room,agent-run,agents-overview"
+grep -qF 'job=\"model-gateway\", namespace=\"maku\"' <<<"$out" || { echo "FAIL: the gateway panels read maku-gateway's job and namespace" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.labels={"team":"agents"}')"
+ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and (.metadata.labels | has("grafana_dashboard") | not))' 'monitoring.dashboards.labels replace the sidecar label (grafana_dashboard: "1"), never merge with it'
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }
+grep -qF 'http://localhost:18080/r/${room}' <<<"$out" || { echo "FAIL: the room links follow maku.broker.publicURL" >&2; fail=1; }
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

@@ -144,7 +144,7 @@ func bridgeEnvOf(p *corev1.Pod) map[string]string {
 // HR14: a run whose claim names safe outputs reaches the output tools through the bridge as
 // room-only appends, and the harness's gh wrapper reads SAFE_OUTPUTS; any other run is today's.
 func TestRunctlReadOnlyTools(t *testing.T) {
-	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict"
+	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict,room-broker__kb_search,room-broker__kb_get" // EX11: harmless without the tools
 	enforced := run("run-abcdefgh", func(r *v1alpha1.AgentRun) {
 		r.Annotations = map[string]string{"agents.ogenki.io/safe-outputs": "comment,pr"}
 	})
@@ -173,7 +173,7 @@ func TestRunctlReadOnlyTools(t *testing.T) {
 
 func TestRoomToolsPassTheBridgesPolicy(t *testing.T) {
 	env := bridgeEnvOf(Pod(run("run-abcdefgh"), withRoomTools(t), testModel, "abcdefgh"))
-	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict"
+	const tools = "room-broker__room_read,room-broker__room_post,room-broker__room_progress,room-broker__room_handoff,room-broker__room_verdict,room-broker__kb_search,room-broker__kb_get" // EX11: harmless without the tools
 	if env["MCP_BARE_SERVER"] != "room-broker" || env["MCP_READ_ONLY_TOOLS"] != tools {
 		t.Fatalf("bridge env %v", env)
 	}

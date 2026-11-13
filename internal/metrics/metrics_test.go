@@ -739,6 +739,38 @@ func TestCoordinationInstruments(t *testing.T) {
 	}
 }
 
+// EX11: a knowledge call is counted by tool and outcome, both closed sets.
+func TestKnowledgeCallsCounter(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.KnowledgeCall(ctx, "kb_search", "ok")
+	s.KnowledgeCall(ctx, "kb_get", "timeout")
+	s.KnowledgeCall(ctx, "kb_get", "invalid_arguments")
+	s.KnowledgeCall(ctx, "kb_delete", "no entry at incidents/secret.md")
+	body := scrape(t, exp.Handler())
+	for _, want := range []string{
+		`maku_rooms_knowledge_calls_total{outcome="ok",tool="kb_search"} 1`,
+		`maku_rooms_knowledge_calls_total{outcome="timeout",tool="kb_get"} 1`,
+		`maku_rooms_knowledge_calls_total{outcome="invalid_arguments",tool="kb_get"} 1`,
+		`maku_rooms_knowledge_calls_total{outcome="other",tool="other"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s", want)
+		}
+	}
+	if strings.Contains(body, "secret") || strings.Contains(body, "kb_delete") {
+		t.Fatal("an unbounded value reached a label")
+	}
+}
+
 // v4: a coordination delivery is counted by what its channel was told, a closed outcome only.
 func TestSlackCoordinationProjectionCounter(t *testing.T) {
 	ctx := t.Context()
