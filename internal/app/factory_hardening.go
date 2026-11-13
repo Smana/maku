@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"path/filepath"
 	"slices"
@@ -101,43 +102,92 @@ type policyReader interface {
 	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
 }
 
+// tokenGrants is readiness's and the gauge's Grants under the minter (plan PR8, HR42 option A):
+// for a repository, each sandbox role's and the publisher's permissions from table for the
+// repository's enforced outputs, read live: what the minter mints for its runs now.
+type tokenGrants = func(repo string) (roles map[string]map[string]string, publisher map[string]string)
+
+// tableGrants is tokenGrants from table (minter.Roles in the factory).
+func tableGrants(live func() *config.Config, table minter.Table) tokenGrants {
+	return func(repo string) (map[string]map[string]string, map[string]string) {
+		enforced := live().Hardening.EnforcedFor(repo)
+		roles := map[string]map[string]string{}
+		for _, role := range hardening.SandboxRoles() {
+			if p, err := table.For(role, enforced); err == nil {
+				roles[role] = p
+			}
+		}
+		pub, err := table.For(minter.Publisher, enforced)
+		if err != nil {
+			pub = nil
+		}
+		return roles, pub
+	}
+}
+
 // sandboxPermissionObserver is a fence observer that, on each pass over a repository with an
-// enforceOutputs list, reads each sandbox role's and the publisher's octo-sts policy and sets the
-// permission gauge from them (H2, R2 as evidence): the role policy losing pull_requests: write shows
-// there. A policy that cannot be read or does not parse is logged and keeps its last values.
-func sandboxPermissionObserver(live func() *config.Config, files func(repo string) policyReader,
+// enforceOutputs list, sets the permission gauge from the token source the runs and the publisher
+// actually get (H2, R2 as evidence; plan PR8): on the XR, each sandbox role's octo-sts policy; under
+// runTokens.perRun, the minter's role table through grants; and the publisher's policy, or the
+// table's publisher row with hardening.publisher.minter. A shared token's roles are not recorded:
+// HR13 refuses enforcement on one. A policy that cannot be read or does not parse is logged and
+// keeps its last values.
+func sandboxPermissionObserver(live func() *config.Config, files func(repo string) policyReader, grants tokenGrants,
 	record func(ctx context.Context, repo string, grants map[string]map[string]string), log *slog.Logger) fenceObserver {
 	return func(ctx context.Context, repo string, _ []byte) {
-		if len(live().Hardening.EnforcedFor(repo)) == 0 {
+		cfg := live()
+		if len(cfg.Hardening.EnforcedFor(repo)) == 0 {
 			return
 		}
-		f := files(repo)
-		if f == nil {
-			return
-		}
-		grants := map[string]map[string]string{}
-		paths := map[string]string{applier.PublisherIdentity: hardening.PublisherPolicyPath}
-		for _, role := range hardening.SandboxRoles() {
-			paths[role] = hardening.RolePolicyPath(role)
-		}
-		for role, path := range paths {
-			text, _, found, err := f.DefaultBranchFile(ctx, path)
-			switch {
-			case err != nil:
-				log.Warn("octo-sts policy unreadable: its permissions keep their last values", "repository", repo, "role", role, "err", err)
-				continue
-			case !found:
-				grants[role] = map[string]string{} // no policy, no token
-				continue
+		src, pubMinter := cfg.TokenSource(), cfg.Hardening.Publisher.Minter
+		out := map[string]map[string]string{}
+		if grants != nil && (src == hardening.TokenSourceMinter || pubMinter) {
+			roles, pub := grants(repo)
+			if src == hardening.TokenSourceMinter {
+				maps.Copy(out, roles)
 			}
-			perms, err := hardening.PolicyPermissions([]byte(text))
-			if err != nil {
-				log.Warn("octo-sts policy does not parse: its permissions keep their last values", "repository", repo, "role", role, "err", err)
-				continue
+			if pubMinter {
+				out[applier.PublisherIdentity] = pub
 			}
-			grants[role] = perms
 		}
-		record(ctx, repo, grants)
+		paths := map[string]string{}
+		if !pubMinter {
+			paths[applier.PublisherIdentity] = hardening.PublisherPolicyPath
+		}
+		if src == hardening.TokenSourceXR {
+			for _, role := range hardening.SandboxRoles() {
+				paths[role] = hardening.RolePolicyPath(role)
+			}
+		}
+		if len(paths) > 0 {
+			f := files(repo)
+			if f == nil {
+				return
+			}
+			readPolicies(ctx, f, repo, paths, out, log)
+		}
+		record(ctx, repo, out)
+	}
+}
+
+// readPolicies reads each role's octo-sts policy at paths into grants.
+func readPolicies(ctx context.Context, f policyReader, repo string, paths map[string]string, grants map[string]map[string]string, log *slog.Logger) {
+	for role, path := range paths {
+		text, _, found, err := f.DefaultBranchFile(ctx, path)
+		switch {
+		case err != nil:
+			log.Warn("octo-sts policy unreadable: its permissions keep their last values", "repository", repo, "role", role, "err", err)
+			continue
+		case !found:
+			grants[role] = map[string]string{} // no policy, no token
+			continue
+		}
+		perms, err := hardening.PolicyPermissions([]byte(text))
+		if err != nil {
+			log.Warn("octo-sts policy does not parse: its permissions keep their last values", "repository", repo, "role", role, "err", err)
+			continue
+		}
+		grants[role] = perms
 	}
 }
 

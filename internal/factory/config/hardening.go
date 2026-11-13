@@ -471,5 +471,18 @@ func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Set
 	h := c.Hardening
 	mode := h.ModeFor(repository)
 	return hardening.Settings{Mode: mode, Layers: hardening.LayersFor(mode, h.EffectiveClassifier()),
-		Demo: c.Demo, DrillMaxAge: h.Drills.MaxAge.Duration, ConfigHash: h.Hash(), Version: makuVersion}
+		Demo: c.Demo, DrillMaxAge: h.Drills.MaxAge.Duration, ConfigHash: h.Hash(), Version: makuVersion,
+		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter}
+}
+
+// TokenSource is where the runs' sandbox tokens come from (plan PR8): octo-sts on the XR, the
+// minter's role table under runTokens.perRun, and otherwise a shared token that grants writes.
+func (c *Config) TokenSource() hardening.TokenSource {
+	switch {
+	case c.Runs.Group == "" || c.Runs.XR(): // omitted is the XR, as Parse defaults it
+		return hardening.TokenSourceXR
+	case c.RunTokens.PerRun:
+		return hardening.TokenSourceMinter
+	}
+	return hardening.TokenSourceShared
 }

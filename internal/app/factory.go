@@ -449,14 +449,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return nil // a nil interface, never a typed-nil *forge.GitHub
 	}, m.MergeGateRequired, m.MergeGateRulesUnread, log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
-	// publisher's GitHub permissions, read from their octo-sts policies (R2 as evidence).
+	// publisher's GitHub permissions, read from the token source they get: the octo-sts policies, or
+	// the minter's role table (R2 as evidence, plan PR8).
 	if cfg.Hardening.Enforcing() {
 		fenced.OnFile = chainOnFile(fenced.OnFile, sandboxPermissionObserver(live.Current, func(repo string) policyReader {
 			if c, ok := conns.get(repo); ok && c.gh != nil {
 				return c.gh
 			}
 			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, m.SandboxPermissions, log))
+		}, tableGrants(live.Current, minter.Roles), m.SandboxPermissions, log))
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	for name, usd := range meter.RunUSD(cfg) {

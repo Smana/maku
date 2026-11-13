@@ -120,6 +120,34 @@ func TestHardeningSettings(t *testing.T) {
 	}
 }
 
+// Plan PR8: R2 and R3 read the token source the runs get: the XR's policies, the minter's table
+// under runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
+func TestHardeningSettingsTokenSource(t *testing.T) {
+	runs := "runs: {group: maku.ogenki.io}\n"
+	shared := "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+	for name, tc := range map[string]struct {
+		file      string
+		src       hardening.TokenSource
+		pubMinter bool
+	}{
+		"the XR":               {good, hardening.TokenSourceXR, false},
+		"per-run tokens":       {good + perRunTokens, hardening.TokenSourceMinter, false},
+		"the minter publishes": {good + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
+		"the shared writer":    {good + runs + shared, hardening.TokenSourceShared, false},
+		"no run token":         {good + runs, hardening.TokenSourceShared, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s := c.HardeningSettings("Smana/cloud-native-ref", ""); s.TokenSource != tc.src || s.PublisherMinter != tc.pubMinter {
+				t.Fatalf("source %q, publisher minter %v; want %q, %v", s.TokenSource, s.PublisherMinter, tc.src, tc.pubMinter)
+			}
+		})
+	}
+}
+
 // Stage H1: audit is accepted centrally and per repository.
 func TestHardeningAuditAccepted(t *testing.T) {
 	for name, tc := range map[string]struct {
