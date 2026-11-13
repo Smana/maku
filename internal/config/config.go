@@ -541,6 +541,102 @@ type RoomToolsConfig struct {
 	// audience (hardening H4, HR35): set, :8090 serves forge_read to a run annotated forge-api: deny,
 	// read and filtered by the factory at factoryURL. Empty by default: forge_read is not served.
 	ForgeReadTokenFile string `json:"forgeReadTokenFile,omitempty"`
+	// Knowledge is a knowledge MCP endpoint, RunLore's (EX11, owner ruling R5): :8090 forwards
+	// kb_search and kb_get to it for the roles it names. Absent, no knowledge tool is served.
+	Knowledge *KnowledgeConfig `json:"knowledge,omitempty"`
+}
+
+// KnowledgeConfig is roomTools.knowledge.
+type KnowledgeConfig struct {
+	// URL is the endpoint, MCP over Streamable HTTP: https, or http to an in-cluster Service.
+	URL string `json:"url"`
+	// Tools are the ones forwarded, a subset of kb_search and kb_get; both by default.
+	Tools []string `json:"tools,omitempty"`
+	// Roles are the AgentRun roles that list and may call them; triager by default.
+	Roles []string `json:"roles,omitempty"`
+	// Timeout bounds one call, 1 s to 12 s, under :8090's 15 s bound on any call; 10 s by default.
+	Timeout Duration `json:"timeout,omitzero"`
+	// MaxBytes is the most of an answer forwarded, at most 256 KiB; 64 KiB by default.
+	MaxBytes int `json:"maxBytes,omitempty"`
+}
+
+// The knowledge endpoint's defaults and bounds (EX11).
+const (
+	DefaultKnowledgeTimeout  = 10 * time.Second
+	DefaultKnowledgeMaxBytes = 64 << 10
+	minKnowledgeTimeout      = time.Second
+	maxKnowledgeTimeout      = 12 * time.Second
+	maxKnowledgeMaxBytes     = 256 << 10
+)
+
+var (
+	knowledgeTools = []string{"kb_search", "kb_get"}
+	// knowledgeRoles are the roles a run serves under on :8090.
+	knowledgeRoles = []string{"implementer", "reviewer", "tester", "triager"}
+	// serviceHost is an in-cluster Service: <svc>.<ns>.svc, then the cluster domain if any.
+	serviceHost = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?\.[a-z0-9]([a-z0-9-]*[a-z0-9])?\.svc(\.[a-z0-9]([a-z0-9.-]*[a-z0-9])?)?$`)
+)
+
+// Knowledge is roomTools.knowledge with its defaults; a zero value (no URL) serves nothing.
+func (c Config) Knowledge() KnowledgeConfig {
+	if c.RoomTools == nil || c.RoomTools.Knowledge == nil {
+		return KnowledgeConfig{}
+	}
+	return *c.RoomTools.Knowledge
+}
+
+func (k *KnowledgeConfig) applyDefaults() {
+	if k.Tools == nil {
+		k.Tools = slices.Clone(knowledgeTools)
+	}
+	if k.Roles == nil {
+		k.Roles = []string{"triager"}
+	}
+	if k.Timeout.Duration == 0 {
+		k.Timeout.Duration = DefaultKnowledgeTimeout
+	}
+	if k.MaxBytes == 0 {
+		k.MaxBytes = DefaultKnowledgeMaxBytes
+	}
+}
+
+// knowledgeScheme is the model URL's rule: https, or http to an in-cluster Service.
+func knowledgeScheme(u *url.URL) bool {
+	return u.Scheme == "https" || u.Scheme == "http" && serviceHost.MatchString(u.Hostname())
+}
+
+func (k KnowledgeConfig) validate() []error {
+	var errs []error
+	u, err := url.Parse(k.URL)
+	switch {
+	case k.URL == "":
+		errs = append(errs, errors.New("roomTools.knowledge.url is required: it is the knowledge MCP endpoint"))
+	case err != nil || u.Host == "" || u.User != nil || !knowledgeScheme(u):
+		errs = append(errs, fmt.Errorf("roomTools.knowledge.url %q must be https, or http to an in-cluster <svc>.<ns>.svc[.<domain>], with no credentials", k.URL))
+	}
+	if len(k.Tools) == 0 {
+		errs = append(errs, errors.New("roomTools.knowledge.tools is empty: name kb_search, kb_get or both"))
+	}
+	for _, t := range k.Tools {
+		if !slices.Contains(knowledgeTools, t) {
+			errs = append(errs, fmt.Errorf("roomTools.knowledge.tools: %q is not kb_search or kb_get", t))
+		}
+	}
+	if len(k.Roles) == 0 {
+		errs = append(errs, errors.New("roomTools.knowledge.roles is empty"))
+	}
+	for _, r := range k.Roles {
+		if !slices.Contains(knowledgeRoles, r) {
+			errs = append(errs, fmt.Errorf("roomTools.knowledge.roles: %q is not implementer, reviewer, tester or triager", r))
+		}
+	}
+	if d := k.Timeout.Duration; d < minKnowledgeTimeout || d > maxKnowledgeTimeout {
+		errs = append(errs, fmt.Errorf("roomTools.knowledge.timeout: %s must be within [%s, %s], under :8090's bound on one call", d, minKnowledgeTimeout, maxKnowledgeTimeout))
+	}
+	if k.MaxBytes < 1 || k.MaxBytes > maxKnowledgeMaxBytes {
+		errs = append(errs, fmt.Errorf("roomTools.knowledge.maxBytes: %d must be 1 to %d", k.MaxBytes, maxKnowledgeMaxBytes))
+	}
+	return errs
 }
 
 // PushRepositories are the repositories :8090 serves output_push to: none unless roomTools names
@@ -855,6 +951,9 @@ func (c *Config) ApplyDefaults() {
 		c.TLS.KeyFile = DefaultKeyFile
 	}
 	c.Runs = c.Runs.WithDefaults()
+	if c.RoomTools != nil && c.RoomTools.Knowledge != nil {
+		c.RoomTools.Knowledge.applyDefaults()
+	}
 	c.Coordination.ApplyDefaults()
 	if c.Suspend.After.Duration == 0 {
 		c.Suspend.After.Duration = DefaultSuspendAfter
@@ -893,6 +992,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.roomToolsAuth()...)
+	if c.RoomTools != nil && c.RoomTools.Knowledge != nil {
+		errs = append(errs, c.RoomTools.Knowledge.validate()...)
+	}
 	for i, r := range c.PushRepositories() {
 		owner, name, ok := strings.Cut(r, "/")
 		if !ok || owner == "" || name == "" || strings.Contains(name, "/") || strings.TrimSpace(r) != r {

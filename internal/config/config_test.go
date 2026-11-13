@@ -983,6 +983,55 @@ func TestRoomToolsPushRepositories(t *testing.T) {
 	}
 }
 
+// EX11: roomTools.knowledge is RunLore's MCP endpoint. Unset, nothing is served; set, its defaults
+// are kb_search and kb_get for triagers, 10 s and 64 KiB, and every bound is checked with its key named.
+func TestRoomToolsKnowledge(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if k := c.Knowledge(); k.URL != "" {
+		t.Fatalf("unset: %+v", k)
+	}
+	c, err = Load(write(t, valid+"roomTools:\n  knowledge:\n    url: http://runlore.runlore.svc.cluster.local:8080/mcp\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	k := c.Knowledge()
+	if k.URL != "http://runlore.runlore.svc.cluster.local:8080/mcp" || strings.Join(k.Tools, ",") != "kb_search,kb_get" ||
+		strings.Join(k.Roles, ",") != "triager" || k.Timeout.Duration != 10*time.Second || k.MaxBytes != 65536 {
+		t.Fatalf("defaults: %+v", k)
+	}
+	for _, ok := range []string{
+		"url: http://runlore.runlore.svc:8080/mcp",
+		"url: https://kb.example.com/mcp",
+		"url: http://runlore.runlore.svc.cluster.local:8080/mcp\n    tools: [kb_get]\n    roles: [triager, reviewer]\n    timeout: 1s\n    maxBytes: 262144",
+	} {
+		if _, err := Load(write(t, valid+"roomTools:\n  knowledge:\n    "+ok+"\n")); err != nil {
+			t.Errorf("%s: %v", ok, err)
+		}
+	}
+	for _, tc := range []struct{ body, key string }{
+		{"url: http://runlore.example.com/mcp", "roomTools.knowledge.url"},
+		{"url: ftp://runlore.runlore.svc/mcp", "roomTools.knowledge.url"},
+		{"url: https://user:pw@kb.example.com/mcp", "roomTools.knowledge.url"},
+		{"url: https://kb.example.com/mcp\n    tools: [kb_delete]", "roomTools.knowledge.tools"},
+		{"url: https://kb.example.com/mcp\n    tools: []", "roomTools.knowledge.tools"},
+		{"url: https://kb.example.com/mcp\n    roles: [scoper]", "roomTools.knowledge.roles"},
+		{"url: https://kb.example.com/mcp\n    timeout: 500ms", "roomTools.knowledge.timeout"},
+		{"url: https://kb.example.com/mcp\n    timeout: 13s", "roomTools.knowledge.timeout"},
+		{"url: https://kb.example.com/mcp\n    maxBytes: 262145", "roomTools.knowledge.maxBytes"},
+		{"tools: [kb_search]", "roomTools.knowledge.url"},
+	} {
+		if _, err := Load(write(t, valid+"roomTools:\n  knowledge:\n    "+tc.body+"\n")); err == nil || !strings.Contains(err.Error(), tc.key) {
+			t.Errorf("%s: want a %s refusal, got %v", tc.body, tc.key, err)
+		}
+	}
+	if _, err := Load(write(t, valid+"roomTools:\n  knowledge:\n    url: https://kb.example.com/mcp\n    token: x\n")); err == nil {
+		t.Fatal("an unknown knowledge key decoded")
+	}
+}
+
 // v4 MR16: the broker reads the same coordination switch as the factory, strictly and with the same
 // defaults: off, public only, two children. A mode other than off needs the planner it plans through.
 func TestCoordinationConfig(t *testing.T) {

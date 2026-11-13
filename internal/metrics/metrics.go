@@ -206,6 +206,9 @@ type Set struct {
 	// policyChanges is rooms_policy_changes_total{repository,class,change} (merge policy stage 6):
 	// the promotion workflow's records, by a closed change.
 	policyChanges metric.Int64Counter
+	// knowledgeCalls is rooms_knowledge_calls_total{tool,outcome} (EX11): the knowledge endpoint's
+	// kb_search and kb_get calls on :8090, by a closed outcome.
+	knowledgeCalls metric.Int64Counter
 
 	meter             metric.Meter
 	appended          metric.Int64Counter
@@ -350,6 +353,9 @@ func New(meter metric.Meter) (*Set, error) {
 	check(err)
 	s.coordViews, err = meter.Int64Counter("rooms_coordination_views_total", metric.WithDescription("Coordination parent views served, by outcome."))
 	check(err)
+	s.knowledgeCalls, err = meter.Int64Counter("rooms_knowledge_calls_total",
+		metric.WithDescription("Knowledge tool calls forwarded from :8090, by tool and outcome."))
+	check(err)
 	s.coordCheckouts, err = meter.Int64Counter("rooms_coordination_checkout_manifests_total",
 		metric.WithDescription("Coordination checkout documents asked for, by outcome."))
 	check(err)
@@ -473,7 +479,17 @@ func (s *Set) Needs(kinds map[string]int) {
 var (
 	coordViewOutcomes     = map[string]bool{"ok": true, "restricted": true, "not_found": true, "unverified": true}
 	coordCheckoutOutcomes = map[string]bool{"served": true, "restricted": true, "not_ready": true, "unavailable": true}
+	knowledgeToolNames    = map[string]bool{"kb_search": true, "kb_get": true}
+	knowledgeOutcomes     = map[string]bool{"ok": true, "clipped": true, "refused": true, "timeout": true,
+		"upstream_error": true, "bad_answer": true}
 )
+
+// KnowledgeCall counts one knowledge tool call: kb_search or kb_get, and ok, clipped, refused,
+// timeout, upstream_error or bad_answer.
+func (s *Set) KnowledgeCall(ctx context.Context, tool, outcome string) {
+	s.knowledgeCalls.Add(ctx, 1, metric.WithAttributes(attribute.String("tool", closed(knowledgeToolNames, tool)),
+		attribute.String("outcome", closed(knowledgeOutcomes, outcome))))
+}
 
 func closed(set map[string]bool, v string) string {
 	if set[v] {
