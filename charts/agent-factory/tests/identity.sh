@@ -61,7 +61,15 @@ k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
   --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
   --kubeconfig-update-default=false --kubeconfig-switch-context=false >/dev/null
 k3d kubeconfig get "$NAME" >"$KUBECONFIG"
-for image in maku-broker maku-e2e-stub; do k3d image import -c "$NAME" "ghcr.io/smana/$image:$TAG" >/dev/null; done
+# k3d reports success even when the node fails to ingest the tarball: the image counts once containerd lists it.
+for image in maku-broker maku-e2e-stub; do
+  for _ in 1 2 3; do
+    k3d image import -c "$NAME" "ghcr.io/smana/$image:$TAG" >/dev/null
+    docker exec "k3d-$NAME-server-0" ctr -n k8s.io images ls -q | grep -qxF "ghcr.io/smana/$image:$TAG" && continue 2
+    sleep 2
+  done
+  die "k3d image import: $image never reached the node"
+done
 
 step "a throwaway CA, the stub's certificate, the broker's OIDC ids"
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=maku-identity-e2e-ca' \
