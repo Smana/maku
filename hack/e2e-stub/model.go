@@ -203,7 +203,7 @@ func writeCompletion(w http.ResponseWriter, stream bool, call *modelToolCall, co
 			{"index": 0, "delta": delta, "finish_reason": nil},
 			{"index": 0, "delta": map[string]any{}, "finish_reason": finishReason},
 		}
-		frames := make([]map[string]any, 0, len(chunks)+1)
+		var frames []map[string]any
 		for _, choice := range chunks {
 			frames = append(frames, map[string]any{"choices": []any{choice}})
 		}
