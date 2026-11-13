@@ -217,6 +217,19 @@ runController:
   allowUnsandboxed: false
   # Replaces the built-in profiles (github, pypi, npm, golang, crates) when set.
   egressProfiles: {}
+  # Run traces (v4 D21, docs/observability.md). Empty otlpEndpoint: runs export nothing, and their
+  # policies are unchanged. Set, each run's harness exports its span over OTLP/HTTP to
+  # <otlpEndpoint>/v1/traces, parented on its task's trace (the AgentRun's traceparent annotation),
+  # and each run's NetworkPolicy or CNP opens the endpoint's port to the collector's pods: the one
+  # addition to the runs' egress, and a run can send its own data there.
+  #   otlpEndpoint  http(s)://<service>.<namespace>.svc.<clusterDomain>:<port>, the port the
+  #                 collector's pods listen on (policies see the backend port), e.g.
+  #                 http://collector.observability.svc.cluster.local:4318
+  #   collector     the collector's pods: namespace (the endpoint's) and labels. Required with
+  #                 otlpEndpoint. The collector must admit the runs namespace itself.
+  tracing:
+    otlpEndpoint: ""
+    collector: {namespace: "", labels: {}}
 
 # The run pod's sandbox (D18). These keys are the spec's; the run-controller's older keys stay
 # honoured until rollout step 8 deletes them:
