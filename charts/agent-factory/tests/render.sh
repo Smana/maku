@@ -302,6 +302,20 @@ yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != nul
   { echo "FAIL: the metering leg's factory config does not parse:" >&2; cat "$tmp/parse-m.log" >&2; fail=1; }
 grep -qE 'name: metrics' <<<"$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .spec.ingress[] | select(.ports[0].port == 15020)' - <<<"$mout")" ||
   { echo "FAIL: the metering values do not admit the metrics namespace to the gateway's 15020" >&2; fail=1; }
+# The factory-level USD proof's values (intake.sh USD=1): gateway-mode runs on the stub provider, a
+# meter, and a catalog that prices every model the gateway serves, the runs' and the broker clients'.
+uout="$(helm template af . -n maku -f values-demo.yaml "${img[@]}" --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem1 \
+  -f tests/intake-values.yaml --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local -f tests/usd-values.yaml)" ||
+  { echo "FAIL: the USD proof's values do not render" >&2; fail=1; uout=''; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$uout" >"$tmp/usd-config.yaml"
+yq -e '.runs.gatewayIdentity and .meter.url == "http://vmsingle.metrics.svc.cluster.local:8428" and .meter.prices."stub-default".input == 1000' "$tmp/usd-config.yaml" >/dev/null 2>&1 ||
+  { echo "FAIL: the USD proof's factory config lacks its identity, meter or prices" >&2; fail=1; }
+(cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/usd-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-usd.log" 2>&1) ||
+  { echo "FAIL: the USD proof's factory config does not parse:" >&2; cat "$tmp/parse-usd.log" >&2; fail=1; }
+[[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .data."catalog.json" | from_yaml | .providers.stub.models | keys | sort | join(",")' - <<<"$uout")" == "stub-default,stub-frontier,stub-light" ]] ||
+  { echo "FAIL: the USD proof's catalog does not price every model the stub provider serves" >&2; fail=1; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "run-controller-config") | .data."config.yaml"' - <<<"$uout" | yq -e '.model.mode == "gateway"' >/dev/null 2>&1 ||
+  { echo "FAIL: the USD proof's runs are not in model.mode gateway" >&2; fail=1; }
 # GW12: the gateway's prices default to the factory's meter.prices (one source); the gateway's own win.
 catalogs() { yq ea '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' - <<<"$out"; }
 [[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway demo renders $(catalogs) model catalogs, want 1" >&2; fail=1; }
