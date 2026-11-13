@@ -49,3 +49,17 @@ agentgateway:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: "1", memory: 512Mi}
+
+# Observability (D21; docs/observability.md), every switch off. Monitoring objects render only when
+# asked, never on a guess at the cluster's CRDs, so offline renders (Flux, Argo CD, helm template) are
+# deterministic: the prometheus-operator CRDs (monitoring.coreos.com/v1) must exist when one is on.
+# The VictoriaMetrics operator converts them.
+monitoring:
+  # ServiceMonitors for the broker and the factory, PodMonitors for the run-controller, the egress
+  # proxy (networkPolicies.mode kubernetes) and the model-gateway proxies (maku-gateway.enabled). In
+  # mode kubernetes the scraper must be in maku.networkPolicies.kubernetes.metricsFrom. labels: added
+  # to each object, for a Prometheus whose selector wants them (e.g. release: kube-prometheus-stack).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}

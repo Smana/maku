@@ -77,6 +77,23 @@
         "plain": {"type": "boolean"}
       }
     },
+    "monitoring": {
+      "description": "Observability (D21), every switch off: monitoring objects render only when asked. Each needs the prometheus-operator CRDs (monitoring.coreos.com/v1).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "serviceMonitor": {
+          "description": "ServiceMonitors for the broker and the factory; PodMonitors for the run-controller, the egress proxy (mode kubernetes) and the model-gateway proxies (maku-gateway.enabled).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "interval": {"type": "string", "pattern": "^[0-9]+(ms|s|m|h)$"},
+            "labels": {"description": "Added to every scrape object.", "type": "object", "additionalProperties": {"type": "string"}}
+          }
+        }
+      }
+    },
     "maku": {"type": "object"},
     "maku-factory": {"type": "object"},
     "maku-gateway": {"description": "The model gateway subchart (charts/maku-gateway, its own strict schema).", "type": "object"},

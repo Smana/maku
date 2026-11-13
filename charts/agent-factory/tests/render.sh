@@ -362,5 +362,34 @@ if [[ -n $mine ]]; then
   (cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/mine-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse2.log" 2>&1) || { echo "FAIL: the example's config does not parse:" >&2; cat "$tmp/parse2.log" >&2; fail=1; }
 fi
 
+# v4 step 6 Task 4 (D21, EX12): opt-in ServiceMonitors and PodMonitors. Off (the default), none;
+# the golden above already holds the demo byte for byte.
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind == "ServiceMonitor" or .kind == "PodMonitor" or .kind == "PrometheusRule") | .kind' 'monitoring off renders a monitoring object'
+mon=(--set monitoring.serviceMonitor.enabled=true --set-json 'monitoring.serviceMonitor.labels={"release":"prom"}')
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}")" || { echo "FAIL: monitoring.serviceMonitor.enabled does not render" >&2; fail=1; out=''; }
+got=$(yq ea '[select(.kind == "ServiceMonitor" or .kind == "PodMonitor") | .kind + "/" + .metadata.name] | sort | join(" ")' - <<<"$out")
+want="PodMonitor/maku-run-controller ServiceMonitor/agent-factory ServiceMonitor/room-broker"
+[[ $got == "$want" ]] || { echo "FAIL: the scrape objects are '$got', want '$want'" >&2; fail=1; }
+ykind ServiceMonitor '((.spec.endpoints | length) == 1 and .spec.endpoints[0].port == "metrics" and .spec.endpoints[0].path == "/metrics" and .spec.endpoints[0].interval == "30s")' 'each ServiceMonitor scrapes port metrics, /metrics, every 30s'
+ykind ServiceMonitor 'select(.metadata.name == "room-broker") | .spec.selector.matchLabels."app.kubernetes.io/name" == "room-broker"' 'the broker ServiceMonitor selects the room-broker Service'
+ykind ServiceMonitor 'select(.metadata.name == "agent-factory") | .spec.selector.matchLabels."app.kubernetes.io/name" == "agent-factory"' 'the factory ServiceMonitor selects the agent-factory Service'
+ykind PodMonitor '((.spec.podMetricsEndpoints | length) == 1 and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'each PodMonitor scrapes the pod port metrics, /metrics'
+ykind PodMonitor 'select(.metadata.name == "maku-run-controller") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "run-controller" and (.spec.podMetricsEndpoints[0].relabelings[] | select(.targetLabel == "job") | .replacement) == "run-controller")' 'the run-controller PodMonitor selects its pods, job run-controller'
+ykind ServiceMonitor '(.metadata.labels.release == "prom" and .metadata.namespace == "maku")' 'monitoring.serviceMonitor.labels reach the ServiceMonitors'
+ykind PodMonitor '(.metadata.labels.release == "prom" and .metadata.namespace == "maku")' 'monitoring.serviceMonitor.labels reach the PodMonitors'
+# kubernetes mode adds the egress proxy's PodMonitor, and needs a scraper the policies admit
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes \
+  --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" ||
+  { echo "FAIL: monitoring in kubernetes mode does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-egress-proxy") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "egress-proxy" and .spec.podMetricsEndpoints[0].port == "metrics")' 'kubernetes mode: the egress proxy PodMonitor'
+bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090' \
+  "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes
+# maku-gateway adds its proxies' PodMonitor (the pod's metrics port, 15020)
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}")" || { echo "FAIL: monitoring with maku-gateway does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-gateway") | (.spec.selector.matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway" and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'maku-gateway: the model-gateway proxies PodMonitor'
+notes="$(helm install af . -n maku --dry-run=client "${gwd[@]}" "${mon[@]}" --set agentgateway.enabled=true 2>/dev/null | sed -n '/^NOTES:/,$p')"
+grep -qF 'agentgateway.monitoring.enabled' <<<"$notes" || { echo "FAIL: NOTES does not tell agentgateway.monitoring.enabled with monitoring on" >&2; fail=1; }
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

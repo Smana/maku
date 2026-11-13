@@ -10,3 +10,6 @@ Residual: maku.networkPolicies.kubernetes.apiServerCIDRs is empty, so the broker
 {{- else }}
 Network policy: only plain NetworkPolicies on the database and the factory's API; runs keep their egress. Not for untrusted repositories.
 {{- end }}
+{{- if and .Values.monitoring.serviceMonitor.enabled .Values.agentgateway.enabled }}
+Monitoring: the umbrella scrapes the model-gateway proxies (PodMonitor maku-gateway) but not the agentgateway controller. Set agentgateway.monitoring.enabled=true for the controller's ServiceMonitor, with agentgateway.monitoring.proxy.podMonitor.enabled=false so the proxies are not scraped twice.
+{{- end }}

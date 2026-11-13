@@ -151,3 +151,14 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- end -}}
 {{- end -}}
 {{- end }}
+
+{{/* Monitoring (plan v4 step 6, EX12). In maku's networkPolicies.mode kubernetes, the broker's, the
+run-controller's and the egress proxy's NetworkPolicies admit :9090 only from metricsFrom: a scrape
+object with no scraper there would read nothing but `up == 0`. */}}
+{{- define "afumbrella.monitoring" -}}
+{{- $sm := dig "serviceMonitor" dict (.Values.monitoring | default dict) -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- if and $sm.enabled $maku.enabled (eq (dig "networkPolicies" "mode" "" $maku) "kubernetes") (not (dig "networkPolicies" "kubernetes" "metricsFrom" list $maku)) -}}
+{{- fail "monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090 (name your Prometheus pods there)" -}}
+{{- end -}}
+{{- end }}

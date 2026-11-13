@@ -30,6 +30,7 @@ rejects 'tls.days 0' "minimum: got 0, want 1" "${demo[@]}" --set tls.days=0
 rejects 'a storage that is not a quantity' "does not match pattern" "${demo[@]}" --set postgres.storage=lots
 rejects 'a postgres image without a digest' "does not match pattern" "${demo[@]}" --set postgres.image=postgres:17
 rejects 'networkPolicies.plain as a string' "got string, want boolean" "${demo[@]}" --set-string networkPolicies.plain=yes
+rejects 'an unknown monitoring.serviceMonitor key' "additional properties 'enable' not allowed" "${demo[@]}" --set monitoring.serviceMonitor.enable=true
 rejects 'an unknown maku-gateway key (its own strict schema)' "additional properties 'providerz' not allowed" "${demo[@]}" --set maku-gateway.enabled=true --set maku-gateway.providerz.x=1
 rejects 'profile production' 'profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo' "${img[@]}" --set profile=production
 rejects 'an unset profile' 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' "${img[@]}"
