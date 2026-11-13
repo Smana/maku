@@ -312,7 +312,7 @@ func TestARefusedObjectNotServedIsNotAcceptedAtGenerationZero(t *testing.T) {
 func TestGenerationsIgnoreAnOrphanPolicy(t *testing.T) {
 	g := generations([]resources.Object{
 		{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{"repositoryRef": "missing"}},
-	})
+	}, nil)
 	if _, ok := g.Repos[""]; ok || len(g.Repos) != 0 {
 		t.Fatalf("generations %+v, want none for an orphan policy", g.Repos)
 	}
