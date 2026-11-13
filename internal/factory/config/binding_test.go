@@ -315,3 +315,16 @@ func TestRecheck(t *testing.T) {
 		t.Fatalf("without a source: %+v", refused)
 	}
 }
+
+// review merges nothing (R30), so the guardrails, which cap what merges, leave it as bound: a cap
+// they would give it is a field review may not hold, and would drop its binding.
+func TestGuardrailsLeaveReview(t *testing.T) {
+	ctx := PolicyContext{Guardrails: MergeGuardrails{MaxPerDay: 2, MandatoryChecks: []string{"lint"}, ProtectedFiles: []string{"^x$"}}}
+	cl, refusal := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: ModeOff}, ctx, Merge{})
+	if refusal != nil || cl.MaxPerDay != 0 || cl.HoldoutChecks != nil || cl.ProtectedFiles != nil {
+		t.Fatalf("%+v %+v", cl, refusal)
+	}
+	if _, refusal := Recheck("review", Class{}, ctx, Merge{}); refusal != nil {
+		t.Fatalf("%+v", refusal)
+	}
+}
