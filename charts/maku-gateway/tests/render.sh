@@ -201,6 +201,17 @@ yeq '[select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy")] | leng
 out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
 yeq '[select(.kind == "NetworkPolicy")] | length' 0 'mode cilium: no NetworkPolicy'
 yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | sort | join(\",\")" 'api.anthropic.com,api.kimi.ai,api.mistral.ai,api.z.ai' "mode cilium: every provider's host by FQDN"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress | length" 2 'mode cilium: no scraper unless metrics.allowFrom'
+# metrics.allowFrom's NetworkPolicy peers, translated to Cilium endpoint selectors (cnref runs Cilium)
+out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium \
+  --set 'metrics.allowFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=observability' \
+  --set 'metrics.allowFrom[0].podSelector.matchLabels.app\.kubernetes\.io/name=vmagent' \
+  --set 'metrics.allowFrom[1].podSelector.matchLabels.app=scraper')"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress[2] | ([.fromEndpoints[] | .matchLabels | to_entries | map(.key + \"=\" + .value) | join(\"+\")] | join(\",\")) + \" \" + .toPorts[0].ports[0].port" \
+  'k8s:app.kubernetes.io/name=vmagent+k8s:io.cilium.k8s.namespace.labels.kubernetes.io/metadata.name=observability,k8s:app=scraper+k8s:io.kubernetes.pod.namespace=maku 15020' \
+  'mode cilium: metrics.allowFrom becomes fromEndpoints on 15020'
+rejects 'mode cilium with an ipBlock scraper' 'metrics.allowFrom[0]: mode cilium translates namespaceSelector and podSelector matchLabels only' \
+  "${cnref[@]}" --set networkPolicy.mode=cilium --set 'metrics.allowFrom[0].ipBlock.cidr=10.0.0.0/8'
 
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"
