@@ -1,50 +1,66 @@
 # maku-gateway under promtool. The cross-check and the unpriced lookup are ported from ai-native-ref's
-# test-agent-cost-crosscheck-alerts.sh at 1529b3b, with its series and boundaries, on the runs' subject
-# (system:serviceaccount:agents:run-) and without its Envoy case (maku-gateway has no Envoy path, so the
-# rule has no Envoy branch). The rest is one case per rule, on agentgateway's own names.
+# test-agent-cost-crosscheck-alerts.sh at 1529b3b (agree, off, floor, live, unseen; the Missing
+# lookup), on the runs' subject (system:serviceaccount:agents:run-) and without its Envoy case
+# (maku-gateway has no Envoy path). Unlike ANR's, the cost series start above zero, as a run's
+# per-run counter does, with no leading zeros, and add small, early and split. The rest is one case
+# per rule, on agentgateway's own names.
 rule_files: [rules.yaml]
 evaluation_interval: 30s
 tests:
-  # Every run spends for 10 minutes (20 scrapes), then stops; the ledger holds its total throughout.
+  # A run's cost series is born at its first priced call, so it starts above zero: no leading zeros.
+  # Every run but live and early spends for about 10 minutes, then stops (by 9.5 m); the ledger holds
+  # its total throughout.
   #  agree: 10.00 both sides.   off: gateway 10.00, ledger 10.15 (1.5%).   floor: 0.20 vs 0.205.
-  #  live: still spending, ledger 5 behind.   unseen: gateway 3.00, no ledger series.
-  # 6 h of nothing first: increase() then has no window-edge extrapolation.
+  #  live: still spending, ledger behind.   unseen: gateway 3.00, no ledger series.
+  #  small: $0.20, all of it before the first scrape, ledger 0.20: a single sample, never a mismatch.
+  #  early: $0.20 before the first scrape and no ledger: the gateway priced spend the ledger never saw.
+  #  split: two proxies served the run, 6 + 4, ledger 10: summed, they agree.
   - interval: 30s
     input_series:
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-agree"}', values: '0x720 0+0.5x20 10x100'}
-      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="agree"}', values: '0x720 10x120'}
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-off"}', values: '0x720 0+0.5x20 10x100'}
-      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="off"}', values: '0x720 10.15x120'}
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-floor"}', values: '0x720 0 0.1 0.2x100'}
-      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="floor"}', values: '0x720 0.205x120'}
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-live"}', values: '0x720 0+0.5x120'}
-      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="live"}', values: '0x720 5x120'}
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-unseen"}', values: '0x720 0+0.15x19 3x101'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-agree"}', values: '1+0.5x18 10x101'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="agree"}', values: '10x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-off"}', values: '1+0.5x18 10x101'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="off"}', values: '10.15x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-floor"}', values: '0.1 0.2x119'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="floor"}', values: '0.205x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-live"}', values: '0.5+0.5x119'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="live"}', values: '0.5x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-unseen"}', values: '0.15+0.15x18 3x101'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-small"}', values: '0.2x120'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="small"}', values: '0.2x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-early"}', values: '0.2x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", pod="model-gateway-a", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-split"}', values: '1+0.5x10 6x109'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", pod="model-gateway-b", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-split"}', values: '4x120'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="split"}', values: '10x120'}
     alert_rule_test:
-      # The run stops 10m in (at 370m); idle from 380m; for 15m: not before 395m.
-      - {eval_time: 385m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
-      - {eval_time: 393m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
-      - eval_time: 397m
+      # early is idle from its first sample: pending at 0, firing from 15 m.
+      - {eval_time: 14m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
+      - {eval_time: 20m, alertname: AgentCostCrossCheckMismatch, exp_alerts: [{exp_labels: {severity: warning, run: early}}]}
+      # off and unseen stop moving at 9.5 m, idle from 19.5 m; for 15 m: not before 34.5 m.
+      - {eval_time: 33m, alertname: AgentCostCrossCheckMismatch, exp_alerts: [{exp_labels: {severity: warning, run: early}}]}
+      - eval_time: 36m
+        alertname: AgentCostCrossCheckMismatch
+        exp_alerts:
+          - exp_labels: {severity: warning, run: early}
+          - exp_labels: {severity: warning, run: "off"}
+          - exp_labels: {severity: warning, run: unseen}
+      # early's series is 40 m old, its cost never moved: its gauge would be gone, the branch resolves.
+      - eval_time: 45m
         alertname: AgentCostCrossCheckMismatch
         exp_alerts:
           - exp_labels: {severity: warning, run: "off"}
           - exp_labels: {severity: warning, run: unseen}
-      - eval_time: 403m
-        alertname: AgentCostCrossCheckMismatch
-        exp_alerts:
-          - exp_labels: {severity: warning, run: "off"}
-          - exp_labels: {severity: warning, run: unseen}
-      # The unseen run's gauge would be gone by now (1 h after its end): the branch resolves at 40 m.
-      - eval_time: 415m
+      # unseen's cost last moved at 9.5 m: the branch resolves 40 m later.
+      - eval_time: 55m
         alertname: AgentCostCrossCheckMismatch
         exp_alerts:
           - exp_labels: {severity: warning, run: "off"}
   # A run outside the runs' subject (another namespace's ServiceAccount) is not cross-checked.
   - interval: 30s
     input_series:
-      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:other:run-x"}', values: '0x720 0+0.15x19 3x101'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:other:run-x"}', values: '0.15+0.15x18 3x101'}
     alert_rule_test:
-      - {eval_time: 403m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
+      - {eval_time: 36m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
   # A Missing lookup, two scrapes of it.
   - interval: 30s
     input_series:

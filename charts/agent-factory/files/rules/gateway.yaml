@@ -5,7 +5,8 @@
 # input_cache_write). Placeholders as in rooms.yaml, plus __GATEWAY_NAME__ (maku-gateway.name, the job
 # the chart's PodMonitor sets) and __RUN_SUBJECT__ (system:serviceaccount:<runs ns>:<namePrefix>,
 # regex-escaped: it is read only inside =~ and label_replace). The cross-check reads the factory's
-# ledger gauge, so its record and alert render only with maku-factory.enabled.
+# ledger gauge, so its record and alert render only with maku-factory.enabled and its meter.url;
+# they and AgentGatewayCostUnpriced need a priced catalog (maku-gateway.modelCatalog).
 name: maku-gateway
 rules:
   # Step 4's metric contract: the meter reads agentgateway's token series by name and token type. Model
@@ -53,7 +54,7 @@ rules:
       dashboard: "/d/agent-gateway"
   # agentgateway prices a response from the catalog (maku-gateway.modelCatalog) and counts the
   # lookup; only Exact adds to the cost counter, so any other status is spend the cross-check cannot
-  # see on the gateway side.
+  # see on the gateway side. Rendered only with a priced catalog: without one every lookup misses.
   - alert: AgentGatewayCostUnpriced
     expr: sum by (ar_agent, gen_ai_request_model, status) (increase(agentgateway_cost_catalog_lookups_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", status!="Exact"}[15m])) > 0
     labels:
@@ -65,14 +66,20 @@ rules:
       dashboard: "/d/agent-gateway"
   # The cost cross-check: the ledger's total for a run (maku_factory_run_settled_usd, kept 1 h after
   # the run) against the gateway's own priced counter. A mismatch warns, nothing more: the meter stays
-  # the authority. 6 h outlasts the longest run cap. increase() reads a few percent low for a run's
-  # first samples, well inside the 15 m `for` once the run has stopped spending.
+  # the authority. Rendered only with a priced catalog and a factory meter (meter.url).
+  #
+  # A run's cost series is born at its first priced call, so its first sample already holds that
+  # call's cost, and the whole run's when it ends before the first scrape: increase() would drop it.
+  # A run's total is each series' latest value, summed over the proxies that served it (one series
+  # per pod). max_over_time, not last_over_time: a proxy container restarting within the window
+  # resets its series, and the pre-restart total is the larger part; the spend after a reset then
+  # reads low until it passes it. A replaced pod is a new series, summed with the old one.
   - record: agent_cost:gateway_run_usd
-    expr: sum by (run) (label_replace(increase(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"}[6h]), "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)"))
+    expr: sum by (run) (label_replace(max_over_time(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"}[6h]), "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)"))
   # abs(ledger - gateway) <= max(1% of the gateway, 0.01 USD), judged once the gateway's cost has not
   # moved for 10 m, so a run still spending is silent. Second branch: gateway cost the ledger never
-  # saw, only while the run's gauge must still exist (it leaves 1 h after the run ends; the cost last
-  # moved under 40 m ago).
+  # saw, only while the run's gauge must still exist (it leaves 1 h after the run ends): the cost
+  # moved, or the series was born, under 40 m ago.
   - alert: AgentCostCrossCheckMismatch
     expr: |
       (
@@ -83,7 +90,10 @@ rules:
         or
         (
           (agent_cost:gateway_run_usd > 0.01 unless on (run) maku_factory_run_settled_usd)
-            and on (run) (sum by (run) (label_replace(changes(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"}[40m]), "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)")) > 0)
+            and on (run) (
+                 sum by (run) (label_replace(changes(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"}[40m]), "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)")) > 0
+              or count by (run) (label_replace(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"} unless agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"} offset 40m, "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)"))
+            )
         )
       )
       and on (run) (sum by (run) (label_replace(changes(agentgateway_gen_ai_client_cost_usd_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", ar_agent=~"__RUN_SUBJECT__.+"}[10m]), "run", "$1", "ar_agent", "__RUN_SUBJECT__(.+)")) == 0)

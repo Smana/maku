@@ -696,9 +696,18 @@ approval label.
 
 Group `maku-gateway`, with `maku-gateway.enabled`. Every rule reads agentgateway's own names, as the
 meter does ([metering the runs](gateway.md#metering-the-runs)), on the job the chart's `PodMonitor`
-sets (`maku-gateway.name`) in the release namespace. The cost cross-check reads the factory's
+sets (`maku-gateway.name`) in the release namespace. `AgentGatewayCostUnpriced` and the cost
+cross-check need a priced catalog (`maku-gateway.modelCatalog.prices`, or the factory's
+`meter.prices` through the umbrella); the cross-check also reads the factory's
 `maku_factory_run_settled_usd`, so its record `agent_cost:gateway_run_usd` and its alert render only
-with `maku-factory.enabled`.
+with `maku-factory.enabled` and its `meter.url`.
+
+The record takes a run's cost as each gateway series' highest value in 6 h, summed over the proxies
+that served it: a run's series is born at its first priced call, so `increase()` would drop that
+call's cost, and a run that ends before the first scrape entirely. A proxy container that restarts
+mid-run resets its series: the record then reads the pre-restart total until the spend after the
+restart passes it, which can raise a mismatch the ledger is right about. A replaced pod is a new
+series and is summed.
 
 | Alert | Fires when | For | First step |
 |---|---|---|---|

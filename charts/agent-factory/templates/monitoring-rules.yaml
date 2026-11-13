@@ -27,8 +27,15 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- $gw := index .Values "maku-gateway" | default dict -}}
 {{- if $gw.enabled -}}
 {{- $on = append $on "gateway" -}}
-{{- /* The cross-check compares the gateway's cost with the factory's ledger gauge: no factory, no ledger. */ -}}
-{{- if not (index .Values "maku-factory").enabled }}{{ $drop = concat $drop (list "agent_cost:gateway_run_usd" "AgentCostCrossCheckMismatch") }}{{ end -}}
+{{- /* A priced catalog: maku-gateway's own prices, or the factory's meter.prices through the
+umbrella (GW12, templates/gateway-catalog.yaml). Without one every lookup misses and no cost is
+counted, so the lookup alert and the cross-check have nothing to judge. The cross-check also
+compares with the factory's ledger gauge: no factory meter (meter.url), no ledger. */ -}}
+{{- $factory := index .Values "maku-factory" | default dict -}}
+{{- $cat := $gw.modelCatalog | default dict -}}
+{{- $priced := and $cat.enabled (or $cat.prices (and $cat.umbrellaPrices (dig "config" "meter" "prices" dict $factory))) -}}
+{{- if not $priced }}{{ $drop = append $drop "AgentGatewayCostUnpriced" }}{{ end -}}
+{{- if or (not $priced) (not $factory.enabled) (not (dig "config" "meter" "url" "" $factory)) }}{{ $drop = concat $drop (list "agent_cost:gateway_run_usd" "AgentCostCrossCheckMismatch") }}{{ end -}}
 {{- end -}}
 {{- /* The runs' subject prefix, regex-escaped: the gateway group reads it only inside =~ and
 label_replace, and a PromQL string needs each backslash doubled. */ -}}

@@ -3,8 +3,8 @@
 #
 # The PrometheusRule under promtool (v4 step 6, Tasks 6 and 22). Renders it with production-shaped
 # values, so every group and every rule is in (an issuer, networkPolicies.mode kubernetes,
-# kube-state-metrics, slack.enabled, maku-gateway with its scraper admitted), extracts .spec, runs
-# `promtool check rules`, then `promtool test rules` on tests/monitoring/*.test.yaml. Those read
+# kube-state-metrics, slack.enabled, maku-gateway with its scraper admitted, a priced catalog and a
+# meter), extracts .spec, runs `promtool check rules`, then `promtool test rules` on tests/monitoring/*.test.yaml. Those read
 # rules.yaml, the rule with its annotations stripped: promtool compares annotations exactly, and only
 # annotations.test.yaml (rules-annotated.yaml) owns them. Every alert must be named by at least one test.
 set -euo pipefail
@@ -18,7 +18,8 @@ helm template af . -n maku \
   --set maku.runController.images.harness.tag=$digest --set maku.runController.images.bridge.tag=$digest \
   --set maku-factory.image.tag=$digest -f values-demo.yaml -f values-demo-gateway.yaml --set demo.model.apiKey=k1 \
   --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local --set maku-gateway.providers.demo.host=api.example.test \
-  --set maku-gateway.aliases.public.agent-default.model=m1 --set maku-gateway.aliases.public.tier-light.model=m2 \
+  -f tests/metering-values.yaml \
+  --set maku-gateway.aliases.public.agent-default.model=echo-default --set maku-gateway.aliases.public.tier-light.model=echo-light \
   --set-json 'maku-gateway.metrics.allowFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
   --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 \
   --set maku.broker.human.mode=oidc --set maku.broker.human.issuer=https://idp.example.test \
