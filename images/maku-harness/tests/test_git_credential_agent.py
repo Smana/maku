@@ -161,6 +161,51 @@ class HelperTest(unittest.TestCase):
         self.assertFalse(os.path.exists(helper.CACHE), "cache should be deleted")
         self.assertEqual(Stub.calls[-1], ("DELETE", "/installation/token", "Bearer ghs_stub1"))
 
+    def _file_token(self):
+        path = os.path.join(self.tmp, "github-token")
+        with open(path, "w") as f:
+            f.write("ghs_minted\n")
+        return path
+
+    def test_revoke_revokes_a_minted_file_token(self):
+        """perRun (D10): the factory minted the file's token for this run alone."""
+        path = self._file_token()
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}):
+            helper.main(["git-credential-agent", "revoke"])
+        self.assertEqual(Stub.calls, [("DELETE", "/installation/token", "Bearer ghs_minted")])
+
+    def test_revoke_of_a_minted_file_token_logs_a_401(self):
+        path = self._file_token()
+        Stub.revoke_status = 401
+        self.addCleanup(setattr, Stub, "revoke_status", 204)
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}), \
+                self.assertLogs("git-credential-agent", level="WARNING") as logs:
+            helper.main(["git-credential-agent", "revoke"])  # must not traceback
+        self.assertEqual(len(Stub.calls), 1)
+        self.assertNotIn("ghs_minted", "".join(logs.output))
+
+    def test_a_minted_file_token_is_read_under_the_lock(self):
+        """perRun: token() takes the lock revoke() holds, so no read interleaves with the revoke."""
+        path = self._file_token()
+        lock_fd = os.open(helper.CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        got = []
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}):
+            th = threading.Thread(target=lambda: got.append(helper.token()))
+            th.start()
+            time.sleep(0.1)
+            self.assertEqual(got, [], "token() must wait for the lock")
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
+            th.join(timeout=5)
+        self.assertEqual(got, ["ghs_minted"])
+
+    def test_revoke_of_a_file_token_without_the_flag_makes_no_call(self):
+        path = self._file_token()
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path}):
+            helper.main(["git-credential-agent", "revoke"])
+        self.assertEqual(Stub.calls, [])
+
 
 class TokenFileMode(unittest.TestCase):
     def setUp(self):

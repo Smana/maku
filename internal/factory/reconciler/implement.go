@@ -27,6 +27,7 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
+	"github.com/Smana/maku/internal/hardening"
 )
 
 // runEndGrace is how long a finished run waits for the room's end reason before falling back to
@@ -782,7 +783,7 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 	case run.Phase == "Succeeded" && t.Status.PullRequest != nil:
 		return r.afterWriter(ctx, cfg, t)
 	case run.Phase == "Succeeded":
-		why, err := r.noPRReason(ctx, t)
+		why, err := r.noPRReason(ctx, cfg, t)
 		if err != nil {
 			return err
 		}
@@ -807,9 +808,20 @@ var committedNotes = []string{"Harness (implementer): the agent committed.", "Ha
 // noPRReason is why a run that finished without a pull request ended: no_pr when the agent
 // changed nothing (a no-op), pushed_no_pr when its branch reached the remote, committed_no_pr when
 // it committed and the commit exists nowhere else. The harness never opens the pull request or
-// pushes on a commit: the agent does both, so a note of a commit with no push is a lost commit.
-func (r *Reconciler) noPRReason(ctx context.Context, t *v1alpha1.Task) (string, error) {
+// pushes on a commit: the agent does both, so a note of a commit with no push is a lost commit. On a
+// repository that enforces push, a run whose push requests the factory refused, the last one
+// included and none applied, is push_refused (HR29): its work did not reach the branch.
+func (r *Reconciler) noPRReason(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (string, error) {
 	cur := current(t)
+	if slices.Contains(cfg.Hardening.EnforcedFor(t.Spec.Repository), hardening.Push) {
+		l, err := r.taskOutputs(ctx, t)
+		if err != nil {
+			return "", err
+		}
+		if l.pushRefused(cur.ID) {
+			return reasonPushRefused, nil
+		}
+	}
 	pushed, err := r.branchPushed(ctx, "agent/"+t.Name)
 	if err != nil {
 		return "", err

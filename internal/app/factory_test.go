@@ -280,6 +280,26 @@ func TestRunTokensServeTheListedRepositories(t *testing.T) {
 	}
 }
 
+// v4 D10: runTokens.perRun builds the per-run minter, on the leader, for repositories of any
+// owner; without it the shared writer stays (D25).
+func TestPerRunTokens(t *testing.T) {
+	cfg := &config.Config{Runs: runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "maku-run-"},
+		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Other/c"}},
+		RunTokens:    config.RunTokens{Enabled: true, AppIDFile: "/x/app_id", PrivateKeyFile: "/x/private_key"}}
+	if rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler)); rt != nil {
+		t.Fatal("perRun off: no minter")
+	}
+	cfg.RunTokens.PerRun = true
+	rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler))
+	if rt == nil || !rt.NeedLeaderElection() || rt.Kind != cfg.Runs || rt.TaskNamespace != "agent-factory" || rt.Reserved == nil || rt.Enforced == nil {
+		t.Fatalf("%+v", rt)
+	}
+	cfg.RunTokens.Enabled = false
+	if rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler)); rt != nil {
+		t.Fatal("perRun without runTokens.enabled (outside the demo): no App, no minter")
+	}
+}
+
 func served(cfg *config.Config) func() []string {
 	return func() []string {
 		var out []string

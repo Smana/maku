@@ -395,6 +395,9 @@ type Client struct {
 	C client.Client
 	// Kind is the runs kind, required: every claim read or written is one of its runs.
 	Kind runwatch.Kind
+	// Created, when set, is called with the claim after Create made it, and after a replay that
+	// found it: the minter applies the run's first token there (v4 D10, plan PR5).
+	Created func(ctx context.Context, claim *unstructured.Unstructured)
 }
 
 // check refuses a Client whose Kind is not a valid runs kind, the zero Kind included: its claims
@@ -436,22 +439,27 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	if s.Loop != nil || s.Checks || s.Search {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
-	if err := c.C.Create(ctx, Build(c.Kind, s), opts...); err != nil {
-		if apierrors.IsAlreadyExists(err) && c.replayOf(ctx, s) {
-			return nil
+	claim := Build(c.Kind, s)
+	if err := c.C.Create(ctx, claim, opts...); err != nil {
+		u, ok := c.replayOf(ctx, s)
+		if !apierrors.IsAlreadyExists(err) || !ok {
+			return fmt.Errorf("create run %s: %w", s.RunID, err)
 		}
-		return fmt.Errorf("create run %s: %w", s.RunID, err)
+		claim = u
+	}
+	if c.Created != nil {
+		c.Created(ctx, claim)
 	}
 	return nil
 }
 
-// replayOf reports whether the claim under s's id is this same run. The derived id is the
+// replayOf returns the claim under s's id when it is this same run. The derived id is the
 // identity (R48), so equality is what only CREATE could have written: start seq and head.
 // Everything else on a live claim is the composition's or the meter's to change.
-func (c Client) replayOf(ctx context.Context, s Spec) bool {
+func (c Client) replayOf(ctx context.Context, s Spec) (*unstructured.Unstructured, bool) {
 	u := c.empty()
 	if err := c.C.Get(ctx, types.NamespacedName{Namespace: c.Kind.Namespace, Name: c.Kind.ClaimName(s.RunID)}, u); err != nil {
-		return false
+		return nil, false
 	}
 	a := u.GetAnnotations()
 	start := ""
@@ -459,7 +467,7 @@ func (c Client) replayOf(ctx context.Context, s Spec) bool {
 		start = strconv.FormatInt(s.StartSeq, 10)
 	}
 	_, h := artifactsJSON(s.CoordinationArtifacts)
-	return a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h &&
+	return u, a[AnnStartSeq] == start && a[AnnHead] == s.Head && a[AnnCoordinationArtifactsHash] == h &&
 		a[AnnCoordinationManifestHash] == s.CoordinationManifestHash
 }
 

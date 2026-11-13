@@ -232,6 +232,31 @@ func TestCreateReplaysItsOwnClaim(t *testing.T) {
 	}
 }
 
+// v4 D10: the minter applies a run's first token right after its claim exists, on a create and on
+// a replay that finds the claim, and never for a refused one.
+func TestCreatedHook(t *testing.T) {
+	c := newClient()
+	var got []string
+	c.Created = func(_ context.Context, claim *unstructured.Unstructured) {
+		got = append(got, claim.GetName()+" "+string(claim.GetUID()))
+	}
+	s := spec()
+	s.StartSeq = 7
+	if err := c.Create(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(t.Context(), s); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Create(t.Context(), func() Spec { x := s; x.StartSeq = 99; return x }()); err == nil {
+		t.Fatal("a different start seq is a different run")
+	}
+	name := runwatch.DefaultKind.ClaimName(s.RunID)
+	if len(got) != 2 || got[0] != got[1] || !strings.HasPrefix(got[0], name+" ") {
+		t.Fatalf("Created calls %q, want two for %s, one per create and one per replay", got, name)
+	}
+}
+
 func TestCreateReplaysAClaimWithNoCreateOnlyValues(t *testing.T) {
 	c := newClient()
 	if err := c.Create(t.Context(), spec()); err != nil {

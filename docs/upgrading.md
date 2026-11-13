@@ -4,6 +4,29 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Per-run tokens (v0.4x, v4 rollout step 3)
+
+Two opt-in keys, which go together; without them nothing changes (`gitTokens: shared` stays the
+default, and `runTokens.enabled` alone keeps the two shared Secrets).
+
+| Key | Chart | What it does |
+|---|---|---|
+| `runTokens.perRun: true` | `maku-factory` | The factory mints each run's own token, `<run>-git`, from the App in `runTokens.appSecret` (the demo: its own App). Its runs-namespace Role becomes `create`, `patch`, `delete` on Secrets with no `get`, and the admission policy that bounds it renders with it. Needs `config.runs.group: maku.ogenki.io` and, outside the demo, `agentsLogin` different from `factoryLogin` |
+| `runController.gitTokens: perRun` | `maku` | Each run mounts its own Secret; `gitSecret`, `gitReadSecret` and `unsafeSharedGitToken` are not read (setting `unsafeSharedGitToken` fails the render) |
+
+Set `runController.gitReadSecret: ""` with `perRun` (the chart refuses both). The umbrella fails a
+render that sets one key without the other, or `perRun` without
+`maku.agentRunPolicies.creators` naming the release's factory. `values-demo.yaml` sets all three
+(its creators name `system:serviceaccount:maku:agent-factory`: install the demo in another
+namespace with your own). The App needs every permission of the
+[role table](factory.md#run-tokens-the-role-table). The factory and run-controller configs are
+decoded strictly: upgrade the chart and the images together.
+
+With the standalone `maku` and `maku-factory` charts nothing pairs the two keys, and the factory
+cannot read the run-controller's mode: set both, or an `enforceOutputs` repository the factory
+admits (HR13) would run on the shared write token. API runs reserved before the upgrade carry no
+repository in their reservation and get no per-run token: let them end before enabling `perRun`.
+
 ## The run path (v0.4x, v4 rollout step 2)
 
 New keys in the `maku` chart, each rendered only with `runController.enabled`, so an install without

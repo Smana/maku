@@ -82,6 +82,8 @@ var reasonPhrases = map[string]string{
 	"no_pr":                     "the agent opened no pull request",
 	"committed_no_pr":           "committed, never pushed: work lost",
 	"pushed_no_pr":              "pushed, but no pull request opened",
+	"push_refused":              "the factory refused the push",
+	"push_awaiting_approval":    "a push waits for a maintainer",
 	"scope_changed":             "the revision changed the task's scope",
 	"no_verdict":                "the review gave no verdict",
 	"not_adopted_author":        "the pull request's author is not adopted",

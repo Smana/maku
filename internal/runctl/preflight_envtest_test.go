@@ -69,6 +69,26 @@ func TestEnvtestPreflightNeverRefusesARunWithAPod(t *testing.T) {
 	}
 }
 
+// A run held by a waiting preflight, then refused by a failed one, says so in every condition: its
+// Ready condition does not keep the stale PreflightPending beside phase Failed.
+func TestEnvtestPreflightWaitingThenFailed(t *testing.T) {
+	e := startEnv(t)
+	e.modelSecret(t)
+	pf := &fixedPreflight{Result{State: PreflightWaiting, Check: "network", Message: "probing"}}
+	e.r.Preflight = pf
+	create(t, e, run("run-ssssssss"))
+	e.reconcile(t, "run-ssssssss")
+	pf.res = Result{State: PreflightFailed, Check: "network", Message: "a denied connection went through"}
+	e.reconcile(t, "run-ssssssss")
+	got := e.get(t, "run-ssssssss")
+	ready := apimeta.FindStatusCondition(got.Status.Conditions, "Ready")
+	invalid := apimeta.FindStatusCondition(got.Status.Conditions, "Invalid")
+	if got.Status.Phase != "Failed" || invalid == nil || invalid.Reason != "PreflightFailed" ||
+		ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != "PreflightFailed" {
+		t.Fatalf("a failed preflight after a waiting one: phase %s, Ready %+v, Invalid %+v", got.Status.Phase, ready, invalid)
+	}
+}
+
 // PR B: a missing git Secret holds new runs Pending, naming the Secret, and never fails them.
 func TestEnvtestPreflightWaitingHoldsTheRun(t *testing.T) {
 	e := startEnv(t)

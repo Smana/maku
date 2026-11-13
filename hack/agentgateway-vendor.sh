@@ -22,13 +22,15 @@ mode="${1:-check}"
 case "$mode" in
   check)
     # DIR is the repository's charts/ or a copy of it (the publish jobs'); the pins are always this
-    # checkout's.
+    # checkout's. The check only proves the tree matches the committed pins: what anchors them to
+    # upstream is `update` pulling by the OCI digests above, and the review of its diff.
     dir="${2:-charts}"
     pins="$PWD/$PINS"
     (cd "$dir" && sha256sum --quiet --strict -c "$pins") ||
       { echo "FAIL: a vendored agentgateway file under $dir differs from $PINS: re-vendor with 'hack/agentgateway-vendor.sh update'" >&2; exit 1; }
-    # nothing vendored that the pins do not name
-    extra="$(cd "$dir" && comm -23 <(find agent-factory-crds/files/agentgateway agent-factory/vendor/agentgateway -type f | sort) <(awk '{print $2}' "$pins" | sort))"
+    # nothing vendored that the pins do not name: every entry but a directory, so a symlink or any
+    # other non-regular file is listed (and refused) rather than skipped
+    extra="$(cd "$dir" && comm -23 <(find agent-factory-crds/files/agentgateway agent-factory/vendor/agentgateway ! -type d | sort) <(awk '{print $2}' "$pins" | sort))"
     [[ -z $extra ]] || { echo "FAIL: vendored files missing from $PINS: $extra" >&2; exit 1; }
     echo "agentgateway $VERSION: the vendored CRDs and controller chart under $dir match $PINS"
     ;;
