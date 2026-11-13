@@ -10,7 +10,7 @@
 import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
 import type { PolicyFile } from "./policy-editor";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
-import type { Catalogue, CatalogueClass, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
+import type { Binding, Catalogue, CatalogueClass, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
 
@@ -52,6 +52,51 @@ export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
     ? `${e.minimum} of ${e.minimum} clean decisions (${e.clean} recorded)`
     : `${e.clean} of ${e.minimum} clean decisions to promote`, "evidence-count"));
   return box;
+}
+
+// generationLine is the shadow decisions merged unchanged per policy generation (Q6, PR13):
+// "gen 4: 3 clean · gen 3: 17 clean · before the binding: 12"; empty without a split. Promotion
+// counts them all.
+export function generationLine(e: Evidence): string {
+  return (e.shadow.byGeneration ?? []).map((g) => g.before ? `before the binding: ${g.mergedUnchanged}` : `gen ${g.generation}: ${g.mergedUnchanged} clean`).join(" \u00b7 ");
+}
+
+// parameterWords are what a binding supplies, one per line, as "key: value".
+function parameterWords(b: Binding): string[] {
+  const out: string[] = [];
+  for (const [k, v] of Object.entries(b)) {
+    if (k === "name" || k === "mode" || v === undefined) continue;
+    if (k === "requiresApproval") out.push(`requiresApproval: ${(v as { changedFiles: string[] }[]).map((a) => a.changedFiles.join(", ")).join("; ")}`);
+    else out.push(`${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`);
+  }
+  return out;
+}
+
+// bindingRows are a bound class's binding (B16): its policy, linked, the generation it serves, the
+// parameters this repository supplies, and why it is refused when it is.
+function bindingRows(card: HTMLElement, c: ClassReport, ctx: CardContext) {
+  const r = ctx.page.report;
+  const b = r.bindings?.find((x) => x.name === c.class);
+  if (!b) return;
+  const st = r.repositoryStatus?.status.classes?.find((x) => x.name === c.class);
+  const line = el("p", "Policy ", "binding-policy");
+  const a = el("a", c.class);
+  a.href = `/settings/merge-policies/policies/${encodeURIComponent(c.class)}`;
+  line.append(a);
+  const gen = st?.policyGeneration ?? b.policyGeneration;
+  if (b.accepted && gen) line.append(` \u00b7 Policy generation ${gen}`);
+  card.append(line);
+  if (!b.accepted) {
+    const why = [b.reason ?? st?.reason, st?.message].filter(Boolean).join(": ");
+    card.append(el("p", `Refused: ${why || "no reason given"}`, "binding-refused"),
+      el("p", gen ? `Serving generation ${gen}` : "Not serving: the class falls back to review", "binding-serving"));
+  }
+  const params = parameterWords(b.parameters);
+  if (params.length) {
+    const ul = el("ul", undefined, "binding-parameters");
+    for (const p of params) ul.append(el("li", p));
+    card.append(el("p", "This repository supplies:", "binding-parameters-lead"), ul);
+  }
 }
 
 // detail is a class's track record as one line of words.
@@ -143,12 +188,15 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     const parts = summaryLine(policy, r.guardrails).split(" · ");
     parts.forEach((part, i) => sum.append(el("span", i < parts.length - 1 ? `${part} ·` : part, "summary-part"), i < parts.length - 1 ? " " : ""));
     card.append(sum);
+  } else if (r.repositoryObject) {
+    card.append(el("p", "This class's conditions are its MergePolicy's: open the policy's page.", "class-summary"));
   } else {
     card.append(el("p", policyState(r) === "central"
       ? "This class's conditions are set in the MergePolicy and cannot be shown here."
       : "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
   }
-  const last = r.mergePolicyStatus?.status.classes?.find((x) => x.name === c.class);
+  bindingRows(card, c, ctx);
+  const last = (r.repositoryObject ? r.repositoryStatus : r.mergePolicyStatus)?.status.classes?.find((x) => x.name === c.class);
   if (last?.lastDecision) {
     const p = el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}`, "class-last");
     if (last.lastDecisionAt) p.append(", ", timeText(last.lastDecisionAt, now()));
@@ -182,6 +230,13 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
     const exc = ctx.page.exceptions.find((x) => x.class === c.class && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
     const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
     card.append(evidenceBar(e, eligible), ladder(e), detail(e));
+    const gens = generationLine(e);
+    if (gens) card.append(el("p", gens, "evidence-generations"));
+    if (r.repositoryObject) {
+      // B16: where a binding's promotion is made, by authority.
+      const where = policyState(r) === "repository" ? ".github/agent-factory.yaml" : r.repositoryManifestPath ?? "the Repository manifest";
+      card.append(el("p", `To promote, set mode: live on the binding in ${where} and merge the change.`, "promote-where"));
+    }
     const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
     if (reviewers) card.append(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
     card.append(el("p", eligible
@@ -278,10 +333,12 @@ function exceptionsOf(cls: string, ctx: CardContext): HTMLElement | undefined {
 export function showProposal(main: HTMLElement, p: Proposal) {
   const box = el("section", undefined, "proposal");
   box.append(el("h2", "Your promotion pull request"));
-  const lead = el("p", `Change line ${p.line} of ${p.path} from mode: shadow to mode: live, as below, then propose it as a pull request: `);
-  const a = el("a", "edit the file on GitHub");
-  a.href = p.editURL;
-  lead.append(a);
+  const lead = el("p", `Change line ${p.line} of ${p.path} from mode: shadow to mode: live, as below, then propose it as a pull request`);
+  if (p.editURL) {
+    const a = el("a", "edit the file on GitHub");
+    a.href = p.editURL;
+    lead.append(": ", a);
+  } else lead.append(" to the repository Flux applies it from."); // a Repository manifest (B5)
   box.append(lead, el("pre", p.file, "proposal-file"));
   const copy = el("button", "Copy the file");
   copy.type = "button";

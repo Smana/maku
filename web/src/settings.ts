@@ -7,7 +7,8 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { centralManifest, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, timeText, trackRecord } from "./settings-api";
+import { centralManifest, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
+
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
@@ -17,8 +18,11 @@ import { mountThemeButton, type ThemeController } from "./theme";
 
 export interface Step { merges: number; maxBad: number; reached: boolean }
 export interface Reviewer { model: string; mergedUnchanged: number; changed: number }
+// GenerationCount is one policy generation's share of the shadow decisions, or, before, the share
+// decided before the class was bound (Q6).
+export interface GenerationCount { generation?: number; before?: boolean; mergedUnchanged: number; changed: number }
 export interface Evidence {
-  shadow: { mergedUnchanged: number; changed: number; reverted: number; autoMerged: number; drill: number; reviewers: Reviewer[] | null };
+  shadow: { mergedUnchanged: number; changed: number; reverted: number; autoMerged: number; drill: number; reviewers: Reviewer[] | null; byGeneration?: GenerationCount[] };
   clean: number; bad: number; immature: number; pending: number;
   bound: number; budget: number; widen: boolean; ladder: Step[];
   drill: string; minimum: number; eligible: boolean; blockers?: string[];
@@ -33,6 +37,21 @@ export interface MergePolicyStatus {
   namespace: string; generation: number;
   status: { observedGeneration?: number; authority?: string; conditions?: Condition[]; classes?: ClassStatus[] };
 }
+// A binding's parameters, as Repository.spec.mergePolicies holds them (B4).
+export interface Binding {
+  name: string; mode: string; allowedFiles?: string[]; companionFiles?: string[]; requiredLabel?: string; oracleWorkflow?: string;
+  holdoutChecks?: string[]; protectedFiles?: string[]; requiresApproval?: { changedFiles: string[] }[];
+  maxPatchFiles?: number; maxModifiedLines?: number; maxPerDay?: number;
+}
+// One binding of a bound repository, as the report gives it (B16).
+export interface BindingView { name: string; mode: string; policyGeneration?: number; parameters: Binding; accepted: boolean; reason?: string }
+export interface BindingStatus { name: string; mode?: string; policyGeneration?: number; accepted: boolean; reason?: string; message?: string; lastDecision?: string; lastDecisionAt?: string }
+// A bound repository's Repository object as the factory reads it (B10).
+export interface RepositoryStatus {
+  namespace: string; generation: number;
+  status: { observedGeneration?: number; authority?: string; conditions?: Condition[]; classes?: BindingStatus[];
+    merge?: Record<string, unknown>; mergeDefaulted?: string[] };
+}
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
   evidenceAt?: string; evidenceError?: string;
@@ -43,6 +62,10 @@ export interface Report {
   // Set when the repository is served from a MergePolicy object: its name, its manifest as the
   // factory renders it, the file name to save that under, and its classes in the file's shape.
   mergePolicy?: string; mergePolicyStatus?: MergePolicyStatus; manifest?: string; manifestPath?: string; served?: PolicyFile;
+  // Set when the repository is served from its Repository's bindings (B3, B16): the object's name,
+  // its manifest and the file name to save it under, its status, and each binding.
+  repositoryObject?: string; repositoryManifest?: string; repositoryManifestPath?: string; repositoryStatus?: RepositoryStatus;
+  bindings?: BindingView[];
 }
 
 // One repository's hardening readiness: hardened, and the facts that do not hold.
@@ -265,6 +288,12 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
 // mergePolicyCell is a repository's MergePolicy in the list: its name and whether it was accepted
 // and is in sync, or that the repository is not migrated.
 function mergePolicyCell(r: Report): string {
+  if (r.repositoryObject) {
+    const st = r.repositoryStatus;
+    const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => ["Accepted", "BindingsValid", "InSync"].includes(c.type)) } };
+    const words = conditionWords(kept).map((c) => c.word);
+    return [`Repository ${r.repositoryObject}`, ...(words.length ? words : ["status unknown"])].join(" · ");
+  }
   if (policyState(r) === "not-migrated") return "Not migrated";
   const st = r.mergePolicyStatus;
   const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => c.type === "Accepted" || c.type === "InSync") } };
@@ -355,7 +384,8 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   main.append(el("p", "The factory's guardrails, which every class inherits:", "guardrails-lead"), guard);
   const classes = el("section", undefined, "policy-classes");
   main.append(classes);
-  const policyOf = (p: RepositoryPage) => (centralManifest(p.report) ? p.report.served : p.report.policy);
+  // A binding's conditions are its policy's, on the policy's page: the card links there.
+  const policyOf = (p: RepositoryPage) => (p.report.repositoryObject ? undefined : centralManifest(p.report) ? p.report.served : p.report.policy);
   const age = (p: RepositoryPage) => { const e = el("p", undefined, "evidence-age"); e.append(...evidenceAge(p.report)); return e; };
   const draw = (p: RepositoryPage) => classes.replaceChildren(age(p),
     ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main, policy: policyOf(p) })));
@@ -392,6 +422,7 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   main.append(tl);
 
   if (state === "not-migrated") return;
+  if (r.repositoryObject) return; // its editor is the bindings editor (B16)
   main.append(el("h2", "Policy editor"));
   main.append(editor(r, page.you.maintainer, get));
 }
@@ -405,11 +436,12 @@ function policyHeader(r: Report): HTMLElement {
     return box;
   }
   const state = policyState(r);
-  const st = r.mergePolicyStatus;
+  const st = servingStatus(r);
   const head = el("header", undefined, "policy-header");
   const dl = el("dl");
   const row = (k: string, v: string) => dl.append(el("dt", k), el("dd", v));
-  row("MergePolicy", r.mergePolicy!);
+  if (r.repositoryObject) row("Repository", r.repositoryObject);
+  else row("MergePolicy", r.mergePolicy!);
   if (st) row("Namespace", st.namespace);
   row("Authority", st?.status.authority ?? state);
   // A status that lags the spec describes an older generation: say which, only then.
@@ -436,11 +468,30 @@ function policyHeader(r: Report): HTMLElement {
       head.append(d);
     } else head.append(el("p", `${c.word}: ${c.message}`, "policy-condition-message"));
   }
-  if (state === "repository") head.append(el("p", "The repository's .github/agent-factory.yaml decides the classes; the MergePolicy defers to it.", "policy-authority"));
+  if (state === "repository") head.append(el("p", `The repository's .github/agent-factory.yaml decides the classes; the ${r.repositoryObject ? "Repository" : "MergePolicy"} defers to it.`, "policy-authority"));
+  const merge = mergeView(r);
+  if (merge) head.append(merge);
   const read = el("p", "Policy read ", "policy-read");
   read.append(timeText(r.readAt), ".");
   head.append(read);
   return head;
+}
+
+// mergeView is a bound repository's merge settings as resolved (Q8), each key the Factory's
+// mergeDefaults filled marked so; undefined without them.
+function mergeView(r: Report): HTMLElement | undefined {
+  const m = r.repositoryStatus?.status.merge;
+  if (!m) return undefined;
+  const from = new Set(r.repositoryStatus?.status.mergeDefaulted ?? []);
+  const d = el("details", undefined, "repository-merge");
+  d.append(el("summary", "Merge settings"));
+  const ul = el("ul");
+  for (const k of Object.keys(m).sort()) {
+    const v = m[k];
+    ul.append(el("li", `${k}: ${typeof v === "object" && v !== null ? JSON.stringify(v) : String(v)}${from.has(k) ? " (from the Factory)" : ""}`));
+  }
+  d.append(ul);
+  return d;
 }
 
 // modeLegend says once what the three modes mean; a card's badge is only the word.
