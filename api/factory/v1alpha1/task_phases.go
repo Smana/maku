@@ -58,6 +58,15 @@ const LabelIssue = "agents.ogenki.io/issue"
 // one List, as it finds a task by LabelIssue.
 const LabelPublishedIssue = "agents.ogenki.io/published-issue"
 
+// LabelDrillInjection marks a task whose issue carries factory/drill-injection: an injection drill's
+// planted task (hardening HR38). The drill manifest route accepts only such tasks, the room stays
+// open until the drill runner has scored it, and its T5 calls count under drill="true".
+const LabelDrillInjection = "agents.ogenki.io/drill-injection"
+
+// AnnotationDrillScored names the drill whose runner scored this task (or, on a drill manifest's
+// ConfigMap, its result): the room's close waits for it on a LabelDrillInjection task.
+const AnnotationDrillScored = "agents.ogenki.io/drill-scored"
+
 // LabelParent carries a child task's parent's name (splitter design SL14): a family's cost is a
 // selector sum, and the parent finds its children by it.
 const LabelParent = "agents.ogenki.io/parent"

@@ -118,9 +118,13 @@ type Applier struct {
 	// are still applied (DefaultAnswerWait); for as long again, what is still unanswered is
 	// refused output_expired, and then the run is no longer read.
 	Interval, AnswerWait time.Duration
-	Now                  func() time.Time
-	Metrics              Metrics
-	Log                  *slog.Logger
+	// Drill reports whether the repository's drill-labelled tasks are drill tasks: the drills are on
+	// and it is the drill repository (config.DrillTask). nil counts no T5 call as a drill's, so a
+	// drill label never hides a false positive while drills are off.
+	Drill   func(repo string) bool
+	Now     func() time.Time
+	Metrics Metrics
+	Log     *slog.Logger
 
 	rooms map[string]*roomState
 }
@@ -419,9 +423,10 @@ func (rs *runState) done(req request, n hardening.Counts) {
 }
 
 // refuse answers req refused with r and spends n.
-func (a *Applier) refuse(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, r hardening.Refusal, n hardening.Counts) error {
+func (a *Applier) refuse(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, r hardening.Refusal, n hardening.Counts,
+	audit ...hardening.Finding) error {
 	if err := a.post(ctx, t, runID, envelope.KindOutputRefused, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
-		Digest: req.rec.Digest, Bytes: req.rec.Bytes, Reason: string(r)}, req); err != nil {
+		Digest: req.rec.Digest, Bytes: req.rec.Bytes, Reason: string(r), Audit: findings(audit)}, req); err != nil {
 		return err
 	}
 	rs.done(req, n)
@@ -466,8 +471,12 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	if c.Layers.Classifier.AtLeast(hardening.ModeAudit) {
 		t5 = hardening.ModeAudit
 	}
+	if req.redacted {
+		t5 = hardening.ModeOff // the broker's redaction found a secret: nothing of this payload goes to T5 (#520's review)
+	}
 	c.Layers = hardening.LayersFor(hardening.ModeEnforce, t5)
-	v := c.Check(ctx, &n, hardening.Request{Type: typ, Payload: req.rec.Payload, OwnIssue: t.Spec.Issue, Canary: rs.claim.Canary})
+	hreq := hardening.Request{Type: typ, Payload: req.rec.Payload, OwnIssue: t.Spec.Issue, Canary: rs.claim.Canary}
+	v := c.Check(ctx, &n, hreq)
 	switch {
 	case v.Refusal == hardening.RefuseCanary:
 		a.Log.Error("canary leaked: an output request repeated the run's canary", "task.id", t.Name, "run.id", rec.ID,
@@ -477,7 +486,11 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		v.Refusal = hardening.RefuseSecret
 	}
 	if v.Refusal != "" {
-		return a.refuse(ctx, t, rec.ID, rs, req, v.Refusal, n)
+		v = c.Measure(ctx, hreq, v) // HR39: T5 reads a refusal it may, in audit
+	}
+	a.countT5(ctx, t, typ, v.T5)
+	if v.Refusal != "" {
+		return a.refuse(ctx, t, rec.ID, rs, req, v.Refusal, n, v.Audit...)
 	}
 	if a.stopped(ctx) {
 		return errStopped
@@ -493,7 +506,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	case err != nil:
 		return err
 	case refusal != "":
-		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n)
+		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n, v.Audit...) // T5 read it in Check: its finding stays
 	}
 	sanitised, err := json.Marshal(v.Payload)
 	if err != nil {
@@ -501,13 +514,35 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	}
 	out := envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type, Digest: hardening.Digest(sanitised),
 		Bytes: min(len(sanitised), envelope.MaxOutputBytes), Object: obj}
-	for _, f := range v.Audit {
-		if len(out.Audit) == envelope.MaxOutputFindings {
+	out.Audit = findings(v.Audit)
+	return a.applied(ctx, t, rec.ID, rs, req, n, prs, out)
+}
+
+// findings is the record's audit list: at most MaxOutputFindings, nil when there is none.
+func findings(audit []hardening.Finding) []envelope.OutputFinding {
+	var out []envelope.OutputFinding
+	for _, f := range audit {
+		if len(out) == envelope.MaxOutputFindings {
 			break
 		}
-		out.Audit = append(out.Audit, envelope.OutputFinding{Layer: string(f.Layer), Reason: string(f.Refusal)})
+		out = append(out, envelope.OutputFinding{Layer: string(f.Layer), Reason: string(f.Refusal)})
 	}
-	return a.applied(ctx, t, rec.ID, rs, req, n, prs, out)
+	return out
+}
+
+// t5Metrics counts T5's calls (HR39); fmetrics.Set implements it. A metrics port without it
+// records nothing.
+type t5Metrics interface {
+	HardeningT5(ctx context.Context, typ, result string, drill bool)
+}
+
+// countT5 counts one T5 answer on an output of t, labelled by whether t is a drill task: false
+// positives are hits on applied outputs of non-drill tasks.
+func (a *Applier) countT5(ctx context.Context, t *v1alpha1.Task, typ hardening.OutputType, result string) {
+	if m, ok := a.Metrics.(t5Metrics); ok && result != "" {
+		drill := t.Labels[v1alpha1.LabelDrillInjection] == "true" && a.Drill != nil && a.Drill(t.Spec.Repository)
+		m.HardeningT5(ctx, string(typ), result, drill)
+	}
 }
 
 func (a *Applier) applied(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, n hardening.Counts,

@@ -20,6 +20,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/bridgeapi"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/runwatch"
@@ -331,5 +332,77 @@ func TestTheGrantClientSpeaksTheBrokersGrantRoutes(t *testing.T) {
 	}
 	if _, _, err := c.LookupGrants(ctx, "smana/docs", "docs-broad", hash[:12], time.Hour); err == nil {
 		t.Fatal("a short hash was sent")
+	}
+}
+
+// memDrills is the store's drill reports, once per id.
+type memDrills struct {
+	mu   sync.Mutex
+	rows map[string]store.DrillReport
+}
+
+func (m *memDrills) PutDrillReport(_ context.Context, r store.DrillReport) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, ok := m.rows[r.ID]; ok {
+		return store.ErrDrillExists
+	}
+	m.rows[r.ID] = r
+	return nil
+}
+
+func (m *memDrills) LastPass(_ context.Context, version, hash string) (string, time.Time, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for _, r := range m.rows {
+		if r.Pass && r.Version == version && r.ConfigHash == hash {
+			return r.ID, r.At, true, nil
+		}
+	}
+	return "", time.Time{}, false, nil
+}
+
+func (m *memDrills) DrillPassed(_ context.Context, id string) (bool, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	r, ok := m.rows[id]
+	return r.Pass, ok, nil
+}
+
+// HR38: the report the factory posts is one the broker takes, and the pass it reads back is the
+// one it stored.
+func TestTheDrillClientSpeaksTheBrokersDrillRoutes(t *testing.T) {
+	md := &memDrills{rows: map[string]store.DrillReport{}}
+	srv := &bridgeapi.Server{Redactor: noRedact{}, Runs: systems{}, Systems: systems{}, Watch: noRuns{}, Drills: md, OutputClient: "system:factory"}
+	ts := httptest.NewTLSServer(srv.Routes())
+	defer ts.Close()
+	roots := x509.NewCertPool()
+	roots.AddCert(ts.Certificate())
+	tok := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(tok, []byte("factory-token\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	c, err := New(ts.URL, tok, httpx.New(5*time.Second, roots), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := hardening.DrillKey{Version: "v0.45.0", ConfigHash: strings.Repeat("c", 64)}
+	at := time.Date(2026, 11, 13, 6, 0, 0, 0, time.UTC)
+	rep := hardening.Score(hardening.Suite{Version: 1}, hardening.DrillMeta{ID: "drill-1", Version: key.Version, ConfigHash: key.ConfigHash, At: at}, nil)
+	if err := c.PutDrillReport(t.Context(), rep); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.PutDrillReport(t.Context(), rep); !errors.Is(err, ErrDrillExists) {
+		t.Fatalf("a second report: %v", err)
+	}
+	got, ok, err := c.LastPass(t.Context(), key)
+	if err != nil || !ok || got.ID != "drill-1" || !got.At.Equal(at) {
+		t.Fatalf("%+v %v %v", got, ok, err)
+	}
+	if pass, err := c.DrillPassed(t.Context(), "drill-1"); err != nil || !pass {
+		t.Fatalf("result %v %v", pass, err)
+	}
+	if _, err := c.DrillPassed(t.Context(), "drill-9"); err == nil {
+		t.Fatal("no stored report read as one")
 	}
 }
