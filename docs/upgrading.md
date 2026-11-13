@@ -4,6 +4,26 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Run traces (v0.4x, v4 rollout step 6)
+
+One new key in the `maku` chart, off by default, so a release that does not set it renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `runController.tracing.otlpEndpoint` and `runController.tracing.collector` | unset: runs export no span | each run's harness exports its span over OTLP/HTTP under its task's trace, and each run's policy opens the endpoint's port to the collector's pods ([Observability](observability.md#traces)) |
+
+`maku-factory.config.tracing.otlpEndpoint` keeps its meaning: the factory's gRPC `host:port`.
+
+The harness no longer hands agent-server a trace endpoint, because agent-server's spans carry
+prompts and tool output ([what spans contain](observability.md#what-spans-contain)). A run template
+that relied on those spans, such as cloud-native-ref's AgentRun composition, sets
+`AGENT_TRACE_CONTENT=1` in the harness's environment to keep them, behind a collector that filters
+span attributes. Set this way, the harness's own root span is unchanged.
+
+The run controller decodes its config strictly, so a `tracing:` block needs this release's run
+controller image: chart and images move together. Runs already started keep their pods, without
+traces, until they end.
+
 ## Scrape objects and alerts (v0.4x, v4 rollout step 6)
 
 New umbrella keys, all off by default, so a release that sets none of them renders as before:

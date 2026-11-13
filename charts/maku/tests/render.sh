@@ -526,6 +526,30 @@ bad 'runController.model.gateway.aliases.public is required' --set runController
 bad "at '/runController/model/mode'" --set runController.model.mode=direct
 bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
 
+# v4 step 6 (D21, EX15): runController.tracing hands runs the OTLP/HTTP endpoint and opens the
+# collector's port in each run's own policy; unset, the controller config carries no tracing block
+for r in "$q" "$ctl" "$kn"; do
+  out="$r"
+  ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("tracing") | not)' 'tracing unset: the controller config has no tracing block'
+done
+trc=(--set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local:4318
+     --set runController.tracing.collector.namespace=obs --set-json 'runController.tracing.collector.labels={"app.kubernetes.io/name":"collector"}')
+tr="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" "${trc[@]}")"
+trk="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" "${trc[@]}" --set networkPolicies.mode=kubernetes)"
+for r in "$tr" "$trk"; do
+  out="$r"
+  ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.tracing.otlpEndpoint == "http://collector.obs.svc.cluster.local:4318" and .tracing.collector.namespace == "obs" and (.tracing.collector.labels | to_entries | map(.key + "=" + .value) | join(",")) == "app.kubernetes.io/name=collector")' 'tracing: the controller config carries the endpoint and the collector selector'
+done
+bad "tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local:4318
+bad "tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local:4318 --set runController.tracing.collector.namespace=obs
+bad 'runController.tracing.collector is set without runController.tracing.otlpEndpoint' --set runController.tracing.collector.namespace=obs
+bad 'runController.tracing.collector.namespace "other" is not the endpoint'"'"'s namespace "obs"' "${trc[@]}" --set runController.tracing.collector.namespace=other
+bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=collector.obs.svc.cluster.local:4317
+bad 'runController.tracing.otlpEndpoint "http://collector.obs.svc.other.local:4318" is not in clusterDomain "cluster.local"' "${trc[@]}" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.other.local:4318
+bad 'runController.tracing.collector.labels: "io.kubernetes.pod.namespace" is not a pod label' "${trc[@]}" --set-json 'runController.tracing.collector.labels={"app.kubernetes.io/name":"collector","io.kubernetes.pod.namespace":"kube-system"}'
+bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local
+bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=https://otel.example.com:4318
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
@@ -549,7 +573,10 @@ yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<
 go run ./tests/loadconfig broker-roomtools-tokenreview "$tmp/roomtools-tokenreview.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$nonp" >"$tmp/rc-none.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$kn" >"$tmp/rc-kubernetes.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$tr" >"$tmp/rc-tracing.yaml"
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$trk" >"$tmp/rc-tracing-kubernetes.yaml"
 go run ./tests/loadconfig run-controller "$tmp/rc-quickstart.yaml" "$tmp/rc-production.yaml" "$tmp/rc-none.yaml" "$tmp/rc-roomtools.yaml" "$tmp/rc-kubernetes.yaml" "$tmp/rc-perrun.yaml" || fail=1
+go run ./tests/loadconfig run-controller-tracing "$tmp/rc-tracing.yaml" "$tmp/rc-tracing-kubernetes.yaml" || fail=1
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gw" >"$tmp/rc-gateway.yaml"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$gwext" >"$tmp/rc-gateway-external.yaml"
 go run ./tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml" "$tmp/rc-gateway-external.yaml" || fail=1
