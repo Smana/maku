@@ -122,9 +122,10 @@ func (t Tracing) port() int {
 }
 
 // validate checks the endpoint: an in-cluster Service by its fully qualified name, as the run's DNS
-// allowlist and ndots:1 resolver need, with an explicit port; and the collector's selector, in the
-// endpoint's namespace, which the run's policy opens that port to.
-func (t Tracing) validate() []error {
+// allowlist and ndots:1 resolver need, in clusterDomain, which the harness's NO_PROXY keeps direct,
+// with an explicit port; and the collector's selector, in the endpoint's namespace, which the run's
+// policy opens that port to. A namespace label would replace the CNP's namespace selector.
+func (t Tracing) validate(clusterDomain string) []error {
 	if !t.enabled() {
 		if !reflect.ValueOf(t.Collector).IsZero() {
 			return []error{errors.New("tracing.collector is set without tracing.otlpEndpoint: set both, or neither")}
@@ -134,8 +135,14 @@ func (t Tracing) validate() []error {
 	var errs []error
 	u, err := url.Parse(t.OTLPEndpoint)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !validPort(u.Port()) || u.User != nil ||
-		u.RawQuery != "" || u.Fragment != "" || !brokerHostRE.MatchString(u.Hostname()) {
-		return []error{fmt.Errorf("tracing.otlpEndpoint %q must be http(s)://<service>.<namespace>.svc.<cluster-domain>:<port>, the collector's OTLP/HTTP port", t.OTLPEndpoint)}
+		u.RawQuery != "" || u.Fragment != "" || !brokerHostRE.MatchString(u.Hostname()) ||
+		!strings.HasSuffix(u.Hostname(), ".svc."+clusterDomain) {
+		return []error{fmt.Errorf("tracing.otlpEndpoint %q must be http(s)://<service>.<namespace>.svc.%s:<port>, the collector's OTLP/HTTP port in the broker's cluster domain", t.OTLPEndpoint, clusterDomain)}
+	}
+	for k := range t.Collector.Labels {
+		if strings.TrimPrefix(k, "k8s:") == "io.kubernetes.pod.namespace" {
+			errs = append(errs, fmt.Errorf("tracing.collector.labels: %q is not a pod label: name the namespace in tracing.collector.namespace", k))
+		}
 	}
 	if t.Collector.Namespace == "" || len(t.Collector.Labels) == 0 {
 		errs = append(errs, errors.New("tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it"))
@@ -399,7 +406,7 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("broker.url host %q must be <service>.<namespace>.svc.<cluster-domain>, e.g. room-broker.agent-platform.svc.cluster.local", u.Hostname()))
 	}
 	errs = append(errs, c.roomToolsURL()...)
-	errs = append(errs, c.Tracing.validate()...)
+	errs = append(errs, c.Tracing.validate(c.clusterDomain())...)
 	if len(c.Broker.Labels) == 0 {
 		errs = append(errs, errors.New("broker.labels: the CNP needs at least one to select the broker"))
 	}

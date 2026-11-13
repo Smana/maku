@@ -545,6 +545,8 @@ bad "tracing.collector: name the collector's pods (namespace, labels) so the run
 bad 'runController.tracing.collector is set without runController.tracing.otlpEndpoint' --set runController.tracing.collector.namespace=obs
 bad 'runController.tracing.collector.namespace "other" is not the endpoint'"'"'s namespace "obs"' "${trc[@]}" --set runController.tracing.collector.namespace=other
 bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=collector.obs.svc.cluster.local:4317
+bad 'runController.tracing.otlpEndpoint "http://collector.obs.svc.other.local:4318" is not in clusterDomain "cluster.local"' "${trc[@]}" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.other.local:4318
+bad 'runController.tracing.collector.labels: "io.kubernetes.pod.namespace" is not a pod label' "${trc[@]}" --set-json 'runController.tracing.collector.labels={"app.kubernetes.io/name":"collector","io.kubernetes.pod.namespace":"kube-system"}'
 bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local
 bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=https://otel.example.com:4318
 

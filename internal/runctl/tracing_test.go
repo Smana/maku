@@ -55,6 +55,11 @@ func TestLoadConfigTracing(t *testing.T) {
 		{"userinfo", strings.Replace(tracingConfig, "http://", "http://u:p@", 1), "tracing.otlpEndpoint"},
 		{"query", strings.Replace(tracingConfig, ":4318", ":4318/?x=1", 1), "tracing.otlpEndpoint"},
 		{"other namespace", strings.Replace(tracingConfig, "namespace: obs", "namespace: other", 1), "tracing.collector.namespace"},
+		// The CNP merges the labels into one selector: this key would replace the namespace.
+		{"namespace label", strings.Replace(tracingConfig, "{app.kubernetes.io/name: collector}", "{app.kubernetes.io/name: collector, io.kubernetes.pod.namespace: kube-system}", 1), "tracing.collector.labels"},
+		{"cilium namespace label", strings.Replace(tracingConfig, "{app.kubernetes.io/name: collector}", "{app.kubernetes.io/name: collector, k8s:io.kubernetes.pod.namespace: kube-system}", 1), "tracing.collector.labels"},
+		// NO_PROXY holds .svc.<broker's cluster domain>: another domain would send https to the egress proxy.
+		{"other cluster domain", strings.Replace(tracingConfig, ".svc.cluster.local", ".svc.other.local", 1), "tracing.otlpEndpoint"},
 	} {
 		_, err := cfgFrom(t, goodConfig+tc.body)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
