@@ -502,7 +502,20 @@ quirk() {
     { cat "$work/quirk-$preset.out" >&2; die "the $preset preset: $what (the provider received $got)"; }
 }
 quirk mistral mistral-small-2603 '.reasoning_effort == "none"' 'reasoning_effort "none" on the wire, though the broker sent low'
-quirk moonshot k3.1-pro '.temperature == 1 and .top_p == "<absent>"' 'temperature 1 and no top_p on the wire, though the broker sent 0'
+quirk moonshot k3.1-pro '.temperature == 1' 'temperature 1 on the wire, though the broker sent 0'
+
+step "planner on the moonshot preset: a caller's top_p never reaches the provider"
+# The broker sends no top_p, so this call sends one itself, on the planner's route with a fresh token
+# of the broker's ServiceAccount (the quirk legs outlast the first one's ten minutes).
+kubectl -n "$NS" create token room-broker --audience maku-gateway.client.planner --duration 10m >"$work/planner-token"
+code=$(curl -sS -o "$work/top-p.out" -w '%{http_code}' -H "Authorization: Bearer $(cat "$work/planner-token")" \
+  -H 'Content-Type: application/json' \
+  --data '{"model":"tier-frontier","temperature":0,"top_p":0.5,"messages":[{"role":"user","content":"hello"}]}' \
+  "http://127.0.0.1:$gw_port/clients/planner/v1/chat/completions")
+[[ $code == 200 ]] || { cat "$work/top-p.out" >&2; die "the planner route answered $code to a call carrying top_p"; }
+got=$(last_received other)
+jq -e '.model == "k3.1-pro" and .temperature == 1 and .top_p == "<absent>"' <<<"$got" >/dev/null ||
+  die "the moonshot preset: the provider received top_p or another temperature, though the caller sent top_p 0.5 ($got)"
 echo 'ok: the planner and the classifier through the gateway, provider quirks applied'
 
 issue_body=$(cat <<'EOF'

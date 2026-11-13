@@ -195,8 +195,10 @@ namespace, port, audiencePrefix, base, tokens}. base is the clients listener's U
 
 {{/*
 The human block as the broker reads it (oidc mode): the values' block, with the model gateway's
-routes filled in where the block leaves url or apiKeyFile unset (D25: a value you set wins). The
-planner's only when it is enabled; the classifier's only when human.slackIntents exists.
+routes filled in where the block leaves both url and apiKeyFile unset (D25: a pair you set wins).
+The planner's only when it is enabled; the classifier's only when human.slackIntents exists. One of
+the two set alone fails the render: the gateway's token would go to another endpoint, or another
+key to the gateway.
 */}}
 {{- define "ap.human" -}}
 {{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
@@ -204,13 +206,23 @@ planner's only when it is enabled; the classifier's only when human.slackIntents
 {{- if $g.service -}}
 {{- $plan := dig "intake" "plan" dict $h -}}
 {{- if $plan.enabled -}}
-{{- if not $plan.url }}{{ $_ := set $plan "url" (printf "%s/clients/planner/v1" $g.base) }}{{ end -}}
-{{- if not $plan.apiKeyFile }}{{ $_ := set $plan "apiKeyFile" (printf "%s/planner" $g.tokens) }}{{ end -}}
+{{- include "ap.gatewayPair" (dict "block" $plan "key" "broker.human.intake.plan" "url" (printf "%s/clients/planner/v1" $g.base) "token" (printf "%s/planner" $g.tokens)) -}}
 {{- end -}}
 {{- with $h.slackIntents -}}
-{{- if not .url }}{{ $_ := set . "url" (printf "%s/clients/classifier/v1" $g.base) }}{{ end -}}
-{{- if not .apiKeyFile }}{{ $_ := set . "apiKeyFile" (printf "%s/classifier" $g.tokens) }}{{ end -}}
+{{- include "ap.gatewayPair" (dict "block" . "key" "broker.human.slackIntents" "url" (printf "%s/clients/classifier/v1" $g.base) "token" (printf "%s/classifier" $g.tokens)) -}}
 {{- end -}}
 {{- end -}}
 {{- toYaml $h -}}
+{{- end -}}
+
+{{/* One client's url and apiKeyFile: both filled from the gateway when both are unset, kept when both
+are set, and a render error naming both keys when only one is. Mutates block. */}}
+{{- define "ap.gatewayPair" -}}
+{{- $b := .block -}}
+{{- if and (not $b.url) (not $b.apiKeyFile) -}}
+{{- $_ := set $b "url" .url -}}
+{{- $_ := set $b "apiKeyFile" .token -}}
+{{- else if not (and $b.url $b.apiKeyFile) -}}
+{{- fail (printf "%s.url and %s.apiKeyFile: set both or neither (broker.modelGateway fills both when neither is set): one alone would pair the gateway's token with another endpoint, or another key with the gateway" .key .key) -}}
+{{- end -}}
 {{- end -}}

@@ -233,8 +233,10 @@ reach the gateway's pods on `port`. The chart then fills two blocks of the broke
 - `human.intake.plan`, when it is enabled: `url` becomes `http://<service>.<namespace>.svc.<clusterDomain>:<port>/clients/planner/v1`, and `apiKeyFile` becomes the planner's token;
 - `human.slackIntents`, only when the block exists: the classifier's route and token.
 
-Each key is filled only when the block leaves it unset. A `url` or `apiKeyFile` you set wins, so a
-broker that reaches another gateway with a static key keeps working until you remove the two keys.
+The two keys are filled together, and only when the block sets neither. A block that sets both keeps
+them, so a broker that reaches another gateway with a static key keeps working until you remove the
+pair. A block that sets only one of them fails the render, naming both keys. Filling the other key
+would pair the gateway's token with your endpoint, or your key with the gateway.
 
 In the umbrella, the render fails when:
 - `maku-gateway` serves a client but `maku.broker.modelGateway.service` does not name its Gateway;

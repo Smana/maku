@@ -265,10 +265,11 @@ gwbad 'maku.broker.human.intake.plan routes through maku-gateway (no url set), b
   --set maku-gateway.clients.planner.enabled=false --set maku.broker.human.intake.plan.enabled=true
 gwbad 'maku.broker.human.slackIntents routes through maku-gateway (no url set), but maku-gateway.clients.classifier.enabled is false' \
   --set maku.broker.human.slackIntents.principal=slack-app
-# a block with its own url keeps working beside the gateway (D25)
+# a block with its own url and apiKeyFile keeps working beside the gateway (D25)
 helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gateway.clients.planner.enabled=false \
-  --set maku.broker.human.intake.plan.enabled=true --set maku.broker.human.intake.plan.url=http://gw.ai.svc:8080/v1 >/dev/null 2>&1 ||
-  { echo "FAIL: a planner with its own url does not render beside the gateway" >&2; fail=1; }
+  --set maku.broker.human.intake.plan.enabled=true --set maku.broker.human.intake.plan.url=http://gw.ai.svc:8080/v1 \
+  --set maku.broker.human.intake.plan.apiKeyFile=/etc/planner/key >/dev/null 2>&1 ||
+  { echo "FAIL: a planner with its own url and apiKeyFile does not render beside the gateway" >&2; fail=1; }
 
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"

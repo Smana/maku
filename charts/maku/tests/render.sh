@@ -308,6 +308,25 @@ out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCon
 ynone 'select(.kind=="Deployment") | .spec.template.spec.volumes[] | select(.name == "model-gateway")' 'no modelGateway: no token volume'
 ynone 'select(.kind=="CiliumNetworkPolicy") | .spec.egress[] | select(.toEndpoints[0].matchLabels."gateway.networking.k8s.io/gateway-name")' 'no modelGateway: no egress to a gateway'
 bad '/broker/modelGateway/port' --set broker.modelGateway.service=model-gateway --set broker.modelGateway.port=0
+# A url without its apiKeyFile (or the reverse) would pair the gateway's token with another endpoint,
+# or another key with the gateway: the pair is filled only when both are unset, else the render fails.
+mgbad() { # mgbad 'expected message' --set ...: the oidc-mode render with modelGateway on must fail with it
+  local want="$1" err; shift
+  if err="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+      --set broker.modelGateway.service=model-gateway "$@" 2>&1 >/dev/null)"; then
+    echo "FAIL: $* must not render" >&2; fail=1
+  elif ! grep -qF -- "$want" <<<"$err"; then
+    echo "FAIL: $* failed, but not with \"$want\": $err" >&2; fail=1
+  fi
+}
+mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.url=https://api.openai.com/v1
+mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.apiKeyFile=/etc/planner/key
+mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
+  --set broker.human.slackIntents.url=https://api.openai.com/v1
+mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
+  --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key
 
 # sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
 # is the old one, byte for byte (runtimeClassName: gvisor), plus PR B's unsafeSharedGitToken (the

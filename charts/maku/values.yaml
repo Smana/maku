@@ -132,8 +132,8 @@ broker:
   # <audiencePrefix>.client.planner and .client.classifier, 3600 s, read at use), never a static key.
   # Set service (the Gateway's name: maku-gateway's `name`, model-gateway) to turn it on. The chart
   # then fills human.intake.plan's url and apiKeyFile, and an existing human.slackIntents block's,
-  # where the human block leaves them unset: a url or apiKeyFile you set wins. namespace "" is the
-  # release namespace.
+  # when the block sets neither: a block that sets both keeps them, and one set alone fails the
+  # render. namespace "" is the release namespace.
   modelGateway:
     service: ""
     namespace: ""
