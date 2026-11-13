@@ -35,11 +35,13 @@ type atlasRevision struct {
 // transaction, so migrate applies only what is pending and nothing twice (D25). Anything else is
 // refused, naming the version, with nothing written. The Atlas ledger is left as it is.
 func adopt(ctx context.Context, conn *pgx.Conn, files []migrations.File, log *slog.Logger) error {
-	var ours bool
-	if err := conn.QueryRow(ctx, "SELECT to_regclass('public.room_broker_revisions') IS NOT NULL").Scan(&ours); err != nil {
-		return fmt.Errorf("migrate: adopt: %w", err)
+	// An empty ledger of ours is no history: a first run that failed on its first file leaves one
+	// behind, and must not hide the operator's ledger from the next run.
+	ours, err := recorded(ctx, conn)
+	if err != nil {
+		return err
 	}
-	if ours {
+	if len(ours) > 0 {
 		return nil // our own ledger wins; the operator's, if any, is history
 	}
 	var present, readable bool

@@ -134,6 +134,20 @@ func TestAdoptRefuses(t *testing.T) {
 	}
 }
 
+// An empty ledger of ours, left by a first run that failed on its first file, does not hide the
+// operator's: the next run still adopts.
+func TestAdoptBesideAnEmptyLedgerOfOurs(t *testing.T) {
+	owner, _ := atlasMigrated(t)
+	exec(t, owner, createRevisions)
+	var buf bytes.Buffer
+	if n, err := Migrate(t.Context(), owner, logTo(&buf)); err != nil || n != migrationCount(t)-atlasFiles {
+		t.Fatalf("Migrate = %d, %v, want the %d files past the operator's", n, err, migrationCount(t)-atlasFiles)
+	}
+	if !strings.Contains(buf.String(), "adopted 14 revisions") {
+		t.Fatalf("not adopted:\n%s", buf.String())
+	}
+}
+
 // Our own ledger wins: with both present, the operator's is never read, whatever it holds.
 func TestAdoptIgnoresAtlasBesideOurLedger(t *testing.T) {
 	owner, _, _, super := testDB(t)
