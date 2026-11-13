@@ -461,7 +461,8 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | `room-bridge` sidecar and its `room-token` volume | `agents` | crossplane-configuration's `AgentRun` composition | Image `ghcr.io/smana/maku-bridge`, this repo |
 | `agent-harness` image | `agents` | crossplane-configuration's `AgentRun` composition | `images/maku-harness`, this repo |
 | Secret `room-broker-ca` | `agents` | cloud-native-ref ExternalSecret | The platform's private CA |
-| CNPs, `VMServiceScrape`, `VMRule` | `agent-system`, `observability` | cloud-native-ref | — |
+| CNPs | `agent-system` | cloud-native-ref | — |
+| `ServiceMonitor`s, `PodMonitor`s, `PrometheusRule` `maku` | the release namespace | The umbrella chart, with `monitoring.*.enabled` ([observability](observability.md)); cloud-native-ref runs its own `VMServiceScrape`s and `VMRule`s until it turns them on | `charts/agent-factory`, this repo |
 | oauth2-proxy, `HTTPRoute` | `agent-system` | cloud-native-ref | — |
 | `agent-router` MCPRoute backend for `:8090` | `agent-system` | cloud-native-ref | — |
 

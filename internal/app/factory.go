@@ -910,7 +910,7 @@ type wiring struct {
 
 // served moves the pollers, the metrics' repository list and the fence onto the served set once
 // a sync changed it. A dropped repository's repository_owned keeps its last value: a 0 would
-// fire FactoryRepositoryNotOwned for a repository nobody serves.
+// fire AgentFactoryRepositoryNotOwned for a repository nobody serves.
 func (w *wiring) served() []string {
 	w.servedMu.Lock()
 	defer w.servedMu.Unlock()

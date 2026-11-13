@@ -195,9 +195,11 @@ rules:
       description: "The meter priced those runs right, as fresh input. Any cost computed from the gateway's own token counters under-counts them. A gateway path or the provider changed its usage shape. The leader's log names each run: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep 'without its cache tokens'"
       runbook_url: "__DOCS__/operations.md#budget-signals"
       dashboard: "/d/agent-factory"
-  # Step 3 (D11): an agent token merged past the factory's own merge.
+  # Step 3 (D11): an agent token merged past the factory's own merge. The outcome's series is born at
+  # its first increment, which increase() reads as 0: compare with 15 minutes ago, absence read as 0,
+  # so the first such merge fires.
   - alert: FactoryAgentMerged
-    expr: sum by (repository) (increase(maku_factory_pr_outcomes_total{outcome="agent_merged"}[15m])) > 0
+    expr: sum by (repository) (clamp_min(maku_factory_pr_outcomes_total{outcome="agent_merged"} - (maku_factory_pr_outcomes_total{outcome="agent_merged"} offset 15m or maku_factory_pr_outcomes_total{outcome="agent_merged"} * 0), 0)) > 0
     labels:
       severity: warning
     annotations:

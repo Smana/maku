@@ -1,0 +1,125 @@
+# maku-rooms under promtool. Series are shaped as the broker's scrape leaves them, in namespace maku
+# (monitoring.sh renders the rule there). RoomWebhookDisabled is ported from ai-native-ref's
+# test-room-webhook-alerts.sh at 1529b3b; the rest is one case per rule, with its boundary.
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+tests:
+  # RoomBrokerDown: up, then down; pending 5 minutes, then firing. Another namespace's broker does
+  # not stand in for this one.
+  - interval: 1m
+    input_series:
+      - {series: 'up{job="room-broker", namespace="maku", instance="a"}', values: '1x5 0x15'}
+      - {series: 'up{job="room-broker", namespace="other", instance="b"}', values: '1x20'}
+    alert_rule_test:
+      - {eval_time: 5m, alertname: RoomBrokerDown, exp_alerts: []}
+      - {eval_time: 9m, alertname: RoomBrokerDown, exp_alerts: []}
+      - {eval_time: 12m, alertname: RoomBrokerDown, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # RoomAuthnHumanIssuerNeverFetched: a broker up for 30 minutes that never fetched the human
+  # issuer's keys, whatever other issuers it holds; silent once that issuer has a series.
+  - interval: 1m
+    input_series:
+      - {series: 'up{job="room-broker", namespace="maku", instance="a"}', values: '1x60'}
+      - {series: 'maku_rooms_authn_jwks_last_refresh_timestamp_seconds{issuer="https://kubernetes.default.svc"}', values: '0+60x60'}
+    alert_rule_test:
+      - {eval_time: 29m, alertname: RoomAuthnHumanIssuerNeverFetched, exp_alerts: []}
+      - {eval_time: 31m, alertname: RoomAuthnHumanIssuerNeverFetched, exp_alerts: [{exp_labels: {severity: warning, issuer: "https://idp.example.test"}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'up{job="room-broker", namespace="maku", instance="a"}', values: '1x60'}
+      - {series: 'maku_rooms_authn_jwks_last_refresh_timestamp_seconds{issuer="https://idp.example.test"}', values: '0+60x60'}
+    alert_rule_test:
+      - {eval_time: 45m, alertname: RoomAuthnHumanIssuerNeverFetched, exp_alerts: []}
+      - {eval_time: 45m, alertname: RoomAuthnJWKSStale, exp_alerts: []}
+  # RoomAuthnJWKSStale: a refresh 6 hours old, held 5 minutes.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_authn_jwks_last_refresh_timestamp_seconds{issuer="https://idp.example.test"}', values: '0x400'}
+    alert_rule_test:
+      - {eval_time: 360m, alertname: RoomAuthnJWKSStale, exp_alerts: []}
+      - {eval_time: 367m, alertname: RoomAuthnJWKSStale, exp_alerts: [{exp_labels: {severity: warning, issuer: "https://idp.example.test"}}]}
+  # RoomLogAppendErrors: appends failing for 10 minutes.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_append_errors_total{namespace="maku"}', values: '0x5 1+1x30'}
+    alert_rule_test:
+      - {eval_time: 12m, alertname: RoomLogAppendErrors, exp_alerts: []}
+      - {eval_time: 20m, alertname: RoomLogAppendErrors, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # RoomRedactionsSpike: 20 in 15 minutes is the boundary, 21 fires.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_redactions_total{rule="aws"}', values: '0x5 20x20'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: RoomRedactionsSpike, exp_alerts: []}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_redactions_total{rule="aws"}', values: '0x5 21x20'}
+    alert_rule_test:
+      - {eval_time: 10m, alertname: RoomRedactionsSpike, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # RoomStalled: room r1's last event is 30 minutes old; r2's is current.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_last_event_timestamp_seconds{room="r1"}', values: '0x40'}
+      - {series: 'maku_rooms_last_event_timestamp_seconds{room="r2"}', values: '0+60x40'}
+    alert_rule_test:
+      - {eval_time: 29m, alertname: RoomStalled, exp_alerts: []}
+      - {eval_time: 31m, alertname: RoomStalled, exp_alerts: [{exp_labels: {severity: warning, room: r1}}]}
+  # The bridge's stalls and stubs: a stall of any reason, a refused item, and the two unstorable
+  # reasons (info); an oversize stub is none of them.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_bridge_harness_stalls_total{reason="cursor_lost"}', values: '0x5 1x10'}
+      - {series: 'maku_rooms_bridge_items_stubbed_total{reason="refused"}', values: '0x5 1x10'}
+      - {series: 'maku_rooms_bridge_items_stubbed_total{reason="invalid_value"}', values: '0x5 1x10'}
+    alert_rule_test:
+      - {eval_time: 4m, alertname: RoomBridgeHarnessStalled, exp_alerts: []}
+      - {eval_time: 8m, alertname: RoomBridgeHarnessStalled, exp_alerts: [{exp_labels: {severity: warning, reason: cursor_lost}}]}
+      - {eval_time: 8m, alertname: RoomBridgeItemsRefused, exp_alerts: [{exp_labels: {severity: warning}}]}
+      - {eval_time: 8m, alertname: RoomBridgeItemsUnstorable, exp_alerts: [{exp_labels: {severity: info, reason: invalid_value}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_bridge_items_stubbed_total{reason="oversize"}', values: '0x5 1x10'}
+    alert_rule_test:
+      - {eval_time: 8m, alertname: RoomBridgeItemsRefused, exp_alerts: []}
+      - {eval_time: 8m, alertname: RoomBridgeItemsUnstorable, exp_alerts: []}
+  # RoomRejectedActionsSpike: 30 in 10 minutes is the boundary, 31 fires.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_rejected_actions_total{reason="not_permitted"}', values: '0x5 30x10'}
+    alert_rule_test:
+      - {eval_time: 8m, alertname: RoomRejectedActionsSpike, exp_alerts: []}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_rejected_actions_total{reason="not_permitted"}', values: '0x5 31x10'}
+    alert_rule_test:
+      - {eval_time: 8m, alertname: RoomRejectedActionsSpike, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # RoomVerdictsNotReachingGitHub: errors and no post for 30 minutes fire; a post in the window
+  # keeps it silent.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_verdict_posts_total{result="error"}', values: '0+1x60'}
+    alert_rule_test:
+      - {eval_time: 25m, alertname: RoomVerdictsNotReachingGitHub, exp_alerts: []}
+      - {eval_time: 35m, alertname: RoomVerdictsNotReachingGitHub, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_verdict_posts_total{result="error"}', values: '0+1x60'}
+      - {series: 'maku_rooms_verdict_posts_total{result="posted"}', values: '0+1x60'}
+    alert_rule_test:
+      - {eval_time: 45m, alertname: RoomVerdictsNotReachingGitHub, exp_alerts: []}
+  # RoomApprovalPendingTooLong: 900 s is the boundary.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_approvals_oldest_pending_seconds{pod="room-broker-0"}', values: '600 900 901'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RoomApprovalPendingTooLong, exp_alerts: []}
+      - {eval_time: 2m, alertname: RoomApprovalPendingTooLong, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # RoomWebhookDisabled: 0 for 2 minutes (silent), 1 for 5 (fires once it has held 1 minute), 0
+  # again (resolves).
+  - interval: 30s
+    input_series:
+      - {series: 'maku_rooms_webhook_disabled{namespace="maku", pod="room-broker-0", subscriber="slack-app"}', values: '0x4 1x9 0x10'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: RoomWebhookDisabled, exp_alerts: []}
+      - {eval_time: 2m30s, alertname: RoomWebhookDisabled, exp_alerts: []}
+      - {eval_time: 4m, alertname: RoomWebhookDisabled, exp_alerts: [{exp_labels: {severity: warning, subscriber: slack-app}}]}
+      - {eval_time: 8m, alertname: RoomWebhookDisabled, exp_alerts: []}

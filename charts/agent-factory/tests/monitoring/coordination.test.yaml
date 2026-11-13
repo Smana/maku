@@ -1,0 +1,51 @@
+# v4 coordination's alerts, ported from ai-native-ref's test-agent-coordination-alerts.sh at 1529b3b:
+# every maku_factory_coordination_* counter is born at its first increment, so a first failure or
+# refusal must fire, and a family filed inside the window counts as a state change.
+rule_files: [rules.yaml]
+evaluation_interval: 1m
+tests:
+  # A recovery standing past 15 minutes fires; one under it, or a primary with none, does not.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_coordination_recovery_age_seconds{repository="Smana/a"}', values: '840 900 960 1020'}
+      - {series: 'maku_factory_coordination_recovery_age_seconds{repository="Smana/b"}', values: '60 120 180 240'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: AgentFactoryCoordinationRecoveryRequired, exp_alerts: []}
+      - {eval_time: 2m, alertname: AgentFactoryCoordinationRecoveryRequired, exp_alerts: [{exp_labels: {severity: warning, repository: Smana/a}}]}
+  # A first failure fires on its own series' birth; a pass never does.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_coordination_integration_runs_total{repository="Smana/a", purpose="final", result="checks_failed"}', values: '_ _ 1 1 1'}
+      - {series: 'maku_factory_coordination_integration_runs_total{repository="Smana/a", purpose="final", result="passed"}', values: '1 2 3 4 5'}
+    alert_rule_test:
+      - {eval_time: 3m, alertname: AgentFactoryCoordinationIntegrationFailed, exp_alerts: [{exp_labels: {severity: warning, repository: Smana/a, purpose: final, result: checks_failed}}]}
+      - {eval_time: 30m, alertname: AgentFactoryCoordinationIntegrationFailed, exp_alerts: []}
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_coordination_integration_runs_total{repository="Smana/a", purpose="final", result="infrastructure_failed"}', values: '1x10 2x10'}
+    alert_rule_test:
+      - {eval_time: 12m, alertname: AgentFactoryCoordinationIntegrationFailed, exp_alerts: [{exp_labels: {severity: warning, repository: Smana/a, purpose: final, result: infrastructure_failed}}]}
+  # Lost authority fires; a stale plan is a refusal, not lost authority.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_coordination_admission_refusals_total{repository="Smana/b", reason="repository_permission"}', values: '_ _ 1 1 1'}
+      - {series: 'maku_factory_coordination_admission_refusals_total{repository="Smana/b", reason="stale_plan"}', values: '_ _ 1 1 1'}
+    alert_rule_test:
+      - {eval_time: 3m, alertname: AgentFactoryCoordinationAuthorizationLost, exp_alerts: [{exp_labels: {severity: warning, repository: Smana/b, reason: repository_permission}}]}
+  # Stalled: a family filed at 0 and nothing after; silent inside the 24 h, firing past it.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_tasks{repository="Smana/a", source="issue", predicted_class="", tier="", principal="", phase="Coordinating"}', values: '1x1600'}
+      - {series: 'maku_factory_coordination_families_total{repository="Smana/a", outcome="filed"}', values: '1x1600'}
+    alert_rule_test:
+      - {eval_time: 1380m, alertname: AgentFactoryCoordinationStalled, exp_alerts: []}
+      - {eval_time: 1530m, alertname: AgentFactoryCoordinationStalled, exp_alerts: [{exp_labels: {severity: warning, repository: Smana/a}}]}
+  # A plan version confirmed at 20 h is a state change at 25.5 h; no Coordinating parent, no alert.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_tasks{repository="Smana/a", source="issue", predicted_class="", tier="", principal="", phase="Coordinating"}', values: '1x1600'}
+      - {series: 'maku_factory_coordination_families_total{repository="Smana/a", outcome="filed"}', values: '1x1600'}
+      - {series: 'maku_factory_coordination_plan_versions_total{repository="Smana/a", outcome="confirmed"}', values: '_x1199 1x400'}
+      - {series: 'maku_factory_tasks{repository="Smana/a", source="issue", predicted_class="", tier="", principal="", phase="Implementing"}', values: '1x1600'}
+    alert_rule_test:
+      - {eval_time: 1530m, alertname: AgentFactoryCoordinationStalled, exp_alerts: []}
