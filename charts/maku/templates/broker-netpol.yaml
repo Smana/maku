@@ -76,6 +76,15 @@ spec:
             matchLabels: {gateway.networking.k8s.io/gateway-name: {{ .service }}}
       ports: [{port: {{ .port }}, protocol: TCP}]
     {{- end }}
+    {{- if include "ap.githubLinkHosts" . | fromJsonArray }}
+    # The GitHub account link (v4 D8): GitHub's site and API on 443. A NetworkPolicy names no host,
+    # so this is any public address on 443, the cluster's own ranges excluded.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $k.privateCIDRs | nindent 14 }}
+      ports: [{port: 443, protocol: TCP}]
+    {{- end }}
     {{- with include "ap.knowledge" . | fromJson }}
     # The knowledge MCP endpoint (broker.roomTools.knowledge): its port, to the named peers only.
     - to: {{- toYaml .to | nindent 8 }}

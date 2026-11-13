@@ -1,6 +1,7 @@
 # The laptop demo in CI.
 #   k3d:     on pull requests touching the demo, `task chart:install:k3d` (this checkout's broker,
-#            run-controller and factory images, the latest release's harness and bridge, a dummy App),
+#            run-controller and factory images, built once by the images job for every leg, the latest
+#            release's harness and bridge, a dummy App),
 #            in three network legs (install.sh's NETPOL): none, the demo as shipped; kubernetes, the
 #            NetworkPolicy mode on kube-router, whose preflight passes; unenforced, the same mode on a
 #            k3s with no NetworkPolicy controller, whose preflight refuses runs. A fourth leg, gateway
@@ -47,16 +48,21 @@ on:
     paths:
       - charts/**
       - hack/demo/**
-      - internal/runctl/**
-      - internal/factory/**
-      - internal/app/**
-      - internal/broker/**
-      - internal/store/**
+      # The three images the legs build: every package they import, not a hand-kept subset.
+      - internal/**
+      - api/**
+      - config/**
+      - go.mod
+      - go.sum
+      - cmd/**
       - docs/database.md
       - images/**
       - hack/quickstart/versions.env
       - examples/demo-repo/**
-      - cmd/maku/**
+      # install.sh runs through task and mise; the images' build context is cut by .dockerignore.
+      - taskfile.yaml
+      - mise.toml
+      - .dockerignore
       - .github/workflows/demo-e2e.yaml
   schedule:
     - cron: "17 3 * * *"
@@ -66,7 +72,35 @@ concurrency:
   group: demo-e2e-${{ github.event_name == 'pull_request' && github.ref || 'nightly' }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
+  # The legs' three images, built once and handed to each leg (install.sh's PREBUILT=1): building them
+  # in every leg took six of its eight minutes.
+  images:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      # install.sh's images and TAG: it refuses to start if one is missing.
+      - run: |
+          set -euo pipefail
+          for i in maku-broker maku-run-controller maku-factory; do
+            docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:e2e" . >/dev/null
+          done
+          docker save ghcr.io/smana/maku-broker:e2e ghcr.io/smana/maku-run-controller:e2e ghcr.io/smana/maku-factory:e2e -o "$RUNNER_TEMP/images.tar"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: demo-e2e-images
+          path: ${{ runner.temp }}/images.tar
+          retention-days: 1
+          if-no-files-found: error
+
   k3d:
+    needs: images
     if: github.event_name == 'pull_request'
     name: k3d (${{ matrix.netpol }})
     strategy:
@@ -83,6 +117,7 @@ jobs:
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       EXTERNAL_DB: ${{ matrix.netpol == 'external-db' && '1' || '' }}
+      PREBUILT: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -102,6 +137,11 @@ jobs:
         run: |
           lsmod | grep -q '^br_netfilter' && echo "br_netfilter already loaded" || echo "br_netfilter not loaded: loading it"
           sudo modprobe br_netfilter
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: demo-e2e-images
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/images.tar" && rm "$RUNNER_TEMP/images.tar"
       - run: task chart:install:k3d
 
   # The factory-level USD proof (step 4 PR D's follow-up, GW10): on k3d with the e2e stub as GitHub,

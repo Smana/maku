@@ -257,12 +257,18 @@ func (s *Server) slackLinkRoutes(mux *http.ServeMux) {
 // session links or unlinks (ruling P18): a maku or MCP bearer can set any Origin, so a local
 // agent on the developer's token must never confirm a link in their name.
 func (s *Server) linkHuman(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
+	return s.webHuman(w, r, func(ctx context.Context) { s.linkCounted(ctx, linkNotWeb) })
+}
+
+// webHuman is the signed-in human behind a request only a web UI session may make, or the refusal
+// written; notWeb counts a principal that is not one.
+func (s *Server) webHuman(w http.ResponseWriter, r *http.Request, notWeb func(context.Context)) (authn.Principal, bool) {
 	p, ok := s.principal(w, r)
 	if !ok {
 		return p, false
 	}
 	if p.Kind != envelope.ActorHuman || p.Sub == "" || s.WebClient == nil || p.ClientID == "" || p.ClientID != s.WebClient() {
-		s.linkCounted(r.Context(), linkNotWeb)
+		notWeb(r.Context())
 		http.Error(w, "the rooms web UI's session is required", http.StatusForbidden)
 		return p, false
 	}
@@ -369,10 +375,16 @@ func (s *Server) linkCode(w http.ResponseWriter, r *http.Request, p authn.Princi
 	}
 	if login == "" {
 		s.linkCounted(ctx, linkNoGitHub)
+		if s.GitHubLink != nil {
+			return c, "", refusalNoGitHubLink, true
+		}
 		return c, "", "Your account has no GitHub link: link GitHub in your ZITADEL profile, then open this link again.", true
 	}
 	return c, login, "", true
 }
+
+// refusalNoGitHubLink sends a human with no GitHub account link to /link/github (v4 D8).
+const refusalNoGitHubLink = "Your account has no GitHub link: link your GitHub account on /link/github, then open this link again."
 
 const refusalCodeInvalid = "This link expired or was already used: mention @factory link in Slack for a new one."
 

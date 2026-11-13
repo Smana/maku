@@ -5,7 +5,7 @@
 #   usage: install.sh k3d|kind        (task chart:install:k3d | chart:install:kind)
 # The CRD chart (release af-crds) installs first. ADOPT=1 instead installs the umbrella alone, creates
 # a Room, adopts the CRDs into af-crds with docs/upgrading.md's commands, and asserts the Room survives.
-# Images: broker, run-controller and factory are built from this checkout and loaded; harness and
+# Images: broker, run-controller and factory are built from this checkout (PREBUILT=1: already built) and loaded; harness and
 # bridge are the latest release's, by digest (no run starts here). A dummy GitHub App means the
 # factory cannot pass start-up: the assertion is that it parses its config, mounts everything and
 # logs the App lookup failure. The cluster is always deleted, with its own kubeconfig.
@@ -72,6 +72,9 @@ NAME="maku-chart-$CLUSTER_KIND"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
 TAG="${TAG:-e2e}"
+# PREBUILT=1: the images are already in the local Docker, tagged $TAG (demo-e2e.yaml builds them once
+# for all its legs); each must be there, or the run fails before any cluster exists.
+PREBUILT="${PREBUILT:-}"
 NS=maku
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -132,11 +135,18 @@ k3d_import() {
   die "k3d image import: $1 never reached the node"
 }
 
-step "build the images from this checkout"
 images=(maku-broker maku-run-controller maku-factory)
-for i in "${images[@]}"; do
-  docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:$TAG" . >/dev/null
-done
+if [[ -n $PREBUILT ]]; then
+  step "the images from this checkout, built beforehand (PREBUILT)"
+  for i in "${images[@]}"; do
+    docker image inspect "ghcr.io/smana/$i:$TAG" >/dev/null 2>&1 || die "PREBUILT: ghcr.io/smana/$i:$TAG is not in the local Docker"
+  done
+else
+  step "build the images from this checkout"
+  for i in "${images[@]}"; do
+    docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:$TAG" . >/dev/null
+  done
+fi
 if [[ -n $TRACING ]]; then
   docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG" . >/dev/null
   images+=(maku-e2e-stub)

@@ -29,7 +29,7 @@ task check      # exit 0, or it is not done
 | `ui:test` | `npm ci`, `tsc --noEmit`, `vitest run` in `web/` | a type error or a failing UI test |
 | `ui:check` | `web/`'s build into `internal/humanapi/ui/dist/` | a committed bundle that differs from what `web/` builds, or a built file not committed |
 
-CI's `check` job runs the same `task check`; `analyze` (CodeQL) is the other required check.
+CI's required `check` job joins the same steps, run as `task check:static` and three `task test:shard` slices; `analyze` (CodeQL) and `harness-test` are the other required checks.
 Store tests use testcontainers, so `task test` needs a running Docker daemon.
 
 **Lint through `task lint`, never a bare `golangci-lint run`.** A v1 binary often sits earlier

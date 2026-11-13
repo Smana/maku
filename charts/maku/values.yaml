@@ -124,6 +124,22 @@ broker:
   # refused, here and at start, unless factoryInsecure is true (S-1, D6).
   factoryURL: ""
   factoryInsecure: false
+  # The GitHub account link (v4 D8, oidc mode): each human links their GitHub account once, on
+  # /link/github, through GitHub's OAuth flow with the factory App's OAuth client (or an OAuth App's),
+  # whose callback URL is <publicURL>/link/github/callback. existingSecret holds the client (keys
+  # below), mounted at /etc/room-broker/github-link; set, it fills human.githubLink's unset keys, so a
+  # path the human block sets wins. webURL is GitHub's site ("": https://github.com; a GHES host's
+  # API is <webURL>/api/v3, set ROOMS_GITHUB_API_URL through extraEnv). activeWindow: how long a link
+  # stays active without its human signing in; the Slack App acting for them is refused past it.
+  # The broker's egress then reaches GitHub on 443: its site and API by name in mode cilium, any
+  # public address in mode kubernetes (a NetworkPolicy names no host).
+  githubLink:
+    existingSecret: ""
+    keys:
+      clientID: client_id
+      clientSecret: client_secret
+    webURL: ""
+    activeWindow: 168h
   # The OIDC client ids (v4 D8, oidc mode): a Secret mounted at /etc/room-broker/oidc. Set, it fills
   # human.clientIDFile, human.roomctlClientIDFile and (preset zitadel) human.projectIDFile with its
   # keys' paths, wherever the human block leaves them unset: a path the block sets wins.

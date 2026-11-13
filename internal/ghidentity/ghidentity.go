@@ -157,3 +157,11 @@ func (e entry) read() time.Time {
 	}
 	return e.at
 }
+
+// Forget drops sub's cached answers: its link was just written or removed, so the next read asks
+// again instead of serving the old login for TTL.
+func (r *Resolver) Forget(sub string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.cache, sub)
+}
