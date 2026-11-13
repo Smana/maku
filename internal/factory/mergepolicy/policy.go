@@ -136,10 +136,9 @@ type DenyLeaf struct {
 	ProtectedFiles []string `json:"protectedFiles"`
 }
 
-// ApprovalLeaf asks a human about a pull request touching one of its paths, even in a live class.
-type ApprovalLeaf struct {
-	ChangedFiles []string `json:"changedFiles"`
-}
+// ApprovalLeaf asks a human about a pull request touching one of its paths, even in a live class:
+// config's own, so a resolved class carries the same leaves.
+type ApprovalLeaf = config.ApprovalLeaf
 
 // Limits are a class's own caps, below the guardrails.
 type Limits struct {
