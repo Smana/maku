@@ -4,6 +4,20 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+
+## The preflight (v0.4x, v4 rollout step 7)
+
+One new key, off by default, so a release that does not set it renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.preflight.enabled` | `false` | Renders the install's preflight: a Helm test hook (`helm test <release>`), and a suspended CronJob, `<release>-preflight`, from which `kubectl create job --from=cronjob/<release>-preflight` runs it under Argo CD. It runs the run-controller image's `preflight` subcommand and checks the Kubernetes version (1.30 or later), the six maku CRDs (and `preflight.extraCRDs`), the RuntimeClass, and each Secret of [install Secrets](install-secrets.md) the values enable, with its keys. Each result is a JSON line on the Job's log, and the summary is its termination message. `preflight.strict` fails on a warning too |
+
+The pod reads the API server only, through its own ServiceAccount. Its Role gets the Secrets by
+name, and its ClusterRole gets the named CRDs, the RuntimeClass and `/version`. In `kubernetes` and
+`cilium` modes, a policy limits its egress to the API server and the components' `:9090`, and the
+broker and the run-controller admit it there.
+
 ## Secrets by name (v0.4x, v4 rollout step 5)
 
 Every Secret an install reads is listed in [install Secrets](install-secrets.md), with its keys.
