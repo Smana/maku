@@ -218,3 +218,13 @@ maku-metrics admits cilium.fromEndpoints. maku-gateway: its policy admits metric
 {{- end -}}
 {{- end -}}
 {{- end }}
+
+{{/* afumbrella.at: the value at a dotted path of a values map, as {"v": value}; null when absent.
+Call with (dict "v" <map> "path" "a.b.c"), read with fromJson. */}}
+{{- define "afumbrella.at" -}}
+{{- $cur := .v -}}
+{{- range (splitList "." .path) -}}
+{{- if kindIs "map" $cur }}{{ $cur = index $cur . }}{{ else }}{{ $cur = nil }}{{ end -}}
+{{- end -}}
+{{- dict "v" $cur | toJson -}}
+{{- end -}}

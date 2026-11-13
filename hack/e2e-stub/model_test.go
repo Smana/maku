@@ -281,3 +281,63 @@ func TestModelNonModelPathsDoNotChangeCounters(t *testing.T) {
 			counters.PlannerCalls(), counters.ScoperCalls(), stub.ModelCalls())
 	}
 }
+
+// Every completion reports the same usage, streamed (a last chunk with no choices, as OpenAI sends
+// under stream_options.include_usage) or not, so the gateway meters each call and the factory-level
+// USD proof knows its price exactly.
+func TestModelReportsUsage(t *testing.T) {
+	_, ts := newStubServer(t)
+	want := map[string]any{"prompt_tokens": float64(stubPromptTokens), "completion_tokens": float64(stubCompletionTokens),
+		"total_tokens": float64(stubPromptTokens + stubCompletionTokens)}
+	for _, stream := range []bool{false, true} {
+		t.Run(fmt.Sprintf("stream=%v", stream), func(t *testing.T) {
+			body := fmt.Sprintf(`{"stream":%v,"messages":[{"role":"system","content":"You are the implementer."}]}`, stream)
+			status, raw := postCompletion(t, ts, body)
+			if status != http.StatusOK {
+				t.Fatalf("status %d", status)
+			}
+			var usage map[string]any
+			if !stream {
+				var out struct{ Usage map[string]any }
+				if err := json.Unmarshal(raw, &out); err != nil {
+					t.Fatal(err)
+				}
+				usage = out.Usage
+			} else {
+				var last string
+				for _, line := range strings.Split(string(raw), "\n") {
+					if strings.HasPrefix(line, "data: {") {
+						last = strings.TrimPrefix(line, "data: ")
+					}
+				}
+				var chunk struct {
+					Choices []any
+					Usage   map[string]any
+				}
+				if err := json.Unmarshal([]byte(last), &chunk); err != nil {
+					t.Fatal(err)
+				}
+				if len(chunk.Choices) != 0 {
+					t.Fatalf("the usage chunk carries choices: %s", last)
+				}
+				usage = chunk.Usage
+			}
+			if fmt.Sprint(usage) != fmt.Sprint(want) {
+				t.Fatalf("usage %v, want %v", usage, want)
+			}
+		})
+	}
+}
+
+// A completion whose last user message is failMarker answers 500, so a k3d leg can read the error
+// label agentgateway sets on a failed provider call.
+func TestModelFailsOnTheMarker(t *testing.T) {
+	_, ts := newStubServer(t)
+	status, _ := postCompletion(t, ts, `{"messages":[{"role":"user","content":"`+failMarker+`"}]}`)
+	if status != http.StatusInternalServerError {
+		t.Fatalf("status %d, want 500", status)
+	}
+	if status, _ := postCompletion(t, ts, `{"messages":[{"role":"user","content":"hello"}]}`); status != http.StatusOK {
+		t.Fatalf("an ordinary call: status %d", status)
+	}
+}

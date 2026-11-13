@@ -84,3 +84,29 @@ func TestGitHubReads(t *testing.T) {
 		t.Errorf("permission = %+v", permission)
 	}
 }
+
+// A scoped request is granted exactly its scope, as GitHub grants it: the factory's minter refuses a
+// token whose permissions or repositories differ (v4 D10), and revokes it on DELETE /installation/token.
+func TestInstallationTokenGrantsTheScopeAsked(t *testing.T) {
+	_, ts := newStubServer(t)
+	status, raw := request(t, ts, http.MethodPost, "/app/installations/1/access_tokens",
+		[]byte(`{"repositories":["repo"],"permissions":{"contents":"read","pull_requests":"read"}}`))
+	if status != http.StatusCreated {
+		t.Fatalf("installation token status = %d", status)
+	}
+	got := decodeResponse[struct {
+		Permissions  map[string]string `json:"permissions"`
+		Repositories []struct {
+			FullName string `json:"full_name"`
+		} `json:"repositories"`
+	}](t, raw)
+	if len(got.Permissions) != 2 || got.Permissions["contents"] != "read" || got.Permissions["pull_requests"] != "read" {
+		t.Errorf("permissions %v, want exactly the asked contents:read, pull_requests:read", got.Permissions)
+	}
+	if len(got.Repositories) != 1 || got.Repositories[0].FullName != "owner/repo" {
+		t.Errorf("repositories %+v, want owner/repo", got.Repositories)
+	}
+	if status, _ := request(t, ts, http.MethodDelete, "/installation/token", nil); status != http.StatusNoContent {
+		t.Errorf("revoke status = %d, want 204", status)
+	}
+}

@@ -1,0 +1,40 @@
+# A production-shaped install for TestRenderedRefs: the demo profile with every optional Secret
+# named, so the render mounts or references each one. Throwaway names only.
+postgres:
+  enabled: false
+maku:
+  broker:
+    publicURL: https://rooms.example.test
+    database:
+      brokerSecret: db-broker
+      ownerSecret: db-owner
+      retentionSecret: db-retention
+      caSecret: db-ca
+    oidc:
+      existingSecret: broker-oidc
+    githubLink:
+      existingSecret: gh-link
+    factoryCA:
+      secretName: factory-api-ca
+    factoryURL: https://agent-factory.maku.svc.cluster.local:8082
+    human:
+      mode: oidc
+      preset: generic
+      issuer: https://idp.example.test
+      rolesClaim: groups
+      origin: https://rooms.example.test
+      groups: {admin: agents-admin, member: agents-member}
+maku-factory:
+  # The factory outside the demo: its OIDC ids, the reader and the sponsored ids are mounted.
+  demo: false
+  runTokens:
+    enabled: true
+  apps:
+    agents:
+      existingSecret: agents-app
+    merger:
+      mode: separate
+  mergerSecret: merger-app
+  api:
+    tls:
+      secretName: factory-api-tls

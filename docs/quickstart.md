@@ -208,6 +208,9 @@ table names what you have not proven by running it.
 | TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
 | Public repositories only | Private repositories, with models chosen per data class |
 
+Every Secret production reads, and how to bring each one by hand or with an ExternalSecret, is in
+[install Secrets](install-secrets.md).
+
 ## Clean up
 
 ```bash
