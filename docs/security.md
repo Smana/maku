@@ -37,6 +37,7 @@ The design's threats, the controls against each, and the package or mechanism th
 | Agent run | A projected ServiceAccount token of `xplane-run-<runId>` in `agents`, audience `room-broker`, 600 s, mounted **only** in the bridge container | Offline against the JWKS of an issuer in `runIssuers`; `sub` must match the issuer's `subPattern`; then the `AgentRun` must be live and name a room | `agent:<runId>` |
 | System caller | A ServiceAccount token with audience `rooms-system` (the platform's Kyverno policies reserve every `room-broker*` audience for `agents`) | Offline against `systemIssuer` (mode `jwks`), or by the apiserver when it says `mode: tokenreview`; `sub` must be a key of the `systemPrincipals` allowlist, which needs an issuer. The issuer is optional: without one, the broker's system authenticator never authenticates and the routes answer `401` | e.g. `system:factory` |
 | Human | A ZITADEL ID token and a JWT access token, both from oauth2-proxy | Offline: issuer, expiry, groups; `aud` holds the project id and a rooms client, and the token names that client: the ID token in `azp`, the access token in `client_id`, since ZITADEL access tokens carry no `azp`. The two must share the `sub` and the client | `human:<sub>` |
+| Human, preset `generic`, `tokenUse: id` ([identity](identity.md)) | The IdP's ID token, beside a distinct access token oauth2-proxy writes; maku's own ID token as a bearer | Offline: issuer, expiry, the roles claim; `aud` holds the client it was issued to (`azp`, else `client_id`, else its one `aud`), never a `typ: at+jwt` access token. The access token is not parsed | `human:<sub>` |
 
 Why offline: every consumer validates issuer-agnostically. A runtime whose identities are
 not ServiceAccounts needs one more `runIssuers` entry, not a new code path. Liveness comes from the
@@ -79,6 +80,18 @@ their last sign-in, ended at once by an admin unlink.
 
 When the broker asks the factory for a run on a human's behalf, it forwards that human's access
 token, never an asserted `sub`, so the factory proves the principal itself.
+
+**P18 under `tokenUse: id`.** A web session may steer and decide, and maku may not. Under the generic
+preset's `tokenUse: id`, the broker tells the two apart by `X-Forwarded-Access-Token` alone:
+
+- a web session's ID token arrives beside a distinct access token;
+- maku's bearer, let through by `skip-jwt-bearer-tokens`, arrives with both headers equal, or
+  without the access token.
+
+This holds only while oauth2-proxy writes that header on every request, overwriting the
+client's, and while nothing reaches `:8080` around oauth2-proxy. A client that could set the header
+could pass the web client's ID token as a web session. The broker forwards the ID token to the
+factory, whose run API checks that its `aud` holds a rooms client.
 
 ## The merge gate's Apps
 

@@ -489,7 +489,12 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		start[strings.ToLower(r)] = true
 	}
 	mode := h.EffectiveMode()
-	webClient, roomctlClient, projectID := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile), humanAudience(h)
+	webClient, roomctlClient := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile)
+	// maku reads the project id under zitadel, the audience under generic (v4 D8).
+	projectID, audience := humanAudience(h), func() string { return "" }
+	if h.EffectivePreset() == config.PresetGeneric {
+		projectID, audience = audience, humanAudience(h)
+	}
 	if mode == config.HumanModeLocal {
 		// No IdP, so no ids to read; Serve refuses nil ones. Access stays nil too (humanSide sets
 		// it only from a human.access block, which local mode refuses): the local user is an
@@ -526,7 +531,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		Intake: in, Coordination: coord, Catalogue: catalogueCache(cfg, m), SponsoredRepositories: sponsoredRepos,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
-		ProjectID:        projectID,
+		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
 		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe}, nil

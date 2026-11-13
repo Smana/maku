@@ -149,7 +149,7 @@ The step's v0.4x minor is cut after PR E. PR A to D may also ship in interim min
 
     At most 256 names of at most 256 bytes each. Any other shape, or a value over the bounds, gives no groups and counts `rooms_human_roles_claim_refused_total{reason}`, with `reason` one of `missing`, `type` and `bounds`.
   - **Examples in the docs** (Task 8):
-    - Keycloak `/realm_access/roles`;
+    - Keycloak `groups` with a group-membership mapper under `tokenUse: id`, and `/realm_access/roles` under `tokenUse: access` only: the realm roles are in the access token, not the ID token (Task 1's probe, PR A);
     - Okta `groups`;
     - Entra `roles` (app roles; `groups` carries GUIDs, which also work as `groups.admin` values);
     - Auth0 `https://<ns>/roles` (no leading `/`, so a name);

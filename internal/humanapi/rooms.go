@@ -135,8 +135,9 @@ func createStatus(err error) int {
 
 // roomctlSetup is GET /api/roomctl: the values of `maku configure` and the broker's
 // version, whose maku release the UI's CLI setup view installs. clientID is "" while the broker has no maku client.
-// maku asks for the project's audience with projectID: ZITADEL adds the
-// project to aud only then, and the broker refuses a token without it (ruling AS).
+// Under the zitadel preset maku asks for the project's audience with projectID: ZITADEL adds the
+// project to aud only then, and the broker refuses a token without it (ruling AS). Any other
+// issuer is signed in to from preset, tokenUse, scopes and audience, and projectID is empty.
 // It also carries the room page's dashboard templates, unfilled: not secrets, but of no use to
 // maku configure, so the unauthenticated route leaves them out.
 func (s *Server) roomctlSetup(w http.ResponseWriter, r *http.Request) {
@@ -177,7 +178,14 @@ func (s *Server) writeSetup(w http.ResponseWriter, dashboards []Dashboard) {
 		HumanMode string `json:"humanMode"`
 		// Dashboards are the templates, absent when none is configured.
 		Dashboards []Dashboard `json:"dashboards,omitempty"`
-	}{s.PublicURL, s.Issuer, read(s.RoomctlClient), read(s.ProjectID), version.Version, cmp.Or(s.HumanMode, config.HumanModeOIDC), dashboards})
+		// Preset and TokenUse say how maku signs in (v4 D8): additive, so an older maku reads the
+		// zitadel answer it always did. Scopes and Audience are left out when empty.
+		Preset   string   `json:"preset"`
+		TokenUse string   `json:"tokenUse"`
+		Scopes   []string `json:"scopes,omitempty"`
+		Audience string   `json:"audience,omitempty"`
+	}{s.PublicURL, s.Issuer, read(s.RoomctlClient), read(s.ProjectID), version.Version, cmp.Or(s.HumanMode, config.HumanModeOIDC), dashboards,
+		cmp.Or(s.Preset, config.PresetZITADEL), cmp.Or(s.TokenUse, config.TokenUseAccess), s.Scopes, read(s.Audience)})
 }
 
 // roomRow is one row of GET /api/rooms.

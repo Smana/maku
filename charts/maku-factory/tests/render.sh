@@ -285,6 +285,12 @@ for bad in "" "v0.0.0" "latest"; do
   fi
 done
 # e2e.unpinnedImages accepts a bare tag and never pulls
+# v4 D8: the api block's identity keys reach the config as written; the oidc volume already carries
+# the client ids they read (clientIDFiles), so nothing new is mounted.
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000 --set config.api.preset=generic \
+  --set config.api.tokenUse=id --set config.api.rolesClaim=/realm_access/roles --set config.api.humanJWKS=)
+ykind ConfigMap '.data."config.yaml" | from_yaml | .api | (.preset == "generic" and .tokenUse == "id" and .rolesClaim == "/realm_access/roles")' "config.api's identity keys render verbatim"
+ykind Deployment "$(vol oidc).secret.secretName == \"agent-factory-oidc\"" "the generic preset reads the same client ids volume"
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
 ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
 ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"
