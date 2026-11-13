@@ -3,12 +3,15 @@
 package app
 
 import (
+	"bytes"
 	"cmp"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -36,14 +39,23 @@ func (r Maku) config(args []string) error {
 		var manifests manifestList
 		fs.Var(&manifests, "manifests", "per-repository MergePolicy manifests (and their Factory and Repositories) to convert; repeatable")
 		ns := fs.String("namespace", "agent-system", "the namespace of the manifests")
-		residual := fs.String("residual", "", "write the config file without the migrated keys here")
+		residual := fs.String("residual", "", "write the config file without the migrated keys here, once the conversion is proved")
+		force := fs.Bool("force", false, "replace an existing --residual file")
 		if _, err := flags(fs, args); err != nil {
 			return err
 		}
 		if (*from == "") == (len(manifests) == 0) {
 			return errors.New("config migrate: --from, or --config with --manifests, is required")
 		}
-		out, before, file, err := r.migrateFrom(*from, *cfgPath, manifests, *ns, *residual)
+		if *residual != "" && *from != "" && samePath(*residual, *from) {
+			return errors.New("config migrate: --residual is the --from file: write the residual beside it")
+		}
+		if *residual != "" && !*force {
+			if _, err := os.Stat(*residual); err == nil {
+				return fmt.Errorf("config migrate: %s exists: --force replaces it", *residual)
+			}
+		}
+		out, before, file, err := r.migrateFrom(*from, *cfgPath, manifests, *ns)
 		if err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
@@ -55,7 +67,7 @@ func (r Maku) config(args []string) error {
 		if err != nil {
 			return fmt.Errorf("config migrate: the converted objects: %w", err)
 		}
-		if err := r.printRefusals(after); err != nil {
+		if err := printRefusals(r.Out, after); err != nil {
 			return err
 		}
 		if len(after.Refused) > 0 {
@@ -70,20 +82,39 @@ func (r Maku) config(args []string) error {
 			}
 			return fmt.Errorf("config migrate: the conversion would change %d resolved settings: nothing written", len(d))
 		}
+		if *residual != "" && *from != "" {
+			if err := writeAtomic(filepath.Clean(*residual), file); err != nil {
+				return fmt.Errorf("config migrate: %w", err)
+			}
+		}
 		_, err = r.Out.Write(out)
 		return err
 	case "validate":
 		cfgPath := fs.String("config", "", "the factory config file")
 		var base manifestList
-		fs.Var(&base, "base", "the manifests before the change (e.g. origin/main's), for each changed policy's consumers; repeatable")
-		resolved := fs.Bool("resolved", false, "print each repository's resolved classes as JSON")
-		unchanged := fs.Bool("expect-unchanged", false, "with --base: fail when any resolved class differs from the base's")
+		fs.Var(&base, "base", "the manifests before the change, for each changed policy's consumers; repeatable, with --base-config")
+		baseConfig := fs.String("base-config", "", "with --base: the config file the base manifests are served over")
+		baseRef := fs.String("base-ref", "", "a git ref (e.g. origin/main): the base is --config and each manifest as committed there")
+		resolved := fs.Bool("resolved", false, "print each repository's resolved classes as JSON on stdout, and everything else on stderr")
+		unchanged := fs.Bool("expect-unchanged", false, "with a base: fail when any resolved class differs from the base's")
 		pos, err := flags(fs, args)
 		if err != nil {
 			return err
 		}
 		if *cfgPath == "" || len(pos) == 0 {
 			return errors.New("config validate: --config and at least one manifest file are required")
+		}
+		switch {
+		case len(base) > 0 && *baseRef != "":
+			return errors.New("config validate: --base or --base-ref, not both")
+		case len(base) > 0 && *baseConfig == "":
+			return errors.New("config validate: --base needs --base-config, the file the base is served over: a catalogue change shows only against it")
+		case *unchanged && len(base) == 0 && *baseRef == "":
+			return errors.New("config validate: --expect-unchanged compares with --base or --base-ref")
+		}
+		info := r.Out // with --resolved, stdout is the JSON alone
+		if *resolved {
+			info = r.Err
 		}
 		file, err := os.ReadFile(filepath.Clean(*cfgPath))
 		if err != nil {
@@ -96,11 +127,11 @@ func (r Maku) config(args []string) error {
 		// An error means no servable config; its refusals are still printed first.
 		res, assembleErr := resources.Assemble(file, objs)
 		for _, w := range res.Warnings {
-			if _, err := fmt.Fprintf(r.Out, "warning: %s\n", w); err != nil {
+			if _, err := fmt.Fprintf(info, "warning: %s\n", w); err != nil {
 				return err
 			}
 		}
-		if err := r.printRefusals(res); err != nil {
+		if err := printRefusals(info, res); err != nil {
 			return err
 		}
 		if assembleErr != nil {
@@ -109,15 +140,16 @@ func (r Maku) config(args []string) error {
 		if len(res.Refused) > 0 {
 			return fmt.Errorf("config validate: %d refused", len(res.Refused))
 		}
-		if *unchanged && len(base) == 0 {
-			return errors.New("config validate: --expect-unchanged compares with --base")
-		}
-		if len(base) > 0 {
-			if err := r.blastRadius(file, base, res, *unchanged); err != nil {
+		if len(base) > 0 || *baseRef != "" {
+			baseFile, baseObjs, err := readBase(*baseConfig, base, *baseRef, *cfgPath, pos)
+			if err != nil {
+				return fmt.Errorf("config validate: the base: %w", err)
+			}
+			if err := blastRadius(info, baseFile, baseObjs, res, *unchanged); err != nil {
 				return err
 			}
 		}
-		if over, err := r.guardrailLines(res); err != nil || over > 0 {
+		if over, err := guardrailLines(info, res); err != nil || over > 0 {
 			return cmp.Or(err, fmt.Errorf("config validate: %d bindings over a guardrail", over))
 		}
 		if *resolved {
@@ -131,8 +163,8 @@ func (r Maku) config(args []string) error {
 
 // migrateFrom converts a config file (--from) or per-repository manifests over a config file
 // (--config with --manifests) into the binding shape: the manifests, the config served before,
-// and the file the manifests are served over. A residual, written only for --from, is the file.
-func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns, residual string) (out []byte, before *config.Config, file []byte, err error) {
+// and the file the manifests are served over: for --from, the residual. It writes nothing.
+func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns string) (out []byte, before *config.Config, file []byte, err error) {
 	if from != "" {
 		raw, err := os.ReadFile(filepath.Clean(from))
 		if err != nil {
@@ -143,11 +175,6 @@ func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns, residual
 		}
 		if out, file, err = resources.Migrate(raw, ns); err != nil {
 			return nil, nil, nil, err
-		}
-		if residual != "" {
-			if err := writeIn(filepath.Clean(residual), file); err != nil {
-				return nil, nil, nil, err
-			}
 		}
 		return out, before, file, nil
 	}
@@ -165,7 +192,7 @@ func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns, residual
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	if err := r.printRefusals(res); err != nil {
+	if err := printRefusals(r.Out, res); err != nil {
 		return nil, nil, nil, err
 	}
 	if len(res.Refused) > 0 {
@@ -195,9 +222,9 @@ func readManifests(paths []string) ([]resources.Object, error) {
 }
 
 // printRefusals prints each refused object as validate does.
-func (r Maku) printRefusals(res resources.Result) error {
+func printRefusals(out io.Writer, res resources.Result) error {
 	for _, f := range res.Refused {
-		if _, err := fmt.Fprintf(r.Out, "%s/%s: %s: %s\n", f.Kind, f.Name, f.Reason, f.Message); err != nil {
+		if _, err := fmt.Fprintf(out, "%s/%s: %s: %s\n", f.Kind, f.Name, f.Reason, f.Message); err != nil {
 			return err
 		}
 	}
@@ -207,16 +234,12 @@ func (r Maku) printRefusals(res resources.Result) error {
 // blastRadius prints each changed policy's consumers against the base manifests (B11, Q5): live
 // consumers first, each relaxation of a live one marked LIVE. With unchanged, any resolved class
 // that differs from the base's is an error.
-func (r Maku) blastRadius(file []byte, paths []string, next resources.Result, unchanged bool) error {
-	objs, err := readManifests(paths)
-	if err != nil {
-		return fmt.Errorf("config validate: --base: %w", err)
-	}
+func blastRadius(out io.Writer, file []byte, objs []resources.Object, next resources.Result, unchanged bool) error {
 	base, err := resources.Assemble(file, objs)
 	if err != nil {
 		return fmt.Errorf("config validate: --base: %w", err)
 	}
-	w := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0) // buffered: Flush returns the write error
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0) // buffered: Flush returns the write error
 	for _, p := range policyview.Impact(base, next) {
 		gen := ""
 		if p.BaseGeneration != 0 || p.Generation != 0 {
@@ -248,26 +271,70 @@ func (r Maku) blastRadius(file []byte, paths []string, next resources.Result, un
 	}
 	d := resources.Equal(base.Config, next.Config)
 	for _, line := range d {
-		if _, err := fmt.Fprintf(r.Out, "changed: %s\n", line); err != nil {
+		if _, err := fmt.Fprintf(out, "changed: %s\n", line); err != nil {
 			return err
 		}
 	}
 	if len(d) > 0 {
-		return fmt.Errorf("config validate: %d resolved settings differ from --base", len(d))
+		return fmt.Errorf("config validate: %d resolved settings differ from the base", len(d))
 	}
 	return nil
 }
 
+// readBase is the base a change is compared with: --base-config and --base, or, with ref, the
+// config file and each manifest as committed at ref (git show), so CI compares with origin/main
+// without copying it.
+func readBase(cfgPath string, paths []string, ref, nextCfg string, nextPaths []string) ([]byte, []resources.Object, error) {
+	if ref == "" {
+		file, err := os.ReadFile(filepath.Clean(cfgPath))
+		if err != nil {
+			return nil, nil, err
+		}
+		objs, err := readManifests(paths)
+		return file, objs, err
+	}
+	file, err := gitShow(ref, nextCfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	docs := make([]string, 0, len(nextPaths))
+	for _, p := range nextPaths {
+		b, err := gitShow(ref, p)
+		if err != nil {
+			return nil, nil, err
+		}
+		docs = append(docs, string(b))
+	}
+	objs, err := resources.Decode([]byte(strings.Join(docs, "---\n")))
+	return file, objs, err
+}
+
+// gitShow is path's content at ref, read from the repository path is in.
+func gitShow(ref, path string) ([]byte, error) {
+	if strings.HasPrefix(ref, "-") {
+		return nil, fmt.Errorf("--base-ref %q is not a ref", ref)
+	}
+	p := filepath.Clean(path)
+	cmd := exec.Command("git", "-C", filepath.Dir(p), "show", ref+":./"+filepath.Base(p)) //nolint:gosec // a ref and a path the developer named, no shell
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git show %s:%s: %w: %s", ref, path, err, strings.TrimSpace(stderr.String()))
+	}
+	return out, nil
+}
+
 // guardrailLines prints one line per binding over a guardrail (Q10, PR10) and, with guardrails
 // set and none over, how many bindings are within. It returns how many are over.
-func (r Maku) guardrailLines(res resources.Result) (int, error) {
+func guardrailLines(out io.Writer, res resources.Result) (int, error) {
 	over, within := 0, 0
 	for _, b := range res.Bindings {
 		switch {
 		case b.Reason == config.ReasonGuardrailMismatch:
 			over++
 			msg := strings.TrimPrefix(b.Message, "class "+b.Name+": ")
-			if _, err := fmt.Fprintf(r.Out, "guardrail: Repository/%s %s: %s\n", b.Repository, b.Name, msg); err != nil {
+			if _, err := fmt.Fprintf(out, "guardrail: Repository/%s %s: %s\n", b.Repository, b.Name, msg); err != nil {
 				return over, err
 			}
 		case b.Accepted:
@@ -275,7 +342,7 @@ func (r Maku) guardrailLines(res resources.Result) (int, error) {
 		}
 	}
 	if over == 0 && res.Config != nil && !reflect.ValueOf(res.Config.MergeGuardrails).IsZero() {
-		_, err := fmt.Fprintf(r.Out, "guardrails: %d bindings within\n", within)
+		_, err := fmt.Fprintf(out, "guardrails: %d bindings within\n", within)
 		return 0, err
 	}
 	return over, nil
@@ -296,13 +363,35 @@ func (r Maku) printResolved(c *config.Config) error {
 	return err
 }
 
-// writeIn writes b to p, 0600, through an os.Root on p's directory: the file stays in the
-// directory the developer named.
-func writeIn(p string, b []byte) error {
+// writeAtomic writes b to p, 0600, through an os.Root on p's directory, so the file stays in the
+// directory the developer named: a temporary file beside p, renamed over it, so a failed write
+// never leaves p half written.
+func writeAtomic(p string, b []byte) error {
 	root, err := os.OpenRoot(filepath.Dir(p))
 	if err != nil {
 		return err
 	}
 	defer func() { _ = root.Close() }()
-	return root.WriteFile(filepath.Base(p), b, 0o600)
+	tmp := fmt.Sprintf(".%s.%d.tmp", filepath.Base(p), os.Getpid())
+	if err := root.WriteFile(tmp, b, 0o600); err != nil {
+		return err
+	}
+	if err := root.Rename(tmp, filepath.Base(p)); err != nil {
+		_ = root.Remove(tmp)
+		return err
+	}
+	return nil
+}
+
+// samePath reports whether a and b name one file: the same cleaned absolute path, or the same file
+// on disk.
+func samePath(a, b string) bool {
+	x, err1 := filepath.Abs(a)
+	y, err2 := filepath.Abs(b)
+	if err1 == nil && err2 == nil && x == y {
+		return true
+	}
+	sa, err1 := os.Stat(a)
+	sb, err2 := os.Stat(b)
+	return err1 == nil && err2 == nil && os.SameFile(sa, sb)
 }

@@ -101,10 +101,13 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 		}
 		r.Branches = append(r.Branches, v)
 	}
-	for i := range r.Branches {
-		errs = append(errs, guard(name, &r.Branches[i], c.MergeGuardrails))
+	// The guardrails cap what merges: review merges nothing (R30), as config.Resolve has it.
+	if name != "review" {
+		for i := range r.Branches {
+			errs = append(errs, guard(name, &r.Branches[i], c.MergeGuardrails))
+		}
+		errs = append(errs, guard(name, &cl, c.MergeGuardrails))
 	}
-	errs = append(errs, guard(name, &cl, c.MergeGuardrails))
 	if err := errors.Join(errs...); err != nil {
 		return Resolved{}, err
 	}

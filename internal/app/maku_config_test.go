@@ -5,6 +5,7 @@ package app
 import (
 	"bytes"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -265,7 +266,7 @@ func TestMakuConfigValidateBase(t *testing.T) {
 	})
 	var out bytes.Buffer
 	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", base, next}); err != nil {
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", base, next}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	want := `MergePolicy dead-links (generation 3 -> 4):
@@ -282,7 +283,7 @@ ok: 17 accepted
 		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
 	}
 	out.Reset()
-	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", base, "--expect-unchanged", next})
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", base, "--expect-unchanged", next})
 	if err == nil || !strings.Contains(out.String(), "changed: Smana/ai-native-ref dead-links: served before only") {
 		t.Fatalf("got %v\n%s", err, out.String())
 	}
@@ -295,7 +296,7 @@ func TestMakuConfigValidateResolvedAndUnchanged(t *testing.T) {
 	split := splitANR(t, nil)
 	var out bytes.Buffer
 	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", anrObjects, "--expect-unchanged", split}); err != nil {
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", anrObjects, "--expect-unchanged", split}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	want, err := os.ReadFile("testdata/anr-resolved.json")
@@ -303,16 +304,11 @@ func TestMakuConfigValidateResolvedAndUnchanged(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, objs := range []string{anrObjects, split} {
-		out.Reset()
-		if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--resolved", objs}); err != nil {
-			t.Fatalf("%v\n%s", err, out.String())
+		var stdout, stderr bytes.Buffer
+		if err := (Maku{Dir: t.TempDir(), Out: &stdout, Err: &stderr}).run(t.Context(), []string{"config", "validate", "--config", residual, "--resolved", objs}); err != nil {
+			t.Fatalf("%v\n%s", err, stderr.String())
 		}
-		_, json, ok := strings.Cut(out.String(), "\n{") // after the legacy shape's warnings
-		got := "{" + json
-		if !ok && strings.HasPrefix(out.String(), "{") {
-			got = out.String()
-		}
-		if got != string(want) {
+		if got := stdout.String(); got != string(want) { // pure JSON: the warnings go to stderr
 			t.Fatalf("%s: --resolved is not testdata/anr-resolved.json:\n%s", objs, got)
 		}
 	}
@@ -351,5 +347,168 @@ func TestMakuConfigValidateGuardrails(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "guardrails: 23 bindings within\n") {
 		t.Fatalf("%s", out.String())
+	}
+}
+
+// B17: a refused conversion writes nothing, the residual included; the residual never replaces
+// the file it came from, nor an existing file without --force.
+func TestMakuConfigMigrateWritesNothingUnlessProved(t *testing.T) {
+	dir, file := writeConfigFixture(t)
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := Maku{Dir: t.TempDir(), Out: &bytes.Buffer{}, Err: &bytes.Buffer{}}
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", file, "--residual", file}); err == nil || !strings.Contains(err.Error(), "--residual is the --from file") {
+		t.Fatalf("got %v", err)
+	}
+	// A change the proof refuses: a guardrail in the file now caps every binding.
+	capped := filepath.Join(dir, "capped.yaml")
+	if err := os.WriteFile(capped, append(raw, []byte("mergeGuardrails: {maxModifiedLines: 1}\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	residual := filepath.Join(dir, "residual.yaml")
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", capped, "--residual", residual}); err == nil {
+		t.Fatal("the guardrail changes the classes: refused")
+	}
+	if _, err := os.Stat(residual); !os.IsNotExist(err) {
+		t.Fatalf("a refused conversion wrote its residual: %v", err)
+	}
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", file, "--residual", residual}); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", file, "--residual", residual}); err == nil || !strings.Contains(err.Error(), "--force") {
+		t.Fatalf("an existing residual is kept without --force: %v", err)
+	}
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", file, "--residual", residual, "--force"}); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(file); string(after) != string(raw) {
+		t.Fatal("the --from file changed")
+	}
+}
+
+// B11 with --base-ref: the base is the ref's own config and manifests, read through git, so a
+// catalogue change, here a guardrail, shows on every consumer it changes.
+func TestMakuConfigValidateBaseRef(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	repo := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", repo, "-c", "user.name=t", "-c", "user.email=t@example.invalid", "-c", "commit.gpgsign=false"}, args...)...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	residual, err := os.ReadFile(anrResidual(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	split, err := os.ReadFile(splitANR(t, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, b := range map[string][]byte{"factory.yaml": residual, "objects.yaml": split} {
+		if err := os.WriteFile(filepath.Join(repo, name), b, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	git("init", "-q")
+	git("add", ".")
+	git("commit", "-q", "-m", "base")
+	guarded := strings.Replace(string(split), "  harnessProfiles:", "  mergeGuardrails:\n    maxPerDay: 1\n  harnessProfiles:", 1)
+	if guarded == string(split) {
+		t.Fatal("no harnessProfiles key to anchor on")
+	}
+	if err := os.WriteFile(filepath.Join(repo, "objects.yaml"), []byte(guarded), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out, errOut bytes.Buffer
+	m := Maku{Dir: repo, Out: &out, Err: &errOut}
+	err = m.run(t.Context(), []string{"config", "validate", "--config", filepath.Join(repo, "factory.yaml"), "--base-ref", "HEAD", filepath.Join(repo, "objects.yaml")})
+	if err == nil {
+		t.Fatal("bindings over the guardrail fail validate")
+	}
+	for _, want := range []string{
+		"MergePolicy deps-patch:\n  cloud-native-ref  shadow  -  refused: GuardrailMismatch: class deps-patch: maxPerDay 2 is over the guardrail's 1\n",
+		"MergePolicy alert-rules:\n  cloud-native-ref  shadow  tightening  resolves\n",
+	} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("missing %q in:\n%s", want, out.String())
+		}
+	}
+}
+
+// Task 19: validate names every legacy object it still reads.
+func TestMakuConfigValidateWarnsOfTheLegacyShape(t *testing.T) {
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", anrResidual(t), anrObjects}); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"cloud-native-ref", "ai-native-ref", "runlore-kb", "runlore"} {
+		if !strings.Contains(out.String(), "warning: MergePolicy "+n+" is in the per-repository shape, removed in the next minor: maku config migrate\n") {
+			t.Errorf("no warning for %s:\n%s", n, out.String())
+		}
+	}
+}
+
+// B17 end to end: the migrated objects, their repository file exported in the binding shape, decide
+// every conformance fixture as the central config does.
+func TestMigratedOutputSimulatesUnchanged(t *testing.T) {
+	residual := anrResidual(t)
+	raw, err := os.ReadFile(residual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(residual, append(raw, []byte("policyManagement: {simulation: true}\n")...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	split := splitANR(t, nil)
+	args := []string{"--config", residual, "--manifests", split, "--repository", "Smana/ai-native-ref"}
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	if err := m.run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	file := filepath.Join(t.TempDir(), "agent-factory.yaml")
+	if err := os.WriteFile(file, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	fixtures, err := filepath.Glob("../factory/reconciler/testdata/conformance/*.json")
+	if err != nil || len(fixtures) == 0 {
+		t.Fatalf("no fixtures: %v", err)
+	}
+	out.Reset()
+	if err := m.run(t.Context(), append(append(append([]string{"policy", "simulate"}, args...), file), fixtures...)); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	if len(lines) != len(fixtures)+1 {
+		t.Fatalf("%d rows for %d fixtures:\n%s", len(lines)-1, len(fixtures), out.String())
+	}
+	for _, l := range lines[1:] {
+		if !strings.Contains(l, " unchanged") {
+			t.Errorf("not unchanged: %s", l)
+		}
+	}
+}
+
+// Migrating objects already in the binding shape changes nothing and succeeds.
+func TestMakuConfigMigrateIsIdempotent(t *testing.T) {
+	residual := anrResidual(t)
+	split := splitANR(t, nil)
+	var out bytes.Buffer
+	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", split}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	want, err := os.ReadFile(split)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.String() != string(want) {
+		t.Fatalf("a second migration changed the objects:\n%s", out.String())
 	}
 }

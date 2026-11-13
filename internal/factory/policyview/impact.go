@@ -31,9 +31,10 @@ type ConsumerImpact struct {
 }
 
 // Impact compares two assemblies, a base and a proposal, policy by policy: every class policy
-// whose definition differs (added, edited or removed), with each binding of it in next, live ones
-// first (Q5), then by repository. A consumer's change is mergepolicy.ClassChange on its resolved
-// classes before and after.
+// whose definition differs (added, edited or removed), or one of whose bindings resolves to
+// another class or no longer resolves (a catalogue or guardrail change, B14), with each binding of
+// it in next, live ones first (Q5), then by repository. A consumer's change is
+// mergepolicy.ClassChange on its resolved classes before and after.
 func Impact(base, next resources.Result) []PolicyImpact {
 	bp, np := policies(base), policies(next)
 	names := map[string]bool{}
@@ -47,7 +48,7 @@ func Impact(base, next resources.Result) []PolicyImpact {
 	for _, name := range slices.Sorted(maps.Keys(names)) {
 		b, inB := bp[name]
 		n, inN := np[name]
-		if inB && inN && specJSON(b.Spec) == specJSON(n.Spec) {
+		if inB && inN && specJSON(b.Spec) == specJSON(n.Spec) && !consumersChanged(base, next, name) {
 			continue
 		}
 		pi := PolicyImpact{Policy: name, BaseGeneration: b.Generation, Generation: n.Generation}
@@ -74,6 +75,29 @@ func Impact(base, next resources.Result) []PolicyImpact {
 		out = append(out, pi)
 	}
 	return out
+}
+
+// consumersChanged reports whether a binding of policy name resolves differently in next: another
+// class, or resolved in one assembly only.
+func consumersChanged(base, next resources.Result, name string) bool {
+	keys := map[resources.BindingKey]bool{}
+	for k := range base.Resolved {
+		keys[k] = true
+	}
+	for k := range next.Resolved {
+		keys[k] = true
+	}
+	for k := range keys {
+		if k.Name != name {
+			continue
+		}
+		b, inB := base.Resolved[k]
+		n, inN := next.Resolved[k]
+		if inB != inN || config.ResolvedHash(b.Class) != config.ResolvedHash(n.Class) || b.Class.Live != n.Class.Live || b.Class.Shadow != n.Class.Shadow {
+			return true
+		}
+	}
+	return false
 }
 
 func rank(mode string) int {

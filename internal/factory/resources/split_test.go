@@ -219,3 +219,45 @@ func TestEqualNamesWhatTheGuardrailsChange(t *testing.T) {
 		}
 	}
 }
+
+// Split of what is already split is the same objects: a converted repository converts to itself.
+func TestSplitOfTheBindingShapeIsANoOp(t *testing.T) {
+	_, objs := anrLegacy(t)
+	once, err := Split(objs, "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	twice, err := Split(once, "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, _ := Encode(once)
+	b, _ := Encode(twice)
+	if string(a) != string(b) {
+		t.Fatal("a second Split changed the objects")
+	}
+}
+
+// A class policy already served under a class's name is kept when the converted one is the same
+// definition, and refused when it is not: Split never replaces a shared policy.
+func TestSplitRefusesACollidingPolicy(t *testing.T) {
+	_, objs := anrLegacy(t)
+	same := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true}}
+	out, err := Split(append(slices.Clone(objs), same), "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for _, o := range out {
+		if o.Kind == KindMergePolicy && o.Name == "docs" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("%d docs policies", n)
+	}
+	other := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true, "testFirst": true}}
+	if _, err := Split(append(slices.Clone(objs), other), "agent-system"); err == nil || !strings.Contains(err.Error(), "MergePolicy docs exists with another definition") {
+		t.Fatalf("got %v", err)
+	}
+}

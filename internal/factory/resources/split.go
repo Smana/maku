@@ -27,7 +27,9 @@ type consumer struct {
 // Split converts per-repository MergePolicies into class-shape policies and bindings (B17, plan
 // PR19), deterministically: one MergePolicy per class name, and each Repository a legacy policy
 // named gaining its merge (plus fluxSource) and its bindings, in class-name order. Every other
-// object passes through.
+// object passes through, so objects already in the binding shape split to themselves. A class
+// policy already among the objects under a class's name must be the definition Split would
+// write, or the class is refused: a shared policy is never replaced.
 //
 //   - Meaning fields must be equal across a class's consumers, compared on the decoded value;
 //     otherwise the class is refused, naming the fields that differ. Split never renames.
@@ -49,10 +51,7 @@ func Split(objs []Object, ns string) ([]Object, error) {
 			legacy = append(legacy, o)
 			continue
 		}
-		if o.Kind == KindMergePolicy {
-			return nil, fmt.Errorf("split: MergePolicy %s is already in the class shape: split the per-repository objects only", o.Name)
-		}
-		out = append(out, o)
+		out = append(out, o) // a class-shape policy passes, and a generated one must match it
 	}
 	repos := map[string]int{} // a Repository object's index in out
 	for i, o := range out {
@@ -121,7 +120,15 @@ func Split(objs []Object, ns string) ([]Object, error) {
 		if err != nil {
 			return nil, err
 		}
-		policies = append(policies, Object{Kind: KindMergePolicy, Name: name, Namespace: ns, Spec: m})
+		if existing := slices.IndexFunc(out, func(o Object) bool { return o.Kind == KindMergePolicy && o.Name == name }); existing >= 0 {
+			var have config.PolicySpec
+			if err := decodeStrict(out[existing].Spec, &have); err != nil || string(mustJSON(have)) != string(mustJSON(spec)) {
+				errs = append(errs, fmt.Errorf("split: class %s: MergePolicy %s exists with another definition: the converter never replaces a shared policy; "+
+					"align the two or rename the class first", name, name))
+			}
+		} else {
+			policies = append(policies, Object{Kind: KindMergePolicy, Name: name, Namespace: ns, Spec: m})
+		}
 		for repo, b := range bs {
 			if bound[repo] == nil {
 				bound[repo] = map[string]config.Binding{}
