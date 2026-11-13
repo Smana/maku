@@ -187,6 +187,9 @@ fq '.repositories[0].classes | (has("docs-links") and has("revert"))' 'docs-link
 fq '[.repositories[0].classes[] | select(.shadow != true)] | length == 0' 'every class is in shadow'
 fq '[.repositories[0].classes[] | select((.allowedFiles | length) == 0)] | length == 0' 'every class carries allowedFiles'
 fq '.github.mergerAppIDFile == .github.appIDFile and .github.mergerKeyFile == .github.privateKeyFile' 'the merger signs with the same App files'
+fq '.github.mergerAppIDFile == "/etc/agent-factory-github/app_id" and .github.mergerKeyFile == "/etc/agent-factory-github/private_key"' 'apps.merger.mode factory: the factory App files, as before (D12)'
+fq '.repositories[0].merge.mergerLogin == .factoryLogin' 'folded, the merger login is the factory login (D12)'
+ynone 'select(.kind == "Deployment" and .metadata.name == "agent-factory") | .spec.template.spec.volumes[] | select(.name == "merger")' 'apps.merger.mode factory: no merger volume (D12)'
 fq '(has("meter") | not) and (.api | has("humanIssuer") | not)' 'no meter, no human API keys'
 # The umbrella passes the overlap rollout through the factory's config, with no parallel value.
 for mode in shadow enforce; do

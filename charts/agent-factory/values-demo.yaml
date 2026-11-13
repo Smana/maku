@@ -85,6 +85,11 @@ maku-factory:
   # Per-run tokens (v4 D10), from the demo's one App: the factory writes each run's own Secret.
   runTokens:
     perRun: true
+  # One App (v4 D12): the merger signs with the factory App's files, which the chart writes as
+  # config.github.mergerAppIDFile and mergerKeyFile; no merger Secret is mounted.
+  apps:
+    merger:
+      mode: factory
   # The demo's config, passed through `tpl`: `{{ .Release.Namespace }}` and the cluster domain are
   # the release's. Name the repository, the maintainers and the App's three bot logins (the slug of
   # the one App, as `<slug>[bot]`) to match yours, and the check names its CI reports.
@@ -103,12 +108,10 @@ maku-factory:
       group: maku.ogenki.io
       namespace: agents
       namePrefix: run-
-    # One App: the merger signs with the factory's own files.
+    # One App: apps.merger.mode factory adds the merger's files, the factory's own.
     github:
       appIDFile: /etc/agent-factory-github/app_id
       privateKeyFile: /etc/agent-factory-github/private_key
-      mergerAppIDFile: /etc/agent-factory-github/app_id
-      mergerKeyFile: /etc/agent-factory-github/private_key
     poll: {issues: 60s, tasks: 30s, meter: 30s}
     defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
     # The loop is scoper, implementer, completion judge, reviewer, gate. Without a row a class has no

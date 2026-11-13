@@ -7,9 +7,31 @@ resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {cpu: 500m, memory: 512Mi}
 # Secrets, their keys and mount paths, and the merger-key prerequisite: README.md#prerequisites.
+# The GitHub Apps (v4 D12, plan PR9; docs/github-apps.md). Each key maps onto an older one, which
+# keeps working:
+#
+#   | New key                     | Old key, still honoured | Rule                                         |
+#   |-----------------------------|-------------------------|----------------------------------------------|
+#   | apps.factory.existingSecret | githubSecret            | the new key wins when set                    |
+#   | apps.agents.existingSecret  | runTokens.appSecret     | the new key wins; both set and different fail |
+#   | apps.merger.mode            | mergerSecret            | factory: no merger Secret; with mergerSecret set, the render fails |
+#
+# apps.agents mounts the agents App (keys app_id, private_key) at /etc/agent-factory-agents and
+# writes config.github.agentsAppIDFile and agentsKeyFile. apps.merger.mode factory folds the merger
+# into the factory App: no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name
+# the factory App's files (every repository's merge.mergerLogin is then factoryLogin). Each key that
+# writes config fails the render when config already sets that key.
+apps:
+  factory:
+    existingSecret: ""
+  agents:
+    existingSecret: ""
+  merger:
+    mode: separate
 githubSecret: agent-factory-github
 # HARD PREREQUISITE when any merge class is live or in shadow: README.md#prerequisites.
-mergerSecret: agent-factory-merger
+# Empty means agent-factory-merger; set it only with apps.merger.mode separate.
+mergerSecret: ""
 brokerCASecret: openbao-ca
 # Audience of the projected token for the broker's system API.
 roomsAudience: rooms-system
