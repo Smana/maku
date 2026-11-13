@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/schemacheck"
 )
 
@@ -17,7 +16,7 @@ import (
 func TestEveryToolSchemaNodeNamesItsType(t *testing.T) {
 	tools := RoomTools(&memLog{}, fakeRedactor{}, time.Now)
 	tools = append(tools, OutputTools(&memLog{}, fakeRedactor{}, time.Now, OutputConfig{})...)
-	tools = append(tools, ForgeReadTool(nil, hardening.Policy{}))
+	tools = append(tools, ForgeReadTool(nil, nil, time.Now))
 	if len(tools) < 10 {
 		t.Fatalf("only %d tools collected: the registry changed shape", len(tools))
 	}

@@ -25,6 +25,12 @@ const (
 	// LabelAllowlistAnnotation is the labels the run may request with output_labels, a JSON array
 	// (a label may hold a comma), written beside SafeOutputsAnnotation.
 	LabelAllowlistAnnotation = "agents.ogenki.io/label-allowlist"
+	// ForgeAPIAnnotation, "deny", is a run of a repository in hardening mode enforce (HR36): it
+	// reads forge text through forge_read alone, and the run-controller gives it no api.github.com
+	// egress. The broker lists forge_read for such a run only.
+	ForgeAPIAnnotation = "agents.ogenki.io/forge-api"
+	// ForgeAPIDeny is ForgeAPIAnnotation's one value.
+	ForgeAPIDeny = "deny"
 	// OperatingModeAnnotation asks a suspendable run's Sandbox to be Suspended or Running
 	// (v2 warm-sandboxes design §6). The room-broker writes it and the next two; the
 	// composition reads them only when spec.suspendable is true.
@@ -72,6 +78,8 @@ type Run struct {
 	// SafeOutputs and LabelAllowlist are SafeOutputsAnnotation and LabelAllowlistAnnotation, read:
 	// empty on every run the factory does not enforce.
 	SafeOutputs, LabelAllowlist []string
+	// ForgeAPIDenied is ForgeAPIAnnotation set to ForgeAPIDeny: the run reads through forge_read.
+	ForgeAPIDenied bool
 }
 
 // ServesOutput reports whether the run requests typ through the broker's output tool.
@@ -126,6 +134,7 @@ func (k Kind) FromUnstructured(u *unstructured.Unstructured) (Run, bool) {
 		r.Model = m
 	}
 	r.SafeOutputs, r.LabelAllowlist = readSafeOutputs(ann)
+	r.ForgeAPIDenied = ann[ForgeAPIAnnotation] == ForgeAPIDeny
 	return r, true
 }
 
