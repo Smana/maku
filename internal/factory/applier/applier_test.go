@@ -140,6 +140,14 @@ func (c classifier) Injection(context.Context, []string) (bool, error) { return 
 type latency struct {
 	mu   sync.Mutex
 	seen map[string][]time.Duration
+	t5   []string
+}
+
+// HardeningT5 records each T5 call as "type result drill" (HR39).
+func (l *latency) HardeningT5(_ context.Context, typ, result string, drill bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.t5 = append(l.t5, fmt.Sprintf("%s %s %v", typ, result, drill))
 }
 
 func (l *latency) HardeningOutput(_ context.Context, typ string, d time.Duration) {
@@ -765,4 +773,39 @@ func appliedEvent(t *testing.T, run string, rec envelope.OutputRecord) envelope.
 	}
 	return envelope.Event{RunID: run, Type: envelope.Message, Origin: envelope.OriginClient,
 		Actor: envelope.Actor{Kind: envelope.ActorSystem, ID: envelope.FactoryActor}, Payload: raw}
+}
+
+// HR39: a text output refused by T3 is still read by T5 in audit, its finding recorded on the
+// refusal, and every T5 call is counted by type, result and whether the task is a drill's.
+func TestT5CounterOnRefusals(t *testing.T) {
+	r := newRig(t, 7, func(a *Applier) {
+		a.Checker = func(string) hardening.Checker {
+			return hardening.Checker{Secrets: scanner{}, Classifier: classifier{hit: true},
+				Layers: hardening.Layers{Classifier: hardening.ModeAudit}}
+		}
+	})
+	var task v1alpha1.Task
+	if err := r.c.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: taskID}, &task); err != nil {
+		t.Fatal(err)
+	}
+	task.Labels = map[string]string{v1alpha1.LabelDrillInjection: "true"}
+	if err := r.c.Update(t.Context(), &task); err != nil {
+		t.Fatal(err)
+	}
+	leaked := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "here: " + canary})
+	applied := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+	r.tick(t)
+	a := r.only(t, leaked)
+	if a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseCanary) || len(a.rec.Audit) != 1 ||
+		a.rec.Audit[0] != (envelope.OutputFinding{Layer: "t5_classifier", Reason: "injection_suspected"}) {
+		t.Fatalf("the refusal %+v", a)
+	}
+	if b := r.only(t, applied); b.kind != envelope.KindOutputApplied {
+		t.Fatalf("the pr %+v", b)
+	}
+	r.metrics.mu.Lock()
+	defer r.metrics.mu.Unlock()
+	if strings.Join(r.metrics.t5, ",") != "comment hit true,pr hit true" {
+		t.Fatalf("t5 %q", r.metrics.t5)
+	}
 }
