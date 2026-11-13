@@ -53,10 +53,11 @@ tasks:
       - bash hack/names.sh
 
   scripts:
-    desc: The operator scripts under scripts/, against fakes.
+    desc: The operator scripts under scripts/, and hack/ci-changes.sh, against fakes.
     cmds:
       - bash scripts/shadow-merge-tally_test.sh
       - bash scripts/stall-steps_test.sh
+      - bash hack/ci-changes_test.sh
 
   vuln:
     desc: Known vulnerabilities reachable from our code, the stdlib included.

@@ -57,6 +57,10 @@ on:
       - images/**
       - hack/quickstart/versions.env
       - examples/demo-repo/**
+      # install.sh runs through task and mise; the images' build context is cut by .dockerignore.
+      - taskfile.yaml
+      - mise.toml
+      - .dockerignore
       - .github/workflows/demo-e2e.yaml
   schedule:
     - cron: "17 3 * * *"

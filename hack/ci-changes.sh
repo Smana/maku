@@ -4,7 +4,7 @@
 # What a pull request touches, for ci.yaml's path-gated jobs: key=value lines on stdout (and in
 # $GITHUB_OUTPUT when set).
 #   harness     images/maku-harness/ (the harness image, its suites and its checks), or this gating
-#   deployable  anything but documentation: what the prerelease images and charts are built from
+#   deployable  anything but documentation (docs/, LICENSE, the root's *.md): what the prereleases build
 # On any event but pull_request every key is true: main and tags run everything.
 #
 # It reads the merge commit a pull_request checks out (fetch-depth 2): HEAD^1 is the base, so
@@ -36,8 +36,12 @@ while IFS= read -r f; do
   case "$f" in
     images/maku-harness/* | .github/workflows/ci.yaml | hack/ci-changes.sh) harness=true ;;
   esac
+  # Documentation is docs/, LICENSE and the root's *.md only: markdown deeper down can be code
+  # (internal/maku/skill/ embeds its files in the binary) or ship in a chart.
   case "$f" in
-    docs/* | *.md | LICENSE) ;;
+    docs/* | LICENSE) ;;
+    */*) deployable=true ;;
+    *.md) ;;
     *) deployable=true ;;
   esac
 done <<<"$files"
