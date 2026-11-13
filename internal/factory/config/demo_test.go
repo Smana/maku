@@ -91,7 +91,7 @@ func TestDemoPolicyBot(t *testing.T) {
 
 func TestNonDemoUnchanged(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
-		"policyBot false":   {"  policyBotLogin: ogenki-merge-gate[bot]\n", "  policyBotLogin: ogenki-merge-gate[bot]\n  policyBot: false\n", "merge.policyBot: false is the demo's: production gates through policy-bot"},
+		"policyBot false":   {"  policyBotLogin: ogenki-merge-gate[bot]\n", "  policyBotLogin: ogenki-merge-gate[bot]\n  policyBot: false\n", "merge.policyBot: false needs merge.gateStatus: true"},
 		"an http broker":    {`url: "https://room-broker`, `url: "http://room-broker`, `broker.url "http://room-broker.agent-system.svc.cluster.local:8443" must be an https:// URL`},
 		"no meter.url":      {"  url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428\n", "", "meter.url is required"},
 		"no broker.caFile":  {"caFile: /etc/agent-factory/openbao-ca/ca.crt, ", "", "broker.caFile is required"},

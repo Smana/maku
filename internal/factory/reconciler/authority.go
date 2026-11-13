@@ -4,6 +4,8 @@ package reconciler
 
 import (
 	"errors"
+	"maps"
+	"slices"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
@@ -76,8 +78,23 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 	} else {
 		d = DecideArmUnder(in, nil, nil)
 	}
+	if rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository); rc != nil {
+		d = withGatePath(d, in, rc, policyGatePaths(p.snap.Classes)) // the policy's gate paths, every class
+	}
 	d.Rows.Policy = shortHash(p.snap.Hash)
 	return d
+}
+
+// policyGatePaths is every protectedFiles pattern of a policy's classes, each variant included:
+// without policy-bot, the gate paths of a repository whose policy is authoritative.
+func policyGatePaths(classes map[string]mergepolicy.Resolved) []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(classes)) {
+		for _, v := range classes[name].Variants() {
+			out = append(out, v.ProtectedFiles...)
+		}
+	}
+	return out
 }
 
 // noAuthority is the decision on a policy that gives no authority (MP13): the fixed base's, when

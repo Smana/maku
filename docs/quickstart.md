@@ -78,8 +78,9 @@ merger and every run.
    sandboxed** banner: the demo has no sandbox, and you are told.
 3. The pull request appears on your repository, opened by `<slug>[bot]`. Its `ci` check runs.
 4. The gate posts the commit status **`maku/merge-gate`** on the pull request, naming the class and the
-   reason. In the demo's first run the class is in *shadow*: the status says what the gate would do,
-   and merges nothing. You can merge the pull request yourself.
+   reason. In the demo's first run the class is in *shadow*: the status stays `pending` and says what
+   the gate would do ("shadow: would merge; a maintainer merges"), and the gate merges nothing. Only a
+   merge by the factory itself posts `success`. You can merge the pull request yourself.
 5. The second seeded issue is labelled `documentation`, not `class:docs-links`, so the gate classes it
    `review` and hands it to a human: it posts that a human decides, and you merge the pull request by hand
    on GitHub (the demo does not configure approve-to-merge). If a task escalates, a maintainer's comment
@@ -201,7 +202,7 @@ table names what you have not proven by running it.
 | No meter and no USD caps | The meter reads the gateway's metrics; caps refuse a task over its dollars |
 | Runs under runc, with the room's "Not sandboxed" banner | Runs in a gVisor sandbox |
 | Network policies on the rooms database (the broker only) and the factory's API (the broker only; the ops port stays open); **runs keep their egress** | Default-deny egress with a per-run FQDN allow-list |
-| With `gh`, a ruleset requires pull requests and your CI's `ci` check. The gate's `maku/merge-gate` verdict is **advisory** against an agent that holds the token: the one App backs the factory, the merger and every run | `main` requires the gate's verdict, and no run holds the merger's key |
+| With `gh`, a ruleset requires pull requests and your CI's `ci` check. The gate's `maku/merge-gate` verdict is **advisory** against an agent that holds the token: the one App backs the factory, the merger and every run, so no ruleset could tell the merger's status from an agent's, and the demo requires none | Two Apps: `main` requires the gate's verdict on agent pull requests through [the gate's ruleset](factory.md#branch-protection-for-the-merge-gate), and no run holds the merger's key |
 | Runs reach the broker's room tools on `:8090`, which verifies each run's own token (`roomTools.auth: tokenreview`); the bridge lets the five room tools through (`MCP_BARE_SERVER`, `MCP_READ_ONLY_TOOLS`) | An agent gateway in front of `:8090` authenticates the run and injects a key |
 | One local user, no login | OIDC login, roles, room access following GitHub permissions |
 | TLS from a CA the chart generates; the database hop is plain inside the cluster | TLS from your CA, database included |
