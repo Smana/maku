@@ -103,6 +103,66 @@ func TestPushIntentUnrecorded(t *testing.T) {
 	}
 }
 
+// #513's review: a definitive refusal (a lost lease, a rejection) clears the intent, so another
+// hand's later push of the inspected head is refused push_ref, never answered applied; a restarted
+// applier reads no record either.
+func TestPushIntentClearedOnRefusal(t *testing.T) {
+	for _, restart := range []bool{false, true} {
+		r, fp, pr, _ := pushRig(t)
+		r.a.Tasks = r.c
+		fp.pushErr = gitbundle.ErrLeaseLost
+		id := r.pushRequest(t, pr, "bundle-1")
+		r.tick(t)
+		var task v1alpha1.Task
+		if err := r.c.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: taskID}, &task); err != nil {
+			t.Fatal(err)
+		}
+		if v, ok := task.Annotations[AnnotationPushIntent]; ok {
+			t.Fatalf("a lost lease kept the intent %q", v)
+		}
+		if restart {
+			old := r.a
+			r.a = &Applier{}
+			*r.a = *old
+			r.a.rooms = nil
+		}
+		fp.pushErr = nil
+		fp.in.OldHead = newHead // another hand pushed the inspected head
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefusePushRef) {
+			t.Fatalf("restart %v: %+v", restart, a)
+		}
+	}
+
+	r, fp, pr, _ := pushRig(t)
+	r.a.Tasks = r.c
+	fp.pushErr = gitbundle.ErrPushRejected
+	id := r.pushRequest(t, pr, "bundle-1")
+	r.tick(t)
+	var task v1alpha1.Task
+	if err := r.c.Get(t.Context(), client.ObjectKey{Namespace: ns, Name: taskID}, &task); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := task.Annotations[AnnotationPushIntent]; ok {
+		t.Fatal("a rejection kept the intent")
+	}
+	if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseUnavailable) {
+		t.Fatalf("%+v", a)
+	}
+}
+
+// #513's review: caps of -1 (a task whose class the repository does not declare, and no class
+// declares caps) refuse the push push_size.
+func TestPushNegativeCaps(t *testing.T) {
+	r, p, pr, _ := pushRig(t)
+	r.a.Caps = func(*v1alpha1.Task) (int, int) { return -1, -1 }
+	id := r.pushRequest(t, pr, "bundle-1")
+	r.tick(t)
+	if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefusePushSize) || len(p.pushed) != 0 {
+		t.Fatalf("%+v, pushed %d", a, len(p.pushed))
+	}
+}
+
 type failingWriter struct{ client.Client }
 
 func (failingWriter) Patch(context.Context, client.Object, client.Patch, ...client.PatchOption) error {
