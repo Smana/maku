@@ -37,8 +37,9 @@ func TestShadowAgreesWithTheTallyOnItsDecisionFixture(t *testing.T) {
 	got := Shadow(fixture[[]PR](t, "prs-decisions.json"), fixture[[]Revert](t, "reverts-drill.json"), "docs-links", repo, logins)
 	// --strictness: refused=3 refused_merged_unchanged=2, as the script's test says.
 	want := ShadowTally{MergedUnchanged: 2, Changed: 1, Reverted: 1, Drill: 1, Refused: 3, RefusedMergedUnchanged: 2,
-		Reviewers: []Reviewer{{Model: "glm-5.3", MergedUnchanged: 2}, {Model: "kimi-k3", Changed: 1}},
-		Judged:    []int{21, 22, 23, 29}, Drilled: []int{21}}
+		Reviewers:    []Reviewer{{Model: "glm-5.3", MergedUnchanged: 2}, {Model: "kimi-k3", Changed: 1}},
+		ByGeneration: []GenerationCount{{Generation: 4, MergedUnchanged: 1}, {Before: true, MergedUnchanged: 1, Changed: 1}},
+		Judged:       []int{21, 22, 23, 29}, Drilled: []int{21}}
 	if fmt.Sprint(got) != fmt.Sprint(want) {
 		t.Fatalf("got  %+v\nwant %+v", got, want)
 	}
@@ -172,5 +173,46 @@ func TestTheWideningLadder(t *testing.T) {
 	}
 	if e := Evaluate(ShadowTally{}, OutcomeTally{Conclusive: 28}, nil, repo, 20); e.Widen || e.Ladder[0].Reached {
 		t.Fatalf("0 in 28 is not under 10%%: %+v", e)
+	}
+}
+
+// Q6, PR13: the card splits shadow decisions by the policy generation they were made under; a
+// record without repogen= was made before the binding, and is bucketed "before". Promotion still
+// counts every one.
+func TestShadowByGeneration(t *testing.T) {
+	var prs []PR
+	add := func(n int, gens string) {
+		head := fmt.Sprintf("a%03x", n)
+		prs = append(prs, PR{Number: n, HeadRefOid: head, MergedBy: &Actor{Login: "Smana"}, Comments: []Comment{{
+			Author: Actor{Login: "ogenki-agent-factory"}, CreatedAt: time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC),
+			Body: "would auto-merge: `dead-links` <!-- agent-factory scope=x event=would-arm-1 head=" + head + " -->\n\n" +
+				"<!-- agent-factory-decision head=" + head + " class=dead-links decision=shadow:shadow_would_arm files=1/3 lines=2/20 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false" +
+				gens + " reviewer=glm-5.3 -->"}}})
+	}
+	n := 0
+	for range 3 {
+		n++
+		add(n, " policygen=4 repogen=7 resolved=0123456789ab")
+	}
+	for range 17 {
+		n++
+		add(n, " policygen=3 repogen=6 resolved=0123456789ab")
+	}
+	for range 12 {
+		n++
+		add(n, " policygen=2")
+	}
+	sh := Shadow(prs, nil, "dead-links", repo, logins)
+	want := []GenerationCount{{Generation: 4, MergedUnchanged: 3}, {Generation: 3, MergedUnchanged: 17}, {Before: true, MergedUnchanged: 12}}
+	if !slices.Equal(sh.ByGeneration, want) {
+		t.Fatalf("by generation %+v, want %+v", sh.ByGeneration, want)
+	}
+	if e := Evaluate(sh, OutcomeTally{}, nil, repo, 30); e.Clean != 32 {
+		t.Fatalf("clean %d, want 32: promotion counts every shadow decision (Q6)", e.Clean)
+	}
+	// The script's fixture: #22's record is a bound class's (policygen=4 repogen=7), the rest before.
+	fx := Shadow(fixture[[]PR](t, "prs-decisions.json"), fixture[[]Revert](t, "reverts-drill.json"), "docs-links", repo, logins)
+	if want := []GenerationCount{{Generation: 4, MergedUnchanged: 1}, {Before: true, MergedUnchanged: 1, Changed: 1}}; !slices.Equal(fx.ByGeneration, want) {
+		t.Fatalf("fixture by generation %+v, want %+v", fx.ByGeneration, want)
 	}
 }

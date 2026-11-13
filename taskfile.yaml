@@ -53,11 +53,12 @@ tasks:
       - bash hack/names.sh
 
   scripts:
-    desc: The operator scripts under scripts/, and hack/ci-changes.sh, against fakes.
+    desc: The operator scripts under scripts/, hack/ci-changes.sh and hack/prerelease-publish.sh, against fakes.
     cmds:
       - bash scripts/shadow-merge-tally_test.sh
       - bash scripts/stall-steps_test.sh
       - bash hack/ci-changes_test.sh
+      - bash hack/prerelease-publish_test.sh
 
   vuln:
     desc: Known vulnerabilities reachable from our code, the stdlib included.
@@ -123,10 +124,17 @@ tasks:
     cmds:
       - bash hack/agentgateway-vendor.sh check
 
+  chart:seams:
+    desc: Write the umbrella's _seams.tpl and docs/install-secrets.md's table from internal/install (v4 D14).
+    cmds:
+      - go run hack/gen-seams.go
+
   chart:check:
     desc: Lint and render the CRD, factory, gateway and umbrella charts; the umbrella's alerts under promtool.
     cmds:
       - task: chart:deps
+      - task: chart:seams
+      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl docs/install-secrets.md
       - helm lint --strict charts/agent-factory-crds
       - bash charts/agent-factory-crds/tests/render.sh
       - helm lint --strict charts/maku-gateway
@@ -185,6 +193,11 @@ tasks:
     desc: Install the demo profile on a throwaway kind cluster and assert it (docker, kind; not part of check)
     cmds:
       - bash charts/agent-factory/tests/install.sh kind
+
+  chart:usd:k3d:
+    desc: "The factory-level USD proof on k3d: a gateway-mode run, priced by agentgateway's catalog, settles in the factory's ledger at the gateway's cost for it (intake.sh USD=1)"
+    cmds:
+      - USD=1 bash charts/agent-factory/tests/intake.sh
 
   chart:identity:k3d:
     desc: Prove the broker in preset generic against the in-cluster stub issuer on throwaway k3d (docker, k3d; not part of check)

@@ -1446,7 +1446,11 @@ func (f *Fake) RepositoryInfo(context.Context) (forge.RepositoryInfo, error) {
 	if f.repoInfo != nil {
 		return *f.repoInfo, nil
 	}
-	return forge.RepositoryInfo{FullName: "owner/repo", DefaultBranch: "main", Private: f.private}, nil
+	vis := "public"
+	if f.private {
+		vis = "private"
+	}
+	return forge.RepositoryInfo{FullName: "owner/repo", DefaultBranch: "main", Private: f.private, Visibility: vis}, nil
 }
 
 // SetPermission sets login's permission on the repository.

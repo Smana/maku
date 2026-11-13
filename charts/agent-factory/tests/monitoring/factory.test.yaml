@@ -95,6 +95,15 @@ tests:
     alert_rule_test:
       - {eval_time: 34m, alertname: FactoryMergeGateRulesUnread, exp_alerts: []}
       - {eval_time: 40m, alertname: FactoryMergeGateRulesUnread, exp_alerts: [{exp_labels: {severity: warning, repository: o/r}}]}
+  # AgentFactoryPrivateCodeUnacknowledged: private code unacknowledged for 15 minutes; an
+  # acknowledged or public repository never (v4 D3).
+  - interval: 1m
+    input_series:
+      - {series: 'maku_factory_private_code_unacknowledged{repository="o/r", pod="agent-factory-0"}', values: '0x5 1x30'}
+      - {series: 'maku_factory_private_code_unacknowledged{repository="o/public", pod="agent-factory-0"}', values: '0x35'}
+    alert_rule_test:
+      - {eval_time: 19m, alertname: AgentFactoryPrivateCodeUnacknowledged, exp_alerts: []}
+      - {eval_time: 21m, alertname: AgentFactoryPrivateCodeUnacknowledged, exp_alerts: [{exp_labels: {severity: warning, repository: o/r}}]}
   # AgentPersonCapShadowRefusal: a would-be refusal, by principal; an enforced refusal is not one.
   - interval: 1m
     input_series:

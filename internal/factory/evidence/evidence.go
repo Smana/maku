@@ -8,6 +8,7 @@
 package evidence
 
 import (
+	"cmp"
 	"maps"
 	"math"
 	"regexp"
@@ -153,9 +154,42 @@ type ShadowTally struct {
 	// and those a human then merged unchanged at that head (the gate's too-strict side).
 	Refused                int `json:"refused"`
 	RefusedMergedUnchanged int `json:"refusedMergedUnchanged"`
+	// ByGeneration splits MergedUnchanged and Changed by the policy generation each decision was
+	// made under (Q6): a bound class's records, newest generation first, then the ones made
+	// before the binding (no repogen=, PR13). The card shows it; Evaluate counts them all.
+	ByGeneration []GenerationCount `json:"byGeneration,omitempty"`
 	// Judged and Drilled are the pull request numbers, for the drill check.
 	Judged  []int `json:"-"`
 	Drilled []int `json:"-"`
+}
+
+// GenerationCount is one policy generation's share of the shadow decisions, or, Before, the share
+// decided before the class was bound.
+type GenerationCount struct {
+	Generation      int64 `json:"generation,omitempty"`
+	Before          bool  `json:"before,omitempty"`
+	MergedUnchanged int   `json:"mergedUnchanged"`
+	Changed         int   `json:"changed"`
+}
+
+var (
+	policyGen = regexp.MustCompile(` policygen=([0-9]+)`)
+	repoGen   = regexp.MustCompile(` repogen=[0-9]+`)
+)
+
+// generationOf is the bucket a would-arm comment's record falls in: its policygen= when the record
+// names repogen= (a bound class's decision), before otherwise.
+func generationOf(body string) GenerationCount {
+	m := record.FindString(body)
+	if m == "" || !repoGen.MatchString(m) {
+		return GenerationCount{Before: true}
+	}
+	g := policyGen.FindStringSubmatch(m)
+	if g == nil {
+		return GenerationCount{Before: true}
+	}
+	n, _ := strconv.ParseInt(g[1], 10, 64)
+	return GenerationCount{Generation: n}
 }
 
 // Shadow counts prs as `shadow-merge-tally.sh --class class` does.
@@ -163,6 +197,7 @@ func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTall
 	rev, drilled := reverted(reverts, repo, false), reverted(reverts, repo, true)
 	var t ShadowTally
 	models := map[string]*Reviewer{}
+	gens := map[GenerationCount]*GenerationCount{}
 	for _, p := range prs {
 		t.strictness(p, class, l)
 		mine := own(p, l.Factory, wouldArm)
@@ -200,17 +235,40 @@ func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTall
 		case p.HeadRefOid == head:
 			t.MergedUnchanged++
 			r.MergedUnchanged++
+			bucket(gens, last.Body).MergedUnchanged++
 		default:
 			t.Changed++
 			r.Changed++
+			bucket(gens, last.Body).Changed++
 		}
 	}
+	for _, g := range gens {
+		t.ByGeneration = append(t.ByGeneration, *g)
+	}
+	slices.SortFunc(t.ByGeneration, func(a, b GenerationCount) int { // newest first, before last
+		if a.Before != b.Before {
+			if a.Before {
+				return 1
+			}
+			return -1
+		}
+		return cmp.Compare(b.Generation, a.Generation)
+	})
 	for _, m := range slices.Sorted(maps.Keys(models)) {
 		if m != "-" {
 			t.Reviewers = append(t.Reviewers, *models[m])
 		}
 	}
 	return t
+}
+
+func bucket(gens map[GenerationCount]*GenerationCount, body string) *GenerationCount {
+	k := generationOf(body)
+	if gens[k] == nil {
+		c := k
+		gens[k] = &c
+	}
+	return gens[k]
 }
 
 // strictRows are the class rows whose refusal --strictness counts.

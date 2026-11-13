@@ -357,7 +357,27 @@ func TestAssembleBadFactoryMessageHasNoFalseRepositoryErrors(t *testing.T) {
 		strings.Contains(x.Message, "not a listed repository") {
 		t.Fatalf("Factory refusal: %+v", x)
 	}
-	if len(r.Refused) != 1 {
-		t.Fatalf("only the Factory is at fault: %+v", r.Refused)
+	// No Repository is blamed. A class policy naming a profile only the refused Factory held is
+	// refused alone (B9): the catalogue it is judged under is the file's.
+	for _, x := range r.Refused {
+		if x.Kind == KindRepository || (x.Kind == KindMergePolicy && !strings.Contains(x.Message, "is not in harnessProfiles")) {
+			t.Fatalf("only the Factory is at fault: %+v", r.Refused)
+		}
+	}
+}
+
+// v4 D3: a Repository's privateCode reaches the served config.
+func TestAssembleCarriesPrivateCode(t *testing.T) {
+	r0 := repo("maku", "Smana/maku")
+	r0.Spec["privateCode"] = map[string]any{"acknowledged": true}
+	r, err := Assemble(file(t), []Object{r0, policy(t, "maku", "maku")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rc := r.Config.RepositoryFor("Smana/maku"); !rc.PrivateCodeAcknowledged() {
+		t.Fatalf("privateCode dropped: %+v %+v", rc, r.Refused)
+	}
+	if r.Config.RepositoryFor("Smana/cloud-native-ref").PrivateCodeAcknowledged() {
+		t.Fatal("a repository without privateCode acknowledges nothing")
 	}
 }

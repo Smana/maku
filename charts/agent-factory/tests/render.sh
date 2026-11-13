@@ -306,6 +306,20 @@ yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != nul
   { echo "FAIL: the metering leg's factory config does not parse:" >&2; cat "$tmp/parse-m.log" >&2; fail=1; }
 grep -qE 'name: metrics' <<<"$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .spec.ingress[] | select(.ports[0].port == 15020)' - <<<"$mout")" ||
   { echo "FAIL: the metering values do not admit the metrics namespace to the gateway's 15020" >&2; fail=1; }
+# The factory-level USD proof's values (intake.sh USD=1): gateway-mode runs on the stub provider, a
+# meter, and a catalog that prices every model the gateway serves, the runs' and the broker clients'.
+uout="$(helm template af . -n maku -f values-demo.yaml "${img[@]}" --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem1 \
+  -f tests/intake-values.yaml --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local -f tests/usd-values.yaml)" ||
+  { echo "FAIL: the USD proof's values do not render" >&2; fail=1; uout=''; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$uout" >"$tmp/usd-config.yaml"
+yq -e '.runs.gatewayIdentity and .meter.url == "http://vmsingle.metrics.svc.cluster.local:8428" and .meter.prices."stub-default".input == 1000' "$tmp/usd-config.yaml" >/dev/null 2>&1 ||
+  { echo "FAIL: the USD proof's factory config lacks its identity, meter or prices" >&2; fail=1; }
+(cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/usd-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-usd.log" 2>&1) ||
+  { echo "FAIL: the USD proof's factory config does not parse:" >&2; cat "$tmp/parse-usd.log" >&2; fail=1; }
+[[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .data."catalog.json" | from_yaml | .providers.stub.models | keys | sort | join(",")' - <<<"$uout")" == "stub-default,stub-frontier,stub-light" ]] ||
+  { echo "FAIL: the USD proof's catalog does not price every model the stub provider serves" >&2; fail=1; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "run-controller-config") | .data."config.yaml"' - <<<"$uout" | yq -e '.model.mode == "gateway"' >/dev/null 2>&1 ||
+  { echo "FAIL: the USD proof's runs are not in model.mode gateway" >&2; fail=1; }
 # GW12: the gateway's prices default to the factory's meter.prices (one source); the gateway's own win.
 catalogs() { yq ea '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' - <<<"$out"; }
 [[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway demo renders $(catalogs) model catalogs, want 1" >&2; fail=1; }
@@ -342,6 +356,11 @@ bad() {
 idv=("${args[@]}" -f tests/identity-values.yaml)
 out="$(helm template af . -n maku "${idv[@]}")"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.preset == "generic" and .human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and (.human | has("projectIDFile") | not))' 'the identity values render the generic broker with its ids by Secret'
+# step 5 PR C: the identity leg's GitHub account link renders, its broker config filled from the Secret
+out="$(helm template af . -n maku "${idv[@]}" -f tests/identity-link-values.yaml)" || { echo 'FAIL: the identity link values do not render' >&2; fail=1; out=''; }
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.githubLink.clientIDFile == "/etc/room-broker/github-link/client_id" and .human.githubLink.webURL == "https://e2e-stub.e2e.svc.cluster.local" and .human.access.ttl == "1m" and (.human.access | has("readerFile") | not))' 'the identity link values: the link, and room access without a reader'
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/identity-link.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/identity-link.yaml") || fail=1
 fapi=(--set maku-factory.config.api.humanIssuer=https://e2e-stub.e2e.svc.cluster.local --set maku-factory.config.api.preset=generic
       --set maku-factory.config.api.rolesClaim=groups)
 helm template af . -n maku "${idv[@]}" "${fapi[@]}" >/dev/null || { echo 'FAIL: an agreeing broker and factory must render' >&2; fail=1; }
@@ -352,6 +371,46 @@ bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-
 bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
 bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
 bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
+# v4 D14, PR10: ExternalSecrets for the seams the values list, against the store they name; off, nothing.
+esv=("${args[@]}" -f tests/externalsecrets-values.yaml)
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind=="ExternalSecret")' 'externalSecrets off renders no ExternalSecret'
+out="$(helm template af . -n maku "${esv[@]}")"
+es="$(yq ea 'select(.kind=="ExternalSecret")' - <<<"$out")"
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$es" >tests/golden/externalsecrets.yaml; fi
+printf '%s\n' "$es" | diff -u tests/golden/externalsecrets.yaml - >&2 || { echo 'FAIL: the ExternalSecrets differ from tests/golden/externalsecrets.yaml' >&2; fail=1; }
+ykind ExternalSecret 'select(.metadata.name=="db-broker") | (.spec.target.name == "db-broker" and .spec.target.creationPolicy == "Owner" and .spec.target.deletionPolicy == "Retain" and .spec.secretStoreRef.kind == "SecretStore" and .spec.secretStoreRef.name == "agents-secrets" and (.spec.target.template.data.uri | test("^postgresql://")))' 'databaseBroker: its resolved name, Owner and Retain, the named store, the template passed through'
+ykind ExternalSecret 'select(.metadata.name=="db-owner") | .spec.dataFrom[0].extract.key == "maku/rooms-owner"' 'a dataFrom.extract is trusted and passed through'
+ykind ExternalSecret 'select(.metadata.name=="db-ca") | .spec.refreshInterval == "24h"' 'a seam may set its own refreshInterval'
+ykind ExternalSecret 'select(.metadata.name=="agent-factory-intake") | (.metadata.namespace == "maku" and .spec.refreshInterval == "1h" and .apiVersion == "external-secrets.io/v1")' 'a default name, the release namespace, the default refresh, ESO v1'
+ynone 'select(.kind=="Secret" and (.metadata.name=="db-broker" or .metadata.name=="agent-factory-intake"))' 'never a Secret beside an ExternalSecret of the same name'
+bad 'externalSecrets.enabled needs externalSecrets.storeRef.name' "${esv[@]}" --set externalSecrets.storeRef.name=
+bad 'externalSecrets.secrets.databaseBroker: key uri is required (docs/install-secrets.md)' "${esv[@]}" --set 'externalSecrets.secrets.databaseBroker.template=null'
+bad 'externalSecrets.secrets.databaseBroker: key dsn is required (docs/install-secrets.md)' "${esv[@]}" --set maku.broker.database.secretKey=dsn
+bad 'externalSecrets.secrets.nope: not a seam id (docs/install-secrets.md)' "${esv[@]}" --set-json 'externalSecrets.secrets.nope={"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.factoryApp: the demo writes agent-factory-github from demo.githubApp' "${esv[@]}" --set-json 'externalSecrets.secrets.factoryApp={"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enabled) writes rooms-broker-dsn' "${args[@]}" -f tests/externalsecrets-values.yaml \
+  --set postgres.enabled=true --set maku.broker.database.brokerSecret=rooms-broker-dsn
+# Review of #544: a runtime writer refuses its Secret only while it runs; one writer per Secret name.
+xf='{"dataFrom":[{"extract":{"key":"x"}}]}'
+bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json "externalSecrets.secrets.runGit=$xf"
+bad 'externalSecrets.secrets.runGitRead: the factory writes agent-git-read' "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.enabled=true --set maku-factory.runTokens.appSecret=run-token-app \
+  --set-json "externalSecrets.secrets.runGitRead=$xf"
+out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.perRun=false \
+  --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read --set-json "externalSecrets.secrets.runGit=$xf")"
+ykind ExternalSecret 'select(.metadata.name=="agent-git") | .metadata.namespace == "agents"' 'agent-git is the operator'"'"'s while the factory writes no run token: its ExternalSecret, in the runs namespace'
+bad 'externalSecrets.secrets.factoryAPITLS: cert-manager (maku-factory.api.tls.issuerRef) writes factory-api-tls' "${esv[@]}" \
+  --set maku-factory.api.tls.secretName=factory-api-tls --set maku-factory.api.tls.issuerRef.name=ca --set-json "externalSecrets.secrets.factoryAPITLS=$xf"
+out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.api.tls.secretName=factory-api-tls --set-json "externalSecrets.secrets.factoryAPITLS=$xf")"
+ykind ExternalSecret 'select(.metadata.name=="factory-api-tls") | .spec.dataFrom[0].extract.key == "x"' 'without issuerRef the API pair is the operator'"'"'s'
+bad 'externalSecrets.secrets.gatewayProvider.demo: the umbrella writes demo-model' "${gwd[@]}" -f tests/externalsecrets-values.yaml \
+  --set-json "externalSecrets.secrets.gatewayProvider\.demo=$xf"
+bad 'externalSecrets.secrets.runModel: the umbrella writes agent-model' "${esv[@]}" --set-json "externalSecrets.secrets.runModel=$xf"
+bad 'externalSecrets.secrets.databaseOwner and externalSecrets.secrets.databaseBroker both target db-broker' "${esv[@]}" --set maku.broker.database.ownerSecret=db-broker
+bad 'externalSecrets.secrets.intake: maku-factory.enabled is false' "${esv[@]}" --set maku-factory.enabled=false
+bad 'externalSecrets.secrets.databaseCA: data or dataFrom is required' "${esv[@]}" --set 'externalSecrets.secrets.databaseCA.data=null'
+out="$(helm template af . -n maku "${esv[@]}" --set externalSecrets.storeRef.kind=ClusterSecretStore)"
+ykind ExternalSecret '.spec.secretStoreRef.kind == "ClusterSecretStore"' 'a ClusterSecretStore is accepted'
 bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
   --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
 bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \

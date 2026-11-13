@@ -395,3 +395,45 @@ func TestDuplicatePolicyReportsItsOwnClasses(t *testing.T) {
 		t.Fatalf("classes %+v, want the policy's own mine/shadow and other/unarmed, no decision", got.Classes)
 	}
 }
+
+// v4 D3, step 7 R1: PrivateCode on a served Repository. Private, internal or unread code without
+// privateCode.acknowledged is False with D3's sentence; work continues (no other condition moves).
+func TestPrivateCode(t *testing.T) {
+	acked := config.Repository{Name: repo, PrivateCode: &config.PrivateCode{Acknowledged: true}}
+	for name, tc := range map[string]struct {
+		served     *config.Repository
+		visibility string
+		status     metav1.ConditionStatus
+		reason     string
+		message    string
+	}{
+		"not served":               {visibility: "private", status: metav1.ConditionUnknown, reason: "NotServed"},
+		"not read yet":             {served: &config.Repository{Name: repo}, status: metav1.ConditionUnknown, reason: "NotChecked"},
+		"public":                   {served: &config.Repository{Name: repo}, visibility: "public", status: metav1.ConditionTrue, reason: "Public"},
+		"private":                  {served: &config.Repository{Name: repo}, visibility: "private", status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: config.PrivateCodeSentence},
+		"internal":                 {served: &config.Repository{Name: repo}, visibility: "internal", status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: config.PrivateCodeSentence},
+		"unread counts as private": {served: &config.Repository{Name: repo}, visibility: VisibilityUnknown, status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: "its visibility could not be read"},
+		"private, acknowledged":    {served: &acked, visibility: "private", status: metav1.ConditionTrue, reason: "Acknowledged"},
+		"unread, acknowledged":     {served: &acked, visibility: VisibilityUnknown, status: metav1.ConditionTrue, reason: "Acknowledged"},
+		"public, acknowledged":     {served: &acked, visibility: "public", status: metav1.ConditionTrue, reason: "Public"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			in := Inputs{Config: cfg(), Visibility: func(r string) string {
+				if r != repo {
+					t.Fatalf("visibility of %s", r)
+				}
+				return tc.visibility
+			}}
+			if tc.served != nil {
+				in.Config = cfg(*tc.served)
+			}
+			st := Desired(in, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, now).Repositories["app"]
+			c := want(t, st.Conditions, v1alpha1.ConditionPrivateCode, tc.status, tc.reason)
+			if !strings.Contains(c.Message, tc.message) {
+				t.Fatalf("message %q, want %q", c.Message, tc.message)
+			}
+		})
+	}
+	st := Desired(Inputs{Config: cfg(config.Repository{Name: repo})}, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, now).Repositories["app"]
+	want(t, st.Conditions, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotChecked")
+}

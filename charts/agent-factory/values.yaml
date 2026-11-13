@@ -23,6 +23,17 @@ maku:
 maku-factory:
   enabled: false
 
+# ExternalSecrets (v4 D14; docs/install-secrets.md#externalsecrets), off by default: one for each seam
+# listed under secrets, against the store named here (never rendered by this chart). Each target is
+# the seam's resolved Secret name. A seam id is a row of docs/install-secrets.md:
+#   <seam id>: {data: [{secretKey, remoteRef: {key, property?}}] | dataFrom: [...], template?: {...}, refreshInterval?}
+externalSecrets:
+  enabled: false
+  apiVersion: external-secrets.io/v1   # ESO 0.17 or later
+  storeRef: {kind: ClusterSecretStore, name: ""}
+  refreshInterval: 1h
+  secrets: {}
+
 # The model gateway (D7; docs/gateway.md), off by default. maku-gateway renders the Gateway, its
 # policies, a backend and a route per model alias; its `runs` must equal maku's, and its broker
 # ServiceAccount the broker's (room-broker). agentgateway is the upstream controller (v1.6.0): leave

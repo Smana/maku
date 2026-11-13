@@ -271,6 +271,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
+	if err := checkBrokerSecrets(cfg, readMounted); err != nil {
+		return fmt.Errorf("room-broker: %w", err)
+	}
 	tlsCfg, err := tlsreload.Config(cfg.TLS.CertFile, cfg.TLS.KeyFile, log)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
@@ -534,7 +537,17 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe}, nil
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
+		FactoryInstall: factoryInstall(cfg)}, nil
+}
+
+// factoryInstall reads the factory's banner codes (v4 D3) with the caller's own token: nil while no
+// factory is configured.
+func factoryInstall(cfg config.Config) func(ctx context.Context, accessToken string) ([]string, error) {
+	if cfg.FactoryURL == "" {
+		return nil
+	}
+	return runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}.Install
 }
 
 // catalogueCache is the broker's reader of the factory's catalogue (profile choice at intake,

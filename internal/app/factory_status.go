@@ -19,10 +19,11 @@ import (
 
 // factoryStatusInputs is what the status writer reads: the Source's outcomes and published
 // config, each repository's GitHub health, the policy watch's snapshots (none while
-// policyManagement.read is off), the latest decisions and the stop object. A stop that cannot be
+// policyManagement.read is off), the latest decisions, each repository's visibility as the last
+// fence pass read it (v4 D3) and the stop object. A stop that cannot be
 // read counts as not stopped and is logged.
 func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, conns *repoConns,
-	watch func() *mergepolicy.Watch, rec *decision.Recorder, log *slog.Logger) func(context.Context) statuswriter.Inputs {
+	watch func() *mergepolicy.Watch, rec *decision.Recorder, visibility func(string) string, log *slog.Logger) func(context.Context) statuswriter.Inputs {
 	return func(ctx context.Context) statuswriter.Inputs {
 		outcomes, synced := src.Outcomes()
 		in := statuswriter.Inputs{
@@ -31,8 +32,9 @@ func factoryStatusInputs(ns string, src *configsource.Source, c client.Reader, c
 			Connected: func(repository string) (metav1.ConditionStatus, string) {
 				return conns.connection(repository, time.Now())
 			},
-			Decisions: rec.Latest,
-			GitHubUp:  conns.githubUp(time.Now()),
+			Decisions:  rec.Latest,
+			GitHubUp:   conns.githubUp(time.Now()),
+			Visibility: visibility,
 		}
 		if w := watch(); w != nil {
 			in.Snapshot = w.Snapshot

@@ -17,7 +17,8 @@ import (
 
 // Migrate moves a config file's catalogue and repositories into manifests (D8): it returns the
 // manifests, as multi-document YAML in namespace ns, and the file with those keys removed.
-// Keys move verbatim, so a defaulted field stays omitted.
+// Keys move verbatim, so a defaulted field stays omitted. Each repository's classes and merge are
+// split into class-shape MergePolicies and the Repository's bindings (Split, B17).
 func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	var base map[string]any
 	if err := yaml.Unmarshal(file, &base); err != nil {
@@ -69,20 +70,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		}
 	})
 
-	var docs [][]byte
-	add := func(kind, name string, spec map[string]any) error {
-		b, err := yaml.Marshal(map[string]any{
-			"apiVersion": "maku.ogenki.io/v1alpha1",
-			"kind":       kind,
-			"metadata":   map[string]any{"name": name, "namespace": ns},
-			"spec":       spec,
-		})
-		docs = append(docs, b)
-		return err
-	}
-	if err := add(string(KindFactory), factory, spec); err != nil {
-		return nil, nil, err
-	}
+	objs := []Object{{Kind: KindFactory, Name: factory, Namespace: ns, Spec: spec}}
 
 	entries, _ := base["repositories"].([]any)
 	delete(base, "repositories")
@@ -111,25 +99,20 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 				ps[k] = v
 			}
 		}
-		if err := add(string(KindRepository), name, rs); err != nil {
-			return nil, nil, err
-		}
-		if err := add(string(KindMergePolicy), name, ps); err != nil {
-			return nil, nil, err
-		}
+		objs = append(objs, Object{Kind: KindRepository, Name: name, Namespace: ns, Spec: rs},
+			Object{Kind: KindMergePolicy, Name: name, Namespace: ns, Spec: ps})
 	}
-
+	if objs, err = Split(objs, ns); err != nil {
+		return nil, nil, fmt.Errorf("migrate: %w", err)
+	}
+	if manifests, err = Encode(objs); err != nil {
+		return nil, nil, err
+	}
 	residual, err = yaml.Marshal(base)
 	if err != nil {
 		return nil, nil, err
 	}
-	return []byte(strings.Join(func() []string {
-		s := make([]string, len(docs))
-		for i, d := range docs {
-			s[i] = string(d)
-		}
-		return s
-	}(), "---\n")), residual, nil
+	return manifests, residual, nil
 }
 
 // ObjectName is the name Migrate gives repository's Repository and MergePolicy objects: its name
@@ -162,6 +145,31 @@ func MergePolicyManifest(name, ns, repositoryRef string, classes, merge any) ([]
 		"kind":       string(KindMergePolicy),
 		"metadata":   map[string]any{"name": name, "namespace": ns},
 		"spec":       spec,
+	})
+}
+
+// RepositoryManifest is the YAML of a Repository named name in ns with spec as given (B2, B3).
+func RepositoryManifest(name, ns string, spec map[string]any) ([]byte, error) {
+	return yaml.Marshal(map[string]any{
+		"apiVersion": "maku.ogenki.io/v1alpha1",
+		"kind":       string(KindRepository),
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"spec":       spec,
+	})
+}
+
+// PolicyManifest is the YAML of a class-shape MergePolicy named name in ns (B1, B7): spec as JSON
+// writes it, so an omitted field stays omitted.
+func PolicyManifest(name, ns string, spec config.PolicySpec) ([]byte, error) {
+	m, err := toMap(spec)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(map[string]any{
+		"apiVersion": "maku.ogenki.io/v1alpha1",
+		"kind":       string(KindMergePolicy),
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"spec":       m,
 	})
 }
 

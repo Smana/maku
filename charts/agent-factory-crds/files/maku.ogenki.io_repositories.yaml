@@ -287,6 +287,24 @@ spec:
                 x-kubernetes-list-map-keys:
                 - name
                 x-kubernetes-list-type: map
+              privateCode:
+                description: |-
+                  PrivateCode states that a private or internal repository's code is sent to the configured
+                  models, which are usually SaaS (v4 D3). A private repository without it is warned in this
+                  release (the PrivateCode condition) and refused from the next.
+                properties:
+                  acknowledged:
+                    description: |-
+                      Acknowledged states that this repository's code is sent to the configured models, which are
+                      usually SaaS.
+                    type: boolean
+                required:
+                - acknowledged
+                type: object
+                x-kubernetes-validations:
+                - message: 'privateCode.acknowledged is true or absent: false says
+                    nothing (D3)'
+                  rule: self.acknowledged
               repository:
                 description: Repository is owner/name on GitHub.
                 maxLength: 140

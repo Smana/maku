@@ -108,15 +108,7 @@ func loadServed(cfgPath string, manifests []string) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	docs := make([]string, 0, len(manifests))
-	for _, p := range manifests {
-		raw, err := os.ReadFile(filepath.Clean(p))
-		if err != nil {
-			return nil, err
-		}
-		docs = append(docs, string(raw))
-	}
-	objs, err := resources.Decode([]byte(strings.Join(docs, "---\n")))
+	objs, err := readManifests(manifests)
 	if err != nil {
 		return nil, fmt.Errorf("policy: %w", err)
 	}

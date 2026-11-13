@@ -305,6 +305,14 @@ before printing.
 
 Details and the tests that prove them: [room log](room-log.md#the-guarantees).
 
+## Private code
+
+A run sends the repository's code to the configured models, which are usually SaaS. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
+The factory reads each repository's visibility through its App and fails closed: an internal
+repository, or one whose visibility it cannot read, counts as private. This release warns and the
+next refuses ([private code](factory.md#private-code)). Demo mode and coordination's `publicOnly`
+serve public code only, acknowledged or not.
+
 ## The model gateway's identity
 
 The model gateway ([gateway](gateway.md)) verifies each caller's projected ServiceAccount token against

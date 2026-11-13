@@ -5,6 +5,7 @@ package forge
 import (
 	"context"
 	"errors"
+	"strings"
 )
 
 // Public reports whether the repository is public, read live from GET repos/{owner}/{repo}. A
@@ -28,7 +29,14 @@ type RepositoryInfo struct {
 	FullName      string
 	DefaultBranch string
 	Private       bool
+	// Visibility is public, private or internal (v4 D3), lowercased; from Private when the reply
+	// has none, as an older GHES's does.
+	Visibility string
 }
+
+// PrivateCode reports whether the repository's code is not public: private, or internal (an
+// Enterprise's, readable by its members only). Either needs privateCode.acknowledged (v4 D3).
+func (i RepositoryInfo) PrivateCode() bool { return i.Private || i.Visibility != "public" }
 
 // RepositoryInfo reads GET repos/{owner}/{repo} through this connection. A failed read, or a reply
 // without its full name or private flag, is an error and never an answer.
@@ -41,5 +49,12 @@ func (g *GitHub) RepositoryInfo(ctx context.Context) (RepositoryInfo, error) {
 	if r.Private == nil || r.GetFullName() == "" {
 		return RepositoryInfo{}, errors.New("forge: repository: the reply has no full name or private flag")
 	}
-	return RepositoryInfo{FullName: r.GetFullName(), DefaultBranch: r.GetDefaultBranch(), Private: *r.Private}, nil
+	vis := strings.ToLower(r.GetVisibility())
+	if vis == "" {
+		vis = "public"
+		if *r.Private {
+			vis = "private"
+		}
+	}
+	return RepositoryInfo{FullName: r.GetFullName(), DefaultBranch: r.GetDefaultBranch(), Private: *r.Private, Visibility: vis}, nil
 }

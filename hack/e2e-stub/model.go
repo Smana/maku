@@ -168,6 +168,22 @@ func plannerDraft() string {
 	return string(content)
 }
 
+// The usage every completion reports, streamed or not: the gateway meters each call, and the
+// factory-level USD proof (intake.sh USD=1) prices it exactly.
+const (
+	stubPromptTokens     = 1000
+	stubCompletionTokens = 100
+)
+
+// failMarker, as a request's last message, makes the stub answer 500: the USD proof reads the error
+// label agentgateway sets on a failed provider call.
+const failMarker = "e2e-stub: fail this call"
+
+func stubUsage() map[string]any {
+	return map[string]any{"prompt_tokens": stubPromptTokens, "completion_tokens": stubCompletionTokens,
+		"total_tokens": stubPromptTokens + stubCompletionTokens}
+}
+
 func writeCompletion(w http.ResponseWriter, stream bool, call *modelToolCall, content string) {
 	created := time.Now().Unix()
 	if stream {
@@ -187,10 +203,15 @@ func writeCompletion(w http.ResponseWriter, stream bool, call *modelToolCall, co
 			{"index": 0, "delta": delta, "finish_reason": nil},
 			{"index": 0, "delta": map[string]any{}, "finish_reason": finishReason},
 		}
+		var frames []map[string]any
 		for _, choice := range chunks {
-			raw, err := json.Marshal(map[string]any{
-				"id": "e2e-stub", "object": "chat.completion.chunk", "created": created, "model": "e2e-stub", "choices": []any{choice},
-			})
+			frames = append(frames, map[string]any{"choices": []any{choice}})
+		}
+		// The last chunk carries the usage and no choice, as OpenAI's stream_options.include_usage does.
+		frames = append(frames, map[string]any{"choices": []any{}, "usage": stubUsage()})
+		for _, frame := range frames {
+			frame["id"], frame["object"], frame["created"], frame["model"] = "e2e-stub", "chat.completion.chunk", created, "e2e-stub"
+			raw, err := json.Marshal(frame)
 			if err != nil {
 				panic("e2e-stub: marshal fixed stream: " + err.Error())
 			}
@@ -213,7 +234,7 @@ func writeCompletion(w http.ResponseWriter, stream bool, call *modelToolCall, co
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": "e2e-stub", "object": "chat.completion", "created": created, "model": "e2e-stub",
 		"choices": []any{map[string]any{"index": 0, "finish_reason": finishReason, "message": message}},
-		"usage":   map[string]any{"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+		"usage":   stubUsage(),
 	})
 }
 
@@ -231,6 +252,10 @@ func (s *Stub) completion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.modelCalls.Add(1)
+	if n := len(request.Messages); n > 0 && request.Messages[n-1].Content == failMarker {
+		http.Error(w, "e2e-stub: failing on request", http.StatusInternalServerError)
+		return
+	}
 	role := request.role()
 	s.record(role, r, raw)
 	switch role {

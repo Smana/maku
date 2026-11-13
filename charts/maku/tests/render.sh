@@ -623,6 +623,12 @@ bad 'runController.tracing.collector.labels: "io.kubernetes.pod.namespace" is no
 bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=http://collector.obs.svc.cluster.local
 bad "at '/runController/tracing/otlpEndpoint'" --set runController.tracing.otlpEndpoint=https://otel.example.com:4318
 
+# v4 D14: the DSNs are env, read once: broker.reloader annotates the Deployment for Stakater Reloader
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.database.ownerSecret=owner-dsn --set broker.reloader=true)"
+ykind Deployment 'select(.metadata.name=="room-broker") | .metadata.annotations."secret.reloader.stakater.com/reload" == "dsn,owner-dsn"' 'broker.reloader names both DSN Secrets'
+out="$p"
+ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .metadata.annotations | select(. != null)' 'no reloader, no Deployment annotation'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ozit" >"$tmp/oidc-zitadel.yaml"

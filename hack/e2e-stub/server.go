@@ -71,6 +71,7 @@ func New() *Stub {
 	mux.HandleFunc("GET /app", gitHubApp)
 	mux.HandleFunc("GET /repos/owner/repo/installation", gitHubInstallation)
 	mux.HandleFunc("POST /app/installations/1/access_tokens", gitHubInstallationToken)
+	mux.HandleFunc("DELETE /installation/token", gitHubRevokeToken)
 	mux.HandleFunc("GET /repos/owner/repo", gitHubRepository)
 	mux.HandleFunc("GET /user/123", gitHubUser)
 	mux.HandleFunc("GET /repos/owner/repo/collaborators/dev/permission", gitHubPermission)

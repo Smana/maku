@@ -140,6 +140,10 @@ broker:
       clientSecret: client_secret
     webURL: ""
     activeWindow: 168h
+  # The broker reads its DSN Secrets (broker.database) as environment variables, once at start: a
+  # rotated password reaches it only through a restart (docs/install-secrets.md#rotation). reloader:
+  # true annotates the Deployment for Stakater Reloader, which rolls it when either Secret changes.
+  reloader: false
   # The OIDC client ids (v4 D8, oidc mode): a Secret mounted at /etc/room-broker/oidc. Set, it fills
   # human.clientIDFile, human.roomctlClientIDFile and (preset zitadel) human.projectIDFile with its
   # keys' paths, wherever the human block leaves them unset: a path the block sets wins.
