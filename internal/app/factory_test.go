@@ -257,7 +257,7 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 // Demo mode's run tokens are for the served repositories of one account, written in the runs'
 // namespace as the two Secrets the run-controller mounts; two accounts cannot share one installation.
 func TestRunTokensServeTheListedRepositories(t *testing.T) {
-	cfg := &config.Config{Demo: true, Runs: runwatch.Kind{Namespace: "runs"},
+	cfg := &config.Config{Demo: true, Runs: config.Runs{Kind: runwatch.Kind{Namespace: "runs"}},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
 	ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler))
 	if err != nil || len(ws) != 2 {
@@ -287,7 +287,7 @@ func TestRunTokensServeTheListedRepositories(t *testing.T) {
 // v4 D10: runTokens.perRun builds the per-run minter, on the leader, for repositories of any
 // owner; without it the shared writer stays (D25).
 func TestPerRunTokens(t *testing.T) {
-	cfg := &config.Config{Runs: runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "maku-run-"},
+	cfg := &config.Config{Runs: config.Runs{Kind: runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "maku-run-"}},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Other/c"}},
 		RunTokens:    config.RunTokens{Enabled: true, AppIDFile: "/x/app_id", PrivateKeyFile: "/x/private_key"}}
 	if rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler)); rt != nil {
@@ -295,7 +295,7 @@ func TestPerRunTokens(t *testing.T) {
 	}
 	cfg.RunTokens.PerRun = true
 	rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler))
-	if rt == nil || !rt.NeedLeaderElection() || rt.Kind != cfg.Runs || rt.TaskNamespace != "agent-factory" || rt.Reserved == nil || rt.Enforced == nil {
+	if rt == nil || !rt.NeedLeaderElection() || rt.Kind != cfg.Runs.Kind || rt.TaskNamespace != "agent-factory" || rt.Reserved == nil || rt.Enforced == nil {
 		t.Fatalf("%+v", rt)
 	}
 	cfg.RunTokens.Enabled = false
