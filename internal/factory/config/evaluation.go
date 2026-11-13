@@ -50,23 +50,38 @@ func (c *Config) RowFor(class string, p HarnessProfile) string {
 
 // VariantProblems is every reason cl's floor, variants and escalation are refused (TE2, TE6, TE7).
 func (c *Config) VariantProblems(class string, cl Class) []string {
+	return variantProblems(c.HarnessProfiles, cl, func(floor HarnessProfile, name string, v HarnessProfile, bad func(string, ...any)) {
+		c.belowFloor(class, floor, name, v, bad)
+	})
+}
+
+// VariantProblemsIn is VariantProblems against the profiles alone, for a class resolved outside a
+// config: every profile named exists, and the escalation stays within harnessAllowed. Comparing a
+// variant to its floor reads the templates and loops, so it is left to Parse's VariantProblems.
+func VariantProblemsIn(profiles map[string]HarnessProfile, _ string, cl Class) []string {
+	return variantProblems(profiles, cl, nil)
+}
+
+// variantProblems is VariantProblems, with the floor comparison handed in (nil skips it).
+func variantProblems(profiles map[string]HarnessProfile, cl Class,
+	belowFloor func(floor HarnessProfile, name string, v HarnessProfile, bad func(string, ...any))) []string {
 	var out []string
 	bad := func(f string, a ...any) { out = append(out, fmt.Sprintf(f, a...)) }
 	if (cl.Live || cl.Shadow) && (len(cl.HarnessAllowed) > 0 || cl.Escalation != nil) {
 		bad("harnessAllowed, escalation: a live or shadow class has one profile (TE2)")
 	}
-	floor, hasFloor := c.HarnessProfiles[cl.Harness]
+	floor, hasFloor := profiles[cl.Harness]
 	if cl.Harness != "" && !hasFloor {
 		bad("harness %q is not in harnessProfiles (TE2)", cl.Harness)
 	}
 	for _, name := range cl.HarnessAllowed {
-		v, ok := c.HarnessProfiles[name]
+		v, ok := profiles[name]
 		if !ok {
 			bad("harnessAllowed %q is not in harnessProfiles (TE2)", name)
 			continue
 		}
-		if hasFloor {
-			c.belowFloor(class, floor, name, v, bad)
+		if hasFloor && belowFloor != nil {
+			belowFloor(floor, name, v, bad)
 		}
 	}
 	if e := cl.Escalation; e != nil {

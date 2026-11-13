@@ -140,30 +140,11 @@ func clone(cl config.Class) config.Class {
 	return cl
 }
 
-// guard applies the guardrails to one variant. Parse has refused a negative cap.
+// guard applies the guardrails to one variant (config.ApplyGuardrails, B14). Parse has refused a
+// negative cap.
 func guard(name string, cl *config.Class, g config.MergeGuardrails) error {
-	for _, pf := range g.ProtectedFiles {
-		if !slices.Contains(cl.ProtectedFiles, pf) {
-			cl.ProtectedFiles = append(cl.ProtectedFiles, pf)
-		}
-	}
-	for _, n := range g.MandatoryChecks {
-		if !slices.Contains(cl.HoldoutChecks, n) {
-			cl.HoldoutChecks = append(cl.HoldoutChecks, n)
-		}
-	}
-	for _, f := range []struct {
-		key   string
-		value *int
-		limit int
-	}{{"maxPatchFiles", &cl.MaxPatchFiles, g.MaxPatchFiles}, {"maxModifiedLines", &cl.MaxModifiedLines, g.MaxModifiedLines}, {"maxPerDay", &cl.MaxPerDay, g.MaxPerDay}} {
-		switch {
-		case f.limit == 0:
-		case *f.value == 0:
-			*f.value = f.limit
-		case *f.value > f.limit:
-			return fmt.Errorf("class %s: %w: %s %d is over the guardrail's %d", name, ErrGuardrail, f.key, *f.value, f.limit)
-		}
+	if over := config.ApplyGuardrails(cl, g); over != "" {
+		return fmt.Errorf("class %s: %w: %s", name, ErrGuardrail, over)
 	}
 	return nil
 }
