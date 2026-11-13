@@ -537,7 +537,8 @@ non-code outputs. Each step lands and is checked before the next.
 3. **The config.** The `maku-factory` chart's `hardening.gitCache.sizeLimit` (e.g. `2Gi`), and
    `hardening.applier.approvalTTL` if 24 h does not suit. Add `push` to the repository's
    `enforceOutputs`, and the repository to the broker's `roomTools.pushRepositories`. Restart
-   both. The factory refuses to start without `MAKU_GIT_CACHE`. The Slack channel's
+   both. Listing only one of the two serves no push: the broker serves `output_push` to a
+   repository its own list names, and the factory applies pushes only for its `enforceOutputs`. The factory refuses to start without `MAKU_GIT_CACHE`. The Slack channel's
    `approvals: true` lets a maintainer decide on the card as well as on the room page.
 4. **The capability profiles.** `output_status` is added to the implementer and tester profiles.
    `output_push` is harness-only and never in a model's profile. On the XR, the agent-mcp route's

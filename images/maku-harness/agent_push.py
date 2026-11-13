@@ -175,7 +175,7 @@ def settle(repo, env, branch: str, sha: str, output_id: str, status: dict) -> tu
         return 0, "waiting for a maintainer's approval (%s)" % status.get("approvalId", "")
     if kind == "unknown":
         return 1, "refused: the factory does not know output %s" % output_id
-    return 0, "requested %s: no answer within %d s; the factory answers it later" % (output_id, WAIT_S)
+    return 0, "requested %s: no answer within %d s; the factory answers it later, and may still apply it" % (output_id, WAIT_S)
 
 
 def target(argv: list[str], repo, env, branch: str) -> tuple[str, bool]:

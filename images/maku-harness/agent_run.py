@@ -963,6 +963,8 @@ def push_contract(env: dict, sha: str) -> str | None:
         print("agent-run contract: " + line, flush=True)
         if status.get("status") in ("applied", "waiting"):
             return None
+        # Unanswered within the wait, the contract counts as not pushed for this run, though the
+        # factory may still apply the push later: the end note says so.
         return redact(_short(status.get("reason") or line, 200))
     ac = checks_module()
     objects = os.path.join(REPO_DIR, _git_out("rev-parse", "--git-path", "objects"))

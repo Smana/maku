@@ -2066,7 +2066,8 @@ flowchart LR
   `refs/heads/agent/<task>`, calls `output_push`, then polls `output_status` for up to 90 s, and
   prints `applied <sha>`, `refused <reason>` or `waiting for a maintainer's approval (<id>)`. A
   delete, a tag or another branch exits 3. A bundle over 8 MiB exits 1 with `push_size` before
-  any call. The shim is advisory: the run's token is the boundary (below).
+  any call. A push with no answer within 90 s stays requested: the factory may still apply it,
+  and the tester's contract push says so in the run's end note. The shim is advisory: the run's token is the boundary (below).
 - **Its rules.** The implementer's rule 2 reads "Push only to `<branch>`, with git push: the
   factory checks the push and applies it. A change to a protected path waits for a maintainer's
   approval; check it with output_status." A tester is told the platform pushes its tests through
