@@ -30,3 +30,26 @@ func TestPrivateCodeUnacknowledgedGauge(t *testing.T) {
 		t.Errorf("missing %s", want)
 	}
 }
+
+// Review of #540: a repository the config no longer serves leaves both per-repository fence gauges,
+// so AgentFactoryPrivateCodeUnacknowledged and AgentFactoryRepositoryNotOwned clear.
+func TestForgetRepositoryDropsItsFenceSeries(t *testing.T) {
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/private", "Smana/kept")
+	s.PrivateCodeUnacknowledged(t.Context(), "Smana/private", true)
+	s.RepositoryOwned(t.Context(), "Smana/private", false)
+	s.PrivateCodeUnacknowledged(t.Context(), "Smana/kept", true)
+	s.RepositoryOwned(t.Context(), "Smana/kept", true)
+	s.ForgetRepository("smana/PRIVATE")
+	body := scrape()
+	for _, gone := range []string{`maku_factory_private_code_unacknowledged{repository="Smana/private"}`, `maku_factory_repository_owned{repository="Smana/private"}`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("still served: %s", gone)
+		}
+	}
+	for _, kept := range []string{`maku_factory_private_code_unacknowledged{repository="Smana/kept"} 1`, `maku_factory_repository_owned{repository="Smana/kept"} 1`} {
+		if !strings.Contains(body, kept+"\n") {
+			t.Errorf("missing %s\n%s", kept, body)
+		}
+	}
+}

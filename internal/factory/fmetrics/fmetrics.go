@@ -168,7 +168,7 @@ type Set struct {
 	hardeningT5          metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
-	privateCode          metric.Int64Gauge
+	privateCode          repoGauge
 	appPermissionMissing metric.Int64Gauge
 	mergeGateUnread      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
@@ -221,7 +221,7 @@ type Set struct {
 	runCost              metric.Float64Histogram
 	runBudgetUSD         metric.Float64Gauge
 	budgetFallbacks      metric.Int64Counter
-	owned                metric.Int64Gauge
+	owned                repoGauge
 	policyLoadErrors     metric.Int64Counter
 	policyDivergence     metric.Int64Gauge
 	policyDual           metric.Int64Counter
@@ -404,7 +404,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
 	check(err)
-	s.privateCode, err = meter.Int64Gauge("agent_factory_private_code_unacknowledged",
+	err = s.registerRepoGauge(meter, &s.privateCode, "agent_factory_private_code_unacknowledged",
 		metric.WithDescription("1 when a served repository's code is private, internal or of unread visibility and its Repository has no spec.privateCode.acknowledged, else 0, by repository, as the last fence pass read it (v4 D3; a warning in this release, a refusal from the next)."))
 	check(err)
 	s.appPermissionMissing, err = meter.Int64Gauge("agent_factory_github_app_permission_missing",
@@ -571,7 +571,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	s.budgetFallbacks, err = meter.Int64Counter("agent_factory_run_budget_fallbacks_total",
 		metric.WithDescription("Runs and tasks of a USD-capped tier held to their token cap instead: an unpriced model, or a meter.query without gen_ai_token_type."))
 	check(err)
-	s.owned, err = meter.Int64Gauge("agent_factory_repository_owned",
+	err = s.registerRepoGauge(meter, &s.owned, "agent_factory_repository_owned",
 		metric.WithDescription("1 while the repository's .github/agent-factory.yaml names this factory (v2 D7), else 0."))
 	check(err)
 	s.policyLoadErrors, err = meter.Int64Counter("agent_factory_policy_load_errors_total",
@@ -748,12 +748,12 @@ func registerCollected(meter metric.Meter, r client.Reader, ns string, leader fu
 }
 
 // RepositoryOwned records whether the fence names this factory on repository (v2 D7).
-func (s *Set) RepositoryOwned(ctx context.Context, repository string, owned bool) {
+func (s *Set) RepositoryOwned(_ context.Context, repository string, owned bool) {
 	v := int64(0)
 	if owned {
 		v = 1
 	}
-	s.owned.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+	s.owned.set(repository, v)
 }
 
 func policyLoadReasons() []string {
@@ -1033,12 +1033,12 @@ func (s *Set) MergeGateRequired(ctx context.Context, repository string, required
 
 // PrivateCodeUnacknowledged sets whether repository serves private code without
 // spec.privateCode.acknowledged (v4 D3).
-func (s *Set) PrivateCodeUnacknowledged(ctx context.Context, repository string, unacknowledged bool) {
+func (s *Set) PrivateCodeUnacknowledged(_ context.Context, repository string, unacknowledged bool) {
 	v := int64(0)
 	if unacknowledged {
 		v = 1
 	}
-	s.privateCode.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+	s.privateCode.set(repository, v)
 }
 
 // githubApps is the App label's closed set (D12).
@@ -1524,3 +1524,58 @@ func (s *Set) MeterSucceeded(ctx context.Context, at time.Time) {
 // RunOvershoot adds what a run spent past its cap when the meter revoked it (#54): a tick's lag
 // in steady state, the whole blind interval's spend after an outage.
 func (s *Set) RunOvershoot(ctx context.Context, tokens int64) { s.overshoot.Add(ctx, tokens) }
+
+// repoGauge is a 0/1 gauge by repository, read at each scrape: a repository the fence forgets
+// leaves the scrape (ForgetRepository), so an alert on it clears. Safe for concurrent use.
+type repoGauge struct {
+	mu sync.Mutex
+	v  map[string]int64 // lowercased repository
+}
+
+func (g *repoGauge) set(repository string, v int64) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.v == nil {
+		g.v = map[string]int64{}
+	}
+	g.v[strings.ToLower(repository)] = v
+}
+
+func (g *repoGauge) forget(repository string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.v, strings.ToLower(repository))
+}
+
+// registerRepoGauge exposes g as name{repository}: a repository outside the list reads other, and
+// several such read as their maximum.
+func (s *Set) registerRepoGauge(meter metric.Meter, g *repoGauge, name string, opts ...metric.Int64ObservableGaugeOption) error {
+	o, err := meter.Int64ObservableGauge(name, opts...)
+	if err != nil {
+		return err
+	}
+	_, err = meter.RegisterCallback(func(_ context.Context, obs metric.Observer) error {
+		g.mu.Lock()
+		by := map[string]int64{}
+		for repo, v := range g.v {
+			label := s.repository(repo)
+			if cur, ok := by[label]; !ok || v > cur {
+				by[label] = v
+			}
+		}
+		g.mu.Unlock()
+		for label, v := range by {
+			obs.ObserveInt64(o, v, metric.WithAttributes(attribute.String("repository", label)))
+		}
+		return nil
+	}, o)
+	return err
+}
+
+// ForgetRepository drops repository's fence gauges (agent_factory_repository_owned and
+// agent_factory_private_code_unacknowledged): the fence's OnForget, once the config no longer
+// lists it.
+func (s *Set) ForgetRepository(repository string) {
+	s.owned.forget(repository)
+	s.privateCode.forget(repository)
+}

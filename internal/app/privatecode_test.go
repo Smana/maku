@@ -130,3 +130,30 @@ func TestDemoRefusesPrivateEvenWhenAcknowledged(t *testing.T) {
 		t.Fatalf("outside the demo a private repository is served: %v", err)
 	}
 }
+
+// Review of #540: an unreadable visibility warns once per change of state, not on every pass, and
+// a repository the fence forgets loses its visibility.
+func TestPrivateCodeUnreadWarnsOnceAndForgets(t *testing.T) {
+	g := newPrivateCodeRig(t, false)
+	g.f.FailRepositoryInfo(errors.New("forge: repository: 502"))
+	for range 3 {
+		g.pc.Observe(t.Context(), "Smana/demo", true)
+	}
+	g.f.FailRepositoryInfo(nil)
+	g.f.SetRepositoryInfo(forge.RepositoryInfo{FullName: "Smana/demo", Visibility: "public"})
+	g.pc.Observe(t.Context(), "Smana/demo", true)
+	g.f.FailRepositoryInfo(errors.New("forge: repository: 502"))
+	g.pc.Observe(t.Context(), "Smana/demo", true)
+	g.pc.Observe(t.Context(), "Smana/demo", true)
+	const unread = "the repository's visibility is unreadable"
+	if n := strings.Count(g.log.String(), unread); n != 2 {
+		t.Fatalf("unread warned %d times, want twice:\n%s", n, g.log.String())
+	}
+	if n := strings.Count(g.log.String(), config.PrivateCodeSentence); n != 2 {
+		t.Fatalf("unacknowledged warned %d times, want twice:\n%s", n, g.log.String())
+	}
+	g.pc.Forget("smana/demo")
+	if g.pc.Visibility("Smana/demo") != "" || g.pc.Unacknowledged() {
+		t.Fatal("a forgotten repository keeps its visibility")
+	}
+}

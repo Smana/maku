@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestInstallUnsafeIsShownToEverySignedInHuman(t *testing.T) {
@@ -75,5 +76,46 @@ func TestInstallJoinsTheFactorysCodes(t *testing.T) {
 	srv.Routes().ServeHTTP(rec, req)
 	if called || strings.TrimSpace(rec.Body.String()) != `{"unsafe":[]}` {
 		t.Fatalf("no token reads nothing: called %v, %s", called, rec.Body)
+	}
+}
+
+// Review of #540: the factory's codes are read at most once per installTTL, whoever views the page,
+// and a factory slower than installTimeout gives no banner rather than a slow page.
+func TestInstallCachesAndFailsSoft(t *testing.T) {
+	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	srv := &Server{Humans: tokenAuth{}, Groups: groups, Now: func() time.Time { return now },
+		FactoryInstall: func(context.Context, string) ([]string, error) {
+			calls++
+			return []string{"private_code_unacknowledged"}, nil
+		}}
+	view := func() string {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/install", nil)
+		req.Header.Set("X-Test-User", "alice")
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		return strings.TrimSpace(rec.Body.String())
+	}
+	const with = `{"unsafe":["private_code_unacknowledged"]}`
+	first, second := view(), view()
+	if first != with || second != with || calls != 1 {
+		t.Fatalf("%d factory reads inside the TTL, want 1", calls)
+	}
+	now = now.Add(installTTL + time.Second)
+	if view() != with || calls != 2 {
+		t.Fatalf("%d factory reads past the TTL, want 2", calls)
+	}
+
+	slow := &Server{Humans: tokenAuth{}, Groups: groups, FactoryInstall: func(ctx context.Context, _ string) ([]string, error) {
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}}
+	start := time.Now()
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/api/install", nil)
+	req.Header.Set("X-Test-User", "alice")
+	rec := httptest.NewRecorder()
+	slow.Routes().ServeHTTP(rec, req)
+	if took := time.Since(start); took > installTimeout+time.Second || strings.TrimSpace(rec.Body.String()) != `{"unsafe":[]}` {
+		t.Fatalf("a slow factory took %s and answered %s", took, rec.Body)
 	}
 }

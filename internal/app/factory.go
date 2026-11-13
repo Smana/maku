@@ -486,6 +486,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		m.RepositoryOwned(ctx, repo, owned)
 		privateCode.Observe(ctx, repo, owned)
 	}
+	fenced.OnForget = func(_ context.Context, repo string) {
+		m.ForgetRepository(repo)
+		privateCode.Forget(repo)
+	}
 	// Stages 1, 3 and 5 (merge policy): observed and compared, each merge decision decided again
 	// under it, and its approval subset's grants consulted there. Stage 4: a cut-over repository
 	// is decided on it, and every reader reads its classes from it, aged out at the fence's window.

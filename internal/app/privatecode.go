@@ -39,11 +39,11 @@ type privateCodeTracker struct {
 
 // Observe is the fence's OnState: one read of repository's visibility, whoever owns it.
 func (p *privateCodeTracker) Observe(ctx context.Context, repository string, _ bool) {
-	vis := statuswriter.VisibilityUnknown
+	vis, err := statuswriter.VisibilityUnknown, error(nil)
 	if rr := p.Readers(repository); rr != nil {
-		switch info, err := rr.RepositoryInfo(ctx); {
+		var info forge.RepositoryInfo
+		switch info, err = rr.RepositoryInfo(ctx); {
 		case err != nil:
-			p.Log.Warn("the repository's visibility is unreadable: it counts as private code", "repository", repository, "err", err)
 		case info.PrivateCode() && info.Visibility == "public": // a private flag beside a public visibility
 			vis = "private"
 		default:
@@ -60,10 +60,21 @@ func (p *privateCodeTracker) Observe(ctx context.Context, repository string, _ b
 	was, seen := p.vis[key]
 	p.vis[key] = vis
 	p.mu.Unlock()
-	if unacknowledged && (!seen || was != vis) {
+	changed := !seen || was != vis
+	if changed && vis == statuswriter.VisibilityUnknown { // once per state change, not every pass
+		p.Log.Warn("the repository's visibility is unreadable: it counts as private code", "repository", repository, "err", err)
+	}
+	if unacknowledged && changed {
 		p.Log.Warn("private code is served without an acknowledgement; it is refused from the next release: "+config.PrivateCodeSentence,
 			"repository", repository, "visibility", vis)
 	}
+}
+
+// Forget drops repository's visibility: the fence's OnForget, once the config no longer lists it.
+func (p *privateCodeTracker) Forget(repository string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	delete(p.vis, strings.ToLower(repository))
 }
 
 // Visibility is repository's visibility as last read, "" before the first read: the status
