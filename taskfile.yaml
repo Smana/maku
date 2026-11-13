@@ -139,6 +139,8 @@ tasks:
       - bash charts/agent-factory-crds/tests/render.sh
       - helm lint --strict charts/maku-gateway
       - bash charts/maku-gateway/tests/render.sh
+      - helm lint --strict charts/maku-slack --set image.tag='v0.0.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' --set issuerURL=https://idp.example.test --set roomsURL=https://rooms.example.test
+      - bash charts/maku-slack/tests/render.sh
       - helm lint --strict charts/maku-factory --set image.tag='v0.0.0@sha256:0000'
       - bash charts/maku-factory/tests/render.sh
       - helm lint --strict charts/maku -f charts/maku/values-quickstart.yaml --set broker.image.tag='v0.0.0@sha256:0000' --set runController.image.tag='v0.0.0@sha256:0000' --set runController.images.harness.tag='v0.0.0@sha256:0000' --set runController.images.bridge.tag='v0.0.0@sha256:0000'

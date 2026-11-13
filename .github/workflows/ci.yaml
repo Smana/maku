@@ -392,6 +392,8 @@ jobs:
           publish charts/maku-factory maku-factory
           # the model gateway's objects (D7), consumed alone or through the umbrella.
           publish charts/maku-gateway maku-gateway
+          # the Slack App (D20), consumed alone or through the umbrella as `slack`.
+          publish charts/maku-slack maku-slack
           # the CRDs, installed before agent-factory. The vendored agentgateway (its CRDs in
           # config/agentgateway, its controller chart under the umbrella) is checked against its pins.
           bash hack/agentgateway-vendor.sh check
@@ -401,7 +403,7 @@ jobs:
           # vendored files are checked against the pins, then the dependencies are built into it.
           work="$RUNNER_TEMP/charts"
           cp -r charts "$work"
-          for c in maku maku-factory maku-gateway; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
+          for c in maku maku-factory maku-gateway maku-slack; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
           yq -i '(.dependencies[] | select(.repository | test("^file://\.\./"))).version = env(v)' "$work/agent-factory/Chart.yaml"
           rm -f "$work/agent-factory/Chart.lock"
           bash hack/agentgateway-vendor.sh check-copy "$work"

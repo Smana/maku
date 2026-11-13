@@ -1,0 +1,11 @@
+# The Slack thread to room map, which the App writes (EX10). Rendered with no data, so Helm's
+# three-way merge never patches the App's entries, and kept on uninstall. Flux's drift detection
+# and Argo CD's sync would still reset it: README.md gives their ignore rules.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-slack-threads
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep

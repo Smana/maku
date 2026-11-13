@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command loadconfig loads each file through a component's real config loader:
-// `loadconfig broker|broker-parity|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...`. render.sh feeds
+// `loadconfig broker|broker-parity|slack-app|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...`. render.sh feeds
 // it the chart's rendered config.yaml, so a template edit the component would refuse — or a roomTools
 // switch that disagrees with the values — fails chart:check, not a rollout.
 package main
@@ -13,11 +13,12 @@ import (
 
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/runctl"
+	"github.com/Smana/maku/internal/slackapp"
 )
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-parity|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...")
+		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-parity|slack-app|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...")
 		os.Exit(2)
 	}
 	var load func(string) error
@@ -62,6 +63,9 @@ func main() {
 			}
 			return nil
 		}
+	case "slack-app":
+		// charts/maku-slack (v4 step 6, Task 14): the App's own loader, strict, defaulted, validated.
+		load = func(p string) error { _, err := slackapp.LoadConfig(p); return err }
 	case "broker-parity":
 		// v4 step 6 Task 13 (EX9): cloud-native-ref's webhooks, suspend, policyManagement and
 		// coordination, rendered from values, decode strictly and keep their meaning.

@@ -1,0 +1,65 @@
+# One replica (R26): the in-memory dedupe and the thread map's writes assume it, so a rollout
+# recreates the pod rather than run two.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  template:
+    metadata:
+      labels: {{- include "mslack.labels" . | nindent 8 }}
+      annotations:
+        checksum/config: {{ include "mslack.config" . | sha256sum }}
+    spec:
+      serviceAccountName: factory-slack-app
+      # The thread map's get and update (rbac.yaml).
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532 # the 0440 Secret files are readable through it
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: factory-slack-app
+          image: {{ include "mslack.image" . }}
+          imagePullPolicy: {{ ternary "Never" .Values.image.pullPolicy .Values.e2e.unpinnedImages }}
+          args: ["--config", "/etc/factory-slack-app/config/config.yaml"]
+          ports:
+            - {name: events, containerPort: 8080, protocol: TCP}
+            - {name: webhooks, containerPort: 8081, protocol: TCP}
+            - {name: metrics, containerPort: 9090, protocol: TCP}
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          readinessProbe:
+            httpGet: {path: /readyz, port: metrics}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: config, mountPath: /etc/factory-slack-app/config, readOnly: true}
+            - {name: slack, mountPath: /etc/factory-slack-app/slack, readOnly: true}
+            - {name: principal, mountPath: /etc/factory-slack-app/principal, readOnly: true}
+            - {name: webhook, mountPath: /etc/factory-slack-app/webhook, readOnly: true}
+      # Whole-Secret mounts (no subPath, no items), so a rotation reaches the files without a
+      # restart: the App re-reads each at use except botUserIDFile.
+      volumes:
+        - name: config
+          configMap: {name: factory-slack-app-config}
+        - name: slack
+          secret: {secretName: {{ .Values.slackSecret }}, defaultMode: 0440}
+        - name: principal
+          secret: {secretName: {{ .Values.principalSecret }}, defaultMode: 0440}
+        - name: webhook
+          secret: {secretName: {{ .Values.webhookSecret }}, defaultMode: 0440}

@@ -1,0 +1,51 @@
+# The factory's Slack App (D20; docs/slack.md). Installed through the umbrella as `slack`
+# (slack.enabled), or alone. One replica (R26): its dedupe and its thread map's writes assume it.
+
+image:
+  repository: ghcr.io/smana/maku-slack
+  # Required: <version>@sha256:<digest>.
+  tag: ""
+  pullPolicy: IfNotPresent
+# Test-only: a plain tag and imagePullPolicy Never (k3d).
+e2e:
+  unpinnedImages: false
+
+# The App's own config, verbatim (internal/slackapp): teamID, channels and proposals. The chart
+# derives the file paths, the three addresses and the namespace; setting one here fails the render.
+config: {}
+#  teamID: T0123ABCD
+#  channels:
+#    C0123ABCD: {repositories: [owner/repo], maxCostUSD: 2, approvals: true}
+#  proposals: {enabled: true}
+
+# The broker's human listener (no path: the App appends /mcp). Empty:
+# http://room-broker.<release namespace>.svc.<clusterDomain>:8080.
+brokerURL: ""
+# The rooms' web address, for the links the App posts. Required.
+roomsURL: ""
+# The App's sign-in (D8): its client-credentials token at the issuer, with the principal Secret's client.
+issuerURL: ""
+# "" or zitadel (the project id in principalSecret), or generic (any OIDC issuer; tokenURL, scopes and
+# audience as docs/identity.md says).
+preset: ""
+tokenURL: ""
+scopes: []
+audience: ""
+# The App's identity at the broker and the factory: their sponsored principal's name (the umbrella
+# checks both name it).
+principal: slack-app
+
+# Secrets by name (D14), each mounted whole at /etc/factory-slack-app/<dir>, mode 0440, read at use:
+#   slackSecret      signing-secret, bot-token, bot-user-id
+#   principalSecret  client-id, client-secret, and project-id under the zitadel preset
+#   webhookSecret    signing-key: the broker's webhook signing key (its broker.webhooks entry)
+# The names default to cloud-native-ref's.
+slackSecret: factory-slack-app
+principalSecret: factory-slack-principal
+webhookSecret: room-broker-webhook-slack-app
+
+resources:
+  requests: {cpu: 10m, memory: 32Mi}
+  limits: {cpu: 200m, memory: 128Mi}
+
+clusterDomain: cluster.local
