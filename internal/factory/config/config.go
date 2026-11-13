@@ -175,6 +175,12 @@ type Config struct {
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
 	// Evaluation is the team evaluation's cohort and mode: observe unless set.
 	Evaluation Evaluation `json:"evaluation,omitzero"`
+	// MergeDefaults are the merge settings a repository omits, key by key (Q8): each top-level key
+	// is taken whole, so a set breaker or list replaces the default's. Parse applies them.
+	MergeDefaults *Merge `json:"mergeDefaults,omitempty"`
+	// Policies are the accepted class-shape MergePolicies, by name, set by resources.Assemble: the
+	// stage-4 file and the settings pages resolve against the definitions the factory serves (PR17).
+	Policies map[string]ServedPolicy `json:"-"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
 	// Generations are the object generations this config was served under (Live.Publish); Parse
@@ -424,6 +430,24 @@ type Repository struct {
 	// ClassAuthority is central (the default) or repository: its classes are then its
 	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
 	ClassAuthority string `json:"classAuthority,omitempty"`
+	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
+	// alone (a config file setting them is refused): every binding's name, resolved or not, and the
+	// bindings as written. Classes holds the ones that resolved (B9), so the rules that name a class
+	// read Bound, and a dropped binding never refuses its repository (plan PR7).
+	Bound    []string  `json:"bound,omitempty"`
+	Bindings []Binding `json:"bindings,omitempty"`
+	// MergeDefaulted are the merge keys taken from mergeDefaults (Q8), sorted.
+	MergeDefaulted []string `json:"-"`
+}
+
+// declares reports whether the repository declares class name: for a bound repository, a bound
+// name, resolved or not (B9, plan PR7); otherwise a declared class.
+func (r *Repository) declares(name string) bool {
+	if len(r.Bound) > 0 {
+		return slices.Contains(r.Bound, name)
+	}
+	_, ok := r.Classes[name]
+	return ok
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
@@ -1546,7 +1570,13 @@ func CheckShape(raw []byte) error {
 }
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
-func Parse(raw []byte) (*Config, error) {
+func Parse(raw []byte) (*Config, error) { return parse(raw, false) }
+
+// ParseAssembled is Parse for resources.Assemble alone: a repository entry may carry the bound
+// names and the bindings of its Repository object, which a config file never sets.
+func ParseAssembled(raw []byte) (*Config, error) { return parse(raw, true) }
+
+func parse(raw []byte, assembled bool) (*Config, error) {
 	if err := CheckBlocks(raw); err != nil {
 		return nil, err
 	}
@@ -1554,7 +1584,13 @@ func Parse(raw []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(j))
+	// PR6: mergeDefaults fill each repository's merge at map level, before decoding, so a key
+	// the entry omits and a key it sets are told apart. The hash stays the file's own.
+	defaulted, taken, err := applyMergeDefaults(j)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(defaulted))
 	dec.DisallowUnknownFields()
 	c := Config{Budgets: Budgets{EnforceTask: true}} // decoding keeps a default the file omits
 	if err := dec.Decode(&c); err != nil {
@@ -1562,6 +1598,15 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	if err := c.normalize(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	for i := range c.Repositories {
+		r := &c.Repositories[i]
+		if !assembled && (r.Bound != nil || r.Bindings != nil) {
+			return nil, fmt.Errorf("config: %s: bound and bindings are set by the factory from Repository objects: bind policies in a Repository's mergePolicies", r.Name)
+		}
+		if i < len(taken) {
+			r.MergeDefaulted = taken[i]
+		}
 	}
 	c.Runs.Kind = c.Runs.WithDefaults()
 	if err := c.Runs.Validate(); err != nil {
@@ -2064,7 +2109,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	c.validateAuthority(r, bad)
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range []string{"docs-links", "revert"} {
-		if _, ok := r.Classes[name]; !ok && !cutOver {
+		if !r.declares(name) && !cutOver {
 			bad("class %s is required (OD-8)", name)
 		}
 	}
@@ -2102,7 +2147,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
 		if e.Class != "review" && !cutOver {
-			if _, ok := r.Classes[e.Class]; !ok {
+			if !r.declares(e.Class) {
 				bad("schedule %s: class %q is review or a declared class", e.Name, e.Class)
 			}
 		}
@@ -2112,7 +2157,8 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		switch e.Probe {
 		case "", "renovate-red":
 		case "dead-links":
-			if o := r.Classes[e.Class].Oracle; !cutOver && (o == nil || o.Probe != "dead-links") {
+			// A bound class whose binding did not resolve is absent: its policy was checked alone (B9).
+			if cl, ok := r.Classes[e.Class]; !cutOver && (ok || !slices.Contains(r.Bound, e.Class)) && (cl.Oracle == nil || cl.Oracle.Probe != "dead-links") {
 				bad("schedule %s: probe dead-links needs class %q to declare oracle.probe dead-links", e.Name, e.Class)
 			}
 		default:
@@ -2429,8 +2475,7 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
 		row := c.Loops[name]
 		if name != "default" && name != "review" && !slices.ContainsFunc(c.Repos(), func(r Repository) bool {
-			_, ok := r.Classes[name]
-			return ok
+			return r.declares(name)
 		}) && !slices.ContainsFunc(slices.Collect(maps.Values(c.HarnessProfiles)), func(p HarnessProfile) bool {
 			return string(p.Loop) == name && name != string(LoopOff)
 		}) {
