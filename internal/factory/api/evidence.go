@@ -3,6 +3,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -144,24 +145,34 @@ type PolicySource interface {
 	Policy(ctx context.Context, name string) (evidence.PolicyReport, error)
 }
 
-// bindersOf are the repositories binding policy name, as the config spells them, and the object
-// name of each Repository (the status's consumers name those).
-func bindersOf(cfg *config.Config, name string) map[string]string {
+// bindersOf are the repositories binding policy name, as the config spells them, by the name of
+// each Repository object (the status's consumers name those), else the repository's own: those
+// whose Repository binds it, and those cut over to a file that binds it (stage 4, B15).
+func (s *Server) bindersOf(cfg *config.Config, name string) map[string]string {
 	out := map[string]string{}
+	binds := func(bs []config.Binding) bool {
+		return slices.ContainsFunc(bs, func(b config.Binding) bool { return b.Name == name })
+	}
 	for _, rc := range cfg.Repos() {
-		if slices.ContainsFunc(rc.Bindings, func(b config.Binding) bool { return b.Name == name }) {
-			out[cfg.Generations.Repos[strings.ToLower(rc.Name)].RepositoryName] = rc.Name
+		bound := binds(rc.Bindings)
+		if !bound && cfg.RepositoryAuthoritative(&rc) && s.PolicySnapshot != nil {
+			if snap, ok := s.PolicySnapshot(rc.Name); ok && snap.File != nil {
+				bound = binds(snap.File.MergePolicies)
+			}
+		}
+		if bound {
+			out[cmp.Or(cfg.Generations.Repos[strings.ToLower(rc.Name)].RepositoryName, rc.Name)] = rc.Name
 		}
 	}
 	return out
 }
 
-// visible is p cut to what the caller reads (B16): the consumers they read, the count over all.
+// visible is p cut to what the caller reads (B16): the consumers they read, and the counts over them.
 // False when they read none: a policy is shown to a reader of one of its consumers, never more,
 // so its existence is not told to anyone else. A lookup that fails reads nothing.
 func (s *Server) visible(ctx context.Context, cfg *config.Config, pr authn.Principal, p evidence.PolicyReport) (evidence.PolicyReport, bool) {
 	reads := map[string]bool{}
-	for object, repo := range bindersOf(cfg, p.Name) {
+	for object, repo := range s.bindersOf(cfg, p.Name) {
 		if can, err := s.reads(ctx, pr, repo); err == nil && can {
 			reads[object] = true
 		}
@@ -169,7 +180,18 @@ func (s *Server) visible(ctx context.Context, cfg *config.Config, pr authn.Princ
 	if len(reads) == 0 {
 		return evidence.PolicyReport{}, false
 	}
+	// The consumers the caller reads, and the counts over them alone: no count tells of a
+	// repository they cannot see.
 	p.Status.Consumers = slices.DeleteFunc(slices.Clone(p.Status.Consumers), func(c factoryv1.ConsumerStatus) bool { return !reads[c.Repository] })
+	p.Status.ConsumerCount, p.Status.CurrentCount, p.Status.LiveCount = len(p.Status.Consumers), 0, 0
+	for _, c := range p.Status.Consumers {
+		if c.Accepted && c.ServedGeneration == p.Status.ObservedGeneration {
+			p.Status.CurrentCount++
+		}
+		if c.Mode == config.ModeLive && c.ServedGeneration > 0 {
+			p.Status.LiveCount++
+		}
+	}
 	return p, true
 }
 

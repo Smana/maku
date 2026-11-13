@@ -161,6 +161,9 @@ func TestServiceProposesABindingsMode(t *testing.T) {
 	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 	src := &fakeSource{file: boundFile, found: true}
 	s := service(src, func() time.Time { return now })
+	// Cut over (stage 4): the file holds the authoritative bindings, so it is the one promoted.
+	cfg := s.Cfg.Current()
+	cfg.Repositories[0].ClassAuthority, cfg.PolicyManagement.RepositoryAuthority = config.ClassAuthorityRepository, true
 	if err := s.Refresh(t.Context(), "smana/cloud-native-ref"); err != nil {
 		t.Fatal(err)
 	}
@@ -546,6 +549,20 @@ func TestReportOfABoundRepository(t *testing.T) {
 	if _, defaulted := merge["autoMergesPerDay"]; defaulted || merge["mergerLogin"] != "ogenki-agent-merger[bot]" {
 		t.Fatalf("the manifest's merge is the Repository's own, the defaults left out: %v", merge)
 	}
+	// Review of #546: a zero value is left out, so a default added later applies; one that
+	// overrides a default is kept.
+	if _, zero := merge["fixRuns"]; zero {
+		t.Fatalf("fixRuns 0, which no default sets, is written: %v", merge)
+	}
+	cfg.MergeDefaults = &config.Merge{FixRuns: 2}
+	r, err = s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err = resources.Decode([]byte(r.RepositoryManifest))
+	if merge, _ := objs[0].Spec["merge"].(map[string]any); err != nil || merge["fixRuns"] != float64(0) {
+		t.Fatalf("fixRuns 0 overriding the default 2 must be written: %v %v", merge, err)
+	}
 	if bs, _ := objs[0].Spec["mergePolicies"].([]any); len(bs) != 3 || objs[0].Spec["factoryRef"] != "aws-0" {
 		t.Fatalf("spec %v", objs[0].Spec)
 	}
@@ -576,5 +593,45 @@ func TestPolicies(t *testing.T) {
 	}
 	if _, err := s.Policy(t.Context(), "nope"); !errors.Is(err, ErrUnknownPolicy) {
 		t.Fatalf("an unknown policy: %v", err)
+	}
+}
+
+// B5 (review of #546): under central authority a bound repository's classes are its Repository's
+// bindings, with the served mode, whatever its file says; a shadow one is promoted by editing the
+// binding's mode in repository-<name>.yaml, the file or no file.
+func TestACentralBindingIsPromotedInTheRepositoryManifest(t *testing.T) {
+	for name, file := range map[string]string{"a file in the binding shape": boundFile, "a fence alone": "factory: aws-0\n"} {
+		t.Run(name, func(t *testing.T) {
+			cfg := boundCfg()
+			s := &Service{Cfg: cfg, Namespace: "factory", Now: time.Now,
+				Sources: func(string) (Source, bool) { return &fakeSource{file: file, found: true}, true }}
+			r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			for _, c := range r.Classes {
+				got = append(got, c.Class+":"+c.Source+":"+c.Mode)
+			}
+			if strings.Join(got, " ") != "dead-links:central:shadow docs-links:central:shadow revert:central:shadow" {
+				t.Fatalf("classes %v", got)
+			}
+			c := r.Classes[1]
+			if c.Proposal == nil || c.Proposal.Path != "repository-cloud-native-ref.yaml" || c.Proposal.Line == 0 {
+				t.Fatalf("docs-links: %+v %+v", c.Proposal, c)
+			}
+			objs, err := resources.Decode([]byte(c.Proposal.File))
+			if err != nil || len(objs) != 1 {
+				t.Fatalf("%v\n%s", err, c.Proposal.File)
+			}
+			modes := map[string]any{}
+			for _, b := range objs[0].Spec["mergePolicies"].([]any) {
+				m := b.(map[string]any)
+				modes[m["name"].(string)] = m["mode"]
+			}
+			if modes["docs-links"] != "live" || modes["revert"] != "shadow" || modes["dead-links"] != "shadow" {
+				t.Fatalf("one binding promoted: %v", modes)
+			}
+		})
 	}
 }

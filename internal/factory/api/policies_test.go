@@ -13,6 +13,7 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
 type fakePolicies struct{}
@@ -26,8 +27,9 @@ func (fakePolicies) Policy(_ context.Context, name string) (evidence.PolicyRepor
 	if name != "dead-links" {
 		return evidence.PolicyReport{}, evidence.ErrUnknownPolicy
 	}
-	return evidence.PolicyReport{Name: name, Generation: 4, Status: v1alpha1.MergePolicyStatus{ConsumerCount: 2,
-		Consumers: []v1alpha1.ConsumerStatus{{Repository: "primary"}, {Repository: "other"}}}}, nil
+	return evidence.PolicyReport{Name: name, Generation: 4, Status: v1alpha1.MergePolicyStatus{ObservedGeneration: 4, ConsumerCount: 2, CurrentCount: 2, LiveCount: 1,
+		Consumers: []v1alpha1.ConsumerStatus{{Repository: "primary", Mode: "shadow", Accepted: true, ServedGeneration: 4},
+			{Repository: "other", Mode: "live", Accepted: true, ServedGeneration: 4}}}}, nil
 }
 
 // policiesServer binds dead-links in both repositories; "human" reads the primary one only.
@@ -51,8 +53,10 @@ func TestPoliciesForReadersOfAConsumer(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &p); w.Code != http.StatusOK || err != nil || p.Generation != 4 {
 		t.Fatalf("%d %s %v", w.Code, w.Body, err)
 	}
-	if len(p.Status.Consumers) != 1 || p.Status.Consumers[0].Repository != "primary" || p.Status.ConsumerCount != 2 {
-		t.Fatalf("the consumers the caller reads, the count over all: %+v", p.Status)
+	// Review of #546: the counts are over the consumers the caller reads, never the others'.
+	if len(p.Status.Consumers) != 1 || p.Status.Consumers[0].Repository != "primary" || p.Status.ConsumerCount != 1 ||
+		p.Status.CurrentCount != 1 || p.Status.LiveCount != 0 {
+		t.Fatalf("the consumers the caller reads, and counts over them alone: %+v", p.Status)
 	}
 	w = getAs(s.Handler(), "human", "/v1/policy/policies")
 	var list struct {
@@ -111,5 +115,27 @@ func TestPreviewKinds(t *testing.T) {
 				t.Fatalf("%d %s", w.Code, w.Body)
 			}
 		})
+	}
+}
+
+// Review of #546: a repository whose own file binds the policy (stage 4) is a consumer for its
+// readers too; one with no Repository object name is keyed by its own name.
+func TestAFileBoundPolicyIsShownToItsReaders(t *testing.T) {
+	s, _ := evidenceServer(true)
+	cfg := s.Cfg.Current()
+	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
+	s.Policies = fakePolicies{}
+	s.PolicySnapshot = func(repo string) (mergepolicy.Snapshot, bool) {
+		if repo != coordPrimary {
+			return mergepolicy.Snapshot{}, false
+		}
+		return mergepolicy.Snapshot{File: &mergepolicy.File{MergePolicies: []config.Binding{{Name: "dead-links", Mode: "shadow"}}}}, true
+	}
+	if w := getAs(s.Handler(), "human", "/v1/policy/policies/dead-links"); w.Code != http.StatusOK {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := getAs(s.Handler(), "reader", "/v1/policy/policies/dead-links"); w.Code != http.StatusNotFound {
+		t.Fatalf("a reader of no consumer: %d %s", w.Code, w.Body)
 	}
 }

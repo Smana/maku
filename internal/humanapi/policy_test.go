@@ -543,4 +543,9 @@ func TestPoliciesForwardWithTheCallersToken(t *testing.T) {
 	if code, _ := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("anyone"), bindings); code != http.StatusForbidden {
 		t.Fatalf("a reader previews a binding edit: %d", code)
 	}
+	// Review of #546: an unknown kind is refused here, as the factory refuses it.
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("maint"), map[string]any{"kind": "other"}); code != http.StatusBadRequest ||
+		!strings.Contains(body, "kind_unknown") {
+		t.Fatalf("an unknown kind: %d %s", code, body)
+	}
 }

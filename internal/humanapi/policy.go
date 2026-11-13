@@ -457,6 +457,12 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.maintainerOf(w, r, p, rep.Repository); !ok {
 		return
 	}
+	switch in.Kind {
+	case "", "file", "binding":
+	default:
+		refuseJSON(w, http.StatusBadRequest, "kind_unknown") // as the factory refuses it
+		return
+	}
 	if in.Kind == "binding" {
 		pv, err := s.Policy.Factory.PolicyPreviewBindings(r.Context(), p.AccessToken, rep.Repository, in.Bindings)
 		if !s.forwarded(w, err) {

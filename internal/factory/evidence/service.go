@@ -389,8 +389,10 @@ func (s *Service) repository(cfg *config.Config, name string) *config.Repository
 // judges, and its follow-up window.
 type class struct {
 	name, source, mode string
-	authors            []string
-	window             time.Duration
+	// manifest: a central binding, promoted in the Repository manifest (B5).
+	manifest bool
+	authors  []string
+	window   time.Duration
 }
 
 func readHead(ctx context.Context, src Source, now time.Time) (head, error) {
@@ -540,7 +542,15 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 			cr.Evidence = &e
 		}
 		switch {
-		case c.source != sourceRepository:
+		case c.manifest && c.mode == string(mergepolicy.ModeShadow):
+			// B5, central authority: the binding's mode, in the Repository manifest a GitOps pull
+			// request changes.
+			out, line, err := ProposeInManifest([]byte(r.RepositoryManifest), c.name)
+			if err != nil {
+				return Report{}, fmt.Errorf("evidence: propose %s: %w", c.name, err)
+			}
+			cr.Proposal = &Proposal{Path: r.RepositoryManifestPath, Line: line, File: string(out)}
+		case c.source != sourceRepository && !c.manifest:
 			cr.Unproposed = "not_in_repository_policy"
 		case c.mode != string(mergepolicy.ModeShadow):
 			cr.Unproposed = "not_shadow"
@@ -600,10 +610,22 @@ func (s *Service) bound(ctx context.Context, cfg *config.Config, rc *config.Repo
 // filled are left out, so the manifest is what the author wrote.
 func repositorySpec(cfg *config.Config, rc *config.Repository) map[string]any {
 	spec := map[string]any{"factoryRef": cfg.Factory, "repository": rc.Name, "maintainers": rc.Maintainers, "triggerLabel": rc.TriggerLabel}
-	var merge map[string]any
+	var merge, defaults map[string]any
+	if cfg.MergeDefaults != nil {
+		if b, err := json.Marshal(cfg.MergeDefaults); err == nil {
+			_ = json.Unmarshal(b, &defaults)
+		}
+	}
 	if b, err := json.Marshal(rc.Merge); err == nil && json.Unmarshal(b, &merge) == nil {
 		for _, k := range rc.MergeDefaulted {
 			delete(merge, k)
+		}
+		// A zero value is what an omitted key reads as, so it is left out and a default added later
+		// applies; one the Factory defaults to something else is the author's override, and stays.
+		for k, v := range merge {
+			if d, ok := defaults[k]; zero(v) && (!ok || zero(d)) {
+				delete(merge, k)
+			}
 		}
 		spec["merge"] = merge
 	}
@@ -620,6 +642,31 @@ func repositorySpec(cfg *config.Config, rc *config.Repository) map[string]any {
 		spec["classAuthority"] = rc.ClassAuthority
 	}
 	return spec
+}
+
+// zero reports whether a decoded JSON value is its type's zero: 0, "", false, null, or an empty or
+// all-zero list or map.
+func zero(v any) bool {
+	switch v := v.(type) {
+	case nil:
+		return true
+	case bool:
+		return !v
+	case float64:
+		return v == 0
+	case string:
+		return v == ""
+	case []any:
+		return len(v) == 0
+	case map[string]any:
+		for _, e := range v {
+			if !zero(e) {
+				return false
+			}
+		}
+		return true
+	}
+	return false
 }
 
 // Policies are the class-shape MergePolicies the factory serves (B16), by name.
@@ -663,23 +710,47 @@ const (
 	sourceCentral    = "central"
 )
 
-// classes are the repository file's classes when it declares any, else the central config's.
+// classes are, under central authority, a bound repository's bindings with the mode served (B5);
+// otherwise the repository file's classes or bindings when it declares any, else the central
+// config's. A binding file is read only when it is authoritative (stage 4): under central
+// authority its modes decide nothing.
 func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepolicy.File) []class {
 	agents := []string{searchLogin(cfg.AgentsLogin)}
 	var out []class
-	if f != nil && f.Bound() {
+	policy := func(c *class) {
+		if p, ok := cfg.Policies[c.name]; ok {
+			if p.Spec.Adopted() {
+				c.authors = adopters(p.Spec.Author.Adopt.Logins)
+			}
+			if m := p.Spec.Monitor; m != nil && m.FollowUpWindow.Duration > 0 {
+				c.window = m.FollowUpWindow.Duration
+			}
+		}
+	}
+	if !cfg.RepositoryAuthoritative(rc) && rc.Bindings != nil {
+		for _, b := range slices.SortedFunc(slices.Values(rc.Bindings), func(a, b config.Binding) int { return cmp.Compare(a.Name, b.Name) }) {
+			mode := b.Mode
+			if cl, ok := rc.Classes[b.Name]; ok { // the served mode: a last resolved class's (B9)
+				mode = string(mergepolicy.ModeOff)
+				switch {
+				case cl.Live:
+					mode = string(mergepolicy.ModeLive)
+				case cl.Shadow:
+					mode = string(mergepolicy.ModeShadow)
+				}
+			}
+			c := class{name: b.Name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, manifest: true}
+			policy(&c)
+			out = append(out, c)
+		}
+		return out
+	}
+	if f != nil && f.Bound() && cfg.RepositoryAuthoritative(rc) {
 		// B5, B15: a binding's mode is promoted in the file; what it adopts and how long its merges
 		// are watched are the policy's, as the factory serves it.
 		for _, b := range slices.SortedFunc(slices.Values(f.MergePolicies), func(a, b config.Binding) int { return cmp.Compare(a.Name, b.Name) }) {
 			c := class{name: b.Name, source: sourceRepository, mode: b.Mode, authors: agents, window: defaultWindow}
-			if p, ok := cfg.Policies[b.Name]; ok {
-				if p.Spec.Adopted() {
-					c.authors = adopters(p.Spec.Author.Adopt.Logins)
-				}
-				if m := p.Spec.Monitor; m != nil && m.FollowUpWindow.Duration > 0 {
-					c.window = m.FollowUpWindow.Duration
-				}
-			}
+			policy(&c)
 			out = append(out, c)
 		}
 		return out

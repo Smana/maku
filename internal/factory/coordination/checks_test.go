@@ -50,6 +50,16 @@ func checkRig() (GitHubChecks, map[string]*forgetest.Fake) {
 	}}, fakes
 }
 
+// cutOver gives repoB's file the authority over its classes (stage 4).
+func cutOver() {
+	checkCfg.PolicyManagement.RepositoryAuthority = true
+	for i := range checkCfg.Repositories {
+		if checkCfg.Repositories[i].Name == repoB {
+			checkCfg.Repositories[i].ClassAuthority = config.ClassAuthorityRepository
+		}
+	}
+}
+
 func consumerChild() v1alpha1.CoordinationChild {
 	return v1alpha1.CoordinationChild{ID: "consumer", Repository: repoB, Maintainer: "github:other-maintainer", Class: "scripts", Tier: "standard"}
 }
@@ -88,18 +98,36 @@ func TestRepositoryChecks(t *testing.T) {
 		}, want: ErrAccessUnverified},
 		{name: "a class the repository does not allow", child: func() v1alpha1.CoordinationChild { c := consumerChild(); c.Class = "docs-links"; return c }, want: ErrClassNotAllowed},
 		{name: "a class the fence no longer declares", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			cutOver()
 			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"classes:\n  revert:\n    mode: off\n    author: agents\n    harness: x\n")
 		}, want: ErrClassNotAllowed},
+		// Review of #546: under central authority the class is the served one, as the gate reads it,
+		// whatever the file declares.
+		{name: "central authority, a file without the class", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"classes:\n  revert:\n    mode: off\n    author: agents\n    harness: x\n")
+		}},
+		{name: "central authority, a binding file without the class", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			checkCfg.Policies = map[string]config.ServedPolicy{"revert": {}}
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: revert, mode: \"off\"}\n")
+		}},
+		{name: "central authority, a class not served", child: func() v1alpha1.CoordinationChild { c := consumerChild(); c.Class = "dead-links"; return c },
+			setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+				checkCfg.Policies = map[string]config.ServedPolicy{"dead-links": {}}
+				f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: dead-links, mode: \"off\"}\n")
+			}, want: ErrClassNotAllowed},
 		// Follow-up of #538: a fence in the binding shape is read too (B15).
 		{name: "a fence that binds the class", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			cutOver()
 			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2}}
 			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: \"off\"}\n")
 		}},
 		{name: "a fence that binds other classes only", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			cutOver()
 			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2}, "revert": {}}
 			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: revert, mode: \"off\"}\n")
 		}, want: ErrClassNotAllowed},
 		{name: "a fence binding a policy the factory does not serve", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
+			cutOver()
 			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: \"off\"}\n")
 		}, want: ErrClassNotAllowed},
 		{name: "a fence changed since authorization", actor: maintainer, auth: func(GitHubChecks) *v1alpha1.ChildAuthorization {

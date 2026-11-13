@@ -735,6 +735,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return evidenceSource{c.gh}, true
 			}}
 		apiSrv.Evidence, apiSrv.Policies = ev, ev
+		apiSrv.PolicySnapshot = func(repo string) (mergepolicy.Snapshot, bool) {
+			if policyWatch == nil { // policyManagement.read off: no file is read
+				return mergepolicy.Snapshot{}, false
+			}
+			return policyWatch.Snapshot(repo)
+		}
 		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
 		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Namespace: ns, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
