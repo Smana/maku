@@ -92,6 +92,26 @@ data:
       # The preflight's netprobe pod: this controller's own image.
       probe: {{ include "ap.image" (dict "root" . "image" $c.image) | quote }}
       {{- end }}
+    {{- $tr := $c.tracing | default dict }}
+    {{- $col := $tr.collector | default dict }}
+    {{- if $tr.otlpEndpoint }}
+    {{- if not (and $col.namespace $col.labels) }}
+    {{- fail "runController.tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it" }}
+    {{- end }}
+    {{- $ns := index (splitList "." (regexReplaceAll "^https?://" $tr.otlpEndpoint "")) 1 }}
+    {{- if ne $ns $col.namespace }}
+    {{- fail (printf "runController.tracing.collector.namespace %q is not the endpoint's namespace %q: the run's policy would open the wrong pods" $col.namespace $ns) }}
+    {{- end }}
+    # Each run's harness exports its span here (OTLP/HTTP), under its task's trace; each run's policy
+    # opens this port to the collector's pods, and nothing more (v4 D21, step 6 R1).
+    tracing:
+      otlpEndpoint: {{ $tr.otlpEndpoint | quote }}
+      collector:
+        namespace: {{ $col.namespace | quote }}
+        labels: {{- toYaml $col.labels | nindent 10 }}
+    {{- else if or $col.namespace $col.labels }}
+    {{- fail "runController.tracing.collector is set without runController.tracing.otlpEndpoint: set both, or neither" }}
+    {{- end }}
     {{- with $c.egressProfiles }}
     egressProfiles:
       {{- toYaml . | nindent 6 }}

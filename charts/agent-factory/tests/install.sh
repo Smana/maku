@@ -27,6 +27,10 @@
 # a PromQL throttle, runs.gatewayIdentity and a split on review, and the config loads. The run's tokens
 # reach VictoriaMetrics under agentgateway's own names, labelled with its subject, and the meter's
 # parser prices that reply above zero (internal/factory/meter TestRecordedAgentgatewayReply).
+# TRACING=1 (with GATEWAY=1; task chart:tracing:k3d) adds the run traces proof (plan v4 step 6, Task 2):
+# the e2e stub (hack/e2e-stub) runs as an OTLP/HTTP sink in namespace e2e, maku.runController.tracing
+# names it, and the gateway leg's run, annotated with a traceparent as the factory stamps it, exports its
+# span to the stub under that trace id, through its own policy's collector rule in kubernetes mode.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -42,6 +46,8 @@ GATEWAY="${GATEWAY:-}"
 [[ -z $GATEWAY || $CLUSTER_KIND == k3d ]] || { echo "FAIL: GATEWAY=1 runs on k3d only" >&2; exit 2; }
 METERING="${METERING:-}"
 [[ -z $METERING || -n $GATEWAY ]] || { echo "FAIL: METERING=1 needs GATEWAY=1" >&2; exit 2; }
+TRACING="${TRACING:-}"
+[[ -z $TRACING || -n $GATEWAY ]] || { echo "FAIL: TRACING=1 needs GATEWAY=1" >&2; exit 2; }
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
 ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
@@ -49,6 +55,8 @@ NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 [[ -z $GATEWAY ]] || NAME="$NAME-gateway"
 [[ -z $METERING ]] || NAME="$NAME-metering"
+# k3d caps a cluster name at 32 characters
+[[ -z $TRACING ]] || NAME="maku-$CLUSTER_KIND-tracing-$NETPOL"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
 TAG="${TAG:-e2e}"
@@ -70,6 +78,7 @@ dump() {
   [[ $CLUSTER_KIND != k3d ]] || docker exec "k3d-$NAME-server-0" sh -c 'iptables-save -t filter; iptables-save -t nat | grep -c KUBE-SVC' >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp >&2 || true
   for d in room-broker run-controller agent-factory egress-proxy model-gateway af-agentgateway; do kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 || true; done
+  [[ -z $TRACING ]] || kubectl -n e2e logs deploy/e2e-stub --tail=40 >&2 || true
   kubectl get networkpolicy -A >&2 || true
   kubectl -n "$NS" logs sts/rooms-db --tail=40 >&2 || true
 }
@@ -90,9 +99,14 @@ onexit() {
 trap onexit EXIT
 
 step "build the images from this checkout"
-for i in maku-broker maku-run-controller maku-factory; do
+images=(maku-broker maku-run-controller maku-factory)
+for i in "${images[@]}"; do
   docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:$TAG" . >/dev/null
 done
+if [[ -n $TRACING ]]; then
+  docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG" . >/dev/null
+  images+=(maku-e2e-stub)
+fi
 rel="${MAKU_RELEASE:-$(gh api repos/Smana/maku/releases/latest -q .tag_name)}"
 digest() { docker buildx imagetools inspect "ghcr.io/smana/$1:$rel" --format '{{.Manifest.Digest}}'; }
 harness="$rel@$(digest maku-harness)"
@@ -116,7 +130,7 @@ case "$CLUSTER_KIND" in
     k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" \
       --kubeconfig-update-default=false --kubeconfig-switch-context=false
     k3d kubeconfig get "$NAME" >"$KUBECONFIG"
-    for i in maku-broker maku-run-controller maku-factory; do k3d image import -c "$NAME" "ghcr.io/smana/$i:$TAG"; done ;;
+    for i in "${images[@]}"; do k3d image import -c "$NAME" "ghcr.io/smana/$i:$TAG"; done ;;
   kind)
     ! kind get clusters 2>/dev/null | grep -qx "$NAME" || { trap - EXIT; die "cluster $NAME exists"; }
     kind create cluster --name "$NAME" --image "$KIND_NODE_IMAGE" --wait 120s --kubeconfig "$KUBECONFIG"
@@ -197,6 +211,9 @@ EOF
     --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
   [[ -z $METERING ]] || values+=(-f charts/agent-factory/tests/metering-values.yaml)
 fi
+# The OTLP sink is the e2e stub's plain http port; each run's policy opens it to the stub's pods.
+[[ -z $TRACING ]] || values+=(--set maku.runController.tracing.otlpEndpoint=http://e2e-stub.e2e.svc.cluster.local:8080
+  --set maku.runController.tracing.collector.namespace=e2e --set-json 'maku.runController.tracing.collector.labels={"app.kubernetes.io/name":"e2e-stub"}')
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
   helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
@@ -278,6 +295,24 @@ spec:
   selector: {app.kubernetes.io/name: echo-llm}
   ports: [{name: http, port: 8080, targetPort: http}]
 EOF
+    if [[ -n $TRACING ]]; then
+      step "the OTLP sink: the e2e stub, its throwaway TLS, and ingress from the runs namespace on http"
+      kubectl create namespace e2e >/dev/null
+      openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=e2e-stub.e2e.svc.cluster.local' \
+        -addext 'subjectAltName=DNS:e2e-stub.e2e.svc.cluster.local' -keyout "$work/stub.key" -out "$work/stub.crt" >/dev/null 2>&1
+      kubectl -n e2e create secret generic e2e-stub-tls --from-file=tls.crt="$work/stub.crt" --from-file=tls.key="$work/stub.key" >/dev/null
+      sed "s#ghcr.io/smana/maku-e2e-stub:e2e#ghcr.io/smana/maku-e2e-stub:$TAG#" charts/agent-factory/tests/e2e-stub.yaml | kubectl apply -f - >/dev/null
+      kubectl -n e2e apply -f - >/dev/null <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: e2e-stub-otlp}
+spec:
+  podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}
+  policyTypes: [Ingress]
+  ingress: [{from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: agents}}}], ports: [{protocol: TCP, port: http}]}]
+EOF
+      kubectl -n e2e rollout status deploy/e2e-stub --timeout=180s >/dev/null
+    fi
     if [[ -n $METERING ]]; then
       step "the metering stub: a single-binary VictoriaMetrics scraping the gateway's pods"
       kubectl apply -f charts/agent-factory/tests/metrics-stub.yaml >/dev/null
@@ -578,10 +613,12 @@ EOF
   # AgentRuns). Its token Secret is written as the minter writes it, with a dummy token: the harness
   # clones a public repository anonymously, then calls its model, agent-default, through the gateway.
   run=run-gwrunab2
+  # The traceparent the factory stamps at CREATE (runs.AnnTraceparent): TRACING=1 finds the run's span under it.
+  trace_id=4bf92f3577b34da6a3ce929d0e0e4736
   kubectl apply --as="$sa:agent-factory" -f - >/dev/null <<EOF
 apiVersion: maku.ogenki.io/v1alpha1
 kind: AgentRun
-metadata: {name: $run, namespace: agents}
+metadata: {name: $run, namespace: agents, annotations: {agents.ogenki.io/traceparent: 00-$trace_id-00f067aa0ba902b7-01}}
 spec:
   role: implementer
   repository: ${GATEWAY_RUN_REPO:-Smana/maku-demo}
@@ -626,6 +663,23 @@ EOF
   kubectl -n "$NS" logs deploy/model-gateway --tail=400 | grep -F "$sub" | head -1 | cut -c1-400
   phase=$(kubectl -n agents get agentrun "$run" -o jsonpath='{.status.phase}')
   echo "ok: the run reached its model through the gateway as $sub (run phase now '$phase'); agents holds no provider key"
+  if [[ -n $TRACING ]]; then
+    step "run traces: the run's span reaches the OTLP sink under its task's trace id"
+    jq -e --arg tp "00-$trace_id-00f067aa0ba902b7-01" '[.spec.containers[0].env[] | select(.name == "OTEL_EXPORTER_OTLP_ENDPOINT" or .name == "TRACEPARENT") | .value] == ["http://e2e-stub.e2e.svc.cluster.local:8080", $tp]' <<<"$pod" >/dev/null ||
+      die "the run's harness lacks its trace env: $(jq -c '[.spec.containers[0].env[] | select(.name | test("OTEL|TRACE"))]' <<<"$pod")"
+    if [[ $NETPOL == kubernetes ]]; then
+      kubectl -n agents get networkpolicy "$run" -o json | jq -e '[.spec.egress[] | select(.to[0].namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "e2e")] == [{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "e2e"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/name": "e2e-stub"}}}], "ports": [{"protocol": "TCP", "port": 8080}]}]' >/dev/null ||
+        die "the run's NetworkPolicy does not open exactly the collector's port: $(kubectl -n agents get networkpolicy "$run" -o jsonpath='{.spec.egress}')"
+      echo "ok: the run's NetworkPolicy opens the collector's pods on 8080, and nothing else in e2e"
+    fi
+    traced=0
+    for _ in $(seq 90); do
+      if kubectl get --raw "/api/v1/namespaces/e2e/services/http:e2e-stub:8080/proxy/__traces" 2>/dev/null | jq -e --arg id "$trace_id" 'index($id) != null' >/dev/null 2>&1; then traced=1; break; fi
+      sleep 4
+    done
+    ((traced)) || { kubectl -n agents logs "$run" -c harness --tail=60 >&2 || true; die "no span with the task's trace id $trace_id reached the sink: $(kubectl get --raw /api/v1/namespaces/e2e/services/http:e2e-stub:8080/proxy/__traces 2>&1)"; }
+    echo "ok: the run's span reached the sink under the task's trace id $trace_id"
+  fi
   if [[ -n $METERING ]]; then
     step "metering: the run's tokens reach the meter's query, under agentgateway's names, and are priced"
     kubectl -n metrics rollout status deploy/vmsingle --timeout=120s >/dev/null
