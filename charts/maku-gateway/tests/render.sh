@@ -178,6 +178,11 @@ want="$(yq '.data."catalog.json"' tests/golden/anr-model-catalog.yaml)"
 [[ "$(jq -S . <<<"$cat")" == "$(jq -S . <<<"$want")" ]] || { echo "FAIL: the catalog differs from ANR's model-catalog.yaml:" >&2; diff <(jq -S . <<<"$want") <(jq -S . <<<"$cat") >&2; fail=1; }
 rejects 'a price no alias serves (GW12)' 'modelCatalog.prices.gpt-9: no alias or client serves this model' \
   "${cnref[@]}" --set modelCatalog.prices.gpt-9.input=1 --set modelCatalog.prices.gpt-9.cacheRead=1 --set modelCatalog.prices.gpt-9.output=1
+out="$(render "${cnref[@]}" --set modelCatalog.umbrellaPrices=true)"
+yeq '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' 1 'umbrellaPrices with prices of its own: the chart renders its catalog'
+out="$(render "${cnref[@]}" --set modelCatalog.umbrellaPrices=true --set-json 'modelCatalog.prices={}')"
+yeq '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' 0 'umbrellaPrices without prices: the umbrella renders the catalog (GW12)'
+yeq '[select(.kind == "AgentgatewayParameters") | .spec.modelCatalog.sources[0].configMap.name] | join(",")' 'model-gateway-model-catalog' 'and the parameters still read it'
 out="$(render "${cnref[@]}" --set modelCatalog.enabled=false)"
 yeq '[select(.kind == "ConfigMap")] | length' 0 'modelCatalog.enabled false: no catalog'
 yeq '[select(.kind == "AgentgatewayParameters") | .spec.modelCatalog] | map(select(. != null)) | length' 0 'and no catalog source'

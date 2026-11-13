@@ -1,0 +1,9 @@
+{{- /* GW12: the gateway's model catalog from the factory's meter.prices, so a price has one source.
+maku-gateway renders it itself when its own modelCatalog.prices is set, or without umbrellaPrices. Only
+the rows of a model an alias or a client serves are written: meter.prices may also key a C5 logical
+name (agent-default, tier-*), which no provider serves. */}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- if and $gw.enabled $gw.modelCatalog.enabled $gw.modelCatalog.umbrellaPrices (not $gw.modelCatalog.prices) }}
+{{- $prices := dig "config" "meter" "prices" dict (index .Values "maku-factory") }}
+{{- include "mgw.catalog" (dict "root" (dict "Values" $gw "Release" .Release "Chart" .Chart) "prices" $prices) }}
+{{- end }}

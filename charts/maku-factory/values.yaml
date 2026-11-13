@@ -103,6 +103,9 @@ hardening:
   gitCache:
     sizeLimit: ""
 # The factory config, passed through `tpl` (so `{{ .Release.Namespace }}` works): README.md#config, docs/factory.md#the-config-file.
+# With runs.group maku.ogenki.io, set config.runs.gatewayIdentity: true once the run-controller runs
+# in model.mode gateway (docs/gateway.md, GW10): the meter then prices the runs, and loops.<class>.models
+# and split are accepted. Not defaulted: the runs carry the identity only in gateway mode.
 config: {}
 
 # CI only: images loaded into the node have no registry digest. Accepts a bare tag and never pulls.

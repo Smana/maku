@@ -272,6 +272,13 @@ out=$(helm template agent-factory . --namespace agent-system --set image.tag="$d
 ykind Role 'select(.metadata.namespace == "runs2") | .rules[] | select(.resources[] == "agentruns") | .apiGroups[0] == "maku.ogenki.io"' "H-5: the AgentRun Role takes config.runs.group"
 ykind RoleBinding 'select(.metadata.namespace == "runs2") | (.roleRef.name == "agent-factory" and .subjects[0].namespace == "agent-system")' "H-5: the AgentRun RoleBinding sits in config.runs.namespace"
 ynone 'select(.metadata.namespace == "agents")' "H-5: nothing left in agents once config.runs.namespace moves the runs"
+# GW10: config.runs.gatewayIdentity reaches the factory's config as written, and moves nothing.
+gi=$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set config.runs.group=maku.ogenki.io --set config.runs.namespace=runs2 --set config.runs.gatewayIdentity=true)
+[[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml" | from_yaml | .runs.gatewayIdentity' - <<<"$gi")" == true ]] ||
+  { echo "FAIL: config.runs.gatewayIdentity does not reach the factory's config" >&2; fail=1; }
+diff <(grep -v -e gatewayIdentity -e checksum/config <<<"$gi") <(grep -v -e gatewayIdentity -e checksum/config <<<"$out") >/dev/null ||
+  { echo "FAIL: config.runs.gatewayIdentity changes another object" >&2; fail=1; }
 for bad in "" "v0.0.0" "latest"; do
   if helm template agent-factory . --namespace agent-system --set image.tag="$bad" >/dev/null 2>&1; then
     echo "FAIL: image.tag '$bad' must not render: only <version>@sha256:<digest>" >&2; fail=1
