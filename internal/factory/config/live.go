@@ -29,6 +29,26 @@ type RepoGenerations struct {
 	// RepositoryName and PolicyName are the objects' names: a manifest for the repository must
 	// carry them, or applying it creates a second MergePolicy.
 	RepositoryName, PolicyName string
+	// Classes are a bound repository's per-class generations (B12): each class's own MergePolicy.
+	// Nil for a repository served from the per-repository shape.
+	Classes map[string]ClassGeneration
+}
+
+// ClassGeneration is the generation of the MergePolicy one bound class was resolved from.
+type ClassGeneration struct {
+	Policy     int64
+	PolicyName string
+}
+
+// ClassGenerations returns the generations class of repository was decided under (B12): its own
+// policy's and the Repository's, bound true, for a bound class; the repository's MergePolicy's and
+// the Repository's, bound false, for one served from the per-repository shape; zeros for the file.
+func (c *Config) ClassGenerations(repository, class string) (policy, repo int64, bound bool) {
+	g := c.Generations.Repos[strings.ToLower(repository)]
+	if cg, ok := g.Classes[class]; ok {
+		return cg.Policy, g.Repository, true
+	}
+	return g.MergePolicy, g.Repository, false
 }
 
 // GenerationsFor returns the generations repository was served under; zeros for a file entry.

@@ -150,6 +150,9 @@ func TestResolve(t *testing.T) {
 			reason: ReasonInvalid, msg: `class x: profile "tf": testFirst needs merge.contractCheck`},
 		"testFirst with a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
 			merge: Merge{ContractCheck: "contract"}, check: func(t *testing.T, c Class) { want(t, c.TestFirst, "testFirst") }},
+		// The repository rule a live class without allowedFiles breaks, judged per binding (B9).
+		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
+			merge: Merge{PolicyBot: new(false)}, reason: ReasonInvalid, msg: "class x: merge.policyBot: false needs allowedFiles on every live class"},
 		"an unknown harness": {policy: func(p *PolicySpec) { p.Harness = "nope" }, reason: ReasonInvalid, msg: `harness "nope" is not in harnessProfiles (TE2)`},
 		"live on the policy": {policy: func(p *PolicySpec) { p.Live = true }, reason: ReasonInvalid, msg: "mode is the binding's"},
 	} {
@@ -286,5 +289,21 @@ func want(t *testing.T, ok bool, what string) {
 	t.Helper()
 	if !ok {
 		t.Fatalf("want %s", what)
+	}
+}
+
+// Recheck reads today's repository facts: the Flux source is the current one, a removed source
+// drops the class, and the class handed in is never changed.
+func TestRecheck(t *testing.T) {
+	cl := Class{Shadow: true, Monitor: &Monitor{FollowUpWindow: Duration{time.Hour}, Flux: &FluxWatch{Source: "flux-system/old", Within: Duration{30 * time.Minute}}}}
+	got, refused := Recheck("x", cl, PolicyContext{}, Merge{FluxSource: "flux-system/new"})
+	if refused != nil {
+		t.Fatalf("refused: %+v", refused)
+	}
+	if got.Monitor.Flux.Source != "flux-system/new" || cl.Monitor.Flux.Source != "flux-system/old" {
+		t.Fatalf("got %+v %+v, the input %q", got.Monitor.Flux, refused, cl.Monitor.Flux.Source)
+	}
+	if _, refused := Recheck("x", cl, PolicyContext{}, Merge{}); refused == nil || refused.Reason != ReasonMissingParameter {
+		t.Fatalf("without a source: %+v", refused)
 	}
 }

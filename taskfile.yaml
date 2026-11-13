@@ -108,7 +108,7 @@ tasks:
       - bash hack/agentgateway-vendor.sh check
 
   chart:check:
-    desc: Lint and render the CRD, factory, gateway and umbrella charts.
+    desc: Lint and render the CRD, factory, gateway and umbrella charts; the umbrella's alerts under promtool.
     cmds:
       - task: chart:deps
       - helm lint --strict charts/agent-factory-crds
@@ -123,6 +123,8 @@ tasks:
       - helm lint --strict charts/agent-factory --set maku.broker.image.tag='v0.0.0@sha256:0000' --set maku.runController.image.tag='v0.0.0@sha256:0000' --set maku.runController.images.harness.tag='v0.0.0@sha256:0000' --set maku.runController.images.bridge.tag='v0.0.0@sha256:0000' --set maku-factory.image.tag='v0.0.0@sha256:0000' -f charts/agent-factory/values-demo.yaml --set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m --set demo.model.apiKey=k --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem
       - bash charts/agent-factory/tests/render.sh
       - bash charts/agent-factory/tests/schema.sh
+      - bash charts/agent-factory/tests/monitoring.sh
+      - bash charts/agent-factory/tests/promql-only.sh
       - git diff --exit-code -- config/crd api
 
   chart:install:k3d:

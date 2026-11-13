@@ -28,8 +28,8 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
+| [Observability](observability.md) | The scrape objects and the alert rule the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
-| [Observability](observability.md) | Traces: who emits them, the two endpoints, what run tracing opens on the network |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |
 | [The group move](maku-group-migration.md) | v0.31.0's quiet window: `Room` and `Task` to `maku.ogenki.io`, and its rollback |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
