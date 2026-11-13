@@ -5,12 +5,14 @@ package migrations
 import (
 	"io/fs"
 	"slices"
+	"strings"
 	"testing"
 )
 
 // The catalog room-broker migrate ships: twelve SQL files, sorted, five of them txmode none, and
-// nothing else embedded. atlas.sum is Atlas's and kustomization.yaml feeds the operator; neither
-// is read at run time, and this test stays Docker-free on purpose, so it runs everywhere.
+// nothing else in FS. kustomization.yaml feeds the operator and is never read at run time; atlas.sum
+// is embedded apart, for its per-file hashes alone (TestAtlasHashes). This test stays Docker-free
+// on purpose, so it runs everywhere.
 func TestEmbeddedMigrationCatalog(t *testing.T) {
 	entries, err := fs.Glob(FS, "*")
 	if err != nil {
@@ -53,5 +55,22 @@ func TestEmbeddedMigrationCatalog(t *testing.T) {
 		"20261001140000_brief_index.sql", "20261005130000_approval_indexes.sql", "20261008120000_task_facts_index.sql"}
 	if !slices.Equal(noTx, wantNoTx) {
 		t.Fatalf("txmode none = %q, want %q", noTx, wantNoTx)
+	}
+}
+
+// Every file carries its atlas.sum hash, the one the Atlas operator records for it: migrate adopts
+// the operator's ledger only where the two agree.
+func TestAtlasHashes(t *testing.T) {
+	files, err := Files()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if len(f.AtlasHash) != 44 || strings.HasPrefix(f.AtlasHash, "h1:") {
+			t.Errorf("%s: AtlasHash %q, want atlas.sum's base64 SHA-256 without h1:", f.Name, f.AtlasHash)
+		}
+	}
+	if got := files[0].AtlasHash; got != "2iHh9ofAjF9QEjy2L4Nk4qPz6GPfyTyceOP/Lg2nitE=" {
+		t.Fatalf("the first file's hash = %q", got)
 	}
 }

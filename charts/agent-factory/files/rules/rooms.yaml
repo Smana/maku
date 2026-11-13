@@ -141,3 +141,15 @@ rules:
       description: "Three deliveries were given up. Fix the receiver (its key, or the service behind it), bump generation on the webhooks entry in the broker's config and restart the broker: a webhooks change applies only at restart. The events of the disabled window are not replayed."
       runbook_url: "__DOCS__/operations.md#webhooks"
       dashboard: "/d/agent-factory"
+  # A bridge (v4 D9): the broker serves a schema whose migration ledger its role cannot read, the
+  # Atlas operator's before broker.database.ownerSecret is set. A future minor refuses it.
+  - alert: RoomBrokerSchemaUnverified
+    expr: max(maku_rooms_schema_unverified{namespace="__NAMESPACE__"}) == 1
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "The broker serves a schema whose version it cannot read"
+      description: "The broker's role cannot read the migration ledger, so nothing checks that the schema matches the broker's image. Set broker.database.ownerSecret: the first migrate adopts the Atlas operator's ledger and this clears. A future release refuses to serve without it."
+      runbook_url: "__DOCS__/database.md#a-ledger-the-broker-cannot-read"
+      dashboard: "/d/agent-room"

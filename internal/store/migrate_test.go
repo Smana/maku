@@ -50,11 +50,12 @@ func TestMigrateEmptyToHeadAndRerun(t *testing.T) {
 		JOIN pg_class c ON c.oid = i.indexrelid WHERE c.relname = 'events_agent_verdicts'`); got != "true" {
 		t.Fatal("the verdicts index, the first txmode-none file's, is not a valid index")
 	}
-	// The ledger is the owner's: no migration grants the broker's role anything on it.
+	// The ledger is the owner's: the broker's role holds no table privilege on it, only its version
+	// column (TestMigrateGrantsTheBrokerTheLedgerVersion).
 	if got := query(t, dsn, "SELECT has_table_privilege('rooms_broker', 'public.room_broker_revisions', 'SELECT,INSERT,UPDATE,DELETE')::text"); got != "false" {
 		t.Fatal("rooms_broker holds a privilege on room_broker_revisions")
 	}
-	st, err := Open(ctx, dsn)
+	st, err := Open(ctx, dsn, RoleOwner)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -311,7 +312,7 @@ func TestMigrateConcurrentRunsApplyOnce(t *testing.T) {
 	if got := query(t, dsn, "SELECT count(*)::text FROM room_broker_revisions"); got != strconv.Itoa(migrationCount(t)) {
 		t.Fatalf("revisions = %s, want %d", got, migrationCount(t))
 	}
-	st, err := Open(ctx, dsn)
+	st, err := Open(ctx, dsn, RoleOwner)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -161,7 +161,7 @@ func TestPurgeDropsWebhookCursors(t *testing.T) {
 		t.Fatal(err)
 	}
 	forge(t, super, `UPDATE rooms SET closed_at = now() - interval '91 days' WHERE room_id = 'expiredx'`)
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}

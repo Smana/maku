@@ -49,7 +49,7 @@ func TestPurgeExpired(t *testing.T) {
 	if _, _, err := s.PurgeExpired(ctx); err == nil {
 		t.Fatal("the broker's role must not be able to purge")
 	}
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +97,7 @@ func TestPurgeExpiredBigRoom(t *testing.T) {
 		t.Fatal(err)
 	}
 	u.RawQuery += "&statement_timeout=200ms"
-	r, err := Open(ctx, u.String())
+	r, err := Open(ctx, u.String(), RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +226,7 @@ func TestPurgeWithoutWebhookTables(t *testing.T) {
 	}
 	forge(t, super, `UPDATE rooms SET closed_at = now() - interval '91 days' WHERE room_id = 'expiredx'`)
 	exec(t, super, `DROP TABLE webhook_cursors, webhook_subscribers`)
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}
