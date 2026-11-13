@@ -49,7 +49,24 @@ type Settings struct {
 	DrillMaxAge time.Duration
 	ConfigHash  string // the hardening configuration's hash a drill proved
 	Version     string // the Maku version a drill proved
+	// TokenSource is where the runs' sandbox tokens come from (R2, plan PR8); empty reads as the XR.
+	TokenSource TokenSource
+	// PublisherMinter is the publisher's token minted by the factory (hardening.publisher.minter),
+	// read from Grants for R3; otherwise R3 reads the octo-sts publisher policy.
+	PublisherMinter bool
 }
+
+// TokenSource is where a run's sandbox token comes from: a closed set.
+type TokenSource string
+
+const (
+	// TokenSourceXR is cloud-native-ref's XR: octo-sts, under each role's policy file.
+	TokenSourceXR TokenSource = "xr"
+	// TokenSourceMinter is the factory's per-run minter (runTokens.perRun): the role table.
+	TokenSourceMinter TokenSource = "minter"
+	// TokenSourceShared is any other: a shared token that grants writes (step 2's writer, a PAT).
+	TokenSourceShared TokenSource = "shared"
+)
 
 // SandboxRoles are the run roles whose octo-sts policies must grant no write (R2).
 func SandboxRoles() []string { return []string{"implementer", "tester", "reviewer", "triager"} }
@@ -88,8 +105,11 @@ type Drills interface {
 type Evaluator struct {
 	Settings func(repository string) Settings
 	Policies PolicyFiles
-	Drills   Drills
-	Now      func() time.Time
+	// Grants is each sandbox role's and the publisher's permissions for a repository under the
+	// minter: the role table for the repository's enforced outputs (HR42, option A).
+	Grants func(repository string) (roles map[string]map[string]string, publisher map[string]string)
+	Drills Drills
+	Now    func() time.Time
 }
 
 // Hardened evaluates R1 to R7 for repository, reading every fact afresh.
@@ -105,7 +125,7 @@ func (e Evaluator) Hardened(ctx context.Context, repository string) (Report, err
 		}
 	}
 	miss(s.Mode == ModeEnforce, MissingEnforce)
-	writes, publisher, err := e.policies(ctx, repository)
+	writes, publisher, err := e.policies(ctx, s, repository)
 	if err != nil {
 		return Report{}, err
 	}
@@ -126,23 +146,33 @@ func (e Evaluator) Hardened(ctx context.Context, repository string) (Report, err
 	return r, nil
 }
 
-// policies is R2 and R3: whether any sandbox role's policy grants a write, and whether a publisher
-// policy with a write exists. With no reader, both fail.
-func (e Evaluator) policies(ctx context.Context, repository string) (writes, publisher bool, err error) {
-	if e.Policies == nil {
-		return true, false, nil
+// policies is R2 and R3 from the token source runs actually get (plan PR8, HR42): whether any
+// sandbox role's token may write, and whether the publisher's may. A port that is missing is a fact
+// that fails.
+func (e Evaluator) policies(ctx context.Context, s Settings, repository string) (writes, publisher bool, err error) {
+	var roles map[string]map[string]string
+	var pub map[string]string
+	if e.Grants != nil && (s.TokenSource == TokenSourceMinter || s.PublisherMinter) {
+		roles, pub = e.Grants(repository)
 	}
-	for _, role := range SandboxRoles() {
-		b, ok, err := e.Policies.DefaultBranchFile(ctx, repository, RolePolicyPath(role))
-		if err != nil {
-			return false, false, fmt.Errorf("hardening: read %s policy: %w", role, err)
+	switch s.TokenSource {
+	case TokenSourceMinter:
+		writes = e.Grants == nil
+		for _, role := range SandboxRoles() {
+			writes = writes || GrantsWrite(roles[role])
 		}
-		if !ok {
-			continue // no policy, no token: the role cannot write
+	case TokenSourceShared:
+		writes = true // the shared writer's token grants contents and pull_requests write
+	default:
+		if writes, err = e.rolePolicies(ctx, repository); err != nil {
+			return false, false, err
 		}
-		if w, err := PolicyGrantsWrite(b); err != nil || w {
-			writes = true // a policy that does not read is one that may write
-		}
+	}
+	if s.PublisherMinter {
+		return writes, e.Grants != nil && GrantsWrite(pub), nil
+	}
+	if e.Policies == nil {
+		return writes, false, nil
 	}
 	b, ok, err := e.Policies.DefaultBranchFile(ctx, repository, PublisherPolicyPath)
 	if err != nil {
@@ -153,6 +183,27 @@ func (e Evaluator) policies(ctx context.Context, repository string) (writes, pub
 		publisher = err == nil && w
 	}
 	return writes, publisher, nil
+}
+
+// rolePolicies is R2 on the XR: whether any sandbox role's octo-sts policy grants a write. With no
+// reader, it fails.
+func (e Evaluator) rolePolicies(ctx context.Context, repository string) (writes bool, err error) {
+	if e.Policies == nil {
+		return true, nil
+	}
+	for _, role := range SandboxRoles() {
+		b, ok, err := e.Policies.DefaultBranchFile(ctx, repository, RolePolicyPath(role))
+		if err != nil {
+			return false, fmt.Errorf("hardening: read %s policy: %w", role, err)
+		}
+		if !ok {
+			continue // no policy, no token: the role cannot write
+		}
+		if w, err := PolicyGrantsWrite(b); err != nil || w {
+			writes = true // a policy that does not read is one that may write
+		}
+	}
+	return writes, nil
 }
 
 // drill is R6: the id of a passing drill for this version and configuration within maxAge.
@@ -177,12 +228,17 @@ func PolicyGrantsWrite(policy []byte) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	return GrantsWrite(perms), nil
+}
+
+// GrantsWrite reports whether a permissions map grants any write or admin permission.
+func GrantsWrite(perms map[string]string) bool {
 	for _, v := range perms {
-		if v == "write" || v == "admin" {
-			return true, nil
+		if v := strings.ToLower(v); v == "write" || v == "admin" {
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // PolicyPermissions is an octo-sts trust policy's permissions map, each permission and access
