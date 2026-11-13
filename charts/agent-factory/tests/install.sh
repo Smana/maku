@@ -30,7 +30,9 @@
 # TRACING=1 (with GATEWAY=1; task chart:tracing:k3d) adds the run traces proof (plan v4 step 6, Task 2):
 # the e2e stub (hack/e2e-stub) runs as an OTLP/HTTP sink in namespace e2e, maku.runController.tracing
 # names it, and the gateway leg's run, annotated with a traceparent as the factory stamps it, exports its
-# span to the stub under that trace id, through its own policy's collector rule in kubernetes mode.
+# span to the stub under that trace id. The task runs it with NETPOL=none, as CI runs the gateway leg: its
+# gw-caller probe pod cannot run under the runs namespace's default-deny. With NETPOL=kubernetes the step
+# also asserts the run's own NetworkPolicy opens exactly the collector's port.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"

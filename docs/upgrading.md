@@ -14,6 +14,12 @@ One new key in the `maku` chart, off by default, so a release that does not set 
 
 `maku-factory.config.tracing.otlpEndpoint` keeps its meaning: the factory's gRPC `host:port`.
 
+The harness no longer hands agent-server a trace endpoint, because agent-server's spans carry
+prompts and tool output ([what spans contain](observability.md#what-spans-contain)). A run template
+that relied on those spans, such as cloud-native-ref's AgentRun composition, sets
+`AGENT_TRACE_CONTENT=1` in the harness's environment to keep them, behind a collector that filters
+span attributes. Set this way, the harness's own root span is unchanged.
+
 The run controller decodes its config strictly, so a `tracing:` block needs this release's run
 controller image: chart and images move together. Runs already started keep their pods, without
 traces, until they end.
