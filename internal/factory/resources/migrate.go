@@ -21,20 +21,15 @@ import (
 // split into class-shape MergePolicies and the Repository's bindings (Split, B17). A file still in
 // the single-repository shape, which the factory refuses, is read as its one-entry list first (R7).
 func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
+	if file, err = LiftLegacy(file); err != nil {
+		return nil, nil, err
+	}
 	var base map[string]any
 	if err := yaml.Unmarshal(file, &base); err != nil {
 		return nil, nil, fmt.Errorf("config file: %w", err)
 	}
 	if base == nil {
 		base = map[string]any{}
-	}
-	if _, legacy := base["repository"]; legacy {
-		if err := liftLegacy(base); err != nil {
-			return nil, nil, err
-		}
-		if file, err = yaml.Marshal(base); err != nil {
-			return nil, nil, err
-		}
 	}
 	// Parse's refusals (an empty factory name, an entry without a name) are Migrate's: what it
 	// would split must already be a valid file.
