@@ -121,7 +121,7 @@ disagree about [the clients](#the-planner-and-the-classifier).
 | `providers.<name>` | none | `preset`, `existingSecret` (required), `key` (`apiKey`), `dataClasses` (`[public]`), `transformations`, `egress`; `host`, `port`, `path`, `tls` for `custom` only |
 | `aliases.public`, `aliases.internal` | none | `<alias>: {provider, model}`, with aliases from the AgentRun's model names; `internal` takes the four tiers only |
 | `clients.planner`, `clients.classifier` | off | `{enabled, provider, model}`: the planner's `tier-frontier`, the classifier's `tier-light` |
-| `modelCatalog.prices` | none | The factory's `meter.prices` rows; each model must be served by an alias or a client |
+| `modelCatalog.prices` | none; in the umbrella, `maku-factory.config.meter.prices` | The factory's `meter.prices` rows; each model must be served by an alias or a client. In the umbrella (`modelCatalog.umbrellaPrices: true`), an empty `prices` takes the factory's rows, those of a model an alias or a client serves, so a price has one source; `prices` set here wins |
 | `timeouts` | `runs: 600s`, `clients: 60s` | A long completion must not be cut; the clients' own deadlines are 20 s and 5 s |
 | `networkPolicy.mode` | `""` (kubernetes) | `kubernetes`, `cilium` or `none`; see [Network](#network) |
 | `metrics.allowFrom` | none | NetworkPolicy peers allowed to scrape the proxy's `:15020` |
@@ -249,6 +249,64 @@ from `demo.model.apiKey`. Set the provider's `host` and each alias's `model` in 
 `demo.model.baseURL`, `name` and `judgeName` are refused there, since nothing would read them. No
 `agent-model` Secret exists in the runs namespace.
 
+## Metering the runs
+
+A run in `gateway` mode calls the gateway as its own ServiceAccount, named like the run, so the
+gateway's token metrics carry the run's subject in `ar_agent`: the subject the factory's meter
+matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The factory then:
+
+- prices the runs from `meter.query`, which reads agentgateway's own series, cache types included
+  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](factory.md#budgets));
+- reads the gateway's 429s from `meter.throttle.promQuery`, PromQL on the same `meter.url`, or from
+  VictoriaLogs as before;
+- accepts `loops.<class>.models`, a provider alias per role and tier, which becomes the run's
+  `spec.model` and so its path and audience;
+- accepts `loops.<class>.split` with a meter, since a family's cap is in USD.
+
+The umbrella keeps the two sides together. It fails a render where `model.mode: gateway` and a
+portable factory (`runs.group: maku.ogenki.io`) lack `runs.gatewayIdentity: true`, or where
+`gatewayIdentity` is set without `model.mode: gateway`. The factory refuses `gatewayIdentity` on
+`cloud.ogenki.io`, whose AgentRun always carries the identity. Without the key, a configured meter
+starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
+
+**The handshake, run by run.** The umbrella's render check does not reach an install that runs
+`maku-factory` and `maku` as separate releases, as ANR does. So the factory stamps each AgentRun it
+creates under `runs.gatewayIdentity` with `spec.meteredBy: gateway`, which the CRD keeps immutable
+from creation. A run controller in `model.mode: secret` refuses such a run before its pod exists:
+`spec.meteredBy gateway needs model.mode gateway`, as it refuses `dataClass: internal`. Without the
+stamp, a secret-mode run would make no `ar_agent` series. It would end at $0, `familyUSD` would
+never be spent, and its `loops.<class>.models` alias would be ignored.
+
+**The backstop, and what it leaves.** The handshake is the guard; the backstop only makes a miss
+visible. Under `runs.gatewayIdentity`, a run that succeeded and still has no gateway series two
+minutes after it finished (`endSettle`: a short run's last calls reach the meter a scrape interval
+plus VictoriaMetrics' offset late) gets the fallback verdict, unpriced, never $0. Then:
+
+- the meter names its model once (`maku_factory_meter_unpriced_model_runs_total`, the
+  `AgentModelUnpriced` signal);
+- the task's spend is not final, so no `spendFinal` is posted;
+- a split family's `familyUSD` and a coordination child's allocation charge the run its whole
+  reservation (its USD run cap, else its token cap at the reference rate), so those caps stay bounded.
+
+What the backstop does not cover:
+
+- **The day ledgers and the principal caps** charge such a run nothing: the meter read no tokens.
+- **The task's own cap** falls back to its token cap, as for any unpriced run, and the run counts
+  no tokens there.
+- **A run still live with no series** is not flagged: it may not have called its model yet.
+- **A run that fails or is revoked with no series** is not flagged either. It spent nothing the
+  gateway saw, or a scrape missed it.
+
+A scrape that drops the gateway (wrong `metrics.allowFrom`, a missing scrape target) therefore shows
+as unpriced succeeded runs, never as cheap ones.
+
+**The 429s.** `agentgateway_requests_total{status="429"}` counts every 429 the gateway answered,
+its own and a provider's passed through. The meter revokes a run its throttle query names, as
+`budget-fleet`, so the query keeps the gateway's own: `reason="RateLimit"`, the label agentgateway
+sets on a local rate limit (ai-native-ref's budget runbook records it). maku-gateway renders no rate
+limit of its own, so on it the query names no run: a provider's 429 reaches the harness as the
+provider's answer, and the meter never revokes the run for it.
+
 ## The planner and the classifier
 
 The broker makes two kinds of model call: the planner (`intake_plan`, alias `tier-frontier`) and the
@@ -359,3 +417,11 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - on a `moonshot` provider, `temperature: 1` and no `top_p`, though the broker sent 0.
 
   It also checks that a planner token gets 403 on the classifier's route, and the reverse.
+- `task chart:metering:k3d` is the gateway demo with a meter (`tests/metering-values.yaml`) and a
+  test-only VictoriaMetrics (`tests/metrics-stub.yaml`) scraping the gateway. It checks three things:
+  - the factory's config loads with `runs.gatewayIdentity`, a PromQL throttle and a `split`;
+  - the run's tokens reach VictoriaMetrics under agentgateway's own names, with `ar_agent` set to the run's subject;
+  - the meter's parser prices that reply above zero, and the throttle query answers.
+
+  The demo's dummy App keeps the factory from starting, so the leg cannot show a settled run in
+  dollars. The nightly real-model job runs the secret-mode demo.

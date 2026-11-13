@@ -108,17 +108,20 @@ func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	}
 }
 
-// A split is capped in USD (familyUSD), and portable runs carry no gateway identity, so nothing
-// meters their spend: the family's budget would never decrease. Refused there until the gateway
-// (rollout step 4), as models is; parses on cloud-native-ref's AgentRun.
+// A split is capped in USD (familyUSD), and portable runs without runs.gatewayIdentity reach no
+// meter: the family's budget would never decrease. Refused there, as models is; parses on
+// cloud-native-ref's AgentRun, and on the portable kind with the key (GW10).
 func TestSplitIsRefusedOnThePortableRuntime(t *testing.T) {
-	const want = "loops.docs.split needs a model gateway (rollout step 4): this runtime meters no USD, so familyUSD would never be spent"
+	const want = "loops.docs.split needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime meters no USD, so familyUSD would never be spent"
 	for _, row := range []string{"{docs: {scope: scoper, split: {maxChildren: 3}}}", "{docs: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}"} {
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s portable: %v, want %q", row, err, want)
 		}
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err != nil {
 			t.Errorf("%s on cloud-native-ref's AgentRun: %v", row, err)
+		}
+		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {
+			t.Errorf("%s portable with a gateway identity: %v", row, err)
 		}
 	}
 }

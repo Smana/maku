@@ -5,7 +5,9 @@
 #            NetworkPolicy mode on kube-router, whose preflight passes; unenforced, the same mode on a
 #            k3s with no NetworkPolicy controller, whose preflight refuses runs. A fourth leg, gateway
 #            (install.sh's GATEWAY=1), layers values-demo-gateway.yaml: a run in model.mode gateway
-#            reaches its model through agentgateway with its own token, and agents holds no provider key.
+#            reaches its model through agentgateway with its own token, and agents holds no provider key;
+#            with METERING=1, its tokens reach a test-only VictoriaMetrics under agentgateway's names and
+#            the meter prices them (plan v4 step 4, Task 17).
 #   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
 #            seeded docs-links issue is labelled and the job waits up to 30 minutes for a pull request
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
@@ -73,6 +75,7 @@ jobs:
       GH_TOKEN: ${{ github.token }} # install.sh asks the API for the latest release
       NETPOL: ${{ matrix.netpol == 'gateway' && 'none' || matrix.netpol }}
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
+      METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:

@@ -183,16 +183,19 @@ type Review struct {
 // PR is one GraphQL snapshot of a pull request. Checks and statuses are a separate query on the
 // Merger: reading them needs checks and statuses read, which only the merger App holds (R16).
 type PR struct {
-	Number      int
-	NodeID      string
-	URL         string
-	Title       string
-	Body        string // the description: a claim by whoever wrote it
-	State       string // OPEN | CLOSED | MERGED
-	Author      string
-	HeadRef     string
-	HeadSHA     string
-	HeadMessage string
+	Number int
+	NodeID string
+	URL    string
+	Title  string
+	Body   string // the description: a claim by whoever wrote it
+	// BodyEditedAt is the description's last edit, zero when never edited: a vouch given before it
+	// does not cover it (forge_read, UH6).
+	BodyEditedAt time.Time
+	State        string // OPEN | CLOSED | MERGED
+	Author       string
+	HeadRef      string
+	HeadSHA      string
+	HeadMessage  string
 	// ReviewsTruncated: GitHub has more reviews than the page read, so one may be unseen.
 	ReviewsTruncated bool
 	// CrossRepository: the head is a branch of a fork, not of this repository.

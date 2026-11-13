@@ -605,7 +605,7 @@ This release runs it in **audit** only ([Hardening, audit](factory.md#hardening-
 - **What changes for a run.** Nothing is refused or withheld. The canary line at the end of a
   writer run's brief is the only change a run sees.
 
-`mode: enforce` is refused at startup, so readiness stays `false`. The shadow pass's log lines
+Readiness stays `false` until `mode: enforce` (below). The shadow pass's log lines
 and metrics carry the layer, a bounded reason and the GitHub object, never the written text.
 
 Residuals while in audit:
@@ -698,6 +698,27 @@ Residuals with push enforced:
   (`agents.ogenki.io/push-intent`). The record holds the task's latest push only.
 - The run-controller path needs `runTokens.perRun` (HR13), so the role table is what removes the
   write there. On the XR the policy files must follow it by hand; the permission gauge shows them.
+
+A repository at `mode: enforce` goes one stage further
+([Hardening, reads filtered](factory.md#hardening-reads-filtered)):
+
+- **What is withheld.** The run reads its issue, pull request and checks through `forge_read`. The
+  factory reads them with its App and withholds text below the repository's `minAuthorTrust`
+  before any model reads it. Withheld text never leaves the factory: not in the answer, not in a
+  log line, not in the `input_read` record.
+- **What the sandbox loses.** `api.github.com` egress: the run-controller drops it from the run's
+  CNP and the egress proxy's allow-list. `git` keeps `github.com`. The `gh` wrapper's refusals
+  are advisory: the egress is what holds.
+- **Where it holds.** On the run-controller only, with all five output types enforced. On the XR
+  the factory cannot see the composition's egress, and `mode: enforce` refuses the start.
+
+Residuals with reads filtered:
+
+- `github.com` serves the issue's HTML page, which `git`'s egress reaches.
+- An approved author's text is delivered: an injection from a maintainer or a collaborator is
+  not withheld.
+- A run-controller older than the factory ignores `forge-api: deny`. The chart pins both to one
+  version.
 
 ## Reporting a vulnerability
 

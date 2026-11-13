@@ -23,6 +23,14 @@ maku:
         # The demo's tiers all name agent-default; its loops' judge is tier-light.
         aliases: {public: [agent-default, tier-light], internal: []}
 
+# The runs carry a gateway identity, so the meter prices them (GW10): loops.<class>.models and split
+# are accepted on maku.ogenki.io. The demo has no meter: set maku-factory.config.meter (url, query,
+# throttle.promQuery and prices) to price runs, as the metering test does.
+maku-factory:
+  config:
+    runs:
+      gatewayIdentity: true
+
 # The upstream controller, in the release namespace.
 agentgateway:
   enabled: true

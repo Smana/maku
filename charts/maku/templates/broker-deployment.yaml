@@ -93,6 +93,9 @@ spec:
             {{- with $mg.tokens }}
             - {name: model-gateway, mountPath: {{ . }}, readOnly: true}
             {{- end }}
+            {{- if dig "hardening" "forgeRead" "audience" "" $b }}
+            - {name: factory-token, mountPath: /var/run/secrets/maku/factory, readOnly: true}
+            {{- end }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -116,6 +119,14 @@ spec:
             sources:
               - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.planner, expirationSeconds: 3600, path: planner}
               - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.classifier, expirationSeconds: 3600, path: classifier}
+        {{- end }}
+        {{- with dig "hardening" "forgeRead" "audience" "" $b }}
+        # forge_read (hardening H4, HR35): the broker's token for the factory's system audience,
+        # which api.systemPrincipals maps to system:broker. Re-read at each call.
+        - name: factory-token
+          projected:
+            sources:
+              - serviceAccountToken: {audience: {{ . }}, expirationSeconds: 3600, path: token}
         {{- end }}
         {{- with $b.extraVolumes }}
         {{- toYaml . | nindent 8 }}

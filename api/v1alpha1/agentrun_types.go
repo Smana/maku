@@ -39,6 +39,7 @@ type AgentRunList struct {
 // +kubebuilder:validation:XValidation:rule="has(self.roomRef) == has(oldSelf.roomRef) && (!has(self.roomRef) || self.roomRef == oldSelf.roomRef)",message="roomRef is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)",message="queueName is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)",message="suspendable is immutable and cannot be added or removed after creation"
+// +kubebuilder:validation:XValidation:rule="has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)",message="meteredBy is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="self.dataClass != 'internal' || !has(self.loop) || !has(self.loop.checks) || !self.loop.checks",message="an internal run runs no repository checks"
 // +kubebuilder:validation:XValidation:rule="has(self.loop) == has(oldSelf.loop) && (!has(self.loop) || (has(self.loop.checks) == has(oldSelf.loop.checks) && (!has(self.loop.checks) || self.loop.checks == oldSelf.loop.checks) && has(self.loop.search) == has(oldSelf.loop.search) && (!has(self.loop.search) || self.loop.search == oldSelf.loop.search)))",message="loop is immutable and cannot be added or removed after creation"
 // +kubebuilder:validation:XValidation:rule="self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light'])",message="an internal run never names a provider alias"
@@ -103,6 +104,12 @@ type AgentRunSpec struct {
 	Suspendable bool `json:"suspendable,omitempty"`
 	// +optional
 	Loop AgentRunLoop `json:"loop,omitzero"`
+	// MeteredBy gateway says the factory prices this run from the model gateway's per-run identity
+	// (its runs.gatewayIdentity): only a run-controller in model.mode gateway may start it, since in
+	// model.mode secret the run makes no ar_agent series and would be metered at $0. Set at creation.
+	// +kubebuilder:validation:Enum=gateway
+	// +optional
+	MeteredBy string `json:"meteredBy,omitempty"`
 }
 
 // AgentRunLoop is the run's loop policy, fixed at creation (v3: the loop policy's claim object).

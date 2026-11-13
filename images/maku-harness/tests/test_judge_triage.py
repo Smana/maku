@@ -125,6 +125,37 @@ class CheckRunsTest(unittest.TestCase):
         self.assertEqual([r["details_url"] for r in o.runs], [JOB_URL])
 
 
+class ForgeReadTriageTest(unittest.TestCase):
+    """HR37: under FORGE_READ=1 the check runs and the failed logs come from forge_read, and no gh runs."""
+    env = {"REPOSITORY": "o/r", "FORGE_READ": "1", "MCP_URL": "http://broker/mcp"}
+
+    def test_checks_and_logs_through_forge_read(self):
+        answer = {"items": [{"kind": "check", "name": "0", "conclusion": "FAILURE", "trust": "approved",
+                             "body": "".join("line %d\n" % i for i in range(100)) + "token=%s\n" % FAKE_TOKEN},
+                            {"kind": "check", "name": "lint", "conclusion": "", "trust": "approved", "body": ""}]}
+        client = mock.Mock()
+        client.harness_call.return_value = {"content": [{"type": "text", "text": json.dumps(answer)}]}
+        with mock.patch("agent_run.forge_client", return_value=client), \
+                mock.patch("subprocess.run", side_effect=AssertionError("gh ran")):
+            got = agent_run.check_runs(self.env, "h")
+            client.harness_call.assert_called_with("forge_read", {"target": "checks"})
+            self.assertEqual([(r["name"], r["status"], r["conclusion"]) for r in got],
+                             [("0", "completed", "failure"), ("lint", "in_progress", "")])
+            _, o = lp.judge_input("", "h", [], "", got)
+            tail, note = agent_run.failing_log_tail(self.env, o, o.runs)
+        self.assertIsNone(note)
+        self.assertIn("line 99", tail)
+        self.assertNotIn("line 39\n", tail)
+        self.assertNotIn(FAKE_TOKEN, tail)
+
+    def test_no_answer_is_no_evidence(self):
+        client = mock.Mock()
+        client.harness_call.side_effect = RuntimeError("forge_read is not exposed to this run")
+        with mock.patch("agent_run.forge_client", return_value=client), \
+                mock.patch("subprocess.run", side_effect=AssertionError("gh ran")):
+            self.assertIsNone(agent_run.check_runs(self.env, "h"))
+
+
 class FailingLogTailTest(unittest.TestCase):
     """HR5: the failing check's job log, read with the harness's own gh, or the sentence that forbids fetching it."""
     env = {"REPOSITORY": "o/r"}

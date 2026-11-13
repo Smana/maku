@@ -425,6 +425,8 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return fmt.Sprintf("runs live in namespace %q", c.Namespace)
 	case r.Spec.Suspendable:
 		return "spec.suspendable runs need cloud-native-ref's runtime"
+	case r.Spec.MeteredBy == "gateway" && !c.Gateway():
+		return "spec.meteredBy gateway needs model.mode gateway: in model.mode secret the run makes no ar_agent series, so the factory's meter would price it at $0"
 	case r.Spec.DataClass == "internal" && !c.Gateway():
 		return "spec.dataClass internal needs the model gateway, which this runtime does not have"
 	case r.Spec.DataClass == "internal" && len(c.Model.Gateway.Aliases.Internal) == 0:
@@ -487,13 +489,27 @@ func (c Config) GitSecretFor(r *v1alpha1.AgentRun) string {
 	}
 }
 
-// FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated.
+// ForgeAPIHost is GitHub's API, which a run annotated forge-api: deny never reaches (HR36): it reads
+// forge text through forge_read, and git keeps github.com.
+const ForgeAPIHost = "api.github.com"
+
+// forgeAPIDenied reports whether the factory annotated r forge-api: deny (hardening mode enforce).
+func forgeAPIDenied(r *v1alpha1.AgentRun) bool {
+	return r.Annotations[runwatch.ForgeAPIAnnotation] == runwatch.ForgeAPIDeny
+}
+
+// FQDNs are the hosts the run may reach on 443: github, then its profiles, deduplicated, without
+// ForgeAPIHost for a run annotated forge-api: deny. Both the CNP and the egress proxy's
+// allow-list derive from it.
 func (c Config) FQDNs(r *v1alpha1.AgentRun) []string {
 	out := slices.Clone(c.EgressProfiles["github"])
 	for _, p := range r.Spec.Egress.Profiles {
 		for _, h := range c.EgressProfiles[string(p)] {
 			out = addUnique(out, h)
 		}
+	}
+	if forgeAPIDenied(r) {
+		out = slices.DeleteFunc(out, func(h string) bool { return strings.EqualFold(h, ForgeAPIHost) })
 	}
 	return out
 }

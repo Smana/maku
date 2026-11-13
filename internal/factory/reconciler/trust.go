@@ -13,6 +13,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
@@ -88,6 +89,13 @@ func (r *Reconciler) markSafeOutputs(cfg *config.Config, t *v1alpha1.Task, s *ru
 	}
 }
 
+// markForgeAPI denies the forge API to every run of a repository in hardening mode enforce, the
+// reviewer and the triager included (HR36): the run-controller drops api.github.com from its
+// egress, and the run reads forge text through forge_read, filtered by the factory.
+func (r *Reconciler) markForgeAPI(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) {
+	s.ForgeAPIDeny = r.auditing(cfg, t) && cfg.Hardening.ModeFor(t.Spec.Repository) == hardening.ModeEnforce
+}
+
 // The implementer brief's pull request line, as firstBrief writes it and as a run with output_pr
 // reads it: the factory opens the pull request, so the run requests it.
 const (
@@ -141,17 +149,7 @@ var revisionTriggers = []string{"review", "ci", "human"}
 //     still lowers the minimum, since the run can read it;
 //   - a split child's or coordination child's parent, at the parent's recorded minimum.
 func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, trigger string) (hardening.InputTrust, error) {
-	rp := r.repositoryPolicy(cfg, t)
-	repo := r.repo(cfg, t)
-	pol := hardening.Policy{Min: rp.MinTrust, Blocked: cfg.Hardening.BlockedUsers}
-	if repo != nil {
-		pol.Maintainers = repo.Maintainers
-		for _, b := range []string{repo.Merge.MergerLogin, repo.Merge.PolicyBotLogin} {
-			if b != "" {
-				pol.TrustedBots = append(pol.TrustedBots, b)
-			}
-		}
-	}
+	pol := cfg.TrustPolicy(t.Spec.Repository, r.repositoryPolicy(cfg, t).MinTrust)
 	it := hardening.NewInputTrust()
 	it.Record(hardening.SourceDefaultBranch, hardening.Merged)
 	if t.Spec.Steering != nil {
@@ -190,10 +188,68 @@ func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1al
 	if slices.Contains(revisionTriggers, trigger) && t.Status.PullRequest != nil {
 		it.Record(hardening.SourceOwnCI, hardening.SourceOwnCI.Level())
 	}
+	if cfg.Hardening.ModeFor(t.Spec.Repository) == hardening.ModeEnforce {
+		// Enforce (HR35): the run reads forge text through forge_read alone, so what it read is the
+		// broker's input_read records, and withheld text never lowers the minimum.
+		if err := r.foldInputReads(ctx, t, &it); err != nil {
+			return hardening.InputTrust{}, err
+		}
+	} else if err := r.recordComments(ctx, cfg, t, pol, &it); err != nil {
+		return hardening.InputTrust{}, err
+	}
+	if p, ok, err := r.parentTrust(ctx, t); err != nil {
+		return hardening.InputTrust{}, err
+	} else if ok {
+		it.Inherit(p)
+	}
+	return it, nil
+}
+
+// foldInputReads records the current run's input_read records (UH7, HR35): each kind and level
+// delivered, and the withheld counts summed across its calls. Only the broker's stamp counts.
+func (r *Reconciler) foldInputReads(ctx context.Context, t *v1alpha1.Task, it *hardening.InputTrust) error {
+	if len(t.Status.Runs) == 0 || t.Status.RoomRef == "" {
+		return nil
+	}
+	cur := current(t)
+	evs, _, err := r.Rooms.EventsSince(ctx, t.Status.RoomRef, cur.StartSeq, func(e envelope.Event) bool {
+		_, ok := envelope.ReadInput(e, cur.ID)
+		return ok
+	})
+	if err != nil {
+		return fmt.Errorf("read the run's input records: %w", err)
+	}
+	for _, e := range evs {
+		rec, ok := envelope.ReadInput(e, cur.ID)
+		if !ok {
+			continue
+		}
+		for _, s := range rec.Sources {
+			l, err := hardening.ParseLevel(s.Level)
+			if err != nil {
+				l = hardening.Blocked // unreachable after Validate; a damaged record lowers, never raises
+			}
+			it.Record(hardening.SourceKind(s.Kind), l)
+		}
+		for k, n := range rec.Withheld {
+			if it.Withheld == nil {
+				it.Withheld = map[hardening.SourceKind]int{}
+			}
+			it.Withheld[hardening.SourceKind(k)] += n
+		}
+	}
+	return nil
+}
+
+// recordComments is audit's reading of the task's threads: every comment on the issue and the pull
+// request but the factory's and the agents' own, at its author's level. One below the minimum is
+// counted withheld and, under audit, still lowers the minimum, since the run can read it.
+func (r *Reconciler) recordComments(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pol hardening.Policy, it *hardening.InputTrust) error {
+	gh := r.gh(ctx)
 	for _, n := range threads(t) {
 		cs, err := gh.AllComments(ctx, n)
 		if err != nil {
-			return hardening.InputTrust{}, fmt.Errorf("read comments on %d: %w", n, err)
+			return fmt.Errorf("read comments on %d: %w", n, err)
 		}
 		for _, c := range cs {
 			if c.Author != "" && (strings.EqualFold(c.Author, cfg.FactoryLogin) || strings.EqualFold(c.Author, cfg.AgentsLogin)) {
@@ -206,12 +262,7 @@ func (r *Reconciler) inputTrust(ctx context.Context, cfg *config.Config, t *v1al
 			it.Record(hardening.SourceComment, l) // audit: nothing is withheld, so the run could read it
 		}
 	}
-	if p, ok, err := r.parentTrust(ctx, t); err != nil {
-		return hardening.InputTrust{}, err
-	} else if ok {
-		it.Inherit(p)
-	}
-	return it, nil
+	return nil
 }
 
 // threads are the GitHub threads a run can read: the task's issue and its pull request.

@@ -287,6 +287,45 @@ ynone 'select(.kind == "Secret" and .metadata.namespace == "agents")' 'the gatew
 ykind Secret 'select(.metadata.name == "demo-model") | (.metadata.namespace == "maku" and .stringData.apiKey == "k1")' 'the demo key is its provider'"'"'s Secret, in the release namespace'
 ykind AgentgatewayBackend '(.metadata.name == "demo-agent-default" or .metadata.name == "demo-tier-light" or .metadata.name == "model-gateway-jwks")' 'the demo provider serves agent-default'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (has("modelSecret") | not))' 'the gateway demo: the run-controller calls this release'"'"'s model-gateway'
+ykind ConfigMap 'select(.metadata.name=="agent-factory-config") | .data."config.yaml" | from_yaml | .runs.gatewayIdentity == true' 'the gateway demo: the factory states its runs carry a gateway identity'
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/gw-factory-config.yaml"
+(cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/gw-factory-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-gw.log" 2>&1) ||
+  { echo "FAIL: the gateway demo's factory config does not parse:" >&2; cat "$tmp/parse-gw.log" >&2; fail=1; }
+# Task 17: the metering leg's values (install.sh METERING=1): a meter with a PromQL throttle and a split
+# on the portable kind, which the factory accepts with runs.gatewayIdentity.
+mout="$(helm template af . -n maku "${gwd[@]}" -f tests/metering-values.yaml \
+  --set maku-gateway.aliases.public.agent-default.model=echo-default --set maku-gateway.aliases.public.tier-light.model=echo-light)" || { echo "FAIL: the metering values do not render" >&2; fail=1; mout=''; }
+yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mout" >"$tmp/metering-config.yaml"
+yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != null and .runs.gatewayIdentity' "$tmp/metering-config.yaml" >/dev/null 2>&1 ||
+  { echo "FAIL: the metering config lacks its split, throttle or identity" >&2; fail=1; }
+(cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/metering-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-m.log" 2>&1) ||
+  { echo "FAIL: the metering leg's factory config does not parse:" >&2; cat "$tmp/parse-m.log" >&2; fail=1; }
+grep -qE 'name: metrics' <<<"$(yq 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .spec.ingress[] | select(.ports[0].port == 15020)' - <<<"$mout")" ||
+  { echo "FAIL: the metering values do not admit the metrics namespace to the gateway's 15020" >&2; fail=1; }
+# GW12: the gateway's prices default to the factory's meter.prices (one source); the gateway's own win.
+catalogs() { yq ea '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' - <<<"$out"; }
+[[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway demo renders $(catalogs) model catalogs, want 1" >&2; fail=1; }
+ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | (.providers | length) == 0' 'the gateway demo without prices: an empty catalog'
+out="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4},"m2":{"input":3,"cacheRead":0.3,"output":9},"agent-default":{"input":1,"cacheRead":0.1,"output":2}}')" ||
+  { echo "FAIL: the gateway demo with factory prices does not render" >&2; fail=1; out=''; }
+[[ "$(catalogs)" == 1 ]] || { echo "FAIL: factory prices render $(catalogs) model catalogs, want 1" >&2; fail=1; }
+ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | .providers.demo.models | ((keys | join(",")) == "m1,m2" and .m1.rates.input == "1.40" and .m1.rates.cacheRead == "0.26" and .m1.rates.output == "4.40" and (.m1.rates | length) == 3)' \
+  'the catalog defaults to maku-factory.config.meter.prices, the served models only (agent-default is no provider model)'
+# the umbrella-rendered catalog carries maku-gateway's own labels, as the subchart's objects do
+[[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .metadata.labels' - <<<"$out")" == \
+   "$(yq ea 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .metadata.labels' - <<<"$out")" ]] ||
+  { echo "FAIL: the umbrella's catalog does not carry maku-gateway's labels" >&2; fail=1; }
+# once the factory prices anything, a served model without a row fails the render (review #518)
+msg="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4}}' 2>&1 >/dev/null || true)"
+grep -qF 'maku-gateway serves m2 (tier-light, provider demo) but maku-factory.config.meter.prices has no row for it' <<<"$msg" ||
+  { echo "FAIL: a served model with no factory price does not fail the render (got: $msg)" >&2; fail=1; }
+out="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4}}' \
+  --set-json 'maku-gateway.modelCatalog.prices={"m2":{"input":3,"cacheRead":0.3,"output":9}}')" ||
+  { echo "FAIL: the gateway demo with its own prices does not render" >&2; fail=1; out=''; }
+[[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway's own prices render $(catalogs) model catalogs, want 1" >&2; fail=1; }
+ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | (.providers.demo.models | keys | join(",")) == "m2"' \
+  'maku-gateway.modelCatalog.prices wins over the factory'"'"'s'
+out="$(helm template af . -n maku "${gwd[@]}")"
 yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-gateway.yaml"
 (cd ../.. && go run ./charts/maku/tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml") || fail=1
 # bad WANT ARGS...: the render fails naming WANT.
@@ -304,8 +343,10 @@ bad 'maku.runController.model.gateway.ports (8090, 8081) must equal maku-gateway
 bad 'maku.runController.model.gateway.service "elsewhere" must be empty or maku-gateway.name "model-gateway"' "${gwd[@]}" --set maku.runController.model.gateway.service=elsewhere
 bad 'demo.model.baseURL: with maku.runController.model.mode gateway' "${gwd[@]}" --set demo.model.baseURL=http://model.example.test/v1
 bad 'maku-factory.config.runs.gatewayIdentity is true but maku.runController.model.mode is "secret"' "${args[@]}" --set maku-factory.config.runs.gatewayIdentity=true
+bad 'maku.runController.model.mode gateway needs maku-factory.config.runs.gatewayIdentity: true' "${gwd[@]}" --set maku-factory.config.runs.gatewayIdentity=false
 # ANR's form: an external gateway, maku-gateway off.
 out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 --set maku.runController.model.mode=gateway \
+  --set maku-factory.config.runs.gatewayIdentity=true \
   --set maku.runController.model.gateway.service=agentgateway --set maku.runController.model.gateway.namespace=ai \
   --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}')" || { echo "FAIL: an external gateway does not render" >&2; fail=1; out=''; }
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .model.gateway.url == "http://agentgateway.ai.svc.cluster.local"' 'an external gateway by service and namespace'

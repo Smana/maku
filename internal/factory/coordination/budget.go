@@ -56,16 +56,26 @@ func runReservation(b v1alpha1.Budget) int64 {
 	return config.RefMicroUSD(b.RunTokens)
 }
 
-// AllocationSpent is what t's runs hold of its lifetime allocation: each ended run's priced cost,
-// an unpriced one's tokens at the reference rate (never $0), and a live run's whole reservation,
-// which the meter may still spend.
+// RunCharge is what one run of a task with budget b holds of a USD cap: its priced cost; an
+// unpriced run's tokens at the reference rate (never $0); and an unpriced run with no tokens at all
+// its whole reservation (review #518: the meter's backstop names a run that succeeded with no
+// usage series unpriced, and it spent what nobody read).
+func RunCharge(b v1alpha1.Budget, r v1alpha1.RunRecord) int64 {
+	switch {
+	case r.Unpriced != "" && r.Tokens == 0:
+		return max(r.CostMicroUSD, runReservation(b))
+	case r.Unpriced != "" || (r.Tokens > 0 && r.CostMicroUSD == 0):
+		return max(r.CostMicroUSD, config.RefMicroUSD(r.Tokens))
+	}
+	return r.CostMicroUSD
+}
+
+// AllocationSpent is what t's runs hold of its lifetime allocation: each ended run's charge
+// (RunCharge), and a live run's whole reservation, which the meter may still spend.
 func AllocationSpent(t *v1alpha1.Task) int64 {
 	var spent int64
 	for _, r := range t.Status.Runs {
-		c := r.CostMicroUSD
-		if r.Unpriced != "" || (r.Tokens > 0 && c == 0) {
-			c = max(c, config.RefMicroUSD(r.Tokens))
-		}
+		c := RunCharge(t.Spec.Budget, r)
 		if !runs.Terminal(r.Phase) {
 			c = max(c, runReservation(t.Spec.Budget))
 		}

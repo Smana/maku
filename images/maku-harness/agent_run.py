@@ -1521,9 +1521,42 @@ def stall_watch(env: dict, steps, policy, state, path: str = LOOP_STATE):
     return tick
 
 
+def forge_client(env: dict):
+    """The harness's MCP client to the broker, for forge_read (hardening H4, HR37)."""
+    return ProgressNotes(env["MCP_URL"], env.get("ROLE") or "agent", token_file=env.get("MCP_TOKEN_FILE"))
+
+
+def forge_checks(env: dict) -> list[dict] | None:
+    """The task's pull request checks through forge_read {target: checks} (FORGE_READ=1, HR37): the run
+    has no api.github.com egress, and the factory reads them. Each failed Actions job carries its log
+    tail as "log". None when the broker does not answer."""
+    try:
+        result = forge_client(env).harness_call("forge_read", {"target": "checks"}) or {}
+        data = result.get("structuredContent")
+        if not isinstance(data, dict):
+            text = "".join(p.get("text", "") for p in result.get("content") or [] if isinstance(p, dict))
+            data = json.loads(text)
+        items = data.get("items")
+    except Exception:  # noqa: BLE001 -- no answer is evidence of nothing
+        return None
+    if not isinstance(items, list):
+        return None
+    out = []
+    for it in items:
+        if not isinstance(it, dict) or it.get("kind") != "check":
+            continue
+        conclusion = str(it.get("conclusion") or "").lower()
+        out.append({"name": str(it.get("name") or ""), "status": "completed" if conclusion else "in_progress",
+                    "conclusion": conclusion, "title": "", "details_url": "", "log": str(it.get("body") or "")})
+    return out
+
+
 def check_runs(env: dict, sha: str) -> list[dict] | None:
     """The head's check runs, read with the run's own gh (its token has checks: read); None when
-    GitHub knows no such head or does not answer."""
+    GitHub knows no such head or does not answer. Under FORGE_READ=1, the pull request head's checks
+    through forge_read instead: no gh runs."""
+    if env.get("FORGE_READ") == "1":
+        return forge_checks(env)
     try:
         p = subprocess.run(["gh", "api", "repos/%s/commits/%s/check-runs?per_page=100" % (env["REPOSITORY"], sha)],
                            capture_output=True, text=True, errors="replace", timeout=30)
@@ -1656,6 +1689,12 @@ def failing_log_tail(env: dict, offered, runs) -> tuple[str | None, str | None]:
     """(the last LOG_LINES lines of each failing check's job log, redacted and cut at LOG_MAX, None), or
     (None, LOG_UNREADABLE) when gh cannot read one or no failing check ran on GitHub Actions."""
     failing, tails, seen = set(getattr(offered, "failing", ())), [], set()
+    if env.get("FORGE_READ") == "1":  # HR37: the logs came with forge_read's checks, filtered by the factory
+        for run in runs or ():
+            cid = "check:" + str(run.get("name") or "")
+            if cid in failing and str(run.get("log") or "").strip() and len(tails) < LOG_JOBS:
+                tails.append("## %s\n%s" % (cid, "\n".join(str(run["log"]).rstrip("\n").split("\n")[-LOG_LINES:])))
+        runs = ()
     for run in runs or ():
         cid = "check:" + str(run.get("name") or "")
         m = ACTIONS_JOB.search(str(run.get("details_url") or ""))

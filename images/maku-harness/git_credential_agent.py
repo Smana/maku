@@ -44,9 +44,20 @@ def _cached() -> str | None:
     return None
 
 
+_revoke_skipped_logged = False
+
+
 def _revoke_value(value: str) -> None:
     """Best-effort revoke: the exit path must not traceback over a token GitHub
-    already considers gone (expired, or revoked by an earlier attempt)."""
+    already considers gone (expired, or revoked by an earlier attempt). Under
+    FORGE_READ=1 (hardening H4, HR36) the run has no api.github.com egress, so the
+    revoke is skipped and logged once: the token is read-only and expires within the hour."""
+    global _revoke_skipped_logged
+    if os.environ.get("FORGE_READ") == "1":
+        if not _revoke_skipped_logged:
+            log.info("revoke skipped: this run has no api.github.com egress (FORGE_READ); the token expires within the hour")
+            _revoke_skipped_logged = True
+        return
     req = urllib.request.Request(GITHUB_API + "/installation/token", method="DELETE", headers={"Authorization": "Bearer " + value})
     try:
         urllib.request.urlopen(req, timeout=10)

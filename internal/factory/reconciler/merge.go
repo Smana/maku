@@ -23,6 +23,7 @@ import (
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/narrate"
+	"github.com/Smana/maku/internal/hardening"
 )
 
 // mergedOutcome is the outcome of a merge the merger App did not make: agent_merged when the
@@ -987,6 +988,10 @@ func (r *Reconciler) fixCI(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	narrateLater(t, narrate.CIFixing(t, pr.Number, pr.HeadSHA, why, int(t.Status.FixRuns-t.Status.FixRunsBeforeStep), int(r.repo(cfg, t).Merge.FixRuns)))
 	msg := fmt.Sprintf("CI failed on %s: %s. Read the failing jobs with `gh pr checks %d` and fix them on the same branch.",
 		pr.HeadSHA, strings.Join(names, ", "), pr.Number)
+	if r.auditing(cfg, t) && cfg.Hardening.ModeFor(t.Spec.Repository) == hardening.ModeEnforce { // HR37: no gh reads
+		msg = fmt.Sprintf("CI failed on %s: %s. Read the failing jobs with forge_read (target checks) and fix them on the same branch.",
+			pr.HeadSHA, strings.Join(names, ", "))
+	}
 	if err := r.Rooms.Enqueue(ctx, t.Status.RoomRef, "ci", msg, int64(t.Status.FixRuns)); err != nil {
 		return err
 	}

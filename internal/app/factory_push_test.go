@@ -122,7 +122,7 @@ func TestRoleTableWarningPush(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit, EnforceOutputs: tc.enforced}})
 			cfg.Repositories = []config.Repository{{Name: repo}, {Name: "Smana/cloud-native-ref"}}
-			cfg.Runs = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
+			cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
 			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
 			w := roleTableWarning(cfg, tc.table)
 			if (w != "") != (tc.want != nil) {

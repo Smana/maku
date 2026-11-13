@@ -117,6 +117,10 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- if and (not $gw.enabled) (not $g.service) -}}
 {{- fail "maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service naming an external gateway" -}}
 {{- end -}}
+{{- $factory := index .Values "maku-factory" | default dict -}}
+{{- if and $factory.enabled (eq (dig "config" "runs" "group" "" $factory) "maku.ogenki.io") (not $identity) -}}
+{{- fail "maku.runController.model.mode gateway needs maku-factory.config.runs.gatewayIdentity: true: the factory's runs then carry a gateway identity, which the meter prices (GW10)" -}}
+{{- end -}}
 {{- if $gw.enabled -}}
 {{- if and $g.service (ne $g.service $gw.name) -}}
 {{- fail (printf "maku.runController.model.gateway.service %q must be empty or maku-gateway.name %q: maku-gateway is enabled" $g.service $gw.name) -}}

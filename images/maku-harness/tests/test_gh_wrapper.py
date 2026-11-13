@@ -12,7 +12,7 @@ HERE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 class SafeOutputsGhTest(unittest.TestCase):
     """Which gh writes a run with safe outputs is turned away from, and to which tool."""
 
-    def run_gh(self, argv, safe_outputs=None):
+    def run_gh(self, argv, safe_outputs=None, forge_read=None):
         d = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, d)
         stubs = {}
@@ -28,9 +28,11 @@ class SafeOutputsGhTest(unittest.TestCase):
         path = os.path.join(d, "gh")
         with open(path, "w") as f:
             f.write(script)
-        env = {k: v for k, v in os.environ.items() if k != "SAFE_OUTPUTS"}
+        env = {k: v for k, v in os.environ.items() if k not in ("SAFE_OUTPUTS", "FORGE_READ")}
         if safe_outputs is not None:
             env["SAFE_OUTPUTS"] = safe_outputs
+        if forge_read is not None:
+            env["FORGE_READ"] = forge_read
         return subprocess.run(["sh", path] + list(argv), capture_output=True, text=True, env=env)
 
     ALL = "comment,issue,labels,pr"
@@ -74,6 +76,29 @@ class SafeOutputsGhTest(unittest.TestCase):
             for argv in (["pr", "edit", "1"], ["issue", "create"], ["label", "create", "x"]):
                 p = self.run_gh(argv, safe)
                 self.assertEqual((p.returncode, p.stdout.split()[0]), (0, "real"), argv)
+
+
+class ForgeReadGhTest(unittest.TestCase):
+    """Hardening H4 (HR37): with FORGE_READ=1, gh's forge reads name forge_read."""
+
+    run_gh = SafeOutputsGhTest.run_gh
+
+    def test_forge_reads_are_refused_with_the_tool(self):
+        for argv in (["issue", "view", "7"], ["issue", "list"], ["pr", "view", "1"], ["pr", "checks", "1"],
+                     ["pr", "list"], ["pr", "-R", "o/r", "view", "1"], ["run", "view", "9", "--log-failed"],
+                     ["run", "list"], ["api", "repos/o/r/check-runs"], ["api", "-X", "POST", "repos/o/r/pulls"]):
+            p = self.run_gh(argv, forge_read="1")
+            self.assertEqual(p.returncode, 3, argv)
+            self.assertIn("use forge_read (target issue, pr or checks)", p.stderr, argv)
+            self.assertEqual(p.stdout, "", argv)
+        p = self.run_gh(["pr", "diff", "1"], forge_read="1")
+        self.assertEqual(p.returncode, 3)
+        self.assertIn("git diff origin/<base>...HEAD", p.stderr)
+
+    def test_without_the_variable_reads_pass(self):
+        for argv in (["issue", "view", "7"], ["pr", "checks", "1"], ["api", "repos/o/r"]):
+            p = self.run_gh(argv)
+            self.assertEqual((p.returncode, p.stdout.split()[0]), (0, "real"), argv)
 
 
 if __name__ == "__main__":

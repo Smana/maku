@@ -73,6 +73,9 @@ const (
 	// serves output_<type> for each, and the harness turns gh's writes away. CREATE only.
 	AnnSafeOutputs    = runwatch.SafeOutputsAnnotation
 	AnnLabelAllowlist = runwatch.LabelAllowlistAnnotation
+	// AnnForgeAPI, "deny", marks every run of a repository in hardening mode enforce (HR36): the
+	// run-controller gives it no api.github.com egress and the broker serves it forge_read. CREATE only.
+	AnnForgeAPI = runwatch.ForgeAPIAnnotation
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -123,6 +126,9 @@ type Spec struct {
 	EgressProfiles                                                                                                                      []string
 	// Suspendable is spec.suspendable (v2 suspend), written only when true: it is immutable.
 	Suspendable bool
+	// MeteredBy is spec.meteredBy, written only when set: MeteredByGateway when the factory prices
+	// the run from the gateway's per-run identity (runs.gatewayIdentity). Client.Create fills it.
+	MeteredBy string
 	// Loop is spec.loop (loops design L2, L3), written only when set: it is immutable.
 	Loop *Loop
 	// Checks is spec.loop.checks (v3 feature 3), written only when true, so every other claim is
@@ -145,6 +151,8 @@ type Spec struct {
 	// LabelAllowlist as AnnLabelAllowlist beside it; neither is written when SafeOutputs is empty.
 	SafeOutputs    []string
 	LabelAllowlist []string
+	// ForgeAPIDeny writes AnnForgeAPI: deny, on a run of a repository in mode enforce (HR36).
+	ForgeAPIDeny bool
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -169,6 +177,9 @@ var (
 // (review I4); it must be an issue or a PR of the run's own repository.
 func (s Spec) Validate() error {
 	var errs []error
+	if s.MeteredBy != "" && s.MeteredBy != MeteredByGateway {
+		errs = append(errs, fmt.Errorf("meteredBy %q is %s or empty", s.MeteredBy, MeteredByGateway))
+	}
 	if !envelope.ValidID(s.RunID) {
 		errs = append(errs, fmt.Errorf("run id %q is not a C2 id", s.RunID))
 	}
@@ -240,6 +251,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	if s.Suspendable {
 		spec["suspendable"] = true
 	}
+	if s.MeteredBy != "" {
+		spec["meteredBy"] = s.MeteredBy
+	}
 	if l := s.Loop; l != nil || s.Checks || s.Search {
 		loop := map[string]any{}
 		if l != nil {
@@ -307,6 +321,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Canary != "" {
 		ann[AnnCanary] = s.Canary
+	}
+	if s.ForgeAPIDeny {
+		ann[AnnForgeAPI] = runwatch.ForgeAPIDeny
 	}
 	if len(s.SafeOutputs) > 0 {
 		types := slices.Clone(s.SafeOutputs)
@@ -398,7 +415,14 @@ type Client struct {
 	// Created, when set, is called with the claim after Create made it, and after a replay that
 	// found it: the minter applies the run's first token there (v4 D10, plan PR5).
 	Created func(ctx context.Context, claim *unstructured.Unstructured)
+	// MeteredBy is stamped on every claim Create makes (spec.meteredBy): MeteredByGateway under
+	// runs.gatewayIdentity, so a run-controller that cannot meter the run refuses it; "" stamps none.
+	MeteredBy string
 }
+
+// MeteredByGateway is spec.meteredBy for a run the factory prices from the model gateway's per-run
+// identity (review #518): only a run-controller in model.mode gateway starts it.
+const MeteredByGateway = "gateway"
 
 // check refuses a Client whose Kind is not a valid runs kind, the zero Kind included: its claims
 // would carry no group, namespace or name prefix, and a caller that forgot to wire the configured
@@ -429,6 +453,9 @@ func (c Client) named(id string) *unstructured.Unstructured {
 func (c Client) Create(ctx context.Context, s Spec) error {
 	if err := c.check("create"); err != nil {
 		return err
+	}
+	if s.MeteredBy == "" {
+		s.MeteredBy = c.MeteredBy
 	}
 	if err := s.Validate(); err != nil {
 		return fmt.Errorf("create run %s: %w", s.RunID, err)
@@ -529,7 +556,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

@@ -1,3 +1,5 @@
-{{- if and .Values.enabled .Values.modelCatalog.enabled }}
+{{- /* GW12: with modelCatalog.umbrellaPrices and no prices of its own, the agent-factory umbrella
+renders this ConfigMap from maku-factory.config.meter.prices (its templates/gateway-catalog.yaml). */}}
+{{- if and .Values.enabled .Values.modelCatalog.enabled (or .Values.modelCatalog.prices (not .Values.modelCatalog.umbrellaPrices)) }}
 {{- include "mgw.catalog" (dict "root" . "prices" .Values.modelCatalog.prices) }}
 {{- end }}
