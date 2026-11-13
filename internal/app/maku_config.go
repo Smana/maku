@@ -5,6 +5,7 @@ package app
 import (
 	"bytes"
 	"cmp"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +17,7 @@ import (
 	"reflect"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
@@ -315,7 +317,9 @@ func gitShow(ref, path string) ([]byte, error) {
 		return nil, fmt.Errorf("--base-ref %q is not a ref", ref)
 	}
 	p := filepath.Clean(path)
-	cmd := exec.Command("git", "-C", filepath.Dir(p), "show", ref+":./"+filepath.Base(p)) //nolint:gosec // a ref and a path the developer named, no shell
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "git", "-C", filepath.Dir(p), "show", ref+":./"+filepath.Base(p)) //nolint:gosec // a ref and a path the developer named, no shell
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
