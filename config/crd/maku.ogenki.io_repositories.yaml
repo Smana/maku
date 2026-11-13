@@ -229,12 +229,15 @@ spec:
                       maxItems: 64
                       type: array
                     maxModifiedLines:
+                      minimum: 0
                       type: integer
                     maxPatchFiles:
                       description: MaxPatchFiles, MaxModifiedLines and MaxPerDay lower
                         the policy's caps, never raise them.
+                      minimum: 0
                       type: integer
                     maxPerDay:
+                      minimum: 0
                       type: integer
                     mode:
                       enum:

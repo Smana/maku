@@ -814,12 +814,12 @@ spec:
         x-kubernetes-validations:
         - message: a MergePolicy's name is its class name (B1)
           rule: has(self.spec.repositoryRef) || self.metadata.name.matches('^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$')
-        - message: review takes only description, harness, harnessAllowed and escalation
+        - message: review takes only description, harness, harnessAllowed, escalation,
+            checks and testFirst
           rule: has(self.spec.repositoryRef) || self.metadata.name != 'review' ||
-            !(has(self.spec.live) || has(self.spec.shadow) || (has(self.spec.checks)
-            && self.spec.checks) || (has(self.spec.testFirst) && self.spec.testFirst)
-            || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval)
-            || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles)
+            !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles)
+            || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) ||
+            (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles)
             || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks)
             || has(self.spec.maxPerDay) || has(self.spec.oracle) || has(self.spec.monitor)
             || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles)

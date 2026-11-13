@@ -31,7 +31,7 @@ func readCRD(t *testing.T, plural string) (string, *apiextensionsv1.CustomResour
 // The CEL messages of reusable merge policies (B1–B4, B8, OD-8, MP15).
 const (
 	msgPolicyName     = "a MergePolicy's name is its class name (B1)"
-	msgReviewPolicy   = "review takes only description, harness, harnessAllowed and escalation"
+	msgReviewPolicy   = "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
 	msgNeverTogether  = "the per-repository fields (repositoryRef, classes, merge) and the class fields never together (B8)"
 	msgLegacyNeedsRef = "classes and merge are the per-repository shape: they need repositoryRef (B8)"
 	msgModeOnBinding  = "mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
@@ -133,7 +133,7 @@ func TestMergePolicyCELNamesEveryClassField(t *testing.T) {
 		if !strings.Contains(together, "has(self."+f+")") {
 			t.Errorf("the never-together rule does not name %s", f)
 		}
-		if slices.Contains([]string{"description", "harness", "harnessAllowed", "escalation"}, f) {
+		if slices.Contains([]string{"description", "harness", "harnessAllowed", "escalation", "checks", "testFirst"}, f) {
 			if strings.Contains(review, "self.spec."+f+")") {
 				t.Errorf("the review rule refuses %s, which review takes", f)
 			}

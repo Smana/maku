@@ -157,7 +157,7 @@ func TestMergePolicyAdmission(t *testing.T) {
 			t.Errorf("ai-native-ref's legacy MergePolicy refused: %v", err)
 		}
 	}
-	reviewOK := "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {description: d, harness: solo, checks: false, testFirst: false}\n"
+	reviewOK := "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {description: d, harness: solo, checks: true, testFirst: true}\n"
 	for name, m := range map[string]string{"dead-links": deadLinksPolicy, "docs-links": docsLinksPolicy, "review": reviewOK} {
 		if err := a.create(t, m); err != nil {
 			t.Errorf("%s refused: %v", name, err)
@@ -174,7 +174,9 @@ func TestMergePolicyAdmission(t *testing.T) {
 		"a source on a policy":    {edit(t, deadLinksPolicy, "source", map[string]string{"spec.monitor.flux": "{source: flux-system/flux-system, within: 30m}"}), msgFluxSource},
 		"requires a cap":          {edit(t, docsLinksPolicy, "requires", map[string]string{"spec.requires": "[maxPerDay]"}), `Unsupported value: "maxPerDay"`},
 		"review with files":       {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.allowedFiles": "['^docs/.+$']"}), msgReviewPolicy},
-		"review with checks":      {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.checks": "true"}), msgReviewPolicy},
+		"review with requires":    {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requires": "[holdoutChecks]"}), msgReviewPolicy},
+		"review with a label":     {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requiredLabel": "x"}), msgReviewPolicy},
+		"review with modifyOnly":  {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.modifyOnly": "true"}), msgReviewPolicy},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_ = a.c.Delete(t.Context(), a.object(t, tc.manifest)) // review was admitted above
@@ -226,8 +228,9 @@ func TestRepositoryAdmission(t *testing.T) {
 		"no revert": {bindings: `[{name: docs-links, mode: shadow}]`, want: msgEntryClasses},
 		"file authority": {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}]`, extra: "repository",
 			want: msgFileBindings},
-		"33 bindings": {bindings: "[{name: docs-links, mode: \"off\"}, {name: revert, mode: \"off\"}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
-		"a bad name":  {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: Docs, mode: "off"}]`, want: "should match"},
+		"33 bindings":    {bindings: "[{name: docs-links, mode: \"off\"}, {name: revert, mode: \"off\"}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
+		"a negative cap": {bindings: `[{name: docs-links, mode: "off", maxPerDay: -1}, {name: revert, mode: "off"}]`, want: "should be greater than or equal to 0"},
+		"a bad name":     {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: Docs, mode: "off"}]`, want: "should match"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			set := map[string]string{"spec.mergePolicies": tc.bindings}
