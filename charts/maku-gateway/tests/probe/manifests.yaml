@@ -1,0 +1,446 @@
+# The agentgateway probe (plan v4 step 4, Task 1): hand-written objects in the shape maku-gateway
+# renders, on a throwaway k3d. probe.sh applies them after the upstream CRDs and controller, with
+# __ISSUER__ replaced by the cluster's ServiceAccount issuer, in the namespaces it creates: `maku`
+# holds the Gateway and the fake provider, `agents` the run-like caller.
+# The fake provider (echo-llm.py), plain http.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo-llm
+  namespace: maku
+spec:
+  replicas: 1
+  selector:
+    matchLabels: {app.kubernetes.io/name: echo-llm}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: echo-llm}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: echo
+          image: docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+          command: ["python3", "-u", "/app/echo-llm.py", "8080"]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: app, mountPath: /app, readOnly: true}]
+      volumes:
+        - name: app
+          configMap: {name: probe-scripts}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo-llm
+  namespace: maku
+spec:
+  selector: {app.kubernetes.io/name: echo-llm}
+  ports: [{name: http, port: 8080, targetPort: http}]
+---
+# A run-like caller: its ServiceAccount is named like a run (run-<8 base32>), and it holds one
+# projected token per audience the probe tries.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: run-abcdefgh
+  namespace: agents
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: caller
+  namespace: agents
+spec:
+  serviceAccountName: run-abcdefgh
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: caller
+      image: docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+      command: ["sleep", "3600"]
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts:
+        - {name: app, mountPath: /app, readOnly: true}
+        - {name: tokens, mountPath: /tokens, readOnly: true}
+  volumes:
+    - name: app
+      configMap: {name: probe-scripts}
+    - name: tokens
+      projected:
+        sources:
+          - serviceAccountToken: {audience: maku-gateway.public.tier-light, expirationSeconds: 3600, path: public-tier-light}
+          - serviceAccountToken: {audience: maku-gateway.public.kimi-frontier, expirationSeconds: 3600, path: public-kimi-frontier}
+          - serviceAccountToken: {audience: maku-gateway.public.mistral-light, expirationSeconds: 3600, path: public-mistral-light}
+          - serviceAccountToken: {audience: maku-gateway.internal.tier-light, expirationSeconds: 3600, path: internal-tier-light}
+          - serviceAccountToken: {audience: room-broker, expirationSeconds: 3600, path: room-broker}
+---
+# A bystander in the runs namespace whose ServiceAccount is not named like a run, holding the right
+# audience: the listener's subject check alone must refuse it (the route requires only the audience).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bystander
+  namespace: agents
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bystander
+  namespace: agents
+spec:
+  serviceAccountName: bystander
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: caller
+      image: docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+      command: ["sleep", "3600"]
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts:
+        - {name: app, mountPath: /app, readOnly: true}
+        - {name: tokens, mountPath: /tokens, readOnly: true}
+  volumes:
+    - name: app
+      configMap: {name: probe-scripts}
+    - name: tokens
+      projected:
+        sources:
+          - serviceAccountToken: {audience: maku-gateway.public.tier-light, expirationSeconds: 3600, path: public-tier-light}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: model-gateway
+  namespace: maku
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - {name: public, protocol: HTTP, port: 8080, allowedRoutes: {namespaces: {from: Same}}}
+    - {name: internal, protocol: HTTP, port: 8081, allowedRoutes: {namespaces: {from: Same}}}
+  infrastructure:
+    parametersRef: {group: agentgateway.dev, kind: AgentgatewayParameters, name: model-gateway}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: model-gateway
+  namespace: maku
+spec:
+  image:
+    registry: cr.agentgateway.dev
+    repository: agentgateway
+    tag: v1.6.0
+    digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+  logging: {format: json}
+  deployment:
+    spec:
+      replicas: 1
+  service:
+    spec: {type: ClusterIP}
+---
+# source: apiserver. The issuer's JWKS from the in-cluster apiserver, verified with kube-root-ca.crt.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: model-gateway-jwks
+  namespace: maku
+spec:
+  static: {host: kubernetes.default.svc.cluster.local, port: 443}
+  policies:
+    tls:
+      caCertificateRefs: [{name: kube-root-ca.crt}]
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: strip-identity-headers
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway}]
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        remove: [x-ar-agent, x-ar-human, x-ai-gateway-client-id, agent-session-id]
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: listener-public
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: __ISSUER__
+          jwks:
+            remote:
+              backendRef: {group: agentgateway.dev, kind: AgentgatewayBackend, name: model-gateway-jwks}
+              jwksPath: openid/v1/jwks
+          validation:
+            requiredClaims: [exp, sub]
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.public."))'
+    transformation:
+      request:
+        set: [{name: x-ar-agent, value: jwt.sub}]
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: listener-internal
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: internal}]
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: __ISSUER__
+          jwks:
+            remote:
+              backendRef: {group: agentgateway.dev, kind: AgentgatewayBackend, name: model-gateway-jwks}
+              jwksPath: openid/v1/jwks
+          validation:
+            requiredClaims: [exp, sub]
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.internal."))'
+    transformation:
+      request:
+        set: [{name: x-ar-agent, value: jwt.sub}]
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: frontend
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway}]
+  frontend:
+    accessLog:
+      attributes:
+        add:
+          - {name: x_ar_agent, expression: jwt.sub}
+    metrics:
+      attributes:
+        add:
+          - {name: ar_agent, expression: jwt.sub}
+---
+# One backend per alias: the model is forced to the alias whatever the body says, then mapped.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: echo-tier-light
+  namespace: maku
+spec:
+  ai:
+    provider:
+      custom:
+        providerOverride: echo
+        formats: [{type: Completions, path: /provider/v4/chat/completions}]
+      host: echo-llm.maku.svc.cluster.local
+      port: 8080
+  policies:
+    ai:
+      routes: {/v1/chat/completions: Completions}
+      modelAliases: {tier-light: echo-light-1}
+      transformations:
+        - {field: model, expression: '"tier-light"'}
+---
+# The mistral preset's transformation.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mistral-mistral-light
+  namespace: maku
+spec:
+  ai:
+    provider:
+      custom:
+        providerOverride: mistral
+        formats: [{type: Completions, path: /v1/chat/completions}]
+      host: echo-llm.maku.svc.cluster.local
+      port: 8080
+  policies:
+    ai:
+      routes: {/v1/chat/completions: Completions}
+      modelAliases: {mistral-light: mistral-small-2603}
+      transformations:
+        - {field: model, expression: '"mistral-light"'}
+        - {field: reasoning_effort, expression: '"none"'}
+---
+# The moonshot preset's transformations.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: moonshot-kimi-frontier
+  namespace: maku
+spec:
+  ai:
+    provider:
+      custom:
+        providerOverride: moonshot
+        formats: [{type: Completions, path: /coding/v1/chat/completions}]
+      host: echo-llm.maku.svc.cluster.local
+      port: 8080
+  policies:
+    ai:
+      routes: {/v1/chat/completions: Completions}
+      modelAliases: {kimi-frontier: k3.1-pro}
+      transformations:
+        - {field: model, expression: '"kimi-frontier"'}
+        - {field: temperature, expression: '1'}
+        - {field: top_p, expression: 'null'}
+---
+# One HTTPRoute per alias (a rule name, sectionName, needs Gateway API v1.4; a route does not), matching
+# the chat path exactly and rewriting it to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-light
+  namespace: maku
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
+  rules:
+    - matches: [{path: {type: Exact, value: /m/tier-light/v1/chat/completions}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-frontier
+  namespace: maku
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
+  rules:
+    - matches: [{path: {type: Exact, value: /m/tier-frontier/v1/chat/completions}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-kimi-frontier
+  namespace: maku
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
+  rules:
+    - matches: [{path: {type: Exact, value: /m/kimi-frontier/v1/chat/completions}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: moonshot-kimi-frontier}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-mistral-light
+  namespace: maku
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
+  rules:
+    - matches: [{path: {type: Exact, value: /m/mistral-light/v1/chat/completions}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: mistral-mistral-light}]
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-tier-light
+  namespace: maku
+spec:
+  parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: internal}]
+  rules:
+    - matches: [{path: {type: Exact, value: /m/tier-light/v1/chat/completions}}]
+      filters:
+        - type: URLRewrite
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
+      backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
+---
+# One Require per alias route: the token's audience names this listener and this alias (P2's `in`).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-light
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: maku-models-public-tier-light}]
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions: ['"maku-gateway.public.tier-light" in jwt.aud']
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-frontier
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: maku-models-public-tier-frontier}]
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions: ['"maku-gateway.public.tier-frontier" in jwt.aud']
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-kimi-frontier
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: maku-models-public-kimi-frontier}]
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions: ['"maku-gateway.public.kimi-frontier" in jwt.aud']
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-mistral-light
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: maku-models-public-mistral-light}]
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions: ['"maku-gateway.public.mistral-light" in jwt.aud']
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-tier-light
+  namespace: maku
+spec:
+  targetRefs: [{group: gateway.networking.k8s.io, kind: HTTPRoute, name: maku-models-internal-tier-light}]
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions: ['"maku-gateway.internal.tier-light" in jwt.aud']

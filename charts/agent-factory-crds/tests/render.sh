@@ -31,6 +31,17 @@ done
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }
 
+# Exactly the six, and files/ holds nothing else (its glob is `files/*.yaml`). agentgateway's CRDs
+# are not this chart's: in a Helm release they push its Secret to the 1 MiB limit (the release stores
+# the chart's files and the manifest), so they are applied apart (config/agentgateway, docs/gateway.md).
+[[ "$(grep -c '^kind: CustomResourceDefinition$' <<<"$out")" == 6 ]] || { echo "FAIL: the chart renders $(grep -c '^kind: CustomResourceDefinition$' <<<"$out") CRDs, want 6" >&2; fail=1; }
+! grep -q 'agentgateway' values.yaml templates/* || { echo "FAIL: the CRD chart still carries agentgateway" >&2; fail=1; }
+[[ -z "$(find files -mindepth 1 -not -name 'maku.ogenki.io_*.yaml')" ]] || { echo "FAIL: files/ holds more than the maku.ogenki.io CRDs" >&2; fail=1; }
+# the release Secret: Helm stores base64(gzip(release JSON)), and the API refuses a Secret over 1 MiB
+size="$(helm install af-crds . --dry-run=client -o json | gzip | base64 -w0 | wc -c)"
+(( size < 262144 )) || { echo "FAIL: the release Secret would hold $size bytes; keep it far below 1048576" >&2; fail=1; }
+yq -e '(.dependencies // []) | length == 0' Chart.yaml >/dev/null || { echo "FAIL: the CRD chart has a dependency: every install would need to build it" >&2; fail=1; }
+
 # the packaged chart ships the six CRDs, never tests/ (.helmignore)
 helm package . -d "$tmp/pkg" >/dev/null
 shipped="$(tar -tzf "$tmp"/pkg/agent-factory-crds-*.tgz)"

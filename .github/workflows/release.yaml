@@ -136,14 +136,21 @@ jobs:
           publish charts/maku-factory maku-factory
           # broker and run controller, same version, no dependency.
           publish charts/maku maku
-          # the CRDs, installed before agent-factory.
+          # the model gateway's objects (D7), consumed alone or through the umbrella.
+          publish charts/maku-gateway maku-gateway
+          # the CRDs, installed before agent-factory. The vendored agentgateway (its CRDs in
+          # config/agentgateway, its controller chart under the umbrella) is checked against its pins.
+          bash hack/agentgateway-vendor.sh check
           publish charts/agent-factory-crds agent-factory-crds
-          # The umbrella carries both subcharts at $v: on a copy (never committed), the subcharts and
-          # the file:// dependency constraints take $v, then the dependencies are built into it.
+          # The umbrella carries its subcharts at $v: on a copy (never committed), the sibling subcharts
+          # and their file:// constraints take $v (the vendored agentgateway keeps v1.6.0), the copy's
+          # vendored files are checked against the pins, then the dependencies are built into it.
           work="$RUNNER_TEMP/charts"
           cp -r charts "$work"
-          for c in maku maku-factory; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
-          yq -i '.dependencies[].version = env(v)' "$work/agent-factory/Chart.yaml"
+          for c in maku maku-factory maku-gateway; do yq -i '.version = env(v) | .appVersion = env(app)' "$work/$c/Chart.yaml"; done
+          yq -i '(.dependencies[] | select(.repository | test("^file://\.\./"))).version = env(v)' "$work/agent-factory/Chart.yaml"
+          rm -f "$work/agent-factory/Chart.lock"
+          bash hack/agentgateway-vendor.sh check-copy "$work"
           helm dependency build "$work/agent-factory"
           publish "$work/agent-factory" agent-factory
 

@@ -102,11 +102,19 @@ tasks:
       - task: crd:gen
       - git diff --exit-code -- config/crd api charts
 
-  chart:check:
-    desc: Lint and render the CRD, factory and umbrella charts.
+  chart:deps:
+    desc: Check the vendored agentgateway CRDs and controller chart against hack/agentgateway.sha256 (offline)
     cmds:
+      - bash hack/agentgateway-vendor.sh check
+
+  chart:check:
+    desc: Lint and render the CRD, factory, gateway and umbrella charts.
+    cmds:
+      - task: chart:deps
       - helm lint --strict charts/agent-factory-crds
       - bash charts/agent-factory-crds/tests/render.sh
+      - helm lint --strict charts/maku-gateway
+      - bash charts/maku-gateway/tests/render.sh
       - helm lint --strict charts/maku-factory --set image.tag='v0.0.0@sha256:0000'
       - bash charts/maku-factory/tests/render.sh
       - helm lint --strict charts/maku -f charts/maku/values-quickstart.yaml --set broker.image.tag='v0.0.0@sha256:0000' --set runController.image.tag='v0.0.0@sha256:0000' --set runController.images.harness.tag='v0.0.0@sha256:0000' --set runController.images.bridge.tag='v0.0.0@sha256:0000'
@@ -127,6 +135,16 @@ tasks:
     cmds:
       - NETPOL=kubernetes bash charts/agent-factory/tests/install.sh k3d
       - NETPOL=unenforced bash charts/agent-factory/tests/install.sh k3d
+
+  chart:gateway:k3d:
+    desc: The demo on k3d with the model gateway on (agentgateway, its CRDs, maku-gateway); a run-like token reaches its alias only
+    cmds:
+      - GATEWAY=1 bash charts/agent-factory/tests/install.sh k3d
+
+  chart:gateway:probe:
+    desc: Assert what maku-gateway relies on against agentgateway on a throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - bash charts/maku-gateway/tests/probe/probe.sh
 
   chart:install:kind:
     desc: Install the demo profile on a throwaway kind cluster and assert it (docker, kind; not part of check)

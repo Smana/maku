@@ -1,0 +1,625 @@
+---
+# Source: maku-gateway/templates/networkpolicy.yaml
+# Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
+# scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
+# here: the controller fetches it, and the proxies receive the keyset over xDS. Probes are node
+# traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: model-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agents}
+          podSelector:
+            matchExpressions:
+              # The run-controller's label on every run pod.
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8081, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {port: 8082, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+      ports: [{port: 9978, protocol: TCP}]
+    # provider stub (stub.models.svc.cluster.local)
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: models
+      ports: [{port: 8080, protocol: TCP}]
+
+---
+# Source: maku-gateway/templates/catalog.yaml
+# The prices agentgateway merges over its built-in catalog to price each response (the access log's
+# `cost`), from the factory's meter.prices rows: edit a price there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-gateway-model-catalog
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+data:
+  catalog.json: |
+    {
+      "providers": {}
+    }
+
+---
+# Source: maku-gateway/templates/backends.yaml
+# tier-light on stub (custom): the model is forced to the alias whatever the
+# body says, then mapped to stub-light (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret stub-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: stub-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: stub
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: stub.models.svc.cluster.local
+      port: 8080
+  policies:
+    auth:
+      secretRef:
+        name: stub-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-light: "stub-light"
+      transformations:
+        - field: model
+          expression: '"tier-light"'
+
+---
+# Source: maku-gateway/templates/parameters.yaml
+# The generated proxy has no pod seccomp profile, no liveness probe, no limits and a LoadBalancer
+# Service by default; these fields are strategic-merge overlays on what the controller renders (its
+# container is already non-root, read-only, capabilities dropped). As cnref's parameters.yaml.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  # A controller pin change does not re-render the proxy until the Gateway is touched: bump this with
+  # the controller, then check the pod's digest.
+  image:
+    registry: cr.agentgateway.dev
+    repository: agentgateway
+    tag: "v1.6.0"
+    digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+  logging:
+    format: json
+  # The overlay that prices each response (the access log's `cost`), merged over the built-in catalog.
+  modelCatalog:
+    sources:
+      - configMap:
+          name: model-gateway-model-catalog
+  # The default (10s/60s) cut a 200s stream; min 10 / max 660 held it through the deletion of every
+  # proxy pod (cnref PoC N1). 660 = the 600s request timeout + 60s; the controller sets
+  # terminationGracePeriodSeconds from max.
+  shutdown:
+    min: 10
+    max: 660
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  deployment:
+    spec:
+      replicas: 2
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+          containers:
+            - name: agentgateway
+              securityContext:
+                seccompProfile:
+                  type: RuntimeDefault
+              livenessProbe:
+                httpGet:
+                  path: /healthz/ready
+                  port: 15021
+                periodSeconds: 10
+                failureThreshold: 6
+  service:
+    spec:
+      # Runs and the broker reach it in-cluster; a LoadBalancer would give their boundary a cloud address.
+      type: ClusterIP
+  # A drain never takes every in-flight completion. One replica gets no PDB: it would block every drain.
+  podDisruptionBudget:
+    spec:
+      minAvailable: 1
+
+---
+# Source: maku-gateway/templates/policies-identity.yaml
+# The identity headers are dropped before routing, so no route or backend sees a forged one, even
+# where a listener's `set` does not run.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-strip-identity-headers
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        remove:
+          - x-ar-agent
+          - x-ar-human
+          - x-ai-gateway-client-id
+          - agent-session-id
+
+---
+# Source: maku-gateway/templates/policies-identity.yaml
+# Listener public: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.public."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-public
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              url: https://issuer.example.test/openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.public."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+
+---
+# Source: maku-gateway/templates/policies-identity.yaml
+# Listener internal: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.internal."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-internal
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              url: https://issuer.example.test/openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.internal."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+
+---
+# Source: maku-gateway/templates/policies-identity.yaml
+# Listener clients: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.client."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-clients
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: clients
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              url: https://issuer.example.test/openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub == "system:serviceaccount:maku:room-broker"'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.client."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # The callers' own deadlines (20 s planner, 5 s classifier) are shorter.
+    timeouts:
+      request: 60s
+
+---
+# Source: maku-gateway/templates/policies-identity.yaml
+# One frontend policy per Gateway: two would leave the merge to the controller.
+# Buffer: 8Mi, as cnref's agent-router (agentgateway's 2 MiB default cuts long agent contexts).
+# Telemetry: every identity label is the verified sub, under the names the factory's meter and the
+# dashboards read (ar_agent on metrics, x_ar_agent on the access log), with the priced cost.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-frontend
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  frontend:
+    http:
+      maxBufferSize: 8Mi
+    accessLog:
+      attributes:
+        add:
+          - name: x_ar_agent
+            expression: jwt.sub
+          # The request's priced cost in USD (empty when the catalog has no exact row).
+          - name: cost
+            expression: flatten(llm.cost)
+    metrics:
+      attributes:
+        add:
+          - name: ar_agent
+            expression: jwt.sub
+
+---
+# Source: maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+
+---
+# Source: maku-gateway/templates/routes.yaml
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+
+---
+# Source: maku-gateway/templates/gateway.yaml
+# The model gateway (D7). One listener per data class, as on cnref's agent-router: an internal run's
+# token never reaches a public-only provider, because that provider's routes attach to `public` only.
+# `clients` serves the broker's planner and classifier. Routes attach from this namespace only.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: public
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: internal
+      protocol: HTTP
+      port: 8081
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: clients
+      protocol: HTTP
+      port: 8082
+      allowedRoutes:
+        namespaces:
+          from: Same
+  infrastructure:
+    parametersRef:
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+      name: model-gateway
+
+---
+# Source: maku-gateway/templates/routes.yaml
+# /m/tier-light on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: stub-tier-light
+
+---
+# Source: maku-gateway/templates/routes.yaml
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: mgw
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/models
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: stub-tier-light

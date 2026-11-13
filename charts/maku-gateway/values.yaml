@@ -1,0 +1,121 @@
+# maku-gateway: the factory's model gateway, rendered as objects for an agentgateway controller
+# (docs/gateway.md). Off by default: an install that does not set `enabled: true` renders nothing.
+# The controller and its CRDs are a cluster prerequisite (the umbrella's `agentgateway` and
+# the vendored CRDs in config/agentgateway, applied with `kubectl apply --server-side`, or your own), and so are Gateway API's standard
+# CRDs, v1.2 or later.
+enabled: false
+
+# The GatewayClass the controller serves, and the Gateway's name: its Service is
+# <name>.<release namespace>.svc, the address runs and the broker call.
+gatewayClassName: agentgateway
+name: model-gateway
+
+# The proxy image, by digest. Keep it on the controller's version (agentgateway v1.6.0 here): a
+# controller bump does not re-render the proxy until the Gateway is touched.
+image:
+  registry: cr.agentgateway.dev
+  repository: agentgateway
+  tag: v1.6.0
+  digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+replicas: 2
+# 1.6 buffers up to 32 MiB per LLM request with no aggregate cap (agentgateway #3184).
+resources:
+  requests: {cpu: 100m, memory: 128Mi}
+  limits: {cpu: "1", memory: 1Gi}
+
+# One listener per data class, and one for the factory's own clients (the planner, the classifier).
+listeners: {public: 8080, internal: 8081, clients: 8082}
+
+# Every audience the gateway accepts starts with this prefix: <prefix>.<class>.<alias> for a run,
+# <prefix>.client.<planner|classifier> for the broker. Must equal the run-controller's and the
+# broker's audiencePrefix.
+audiencePrefix: maku-gateway
+
+# The cluster's DNS domain (source: apiserver dials kubernetes.default.svc.<clusterDomain>).
+clusterDomain: cluster.local
+
+# Who signed the callers' tokens: this cluster's ServiceAccount issuer (required when enabled).
+#   jwks.source url        jwks.url is the issuer's public JWKS (GKE, EKS).
+#   jwks.source apiserver  the in-cluster apiserver's /openid/v1/jwks, verified with kube-root-ca.crt
+#                          (kind, k3d, kubeadm). The controller fetches it anonymously, so it needs
+#                          allowAnonymousDiscovery: true, which binds system:service-account-issuer-discovery
+#                          to system:unauthenticated (public keys only; Kubernetes' documented setting
+#                          for OIDC discovery), and an apiserver that admits anonymous requests.
+#   jwks.source inline     jwks.inline is the issuer's public JWKS as JSON (`kubectl get --raw
+#                          /openid/v1/jwks`): no fetch and no anonymous access, but re-render it
+#                          whenever the issuer rotates its signing keys.
+identity:
+  issuer: ""
+  jwks:
+    source: url
+    url: ""
+    inline: ""
+    allowAnonymousDiscovery: false
+
+# The runs this gateway serves: a run's token subject is system:serviceaccount:<namespace>:<namePrefix><8 base32>.
+# Must equal the factory's and the broker's `runs`.
+runs:
+  namespace: agents
+  namePrefix: run-
+
+# The broker, the clients listener's only caller. namespace "" is the release namespace.
+broker:
+  serviceAccount: room-broker
+  namespace: ""
+  # Its pods' labels, which the NetworkPolicy admits on the clients listener.
+  podLabels: {app.kubernetes.io/name: room-broker}
+
+# The model providers, by name. Each one's key is a Secret in the release namespace, named here and
+# never rendered by this chart (D14):
+#   <name>:
+#     preset: openai | anthropic | zai | mistral | moonshot | custom
+#     existingSecret: <Secret name>        # required
+#     key: apiKey                          # the Secret's key
+#     dataClasses: [public]                # the listeners its aliases may serve
+#     host, port, path, tls                # custom only: the Chat Completions endpoint
+#     transformations: [{field, expression}]   # appended to the preset's; never one the preset sets
+#     egress: {cidrs: [], peers: []}       # where the gateway may dial it (default: any public address)
+# The presets carry each provider's quirks (docs/gateway.md, "Presets").
+providers: {}
+
+# The model aliases each listener serves, by the AgentRun's model names:
+#   <alias>: {provider: <providers key>, model: <the provider's model>}
+aliases:
+  public: {}
+  internal: {}
+
+# The broker's clients on the clients listener: the planner (alias tier-frontier) and the Slack
+# intent classifier (alias tier-light). A classifier never runs on a model that always reasons.
+clients:
+  planner: {enabled: false, provider: "", model: ""}
+  classifier: {enabled: false, provider: "", model: ""}
+
+# The price catalog agentgateway prices each response with (the access log's `cost`): the factory's
+# meter.prices rows, USD per million tokens. Each model must be one an alias or a client serves.
+modelCatalog:
+  enabled: true
+  prices: {}
+
+# Request timeouts: a long completion must not be cut (runs); the callers' own deadlines are shorter (clients).
+timeouts:
+  runs: 600s
+  clients: 60s
+
+# The proxy pods' network: "" or kubernetes (standard NetworkPolicy), cilium (CiliumNetworkPolicy,
+# providers by FQDN), none.
+networkPolicy:
+  mode: ""
+  dns:
+    namespace: kube-system
+    labels: {k8s-app: kube-dns}
+  # The controller's xDS, which the proxy dials. namespace "" is the release namespace.
+  controller:
+    namespace: ""
+    labels: {app.kubernetes.io/name: agentgateway}
+    port: 9978
+  # Never dialled as a provider: the cluster's own ranges (a provider's own `egress` overrides).
+  exceptCIDRs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+
+# NetworkPolicy peers allowed to scrape the proxy's metrics (:15020). Empty: no scraper.
+metrics:
+  allowFrom: []

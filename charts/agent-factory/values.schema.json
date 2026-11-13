@@ -78,6 +78,8 @@
       }
     },
     "maku": {"type": "object"},
-    "maku-factory": {"type": "object"}
+    "maku-factory": {"type": "object"},
+    "maku-gateway": {"description": "The model gateway subchart (charts/maku-gateway, its own strict schema).", "type": "object"},
+    "agentgateway": {"description": "The upstream agentgateway controller subchart, v1.6.0.", "type": "object"}
   }
 }

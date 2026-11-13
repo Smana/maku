@@ -1,0 +1,125 @@
+{{- if .Values.enabled }}
+{{- $v := .Values }}
+{{- $presets := include "mgw.presets" . | fromYaml }}
+{{- $runSub := printf "jwt.sub.matches(\"%s\")" (include "mgw.celString" (include "mgw.runSubPattern" .)) }}
+{{- $brokerSub := printf "jwt.sub == \"%s\"" (include "mgw.celString" (include "mgw.brokerSub" .)) }}
+{{- /* Every route: {name, section, prefix, backend, audience, sub, paths}. One HTTPRoute per alias, not
+one rule per alias: targeting a rule (sectionName) needs Gateway API v1.4, a route needs v1.2 (probe
+P6). Each matches the backend's typed paths exactly, so the gateway's key reaches nothing else. */}}
+{{- $routes := list }}
+{{- range $class := list "public" "internal" }}
+{{- range $alias, $t := (index $v.aliases $class) | default dict }}
+{{- $paths := list "/v1/chat/completions" }}
+{{- if eq (index $presets (index $v.providers $t.provider).preset).provider "anthropic" }}{{ $paths = append $paths "/v1/messages" }}{{ end }}
+{{- $routes = append $routes (dict "name" (printf "maku-models-%s-%s" $class $alias) "section" $class "prefix" (printf "/m/%s" $alias) "backend" (printf "%s-%s" $t.provider $alias) "audience" (printf "%s.%s.%s" $v.audiencePrefix $class $alias) "sub" $runSub "paths" $paths) }}
+{{- end }}
+{{- end }}
+{{- range $client := list "planner" "classifier" }}
+{{- $c := index $v.clients $client }}
+{{- if $c.enabled }}
+{{- $routes = append $routes (dict "name" (printf "maku-clients-%s" $client) "section" "clients" "prefix" (printf "/clients/%s" $client) "backend" (printf "%s-%s" $c.provider $client) "audience" (printf "%s.client.%s" $v.audiencePrefix $client) "sub" $brokerSub "paths" (list "/v1/chat/completions")) }}
+{{- end }}
+{{- end }}
+{{- range $r := $routes }}
+---
+# {{ $r.prefix }} on {{ $r.section }}: a caller's base URL is
+# http://{{ $v.name }}.<namespace>.svc:<port>{{ $r.prefix }}/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ $r.name }}
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $v.name }}
+      sectionName: {{ $r.section }}
+  rules:
+    {{- range $path := $r.paths }}
+    - matches:
+        - path:
+            type: Exact
+            value: {{ $r.prefix }}{{ $path }}
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: {{ $path }}
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: {{ $r.backend }}
+    {{- end }}
+---
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: {{ $r.name }}
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: {{ $r.name }}
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - {{ printf "\"%s\" in jwt.aud" $r.audience | squote }}
+          - {{ $r.sub | squote }}
+{{- end }}
+{{- range $class := list "public" "internal" }}
+{{- $aliases := (index $v.aliases $class) | default dict }}
+{{- if $aliases }}
+{{- $first := index $aliases (first (keys $aliases | sortAlpha)) }}
+---
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-{{ $class }}-list
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: {{ $v.name }}
+      sectionName: {{ $class }}
+  rules:
+    - matches:
+        {{- range $alias := keys $aliases | sortAlpha }}
+        - path:
+            type: Exact
+            value: /m/{{ $alias }}/v1/models
+        {{- end }}
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: {{ $first.provider }}-{{ first (keys $aliases | sortAlpha) }}
+---
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-{{ $class }}-list
+  labels: {{- include "mgw.labels" $ | nindent 4 }}
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-{{ $class }}-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+{{- end }}
+{{- end }}
+{{- end }}

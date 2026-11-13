@@ -1,0 +1,39 @@
+# cnref's providers and aliases as values (ANR's infrastructure/base/agent-gateway, llm.yaml's table),
+# the planner on Z.ai glm-5.3, and the meter's prices: the catalog must equal ANR's model-catalog.yaml
+# (tests/golden/anr-model-catalog.yaml, copied from ai-native-ref 1529b3b).
+enabled: true
+identity:
+  issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+  jwks: {url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks}
+providers:
+  zai: {preset: zai, existingSecret: agents-zai-api-key, key: apiKey}
+  anthropic: {preset: anthropic, existingSecret: agents-anthropic-api-key, key: apiKey, dataClasses: [internal]}
+  moonshot: {preset: moonshot, existingSecret: agents-moonshot-api-key, key: apiKey}
+  mistral: {preset: mistral, existingSecret: agents-mistral-api-key, key: apiKey}
+aliases:
+  public:
+    agent-default: {provider: zai, model: glm-5.3}
+    tier-frontier: {provider: zai, model: glm-5.3}
+    tier-standard: {provider: zai, model: glm-5.3-flashx}
+    tier-light: {provider: zai, model: glm-5.3-flash}
+    kimi-frontier: {provider: moonshot, model: k3.1-pro}
+    mistral-standard: {provider: mistral, model: mistral-medium-2604}
+    mistral-light: {provider: mistral, model: mistral-small-2603}
+  internal:
+    agent-default: {provider: anthropic, model: claude-opus-5-5}
+    tier-frontier: {provider: anthropic, model: claude-opus-5-5}
+    tier-standard: {provider: anthropic, model: claude-sonnet-5-5}
+    tier-light: {provider: anthropic, model: claude-haiku-5-5}
+clients:
+  planner: {enabled: true, provider: zai, model: glm-5.3}
+modelCatalog:
+  prices:
+    glm-5.3: {input: 1.40, cacheRead: 0.26, output: 4.40, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}
+    glm-5.3-flashx: {input: 0.37, cacheRead: 0.075, output: 1.25}
+    glm-5.3-flash: {input: 0.15, cacheRead: 0.03, output: 0.50}
+    k3.1-pro: {input: 2.00, cacheRead: 0.20, cacheWrite: 2.00, output: 10.00}
+    mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50}
+    mistral-small-2603: {input: 0.15, cacheRead: 0.015, output: 0.60}
+    claude-opus-5-5: {input: 4.00, cacheRead: 0.20, cacheWrite: 5.00, output: 20.00}
+    claude-sonnet-5-5: {input: 2.00, cacheRead: 0.10, cacheWrite: 2.50, output: 10.00}
+    claude-haiku-5-5: {input: 0.50, cacheRead: 0.05, cacheWrite: 0.625, output: 2.50}

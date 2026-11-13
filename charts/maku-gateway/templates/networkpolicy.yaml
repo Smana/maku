@@ -1,0 +1,177 @@
+{{- if .Values.enabled }}
+{{- $v := .Values }}
+{{- $mode := $v.networkPolicy.mode | default "kubernetes" }}
+{{- $presets := include "mgw.presets" . | fromYaml }}
+{{- $ctlNS := $v.networkPolicy.controller.namespace | default .Release.Namespace }}
+{{- /* The providers the backends dial: {name, host, port, peers, cidrs}, once each. */}}
+{{- $dials := list }}
+{{- $seen := dict }}
+{{- range $b := include "mgw.backends" . | fromYamlArray }}
+{{- if not (hasKey $seen $b.provider) }}
+{{- $_ := set $seen $b.provider true }}
+{{- $p := index $v.providers $b.provider }}
+{{- $preset := index $presets $p.preset }}
+{{- $e := $p.egress | default dict }}
+{{- $dials = append $dials (dict "name" $b.provider "host" ($p.host | default $preset.host) "port" ($p.port | default $preset.port) "peers" ($e.peers | default list) "cidrs" ($e.cidrs | default list)) }}
+{{- end }}
+{{- end }}
+{{- if eq $mode "kubernetes" }}
+# Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
+# scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
+# here: the controller fetches it, and the proxies receive the keyset over xDS. Probes are node
+# traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $v.name }}
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: {{ $v.name }}
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $v.runs.namespace }}}
+          podSelector:
+            matchExpressions:
+              # The run-controller's label on every run pod.
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: {{ $v.listeners.public }}, protocol: TCP}
+        - {port: {{ $v.listeners.internal }}, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ include "mgw.brokerNamespace" . }}}
+          podSelector:
+            matchLabels: {{- toYaml $v.broker.podLabels | nindent 14 }}
+      ports:
+        - {port: {{ $v.listeners.clients }}, protocol: TCP}
+    {{- with $v.metrics.allowFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports:
+        - {port: 15020, protocol: TCP}
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $v.networkPolicy.dns.namespace }}}
+          podSelector:
+            matchLabels: {{- toYaml $v.networkPolicy.dns.labels | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $ctlNS }}}
+          podSelector:
+            matchLabels: {{- toYaml $v.networkPolicy.controller.labels | nindent 14 }}
+      ports: [{port: {{ $v.networkPolicy.controller.port }}, protocol: TCP}]
+    {{- range $d := $dials }}
+    # provider {{ $d.name }}{{ with $d.host }} ({{ . }}){{ end }}
+    - to:
+        {{- if $d.peers }}
+        {{- toYaml $d.peers | nindent 8 }}
+        {{- else if $d.cidrs }}
+        {{- range $d.cidrs }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+        {{- else }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $v.networkPolicy.exceptCIDRs | nindent 14 }}
+        {{- end }}
+      ports: [{port: {{ $d.port }}, protocol: TCP}]
+    {{- end }}
+{{- else if eq $mode "cilium" }}
+# The same in Cilium's terms, with each provider by FQDN through Cilium's DNS proxy.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ $v.name }}
+  labels: {{- include "mgw.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: {{ $v.name }}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $v.runs.namespace }}
+          matchExpressions:
+            - {key: agents.ogenki.io/run-id, operator: Exists}
+      toPorts:
+        - ports:
+            - {port: {{ $v.listeners.public | quote }}, protocol: TCP}
+            - {port: {{ $v.listeners.internal | quote }}, protocol: TCP}
+    - fromEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ include "mgw.brokerNamespace" . }}
+            {{- range $k, $val := $v.broker.podLabels }}
+            {{ $k }}: {{ $val }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - {port: {{ $v.listeners.clients | quote }}, protocol: TCP}
+    {{- with $v.metrics.allowFrom }}
+    # metrics.allowFrom's NetworkPolicy peers as Cilium endpoint selectors: namespace labels under
+    # io.cilium.k8s.namespace.labels, pod labels as they are. A peer without a namespaceSelector is in
+    # the release namespace; an empty namespaceSelector ({}) is every namespace, which a namespaced
+    # Cilium policy states with an Exists on the namespace label (a bare selector means its own).
+    - fromEndpoints:
+        {{- range $i, $peer := . }}
+        {{- if or $peer.ipBlock (and $peer.namespaceSelector $peer.namespaceSelector.matchExpressions) (and $peer.podSelector $peer.podSelector.matchExpressions) }}
+        {{- fail (printf "metrics.allowFrom[%d]: mode cilium translates namespaceSelector and podSelector matchLabels only; use mode kubernetes, or select the scraper by labels" $i) }}
+        {{- end }}
+        {{- $sel := dict }}
+        {{- $anyNamespace := false }}
+        {{- if hasKey $peer "namespaceSelector" }}
+        {{- $nsLabels := ($peer.namespaceSelector | default dict).matchLabels | default dict }}
+        {{- if not $nsLabels }}{{ $anyNamespace = true }}{{ end }}
+        {{- range $k, $val := $nsLabels }}{{ $_ := set $sel (printf "k8s:io.cilium.k8s.namespace.labels.%s" $k) $val }}{{ end }}
+        {{- else }}
+        {{- $_ := set $sel "k8s:io.kubernetes.pod.namespace" $.Release.Namespace }}
+        {{- end }}
+        {{- if $peer.podSelector }}
+        {{- range $k, $val := $peer.podSelector.matchLabels }}{{ $_ := set $sel (printf "k8s:%s" $k) $val }}{{ end }}
+        {{- end }}
+        - {{- if $anyNamespace }}
+          matchExpressions:
+            - {key: k8s:io.kubernetes.pod.namespace, operator: Exists}
+          {{- end }}
+          matchLabels: {{- toYaml $sel | nindent 12 }}
+        {{- end }}
+      toPorts:
+        - ports:
+            - {port: "15020", protocol: TCP}
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $v.networkPolicy.dns.namespace }}
+            {{- range $k, $val := $v.networkPolicy.dns.labels }}
+            {{ $k }}: {{ $val }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - {port: "53", protocol: ANY}
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: {{ $ctlNS }}
+            {{- range $k, $val := $v.networkPolicy.controller.labels }}
+            {{ $k }}: {{ $val }}
+            {{- end }}
+      toPorts:
+        - ports:
+            - {port: {{ $v.networkPolicy.controller.port | quote }}, protocol: TCP}
+    {{- range $d := $dials }}
+    - toFQDNs:
+        - matchName: {{ $d.host }}
+      toPorts:
+        - ports:
+            - {port: {{ $d.port | quote }}, protocol: TCP}
+    {{- end }}
+{{- end }}
+{{- end }}
