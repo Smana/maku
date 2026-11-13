@@ -40,6 +40,9 @@ spec:
             httpGet: {path: /healthz, port: metrics}
           readinessProbe:
             httpGet: {path: /readyz, port: metrics}
+          {{- with .Values.extraEnv }}
+          env: {{- toYaml . | nindent 12 }}
+          {{- end }}
           resources: {{- toYaml .Values.resources | nindent 12 }}
           securityContext:
             allowPrivilegeEscalation: false
@@ -52,6 +55,9 @@ spec:
             - {name: slack, mountPath: /etc/factory-slack-app/slack, readOnly: true}
             - {name: principal, mountPath: /etc/factory-slack-app/principal, readOnly: true}
             - {name: webhook, mountPath: /etc/factory-slack-app/webhook, readOnly: true}
+            {{- with .Values.extraVolumeMounts }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
       # Whole-Secret mounts (no subPath, no items), so a rotation reaches the files without a
       # restart: the App re-reads each at use except botUserIDFile.
       volumes:
@@ -63,3 +69,6 @@ spec:
           secret: {secretName: {{ .Values.principalSecret }}, defaultMode: 0440}
         - name: webhook
           secret: {secretName: {{ .Values.webhookSecret }}, defaultMode: 0440}
+        {{- with .Values.extraVolumes }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}

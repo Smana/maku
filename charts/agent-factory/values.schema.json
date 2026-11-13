@@ -131,8 +131,14 @@
             "enabled": {"type": "boolean"},
             "intakeFrom": {"type": "array", "items": {"type": "object"}},
             "github": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}}},
+            "idp": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "classifier": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
             "meter": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "logs": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
             "otlp": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "agentGuard": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "gatewayLog": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "octoSTS": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
             "extraEgress": {"type": "array", "items": {"type": "object"}}
           }
         }

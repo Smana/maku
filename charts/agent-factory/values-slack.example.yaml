@@ -16,6 +16,12 @@ slack:
     channels:
       C0123ABCD: {repositories: [owner/repo], maxCostUSD: 2, approvals: true} # CHANGE
     proposals: {enabled: true}
+  # Must equal maku.networkPolicies.mode (cilium, maku's default). In mode cilium the ingress entity
+  # (Cilium's Gateway and Ingress) reaches the App's :8080; in mode kubernetes, set from to your
+  # gateway's or ingress controller's pods, as expose.networkPolicy.from: empty, the render fails.
+  networkPolicy:
+    mode: cilium                              # CHANGE: maku.networkPolicies.mode
+    # from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: gateway}}}]
 expose:
   slack:
     hostnames: [factory-slack.example.com]    # CHANGE: the one public path is POST /slack/events

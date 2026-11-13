@@ -18,7 +18,7 @@ New keys, all off by default, so a release that sets none of them renders as bef
 **`slack.enabled: true` now installs the App.** Before this release, `slack.enabled: true` only added
 the `maku-slack` alert group, for an App installed outside the chart. It now renders the App and checks
 its agreements, so an install that kept its own App either moves it to the subchart, or turns
-`slack.enabled` off (and loses that alert group).
+`slack.enabled` off, and loses that alert group and the `expose.slack` route with it.
 ## Exposure and the web front door (v0.4x, v4 rollout step 6)
 
 New keys, all off by default, so a release that sets none of them renders as before:

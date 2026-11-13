@@ -44,6 +44,12 @@ slackSecret: factory-slack-app
 principalSecret: factory-slack-principal
 webhookSecret: room-broker-webhook-slack-app
 
+# e.g. a private IdP CA (SSL_CERT_FILE plus its Secret's volume). Secrets only through
+# valueFrom.secretKeyRef, never a plaintext value.
+extraEnv: []
+extraVolumes: []
+extraVolumeMounts: []
+
 resources:
   requests: {cpu: 10m, memory: 32Mi}
   limits: {cpu: 200m, memory: 128Mi}

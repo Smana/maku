@@ -118,7 +118,7 @@ spec:
             - {name: factory-token, mountPath: /var/run/secrets/maku/factory, readOnly: true}
             {{- end }}
             {{- range (include "ap.webhooks" . | fromJson).mounts }}
-            - {name: webhook-{{ .name }}, mountPath: /etc/room-broker/webhooks/{{ .name }}, readOnly: true}
+            - {name: {{ .volume }}, mountPath: /etc/room-broker/webhooks/{{ .name }}, readOnly: true}
             {{- end }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
@@ -169,7 +169,7 @@ spec:
         {{- end }}
         {{- range (include "ap.webhooks" . | fromJson).mounts }}
         # broker.webhooks[{{ .name }}]'s signing key (EX9), read at each delivery.
-        - name: webhook-{{ .name }}
+        - name: {{ .volume }}
           secret: {secretName: {{ .secret }}, defaultMode: 0440}
         {{- end }}
         {{- with $b.extraVolumes }}

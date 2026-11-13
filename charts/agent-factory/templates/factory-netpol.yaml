@@ -9,14 +9,7 @@ closed), its ops port (:9090) from the scraper and the kubelet. Egress: DNS, the
 {{- $maku := .Values.maku | default dict -}}
 {{- $k := dig "networkPolicies" "kubernetes" dict $maku -}}
 {{- $apiPorts := $maku.apiServerPorts | default (list 443 6443) -}}
-{{- $extra := list -}}
-{{- range $name := list "meter" "otlp" -}}
-{{- $e := index $f $name | default dict -}}
-{{- if $e.to -}}
-{{- if not $e.port }}{{ fail (printf "networkPolicies.factory.%s.port is required with its to: the port the factory dials" $name) }}{{ end -}}
-{{- $extra = append $extra (dict "name" $name "to" $e.to "port" $e.port) -}}
-{{- end -}}
-{{- end -}}
+{{- $extra := (include "afumbrella.factoryEgress" . | fromJson).rules -}}
 {{- if eq $mode "kubernetes" }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -78,8 +71,15 @@ spec:
         {{- end }}
       ports: [{port: 443, protocol: TCP}]
     {{- range $extra }}
-    # networkPolicies.factory.{{ .name }}.
-    - to: {{- toYaml .to | nindent 8 }}
+    # maku-factory.config.{{ .key }}{{ if .external }} ({{ .host }}, a public address){{ else }} (networkPolicies.factory.{{ .id }}.to){{ end }}.
+    - to:
+        {{- if .external }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml ($k.privateCIDRs | default list) | nindent 14 }}
+        {{- else }}
+        {{- toYaml .to | nindent 8 }}
+        {{- end }}
       ports: [{port: {{ .port }}, protocol: TCP}]
     {{- end }}
     {{- with $f.extraEgress }}
@@ -146,10 +146,33 @@ spec:
     {{- end }}
     {{- range $extra }}
     {{- $port := .port }}
-    # networkPolicies.factory.{{ .name }}: endpoint selectors.
-    - toEndpoints: {{- toYaml .to | nindent 8 }}
+    {{- if .external }}
+    # maku-factory.config.{{ .key }}: its host, by name.
+    - toFQDNs: [{matchName: {{ .host }}}]
       toPorts:
         - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- else }}
+    {{- $selectors := list }}
+    {{- $peers := list }}
+    {{- range .to }}
+    {{- if or (hasKey . "toFQDNs") (hasKey . "toCIDR") (hasKey . "toCIDRSet") (hasKey . "toEntities") (hasKey . "toEndpoints") }}
+    {{- $peers = append $peers . }}
+    {{- else }}
+    {{- $selectors = append $selectors . }}
+    {{- end }}
+    {{- end }}
+    {{- with $selectors }}
+    # networkPolicies.factory: endpoint selectors.
+    - toEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- range $peers }}
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- end }}
     {{- end }}
     {{- with $f.extraEgress }}
     {{- toYaml . | nindent 4 }}

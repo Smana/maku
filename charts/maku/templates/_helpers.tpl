@@ -479,7 +479,10 @@ broker.webhooks (plan v4 step 6, EX9), as JSON {"config": [...], "mounts": [...]
 {{- end -}}
 {{- $config = append $config $entry -}}
 {{- with $w.existingSecret -}}
-{{- $mounts = append $mounts (dict "name" $w.name "secret" .) -}}
+{{- /* A volume name is a DNS label: webhook-<name>, cut with a hash suffix past 63. */ -}}
+{{- $vol := printf "webhook-%s" $w.name -}}
+{{- if gt (len $vol) 63 }}{{ $vol = printf "%s-%s" (trunc 54 $vol | trimSuffix "-") (trunc 8 (sha256sum $w.name)) }}{{ end -}}
+{{- $mounts = append $mounts (dict "name" $w.name "volume" $vol "secret" .) -}}
 {{- end -}}
 {{- $u := urlParse ($w.url | default "") -}}
 {{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
@@ -488,12 +491,20 @@ broker.webhooks (plan v4 step 6, EX9), as JSON {"config": [...], "mounts": [...]
 {{- $to := $np.to | default list -}}
 {{- if eq $w.network "cluster" -}}
 {{- $parts := splitList "." $u.hostname -}}
-{{- if and (not $to) (eq (first $parts) "factory-slack-app") (gt (len $parts) 1) -}}
-{{- $ns := index $parts 1 -}}
+{{- if and (not $to) (eq (first $parts) "factory-slack-app") -}}
+{{- $ns := $.Release.Namespace -}}
+{{- if gt (len $parts) 1 }}{{ $ns = index $parts 1 }}{{ end -}}
 {{- if eq $mode "kubernetes" -}}
 {{- $to = list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $ns)) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "factory-slack-app"))) -}}
 {{- else -}}
 {{- $to = list (dict "matchLabels" (dict "io.kubernetes.pod.namespace" $ns "app.kubernetes.io/name" "factory-slack-app")) -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $mode "cilium" -}}
+{{- range $to -}}
+{{- if or (hasKey . "podSelector") (hasKey . "namespaceSelector") (hasKey . "ipBlock") -}}
+{{- fail (printf "broker.webhooks[%s].networkPolicy.to holds a NetworkPolicy peer (podSelector, namespaceSelector, ipBlock): networkPolicies.mode cilium takes endpoint selectors (matchLabels with io.kubernetes.pod.namespace) or whole Cilium peers" $w.name) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if and (ne $mode "none") (not $to) -}}

@@ -28,6 +28,9 @@
     "slackSecret": {"type": "string", "minLength": 1},
     "principalSecret": {"type": "string", "minLength": 1},
     "webhookSecret": {"type": "string", "minLength": 1},
+    "extraEnv": {"type": "array", "items": {"type": "object"}},
+    "extraVolumes": {"type": "array", "items": {"type": "object"}},
+    "extraVolumeMounts": {"type": "array", "items": {"type": "object"}},
     "resources": {"type": "object"},
     "clusterDomain": {"type": "string"},
     "networkPolicy": {

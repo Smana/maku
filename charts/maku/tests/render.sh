@@ -799,6 +799,15 @@ jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | s
 jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.ports == [{"port": 443, "protocol": "TCP"}] and (.to[0].ipBlock.cidr // "") == "0.0.0.0/0")] | length == 1 and (.[0].to[0].ipBlock.except | index("10.0.0.0/8") != null)' 'kubernetes: an internet subscriber opens 443 to public addresses, privateCIDRs excepted'
 msg="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=kubernetes --set-json 'broker.webhooks[1].networkPolicy.to=[]' 2>&1 >/dev/null || true)"
 grep -qF 'broker.webhooks[runlore].networkPolicy.to is empty: name the subscriber' <<<"$msg" || { echo "FAIL: a cluster subscriber with no peers does not fail (got: $msg)" >&2; fail=1; }
+# the review of #556: a NetworkPolicy peer in cilium mode is refused; a long name's volume is cut to 63
+msg="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=cilium --set-json 'broker.webhooks[1].networkPolicy.to=[{"podSelector":{"matchLabels":{"app":"runlore"}}}]' 2>&1 >/dev/null || true)"
+grep -qF 'broker.webhooks[runlore].networkPolicy.to holds a NetworkPolicy peer' <<<"$msg" || { echo "FAIL: a podSelector in cilium mode does not fail (got: $msg)" >&2; fail=1; }
+long=a23456789012345678901234567890123456789012345678901234567890b
+out="$(helm template ap . -n agent-system "${pv[@]}" --set "broker.webhooks[2].name=$long")"
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.volumes[] | select(.secret.secretName == "pager-key") | .name] | (length == 1 and (.[0] | length) <= 63 and (.[0] | startswith("webhook-a2345")))' 'a long webhook name'"'"'s volume is cut to 63 characters'
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.containers[0].volumeMounts[] | select(.mountPath == "/etc/room-broker/webhooks/'"$long"'") | .name | length] == [63]' 'its mount names the same volume, at /etc/room-broker/webhooks/<name>'
+out="$(helm template ap . -n agent-system "${pv[@]}" --set 'broker.webhooks[0].url=http://factory-slack-app:8081/webhooks')"
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8081") | .toEndpoints[0].matchLabels."io.kubernetes.pod.namespace"] == ["agent-system"]' "a short-name App URL defaults to the App's pods in the release namespace"
 mkdir -p "$tmp/parity"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$pc" >"$tmp/parity/broker.yaml"
 go run ./tests/loadconfig broker-parity "$tmp/parity/broker.yaml" || fail=1

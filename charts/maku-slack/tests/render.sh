@@ -59,6 +59,10 @@ helm template s . -n agent-system --set e2e.unpinnedImages=true --set image.tag=
 msg="$(helm template s . "${base[@]}" --kube-version 1.29.0 2>&1 >/dev/null || true)"
 grep -qF kubeVersion <<<"$msg" || { echo "FAIL: Kubernetes 1.29 renders" >&2; fail=1; }
 
+bad 'networkPolicy.from is empty: default-deny would drop Slack'"'"'s events on :8080' "${base[@]}" --set networkPolicy.mode=kubernetes
+out="$(helm template s . -n agent-system "${base[@]}" --set-json 'extraEnv=[{"name":"SSL_CERT_FILE","value":"/ca/ca.crt"}]' \
+  --set-json 'extraVolumes=[{"name":"ca","secret":{"secretName":"idp-ca"}}]' --set-json 'extraVolumeMounts=[{"name":"ca","mountPath":"/ca"}]')"
+jkind Deployment "$d | .spec.template.spec.containers[0].env == [{\"name\": \"SSL_CERT_FILE\", \"value\": \"/ca/ca.crt\"}] and (.spec.template.spec.volumes | map(.name) | index(\"ca\")) != null and (.spec.template.spec.containers[0].volumeMounts | map(.name) | index(\"ca\")) != null" 'extraEnv, extraVolumes and extraVolumeMounts reach the App'
 # Task 16 (D6): the App's default-deny, per mode, exactly the flows docs/slack.md lists. Off (none), none.
 out="$(helm template s . -n agent-system "${base[@]}")"
 [[ -z $(yq 'select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") | .kind' - <<<"$out") ]] || { echo 'FAIL: mode none renders a policy' >&2; fail=1; }

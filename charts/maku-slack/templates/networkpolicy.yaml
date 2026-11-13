@@ -1,6 +1,7 @@
 {{- /* v4 step 6 Task 16 (D6): the App's default-deny in mode kubernetes. */ -}}
 {{- $np := .Values.networkPolicy -}}
 {{- if eq $np.mode "kubernetes" }}
+{{- if not $np.from }}{{ fail "networkPolicy.from is empty: default-deny would drop Slack's events on :8080; name your gateway's or ingress controller's pods" }}{{ end -}}
 {{- $u := urlParse (.Values.issuerURL | default "https://idp.invalid") -}}
 {{- $idpPort := int ($np.idp.port | default 0) -}}
 {{- if not $idpPort }}{{ $idpPort = ternary 443 80 (eq $u.scheme "https") }}{{ if regexMatch ":[0-9]+$" $u.host }}{{ $idpPort = regexFind "[0-9]+$" $u.host | int }}{{ end }}{{ end -}}

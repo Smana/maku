@@ -456,6 +456,18 @@ subscriber may still point at the App: every event would end in RoomWebhookDisab
 {{- if ne ($hook.existingSecret | default "") $secret -}}
 {{- fail (printf "maku.broker.webhooks[%s].existingSecret %q must equal slack.webhookSecret %q: the App verifies with the key the broker signs with" $principal ($hook.existingSecret | default "") $secret) -}}
 {{- end -}}
+{{- /* The App reads signing-key from that Secret: another key, or a secretFile elsewhere, signs with
+a key the App never reads, and every delivery is refused. */ -}}
+{{- if not (has ($hook.key | default "signing-key") (list "signing-key")) -}}
+{{- fail (printf "maku.broker.webhooks[%s].key %q must be empty or signing-key: the App reads signing-key from slack.webhookSecret" $principal $hook.key) -}}
+{{- end -}}
+{{- if $hook.secretFile -}}
+{{- fail (printf "maku.broker.webhooks[%s].secretFile %q must be unset: the chart mounts slack.webhookSecret's signing-key, the key the App verifies with" $principal $hook.secretFile) -}}
+{{- end -}}
+{{- $hi := dig "human" "issuer" "" $b -}}
+{{- if and $hi $s.issuerURL (ne (trimSuffix "/" $s.issuerURL) (trimSuffix "/" $hi)) -}}
+{{- fail (printf "slack.issuerURL %q must equal maku.broker.human.issuer %q: the broker verifies the App's token against its issuer" $s.issuerURL $hi) -}}
+{{- end -}}
 {{- $named := false -}}
 {{- range (dig "human" "mcp" "sponsored" list $b) }}{{ if eq .name $principal }}{{ $named = true }}{{ end }}{{ end -}}
 {{- if not $named -}}
@@ -473,6 +485,15 @@ subscriber may still point at the App: every event would end in RoomWebhookDisab
 {{- fail (printf "slack.networkPolicy.mode %q must equal maku.networkPolicies.mode %q: the App joins the release's default-deny" $smode $mode) -}}
 {{- end -}}
 {{- end -}}
+{{- if (include "afumbrella.exposed" . | fromJson).slack -}}
+{{- $snp := $s.networkPolicy | default dict -}}
+{{- if and (eq ($snp.mode | default "none") "kubernetes") (not $snp.from) -}}
+{{- fail "slack.networkPolicy.from is empty: expose.slack routes Slack's events to the App's :8080, which default-deny then drops; name your gateway's or ingress controller's pods (as expose.networkPolicy.from)" -}}
+{{- end -}}
+{{- if and (eq ($snp.mode | default "none") "cilium") (not (dig "cilium" "fromEntities" (list "ingress") $snp)) -}}
+{{- fail "slack.networkPolicy.cilium.fromEntities is empty: expose.slack routes Slack's events to the App's :8080, which default-deny then drops" -}}
+{{- end -}}
+{{- end -}}
 {{- $f := index .Values "maku-factory" | default dict -}}
 {{- if $f.enabled -}}
 {{- $named := false -}}
@@ -483,7 +504,7 @@ subscriber may still point at the App: every event would end in RoomWebhookDisab
 {{- end -}}
 {{- else if $maku.enabled -}}
 {{- range $hooks -}}
-{{- if hasPrefix "factory-slack-app." ((urlParse (.url | default "")).hostname) -}}
+{{- if eq (first (splitList "." ((urlParse (.url | default "")).hostname))) "factory-slack-app" -}}
 {{- fail (printf "maku.broker.webhooks[%s] targets factory-slack-app, but slack.enabled is false: every event would go to a subscriber that does not exist" .name) -}}
 {{- end -}}
 {{- end -}}
@@ -501,4 +522,49 @@ default-deny to join; the demo's ingress-only plain policy would select the same
 {{- fail "networkPolicies.factory.enabled and networkPolicies.plain both select the factory: plain is the demo's ingress-only policy; turn it off" -}}
 {{- end -}}
 {{- end -}}
+{{- end }}
+
+{{/* The factory's URL-derived egress (the review of #556), as JSON {"rules": [{id, key, host, port,
+to, external}]}: one rule per configured URL of maku-factory.config, plus meter and otlp when only
+their peers are named. An external host is opened by name (cilium toFQDNs) or as public addresses
+(kubernetes); an in-cluster one needs networkPolicies.factory.<id>.to, or the render fails naming it. */}}
+{{- define "afumbrella.factoryEgress" -}}
+{{- $f := .Values.networkPolicies.factory | default dict -}}
+{{- $c := dig "config" dict (index .Values "maku-factory") -}}
+{{- $rules := list -}}
+{{- range $pair := list
+  (list "idp" "api.humanIssuer" (dig "api" "humanIssuer" "" $c))
+  (list "classifier" "triage.classifierURL" (dig "triage" "classifierURL" "" $c))
+  (list "meter" "meter.url" (dig "meter" "url" "" $c))
+  (list "logs" "meter.logsURL" (dig "meter" "logsURL" "" $c))
+  (list "otlp" "tracing.otlpEndpoint" (dig "tracing" "otlpEndpoint" "" $c))
+  (list "agentGuard" "hardening.agentGuard.url" (dig "hardening" "agentGuard" "url" "" $c))
+  (list "gatewayLog" "hardening.drills.gatewayLog.url" (dig "hardening" "drills" "gatewayLog" "url" "" $c))
+  (list "octoSTS" "hardening.publisher.octoSTS.url" (dig "hardening" "publisher" "octoSTS" "url" "" $c)) -}}
+{{- $id := index $pair 0 -}}
+{{- $key := index $pair 1 -}}
+{{- $raw := tpl (toString (index $pair 2)) $ -}}
+{{- $e := index $f $id | default dict -}}
+{{- if or $raw $e.to -}}
+{{- $host := "" -}}
+{{- $port := 0 -}}
+{{- if $raw -}}
+{{- $url := ternary $raw (printf "grpc://%s" $raw) (contains "://" $raw) -}}
+{{- $u := urlParse $url -}}
+{{- $host = $u.hostname | default (first (splitList ":" $u.host)) -}}
+{{- $port = ternary 443 80 (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host | int }}{{ end -}}
+{{- end -}}
+{{- with $e.port }}{{ $port = int . }}{{ end -}}
+{{- if not $port -}}
+{{- fail (printf "networkPolicies.factory.%s.port is required with its to: the port the factory dials" $id) -}}
+{{- end -}}
+{{- $internal := or (not $host) (not (contains "." $host)) (regexMatch "\\.svc(\\..+)?$" $host) (hasSuffix ".local" $host) -}}
+{{- if and $internal (not $e.to) -}}
+{{- fail (printf "maku-factory.config.%s %q is in-cluster: name its pods in networkPolicies.factory.%s.to, or the factory's default-deny drops every call" $key $raw $id) -}}
+{{- end -}}
+{{- $rules = append $rules (dict "id" $id "key" $key "host" $host "port" $port "to" ($e.to | default list) "external" (not $e.to)) -}}
+{{- end -}}
+{{- end -}}
+{{- dict "rules" $rules | toJson -}}
 {{- end }}

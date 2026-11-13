@@ -194,11 +194,18 @@ YAML
       # The App's three Secrets (throwaway), its subchart, the factory, both default-deny policies.
       k -n "$NS" create secret generic factory-slack-app --from-literal=signing-secret=e2e-slack-signing \
         --from-literal=bot-token=xoxb-e2e --from-literal=bot-user-id=U0E2EBOT >/dev/null
-      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=slack-app --from-literal=client-secret=e2e-throwaway >/dev/null
+      # The App signs in as the sponsored principal whose client id the broker's sponsored entry reads
+      # (maku-cli, the OIDC Secret's), with that client as its audience: the broker admits it as the App.
+      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=maku-cli --from-literal=client-secret=e2e-throwaway >/dev/null
       k -n "$NS" create secret generic room-broker-webhook-slack-app --from-literal=signing-key=e2e-webhook-key >/dev/null
       expose+=(-f charts/agent-factory/values-slack.example.yaml --set slack.e2e.unpinnedImages=true --set "slack.image.tag=$TAG"
         --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.roomsURL=https://rooms.e2e.test --set slack.preset=generic
-        --set slack.networkPolicy.mode=kubernetes
+        --set slack.networkPolicy.mode=kubernetes --set slack.audience=maku-cli
+        --set-json 'slack.extraEnv=[{"name":"SSL_CERT_FILE","value":"/etc/e2e/ca/ca.crt"}]'
+        --set-json 'slack.extraVolumes=[{"name":"e2e-ca","secret":{"secretName":"e2e-stub-ca","defaultMode":288}}]'
+        --set-json 'slack.extraVolumeMounts=[{"name":"e2e-ca","mountPath":"/etc/e2e/ca","readOnly":true}]'
+        --set-json 'slack.networkPolicy.idp.to=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"e2e"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"e2e-stub"}}}]'
+        --set slack.networkPolicy.idp.port=8443
         --set-json 'slack.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
         --set-json 'expose.slack.hostnames=["factory-slack.e2e.test"]'
         --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/cli-client-id'
@@ -419,6 +426,23 @@ r = c.getresponse(); print(r.status, r.read().decode()[:200])' "$1" "$2"
   out="$(slack_post wrong-secret '{"type":"url_verification","challenge":"x"}')"
   [[ $out == 401* ]] || die "a badly signed event: $out, want 401"
   echo "ok   a badly signed event is 401"
+  # A mention: the App signs in with its client credentials and calls the broker's /mcp (before any
+  # Slack post, which has no Slack to reach here).
+  mention='{"type":"event_callback","team_id":"T0123ABCD","event_id":"Ev0E2E1","event_time":1,"event":{"type":"app_mention","channel":"C0123ABCD","user":"U0E2EUSER","text":"<@U0E2EBOT> fix the docs typo","ts":"1700000000.000100"}}'
+  out="$(slack_post e2e-slack-signing "$mention")"
+  [[ $out == 200* ]] || die "a signed app_mention: $out"
+  grants='' calls=''
+  metrics_port=''
+  forward "$NS" deploy/room-broker 9090 metrics_port
+  for _ in $(seq 40); do
+    grants="$(curl -fsS --cacert "$work/ca.crt" --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" "https://e2e-stub.e2e.svc.cluster.local:$stub/__grants" | jq -r 'map(select(. == "maku-cli")) | length')"
+    calls="$(curl -fsS "http://127.0.0.1:$metrics_port/metrics" | grep -E '^(maku_)?rooms_human_mcp_calls_total\{' || true)"
+    [[ $grants -ge 1 && -n $calls ]] && break
+    sleep 3
+  done
+  [[ $grants -ge 1 ]] || die "the App never signed in with its client credentials (stub grants: $grants)"
+  [[ -n $calls ]] || { k -n "$NS" logs deploy/factory-slack-app --tail=40 >&2 || true; die "the broker counted no /mcp tool call after the mention"; }
+  echo "ok   a mention makes the App sign in with its client credentials and call the broker's /mcp ($(head -1 <<<"$calls"))"
   out="$(c http GET http://factory-slack.e2e.test/slack/events)"
   [[ $(status "$out") == 404 ]] || die "GET /slack/events: $out, want the gateway's 404"
   echo "ok   GET /slack/events is the gateway's 404"
