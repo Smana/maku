@@ -1128,7 +1128,7 @@ func TestHumanPresets(t *testing.T) {
 		{"generic access without an audience", generic + "  tokenUse: access\n",
 			"human.audience, human.audienceFile: tokenUse access needs exactly one"},
 		{"generic access with both audiences", generic + "  tokenUse: access\n  audience: a\n  audienceFile: /a\n",
-			"human.audience, human.audienceFile: tokenUse access needs exactly one"},
+			"human.audience, human.audienceFile: set one, not both"},
 		{"zitadel with an audience", valid + "  audience: a\n", "human.audience: the zitadel preset's audience is human.projectIDFile"},
 		{"zitadel with an audience file", valid + "  audienceFile: /a\n", "human.audienceFile: the zitadel preset's audience is human.projectIDFile"},
 		{"zitadel with token use id", valid + "  tokenUse: id\n", "human.tokenUse: the zitadel preset uses access"},

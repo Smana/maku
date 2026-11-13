@@ -1322,7 +1322,7 @@ func (h HumanConfig) validatePreset() []error {
 			errs = append(errs, errors.New("human.projectIDFile: the zitadel preset's; use human.audienceFile with tokenUse access"))
 		}
 		if h.Audience != "" && h.AudienceFile != "" {
-			errs = append(errs, errors.New("human.audience, human.audienceFile: tokenUse access needs exactly one"))
+			errs = append(errs, errors.New("human.audience, human.audienceFile: set one, not both"))
 		}
 		switch h.EffectiveTokenUse() {
 		case TokenUseAccess:
