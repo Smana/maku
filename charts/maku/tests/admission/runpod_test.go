@@ -348,8 +348,23 @@ func TestRunPodPolicyGatewayTokens(t *testing.T) {
 		{"the apiserver's audience", "projected ServiceAccount tokens", token("https://kubernetes.default.svc")},
 		{"no audience (the apiserver's)", "projected ServiceAccount tokens", token("")},
 		{"another prefix", "projected ServiceAccount tokens", token("maku-gatewayx.public.tier-light")},
-		{"the model Secret", "never mounts the model Secret agent-model", func(p *corev1.Pod) {
+		// The broker's client listener and the preflight's audience are not a run's.
+		{"the planner's audience", "projected ServiceAccount tokens", token("maku-gateway.client.planner")},
+		{"the preflight's audience", "projected ServiceAccount tokens", token("maku-gateway.preflight")},
+		{"the model Secret", "never reads the model Secret agent-model", func(p *corev1.Pod) {
 			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: "agent-model"}}})
+		}},
+		{"the model Secret, projected", "never reads the model Secret agent-model", func(p *corev1.Pod) {
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "model", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{Secret: &corev1.SecretProjection{LocalObjectReference: corev1.LocalObjectReference{Name: "agent-model"}}}}}}})
+		}},
+		{"the model Secret, in a harness env var", "never reads the model Secret agent-model", func(p *corev1.Pod) {
+			p.Spec.Containers[0].Env = append(p.Spec.Containers[0].Env, corev1.EnvVar{Name: "K", ValueFrom: &corev1.EnvVarSource{
+				SecretKeyRef: &corev1.SecretKeySelector{LocalObjectReference: corev1.LocalObjectReference{Name: "agent-model"}, Key: "api_key"}}})
+		}},
+		{"the model Secret, in an init container's envFrom", "never reads the model Secret agent-model", func(p *corev1.Pod) {
+			p.Spec.InitContainers[0].EnvFrom = append(p.Spec.InitContainers[0].EnvFrom, corev1.EnvFromSource{
+				SecretRef: &corev1.SecretEnvSource{LocalObjectReference: corev1.LocalObjectReference{Name: "agent-model"}}})
 		}},
 	} {
 		p := gatewayRunPod(t)

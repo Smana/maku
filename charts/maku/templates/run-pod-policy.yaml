@@ -77,10 +77,17 @@ spec:
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || !has(v.projected.sources) ||
         v.projected.sources.all(s, !has(s.serviceAccountToken) || (has(s.serviceAccountToken.audience) &&
-        (s.serviceAccountToken.audience in ['room-broker', 'room-tools'] || s.serviceAccountToken.audience.startsWith('{{ .audiencePrefix }}.')))))
-      message: {{ printf "a run pod's projected ServiceAccount tokens are for room-broker, room-tools or %s.<class>.<alias> only" .audiencePrefix | quote }}
-    - expression: {{ printf "!has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.secret) || v.secret.secretName != '%s')" $.Values.runController.modelSecret | quote }}
-      message: {{ printf "model.mode gateway: a run pod never mounts the model Secret %s; the gateway holds the keys" $.Values.runController.modelSecret | quote }}
+        (s.serviceAccountToken.audience in ['room-broker', 'room-tools'] || s.serviceAccountToken.audience.startsWith('{{ .audiencePrefix }}.public.') ||
+        s.serviceAccountToken.audience.startsWith('{{ .audiencePrefix }}.internal.')))))
+      message: {{ printf "a run pod's projected ServiceAccount tokens are for room-broker, room-tools or %s.<public|internal>.<alias> only" .audiencePrefix | quote }}
+    {{- /* The model Secret by every way a pod reads a Secret: a volume, a projected source, an env var, envFrom. */}}
+    {{- $s := $.Values.runController.modelSecret }}
+    - expression: >-
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, (!has(v.secret) || v.secret.secretName != '{{ $s }}') &&
+        (!has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(p, !has(p.secret) || p.secret.name != '{{ $s }}')))) &&
+        variables.containers.all(c, (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name != '{{ $s }}')) &&
+        (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) || f.secretRef.name != '{{ $s }}')))
+      message: {{ printf "model.mode gateway: a run pod never reads the model Secret %s (volume, projected source, env or envFrom); the gateway holds the keys" $s | quote }}
     {{- end }}
     - expression: "!has(object.spec.ephemeralContainers)"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
