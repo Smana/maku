@@ -57,8 +57,8 @@ type Config struct {
 	// default). It is refused in gateway mode, where the gateway holds the keys.
 	ModelSecret string `json:"modelSecret,omitempty"`
 	// Model is how runs reach a model: secret (ModelSecret) or gateway (v4 step 4, D7).
-	Model ModelConfig `json:"model,omitzero"`
-	GitSecret   string `json:"gitSecret"`
+	Model     ModelConfig `json:"model,omitzero"`
+	GitSecret string      `json:"gitSecret"`
 	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
 	// write token implementer and tester runs mount. Unset, those roles are refused unless
 	// UnsafeSharedGitToken lets them share gitSecret, as a laptop's one PAT does.
