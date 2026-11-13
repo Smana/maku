@@ -3,6 +3,7 @@
 package mergepolicy
 
 import (
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -175,7 +176,7 @@ func TestARefusedFileBindingIsIsolated(t *testing.T) {
 	if s.Refused["alert-rules"].Reason != config.ReasonMissingParameter {
 		t.Fatalf("%+v", s.Refused)
 	}
-	if a, ok := s.Classes["alert-rules"]; !ok || !a.Class.Shadow || a.Class.MaxModifiedLines != 40 {
+	if a, ok := s.Classes["alert-rules"]; !ok || !a.Class.Shadow || a.Class.MaxModifiedLines != 40 || a.PolicyGeneration != 2 {
 		t.Fatalf("the last resolved class serves: %+v", s.Classes)
 	}
 
@@ -266,5 +267,35 @@ func TestStructuralBetweenBindingFiles(t *testing.T) {
 	}
 	if got["alert-rules"] != KindRelaxation || got["docs-links"] != KindUnchanged || got["revert"] != KindUnchanged {
 		t.Fatalf("%+v", ch)
+	}
+}
+
+// A published config reaches a cut-over repository's decision at once: Authority resolves the file
+// again under it rather than deciding on the class the last read resolved (B9, B13).
+func TestAuthorityReadsANewConfigBeforeTheNextRead(t *testing.T) {
+	w, _, src := boundAuthorityRig()
+	w.Observe(t.Context(), "o/r", []byte(bindingFile))
+	republish(w, src, "two", "alert-rules", config.PolicySpec{Class: config.Class{MaxModifiedLines: 10}, Requires: []string{"allowedFiles"}})
+	s, err := w.Authority("o/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := s.Classes["alert-rules"]; a.Class.MaxModifiedLines != 10 || a.PolicyGeneration != 3 {
+		t.Fatalf("decided on the old class: %+v", a)
+	}
+	if cl := src.c.RepositoryFor("o/r").Classes; cl["alert-rules"].MaxModifiedLines != 10 {
+		t.Fatalf("classSource: %+v", cl["alert-rules"])
+	}
+	// The file's read time is the fence's, not this re-resolution's.
+	if s.Read != w.now() {
+		t.Fatalf("read %v", s.Read)
+	}
+
+	// A config no longer listing the repository cannot resolve it: never decide on the old class.
+	next := *src.c
+	next.Hash, next.Repositories = "three", []config.Repository{{Name: "o/other"}}
+	src.c = &next
+	if _, err := w.Authority("o/r"); !errors.Is(err, ErrStale) {
+		t.Fatalf("got %v, want ErrStale", err)
 	}
 }

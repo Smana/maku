@@ -383,12 +383,29 @@ var reviewKeysAllowed = []string{"harness", "harnessAllowed", "escalation"}
 // or zero value decodes to the absent value, and would otherwise pass as undeclared.
 func reviewKeys(tree any) error {
 	root, _ := tree.(map[string]any)
+	var errs []error
+	// The binding shape: review is bound off, with no parameter (R30, B1).
+	list, _ := root["mergePolicies"].([]any)
+	for _, e := range list {
+		b, _ := e.(map[string]any)
+		if b["name"] != "review" {
+			continue
+		}
+		for _, k := range slices.Sorted(maps.Keys(b)) {
+			if k != "name" && k != "mode" {
+				errs = append(errs, fmt.Errorf("binding review: %s is refused on review: it is bound with mode off and nothing else, "+
+					"and a human merges it", k))
+			}
+		}
+		if m := b["mode"]; m != false && m != config.ModeOff {
+			errs = append(errs, errors.New("binding review: review is bound with mode off: a human merges it"))
+		}
+	}
 	classes, _ := root["classes"].(map[string]any)
 	review, ok := classes["review"].(map[string]any)
 	if !ok {
-		return nil
+		return errors.Join(errs...)
 	}
-	var errs []error
 	for _, k := range slices.Sorted(maps.Keys(review)) {
 		if !slices.Contains(reviewKeysAllowed, k) {
 			errs = append(errs, fmt.Errorf("class review: %s is refused on review: it declares harness, harnessAllowed and escalation only, "+

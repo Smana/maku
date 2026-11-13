@@ -24,6 +24,9 @@ type Resolved struct {
 	Branches []config.Class
 	Approval []string // requiresApproval's paths
 	Profile  config.HarnessProfile
+	// PolicyGeneration is a binding's: the generation of the MergePolicy its class was resolved
+	// from, the last resolved one's when that one serves (B9, B12); 0 for a class-shape file.
+	PolicyGeneration int64
 }
 
 // Variants are the classes the evaluator decides on, one at a time: the class holds when one
@@ -297,6 +300,9 @@ func ResolveBindings(f *File, rc *config.Repository, c *config.Config) (map[stri
 		}
 		served[b.Name] = cl
 		classes[b.Name] = resolvedOf(cl)
+		r := classes[b.Name]
+		r.PolicyGeneration = p.Generation
+		classes[b.Name] = r
 	}
 	return classes, refused
 }

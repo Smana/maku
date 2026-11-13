@@ -66,16 +66,18 @@ func TestParseRefusesABadBindingFile(t *testing.T) {
 		many += fmt.Sprintf("  - {name: c%d, mode: shadow}\n", i)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
-		"both shapes":     {"factory: aws-0\nclasses: {docs-links: {mode: off, author: agents, harness: plain}}\nmergePolicies: [{name: docs-links, mode: live}]\n", "classes (the old shape) or mergePolicies, never both"},
-		"a name twice":    {"factory: aws-0\nmergePolicies: [{name: docs, mode: live}, {name: docs, mode: off}]\n", "docs is bound twice"},
-		"too many":        {many, fmt.Sprintf("at most %d", MaxClasses)},
-		"a bad mode":      {"factory: aws-0\nmergePolicies: [{name: docs, mode: armed}]\n", `mode "armed"`},
-		"no mode":         {"factory: aws-0\nmergePolicies: [{name: docs}]\n", `mode ""`},
-		"a bad name":      {"factory: aws-0\nmergePolicies: [{name: Docs, mode: live}]\n", `"Docs" is not a class name`},
-		"an unknown key":  {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, harness: plain}]\n", `key "harness" is not a field`},
-		"an empty path":   {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, allowedFiles: ['']}]\n", "an empty pattern"},
-		"an empty asking": {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, requiresApproval: [{changedFiles: []}]}]\n", "asks about nothing"},
-		"a negative cap":  {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, maxPerDay: -1}]\n", "maxPerDay is 0"},
+		"both shapes":             {"factory: aws-0\nclasses: {docs-links: {mode: off, author: agents, harness: plain}}\nmergePolicies: [{name: docs-links, mode: live}]\n", "classes (the old shape) or mergePolicies, never both"},
+		"a name twice":            {"factory: aws-0\nmergePolicies: [{name: docs, mode: live}, {name: docs, mode: off}]\n", "docs is bound twice"},
+		"too many":                {many, fmt.Sprintf("at most %d", MaxClasses)},
+		"a bad mode":              {"factory: aws-0\nmergePolicies: [{name: docs, mode: armed}]\n", `mode "armed"`},
+		"no mode":                 {"factory: aws-0\nmergePolicies: [{name: docs}]\n", `mode ""`},
+		"a bad name":              {"factory: aws-0\nmergePolicies: [{name: Docs, mode: live}]\n", `"Docs" is not a class name`},
+		"an unknown key":          {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, harness: plain}]\n", `key "harness" is not a field`},
+		"an empty path":           {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, allowedFiles: ['']}]\n", "an empty pattern"},
+		"an empty asking":         {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, requiresApproval: [{changedFiles: []}]}]\n", "asks about nothing"},
+		"review with a parameter": {"factory: aws-0\nmergePolicies: [{name: review, mode: \"off\", holdoutChecks: [x]}]\n", "binding review: holdoutChecks is refused on review"},
+		"review in shadow":        {"factory: aws-0\nmergePolicies: [{name: review, mode: shadow}]\n", "binding review: review is bound with mode off"},
+		"a negative cap":          {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, maxPerDay: -1}]\n", "maxPerDay is 0"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.body))
@@ -214,4 +216,12 @@ classes:
 
 func equalClass(a, b config.Class) bool {
 	return config.ResolvedHash(a) == config.ResolvedHash(b) && a.Live == b.Live && a.Shadow == b.Shadow
+}
+
+// R30 for the binding shape: review is bound off and nothing else, and parses so.
+func TestReviewIsBoundOff(t *testing.T) {
+	f, err := Parse([]byte("factory: aws-0\nmergePolicies: [{name: review, mode: off}]\n"))
+	if err != nil || f.MergePolicies[0].Mode != config.ModeOff {
+		t.Fatalf("%+v %v", f, err)
+	}
 }

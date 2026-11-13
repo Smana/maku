@@ -58,6 +58,8 @@ type Snapshot struct {
 	File *File
 	// cfgHash is the hash of the config the file was evaluated under: the cache key's second half.
 	cfgHash string
+	// body is the file as read, so Authority can evaluate it again under a newer config.
+	body []byte
 }
 
 // Watch observes each owned repository's file as the fence reads it. It decides nothing: the gate
@@ -86,6 +88,11 @@ type Watch struct {
 // failed read, so a rate shows it is still bad. A file whose hash is the last read's is not
 // evaluated again under the same config (its Hash): a published config re-evaluates it.
 func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
+	w.observe(ctx, repository, body, w.now())
+}
+
+// observe is Observe of a file read at read.
+func (w *Watch) observe(ctx context.Context, repository string, body []byte, read time.Time) {
 	cfg := w.Cfg.Current()
 	rc := w.listed(cfg, repository)
 	if rc == nil {
@@ -103,7 +110,7 @@ func (w *Watch) Observe(ctx context.Context, repository string, body []byte) {
 	if evaluated {
 		s = w.evaluate(cfg, rc, hash, body, last)
 	}
-	s.Read = w.now()
+	s.Read, s.body = read, body
 	switch {
 	case s.Err != nil && OnlyGuardrail(s.Err):
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonGuardrail)
@@ -212,7 +219,9 @@ func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string,
 			continue
 		}
 		if cl, again := config.Recheck(b.Name, prior.Class, policyContext(cfg), rc.Merge); again == nil {
-			s.Classes[b.Name] = resolvedOf(cl)
+			r := resolvedOf(cl)
+			r.PolicyGeneration = prior.PolicyGeneration
+			s.Classes[b.Name] = r
 		}
 	}
 	return s
@@ -270,14 +279,35 @@ func (w *Watch) demote(cfg *config.Config, rc *config.Repository, key string, la
 // Authority is a cut-over repository's policy as the gate decides on it (stage 4): its current
 // snapshot, fresh within Stale, valid and declaring classes, with each relaxed class in shadow.
 // Anything else is an error the gate pauses on (MP13): ErrUnreadable, ErrStale or ErrInvalid.
-func (w *Watch) Authority(repository string) (Snapshot, error) {
+//
+// A snapshot evaluated under another config than the current one is evaluated again first, as the
+// fence read it: a published config (a MergePolicy edit, the guardrails) reaches the decision at
+// once, not at the next read. One that still cannot be evaluated under it is ErrStale.
+func (w *Watch) Authority(repository string) (Snapshot, error) { return w.authority(repository, true) }
+
+// authority is Authority; current false skips the config check, for Classes: its readers decide
+// no merge, and evaluating from there would recurse (observe lists the repositories, which reads
+// Classes through the class source).
+func (w *Watch) authority(repository string, current bool) (Snapshot, error) {
 	key := strings.ToLower(repository)
+	var cfg *config.Config
+	if current {
+		cfg = w.Cfg.Current()
+		w.mu.RLock()
+		s, ok := w.state[key]
+		w.mu.RUnlock()
+		if ok && s.cfgHash != cfg.Hash {
+			w.observe(context.Background(), repository, s.body, s.Read)
+		}
+	}
 	w.mu.RLock()
 	defer w.mu.RUnlock()
 	s, ok := w.state[key]
 	switch {
 	case !ok:
 		return Snapshot{}, ErrUnreadable
+	case current && s.cfgHash != cfg.Hash:
+		return s, ErrStale
 	case w.Stale > 0 && w.now().Sub(s.Read) >= w.Stale:
 		return s, ErrStale
 	case s.Err != nil || !s.HasClasses:
@@ -291,7 +321,7 @@ func (w *Watch) Authority(repository string) (Snapshot, error) {
 // (config.SetClassSource): the last valid file's, with relaxed classes in shadow, and every live
 // class in shadow while the current file gives no authority, so nothing merges on it.
 func (w *Watch) Classes(repository string) (map[string]config.Class, bool) {
-	_, authErr := w.Authority(repository)
+	_, authErr := w.authority(repository, false)
 	key := strings.ToLower(repository)
 	w.mu.RLock()
 	defer w.mu.RUnlock()
