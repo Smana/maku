@@ -39,9 +39,13 @@ func Requirable() []string {
 // it never widens what the policy says.
 // +kubebuilder:object:generate=true
 type Binding struct {
+	// Name is the MergePolicy's, so the class's (B1).
+	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:MaxLength=40
+	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`
 	Name string `json:"name"`
-	// +kubebuilder:validation:MaxLength=6
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:Enum=live;shadow;off
 	Mode string `json:"mode"`
 	// AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
 	// the policy, never both.
@@ -82,6 +86,7 @@ type PolicySpec struct {
 	// Requires names the parameters each binding must set: of Requirable.
 	// +listType=set
 	// +kubebuilder:validation:MaxItems=5
+	// +kubebuilder:validation:items:Enum=allowedFiles;companionFiles;requiredLabel;oracleWorkflow;holdoutChecks
 	Requires []string `json:"requires,omitempty"`
 }
 
