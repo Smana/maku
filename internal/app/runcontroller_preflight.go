@@ -44,7 +44,7 @@ func runControllerResults(res runctl.Result, mode string) []preflight.Result {
 	}
 	return []preflight.Result{run,
 		{Check: "tracing", Outcome: preflight.Skip, Message: "the collector's probe from a run pod is not built yet"},
-		{Check: "models", Component: "", Outcome: preflight.Skip, Message: "the run aliases' probe through the gateway is not built yet"}}
+		{Check: "models", Outcome: preflight.Skip, Message: "the run aliases' probe through the gateway is not built yet"}}
 }
 
 // runControllerSource serves pf's latest result; nil before the preflight exists.
