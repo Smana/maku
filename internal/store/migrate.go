@@ -60,6 +60,11 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 	if err := refuseInvalidIndexes(ctx, conn, files); err != nil {
 		return 0, err
 	}
+	// A database the Atlas operator migrated is adopted first: its revisions become ours, so
+	// nothing below applies a file twice.
+	if err := adopt(ctx, conn, files, log); err != nil {
+		return 0, err
+	}
 	applied, err := recorded(ctx, conn)
 	if err != nil {
 		return 0, err

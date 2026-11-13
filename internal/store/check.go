@@ -134,13 +134,21 @@ func schemaCurrent(ctx context.Context, q querier, files []migrations.File) erro
 	return nil
 }
 
-// newestApplied reads the newest applied version from room_broker_revisions: "" when the
-// database holds no ledger at all.
+// newestApplied reads the newest applied version from room_broker_revisions, else from the Atlas
+// operator's ledger (a cnref database before its first migrate): "" when the database holds
+// neither ledger, ErrSchemaUnverified when the one it holds is not readable by this role.
 func newestApplied(ctx context.Context, q querier) (string, error) {
 	var exists, readable bool
 	if err := q.QueryRow(ctx, `SELECT to_regclass('public.room_broker_revisions') IS NOT NULL,
 		coalesce(has_column_privilege(to_regclass('public.room_broker_revisions'), 'version', 'SELECT'), false)`).Scan(&exists, &readable); err != nil {
 		return "", fmt.Errorf("schema check: %w", err)
+	}
+	sql, args := newestVersionSQL, []any{}
+	if !exists {
+		if err := q.QueryRow(ctx, atlasLedgerSQL).Scan(&exists, &readable); err != nil {
+			return "", fmt.Errorf("schema check: %w", err)
+		}
+		sql, args = newestAtlasVersionSQL, []any{atlasCloudIdentifier}
 	}
 	if !exists {
 		return "", nil
@@ -149,8 +157,13 @@ func newestApplied(ctx context.Context, q querier) (string, error) {
 		return "", ErrSchemaUnverified
 	}
 	var v string
-	if err := q.QueryRow(ctx, newestVersionSQL).Scan(&v); err != nil {
+	if err := q.QueryRow(ctx, sql, args...).Scan(&v); err != nil {
 		return "", fmt.Errorf("schema check: %w", err)
 	}
 	return v, nil
 }
+
+// newestAtlasVersionSQL is the operator's newest complete revision: a partial or failed one has
+// not finished its file.
+const newestAtlasVersionSQL = `SELECT coalesce(max(version), '') FROM atlas_schema_revisions.atlas_schema_revisions
+	WHERE version <> $1 AND applied = total AND coalesce(error, '') = ''`
