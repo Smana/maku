@@ -32,6 +32,13 @@ spec:
           env:
             - name: RUN_CONTROLLER_CONFIG
               value: /etc/run-controller/config.yaml
+            {{- if include "ap.modelGateway" . | fromJson }}
+            # The gateway-token-ttl preflight binds its TokenRequest to this pod (model.mode gateway).
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+            {{- end }}
           ports:
             - {name: metrics, containerPort: 9090}
             - {name: probes, containerPort: 9091}

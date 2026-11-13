@@ -439,8 +439,9 @@ out="$gw"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | ((has("modelSecret") | not) and .model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and .model.gateway.ports.public == 8080 and .model.gateway.ports.internal == 8081 and .model.gateway.audiencePrefix == "maku-gateway" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (.model.gateway.aliases.internal | join(",")) == "tier-standard" and .model.gateway.serviceAccount.namespace == "maku" and .model.gateway.serviceAccount.name == "run-controller")' 'gateway mode: no modelSecret, the gateway in the release namespace by default, its ports, prefix, aliases and the controller'"'"'s own ServiceAccount'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git"' 'gateway mode: the controller may not read the model Secret'
 ykind Role 'select(.metadata.name=="run-controller-token") | (.metadata.namespace == null and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "serviceaccounts/token" and (.rules[0].resourceNames | join(",")) == "run-controller" and (.rules[0].verbs | join(",")) == "create")' 'gateway mode: the preflight requests its own ServiceAccount token, by name, nothing else'
-ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("projected ServiceAccount tokens")) | .expression | test("startsWith\\('"'"'maku-gateway[.]'"'"'\\)")' 'gateway mode: the run-pod policy holds token audiences to the broker, the room tools and the gateway prefix'
-ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("never mounts the model Secret agent-model")) | .expression | test("agent-model")' 'gateway mode: the run-pod policy refuses the model Secret'
+ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("projected ServiceAccount tokens")) | .expression | (test("startsWith\\('"'"'maku-gateway[.]public[.]'"'"'\\)") and test("startsWith\\('"'"'maku-gateway[.]internal[.]'"'"'\\)") and (test("startsWith\\('"'"'maku-gateway[.]'"'"'\\)") | not))' 'gateway mode: the run-pod policy holds token audiences to the broker, the room tools and the gateway'"'"'s two run listeners'
+ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("never reads the model Secret agent-model")) | .expression | (test("secretKeyRef") and test("envFrom") and test("projected"))' 'gateway mode: the run-pod policy refuses the model Secret by volume, projected source, env and envFrom'
+ykind Deployment 'select(.metadata.name=="run-controller") | (.spec.template.spec.containers[0].env | map(select(.name == "POD_NAME" or .name == "POD_UID") | .valueFrom.fieldRef.fieldPath) | join(",")) == "metadata.name,metadata.uid"' 'gateway mode: the controller knows its own pod, for the preflight'"'"'s bound token'
 gwext="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.model.mode=gateway \
   --set runController.model.gateway.service=agentgateway --set runController.model.gateway.namespace=ai \
   --set runController.model.gateway.ports.public=9080 --set runController.model.gateway.audiencePrefix=cnref.gw \
@@ -450,7 +451,8 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 for r in "$q" "$ctl" "$nonp"; do
   out="$r"
   ynone 'select(.metadata.name=="run-controller-token")' 'secret mode: no token Role'
-  ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never mounts the model Secret"))' 'secret mode: the run-pod policy is unchanged'
+  ynone 'select(.kind=="Deployment" and .metadata.name=="run-controller") | .spec.template.spec.containers[0].env[] | select(.name == "POD_NAME")' 'secret mode: the controller Deployment is unchanged'
+  ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never reads the model Secret"))' 'secret mode: the run-pod policy is unchanged'
 done
 bad 'runController.model.gateway.aliases.public is required' --set runController.model.mode=gateway
 bad "at '/runController/model/mode'" --set runController.model.mode=direct

@@ -396,11 +396,14 @@ and sends the provider its own key, never the token. The token is not rotated: t
 once, and gVisor raises no inotify event for a rotated file. So it lives the pod's deadline plus 10
 minutes. The run controller's preflight (`gateway-token-ttl`) refuses gateway runs when the apiserver
 caps token lifetimes under the longest run's. That check needs `create` on `serviceaccounts/token`
-for the run controller's own ServiceAccount, by name, and nothing else. The run-pod policy adds two
-rules in this mode:
-- a projected token's audience is `room-broker`, `room-tools` or `<prefix>.<…>`, never the apiserver's
-  or another service's;
-- no pod mounts `modelSecret`.
+for the run controller's own ServiceAccount, by name, and nothing else. Its token is bound to the
+controller's own pod (`POD_NAME` and `POD_UID` from the downward API), so the apiserver stops
+accepting it when that pod goes. Its audience, `<prefix>.preflight`, is one that no gateway route and
+no run admits. The run-pod policy adds two rules in this mode:
+- a projected token's audience is `room-broker`, `room-tools`, `<prefix>.public.<alias>` or
+  `<prefix>.internal.<alias>`, never the apiserver's, the broker's client audiences or another service's;
+- no pod reads `modelSecret`: no Secret volume, projected source, `env` `secretKeyRef` or `envFrom` in
+  any container or init container.
 
 The run controller's Role no longer reads that Secret.
 

@@ -236,8 +236,11 @@ const runTokenMargin = 5 * time.Minute
 func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun, now time.Time) (Model, []byte, hold, error) {
 	c := r.Cfg
 	m, why, err := r.model(ctx, run)
-	if why != "" || err != nil {
-		return Model{}, nil, missingSecret(why), err
+	if err != nil {
+		return Model{}, nil, hold{}, err
+	}
+	if why != "" {
+		return Model{}, nil, missingSecret(why), nil
 	}
 	if c.PerRun() {
 		if h, err := r.runToken(ctx, run, now); err != nil || h.why != "" {

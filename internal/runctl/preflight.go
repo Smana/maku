@@ -67,6 +67,8 @@ type Preflight struct {
 	ProbeStart, ProbePoll time.Duration
 	// ProbeSuffix names the probe pod (default 8 random characters of [a-z2-7]).
 	ProbeSuffix func() string
+	// Self is the run-controller's own pod, which the gateway-token-ttl check binds its token to.
+	Self PodRef
 
 	mu  sync.Mutex
 	res Result

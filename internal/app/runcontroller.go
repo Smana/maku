@@ -74,7 +74,8 @@ func RunController(ctx context.Context, logger *slog.Logger, getenv func(string)
 	if err != nil {
 		return err
 	}
-	pf := &runctl.Preflight{Client: mgr.GetAPIReader(), Kube: mgr.GetClient(), Cfg: cfg, Every: runctl.DefaultPreflightEvery, Log: logger, Passed: passed}
+	pf := &runctl.Preflight{Client: mgr.GetAPIReader(), Kube: mgr.GetClient(), Cfg: cfg, Every: runctl.DefaultPreflightEvery, Log: logger, Passed: passed,
+		Self: runctl.PodRef{Name: getenv("POD_NAME"), UID: getenv("POD_UID")}}
 	if err := mgr.Add(pf); err != nil {
 		return err
 	}

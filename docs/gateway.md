@@ -168,9 +168,10 @@ The values, under `maku.runController.model`:
 | `gateway.audiencePrefix` | `maku-gateway` | must equal `maku-gateway.audiencePrefix` |
 | `gateway.aliases` | `{public: [], internal: []}` | the aliases each listener serves. `public` is required in `gateway` mode |
 
-In `gateway` mode, the run-pod policy holds every projected token's audience to `room-broker`, `room-tools`
-or `<prefix>.`, and refuses a pod that mounts `modelSecret`. The run controller's Role no longer reads
-it. The umbrella fails the render when `model.mode: gateway` has neither `maku-gateway.enabled` nor
+In `gateway` mode, the run-pod policy holds every projected token's audience to `room-broker`, `room-tools`,
+`<prefix>.public.` or `<prefix>.internal.`. It also refuses a pod that reads `modelSecret` in any way:
+a volume, a projected source, `env` or `envFrom`. The run controller's Role no longer reads that Secret.
+The preflight's token is bound to the controller's own pod. The umbrella fails the render when `model.mode: gateway` has neither `maku-gateway.enabled` nor
 `model.gateway.service` (an external gateway, as on cloud-native-ref), or when the ports, the prefix or
 the aliases disagree with `maku-gateway`'s.
 

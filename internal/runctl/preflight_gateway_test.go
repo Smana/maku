@@ -24,7 +24,11 @@ func tokenAPI(t *testing.T, now time.Time, limit time.Duration, err error, asked
 	return fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
 		SubResourceCreate: func(_ context.Context, _ client.Client, sub string, obj, subObj client.Object, _ ...client.SubResourceCreateOption) error {
 			tr := subObj.(*authenticationv1.TokenRequest)
-			*asked = append(*asked, sub+" "+obj.GetNamespace()+"/"+obj.GetName()+" "+strings.Join(tr.Spec.Audiences, ","))
+			bound := "unbound"
+			if b := tr.Spec.BoundObjectRef; b != nil {
+				bound = b.APIVersion + "/" + b.Kind + " " + b.Name + " " + string(b.UID)
+			}
+			*asked = append(*asked, sub+" "+obj.GetNamespace()+"/"+obj.GetName()+" "+strings.Join(tr.Spec.Audiences, ",")+" "+bound)
 			if err != nil {
 				return err
 			}
@@ -33,6 +37,20 @@ func tokenAPI(t *testing.T, now time.Time, limit time.Duration, err error, asked
 			return nil
 		},
 	}).Build()
+}
+
+// An API error reading the model Secret is an error to retry, not a hold that names a missing Secret.
+func TestInputsModelSecretErrorIsNoHold(t *testing.T) {
+	boom := apierrors.NewServiceUnavailable("apiserver down")
+	c := fake.NewClientBuilder().WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+			return boom
+		},
+	}).Build()
+	r := &Reconciler{Client: c, APIReader: c, Cfg: testConfig(t)}
+	if _, _, h, err := r.inputs(t.Context(), run("run-abcdefgh"), time.Now()); err == nil || h != (hold{}) {
+		t.Fatalf("hold %+v err %v, want no hold and the error", h, err)
+	}
 }
 
 // GW9: gateway tokens live the longest run's deadline plus 600 s; an apiserver that caps tokens under
@@ -56,6 +74,7 @@ func TestPreflightGatewayTokenTTL(t *testing.T) {
 		var asked []string
 		p := newPreflight(t, fakeReader(t, gvisor()), gatewayTestConfig(t))
 		p.Kube, p.Now = tokenAPI(t, now, tc.limit, tc.err, &asked), func() time.Time { return now }
+		p.Self = PodRef{Name: "run-controller-7d9f-x2", UID: "uid-rc"}
 		gauge := map[string]bool{}
 		p.Passed = func(check string, ok bool) { gauge[check] = ok }
 		soon := p.Tick(t.Context())
@@ -69,13 +88,22 @@ func TestPreflightGatewayTokenTTL(t *testing.T) {
 		if ok, seen := gauge["gateway-token-ttl"]; !seen || ok != (tc.state == PreflightPassed) {
 			t.Errorf("%s: gauge %v", name, gauge)
 		}
-		if len(asked) != 1 || asked[0] != "token maku/run-controller maku-gateway.preflight" {
+		if len(asked) != 1 || asked[0] != "token maku/run-controller maku-gateway.preflight v1/Pod run-controller-7d9f-x2 uid-rc" {
 			t.Errorf("%s: token requests %v", name, asked)
 		}
 	}
+	// Without its own pod (the downward API's POD_NAME and POD_UID), the controller requests no token:
+	// an unbound one would outlive it.
+	var unbound []string
+	p := newPreflight(t, fakeReader(t, gvisor()), gatewayTestConfig(t))
+	p.Kube = tokenAPI(t, now, 24*time.Hour, nil, &unbound)
+	p.Tick(t.Context())
+	if got := p.Result(); got.State != PreflightFailed || got.Check != "gateway-token-ttl" || !strings.Contains(got.Message, "POD_NAME and POD_UID") || len(unbound) != 0 {
+		t.Errorf("no pod reference: %+v, requests %v", got, unbound)
+	}
 	// secret mode requests no token.
 	var asked []string
-	p := newPreflight(t, fakeReader(t, gvisor()), testConfig(t))
+	p = newPreflight(t, fakeReader(t, gvisor()), testConfig(t))
 	p.Kube = tokenAPI(t, now, time.Hour, nil, &asked)
 	if p.Tick(t.Context()); p.Result().State != PreflightPassed || len(asked) != 0 {
 		t.Fatalf("secret mode: %+v, requests %v", p.Result(), asked)
