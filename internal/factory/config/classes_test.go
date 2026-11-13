@@ -258,3 +258,64 @@ func TestValidateClassDescription(t *testing.T) {
 		})
 	}
 }
+
+// Reusable merge policies PR2: a class carries requiresApproval, so a resolved binding's approval
+// paths reach the central gate.
+func TestClassRequiresApproval(t *testing.T) {
+	for name, tc := range map[string]struct{ class, err string }{
+		"a path":          {"x: {requiresApproval: [{changedFiles: ['^infra/']}]}", ""},
+		"no path":         {"x: {requiresApproval: [{changedFiles: []}]}", "class x: a requiresApproval's changedFiles is empty: it asks about nothing"},
+		"a bad pattern":   {"x: {requiresApproval: [{changedFiles: ['(']}]}", `class x: requiresApproval "(" is not a regular expression`},
+		"an empty string": {"x: {requiresApproval: [{changedFiles: ['']}]}", `class x: requiresApproval "" is not a regular expression`},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(withClasses(t, "docs-links: {}\n  revert: {}\n  "+tc.class)))
+			if tc.err == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := c.RepositoryFor("Smana/cloud-native-ref").Classes["x"].RequiresApproval; len(got) != 1 || got[0].ChangedFiles[0] != "^infra/" {
+					t.Fatalf("requiresApproval = %+v", got)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.err) {
+				t.Fatalf("got %v, want %q", err, tc.err)
+			}
+		})
+	}
+}
+
+// PR2: oracle.workflow and monitor.flux.source are optional in the type (a policy leaves them to
+// the binding and the repository) and still required on a class, with today's messages.
+func TestOracleWorkflowStillRequiredOnAClass(t *testing.T) {
+	c := "docs-links: {}\n  revert: {}\n  x: {diffShape: links-only, holdoutChecks: [h], modifyOnly: true, allowedFiles: ['^docs/.+$'], oracle: {probe: dead-links, maxFindings: 10}}"
+	_, err := Parse([]byte(withClasses(t, c)))
+	if want := `class x: oracle.workflow "" is not a workflow file name`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+	c = "docs-links: {}\n  revert: {}\n  x: {monitor: {followUpWindow: 24h, flux: {within: 30m}}}"
+	_, err = Parse([]byte(withClasses(t, c)))
+	if want := `class x: monitor.flux.source "" is not namespace/name`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+}
+
+// B2, Q14: the repository names the Flux source that delivers it, once, in merge.
+func TestMergeFluxSource(t *testing.T) {
+	const at = "  policyBotLogin: ogenki-merge-gate[bot]\n"
+	if !strings.Contains(good, at) {
+		t.Fatal("the fixture's policyBotLogin line moved")
+	}
+	c, err := Parse([]byte(strings.Replace(good, at, at+"  fluxSource: flux-system/flux-system\n", 1)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.RepositoryFor("Smana/cloud-native-ref").Merge.FluxSource; got != "flux-system/flux-system" {
+		t.Fatalf("fluxSource = %q", got)
+	}
+	_, err = Parse([]byte(strings.Replace(good, at, at+"  fluxSource: nope\n", 1)))
+	if want := `merge.fluxSource "nope" is not namespace/name`; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("got %v, want %q", err, want)
+	}
+}

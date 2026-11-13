@@ -39,6 +39,10 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	ProtectedFiles []string `json:"protectedFiles,omitempty"`
+	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live
+	// class (merge policies MP12).
+	// +kubebuilder:validation:MaxItems=16
+	RequiresApproval []ApprovalLeaf `json:"requiresApproval,omitempty"`
 	// ModifyOnly: no file is added, deleted, renamed or copied.
 	ModifyOnly bool `json:"modifyOnly,omitempty"`
 	// MaxPatchFiles caps the changed files and MaxModifiedLines their additions plus deletions,
@@ -87,6 +91,14 @@ type Class struct {
 	// +kubebuilder:validation:items:MaxLength=253
 	HarnessAllowed []string    `json:"harnessAllowed,omitempty"`
 	Escalation     *Escalation `json:"escalation,omitempty"`
+}
+
+// ApprovalLeaf asks a human about a pull request touching one of its paths, even in a live class.
+// +kubebuilder:object:generate=true
+type ApprovalLeaf struct {
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	ChangedFiles []string `json:"changedFiles"`
 }
 
 // Escalation maps a signal group to a profile of harnessAllowed; an absent group goes to the human.
@@ -146,8 +158,11 @@ type VerificationWatch struct {
 // blamed on the merge.
 // +kubebuilder:object:generate=true
 type FluxWatch struct {
+	// Source is namespace/name. Optional in the type, since a MergePolicy leaves it to the
+	// repository's merge.fluxSource; required on a class.
+	// +optional
 	// +kubebuilder:validation:MaxLength=1024
-	Source string   `json:"source"` // namespace/name
+	Source string   `json:"source,omitempty"`
 	Within Duration `json:"within"`
 }
 
@@ -165,8 +180,11 @@ var sourceRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?/[a-z0-9]([-a-z
 type Oracle struct {
 	// +kubebuilder:validation:MaxLength=1024
 	Probe string `json:"probe"`
+	// Workflow is optional in the type, since a MergePolicy leaves it to the binding's
+	// oracleWorkflow; required on a class.
+	// +optional
 	// +kubebuilder:validation:MaxLength=1024
-	Workflow    string `json:"workflow"`
+	Workflow    string `json:"workflow,omitempty"`
 	MaxFindings int    `json:"maxFindings"`
 }
 
@@ -218,7 +236,7 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 		bad("class %s: testFirst needs checks: true, the red check runs the toolchain (R17)", name)
 	}
 	if name == "review" && (cl.Live || cl.Shadow || cl.ReadsDiff(name) || len(cl.HoldoutChecks) > 0 || cl.MaxPerDay > 0 ||
-		cl.Monitor != nil || cl.Author != nil || cl.ReleaseAgeCheck != "") {
+		cl.Monitor != nil || cl.Author != nil || cl.ReleaseAgeCheck != "" || len(cl.RequiresApproval) > 0) {
 		bad("class review: review takes checks and testFirst only (R17)")
 	}
 	if m := cl.Monitor; m != nil {
@@ -262,6 +280,16 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 		for _, p := range f.pats {
 			if _, err := regexp.Compile(p); err != nil || p == "" {
 				bad("class %s: %s %q is not a regular expression", name, f.key, p)
+			}
+		}
+	}
+	for _, a := range cl.RequiresApproval {
+		if len(a.ChangedFiles) == 0 {
+			bad("class %s: a requiresApproval's changedFiles is empty: it asks about nothing", name)
+		}
+		for _, p := range a.ChangedFiles {
+			if _, err := regexp.Compile(p); err != nil || p == "" {
+				bad("class %s: requiresApproval %q is not a regular expression", name, p)
 			}
 		}
 	}

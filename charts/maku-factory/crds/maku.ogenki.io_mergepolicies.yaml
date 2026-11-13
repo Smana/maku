@@ -189,6 +189,9 @@ spec:
                             source holds the merge commit.
                           properties:
                             source:
+                              description: |-
+                                Source is namespace/name. Optional in the type, since a MergePolicy leaves it to the
+                                repository's merge.fluxSource; required on a class.
                               maxLength: 1024
                               type: string
                             within:
@@ -230,6 +233,9 @@ spec:
                           maxLength: 1024
                           type: string
                         workflow:
+                          description: |-
+                            Workflow is optional in the type, since a MergePolicy leaves it to the binding's
+                            oracleWorkflow; required on a class.
                           maxLength: 1024
                           type: string
                       type: object
@@ -253,6 +259,23 @@ spec:
                         the factory to adopt it (K11): RunLore's ready-to-merge.
                       maxLength: 253
                       type: string
+                    requiresApproval:
+                      description: |-
+                        RequiresApproval asks a human about a pull request touching one of its paths, even in a live
+                        class (merge policies MP12).
+                      items:
+                        description: ApprovalLeaf asks a human about a pull request
+                          touching one of its paths, even in a live class.
+                        properties:
+                          changedFiles:
+                            items:
+                              maxLength: 512
+                              type: string
+                            maxItems: 64
+                            type: array
+                        type: object
+                      maxItems: 16
+                      type: array
                     shadow:
                       type: boolean
                     testFirst:
@@ -320,6 +343,12 @@ spec:
                   fixRuns:
                     format: int32
                     type: integer
+                  fluxSource:
+                    description: |-
+                      FluxSource is the GitRepository that delivers the repository to the factory's cluster,
+                      namespace/name: the source every monitor.flux of a bound MergePolicy watches (B2, Q14).
+                    maxLength: 1024
+                    type: string
                   gateStatus:
                     description: GateStatus makes the factory post the gate's verdict
                       as a commit status on the pull request.

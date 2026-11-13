@@ -680,42 +680,63 @@ type Merge struct {
 	// The 8 contexts classic protection requires, by name (GitHub Actions, app 15368).
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
+	// +optional
 	RequiredChecks []string `json:"requiredChecks"`
 	// The checks main's CI runs on push, watched on the merge commit. Not RequiredChecks: a
 	// path-filtered push workflow never reports there, and absent must not mean pending (§6.4).
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
+	// +optional
 	VerifyChecks []string `json:"verifyChecks"`
 	// ContractCheck is the check run that proves a task's test contract (R21, TF7): required on
 	// a task with a contract (row 2b), only reported on one without.
 	// +kubebuilder:validation:MaxLength=1024
+	// +optional
 	ContractCheck string `json:"contractCheck,omitempty"`
 	// +kubebuilder:validation:MaxLength=1024
+	// +optional
 	LeakScanCheck string `json:"leakScanCheck"` // R42: TruffleHog's check run, "Security scanning 🔒"
 	// +kubebuilder:validation:MaxLength=253
+	// +optional
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
 	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
+	// +optional
 	GateStatus bool `json:"gateStatus,omitempty"`
 	// PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
 	// the status branch protection requires (D11); nil means true.
+	// +optional
 	PolicyBot *bool `json:"policyBot,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
-	MergerLogin      string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
-	AutoMergesPerDay int    `json:"autoMergesPerDay"`
-	FixRuns          int32  `json:"fixRuns"`
+	// +optional
+	MergerLogin string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
+	// +optional
+	AutoMergesPerDay int `json:"autoMergesPerDay"`
+	// +optional
+	FixRuns int32 `json:"fixRuns"`
 	// CheckReruns caps the re-runs of a cancelled required check per task; 0 hands it to a human
 	// instead. Above 0 the merger App must hold actions: write.
-	CheckReruns  int32    `json:"checkReruns"`
-	VerifyFor    Duration `json:"verifyFor"`    // 30m of main's CI after an auto-merge
+	// +optional
+	CheckReruns int32 `json:"checkReruns"`
+	// +optional
+	VerifyFor Duration `json:"verifyFor"` // 30m of main's CI after an auto-merge
+	// +optional
 	RevertWindow Duration `json:"revertWindow"` // 7 days for a maintainer's factory/revert
 	// AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
 	// a human is told which checks never reported. Omitted, Parse sets 24h (D2); 0s is no bound.
 	// Read it through AwaitingCIBound.
+	// +optional
 	AwaitingCIFor *Duration `json:"awaitingCIFor,omitempty"`
-	Breaker       Breaker   `json:"breaker"`
+	// +optional
+	Breaker Breaker `json:"breaker"`
 	// ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
 	// agents pull request (human path AM1). Off, the approval hands off to a human merge.
+	// +optional
 	ApproveToMerge bool `json:"approveToMerge,omitempty"`
+	// FluxSource is the GitRepository that delivers the repository to the factory's cluster,
+	// namespace/name: the source every monitor.flux of a bound MergePolicy watches (B2, Q14).
+	// +optional
+	// +kubebuilder:validation:MaxLength=1024
+	FluxSource string `json:"fluxSource,omitempty"`
 }
 
 // Breaker is the circuit breaker's outcome window (R41, review G5): a class whose last Window
@@ -2100,6 +2121,9 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	// any other login makes the gate read the factory's own merges as a human's.
 	if c.MergerFolded() && !strings.EqualFold(r.Merge.MergerLogin, c.FactoryLogin) {
 		bad("merge.mergerLogin must be factoryLogin when the merger signs with the factory App: %q is not %q", r.Merge.MergerLogin, c.FactoryLogin)
+	}
+	if s := r.Merge.FluxSource; s != "" && !sourceRE.MatchString(s) {
+		bad("merge.fluxSource %q is not namespace/name", s)
 	}
 	if r.Merge.AutoMergesPerDay < 0 {
 		bad("merge.autoMergesPerDay must be 0 or more")
