@@ -376,6 +376,9 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	if g.AgentsKeyFile != "" && t.PrivateKeyFile != "" && g.AgentsKeyFile != t.PrivateKeyFile {
 		bad("github.agentsKeyFile and runTokens.privateKeyFile name different keys")
 	}
+	if c.Demo && !t.Enabled && g.AgentsAppIDFile != "" { // RunTokenApp would mint from the factory's
+		bad("demo: github.agentsAppIDFile names an agents App the demo would not mint from: set runTokens.enabled, or leave it unset")
+	}
 	if t.PerRun {
 		// v4 D10: the demo mints from its factory App, as RunTokenApp says; elsewhere the agents App.
 		if !t.Enabled && !c.Demo {

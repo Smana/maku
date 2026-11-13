@@ -254,6 +254,14 @@ refuse 'config.github.mergerAppIDFile and apps.merger.mode factory' --set apps.m
 refuse "value must be one of 'separate', 'factory'" --set apps.merger.mode=both
 refuse "additional properties 'bogus' not allowed" --set runTokens.bogus=1
 refuse 'runTokens.enabled needs apps.agents.existingSecret or runTokens.appSecret' --set runTokens.enabled=true
+# Review of #510: one Secret is one App. The agents App never shares the factory's Secret (nor the
+# merger's, the gate's bypass actor), and a separate merger never names the factory's.
+refuse 'apps.agents.existingSecret names the factory App' --set apps.agents.existingSecret=agent-factory-github
+refuse 'apps.agents.existingSecret names the factory App' --set apps.factory.existingSecret=f --set apps.agents.existingSecret=f
+refuse 'runTokens.appSecret names the factory App' --set runTokens.enabled=true --set runTokens.appSecret=agent-factory-github
+refuse 'apps.agents.existingSecret names the merger App' --set apps.agents.existingSecret=m --set mergerSecret=m
+refuse 'mergerSecret names the factory App' --set mergerSecret=agent-factory-github
+refuse 'demo: apps.agents.existingSecret needs runTokens.enabled' --set demo=true --set apps.agents.existingSecret=x
 refuse 'runTokens.perRun needs runTokens.enabled' --set runTokens.perRun=true
 refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set runTokens.appSecret=a --set config.runTokens.enabled=true
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao

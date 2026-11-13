@@ -56,6 +56,10 @@ func TestAgentsAppRefusals(t *testing.T) {
 			"runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile (or runTokens.appIDFile and runTokens.privateKeyFile)"},
 		"per run, the agents App is the factory's": {withAgentsApp(good, "/etc/agent-factory-github/app_id", "/etc/agent-factory-github/private_key") + portable + "runTokens: {enabled: true, perRun: true}\n",
 			"runTokens.perRun: the agents App is the factory App; D12 needs two"},
+		// Review of #510: the demo mints from its factory App unless runTokens.enabled, so a named
+		// agents App would be ignored in silence.
+		"the demo ignoring the agents App": {withAgentsApp(demoGood, agentsID, agentsKey) + "runTokens: {perRun: true}\n",
+			"demo: github.agentsAppIDFile names an agents App the demo would not mint from: set runTokens.enabled, or leave it unset"},
 	} {
 		if _, err := Parse([]byte(tc.body)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want %q", name, err, tc.want)

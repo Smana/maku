@@ -39,5 +39,21 @@ always was when apps.agents is unset. merger: the merger App's Secret, empty whe
 {{- end -}}
 {{- $merger = "" -}}
 {{- end -}}
+{{- /* One Secret is one App (review of #510): the agents App is never the factory's nor the merger's,
+the gate ruleset's bypass actor, and a separate merger is never the factory's. */ -}}
+{{- $agentsKey := ternary "apps.agents.existingSecret" "runTokens.appSecret" (ne $agents "") -}}
+{{- $agentsSecret := $agents | default $runTokens -}}
+{{- if and $agentsSecret (eq $agentsSecret $factory) -}}
+{{- fail (printf "%s names the factory App's Secret %q: the agents App must be a second App (D12)" $agentsKey $factory) -}}
+{{- end -}}
+{{- if and $agentsSecret (eq $agentsSecret $merger) -}}
+{{- fail (printf "%s names the merger App's Secret %q: the merger bypasses the merge gate's ruleset, so a run token could merge past maku/merge-gate" $agentsKey $merger) -}}
+{{- end -}}
+{{- if and $merger (eq $merger $factory) -}}
+{{- fail (printf "mergerSecret names the factory App's Secret %q: set apps.merger.mode factory to fold the merger into the factory App" $factory) -}}
+{{- end -}}
+{{- if and $v.demo $agents (not $v.runTokens.enabled) -}}
+{{- fail "demo: apps.agents.existingSecret needs runTokens.enabled: without it the demo mints from the factory App" -}}
+{{- end -}}
 {{- dict "factory" $factory "agents" $agents "runTokens" $runTokens "merger" $merger | toJson -}}
 {{- end -}}

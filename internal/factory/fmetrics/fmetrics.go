@@ -374,7 +374,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
 	check(err)
 	s.appPermissionMissing, err = meter.Int64Gauge("agent_factory_github_app_permission_missing",
-		metric.WithDescription("1 for each permission an App's installation (agents or factory) lacks on a served repository, against the App's required set, as read at start under runTokens.perRun; 0 once granted (D12)."))
+		metric.WithDescription("1 for each permission an App's installation (agents or factory) lacks on a served repository, against the App's required set, under runTokens.perRun, as read when this replica became leader and never refreshed since; 0 when every served installation was read and grants it (D12)."))
 	check(err)
 	s.mergeGateUnread, err = meter.Int64Counter("agent_factory_merge_gate_rules_unread_total",
 		metric.WithDescription("Fence passes over a repository with merge.gateStatus that could not read whether its default branch requires maku/merge-gate: agent_factory_merge_gate_required keeps its last value meanwhile (D11)."))

@@ -159,9 +159,24 @@ agent's, so the demo keeps the gate advisory and requires no ruleset.
 
 ## Checked at start
 
-Under `runTokens.perRun`, the factory reads each served repository's installation of both Apps
-when it starts (`GET /app/installations/{id}`). It compares the grants with the sets above, the
-factory App's following the config's merger options. For each permission an installation lacks, it
-logs a warning once and sets `maku_factory_github_app_permission_missing{app, permission}` to 1
-([operations](operations.md)). A run whose token asks for a missing permission fails to mint with
-`permission_not_granted` and waits Pending.
+**The Apps are compared by App id, not by file path.** At start the factory reads each `app_id`
+file. Two Secrets can hold the same App, and the chart cannot see that, so the factory refuses to
+start in two cases:
+- **Under `runTokens.perRun`, outside the demo, the agents App's id is the factory App's or the
+  merger App's.** The merger App is the gate ruleset's bypass actor, so a run token would merge past
+  `maku/merge-gate`.
+- **The merger App's id is the factory App's, and a repository's `merge.mergerLogin` is not
+  `factoryLogin`.** Such a merger is folded into the factory App, whatever the paths say.
+
+The chart also refuses a Secret named twice: `apps.agents.existingSecret` (or `runTokens.appSecret`)
+naming the factory's or the merger's Secret, or a separate `mergerSecret` naming the factory's.
+
+**The permission check:** under `runTokens.perRun`, when a replica becomes leader, it reads each
+served repository's installation of both Apps (`GET /app/installations/{id}`). It compares the
+grants with the sets above. The factory App's set follows the config's merger options, and
+includes the merger's permissions when the merger is folded in. For each permission an
+installation lacks, the factory logs a warning once and sets
+`maku_factory_github_app_permission_missing{app, permission}` to 1
+([operations](operations.md)). A permission reads 0 only when every installation could be read.
+The gauge is not refreshed until the next leader change. A run whose token asks for a missing
+permission fails to mint with `permission_not_granted` and waits Pending.
