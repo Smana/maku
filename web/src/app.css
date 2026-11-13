@@ -1216,7 +1216,7 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* A binding (B16): its policy line, its refusal in the bad tone, what it supplies, small. */
 .class-card .binding-policy, .class-card .binding-serving, .class-card .evidence-generations, .class-card .promote-where { margin: 4px 0; font-size: var(--text-small); color: var(--muted-foreground); }
 .class-card .binding-refused { margin: 4px 0; color: var(--destructive-text); }
-.class-card .binding-parameters { margin: 2px 0 6px; padding-left: 18px; font-size: var(--text-small); font-family: var(--font-mono, monospace); overflow-wrap: anywhere; }
+.class-card .binding-parameters { margin: 2px 0 6px; padding-left: 18px; font-size: var(--text-small); font-family: var(--font-mono); overflow-wrap: anywhere; }
 .binding-editor .binding-form { margin: 0 0 12px; }
 .binding-editor .binding-meaning, .policy-definition { font-size: var(--text-small); overflow-x: auto; }
 /* A time inside a settings sentence reads as part of it, not as the log's mono timestamp. */
