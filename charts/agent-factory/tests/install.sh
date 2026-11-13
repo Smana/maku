@@ -42,7 +42,8 @@ NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 [[ -z $GATEWAY ]] || NAME="$NAME-gateway"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
-TAG=e2e
+# TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
+TAG="${TAG:-e2e}"
 NS=maku
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -230,7 +231,7 @@ else
   step "the CRD chart first, then the umbrella"
   install_crds
   if [[ -n $GATEWAY ]]; then
-    step "the gateway's prerequisites: Gateway API $GATEWAY_API, the echo provider, its key Secret"
+    step "the gateway's prerequisites: Gateway API $GATEWAY_API and the echo provider"
     curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
       kubectl apply --server-side -f - >/dev/null
     kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
