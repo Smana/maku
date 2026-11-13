@@ -1,0 +1,68 @@
+# cloud-native-ref served from its bindings (reusable merge policies B2-B4), for the binding file's
+# tests: the class-shape policies and the Repository binding them, over
+# internal/factory/resources/testdata/file.yaml.
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs-links, namespace: agent-system}
+spec:
+  description: Fixes a broken link in the docs, and nothing else.
+  requires: [holdoutChecks]
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: revert, namespace: agent-system}
+spec:
+  requires: [holdoutChecks]
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs, namespace: agent-system}
+spec:
+  harness: base
+  harnessAllowed: [rich]
+  escalation: {notConverged: rich}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: dead-links, namespace: agent-system}
+spec:
+  description: Retargets dead external links a detector found, and nothing else.
+  requires: [allowedFiles, holdoutChecks, oracleWorkflow]
+  modifyOnly: true
+  maxModifiedLines: 20
+  diffShape: links-only
+  protectedFiles: ['^docs/(superpowers|specs)/']
+  oracle: {probe: dead-links, maxFindings: 10}
+  monitor: {oracleRuns: 2, followUpWindow: 168h}
+  maxPerDay: 1
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata: {name: cloud-native-ref, namespace: agent-system}
+spec:
+  factoryRef: aws-0
+  repository: Smana/cloud-native-ref
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+  merge:
+    requiredChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Check the documentation links 🔗"]
+    verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Check the documentation links 🔗"]
+    leakScanCheck: "Security scanning 🔒"
+    policyBotLogin: ogenki-merge-gate[bot]
+    mergerLogin: ogenki-agent-merger[bot]
+    autoMergesPerDay: 10
+    fixRuns: 2
+    checkReruns: 1
+    verifyFor: 30m
+    revertWindow: 168h
+    breaker: {window: 10, maxReverts: 1}
+  mergePolicies:
+    - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+    - {name: revert, mode: shadow, holdoutChecks: ['Check the documentation links 🔗']}
+    - {name: docs, mode: "off"}
+    - name: dead-links
+      mode: shadow
+      allowedFiles: ['^(docs|website/content)/.+\.md$']
+      holdoutChecks: ['Check the documentation links 🔗']
+      oracleWorkflow: dead-links.yaml
+      protectedFiles: ['^website/content/docs/decisions/']
