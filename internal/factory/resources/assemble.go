@@ -14,6 +14,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 
@@ -95,7 +96,9 @@ func (c candidate) objects() []Object {
 // Parse's error is (two culprits). The search starts again on what is left, at most once per
 // candidate. When no removal changes anything, the
 // whole set is refused. A culprit pair refuses its MergePolicy with the error and its Repository
-// as "not served". The Accepted objects are the ones Config is built from.
+// as "not served". An error whose every line names, as not listed, a repository whose Repository
+// was refused before Parse blames no candidate: it echoes that refusal. The Accepted objects are
+// the ones Config is built from.
 //
 // An error means no servable config: the file does not read as YAML, or it does not parse once
 // every candidate is refused (after migration the file alone holds no repository). Result.Refused
@@ -139,8 +142,12 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	name, _ := base["factory"].(string)
 
 	var res Result
+	refusedRepos := map[string]bool{} // the repositories of the Repositories refused before Parse
 	refuse := func(o Object, reason, format string, a ...any) {
 		res.Refused = append(res.Refused, Refusal{Kind: o.Kind, Name: o.Name, Reason: reason, Message: fmt.Sprintf(format, a...)})
+		if o.Kind == KindRepository {
+			refusedRepos[strings.ToLower(str(o.Spec, "repository"))] = true
+		}
 	}
 	refuseInvalid := func(c candidate, msg string) {
 		switch {
@@ -162,6 +169,13 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	cfg, warnings, rs, err := tryParse(set)
 	for err != nil && len(set) > 0 {
 		cur := err.Error()
+		// An error that only names repositories whose Repository was refused before Parse echoes
+		// those refusals: no candidate is at fault, and blaming the Factory would refuse the whole
+		// catalogue over a window that clears on its own (Flux's apply-then-prune). The error
+		// stands as is, and the caller keeps the config it serves.
+		if echoesRefusals(errLines(cur), refusedRepos) {
+			break
+		}
 		// Success first: a removal that makes Parse succeed names the culprit. Only when none
 		// does, the first removal that changes the error does (two culprits). Judging by a
 		// changed error alone would blame a pair whose message merely depends on a bad Factory.
@@ -230,6 +244,24 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 // it is on whichever line comes first, so it would make one error's line differ from itself.
 func errLines(msg string) []string {
 	return strings.Split(strings.TrimPrefix(msg, "config: "), "\n")
+}
+
+// unlisted is a Parse line naming a repository the config does not list: control.repository,
+// runlore.repository, api.systemRepositories and the sponsored lists all say it this way.
+var unlisted = regexp.MustCompile(`"([^"]+)" is not a listed repository`)
+
+// echoesRefusals is true when every line names, as not listed, a repository refused before Parse.
+func echoesRefusals(lines []string, refused map[string]bool) bool {
+	if len(refused) == 0 {
+		return false
+	}
+	for _, l := range lines {
+		m := unlisted.FindStringSubmatch(l)
+		if m == nil || !refused[strings.ToLower(m[1])] {
+			return false
+		}
+	}
+	return true
 }
 
 // containsAll is true when every element of want is in have.
@@ -337,10 +369,9 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 	var set []candidate
 	for _, r := range usable {
 		if boundNames[r.Name] {
-			if count[r.Name] > 0 {
-				refuse(r, v1alpha1.ReasonDefinedTwice, "a per-repository MergePolicy names Repository %q, which holds its own merge and mergePolicies: delete that MergePolicy (B8)", r.Name)
-				continue
-			}
+			// B8: a per-repository MergePolicy still naming it was refused above, alone. The
+			// Repository is the newer intent (Flux applies it before pruning the policy), and
+			// refusing it would unlist the repository for every Factory value that names it.
 			r := r
 			set = append(set, candidate{repo: &r})
 			continue

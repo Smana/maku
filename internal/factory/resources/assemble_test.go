@@ -366,6 +366,38 @@ func TestAssembleBadFactoryMessageHasNoFalseRepositoryErrors(t *testing.T) {
 	}
 }
 
+// A Factory value naming a repository whose Repository was itself refused is that refusal's echo,
+// not the Factory's fault: the Factory is never the culprit for it, and the error names the line
+// rather than the catalogue a Factory-less parse would then miss (live, 2026-11-13).
+func TestAssembleNeverBlamesTheFactoryForARefusedRepository(t *testing.T) {
+	manifests, residual, err := Migrate(file(t), "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := range objs {
+		switch objs[i].Kind {
+		case KindFactory:
+			objs[i].Spec["control"] = map[string]any{"repository": "Smana/cloud-native-ref", "issue": 1}
+		case KindRepository:
+			objs[i].Spec["factoryRef"] = "gcp-0" // refused NotThisFactory before any Parse
+		}
+	}
+	// A second repository keeps the set servable but for the control line.
+	objs = append(objs, repo("maku", "Smana/maku"), policy(t, "maku", "maku"))
+	r, err := Assemble(residual, objs)
+	if x := refusal(r, KindFactory, "aws-0"); x != nil {
+		t.Fatalf("the Factory is blamed for a refused Repository: %+v", x)
+	}
+	if err == nil || !strings.Contains(err.Error(), `control.repository "Smana/cloud-native-ref" is not a listed repository`) ||
+		strings.Contains(err.Error(), "missing") {
+		t.Fatalf("err = %v, want the control line alone", err)
+	}
+}
+
 // v4 D3: a Repository's privateCode reaches the served config.
 func TestAssembleCarriesPrivateCode(t *testing.T) {
 	r0 := repo("maku", "Smana/maku")

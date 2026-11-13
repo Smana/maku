@@ -260,8 +260,10 @@ author: {adopt: {logins: ["`+login+`"], branches: ['`+branch+`']}}
 
 func slicesClone(o []Object) []Object { return append([]Object(nil), o...) }
 
-// PR8: a Repository that adds bindings while a per-repository MergePolicy names it is refused, and
-// so is that MergePolicy; with the Repository's last good put back, the legacy pair serves.
+// PR8, B8: a Repository that adds bindings while a per-repository MergePolicy still names it is
+// served from its bindings, and only that MergePolicy is refused. This is Flux's apply-then-prune
+// window: the new Repository lands before the old policy is pruned, and refusing the Repository
+// too would unlist it, so every Factory value naming it (control.repository) would fail as well.
 func TestBindingDefinedTwice(t *testing.T) {
 	bound := boundRepo(t, "maku", "Smana/maku", 2, anrBindings)
 	objs := append(specPolicies(t), bound, policy(t, "maku-legacy", "maku"))
@@ -269,16 +271,19 @@ func TestBindingDefinedTwice(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refused(r, KindRepository, "maku") != v1alpha1.ReasonDefinedTwice || refused(r, KindMergePolicy, "maku-legacy") != v1alpha1.ReasonDefinedTwice {
-		t.Fatalf("both must be refused DefinedTwice: %+v", r.Refused)
+	if got := refused(r, KindRepository, "maku"); got != "" {
+		t.Fatalf("the bound Repository must be served, refused %q: %+v", got, r.Refused)
 	}
-	objs[len(objs)-2] = repo("maku", "Smana/maku")
-	r, err = Assemble(file(t), objs)
-	if err != nil {
-		t.Fatal(err)
+	if refused(r, KindMergePolicy, "maku-legacy") != v1alpha1.ReasonDefinedTwice {
+		t.Fatalf("the per-repository MergePolicy must be refused DefinedTwice: %+v", r.Refused)
 	}
-	if rc := r.Config.RepositoryFor("Smana/maku"); rc == nil || len(rc.Bound) != 0 || len(r.Refused) != 0 {
-		t.Fatalf("the legacy pair must serve: %+v", r.Refused)
+	if rc := r.Config.RepositoryFor("Smana/maku"); rc == nil || len(rc.Bound) == 0 {
+		t.Fatalf("Smana/maku must be served from its bindings: %+v", rc)
+	}
+	// Once the policy is pruned, nothing is refused.
+	r, err = Assemble(file(t), objs[:len(objs)-1])
+	if err != nil || len(r.Refused) != 0 {
+		t.Fatalf("after the prune: %v %+v", err, r.Refused)
 	}
 }
 

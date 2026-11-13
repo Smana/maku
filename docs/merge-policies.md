@@ -1131,7 +1131,7 @@ the binding shape (`mergePolicies:`, [above](#a-binding)) resolves the same way.
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
-| `DefinedTwice` | a `Repository` and a per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object: the previous `Repository` version serves until then |
+| `DefinedTwice` | the per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object. The `Repository` is served from its bindings meanwhile |
 
 **The per-repository shape** (`spec.repositoryRef`, `classes`, `merge` on one `MergePolicy` per
 repository) is still read in this release, with one warning per object at every start, and removed
