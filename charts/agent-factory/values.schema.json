@@ -59,6 +59,37 @@
         "caName": {"type": "string", "minLength": 1}
       }
     },
+    "externalSecrets": {
+      "description": "v4 D14: an ExternalSecret per listed seam, against a store the values name (docs/install-secrets.md#externalsecrets).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "apiVersion": {"type": "string", "pattern": "^external-secrets\\.io/v1(beta1)?$"},
+        "storeRef": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {"enum": ["ClusterSecretStore", "SecretStore"]},
+            "name": {"type": "string"}
+          }
+        },
+        "refreshInterval": {"type": "string", "pattern": "^([0-9]+(\\.[0-9]+)?(ms|s|m|h))+$"},
+        "secrets": {
+          "type": "object",
+          "additionalProperties": {
+            "type": ["object", "null"],
+            "additionalProperties": false,
+            "properties": {
+              "data": {"type": ["array", "null"], "items": {"type": "object", "required": ["secretKey", "remoteRef"]}},
+              "dataFrom": {"type": ["array", "null"], "items": {"type": "object"}},
+              "template": {"type": ["object", "null"]},
+              "refreshInterval": {"type": "string"}
+            }
+          }
+        }
+      }
+    },
     "postgres": {
       "description": "The single-replica rooms database, demo-only (v4 D9).",
       "type": "object",

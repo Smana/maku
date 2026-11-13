@@ -397,6 +397,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	live := src.Live
 	cfg := live.Current() // the startup fields (D12): read once, never re-derived
+	if err := checkFactorySecrets(cfg, readMounted); err != nil {
+		return err
+	}
 	warnIgnored(log, cfg)
 	sink, tp, shutdownTrace, err := taskSink(ctx, cfg.Tracing.OTLPEndpoint)
 	if err != nil {

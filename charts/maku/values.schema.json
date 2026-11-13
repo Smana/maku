@@ -27,6 +27,7 @@
             "activeWindow": {"type": "string", "pattern": "^[0-9]+(h|m|s)$"}
           }
         },
+        "reloader": {"description": "Annotate the Deployment for Stakater Reloader: a DSN Secret's change rolls the broker.", "type": "boolean"},
         "oidc": {
           "description": "The OIDC client ids by Secret (v4 D8, oidc mode): mounted at /etc/room-broker/oidc, filling the human block's unset id files.",
           "type": "object",

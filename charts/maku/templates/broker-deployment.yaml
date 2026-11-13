@@ -8,6 +8,13 @@ kind: Deployment
 metadata:
   name: room-broker
   labels: {{- include "ap.labels" . | nindent 4 }}
+  {{- if $b.reloader }}
+  {{- $dsns := compact (list $b.database.brokerSecret $b.database.ownerSecret) }}
+  {{- if not $dsns }}{{ fail "broker.reloader: no DSN Secret to watch: set broker.database.brokerSecret" }}{{ end }}
+  annotations:
+    # Stakater Reloader rolls the broker when a DSN Secret changes: the broker reads them once, at start.
+    secret.reloader.stakater.com/reload: {{ join "," $dsns | quote }}
+  {{- end }}
 spec:
   replicas: {{ $b.replicas }}
   selector:
