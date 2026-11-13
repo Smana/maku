@@ -1,3 +1,4 @@
+{{- $apps := include "af.apps" . | fromJson -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -63,8 +64,12 @@ spec:
             - {name: config, mountPath: /etc/agent-factory/config, readOnly: true}
             - {name: broker-ca, mountPath: /etc/agent-factory/openbao-ca, readOnly: true}
             - {name: github, mountPath: /etc/agent-factory-github, readOnly: true}
+            {{- if $apps.merger }}
             - {name: merger, mountPath: /etc/agent-factory-merger, readOnly: true}
-            {{- if .Values.runTokens.enabled }}
+            {{- end }}
+            {{- if $apps.agents }}
+            - {name: agents, mountPath: /etc/agent-factory-agents, readOnly: true}
+            {{- else if $apps.runTokens }}
             - {name: run-tokens, mountPath: /etc/agent-factory-run-tokens, readOnly: true}
             {{- end }}
             - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
@@ -92,16 +97,22 @@ spec:
         - name: broker-ca
           secret: {secretName: {{ .Values.brokerCASecret }}, items: [{key: ca.crt, path: ca.crt}]}
         - name: github
-          secret: {secretName: {{ .Values.githubSecret }}, defaultMode: 0440}
+          secret: {secretName: {{ $apps.factory }}, defaultMode: 0440}
+        {{- if $apps.merger }}
         - name: merger
           # optional: a factory with every class off starts without the merger App (it fails closed); a
           # live or shadow class makes the binary refuse the start when the key is absent: a CrashLoop
           # with a log line, not ContainerCreating (values.yaml: hard prerequisite then).
-          secret: {secretName: {{ .Values.mergerSecret }}, defaultMode: 0440, optional: true}
-        {{- if .Values.runTokens.enabled }}
+          secret: {secretName: {{ $apps.merger }}, defaultMode: 0440, optional: true}
+        {{- end }}
+        {{- if $apps.agents }}
+        - name: agents
+          # The agents App (v4 D12): it mints the runs' tokens; 0440 with fsGroup, as the App keys.
+          secret: {secretName: {{ $apps.agents }}, defaultMode: 0440}
+        {{- else if $apps.runTokens }}
         - name: run-tokens
           # The App whose tokens fill agent-git and agent-git-read; 0440 with fsGroup, as the App keys.
-          secret: {secretName: {{ required "runTokens.appSecret is required with runTokens.enabled" .Values.runTokens.appSecret }}, defaultMode: 0440}
+          secret: {secretName: {{ $apps.runTokens }}, defaultMode: 0440}
         {{- end }}
         - name: rooms-token
           projected:

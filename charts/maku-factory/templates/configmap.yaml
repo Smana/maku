@@ -7,15 +7,36 @@
 {{- $_ := set $api "tls" (dict "certFile" "/etc/agent-factory-api-tls/tls.crt" "keyFile" "/etc/agent-factory-api-tls/tls.key") -}}
 {{- $_ := set $cfg "api" $api -}}
 {{- end -}}
+{{- $apps := include "af.apps" . | fromJson -}}
+{{- if or $apps.agents (not $apps.merger) -}}
+{{- $gh := deepCopy (get $cfg "github" | default dict) -}}
+{{- if $apps.agents -}}
+{{- if or (hasKey $gh "agentsAppIDFile") (hasKey $gh "agentsKeyFile") -}}
+{{- fail "config.github.agentsAppIDFile and apps.agents.existingSecret: set apps.agents.existingSecret alone; the chart writes config.github.agents* to read the mounted App" -}}
+{{- end -}}
+{{- $_ := set $gh "agentsAppIDFile" "/etc/agent-factory-agents/app_id" -}}
+{{- $_ := set $gh "agentsKeyFile" "/etc/agent-factory-agents/private_key" -}}
+{{- end -}}
+{{- if not $apps.merger -}}
+{{- if or (hasKey $gh "mergerAppIDFile") (hasKey $gh "mergerKeyFile") -}}
+{{- fail "config.github.mergerAppIDFile and apps.merger.mode factory: set apps.merger.mode alone; the chart writes config.github.merger* as the factory App's files" -}}
+{{- end -}}
+{{- $_ := set $gh "mergerAppIDFile" (get $gh "appIDFile" | default "/etc/agent-factory-github/app_id") -}}
+{{- $_ := set $gh "mergerKeyFile" (get $gh "privateKeyFile" | default "/etc/agent-factory-github/private_key") -}}
+{{- end -}}
+{{- $_ := set $cfg "github" $gh -}}
+{{- end -}}
 {{- if and .Values.runTokens.perRun (not .Values.runTokens.enabled) (not .Values.demo) -}}
-{{- fail "runTokens.perRun needs runTokens.enabled: the agents App in runTokens.appSecret mints each run's token (the demo mints from the factory's)" -}}
+{{- fail "runTokens.perRun needs runTokens.enabled: the agents App in apps.agents.existingSecret mints each run's token (the demo mints from the factory's)" -}}
 {{- end -}}
 {{- if or .Values.runTokens.enabled .Values.runTokens.perRun -}}
 {{- if hasKey $cfg "runTokens" -}}
 {{- fail "config.runTokens and runTokens.enabled: set runTokens.enabled alone; the chart writes config.runTokens to read the mounted App" -}}
 {{- end -}}
 {{- $rt := dict -}}
-{{- if .Values.runTokens.enabled -}}
+{{- if and .Values.runTokens.enabled $apps.agents -}}
+{{- $rt = dict "enabled" true -}}
+{{- else if .Values.runTokens.enabled -}}
 {{- $rt = dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key" -}}
 {{- end -}}
 {{- if .Values.runTokens.perRun -}}

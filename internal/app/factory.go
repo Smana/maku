@@ -401,6 +401,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	conns.failed = m.ConfigWireError
 	m.ListRepositories(conns.names()...)
 	warnConfig(log, cfg, m)
+	// D12 on App ids: the agents App is never the factory's or the merger's, and a merger that is the
+	// factory App merges as factoryLogin (review of #510).
+	mergerFolded, err := appIdentities(cfg, readAppID)
+	if err != nil {
+		return err
+	}
 	m.ChargePeople(cfg.Budgets.PerPerson.Enabled)
 	sponsors := map[string]string{}
 	for _, sp := range cfg.API.Sponsored {
@@ -667,6 +673,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}}
 	pollers.Sync(conns.names())
 	runnables = append(runnables, pollers)
+	if perRun != nil { // D12: both Apps' installations against their required sets, once
+		runnables = append(runnables, appGrantChecks(cfg, mergerFolded, agentsMinter(cfg, m, log), conns.names, m.GitHubAppPermissionMissing, log))
+	}
 	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
 		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {
 			return fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())

@@ -11,9 +11,10 @@ import (
 )
 
 const (
-	plannerRole = "planner"
-	scoperRole  = "scoper"
-	otherRole   = "other"
+	plannerRole    = "planner"
+	classifierRole = "classifier"
+	scoperRole     = "scoper"
+	otherRole      = "other"
 
 	handoffTool = "room-broker__room_handoff"
 	finishTool  = "finish"
@@ -80,6 +81,9 @@ func (r completionRequest) role() string {
 	system := r.Messages[0]
 	if system.Role == "system" && r.ResponseFormat.Type == "json_object" && strings.Contains(system.Content, "You plan the issues a repository's maintainers will work from") {
 		return plannerRole
+	}
+	if system.Role == "system" && r.ResponseFormat.Type == "json_schema" && strings.Contains(system.Content, "You label one message from a person in a chat thread") {
+		return classifierRole
 	}
 	// OpenHands carries the factory brief in its user turn, not in the SDK's system prompt.
 	for _, message := range r.Messages {
@@ -148,8 +152,8 @@ func plannerDraft() string {
 			"title": "docs: document the verification command",
 			"body": "## What is wrong\nThe requested change has no agreed verification command.\n" +
 				"[NEEDS CLARIFICATION: g1 which command verifies the change?]\n" +
-				"## What it should be\nDocument the change and the way to verify it.\n" +
-				"## Acceptance check\nThe documented verification command succeeds.",
+				"## What it should be\nThe README MUST name the command that verifies the change.\n" +
+				"## Acceptance check\nThe documented verification command MUST exit 0.",
 			"class": "docs",
 		}},
 		"gaps": []map[string]any{{
@@ -213,14 +217,26 @@ func writeCompletion(w http.ResponseWriter, stream bool, call *modelToolCall, co
 	})
 }
 
+// classifierAnswer is intent_classify's closed object: a status question, confidently.
+const classifierAnswer = `{"intent":"status","text":"","confidence":0.9}`
+
 func (s *Stub) completion(w http.ResponseWriter, r *http.Request) {
+	raw, ok := readBody(w, r)
+	if !ok {
+		return
+	}
 	var request completionRequest
-	if !decodeBody(w, r, &request) {
+	if err := json.Unmarshal(raw, &request); err != nil {
+		http.Error(w, "invalid JSON body", http.StatusBadRequest)
 		return
 	}
 	s.modelCalls.Add(1)
 	role := request.role()
+	s.record(role, r, raw)
 	switch role {
+	case classifierRole:
+		s.classifierCalls.Add(1)
+		writeCompletion(w, request.Stream, nil, classifierAnswer)
 	case plannerRole:
 		s.plannerCalls.Add(1)
 		writeCompletion(w, request.Stream, nil, plannerDraft())

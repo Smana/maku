@@ -129,6 +129,18 @@ broker:
     # secretName: that Secret also holds the broker's tls.key.
     caSecretName: room-broker-ca
     issuerRef: {kind: ClusterIssuer, name: ""}
+  # The model gateway's clients listener (charts/maku-gateway, docs/gateway.md): the planner and the
+  # Slack intent classifier call it with a projected ServiceAccount token each (audience
+  # <audiencePrefix>.client.planner and .client.classifier, 3600 s, read at use), never a static key.
+  # Set service (the Gateway's name: maku-gateway's `name`, model-gateway) to turn it on. The chart
+  # then fills human.intake.plan's url and apiKeyFile, and an existing human.slackIntents block's,
+  # when the block sets neither: a block that sets both keeps them, and one set alone fails the
+  # render. namespace "" is the release namespace.
+  modelGateway:
+    service: ""
+    namespace: ""
+    port: 8082
+    audiencePrefix: maku-gateway
   # Escape hatches for oidc mode's files, ROOMS_MCP_KEY and the IdP's network flows.
   # Secrets only through valueFrom.secretKeyRef, never a plaintext value.
   extraEnv: []

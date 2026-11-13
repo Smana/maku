@@ -110,8 +110,9 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 }
 
 // pushCaps are the task's class caps on a push (HR25). A class the repository does not declare
-// never means no cap (#513's review): it takes the strictest cap any declared class sets, each
-// dimension alone, and with none set anywhere, -1, which refuses the push push_size.
+// never means no cap (#513's review): each dimension, files and lines alone, takes the strictest
+// cap any declared class sets for it, and -1 when no class caps that dimension. The applier
+// refuses a push push_size when either dimension is -1, so a dimension no class caps refuses it.
 func pushCaps(cfg *config.Config, t *v1alpha1.Task) (files, lines int) {
 	r := cfg.RepositoryFor(t.Spec.Repository)
 	if cl, ok := r.Class(t.Spec.PredictedClass); ok {

@@ -21,8 +21,8 @@ func TestRunTokens(t *testing.T) {
 		t.Fatalf("RunTokenApp = %q %q %v", id, key, ok)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
-		"no key file": {good + portable + "runTokens: {enabled: true, appIDFile: /a}\n", "runTokens.enabled needs runTokens.appIDFile and runTokens.privateKeyFile"},
-		"no files":    {good + portable + "runTokens: {enabled: true}\n", "runTokens.enabled needs runTokens.appIDFile and runTokens.privateKeyFile"},
+		"no key file": {good + portable + "runTokens: {enabled: true, appIDFile: /a}\n", "(or runTokens.appIDFile and runTokens.privateKeyFile)"},
+		"no files":    {good + portable + "runTokens: {enabled: true}\n", "(or runTokens.appIDFile and runTokens.privateKeyFile)"},
 		"the XR":      {good + "runs: {group: cloud.ogenki.io}\n" + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
 		"the default": {good + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
 	} {

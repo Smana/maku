@@ -223,7 +223,45 @@ refuse() {
     echo "FAIL: $* failed, but not with \"$want\": $err" >&2; fail=1
   fi
 }
-refuse 'runTokens.appSecret is required' --set runTokens.enabled=true
+# apps (v4 D12, plan PR9): the new keys map onto the existing Secrets. The factory App by its new
+# key renders exactly as githubSecret does.
+render() { helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref "$@"; }
+[ "$(render --set apps.factory.existingSecret=agent-factory-github)" = "$base" ] \
+  || { echo "FAIL: apps.factory.existingSecret naming githubSecret's default changes the render" >&2; fail=1; }
+out="$(render --set apps.factory.existingSecret=factory-app)"
+ykind Deployment "$(vol github).secret.secretName == \"factory-app\"" "apps.factory: the new key wins over githubSecret"
+# The agents App: mounted at /etc/agent-factory-agents and named under github.agents*; the
+# runTokens alias is then left out of the config.
+out="$(render --set config.runs.group=maku.ogenki.io --set runTokens.enabled=true --set apps.agents.existingSecret=x)"
+ykind Deployment "$(vol agents).secret | (.secretName == \"x\" and .defaultMode == \"0440\")" "apps.agents: the agents App's Secret, 0440"
+ykind Deployment "$(mnt agents) | (.mountPath == \"/etc/agent-factory-agents\" and .readOnly == true)" "apps.agents: mounted at /etc/agent-factory-agents"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .github | (.agentsAppIDFile == "/etc/agent-factory-agents/app_id" and .agentsKeyFile == "/etc/agent-factory-agents/private_key")' "apps.agents: the config reads the mounted App"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.enabled == true and (has("appIDFile") | not))' "apps.agents: runTokens names no alias pair"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "run-tokens")' "apps.agents: no run-tokens volume"
+out="$(render --set config.runs.group=maku.ogenki.io --set runTokens.enabled=true --set apps.agents.existingSecret=x --set runTokens.appSecret=x)"
+ykind Deployment "$(vol agents).secret.secretName == \"x\"" "apps.agents and the same runTokens.appSecret: one App"
+# The merger folded into the factory App: no merger volume, the config's merger files are the factory's.
+out="$(render --set apps.merger.mode=factory)"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "merger")' "apps.merger.mode factory: no merger volume"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "merger")' "apps.merger.mode factory: no merger mount"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .github | (.mergerAppIDFile == "/etc/agent-factory-github/app_id" and .mergerKeyFile == "/etc/agent-factory-github/private_key")' "apps.merger.mode factory: the merger signs with the factory App's files"
+out="$base"
+ykind Deployment "$(vol merger).secret.secretName == \"agent-factory-merger\"" "default: the merger Secret keeps its name"
+refuse 'apps.agents.existingSecret and runTokens.appSecret name different Secrets' --set runTokens.enabled=true --set apps.agents.existingSecret=x --set runTokens.appSecret=y
+refuse 'apps.merger.mode factory and mergerSecret' --set apps.merger.mode=factory --set mergerSecret=m
+refuse 'config.github.agentsAppIDFile and apps.agents.existingSecret' --set apps.agents.existingSecret=x --set config.github.agentsAppIDFile=/a
+refuse 'config.github.mergerAppIDFile and apps.merger.mode factory' --set apps.merger.mode=factory --set config.github.mergerAppIDFile=/a
+refuse "value must be one of 'separate', 'factory'" --set apps.merger.mode=both
+refuse "additional properties 'bogus' not allowed" --set runTokens.bogus=1
+refuse 'runTokens.enabled needs apps.agents.existingSecret or runTokens.appSecret' --set runTokens.enabled=true
+# Review of #510: one Secret is one App. The agents App never shares the factory's Secret (nor the
+# merger's, the gate's bypass actor), and a separate merger never names the factory's.
+refuse 'apps.agents.existingSecret names the factory App' --set apps.agents.existingSecret=agent-factory-github
+refuse 'apps.agents.existingSecret names the factory App' --set apps.factory.existingSecret=f --set apps.agents.existingSecret=f
+refuse 'runTokens.appSecret names the factory App' --set runTokens.enabled=true --set runTokens.appSecret=agent-factory-github
+refuse 'apps.agents.existingSecret names the merger App' --set apps.agents.existingSecret=m --set mergerSecret=m
+refuse 'mergerSecret names the factory App' --set mergerSecret=agent-factory-github
+refuse 'demo: apps.agents.existingSecret needs runTokens.enabled' --set demo=true --set apps.agents.existingSecret=x
 refuse 'runTokens.perRun needs runTokens.enabled' --set runTokens.perRun=true
 refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set runTokens.appSecret=a --set config.runTokens.enabled=true
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao

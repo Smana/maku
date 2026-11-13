@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"sync"
 	"sync/atomic"
 )
 
@@ -17,13 +18,18 @@ var gitProjectRoot = "/srv/git"
 
 // Stub is the in-process external-service emulator. Its state is safe for concurrent requests.
 type Stub struct {
-	key            *rsa.PrivateKey
-	handler        http.Handler
-	issues         *IssueStore
-	modelCalls     atomic.Int64
-	plannerCalls   atomic.Int64
-	scoperCalls    atomic.Int64
-	scoperHandoffs atomic.Int64
+	key             *rsa.PrivateKey
+	handler         http.Handler
+	issues          *IssueStore
+	modelCalls      atomic.Int64
+	plannerCalls    atomic.Int64
+	scoperCalls     atomic.Int64
+	scoperHandoffs  atomic.Int64
+	classifierCalls atomic.Int64
+
+	// received is what each model request carried, as the provider behind a gateway sees it.
+	receivedMu sync.Mutex
+	received   []ModelRequest
 }
 
 // New builds a stub with one throwaway signing key. It never contacts an external service.
@@ -38,7 +44,11 @@ func New() *Stub {
 	mux.HandleFunc("GET /__counts", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]int{
 			"total": s.ModelCalls(), "planner": s.PlannerCalls(), "scoper": s.ScoperCalls(),
+			"classifier": s.ClassifierCalls(),
 		})
+	})
+	mux.HandleFunc("GET /__received", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.Received())
 	})
 	mux.HandleFunc("GET /oauth/v2/keys", s.jwks)
 	mux.HandleFunc("POST /token", s.token)
@@ -65,6 +75,9 @@ func (s *Stub) ModelCalls() int { return int(s.modelCalls.Load()) }
 
 // PlannerCalls reports governed plan/v2 model requests.
 func (s *Stub) PlannerCalls() int { return int(s.plannerCalls.Load()) }
+
+// ClassifierCalls reports intent_classify model requests.
+func (s *Stub) ClassifierCalls() int { return int(s.classifierCalls.Load()) }
 
 // ScoperCalls reports scoper model requests, including the finish after a handoff.
 func (s *Stub) ScoperCalls() int { return int(s.scoperCalls.Load()) }
