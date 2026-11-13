@@ -92,21 +92,15 @@ func Check(cfg *config.Config, rc *config.Repository, rep evidence.Report, file 
 	if next.Factory != cfg.Factory {
 		return bad("factory: is read-only here: it must stay " + cfg.Factory)
 	}
-	if err := mergepolicy.Validate(next, cfg); err != nil {
+	checked, err := mergepolicy.ValidateFile(next, rc, cfg)
+	if err != nil {
 		return bad(strings.Split(err.Error(), "\n")...)
 	}
-	policy := map[string]mergepolicy.Resolved{}
-	for name, p := range next.Classes {
-		r, err := mergepolicy.Resolve(name, p, cfg)
-		if err != nil {
-			return bad(err.Error())
-		}
-		policy[name] = r
-	}
+	policy := checked.Classes
 	pv := Preview{Valid: true, Proposal: &evidence.Proposal{Path: evidence.PolicyPath, File: file,
 		EditURL: evidence.EditURL(rc.Name, rep.DefaultBranch)}}
 	if old := current(cfg, rc, rep); old != nil {
-		if cs, err := mergepolicy.Structural(old, next, cfg); err == nil {
+		if cs, err := mergepolicy.Structural(old, next, rc, cfg); err == nil {
 			for _, c := range cs {
 				pv.Structural = append(pv.Structural, Change{Class: c.Class, Kind: c.Kind, Why: c.Why})
 			}
@@ -164,7 +158,7 @@ func current(cfg *config.Config, rc *config.Repository, rep evidence.Report) *me
 	if rep.Policy != nil && len(rep.Policy.Classes) > 0 && mergepolicy.Validate(rep.Policy, cfg) == nil {
 		return rep.Policy
 	}
-	f, err := mergepolicy.Export(rc, cfg)
+	f, err := mergepolicy.ExportClasses(rc, cfg)
 	if err != nil {
 		return nil
 	}

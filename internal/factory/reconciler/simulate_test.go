@@ -45,7 +45,7 @@ func conformanceCases(t *testing.T) []Case {
 // Parse, Validate and Resolve, as a repository file the factory reads.
 func exported(t *testing.T, c *config.Config) map[string]mergepolicy.Resolved {
 	t.Helper()
-	f, err := mergepolicy.Export(c.RepositoryFor(""), c)
+	f, err := mergepolicy.ExportClasses(c.RepositoryFor(""), c)
 	if err != nil {
 		t.Fatal(err)
 	}

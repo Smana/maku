@@ -41,7 +41,7 @@ func structural(t *testing.T, old, next string) Change {
 		}
 		return f
 	}
-	ch, err := Structural(parse(old), parse(next), c)
+	ch, err := Structural(parse(old), parse(next), nil, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,7 +139,7 @@ func TestAddedAndRemovedClasses(t *testing.T) {
 	c := central()
 	old, _ := Parse([]byte(base))
 	added, _ := Parse([]byte(base + "  more: {mode: shadow, author: agents, harness: plain}\n  idle: {mode: off, author: agents, harness: plain}\n"))
-	ch, err := Structural(old, added, c)
+	ch, err := Structural(old, added, nil, c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,7 +150,7 @@ func TestAddedAndRemovedClasses(t *testing.T) {
 	if got["more"] != KindRelaxation || got["idle"] != KindTightening || got["docs-broad"] != KindUnchanged {
 		t.Fatalf("%+v", ch)
 	}
-	ch, err = Structural(added, old, c)
+	ch, err = Structural(added, old, nil, c)
 	if err != nil || len(ch) != 3 || ch[1].Kind != KindTightening || ch[1].Class != "idle" || ch[2].Kind != KindTightening {
 		t.Fatalf("%+v %v", ch, err)
 	}

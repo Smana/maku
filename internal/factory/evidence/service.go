@@ -108,7 +108,7 @@ type Report struct {
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
 	// For a repository served from a MergePolicy object: its name, the manifest of its central
 	// classes and merge block (what a GitOps pull request changes), the file name to save it
-	// under, and its classes in the policy file's shape (mergepolicy.Export), which the editor
+	// under, and its classes in the policy file's shape (mergepolicy.ExportClasses), which the editor
 	// edits: the editor never edits spec.classes. Empty for a repository the file serves. Served
 	// is nil when a class has no file shape (Export's error).
 	MergePolicy  string            `json:"mergePolicy,omitempty"`
@@ -468,7 +468,7 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 				r.MergePolicyStatus = &st
 			}
 		}
-		if f, err := mergepolicy.Export(rc, cfg); err == nil {
+		if f, err := mergepolicy.ExportClasses(rc, cfg); err == nil {
 			r.Served = f
 		}
 	}
