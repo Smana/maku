@@ -380,7 +380,7 @@ Broker, bridge and CLI, by pipeline stage:
 
 | Package | Stage |
 |---|---|
-| `cmd/maku-broker` | `serve`, `retention`, `migrate` and `migrate-group` subcommands |
+| `cmd/maku-broker` | `serve`, `retention` and `migrate` subcommands |
 | `cmd/maku-bridge` | The sidecar binary |
 | `cmd/maku-run-controller` | The AgentRun controller binary |
 | `cmd/maku`, `internal/maku` | The human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
@@ -419,7 +419,6 @@ Broker, bridge and CLI, by pipeline stage:
 | `internal/humanapi` + `ui/dist/` | `:8080` WebSocket, room list, actions, embedded UI; `POST /mcp`, the humans' MCP server |
 | `web/` | TypeScript UI and its vitest suite |
 | `internal/metrics` | The metric set and the Prometheus exporter maku-broker serves |
-| `internal/migrategroup` | `maku-broker migrate-group`: Rooms and Tasks copied from one API group to another |
 
 The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 
@@ -492,7 +491,7 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 
 | Binary | Runs as | Image |
 |---|---|---|
-| `maku-broker` | Stateless service in `agent-system`; owns the `Room` CRD (`maku.ogenki.io/v1alpha1`); subcommands `serve`, `retention`, `migrate`, `migrate-group` | `ghcr.io/smana/maku-broker` |
+| `maku-broker` | Stateless service in `agent-system`; owns the `Room` CRD (`maku.ogenki.io/v1alpha1`); subcommands `serve`, `retention`, `migrate` | `ghcr.io/smana/maku-broker` |
 | `maku-bridge` | Native sidecar in every `AgentRun` pod that names a room; relays harness events, carries the room token | `ghcr.io/smana/maku-bridge` |
 | `maku-factory` | The factory's orchestrator in `agent-system`, two replicas, one leading; owns the `Task` CRD; chart `oci://ghcr.io/smana/charts/maku-factory` | `ghcr.io/smana/maku-factory` |
 | `maku-harness` | Main container of every `AgentRun` pod: OpenHands agent-server plus `agent-run`, the git credential helper, `gh` with the PR footer and the trailer hook ([`images/maku-harness`](../images/maku-harness/README.md)) | `ghcr.io/smana/maku-harness` |

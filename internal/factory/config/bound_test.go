@@ -10,27 +10,22 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// listShape is good in the repositories shape, its one entry handed to edit before it is written
-// back: the shape Assemble writes.
+// listShape is base (good's repositories shape) with its first entry handed to edit before it is
+// written back: the shape Assemble writes.
 func listShape(t *testing.T, base string, edit func(top, entry map[string]any)) []byte {
 	t.Helper()
 	var m map[string]any
 	if err := yaml.Unmarshal([]byte(base), &m); err != nil {
 		t.Fatal(err)
 	}
-	entry := map[string]any{}
-	for _, k := range []string{"maintainers", "triggerLabel", "classes", "merge"} {
-		entry[k] = m[k]
-		delete(m, k)
+	list, _ := m["repositories"].([]any)
+	if len(list) == 0 {
+		t.Fatal("listShape: base has no repositories entry")
 	}
-	entry["name"] = m["repository"]
-	delete(m, "repository")
-	api, _ := m["api"].(map[string]any)
-	delete(api, "repositories")
+	entry, _ := list[0].(map[string]any)
 	if edit != nil {
 		edit(m, entry)
 	}
-	m["repositories"] = []any{entry}
 	b, err := yaml.Marshal(m)
 	if err != nil {
 		t.Fatal(err)

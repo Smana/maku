@@ -11,7 +11,7 @@ import (
 // Unset is no acknowledgement; true is one; an explicit false says nothing and is refused.
 func TestPrivateCodeAcknowledgement(t *testing.T) {
 	with := func(v string) string {
-		raw := listShaped(t, good)
+		raw := good
 		if v == "" {
 			return raw
 		}

@@ -17,7 +17,7 @@ import (
 func shadowHandOff(t *testing.T) *rig {
 	t.Helper()
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Classes["docs-links"] = config.Class{Shadow: true}
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	g.f.SetChecks(12, green("SUCCESS"))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "shadow_would_arm" {
 		t.Fatalf("shadow: %s %s", got.Status.Phase, got.Status.Reason)
@@ -165,7 +165,7 @@ func TestAShownApprovalKeepsAByHandReason(t *testing.T) {
 // M1: the gate's own hand-off already said maintainer_approved: the shown approval adds no comment.
 func TestAnApprovalTheHandOffSaidIsNotSaidAgain(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Classes["docs-links"] = config.Class{Shadow: true}
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	g.f.SetChecks(12, green("SUCCESS"))
 	approve(g, t, 77, "abc")
 	got := g.reconcile(t, "3buqdlot", 1)
@@ -200,7 +200,7 @@ func TestAnApprovalBeforeTheRunsEndedIsStale(t *testing.T) {
 // M2: a task whose class is adopted keeps today's path: nothing is shown.
 func TestNoApprovalIsShownForAnAdoptedClass(t *testing.T) {
 	g := shadowHandOff(t)
-	g.r.Cfg.Current().Classes["docs-links"] = config.Class{Shadow: true, Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}}
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}}
 	approve(g, t, 77, "abc")
 	if a := approvalOf(g.reconcile(t, "3buqdlot", 1)); a != nil {
 		t.Fatalf("%+v", a)
@@ -232,8 +232,8 @@ func TestAVetoHidesTheApproval(t *testing.T) {
 // in its place.
 func TestAnApprovalWithApproveToMergeOnStillMerges(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Merge.ApproveToMerge = true
-	g.r.Cfg.Current().Classes["docs-links"] = config.Class{Shadow: true}
+	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
 	approve(g, t, 77, "abc")

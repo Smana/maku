@@ -187,7 +187,7 @@ func (p *IssuePoller) Start(ctx context.Context) error {
 	defer stop()
 	name := p.Repository
 	if rc := p.repo(cfg); rc != nil {
-		name = rc.Name // the legacy poller names none: its one entry's
+		name = rc.Name // a poller built with no name serves its one entry
 	}
 	ctx = fmetrics.WithRepository(ctx, name) // v2 D10: this poller's errors are its repository's
 	for {

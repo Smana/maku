@@ -11,7 +11,7 @@ import (
 // twoListed is the good file in the list shape with Smana/ai-native-ref as a second entry.
 func twoListed(t *testing.T) string {
 	t.Helper()
-	l := listShaped(t, good)
+	l := good
 	i := strings.Index(l, "repositories:\n")
 	entry := l[i+len("repositories:\n"):]
 	second := strings.Replace(entry, "- name: Smana/cloud-native-ref", "- name: Smana/ai-native-ref", 1)

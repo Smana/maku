@@ -43,7 +43,7 @@ func evaluated(t *testing.T, class, extra string) string {
 	if !strings.Contains(raw, contractAnchor) {
 		t.Fatal("the fixture's leakScanCheck line moved")
 	}
-	return strings.Replace(raw, contractAnchor, contractAnchor+"\n  contractCheck: Test contract", 1)
+	return strings.Replace(raw, contractAnchor, contractAnchor+"\n      contractCheck: Test contract", 1)
 }
 
 func TestEvaluationTheSpecsExampleLoads(t *testing.T) {
@@ -92,7 +92,7 @@ func TestEvaluationRefuses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			raw := evaluated(t, c.class, c.extra)
 			if name == "testFirst without contract" {
-				raw = strings.Replace(raw, "\n  contractCheck: Test contract", "", 1)
+				raw = strings.Replace(raw, "\n      contractCheck: Test contract", "", 1)
 			}
 			if name == "description" {
 				raw = strings.Replace(raw, `description: "a large or long change"`, `description: "`+long+`"`, 1)

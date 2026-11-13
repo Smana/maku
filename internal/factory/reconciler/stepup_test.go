@@ -29,7 +29,7 @@ import (
 func stepCfg() *config.Config {
 	c := resolveCfg("apply", 0)
 	c.HarnessProfiles["review-frontier"] = config.HarnessProfile{Template: "pair", Tier: "frontier", Description: "a large change"}
-	c.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested", "review-frontier"},
+	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested", "review-frontier"},
 		Escalation: &config.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-search"}}
 	return c
 }
@@ -54,7 +54,7 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	st := tk.Status
 	tk = g.get(t)
 	tk.Status = st
-	p, _ := cf.ProfileFor(cf.Classes["review"], "review-floor")
+	p, _ := cf.ProfileFor(cf.Repositories[0].Classes["review"], "review-floor")
 	g.r.profileSpec(g.r.Cfg.Current(), tk, "review", p)
 	tk.Spec.ScopeMode = string(config.ScopeOff)
 	tk.Spec.Budget.Tier = "standard"
@@ -173,9 +173,9 @@ func TestNoStepWithoutAResolvedProfile(t *testing.T) {
 
 func TestNoStepWithoutAGroup(t *testing.T) {
 	cf := stepCfg()
-	cl := cf.Classes["review"]
+	cl := cf.Repositories[0].Classes["review"]
 	cl.Escalation = &config.Escalation{OutOfBudget: "review-frontier"}
-	cf.Classes["review"] = cl
+	cf.Repositories[0].Classes["review"] = cl
 	g, tk := stepRig(t, cf, nil)
 	wantEscalated(t, g.fail(t, tk, "not_met"), "not_met")
 }
@@ -392,7 +392,7 @@ func TestARoundsExhaustedReviewSteps(t *testing.T) {
 	steps := int32(7)
 	g.r.Cfg.Current().Loops = map[string]config.Loop{"review-search": {StallSteps: &steps}}
 	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-search": {Loop: "review-search"}}
-	g.r.Cfg.Current().Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
+	g.r.Cfg.Current().Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
 		Escalation: &config.Escalation{NotConverged: "review-search"}}
 	tk := g.get(t)
 	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
@@ -489,9 +489,9 @@ func TestAReplayRecoversThePersistedStep(t *testing.T) {
 	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "floor" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
-	cl := g.r.Cfg.Current().Classes["review"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["review"]
 	cl.Escalation = nil
-	g.r.Cfg.Current().Classes["review"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["review"] = cl
 	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}

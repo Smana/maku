@@ -319,7 +319,7 @@ func openRevertRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := approved(t)
 	g.r.Merger = g.f
-	g.r.Cfg.Current().Classes = map[string]config.Class{"revert": {Live: true}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"revert": {Live: true}}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "MERGED", Title: "docs: part 1"})
 	c := childTask(t, g, 1)
 	merged := metav1.NewTime(now)

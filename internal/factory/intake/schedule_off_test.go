@@ -24,7 +24,7 @@ func TestRenovateProbeSkipsWithoutAMerger(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetOpenPRs(forge.PRSummary{Number: 40, Author: "renovate[bot]", Created: now.Add(-48 * time.Hour)})
 	cfg := schedulerCfg()
-	cfg.Classes = nil
+	cfg.Repositories[0].Classes = nil
 	sch := scheduler(f, fake.NewClientBuilder().WithScheme(s), func(context.Context) bool { return false }, now, cfg)
 	sch.Merger = forge.Absent{}
 	if err := sch.Tick(context.Background()); err != nil {

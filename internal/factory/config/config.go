@@ -19,7 +19,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
 	"slices"
 	"strings"
@@ -119,18 +118,6 @@ type Config struct {
 	Control Control `json:"control,omitzero"`
 	// Intake configures behavior shared by every intake source. Overlap evaluation is off unless set.
 	Intake Intake `json:"intake,omitzero"`
-
-	// The legacy single-repository shape (v2 D1), read as a one-entry Repositories for one minor
-	// release and refused beside it. Parse moves these into Repositories and Control and empties
-	// them, so code reads Repos and Control, never these.
-	// +kubebuilder:validation:MaxLength=253
-	Repository   string           `json:"repository,omitempty"`
-	Maintainers  []string         `json:"maintainers,omitempty"`
-	TriggerLabel string           `json:"triggerLabel,omitempty"`
-	ControlIssue int              `json:"controlIssue,omitempty"`
-	Classes      map[string]Class `json:"classes,omitempty"`
-	Merge        Merge            `json:"merge,omitzero"`
-	Schedules    []Schedule       `json:"schedules,omitempty"`
 
 	FactoryLogin string `json:"factoryLogin"`
 	AgentsLogin  string `json:"agentsLogin"`
@@ -556,14 +543,8 @@ func (r *Repository) AnyLive() bool {
 	return false
 }
 
-// Repos is the repository list. A Config built by hand in the legacy shape, without Parse, reads
-// as the one entry Parse would have made of it.
-func (c *Config) Repos() []Repository {
-	if len(c.Repositories) > 0 || reflect.ValueOf(c.legacyRepository()).IsZero() {
-		return c.withSource(c.Repositories)
-	}
-	return []Repository{c.legacyRepository()}
-}
+// Repos is the repository list, each cut-over repository's classes read from its source.
+func (c *Config) Repos() []Repository { return c.withSource(c.Repositories) }
 
 // withSource is rs with each cut-over repository's classes read from the source, on a copy: the
 // config itself is never written. Without a cut-over repository it is rs.
@@ -579,11 +560,6 @@ func (c *Config) withSource(rs []Repository) []Repository {
 		}
 	}
 	return out
-}
-
-func (c *Config) legacyRepository() Repository {
-	return Repository{Name: c.Repository, Maintainers: c.Maintainers, TriggerLabel: c.TriggerLabel,
-		Classes: c.Classes, Merge: c.Merge, Schedules: c.Schedules}
 }
 
 // Primary is the first repository's name: RunLore's, until its config names one (v2 D6).
@@ -620,12 +596,7 @@ func (c *Config) listed(name string) *Repository {
 }
 
 // ControlFor is the kill switch's issue; Issue 0 when there is none.
-func (c *Config) ControlFor() Control {
-	if c.Control.Issue == 0 && c.ControlIssue > 0 {
-		return Control{Repository: c.Repository, Issue: c.ControlIssue}
-	}
-	return c.Control
-}
+func (c *Config) ControlFor() Control { return c.Control }
 
 // NeedsMerger reports whether a class of any repository is live or in shadow: deciding it reads
 // checks through the merger App, so its key is then mandatory. With every class off it is optional.
@@ -1671,6 +1642,9 @@ func CheckShape(raw []byte) error {
 	if t := bytes.TrimSpace(j); len(t) == 0 || bytes.Equal(t, []byte("null")) {
 		return errors.New("config: the file is empty")
 	}
+	if err := refuseLegacy(j); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.DisallowUnknownFields()
 	var c Config
@@ -1693,6 +1667,9 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	}
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	if err := refuseLegacy(j); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	// PR6: mergeDefaults fill each repository's merge at map level, before decoding, so a key
@@ -1829,44 +1806,35 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	return &c, nil
 }
 
-// normalize reads the legacy single-repository keys as a one-entry repositories (v2 D1), and
-// refuses a file that mixes the two shapes. The legacy shape keeps its own api.repositories, the
-// allowlist it always had; the list shape derives it from the names, so it is never written twice.
+// legacyKeys are the single-repository shape's top-level keys (v2 D1), removed in v4 step 8 (R7).
+var legacyKeys = []string{"repository", "maintainers", "triggerLabel", "controlIssue", "classes", "merge", "schedules"}
+
+// refuseLegacy names each single-repository key j holds at its top level, with the Repository
+// object that replaced it, so the file fails on what it means rather than on an unknown field.
+func refuseLegacy(j []byte) error {
+	var top map[string]json.RawMessage
+	if json.Unmarshal(j, &top) != nil {
+		return nil // not an object: the strict decode reports it
+	}
+	var errs []error
+	for _, k := range legacyKeys {
+		if _, ok := top[k]; ok {
+			errs = append(errs, fmt.Errorf("%s is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, "+
+				"which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)", k))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// normalize derives api.repositories from the repositories' names, so it is never written twice.
 func (c *Config) normalize() error {
-	if c.Repository == "" {
-		var errs []error
-		for _, k := range []struct {
-			key string
-			set bool
-		}{
-			{"maintainers", c.Maintainers != nil}, {"triggerLabel", c.TriggerLabel != ""}, {"controlIssue", c.ControlIssue != 0},
-			{"classes", c.Classes != nil}, {"merge", !reflect.ValueOf(c.Merge).IsZero()}, {"schedules", c.Schedules != nil},
-		} {
-			if k.set {
-				errs = append(errs, fmt.Errorf("%s is per repository: it belongs in a repositories entry (v2 D1)", k.key))
-			}
-		}
-		if c.API.Repositories != nil {
-			errs = append(errs, errors.New("api.repositories is derived from repositories (v2 D1): remove it"))
-		}
-		c.API.Repositories = make([]string, 0, len(c.Repositories))
-		for _, r := range c.Repositories {
-			c.API.Repositories = append(c.API.Repositories, r.Name)
-		}
-		return errors.Join(errs...)
+	if c.API.Repositories != nil {
+		return errors.New("api.repositories is derived from repositories (v2 D1): remove it")
 	}
-	switch {
-	case c.Repositories != nil:
-		return errors.New("repository is the legacy single-repository shape: write repositories or repository, never both (v2 D1)")
-	case c.Control != Control{}:
-		return errors.New("control belongs to the repositories shape: the legacy shape writes controlIssue (v2 D1)")
+	c.API.Repositories = make([]string, 0, len(c.Repositories))
+	for _, r := range c.Repositories {
+		c.API.Repositories = append(c.API.Repositories, r.Name)
 	}
-	c.Repositories = []Repository{c.legacyRepository()}
-	if c.ControlIssue != 0 {
-		c.Control = Control{Repository: c.Repository, Issue: c.ControlIssue}
-	}
-	c.Repository, c.Maintainers, c.TriggerLabel, c.ControlIssue = "", nil, "", 0
-	c.Classes, c.Merge, c.Schedules = nil, Merge{}, nil
 	return nil
 }
 

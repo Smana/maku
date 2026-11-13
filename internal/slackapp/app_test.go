@@ -2546,7 +2546,7 @@ func TestSecondMentionUpdatesTheProposal(t *testing.T) {
 
 // CD7's evidence at the App: maku_slack_proposal_updates_total{six closed actions} says what the App
 // did with a proposal, one count per action and none on a path that answered nothing. The counter's
-// vocabulary is the six actions; a refusal code stays on factory_slack_requests_total{route, outcome},
+// vocabulary is the six actions; a refusal code stays on maku_slack_app_requests_total{route, outcome},
 // where a dashboard can read both without the label values leaking into each other.
 func TestProposalActionsCounted(t *testing.T) {
 	// moved is the plan a reply or a second mention re-plans to: one the thread's message does not

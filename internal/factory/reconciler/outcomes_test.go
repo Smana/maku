@@ -46,7 +46,7 @@ func TestFollowUpsAndRegressionsDemote(t *testing.T) {
 // demoted: a human merge of the class (factory/merged) and its follow-up's label.
 func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 	g := declaredRig(t)
-	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Repositories[0].Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 	g.f.SetPR(forge.PR{Number: 40, State: "MERGED", MergedBy: "Smana", MergedAt: now.Add(-48 * time.Hour),
 		Labels: []string{MergedLabel("dead-links")}})
 	g.f.SetPR(forge.PR{Number: 41, State: "MERGED", MergedBy: "Smana", MergedAt: now.Add(-24 * time.Hour),
@@ -55,7 +55,7 @@ func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	g = declaredRig(t)
-	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Repositories[0].Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 	g.f.SetPR(forge.PR{Number: 40, State: "MERGED", MergedBy: "renovate[bot]", MergedAt: now.Add(-48 * time.Hour),
 		Labels: []string{MergedLabel("dead-links"), RegressionLabel}})
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Reason != "class_paused" {
@@ -64,7 +64,7 @@ func TestADemotionOnFollowUpSurvivesEveryTaskDeleted(t *testing.T) {
 }
 
 func followUpBreaker(g *rig) {
-	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Repositories[0].Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 }
 
 // A fix in review is not yet a fix: an OPEN follow-up-of pull request demotes nothing.

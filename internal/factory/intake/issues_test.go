@@ -77,8 +77,7 @@ func poller(t *testing.T, f issueForge, objs ...client.Object) (*IssuePoller, cl
 	}
 	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&v1alpha1.Task{}).WithObjects(objs...).Build()
 	return &IssuePoller{Forge: f, Client: c, Namespace: "agent-system", Stopped: func(context.Context) bool { return false },
-		Cfg: &config.Config{Repository: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready",
-			FactoryLogin: "ogenki-agent-factory[bot]", Poll: config.Poll{Issues: config.Duration{Duration: time.Minute}},
+		Cfg: &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"}}, FactoryLogin: "ogenki-agent-factory[bot]", Poll: config.Poll{Issues: config.Duration{Duration: time.Minute}},
 			Defaults: config.Defaults{DataClass: "public"}},
 		Errors: &counter{}, CanWrite: func(context.Context, string) (bool, error) { return true, nil },
 		Owned: func(string) bool { return true }}, c
@@ -625,7 +624,7 @@ func TestControlIssue(t *testing.T) {
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	f.SetLabeled(LabelStop, forge.Item{Number: 1})
 	p, _ := poller(t, f)
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	_ = p.Poll(context.Background())
 	if on, _ := killswitch.Engaged(context.Background(), p.Client, "agent-system"); !on {
 		t.Fatal("factory/stop on the control issue is the global stop (§6.1)")
@@ -643,7 +642,7 @@ func TestTheControlIssueStopReachesAnotherProcess(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	p, c := poller(t, f)
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	if err := p.Poll(ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +666,7 @@ func TestRemovingTheLabelKeepsAHandMadeStop(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 1})
 	p, c := poller(t, f, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: "agent-system"}})
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}
@@ -685,7 +684,7 @@ func TestAFailedPublishDoesNotSkipReverts(t *testing.T) {
 	f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
 	f.SetEvents(12, forge.LabelEvent{Actor: "Smana", Label: LabelRevert, At: t0})
 	p, c := poller(t, f, tk)
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, o ...client.CreateOption) error {
 			if _, ok := obj.(*corev1.ConfigMap); ok {
@@ -709,7 +708,7 @@ func TestLiftingTheStopIsPreconditioned(t *testing.T) {
 	f.SetIssue(forge.Issue{Number: 1})
 	p, c := poller(t, f, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: killswitch.ConfigMap, Namespace: "agent-system",
 		UID: "u1", Annotations: map[string]string{killswitch.AnnotationSource: killswitch.SourceIssue}}})
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	var pre client.DeleteOptions
 	p.Client = interceptor.NewClient(c.(client.WithWatch), interceptor.Funcs{
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, o ...client.DeleteOption) error {
@@ -731,7 +730,7 @@ func TestThePassThatEngagesTheStopCreatesNoTask(t *testing.T) {
 	labelled(f, 7, "Smana")
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
 	p, c := poller(t, f) // Stopped stays false: the lagging cache
-	p.Cfg.Current().ControlIssue = 1
+	p.Cfg.Current().Control = config.Control{Repository: p.Cfg.Current().Repositories[0].Name, Issue: 1}
 	if err := p.Poll(context.Background()); err != nil {
 		t.Fatal(err)
 	}

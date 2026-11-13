@@ -26,6 +26,43 @@ An install whose run controller still uses `agent-model`:
 An install with `runController.enabled: false` (runs reconciled elsewhere) reads neither value and
 renders as before.
 
+### The single-repository config
+
+The factory config's top-level `repository`, `maintainers`, `triggerLabel`, `controlIssue`,
+`classes`, `merge` and `schedules` (v2 D1) are refused at start, each by name:
+
+```text
+config: repository is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)
+```
+
+Convert the file before you upgrade. `maku config migrate` still reads the old shape: it writes the
+`Factory`, `Repository` and `MergePolicy` objects and the residual file, with `controlIssue` moved to
+`control` on that repository and `api.repositories` dropped (the list derives it):
+
+```bash
+maku config migrate --from factory.yaml --residual factory.new.yaml > resources.yaml
+```
+
+### The group migration
+
+`maku-broker migrate-group` and its v0.30.0 upgrade e2e are removed. An install still serving `Room`
+and `Task` under the pre-rebrand API group (older than v0.31.0) first upgrades to the last v0.4x release
+before this one, runs [the group move](maku-group-migration.md) with that release's `maku-broker`,
+then upgrades here.
+
+### The Slack App's metric names
+
+The Slack App's metrics are served as `maku_slack_app_*`, with no dual export:
+
+| Before | Now |
+|---|---|
+| `factory_slack_requests_total{route, outcome}` | `maku_slack_app_requests_total{route, outcome}` |
+| `factory_slack_build_info{version}` | `maku_slack_app_build_info{version}` |
+
+The chart's `SlackCardUpdatesFailing` rule moves with it. Rewrite any query, rule or dashboard you
+keep outside the chart before the upgrade, or read both names across it
+(`maku_slack_app_requests_total or factory_slack_requests_total`).
+
 ## Reusable merge policies (v0.4x, release N)
 
 A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`

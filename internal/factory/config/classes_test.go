@@ -20,7 +20,8 @@ func withClasses(t *testing.T, classes string) string {
 	if !strings.Contains(good, classesLine) {
 		t.Fatal("the fixture's classes line moved")
 	}
-	return strings.Replace(good, classesLine, "classes:\n  "+classes, 1)
+	// The entry's keys sit four spaces in: each line of classes moves in with them.
+	return strings.Replace(good, classesLine, "classes:\n      "+strings.ReplaceAll(classes, "\n", "\n    "), 1)
 }
 
 // MC1: a class declares its conditions by name; absent, it is decided as before.
@@ -303,18 +304,18 @@ func TestOracleWorkflowStillRequiredOnAClass(t *testing.T) {
 
 // B2, Q14: the repository names the Flux source that delivers it, once, in merge.
 func TestMergeFluxSource(t *testing.T) {
-	const at = "  policyBotLogin: ogenki-merge-gate[bot]\n"
+	const at = "      policyBotLogin: ogenki-merge-gate[bot]\n"
 	if !strings.Contains(good, at) {
 		t.Fatal("the fixture's policyBotLogin line moved")
 	}
-	c, err := Parse([]byte(strings.Replace(good, at, at+"  fluxSource: flux-system/flux-system\n", 1)))
+	c, err := Parse([]byte(strings.Replace(good, at, at+"      fluxSource: flux-system/flux-system\n", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := c.RepositoryFor("Smana/cloud-native-ref").Merge.FluxSource; got != "flux-system/flux-system" {
 		t.Fatalf("fluxSource = %q", got)
 	}
-	_, err = Parse([]byte(strings.Replace(good, at, at+"  fluxSource: nope\n", 1)))
+	_, err = Parse([]byte(strings.Replace(good, at, at+"      fluxSource: nope\n", 1)))
 	if want := `merge.fluxSource "nope" is not namespace/name`; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("got %v, want %q", err, want)
 	}

@@ -31,7 +31,7 @@ func (runloreAuth) Authenticate(*http.Request) (authn.Principal, error) {
 func TestPublishFollowsAnInternalIntake(t *testing.T) {
 	f := forgetest.NewFake()
 	p, c := poller(t, f)
-	p.Cfg.Current().Maintainers = []string{"Smana"}
+	p.Cfg.Current().Repositories[0].Maintainers = []string{"Smana"}
 	p.Now = func() time.Time { return t0.Add(time.Hour) }
 	p.Redact = testRedactor(t)
 	p.Proposal = func(context.Context, *v1alpha1.Task) (string, error) { return proposalOK, nil }
