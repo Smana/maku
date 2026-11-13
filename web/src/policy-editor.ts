@@ -8,6 +8,7 @@
 // request. factory: is never in the form.
 
 import templateFile from "./policy-templates.json";
+import type { Binding } from "./settings";
 import { canonical, highlight, keyFix } from "./policy-yaml";
 import { describeClass } from "./policy-describe";
 import { EXAMPLES } from "./policy-examples";
@@ -22,7 +23,8 @@ export interface ClassPolicy {
   limits?: { maxPerDay?: number };
   monitor?: Record<string, unknown>;
 }
-export interface PolicyFile { factory: string; classes?: Record<string, ClassPolicy> }
+// mergePolicies is a file in the binding shape (B15): its bindings, which the page shows read-only.
+export interface PolicyFile { factory: string; classes?: Record<string, ClassPolicy>; mergePolicies?: Binding[] }
 
 export interface Preview {
   valid: boolean; errors?: string[];

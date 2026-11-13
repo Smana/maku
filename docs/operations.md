@@ -655,6 +655,35 @@ works.
 - **An approved author's injection.** Text at or above `minAuthorTrust` is delivered, sanitised and
   levelled, but not checked for instructions.
 
+### Merge policy bindings
+
+A `Repository` that binds policies reports each binding in `status.classes[]` and the condition
+`BindingsValid`: `True`, or `False` with a message naming every refused binding, as `refused:
+dead-links (MissingParameter)`. One refused binding never refuses the `Repository`: its other
+classes keep serving, and while the factory runs, the refused one keeps its last resolved class when
+that class still holds under today's catalogue and guardrails. After a restart it serves none, and
+a `class:` label naming it falls back to `review`.
+
+```bash
+kubectl get repository ai-native-ref -n agent-system -o jsonpath='{.status.classes}'
+kubectl get mergepolicy dead-links -n agent-system   # CONSUMERS CURRENT LIVE ACCEPTED
+```
+
+| Reason | Means | Fix |
+|---|---|---|
+| `MissingRef` | No served `MergePolicy` has the binding's name, or the policy was refused with no generation served before | Apply the policy, or fix the refused one (`kubectl describe mergepolicy`) |
+| `MissingParameter` | The policy `requires` a parameter the binding does not set, or `monitor.flux` without `spec.merge.fluxSource` | Set it on the binding, or `fluxSource` on the `Repository` |
+| `ParameterTwice` | A fill-once parameter is set by the policy and the binding | Remove one |
+| `OverPolicy` | A cap above the policy's | Lower it, or raise the policy's |
+| `GuardrailMismatch` | A cap above `mergeGuardrails` | Lower it |
+| `AmbiguousAdoption` | Two adopted bindings of one shape share a login and an overlapping branch prefix: the later in the list is refused, and keeps no last class | Narrow one, or unbind it |
+| `Invalid` | The resolved class fails the class rules (`semver-minor` bound `live`, `testFirst` without `merge.contractCheck`, a profile below its floor) | The message names the rule |
+
+A `MergePolicy` refused alone (`Accepted` `False`, `serving generation 3; generation 4 refused: …`)
+keeps its last accepted generation serving every consumer. `maku config validate --base-ref
+origin/main` prints the same per-consumer lines before the merge, and the
+[settings pages](web-ui.md#settings) show them after it.
+
 ### Factory alerts
 
 Group `maku-factory` of the chart's [`PrometheusRule`](#alerts), with `maku-factory.enabled`.
