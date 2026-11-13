@@ -23,12 +23,17 @@ flowchart LR
 | Piece | Who brings it | How |
 |---|---|---|
 | Gateway API standard CRDs, v1.2 or later | the cluster | the [Gateway API release](https://gateway-api.sigs.k8s.io/guides/#installing-gateway-api) |
-| agentgateway's CRDs, v1.6.0 | `agent-factory-crds` with `agentgateway-crds.enabled: true`, or yours | installed before the umbrella, like every CRD |
+| agentgateway's CRDs, v1.6.0 | `config/agentgateway` (vendored), or yours | `kubectl apply --server-side -f config/agentgateway` before the umbrella, apart from any Helm release (see below) |
 | agentgateway's controller, v1.6.0 | the umbrella with `agentgateway.enabled: true`, or yours | its GatewayClass `agentgateway` |
 | The Gateway, its policies, backends, routes, catalog and NetworkPolicy | `maku-gateway` (standalone, or the umbrella with `maku-gateway.enabled: true`) | these values |
 | One Secret per provider | you | `kubectl create secret`, ESO, Sealed Secrets: the chart only names it (D14) |
 
-All three switches are off by default, so a release that sets none of them renders exactly what it did
+agentgateway's four CRDs hold 2.3 MB of schema. Helm stores a release's chart and rendered manifest
+in one Secret, which the API caps at 1 MiB, and these CRDs alone take it to about 1 MB. So they are
+not in any chart: apply them with `kubectl apply --server-side` (Flux: a Kustomization over the
+directory; Argo CD: `ServerSideApply=true`). Outside a release, an uninstall never deletes them.
+
+Both switches are off by default, so a release that sets none of them renders exactly what it did
 before. The umbrella fails the render when `maku-gateway.runs` differs from `maku.runs`, or when the
 gateway's broker ServiceAccount is not `room-broker`. It also fails when the gateway and the broker
 disagree about [the clients](#the-planner-and-the-classifier).

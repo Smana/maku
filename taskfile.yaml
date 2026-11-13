@@ -103,7 +103,7 @@ tasks:
       - git diff --exit-code -- config/crd api charts
 
   chart:deps:
-    desc: Check the vendored agentgateway CRDs and controller chart against charts/agentgateway.sha256 (offline)
+    desc: Check the vendored agentgateway CRDs and controller chart against hack/agentgateway.sha256 (offline)
     cmds:
       - bash hack/agentgateway-vendor.sh check
 

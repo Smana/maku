@@ -31,26 +31,15 @@ done
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }
 
-# agentgateway-crds (plan v4 step 4, Task 5): off by default; on, it adds agentgateway's four CRDs
-# and changes nothing else.
-on="$(helm template af-crds . --set agentgateway-crds.enabled=true)"
-names="$(yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.name] | sort | join(",")' - <<<"$on")"
-want="agentgatewaybackends.agentgateway.dev,agentgatewaymodels.agentgateway.dev,agentgatewayparameters.agentgateway.dev,agentgatewaypolicies.agentgateway.dev,$want"
-[[ $names == "$want" ]] || { echo "FAIL: agentgateway-crds.enabled renders CRDs '$names', want '$want'" >&2; fail=1; }
-other="$(yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") | .kind] | join(",")' - <<<"$on")"
-[[ -z $other ]] || { echo "FAIL: agentgateway-crds.enabled renders more than CRDs: $other" >&2; fail=1; }
-diff <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$out") <(yq ea -o json -I0 'select(.metadata.name | test("maku[.]ogenki[.]io$"))' - <<<"$on") >/dev/null ||
-  { echo "FAIL: agentgateway-crds.enabled changes the maku.ogenki.io CRDs" >&2; fail=1; }
-# vendored (hack/agentgateway-vendor.sh), so no install needs the network; kept on uninstall like ours
-for f in files/agentgateway/*.yaml; do
-  name="$(yq '.metadata.name' "$f")"
-  crd="$(yq ea "select(.kind == \"CustomResourceDefinition\" and .metadata.name == \"$name\")" - <<<"$on")"
-  [[ "$(yq '.metadata.annotations."helm.sh/resource-policy"' - <<<"$crd")" == keep ]] || { echo "FAIL: $name lacks helm.sh/resource-policy: keep" >&2; fail=1; }
-  [[ "$(yq '.metadata.labels."app.kubernetes.io/name"' - <<<"$crd")" == agentgateway ]] || { echo "FAIL: $name lost its upstream labels" >&2; fail=1; }
-  cmp -s <(yq -o json '.spec' "$f") <(yq -o json '.spec' - <<<"$crd") || { echo "FAIL: $name's spec differs from $f" >&2; fail=1; }
-done
-kept="$(helm template af-crds . --set agentgateway-crds.enabled=true --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
-[[ -z $kept ]] || { echo "FAIL: keep=false still keeps an agentgateway CRD" >&2; fail=1; }
+# Exactly the six, and files/ holds nothing else (its glob is `files/*.yaml`). agentgateway's CRDs
+# are not this chart's: in a Helm release they push its Secret to the 1 MiB limit (the release stores
+# the chart's files and the manifest), so they are applied apart (config/agentgateway, docs/gateway.md).
+[[ "$(grep -c '^kind: CustomResourceDefinition$' <<<"$out")" == 6 ]] || { echo "FAIL: the chart renders $(grep -c '^kind: CustomResourceDefinition$' <<<"$out") CRDs, want 6" >&2; fail=1; }
+! grep -q 'agentgateway' values.yaml templates/* || { echo "FAIL: the CRD chart still carries agentgateway" >&2; fail=1; }
+[[ -z "$(find files -mindepth 1 -not -name 'maku.ogenki.io_*.yaml')" ]] || { echo "FAIL: files/ holds more than the maku.ogenki.io CRDs" >&2; fail=1; }
+# the release Secret: Helm stores base64(gzip(release JSON)), and the API refuses a Secret over 1 MiB
+size="$(helm install af-crds . --dry-run=client -o json | gzip | base64 -w0 | wc -c)"
+(( size < 262144 )) || { echo "FAIL: the release Secret would hold $size bytes; keep it far below 1048576" >&2; fail=1; }
 yq -e '(.dependencies // []) | length == 0' Chart.yaml >/dev/null || { echo "FAIL: the CRD chart has a dependency: every install would need to build it" >&2; fail=1; }
 
 # the packaged chart ships the six CRDs, never tests/ (.helmignore)
