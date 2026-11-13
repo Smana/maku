@@ -316,6 +316,16 @@ type GitHub struct {
 	// or shadow, because deciding that class reads checks and arms through the merger.
 	MergerAppIDFile string `json:"mergerAppIDFile,omitempty"`
 	MergerKeyFile   string `json:"mergerKeyFile,omitempty"`
+	// The agents App's pair (v4 D12): both files or neither. It mints the runs' tokens and, with
+	// hardening's minter, the publisher's. runTokens.appIDFile and privateKeyFile are its aliases.
+	AgentsAppIDFile string `json:"agentsAppIDFile,omitempty"`
+	AgentsKeyFile   string `json:"agentsKeyFile,omitempty"`
+}
+
+// MergerFolded reports whether the merger signs with the factory App's own key (D12, plan PR9):
+// one App then arms, merges and handles issues, so its login is the merge actor.
+func (c *Config) MergerFolded() bool {
+	return c.GitHub.MergerAppIDFile != "" && c.GitHub.MergerAppIDFile == c.GitHub.AppIDFile
 }
 
 // RunTokens names the App whose installation tokens fill the run-controller's agent-git (write) and
@@ -331,12 +341,21 @@ type RunTokens struct {
 	PerRun bool `json:"perRun,omitempty"`
 }
 
-// RunTokenApp is the App the run token writer mints from: runTokens' when enabled, else the
-// factory's own in the demo. ok is false when the factory writes no run token.
+// agentsApp resolves the agents App's pair: github.agents* over the runTokens aliases (D12).
+func (c *Config) agentsApp() (appIDFile, keyFile string) {
+	if c.GitHub.AgentsAppIDFile != "" {
+		return c.GitHub.AgentsAppIDFile, c.GitHub.AgentsKeyFile
+	}
+	return c.RunTokens.AppIDFile, c.RunTokens.PrivateKeyFile
+}
+
+// RunTokenApp is the App the run token writer mints from: the agents App when runTokens is
+// enabled, else the factory's own in the demo. ok is false when the factory writes no run token.
 func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 	switch {
 	case c.RunTokens.Enabled:
-		return c.RunTokens.AppIDFile, c.RunTokens.PrivateKeyFile, true
+		id, key := c.agentsApp()
+		return id, key, true
 	case c.Demo:
 		return c.GitHub.AppIDFile, c.GitHub.PrivateKeyFile, true
 	}
@@ -346,7 +365,17 @@ func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 // validateRunTokens: the writer fills Secrets only the run-controller reads, so it is refused on
 // cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
 func (c *Config) validateRunTokens(bad func(string, ...any)) {
-	t := c.RunTokens
+	t, g := c.RunTokens, c.GitHub
+	// D12: the agents App's pair, and its runTokens alias, each name one App or none.
+	if (g.AgentsAppIDFile == "") != (g.AgentsKeyFile == "") {
+		bad("github.agentsAppIDFile and github.agentsKeyFile are both set or both empty")
+	}
+	if g.AgentsAppIDFile != "" && t.AppIDFile != "" && g.AgentsAppIDFile != t.AppIDFile {
+		bad("github.agentsAppIDFile and runTokens.appIDFile name different Apps")
+	}
+	if g.AgentsKeyFile != "" && t.PrivateKeyFile != "" && g.AgentsKeyFile != t.PrivateKeyFile {
+		bad("github.agentsKeyFile and runTokens.privateKeyFile name different keys")
+	}
 	if t.PerRun {
 		// v4 D10: the demo mints from its factory App, as RunTokenApp says; elsewhere the agents App.
 		if !t.Enabled && !c.Demo {
@@ -360,12 +389,15 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 		if !c.Demo && c.AgentsLogin != "" && strings.EqualFold(c.AgentsLogin, c.FactoryLogin) {
 			bad("runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two")
 		}
+		if id, _ := c.agentsApp(); !c.Demo && id != "" && id == g.AppIDFile {
+			bad("runTokens.perRun: the agents App is the factory App; D12 needs two")
+		}
 	}
 	if !t.Enabled {
 		return
 	}
-	if t.AppIDFile == "" || t.PrivateKeyFile == "" {
-		bad("runTokens.enabled needs runTokens.appIDFile and runTokens.privateKeyFile")
+	if id, key := c.agentsApp(); id == "" || key == "" {
+		bad("runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile (or runTokens.appIDFile and runTokens.privateKeyFile)")
 	}
 	if c.Runs.Group != v1alpha1.GroupVersion.Group {
 		bad("runTokens.enabled writes the run-controller's Secrets: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
@@ -2060,6 +2092,11 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		if !strings.HasSuffix(strings.ToLower(f.value), "[bot]") {
 			bad("%s %q must be a bot login", f.key, f.value)
 		}
+	}
+	// D12, plan PR9: the merge actor is the App that signs the merge. Folded into the factory App,
+	// any other login makes the gate read the factory's own merges as a human's.
+	if c.MergerFolded() && !strings.EqualFold(r.Merge.MergerLogin, c.FactoryLogin) {
+		bad("merge.mergerLogin must be factoryLogin when the merger signs with the factory App: %q is not %q", r.Merge.MergerLogin, c.FactoryLogin)
 	}
 	if r.Merge.AutoMergesPerDay < 0 {
 		bad("merge.autoMergesPerDay must be 0 or more")

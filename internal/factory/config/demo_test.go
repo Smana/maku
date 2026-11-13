@@ -147,6 +147,8 @@ func TestDemoOneAppIsTheMerger(t *testing.T) {
 	if raw == demoGood {
 		t.Fatal("the edit changed nothing")
 	}
+	// Folded, the merger's login is the factory App's (D12, plan PR9).
+	raw = strings.Replace(raw, "mergerLogin: ogenki-agent-merger[bot]", "mergerLogin: ogenki-agent-factory[bot]", 1)
 	c, err := Parse([]byte(raw))
 	if err != nil {
 		t.Fatal(err)
