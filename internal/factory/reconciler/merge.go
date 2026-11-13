@@ -175,10 +175,12 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			return ferr
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
-			if hash, ok := r.grantHash(cfg, t, policy); ok && r.grantsOn(cfg) && needsGrantsUnder(in, cfg, policy) {
-				// Stages 4 and 5, and B13 under central authority: the class that decides is read
-				// here, immediately before the decision, under its resolved hash.
-				in.Grants = r.grantRead(ctx, cfg, t, hash)
+			if r.grantsOn(cfg) && needsGrantsUnder(in, cfg, policy) {
+				// Stages 4 and 5, and B13 under central authority: the grants of the class that
+				// decides are read here, immediately before the decision, under its resolved hash.
+				if hash, ok := r.grantHash(cfg, t, policy); ok {
+					in.Grants = r.grantRead(ctx, cfg, t, hash)
+				}
 			}
 			d = decideUnder(in, policy)
 			evaluated = d
