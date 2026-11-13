@@ -277,17 +277,28 @@ from creation. A run controller in `model.mode: secret` refuses such a run befor
 stamp, a secret-mode run would make no `ar_agent` series. It would end at $0, `familyUSD` would
 never be spent, and its `loops.<class>.models` alias would be ignored.
 
-**The backstop, and what it leaves.** Under `runs.gatewayIdentity`, a run that succeeded with no
-gateway series gets the fallback verdict: unpriced, not $0. The meter names its model once
-(`maku_factory_meter_unpriced_model_runs_total`) and the task's USD cap does not count it as free.
-Two cases remain:
+**The backstop, and what it leaves.** The handshake is the guard; the backstop only makes a miss
+visible. Under `runs.gatewayIdentity`, a run that succeeded and still has no gateway series two
+minutes after it finished (`endSettle`: a short run's last calls reach the meter a scrape interval
+plus VictoriaMetrics' offset late) gets the fallback verdict, unpriced, never $0. Then:
 
+- the meter names its model once (`maku_factory_meter_unpriced_model_runs_total`, the
+  `AgentModelUnpriced` signal);
+- the task's spend is not final, so no `spendFinal` is posted;
+- a split family's `familyUSD` and a coordination child's allocation charge the run its whole
+  reservation (its USD run cap, else its token cap at the reference rate), so those caps stay bounded.
+
+What the backstop does not cover:
+
+- **The day ledgers and the principal caps** charge such a run nothing: the meter read no tokens.
+- **The task's own cap** falls back to its token cap, as for any unpriced run, and the run counts
+  no tokens there.
 - **A run still live with no series** is not flagged: it may not have called its model yet.
 - **A run that fails or is revoked with no series** is not flagged either. It spent nothing the
   gateway saw, or a scrape missed it.
 
 A scrape that drops the gateway (wrong `metrics.allowFrom`, a missing scrape target) therefore shows
-as unpriced succeeded runs. It never shows as cheap ones.
+as unpriced succeeded runs, never as cheap ones.
 
 **The 429s.** `agentgateway_requests_total{status="429"}` counts every 429 the gateway answered,
 its own and a provider's passed through. The meter revokes a run its throttle query names, as

@@ -795,10 +795,11 @@ func (m *Meter) Tick(ctx context.Context) error {
 		case !seen:
 			if e := m.last[r.ID]; e.usdKnown {
 				usd[r.ID], costs[r.ID] = e.usd, Cost{MicroUSD: e.usd}
-			} else if m.GatewayIdentity && r.Phase == "Succeeded" {
-				// Review #518's backstop: a run that succeeded and never reached the gateway's series
-				// was not metered (a run-controller in model.mode secret, a scrape missing the
-				// gateway). Unpriced, never $0.
+			} else if m.GatewayIdentity && r.Phase == "Succeeded" && !r.Finished.IsZero() && m.now().Sub(r.Finished) >= endSettle {
+				// Review #518's backstop: a run that succeeded and has no gateway series endSettle
+				// after it finished (a short run's last calls land a scrape interval plus
+				// VictoriaMetrics' offset late) was not metered: a run-controller in model.mode
+				// secret, a scrape missing the gateway. Unpriced, never $0.
 				why = FallbackUnpriced
 				m.unpriced(ctx, r, r.Model)
 			}
