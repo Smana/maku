@@ -850,3 +850,23 @@ func TestT5CounterOnRefusals(t *testing.T) {
 		t.Fatalf("t5 %q", r.metrics.t5)
 	}
 }
+
+// HR40: the applier caps T5 at audit for every type but the promoted ones: a hit on a promoted pr
+// is refused injection_suspected; a hit on an unpromoted comment is applied, recorded in audit.
+func TestApplierPerTypeT5(t *testing.T) {
+	r := newRig(t, 7, func(a *Applier) {
+		a.Checker = func(string) hardening.Checker {
+			return hardening.Checker{Secrets: scanner{}, Classifier: classifier{hit: true},
+				Layers: hardening.Layers{Classifier: hardening.ModeAudit}, ClassifierEnforce: []hardening.OutputType{hardening.PR}}
+		}
+	})
+	pr := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+	comment := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+	r.tick(t)
+	if a := r.only(t, pr); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseInjection) {
+		t.Fatalf("the promoted pr: %+v", a)
+	}
+	if a := r.only(t, comment); a.kind != envelope.KindOutputApplied || len(a.rec.Audit) != 1 || a.rec.Audit[0].Reason != "injection_suspected" {
+		t.Fatalf("the unpromoted comment: %+v", a)
+	}
+}

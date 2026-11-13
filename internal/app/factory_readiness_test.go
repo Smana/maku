@@ -5,6 +5,9 @@ package app
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -136,6 +139,34 @@ func TestPrerequisitesWired(t *testing.T) {
 	cfg.Hardening = config.Hardening{Repositories: map[string]config.HardeningRepository{"o/r": {Mode: hardening.ModeAudit}}}
 	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "o/off"})
 	if got := readinessReporter(func() *config.Config { return cfg }, nil, nil, nil).Repositories(); !slices.Equal(got, []string{"o/r"}) {
+		t.Fatalf("%v", got)
+	}
+}
+
+// HR40: the applier's checker promotes T5 for a repository's promoted types, read live, and only
+// at mode enforce.
+func TestApplierCheckerPromotesT5(t *testing.T) {
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("jwt"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := enforcingConfig(map[string]config.HardeningRepository{
+		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
+	cfg.Hardening.Publisher.OctoSTS.TokenFile = token
+	cfg.Hardening.AgentGuard.URL = "http://agent-guard:8080"
+	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+		Log: slog.New(slog.DiscardHandler)})
+	if err != nil || a == nil {
+		t.Fatalf("%v %v", a, err)
+	}
+	cfg.Hardening.Layers.ClassifierEnforce = []hardening.OutputType{hardening.PR}
+	if got := a.Checker("Smana/ai-native-ref").ClassifierEnforce; len(got) != 0 {
+		t.Fatalf("a repository at audit: %v", got)
+	}
+	r := cfg.Hardening.Repositories["Smana/ai-native-ref"]
+	r.Mode = hardening.ModeEnforce
+	cfg.Hardening.Repositories["Smana/ai-native-ref"] = r
+	if got := a.Checker("Smana/ai-native-ref").ClassifierEnforce; !slices.Equal(got, []hardening.OutputType{hardening.PR}) {
 		t.Fatalf("%v", got)
 	}
 }

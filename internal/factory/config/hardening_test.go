@@ -663,3 +663,44 @@ func TestDrillTask(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// HR40: layers.classifierEnforce promotes T5 per output type. It needs agentGuard.url and a
+// repository at mode enforce, applies only to repositories at enforce, and enters the hash, so a
+// promotion needs a new passing drill. layers.classifier: enforce stays refused.
+func TestClassifierEnforcePerType(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := c.Repos()[0].Name
+	h := c.Hardening
+	h.AgentGuard.URL = "http://agent-guard:8080"
+	h.Repositories = map[string]HardeningRepository{repo: {Mode: hardening.ModeEnforce}}
+	base := h.Hash()
+	h.Layers.ClassifierEnforce = []hardening.OutputType{hardening.PR, hardening.Comment}
+	if h.Hash() == base {
+		t.Fatal("the promoted list is not in the hash")
+	}
+	if got := h.ClassifierEnforceFor(repo); !slices.Equal(got, []hardening.OutputType{hardening.Comment, hardening.PR}) {
+		t.Fatalf("%v", got)
+	}
+	h.Repositories = map[string]HardeningRepository{repo: {Mode: hardening.ModeAudit}}
+	if got := h.ClassifierEnforceFor(repo); len(got) != 0 {
+		t.Fatalf("a repository at audit: %v", got)
+	}
+	for name, tc := range map[string]struct {
+		block string
+		want  string
+	}{
+		"no agent-guard":         {"hardening: {layers: {classifierEnforce: [pr]}, repositories: {" + repo + ": {mode: audit}}}\n", "agentGuard.url"},
+		"no repository enforces": {"hardening: {agentGuard: {url: \"http://g:8080\"}, layers: {classifierEnforce: [pr]}}\n", "mode enforce"},
+		"an unknown type":        {"hardening: {agentGuard: {url: \"http://g:8080\"}, layers: {classifierEnforce: [wiki]}}\n", "classifierEnforce"},
+		"the whole layer":        {"hardening: {layers: {classifier: enforce}}\n", "classifierEnforce"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(good + tc.block)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("%v, want %q", err, tc.want)
+			}
+		})
+	}
+}
