@@ -101,6 +101,10 @@ type ServedPolicy struct {
 type PolicyContext struct {
 	HarnessProfiles map[string]HarnessProfile
 	Guardrails      MergeGuardrails
+	// Templates and Loops are what comparing a variant to its floor reads (TE2, TE6): without
+	// them only the checks that read the profiles alone run.
+	Templates map[string]Template
+	Loops     map[string]Loop
 }
 
 // BindingRefusal is why a binding does not resolve: one of the reasons above, and the message
@@ -300,7 +304,8 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 	var problems []string
 	bad := func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) }
 	validateClass(name, cl, bad)
-	for _, v := range VariantProblemsIn(ctx.HarnessProfiles, name, cl) {
+	floor := &Config{HarnessProfiles: ctx.HarnessProfiles, Templates: ctx.Templates, Loops: ctx.Loops}
+	for _, v := range floor.VariantProblems(name, cl) {
 		bad("class %s: %s", name, v)
 	}
 	// validateRepository's rule on a live class, here so it drops the binding, not the repository.
