@@ -23,6 +23,7 @@ configMapGenerator:
       - ./20261113120000_output_bundles.sql
       - ./20261113130000_approval_digest.sql
       - ./20261113140000_drill_reports.sql
+      - ./20261120120000_github_links.sql
       - atlas.sum
     options:
       disableNameSuffixHash: true
