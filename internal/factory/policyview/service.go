@@ -25,6 +25,8 @@ type Service struct {
 	Cfg      config.Source
 	Reports  Reports
 	Comments func(repository string) (CommentReader, bool)
+	// Namespace is the MergePolicy objects' namespace, for a policy edit's manifest.
+	Namespace string
 }
 
 func (s *Service) repository(cfg *config.Config, name string) (*config.Repository, error) {
@@ -48,6 +50,26 @@ func (s *Service) Preview(ctx context.Context, repository, file string) (Preview
 		return Preview{}, err
 	}
 	return Check(cfg, rc, rep, file), nil
+}
+
+// PreviewBindings checks bindings as repository's spec.mergePolicies (CheckBindings, B16).
+func (s *Service) PreviewBindings(ctx context.Context, repository string, bindings []config.Binding) (BindingPreview, error) {
+	cfg := s.Cfg.Current()
+	rc, err := s.repository(cfg, repository)
+	if err != nil {
+		return BindingPreview{}, err
+	}
+	rep, err := s.Reports.Report(ctx, rc.Name)
+	if err != nil {
+		return BindingPreview{}, err
+	}
+	return CheckBindings(cfg, rc, rep, bindings), nil
+}
+
+// PreviewPolicy checks spec as the MergePolicy name, with the consumers readable lets through
+// (CheckPolicy, B11, B16).
+func (s *Service) PreviewPolicy(_ context.Context, name string, spec config.PolicySpec, readable func(string) bool) (PolicyPreview, error) {
+	return CheckPolicy(s.Cfg.Current(), name, spec, s.Namespace, readable), nil
 }
 
 // Timeline is pr's decisions, from the factory's own comments on it.

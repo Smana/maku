@@ -46,6 +46,8 @@ func Parse(raw []byte) (string, error) {
 		// Classes is the repository's merge policy (mergepolicy), which never decides ownership: a
 		// class this factory cannot read pauses that class's automation, not the repository's intake.
 		Classes json.RawMessage `json:"classes"`
+		// MergePolicies is the same policy in the binding shape (B15), and decides ownership no more.
+		MergePolicies json.RawMessage `json:"mergePolicies"`
 		// Hardening extends the repository's protected paths and trust floor (hardening.
 		// ParseRepositoryBlock), which never decides ownership either: a block that does not parse
 		// reads as the strictest policy, never as a repository this factory does not own.

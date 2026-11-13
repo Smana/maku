@@ -28,6 +28,9 @@ func TestParse(t *testing.T) {
 		"classes beside factory":    {"factory: aws-0\nclasses: {docs-links: {mode: live}}\n", "aws-0", true},
 		"invalid classes still own": {"factory: aws-0\nclasses: [not, a, map]\n", "aws-0", true},
 		"classes without factory":   {"classes: {}\n", "", false},
+		// B15: the binding shape never decides ownership either (found by PR H: it read as not owned).
+		"bindings beside factory":    {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", "aws-0", true},
+		"invalid bindings still own": {"factory: aws-0\nmergePolicies: {not: a list}\n", "aws-0", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got, err := Parse([]byte(tc.in))

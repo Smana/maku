@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/factory/catalogue"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/fanout"
@@ -67,6 +68,29 @@ func (f *fakePolicyFactory) PolicyDecisions(_ context.Context, token, repository
 		return policyview.Timeline{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
 	}
 	return policyview.Timeline{Repository: policyRepo, PullRequest: pr, Decisions: []policyview.Decision{}}, nil
+}
+
+func (f *fakePolicyFactory) PolicyList(_ context.Context, token string) ([]evidence.PolicyReport, error) {
+	f.tokens = append(f.tokens, token)
+	return []evidence.PolicyReport{{Name: "dead-links", Generation: 4}}, nil
+}
+
+func (f *fakePolicyFactory) Policy(_ context.Context, token, name string) (evidence.PolicyReport, error) {
+	f.tokens = append(f.tokens, token)
+	if name != "dead-links" {
+		return evidence.PolicyReport{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
+	}
+	return evidence.PolicyReport{Name: name, Generation: 4}, nil
+}
+
+func (f *fakePolicyFactory) PolicyPreviewBindings(_ context.Context, token, _ string, bs []config.Binding) (policyview.BindingPreview, error) {
+	f.tokens = append(f.tokens, token)
+	return policyview.BindingPreview{Valid: true, ManifestPath: "repository-maku.yaml", Bindings: []policyview.BindingResult{{Name: bs[0].Name}}}, nil
+}
+
+func (f *fakePolicyFactory) PolicyPreviewPolicy(_ context.Context, token, name string, _ config.PolicySpec) (policyview.PolicyPreview, error) {
+	f.tokens = append(f.tokens, token)
+	return policyview.PolicyPreview{Valid: true, ManifestPath: "mergepolicy-" + name + ".yaml"}, nil
 }
 
 func (f *fakePolicyFactory) PolicyRepositories(_ context.Context, token string) ([]string, error) {
@@ -212,11 +236,13 @@ func getPolicy(t *testing.T, e env, path string, h http.Header) (int, string) {
 var policyPaths = []struct{ method, path string }{
 	{http.MethodGet, "/settings"}, {http.MethodGet, "/settings/merge-policies"},
 	{http.MethodGet, "/settings/merge-policies/Smana/maku"}, {http.MethodGet, "/settings/evidence"},
-	{http.MethodGet, "/settings/merge-policies/Smana/maku/decisions/12"},
+	{http.MethodGet, "/settings/merge-policies/Smana/maku/decisions/12"}, {http.MethodGet, "/settings/merge-policies/policies/dead-links"},
 	{http.MethodPost, "/api/policy/repositories/Smana/maku/preview"}, {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12"},
 	{http.MethodGet, "/api/policy/repositories"}, {http.MethodGet, "/api/policy/repositories/Smana/maku"},
 	{http.MethodPost, "/api/policy/promotions"}, {http.MethodPost, "/api/policy/promotions/bbbbbbbb"},
 	{http.MethodPost, "/api/policy/exceptions"}, {http.MethodPost, "/api/policy/exceptions/bbbbbbbb"},
+	{http.MethodGet, "/api/policy/policies"}, {http.MethodGet, "/api/policy/policies/dead-links"},
+	{http.MethodPost, "/api/policy/policies/dead-links/preview"},
 }
 
 // Off (policyManagement.promotion false), every stage 6 path answers exactly as a path that never
@@ -235,7 +261,7 @@ func TestPolicyOffIsByteIdentical(t *testing.T) {
 func TestSettingsPagesServeTheApp(t *testing.T) {
 	f, m := newPolicy(20)
 	e := setup(t, policyOn(f, m))
-	for _, p := range policyPaths[:5] {
+	for _, p := range policyPaths[:6] {
 		if code, body := getPolicy(t, e, p.path, header("anyone")); code != http.StatusOK || !strings.Contains(body, "maku</html>") {
 			t.Errorf("%s: %d %q", p.path, code, body)
 		}
@@ -487,4 +513,39 @@ func TestPolicyRepositoryCarriesCatalogue(t *testing.T) {
 			t.Fatalf("%d %s", code, body)
 		}
 	})
+}
+
+// B16: the broker forwards the policy pages' reads and previews with the caller's own token, and
+// the factory's 404 for an unknown policy reaches the page as it is.
+func TestPoliciesForwardWithTheCallersToken(t *testing.T) {
+	f, m := newPolicy(20)
+	e := setup(t, policyOn(f, m))
+	code, body := getPolicy(t, e, "/api/policy/policies", header("anyone"))
+	if code != http.StatusOK || !strings.Contains(body, `"name":"dead-links"`) || f.tokens[len(f.tokens)-1] != "tok-anyone" {
+		t.Fatalf("%d %s %q", code, body, f.tokens)
+	}
+	if code, body := getPolicy(t, e, "/api/policy/policies/dead-links", header("anyone")); code != http.StatusOK || !strings.Contains(body, `"generation":4`) {
+		t.Fatalf("%d %s", code, body)
+	}
+	if code, body := getPolicy(t, e, "/api/policy/policies/nope", header("anyone")); code != http.StatusNotFound || !strings.Contains(body, "not_found") {
+		t.Fatalf("an unknown policy: %d %s", code, body)
+	}
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/policies/dead-links/preview", header("anyone"), map[string]any{"spec": map[string]any{"maxPerDay": 2}}); code != http.StatusOK ||
+		!strings.Contains(body, "mergepolicy-dead-links.yaml") {
+		t.Fatalf("policy preview: %d %s", code, body)
+	}
+	// A binding edit is a maintainer's, as a file edit is.
+	bindings := map[string]any{"kind": "binding", "bindings": []map[string]string{{"name": "docs-links", "mode": "live"}}}
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("maint"), bindings); code != http.StatusOK ||
+		!strings.Contains(body, "repository-maku.yaml") || f.tokens[len(f.tokens)-1] != "tok-maint" {
+		t.Fatalf("binding preview: %d %s", code, body)
+	}
+	if code, _ := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("anyone"), bindings); code != http.StatusForbidden {
+		t.Fatalf("a reader previews a binding edit: %d", code)
+	}
+	// Review of #546: an unknown kind is refused here, as the factory refuses it.
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("maint"), map[string]any{"kind": "other"}); code != http.StatusBadRequest ||
+		!strings.Contains(body, "kind_unknown") {
+		t.Fatalf("an unknown kind: %d %s", code, body)
+	}
 }

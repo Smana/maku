@@ -31,6 +31,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/ledger"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/policy"
@@ -118,6 +119,11 @@ type Server struct {
 	Evidence EvidenceSource
 	// Editor is the settings editor's check and the decision timeline, served beside Evidence.
 	Editor PolicyEditor
+	// Policies are the class-shape MergePolicies (B16), served beside the evidence; nil lists none.
+	Policies PolicySource
+	// PolicySnapshot is a repository's file as last read (mergepolicy.Watch.Snapshot): a cut-over
+	// repository's file bindings make it a consumer for the policy pages. nil reads none.
+	PolicySnapshot func(repository string) (mergepolicy.Snapshot, bool)
 	// Readers reads a repository's issues, pull requests and checks with the factory App for the
 	// broker's forge_read (HR35); nil, or nil for a repository, answers forge_unavailable.
 	// Readiness is each repository's hardening readiness (H5, HR41), served to operators and on the
@@ -212,6 +218,10 @@ func (s *Server) Handler() http.Handler {
 	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
+		if s.Policies != nil {
+			mux.HandleFunc("GET /v1/policy/policies", s.policyList)
+			mux.HandleFunc("GET /v1/policy/policies/{name}", s.policyGet)
+		}
 		if s.Editor != nil {
 			mux.HandleFunc("POST /v1/policy/preview", s.policyPreview)
 			mux.HandleFunc("GET /v1/policy/decisions", s.policyDecisions)

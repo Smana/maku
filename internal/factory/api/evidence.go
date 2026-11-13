@@ -3,12 +3,16 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
+
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 
 	"github.com/Smana/maku/internal/factory/config"
 
@@ -127,7 +131,106 @@ func (s *Server) policyRepositories(w http.ResponseWriter, r *http.Request) {
 // reconciler imports intake.
 type PolicyEditor interface {
 	Preview(ctx context.Context, repository, file string) (any, error)
+	// PreviewBindings and PreviewPolicy are the binding and policy edits (B16): one repository's
+	// mergePolicies, and a MergePolicy with its consumers the caller reads (readable).
+	PreviewBindings(ctx context.Context, repository string, bindings []config.Binding) (any, error)
+	PreviewPolicy(ctx context.Context, name string, spec config.PolicySpec, readable func(repository string) bool) (any, error)
 	Timeline(ctx context.Context, repository string, pr int) (any, error)
+}
+
+// PolicySource is the class-shape MergePolicies the factory serves (B16); *evidence.Service
+// implements it.
+type PolicySource interface {
+	Policies(ctx context.Context) []evidence.PolicyReport
+	Policy(ctx context.Context, name string) (evidence.PolicyReport, error)
+}
+
+// bindersOf are the repositories binding policy name, as the config spells them, by the name of
+// each Repository object (the status's consumers name those), else the repository's own: those
+// whose Repository binds it, and those cut over to a file that binds it (stage 4, B15).
+func (s *Server) bindersOf(cfg *config.Config, name string) map[string]string {
+	out := map[string]string{}
+	binds := func(bs []config.Binding) bool {
+		return slices.ContainsFunc(bs, func(b config.Binding) bool { return b.Name == name })
+	}
+	for _, rc := range cfg.Repos() {
+		bound := binds(rc.Bindings)
+		if !bound && cfg.RepositoryAuthoritative(&rc) && s.PolicySnapshot != nil {
+			if snap, ok := s.PolicySnapshot(rc.Name); ok && snap.File != nil {
+				bound = binds(snap.File.MergePolicies)
+			}
+		}
+		if bound {
+			out[cmp.Or(cfg.Generations.Repos[strings.ToLower(rc.Name)].RepositoryName, rc.Name)] = rc.Name
+		}
+	}
+	return out
+}
+
+// visible is p cut to what the caller reads (B16): the consumers they read, and the counts over them.
+// False when they read none: a policy is shown to a reader of one of its consumers, never more,
+// so its existence is not told to anyone else. A lookup that fails reads nothing.
+func (s *Server) visible(ctx context.Context, cfg *config.Config, pr authn.Principal, p evidence.PolicyReport) (evidence.PolicyReport, bool) {
+	reads := map[string]bool{}
+	for object, repo := range s.bindersOf(cfg, p.Name) {
+		if can, err := s.reads(ctx, pr, repo); err == nil && can {
+			reads[object] = true
+		}
+	}
+	if len(reads) == 0 {
+		return evidence.PolicyReport{}, false
+	}
+	// The consumers the caller reads, and the counts over them alone: no count tells of a
+	// repository they cannot see.
+	p.Status.Consumers = slices.DeleteFunc(slices.Clone(p.Status.Consumers), func(c factoryv1.ConsumerStatus) bool { return !reads[c.Repository] })
+	p.Status.ConsumerCount, p.Status.CurrentCount, p.Status.LiveCount = len(p.Status.Consumers), 0, 0
+	for _, c := range p.Status.Consumers {
+		if c.Accepted && c.ServedGeneration == p.Status.ObservedGeneration {
+			p.Status.CurrentCount++
+		}
+		if c.Mode == config.ModeLive && c.ServedGeneration > 0 {
+			p.Status.LiveCount++
+		}
+	}
+	return p, true
+}
+
+// policyList is GET /v1/policy/policies: the MergePolicies the caller reads a consumer of (B16).
+func (s *Server) policyList(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
+	p, ok := s.policyReader(w, r)
+	if !ok {
+		return
+	}
+	out := []evidence.PolicyReport{}
+	for _, pol := range s.Policies.Policies(r.Context()) {
+		if v, ok := s.visible(r.Context(), cfg, p, pol); ok {
+			out = append(out, v)
+		}
+	}
+	reply(w, http.StatusOK, map[string][]evidence.PolicyReport{"policies": out})
+}
+
+// policyGet is GET /v1/policy/policies/{name}: one MergePolicy, its definition, manifest and the
+// consumers the caller reads (B16). An unknown policy and one the caller reads no consumer of are a
+// 404 alike.
+func (s *Server) policyGet(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
+	p, ok := s.policyReader(w, r)
+	if !ok {
+		return
+	}
+	pol, err := s.Policies.Policy(r.Context(), r.PathValue("name"))
+	if err != nil {
+		refuse(w, http.StatusNotFound, "not_found")
+		return
+	}
+	v, ok := s.visible(r.Context(), cfg, p, pol)
+	if !ok {
+		refuse(w, http.StatusNotFound, "not_found")
+		return
+	}
+	reply(w, http.StatusOK, v)
 }
 
 // maxPreviewBody bounds a proposed policy: the file's own bound and its envelope.
@@ -162,13 +265,39 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Repository string `json:"repository"`
-		File       string `json:"file"`
+		// Kind is file (the default), binding or policy (B16).
+		Kind       string             `json:"kind"`
+		Repository string             `json:"repository"`
+		File       string             `json:"file"`
+		Bindings   []config.Binding   `json:"bindings"`
+		Policy     string             `json:"policy"`
+		Spec       *config.PolicySpec `json:"spec"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	switch in.Kind {
+	case "", "file", "binding":
+	case "policy":
+		// A policy is central: its preview writes nothing and shows only the consumers the caller
+		// reads, so any reader of the settings may run it.
+		if in.Policy == "" || in.Spec == nil {
+			refuse(w, http.StatusBadRequest, "policy_required")
+			return
+		}
+		readable := func(repo string) bool { can, err := s.reads(r.Context(), p, repo); return err == nil && can }
+		pv, err := s.Editor.PreviewPolicy(r.Context(), in.Policy, *in.Spec, readable)
+		if err != nil {
+			refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
+			return
+		}
+		reply(w, http.StatusOK, pv)
+		return
+	default:
+		refuse(w, http.StatusBadRequest, "kind_unknown")
 		return
 	}
 	repo := s.readable(cfg, w, r, p, in.Repository)
@@ -183,7 +312,13 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusForbidden, "not_a_maintainer")
 		return
 	}
-	pv, err := s.Editor.Preview(r.Context(), repo, in.File)
+	var pv any
+	var err error
+	if in.Kind == "binding" {
+		pv, err = s.Editor.PreviewBindings(r.Context(), repo, in.Bindings)
+	} else {
+		pv, err = s.Editor.Preview(r.Context(), repo, in.File)
+	}
 	if err != nil {
 		refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
 		return
