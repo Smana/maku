@@ -78,6 +78,24 @@ func refuse(reason hardening.Refusal, detail string) *Refused {
 // "main"), and returns what it would change. A *Refused error is the bundle's fault; any other
 // error is the factory's (retry later). It holds the mirror's lock for its whole run.
 func (m *Mirror) Inspect(ctx context.Context, bundle []byte, branch, base string) (Inspection, error) {
+	return m.inspectAs(ctx, bundle, branch, base, false)
+}
+
+// Read is the cumulative change bundle carries onto base, merge-base(base, head)..head, whatever
+// the branch holds now: the drill runner reads an applied push with it after the fact (HR38), when
+// the branch may have moved past the bundle's head. Files and Added are that range's, and Kind is
+// Rebase. It pushes nothing and keeps no ref to the bundle's objects; its refusals are Inspect's.
+func (m *Mirror) Read(ctx context.Context, bundle []byte, branch, base string) (Inspection, error) {
+	in, err := m.inspectAs(ctx, bundle, branch, base, true)
+	if err == nil {
+		m.Discard(ctx, in)
+		in.outRef = ""
+	}
+	return in, err
+}
+
+// inspectAs is Inspect, or with cumulative Read.
+func (m *Mirror) inspectAs(ctx context.Context, bundle []byte, branch, base string, cumulative bool) (Inspection, error) {
 	if !validBranch(branch) || !validBranch(base) {
 		return Inspection{}, fmt.Errorf("gitbundle: invalid branch %q or base %q", cut(branch), cut(base))
 	}
@@ -93,7 +111,7 @@ func (m *Mirror) Inspect(ctx context.Context, bundle []byte, branch, base string
 	var in Inspection
 	err = m.withMirror(ctx, func() error {
 		var opErr error
-		in, opErr = m.inspect(ctx, tok, bundle, branch, base)
+		in, opErr = m.inspect(ctx, tok, bundle, branch, base, cumulative)
 		return opErr
 	})
 	if err != nil {
@@ -102,7 +120,7 @@ func (m *Mirror) Inspect(ctx context.Context, bundle []byte, branch, base string
 	return in, nil
 }
 
-func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch, base string) (Inspection, error) {
+func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch, base string, cumulative bool) (Inspection, error) {
 	ref := "refs/heads/" + branch
 	f, err := os.CreateTemp(m.dir, "bundle-*.tmp")
 	if err != nil {
@@ -160,7 +178,7 @@ func (m *Mirror) inspect(ctx context.Context, tok string, bundle []byte, branch,
 		}
 		return Inspection{}, refuse(hardening.RefusePushTree, "objects failed fsck")
 	}
-	in, err := m.inspectFetched(ctx, tok, ref, outRef, head, oldHead, baseHead, branch, base)
+	in, err := m.inspectFetched(ctx, tok, ref, outRef, head, oldHead, baseHead, branch, base, cumulative)
 	var refused *Refused
 	if errors.As(err, &refused) {
 		m.dropOut(ctx, outRef)
@@ -192,7 +210,7 @@ func (m *Mirror) dropOut(ctx context.Context, outRef string) {
 }
 
 // inspectFetched is the inspection of a bundle fetched into outRef.
-func (m *Mirror) inspectFetched(ctx context.Context, tok, ref, outRef, head, oldHead, baseHead, branch, base string) (Inspection, error) {
+func (m *Mirror) inspectFetched(ctx context.Context, tok, ref, outRef, head, oldHead, baseHead, branch, base string, cumulative bool) (Inspection, error) {
 	got, err := m.revParse(ctx, outRef)
 	var ge *gitError
 	if errors.As(err, &ge) {
@@ -208,6 +226,8 @@ func (m *Mirror) inspectFetched(ctx context.Context, tok, ref, outRef, head, old
 	in := Inspection{Ref: ref, Head: head, OldHead: oldHead, BaseHead: baseHead, outRef: outRef}
 	from := ""
 	switch {
+	case cumulative: // Read: the whole change onto base, whatever the branch holds now
+		in.Kind = Rebase
 	case oldHead != "" && oldHead == head:
 		in.Kind, from = FastForward, oldHead
 	case oldHead != "":

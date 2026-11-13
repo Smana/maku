@@ -69,7 +69,7 @@ func overlapClassifications() []string {
 	return []string{v1alpha1.OverlapActiveDuplicate, v1alpha1.OverlapCompletedDuplicate, v1alpha1.OverlapPriorAttempt,
 		v1alpha1.OverlapPartialOverlap, v1alpha1.OverlapUnverifiedOverlap, v1alpha1.OverlapNoMatch}
 }
-func roomCapReasons() []string { return []string{"human_driver", "facts_due"} }
+func roomCapReasons() []string { return []string{"human_driver", "facts_due", "drill_unscored"} }
 func admissionReasons() []string {
 	return []string{"repository_differs_from_the_room", "repository_differs_from_the_branch", "repository_permission", "repository_not_owned",
 		"person_budget_exhausted"}
@@ -162,6 +162,8 @@ type Set struct {
 	hardeningOutput      metric.Float64Histogram
 	hardeningApproval    metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
+	hardeningDrillLast   metric.Int64Gauge
+	hardeningT5          metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
 	appPermissionMissing metric.Int64Gauge
@@ -377,6 +379,12 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.hardeningUntraced, err = meter.Int64Counter("agent_factory_hardening_untraced_total",
 		metric.WithDescription("Agent writes of an enforced output type that no output_applied explains (hardening H2's tracer, H2-2's gate: stays 0), by repository and output type."))
+	check(err)
+	s.hardeningDrillLast, err = meter.Int64Gauge("agent_factory_hardening_drill_last",
+		metric.WithDescription("Unix time of the last injection drill the factory scored, by result (pass or fail) (hardening HR38): a fail newer than the last pass blocks readiness R6."))
+	check(err)
+	s.hardeningT5, err = meter.Int64Counter("agent_factory_hardening_t5_total",
+		metric.WithDescription("T5 classifier calls on text outputs, refused ones included (hardening HR39, AC6), by repository, output type, result (hit, pass, unavailable) and whether the task is a drill: false positives are hits on applied outputs of non-drill tasks."))
 	check(err)
 	s.sandboxPermission, err = meter.Int64Gauge("agent_factory_hardening_sandbox_permission",
 		metric.WithDescription("1 for each GitHub permission and access a sandbox role's or the publisher's octo-sts policy grants on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
@@ -1084,6 +1092,25 @@ func (s *Set) HardeningOutput(ctx context.Context, typ string, d time.Duration) 
 func (s *Set) HardeningApprovalWait(ctx context.Context, decision string, d time.Duration) {
 	s.hardeningApproval.Record(ctx, max(d.Seconds(), 0), metric.WithAttributes(
 		attribute.String("decision", oneOf(decision, approvalDecisions)), s.repoOf(ctx)))
+}
+
+// HardeningDrillScored records the time of the drill just scored under its result (HR38).
+func (s *Set) HardeningDrillScored(ctx context.Context, pass bool, at time.Time) {
+	result := "fail"
+	if pass {
+		result = "pass"
+	}
+	s.hardeningDrillLast.Record(ctx, at.Unix(), metric.WithAttributes(attribute.String("result", result)))
+}
+
+// t5Results is the T5 counter's closed result set.
+var t5Results = []string{"hit", "pass", "unavailable"}
+
+// HardeningT5 counts one T5 call on an output of type typ (HR39), under the repository ctx names:
+// result is hit, pass or unavailable, and drill whether the task is an injection drill's.
+func (s *Set) HardeningT5(ctx context.Context, typ, result string, drill bool) {
+	s.hardeningT5.Add(ctx, 1, metric.WithAttributes(attribute.String("type", oneOf(typ, shadowTypes[1:])),
+		attribute.String("result", oneOf(result, t5Results)), attribute.Bool("drill", drill), s.repoOf(ctx)))
 }
 
 // RunRevoked counts a revocation by the run meter, by reason and the limit that fired.

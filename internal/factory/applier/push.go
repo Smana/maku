@@ -252,8 +252,8 @@ func (a *Applier) closePush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 
 // refusePush is refuse for a push, which also ends its wait.
 func (a *Applier) refusePush(ctx context.Context, t *v1alpha1.Task, runID string, rs *runState, req request, r hardening.Refusal,
-	n hardening.Counts) error {
-	if err := a.refuse(ctx, t, runID, rs, req, r, n); err != nil {
+	n hardening.Counts, audit ...hardening.Finding) error {
+	if err := a.refuse(ctx, t, runID, rs, req, r, n, audit...); err != nil {
 		return err
 	}
 	rs.unhold(req.rec.ID, a.Now())
@@ -346,18 +346,23 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	for _, f := range in.Files {
 		paths = append(paths, f.Path)
 	}
-	v := c.Check(ctx, &n, hardening.Request{Type: hardening.Push, Payload: payload, Files: paths, Added: in.Added,
-		Approved: approved, Canary: rs.claim.Canary})
+	hreq := hardening.Request{Type: hardening.Push, Payload: payload, Files: paths, Added: in.Added,
+		Approved: approved, Canary: rs.claim.Canary}
+	v := c.Check(ctx, &n, hreq)
+	if v.Refusal != "" {
+		v = c.Measure(ctx, hreq, v) // HR39: T5 reads a T4 refusal's added lines, already past T3, in audit
+	}
+	a.countT5(ctx, t, hardening.Push, v.T5)
 	switch v.Refusal {
 	case "":
 	case hardening.RefuseCanary:
 		a.Log.Error("canary leaked: an output request repeated the run's canary", "task.id", t.Name, "run.id", rec.ID,
 			"output.id", req.rec.ID, "type", req.rec.Type)
-		return a.refusePush(ctx, t, rec.ID, rs, req, v.Refusal, n)
+		return a.refusePush(ctx, t, rec.ID, rs, req, v.Refusal, n, v.Audit...)
 	case hardening.RefuseNeedsApproval:
 		return a.holdPush(ctx, t, rec, rs, req, in, c.Paths)
 	default:
-		return a.refusePush(ctx, t, rec.ID, rs, req, v.Refusal, n)
+		return a.refusePush(ctx, t, rec.ID, rs, req, v.Refusal, n, v.Audit...)
 	}
 	if a.stopped(ctx) {
 		return errStopped

@@ -98,6 +98,9 @@ const (
 	ReasonNoBundle        = "no_bundle"         // 404: the room holds no bundle for that run and digest
 	ReasonNoApproval      = "no_approval"       // 404: no approval has that id
 	ReasonBindingConflict = "binding_conflict"  // 409: the output's approval already binds another digest or branch
+	ReasonBadDrill        = "bad_drill"         // 400: a drill report or read that is not one: a bad id, version, hash, time or report
+	ReasonDrillExists     = "drill_exists"      // 409: a report for that drill id is already stored
+	ReasonNoDrill         = "no_drill"          // 404: no drill passed for that version and configuration hash
 )
 
 // SSE event names, broker → bridge.
