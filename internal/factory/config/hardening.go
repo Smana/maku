@@ -65,9 +65,11 @@ type Hardening struct {
 }
 
 // Publisher is where the publisher's token comes from: octo-sts, under each enforced repository's
-// .github/chainguard/publisher.sts.yaml (O5, HR11).
+// .github/chainguard/publisher.sts.yaml (O5, HR11), or, with Minter, the factory's own minter from
+// the agents App (v4 D10, plan PR7). Either way it is the agents App, so its login is agentsLogin.
 type Publisher struct {
 	OctoSTS PublisherOctoSTS
+	Minter  bool
 }
 
 // PublisherOctoSTS is the exchange: octo-sts's base URL, the factory's projected ServiceAccount
@@ -132,6 +134,7 @@ type hardeningFile struct {
 	} `json:"agentGuard,omitzero"`
 	EnforceOutputs []hardening.OutputType `json:"enforceOutputs,omitempty"`
 	Publisher      struct {
+		Minter  bool `json:"minter,omitempty"`
 		OctoSTS struct {
 			URL       string `json:"url,omitempty"`
 			TokenFile string `json:"tokenFile,omitempty"`
@@ -166,7 +169,7 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	}
 	*h = Hardening{Mode: hardening.ModeOff, MinAuthorTrust: f.MinAuthorTrust, BlockedUsers: f.BlockedUsers,
 		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}, EnforceOutputs: f.EnforceOutputs,
-		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS)}}
+		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS), Minter: f.Publisher.Minter}}
 	if f.AgentGuard.Timeout != nil {
 		h.AgentGuard.Timeout = explicitZero(f.AgentGuard.Timeout)
 	}
@@ -334,14 +337,18 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	}
 	h.validateStricter(bad)
 	h.validateEnforce(bad)
+	if h.Publisher.Minter && !c.RunTokens.Enabled {
+		bad("hardening.publisher.minter needs runTokens.enabled: the publisher's token is minted from the agents App it names")
+	}
 }
 
 // enforceable are the output types stage H2 enforces; push stays in the sandbox until H3.
 var enforceable = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels, hardening.Issue}
 
 // validateEnforce refuses an enforceOutputs list with push or an unknown type, a repository list
-// that drops a central type, a list on a repository in mode off, a list with no octo-sts publisher,
-// and an applier timing that is not positive (HR10, HR11, HR15, HR19).
+// that drops a central type, a list on a repository in mode off, a list with no publisher (octo-sts
+// or the minter, never both), and an applier timing that is not positive (HR10, HR11, HR15, HR19,
+// plan PR7).
 func (h Hardening) validateEnforce(bad func(string, ...any)) {
 	types := func(key string, list []hardening.OutputType) {
 		for _, t := range list {
@@ -370,10 +377,13 @@ func (h Hardening) validateEnforce(bad func(string, ...any)) {
 			bad("%s needs the repository's mode audit at least", key)
 		}
 	}
-	if h.Enforcing() {
-		p := h.Publisher.OctoSTS
+	p := h.Publisher.OctoSTS
+	switch {
+	case h.Publisher.Minter && p.URL != "":
+		bad("hardening.publisher.minter and hardening.publisher.octoSTS.url both name the publisher's token: choose one")
+	case h.Enforcing() && !h.Publisher.Minter:
 		if p.URL == "" {
-			bad("hardening.publisher.octoSTS.url is required with enforceOutputs: the applier writes as the publisher (HR11)")
+			bad("hardening.publisher.octoSTS.url is required with enforceOutputs, or hardening.publisher.minter: the applier writes as the publisher (HR11)")
 		} else if u, err := url.Parse(p.URL); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 			bad("hardening.publisher.octoSTS.url must be an https URL with a host and no credentials")
 		}

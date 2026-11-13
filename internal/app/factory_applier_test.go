@@ -103,6 +103,25 @@ func TestFactoryStartsApplier(t *testing.T) {
 	}
 }
 
+// Plan PR7: with hardening.publisher.minter the publisher's token comes from the agents App's
+// minter, so the applier starts with no projected token to read.
+func TestFactoryStartsApplierWithTheMinter(t *testing.T) {
+	cfg := enforcingConfig(map[string]config.HardeningRepository{
+		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
+	cfg.Hardening.Publisher = config.Publisher{Minter: true, OctoSTS: config.PublisherOctoSTS{TokenFile: filepath.Join(t.TempDir(), "absent")}}
+	cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
+	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+		Log: slog.New(slog.DiscardHandler)})
+	if a == nil || err != nil {
+		t.Fatalf("the minter's publisher did not start: %v", err)
+	}
+	cfg.RunTokens = config.RunTokens{}
+	if _, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
+		Log: slog.New(slog.DiscardHandler)}); err == nil || !strings.Contains(err.Error(), "runTokens.enabled") {
+		t.Fatalf("a minter with no agents App started: %v", err)
+	}
+}
+
 // The permission gauge's observer reads each sandbox role's and the publisher's policy on an
 // enforced repository only, and keeps a role whose policy does not read out of the pass.
 func TestSandboxPermissionObserver(t *testing.T) {

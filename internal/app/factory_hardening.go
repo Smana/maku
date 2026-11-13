@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -16,6 +17,7 @@ import (
 	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/minter"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
@@ -33,23 +35,38 @@ type applierDeps struct {
 	Live      func() *config.Config           // the published config: enforceOutputs and the allowlist per call
 	Metrics   applier.Metrics
 	Log       *slog.Logger
-	// Tokens is the publisher's token source; nil is octo-sts from hardening.publisher.octoSTS.
+	// Tokens is the publisher's token source; nil is the minter's with hardening.publisher.minter,
+	// else octo-sts from hardening.publisher.octoSTS.
 	Tokens applier.PublisherTokens
+	// Minter is the agents App's minter the publisher mints from; nil builds one from cfg.
+	Minter *minter.Minter
 }
 
 // safeOutputApplier is the applier for cfg (hardening H2, HR15): nil, and no publisher built, while
 // no repository has an enforceOutputs list, in the demo profile (never hardened, R7), or without the
 // hardening ports. Otherwise it answers enforced requests with T1 to T4 at enforce, as the agents
 // App: under HR11 the publisher's octo-sts token is the agents App's, so its login is agentsLogin,
-// the one the applier recognises its own pull requests and comments by. Turning enforcement on from
-// none takes a restart, as audit does. The start is refused while the publisher's projected token
-// cannot be read: every enforced request would otherwise wait unanswered for its run's whole
-// answerWait.
+// the one the applier recognises its own pull requests and comments by. With
+// hardening.publisher.minter the token is minted from the agents App instead (v4 D10, plan PR7):
+// the same App, so the same login. Turning enforcement on from none takes a restart, as audit does.
+// Under octo-sts the start is refused while the publisher's projected token cannot be read: every
+// enforced request would otherwise wait unanswered for its run's whole answerWait.
 func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, error) {
 	if cfg.Demo || !cfg.Hardening.Enforcing() || d.Hardened == nil {
 		return nil, nil
 	}
 	tokens := d.Tokens
+	if tokens == nil && cfg.Hardening.Publisher.Minter {
+		mt := d.Minter
+		if mt == nil {
+			mt = agentsMinter(cfg, nil, d.Log)
+		}
+		if mt == nil {
+			return nil, errors.New("hardening.publisher.minter needs runTokens.enabled: no agents App to mint the publisher's token from")
+		}
+		tokens = &minter.PublisherTokens{Minter: mt, Now: time.Now,
+			Enforced: func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) }}
+	}
 	if tokens == nil {
 		p := cfg.Hardening.Publisher.OctoSTS
 		if _, err := os.ReadFile(filepath.Clean(p.TokenFile)); err != nil {
