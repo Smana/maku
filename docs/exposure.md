@@ -26,6 +26,11 @@ flowchart LR
 
 Each hop inside the cluster is plain HTTP, inside the default-deny policies.
 
+No route ever targets `room-broker` itself, on any port: `:8080` would skip the front door, and
+`:8443` and the ops port `:9090` (`/metrics`, `/preflight`) are in-cluster only. With
+`maku.preflight.enabled` and `maku-factory.preflight.enabled`, the preflight's `exposure` check reads
+the namespace's HTTPRoutes and Ingresses and fails, `broker_exposed_around_proxy`, on any that does.
+
 ## The values
 
 ```yaml
