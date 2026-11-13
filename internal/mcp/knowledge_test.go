@@ -315,3 +315,20 @@ func TestNoKnowledgeNoTools(t *testing.T) {
 		t.Fatalf("tools %v", got)
 	}
 }
+
+// An endpoint the broker cannot reach is upstream_error, and the model is not told its address.
+func TestKnowledgeUnreachableNamesNoAddress(t *testing.T) {
+	s, o := knowledgeServer(t, "triager", &upstream{answer: textAnswer("x")}, KnowledgeConfig{})
+	i := slices.IndexFunc(s.Tools, func(tl Tool) bool { return tl.Name == "kb_search" })
+	dead := httptest.NewServer(http.NotFoundHandler())
+	dead.Close()
+	s.Tools[i] = KnowledgeTools(KnowledgeConfig{URL: dead.URL + "/mcp", Tools: []string{"kb_search"}, Roles: []string{"triager"},
+		Timeout: time.Second, MaxBytes: 1 << 10}, httpx.New(time.Second, nil), o.rec)[0]
+	res, text := callArgs(t, s, "kb_search", map[string]any{"query": "x"})
+	if res["isError"] != true || text != "knowledge_unavailable: the knowledge base is unreachable" {
+		t.Fatalf("result %v", res)
+	}
+	if got := o.list(); len(got) != 1 || got[0] != "kb_search:upstream_error" {
+		t.Fatalf("outcomes %v", got)
+	}
+}

@@ -158,7 +158,12 @@ func knowledgeFailure(outcome string, timeout time.Duration, err error) error {
 	case KnowledgeBadAnswer:
 		return knowledgeError("knowledge_bad_answer: the knowledge base's answer is not one the broker reads")
 	}
-	return knowledgeError("knowledge_unavailable: " + echo(err.Error()))
+	var up upstreamError
+	if errors.As(err, &up) { // the endpoint's own words, cut short
+		return knowledgeError("knowledge_unavailable: " + echo(up.Error()))
+	}
+	// A transport error names the endpoint's address, which is not the model's to know.
+	return knowledgeError("knowledge_unavailable: the knowledge base is unreachable")
 }
 
 // echo is at most knowledgeEcho bytes of an upstream message, cut at a rune and on one line.

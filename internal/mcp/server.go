@@ -372,6 +372,7 @@ func (s *Server) failure(ctx context.Context, tool string, run runwatch.Run, err
 	var known knowledgeError
 	switch {
 	case errors.As(err, &known): // the broker's own words, the endpoint's message cut short
+		s.log().Warn("knowledge call failed", "tool", tool, "room", run.Room, "run", run.ID, "reason", known.Error())
 		return known.Error()
 	case errors.As(err, &bad):
 		s.reject(ctx, "invalid_arguments")
