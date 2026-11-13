@@ -397,6 +397,16 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 // tally that reads it, are unchanged.
 func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
 	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, t.Spec.PredictedClass)
+	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
+		// Repository authority: the class that decided is the file's, so are its generations: the
+		// policy its binding resolved against (a last resolved one's included), none for a class
+		// the file defines itself. Never the central config's for the class.
+		res, ok := p.snap.Classes[t.Spec.PredictedClass]
+		gen, bound = res.PolicyGeneration, ok && p.err == nil && res.PolicyGeneration > 0
+		if !bound {
+			gen = 0
+		}
+	}
 	d.Rows.Generation = gen
 	if bound { // PR13: repogen= marks a decision of a bound class
 		d.Rows.RepoGeneration = repo

@@ -49,13 +49,22 @@ func needsGrantsUnder(in ArmInputs, cfg *config.Config, p gatePolicy) bool {
 }
 
 // snapshotHash is a repository policy's class as a grant binds to it (B13): its variants'
-// resolved hash, the requiresApproval subset included, so an edit to the subset suspends grants.
+// resolved hash, the requiresApproval leaves included as written, as config.ResolvedHash reads a
+// central class's, so a class and its in-sync file hash alike and an edit to the subset suspends
+// grants. A Resolved that keeps only the flattened subset hashes it as one leaf.
 func snapshotHash(res mergepolicy.Resolved) string {
+	leaves := res.Approvals
+	if len(leaves) == 0 && len(res.Approval) > 0 {
+		leaves = []config.ApprovalLeaf{{ChangedFiles: res.Approval}}
+	}
 	vs := slices.Clone(res.Variants())
 	for i := range vs {
-		if len(vs[i].RequiresApproval) == 0 && len(res.Approval) > 0 {
+		if len(vs[i].RequiresApproval) == 0 && len(leaves) > 0 {
 			v := *vs[i].DeepCopy()
-			v.RequiresApproval = []config.ApprovalLeaf{{ChangedFiles: slices.Clone(res.Approval)}}
+			v.RequiresApproval = make([]config.ApprovalLeaf, len(leaves))
+			for j, l := range leaves {
+				v.RequiresApproval[j] = config.ApprovalLeaf{ChangedFiles: slices.Clone(l.ChangedFiles)}
+			}
 			vs[i] = v
 		}
 	}

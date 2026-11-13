@@ -175,3 +175,35 @@ func TestDualEvaluationSkipsACutOverRepository(t *testing.T) {
 	}
 	g.reconcile(t, "3buqdlot", 1)
 }
+
+// B12 (review of #533): under repository authority the record's generations are the deciding
+// class's, as the file resolved it (its policy's generation, a last resolved one's included), never
+// the central config's for the class.
+func TestACutOverRecordNamesTheDecidingClassGenerations(t *testing.T) {
+	for name, tc := range map[string]struct {
+		policyGen int64
+		want      string
+		absent    []string
+	}{
+		"a binding served from its last resolved class": {3, " policygen=3 repogen=9 ", nil},
+		"a class-shape file":                            {0, " policy=0123456789ab ", []string{"policygen=", "repogen="}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			res := resolvedLive("docs-links")
+			res.PolicyGeneration = tc.policyGen
+			g := cutOverRig(t, snapshotOf(map[string]mergepolicy.Resolved{"docs-links": res}), nil)
+			g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {
+				Repository: 9, MergePolicy: 5, Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 5, PolicyName: "docs-links"}}}}}
+			g.reconcile(t, "3buqdlot", 1)
+			c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
+			if !strings.Contains(c, tc.want) || strings.Contains(c, "policygen=5") {
+				t.Fatalf("want %q, never the central 5: %s", tc.want, c)
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(c, a) {
+					t.Fatalf("%s printed: %s", a, c)
+				}
+			}
+		})
+	}
+}

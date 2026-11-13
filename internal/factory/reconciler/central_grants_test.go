@@ -100,3 +100,17 @@ func TestUnrelatedClassEditKeepsGrants(t *testing.T) {
 		t.Fatalf("this class's edit kept the grant: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 }
+
+// B13 (review of #533): a central class with several requiresApproval leaves and its in-sync
+// repository file hash the same, so stage-3 grants hold at cutover.
+func TestAMultiLeafClassAndItsFileHashAlike(t *testing.T) {
+	c := conformanceCfg()
+	rc := c.RepositoryFor("")
+	cl := rc.Classes["docs-links"]
+	cl.RequiresApproval = []config.ApprovalLeaf{{ChangedFiles: []string{"^docs/a/"}}, {ChangedFiles: []string{"^docs/b/", "^docs/c/"}}}
+	rc.Classes["docs-links"] = cl
+	file := exported(t, c)["docs-links"]
+	if got, want := snapshotHash(file), config.ResolvedHash(cl); got != want {
+		t.Fatalf("the file hashes %s, the central class %s", got, want)
+	}
+}

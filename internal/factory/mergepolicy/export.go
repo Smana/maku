@@ -68,6 +68,10 @@ func exportClass(cl config.Class, c *config.Config) (ClassPolicy, error) {
 	if cl.Adopted() {
 		p.Author, p.Adopt = AuthorAdopt, cl.Author.Adopt
 	}
+	// B13: the leaves as written, so the exported file's class hashes as the central one does.
+	for _, a := range cl.RequiresApproval {
+		p.RequiresApproval = append(p.RequiresApproval, ApprovalLeaf{ChangedFiles: slices.Clone(a.ChangedFiles)})
+	}
 	add := func(l Leaf) { p.Conditions.All = append(p.Conditions.All, l) }
 	if len(cl.AllowedFiles) > 0 {
 		add(Leaf{AllowedFiles: cl.AllowedFiles})

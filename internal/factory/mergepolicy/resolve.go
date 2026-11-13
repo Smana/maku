@@ -22,7 +22,13 @@ type Resolved struct {
 	// Branches are Class with each branch of any added, one variant per branch; nil without any.
 	Branches []config.Class
 	Approval []string // requiresApproval's paths
-	Profile  config.HarnessProfile
+	// Approvals are requiresApproval's leaves as written: what a grant's hash reads, so the class
+	// and its in-sync central one hash alike (B13).
+	Approvals []config.ApprovalLeaf
+	Profile   config.HarnessProfile
+	// PolicyGeneration is the generation of the MergePolicy a binding resolved against, a last
+	// resolved one's when it is served (B9, B12); 0 for a class the file defines itself.
+	PolicyGeneration int64
 }
 
 // Variants are the classes the evaluator decides on, one at a time: the class holds when one
@@ -89,6 +95,7 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 	r := Resolved{Profile: profile}
 	for _, a := range p.RequiresApproval {
 		r.Approval = append(r.Approval, a.ChangedFiles...)
+		r.Approvals = append(r.Approvals, config.ApprovalLeaf{ChangedFiles: slices.Clone(a.ChangedFiles)})
 	}
 	for _, branch := range p.Conditions.Any {
 		v := clone(cl)
