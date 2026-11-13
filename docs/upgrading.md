@@ -4,6 +4,23 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Two GitHub Apps (v0.4x, v4 rollout step 3)
+
+New `maku-factory` keys name the Apps ([GitHub Apps](github-apps.md)). Each maps onto an old
+key, which keeps working, and with none of them set the render is unchanged.
+
+| New key | Old key | Rule |
+|---|---|---|
+| `apps.factory.existingSecret` | `githubSecret` | The new key wins when set |
+| `apps.agents.existingSecret` | `runTokens.appSecret` | The new key wins; both set and different fail the render. Mounted at `/etc/agent-factory-agents`, read through `config.github.agentsAppIDFile` and `agentsKeyFile` |
+| `apps.merger.mode: factory` | `mergerSecret` | The merger signs with the factory App: no merger volume, and every `merge.mergerLogin` must be `factoryLogin`. `mergerSecret` set beside it fails the render |
+
+`mergerSecret` now defaults to `""`, which means `agent-factory-merger` as before. The demo's
+`values-demo.yaml` sets `apps.merger.mode: factory` in place of its explicit merger files: its
+factory config is unchanged, and its pod no longer mounts the absent `agent-factory-merger` Secret.
+The config also gains `github.agentsAppIDFile` and `agentsKeyFile`; it is decoded strictly, so
+upgrade the chart and the image together.
+
 ## Per-run tokens (v0.4x, v4 rollout step 3)
 
 Two opt-in keys, which go together; without them nothing changes (`gitTokens: shared` stays the
