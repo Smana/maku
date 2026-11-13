@@ -27,6 +27,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
 | [API](api.md) | The broker's four listeners, their errors and limits |
 | [Injection drills](drills.md) | The drill repository and accounts, `maku drill plant`, how the factory scores a drill, reading a report, the stop rule |
+| [Install Secrets](install-secrets.md) | Every Secret an install reads, by name and key; the umbrella's optional ExternalSecrets, with OpenBao, CNPG and AWS examples |
 | [Identity](identity.md) | Any OIDC issuer: the presets, the roles claim, token use `id`, oauth2-proxy's arguments, what each IdP issues, moving off ZITADEL |
 | [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |

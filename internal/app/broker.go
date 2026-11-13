@@ -269,6 +269,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
+	if err := checkBrokerSecrets(cfg, readMounted); err != nil {
+		return fmt.Errorf("room-broker: %w", err)
+	}
 	tlsCfg, err := tlsreload.Config(cfg.TLS.CertFile, cfg.TLS.KeyFile, log)
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
