@@ -108,6 +108,9 @@ type Applier struct {
 	Caps func(t *v1alpha1.Task) (files, lines int)
 	// ApprovalTTL is how long a protected-path push waits for a maintainer (DefaultApprovalTTL).
 	ApprovalTTL time.Duration
+	// Tasks persists a push's intent on its task before the push (AnnotationPushIntent); with nil
+	// a push whose reply is lost is refused push_ref on the next tick (HR26's residual).
+	Tasks client.Writer
 	// AgentsLogin and FactoryLogin are the publisher's and the factory App's logins: the
 	// applier recognises its own writes only by them.
 	AgentsLogin, FactoryLogin string
