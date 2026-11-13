@@ -456,9 +456,12 @@ objs=$(kubectl get all,cm,secret -A -o name) || die "kubectl could not list the 
 ! grep -E 'ciliumnetworkpolic|cert-manager' <<<"$objs" || die "a Cilium or cert-manager object exists"
 echo "ok: the cluster has none of those APIs, and the install needed none"
 
+# The probe helpers below are defined in every leg: later steps create pods in agents with them.
+# The rooms-db assertions skip EXTERNAL_DB, which has no rooms-db.
 if [[ -z $EXTERNAL_DB ]]; then
 step "plain NetworkPolicies: a run-labelled pod cannot reach rooms-db, the broker's pods can"
 kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
+fi
 # probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432. Returns 0 when nc connected and
 # 1 when nc itself failed (refused or timed out); a kubectl or image-pull failure, where the pod never
 # printed its marker, dies instead of passing as "cannot reach".
@@ -493,6 +496,7 @@ probe() {
   [[ $phase == Succeeded ]] || rc=1
   return "$rc"
 }
+if [[ -z $EXTERNAL_DB ]]; then
 kubectl get ns agents >/dev/null || die "the runs namespace agents does not exist"
 # control: the broker's label from the release namespace connects (so a failure below is the policy, not DNS or the image)
 # (the policy engine syncs a new pod's labels a moment after it starts: retry the control)
