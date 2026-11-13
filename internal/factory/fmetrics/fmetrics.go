@@ -164,6 +164,7 @@ type Set struct {
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
+	appPermissionMissing metric.Int64Gauge
 	mergeGateUnread      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
 	prOutcomes           metric.Int64Counter
@@ -371,6 +372,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
+	check(err)
+	s.appPermissionMissing, err = meter.Int64Gauge("agent_factory_github_app_permission_missing",
+		metric.WithDescription("1 for each permission an App's installation (agents or factory) lacks on a served repository, against the App's required set, under runTokens.perRun, as read when this replica became leader and never refreshed since; 0 when every served installation was read and grants it (D12)."))
 	check(err)
 	s.mergeGateUnread, err = meter.Int64Counter("agent_factory_merge_gate_rules_unread_total",
 		metric.WithDescription("Fence passes over a repository with merge.gateStatus that could not read whether its default branch requires maku/merge-gate: agent_factory_merge_gate_required keeps its last value meanwhile (D11)."))
@@ -988,6 +992,20 @@ func (s *Set) MergeGateRequired(ctx context.Context, repository string, required
 		v = 1
 	}
 	s.mergeGateRequired.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// githubApps is the App label's closed set (D12).
+var githubApps = []string{"agents", "factory"}
+
+// GitHubAppPermissionMissing sets whether app's installation lacks permission, on any served
+// repository (D12's startup check).
+func (s *Set) GitHubAppPermissionMissing(ctx context.Context, app, permission string, missing bool) {
+	v := int64(0)
+	if missing {
+		v = 1
+	}
+	s.appPermissionMissing.Record(ctx, v, metric.WithAttributes(attribute.String("app", oneOf(app, githubApps)),
+		attribute.String("permission", oneOf(permission, permissionNames))))
 }
 
 // MergeGateRulesUnread counts a fence pass that could not read repository's branch rules.

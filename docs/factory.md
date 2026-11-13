@@ -2098,7 +2098,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `factoryLogin`, `agentsLogin` | The factory App's login (narration) and the agents App's (pull requests) | Required |
 | `roomsURL` | `https://<host>` of the rooms UI, linked in comments | Required |
 | `broker` | `url` (https only), `caFile`, `tokenFile` | Required |
-| `github` | `appIDFile`, `privateKeyFile`; `mergerAppIDFile`, `mergerKeyFile` (both or neither; required once a class is live or shadow) | Required |
+| `github` | `appIDFile`, `privateKeyFile`; `mergerAppIDFile`, `mergerKeyFile` (both or neither; required once a class is live or shadow; equal to `appIDFile`, the merger is folded into the factory App and every `merge.mergerLogin` must be `factoryLogin`); `agentsAppIDFile`, `agentsKeyFile` (both or neither: the agents App, over the `runTokens.appIDFile` and `privateKeyFile` aliases, which may not name another App). Each App's permissions: [GitHub Apps](github-apps.md) | Required |
 | `poll` | `issues`, `tasks`, `meter`: durations such as `"60s"` | Required, positive |
 | `defaults` | `template`, `tier`, `dataClass`, `predictedClass` | `dataClass` and `predictedClass` required; `template` and `tier` are read by nothing, optional, checked only when set |
 | `triage` | `classifierURL`, `controlPercent` (0–100) | `controlPercent` required; `classifierURL` unset: no classifier call, every task takes the static `standard` tier |
@@ -2170,8 +2170,9 @@ once over the final decision, so no `any` branch can arm an approval over a gate
 a gate path, or a rename from one, is handed off as `gate_path` and stays a human merge on GitHub. `allowedFiles` still bounds what a class arms on its own, not
 what a maintainer approves.
 
-**The demo runs on one GitHub App.** `github.mergerAppIDFile` and `github.mergerKeyFile` may name
-the factory App's own files (`github.appIDFile`, `github.privateKeyFile`): the merger connection
+**The demo runs on one GitHub App.** A production install runs two or more ([GitHub
+Apps](github-apps.md)). `github.mergerAppIDFile` and `github.mergerKeyFile` may name
+the factory App's own files (the chart's `apps.merger.mode: factory` writes them) (`github.appIDFile`, `github.privateKeyFile`): the merger connection
 then signs with the same key, and a shadow or live class still has its merger. That one App needs
 the union of every permission asked on the demo's behalf, as one list: `actions: write` (optional,
 for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadata: read`,

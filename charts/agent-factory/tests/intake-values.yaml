@@ -52,8 +52,8 @@ maku:
       - {name: e2e-github, mountPath: /etc/e2e/github, readOnly: true}
 
 maku-factory:
-  # The demo uses one throwaway App for the factory and merger. Mount it at both expected paths.
-  mergerSecret: agent-factory-github
+  # The demo uses one throwaway App for the factory and merger: values-demo.yaml's
+  # apps.merger.mode factory points the merger at the factory App's files.
   extraEnv:
     - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
     - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
