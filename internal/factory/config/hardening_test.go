@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestHardeningDefaultsOff(t *testing.T) {
 // value the design does not define or a label an agent must never choose.
 func TestHardeningRefusals(t *testing.T) {
 	for name, c := range map[string]struct{ block, want string }{
-		"enforce, before H3":         {"hardening: {mode: enforce}\n", "stage H3"},
+		"enforce, before H4":         {"hardening: {mode: enforce}\n", "stage H4"},
 		"a repository below central": {"hardening: {mode: audit, repositories: {Smana/cloud-native-ref: {mode: off}}}\n", "only be stricter"},
 		"a bogus mode":               {"hardening: {mode: on}\n", "hardening.mode"},
 		"a bogus classifier":         {"hardening: {layers: {classifier: strict}}\n", "hardening.layers.classifier"},
@@ -143,7 +144,7 @@ func TestHardeningAuditAccepted(t *testing.T) {
 	}
 }
 
-// Enforcement is stage H3's: this release refuses it, centrally and per repository, so R1 never holds.
+// Mode enforce is stage H4's (HR34): this release refuses it, centrally and per repository, so R1 never holds.
 func TestHardeningEnforceStillRefused(t *testing.T) {
 	for name, block := range map[string]string{
 		"central":         "hardening: {mode: enforce}\n",
@@ -153,7 +154,7 @@ func TestHardeningEnforceStillRefused(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(good + block))
-			if err == nil || !strings.Contains(err.Error(), "enforce arrives with stage H3") {
+			if err == nil || !strings.Contains(err.Error(), "enforce arrives with stage H4") {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -275,7 +276,7 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 const enforcePublisher = "  publisher: {octoSTS: {url: \"https://octo-sts.dev\"}}\n"
 
 // H2 enforces the non-code outputs per repository (HR10): a repository's list is a superset of the
-// central one, push waits for H3, and a list needs audit at least and a publisher.
+// central one, push is enforceable from H3, and a list needs audit at least and a publisher.
 func TestEnforceOutputs(t *testing.T) {
 	for name, tc := range map[string]struct {
 		block, want string
@@ -286,9 +287,9 @@ func TestEnforceOutputs(t *testing.T) {
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [comment]}}\n", ""},
 		"a repository's list missing pr": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [comment]}}\n", "superset"},
-		"push": {"hardening:\n  mode: audit\n  enforceOutputs: [push]\n" + enforcePublisher, "push arrives with stage H3"},
+		"push": {"hardening:\n  mode: audit\n  enforceOutputs: [push]\n" + enforcePublisher, ""},
 		"a repository's push": {"hardening:\n" + enforcePublisher +
-			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr, push]}}\n", "push arrives with stage H3"},
+			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr, push]}}\n", ""},
 		"an unknown type":   {"hardening:\n  mode: audit\n  enforceOutputs: [review]\n" + enforcePublisher, "hardening.enforceOutputs"},
 		"central, mode off": {"hardening:\n  enforceOutputs: [pr]\n" + enforcePublisher, "audit"},
 		"a repository, mode off": {"hardening:\n" + enforcePublisher +
@@ -399,6 +400,82 @@ func TestUnscopedTokenRefused(t *testing.T) {
 			}
 			if tc.refused && !strings.Contains(err.Error(), "HR13") {
 				t.Fatalf("err %v does not name HR13", err)
+			}
+		})
+	}
+}
+
+// Stage H3 (HR34): push is enforceable under mode audit, alone or with the other four, centrally
+// or per repository.
+func TestEnforcePush(t *testing.T) {
+	for name, block := range map[string]string{
+		"all five, a repository": "hardening:\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [push, pr, comment, labels, issue]}}\n",
+		"push alone, a repository": "hardening:\n" + enforcePublisher +
+			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [push]}}\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, err := Parse([]byte(good + block))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !c.Hardening.EnforcesPush() || !slices.Contains(c.Hardening.EnforcedFor("Smana/cloud-native-ref"), hardening.Push) {
+				t.Fatalf("push not enforced: %v", c.Hardening.EnforcedFor("Smana/cloud-native-ref"))
+			}
+		})
+	}
+	c, err := Parse([]byte(good + "hardening:\n" + enforcePublisher +
+		"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr]}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Hardening.EnforcesPush() {
+		t.Fatal("pr alone enforces push")
+	}
+}
+
+func TestHashCoversPush(t *testing.T) {
+	base := "hardening:\n" + enforcePublisher + "  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr%s]}}\n"
+	a, err := Parse([]byte(good + fmt.Sprintf(base, "")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := Parse([]byte(good + fmt.Sprintf(base, ", push")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a.Hash == b.Hash {
+		t.Fatal("adding push leaves the hash unchanged")
+	}
+}
+
+// HR27: a protected-path push waits 24h by default, and approvalTTL is within (0, 168h]; the
+// mirror's size limit is 1 GiB by default, and at least 64 MiB.
+func TestApproverTTL(t *testing.T) {
+	c, err := Parse([]byte(good))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.Hardening.Applier; a.ApprovalTTL.Duration != 24*time.Hour || a.MirrorMaxBytes != 1<<30 {
+		t.Fatalf("defaults %+v", a)
+	}
+	c, err = Parse([]byte(good + "hardening: {applier: {approvalTTL: 168h, mirrorMaxBytes: 134217728}}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a := c.Hardening.Applier; a.ApprovalTTL.Duration != 168*time.Hour || a.MirrorMaxBytes != 128<<20 {
+		t.Fatalf("set %+v", a)
+	}
+	for name, tc := range map[string]struct{ block, want string }{
+		"zero":           {"hardening: {applier: {approvalTTL: 0s}}\n", "hardening.applier.approvalTTL"},
+		"negative":       {"hardening: {applier: {approvalTTL: -1h}}\n", "hardening.applier.approvalTTL"},
+		"over a week":    {"hardening: {applier: {approvalTTL: 169h}}\n", "hardening.applier.approvalTTL"},
+		"a zero mirror":  {"hardening: {applier: {mirrorMaxBytes: 0}}\n", "hardening.applier.mirrorMaxBytes"},
+		"a small mirror": {"hardening: {applier: {mirrorMaxBytes: 1024}}\n", "hardening.applier.mirrorMaxBytes"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(good + tc.block)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want an error naming %q", err, tc.want)
 			}
 		})
 	}

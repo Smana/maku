@@ -45,7 +45,7 @@ func (m *modeField) UnmarshalJSON(b []byte) error {
 
 // Hardening is the untrusted-input hardening track's central configuration (hardening design,
 // Configuration). A repository may only make it stricter. Stage H1 accepts off and audit, which
-// observes and never refuses; enforce arrives with stage H3, and the classifier's with H5.
+// observes and never refuses; enforce arrives with stage H4, and the classifier's with H5.
 type Hardening struct {
 	Mode           hardening.Mode                 `json:"-"`
 	MinAuthorTrust string                         `json:"-"`
@@ -76,9 +76,17 @@ type PublisherOctoSTS struct {
 	URL, TokenFile, Identity string
 }
 
-// HardeningApplier is the applier's poll and how long a run's end waits for its answers.
+// HardeningApplier is the applier's poll, how long a run's end waits for its answers, how long a
+// protected-path push waits for a maintainer (HR27), and the size of one repository's git mirror
+// (HR24).
 type HardeningApplier struct {
 	Interval, AnswerWait Duration
+	// ApprovalTTL is how long a push touching a protected path waits for a maintainer's approval of
+	// its digest: 24h by default, at most 7 days (168h).
+	ApprovalTTL Duration
+	// MirrorMaxBytes bounds one repository's bare, blobless mirror under MAKU_GIT_CACHE: a mirror
+	// past it is re-created before its next inspection. 1 GiB by default.
+	MirrorMaxBytes int64
 }
 
 // Publisher defaults: the chart mounts the projected token here, and the policy is publisher.sts.yaml.
@@ -87,6 +95,10 @@ const (
 	defaultPublisherIdentity  = "publisher"
 	defaultApplierInterval    = 2 * time.Second
 	defaultApplierAnswerWait  = 5 * time.Minute
+	defaultApprovalTTL        = 24 * time.Hour
+	maxApprovalTTL            = 7 * 24 * time.Hour
+	defaultMirrorMaxBytes     = 1 << 30
+	minMirrorMaxBytes         = 64 << 20
 )
 
 // HardeningLayers sets the layers that may differ from the mode: T5 alone, since T1 to T4 run at
@@ -140,7 +152,9 @@ type hardeningFile struct {
 	} `json:"publisher,omitzero"`
 	Applier struct {
 		Interval   *Duration `json:"interval,omitempty"`
-		AnswerWait *Duration `json:"answerWait,omitempty"`
+		AnswerWait     *Duration `json:"answerWait,omitempty"`
+		ApprovalTTL    *Duration `json:"approvalTTL,omitempty"`
+		MirrorMaxBytes *int64    `json:"mirrorMaxBytes,omitempty"`
 	} `json:"applier,omitzero"`
 	Repositories map[string]struct {
 		Mode           *modeField              `json:"mode,omitempty"`
@@ -175,6 +189,15 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	}
 	if f.Applier.AnswerWait != nil {
 		h.Applier.AnswerWait = explicitZero(f.Applier.AnswerWait)
+	}
+	if f.Applier.ApprovalTTL != nil {
+		h.Applier.ApprovalTTL = explicitZero(f.Applier.ApprovalTTL)
+	}
+	if f.Applier.MirrorMaxBytes != nil {
+		h.Applier.MirrorMaxBytes = *f.Applier.MirrorMaxBytes
+		if h.Applier.MirrorMaxBytes == 0 {
+			h.Applier.MirrorMaxBytes = -1 // written as zero: Validate refuses it
+		}
 	}
 	h.ApplyDefaults()
 	if f.Mode != nil {
@@ -232,6 +255,26 @@ func (h *Hardening) ApplyDefaults() {
 	if h.Applier.AnswerWait.Duration == 0 {
 		h.Applier.AnswerWait.Duration = defaultApplierAnswerWait
 	}
+	if h.Applier.ApprovalTTL.Duration == 0 {
+		h.Applier.ApprovalTTL.Duration = defaultApprovalTTL
+	}
+	if h.Applier.MirrorMaxBytes == 0 {
+		h.Applier.MirrorMaxBytes = defaultMirrorMaxBytes
+	}
+}
+
+// EnforcesPush reports whether any repository enforces push: only then does the factory need its
+// git cache (MAKU_GIT_CACHE) and the applier its pusher (H3).
+func (h Hardening) EnforcesPush() bool {
+	if slices.Contains(h.EnforceOutputs, hardening.Push) {
+		return true
+	}
+	for _, r := range h.Repositories {
+		if slices.Contains(r.EnforceOutputs, hardening.Push) {
+			return true
+		}
+	}
+	return false
 }
 
 // EnforcedFor is repository's effective enforced output types, sorted and once each: its own list
@@ -279,8 +322,9 @@ func (h Hardening) MinTrust() hardening.Level {
 	return l
 }
 
-// enforceRefused is why this release refuses mode enforce: R1 stays false until H3.
-const enforceRefused = "enforce arrives with stage H3; this release offers off and audit"
+// enforceRefused is why this release refuses mode enforce: it means every output type enforced and
+// reads filtered, which stage H4 brings (HR34). H3 enforces push under mode audit.
+const enforceRefused = "enforce arrives with stage H4; this release offers off and audit, with enforceOutputs"
 
 func (c *Config) validateHardening(bad func(string, ...any)) {
 	h := c.Hardening
@@ -336,20 +380,18 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	h.validateEnforce(bad)
 }
 
-// enforceable are the output types stage H2 enforces; push stays in the sandbox until H3.
-var enforceable = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels, hardening.Issue}
+// enforceable are the output types the factory may publish: stage H2's four, and push from stage
+// H3 (HR34).
+var enforceable = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels, hardening.Issue, hardening.Push}
 
-// validateEnforce refuses an enforceOutputs list with push or an unknown type, a repository list
+// validateEnforce refuses an enforceOutputs list with an unknown type, a repository list
 // that drops a central type, a list on a repository in mode off, a list with no octo-sts publisher,
 // and an applier timing that is not positive (HR10, HR11, HR15, HR19).
 func (h Hardening) validateEnforce(bad func(string, ...any)) {
 	types := func(key string, list []hardening.OutputType) {
 		for _, t := range list {
-			switch {
-			case t == hardening.Push:
-				bad("%s: push arrives with stage H3; this release enforces pr, comment, labels and issue", key)
-			case !slices.Contains(enforceable, t):
-				bad("%s: %q is none of pr, comment, labels, issue", key, t)
+			if !slices.Contains(enforceable, t) {
+				bad("%s: %q is none of pr, comment, labels, issue, push", key, t)
 			}
 		}
 	}
@@ -386,6 +428,12 @@ func (h Hardening) validateEnforce(bad func(string, ...any)) {
 	}
 	if h.Applier.AnswerWait.Duration <= 0 {
 		bad("hardening.applier.answerWait must be positive")
+	}
+	if d := h.Applier.ApprovalTTL.Duration; d <= 0 || d > maxApprovalTTL {
+		bad("hardening.applier.approvalTTL must be positive and at most %s (7 days)", maxApprovalTTL)
+	}
+	if h.Applier.MirrorMaxBytes < minMirrorMaxBytes {
+		bad("hardening.applier.mirrorMaxBytes must be at least %d (64 MiB)", minMirrorMaxBytes)
 	}
 }
 
