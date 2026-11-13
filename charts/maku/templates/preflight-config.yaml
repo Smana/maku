@@ -1,0 +1,20 @@
+{{- if .Values.preflight.enabled }}
+{{- $sb := include "ap.sandbox" . | fromJson -}}
+{{- /* The six maku CRDs at the version this chart serves, then the values' extra ones. */ -}}
+{{- $crds := list -}}
+{{- range list "agentruns" "factories" "mergepolicies" "repositories" "rooms" "tasks" -}}
+{{- $crds = append $crds (dict "name" (printf "%s.maku.ogenki.io" .) "version" "v1alpha1") -}}
+{{- end -}}
+{{- $crds = concat $crds .Values.preflight.extraCRDs -}}
+{{- $cfg := dict "cluster" (dict "minKubernetes" "1.30" "crds" $crds "runtimeClass" $sb.class "unsafeAllowRunc" $sb.allowUnsandboxed
+  "secrets" (include "ap.preflightSecrets" . | fromJson).secrets) "components" (list) "timeout" (printf "%ds" (include "ap.preflightSeconds" . | int)) -}}
+# The preflight's checks (v4 D24): the cluster's, against this release's values. maku-run-controller
+# preflight reads it strictly, so the chart and the image move together.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+data:
+  config.json: {{ toJson $cfg | quote }}
+{{- end }}

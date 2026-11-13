@@ -14,6 +14,13 @@ spec:
     - fromEntities: [host]
       toPorts:
         - ports: [{port: "9091", protocol: TCP}]
+    {{- if .Values.preflight.enabled }}
+    # The install's preflight collects /preflight on the ops port (v4 D24).
+    - fromEndpoints:
+        - matchLabels: {app.kubernetes.io/name: preflight}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    {{- end }}
   egress:
     - toEndpoints:
         - matchLabels:

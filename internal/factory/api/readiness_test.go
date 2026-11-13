@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -139,52 +139,57 @@ func (b *blockingReadiness) Hardened(context.Context, string) (hardening.Report,
 	return hardening.Report{Missing: []hardening.Missing{hardening.MissingDrill}}, nil
 }
 
-// #531's review: the Evidence page and the readiness route share one read set per repository for
-// 60 seconds, so N concurrent views cost one evaluation each; past the TTL it is read again. An
-// error reads error. (Admission keeps reading fresh: it calls the Evaluator, not this.)
+// #531's review: the Evidence page and the readiness route share one read per repository for 60
+// seconds, so N concurrent views cost one evaluation; past the TTL it is read again, and an error
+// reads error. (Admission keeps reading fresh: it calls the Evaluator, not this.)
+//
+// Deterministic: the read is held until every view has missed the cache, and the views that reach
+// singleflight only after the first read has finished must find its answer, not read again.
 func TestReadinessCacheSharesOneRead(t *testing.T) {
-	s, _ := readinessServer(t) // two repositories at audit
+	s, _ := readinessServer(t)
 	b := &blockingReadiness{release: make(chan struct{})}
 	s.Readiness = b
 	clock := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	s.Now = func() time.Time { return clock }
-	reads := func() int { b.mu.Lock(); defer b.mu.Unlock(); return b.calls }
-	h := s.Handler() // built once: Handler's lazy setup is not for concurrent first calls
-	get := func() *httptest.ResponseRecorder { return getAs(h, "op", "/v1/hardening/readiness") }
+	s.Handler() // the cache is built with the handler
 	const n = 8
-	var wg sync.WaitGroup
-	codes := make([]int, n)
-	for i := range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			codes[i] = get().Code
-		}()
-	}
-	for reads() == 0 { // the views queue behind the one read in flight
-		time.Sleep(time.Millisecond)
-	}
-	time.Sleep(20 * time.Millisecond)
-	close(b.release)
-	wg.Wait()
-	for _, c := range codes {
-		if c != http.StatusOK {
-			t.Fatalf("codes %v", codes)
+	var misses atomic.Int32
+	allMissed := make(chan struct{})
+	s.readinessCache.afterMiss = func() {
+		if misses.Add(1) == n {
+			close(allMissed)
 		}
 	}
-	if got := reads(); got != 2 {
-		t.Fatalf("%d reads for %d concurrent views of 2 repositories, want 2", got, n)
+	reads := func() int { b.mu.Lock(); defer b.mu.Unlock(); return b.calls }
+	var done sync.WaitGroup
+	got := make([]evidence.Readiness, n)
+	for i := range n {
+		done.Add(1)
+		go func() {
+			defer done.Done()
+			got[i] = s.readinessOf(t.Context(), "Smana/cloud-native-ref")
+		}()
 	}
-	get()
-	if got := reads(); got != 2 {
-		t.Fatalf("a view inside the TTL read again: %d", got)
+	<-allMissed // every view missed the cache before the one read may finish
+	close(b.release)
+	done.Wait()
+	if r := reads(); r != 1 {
+		t.Fatalf("%d reads for %d concurrent views, want 1", r, n)
+	}
+	for _, v := range got {
+		if v.Hardened || len(v.Missing) != 1 || v.Missing[0] != "drill_stale_or_failed" {
+			t.Fatalf("%+v", got)
+		}
+	}
+	s.readinessOf(t.Context(), "Smana/cloud-native-ref")
+	if r := reads(); r != 1 {
+		t.Fatalf("a view inside the TTL read again: %d", r)
 	}
 	clock = clock.Add(61 * time.Second)
 	b.mu.Lock()
 	b.fail = true
 	b.mu.Unlock()
-	w := get()
-	if got := reads(); got != 4 || !strings.Contains(w.Body.String(), `"missing":["error"]`) {
-		t.Fatalf("past the TTL: %d reads, %s", got, w.Body)
+	if v := s.readinessOf(t.Context(), "Smana/cloud-native-ref"); reads() != 2 || len(v.Missing) != 1 || v.Missing[0] != "error" {
+		t.Fatalf("past the TTL: %d reads, %+v", reads(), v)
 	}
 }

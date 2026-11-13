@@ -134,7 +134,7 @@ tasks:
     cmds:
       - task: chart:deps
       - task: chart:seams
-      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl docs/install-secrets.md
+      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl charts/maku/templates/_seams.tpl docs/install-secrets.md
       - helm lint --strict charts/agent-factory-crds
       - bash charts/agent-factory-crds/tests/render.sh
       - helm lint --strict charts/maku-gateway
