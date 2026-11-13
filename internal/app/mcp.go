@@ -16,6 +16,7 @@ import (
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/mcp"
 	"github.com/Smana/maku/internal/metrics"
+	"github.com/Smana/maku/internal/runrequest"
 )
 
 const (
@@ -92,7 +93,19 @@ func roomToolsServer(cfg config.Config, a auth, getenv func(string) string, room
 	if push := cfg.PushRepositories(); len(push) > 0 { // the broker's own gate on output_push
 		s.Tools = roomTools(roomLog, red, push)
 	}
+	s.Tools = append(s.Tools, forgeReadTools(cfg, roomLog)...)
 	return s
+}
+
+// forgeReadTools is forge_read while roomTools.forgeReadTokenFile is set (hardening H4, HR35): read
+// and filtered by the factory, posted with the broker's projected token; none otherwise.
+func forgeReadTools(cfg config.Config, roomLog mcp.Log) []mcp.Tool {
+	tok := cfg.ForgeReadTokenFile()
+	if tok == "" {
+		return nil
+	}
+	f := runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
+	return []mcp.Tool{mcp.ForgeReadTool(mcp.ForgeClient{FactoryURL: cfg.FactoryURL, TokenFile: tok, HTTP: f.HTTPClient}, roomLog, time.Now)}
 }
 
 // mcpServer bounds :8090. Nothing on it streams, so WriteTimeout is set, and

@@ -137,6 +137,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 	if s.Task.URL != "" {
 		env = append(env, corev1.EnvVar{Name: "TASK_URL", Value: s.Task.URL})
 	}
+	if forgeAPIDenied(r) { // HR37: the gh wrapper refuses forge reads; the run uses forge_read
+		env = append(env, corev1.EnvVar{Name: "FORGE_READ", Value: "1"})
+	}
 	outputs := safeOutputs(r)
 	if len(outputs) > 0 { // the gh wrapper turns these writes away to the output tools (HR14)
 		env = append(env, corev1.EnvVar{Name: "SAFE_OUTPUTS", Value: strings.Join(outputs, ",")})

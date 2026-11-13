@@ -48,7 +48,7 @@ func TestHardeningDefaultsOff(t *testing.T) {
 // value the design does not define or a label an agent must never choose.
 func TestHardeningRefusals(t *testing.T) {
 	for name, c := range map[string]struct{ block, want string }{
-		"enforce, before H4":         {"hardening: {mode: enforce}\n", "stage H4"},
+		"enforce on the XR":          {"hardening: {mode: enforce}\n", "R5 cannot hold on the XR"},
 		"a repository below central": {"hardening: {mode: audit, repositories: {Smana/cloud-native-ref: {mode: off}}}\n", "only be stricter"},
 		"a bogus mode":               {"hardening: {mode: on}\n", "hardening.mode"},
 		"a bogus classifier":         {"hardening: {layers: {classifier: strict}}\n", "hardening.layers.classifier"},
@@ -172,7 +172,8 @@ func TestHardeningAuditAccepted(t *testing.T) {
 	}
 }
 
-// Mode enforce is stage H4's (HR34): this release refuses it, centrally and per repository, so R1 never holds.
+// Mode enforce is stage H4's (HR34, HR36): on the XR it is refused, centrally and per repository,
+// since R5 cannot hold there. Edited at H4: the refusal was "enforce arrives with stage H4".
 func TestHardeningEnforceStillRefused(t *testing.T) {
 	for name, block := range map[string]string{
 		"central":         "hardening: {mode: enforce}\n",
@@ -182,7 +183,7 @@ func TestHardeningEnforceStillRefused(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(good + block))
-			if err == nil || !strings.Contains(err.Error(), "enforce arrives with stage H4") {
+			if err == nil || !strings.Contains(err.Error(), "R5 cannot hold on the XR") {
 				t.Fatalf("got %v", err)
 			}
 		})
@@ -515,3 +516,70 @@ func TestApproverTTL(t *testing.T) {
 		})
 	}
 }
+
+// enforceAll is a repository at mode enforce with all five types, its publisher and the broker's
+// system principal (HR34, HR35).
+const enforceAll = "hardening:\n  mode: audit\n  repositories: {Smana/cloud-native-ref: {mode: enforce, enforceOutputs: [comment, issue, labels, pr, push]}}\n" + enforcePublisher
+
+// HR34, HR36: mode enforce validates on the run-controller with all five types enforced and a
+// system:broker; it fails on the XR, with fewer types, or with no broker principal.
+func TestModeEnforce(t *testing.T) {
+	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
+	if _, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker))); err != nil {
+		t.Fatalf("enforce on the run-controller: %v", err)
+	}
+	for name, tc := range map[string]struct{ cfg, want string }{
+		"on the XR":       {withAPI(good+enforceAll, broker), "R5 cannot hold on the XR"},
+		"four types":      {withAPI(good+perRunTokens+strings.Replace(enforceAll, "pr, push", "pr", 1), broker), "all five output types"},
+		"no broker":       {good + perRunTokens + enforceAll, "system:broker"},
+		"central enforce": {withAPI(good+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
+		// The factory's run-token ticker revokes each per-run token at the run's end, from outside
+		// the sandbox: under forge-api: deny the harness cannot. A shared token is refused (HR13).
+		"a shared token": {withAPI(good+"runs: {group: maku.ogenki.io}\n"+enforceAll, broker), "runTokens.perRun"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// HR43: R5 holds only at mode enforce, on the run-controller, with system:broker mapped; on the XR
+// never, and a demo never.
+func TestReadFilterFact(t *testing.T) {
+	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
+	parse := func() *Config {
+		c, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return c
+	}
+	if !parse().HardeningSettings("Smana/cloud-native-ref", "v9.9.9").ReadFilter {
+		t.Fatal("enforce on the run-controller with the broker: R5 holds")
+	}
+	for name, edit := range map[string]func(*Config) string{
+		"mode audit": func(c *Config) string {
+			c.Hardening.Repositories["Smana/cloud-native-ref"] = HardeningRepository{Mode: hardening.ModeAudit}
+			return "Smana/cloud-native-ref"
+		},
+		"the XR": func(c *Config) string { c.Runs.Group = "cloud.ogenki.io"; return "Smana/cloud-native-ref" },
+		"no broker": func(c *Config) string {
+			c.API.SystemPrincipals = map[string]string{"sa": "system:runlore"}
+			return "Smana/cloud-native-ref"
+		},
+		"the demo":     func(c *Config) string { c.Demo = true; return "Smana/cloud-native-ref" },
+		"another repo": func(*Config) string { return "Smana/other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			c := parse()
+			if c.HardeningSettings(edit(c), "v9.9.9").ReadFilter {
+				t.Fatal("R5 held")
+			}
+		})
+	}
+}
+
+// withAPI adds lines under the config's api block.
+func withAPI(cfg, lines string) string { return strings.Replace(cfg, "api:\n", "api:\n"+lines, 1) }

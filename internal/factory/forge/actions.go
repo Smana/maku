@@ -7,12 +7,16 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"slices"
+	"unicode/utf8"
 
 	"github.com/google/go-github/v92/github"
 
+	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/httpx"
 )
 
@@ -93,6 +97,65 @@ func (g *GitHub) RunArtifact(ctx context.Context, runID int64, name, file string
 	}
 	defer func() { _ = rc.Close() }()
 	return httpx.ReadBody(rc, maxArtifactBytes)
+}
+
+// maxJobLog bounds what FailedJobLog returns, the log's tail; maxJobLogStream bounds what it reads
+// to find that tail.
+const (
+	maxJobLog       = 64 << 10
+	maxJobLogStream = 32 << 20
+)
+
+// FailedJobLog is the tail of GitHub Actions job jobID's log, at most maxJobLog bytes, sanitised
+// (forge_read, HR35): the failure is at the end. GitHub answers with a redirect to its storage,
+// fetched through the plain egress client without the installation token, as RunArtifact does.
+// It needs actions: read.
+func (g *GitHub) FailedJobLog(ctx context.Context, jobID int64) (string, error) {
+	u, _, err := g.rest.Actions.GetWorkflowJobLogs(ctx, g.owner, g.name, jobID, 0)
+	g.mark(err)
+	if err != nil {
+		return "", wrap("read a job's log", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return "", fmt.Errorf("forge: job %d log: %w", jobID, err)
+	}
+	resp, err := g.plain.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("forge: fetch job %d log: %w", jobID, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("forge: fetch job %d log: %s", jobID, resp.Status)
+	}
+	tail, err := readTail(io.LimitReader(resp.Body, maxJobLogStream), maxJobLog)
+	if err != nil {
+		return "", fmt.Errorf("forge: fetch job %d log: %w", jobID, err)
+	}
+	for len(tail) > 0 && !utf8.RuneStart(tail[0]) {
+		tail = tail[1:] // the cut may split a character
+	}
+	text, _ := sanitize.Text(string(tail))
+	return text, nil
+}
+
+// readTail reads r to its end and keeps its last n bytes.
+func readTail(r io.Reader, n int) ([]byte, error) {
+	buf := make([]byte, 0, 2*n)
+	chunk := make([]byte, 32<<10)
+	for {
+		k, err := r.Read(chunk)
+		buf = append(buf, chunk[:k]...)
+		if len(buf) > n {
+			buf = append(buf[:0], buf[len(buf)-n:]...)
+		}
+		if errors.Is(err, io.EOF) {
+			return buf, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+	}
 }
 
 // FileAt is path's content at ref, "" when absent there: the dead-links probe reads a finding's

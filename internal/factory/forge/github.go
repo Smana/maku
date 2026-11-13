@@ -988,6 +988,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 				URL              string `graphql:"url"`
 				Title            string
 				Body             string
+				LastEditedAt     *githubv4.DateTime
 				State            string
 				HeadRefName      string
 				HeadRefOid       string
@@ -1052,6 +1053,9 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 		HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo, ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
 	if p.MergeCommit != nil {
 		out.MergeCommitSHA = p.MergeCommit.Oid
+	}
+	if p.LastEditedAt != nil {
+		out.BodyEditedAt = p.LastEditedAt.Time
 	}
 	if p.MergedAt != nil {
 		out.MergedAt = p.MergedAt.Time

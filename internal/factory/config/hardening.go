@@ -325,16 +325,53 @@ func (h Hardening) MinTrust() hardening.Level {
 	return l
 }
 
-// enforceRefused is why this release refuses mode enforce: it means every output type enforced and
-// reads filtered, which stage H4 brings (HR34). H3 enforces push under mode audit.
-const enforceRefused = "enforce arrives with stage H4; this release offers off and audit, with enforceOutputs"
+// TrustPolicy is the author-trust policy repository's text is levelled by (UH6), at floor, the
+// repository's own floor: its maintainers, its merger and policy-bot logins as trusted bots, and
+// hardening.blockedUsers. The reconciler's input record and forge_read's filter read the same one.
+func (c *Config) TrustPolicy(repository string, floor hardening.Level) hardening.Policy {
+	pol := hardening.Policy{Min: floor, Blocked: c.Hardening.BlockedUsers}
+	if repo := c.RepositoryFor(repository); repo != nil {
+		pol.Maintainers = repo.Maintainers
+		for _, b := range []string{repo.Merge.MergerLogin, repo.Merge.PolicyBotLogin} {
+			if b != "" {
+				pol.TrustedBots = append(pol.TrustedBots, b)
+			}
+		}
+	}
+	return pol
+}
+
+// BrokerPrincipal is the room broker's system principal on the factory API: the api.systemPrincipals
+// value forge_read's route admits (HR35).
+const BrokerPrincipal = "system:broker"
+
+// validateModeEnforce holds every repository whose effective mode is enforce to what enforce means
+// (HR34, HR36): all five output types enforced, runs on the run-controller (on the XR the factory
+// cannot see the sandbox's egress, so R5 cannot hold), and a system:broker in api.systemPrincipals,
+// the one caller of the forge-read route.
+func (c *Config) validateModeEnforce(bad func(string, ...any)) {
+	h := c.Hardening
+	broker := slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
+	for _, r := range c.Repos() {
+		if h.ModeFor(r.Name) != hardening.ModeEnforce {
+			continue
+		}
+		key := "hardening mode enforce on " + r.Name
+		switch {
+		case !c.onRunController():
+			bad("%s: R5 cannot hold on the XR: forge_read needs the run-controller's egress (HR36)", key)
+		case !slices.Equal(h.EnforcedFor(r.Name), slices.Sorted(slices.Values(enforceable))):
+			bad("%s needs all five output types in enforceOutputs: pr, comment, labels, issue, push", key)
+		case !broker:
+			bad("%s needs api.systemPrincipals to map the broker's ServiceAccount to %s: forge_read reads through the factory", key, BrokerPrincipal)
+		}
+	}
+}
 
 func (c *Config) validateHardening(bad func(string, ...any)) {
 	h := c.Hardening
 	if _, err := hardening.ParseMode(string(h.Mode)); err != nil {
 		bad("hardening.mode: %v", err)
-	} else if h.Mode == hardening.ModeEnforce {
-		bad("hardening.mode %q: %s", h.Mode, enforceRefused)
 	}
 	if _, err := hardening.ParseMode(string(h.Layers.Classifier)); err != nil {
 		bad("hardening.layers.classifier: %v", err)
@@ -375,12 +412,11 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 			bad("hardening.repositories: %q is not a configured repository", name)
 		case func() bool { _, err := hardening.ParseMode(string(r.Mode)); return err != nil }():
 			bad("hardening.repositories.%s.mode %q is none of off, audit, enforce", name, r.Mode)
-		case r.Mode == hardening.ModeEnforce:
-			bad("hardening.repositories.%s.mode %q: %s", name, r.Mode, enforceRefused)
 		}
 	}
 	h.validateStricter(bad)
 	h.validateEnforce(bad)
+	c.validateModeEnforce(bad)
 	if h.Publisher.Minter && !c.RunTokens.Enabled {
 		bad("hardening.publisher.minter needs runTokens.enabled: the publisher's token is minted from the agents App it names")
 	}
@@ -513,15 +549,30 @@ func (h Hardening) repositoryModes() map[string]hardening.Mode {
 	return m
 }
 
-// HardeningSettings are the facts readiness reads from this configuration for repository. The read
-// filter is off until forge_read is wired (stage H4).
+// HardeningSettings are the facts readiness reads from this configuration for repository.
 func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Settings {
 	h := c.Hardening
 	mode := h.ModeFor(repository)
 	return hardening.Settings{Mode: mode, Layers: hardening.LayersFor(mode, h.EffectiveClassifier()),
 		Demo: c.Demo, DrillMaxAge: h.Drills.MaxAge.Duration, ConfigHash: h.Hash(), Version: makuVersion,
-		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter}
+		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter, ReadFilter: c.readFilter(repository)}
 }
+
+// readFilter is R5 as this configuration states it (HR43): the repository is at mode enforce, its
+// runs are on the run-controller (on the XR the factory cannot see the sandbox's egress), a
+// ServiceAccount maps to system:broker, the forge-read route's one caller, and the factory writes
+// forge-api: deny on every run of it, which it does at mode enforce outside the demo. A
+// run-controller older than the factory would ignore the annotation: the chart pins both to one
+// version, and runbook H4-1 probes it.
+func (c *Config) readFilter(repository string) bool {
+	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce && c.onRunController() &&
+		slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
+}
+
+// onRunController reports whether runs are the run-controller's: a runs group that is set and is
+// not cloud-native-ref's XR (omitted is the XR, as TokenSource reads it). Mode enforce's check and
+// R5 read the same answer.
+func (c *Config) onRunController() bool { return c.Runs.Group != "" && !c.Runs.XR() }
 
 // TokenSource is where the runs' sandbox tokens come from (plan PR8): octo-sts on the XR, the
 // minter's role table under runTokens.perRun, and otherwise a shared token that grants writes.

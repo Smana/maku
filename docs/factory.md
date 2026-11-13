@@ -1829,7 +1829,7 @@ lifts it. One task stops with the annotation `agents.ogenki.io/stop: "true"` on 
 
 Untrusted-input hardening's first live stage. Under `audit`, the factory checks every GitHub write
 an agent run makes, records what enforcement would have done, and changes nothing the run can do.
-Readiness stays `false`: `mode: enforce` is refused at startup in this release.
+Readiness stays `false` until `mode: enforce` ([Hardening, reads filtered](#hardening-reads-filtered)).
 
 ```yaml
 hardening:
@@ -2014,8 +2014,8 @@ table leave the implementer `pull_requests: write` under enforcement (the spec's
 the factory warns at start-up, naming the repositories that must stay on the XR. The way out of
 the XR is a runbook in [Operations](operations.md#leaving-the-xr-with-an-enforced-repository-hr13).
 Readiness reads the same source (HR42): R2 and R3 read the octo-sts policies on the XR, the role
-table under `runTokens.perRun`, and a shared token always misses R2. Readiness stays `false`:
-`mode: enforce` is still refused. Enabling, rolling back and the stop
+table under `runTokens.perRun`, and a shared token always misses R2. Readiness stays `false`
+until `mode: enforce`. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 
 ## Hardening, push enforced
@@ -2024,7 +2024,8 @@ Stage H3. For a repository whose `enforceOutputs` names `push`, a writer run no 
 GitHub. Its `git push` becomes a request: the harness bundles the branch and hands the bundle to
 the broker, and the factory checks it and pushes it as the publisher. A push that touches a
 protected path waits for a maintainer's approval of that bundle's digest. `mode` stays `audit`:
-`mode: enforce` arrives with stage H4, and means every output type enforced and reads filtered.
+`mode: enforce` means every output type enforced and reads filtered
+([Hardening, reads filtered](#hardening-reads-filtered)).
 
 ```yaml
 hardening:
@@ -2117,6 +2118,86 @@ it. GitHub refuses a push that changes `.github/workflows/**` from a token witho
 `workflows: write`: unless the publisher's policy adds it, an approved workflow push is refused
 `output_unavailable`. Enabling and rolling back are in
 [Operations](operations.md#hardening-push-enforced).
+
+## Hardening, reads filtered
+
+Stage H4. For a repository at `mode: enforce`, a run reads its task's issue, pull request and
+checks through the `forge_read` tool alone. The factory reads them with its App and withholds
+text whose author is below the repository's `minAuthorTrust` before any model sees it. The run's
+sandbox has no `api.github.com` egress; `git` keeps `github.com`.
+
+```yaml
+api:
+  systemIssuer: https://kubernetes.default.svc.cluster.local
+  systemJWKS: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+  systemPrincipals:
+    system:serviceaccount:agent-platform:room-broker: system:broker
+hardening:
+  mode: audit
+  repositories:
+    Smana/ai-native-ref: {mode: enforce, enforceOutputs: [comment, issue, labels, pr, push]}
+```
+
+`mode: enforce` refuses the factory's start unless all of these hold:
+
+- the repository enforces all five output types;
+- runs are on the run-controller (`runs.group` is not cloud-native-ref's XR): on the XR the
+  factory cannot see the sandbox's egress, so the API stays reachable;
+- `api.systemPrincipals` maps a ServiceAccount to `system:broker`, the one caller of the
+  forge-read route.
+
+The broker serves `forge_read` once its chart sets `broker.hardening.forgeRead.audience:
+agent-factory`. The broker then posts each call with that projected token to its `factoryURL`.
+
+```mermaid
+flowchart LR
+  A["agent: forge_read {target}"] --> B["broker"]
+  B -->|"POST /v1/runs/{run}/forge-read<br/>as system:broker"| F["factory<br/>withhold below minAuthorTrust"]
+  F -->|"factory App"| GH[("GitHub")]
+  B -->|"input_read (counts)"| LOG[("room log")]
+  LOG --> T["status.inputTrust<br/>mode enforce"]
+```
+
+### What a run sees
+
+- **`forge_read`.** `target` is `issue`, `pr` or `checks`, always the run's own task: the broker
+  sends the verified caller's run, never an argument. `issue` reads the issue and its comments,
+  `pr` the pull request's description, reviews and comments, and `checks` the head's check runs
+  with the tail of each failed GitHub Actions job's log, where the error is: a log over 16 KiB keeps
+  its last 16 KiB, marked `[truncated]` at the top. The factory's and the agents' own comments are
+  left out. Each item carries its author's trust level. Withheld items are a count:
+  `[2 items withheld: author trust]`. One run's read of one target is served again for 15 s without
+  reading GitHub, so a run that loops on `forge_read` cannot spend the App's rate limit.
+- **What counts as vouched.** The trigger label vouches for the task's issue as it was labelled:
+  its title and body hash to the task's snapshot. Only an older task with no snapshot hash falls
+  back to neither being edited after the task was created. A later edit, by anyone, voids it, and the issue is levelled by its author's
+  association. A `factory/vouch` label vouches for an issue or a pull request's description only
+  when its last labeller is a maintainer or has write on the repository, and only if the text was
+  not edited after it. Comments and reviews are never vouched for.
+- **Its egress.** The factory writes `agents.ogenki.io/forge-api: deny` on every run of the
+  repository, the reviewer and the triager included. The run-controller drops `api.github.com`
+  from the run's CNP and from the egress proxy's allow-list, and sets `FORGE_READ=1`.
+- **The `gh` wrapper.** With `FORGE_READ=1`, `gh issue view|list`, `gh pr view|checks|list|diff`,
+  `gh run view|list` and `gh api` exit 3 and name `forge_read`. The rules say to read the pull
+  request's diff with `git diff origin/<base>...HEAD`, and a CI repair names `forge_read`
+  (target checks). The judge's triage reads checks through `forge_read`. The credential agent
+  skips its token revoke, which needs the API. The factory revokes the run's token when the run
+  ends instead: mode enforce needs `runTokens.perRun` there (HR13), whose ticker revokes each
+  run's token at its terminal phase, from outside the sandbox.
+
+### What the factory records
+
+The broker appends one `input_read` per call, with the target, the lowest level delivered, the
+withheld counts per kind and the kinds and levels delivered. It never holds the text. Under
+enforce, `status.inputTrust.mode` is `enforce`, `withheld` sums the run's `input_read` records,
+and `min` counts only what was delivered. A withheld comment does not lower it. The factory logs
+each read's counts, never a body.
+
+Readiness R5 holds for the repository: enforce, the run-controller, and `system:broker` mapped.
+The `hardening` block lives in the factory's config file, which the factory reads at start, and
+the `maku-factory` chart's `checksum/config` annotation restarts it on any change. So the run
+annotation, the forge-read route and R5 always read the same mode. Enabling and rolling back are
+in [Operations](operations.md#hardening-reads-filtered).
 
 ## Reference
 

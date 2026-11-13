@@ -118,6 +118,9 @@ type Factory struct {
 	HC     *http.Client
 }
 
+// HTTPClient is f's HTTP client to the factory, trusting factoryCAFile: forge_read posts with it.
+func (f Factory) HTTPClient() (*http.Client, error) { return f.client() }
+
 // client is f's HTTP client for one call.
 func (f Factory) client() (*http.Client, error) {
 	if f.HC != nil {

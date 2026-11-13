@@ -73,6 +73,9 @@ const (
 	// serves output_<type> for each, and the harness turns gh's writes away. CREATE only.
 	AnnSafeOutputs    = runwatch.SafeOutputsAnnotation
 	AnnLabelAllowlist = runwatch.LabelAllowlistAnnotation
+	// AnnForgeAPI, "deny", marks every run of a repository in hardening mode enforce (HR36): the
+	// run-controller gives it no api.github.com egress and the broker serves it forge_read. CREATE only.
+	AnnForgeAPI = runwatch.ForgeAPIAnnotation
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -145,6 +148,8 @@ type Spec struct {
 	// LabelAllowlist as AnnLabelAllowlist beside it; neither is written when SafeOutputs is empty.
 	SafeOutputs    []string
 	LabelAllowlist []string
+	// ForgeAPIDeny writes AnnForgeAPI: deny, on a run of a repository in mode enforce (HR36).
+	ForgeAPIDeny bool
 }
 
 // Loop is the claim's spec.loop; JudgeModel "" writes no judgeModel, which the composition reads
@@ -307,6 +312,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.Canary != "" {
 		ann[AnnCanary] = s.Canary
+	}
+	if s.ForgeAPIDeny {
+		ann[AnnForgeAPI] = runwatch.ForgeAPIDeny
 	}
 	if len(s.SafeOutputs) > 0 {
 		types := slices.Clone(s.SafeOutputs)
@@ -529,7 +537,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

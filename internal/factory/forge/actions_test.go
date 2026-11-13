@@ -7,7 +7,9 @@ import (
 	"bytes"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
+	"unicode/utf8"
 )
 
 // actionsRig serves two runs of dead-links.yaml, run 7's findings artifact, and the storage
@@ -42,6 +44,34 @@ func actionsRig(t *testing.T) *rig {
 		_, _ = w.Write(zipped.Bytes())
 	})
 	return r
+}
+
+// forge_read (HR35): a failed job's log is its tail, at most 64 KiB, sanitised, read from the
+// storage GitHub redirects to without the installation token.
+func TestFailedJobLog(t *testing.T) {
+	r := actionsRig(t)
+	mux := r.gh.srv.Config.Handler.(*http.ServeMux)
+	mux.HandleFunc("GET /repos/Smana/demo/actions/jobs/9/logs", r.gh.authed(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", r.gh.srv.URL+"/storage/job9.log?sig=x")
+		w.WriteHeader(http.StatusFound)
+	}))
+	mux.HandleFunc("GET /storage/job9.log", func(w http.ResponseWriter, req *http.Request) {
+		if req.Header.Get("Authorization") != "" {
+			t.Error("the installation token reached the log storage")
+		}
+		_, _ = io.WriteString(w, strings.Repeat("é", maxJobLog)) // two bytes each: the head must go
+		_, _ = io.WriteString(w, "\nFAIL: TestX\u200b\n")
+	})
+	got, err := r.g.FailedJobLog(t.Context(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) > maxJobLog || !strings.HasSuffix(got, "FAIL: TestX\n") || strings.Contains(got, "\u200b") || !utf8.ValidString(got) {
+		t.Fatalf("%d bytes, tail %q", len(got), got[max(0, len(got)-20):])
+	}
+	if _, err := r.g.FailedJobLog(t.Context(), 10); err == nil {
+		t.Fatal("a job GitHub does not know is an error")
+	}
 }
 
 func TestWorkflowRunsNewestFirst(t *testing.T) {

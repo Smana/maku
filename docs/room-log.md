@@ -165,6 +165,7 @@ text, with `delivery: none`, so no run is ever handed one:
 | `output_refused` | The factory | The request's `id`, `type`, `digest`, one snake_case `reason`, and optional `audit` findings (T5 runs in audit after a refusal too) |
 | `output_shadowed` | The factory, under `hardening.mode: audit` | A write the run made with its own token: `id`, `type`, `digest`, the GitHub `object`, the would-refuse `reason` (or `would_wait`) if any, and up to 5 `audit` findings, each a layer (`t1_schema` to `t5_classifier`) and a reason |
 | `output_waiting` | The factory | Not an answer: a `push` held for a maintainer's approval of its digest. `id`, `type: push`, `digest`, `reason: protected_path_needs_approval`, and the approval's `approvalId` (a ULID). The answer follows once the approval closes: `output_applied`, or `output_refused` with `approval_denied`, `approval_expired` or `output_superseded` |
+| `input_read` | The broker (`system:room-broker`, its own origin), once per `forge_read` call | What the run read under `hardening.mode: enforce`: the `target` (`issue`, `pr` or `checks`), the lowest trust level delivered (`min`), the items `withheld` per source kind, and each kind and level delivered (`sources`). Counts and levels only, never the text. The factory folds a run's records into `status.inputTrust` |
 
 Only a request carries the payload; an answer or a shadow never repeats the written text, and
 a record's `bytes` is at most 8 MiB.

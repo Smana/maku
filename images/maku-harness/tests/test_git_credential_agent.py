@@ -87,6 +87,15 @@ class HelperTest(unittest.TestCase):
         self.assertEqual(Stub.calls[-1], ("DELETE", "/installation/token", "Bearer ghs_stub1"))
         self.assertFalse(os.path.exists(helper.CACHE))
 
+    def test_revoke_is_skipped_under_forge_read_and_logged_once(self):
+        self.get("github.com")
+        helper._revoke_skipped_logged = False
+        with mock.patch.dict(os.environ, {"FORGE_READ": "1"}), self.assertLogs(helper.log, "INFO") as logs:
+            helper.main(["git-credential-agent", "revoke"])
+            helper._revoke_value("ghs_other")
+        self.assertNotIn("DELETE", [c[0] for c in Stub.calls])
+        self.assertEqual(sum("revoke skipped" in m for m in logs.output), 1)
+
     def test_revoke_without_a_token_is_a_no_op(self):
         helper.main(["git-credential-agent", "revoke"])
         self.assertEqual(Stub.calls, [])

@@ -58,6 +58,8 @@ type MessagePayload struct {
 	Integration *IntegrationResult `json:"integration,omitempty"`
 	// Output is a safe-output event's record (hardening UH4).
 	Output *OutputRecord `json:"output,omitempty"`
+	// Input is an input_read record (hardening UH7, HR35): counts and levels, never text.
+	Input *InputReadRecord `json:"input,omitempty"`
 }
 
 // The integration states, as the Task CRD's status.result enumerates them. A run reports only a
