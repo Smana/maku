@@ -980,7 +980,7 @@ Stage 1 of [natural-language intents](slack.md#understanding-a-reply): the class
 6. **Tune.** `minConfidence` (0.7), `confirmTTL` (10 minutes) and `maxInputChars` (2,000) are config, not code: set them from the unknown share and, once confirms exist, the cancelled-plus-expired share.
 7. **Turn off.** `intents: off` on the channel stops tier 1 on the next config load, and unsetting `human.slackIntents` removes the tool. Stored samples stay until their retention.
 
-**Pre-flight after a move.** Any Slack session after the App moved (a cloud move, a new domain) starts by pressing one proposal's Confirm: `factory_slack_requests_total{route="interactions"}` must rise. The Interactivity request URL is a [setting of its own](slack.md#manifest); stale, a press gets Slack's `could not handle this payload` while events still arrive.
+**Pre-flight after a move.** Any Slack session after the App moved (a cloud move, a new domain) starts by pressing one proposal's Confirm: `maku_slack_app_requests_total{route="interactions"}` must rise. The Interactivity request URL is a [setting of its own](slack.md#manifest); stale, a press gets Slack's `could not handle this payload` while events still arrive.
 
 ### Finished rooms close
 

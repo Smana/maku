@@ -29,6 +29,11 @@ artifacts="Smana/agent-platform|ghcr\\.io/smana/($old)([^a-z-]|\$)|charts/agent-
 group='(^|[^.a-z-])agents\.ogenki\.io(/v1alpha1|_[a-z]+\.yaml|`)|(rooms|tasks|agentruns)\.agents\.ogenki\.io|groupName=agents\.ogenki\.io|apiGroups:.*agents\.ogenki\.io|group: *"?agents\.ogenki\.io|Group: "agents\.ogenki\.io"'
 # The migration's history must name the group it moved from (its command is gone, v4 step 8 R6).
 group_allow=(':!docs/maku-group-migration.md')
+# The Slack App's metrics before v4 step 8 (R5): served as maku_slack_app_* since, with no dual
+# export, so the old names are refused everywhere but the history, the upgrade note and the two
+# tests that prove they are no longer served.
+slack_metrics='factory_slack_[a-z_]+'
+slack_allow=(':!docs/upgrading.md' ':!internal/metrics/metrics_test.go' ':!internal/app/slackapp_test.go')
 # The instruments keep their old strings in Go; the exporter serves maku_ names only (v0.31.0). The
 # list is read from the source, so a new instrument joins the gate; a histogram's series are refused too.
 metric_args=()
@@ -44,7 +49,8 @@ fi
 hits="$( { git grep --untracked -nIE "$artifacts" -- . "${allow[@]}" | grep -vF "$history" || true
           git grep --untracked -nIw roomctl -- . "${allow[@]}" | grep -vE "$legacy" || true
           git grep --untracked -nIE "$group" -- . "${allow[@]}" "${group_allow[@]}" || true
-          git grep --untracked -nIwF "${metric_args[@]}" -- . ':!*.go' "${allow[@]}" || true; } )"
+          git grep --untracked -nIwF "${metric_args[@]}" -- . ':!*.go' "${allow[@]}" || true
+          git grep --untracked -nIE "$slack_metrics" -- . "${allow[@]}" "${slack_allow[@]}" || true; } )"
 if [ -n "$hits" ]; then
   printf '%s\n' "$hits" >&2
   echo "FAIL: an old name (above): rename it, or, for an identity that keeps its name, add it to hack/names.sh's legacy set with its reason" >&2

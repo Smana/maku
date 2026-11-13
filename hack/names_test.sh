@@ -43,6 +43,17 @@ for f in docs/bad-group.md bad-rbac.yaml docs/bad-plural.md docs/bad-metric.md d
   grep -q "^$f:1:" <<<"$out" || { echo "names.sh missed $f"; exit 1; }
 done
 if grep -q 'ok-keys\.md' <<<"$out"; then echo "a key, the lease or a maku_ name was refused: $out"; exit 1; fi
+# The Slack App's pre-v4 metric names (v4 step 8, R5) are refused outside the history and the
+# upgrade note, which must name what moved.
+printf 'rate(factory_slack_requests_total[5m])\n' > "$tmp/docs/bad-slack.md"
+printf 'expr: factory_slack_build_info\n' > "$tmp/bad-slack.yaml"
+mkdir -p "$tmp/docs" && printf 'factory_slack_requests_total is now maku_slack_app_requests_total\n' > "$tmp/docs/upgrading.md"
+printf 'factory_slack_requests_total in an old plan\n' > "$tmp/docs/superpowers/plans/slack.md"
+out=$(bash "$here/names.sh" "$tmp" 2>&1 || true)
+for f in docs/bad-slack.md bad-slack.yaml; do
+  grep -q "^$f:1:" <<<"$out" || { echo "names.sh missed $f"; exit 1; }
+done
+if grep -qE 'upgrading\.md|superpowers' <<<"$out"; then echo "the upgrade note or the history was refused: $out"; exit 1; fi
 # Local agent worktrees under .claude/ are copies of the tree: the gates must never read them (S-11).
 git -C "$here/.." check-ignore -q .claude/worktrees/any/AGENTS.md || { echo "names_test: .claude/ is not ignored, so names.sh and spdx.sh read every local worktree"; exit 1; }
 echo "==> names_test: ok"

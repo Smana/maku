@@ -1082,7 +1082,7 @@ func (a *App) planFailed(ctx context.Context, channel, thread, user string, serv
 }
 
 // orientations are the refusals a person fixes themselves, and the counter's word for each: a closed
-// set, one per cause, so a live session reads which one hit (factory_slack_requests_total{outcome}).
+// set, one per cause, so a live session reads which one hit (maku_slack_app_requests_total{outcome}).
 var orientations = map[string]string{
 	"not_linked":                 "not_linked",
 	"repository_not_allowed":     "repo_not_allowed",

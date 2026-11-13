@@ -50,12 +50,12 @@ var (
 	intakeBuckets = []float64{0.25, 0.5, 1, 2, 5, 10, 15, 20, 30}
 )
 
-// Each binary's build-info gauge carries its own prefix (rooms_ for room-broker,
-// agent_factory_ for agent-factory), so the two never share a series.
+// Each binary's build-info gauge carries its own prefix (rooms_ for room-broker, agent_factory_ for
+// agent-factory, slack_app_ for the Slack App), so no two share a series.
 const (
 	BrokerBuildInfo  = "rooms_build_info"
 	FactoryBuildInfo = "agent_factory_build_info"
-	SlackBuildInfo   = "factory_slack_build_info"
+	SlackBuildInfo   = "slack_app_build_info"
 )
 
 // Exporter is a MeterProvider whose metrics Handler serves in the Prometheus
@@ -95,15 +95,15 @@ func MakuName(name string) string {
 	case strings.HasPrefix(name, "slack_"):
 		// The Slack App's proposal families (CD7, CD25) are slack_*, served as maku_slack_*: the
 		// dashboard queries maku_slack_proposal_updates_total{action} and
-		// maku_slack_thread_answers_total{question} byte for byte. The App's older factory_slack_*
-		// family does not start with slack_ and keeps its own name.
+		// maku_slack_thread_answers_total{question} byte for byte. Its request counter and build
+		// info are slack_app_*, served as maku_slack_app_* (v4 step 8, R5).
 		return "maku_" + name
 	}
 	return ""
 }
 
 // makuGatherer serves each family reg gathers under its maku_ name (MakuName), and a family with
-// none (go_*, factory_slack_*) under its own. A real family that already has the maku_ name wins
+// none (go_*) under its own. A real family that already has the maku_ name wins
 // and the renamed one is dropped: Prometheus refuses two families of one name.
 type makuGatherer struct{ reg prometheus.Gatherer }
 
