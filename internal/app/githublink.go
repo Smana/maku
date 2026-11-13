@@ -78,7 +78,7 @@ func runGitHubUnlink(ctx context.Context, log *slog.Logger, args []string, geten
 	if dsn == "" {
 		return errors.New("room-broker github-unlink: ROOMS_DATABASE_URL is not set")
 	}
-	st, err := store.Open(ctx, dsn)
+	st, err := store.Open(ctx, dsn, store.RoleBroker)
 	if err != nil {
 		return fmt.Errorf("room-broker github-unlink: %w", err)
 	}
