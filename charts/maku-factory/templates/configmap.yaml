@@ -7,11 +7,21 @@
 {{- $_ := set $api "tls" (dict "certFile" "/etc/agent-factory-api-tls/tls.crt" "keyFile" "/etc/agent-factory-api-tls/tls.key") -}}
 {{- $_ := set $cfg "api" $api -}}
 {{- end -}}
-{{- if .Values.runTokens.enabled -}}
+{{- if and .Values.runTokens.perRun (not .Values.runTokens.enabled) (not .Values.demo) -}}
+{{- fail "runTokens.perRun needs runTokens.enabled: the agents App in runTokens.appSecret mints each run's token (the demo mints from the factory's)" -}}
+{{- end -}}
+{{- if or .Values.runTokens.enabled .Values.runTokens.perRun -}}
 {{- if hasKey $cfg "runTokens" -}}
 {{- fail "config.runTokens and runTokens.enabled: set runTokens.enabled alone; the chart writes config.runTokens to read the mounted App" -}}
 {{- end -}}
-{{- $_ := set $cfg "runTokens" (dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key") -}}
+{{- $rt := dict -}}
+{{- if .Values.runTokens.enabled -}}
+{{- $rt = dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key" -}}
+{{- end -}}
+{{- if .Values.runTokens.perRun -}}
+{{- $_ := set $rt "perRun" true -}}
+{{- end -}}
+{{- $_ := set $cfg "runTokens" $rt -}}
 {{- end -}}
 apiVersion: v1
 kind: ConfigMap

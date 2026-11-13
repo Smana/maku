@@ -325,6 +325,10 @@ type RunTokens struct {
 	Enabled        bool   `json:"enabled,omitempty"`
 	AppIDFile      string `json:"appIDFile,omitempty"`
 	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
+	// PerRun mints one token per run instead of the two shared Secrets (v4 D10): each run's own
+	// <run name>-git, for its repository and role from the minter's role table. The run-controller
+	// must mount it (runController.gitTokens perRun).
+	PerRun bool `json:"perRun,omitempty"`
 }
 
 // RunTokenApp is the App the run token writer mints from: runTokens' when enabled, else the
@@ -343,6 +347,20 @@ func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 // cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
 func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	t := c.RunTokens
+	if t.PerRun {
+		// v4 D10: the demo mints from its factory App, as RunTokenApp says; elsewhere the agents App.
+		if !t.Enabled && !c.Demo {
+			bad("runTokens.perRun needs runTokens.enabled: the agents App it names mints each run's token")
+		}
+		if c.Runs.Group != v1alpha1.GroupVersion.Group {
+			bad("runTokens.perRun writes each run's Secret for the run-controller: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
+		}
+		// D12 (plan PR9): an agent token must never be the factory's. Refused only under the new
+		// key, so no existing config breaks; the demo serves one App for both.
+		if !c.Demo && c.AgentsLogin != "" && strings.EqualFold(c.AgentsLogin, c.FactoryLogin) {
+			bad("runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two")
+		}
+	}
 	if !t.Enabled {
 		return
 	}
@@ -1559,11 +1577,12 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	// HR13 (the owner's ruling, 2026-11-12): an enforced repository on a run path whose sandbox token
 	// no role policy scopes could still write directly, so enforcement would be advisory. Refused
-	// until per-run tokens (v4 step 3) scope that path; the XR and octo-sts path is allowed.
-	if c.Hardening.Enforcing() && !c.Runs.XR() {
+	// unless that path's runs get per-run tokens (runTokens.perRun, v4 D10: each from the minter's
+	// role table) or are the XR with octo-sts.
+	if c.Hardening.Enforcing() && !c.Runs.XR() && !c.RunTokens.PerRun {
 		return nil, fmt.Errorf("hardening.enforceOutputs needs runs whose sandbox token a role policy scopes: " +
 			"these runs are not cloud-native-ref's XR, so they would hold a shared token that can still write directly; " +
-			"leave enforceOutputs empty, or run the repository on the XR with octo-sts until per-run tokens ship (HR13)")
+			"set runTokens.perRun (each run's token from the minter's role table), leave enforceOutputs empty, or run the repository on the XR with octo-sts (HR13)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])

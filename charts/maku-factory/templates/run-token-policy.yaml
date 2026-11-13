@@ -1,0 +1,59 @@
+{{- /* v4 D10 (plan PR3): with runTokens.perRun the factory writes each run's token Secret,
+<run name>-git, in the runs namespace, through a Role that can create, patch and delete Secrets
+there but never read one. A patch or a delete answers with the object, so without a bound the
+factory could read agent-model by patching it. This policy is that bound, rendered with the Role,
+never on its own and never without it: the factory's ServiceAccount may create, update or delete a
+Secret there only when it is a run's token Secret, labelled as the factory's and owned by that run.
+A denied request answers with no object. */ -}}
+{{- if .Values.runTokens.perRun }}
+{{- $runs := .Values.config.runs | default dict }}
+{{- $runsNamespace := $runs.namespace | default "agents" }}
+{{- $runsGroup := $runs.group | default "cloud.ogenki.io" }}
+{{- $prefix := $runs.namePrefix | default "xplane-run-" }}
+{{- if not (regexMatch "^[a-z0-9-]*$" $prefix) }}{{ fail (printf "config.runs.namePrefix %q: only [a-z0-9-] may reach the run token policy's pattern" $prefix) }}{{ end }}
+{{- $name := printf "maku-%s-run-token-secrets" .Release.Namespace }}
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: {{ $name }}
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        operations: [CREATE, UPDATE, DELETE]
+        resources: [secrets]
+  matchConditions:
+    - name: the-factory
+      expression: {{ printf "request.userInfo.username == 'system:serviceaccount:%s:agent-factory'" .Release.Namespace | quote }}
+  variables:
+    # On DELETE only the old object exists.
+    - name: s
+      expression: "request.operation == 'DELETE' ? oldObject : object"
+    - name: run
+      expression: "variables.s.metadata.name.endsWith('-git') ? variables.s.metadata.name.substring(0, size(variables.s.metadata.name) - 4) : ''"
+    - name: labels
+      expression: "has(variables.s.metadata.labels) ? variables.s.metadata.labels : {}"
+  validations:
+    - expression: {{ printf "variables.s.metadata.name.matches('^%s[a-z2-7]{8}-git$')" $prefix | quote }}
+      message: "the factory writes only run token Secrets, <run name>-git (v4 D10)"
+    - expression: "variables.labels.exists(k, k == 'app.kubernetes.io/managed-by' && variables.labels[k] == 'maku-factory') && variables.labels.exists(k, k == 'maku.ogenki.io/run' && variables.labels[k] == variables.run)"
+      message: "a run token Secret carries the factory's labels"
+    - expression: {{ printf "has(variables.s.metadata.ownerReferences) && variables.s.metadata.ownerReferences.exists(r, r.kind == 'AgentRun' && r.apiVersion.startsWith('%s/') && r.name == variables.run)" $runsGroup | quote }}
+      message: "a run token Secret is owned by its AgentRun"
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: {{ $name }}
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+spec:
+  policyName: {{ $name }}
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchExpressions:
+        - {key: kubernetes.io/metadata.name, operator: In, values: [{{ $runsNamespace | quote }}]}
+{{- end }}

@@ -245,6 +245,8 @@ func reasons() map[string]string {
 		"no_pr":                       "the agent opened no pull request",
 		"committed_no_pr":             "the agent committed but never pushed, so its work was lost with the sandbox and no pull request was opened",
 		"pushed_no_pr":                "the agent pushed its branch but opened no pull request",
+		"push_refused":                "the factory refused the agent's push, so its work never reached the branch and no pull request was opened",
+		"push_awaiting_approval":      "the agent's push changes a protected path and waits for a maintainer's approval in the room or in Slack",
 		"scope_changed":               "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
 		"no_action":                   "the triager found nothing to change",
 		"no_proposal":                 "the triager's run made no proposal to publish",

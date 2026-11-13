@@ -136,6 +136,12 @@ func oneOf(v string, set []string) string {
 // outputBuckets sit on AC7's 2 s p95, and the applier's 2 s poll that bounds it from below.
 var outputBuckets = []float64{0.5, 1, 2, 3, 5, 10, 30, 60, 300}
 
+// approvalWaitBuckets span a maintainer's answer, from a minute to the 7-day cap on approvalTTL.
+var approvalWaitBuckets = []float64{60, 300, 900, 3600, 4 * 3600, 12 * 3600, 24 * 3600, 3 * 24 * 3600, 7 * 24 * 3600}
+
+// approvalDecisions are how a digest-bound approval closes (store approvals).
+var approvalDecisions = []string{"approved", "denied", "expired", "superseded"}
+
 var (
 	timeToPRBuckets   = []float64{60, 300, 600, 900, 1800, 3600, 7200}
 	taskTokensBuckets = []float64{50_000, 100_000, 200_000, 400_000, 600_000, 1_000_000, 2_000_000, 3_000_000, 5_000_000, 8_000_000, 12_000_000}
@@ -154,6 +160,7 @@ var (
 type Set struct {
 	hardeningShadow      metric.Int64Counter
 	hardeningOutput      metric.Float64Histogram
+	hardeningApproval    metric.Float64Histogram
 	hardeningUntraced    metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
@@ -181,6 +188,7 @@ type Set struct {
 	modelRefused         metric.Int64Counter
 	runTokenMints        metric.Int64Counter
 	runTokenRevokes      metric.Int64Counter
+	runTokenRefusals     metric.Int64Counter
 	steeringReads        metric.Int64Counter
 	scoperRuns           metric.Int64Counter
 	overlapEvaluations   metric.Int64Counter
@@ -351,6 +359,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("From a run's output_requested to the factory's answer, by repository and output type (hardening H2, AC7: p95 at most 2 s per non-push output)."),
 		metric.WithExplicitBucketBoundaries(outputBuckets...))
 	check(err)
+	s.hardeningApproval, err = meter.Float64Histogram("agent_factory_hardening_approval_wait_seconds",
+		metric.WithDescription("From a protected-path push's output_waiting to its approval closing, by repository and decision (hardening H3, HR27)."),
+		metric.WithExplicitBucketBoundaries(approvalWaitBuckets...))
+	check(err)
 	s.hardeningUntraced, err = meter.Int64Counter("agent_factory_hardening_untraced_total",
 		metric.WithDescription("Agent writes of an enforced output type that no output_applied explains (hardening H2's tracer, H2-2's gate: stays 0), by repository and output type."))
 	check(err)
@@ -474,6 +486,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.runTokenRevokes, err = meter.Int64Counter("agent_factory_run_token_revokes_total",
 		metric.WithDescription("Installation tokens the minter revoked, by result: ok or error (v4 D10)."))
+	check(err)
+	s.runTokenRefusals, err = meter.Int64Counter("agent_factory_run_token_refusals_total",
+		metric.WithDescription("Runs the minter refused a token, once per run, by reason: unbound_task, unbound_api, repository_mismatch, role_unknown or role_mismatch (v4 D10, plan PR4). The run waits Pending."))
 	check(err)
 	s.modelRefused, err = meter.Int64Counter("agent_factory_model_refused_total",
 		metric.WithDescription("Runs the model provider refused, by cause (billing, auth, quota) and role: a platform condition the task is held for, never the agent's error (#450). Alert on its increase."))
@@ -1032,6 +1047,13 @@ func (s *Set) HardeningOutput(ctx context.Context, typ string, d time.Duration) 
 		attribute.String("type", oneOf(typ, shadowTypes[1:])), s.repoOf(ctx)))
 }
 
+// HardeningApprovalWait records how long a protected-path push waited for its approval (H3, HR27),
+// under the repository ctx names. A decision outside the closed set reads other.
+func (s *Set) HardeningApprovalWait(ctx context.Context, decision string, d time.Duration) {
+	s.hardeningApproval.Record(ctx, max(d.Seconds(), 0), metric.WithAttributes(
+		attribute.String("decision", oneOf(decision, approvalDecisions)), s.repoOf(ctx)))
+}
+
 // RunRevoked counts a revocation by the run meter, by reason and the limit that fired.
 func (s *Set) RunRevoked(ctx context.Context, reason, limit string) {
 	s.revocations.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", oneOf(reason, revocations())),
@@ -1219,6 +1241,12 @@ func (s *Set) RunTokenMint(ctx context.Context, role, result string) {
 // RunTokenRevoke counts one revoke of the minter by result.
 func (s *Set) RunTokenRevoke(ctx context.Context, result string) {
 	s.runTokenRevokes.Add(ctx, 1, metric.WithAttributes(attribute.String("result", oneOf(result, []string{"ok", "error"}))))
+}
+
+// RunTokenRefusal counts one run the minter refused a token, by reason (plan PR4).
+func (s *Set) RunTokenRefusal(ctx context.Context, reason string) {
+	s.runTokenRefusals.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("reason", oneOf(reason, []string{"unbound_task", "unbound_api", "repository_mismatch", "role_unknown", "role_mismatch"}))))
 }
 
 // LoopRun counts an implementer run under the loop policy once it ends, by its task's class and end.

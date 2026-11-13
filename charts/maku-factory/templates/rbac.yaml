@@ -63,7 +63,15 @@ rules:
   - apiGroups: [{{ $runsGroup }}]
     resources: [agentruns]
     verbs: [get, list, watch, create, patch, delete]
-  {{- if or .Values.demo .Values.runTokens.enabled }}
+  {{- if .Values.runTokens.perRun }}
+  # runTokens.perRun (v4 D10, plan PR3): each run's <run name>-git, written by server-side apply
+  # and deleted at the run's end. No get, list or watch: the factory never reads a Secret back. A
+  # patch or delete answers with the object, so the admission policy rendered beside this Role
+  # (run-token-policy.yaml) bounds these verbs to the run token Secrets.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, patch, delete]
+  {{- else if or .Values.demo .Values.runTokens.enabled }}
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create]

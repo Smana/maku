@@ -639,7 +639,8 @@ func (s *Server) person(ctx context.Context, cfg *config.Config, p authn.Princip
 // in tokens, so it reserves its maxTokens at the reference rate until F4 brings max_cost (TC7).
 func (s *Server) reserve(ctx context.Context, cfg *config.Config, p authn.Principal, person, id string, in RunRequest) (int, string) {
 	b := cfg.Budgets
-	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens)}
+	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens),
+		Repository: in.Repository, Role: in.Role}
 	if person != "" {
 		mine.Principal, mine.Person = runs.PrincipalFactory, person
 	}

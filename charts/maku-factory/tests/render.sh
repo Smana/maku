@@ -165,6 +165,16 @@ out="$(helm template agent-factory . --namespace agent-system --set image.tag="$
 ykind Deployment "$(vol octo-sts-token).projected.sources[0].serviceAccountToken | (.audience == \"octo-sts.dev\" and .path == \"token\")" "the publisher's projected token takes hardening.publisher.audience"
 ykind Deployment "$(mnt octo-sts-token) | (.mountPath == \"/var/run/secrets/octo-sts\" and .readOnly == true)" "the publisher token at /var/run/secrets/octo-sts/token"
 out="$base"
+# H3 (HR24): no git mirror cache by default; with hardening.gitCache.sizeLimit, an emptyDir of that
+# limit at /var/cache/maku/git, named to the factory by MAKU_GIT_CACHE.
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "git-cache")' "no git cache unless hardening.gitCache.sizeLimit"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "MAKU_GIT_CACHE")' "no MAKU_GIT_CACHE unless hardening.gitCache.sizeLimit"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set hardening.gitCache.sizeLimit=2Gi)"
+ykind Deployment "$(vol git-cache).emptyDir.sizeLimit == \"2Gi\"" "the git mirror cache is an emptyDir of hardening.gitCache.sizeLimit"
+ykind Deployment "$(mnt git-cache) | (.mountPath == \"/var/cache/maku/git\" and (.readOnly // false) == false)" "the git cache at /var/cache/maku/git, writable"
+ykind Deployment "$ctr.env[] | select(.name == \"MAKU_GIT_CACHE\") | .value == \"/var/cache/maku/git\"" "MAKU_GIT_CACHE names the git cache"
+out="$base"
 demo="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref --set demo=true)"
 out="$demo"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' "demo: no oidc volume"
@@ -188,6 +198,22 @@ ykind Deployment "$(mnt run-tokens) | (.mountPath == \"/etc/agent-factory-run-to
 ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.enabled == true and .appIDFile == "/etc/agent-factory-run-tokens/app_id" and .privateKeyFile == "/etc/agent-factory-run-tokens/private_key")' "runTokens: the config reads the mounted App"
 ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "secrets" and .verbs[] == "update") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' "runTokens: get, update on both run Secrets"
 out="$base"
+ynone 'select(.kind == "ValidatingAdmissionPolicy" or .kind == "ValidatingAdmissionPolicyBinding")' "default: no run token policy"
+# runTokens.perRun (v4 D10, plan PR3): create, patch, delete on Secrets with no get and no
+# resourceNames, and the policy that bounds them, scoped to the runs namespace, always beside it
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set config.runs.group=maku.ogenki.io --set config.runs.namePrefix=maku-run- \
+  --set runTokens.enabled=true --set runTokens.appSecret=agents-app --set runTokens.perRun=true)"
+ykind Role 'select(.metadata.namespace == "agents") | (.rules | map(select(.resources | contains(["secrets"])))) | ((length == 1) and ((.[0].verbs | join(",")) == "create,patch,delete") and (.[0] | has("resourceNames") | not))' "perRun: Secrets create, patch, delete, unscoped, and nothing else"
+ynone 'select(.kind == "Role") | .rules[] | select(.resources[] == "secrets") | .verbs[] | select(. == "get" or . == "list" or . == "watch" or . == "update")' "perRun: the factory never reads a Secret"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.enabled == true and .perRun == true)' "perRun: the config says perRun"
+ykind ValidatingAdmissionPolicy '((.spec.matchConditions[0].expression | contains("system:serviceaccount:agent-system:agent-factory")) and (.spec.validations[0].expression | contains("^maku-run-[a-z2-7]{8}-git$")))' "perRun: the policy holds the factory's ServiceAccount to run token Secrets"
+ykind ValidatingAdmissionPolicyBinding '(((.spec.validationActions | join(",")) == "Deny") and ((.spec.matchResources.namespaceSelector.matchExpressions[0].values | join(",")) == "agents"))' "perRun: the binding denies, in the runs namespace"
+out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set config.runs.group=maku.ogenki.io --set demo=true --set runTokens.perRun=true)"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.perRun == true and (has("enabled") | not))' "demo perRun: the factory's App, perRun alone in the config"
+ykind ValidatingAdmissionPolicy '.metadata.name == "maku-agent-system-run-token-secrets"' "demo perRun: the policy renders"
+out="$base"
 # refuse 'message' --set ...: the render must fail, naming message
 refuse() {
   local want="$1" err; shift
@@ -198,6 +224,7 @@ refuse() {
   fi
 }
 refuse 'runTokens.appSecret is required' --set runTokens.enabled=true
+refuse 'runTokens.perRun needs runTokens.enabled' --set runTokens.perRun=true
 refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set runTokens.appSecret=a --set config.runTokens.enabled=true
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao
 refuse 'config.api.tls and api.tls.secretName' --set api.tls.secretName=agent-factory-api-tls --set config.api.tls.certFile=/c

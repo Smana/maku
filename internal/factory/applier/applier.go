@@ -98,6 +98,16 @@ type Applier struct {
 	Checker func(repo string) hardening.Checker
 	// Enforced is the repository's enforced output types; an empty list answers nothing.
 	Enforced func(repo string) []hardening.OutputType
+	// Pushers is the repository's mirror, which inspects a run's bundle and pushes it as the
+	// publisher (H3, HR24); PushRooms reads the bundle and the push's approval from the broker. With
+	// either nil, a push is refused output_type. ConnectPushers builds Pushers.
+	Pushers   func(ctx context.Context, repo string) (Pusher, error)
+	PushRooms PushRooms
+	// Caps is the task's class caps on a push's cumulative change, changed files and lines; 0 is
+	// no cap, and nil caps nothing (HR25).
+	Caps func(t *v1alpha1.Task) (files, lines int)
+	// ApprovalTTL is how long a protected-path push waits for a maintainer (DefaultApprovalTTL).
+	ApprovalTTL time.Duration
 	// AgentsLogin and FactoryLogin are the publisher's and the factory App's logins: the
 	// applier recognises its own writes only by them.
 	AgentsLogin, FactoryLogin string
@@ -120,6 +130,9 @@ type roomState struct {
 	// prs are the room's applied pr outputs, every run's: the ids a pull request the applier may
 	// edit names in its footer.
 	prs map[string]bool
+	// pushed are the room's applied push objects, every run's, lower-cased: the heads the factory
+	// itself put on the branch (HR26).
+	pushed map[string]bool
 }
 
 type runState struct {
@@ -127,6 +140,11 @@ type runState struct {
 	answered map[string]bool
 	counts   hardening.Counts
 	claim    *runs.Run // read once; nil until read
+	// waiting is the push held for a maintainer's approval (HR27), lastHeld the one held before,
+	// and heldUntil when the last wait ended: the run's answer window counts from there.
+	waiting, lastHeld *held
+	heldUntil         time.Time
+	room              *roomState
 }
 
 type request struct {
@@ -135,10 +153,12 @@ type request struct {
 	redacted bool
 }
 
-// window is one writer run the applier still reads, and whether its answer wait ran out.
+// window is one writer run the applier still reads, and whether its answer wait ran out. late is a
+// run past its window that is read only while one of its pushes waits for an approval.
 type window struct {
 	rec     *v1alpha1.RunRecord
 	expired bool
+	late    bool
 }
 
 // NeedLeaderElection is true: two replicas would apply the same request twice.
@@ -180,7 +200,7 @@ func (a *Applier) Tick(ctx context.Context) error {
 	var errs []error
 	for i := range l.Items {
 		t := &l.Items[i]
-		live := a.liveRuns(t)
+		live := a.liveRuns(t, a.rooms[t.Status.RoomRef])
 		if len(live) == 0 || t.Status.RoomRef == "" || len(a.Enforced(t.Spec.Repository)) == 0 {
 			continue
 		}
@@ -198,8 +218,11 @@ func (a *Applier) Tick(ctx context.Context) error {
 }
 
 // liveRuns are t's writer runs still running or ended at most twice AnswerWait ago, those past
-// AnswerWait marked expired.
-func (a *Applier) liveRuns(t *v1alpha1.Task) map[string]window {
+// AnswerWait marked expired. A run's end counts from when its last push wait ended, if later, and
+// a run with a push waiting for an approval is live however long ago it ended (HR27). Before its
+// room is read, a task the reconciler holds for an approval (push_awaiting_approval) has its
+// older runs read late: a restart finds its waiting pushes in the log.
+func (a *Applier) liveRuns(t *v1alpha1.Task, st *roomState) map[string]window {
 	wait := a.AnswerWait
 	if wait <= 0 {
 		wait = DefaultAnswerWait
@@ -210,15 +233,25 @@ func (a *Applier) liveRuns(t *v1alpha1.Task) map[string]window {
 		if rec.Started == nil || !slices.Contains(writerRoles, rec.Role) {
 			continue
 		}
-		if rec.Finished == nil {
+		var rs *runState
+		if st != nil {
+			rs = st.runs[rec.ID]
+		}
+		if rec.Finished == nil || (rs != nil && rs.waiting != nil) {
 			out[rec.ID] = window{rec: rec}
 			continue
 		}
-		switch ago := a.Now().Sub(rec.Finished.Time); {
+		end := rec.Finished.Time
+		if rs != nil && rs.heldUntil.After(end) {
+			end = rs.heldUntil
+		}
+		switch ago := a.Now().Sub(end); {
 		case ago <= wait:
 			out[rec.ID] = window{rec: rec}
 		case ago <= 2*wait:
 			out[rec.ID] = window{rec: rec, expired: true}
+		case st == nil && t.Status.Reason == reasonHeld:
+			out[rec.ID] = window{rec: rec, late: true}
 		}
 	}
 	return out
@@ -237,7 +270,7 @@ func (a *Applier) stopped(ctx context.Context) bool {
 func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
-		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}}
+		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
 	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
@@ -249,7 +282,9 @@ func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]wi
 			break
 		}
 		evs, cursor, err := a.Rooms.EventsSince(ctx, t.Status.RoomRef, st.cursor,
-			func(e envelope.Event) bool { return e.Type == envelope.Message && e.RunID != "" })
+			func(e envelope.Event) bool {
+				return (e.Type == envelope.Message || e.Type == envelope.ApprovalDecided) && e.RunID != ""
+			})
 		if err != nil {
 			return fmt.Errorf("read the room: %w", err)
 		}
@@ -267,20 +302,20 @@ func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]wi
 	var errs []error
 	for id, rs := range st.runs {
 		w, ok := live[id]
-		if !ok {
+		if !ok || (w.late && rs.waiting == nil) {
 			continue
 		}
 		for len(rs.pending) > 0 {
 			var err error
 			switch {
-			case w.expired:
+			case w.expired && rs.waiting == nil:
 				err = a.refuse(ctx, t, id, rs, rs.pending[0], hardening.RefuseExpired, rs.counts)
 			case stopped:
 				err = errStopped
 			default:
 				err = a.answer(ctx, t, w.rec, rs, rs.pending[0], st.prs)
 			}
-			if errors.Is(err, errStopped) {
+			if errors.Is(err, errStopped) || errors.Is(err, errLater) {
 				break
 			}
 			if err != nil {
@@ -293,9 +328,14 @@ func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]wi
 	return errors.Join(errs...)
 }
 
-// read takes a page of events in: requests join their run's queue, answers close them.
+// read takes a page of events in: requests join their run's queue, answers close them, a waiting
+// record holds its push (HR27), and the store's approval_decided names a held push's approval.
 func (st *roomState) read(evs []envelope.Event) {
 	for _, e := range evs {
+		if e.Type == envelope.ApprovalDecided {
+			st.decided(e)
+			continue
+		}
 		kind, rec, ok := envelope.ReadOutput(e, e.RunID)
 		if !ok {
 			continue
@@ -306,19 +346,43 @@ func (st *roomState) read(evs []envelope.Event) {
 			if !rs.answered[rec.ID] && !slices.ContainsFunc(rs.pending, func(r request) bool { return r.rec.ID == rec.ID }) {
 				rs.pending = append(rs.pending, request{rec: rec, at: e.TS, redacted: len(e.Redactions) > 0})
 			}
+		case envelope.KindOutputWaiting:
+			if !rs.answered[rec.ID] && (rs.waiting == nil || rs.waiting.id != rec.ID) {
+				rs.hold(rec.ID, rec.ApprovalID, e.TS)
+			}
 		case envelope.KindOutputApplied, envelope.KindOutputRefused:
+			if rs.waiting != nil && rs.waiting.id == rec.ID {
+				rs.unhold(rec.ID, e.TS)
+			}
 			rs.answer(kind, rec)
 			if kind == envelope.KindOutputApplied && rec.Type == string(hardening.PR) {
 				st.prs[rec.ID] = true
 			}
+			if kind == envelope.KindOutputApplied && rec.Type == string(hardening.Push) {
+				st.pushed[strings.ToLower(rec.Object)] = true
+			}
 		}
+	}
+}
+
+// decided marks the held push whose approval an approval_decided event names: the applier reads
+// the approval back from the broker before it acts (the event only says when to read). The broker
+// accepts approval_decided from the store alone, so a run cannot forge one; a forged one would
+// only cause a read.
+func (st *roomState) decided(e envelope.Event) {
+	var p envelope.ApprovalDecidedPayload
+	if json.Unmarshal(e.Payload, &p) != nil {
+		return
+	}
+	if rs := st.runs[e.RunID]; rs != nil && rs.waiting != nil && rs.waiting.approval == p.ApprovalID {
+		rs.waiting.decided = true
 	}
 }
 
 func (st *roomState) run(id string) *runState {
 	rs := st.runs[id]
 	if rs == nil {
-		rs = &runState{answered: map[string]bool{}}
+		rs = &runState{answered: map[string]bool{}, room: st}
 		st.runs[id] = rs
 	}
 	return rs
@@ -375,8 +439,11 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		rs.claim = &x
 	}
 	typ := hardening.OutputType(req.rec.Type)
-	if !slices.Contains(a.Enforced(t.Spec.Repository), typ) || typ == hardening.Push {
+	if !slices.Contains(a.Enforced(t.Spec.Repository), typ) {
 		return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseType, rs.counts) // the gate serves only enforced types: this guards it
+	}
+	if typ == hardening.Push {
+		return a.answerPush(ctx, t, rec, rs, req)
 	}
 	n := maps.Clone(rs.counts) // spent only once the answer is posted
 	obj, found, err := a.find(ctx, t, rec, typ, req.rec.ID)

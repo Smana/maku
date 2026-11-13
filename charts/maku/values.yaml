@@ -161,6 +161,13 @@ runController:
   # Unsafe: every role shares gitSecret, so a reviewer or triager could push. For a laptop's one
   # PAT only; it replaces gitReadSecret, which the controller then does not read.
   unsafeSharedGitToken: false
+  # Where a run's git token comes from (v4 step 3, D10). shared (default): gitSecret and
+  # gitReadSecret, one token per role for every run. perRun: each run mounts its own Secret,
+  # <run name>-git, which the factory mints for that run's repository and role (needs
+  # maku-factory's runTokens.perRun). gitSecret and gitReadSecret are then not read, and the
+  # controller reads Secrets in the runs namespace without resourceNames: it already creates pods
+  # that mount any of them.
+  gitTokens: shared
   # Empty + allowUnsandboxed=false: the controller refuses every run. createRuntimeClass renders
   # the RuntimeClass of that name for the handler. Off by default: it is cluster-scoped, so opt in only
   # where no such RuntimeClass exists.

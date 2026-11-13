@@ -68,10 +68,23 @@ maku:
     runtimeClassName: ""
     allowUnsandboxed: true
     createRuntimeClass: false
+    # Each run mounts its own token Secret, <run name>-git, minted by the factory for the run's
+    # repository and role (v4 D10), with maku-factory.runTokens.perRun.
+    gitTokens: perRun
+    gitReadSecret: ""
+  # Only the factory creates AgentRuns: it mints a token for every run it can account for, so no
+  # other creator may hand it one (plan PR4). Its AgentRun updates touch three annotations only.
+  # The demo installs into namespace maku; another release namespace names its own factory here.
+  agentRunPolicies:
+    creators: ["system:serviceaccount:maku:agent-factory"]
+    factoryServiceAccount: agent-factory
 maku-factory:
   enabled: true
   demo: true
   replicas: 1
+  # Per-run tokens (v4 D10), from the demo's one App: the factory writes each run's own Secret.
+  runTokens:
+    perRun: true
   # The demo's config, passed through `tpl`: `{{ .Release.Namespace }}` and the cluster domain are
   # the release's. Name the repository, the maintainers and the App's three bot logins (the slug of
   # the one App, as `<slug>[bot]`) to match yours, and the check names its CI reports.

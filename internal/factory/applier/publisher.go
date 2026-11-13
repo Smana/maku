@@ -12,7 +12,27 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/gitbundle"
 )
+
+// ConnectPushers is the applier's Pushers (H3, HR24): one gitbundle mirror per repository under
+// root (MAKU_GIT_CACHE), git sending the publisher's token from the same tokens as the publisher's
+// API connection. An empty root connects nothing.
+func ConnectPushers(tokens PublisherTokens, root string) func(ctx context.Context, repo string) (Pusher, error) {
+	cache := &gitbundle.Cache{Root: root, Token: func(ctx context.Context, repo string) (string, error) {
+		src, err := tokens.For(repo)
+		if err != nil {
+			return "", err
+		}
+		return src.Token(ctx)
+	}}
+	return func(_ context.Context, repo string) (Pusher, error) {
+		if root == "" {
+			return nil, errors.New("pusher: no git cache root (MAKU_GIT_CACHE)")
+		}
+		return cache.Mirror(repo), nil
+	}
+}
 
 // PublisherIdentity is the octo-sts trust policy the publisher's token is minted under:
 // `.github/chainguard/publisher.sts.yaml` in each enforced repository (O5, HR11).
