@@ -11,7 +11,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  check:
+  # What the pull request touches (hack/ci-changes.sh), for the path-gated jobs below that no
+  # ruleset requires. A required job never hangs on this one: a failure here would skip it, and a
+  # skipped job passes; the required harness-test reads the same script in its own steps instead.
+  changes:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      harness: ${{ steps.c.outputs.harness }}
+      deployable: ${{ steps.c.outputs.deployable }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 2 # the pull request's merge commit and its base
+          persist-credentials: false
+      - id: c
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: bash hack/ci-changes.sh
+
+  # `task check` on four runners: check-static (every gate but the Go tests) and the Go tests in three
+  # disjoint slices (hack/test-shard.sh), joined by the required `check` below. release.yaml's gate
+  # still runs `task check` whole, on one runner.
+  check-static:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -21,10 +45,93 @@ jobs:
         with:
           persist-credentials: false
       - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
-      - run: task check
+      - name: The Go caches, outside the checkout
+        run: |
+          {
+            echo "GOCACHE=$HOME/.cache/go-build"
+            echo "GOMODCACHE=$HOME/go/pkg/mod"
+            echo "GOLANGCI_LINT_CACHE=$HOME/.cache/golangci-lint"
+          } >> "$GITHUB_ENV"
+      # Written by main's pushes only, restored everywhere: a pull request never writes a cache another
+      # branch reads, and release.yaml restores none.
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-static-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-static-${{ runner.os }}-
+      - run: task check:static
+      - if: github.event_name == 'push'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.cache/golangci-lint
+          key: go-static-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+
+  check-test:
+    name: check-test (${{ matrix.shard }}/3)
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+      - name: The Go caches, outside the checkout
+        run: |
+          {
+            echo "GOCACHE=$HOME/.cache/go-build"
+            echo "GOMODCACHE=$HOME/go/pkg/mod"
+          } >> "$GITHUB_ENV"
+      # As check-static's: main writes, everyone reads. envtest's binaries too (setup-envtest's store).
+      - uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.local/share/kubebuilder-envtest
+          key: go-test-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+          restore-keys: go-test-${{ runner.os }}-
+      - run: task test:shard SHARD=${{ matrix.shard }} SHARDS=3
+      - if: github.event_name == 'push' && matrix.shard == 1
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+            ~/.local/share/kubebuilder-envtest
+          key: go-test-${{ runner.os }}-${{ hashFiles('go.sum', 'mise.toml') }}
+
+  # The required check: `task check`, every slice of it. It runs whatever its needs did, so a failed or
+  # skipped slice fails it rather than skipping it (a skipped required check would pass).
+  check:
+    if: ${{ !cancelled() }}
+    needs: [check-static, check-test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - env:
+          STATIC: ${{ needs.check-static.result }}
+          TEST: ${{ needs.check-test.result }}
+        run: |
+          echo "check-static: $STATIC, check-test: $TEST"
+          [[ $STATIC == success && $TEST == success ]]
 
   # The harness's suites live in its Dockerfile's test stage; `task check` needs no docker.
   # They run on amd64 only: the arm64 image is published untested, as it was in cloud-native-ref.
+  # Required, so the job always runs and reports: on a pull request that leaves images/maku-harness/
+  # alone its steps are skipped (main's push ran them on that tree), never the job.
   harness-test:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -33,9 +140,18 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
+          fetch-depth: 2 # the pull request's merge commit and its base, for hack/ci-changes.sh
           persist-credentials: false
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-      - uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+      - id: c
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: bash hack/ci-changes.sh
+      - if: steps.c.outputs.harness != 'true'
+        run: echo "::notice title=harness-test::images/maku-harness/ is unchanged by this pull request; its suites did not run"
+      - if: steps.c.outputs.harness == 'true'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - if: steps.c.outputs.harness == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           context: images/maku-harness
           target: test
@@ -46,7 +162,10 @@ jobs:
   # it reads two other repositories and the network. A repository that declares nothing yet skips.
   # It fails on the harness's faults only; a check that ran and failed on a repository's main is that
   # repository's verdict, a warning here (tests/checks/verdict.py).
+  # On a pull request, only when it touches images/maku-harness/; main's pushes always run it.
   harness-checks:
+    needs: changes
+    if: needs.changes.outputs.harness == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
@@ -83,10 +202,14 @@ jobs:
   # Never `latest`, never the release tag (the same channel as crossplane-configuration).
   # <sha8> is the PR head's, not the synthetic merge commit a pull_request checks out,
   # so a tag names a commit that exists on the branch (review M1).
-  # Dependabot's PRs get a read-only token, so they cannot push and are skipped.
+  # Dependabot's PRs get a read-only token, so they cannot push and are skipped, and so is a
+  # pull request that changes documentation only (hack/ci-changes.sh: nothing to deploy).
+  # It does not wait for check: a pre-release is a throwaway tag, never a verdict, and a red check
+  # beside it says what it is worth.
   prerelease-version:
-    needs: [check, harness-test]
+    needs: changes
     if: >-
+      needs.changes.outputs.deployable == 'true' &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
@@ -127,23 +250,21 @@ jobs:
       version: ${{ needs.prerelease-version.outputs.version }}
 
   # Signs each joined index here, not in image.yaml: the signature's identity stays this workflow's.
-  # The digest, never the tag, so a re-pushed tag cannot inherit the signature.
+  # The digest, never the tag, so a re-pushed tag cannot inherit the signature. One job for the six:
+  # a job each queued six runners for seconds of work. Sigstore's intermittent 5xx is retried.
   prerelease-sign:
     needs: prerelease
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       packages: write
       id-token: write # keyless cosign signing
-    strategy:
-      matrix:
-        image: [maku-broker, maku-bridge, maku-factory, maku-harness, maku-run-controller, maku-slack]
     steps:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
-          name: index-${{ matrix.image }}
-          path: ${{ runner.temp }}
+          pattern: index-*
+          path: ${{ runner.temp }}/index
       - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
@@ -151,19 +272,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - env:
-          IMAGE: ghcr.io/smana/${{ matrix.image }}
+          # prerelease's matrix: every image must have its index here.
+          IMAGES: maku-broker maku-bridge maku-factory maku-harness maku-run-controller maku-slack
         run: |
           set -euo pipefail
-          digest="$(cat "$RUNNER_TEMP/index-digest")"
-          [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "bad digest '$digest'" >&2; exit 1; }
-          cosign sign --yes "${IMAGE}@${digest}"
+          for image in $IMAGES; do
+            digest="$(cat "$RUNNER_TEMP/index/index-$image/index-digest")"
+            [[ "$digest" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "bad digest '$digest' for $image" >&2; exit 1; }
+            for attempt in 1 2 3 4; do
+              cosign sign --yes "ghcr.io/smana/${image}@${digest}" && continue 2
+              echo "cosign sign $image attempt $attempt failed, retrying" >&2; sleep $((attempt * 20))
+            done
+            echo "cosign sign ghcr.io/smana/${image}@${digest} failed" >&2; exit 1
+          done
 
   # One signed chart per PR push, <next-patch>-pr<N>.g<sha8>, whose appVersion is the image
   # pre-release of the same push. The `g` keeps a digits-only sha a valid semver identifier
   # (R20). Only the factory has a chart here: the broker's lives in cloud-native-ref.
   chart-prerelease:
-    needs: check
+    needs: changes
     if: >-
+      needs.changes.outputs.deployable == 'true' &&
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.actor != 'dependabot[bot]'
@@ -223,8 +352,12 @@ jobs:
             [ "$rc" -eq 0 ] || { echo "helm push failed (exit $rc)" >&2; exit "$rc"; }
             digest="$(sed -n 's/^Digest: //p' <<<"$out")"
             [ -n "$digest" ] || { echo "helm push printed no digest" >&2; exit 1; }
-            # Signs the digest, never the version, as the images do.
-            cosign sign --yes "ghcr.io/smana/charts/$2@${digest}"
+            # Signs the digest, never the version, as the images do; Sigstore's intermittent 5xx is retried.
+            for attempt in 1 2 3 4; do
+              cosign sign --yes "ghcr.io/smana/charts/$2@${digest}" && break
+              [ "$attempt" -lt 4 ] || { echo "cosign sign $2 failed" >&2; exit 1; }
+              echo "cosign sign $2 attempt $attempt failed, retrying" >&2; sleep $((attempt * 20))
+            done
             echo "### chart $2" >> "$GITHUB_STEP_SUMMARY"
             echo "oci://ghcr.io/smana/charts/$2:${v}@${digest}" >> "$GITHUB_STEP_SUMMARY"
           }
