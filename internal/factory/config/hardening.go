@@ -325,11 +325,11 @@ func (h Hardening) MinTrust() hardening.Level {
 	return l
 }
 
-// TrustPolicy is the author-trust policy repository's text is levelled by (UH6), at min, the
+// TrustPolicy is the author-trust policy repository's text is levelled by (UH6), at floor, the
 // repository's own floor: its maintainers, its merger and policy-bot logins as trusted bots, and
 // hardening.blockedUsers. The reconciler's input record and forge_read's filter read the same one.
-func (c *Config) TrustPolicy(repository string, min hardening.Level) hardening.Policy {
-	pol := hardening.Policy{Min: min, Blocked: c.Hardening.BlockedUsers}
+func (c *Config) TrustPolicy(repository string, floor hardening.Level) hardening.Policy {
+	pol := hardening.Policy{Min: floor, Blocked: c.Hardening.BlockedUsers}
 	if repo := c.RepositoryFor(repository); repo != nil {
 		pol.Maintainers = repo.Maintainers
 		for _, b := range []string{repo.Merge.MergerLogin, repo.Merge.PolicyBotLogin} {

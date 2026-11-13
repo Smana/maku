@@ -60,13 +60,13 @@ func TestFailedJobLog(t *testing.T) {
 			t.Error("the installation token reached the log storage")
 		}
 		_, _ = io.WriteString(w, strings.Repeat("é", maxJobLog)) // two bytes each: the head must go
-		_, _ = io.WriteString(w, "\nFAIL: TestX​\n")
+		_, _ = io.WriteString(w, "\nFAIL: TestX\u200b\n")
 	})
 	got, err := r.g.FailedJobLog(t.Context(), 9)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) > maxJobLog || !strings.HasSuffix(got, "FAIL: TestX\n") || strings.Contains(got, "​") || !utf8.ValidString(got) {
+	if len(got) > maxJobLog || !strings.HasSuffix(got, "FAIL: TestX\n") || strings.Contains(got, "\u200b") || !utf8.ValidString(got) {
 		t.Fatalf("%d bytes, tail %q", len(got), got[max(0, len(got)-20):])
 	}
 	if _, err := r.g.FailedJobLog(t.Context(), 10); err == nil {

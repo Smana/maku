@@ -25,7 +25,7 @@ const (
 	// LabelAllowlistAnnotation is the labels the run may request with output_labels, a JSON array
 	// (a label may hold a comma), written beside SafeOutputsAnnotation.
 	LabelAllowlistAnnotation = "agents.ogenki.io/label-allowlist"
-	// ForgeAPIAnnotation, "deny", is a run of a repository in hardening mode enforce (HR36): it
+	// ForgeAPIAnnotation set to "deny" marks a run of a repository in hardening mode enforce (HR36): it
 	// reads forge text through forge_read alone, and the run-controller gives it no api.github.com
 	// egress. The broker lists forge_read for such a run only.
 	ForgeAPIAnnotation = "agents.ogenki.io/forge-api"
