@@ -12,7 +12,6 @@ package preflight
 import (
 	"fmt"
 	"slices"
-	"testing"
 )
 
 // Seam is a row of the spec's seam table: the summary groups checks in this order.
@@ -140,12 +139,16 @@ type Result struct {
 	Seconds   float64 `json:"seconds"`
 }
 
+// panicOnInvalid makes an invalid result panic: this package's tests set it, so a new code never
+// ships without its catalog entry.
+var panicOnInvalid = false
+
 // normalize holds a result to the catalog: a fail or warn code outside its check's set, an unknown
 // check or outcome, is a bug. In tests it panics, so it never ships; in production it becomes a
 // fail undecided, never a pass.
 func normalize(r Result) Result {
 	if err := validate(r); err != nil {
-		if testing.Testing() {
+		if panicOnInvalid {
 			panic(err)
 		}
 		r.Outcome, r.Code, r.Message = Fail, Undecided, "the check reported an invalid result: "+err.Error()

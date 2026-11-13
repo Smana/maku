@@ -85,3 +85,17 @@ func TestNormalize(t *testing.T) {
 		})
 	}
 }
+
+// Outside tests an invalid result is never a pass: it becomes a fail undecided.
+func TestNormalizeInProduction(t *testing.T) {
+	panicOnInvalid = false
+	defer func() { panicOnInvalid = true }()
+	got := normalize(Result{Check: "kubernetes", Outcome: Pass, Code: ""})
+	if got.Outcome != Pass {
+		t.Fatalf("a valid result changed: %+v", got)
+	}
+	got = normalize(Result{Check: "kubernetes", Outcome: Fail, Code: "made_up"})
+	if got.Outcome != Fail || got.Code != Undecided {
+		t.Fatalf("got %+v", got)
+	}
+}

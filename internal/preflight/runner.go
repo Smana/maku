@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -63,7 +64,36 @@ func LoadRunConfig(path string) (RunConfig, error) {
 	if err := dec.Decode(&cfg); err != nil {
 		return RunConfig{}, fmt.Errorf("preflight config %s: %w", path, err)
 	}
+	if err := cfg.validate(); err != nil {
+		return RunConfig{}, fmt.Errorf("preflight config %s: %w", path, err)
+	}
 	return cfg, nil
+}
+
+var minorRE = regexp.MustCompile(`^[0-9]+\.[0-9]+$`)
+
+// validate refuses a config that would check nothing and report it as a pass.
+func (c RunConfig) validate() error {
+	var errs []error
+	if !minorRE.MatchString(c.Cluster.MinKubernetes) {
+		errs = append(errs, errors.New("cluster.minKubernetes is not major.minor"))
+	}
+	if len(c.Cluster.CRDs) == 0 {
+		errs = append(errs, errors.New("cluster.crds is empty: the maku CRDs are always checked"))
+	}
+	if len(c.Cluster.Secrets) == 0 {
+		errs = append(errs, errors.New("cluster.secrets is empty: the broker's TLS pair at least is always checked"))
+	}
+	if c.Timeout.Duration <= 0 {
+		errs = append(errs, errors.New("timeout must be above 0"))
+	}
+	return errors.Join(errs...)
+}
+
+// runDeadline is the run's own deadline inside the Job's activeDeadlineSeconds: a margin, so a hang
+// still leaves the results and the summary written before the kubelet kills the pod.
+func runDeadline(timeout time.Duration) time.Duration {
+	return timeout - min(15*time.Second, timeout/5)
 }
 
 // Deps are the runner's clients: the API server through client and its version endpoint, and HTTP
@@ -82,10 +112,12 @@ var representative = map[string]string{"broker": "database", "factory": "apps", 
 func Run(ctx context.Context, d Deps, cfg RunConfig, out io.Writer, term string, strict bool) int {
 	if cfg.Timeout.Duration > 0 {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, cfg.Timeout.Duration)
+		ctx, cancel = context.WithTimeout(ctx, runDeadline(cfg.Timeout.Duration))
 		defer cancel()
 	}
-	var r Report
+	// Each result is printed as it is stored, so a check that hangs past the deadline leaves the
+	// others on the pod's log.
+	r := Report{stream: json.NewEncoder(out)}
 	add := func(res Result) {
 		if err := r.Add(res); err != nil {
 			_ = r.Add(Result{Check: res.Check, Component: res.Component, Outcome: Fail, Code: Undecided, Message: "a result was withheld: " + err.Error()})
@@ -98,9 +130,6 @@ func Run(ctx context.Context, d Deps, cfg RunConfig, out io.Writer, term string,
 		for _, res := range collect(ctx, d.HTTP, comp) {
 			add(res)
 		}
-	}
-	if err := r.WriteJSONLines(out); err != nil {
-		return 1
 	}
 	if term != "" {
 		_ = os.WriteFile(term, []byte(r.Summary()), 0o600) //nolint:gosec // the pod's termination file
@@ -141,6 +170,9 @@ func collect(ctx context.Context, hc *http.Client, comp ComponentRef) []Result {
 	doc, err := DecodeComponent(resp.Body)
 	if err != nil {
 		return failed(Undecided, comp.Name+": "+err.Error())
+	}
+	if len(doc.Checks) == 0 {
+		return failed(Undecided, comp.Name+" answered /preflight with no check")
 	}
 	took := time.Since(start).Seconds()
 	for i := range doc.Checks {

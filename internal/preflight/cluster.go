@@ -75,19 +75,25 @@ func kubernetesVersion(v Versioner, floor string) []Result {
 	if err != nil {
 		return one(Fail, Undecided, "the API server's version is unreadable")
 	}
-	major, minor := num(info.Major), num(info.Minor)
+	major, okMajor := num(info.Major)
+	minor, okMinor := num(info.Minor)
+	if !okMajor || !okMinor {
+		return one(Fail, Undecided, "the API server's version is not major.minor")
+	}
 	fm, fn, _ := strings.Cut(floor, ".")
+	floorMajor, _ := num(fm)
+	floorMinor, _ := num(fn)
 	got := fmt.Sprintf("%d.%d", major, minor)
-	if major < num(fm) || (major == num(fm) && minor < num(fn)) {
+	if major < floorMajor || (major == floorMajor && minor < floorMinor) {
 		return one(Fail, "kubernetes_too_old", fmt.Sprintf("Kubernetes %s is below the floor %s (D26)", got, floor))
 	}
 	return one(Pass, "", "Kubernetes "+got)
 }
 
-// num reads a version part: GKE and EKS write minors as "30+".
-func num(s string) int {
-	n, _ := strconv.Atoi(strings.TrimRight(s, "+"))
-	return n
+// num reads a version part: GKE and EKS write minors as "30+". Anything else is not a number.
+func num(s string) (int, bool) {
+	n, err := strconv.Atoi(strings.TrimRight(s, "+"))
+	return n, err == nil && n >= 0
 }
 
 func crds(ctx context.Context, c client.Reader, want []CRD) []Result {

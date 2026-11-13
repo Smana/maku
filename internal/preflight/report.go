@@ -25,6 +25,7 @@ var credentialMarkers = []string{"postgres://", "postgresql://", "-----BEGIN", "
 // Report is a run's results.
 type Report struct {
 	results []Result
+	stream  *json.Encoder // set: each stored result is also written here, at once
 }
 
 // Add stores r, held to the catalog. A message holding a credential is refused, and the refusal
@@ -35,7 +36,11 @@ func (r *Report) Add(res Result) error {
 			return fmt.Errorf("%w: %s", ErrCredential, res.Check)
 		}
 	}
-	r.results = append(r.results, normalize(res))
+	res = normalize(res)
+	r.results = append(r.results, res)
+	if r.stream != nil {
+		_ = r.stream.Encode(res)
+	}
 	return nil
 }
 

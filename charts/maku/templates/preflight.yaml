@@ -7,6 +7,11 @@
 {{- range list "agentruns" "factories" "mergepolicies" "repositories" "rooms" "tasks" }}{{ $crds = append $crds (printf "%s.maku.ogenki.io" .) }}{{ end -}}
 {{- range .Values.preflight.extraCRDs }}{{ $crds = append $crds .name }}{{ end -}}
 {{- $cluster := printf "maku-%s-%s-preflight" .Release.Namespace .Release.Name -}}
+{{- /* An empty resourceNames would grant get on every Secret in the namespace: never render it. The
+broker's TLS pair is always one, so this guards against a values change that drops it. */ -}}
+{{- if not $secrets -}}
+{{- fail "preflight.enabled: no Secret of docs/install-secrets.md resolves from the values, and an empty list would grant get on every Secret" -}}
+{{- end -}}
 # The install's preflight (v4 D24, step 7 R2): a Helm test hook, and a suspended CronJob from which
 # `maku preflight` and Argo CD users create a Job. Both run one pod template (ap.preflightPod).
 apiVersion: v1
@@ -143,6 +148,8 @@ spec:
   concurrencyPolicy: Forbid
   jobTemplate:
     spec:
+      # Kept a day for `maku preflight` and `kubectl logs` to read, then collected.
+      ttlSecondsAfterFinished: 86400
       backoffLimit: 0
       activeDeadlineSeconds: {{ include "ap.preflightSeconds" . }}
       template: {{- include "ap.preflightPod" . | nindent 8 }}

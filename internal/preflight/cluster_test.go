@@ -97,6 +97,10 @@ func TestClusterChecksRefuse(t *testing.T) {
 			v.v = version.Info{Major: "1", Minor: "29+"}
 			return o
 		}, "kubernetes/kubernetes_too_old", "1.29", ""},
+		{"an unparseable major is undecided, never too old", func(o []client.Object, _ *ClusterConfig, v *fixedVersion, _ *interceptor.Funcs) []client.Object {
+			v.v = version.Info{Major: "x", Minor: "32"}
+			return o
+		}, "kubernetes/undecided", "", ""},
 		{"no version is undecided", func(o []client.Object, _ *ClusterConfig, v *fixedVersion, _ *interceptor.Funcs) []client.Object {
 			v.err = errors.New("connection refused")
 			return o
