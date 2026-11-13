@@ -708,3 +708,50 @@ func TestMirrorSizeLimit(t *testing.T) {
 		t.Fatalf("the mirror over its size limit was kept: %v", err)
 	}
 }
+
+// HR38: an applied push is read after the fact as its whole change onto the base, even once the
+// branch has moved past it: what the drill runner scores.
+func TestReadAfterPush(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	old := f.remoteHead("refs/heads/agent/t-1")
+	f.commit(map[string]string{"c.txt": "c\n"}, "two")
+	first := f.bundle(old + "..agent/t-1")
+	m := f.cache.Mirror("owner/repo")
+	in, err := m.Inspect(ctx, first, "agent/t-1", "main")
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	if err := m.Push(ctx, in); err != nil {
+		t.Fatalf("Push: %v", err)
+	}
+	// A later push moves the branch past the first bundle's head.
+	f.commit(map[string]string{"d.txt": "d\n"}, "three")
+	git(t, f.work, "", "push", "--quiet", f.remote, "agent/t-1")
+
+	got, err := m.Read(ctx, first, "agent/t-1", "main")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if got.Head != in.Head || got.Kind != Rebase {
+		t.Fatalf("Read = %+v", got)
+	}
+	var paths []string
+	for _, f := range got.Files {
+		paths = append(paths, f.Path)
+	}
+	if !reflect.DeepEqual(paths, []string{"b.txt", "c.txt"}) {
+		t.Fatalf("Files = %v, want the change from main: b.txt, c.txt", paths)
+	}
+	for _, want := range []string{"b1", "c", "two"} {
+		if !slices.Contains(got.Added, want) {
+			t.Errorf("Added = %q, missing %q", got.Added, want)
+		}
+	}
+	if slices.Contains(got.Added, "d") {
+		t.Errorf("Added = %q holds the later push", got.Added)
+	}
+	if refs := outRefs(t, m); refs != "" {
+		t.Errorf("a read left its objects' ref: %q", refs)
+	}
+}

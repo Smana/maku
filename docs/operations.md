@@ -347,7 +347,7 @@ absent rather than 0.
 | `maku_factory_scope_bounces_total` | counter | `class`, `exit`, `repository` | Bounced tasks leaving their wait: `relabel`, `retry`, `expired` |
 | `maku_factory_splits_total` | counter | `class`, `outcome`, `repository` | Split handoffs, once each: `approved`, `declined`, `superseded`, `expired`, `ignored`, and `unstated` (offered a split, the scoper's handoff summary describes one but its `room_handoff` carries no `split`: the task runs whole, and a room note says so) |
 | `maku_factory_split_children_total` | counter | `class`, `outcome`, `repository` | Parts of a split, once each when their parent ends: `landed`, `dropped`, `reverted` |
-| `maku_factory_rooms_closed_at_cap_total` | counter | `reason` | Rooms closed at the cap (below): `human_driver`, `facts_due` |
+| `maku_factory_rooms_closed_at_cap_total` | counter | `reason` | Rooms closed at the cap (below): `human_driver`, `facts_due`, `drill_unscored` (a drill task the drill runner never scored) |
 | `maku_factory_github_up` | gauge | — | 1 while any GitHub call succeeded in the last 3 minutes, per replica |
 | `maku_factory_github_rate_remaining` | gauge | — | The factory App's remaining REST rate limit |
 | `maku_factory_trace_export_abandoned_total` | counter | — | Task spans given up after the collector refused them for a day |
@@ -515,6 +515,8 @@ until the repository enforces it ([below](#hardening-push-enforced)), and raw re
 | `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
 | `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it: from its octo-sts policy on the XR, or from the [role table](factory.md#run-tokens-the-role-table) under `runTokens.perRun` (the publisher's under `hardening.publisher.minter`). A pair a later pass no longer reads is 0 |
 | `maku_factory_hardening_approval_wait_seconds` | histogram | `repository`, `decision` | How long a protected-path push waited for its approval, by how it closed: `approved`, `denied`, `expired`, `superseded` |
+| `maku_factory_hardening_drill_last` | gauge | `result` | Unix time of the last injection drill the factory scored, `pass` or `fail` (HR38). A `fail` newer than the last `pass` means readiness R6 is false until a fix and a passing drill |
+| `maku_factory_hardening_t5_total` | counter | `repository`, `type`, `result`, `drill` | T5 classifier calls on text outputs, refused ones included (HR39): `hit`, `pass`, `unavailable`. T5's false positives are `hit` on applied outputs with `drill="false"`; its detection on the drills is `hit` with `drill="true"` |
 
 ### Leaving the XR with an enforced repository (HR13)
 

@@ -327,6 +327,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	api.OutputClient = fconfig.PrincipalFactory
 	api.Bundles = st         // a push request's bundle, read by the factory alone (HR22)
 	api.OutputApprovals = st // digest-bound approvals, requested by the factory alone (HR28)
+	api.Drills = st          // drill reports, written and read by the factory alone (HR38)
 	rw.watch.OnGone(api.Drop)
 	countLiveRuns(rw.watch, m)
 	hub, err := fanoutHub(st, st, m, log)

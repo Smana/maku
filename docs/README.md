@@ -26,6 +26,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
 | [API](api.md) | The broker's four listeners, their errors and limits |
+| [Injection drills](drills.md) | The drill repository and accounts, `maku drill plant`, how the factory scores a drill, reading a report, the stop rule |
 | [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |

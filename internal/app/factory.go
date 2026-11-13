@@ -578,6 +578,24 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		}
 		log.Info("hardening: the safe-output applier is on", "interval", a.Interval, "answerWait", a.AnswerWait)
 	}
+	// Hardening H4 (HR38): the drill runner scores the drills planted against this factory, on the
+	// leader, while hardening.drills.gatewayLog is set; it reads applied pushes through the
+	// applier's mirror. Its reports go to the broker, which readiness's R6 reads (rooms.Client is
+	// hardening.Drills).
+	dd := drillDeps{Client: ledgers, Namespace: ns, Rooms: broker, Claims: rc, Live: live.Current, Metrics: m, Log: log}
+	if a != nil {
+		dd.Pushers = a.Pushers
+	}
+	dr, err := drillRunner(cfg, dd)
+	if err != nil {
+		return err
+	}
+	if dr != nil {
+		if err := mgr.Add(dr); err != nil {
+			return fmt.Errorf("manager: %w", err)
+		}
+		log.Info("hardening: the drill runner is on", "timeout", cfg.Hardening.Drills.Timeout)
+	}
 	// stopped is §6.1's pause: the stop object stops intake, and from phase 5 the API is intake
 	// too — it refuses 503 kill_switch exactly when the poller stands down.
 	stopped := func(ctx context.Context) bool {
