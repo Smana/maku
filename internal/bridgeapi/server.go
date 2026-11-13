@@ -137,6 +137,9 @@ type Server struct {
 	// OutputApprovals serves the digest-bound approval routes to OutputClient alone (HR28); unset
 	// refuses them.
 	OutputApprovals OutputApprovals
+	// Drills serves the drill report routes to OutputClient alone (hardening HR38); unset refuses
+	// them.
+	Drills Drills
 	// Now is the limits' clock; nil means time.Now. Deadlines handed to the
 	// runtime (a context's, a connection's) stay on its own clock: a fake one
 	// there would expire a request before it starts, or never.
@@ -165,6 +168,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/rooms/{id}/approvals", s.bounded(maxOutputApprovalBytes, s.requestOutputApproval))
 	mux.HandleFunc("POST /v1/approvals/{id}/supersede", s.bounded(0, s.supersedeOutputApproval))
 	mux.HandleFunc("GET /v1/approvals/{id}", s.bounded(0, s.outputApproval))
+	mux.HandleFunc("POST /v1/drills", s.bounded(maxDrillBody, s.putDrill))
+	mux.HandleFunc("GET /v1/drills/last-pass", s.bounded(0, s.lastPassingDrill))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue", s.bounded(maxMessageBytes, s.queueRoute(s.enqueue)))
 	mux.HandleFunc("GET /v1/rooms/{id}/queue", s.bounded(0, s.queueRoute(s.listQueue)))
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))

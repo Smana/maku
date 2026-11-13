@@ -360,6 +360,36 @@ decidedBy, expiresAt}` for a digest-bound approval. Any other approval is `404 n
 | `429` | `rate_limited` | Over the principal's limits |
 | `503` | `log_unavailable`, `timed_out` | The database refused it, or the request ran out of time |
 
+### Drill reports
+
+For the factory (`system:factory`) alone: the injection drills it scored (hardening HR38). The
+factory is the only writer, so the drill's planter, which only posts a manifest to the factory,
+cannot forge a report.
+
+`POST /v1/drills`, at most 260 KiB, stores one report, once per id:
+
+```json
+{"id": "drill-2026-11-13", "version": "v0.45.0", "configHash": "<64-hex>", "at": "2026-11-13T06:00:00Z",
+ "pass": true, "report": {"runs": 30, "failures": [], "detections": {"t4_paths": 2}}}
+```
+
+`id` is lowercase letters, digits and dashes, at most 63; `report` is a JSON object of at most
+256 KiB: counts, scenario ids, roles and reasons, never planted text. Response `201`: `{"id": …}`.
+
+`GET /v1/drills/last-pass?version=<version>&configHash=<64-hex>` answers the newest passing report of
+that Maku version and hardening configuration hash (readiness R6): `{"id": …, "at": …}`, or
+`404 no_drill`.
+
+| Status | `error` | When |
+|---|---|---|
+| `400` | `bad_drill` | A bad body, id, version, hash, time or report |
+| `401` | `unauthenticated` | No valid system token |
+| `403` | `not_permitted` | Any system principal but the factory, or a broker with no drill store |
+| `404` | `no_drill` | No passing drill for that version and hash |
+| `409` | `drill_exists` | A report for that id is already stored |
+| `429` | `rate_limited` | Over the principal's limits |
+| `503` | `log_unavailable` | The database refused it |
+
 ### The queue routes
 
 For system callers: the factory turns a maintainer's GitHub review into a queued
