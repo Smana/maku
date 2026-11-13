@@ -18,11 +18,11 @@ spec:
     - jsonPath: .spec.repositoryRef
       name: Repo
       type: string
-    - jsonPath: .status.authority
-      name: Authority
-      type: string
-    - jsonPath: .status.classCount
-      name: Classes
+    - jsonPath: .status.consumerCount
+      name: Consumers
+      type: integer
+    - jsonPath: .status.currentCount
+      name: Current
       type: integer
     - jsonPath: .status.liveCount
       name: Live
@@ -671,6 +671,8 @@ spec:
                 minimum: 0
                 type: integer
               classes:
+                description: Classes is the per-repository shape's, until the next
+                  minor.
                 items:
                   description: ClassStatus is one class's mode and last decision (D10,
                     narrowed for v1).
@@ -756,6 +758,49 @@ spec:
                 x-kubernetes-list-map-keys:
                 - type
                 x-kubernetes-list-type: map
+              consumerCount:
+                description: |-
+                  ConsumerCount and CurrentCount are always serialized, zero included: the printer columns
+                  read them. CurrentCount counts the accepted consumers serving the current generation.
+                minimum: 0
+                type: integer
+              consumers:
+                description: Consumers are the Repositories that bind a class-shape
+                  MergePolicy (B10).
+                items:
+                  description: ConsumerStatus is one Repository's binding of a class-shape
+                    MergePolicy (B10).
+                  properties:
+                    accepted:
+                      description: Accepted is always serialized, false included.
+                      type: boolean
+                    mode:
+                      enum:
+                      - live
+                      - shadow
+                      - "off"
+                      type: string
+                    reason:
+                      maxLength: 64
+                      type: string
+                    repository:
+                      description: Repository is the Repository object's name.
+                      maxLength: 253
+                      type: string
+                    servedGeneration:
+                      format: int64
+                      type: integer
+                  required:
+                  - repository
+                  type: object
+                maxItems: 64
+                type: array
+                x-kubernetes-list-map-keys:
+                - repository
+                x-kubernetes-list-type: map
+              currentCount:
+                minimum: 0
+                type: integer
               liveCount:
                 minimum: 0
                 type: integer

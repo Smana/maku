@@ -153,9 +153,51 @@ type RepositoryStatus struct {
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// MergePolicy names the MergePolicy that applies.
+	// MergePolicy names the MergePolicy that applies, in the per-repository shape.
 	// +kubebuilder:validation:MaxLength=253
 	MergePolicy string `json:"mergePolicy,omitempty"`
+	// Authority is who declares the classes: central, or the repository's file (MP15).
+	// +kubebuilder:validation:Enum=central;repository
+	Authority string `json:"authority,omitempty"`
+	// ClassCount and LiveCount are always serialized, zero included: the printer columns read them.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ClassCount int `json:"classCount"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	LiveCount int `json:"liveCount"`
+	// Classes is one entry per binding, or per served class of a per-repository MergePolicy (B10).
+	// +listType=map
+	// +listMapKey=name
+	// +kubebuilder:validation:MaxItems=32
+	Classes []BindingStatus `json:"classes,omitempty"`
+	// Merge is the repository's merge settings as resolved, the Factory's defaults applied (Q8).
+	Merge *config.Merge `json:"merge,omitempty"`
+	// MergeDefaulted names the merge keys taken from the Factory's mergeDefaults.
+	// +kubebuilder:validation:MaxItems=32
+	// +kubebuilder:validation:items:MaxLength=64
+	MergeDefaulted []string `json:"mergeDefaulted,omitempty"`
+}
+
+// BindingStatus is one class of a Repository (B10): the binding's mode, the policy generation it
+// serves, and whether its current generation resolves.
+type BindingStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	Name string `json:"name"`
+	// +kubebuilder:validation:Enum=live;shadow;off
+	Mode string `json:"mode,omitempty"`
+	// PolicyGeneration is the generation of the MergePolicy the class serves.
+	PolicyGeneration int64 `json:"policyGeneration,omitempty"`
+	// Accepted is always serialized, false included.
+	// +optional
+	Accepted bool `json:"accepted"`
+	// +kubebuilder:validation:MaxLength=64
+	Reason string `json:"reason,omitempty"`
+	// +kubebuilder:validation:MaxLength=1024
+	Message string `json:"message,omitempty"`
+	// +kubebuilder:validation:MaxLength=63
+	LastDecision   string       `json:"lastDecision,omitempty"`
+	LastDecisionAt *metav1.Time `json:"lastDecisionAt,omitempty"`
 }
 
 // Repository is one repository a Factory serves (D3).
@@ -165,6 +207,8 @@ type RepositoryStatus struct {
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name=Repo,type=string,JSONPath=`.spec.repository`
 // +kubebuilder:printcolumn:name=Factory,type=string,JSONPath=`.spec.factoryRef`
+// +kubebuilder:printcolumn:name=Classes,type=integer,JSONPath=`.status.classCount`
+// +kubebuilder:printcolumn:name=Live,type=integer,JSONPath=`.status.liveCount`
 // +kubebuilder:printcolumn:name=Accepted,type=string,JSONPath=`.status.conditions[?(@.type=="Accepted")].status`
 // +kubebuilder:printcolumn:name=Connected,type=string,JSONPath=`.status.conditions[?(@.type=="Connected")].status`
 // +kubebuilder:printcolumn:name=Age,type=date,JSONPath=`.metadata.creationTimestamp`
@@ -238,8 +282,37 @@ type MergePolicyStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	LiveCount int `json:"liveCount"`
+	// Classes is the per-repository shape's, until the next minor.
 	// +kubebuilder:validation:MaxItems=32
 	Classes []ClassStatus `json:"classes,omitempty"`
+	// ConsumerCount and CurrentCount are always serialized, zero included: the printer columns
+	// read them. CurrentCount counts the accepted consumers serving the current generation.
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	ConsumerCount int `json:"consumerCount"`
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	CurrentCount int `json:"currentCount"`
+	// Consumers are the Repositories that bind a class-shape MergePolicy (B10).
+	// +listType=map
+	// +listMapKey=repository
+	// +kubebuilder:validation:MaxItems=64
+	Consumers []ConsumerStatus `json:"consumers,omitempty"`
+}
+
+// ConsumerStatus is one Repository's binding of a class-shape MergePolicy (B10).
+type ConsumerStatus struct {
+	// Repository is the Repository object's name.
+	// +kubebuilder:validation:MaxLength=253
+	Repository string `json:"repository"`
+	// +kubebuilder:validation:Enum=live;shadow;off
+	Mode             string `json:"mode,omitempty"`
+	ServedGeneration int64  `json:"servedGeneration,omitempty"`
+	// Accepted is always serialized, false included.
+	// +optional
+	Accepted bool `json:"accepted"`
+	// +kubebuilder:validation:MaxLength=64
+	Reason string `json:"reason,omitempty"`
 }
 
 // MergePolicy is one reusable class definition, its name the class name (reusable merge policies
@@ -251,8 +324,8 @@ type MergePolicyStatus struct {
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name=Repo,type=string,JSONPath=`.spec.repositoryRef`
-// +kubebuilder:printcolumn:name=Authority,type=string,JSONPath=`.status.authority`
-// +kubebuilder:printcolumn:name=Classes,type=integer,JSONPath=`.status.classCount`
+// +kubebuilder:printcolumn:name=Consumers,type=integer,JSONPath=`.status.consumerCount`
+// +kubebuilder:printcolumn:name=Current,type=integer,JSONPath=`.status.currentCount`
 // +kubebuilder:printcolumn:name=Live,type=integer,JSONPath=`.status.liveCount`
 // +kubebuilder:printcolumn:name=Accepted,type=string,JSONPath=`.status.conditions[?(@.type=="Accepted")].status`
 // +kubebuilder:printcolumn:name=Age,type=date,JSONPath=`.metadata.creationTimestamp`

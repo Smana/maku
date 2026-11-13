@@ -51,8 +51,10 @@ func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 		"factories": {"kind: Factory", "scope: Namespaced", "subresources:", "name: Accepted", "name: Ready", "name: Repos", "name: Stopped", "mergeDefaults:"},
 		"repositories": {"kind: Repository", "scope: Namespaced", "subresources:", "name: Repo", "name: Factory", "name: Accepted", "name: Connected",
 			"spec.factoryRef is fixed once set", "spec.repository is fixed once set", "mergePolicies:", "x-kubernetes-list-type: map",
+			"name: Classes", "name: Live", "policyGeneration:", "mergeDefaulted:",
 			msgReviewBinding, msgEntryClasses, msgFileBindings},
-		"mergepolicies": {"kind: MergePolicy", "scope: Namespaced", "subresources:", "name: Repo", "name: Live", "name: Accepted",
+		"mergepolicies": {"kind: MergePolicy", "scope: Namespaced", "subresources:", "name: Repo", "name: Consumers", "name: Current", "name: Live", "name: Accepted",
+			"servedGeneration:",
 			"spec.repositoryRef is fixed once set", "a class is live or shadow, never both", "requires:",
 			msgPolicyName, msgReviewPolicy, msgNeverTogether, msgLegacyNeedsRef, msgModeOnBinding, msgWorkflow, msgFluxSource, msgKeepsShape},
 	} {
@@ -62,6 +64,13 @@ func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 			if !strings.Contains(raw, w) && !msgs[w] {
 				t.Errorf("%s CRD lacks %q", plural, w)
 			}
+		}
+	}
+	// B10, plan PR14: Authority and Classes move to the Repository.
+	raw, _ := readCRD(t, "mergepolicies")
+	for _, gone := range []string{"name: Authority", "name: Classes"} {
+		if strings.Contains(raw, gone) {
+			t.Errorf("mergepolicies CRD still has the column %q", gone)
 		}
 	}
 }
