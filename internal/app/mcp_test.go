@@ -236,3 +236,20 @@ func TestForgeReadServedByConfig(t *testing.T) {
 		t.Fatalf("%v", got)
 	}
 }
+
+// EX11: :8090 serves kb_search and kb_get only with roomTools.knowledge set, and only those it names.
+func TestKnowledgeServedByConfig(t *testing.T) {
+	m, err := metrics.New(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := knowledgeTools(config.Config{}, m); len(got) != 0 {
+		t.Fatalf("served with no endpoint: %v", got)
+	}
+	k := &config.KnowledgeConfig{URL: "http://runlore.runlore.svc:8080/mcp", Tools: []string{"kb_get"}, Roles: []string{"triager"},
+		Timeout: config.Duration{Duration: 10 * time.Second}, MaxBytes: 1 << 10}
+	got := knowledgeTools(config.Config{RoomTools: &config.RoomToolsConfig{Knowledge: k}}, m)
+	if len(got) != 1 || got[0].Name != "kb_get" || strings.Join(got[0].Roles, ",") != "triager" {
+		t.Fatalf("%v", got)
+	}
+}

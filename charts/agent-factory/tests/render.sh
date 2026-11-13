@@ -451,8 +451,8 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomStalled") |
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .expr == "absent(up{job=\"room-broker\", namespace=\"maku\"} == 1)"' 'RoomBrokerDown reads the release namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | (.annotations.runbook_url | test("^https://github.com/Smana/maku/blob/v[^/]+/docs/operations.md#room-alerts$"))' 'runbook_url defaults to the release docs'
 all="$(alerts)"
-for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending; do
-  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics)" >&2; fail=1; }
+for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending RoomKnowledgeFailing; do
+  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics, no knowledge endpoint)" >&2; fail=1; }
 done
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["AgentFactoryClassPausedLong"]')"
 want="$(sed 's/ AgentFactoryClassPausedLong / /' <<<" $all ")"
@@ -466,6 +466,9 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanI
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations.md#room-alerts"' 'docsURL replaces the docs base'
+# a knowledge endpoint brings RoomKnowledgeFailing (EX11)
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp)"
+ykind PrometheusRule '.spec.groups[] | select(.name == "maku-rooms") | .rules[] | select(.alert == "RoomKnowledgeFailing") | (.expr | test("maku_rooms_knowledge_calls_total"))' 'roomTools.knowledge.url: RoomKnowledgeFailing'
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
 ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
