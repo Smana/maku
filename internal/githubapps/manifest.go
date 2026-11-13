@@ -19,8 +19,10 @@ const maxNameLen = 34
 type Kind string
 
 const (
-	AgentsApp  Kind = "agents"  // mints the runs' and the publisher's tokens
-	FactoryApp Kind = "factory" // issues, labels, statuses and merges, with the merger folded in
+	// AgentsApp mints the runs' and the publisher's tokens.
+	AgentsApp Kind = "agents"
+	// FactoryApp handles issues, labels, statuses and merges, with the merger folded in.
+	FactoryApp Kind = "factory"
 )
 
 // AppManifest is the JSON GitHub's App manifest flow takes. The fields are in alphabetical order, so

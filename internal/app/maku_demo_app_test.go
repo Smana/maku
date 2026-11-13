@@ -380,3 +380,87 @@ func TestDemoAppRejectsABadOwner(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+// The demo keeps its one App and its permission map: the form carries the same bytes it did before
+// the flow moved to internal/githubapps, the loopback port aside.
+func TestDemoManifestUnchanged(t *testing.T) {
+	d := startDemo(t, "--name", "my-demo")
+	action, manifest := d.page(t)
+	port := regexp.MustCompile(`"redirect_url":"http://127\.0\.0\.1:\d+/callback"`)
+	got := port.ReplaceAllString(manifest, `"redirect_url":"http://127.0.0.1:PORT/callback"`)
+	want := `{"default_events":[],"default_permissions":{"actions":"write","checks":"read","contents":"write","issues":"write","metadata":"read","pull_requests":"write","statuses":"write"},` +
+		`"hook_attributes":{"active":false,"url":"https://github.com/Smana/maku"},"name":"my-demo","public":false,"redirect_url":"http://127.0.0.1:PORT/callback","url":"https://github.com/Smana/maku"}`
+	if got != want {
+		t.Fatalf("manifest\n got %s\nwant %s", got, want)
+	}
+	var m struct {
+		Redirect string `json:"redirect_url"`
+	}
+	_ = json.Unmarshal([]byte(manifest), &m)
+	u, _ := url.Parse(action)
+	d.callback(t, strings.TrimSuffix(m.Redirect, "/callback"), "code=c&state="+u.Query().Get("state"))
+	if err := <-d.err; err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The code is a one-hour credential: a failed conversion's error never carries it.
+func TestDemoAppTransportErrorNamesNoCode(t *testing.T) {
+	d := startDemo(t)
+	d.conv.Close() // the API is gone: the client's error would carry the URL, and the code with it
+	action, manifest := d.pageFrom(t)
+	var m struct {
+		Redirect string `json:"redirect_url"`
+	}
+	_ = json.Unmarshal([]byte(manifest), &m)
+	u, _ := url.Parse(action)
+	d.callbackFrom(t, strings.TrimSuffix(m.Redirect, "/callback"), "code=PLANTEDCODE&state="+u.Query().Get("state"))
+	err := <-d.err
+	if err == nil || strings.Contains(err.Error(), "PLANTEDCODE") || strings.Contains(d.out.String(), "PLANTEDCODE") {
+		t.Fatalf("err = %v, out = %q", err, d.out.String())
+	}
+}
+
+// pageFrom and callbackFrom reach the loopback listener with a plain client: d.conv may be closed.
+func (d *demoRun) pageFrom(t *testing.T) (action, manifest string) {
+	t.Helper()
+	var u string
+	select {
+	case u = <-d.base:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the browser was never opened")
+	}
+	resp, err := plainGet(t, u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	a, m := demoActionRE.FindSubmatch(b), demoManifestRE.FindSubmatch(b)
+	if a == nil || m == nil {
+		t.Fatalf("form not found in %s", b)
+	}
+	return html.UnescapeString(string(a[1])), html.UnescapeString(string(m[1]))
+}
+
+func (d *demoRun) callbackFrom(t *testing.T, base, query string) {
+	t.Helper()
+	resp, err := plainGet(t, base+"/callback?"+query)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	b, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(b), "PLANTED") {
+		t.Fatalf("the browser was shown %q", b)
+	}
+}
+
+func plainGet(t *testing.T, u string) (*http.Response, error) {
+	t.Helper()
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, u, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return (&http.Client{Timeout: 5 * time.Second}).Do(req)
+}
