@@ -858,6 +858,10 @@ func TestAPIPresets(t *testing.T) {
 		{"zitadel with an audience file", apiWith(good, "  audienceFile: /a\n"), "api.audienceFile: the zitadel preset's audience is api.projectIDFile"},
 		{"zitadel with token use id", apiWith(good, "  tokenUse: id\n"), "api.tokenUse: the zitadel preset uses access"},
 		{"a malformed pointer", strings.Replace(generic, "/realm_access/roles", "/realm~2access", 1), "api.rolesClaim: not a claim name or an RFC 6901 pointer"},
+		{"a sponsored client claim under zitadel", apiWith(good, "  sponsoredClientClaim: cid\n"),
+			"api.sponsoredClientClaim: the zitadel preset names the client in azp or client_id"},
+		{"a sponsored client claim outside the allowlist", apiWith(generic, "  sponsoredClientClaim: sub\n"),
+			`api.sponsoredClientClaim: "sub" is not cid, azp, client_id or appid`},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := Parse([]byte(c.body))

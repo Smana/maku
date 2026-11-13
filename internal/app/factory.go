@@ -608,8 +608,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	people, _ := access.(api.PersonResolver) // D1: the login the write check reads is the person charged
 	auth := &api.Authenticator{Humans: humansV, Groups: groups, ClientIDs: clientIDs,
 		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals,
-		TokenUse: cfg.API.EffectiveTokenUse(), RolesClaim: cfg.API.RolesClaim}
-	if cfg.API.EffectivePreset() == config.PresetGeneric && cfg.API.EffectiveTokenUse() == config.TokenUseAccess {
+		TokenUse: cfg.API.EffectiveTokenUse(), RolesClaim: cfg.API.RolesClaim, RolesRefused: m.HumanRolesClaimRefused}
+	if cfg.API.EffectivePreset() == config.PresetGeneric {
+		auth.Generic = true
 		auth.Audience = apiAudience(cfg.API) // the zitadel preset's human path pins the client alone, as before
 	}
 	if humansV != nil && len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4: the third branch, only while a principal is declared
@@ -627,7 +628,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			clients = append(clients, client(ip.Sponsored, true))
 		}
 		auth.Sponsored = &authn.Sponsored{V: humansV, Clients: clients, Exclude: clientIDs,
-			Audience: apiAudience(cfg.API), ClientClaim: cfg.API.SponsoredClientClaim}
+			Audience: apiAudience(cfg.API), ClientClaim: cfg.API.SponsoredClientClaim, Generic: auth.Generic}
 	}
 	// The self-serve link: the broker's records, and the same ZITADEL resolver api.access reads.
 	var logins api.LoginResolver

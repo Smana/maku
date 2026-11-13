@@ -5,6 +5,8 @@
 package api
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
@@ -34,9 +36,14 @@ type Authenticator struct {
 	// RolesClaim names the claim holding the groups, or an RFC 6901 pointer; "" is the zitadel
 	// preset's groups, else the project roles' keys.
 	RolesClaim string
-	// Audience, when set, is the aud value a human access token must hold (preset generic, token
-	// use access); "" refuses. Nil is the zitadel preset, whose human path pins the client alone.
+	// Generic is the generic preset: a one-element aud may name the client, and the roles claim
+	// is judged by RoleNames. Unset is the zitadel preset, byte for byte.
+	Generic bool
+	// Audience is the aud value a generic access token must hold; nil or "" refuses. Unread under
+	// the zitadel preset, whose human path pins the client alone, and under token use id.
 	Audience func() string
+	// RolesRefused counts a roles claim that gave no group, by its reason. Optional.
+	RolesRefused func(ctx context.Context, reason string)
 }
 
 // Authenticate maps r to its caller's principal, from the bearer token alone.
@@ -54,11 +61,14 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		}
 		// A refusal here is only a client mismatch until every id failed; it must
 		// not mask the system branch, so it is skipped, not returned.
-		c, err := a.Humans.VerifyAuthorizedParty(r.Context(), raw, id)
-		if err != nil || !a.audienceHeld(c, id) {
+		c, err := a.verifyHuman(r.Context(), raw, id)
+		if err != nil {
 			continue
 		}
-		groups, _ := c.RoleNames(a.RolesClaim) // a refused claim holds no group: refused below, never a member
+		groups, err := c.RoleNames(a.RolesClaim) // a refused claim holds no group: refused below, never a member
+		if rc := (*authn.RolesClaimError)(nil); errors.As(err, &rc) && a.RolesRefused != nil {
+			a.RolesRefused(r.Context(), rc.Reason)
+		}
 		p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: groups,
 			ClientID: id, Expiry: c.ExpiresAt.Time, AccessToken: raw}
 		if !a.Groups.Admitted(p) {
@@ -87,15 +97,26 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 	return authn.Principal{}, fmt.Errorf("%w: no accepted issuer or client", authn.ErrUnauthenticated)
 }
 
-// audienceHeld is the aud rule of the token use: an ID token's aud holds its client (OIDC Core); a
-// generic access token's holds the configured audience; the zitadel preset's is not read here.
-func (a *Authenticator) audienceHeld(c *authn.Claims, client string) bool {
+// verifyHuman checks raw, a human token issued to client, by the preset's and the token use's rule:
+// an ID token whose aud holds the client (token use id); a generic access token whose aud holds the
+// configured audience; or the zitadel preset's azp or client_id, aud unread, as before.
+func (a *Authenticator) verifyHuman(ctx context.Context, raw, client string) (*authn.Claims, error) {
 	switch {
 	case a.TokenUse == authn.TokenUseID:
-		return slices.Contains(c.Audience, client)
-	case a.Audience != nil:
-		aud := a.Audience()
-		return aud != "" && slices.Contains(c.Audience, aud)
+		return a.Humans.VerifyIDToken(ctx, raw, client)
+	case a.Generic:
+		c, err := a.Humans.VerifyClient(ctx, raw, client)
+		if err != nil {
+			return nil, err
+		}
+		var aud string
+		if a.Audience != nil {
+			aud = a.Audience()
+		}
+		if aud == "" || !slices.Contains(c.Audience, aud) {
+			return nil, fmt.Errorf("%w: aud does not hold the audience", authn.ErrWrongAudience)
+		}
+		return c, nil
 	}
-	return true
+	return a.Humans.VerifyAuthorizedParty(ctx, raw, client)
 }

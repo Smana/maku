@@ -3,12 +3,14 @@
 package api
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"errors"
 	"maps"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -231,7 +233,7 @@ func TestAuthenticateGenericAccess(t *testing.T) {
 	const iss = "https://tenant.auth0.example/"
 	aud := "https://api.rooms.example"
 	a := &Authenticator{Humans: idp.verifier(iss), Groups: policy.Groups{Admin: "agents-admin", Member: "agents-member"},
-		ClientIDs: func() []string { return []string{"rooms-web", "maku-cli"} }, TokenUse: authn.TokenUseAccess,
+		ClientIDs: func() []string { return []string{"rooms-web", "maku-cli"} }, TokenUse: authn.TokenUseAccess, Generic: true,
 		RolesClaim: "https://rooms.example/roles", Audience: func() string { return aud }}
 	call := func(claims jwt.MapClaims) error {
 		c := jwt.MapClaims{"iss": iss, "sub": "auth0|1", "azp": "maku-cli", "https://rooms.example/roles": []string{"agents-member"}}
@@ -268,5 +270,64 @@ func TestAuthenticatorSponsoredClientClaim(t *testing.T) {
 	r.Header.Set("Authorization", "Bearer "+tok)
 	if p, err := a.Authenticate(r); err != nil || p.ID != "system:slack-app" || !p.Sponsored {
 		t.Fatalf("%+v %v", p, err)
+	}
+}
+
+// The zitadel preset stays byte for byte (review of #524): a token naming no client in azp or
+// client_id is no one's, even when its one aud is a rooms client; and a malformed groups claim
+// refuses the token whole, as before.
+func TestAuthenticateZITADELIsUnchanged(t *testing.T) {
+	zitadel := newSigner(t)
+	a := &Authenticator{Humans: zitadel.verifier("https://auth.ogenki.io"),
+		Groups:    policy.Groups{Admin: "agents-admin", Member: "agents-member"},
+		ClientIDs: func() []string { return []string{"rooms-proxy-id", "maku-id"} }}
+	for name, claims := range map[string]jwt.MapClaims{
+		"aud the client alone, no azp or client_id": {"aud": "maku-id", "groups": []string{"agents-member"}},
+		"a string groups claim":                     {"azp": "maku-id", "groups": "agents-member"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			claims["iss"], claims["sub"] = "https://auth.ogenki.io", "291847362183"
+			r := httptest.NewRequestWithContext(t.Context(), "POST", "/v1/runs", nil)
+			r.Header.Set("Authorization", "Bearer "+zitadel.token(t, claims))
+			if p, err := a.Authenticate(r); !errors.Is(err, authn.ErrUnauthenticated) {
+				t.Fatalf("got %+v, %v; want ErrUnauthenticated", p, err)
+			}
+		})
+	}
+}
+
+// Under token use id an RFC 9068 access token is not the forwarded ID token, and a refused roles
+// claim is counted by its reason.
+func TestAuthenticateTokenUseIDRefusals(t *testing.T) {
+	idp := newSigner(t)
+	const iss = "https://dex.example/dex"
+	var refused []string
+	a := &Authenticator{Humans: idp.verifier(iss), Groups: policy.Groups{Admin: "agents-admin", Member: "agents-member"},
+		ClientIDs: func() []string { return []string{"rooms-web"} }, TokenUse: authn.TokenUseID, Generic: true, RolesClaim: "groups",
+		RolesRefused: func(_ context.Context, reason string) { refused = append(refused, reason) }}
+	call := func(typ string, claims jwt.MapClaims) error {
+		c := jwt.MapClaims{"iss": iss, "sub": "alice", "aud": "rooms-web", "exp": time.Now().Add(time.Hour).Unix()}
+		maps.Copy(c, claims)
+		tok := jwt.NewWithClaims(jwt.SigningMethodRS256, c)
+		if typ != "" {
+			tok.Header["typ"] = typ
+		}
+		raw, err := tok.SignedString(idp.key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r := httptest.NewRequestWithContext(t.Context(), "POST", "/v1/runs", nil)
+		r.Header.Set("Authorization", "Bearer "+raw)
+		_, err = a.Authenticate(r)
+		return err
+	}
+	if err := call("at+jwt", jwt.MapClaims{"groups": []string{"agents-member"}}); !errors.Is(err, authn.ErrUnauthenticated) {
+		t.Fatalf("an access token passed as the ID token: %v", err)
+	}
+	if err := call("JWT", jwt.MapClaims{"groups": []string{"agents-member"}}); err != nil {
+		t.Fatalf("the ID token: %v", err)
+	}
+	if err := call("", jwt.MapClaims{"groups": 7}); !errors.Is(err, authn.ErrForbidden) || !slices.Equal(refused, []string{"type"}) {
+		t.Fatalf("a malformed roles claim: %v, counted %v", err, refused)
 	}
 }

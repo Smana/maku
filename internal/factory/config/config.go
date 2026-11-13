@@ -1088,8 +1088,8 @@ type API struct {
 	// RolesClaim names the claim holding Groups' values, or an RFC 6901 pointer to it: required
 	// with preset generic.
 	RolesClaim string `json:"rolesClaim,omitempty"`
-	// SponsoredClientClaim names the claim holding a sponsored token's client id, for an IdP
-	// that puts it elsewhere than azp or client_id (Okta's cid).
+	// SponsoredClientClaim names the claim holding a sponsored token's client id under preset
+	// generic, for an IdP that puts it elsewhere than azp or client_id: cid (Okta) or appid (Entra).
 	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
 	// Groups defaults to agents-admin and agents-member.
 	Groups Groups `json:"groups"`
@@ -1149,8 +1149,14 @@ func (a API) validatePreset(bad func(string, ...any)) {
 	if !authn.ValidRolesClaim(a.RolesClaim) {
 		bad("api.rolesClaim: not a claim name or an RFC 6901 pointer (~0 and ~1 are its only escapes)")
 	}
+	if cc := a.SponsoredClientClaim; cc != "" && !authn.ValidClientClaim(cc) {
+		bad("api.sponsoredClientClaim: %q is not cid, azp, client_id or appid", cc)
+	}
 	switch a.EffectivePreset() {
 	case PresetZITADEL:
+		if a.SponsoredClientClaim != "" {
+			bad("api.sponsoredClientClaim: the zitadel preset names the client in azp or client_id")
+		}
 		if a.Audience != "" {
 			bad("api.audience: the zitadel preset's audience is api.projectIDFile")
 		}
