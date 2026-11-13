@@ -273,15 +273,16 @@ func (s *Server) readForge(ctx context.Context, cfg *config.Config, gh ForgeThre
 }
 
 // issueVouched is whether the task's issue reads approved (UH6): the trigger label vouched for it
-// as it was labelled (its title and body hash to the task's snapshot, or neither changed after the
-// task was created), or a maintainer's or writer's factory/vouch covers it (no edit after the
+// as it was labelled (its title and body hash to the task's snapshot; only an older task with no
+// snapshot hash falls back to neither having changed after the task was created), or a maintainer's or writer's factory/vouch covers it (no edit after the
 // vouch). Otherwise it is levelled by its author's association: a stranger's edit of a labelled
 // issue is not vouched for.
 func (s *Server) issueVouched(ctx context.Context, cfg *config.Config, gh ForgeThreads, t *factoryv1.Task, iss forge.Issue) (bool, error) {
 	editedAfter := func(at time.Time) bool { return iss.LastEditedAt.After(at) || iss.TitleEditedAt.After(at) }
 	if t.Spec.Source.Kind == "issue" {
-		if _, sum, _ := intake.Snapshot(iss); sum == t.Spec.Source.ContentSHA256 || !editedAfter(t.CreationTimestamp.Time) {
-			return true, nil
+		want := t.Spec.Source.ContentSHA256
+		if _, sum, _ := intake.Snapshot(iss); sum == want || (want == "" && !editedAfter(t.CreationTimestamp.Time)) {
+			return true, nil // the hash alone decides when there is one: no intake-to-creation window
 		}
 	}
 	at, ok, err := s.vouchedAt(ctx, cfg, gh, t.Spec.Repository, iss.Number, iss.Labels)

@@ -2169,8 +2169,8 @@ flowchart LR
   `[2 items withheld: author trust]`. One run's read of one target is served again for 15 s without
   reading GitHub, so a run that loops on `forge_read` cannot spend the App's rate limit.
 - **What counts as vouched.** The trigger label vouches for the task's issue as it was labelled:
-  its title and body hash to the task's snapshot, or neither was edited after the task was
-  created. A later edit, by anyone, voids it, and the issue is levelled by its author's
+  its title and body hash to the task's snapshot. Only an older task with no snapshot hash falls
+  back to neither being edited after the task was created. A later edit, by anyone, voids it, and the issue is levelled by its author's
   association. A `factory/vouch` label vouches for an issue or a pull request's description only
   when its last labeller is a maintainer or has write on the repository, and only if the text was
   not edited after it. Comments and reviews are never vouched for.

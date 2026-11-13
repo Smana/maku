@@ -250,7 +250,8 @@ func TestForgeReadVouch(t *testing.T) {
 		served    bool
 	}{
 		"as labelled, by its hash":         {kind: "issue", sum: sum, issue: labelled, served: true},
-		"as labelled, no edit since":       {kind: "issue", issue: labelled, served: true},
+		"an older task, no edit since":     {kind: "issue", issue: labelled, served: true},
+		"a hash mismatch, no edit time":    {kind: "issue", sum: strings.Repeat("0", 64), issue: labelled},
 		"edited after the task":            {kind: "issue", sum: sum, issue: edited},
 		"retitled after the task":          {kind: "issue", sum: sum, issue: retitled},
 		"an api task's issue":              {kind: "api", issue: labelled},
