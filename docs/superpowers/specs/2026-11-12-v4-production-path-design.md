@@ -158,7 +158,9 @@ Decided after the plans for steps 2 and 3 and hardening H1–H5 were written:
 | HR28 | Protected-path push approvals are bound to the bundle's digest: they outlive the run and approve exactly that content. The Slack push approval accepts an approval with no live run |
 | PR9 | The install's unsafe settings stay a banner every signed-in human sees |
 | Pins | A pinned issue shows the pinned profile's roles (profile choice G3) |
+| Merge gate | `maku/merge-gate` is posted and required on agent PRs only, through a separate default-branch ruleset that human roles and the merger App bypass in pull-request mode; the demo requires no gate (owner, 2026-11-12) |
 | Release | The next Maku minor is cut once step 3 (PRs A to E) has merged, not before |
+| A11 (D13 exception) | agentgateway's four CRDs are not in `agent-factory-crds`: with them the release Secret sits 16 KB under Kubernetes' 1 MiB limit. They are vendored in `config/agentgateway` and applied outside Helm (a Flux Kustomization with `prune: false`, an Argo CD Application with `Prune=false`, `kubectl apply --server-side`, or the upstream `agentgateway-crds` chart); the six maku CRDs stay in `agent-factory-crds` (owner, 2026-11-13) |
 
 ## Not here
 
