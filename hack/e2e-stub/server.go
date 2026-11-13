@@ -30,6 +30,8 @@ type Stub struct {
 	// received is what each model request carried, as the provider behind a gateway sees it.
 	receivedMu sync.Mutex
 	received   []ModelRequest
+	// traces are the trace ids the OTLP sink received, each once (plan v4 step 6, Task 2).
+	traces []string
 }
 
 // New builds a stub with one throwaway signing key. It never contacts an external service.
@@ -50,6 +52,10 @@ func New() *Stub {
 	mux.HandleFunc("GET /__received", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, s.Received())
 	})
+	mux.HandleFunc("GET /__traces", func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, http.StatusOK, s.Traces())
+	})
+	mux.HandleFunc("POST /v1/traces", s.otlpTraces)
 	mux.HandleFunc("GET /oauth/v2/keys", s.jwks)
 	mux.HandleFunc("GET /.well-known/openid-configuration", s.discovery)
 	mux.HandleFunc("GET /test/id-token", s.testIDToken)

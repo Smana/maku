@@ -461,3 +461,19 @@ func TestFileEntriesCannotCarryBindings(t *testing.T) {
 		}
 	}
 }
+
+// TE2's floor reads the catalogue's templates: a policy whose variant is below its floor is
+// refused alone (B9), never handed to Parse, where it would refuse each consumer Repository.
+func TestAPolicyBelowItsFloorIsRefusedAlone(t *testing.T) {
+	below := classPolicy(t, "docs", 2, "harness: rich\nharnessAllowed: [base]\n")
+	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], below, boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := refusal(r, KindMergePolicy, "docs"); x == nil || x.Reason != v1alpha1.ReasonInvalid || !strings.Contains(x.Message, "drops roles of the floor") {
+		t.Fatalf("docs: %+v", x)
+	}
+	if refused(r, KindRepository, "maku") != "" || r.Config.RepositoryFor("Smana/maku") == nil {
+		t.Fatalf("the consumer stays served: %+v", r.Refused)
+	}
+}

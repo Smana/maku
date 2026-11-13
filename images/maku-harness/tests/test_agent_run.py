@@ -1080,6 +1080,22 @@ class TraceTest(unittest.TestCase):
     def test_tracing_is_off_without_an_endpoint(self):
         self.assertEqual(agent_run.start_run_span({}), (None, None, {}))
 
+    def test_agent_server_gets_no_trace_endpoint_by_default(self):
+        # Its spans (lmnr, OpenHands' observe) carry prompts, model answers and tool I/O: whatever
+        # the agent read, a token included. Unless AGENT_TRACE_CONTENT=1, it exports nothing.
+        env = {"OTEL_EXPORTER_OTLP_ENDPOINT": "http://c:4318", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT": "http://c:4318/v1/traces",
+               "OTEL_ENDPOINT": "http://c:4318", "LMNR_PROJECT_API_KEY": "k", "LMNR_SPAN_CONTEXT": "{}",
+               "OPENHANDS_OBSERVABILITY_PARENT_SPAN_CONTEXT": "{}", "OTEL_BSP_SCHEDULE_DELAY": "1000",
+               "TRACEPARENT": self.TP, "OH_SECRET_KEY": "k"}
+        for off in ({}, {"AGENT_TRACE_CONTENT": "0"}, {"AGENT_TRACE_CONTENT": "true"}):
+            out = agent_run.server_env({**env, **off})
+            for k in agent_run.AGENT_SERVER_TRACE_KEYS:
+                self.assertNotIn(k, out, (k, off))
+            self.assertEqual(out["TRACEPARENT"], self.TP)  # the harness's MCP calls still carry it
+        out = agent_run.server_env({**env, "AGENT_TRACE_CONTENT": "1"})
+        for k in agent_run.AGENT_SERVER_TRACE_KEYS:
+            self.assertEqual(out[k], env[k], k)
+
     def test_step_lines_carry_the_trace_id(self):
         log = agent_run.StepLog("cid", "4bf92f3577b34da6a3ce929d0e0e4736")
         line = log.describe({"kind": "ActionEvent", "tool_name": "terminal", "summary": "s", "action": {"command": "ls"}})
@@ -1133,7 +1149,7 @@ port, status, record = int(sys.argv[1]), sys.argv[2], sys.argv[3]
 def note(name, value):
     with open(os.path.join(record, name), "w") as f:
         f.write(value)
-note("env", json.dumps({k: os.environ.get(k) for k in ("LMNR_SPAN_CONTEXT", "OTEL_BSP_SCHEDULE_DELAY")}))
+note("env", json.dumps({k: os.environ.get(k) for k in ("LMNR_SPAN_CONTEXT", "OTEL_BSP_SCHEDULE_DELAY", "OTEL_EXPORTER_OTLP_ENDPOINT")}))
 EVENT = {"id": "e1", "kind": "ActionEvent", "tool_name": "terminal", "summary": "s", "action": {"command": "ls"}}
 class Handler(http.server.BaseHTTPRequestHandler):
     def reply(self, body):
@@ -1290,6 +1306,7 @@ class TracedRunTest(unittest.TestCase):
 
     def assert_handed_over(self, trace_id=None):
         env = json.loads(self.read("env"))
+        self.assertIsNotNone(env["OTEL_EXPORTER_OTLP_ENDPOINT"], "AGENT_TRACE_CONTENT=1 forwards the endpoint")
         self.assertEqual(env["OTEL_BSP_SCHEDULE_DELAY"], agent_run.BSP_DELAY_MS)
         ctx = uuid.UUID(json.loads(env["LMNR_SPAN_CONTEXT"])["trace_id"]).hex
         if trace_id:
@@ -1297,13 +1314,25 @@ class TracedRunTest(unittest.TestCase):
         # The step line links to the same trace (O22).
         self.assertIn("agent-run step 1: terminal | s | ls | trace_id=" + ctx + "\n", self.read("stdout"))
 
+    def test_by_default_only_the_run_span_exports(self):
+        Collector.spans = []
+        collector = self.serve(Collector)
+        driver = self.start("finished", "http://127.0.0.1:%d" % collector, {"TRACEPARENT": TraceTest.TP})
+        driver.wait(timeout=60)
+
+        self.assertEqual(driver.returncode, 0)
+        self.assertEqual(json.loads(self.read("env")), {"LMNR_SPAN_CONTEXT": None, "OTEL_BSP_SCHEDULE_DELAY": None,
+                                                        "OTEL_EXPORTER_OTLP_ENDPOINT": None})
+        [span] = Collector.spans
+        self.assertEqual(span.name, "agent-run")
+
     def assert_stopped_then_revoked(self):
         self.assertEqual([r[:2] for r in GitHub.revoked], [("/installation/token", "Bearer ghs_run")])
         self.assertLess(float(self.read("stopped")), GitHub.revoked[0][2])
         return GitHub.revoked[0][2]
 
     def test_sigterm_revokes_within_the_grace_whatever_the_collector(self):
-        driver = self.start("running", "http://127.0.0.1:1")  # nothing listens: a dead collector
+        driver = self.start("running", "http://127.0.0.1:1", {"AGENT_TRACE_CONTENT": "1"})  # nothing listens: a dead collector
         self.wait_for_a_step()
         signalled = time.time()
         driver.send_signal(signal.SIGTERM)
@@ -1323,7 +1352,7 @@ class TracedRunTest(unittest.TestCase):
         Collector.spans = []
         collector = self.serve(Collector)
         _, trace_id, parent_id, _ = TraceTest.TP.split("-")
-        driver = self.start("finished", "http://127.0.0.1:%d" % collector, {"TRACEPARENT": TraceTest.TP})
+        driver = self.start("finished", "http://127.0.0.1:%d" % collector, {"TRACEPARENT": TraceTest.TP, "AGENT_TRACE_CONTENT": "1"})
         driver.wait(timeout=60)
 
         self.assertEqual(driver.returncode, 0)

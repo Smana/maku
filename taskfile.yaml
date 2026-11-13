@@ -148,6 +148,11 @@ tasks:
     cmds:
       - GATEWAY=1 METERING=1 bash charts/agent-factory/tests/install.sh k3d
 
+  chart:tracing:k3d:
+    desc: The gateway demo with run traces on k3d; the e2e stub is the OTLP sink, and a run's span reaches it under its task's trace id (NETPOL=kubernetes also asserts the run's collector rule, once the gateway leg runs in that mode)
+    cmds:
+      - GATEWAY=1 TRACING=1 bash charts/agent-factory/tests/install.sh k3d
+
   chart:gateway:probe:
     desc: Assert what maku-gateway relies on against agentgateway on a throwaway k3d (docker, k3d; not part of check)
     cmds:

@@ -334,8 +334,8 @@ With the run controller, the `maku` chart's `networkPolicies.mode` decides what 
 
 | Mode | What holds a run | Residual risk |
 |---|---|---|
-| `cilium` | A CiliumNetworkPolicy per run: DNS for its own names only, GitHub and its egress profiles on 443 by name, the model, the broker | None this table adds |
-| `kubernetes` | A plain NetworkPolicy per run: the cluster DNS on 53, the egress proxy on 3128, the broker on 8443 (and the room tools port) when the run has a room, an in-cluster model's namespace on its port. The proxy holds the run's HTTPS to its own hosts | DNS to the cluster DNS stays open, so DNS tunnelling is possible. `cilium` mode, which filters DNS names, closes it |
+| `cilium` | A CiliumNetworkPolicy per run: DNS for its own names only, GitHub and its egress profiles on 443 by name, the model, the broker, and the OTLP collector's pods on their port when run tracing is on | None this table adds |
+| `kubernetes` | A plain NetworkPolicy per run: the cluster DNS on 53, the egress proxy on 3128, the broker on 8443 (and the room tools port) when the run has a room, an in-cluster model's namespace on its port, and the OTLP collector's pods on their port when [run tracing](observability.md#what-tracing-opens-on-the-network) is on. The proxy holds the run's HTTPS to its own hosts | DNS to the cluster DNS stays open, so DNS tunnelling is possible. `cilium` mode, which filters DNS names, closes it |
 | `none` | Nothing | Everything: a run reaches any address. The install banner says so (`network_policy_none`) |
 
 In `kubernetes` mode the runs namespace is default-deny in both directions, and the broker, the run
