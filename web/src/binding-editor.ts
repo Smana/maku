@@ -58,12 +58,15 @@ function bindingForm(b: Binding, meaning: Record<string, unknown> | undefined, c
       if (f.kind === "list" || f.kind === "approval") {
         input = el("textarea");
         input.rows = 2;
+        // requiresApproval is a list of leaves (B4): one block of patterns per leaf, a blank line
+        // between, so each stays its own.
         input.value = f.kind === "approval"
-          ? ((cur as { changedFiles: string[] }[] | undefined) ?? []).flatMap((a) => a.changedFiles).join("\n")
+          ? ((cur as { changedFiles: string[] }[] | undefined) ?? []).map((a) => a.changedFiles.join("\n")).join("\n\n")
           : ((cur as string[] | undefined) ?? []).join("\n");
         input.oninput = () => {
-          const v = lines(input.value);
-          set(b, f.key, f.kind === "approval" ? (v.length ? [{ changedFiles: v }] : []) : v);
+          set(b, f.key, f.kind === "approval"
+            ? input.value.split(/\n\s*\n/).map(lines).filter((v) => v.length).map((v) => ({ changedFiles: v }))
+            : lines(input.value));
           change();
         };
       } else {
@@ -137,5 +140,6 @@ function previewOf(pv: BindingPreview): Node[] {
   const path = pv.manifestPath ?? "repository.yaml";
   const actions = el("p", undefined, "file-actions");
   actions.append(...fileActions(() => pv.manifest ?? "", path, `Copy ${path}`));
-  return [ul, actions];
+  // The manifest itself, as the factory built it: what the pull request commits.
+  return [ul, actions, el("pre", pv.manifest ?? "", "binding-manifest")];
 }

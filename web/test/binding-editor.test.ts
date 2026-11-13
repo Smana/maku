@@ -34,6 +34,10 @@ describe("the binding editor (B4, B16)", () => {
     expect(calls.at(-1)).toContain(`{"name":"docs-links","mode":"live","holdoutChecks":["lint"]}`);
     expect(box.textContent).toContain("Copy repository-ai-native-ref.yaml");
     expect(box.textContent).toContain("dead-links: does not resolve: MissingParameter: monitor.flux needs a source");
+    // The manifest to commit is shown as the factory built it, its spec.mergePolicies included.
+    const shown = box.querySelector("pre.binding-manifest")!.textContent!;
+    expect(shown).toBe(MANIFEST);
+    expect(shown).toContain("mergePolicies:");
   });
 });
 
@@ -46,5 +50,22 @@ describe("routing (PR15)", () => {
     calls.length = 0;
     await mountSettings(document.createElement("div"), "/settings/merge-policies/Smana/runlore", fakeFetch({}, calls));
     expect(calls).toEqual(["GET /api/policy/repositories/Smana/runlore"]);
+  });
+});
+
+describe("requiresApproval in the binding editor (review of #551)", () => {
+  it("keeps each leaf apart: one block of patterns per leaf, a blank line between", async () => {
+    const calls: string[] = [];
+    const get = fakeFetch({ "/api/policy/repositories/Smana/ai-native-ref/preview": { valid: true, manifest: MANIFEST, manifestPath: "repository-ai-native-ref.yaml", bindings: [] } }, calls);
+    const p = boundPage();
+    p.report.bindings![0].parameters.requiresApproval = [{ changedFiles: ["^infra/"] }, { changedFiles: ["^security/", "^flux/"] }];
+    const box = bindingEditor(p.report, {}, true, get);
+    const area = box.querySelector<HTMLTextAreaElement>('textarea[aria-label="docs-links requiresApproval"]')!;
+    expect(area.value).toBe("^infra/\n\n^security/\n^flux/");
+    area.value = "^infra/\n\n^security/\n^flux/\n\n^apps/";
+    area.dispatchEvent(new Event("input"));
+    box.querySelector<HTMLButtonElement>("button.primary")!.click();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(calls.at(-1)).toContain(`"requiresApproval":[{"changedFiles":["^infra/"]},{"changedFiles":["^security/","^flux/"]},{"changedFiles":["^apps/"]}]`);
   });
 });

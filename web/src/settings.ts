@@ -431,6 +431,11 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   main.append(tl);
 
   if (state === "not-migrated") return;
+  if (r.repositoryObject && state === "repository") {
+    // Cut over (stage 4): the file holds the bindings, so no Repository manifest edits them.
+    main.append(el("h2", "Bindings"), el("p", "The bindings are in .github/agent-factory.yaml, which decides the classes: edit them there, by pull request.", "editor-footer"));
+    return;
+  }
   if (r.repositoryObject) {
     // B16: a bound repository edits its bindings; a policy is edited on its own page.
     const meaning = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)

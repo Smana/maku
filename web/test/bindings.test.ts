@@ -34,7 +34,7 @@ describe("a bound repository's page (B16)", () => {
   it("splits the evidence by policy generation, and says where a promotion is made", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/ai-native-ref", fakeFetch({ "/api/policy/repositories/Smana/ai-native-ref": boundPage() }));
-    expect(card(app, "dead-links").textContent).toContain("gen 4: 3 clean · gen 3: 17 clean · before the binding: 12");
+    expect(card(app, "dead-links").textContent).toContain("gen 4: 3 clean · gen 3: 17 clean, 1 changed · before the binding: 12 clean");
     expect(card(app, "docs-links").textContent).toContain("To promote, set mode: live on the binding in repository-ai-native-ref.yaml and merge the change.");
     const cut = boundPage();
     cut.report.repositoryStatus!.status.authority = "repository";
@@ -66,8 +66,34 @@ describe("a bound repository's page (B16)", () => {
   });
 
   it("writes each generation's share in words", () => {
-    expect(generationLine(ev())).toBe("gen 4: 3 clean · gen 3: 17 clean · before the binding: 12");
+    expect(generationLine(ev())).toBe("gen 4: 3 clean · gen 3: 17 clean, 1 changed · before the binding: 12 clean");
     expect(generationLine(ev({ shadow: { ...ev().shadow, byGeneration: undefined } }))).toBe("");
   });
 });
 
+
+describe("a bound repository under repository authority (review of #551)", () => {
+  const cutOver = () => {
+    const p = boundPage();
+    p.report.repositoryStatus!.status.authority = "repository";
+    p.report.bindings = [];
+    p.report.policy = { factory: "aws-0", mergePolicies: [{ name: "dead-links", mode: "shadow", allowedFiles: ["^docs/"], oracleWorkflow: "dead-links.yaml" },
+      { name: "docs-links", mode: "shadow", holdoutChecks: ["lint"] }] };
+    return p;
+  };
+  it("shows a file binding's rows on its card", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/ai-native-ref", fakeFetch({ "/api/policy/repositories/Smana/ai-native-ref": cutOver() }));
+    const dead = card(app, "dead-links");
+    expect(dead.querySelector('a[href="/settings/merge-policies/policies/dead-links"]')).not.toBeNull();
+    expect(dead.textContent).toContain("oracleWorkflow: dead-links.yaml");
+    expect(dead.textContent).toContain("Bound in .github/agent-factory.yaml");
+  });
+  it("offers no Repository manifest editor: the bindings are the file's", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/merge-policies/Smana/ai-native-ref", fakeFetch({ "/api/policy/repositories/Smana/ai-native-ref": cutOver(), "/api/policy/policies": { policies: [] } }));
+    expect(app.querySelector(".binding-editor")).toBeNull();
+    expect(app.textContent).not.toContain("repository-ai-native-ref.yaml");
+    expect(app.textContent).toContain("The bindings are in .github/agent-factory.yaml, which decides the classes: edit them there");
+  });
+});

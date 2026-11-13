@@ -58,7 +58,10 @@ export function evidenceBar(e: Evidence, eligible = e.eligible): HTMLElement {
 // "gen 4: 3 clean · gen 3: 17 clean · before the binding: 12"; empty without a split. Promotion
 // counts them all.
 export function generationLine(e: Evidence): string {
-  return (e.shadow.byGeneration ?? []).map((g) => g.before ? `before the binding: ${g.mergedUnchanged}` : `gen ${g.generation}: ${g.mergedUnchanged} clean`).join(" \u00b7 ");
+  return (e.shadow.byGeneration ?? []).map((g) => {
+    const counts = `${g.mergedUnchanged} clean${g.changed ? `, ${g.changed} changed` : ""}`;
+    return g.before ? `before the binding: ${counts}` : `gen ${g.generation}: ${counts}`;
+  }).join(" \u00b7 ");
 }
 
 // parameterWords are what a binding supplies, one per line, as "key: value".
@@ -77,7 +80,23 @@ function parameterWords(b: Binding): string[] {
 function bindingRows(card: HTMLElement, c: ClassReport, ctx: CardContext) {
   const r = ctx.page.report;
   const b = r.bindings?.find((x) => x.name === c.class);
-  if (!b) return;
+  if (!b) {
+    // Under repository authority the binding is the file's (B15): its policy and what it supplies.
+    const f = policyState(r) === "repository" ? r.policy?.mergePolicies?.find((x) => x.name === c.class) : undefined;
+    if (!f) return;
+    const line = el("p", "Policy ", "binding-policy");
+    const a = el("a", c.class);
+    a.href = `/settings/merge-policies/policies/${encodeURIComponent(c.class)}`;
+    line.append(a, " \u00b7 Bound in .github/agent-factory.yaml");
+    card.append(line);
+    const params = parameterWords(f);
+    if (params.length) {
+      const ul = el("ul", undefined, "binding-parameters");
+      for (const p of params) ul.append(el("li", p));
+      card.append(el("p", "This repository supplies:", "binding-parameters-lead"), ul);
+    }
+    return;
+  }
   const st = r.repositoryStatus?.status.classes?.find((x) => x.name === c.class);
   const line = el("p", "Policy ", "binding-policy");
   const a = el("a", c.class);

@@ -84,7 +84,7 @@ export const BINDING_FIELDS: BindingField[] = [
   { key: "oracleWorkflow", label: "Workflow reporting the oracle's findings (fill once)", kind: "text" },
   { key: "holdoutChecks", label: "Checks that must pass (added to the policy's)", kind: "list" },
   { key: "protectedFiles", label: "Files it must never touch (added to the policy's)", kind: "list" },
-  { key: "requiresApproval", label: "Changes that need a maintainer's approval (added to the policy's)", kind: "approval" },
+  { key: "requiresApproval", label: "Changes that need a maintainer's approval (added to the policy's; one block of patterns per rule, a blank line between)", kind: "approval" },
   { key: "maxPatchFiles", label: "Most files changed (at most the policy's)", kind: "number" },
   { key: "maxModifiedLines", label: "Most lines changed (at most the policy's)", kind: "number" },
   { key: "maxPerDay", label: "Most merges a day (at most the policy's)", kind: "number" },
