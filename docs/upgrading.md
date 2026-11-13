@@ -4,6 +4,24 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Private code (v0.4x, v4 rollout step 7)
+
+One new optional field on the `Repository`, `spec.privateCode.acknowledged`. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
+This release warns and serves; the next one refuses
+([private code](factory.md#private-code)).
+
+1. Apply the CRD chart first: the new field is in `agent-factory-crds`.
+2. After the upgrade, list the repositories it warns about:
+
+   ```bash
+   kubectl get repositories -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="PrivateCode")].status}{"\n"}{end}'
+   ```
+3. Set `privateCode: {acknowledged: true}` on each one that reads `False`, or stop serving it.
+
+A repository defined in the factory's config file takes the same key on its `repositories` entry.
+The web UI shows the banner only when the broker has `factoryURL`, and the broker and factory images
+move together: an older factory answers 404 on `GET /v1/install`, and the banner shows nothing for it.
+
 ## Run traces (v0.4x, v4 rollout step 6)
 
 One new key in the `maku` chart, off by default, so a release that does not set it renders as before:

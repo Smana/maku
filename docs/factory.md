@@ -2324,6 +2324,41 @@ Promote a type only on its numbers, read from the drill reports and
   target and T4 refusals, with T2 and T3's detections on their own outputs. Readiness never
   assumes T5 saw an output: R4 covers T1 to T4 only.
 
+## Private code
+
+A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS. Self-hosted models remain possible through agentgateway, but
+nothing in the product depends on them.
+
+```yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata: {name: platform}
+spec:
+  factoryRef: aws-0
+  repository: acme/platform
+  privateCode: {acknowledged: true}   # true or absent: false is refused
+```
+
+On each fence pass, every 5 minutes, the factory reads each served repository's visibility through
+the factory App. `private` and `internal` count as private code. So does a read that fails: the
+factory cannot tell, so it fails closed. A repository without `privateCode` that is private code
+is, in this release, warned about and still served:
+
+| Where | What it says |
+|---|---|
+| The `Repository`'s `PrivateCode` condition | `False` `Unacknowledged`, with the sentence above; `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read, `NotServed` when the factory does not serve it |
+| `maku_factory_private_code_unacknowledged{repository}` | `1`, else `0`; `AgentFactoryPrivateCodeUnacknowledged` fires after 15 minutes at `1` |
+| The web UI's install banner | `private_code_unacknowledged`, read from the factory's `GET /v1/install` with the viewer's own token; the broker needs `factoryURL` |
+| The factory's log | one `WARN` per change of visibility, naming the repository |
+
+The next release refuses it: no new task for that repository until the field is set.
+
+Two settings stay stricter whatever the acknowledgement says:
+
+- **Demo mode** serves public repositories only, because the demo's agents can read the model key
+  and the GitHub token.
+- **Coordination's `publicOnly`** refuses a family with a private repository.
+
 ## Reference
 
 ### The Task CRD

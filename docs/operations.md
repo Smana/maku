@@ -678,6 +678,7 @@ Group `maku-factory` of the chart's [`PrometheusRule`](#alerts), with `maku-fact
 | `FactoryAgentMerged` | An `agent_merged` outcome in 15 min, the first one of a repository included | — | An agent token merged a pull request past the factory's own merge (D11, PR12). Find it in the factory's error log (`the agents App merged a pull request`), check the ruleset requires `maku/merge-gate` from the posting App, that the agents App is not one of its bypass actors and that no run holds a person's token, and review the merged change |
 | `FactoryMergeGateNotRequired` | `min by (repository) (maku_factory_merge_gate_required) == 0` | 30 min | The repository's ruleset no longer requires `maku/merge-gate` from the App that posts it: [branch protection for the merge gate](factory.md#branch-protection-for-the-merge-gate) |
 | `FactoryMergeGateRulesUnread` | `increase(maku_factory_merge_gate_rules_unread_total[30m]) > 0` | 30 min | The gauge is stale: the factory's log names the failed read (the merger App id file, the repository, or the branch rules) |
+| `AgentFactoryPrivateCodeUnacknowledged` | `max by (repository) (maku_factory_private_code_unacknowledged) == 1` | 15 min | A served repository is private code without `spec.privateCode.acknowledged`: set it on the `Repository`, or stop serving it ([private code](factory.md#private-code)). The next release refuses it |
 
 No series, no alert: on a release without a gauge the expression is empty, so a rule is safe to ship ahead of it.
 
