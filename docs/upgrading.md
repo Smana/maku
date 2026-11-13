@@ -4,6 +4,27 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The GitHub account link (v0.4x, v4 rollout step 5)
+
+New keys, all off by default, so a release that sets none of them renders and runs as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.broker.githubLink.existingSecret` | `""` | The [GitHub account link](github-link.md)'s OAuth client (`client_id`, `client_secret`), mounted for `human.githubLink`; the broker's egress then reaches GitHub on 443 |
+| `maku.broker.githubLink.webURL`, `activeWindow` | `https://github.com`, `168h` | GitHub's site (a GHES), and how long a link stays active without its human signing in |
+| `maku-factory.config.api.access.links` | `""` | `broker`: the factory reads each human's GitHub link from the broker (`GET /v1/links/github`) |
+
+To move an install off the ZITADEL reader:
+
+1. Register `<publicURL>/link/github/callback` on the factory App, and store its client in a Secret.
+2. Set `broker.githubLink.existingSecret`, add `skip-auth-route: GET=^/link/github/callback$` to
+   oauth2-proxy, and set `api.access.links: broker` in the factory. Keep both `readerFile`s: the reader
+   then answers only for an account with no link.
+3. Upgrade the broker and the factory together: both decode their configs strictly, and the broker's
+   migration adds `github_links`, `github_link_states` and `github_link_events`.
+4. Each human opens `/link/github` once. Once every active human has linked, remove
+   `human.access.readerFile`, `api.access.readerFile` and `zitadelReaderSecret`.
+
 ## RunLore's knowledge base for runs (v0.4x, v4 rollout step 6)
 
 New keys, off by default, so a release that does not set it renders as before:

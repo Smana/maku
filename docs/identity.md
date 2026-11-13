@@ -234,3 +234,6 @@ already hold.
 5. **Repoint oauth2-proxy** with the arguments above.
 6. **Sign everyone in again.** Each person runs `maku configure --from <rooms URL>`, then
    `maku login`: the old tokens are the old issuer's.
+7. **Link GitHub accounts in the broker.** Without ZITADEL's GitHub IdP link, each person's GitHub
+   login comes from the broker's [GitHub account link](github-link.md): turn on
+   `broker.githubLink`, and each person opens `/link/github` once.

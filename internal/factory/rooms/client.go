@@ -549,6 +549,38 @@ func (c *Client) SlackLink(ctx context.Context, team, user string) (string, bool
 	return out.Sub, true, nil
 }
 
+const githubLinkRoute = "/v1/links/github"
+
+// GitHubLink is a sub's GitHub account link as the broker answers it: the numeric GitHub id, and
+// whether its human signed in within the broker's activeWindow.
+type GitHubLink struct {
+	GitHubID int64
+	Active   bool
+}
+
+// GitHubLink reads sub's GitHub account link (v4 D8): found is false when it has none; any other
+// refusal or a reply without an id is an error, which the caller reads as link_unverified.
+func (c *Client) GitHubLink(ctx context.Context, sub string) (GitHubLink, bool, error) {
+	if sub == "" || len(sub) > 128 {
+		return GitHubLink{}, false, errors.New("rooms: a sub is 1 to 128 bytes")
+	}
+	var out struct {
+		GitHubID int64 `json:"githubId"`
+		Active   bool  `json:"active"`
+	}
+	err := c.do(ctx, http.MethodGet, githubLinkRoute, "", "?"+url.Values{"sub": {sub}}.Encode(), nil, maxReplyOverhead, &out)
+	var api *APIError
+	switch {
+	case errors.As(err, &api) && api.Status == http.StatusNotFound && api.Reason == wire.ReasonNotLinked:
+		return GitHubLink{}, false, nil
+	case err != nil:
+		return GitHubLink{}, false, err
+	case out.GitHubID <= 0:
+		return GitHubLink{}, false, errors.New("rooms: the broker's GitHub link names no GitHub id")
+	}
+	return GitHubLink{GitHubID: out.GitHubID, Active: out.Active}, true, nil
+}
+
 // spanReason bounds a refusal's reason, which the peer's reply body sets, to the system API's
 // vocabulary: anything else is "other" on a span.
 func spanReason(r string) string {
@@ -556,7 +588,7 @@ func spanReason(r string) string {
 	case wire.ReasonBadRoom, wire.ReasonBadMessage, wire.ReasonUnauthenticated, wire.ReasonNotPermitted,
 		wire.ReasonNoRoom, wire.ReasonSealed, wire.ReasonRateLimited, wire.ReasonLogUnavailable, wire.ReasonTimedOut,
 		wire.ReasonBadStream, wire.ReasonBadConsume, wire.ReasonNoQueue, wire.ReasonNotLinked, wire.ReasonBadSlackUser,
-		wire.ReasonBadGrant, wire.ReasonNoGrant, wire.ReasonGrantState:
+		wire.ReasonBadGrant, wire.ReasonNoGrant, wire.ReasonGrantState, wire.ReasonBadSub:
 		return r
 	}
 	return "other"
