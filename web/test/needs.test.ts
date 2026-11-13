@@ -372,9 +372,26 @@ describe("the approval card's guidance", () => {
     expect(root.querySelector(".approval-intent")?.textContent).not.toContain("img");
   });
   it("shows the deadline, and none when the expiry is missing", () => {
-    const soon = new Date(Date.now() + 5 * 60_000 + 5000).toISOString();
-    expect(mk("forge.pr", you, { expiresAt: soon }).root.querySelector(".approval-deadline")?.textContent).toMatch(/^Decide by \d\d:\d\d \(in 5 min\); if nobody decides: the request expires/);
-    expect(mk("forge.pr", you, { expiresAt: "" }).root.querySelector(".approval-deadline")?.textContent).toBe("No deadline.");
+    // A frozen clock: a deadline that crosses midnight prints its date, so "now" must not drift.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 5, 10, 0, 0));
+      const soon = new Date(2026, 10, 5, 10, 5, 5).toISOString();
+      expect(mk("forge.pr", you, { expiresAt: soon }).root.querySelector(".approval-deadline")?.textContent).toMatch(/^Decide by 10:05 \(in 5 min\); if nobody decides: the request expires/);
+      expect(mk("forge.pr", you, { expiresAt: "" }).root.querySelector(".approval-deadline")?.textContent).toBe("No deadline.");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+  it("shows the date when the deadline falls after midnight", () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    try {
+      vi.setSystemTime(new Date(2026, 10, 5, 23, 57, 0));
+      const soon = new Date(2026, 10, 6, 0, 2, 5).toISOString();
+      expect(mk("forge.pr", you, { expiresAt: soon }).root.querySelector(".approval-deadline")?.textContent).toMatch(/^Decide by 2026-11-06 00:02 \(in 5 min\); if nobody decides: the request expires/);
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("says you can decide, with the buttons", () => {
     const { root } = mk("forge.pr");
