@@ -31,7 +31,7 @@ done
 kept="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
 [[ -z $kept ]] || { echo "FAIL: keep=false still renders the keep annotation" >&2; fail=1; }
 
-# Exactly the six, whatever else sits in files/ (a stray glob once doubled them). agentgateway's CRDs
+# Exactly the six, and files/ holds nothing else (its glob is `files/*.yaml`). agentgateway's CRDs
 # are not this chart's: in a Helm release they push its Secret to the 1 MiB limit (the release stores
 # the chart's files and the manifest), so they are applied apart (config/agentgateway, docs/gateway.md).
 [[ "$(grep -c '^kind: CustomResourceDefinition$' <<<"$out")" == 6 ]] || { echo "FAIL: the chart renders $(grep -c '^kind: CustomResourceDefinition$' <<<"$out") CRDs, want 6" >&2; fail=1; }
