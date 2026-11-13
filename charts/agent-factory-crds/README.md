@@ -27,6 +27,11 @@ Before you upgrade to it, check that no MergePolicy still has a `repositoryRef`:
 kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'
 ```
 
+`kubectl get repository` shows `CLASSES` and `LIVE` per Repository, and `kubectl get mergepolicy`
+shows `CONSUMERS` (the Repositories binding a class policy), `CURRENT` (those serving its current
+generation), `LIVE` and `ACCEPTED`; `REPO` is set on a per-repository object only. The
+[upgrade](../../docs/upgrading.md#reusable-merge-policies-v04x-release-n) lists the steps.
+
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
 needs `--kube-version 1.30.0` or later.
 

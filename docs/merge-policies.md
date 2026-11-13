@@ -281,7 +281,8 @@ central config.
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `factory` | string | required | A factory name (DNS label). Must equal the config's `factory`. Maku never edits it |
-| `classes` | map of class name → class | absent: no policy | Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` takes `harness`, `harnessAllowed` and `escalation` only |
+| `mergePolicies` | list of [bindings](#a-binding) | absent: no policy | The binding shape: each item binds a `MergePolicy` the factory serves, by name. Never with `classes` |
+| `classes` | map of class name → class | absent: no policy | **Deprecated**: read in this release, refused from the next minor, with `maku policy export` named. Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` takes `harness`, `harnessAllowed` and `escalation` only |
 
 Two rules every file with classes must meet:
 
@@ -306,7 +307,31 @@ mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did 
 | Pattern length | 512 bytes |
 | `any` branches | 2 to 8 |
 
+#### A binding
+
+The file's `mergePolicies` is the same list as a `Repository`'s `spec.mergePolicies` ([factory
+resources](#factory-resources)): it names a `MergePolicy` of the factory's namespace and supplies the
+mode and this repository's parameters. Each binding resolves on its own: one that does not resolve
+drops its class, never the file, and a file that does not parse pauses auto-merge as before. The
+guardrails cap every binding. Quote the mode `"off"`: YAML 1.1 reads a bare `off` as `false`.
+
+<!-- check: repository -->
+```yaml
+factory: aws-0
+mergePolicies:
+  - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: docs,       mode: "off"}
+  - name: alert-rules
+    mode: shadow
+    allowedFiles: ['^observability/.+\.ya?ml$']
+    requiresApproval: [{changedFiles: ['^observability/base/']}]
+```
+
 #### A class
+
+The classes shape, deprecated: a class with `conditions.any` becomes one policy per branch in the
+binding shape, and the next minor refuses both `classes:` and `any`.
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
@@ -428,20 +453,22 @@ A fuller example of the three blocks. The repository files on this page are vali
 Start every class in `shadow`. A recipe's file shows only the new class beside the two required
 ones; yours keeps its others.
 
-### Your first file: export the central classes
+### Your first file: export the bindings
 
-Before stage 4 the repository's file should say exactly what the central config says, so the
-comparison reads 0. Write it from the config, then check it:
+Before stage 4 the repository's file should say exactly what the factory serves, so the comparison
+reads 0. `export` writes the repository's [bindings](#factory-resources) as the file's
+`mergePolicies`, from the config and the manifests the factory serves over it; then check it:
 
 ```bash
-maku policy export --config factory.yaml --repository Smana/cloud-native-ref > .github/agent-factory.yaml
-maku policy check  --config factory.yaml --repository Smana/cloud-native-ref .github/agent-factory.yaml
+maku policy export --config factory.yaml --manifests resources.yaml --repository Smana/cloud-native-ref > .github/agent-factory.yaml
+maku policy check  --config factory.yaml --manifests resources.yaml --repository Smana/cloud-native-ref .github/agent-factory.yaml
 # equivalent
 ```
 
-`export` keeps each class's mode, moves `protectedFiles` into `deny`, and picks for each class the
-first profile, by name, whose `checks`, `testFirst` and adoption match and which pins no
-`template`, `tier` or `loop`. A class no profile fits is an error: add the profile first.
+A repository still served from a per-repository `MergePolicy`, or from the config file's `classes`,
+is refused: convert it first with [`maku config migrate`](#factory-resources). The settings editor
+still writes the classes shape for such a repository (`classes:`, below), which this release reads
+and the next minor refuses.
 
 ### Documentation only
 
@@ -866,10 +893,12 @@ record's fields are in [the factory](factory.md#the-merge-gate):
 
 | Field | Use |
 |---|---|
-| `policy=` | The snapshot decided under (cut over), or compared (dual). Match it against `sha256sum .github/agent-factory.yaml` at the commit; it is the `policy` a grant binds to |
+| `policy=` | The snapshot decided under (cut over), or compared (dual). Match it against `sha256sum .github/agent-factory.yaml` at the commit |
 | `dual=` | `agree`, `explained`, `unread`, `unexplained`, `no_policy`. With anything but `agree` the factory logs `merge decision under the repository policy` with both decisions |
 | `grant=` | The grant and version that let it arm |
-| `policygen=` | The generation of the `MergePolicy` the decision used, [below](#factory-resources). Absent when the policy comes from the repository's file |
+| `policygen=` | The generation of the class's own `MergePolicy` the decision used, [below](#factory-resources): a bound class's policy, else the repository's per-repository `MergePolicy`. Absent when the class comes from the repository's file and is not a binding |
+| `repogen=` | Only for a bound class: the generation of the `Repository` that holds the binding (its mode and parameters) |
+| `resolved=` | The first 12 hex digits of the resolved class's hash: the policy's definition and this repository's binding together, mode excluded. It is what an approval grant binds to, so the approval-memory form prefills from it; an edit to another class leaves it, and its grants, unchanged |
 
 The guardrails and profiles in force are the pod's config, bound by its checksum, not per record.
 `policy_unavailable` and `policy_invalid` decisions map to no stage on the timeline.
@@ -1012,20 +1041,116 @@ without a restart. How is in [architecture](architecture.md#how-the-factory-read
   waits, not Ready, until a `Repository` is applied again.
 - **A repository defined in both** the file and a resource is refused, never merged.
 - **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
-  started under. It is a record, not a pin.
+  started under (for a bound class, the class's own policy). It is a record, not a pin.
 
-Two offline commands prepare the move. `migrate` splits a config file into manifests and writes
-what stays in the file as a residual; `validate` lays manifests over a config file and refuses
-what the factory would refuse, one line each.
+### Policies and bindings
+
+A `MergePolicy` is **one class**: its name is the class name, and its spec is the class's
+definition. A `Repository` **binds** the policies it uses under `spec.mergePolicies`, each with its
+mode and the parameters this repository supplies, and holds its merge settings under `spec.merge`.
+One definition serves every repository that binds it, so a shared edit is reviewed once.
+
+<!-- check: none -->
+```yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: dead-links, namespace: agent-system}
+spec:
+  description: Retargets dead external links a detector found, and nothing else.
+  requires: [allowedFiles, holdoutChecks, oracleWorkflow]   # each binding must supply these
+  modifyOnly: true
+  maxModifiedLines: 20
+  diffShape: links-only
+  protectedFiles: ['^docs/(superpowers|specs)/']
+  oracle: {probe: dead-links, maxFindings: 10}               # the workflow is the repository's
+  monitor: {oracleRuns: 2, followUpWindow: 168h}
+  maxPerDay: 1
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata: {name: ai-native-ref, namespace: agent-system}
+spec:
+  factoryRef: aws-0
+  repository: Smana/ai-native-ref
+  maintainers: [Smana]
+  merge:
+    requiredChecks: [validate, lint]
+    verifyChecks: [validate, lint]
+    leakScanCheck: lint
+    mergerLogin: ogenki-agent-merger[bot]
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1}
+  mergePolicies:
+    - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
+    - {name: revert,     mode: shadow, holdoutChecks: [validate]}
+    - {name: docs,       mode: "off"}
+    - name: dead-links
+      mode: shadow
+      allowedFiles: ['^(docs|website/content)/.+\.md$']
+      holdoutChecks: ['External links 🔗']
+      oracleWorkflow: dead-links.yaml
+```
+
+Quote `"off"` wherever a mode is written: YAML 1.1 reads a bare `off` as `false`, which the API
+server refuses. Every field has one combination rule:
+
+| Kind | Fields | On the policy | On the binding | Resolved as |
+|---|---|---|---|---|
+| Meaning | `description`, `author.adopt`, `harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`, `diffShape`, `modifyOnly`, `oracle.probe`, `oracle.maxFindings`, `releaseAgeCheck`, `monitor` | yes | refused | the policy's |
+| Mode | `mode`: `live`, `shadow`, `"off"` | refused | required | the binding's |
+| Fill once | `allowedFiles`, `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
+| Additive | `holdoutChecks`, `protectedFiles`, `requiresApproval` | optional | optional; `holdoutChecks` required when the policy `requires` it | the union; a required `holdoutChecks` needs a check the policy does not already name |
+| Caps | `maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | optional | optional, at most the policy's | the lower; above the policy is `OverPolicy` |
+| Repository fact | the Flux source a monitor watches | — | — | `Repository.spec.merge.fluxSource` |
+
+A binding tightens or fills; it never widens what the policy says. The
+[guardrails](#central-config) cap every binding: their paths and checks are added, an unset cap
+inherits theirs, and a cap above theirs is `GuardrailMismatch`. The built-in names keep their rules:
+`docs-links` and `revert` are `links-only` and must be bound whenever any policy is (OD-8), and
+`review` is bound `"off"` with no parameter. Run-only classes (`docs`, `tests`) are policies bound
+`"off"`.
+
+`Factory.spec.mergeDefaults` holds the merge settings most repositories share. A `Repository`
+overrides them key by key: a key it sets wins whole (a `breaker` it sets replaces the default's), and
+a key it omits is the default's. `Repository.status.merge` shows the result, and
+`status.mergeDefaulted` names the keys the `Factory` filled.
+
+**Each binding resolves, fails and keeps its last good version on its own.** A policy is accepted
+when it is valid alone. A binding that does not resolve drops that class only: the `Repository` and
+its other classes keep serving. While the factory runs, the binding keeps its last resolved class
+when that class still holds under today's catalogue, guardrails and merge settings; after a restart
+it serves none, and a `class:` label naming it falls back to `review`. A repository's own file in
+the binding shape (`mergePolicies:`, [above](#a-binding)) resolves the same way.
+
+| Reason | On | Means | Fix |
+|---|---|---|---|
+| `MissingRef` | a binding | No served policy has its name, or the policy was refused with none served before | Apply or fix the policy |
+| `MissingParameter` | a binding | A `requires` parameter unset, or `monitor.flux` without `merge.fluxSource` | Set it |
+| `ParameterTwice` | a binding | A fill-once parameter set on the policy and the binding | Remove one |
+| `OverPolicy` | a binding | A cap above the policy's | Lower it |
+| `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
+| `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
+| `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
+| `DefinedTwice` | a `Repository` and a per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object: the previous `Repository` version serves until then |
+
+**The per-repository shape** (`spec.repositoryRef`, `classes`, `merge` on one `MergePolicy` per
+repository) is still read in this release, with one warning per object at every start, and removed
+in the next minor. CEL keeps the two shapes apart.
+
+Offline commands prepare the move. `migrate` splits a config file into manifests, or converts
+per-repository objects into policies and bindings; `validate` lays manifests over a config file and
+refuses what the factory would refuse, one line each:
 
 ```bash
 maku config migrate --from config.yaml --residual residual.yaml > manifests.yaml
-maku config validate --config residual.yaml manifests.yaml   # ok: 3 accepted
+maku config migrate --config residual.yaml --manifests manifests.yaml > bound.yaml   # proves no class changes
+maku config validate --config residual.yaml --base-ref origin/main bound.yaml        # each changed policy's consumers
 ```
 
 The residual is the file to deploy. A catalogue key left in the file next to a `Factory` is
 ignored, with a warning at every start. When the file comes from a Helm values file, remove the
-migrated keys from the values rather than overriding them with `key: null`.
+migrated keys from the values rather than overriding them with `key: null`. The flags are in the
+[CLI](cli.md), and the release's steps in [upgrading](upgrading.md#reusable-merge-policies-v04x-release-n).
 
 ### Status
 
@@ -1043,13 +1168,13 @@ An example output, with plausible values:
 
 ```
 NAME                                   ACCEPTED   READY   REPOS   STOPPED   AGE
-factory.maku.ogenki.io/cnref           True       True    2       false     12d
+factory.maku.ogenki.io/aws-0           True       True    2       false     12d
 
-NAME                                   REPO                   FACTORY   ACCEPTED   CONNECTED   AGE
-repository.maku.ogenki.io/cnref        Smana/cloud-native-ref cnref     True       True        12d
+NAME                                   REPO                     FACTORY   CLASSES   LIVE   ACCEPTED   CONNECTED   AGE
+repository.maku.ogenki.io/ai-native-ref  Smana/ai-native-ref    aws-0     4         0      True       True        12d
 
-NAME                                   REPO    AUTHORITY    CLASSES   LIVE   ACCEPTED   AGE
-mergepolicy.maku.ogenki.io/cnref       cnref   repository   3         1      True       12d
+NAME                                   REPO   CONSUMERS   CURRENT   LIVE   ACCEPTED   AGE
+mergepolicy.maku.ogenki.io/dead-links         2           1         0      True       3d
 ```
 
 The status and each of its conditions carry one `observedGeneration`: the generation the factory
@@ -1057,35 +1182,41 @@ last looked at, which trails the object's own until it reads the newer one. A co
 `lastTransitionTime` moves only when its status does. A refused object keeps the last accepted
 version in service, and its message says which generation that is. The factory logs one WARN line,
 `generation refused`, with the `kind`, `name`, `generation`, `serving` generation and the first
-error, the first time it refuses a generation.
+error, the first time it refuses a generation, and one `binding refused` line per refused binding.
 
 | Condition | On | Status and reason |
 |---|---|---|
-| `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid` |
+| `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid`. A class `MergePolicy` refused with a generation still serving reads `serving generation 3; generation 4 refused: …` |
+| `BindingsValid` | a `Repository` with bindings | `True` `BindingsValid`; `False` `BindingsRefused`, the message naming each refused binding: `refused: dead-links (MissingParameter)` |
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
-| `RepositoryFileValid` | `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
-| `InSync` | `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
+| `RepositoryFileValid` | `Repository`, and a per-repository `MergePolicy` | `True` `Valid`; `False` `Invalid` (the file does not parse, or declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
+| `InSync` | `Repository`, and a per-repository `MergePolicy` | `True` `InSync`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
 | `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](factory.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 With `policyManagement.read` off nothing watches the repository's file, so `RepositoryFileValid`
 and `InSync` stay `Unknown` with `PolicyReadOff`.
 
-A `MergePolicy` also reports its `authority` (`central` or `repository`) and one entry per class:
-the `mode` (`live`, `shadow` or `unarmed`) and the last decision as `verdict:reason`, with its
-time. The last decision is kept in memory and is best-effort: it is empty after a restart or a
-leader change, until the next decision. For a repository served from a `MergePolicy`, every
-decision marker carries `policygen=<n>`, the generation the decision used, so a decision can be
-matched to the `MergePolicy` that made it.
+A `Repository` reports its `authority` (`central` or `repository`), its resolved `merge` and
+`mergeDefaulted`, and one entry per class in `classes[]`: for a bound repository each binding's
+`mode`, the `policyGeneration` it serves, `accepted` with `reason` and `message`, and the last
+decision as `verdict:reason` with its time; for one served from a per-repository `MergePolicy`, each
+served class at that object's generation. A class `MergePolicy` reports its `consumers[]` (each
+binding `Repository`, its mode, the generation it serves, whether it resolved and why not),
+`consumerCount`, `currentCount` (consumers serving its current generation) and `liveCount`. A
+per-repository `MergePolicy` keeps its `authority`, `classes` and `classCount` until the next minor.
+The last decision is kept in memory and is best-effort: it is empty after a restart or a leader
+change, until the next decision. Every decision marker of a repository served from objects carries
+`policygen=<n>`, the generation of the class's policy, and a bound class's also `repogen=`, so a
+decision can be matched to the objects that made it.
 
-For a repository served from a `MergePolicy`, [the settings page](web-ui.md#settings) offers **Copy
-MergePolicy manifest** and **Download**, a file named `mergepolicy-<name>.yaml` with the real
-object's name. A change is a GitOps pull request on that manifest, which Flux applies. The editor
-holds the served classes in the policy file's shape; the factory builds the manifest. Unedited, it
-is the served one. Edited, the page checks the text first, and the manifest is the check's: each
-class resolved as the gate decides on it. A text the factory refuses has no manifest, and neither
-has a class with `any` or `requiresApproval`, which `spec.classes` cannot hold. The manifest is
-built from the version the factory serves: a change the factory refused is not in it.
+[The settings pages](web-ui.md#settings) follow the split. A bound repository's page offers its
+`repository-<name>.yaml` from the bindings editor, and each policy has its own page with its
+consumers and the `mergepolicy-<name>.yaml` its editor checks. A repository still served from a
+per-repository object offers **Copy MergePolicy manifest** and **Download**, `mergepolicy-<name>.yaml`
+with the real object's name. Either way a change is a GitOps pull request on the manifest, which
+Flux applies, and the factory builds the manifest from the version it serves: a change it refused is
+not in it.
 
 Counts and spend are not in the status yet.
 

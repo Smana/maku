@@ -1190,6 +1190,8 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
 | `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
 | `grant=` | Only on a decision a saved approval grant let arm (`policyManagement.approvalMemory`): `<id>:<version>`, the grant and the version it was read at |
+| `policygen=`, `repogen=` | For a repository served from objects: the generation of the class's own `MergePolicy`, and, for a [bound class](merge-policies.md#factory-resources) only, the generation of the `Repository` holding the binding. `Task.status.configGenerations.mergePolicy` records the same policy generation: the class is fixed at triage |
+| `resolved=` | For a declared class: the first 12 hex digits of the resolved class's hash (the definition the gate decided on, mode excluded), which an approval grant binds to. A class that changes suspends its grants; another class's edit does not |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
 A value the decision never read prints `-`: a refusal leaves the rows after it unread, and a
