@@ -194,6 +194,16 @@ func (s *Store) GitHubLinkOf(ctx context.Context, sub string) (GitHubLink, bool,
 	return l, err == nil, err
 }
 
+// GitHubLinkHolder is the sub whose link holds githubID; found is false when none does.
+func (s *Store) GitHubLinkHolder(ctx context.Context, githubID int64) (string, bool, error) {
+	var sub string
+	err := s.pool.QueryRow(ctx, `SELECT sub FROM github_links WHERE github_id = $1`, githubID).Scan(&sub)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	return sub, err == nil, err
+}
+
 // UnlinkGitHub removes sub's link and appends the act: unlinked by the human, admin_unlinked when
 // admin (an admin's page, or the break-glass command), with actor naming who. gone is false when
 // there was nothing to remove, and then nothing is written.

@@ -115,11 +115,21 @@ func TestGitHubLinkUniqueness(t *testing.T) {
 	if l, _, _ := s.GitHubLinkOf(ctx, "zsub1"); l.GitHubID != 7777 || l.Login != "dev2" {
 		t.Fatalf("after relink: %+v", l)
 	}
+	if sub, found, err := s.GitHubLinkHolder(ctx, 7777); err != nil || !found || sub != "zsub1" {
+		t.Fatalf("the holder of 7777: %q %v %v", sub, found, err)
+	}
+	if _, found, err := s.GitHubLinkHolder(ctx, 4242); err != nil || found {
+		t.Fatalf("4242 after the relink: %v %v", found, err)
+	}
 	// 4242 is free again.
 	if act, err := link("d", "zsub2", 4242, "dev"); err != nil || act != GitHubLinked {
 		t.Fatalf("the freed id: %q %v", act, err)
 	}
-	if got := query(t, super, `SELECT string_agg(act, ',' ORDER BY id) FROM github_link_events`); got != "linked,relinked,linked" {
+	// An Enterprise Managed User's login is handle_shortcode.
+	if act, err := link("e", "zsub3", 9001, "dana_acme"); err != nil || act != GitHubLinked {
+		t.Fatalf("an EMU login: %q %v", act, err)
+	}
+	if got := query(t, super, `SELECT string_agg(act, ',' ORDER BY id) FROM github_link_events`); got != "linked,relinked,linked,linked" {
 		t.Fatalf("events: %q", got)
 	}
 }

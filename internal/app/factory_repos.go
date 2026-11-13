@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -287,7 +288,7 @@ func (c *repoConns) access(log *slog.Logger, cfg *config.Config, perms *repoacce
 			}
 			return rc.gh.UserLogin(ctx, gid)
 		}}
-	id.Links, id.Active = factoryLinks(a, cfg.API.HumanIssuer, links)
+	id.Links, id.Active = factoryLinks(a, cfg.API.HumanIssuer, links, httpx.New(zitadelTimeout, nil))
 	return api.GitHubAccess{Identity: id, Perms: perms}
 }
 
@@ -298,13 +299,13 @@ type brokerGitHubLinks interface {
 
 // factoryLinks is the resolver's two sources from api.access: the broker's links, the ZITADEL reader,
 // or both, the reader then behind the link. The broker answers whether a link is active (its
-// activeWindow), so one window rules the broker and the factory; a sub with no link asks the reader
-// for its state, or is active without one: it has no GitHub identity to act with.
-func factoryLinks(a *config.Access, issuer string, links brokerGitHubLinks) (func(context.Context, string) ([]ghidentity.Link, error), func(context.Context, string) (bool, error)) {
+// activeWindow), so one window rules the broker and the factory; while the reader is configured its
+// user state must say active too, for every sub, so an IdP deactivation applies at once (#126). A
+// sub with no link and no reader is active: it has no GitHub identity to act with.
+func factoryLinks(a *config.Access, issuer string, links brokerGitHubLinks, zitadel *http.Client) (func(context.Context, string) ([]ghidentity.Link, error), func(context.Context, string) (bool, error)) {
 	var rLinks func(context.Context, string) ([]ghidentity.Link, error)
 	var rActive func(context.Context, string) (bool, error)
 	if a.ReaderFile != "" {
-		zitadel := httpx.New(zitadelTimeout, nil)
 		rLinks, rActive = readerLinks(zitadel, issuer, a.ReaderFile), readerActive(zitadel, issuer, a.ReaderFile)
 	}
 	if a.Links != config.LinksBroker || links == nil {
@@ -322,12 +323,16 @@ func factoryLinks(a *config.Access, issuer string, links brokerGitHubLinks) (fun
 		switch {
 		case err != nil:
 			return false, err
-		case found:
-			return l.Active, nil
-		case rActive != nil:
+		case found && !l.Active:
+			return false, nil
+		case rActive != nil: // while the reader is configured, its user state rules every sub (#126)
 			return rActive(ctx, sub)
 		}
 		return true, nil
 	}
-	return ghidentity.Chain(brokerLinks, rLinks), active
+	// No holder check here: the broker's route answers by sub only. During the move off the reader,
+	// an id one account linked in the broker could still reach another sub through that sub's own
+	// ZITADEL link on this API (docs/github-link.md names the residual); the broker's own resolver
+	// drops it.
+	return ghidentity.Chain(brokerLinks, rLinks, nil), active
 }

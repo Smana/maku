@@ -5,7 +5,6 @@ package app
 import (
 	"context"
 	"errors"
-	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"sync/atomic"
@@ -51,7 +50,7 @@ func TestFactoryAccessFromTheBrokersLinks(t *testing.T) {
 				}
 				return "", errors.New("unknown id")
 			}}
-		r.Links, r.Active = factoryLinks(a, issuer, b)
+		r.Links, r.Active = factoryLinks(a, issuer, b, nil)
 		return r
 	}
 	ctx := t.Context()
@@ -70,24 +69,30 @@ func TestFactoryAccessFromTheBrokersLinks(t *testing.T) {
 		t.Fatalf("a broker 503: %q %v", login, err)
 	}
 	b.down = false
-	// The reader behind the link.
+	// The reader behind the link: a linked human's login never searches ZITADEL's links, but its
+	// user state still rules (#126), so a deactivation applies at once.
 	z := &fakeZitadel{}
 	z.set("pat-1", `[{"idpId":"idp-gh","userId":"583231"}]`)
-	var hits atomic.Int64
-	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { hits.Add(1); z.ServeHTTP(w, r) }))
+	srv := httptest.NewTLSServer(z)
 	t.Cleanup(srv.Close)
 	reader := filepath.Join(t.TempDir(), "reader.json")
 	writeReader(t, reader, "pat-1", "idp-gh")
 	a := &config.Access{Links: config.LinksBroker, ReaderFile: reader}
 	r = &ghidentity.Resolver{IDPID: githubIDP, TTL: time.Minute, Now: time.Now,
 		LoginOf: func(context.Context, string, int64) (string, error) { return "octocat", nil }}
-	r.Links, r.Active = factoryLinks(a, srv.URL, b)
-	if login, err := r.Login(ctx, "linked", "Smana/a"); err != nil || login != "octocat" || hits.Load() != 0 {
-		t.Fatalf("linked with the reader behind: %q %v, ZITADEL asked %d times", login, err, hits.Load())
+	r.Links, r.Active = factoryLinks(a, srv.URL, b, srv.Client())
+	searches := func() int { z.mu.Lock(); defer z.mu.Unlock(); return z.calls }
+	if login, err := r.Login(ctx, "linked", "Smana/a"); err != nil || login != "octocat" || searches() != 0 {
+		t.Fatalf("linked with the reader behind: %q %v, ZITADEL's links searched %d times", login, err, searches())
 	}
-	// factoryLinks' reader rides httpx's client, which does not trust the test server's certificate:
-	// the fallback is reached (a request is made) and fails closed.
-	if login, err := r.Login(ctx, "u1", "Smana/a"); err == nil || login != "" {
-		t.Fatalf("unlinked, through an unreachable reader: %q %v", login, err)
+	if login, err := r.Login(ctx, "u1", "Smana/a"); err != nil || login != "octocat" || searches() != 1 {
+		t.Fatalf("unlinked, through the reader: %q %v", login, err)
+	}
+	z.mu.Lock()
+	z.state = "USER_STATE_INACTIVE"
+	z.mu.Unlock()
+	r.Forget("linked")
+	if err := r.CheckActive(ctx, "linked"); !errors.Is(err, ghidentity.ErrInactive) {
+		t.Fatalf("linked, deactivated in ZITADEL: %v", err)
 	}
 }

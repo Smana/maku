@@ -5,8 +5,9 @@
 CREATE TABLE github_links (
   sub           text        PRIMARY KEY CHECK (length(sub) BETWEEN 1 AND 128),
   github_id     bigint      NOT NULL UNIQUE CHECK (github_id > 0),
-  -- The login GitHub named at link time: display only, stale after a rename.
-  login_at_link text        NOT NULL CHECK (login_at_link ~ '^[A-Za-z0-9-]{1,39}$'),
+  -- The login GitHub named at link time: display only, stale after a rename. An Enterprise Managed
+  -- User's login is handle_shortcode, hence `_` and the bound above github.com's 39.
+  login_at_link text        NOT NULL CHECK (login_at_link ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$'),
   linked_at     timestamptz NOT NULL,
   -- Refreshed at most hourly by the human's own authenticated requests: "active" without an IdP
   -- admin API (human.githubLink.activeWindow).
@@ -23,7 +24,7 @@ CREATE TABLE github_link_states (
   nonce_sha256 bytea       NOT NULL CHECK (length(nonce_sha256) = 32),
   expires_at   timestamptz NOT NULL,
   github_id    bigint      CHECK (github_id > 0),
-  login        text        CHECK (login ~ '^[A-Za-z0-9-]{1,39}$'),
+  login        text        CHECK (login ~ '^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$'),
   CHECK ((github_id IS NULL) = (login IS NULL))
 );
 CREATE INDEX github_link_states_sub ON github_link_states (sub);

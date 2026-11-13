@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -42,12 +43,13 @@ type fakeZitadel struct {
 func (z *fakeZitadel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	z.mu.Lock()
 	defer z.mu.Unlock()
-	if r.Method == http.MethodGet && r.URL.Path == "/v2/users/u1" && r.Header.Get("Authorization") == "Bearer "+z.pat {
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v2/users/") && !strings.Contains(r.URL.Path[len("/v2/users/"):], "/") &&
+		r.Header.Get("Authorization") == "Bearer "+z.pat {
 		state := z.state
 		if state == "" {
 			state = "USER_STATE_ACTIVE"
 		}
-		_, _ = w.Write([]byte(`{"user":{"userId":"u1","state":"` + state + `"}}`))
+		_, _ = w.Write([]byte(`{"user":{"userId":"` + r.URL.Path[len("/v2/users/"):] + `","state":"` + state + `"}}`))
 		return
 	}
 	z.calls++
@@ -136,7 +138,7 @@ func TestRoomAccess(t *testing.T) {
 	gh := &fakeGitHubUsers{}
 	h := config.HumanConfig{Issuer: srv.URL, Access: &config.AccessConfig{ReaderFile: reader, TTL: config.Duration{Duration: 3 * time.Minute}}}
 
-	id, acc, err := roomAccess(h, gh, srv.Client(), clock, nil)
+	id, acc, err := roomAccess(h, gh, srv.Client(), clock, nil, nil)
 	if err != nil || id == nil || acc == nil {
 		t.Fatalf("%v %v %v", id, acc, err)
 	}
@@ -202,7 +204,7 @@ func TestRoomAccessReadsAnUnseenRepositoryAsUnreadable(t *testing.T) {
 	reader := filepath.Join(t.TempDir(), "reader.json")
 	writeReader(t, reader, "pat-1", "idp-gh")
 	h := config.HumanConfig{Issuer: srv.URL, Access: &config.AccessConfig{ReaderFile: reader, TTL: config.Duration{Duration: time.Minute}}}
-	id, acc, err := roomAccess(h, &fakeGitHubUsers{}, srv.Client(), time.Now, nil)
+	id, acc, err := roomAccess(h, &fakeGitHubUsers{}, srv.Client(), time.Now, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,11 +219,11 @@ func TestRoomAccessReadsAnUnseenRepositoryAsUnreadable(t *testing.T) {
 }
 
 func TestRoomAccessIsOffOrComplete(t *testing.T) {
-	if id, acc, err := roomAccess(config.HumanConfig{Issuer: "https://auth.example.test"}, &fakeGitHubUsers{}, nil, time.Now, nil); id != nil || acc != nil || err != nil {
+	if id, acc, err := roomAccess(config.HumanConfig{Issuer: "https://auth.example.test"}, &fakeGitHubUsers{}, nil, time.Now, nil, nil); id != nil || acc != nil || err != nil {
 		t.Fatalf("no human.access: %v %v %v; want both nil (admins-only)", id, acc, err)
 	}
 	h := config.HumanConfig{Issuer: "https://auth.example.test", Access: &config.AccessConfig{ReaderFile: "/r.json", TTL: config.Duration{Duration: time.Minute}}}
-	if _, _, err := roomAccess(h, nil, nil, time.Now, nil); err == nil {
+	if _, _, err := roomAccess(h, nil, nil, time.Now, nil, nil); err == nil {
 		t.Fatal("human.access without the factory App must stop start-up")
 	}
 }
@@ -272,10 +274,16 @@ func TestRoomAccessFromTheGitHubLink(t *testing.T) {
 		}
 		return ghidentity.LinkRecord{}, false, nil
 	}
+	holders := func(_ context.Context, id int64) (string, bool, error) {
+		if id == 583231 {
+			return "linked", true, nil
+		}
+		return "", false, nil
+	}
 	gl := &config.GitHubLinkConfig{ActiveWindow: config.Duration{Duration: 168 * time.Hour}}
 	ttl := config.Duration{Duration: time.Minute}
 	h := config.HumanConfig{Issuer: srv.URL, GitHubLink: gl, Access: &config.AccessConfig{TTL: ttl}}
-	id, _, err := roomAccess(h, &fakeGitHubUsers{}, nil, func() time.Time { return now }, links)
+	id, _, err := roomAccess(h, &fakeGitHubUsers{}, nil, func() time.Time { return now }, links, holders)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,18 +299,31 @@ func TestRoomAccessFromTheGitHubLink(t *testing.T) {
 	}
 	// The reader behind the link.
 	h.Access.ReaderFile = reader
-	id, _, err = roomAccess(h, &fakeGitHubUsers{}, srv.Client(), func() time.Time { return now }, links)
+	id, _, err = roomAccess(h, &fakeGitHubUsers{}, srv.Client(), func() time.Time { return now }, links, holders)
 	if err != nil {
 		t.Fatal(err)
 	}
-	before := hits.Load()
-	if login, err := id.Login(ctx, "linked", "Smana/a"); err != nil || login != "octocat" || hits.Load() != before {
-		t.Fatalf("linked: %q %v, ZITADEL asked %d times", login, err, hits.Load()-before)
+	searches := func() int { z.mu.Lock(); defer z.mu.Unlock(); return z.calls } // ZITADEL link searches only
+	before, states := searches(), hits.Load()
+	if login, err := id.Login(ctx, "linked", "Smana/a"); err != nil || login != "octocat" || searches() != before {
+		t.Fatalf("linked: %q %v, ZITADEL's links searched %d times", login, err, searches()-before)
 	}
-	if login, err := id.Login(ctx, "u1", "Smana/a"); err != nil || login != "octocat" || hits.Load() == before {
-		t.Fatalf("unlinked, through the reader: %q %v", login, err)
+	if hits.Load() == states {
+		t.Fatal("the reader's user state was not read for a linked sub")
 	}
-	if _, _, err := roomAccess(h, &fakeGitHubUsers{}, srv.Client(), time.Now, nil); err == nil {
+	// u1's ZITADEL link names 583231, which "linked" holds through its account link: dropped.
+	if login, err := id.Login(ctx, "u1", "Smana/a"); err != nil || login != "" || searches() == before {
+		t.Fatalf("an id another account linked, through the reader: %q %v", login, err)
+	}
+	// #126: a linked sub deactivated in ZITADEL is refused at once, inside the window.
+	z.mu.Lock()
+	z.state = "USER_STATE_INACTIVE"
+	z.mu.Unlock()
+	id.Forget("linked")
+	if err := id.CheckActive(ctx, "linked"); !errors.Is(err, ghidentity.ErrInactive) {
+		t.Fatalf("linked, deactivated in ZITADEL: %v", err)
+	}
+	if _, _, err := roomAccess(h, &fakeGitHubUsers{}, srv.Client(), time.Now, nil, nil); err == nil {
 		t.Fatal("human.githubLink without the store must stop start-up")
 	}
 }

@@ -155,3 +155,15 @@ func TestOAuthRefusesBadEndpointsAndReplies(t *testing.T) {
 		t.Fatal("a zero id was accepted")
 	}
 }
+
+// An Enterprise Managed User's login (handle_shortcode) is a login.
+func TestOAuthUserAcceptsAnEMULogin(t *testing.T) {
+	ts := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"id": 7, "login": "dana_acme"}`)
+	}))
+	t.Cleanup(ts.Close)
+	o := OAuth{WebURL: ts.URL, APIURL: ts.URL + "/", HC: ts.Client()}
+	if id, login, err := o.User(t.Context(), "t"); err != nil || id != 7 || login != "dana_acme" {
+		t.Fatalf("%d %q %v", id, login, err)
+	}
+}

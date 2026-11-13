@@ -285,11 +285,13 @@ else the human.githubLink keys the Secret's mount fills. Read it with
 {{- end }}
 
 {{/* The hosts the GitHub account link calls, as a JSON list: GitHub's site and API (github.com and
-api.github.com), or a GHES's one host. Empty without the link. */}}
+api.github.com), or a GHES's one host. Empty without the link, whether broker.githubLink's Secret or
+the human block turns it on. */}}
 {{- define "ap.githubLinkHosts" -}}
 {{- $l := include "ap.githubLink" . | fromJson -}}
-{{- if $l -}}
-{{- $web := dig "githubLink" "webURL" "" (.Values.broker.human | default dict) | default ($l.webURL | default "https://github.com") -}}
+{{- $h := (.Values.broker.human | default dict).githubLink | default dict -}}
+{{- if or $l $h -}}
+{{- $web := $h.webURL | default ($l.webURL | default "https://github.com") -}}
 {{- $host := (urlParse $web).hostname -}}
 {{- if eq $host "github.com" }}{{ toJson (list "github.com" "api.github.com") }}{{ else }}{{ toJson (list $host) }}{{ end -}}
 {{- else -}}

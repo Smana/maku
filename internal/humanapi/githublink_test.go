@@ -264,9 +264,14 @@ func ghStart(t *testing.T, e env, user string) started {
 			cookie = c
 		}
 	}
-	if cookie == nil || !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode || cookie.Path != "/link/github" ||
-		cookie.MaxAge != 600 || !stateRE.MatchString(cookie.Value) {
+	// __Host-: Secure, Path=/ and no Domain, so a sibling subdomain cannot plant its own nonce
+	// (cookie tossing) and complete a flow in the victim's browser.
+	if cookie == nil || cookie.Name != "__Host-maku-ghlink" || !cookie.Secure || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode ||
+		cookie.Path != "/" || cookie.Domain != "" || cookie.MaxAge != 600 || !stateRE.MatchString(cookie.Value) {
 		t.Fatalf("the flow's cookie: %+v", cookie)
+	}
+	if raw := h.Get("Set-Cookie"); strings.Contains(strings.ToLower(raw), "domain=") || !strings.HasPrefix(raw, "__Host-maku-ghlink=") {
+		t.Fatalf("Set-Cookie: %s", raw)
 	}
 	return started{state: loc.Query().Get("state"), challenge: loc.Query().Get("code_challenge"), cookie: cookie.Value}
 }

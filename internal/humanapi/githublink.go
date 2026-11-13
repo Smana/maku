@@ -41,7 +41,10 @@ const GitHubLinkTTL = 10 * time.Minute
 const (
 	GitHubLinkPath     = "/link/github"
 	GitHubCallbackPath = "/link/github/callback"
-	githubCookie       = "__Secure-maku-ghlink"
+	// The flow's cookie: __Host-, so it is Secure, Path=/ and host-only. A sibling subdomain cannot
+	// set it (a __Secure- cookie could be planted with Domain=.parent, cookie tossing), so a nonce in
+	// the browser is this broker's own.
+	githubCookie = "__Host-maku-ghlink"
 )
 
 // GitHubLinkStore is the part of the store the link reads and writes; *store.Store has it.
@@ -288,7 +291,7 @@ func (s *Server) githubStart(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable: try again", http.StatusServiceUnavailable)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: githubCookie, Value: nonce, Path: GitHubLinkPath, MaxAge: int(GitHubLinkTTL / time.Second),
+	http.SetCookie(w, &http.Cookie{Name: githubCookie, Value: nonce, Path: "/", MaxAge: int(GitHubLinkTTL / time.Second),
 		Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	s.ghCounted(ctx, ghStarted)
 	http.Redirect(w, r, s.GitHubLink.OAuth.AuthorizeURL(clientID, s.callbackURL(), state, pkceChallenge(pkceVerifier(nonce, state))), http.StatusSeeOther)
@@ -444,7 +447,7 @@ func (s *Server) githubConfirm(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable: try again", http.StatusServiceUnavailable)
 		return
 	}
-	http.SetCookie(w, &http.Cookie{Name: githubCookie, Value: "", Path: GitHubLinkPath, MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
+	http.SetCookie(w, &http.Cookie{Name: githubCookie, Value: "", Path: "/", MaxAge: -1, Secure: true, HttpOnly: true, SameSite: http.SameSiteLaxMode})
 	s.githubChanged(p.Sub)
 	outcome, notice := ghLinked, "Linked: rooms and the factory now know you as @"+st.Login+"."
 	if act == store.GitHubRelinked {

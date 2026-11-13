@@ -53,12 +53,11 @@ func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Cl
 		return nil, err
 	}
 	var links ghidentity.LinkReader
-	if st, ok := roomLog.(interface {
-		GitHubLinkOf(ctx context.Context, sub string) (store.GitHubLink, bool, error)
-	}); ok && cfg.Human.GitHubLink != nil {
-		links = storeLinks(st)
+	var holders ghidentity.HolderReader
+	if st, ok := roomLog.(githubLinkStore); ok && cfg.Human.GitHubLink != nil {
+		links, holders = storeLinks(st)
 	}
-	identity, access, err := roomAccess(cfg.Human, gh, httpx.New(zitadelTimeout, nil), time.Now, links)
+	identity, access, err := roomAccess(cfg.Human, gh, httpx.New(zitadelTimeout, nil), time.Now, links, holders)
 	if err != nil {
 		return nil, err
 	}

@@ -583,6 +583,10 @@ out="$gk"
 n443="$(yq ea 'select(.kind == "NetworkPolicy" and .metadata.name == "room-broker")' - <<<"$out" | yq '[.spec.egress[] | select(.ports[0].port == 443 and .to[0].ipBlock.cidr == "0.0.0.0/0")] | length' -)"
 [[ $n443 == 1 ]] || { echo "FAIL: mode kubernetes: 443 to public addresses (NetworkPolicy names no host), got $n443 rules" >&2; fail=1; }
 ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.ports[0].port == 443 and .to[0].ipBlock.cidr == "0.0.0.0/0") | (.to[0].ipBlock.except | contains(["10.0.0.0/8", "169.254.0.0/16"]))' 'the private ranges excluded'
+# human.githubLink set directly, with no Secret: the link is on, so the egress is too
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.human.githubLink.clientIDFile=/a --set broker.human.githubLink.clientSecretFile=/b)"
+[[ "$(fqdns)" == "github.com,api.github.com" ]] || { echo "FAIL: human.githubLink set directly renders no GitHub egress, got '$(fqdns)'" >&2; fail=1; }
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "github-link") | .name' 'human.githubLink set directly mounts no Secret'
 out="$p"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "github-link") | .name' 'no githubLink, no mount'
 ynone 'select(.kind == "CiliumNetworkPolicy") | .spec.egress[] | select(.toFQDNs != null) | .toPorts' 'no githubLink, no GitHub egress'

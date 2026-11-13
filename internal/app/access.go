@@ -105,7 +105,7 @@ func intakePublicity(gh gitHubVisibilities, ttl time.Duration) intake.Publicity 
 // ZITADEL, from their ZITADEL IdP link (human.access.readerFile) for a sub with no account link
 // (plan step 5 PR5). Without human.access it returns nils, and the human API shows rooms to admins
 // only.
-func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now func() time.Time, links ghidentity.LinkReader) (*ghidentity.Resolver, *repoaccess.Checker, error) {
+func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now func() time.Time, links ghidentity.LinkReader, holders ghidentity.HolderReader) (*ghidentity.Resolver, *repoaccess.Checker, error) {
 	if h.Access == nil {
 		return nil, nil, nil
 	}
@@ -128,7 +128,7 @@ func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now 
 		if links == nil {
 			return nil, nil, errors.New("human.githubLink needs the rooms database to read the links from")
 		}
-		id.Links = ghidentity.Chain(ghidentity.StoreLinks(links, githubIDP), readerLinksOf)
+		id.Links = ghidentity.Chain(ghidentity.StoreLinks(links, githubIDP), readerLinksOf, holders)
 		id.Active = ghidentity.StoreActive(links, l.ActiveWindow.Duration, now, readerActiveOf)
 	} else {
 		id.Links, id.Active = readerLinksOf, readerActiveOf
@@ -140,14 +140,18 @@ func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now 
 	return id, &repoaccess.Checker{Perm: perm, TTL: ttl, Now: now}, nil
 }
 
-// storeLinks reads the broker's github_links for the resolver.
-func storeLinks(st interface {
+// githubLinkStore is the part of the store the resolver reads the links from; *store.Store has it.
+type githubLinkStore interface {
 	GitHubLinkOf(ctx context.Context, sub string) (store.GitHubLink, bool, error)
-}) ghidentity.LinkReader {
+	GitHubLinkHolder(ctx context.Context, githubID int64) (string, bool, error)
+}
+
+// storeLinks reads the broker's github_links for the resolver: a sub's link, and an id's holder.
+func storeLinks(st githubLinkStore) (ghidentity.LinkReader, ghidentity.HolderReader) {
 	return func(ctx context.Context, sub string) (ghidentity.LinkRecord, bool, error) {
 		l, found, err := st.GitHubLinkOf(ctx, sub)
 		return ghidentity.LinkRecord{GitHubID: l.GitHubID, LastSeenAt: l.LastSeenAt}, found, err
-	}
+	}, st.GitHubLinkHolder
 }
 
 // unseen marks a repository the App cannot see, or cannot name in a path, as one nobody reads

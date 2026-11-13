@@ -53,7 +53,7 @@ sequenceDiagram
   participant G as GitHub
   B->>R: POST /link/github/start (same origin)
   R->>R: state, nonce; store sha256(state), sha256(nonce), sub
-  R-->>B: 303 to GitHub's authorize, cookie __Secure-maku-ghlink=nonce
+  R-->>B: 303 to GitHub's authorize, cookie __Host-maku-ghlink=nonce
   B->>G: authorize (state, S256 challenge)
   G-->>B: 302 to /link/github/callback?code&state
   B->>R: GET /link/github/callback (cookie, no session)
@@ -66,7 +66,8 @@ sequenceDiagram
 - **Start** needs the web UI's session (the CLI and MCP bearers are refused `not_web`) and the
   broker's own `Origin`. It makes a 32-byte `state` and a 32-byte nonce, stores only their SHA-256
   with the `sub`, at most 3 flows per `sub`, 10 minutes each, and sets the nonce as the cookie
-  `__Secure-maku-ghlink` (`Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/link/github`).
+  `__Host-maku-ghlink` (`Secure`, `HttpOnly`, `SameSite=Lax`, `Path=/`, no `Domain`). The `__Host-`
+  prefix keeps a sibling subdomain from planting its own nonce in the browser (cookie tossing).
 - **The PKCE verifier** is derived from the nonce and the state, and stored nowhere: only the browser
   holding the cookie, with the state GitHub sends back, lets the broker compute it.
 - **The callback** is the one unauthenticated route. It refuses a state whose nonce is not the
@@ -80,7 +81,8 @@ This defeats a link CSRF either way: an attacker's flow confirmed in the victim'
 
 **Uniqueness.** One GitHub id per `sub`, one `sub` per GitHub id. Linking an id another account holds
 is refused (`github_account_taken`): an admin unlinks it first. Relinking one's own account replaces
-its link.
+its link. Logins are kept as GitHub names them, an Enterprise Managed User's `handle_shortcode`
+included.
 
 ## Revocation
 
@@ -109,9 +111,18 @@ their last sign-in. A smaller window shortens it; an admin unlink ends it at onc
 
 ## Moving off the ZITADEL reader
 
-With `human.githubLink` and `human.access.readerFile` both set, the link is read first and the reader
-only for an account with no link, its user state included; the broker logs that `readerFile` is
-deprecated. The factory does the same with `api.access.links: broker` beside `readerFile`. Once every
+With `human.githubLink` and `human.access.readerFile` both set, the link is read first and the
+reader's links only for an account with no link. The reader's user state still rules every account,
+linked or not, so a deactivation in ZITADEL applies at once, not after `activeWindow`. The broker
+drops a ZITADEL link to a GitHub id another account holds through its account link: one GitHub id is
+one account across both sources, and the account link wins. The broker logs that `readerFile` is
+deprecated.
+
+**The residual during the move.** The factory's run-request API reads the broker's link by `sub`
+only, so it cannot tell that a ZITADEL link names an id another account linked in the broker. An
+account whose ZITADEL link and another account's GitHub link name the same id can resolve to that
+login there until the reader is removed. Moving every human onto the link, then removing both
+`readerFile`s, closes it. The factory does the same with `api.access.links: broker` beside `readerFile`. Once every
 active human has linked, remove both `readerFile`s; v4 step 8 deletes them.
 
 ## Signals

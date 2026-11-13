@@ -34,8 +34,9 @@ const replyLimit = 64 << 10
 // anything else is not repeated.
 var errorWordRE = regexp.MustCompile(`^[a-z_]{1,64}$`)
 
-// loginRE is a GitHub login.
-var loginRE = regexp.MustCompile(`^[A-Za-z0-9-]{1,39}$`)
+// loginRE is a GitHub login: an Enterprise Managed User's is handle_shortcode, so `_` is allowed and
+// the bound is above the 39 characters of a github.com login.
+var loginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,99}$`)
 
 func httpsBase(raw string) (*url.URL, error) {
 	u, err := url.Parse(raw)
