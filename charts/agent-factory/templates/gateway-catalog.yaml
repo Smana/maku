@@ -1,0 +1,21 @@
+{{- /* GW12: the gateway's model catalog from the factory's meter.prices, so a price has one source.
+maku-gateway renders it itself when its own modelCatalog.prices is set, or without umbrellaPrices. Only
+the rows of a model an alias or a client serves are written: meter.prices may also key a C5 logical
+name (agent-default, tier-*), which no provider serves. Once the factory prices anything, every model
+the gateway serves needs a row: an unpriced one would log no cost and meter as unpriced. The object
+carries maku-gateway's own labels, from the subchart's Chart. */}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- if and $gw.enabled $gw.modelCatalog.enabled $gw.modelCatalog.umbrellaPrices (not $gw.modelCatalog.prices) }}
+{{- $prices := dig "config" "meter" "prices" dict (index .Values "maku-factory") }}
+{{- $chart := .Chart }}
+{{- with index (.Subcharts | default dict) "maku-gateway" }}{{ $chart = .Chart }}{{ end }}
+{{- $root := dict "Values" $gw "Release" .Release "Chart" $chart }}
+{{- if $prices }}
+{{- range $b := include "mgw.backends" $root | fromYamlArray }}
+{{- if not (hasKey $prices $b.model) }}
+{{- fail (printf "maku-gateway serves %s (%s, provider %s) but maku-factory.config.meter.prices has no row for it: add one, or set maku-gateway.modelCatalog.prices" $b.model $b.alias $b.provider) }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- include "mgw.catalog" (dict "root" $root "prices" $prices) }}
+{{- end }}

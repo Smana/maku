@@ -1,0 +1,14 @@
+{
+  "_note": "agentgateway v1.6.0's own names (probe P5, charts/maku-gateway/tests/probe): agentgateway_gen_ai_client_token_usage_sum summed by ar_agent, gen_ai_request_model, gen_ai_token_type and pod, with no relabel; the usage of query_reply.json, for a portable run",
+  "status": "success",
+  "data": {
+    "resultType": "vector",
+    "result": [
+      {"metric": {"ar_agent": "system:serviceaccount:agents:run-cf4ato2x", "gen_ai_request_model": "glm-5.3", "gen_ai_token_type": "input", "pod": "model-gateway-7d9f8b6c5-abcde"}, "value": [1731456000, "1000000"]},
+      {"metric": {"ar_agent": "system:serviceaccount:agents:run-cf4ato2x", "gen_ai_request_model": "glm-5.3", "gen_ai_token_type": "input_cache_read", "pod": "model-gateway-7d9f8b6c5-abcde"}, "value": [1731456000, "800000"]},
+      {"metric": {"ar_agent": "system:serviceaccount:agents:run-cf4ato2x", "gen_ai_request_model": "glm-5.3", "gen_ai_token_type": "input_cache_write", "pod": "model-gateway-7d9f8b6c5-abcde"}, "value": [1731456000, "50000"]},
+      {"metric": {"ar_agent": "system:serviceaccount:agents:run-cf4ato2x", "gen_ai_request_model": "glm-5.3", "gen_ai_token_type": "output", "pod": "model-gateway-7d9f8b6c5-abcde"}, "value": [1731456000, "100000"]},
+      {"metric": {"ar_agent": "system:serviceaccount:agents:run-cf4ato2x", "gen_ai_request_model": "glm-5.3", "gen_ai_token_type": "reasoning", "pod": "model-gateway-7d9f8b6c5-abcde"}, "value": [1731456000, "70000"]}
+    ]
+  }
+}

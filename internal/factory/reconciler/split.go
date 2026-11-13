@@ -19,6 +19,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/factory/fmetrics"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/ledger"
@@ -233,15 +234,12 @@ func newer(a, b *v1alpha1.Task) bool {
 }
 
 // spend is what a task's runs cost, a run the meter could not price at the reference rate the day
-// ledger charges it (TC7): a family's cap never counts an unpriced run as $0.
+// ledger charges it (TC7), and one with no tokens at all at its whole reservation (review #518):
+// a family's cap never counts an unpriced run as $0 (coordination.RunCharge).
 func spend(t *v1alpha1.Task) int64 {
 	var sum int64
 	for _, rec := range t.Status.Runs {
-		if rec.Unpriced != "" || (rec.Tokens > 0 && rec.CostMicroUSD == 0) {
-			sum += config.RefMicroUSD(rec.Tokens)
-		} else {
-			sum += rec.CostMicroUSD
-		}
+		sum += coordination.RunCharge(t.Spec.Budget, rec)
 	}
 	return sum
 }

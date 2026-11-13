@@ -145,6 +145,19 @@ func sumUsage(series []Series) map[string]Usage {
 	return out
 }
 
+// normalizedType maps agentgateway's own cache token types to the names the meter prices
+// (GW10), so a scrape that does not relabel them, as ai-native-ref's vmpodscrape does, still
+// prices a run. Every other type is returned as it is.
+func normalizedType(typ string) string {
+	switch typ {
+	case "input_cache_read":
+		return "cached_input"
+	case "input_cache_write":
+		return "cache_creation_input"
+	}
+	return typ
+}
+
 // countedType is a gen_ai_token_type the meter counts.
 func countedType(typ string) bool {
 	switch typ {

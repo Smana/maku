@@ -75,17 +75,20 @@ func TestLoopParsesOnThePortableRuntime(t *testing.T) {
 	}
 }
 
-// PR4: loops.<class>.models picks a provider alias the gateway resolves; the portable runtime runs
-// every role on modelSecret's model, so a models row is refused there until agentgateway (rollout
-// step 4), never silently ignored.
+// PR4: loops.<class>.models picks a provider alias the gateway resolves; a portable runtime without
+// runs.gatewayIdentity runs every role on modelSecret's model, so a models row is refused there,
+// never silently ignored. With the key (GW10) it parses (TestGatewayIdentity).
 func TestLoopModelsAreRefusedOnThePortableRuntime(t *testing.T) {
 	const row = "loops: {docs: {models: {implementer: {frontier: kimi-frontier}}}}\n"
 	_, err := Parse([]byte(byModel + row + "runs: {group: maku.ogenki.io}\n"))
-	const want = "loops.docs.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model"
+	const want = "loops.docs.models needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime runs every role on modelSecret's model"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("portable: %v, want %q", err, want)
 	}
 	if _, err := Parse([]byte(byModel + row + "runs: {group: cloud.ogenki.io}\n")); err != nil {
 		t.Fatalf("cloud-native-ref's AgentRun: %v", err)
+	}
+	if _, err := Parse([]byte(byModel + row + "runs: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {
+		t.Fatalf("portable with a gateway identity: %v", err)
 	}
 }

@@ -176,7 +176,7 @@ func TestTokenSourceReadiness(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit, EnforceOutputs: all}})
-			cfg.Runs = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
+			cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
 			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: tc.perRun, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
 			cfg.Hardening.Publisher = config.Publisher{Minter: true}
 			live := func() *config.Config { return cfg }
@@ -232,7 +232,7 @@ func TestRoleTableWarning(t *testing.T) {
 				EnforceOutputs: []hardening.OutputType{hardening.PR}}})
 			cfg.Repositories = []config.Repository{{Name: repo}, {Name: "Smana/cloud-native-ref"}}
 			if tc.perRun {
-				cfg.Runs = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
+				cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
 				cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
 			}
 			w := roleTableWarning(cfg, tc.table)

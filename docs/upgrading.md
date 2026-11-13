@@ -13,16 +13,25 @@ New keys, all off by default, so a release that sets none of them renders as bef
 | `maku.runController.model.mode` | `secret`: `runController.modelSecret`, as before | `gateway`: runs call the model gateway with their own token, and `modelSecret` is not read ([the model gateway](gateway.md#runs-through-the-gateway)) |
 | `maku.runController.model.gateway` | `model-gateway` in the release namespace, ports 8080 and 8081, prefix `maku-gateway`, no aliases | the gateway and the aliases each listener serves |
 | `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered |
+| `maku-factory.config.runs.gatewayIdentity` | unset | `true`: portable runs carry a gateway identity, so the meter prices them, and `loops.<class>.models` and `split` are accepted ([metering the runs](gateway.md#metering-the-runs)). The umbrella requires it with `model.mode: gateway` and a portable factory |
+| `maku-factory.config.meter.throttle.promQuery` | unset | the gateway's 429s from PromQL on `meter.url`, in place of `meter.logsURL` with `meter.throttleQuery`; one of the two is required outside the demo, never both |
+| `maku-gateway.modelCatalog.prices` (umbrella) | `maku-factory.config.meter.prices` | the gateway's catalog takes the factory's prices when its own are empty |
 
 To move an install to `gateway` mode:
 
 1. Run the gateway, with `maku-gateway` and its providers' Secrets.
-2. Set `model.mode: gateway` and `model.gateway.aliases` to the gateway's aliases.
+2. Set `model.mode: gateway` and `model.gateway.aliases` to the gateway's aliases, and
+   `maku-factory.config.runs.gatewayIdentity: true`.
 3. Upgrade.
 4. Delete `agent-model` from the runs namespace: nothing reads it any more.
 
-Runs already started keep their pods and their key until they end. The run controller decodes its
-config strictly, so a `model:` block needs this release's run controller: chart and image move together.
+Runs already started keep their pods and their key until they end. The run controller and the
+factory decode their configs strictly, so a `model:` block, `runs.gatewayIdentity` and
+`meter.throttle` need this release's images: chart and images move together. The refusal messages
+of `loops.<class>.models` and `split` on a portable runtime now name `runs.gatewayIdentity`.
+Under `runs.gatewayIdentity` the factory stamps each AgentRun `spec.meteredBy: gateway`: upgrade
+`agent-factory-crds` first, since an older AgentRun CRD prunes the field, and a secret-mode run
+controller then starts the run unmetered.
 
 ## Push enforced (v0.4x, hardening stage H3)
 

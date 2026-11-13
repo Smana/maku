@@ -56,7 +56,7 @@ func tracerRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g, tk, _ := shadowRig(t, "documentation")
 	g.r.Cfg.Current().Hardening.EnforceOutputs = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels}
-	g.r.Cfg.Current().Runs = runwatch.DefaultKind
+	g.r.Cfg.Current().Runs.Kind = runwatch.DefaultKind
 	title, body := publishedAs(t, hardening.PR, prAsked, prOut)
 	g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
 	_, comment := publishedAs(t, hardening.Comment, commentAsked, commentOut)
@@ -261,7 +261,7 @@ func TestTracerHumanEdit(t *testing.T) {
 			g.f.SetEditsTruncated(prNode)
 		}, pr, pr},
 		"off the XR, a maintainer's edit": {func(t *testing.T, g *rig) {
-			g.r.Cfg.Current().Runs = runwatch.Kind{Group: "agents.example.com", Namespace: "agents", NamePrefix: "run-"}
+			g.r.Cfg.Current().Runs.Kind = runwatch.Kind{Group: "agents.example.com", Namespace: "agents", NamePrefix: "run-"}
 			editedPR(t, g, byMaintainer)
 		}, pr, pr},
 		"a pull request opened directly, then edited by a maintainer": {func(_ *testing.T, g *rig) {

@@ -95,7 +95,7 @@ rolls the pods through its `checksum/config` annotation). The factory also reads
 installation, a merger key) is retried every minute, as is a served one whose merger reconnect
 failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `intake`, `api`, `runs`,
 `sandbox`, `demo`, `broker`, `github`, `meter.url`, `meter.query`, `meter.logsURL`,
-`meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
+`meter.throttleQuery`, `meter.throttle`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
 `runlore.listen`, `triage.classifierURL`, `factory`) are read once, at the start the rollout
 gives. With no CRDs installed the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
 [docs/factory.md](../../docs/factory.md#the-config-file). Keys added since a file was written

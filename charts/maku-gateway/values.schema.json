@@ -103,6 +103,7 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean"},
+        "umbrellaPrices": {"type": "boolean", "description": "Set by the agent-factory umbrella (GW12): with prices empty, the umbrella renders the catalog from maku-factory.config.meter.prices."},
         "prices": {
           "type": "object",
           "propertyNames": {"pattern": "^[a-z0-9][a-z0-9.-]*$"},

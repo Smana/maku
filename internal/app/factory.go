@@ -197,15 +197,29 @@ func usageSource(cfg *config.Config) (meter.Source, error) {
 	if cfg.Meter.URL == "" {
 		return meter.Off{}, nil
 	}
-	return meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs, httpx.New(vmTimeout, nil))
+	return meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs.Kind, httpx.New(vmTimeout, nil))
 }
 
-// throttle maps gateway 429s to runs; nil without meter.logsUrl.
-func throttle(cfg *config.Config) meter.Throttled {
-	if cfg.Meter.LogsURL == "" {
-		return nil
+// meteredBy is what the factory stamps on each run it creates (spec.meteredBy, review #518): gateway
+// under runs.gatewayIdentity, so a run-controller in model.mode secret refuses the run rather than
+// start one the meter would price at $0.
+func meteredBy(cfg *config.Config) string {
+	if cfg.Runs.GatewayIdentity {
+		return runs.MeteredByGateway
 	}
-	return meter.VL{Kind: cfg.Runs, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)}
+	return ""
+}
+
+// throttle maps gateway 429s to runs: PromQL on meter.url (meter.throttle.promQuery, GW10), else
+// VictoriaLogs (meter.logsURL); nil with neither.
+func throttle(cfg *config.Config) (meter.Throttled, error) {
+	switch {
+	case cfg.Meter.Throttle.PromQuery != "":
+		return meter.NewVM(cfg.Meter.URL, cfg.Meter.Throttle.PromQuery, cfg.Runs.Kind, httpx.New(vmTimeout, nil))
+	case cfg.Meter.LogsURL != "":
+		return meter.VL{Kind: cfg.Runs.Kind, URL: cfg.Meter.LogsURL, Query: cfg.Meter.ThrottleQuery, HC: httpx.New(vmTimeout, nil)}, nil
+	}
+	return nil, nil
 }
 
 // humanVerifier fetches the humans' JWKS. In demo mode there is none: nil, and the Authenticator
@@ -276,7 +290,7 @@ func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Cl
 	if met != nil {
 		rm = met
 	}
-	return &minter.RunTokens{Minter: mt, Client: c, Runs: runsCache, Tasks: c, Kind: cfg.Runs, TaskNamespace: ns,
+	return &minter.RunTokens{Minter: mt, Client: c, Runs: runsCache, Tasks: c, Kind: cfg.Runs.Kind, TaskNamespace: ns,
 		Reserved: func(ctx context.Context, id string) (string, string, bool, error) {
 			r, ok, err := ledger.Held(ctx, ledgers, ns, time.Now(), id)
 			return r.Repository, r.Role, ok, err
@@ -366,11 +380,15 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
+	throttled, err := throttle(cfg)
+	if err != nil {
+		return err
+	}
 	// A repository whose installation is missing is left out, never silently: it is logged, its
 	// Connected condition says why, and the retry wires it once the App is installed (#447).
 	conns := newRepoConns(log)
 	startupWire(ctx, log, conns, cfg)
-	mgr, err := newFactoryManager(log, ns, cfg.Runs, kinds)
+	mgr, err := newFactoryManager(log, ns, cfg.Runs.Kind, kinds)
 	if err != nil {
 		return err
 	}
@@ -480,7 +498,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs}
+	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs.Kind, MeteredBy: meteredBy(cfg)}
 	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
 	if perRun != nil {
 		rc.Created = perRun.Ensure // the first token, right after the claim exists (plan PR5)
@@ -490,7 +508,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if cfg.Triage.ClassifierURL != "" {
 		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
 	}
-	rec := &reconciler.Reconciler{Kind: cfg.Runs, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
+	rec := &reconciler.Reconciler{Kind: cfg.Runs.Kind, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
 		Triage: triage.Classify{C: c7,
 			Clients: conns.class},
@@ -721,7 +739,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Cfg: live, OnCost: runCost(m), OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle:  throttle(cfg),
+			Throttle: throttled, GatewayIdentity: cfg.Runs.GatewayIdentity,
 			B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,

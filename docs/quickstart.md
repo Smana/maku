@@ -199,7 +199,7 @@ table names what you have not proven by running it.
 | One GitHub App: the factory, every run and the merger share it, and a run can read its token | A read-only factory App, a separate merger App, and a token per role minted for one run: a reviewer cannot push |
 | The model key goes from the run to the provider; a run is bounded by its minutes and the provider's limit on your key | A gateway holds the key outside the sandbox, enforces a per-run, fleet and per-person budget, and meters every call |
 | The judge calls the run's own model directly: its alias is not pinned by a proxy | The judge's model is pinned by the identity proxy, so a run cannot swap it |
-| No meter and no USD caps | The meter reads the gateway's metrics; caps refuse a task over its dollars |
+| No meter and no USD caps (the gateway demo, `values-demo-gateway.yaml`, gives runs a gateway identity a meter can price) | The meter reads the gateway's metrics; caps refuse a task over its dollars |
 | Runs under runc, with the room's "Not sandboxed" banner | Runs in a gVisor sandbox |
 | Network policies on the rooms database (the broker only) and the factory's API (the broker only; the ops port stays open); **runs keep their egress** | Default-deny egress with a per-run FQDN allow-list |
 | With `gh`, a ruleset requires pull requests and your CI's `ci` check. The gate's `maku/merge-gate` verdict is **advisory** against an agent that holds the token: the one App backs the factory, the merger and every run, so no ruleset could tell the merger's status from an agent's, and the demo requires none | Two Apps: `main` requires the gate's verdict on agent pull requests through [the gate's ruleset](factory.md#branch-protection-for-the-merge-gate), and no run holds the merger's key |

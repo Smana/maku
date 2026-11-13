@@ -654,7 +654,7 @@ func TestRunsKind(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Runs != runwatch.DefaultKind {
+	if c.Runs.Kind != runwatch.DefaultKind {
 		t.Fatalf("no runs block: %+v", c.Runs)
 	}
 	c, err = Parse([]byte(good + "runs:\n  group: maku.ogenki.io\n  namePrefix: run-\n"))

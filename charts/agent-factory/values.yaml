@@ -25,6 +25,9 @@ maku-factory:
 # (v1.2 or later) are a cluster prerequisite.
 maku-gateway:
   enabled: false
+  # GW12: the gateway's price catalog defaults to maku-factory.config.meter.prices, so a price has one
+  # source; maku-gateway.modelCatalog.prices, when set, wins.
+  modelCatalog: {umbrellaPrices: true}
 agentgateway:
   enabled: false
   # As cnref runs it (ANR infrastructure/base/agentgateway): the controller by digest, no Istio

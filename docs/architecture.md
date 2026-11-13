@@ -313,7 +313,7 @@ the same configuration. Only leader-only work stays leader-only.
 | Live: applies on the next decision | Startup: needs a rollout |
 |---|---|
 | The catalogue: `control`, `defaults`, `tiers`, `templates`, `caps`, `budgets`, `facts`, `brief`, `resume`, `scoper`, `loops`, `harnessProfiles`, `mergeGuardrails`, `meter.prices`, `triage.controlPercent` | `policyManagement`, `coordination`, `hardening`, `api`, `runs`, `sandbox`, `demo`, `broker`, `github`, `factory` |
-| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `intake`, `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
+| `repositories`: adding or removing one, and each one's settings, classes and merge rules | `intake`, `meter.url`, `meter.query`, `meter.logsURL`, `meter.throttleQuery`, `meter.throttle`, `runs`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`, `runlore.listen`, `triage.classifierURL` |
 
 ### What happens when a change is refused, and at startup
 

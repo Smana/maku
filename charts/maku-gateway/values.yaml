@@ -92,9 +92,13 @@ clients:
 
 # The price catalog agentgateway prices each response with (the access log's `cost`): the factory's
 # meter.prices rows, USD per million tokens. Each model must be one an alias or a client serves.
+# umbrellaPrices is the agent-factory umbrella's (GW12): with prices empty, the umbrella renders the
+# catalog from maku-factory.config.meter.prices, so a price has one source. Leave it false when this
+# chart is installed on its own.
 modelCatalog:
   enabled: true
   prices: {}
+  umbrellaPrices: false
 
 # Request timeouts: a long completion must not be cut (runs); the callers' own deadlines are shorter (clients).
 timeouts:

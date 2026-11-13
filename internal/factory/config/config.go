@@ -160,7 +160,7 @@ type Config struct {
 	// Hardening is the untrusted-input hardening track (hardening design): off unless set.
 	Hardening Hardening `json:"hardening,omitzero"`
 	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
-	Runs runwatch.Kind `json:"runs,omitzero"`
+	Runs Runs `json:"runs,omitzero"`
 	// RunTokens has the factory write the run-controller's two git Secrets (v4 step 2, PR3): off
 	// unless set, and implied by demo.
 	RunTokens RunTokens `json:"runTokens,omitzero"`
@@ -998,10 +998,31 @@ type Meter struct {
 	// ThrottleQuery is the LogsQL that names them: the last minutes of 429s with Envoy's RL
 	// flag on agent-router, grouped by the verified identity header.
 	ThrottleQuery string `json:"throttleQuery"`
+	// Throttle is the other source of the gateway's 429s: a PromQL query on URL (GW10). Outside the
+	// demo, it or the pair LogsURL and ThrottleQuery is required, never both.
+	Throttle MeterThrottle `json:"throttle,omitzero"`
 	// Prices are by the model that served the tokens (gen_ai_request_model, once Query groups by
 	// it: ByModel), else by the tier's logical model (C5), which the run's claim names. Pricing a
 	// run also needs Query grouped by gen_ai_token_type; an untyped reply meters in tokens.
 	Prices map[string]Price `json:"prices,omitempty"`
+}
+
+// Runs is the runs kind, plus whether its runs call the model gateway with their own token.
+type Runs struct {
+	runwatch.Kind
+	// GatewayIdentity states that each portable run (maku.ogenki.io) calls the model gateway with
+	// its own projected token, whose subject the gateway records as ar_agent, so the meter prices
+	// it (GW10). It lifts the refusals of loops.<class>.models and loops.<class>.split there. The
+	// run-controller's model.mode gateway is what makes it true; the umbrella checks they agree.
+	// cloud-native-ref's AgentRun always carries the identity, so the key is refused there.
+	GatewayIdentity bool `json:"gatewayIdentity,omitempty"`
+}
+
+// MeterThrottle reads the gateway's 429s from meter.url (GW10).
+type MeterThrottle struct {
+	// PromQuery is an instant query on meter.url whose series name the runs the gateway answered
+	// with a 429 lately, labelled ar_agent: the verified identity, never a client-supplied one.
+	PromQuery string `json:"promQuery,omitempty"`
 }
 
 // Tracing is where task spans go (R46): the trace collector's platform port. Empty: tracing off.
@@ -1542,9 +1563,12 @@ func Parse(raw []byte) (*Config, error) {
 	if err := c.normalize(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	c.Runs = c.Runs.WithDefaults()
+	c.Runs.Kind = c.Runs.WithDefaults()
 	if err := c.Runs.Validate(); err != nil {
 		return nil, fmt.Errorf("config: runs: %w", err)
+	}
+	if c.Runs.GatewayIdentity && c.Runs.Group != v1alpha1.GroupVersion.Group {
+		return nil, fmt.Errorf("config: runs.gatewayIdentity is only for runs.group %s: cloud-native-ref's AgentRun always carries a gateway identity", v1alpha1.GroupVersion.Group)
 	}
 	if c.Caps.MaxPendingMinutes == 0 {
 		c.Caps.MaxPendingMinutes = defaultMaxPendingMinutes // the Pending bound never stays open (P)
@@ -1630,6 +1654,10 @@ func Parse(raw []byte) (*Config, error) {
 		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
 			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
+	}
+	// GW10: a portable run without a gateway identity never reaches the meter's ar_agent.
+	if c.Meter.URL != "" && c.Runs.Group == v1alpha1.GroupVersion.Group && !c.Runs.GatewayIdentity {
+		c.Warnings = append(c.Warnings, "the meter prices no run of this runtime: its runs carry no gateway identity (runs.gatewayIdentity)")
 	}
 	// HR13 (the owner's ruling, 2026-11-12): an enforced repository on a run path whose sandbox token
 	// no role policy scopes could still write directly, so enforcement would be advisory. Refused
@@ -1730,7 +1758,10 @@ func (c *Config) Validate() error {
 	} else if ctl.Issue > 0 && !seenRepo[strings.ToLower(ctl.Repository)] {
 		bad("control.repository %q is not a listed repository", ctl.Repository)
 	}
-	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
+	logsSet := c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
+	promSet := c.Meter.Throttle.PromQuery != ""
+	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || logsSet || promSet
+	meterRequired := !c.Demo || demoMeterSet // demo: a meter is all its keys or none; any one set brings the production rules
 	for _, f := range []struct {
 		key, value   string
 		demoOptional bool // demo: the laptop has no metrics backend
@@ -1739,12 +1770,23 @@ func (c *Config) Validate() error {
 		{"roomsURL", c.RoomsURL, false}, {"broker.url", c.Broker.URL, false}, {"broker.caFile", c.Broker.CAFile, false},
 		{"broker.tokenFile", c.Broker.TokenFile, false}, {"github.appIDFile", c.GitHub.AppIDFile, false},
 		{"github.privateKeyFile", c.GitHub.PrivateKeyFile, false}, {"meter.url", c.Meter.URL, true}, {"meter.query", c.Meter.Query, true},
-		{"meter.logsURL", c.Meter.LogsURL, true}, {"meter.throttleQuery", c.Meter.ThrottleQuery, true},
 	} {
-		// demo: a meter is all four keys or none; any one set brings the production rules.
-		if f.value == "" && (!c.Demo || !f.demoOptional || (strings.HasPrefix(f.key, "meter.") && demoMeterSet)) {
+		if f.value == "" && (!f.demoOptional || meterRequired) {
 			bad("%s is required", f.key)
 		}
+	}
+	// GW10: the gateway's 429s come from one source, PromQL on meter.url or VictoriaLogs.
+	switch {
+	case !meterRequired:
+	case promSet && logsSet:
+		bad("meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one")
+	case promSet:
+	case !logsSet:
+		bad("meter.throttle.promQuery, or meter.logsURL with meter.throttleQuery, is required")
+	case c.Meter.LogsURL == "":
+		bad("meter.logsURL is required")
+	case c.Meter.ThrottleQuery == "":
+		bad("meter.throttleQuery is required")
 	}
 	// GP-18: the broker serves TLS only, and the factory never talks to it in the clear; the demo too
 	// (its chart generates the broker's CA).
@@ -2424,6 +2466,8 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 				bad("loops.%s.split.maxChildren must be 2..5", name)
 			case !slices.Contains(tiers(), tier):
 				bad("loops.%s.split.childTier %q is light, standard or frontier", name, s.ChildTier)
+			case c.Meter.URL == "" || c.Meter.Query == "":
+				bad("loops.%s.split needs a meter: a family's cap is in USD", name)
 			case len(c.Meter.Prices) == 0:
 				bad("loops.%s.split needs meter.prices: a family's cap is in USD", name)
 			case math.IsNaN(s.FamilyUSD) || s.FamilyUSD < 0 || s.FamilyUSD > MaxFamilyUSD:
@@ -2433,15 +2477,16 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 			}
 		}
 		// D5: the scoper and the loop policy run on the run-controller too, which enforces the
-		// scoper's read-only token and its room_handoff path where the token is chosen. Its runs carry
-		// no model alias: every role runs on modelSecret's model until agentgateway (rollout step 4).
-		if len(row.Models) > 0 && c.Runs.Group == v1alpha1.GroupVersion.Group {
-			bad("loops.%s.models needs a model gateway (rollout step 4): this runtime runs every role on modelSecret's model", name)
+		// scoper's read-only token and its room_handoff path where the token is chosen. Without a
+		// gateway identity (GW10) its runs carry no model alias: every role runs on modelSecret's model.
+		noIdentity := c.Runs.Group == v1alpha1.GroupVersion.Group && !c.Runs.GatewayIdentity
+		if len(row.Models) > 0 && noIdentity {
+			bad("loops.%s.models needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime runs every role on modelSecret's model", name)
 		}
-		// Portable runs carry no gateway identity, so nothing meters their spend: a split's familyUSD
-		// would never decrease. Refused there until the gateway, as models is.
-		if row.Split != nil && c.Runs.Group == v1alpha1.GroupVersion.Group {
-			bad("loops.%s.split needs a model gateway (rollout step 4): this runtime meters no USD, so familyUSD would never be spent", name)
+		// Portable runs without a gateway identity reach no meter: a split's familyUSD would never
+		// decrease. Refused there, as models is; with the identity, the split rules above hold.
+		if row.Split != nil && noIdentity {
+			bad("loops.%s.split needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime meters no USD, so familyUSD would never be spent", name)
 		}
 	}
 }
