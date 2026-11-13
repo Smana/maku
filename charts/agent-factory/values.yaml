@@ -73,7 +73,7 @@ monitoring:
       fromEndpoints: []
   # One PrometheusRule, maku, with a group per component, each rendered only with it: maku-rooms
   # (maku), maku-run-path (maku.runController), maku-factory (maku-factory), maku-slack
-  # (slack.enabled). docs/operations.md#alerts lists every alert. In PromQL, tested by promtool.
+  # (slack.enabled), maku-gateway (maku-gateway; its cost cross-check also needs maku-factory). docs/operations.md#alerts lists every alert. In PromQL, tested by promtool.
   prometheusRule:
     enabled: false
     labels: {}

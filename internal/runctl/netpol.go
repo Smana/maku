@@ -49,7 +49,8 @@ func dnsRule(c Config) networkingv1.NetworkPolicyEgressRule {
 
 // KubeNetworkPolicy is a kubernetes-mode run's policy (plan PR6): DNS to the cluster DNS, the egress
 // proxy on its port, the broker on 8443 (and roomToolsURL's port) when the run has a room, the model's
-// namespace on its port when the model is in-cluster. No ingress at all. The web is reached only through the proxy, which holds
+// namespace on its port when the model is in-cluster, the OTLP collector's pods on its port when tracing
+// is configured. No ingress at all. The web is reached only through the proxy, which holds
 // the run to Egress; DNS stays open, so DNS tunnelling is this mode's residual risk (docs/security.md).
 func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *networkingv1.NetworkPolicy {
 	egress := []networkingv1.NetworkPolicyEgressRule{dnsRule(c), {
@@ -68,6 +69,11 @@ func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *n
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
 			To:    []networkingv1.NetworkPolicyPeer{{NamespaceSelector: nsSelector(c.Broker.Namespace), PodSelector: &metav1.LabelSelector{MatchLabels: c.Broker.Labels}}},
 			Ports: tcp(ports...)})
+	}
+	if c.Tracing.enabled() { // the collector's OTLP port, and only when tracing is configured (step 6 R1)
+		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
+			To:    []networkingv1.NetworkPolicyPeer{{NamespaceSelector: nsSelector(c.Tracing.Collector.Namespace), PodSelector: &metav1.LabelSelector{MatchLabels: c.Tracing.Collector.Labels}}},
+			Ports: tcp(c.Tracing.port())})
 	}
 	// No ingress rule (review of #492): NetworkPolicy always admits node-local traffic, so the
 	// kubelet's probe of the bridge needs none, and nothing else may reach a run.

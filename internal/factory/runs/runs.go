@@ -172,6 +172,13 @@ var (
 	traceparent = regexp.MustCompile(`^00-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$`)
 )
 
+// ValidTraceparent reports whether tp is a W3C Trace Context version 00 header the harness can
+// parent on: lower-case hex, and neither the trace id nor the parent id all zero, which W3C calls
+// invalid.
+func ValidTraceparent(tp string) bool {
+	return traceparent.MatchString(tp) && tp[3:35] != strings.Repeat("0", 32) && tp[36:52] != strings.Repeat("0", 16)
+}
+
 // Validate refuses what the claim cannot carry safely. The task URL ends in the harness footer
 // as `Agent-Task: <URL>` (SF), so a newline in it would forge a trailer, Agent-Run included
 // (review I4); it must be an issue or a PR of the run's own repository.
@@ -191,9 +198,7 @@ func (s Spec) Validate() error {
 			errs = append(errs, fmt.Errorf("%s %q is not an issue or a pull request of %s on https://github.com", u.field, u.value, s.Repository))
 		}
 	}
-	// W3C: an all-zero trace id or parent id is invalid, and the harness would parent on nothing.
-	if s.Traceparent != "" && (!traceparent.MatchString(s.Traceparent) ||
-		s.Traceparent[3:35] == strings.Repeat("0", 32) || s.Traceparent[36:52] == strings.Repeat("0", 16)) {
+	if s.Traceparent != "" && !ValidTraceparent(s.Traceparent) {
 		errs = append(errs, fmt.Errorf("traceparent %q is not W3C version 00", s.Traceparent))
 	}
 	if s.Tier != "" && !slices.Contains([]string{"light", "standard", "frontier"}, s.Tier) {

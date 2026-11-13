@@ -18,6 +18,26 @@ The run controller now lists `room-broker__kb_search` and `room-broker__kb_get` 
 `MCP_READ_ONLY_TOOLS`, whether or not the broker serves them. The broker decodes its config strictly,
 so a `roomTools.knowledge` block needs this release's broker image: chart and images move together.
 
+## Run traces (v0.4x, v4 rollout step 6)
+
+One new key in the `maku` chart, off by default, so a release that does not set it renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `runController.tracing.otlpEndpoint` and `runController.tracing.collector` | unset: runs export no span | each run's harness exports its span over OTLP/HTTP under its task's trace, and each run's policy opens the endpoint's port to the collector's pods ([Observability](observability.md#traces)) |
+
+`maku-factory.config.tracing.otlpEndpoint` keeps its meaning: the factory's gRPC `host:port`.
+
+The harness no longer hands agent-server a trace endpoint, because agent-server's spans carry
+prompts and tool output ([what spans contain](observability.md#what-spans-contain)). A run template
+that relied on those spans, such as cloud-native-ref's AgentRun composition, sets
+`AGENT_TRACE_CONTENT=1` in the harness's environment to keep them, behind a collector that filters
+span attributes. Set this way, the harness's own root span is unchanged.
+
+The run controller decodes its config strictly, so a `tracing:` block needs this release's run
+controller image: chart and images move together. Runs already started keep their pods, without
+traces, until they end.
+
 ## Scrape objects and alerts (v0.4x, v4 rollout step 6)
 
 New umbrella keys, all off by default, so a release that sets none of them renders as before:
@@ -25,7 +45,7 @@ New umbrella keys, all off by default, so a release that sets none of them rende
 | New key | Default | What it does |
 |---|---|---|
 | `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
-| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)) |
+| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations.md#gateway-alerts) and the cost cross-check |
 | `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
 
 Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the

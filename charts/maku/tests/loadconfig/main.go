@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command loadconfig loads each file through a component's real config loader:
-// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller FILE...`. render.sh feeds
+// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...`. render.sh feeds
 // it the chart's rendered config.yaml, so a template edit the component would refuse — or a roomTools
 // switch that disagrees with the values — fails chart:check, not a rollout.
 package main
@@ -17,7 +17,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller FILE...")
+		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller|run-controller-gateway|run-controller-tracing FILE...")
 		os.Exit(2)
 	}
 	var load func(string) error
@@ -105,6 +105,18 @@ func main() {
 			}
 			if !c.Gateway() || c.ModelSecret != "" {
 				return fmt.Errorf("model.mode %q modelSecret %q, want gateway and none", c.Model.Mode, c.ModelSecret)
+			}
+			return nil
+		}
+	case "run-controller-tracing":
+		// v4 step 6 (D21): runController.tracing must decode to the endpoint and the collector selector.
+		load = func(p string) error {
+			c, err := runctl.LoadConfig(p)
+			if err != nil {
+				return err
+			}
+			if c.Tracing.OTLPEndpoint == "" || c.Tracing.Collector.Namespace == "" || len(c.Tracing.Collector.Labels) == 0 {
+				return fmt.Errorf("tracing %+v, want an endpoint and a collector selector", c.Tracing)
 			}
 			return nil
 		}

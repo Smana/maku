@@ -15,7 +15,8 @@ import (
 
 // NetworkPolicy is the run's default-deny CNP: DNS for its names only, the broker on 8443 (and
 // roomToolsURL's port when set),
-// github and its profiles on 443, the model host on its port. Nothing dials in except the
+// github and its profiles on 443, the model host on its port, the OTLP collector's pods on its port
+// when tracing is configured. Nothing dials in except the
 // kubelet's probe of the bridge (C4).
 func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstructured.Unstructured {
 	web := webHosts(r, c, m) // reached on 443
@@ -35,6 +36,9 @@ func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstr
 	// the empty rule {} for it, and a Go-empty list is omitted by omitempty, so it would not.
 	ingress := []any{map[string]any{}}
 	var roomEgress []any
+	if c.Tracing.enabled() {
+		names = addUnique(names, c.Tracing.host())
+	}
 	if r.Spec.RoomRef != "" {
 		names = append(names, brokerHost(c))
 		sel := map[string]any{"io.kubernetes.pod.namespace": c.Broker.Namespace}
@@ -70,6 +74,13 @@ func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstr
 		egress = append(egress, map[string]any{"toFQDNs": matchNames([]string{m.Host}), "toPorts": port(m.Port)})
 	}
 	egress = append(egress, roomEgress...)
+	if c.Tracing.enabled() { // the collector's OTLP port, and only when tracing is configured (step 6 R1)
+		sel := map[string]any{"io.kubernetes.pod.namespace": c.Tracing.Collector.Namespace}
+		for k, v := range c.Tracing.Collector.Labels {
+			sel[k] = v
+		}
+		egress = append(egress, map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": sel}}, "toPorts": port(c.Tracing.port())})
+	}
 	spec := map[string]any{
 		"endpointSelector": map[string]any{"matchLabels": map[string]any{LabelRunID: runID}},
 		"egress":           egress,
