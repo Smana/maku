@@ -41,7 +41,17 @@ type fakeEditor struct{ previews, timelines int }
 
 func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
 	f.previews++
-	return map[string]bool{"valid": true}, nil
+	return map[string]any{"valid": true, "kind": "file"}, nil
+}
+
+func (f *fakeEditor) PreviewBindings(context.Context, string, []config.Binding) (any, error) {
+	f.previews++
+	return map[string]any{"valid": true, "kind": "binding"}, nil
+}
+
+func (f *fakeEditor) PreviewPolicy(context.Context, string, config.PolicySpec, func(string) bool) (any, error) {
+	f.previews++
+	return map[string]any{"valid": true, "kind": "policy"}, nil
 }
 
 func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (any, error) {

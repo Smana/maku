@@ -24,10 +24,12 @@ type PolicyImpact struct {
 // ConsumerImpact is one binding of a changed policy. Change is a mergepolicy verdict, "new" for a
 // binding the base did not resolve, or "-" when the binding no longer resolves.
 type ConsumerImpact struct {
-	Repository, Mode, Change string
-	Why                      []string
-	Resolves                 bool
-	Reason                   string // "Reason: message", when !Resolves
+	Repository string   `json:"repository"`
+	Mode       string   `json:"mode"`
+	Change     string   `json:"change"`
+	Why        []string `json:"why,omitempty"`
+	Resolves   bool     `json:"resolves"`
+	Reason     string   `json:"reason,omitempty"` // "Reason: message", when !Resolves
 }
 
 // Impact compares two assemblies, a base and a proposal, policy by policy: every class policy

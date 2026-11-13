@@ -717,6 +717,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 					return evidence.PolicyStatus{}, false
 				}
 				return evidence.PolicyStatus{Namespace: ns, Generation: mp.Generation, Status: mp.Status}, true
+			},
+			RepositoryStatus: func(ctx context.Context, name string) (evidence.RepositoryStatusView, bool) {
+				var r factoryv1.Repository
+				if err := mgr.GetClient().Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &r); err != nil {
+					return evidence.RepositoryStatusView{}, false
+				}
+				return evidence.RepositoryStatusView{Namespace: ns, Generation: r.Generation, Status: r.Status}, true
 			}, Sources: func(repo string) (evidence.Source, bool) {
 				c, ok := conns.get(repo)
 				if !ok || c.gh == nil {
@@ -724,9 +731,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				}
 				return evidenceSource{c.gh}, true
 			}}
-		apiSrv.Evidence = ev
+		apiSrv.Evidence, apiSrv.Policies = ev, ev
 		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
-		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Comments: func(repo string) (policyview.CommentReader, bool) {
+		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Namespace: ns, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
@@ -1269,6 +1276,14 @@ type policyEditor struct{ *policyview.Service }
 
 func (e policyEditor) Preview(ctx context.Context, repository, file string) (any, error) {
 	return e.Service.Preview(ctx, repository, file)
+}
+
+func (e policyEditor) PreviewBindings(ctx context.Context, repository string, bindings []config.Binding) (any, error) {
+	return e.Service.PreviewBindings(ctx, repository, bindings)
+}
+
+func (e policyEditor) PreviewPolicy(ctx context.Context, name string, spec config.PolicySpec, readable func(string) bool) (any, error) {
+	return e.Service.PreviewPolicy(ctx, name, spec, readable)
 }
 
 func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {

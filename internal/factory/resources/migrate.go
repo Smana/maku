@@ -148,6 +148,31 @@ func MergePolicyManifest(name, ns, repositoryRef string, classes, merge any) ([]
 	})
 }
 
+// RepositoryManifest is the YAML of a Repository named name in ns with spec as given (B2, B3).
+func RepositoryManifest(name, ns string, spec map[string]any) ([]byte, error) {
+	return yaml.Marshal(map[string]any{
+		"apiVersion": "maku.ogenki.io/v1alpha1",
+		"kind":       string(KindRepository),
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"spec":       spec,
+	})
+}
+
+// PolicyManifest is the YAML of a class-shape MergePolicy named name in ns (B1, B7): spec as JSON
+// writes it, so an omitted field stays omitted.
+func PolicyManifest(name, ns string, spec config.PolicySpec) ([]byte, error) {
+	m, err := toMap(spec)
+	if err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(map[string]any{
+		"apiVersion": "maku.ogenki.io/v1alpha1",
+		"kind":       string(KindMergePolicy),
+		"metadata":   map[string]any{"name": name, "namespace": ns},
+		"spec":       m,
+	})
+}
+
 // namePart is the repository's name without its owner, as a DNS-1123 label.
 func namePart(repository string) string {
 	_, n, ok := strings.Cut(repository, "/")

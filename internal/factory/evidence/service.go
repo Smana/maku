@@ -5,6 +5,7 @@ package evidence
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -82,6 +83,37 @@ type PolicyStatus struct {
 	Status     factoryv1.MergePolicyStatus `json:"status"`
 }
 
+// RepositoryStatusView is a Repository's stored status as the leader wrote it, and the object's
+// generation and namespace: what `kubectl get repository` shows.
+type RepositoryStatusView struct {
+	Namespace  string                     `json:"namespace"`
+	Generation int64                      `json:"generation"`
+	Status     factoryv1.RepositoryStatus `json:"status"`
+}
+
+// BindingView is one binding of a bound repository (B16): its policy, the mode and parameters
+// this repository supplies, the generation of the policy its served class came from (0 when none
+// is served), and whether it resolved, as the Repository's status says.
+type BindingView struct {
+	Name             string         `json:"name"`
+	Mode             string         `json:"mode"`
+	PolicyGeneration int64          `json:"policyGeneration,omitempty"`
+	Parameters       config.Binding `json:"parameters"`
+	Accepted         bool           `json:"accepted"`
+	Reason           string         `json:"reason,omitempty"`
+}
+
+// PolicyReport is one class-shape MergePolicy (B16): its definition as served, its manifest and the
+// file name to save it under, and its stored status, which lists its consumers.
+type PolicyReport struct {
+	Name         string                      `json:"name"`
+	Generation   int64                       `json:"generation"`
+	Spec         config.PolicySpec           `json:"spec"`
+	Manifest     string                      `json:"manifest"`
+	ManifestPath string                      `json:"manifestPath"`
+	Status       factoryv1.MergePolicyStatus `json:"status"`
+}
+
 // Report is a repository's policy as read at ReadAt, and its classes' promotion evidence as read
 // at EvidenceAt.
 type Report struct {
@@ -120,6 +152,15 @@ type Report struct {
 	// Hardening is the repository's hardening readiness (H5, HR41), computed afresh by the API for a
 	// repository at mode audit or above; nil otherwise.
 	Hardening *Readiness `json:"hardening,omitempty"`
+	// For a repository served from its Repository's bindings (B3, B16): the object's name, its
+	// manifest (spec.mergePolicies and its own merge keys, the Factory's defaults left out), the file
+	// name to save it under, its stored status, and each binding with its policy's generation. The
+	// per-repository fields above are then empty.
+	RepositoryObject       string                `json:"repositoryObject,omitempty"`
+	RepositoryManifest     string                `json:"repositoryManifest,omitempty"`
+	RepositoryManifestPath string                `json:"repositoryManifestPath,omitempty"`
+	RepositoryStatus       *RepositoryStatusView `json:"repositoryStatus,omitempty"`
+	Bindings               []BindingView         `json:"bindings,omitempty"`
 	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
 	Namespace     string `json:"-"`
 	RepositoryRef string `json:"-"`
@@ -138,6 +179,8 @@ type Readiness struct {
 var (
 	// ErrUnknownRepository is a repository the config does not list.
 	ErrUnknownRepository = errors.New("evidence: the repository is not configured")
+	// ErrUnknownPolicy is a MergePolicy the factory does not serve.
+	ErrUnknownPolicy = errors.New("evidence: no such MergePolicy is served")
 	// ErrInFlight is a refresh asked while one of the same repository runs.
 	ErrInFlight = errors.New("evidence: a read of the repository is running")
 )
@@ -179,7 +222,9 @@ type Service struct {
 	Namespace string
 	// PolicyStatus reads the named MergePolicy from the manager's cache; nil reports none.
 	PolicyStatus func(ctx context.Context, name string) (PolicyStatus, bool)
-	Log          *slog.Logger
+	// RepositoryStatus reads the named Repository from the manager's cache; nil reports none.
+	RepositoryStatus func(ctx context.Context, name string) (RepositoryStatusView, bool)
+	Log              *slog.Logger
 	// Parallel bounds the searches one read runs at once, DefaultParallel when 0; Deadline bounds
 	// the read, DefaultDeadline when 0.
 	Parallel int
@@ -458,7 +503,11 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 		}
 	}
 	r.Guardrails = cfg.MergeGuardrails
-	if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
+	if rc.Bound != nil || rc.Bindings != nil {
+		if err := s.bound(ctx, cfg, rc, &r); err != nil {
+			return Report{}, err
+		}
+	} else if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
 		// The objects' own names, as served; Migrate's naming only when the config lacks them.
 		g := cfg.Generations.Repos[strings.ToLower(rc.Name)]
 		name, ref := g.PolicyName, g.RepositoryName
@@ -504,6 +553,102 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 				EditURL: EditURL(rc.Name, h.branch)}
 		}
 		r.Classes = append(r.Classes, cr)
+	}
+	return r, nil
+}
+
+// bound fills a bound repository's report (B16): its Repository manifest, its status and bindings.
+func (s *Service) bound(ctx context.Context, cfg *config.Config, rc *config.Repository, r *Report) error {
+	g := cfg.Generations.Repos[strings.ToLower(rc.Name)]
+	name := g.RepositoryName
+	if name == "" {
+		names := make([]string, len(cfg.Repositories))
+		for i, x := range cfg.Repositories {
+			names[i] = x.Name
+		}
+		name = resources.ObjectName(rc.Name, names)
+	}
+	m, err := resources.RepositoryManifest(name, s.Namespace, repositorySpec(cfg, rc))
+	if err != nil {
+		return fmt.Errorf("evidence: repository manifest: %w", err)
+	}
+	r.RepositoryObject, r.RepositoryManifest, r.RepositoryManifestPath = name, string(m), "repository-"+name+".yaml"
+	var status map[string]factoryv1.BindingStatus
+	if s.RepositoryStatus != nil {
+		if st, ok := s.RepositoryStatus(ctx, name); ok {
+			r.RepositoryStatus = &st
+			status = map[string]factoryv1.BindingStatus{}
+			for _, b := range st.Status.Classes {
+				status[b.Name] = b
+			}
+		}
+	}
+	for _, b := range rc.Bindings {
+		v := BindingView{Name: b.Name, Mode: b.Mode, Parameters: *b.DeepCopy()}
+		if _, served := rc.Classes[b.Name]; served {
+			v.PolicyGeneration, v.Accepted = g.Classes[b.Name].Policy, true
+		}
+		if st, ok := status[b.Name]; ok { // the status writer's verdict, when there is one
+			v.Accepted, v.Reason = st.Accepted, st.Reason
+		}
+		r.Bindings = append(r.Bindings, v)
+	}
+	return nil
+}
+
+// repositorySpec is rc as its Repository object's spec: the merge keys the Factory's defaults
+// filled are left out, so the manifest is what the author wrote.
+func repositorySpec(cfg *config.Config, rc *config.Repository) map[string]any {
+	spec := map[string]any{"factoryRef": cfg.Factory, "repository": rc.Name, "maintainers": rc.Maintainers, "triggerLabel": rc.TriggerLabel}
+	var merge map[string]any
+	if b, err := json.Marshal(rc.Merge); err == nil && json.Unmarshal(b, &merge) == nil {
+		for _, k := range rc.MergeDefaulted {
+			delete(merge, k)
+		}
+		spec["merge"] = merge
+	}
+	if rc.Bindings != nil {
+		spec["mergePolicies"] = rc.Bindings
+	}
+	if len(rc.Schedules) > 0 {
+		spec["schedules"] = rc.Schedules
+	}
+	if len(rc.Checks.Egress) > 0 {
+		spec["checks"] = rc.Checks
+	}
+	if rc.ClassAuthority != "" {
+		spec["classAuthority"] = rc.ClassAuthority
+	}
+	return spec
+}
+
+// Policies are the class-shape MergePolicies the factory serves (B16), by name.
+func (s *Service) Policies(ctx context.Context) []PolicyReport {
+	cfg := s.Cfg.Current()
+	out := []PolicyReport{}
+	for _, name := range slices.Sorted(maps.Keys(cfg.Policies)) {
+		if p, err := s.Policy(ctx, name); err == nil {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// Policy is the served MergePolicy name (B16), ErrUnknownPolicy when the factory serves none.
+func (s *Service) Policy(ctx context.Context, name string) (PolicyReport, error) {
+	p, ok := s.Cfg.Current().Policies[name]
+	if !ok {
+		return PolicyReport{}, ErrUnknownPolicy
+	}
+	m, err := resources.PolicyManifest(name, s.Namespace, p.Spec)
+	if err != nil {
+		return PolicyReport{}, fmt.Errorf("evidence: policy manifest: %w", err)
+	}
+	r := PolicyReport{Name: name, Generation: p.Generation, Spec: *p.Spec.DeepCopy(), Manifest: string(m), ManifestPath: "mergepolicy-" + name + ".yaml"}
+	if s.PolicyStatus != nil {
+		if st, ok := s.PolicyStatus(ctx, name); ok {
+			r.Status = st.Status
+		}
 	}
 	return r, nil
 }

@@ -14,6 +14,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/catalogue"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/policyview"
@@ -28,6 +29,11 @@ type PolicyGateway interface {
 	PolicyRepositories(ctx context.Context, accessToken string) ([]string, error)
 	PolicyPreview(ctx context.Context, accessToken, repository, file string) (policyview.Preview, error)
 	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
+	// PolicyList, Policy and the two previews are the MergePolicies' pages (B16).
+	PolicyList(ctx context.Context, accessToken string) ([]evidence.PolicyReport, error)
+	Policy(ctx context.Context, accessToken, name string) (evidence.PolicyReport, error)
+	PolicyPreviewBindings(ctx context.Context, accessToken, repository string, bindings []config.Binding) (policyview.BindingPreview, error)
+	PolicyPreviewPolicy(ctx context.Context, accessToken, name string, spec config.PolicySpec) (policyview.PolicyPreview, error)
 }
 
 // PolicyRecords is the promotion workflow's audit; *store.Store implements it.
@@ -65,13 +71,19 @@ const maxPolicyBody = 8 << 10
 // policyRoutes registers the settings pages and the policy API; only with Policy set.
 func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
 	for _, p := range []string{"GET /settings", "GET /settings/merge-policies", "GET /settings/merge-policies/{owner}/{name}",
-		"GET /settings/merge-policies/{owner}/{name}/decisions/{pr}", "GET /settings/evidence"} {
+		"GET /settings/merge-policies/{owner}/{name}/decisions/{pr}", "GET /settings/evidence",
+		// PR15: more specific than {owner}/{name}, so it wins; an owner named policies is reached
+		// from the Evidence page's link only.
+		"GET /settings/merge-policies/policies/{name}"} {
 		mux.Handle(p, withCSP(index))
 	}
 	mux.HandleFunc("GET /api/policy/repositories", s.policyRepositories)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}", s.policyRepository)
 	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/preview", s.policyPreview)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions/{pr}", s.policyDecisions)
+	mux.HandleFunc("GET /api/policy/policies", s.policyList)
+	mux.HandleFunc("GET /api/policy/policies/{name}", s.policyGet)
+	mux.HandleFunc("POST /api/policy/policies/{name}/preview", s.policyPolicyPreview)
 	mux.HandleFunc("POST /api/policy/promotions", s.requestPromotion)
 	mux.HandleFunc("POST /api/policy/promotions/{id}", s.movePromotion)
 	mux.HandleFunc("POST /api/policy/exceptions", s.requestException)
@@ -427,7 +439,10 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		File string `json:"file"`
+		// Kind is file (the default) or binding (B16): the proposed spec.mergePolicies.
+		Kind     string           `json:"kind"`
+		File     string           `json:"file"`
+		Bindings []config.Binding `json:"bindings"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
 	dec.DisallowUnknownFields()
@@ -442,7 +457,64 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 	if _, ok := s.maintainerOf(w, r, p, rep.Repository); !ok {
 		return
 	}
+	if in.Kind == "binding" {
+		pv, err := s.Policy.Factory.PolicyPreviewBindings(r.Context(), p.AccessToken, rep.Repository, in.Bindings)
+		if !s.forwarded(w, err) {
+			return
+		}
+		writeJSON(w, pv)
+		return
+	}
 	pv, err := s.Policy.Factory.PolicyPreview(r.Context(), p.AccessToken, rep.Repository, in.File)
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, pv)
+}
+
+// policyList is GET /api/policy/policies: the MergePolicies the factory shows this caller (B16).
+func (s *Server) policyList(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	ps, err := s.Policy.Factory.PolicyList(r.Context(), p.AccessToken)
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, map[string][]evidence.PolicyReport{"policies": ps})
+}
+
+// policyGet is GET /api/policy/policies/{name}: one MergePolicy and the consumers the caller reads.
+func (s *Server) policyGet(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	pol, err := s.Policy.Factory.Policy(r.Context(), p.AccessToken, r.PathValue("name"))
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, pol)
+}
+
+// policyPolicyPreview is POST /api/policy/policies/{name}/preview {spec}: a proposed MergePolicy,
+// its manifest and its consumers' changes (B11, B16). It writes nothing.
+func (s *Server) policyPolicyPreview(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	var in struct {
+		Spec config.PolicySpec `json:"spec"`
+	}
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		refuseJSON(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	pv, err := s.Policy.Factory.PolicyPreviewPolicy(r.Context(), p.AccessToken, r.PathValue("name"), in.Spec)
 	if !s.forwarded(w, err) {
 		return
 	}

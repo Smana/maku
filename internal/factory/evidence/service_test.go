@@ -482,3 +482,99 @@ func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
 		t.Fatalf("%+v %v", r, err)
 	}
 }
+
+// boundCfg serves Smana/cloud-native-ref from its Repository's bindings (B3): dead-links is
+// bound but dropped (B9), the other two served at their policies' generations.
+func boundCfg() *config.Config {
+	cfg := serviceCfg()
+	rc := &cfg.Repositories[0]
+	rc.Maintainers, rc.TriggerLabel = []string{"Smana"}, "factory/ready"
+	rc.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
+	rc.Bound = []string{"docs-links", "revert", "dead-links"}
+	rc.Bindings = []config.Binding{{Name: "docs-links", Mode: "shadow", HoldoutChecks: []string{"lint"}},
+		{Name: "revert", Mode: "shadow", HoldoutChecks: []string{"lint"}},
+		{Name: "dead-links", Mode: "shadow", AllowedFiles: []string{`^docs/`}, HoldoutChecks: []string{"links"}, OracleWorkflow: "dead-links.yaml"}}
+	rc.Merge = config.Merge{RequiredChecks: []string{"lint"}, VerifyChecks: []string{"lint"}, LeakScanCheck: "lint",
+		PolicyBotLogin: "policy-bot[bot]", MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 2}
+	rc.MergeDefaulted = []string{"autoMergesPerDay"}
+	cfg.Factory = "aws-0"
+	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 7, RepositoryName: "cloud-native-ref",
+		Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 1, PolicyName: "docs-links"}, "revert": {Policy: 2, PolicyName: "revert"}}}}}
+	cfg.Policies = map[string]config.ServedPolicy{
+		"docs-links": {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 1},
+		"revert":     {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 2},
+		"dead-links": {Spec: config.PolicySpec{Class: config.Class{Description: "Retargets dead links."}}, Generation: 4},
+	}
+	return cfg
+}
+
+// B16: a bound repository's report lists its bindings, their policies' generations and their
+// status; its Repository manifest round-trips through the factory's decoder; no MergePolicy.
+func TestReportOfABoundRepository(t *testing.T) {
+	cfg := boundCfg()
+	s := &Service{Cfg: cfg, Namespace: "factory", Now: time.Now,
+		Sources: func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true },
+		RepositoryStatus: func(_ context.Context, name string) (RepositoryStatusView, bool) {
+			if name != "cloud-native-ref" {
+				return RepositoryStatusView{}, false
+			}
+			return RepositoryStatusView{Namespace: "factory", Generation: 7, Status: factoryv1.RepositoryStatus{Classes: []factoryv1.BindingStatus{
+				{Name: "docs-links", Mode: "shadow", PolicyGeneration: 1, Accepted: true},
+				{Name: "revert", Mode: "shadow", PolicyGeneration: 2, Accepted: true},
+				{Name: "dead-links", Mode: "shadow", Reason: "MissingParameter"}}}}, true
+		}}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Manifest != "" || r.MergePolicy != "" || r.RepositoryObject != "cloud-native-ref" || r.RepositoryManifestPath != "repository-cloud-native-ref.yaml" ||
+		r.RepositoryStatus == nil || r.RepositoryStatus.Generation != 7 {
+		t.Fatalf("%+v", r)
+	}
+	var got []string
+	for _, b := range r.Bindings {
+		got = append(got, fmt.Sprintf("%s:%s:%d:%v:%s:%d", b.Name, b.Mode, b.PolicyGeneration, b.Accepted, b.Reason, len(b.Parameters.HoldoutChecks)))
+	}
+	if strings.Join(got, " ") != "docs-links:shadow:1:true::1 revert:shadow:2:true::1 dead-links:shadow:0:false:MissingParameter:1" {
+		t.Fatalf("bindings %v", got)
+	}
+	objs, err := resources.Decode([]byte(r.RepositoryManifest))
+	if err != nil || len(objs) != 1 || objs[0].Kind != resources.KindRepository || objs[0].Name != "cloud-native-ref" || objs[0].Namespace != "factory" {
+		t.Fatalf("%v %+v\n%s", err, objs, r.RepositoryManifest)
+	}
+	merge, _ := objs[0].Spec["merge"].(map[string]any)
+	if _, defaulted := merge["autoMergesPerDay"]; defaulted || merge["mergerLogin"] != "ogenki-agent-merger[bot]" {
+		t.Fatalf("the manifest's merge is the Repository's own, the defaults left out: %v", merge)
+	}
+	if bs, _ := objs[0].Spec["mergePolicies"].([]any); len(bs) != 3 || objs[0].Spec["factoryRef"] != "aws-0" {
+		t.Fatalf("spec %v", objs[0].Spec)
+	}
+}
+
+// B16: the class policies, each with its manifest and its stored status (the consumers).
+func TestPolicies(t *testing.T) {
+	cfg := boundCfg()
+	s := &Service{Cfg: cfg, Namespace: "factory", Now: time.Now,
+		PolicyStatus: func(_ context.Context, name string) (PolicyStatus, bool) {
+			if name != "dead-links" {
+				return PolicyStatus{}, false
+			}
+			return PolicyStatus{Namespace: "factory", Generation: 4, Status: factoryv1.MergePolicyStatus{ConsumerCount: 2,
+				Consumers: []factoryv1.ConsumerStatus{{Repository: "ai-native-ref"}, {Repository: "cloud-native-ref"}}}}, true
+		}}
+	all := s.Policies(t.Context())
+	if len(all) != 3 || all[0].Name != "dead-links" || all[1].Name != "docs-links" {
+		t.Fatalf("%+v", all)
+	}
+	p, err := s.Policy(t.Context(), "dead-links")
+	if err != nil || p.Generation != 4 || p.ManifestPath != "mergepolicy-dead-links.yaml" || len(p.Status.Consumers) != 2 || p.Spec.Description != "Retargets dead links." {
+		t.Fatalf("%+v %v", p, err)
+	}
+	objs, err := resources.Decode([]byte(p.Manifest))
+	if err != nil || len(objs) != 1 || objs[0].Kind != resources.KindMergePolicy || objs[0].Spec["repositoryRef"] != nil || objs[0].Spec["description"] != "Retargets dead links." {
+		t.Fatalf("%v %+v\n%s", err, objs, p.Manifest)
+	}
+	if _, err := s.Policy(t.Context(), "nope"); !errors.Is(err, ErrUnknownPolicy) {
+		t.Fatalf("an unknown policy: %v", err)
+	}
+}
