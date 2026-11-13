@@ -121,7 +121,8 @@ D, E and F may run in parallel once C merges. Release N, a v0.4x minor, is cut a
 - **PR3 (`requires`).** `requires` may name the four fill-once fields (`allowedFiles`, `companionFiles`, `requiredLabel`, `oracleWorkflow`) and `holdoutChecks`. For `holdoutChecks`, "required" means the binding adds at least one check.
   - The spec's Validation table says "only fill-once fields", but its own examples (`requires: [holdoutChecks]` on `docs-links`, `[allowedFiles, holdoutChecks, oracleWorkflow]` on `dead-links`) need `holdoutChecks`.
   - Without it, `dead-links` alone fails `ValidateClass` ("an oracle needs holdoutChecks"), since every consumer supplies its own holdout.
-  - Amend the Validation row in #472 before it merges. **Owner to confirm.**
+  - **Owner ruling (2026-11-13): allowed.** `holdoutChecks` is additive *and* requirable; the spec's Validation row and B4 table are amended. A binding that only repeats the policy's own holdouts adds none and is `MissingParameter` (A-L2, PR A).
+- **PR3b (review, owner ruling 2026-11-13).** Review classes keep R17's flexibility: a `review` MergePolicy may declare `checks` and `testFirst`, true included. Review still never merges on its own: it is bound `off` with no parameter. The spec is amended.
 - **PR4 (Q13 reads "`author: any`").** The file grammar has no such value (`author` is `agents` or `adopt`; centrally `author.adopt`). Q13 cites B7, which is about the file's `conditions.any`. This plan reads Q13 as `conditions.any`:
   - **N:** a file using `any` still parses (legacy `classes:` only; no live file uses it). It gets a deprecation line in `RepositoryFileValid`'s message, in `maku policy check` and in the Watch's log.
   - **N+1:** it is refused together with the `classes:` grammar. `Resolved.Branches` and the variant loop of `DecideArmUnder` are deleted.
@@ -896,6 +897,7 @@ D, E and F may run in parallel once C merges. Release N, a v0.4x minor, is cut a
   - **`docs/roadmap.md`.**
   - **`charts/agent-factory-crds/README.md`.**
   - **The spec:** status "built (release N)", PR3's amendment and PR4's reading.
+  - **TODO (B-L2):** wherever a binding is shown, quote the mode: `mode: "off"`. YAML 1.1 reads a bare `off` as `false` and `on` as `true`, so the API server refuses an unquoted one as a boolean.
 
 - [ ] **Step 1:** write. Run `task docs` (dead links, anchors), then `task check`. Expected: PASS.
 - [ ] **Step 2: commit** `docs: reusable merge policies, bindings and the two-release upgrade`, then open PR J. Release N is cut after it merges.
