@@ -24,7 +24,7 @@ The run controller decodes its config strictly, so a `tracing:` block needs this
 controller image: chart and images move together. Runs already started keep their pods, without
 traces, until they end.
 
-## Scrape objects and alerts (v0.4x, v4 rollout step 6)
+## Scrape objects, alerts and dashboards (v0.4x, v4 rollout step 6)
 
 New umbrella keys, all off by default, so a release that sets none of them renders as before:
 
@@ -32,6 +32,7 @@ New umbrella keys, all off by default, so a release that sets none of them rende
 |---|---|---|
 | `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
 | `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)) |
+| `monitoring.dashboards` | `enabled: false` | A ConfigMap per product dashboard, `maku-dashboard-<uid>`, for Grafana's sidecar or a grafana-operator `configMapRef` ([dashboards](observability.md#dashboards)). An install that runs cloud-native-ref's `GrafanaDashboard`s with the same uids removes them first, or Grafana holds two dashboards with one uid |
 | `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
 
 Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the

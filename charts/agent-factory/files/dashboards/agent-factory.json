@@ -559,7 +559,7 @@
       "id": 18,
       "type": "stat",
       "title": "Classes paused",
-      "description": "How many live classes the breaker holds right now (the AgentFactoryClassPausedLong selector: shadow and unarmed classes are left out). Red from 1: nobody merges for a paused class until it is lifted. The gauge can be absent for a paused class with no decision and no watched merge: 0 here means not reported, not not paused.",
+      "description": "How many classes the breaker holds right now (the AgentFactoryClassPausedLong selector: every named class of every repository). Red from 1: nobody merges for a paused class until it is lifted. The gauge can be absent for a paused class with no decision and no watched merge: 0 here means not reported, not not paused.",
       "gridPos": {
         "x": 20,
         "y": 49,
@@ -606,7 +606,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "count(maku_factory_class_paused == 1)",
+          "expr": "count(max by (repository, class) (maku_factory_class_paused{class!=\"\"}) == 1)",
           "instant": true
         }
       ]

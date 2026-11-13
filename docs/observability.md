@@ -1,7 +1,7 @@
 # Observability
 
 Every component serves `/metrics`; the umbrella chart (`charts/agent-factory`) can also render the
-objects a Prometheus stack needs to scrape and alert on them. Each switch is off by default, and none
+objects a Prometheus stack needs to scrape, alert on and chart them. Each switch is off by default, and none
 guesses at the cluster: with one on, the prometheus-operator CRDs (`monitoring.coreos.com/v1`) must
 exist. The VictoriaMetrics operator converts `ServiceMonitor`, `PodMonitor` and `PrometheusRule` to its
 own kinds.
@@ -58,6 +58,69 @@ component, every rule in PromQL with `runbook_url` and `dashboard` annotations. 
 namespace, `maku.runs.namespace`, `maku.broker.human.issuer` and `monitoring.prometheusRule.docsURL`
 are substituted into it, so the schema refuses a double quote or a backslash in them.
 [Operations](operations.md#alerts) lists each alert and the values that shape the rule.
+
+## Dashboards
+
+`monitoring.dashboards.enabled` renders one ConfigMap per dashboard, `maku-dashboard-<uid>`, holding
+`<uid>.json`. Each carries `monitoring.dashboards.labels` (default `grafana_dashboard: "1"`, the label
+Grafana's dashboard sidecar watches) and `monitoring.dashboards.annotations`, such as
+`grafana_folder: Agents`.
+
+```yaml
+monitoring:
+  dashboards:
+    enabled: true
+    annotations: {grafana_folder: Agents}
+```
+
+| uid | Title | Rendered with |
+|---|---|---|
+| `agents-overview` | The fleet at a glance: health, spend, runs in flight, pull requests, firing alerts | always |
+| `agent-factory` | Tasks, pull request outcomes, budgets, merge decisions, the ledger against the gateway | always |
+| `agent-room` | One room (`var-room`): its runs, spend, approvals, events | always |
+| `agent-run` | One run (`var-run`): phase, duration, models, tokens and cost, the ledger against the gateway | always |
+| `agent-identity` | Spend per identity (`var-principal`): one principal at a time, never ranked | always |
+| `agent-fleet` | Every run: phases, tokens, spend by model and principal | always |
+| `agent-gateway` | The model gateway: requests, errors, latency, tokens, MCP calls | `maku-gateway.enabled` |
+
+**grafana-operator.** Point a `GrafanaDashboard` at each ConfigMap:
+
+```yaml
+apiVersion: grafana.integreatly.org/v1beta1
+kind: GrafanaDashboard
+metadata: {name: agent-run, namespace: maku}
+spec:
+  instanceSelector: {matchLabels: {dashboards: grafana}}
+  folder: Agents
+  configMapRef: {name: maku-dashboard-agent-run, key: agent-run.json}
+```
+
+**Links.** The uids are cloud-native-ref's, so the dashboards' links to each other, and the room
+page's [`human.dashboards`](integration.md#the-brokers-configuration) links, resolve by uid, for
+example `https://grafana.example.com/d/agent-room/rooms?var-room={room}`. A room's links back to the
+room page use `maku.broker.publicURL`.
+
+**The datasource** is the `${datasource}` variable, of type `prometheus`. Every query is PromQL:
+`tests/promql-only.sh` refuses MetricsQL-only functions in the chart's files, and
+`tests/monitoring/dashboards.sh` runs every query through promtool.
+
+**What the panels read.**
+
+- **The broker's and the factory's metrics**, scraped as [Metrics](#metrics) says.
+- **The model gateway's own series**, `agentgateway_*`, on `job="<maku-gateway.name>"` in the release
+  namespace. A run's cost is `agentgateway_gen_ai_client_cost_usd_total`, priced by the gateway's
+  catalog. A run's gateway series is born at its first call, already holding it, so a panel reads
+  it with `max_over_time` over the range, or adds the series' first window to a per-interval
+  `increase()`. `increase()` alone would drop that first call.
+- **kube-state-metrics.** The run panels read `agentrun_info`, `agentrun_status_phase` and the other
+  `agentrun_*` series, which kube-state-metrics exports from AgentRun objects only with a
+  custom-resource configuration. The chart does not ship that configuration. Without it, those panels
+  read no data and the rest still work. `kube_pod_status_phase` is kube-state-metrics' own.
+
+**Left in cloud-native-ref.** The VictoriaLogs and VictoriaTraces panels (a run's steps, its errors,
+its traces and the gateway's access log), the Karpenter pool panel, the trace collector's pipeline,
+the Envoy gateway's cross-check, the rate-limit budgets and the prompt-cache recording rule all read
+what cloud-native-ref runs, so they stay in one of its own dashboards.
 
 ## Traces
 
