@@ -9,6 +9,7 @@ const SAYS: Record<string, string> = {
   unsafe_allow_runc: "Runs are not sandboxed: sandbox.unsafeAllowRunc is set.",
   network_policy_none: "Nothing confines a run's network: network policies are off.",
   shared_git_token: "Every role shares one write token: runController.unsafeSharedGitToken is set.",
+  model_key_in_sandbox: "The model provider's key sits in every run's sandbox: runController.model.mode is secret.",
   private_code_unacknowledged: "A private repository is served without spec.privateCode.acknowledged: true. " +
     "That field states the code is sent to the configured models, which are usually SaaS. " +
     "Set it on the Repository: the next release refuses private code without it.",
@@ -16,7 +17,7 @@ const SAYS: Record<string, string> = {
 
 // DEMOS_ONLY are the codes that weaken a run's isolation: the banner then says the install is for
 // demos only. Private code is a choice to acknowledge, not an isolation setting.
-const DEMOS_ONLY = new Set(["unsafe_allow_runc", "network_policy_none", "shared_git_token"]);
+const DEMOS_ONLY = new Set(["unsafe_allow_runc", "network_policy_none", "shared_git_token", "model_key_in_sandbox"]);
 
 // renderInstallBanner is the banner for these codes, or null when none is known.
 export function renderInstallBanner(unsafe: string[]): HTMLElement | null {

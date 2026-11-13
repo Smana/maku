@@ -4,7 +4,6 @@ package app
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -99,6 +98,7 @@ func (r Maku) config(args []string) error {
 		baseRef := fs.String("base-ref", "", "a git ref (e.g. origin/main): the base is --config and each manifest as committed there")
 		resolved := fs.Bool("resolved", false, "print each repository's resolved classes as JSON on stdout, and everything else on stderr")
 		unchanged := fs.Bool("expect-unchanged", false, "with a base: fail when any resolved class differs from the base's")
+		allowRefused := fs.Bool("allow-refused-bindings", false, "print a binding that does not resolve as a warning instead of failing")
 		pos, err := flags(fs, args)
 		if err != nil {
 			return err
@@ -151,8 +151,23 @@ func (r Maku) config(args []string) error {
 				return err
 			}
 		}
-		if over, err := guardrailLines(info, res); err != nil || over > 0 {
-			return cmp.Or(err, fmt.Errorf("config validate: %d bindings over a guardrail", over))
+		over, err := guardrailLines(info, res)
+		if err != nil {
+			return err
+		}
+		refused, err := refusedBindings(info, res, *allowRefused)
+		if err != nil {
+			return err
+		}
+		switch {
+		case over > 0 && refused > 0:
+			return fmt.Errorf("config validate: %d bindings over a guardrail, %d refused", over, refused)
+		case over > 0:
+			return fmt.Errorf("config validate: %d bindings over a guardrail", over)
+		case refused == 1:
+			return errors.New("config validate: 1 binding refused")
+		case refused > 0:
+			return fmt.Errorf("config validate: %d bindings refused", refused)
 		}
 		if *resolved {
 			return r.printResolved(res.Config)
@@ -354,6 +369,29 @@ func guardrailLines(out io.Writer, res resources.Result) (int, error) {
 		return 0, err
 	}
 	return over, nil
+}
+
+// refusedBindings prints each binding that does not resolve, other than one over a guardrail
+// (guardrailLines prints those), with its reason: such a binding drops its class without refusing an
+// object (B9), so the objects alone would read as accepted. It returns how many fail the run: none
+// with allow, which prints each as a warning.
+func refusedBindings(out io.Writer, res resources.Result, allow bool) (int, error) {
+	n := 0
+	for _, b := range res.Bindings {
+		if b.Accepted || b.Reason == config.ReasonGuardrailMismatch {
+			continue
+		}
+		prefix := "binding: "
+		if allow {
+			prefix = "warning: binding: "
+		} else {
+			n++
+		}
+		if _, err := fmt.Fprintf(out, "%sRepository/%s %s: %s: %s\n", prefix, b.Repository, b.Name, b.Reason, b.Message); err != nil {
+			return n, err
+		}
+	}
+	return n, nil
 }
 
 // printResolved prints each repository's resolved classes as JSON, sorted by repository and

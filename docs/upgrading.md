@@ -4,10 +4,27 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
-## Older deprecations removed (v0.4x, v4 rollout step 8)
+## The clean-up (v0.4x, v4 rollout step 8)
 
-Three paths deprecated before v4 are gone, with no compatibility window. Each was unused by the
-reference install (ai-native-ref and cloud-native-ref) when it was removed.
+Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at
+their old values. Each change below is breaking: a removed or flipped value is refused by the schema
+or by a render `fail` that names its replacement, never silently ignored.
+
+### The gateway is the model path
+
+| Value | Before | Now |
+|---|---|---|
+| `maku.runController.model.mode` | `secret` by default | `gateway` by default: set `model.gateway.aliases.public` (and `maku-factory.config.runs.gatewayIdentity: true` under the umbrella), or the render fails ([runs through the gateway](gateway.md#runs-through-the-gateway)) |
+| `maku.runController.model.mode: secret` | any install | demo-only: refused without `demoValues: true` (`runController.model.mode secret is demo-only (v4 D7)`), and on the install banner as `model_key_in_sandbox` |
+| `demoValues` (maku chart) | absent | `false`. `values-quickstart.yaml` and the umbrella's `values-demo.yaml` (as `maku.demoValues`) set it |
+
+An install whose run controller still uses `agent-model`:
+
+1. Move it to the gateway, with the [step 4 steps](#runs-through-the-model-gateway-v04x-v4-rollout-step-4).
+2. Or, for a demo only, set `model.mode: secret` and `demoValues: true` explicitly.
+
+An install with `runController.enabled: false` (runs reconciled elsewhere) reads neither value and
+renders as before.
 
 ### The single-repository config
 
