@@ -21,6 +21,14 @@ check() { grep -qF -- "$1" <<<"$out" || { echo "FAIL: $2" >&2; fail=1; }; }
 ykind() {
   yq ea -e "[select(.kind == \"$1\") | $2] | (length > 0 and all)" - <<<"$out" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
 }
+# jkind KIND 'jq expr' 'message': as ykind, in jq (yq compares only scalars, never maps or lists).
+jkind() {
+  yq ea -o=json -I0 "select(.kind == \"$1\")" - <<<"$out" | jq -s -e "map($2) | (length > 0 and all)" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
+}
+# jnone 'jq expr' 'message': the expression yields nothing over every object.
+jnone() {
+  [[ -z $(yq ea -o=json -I0 '.' - <<<"$out" | jq -c "$1" 2>&1) ]] || { echo "FAIL: $2" >&2; fail=1; }
+}
 # yq query that must succeed and print nothing: ynone 'expr' 'message'.
 ynone() {
   local got
@@ -621,6 +629,36 @@ ykind Deployment 'select(.metadata.name=="room-broker") | .metadata.annotations.
 out="$p"
 ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .metadata.annotations | select(. != null)' 'no reloader, no Deployment annotation'
 
+# v4 D24 (step 7 PR A): the preflight runner, off by default; on, eight objects from one pod template.
+out="$q"
+ynone 'select(.metadata.labels."app.kubernetes.io/name" == "preflight")' 'preflight off renders no preflight object'
+pf="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=kubernetes \
+  --set broker.database.ownerSecret=owner-dsn --set preflight.enabled=true --set preflight.strict=true \
+  --set-json 'preflight.extraCRDs=[{"name":"gateways.gateway.networking.k8s.io","version":"v1"}]')"
+out="$pf"
+kinds="$(yq ea '[select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .kind] | sort | join(",")' - <<<"$pf")"
+[[ $kinds == "ClusterRole,ClusterRoleBinding,ConfigMap,CronJob,Job,NetworkPolicy,Role,RoleBinding,ServiceAccount" ]] ||
+  { echo "FAIL: preflight renders $kinds" >&2; fail=1; }
+job="$(yq ea 'select(.kind == "Job" and .metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.template' - <<<"$pf")"
+cron="$(yq ea 'select(.kind == "CronJob" and .metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.jobTemplate.spec.template' - <<<"$pf")"
+[[ -n $job && $job == "$cron" ]] || { echo "FAIL: the preflight Job's and CronJob's pod templates differ" >&2; fail=1; }
+ykind Job 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | (.metadata.annotations."helm.sh/hook" == "test" and .metadata.annotations."helm.sh/hook-delete-policy" == "before-hook-creation,hook-succeeded" and .spec.backoffLimit == 0 and .spec.activeDeadlineSeconds == 300)' 'the test hook: deleted before a rerun and on success, never retried, bounded by preflight.timeout'
+ykind CronJob 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | (.metadata.name == "ap-preflight" and .spec.suspend == true and .spec.jobTemplate.spec.ttlSecondsAfterFinished == 86400)' 'the CronJob <release>-preflight is suspended: maku preflight and Argo CD users create a Job from it'
+ykind Job 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.template.spec | (.serviceAccountName == "ap-preflight" and .restartPolicy == "Never" and .enableServiceLinks == false and .securityContext.runAsNonRoot == true and .securityContext.seccompProfile.type == "RuntimeDefault")' 'the pod: its own ServiceAccount, never restarted, no service links, non-root under RuntimeDefault'
+ykind Job 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.template.spec.containers[0] | [.securityContext.allowPrivilegeEscalation == false, .securityContext.readOnlyRootFilesystem, .securityContext.capabilities.drop[0] == "ALL", .resources.limits.memory != null, (.args | join(" ")) == "preflight --config /etc/maku-preflight/config.json --strict", (.image | test("maku-run-controller:"))] | all' 'the container: restricted, with limits, the run-controller image running preflight'
+ynone 'select(.kind == "Role" and .metadata.labels."app.kubernetes.io/name" == "preflight") | .rules[] | select(.resourceNames == null or (.resourceNames | length) == 0)' 'the preflight Role never grants get on every Secret: resourceNames is never empty'
+ykind Role 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | (.rules[0].resources[0] == "secrets" and (.rules[0].verbs | join(",")) == "get" and (.rules[0].resourceNames | join(",")) == "broker-ca,broker-cert,dsn,owner-dsn")' 'the Role gets exactly the registry Secrets the values enable, by name'
+ykind ConfigMap 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .data."config.json" | from_json | ((.cluster.secrets | map(.name) | sort | join(",")) == "broker-ca,broker-cert,dsn,owner-dsn" and (.cluster.secrets[] | select(.name == "dsn") | (.keys | join(","))) == "uri" and .cluster.runtimeClass == "gvisor" and .cluster.minKubernetes == "1.30" and (.cluster.crds | length) == 7 and (.components | length) == 0 and .timeout == "300s")' 'the config: the same Secrets with their keys, the RuntimeClass, the six CRDs and the extra one'
+ykind ClusterRole 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | (.metadata.name == "maku-agent-system-ap-preflight" and (.rules[] | select(.resources[0] == "customresourcedefinitions") | (.resourceNames | length) == 7) and (.rules[] | select(.resources[0] == "runtimeclasses") | .resourceNames[0] == "gvisor") and (.rules[] | select(.nonResourceURLs != null) | .nonResourceURLs[0] == "/version"))' 'the ClusterRole: the named CRDs, the RuntimeClass and /version, under a release-unique name'
+ykind NetworkPolicy 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | ((.spec.egress | length) == 3 and (.spec.egress[2].ports[0].port == 9090))' 'the preflight egress: DNS, the API server, the components on 9090'
+ykind NetworkPolicy 'select(.metadata.name == "room-broker") | .spec.ingress[] | select(.from[0].podSelector.matchLabels."app.kubernetes.io/name" == "preflight") | .ports[0].port == 9090' 'the broker admits the preflight on 9090'
+cnp="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set preflight.enabled=true)"
+out="$cnp"
+ykind CiliumNetworkPolicy 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | (.spec.egress | length) == 3' 'cilium mode: a CNP in place of the NetworkPolicy'
+ynone 'select(.kind == "NetworkPolicy" and .metadata.labels."app.kubernetes.io/name" == "preflight")' 'cilium mode renders no NetworkPolicy for the preflight'
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set preflight.enabled=true)"
+ykind ConfigMap 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .data."config.json" | from_json | (.cluster.unsafeAllowRunc == (.cluster.runtimeClass == ""))' 'the quickstart: the sandbox as the chart resolves it'
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ozit" >"$tmp/oidc-zitadel.yaml"
@@ -724,6 +762,16 @@ if helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set 'brok
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then
   echo 'FAIL: a bare image tag must be refused' >&2; fail=1; fi
+# v4 step 6 Task 12 (D19): broker.webProxy opens the human listener, :8080, to the web front door's
+# pods alone, in both policy modes; off (the default), no rule admits :8080.
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=$m)"
+  jnone 'select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") | select(.metadata.name == "room-broker") | .spec.ingress[] | select(((.ports // []) | map(.port) | any(. == 8080)) or ((.toPorts // []) | map(.ports[].port) | any(. == "8080")))' "mode $m: without broker.webProxy a rule admits :8080"
+  out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=$m --set broker.webProxy=true)"
+done
+jkind NetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.ports // []) | map(.port) | any(. == 8080))] == [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "rooms-web-proxy"}}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]' 'mode kubernetes: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.webProxy=true)"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] == [{"fromEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "rooms-web-proxy"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' 'mode cilium: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
 helm template ap . -n x -f values-quickstart.yaml --set e2e.unpinnedImages=true --set broker.image.tag=e2e --set runController.image.tag=e2e \
   --set runController.images.harness.tag=e2e --set runController.images.bridge.tag=e2e \
   | grep -q 'imagePullPolicy: Never' || { echo 'FAIL: e2e.unpinnedImages renders Never' >&2; fail=1; }

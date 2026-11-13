@@ -1,0 +1,136 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 (D19, EX4): the web front door, oauth2-proxy, in front of the broker's :8080. Its
+arguments are derived from maku.broker.human (afumbrella.webProxyArgs); its credentials are Secrets by
+name (D14), read through the environment. */ -}}
+{{- $w := .Values.webProxy -}}
+{{- if $w.enabled }}
+{{- $b := .Values.maku.broker -}}
+{{- $h := $b.human | default dict -}}
+{{- $oidc := $b.oidc | default dict -}}
+{{- $okeys := $oidc.keys | default dict -}}
+{{- $args := include "afumbrella.webProxyArgs" . | fromJson }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+# It never calls the API server.
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+spec:
+  selector:
+    app.kubernetes.io/name: rooms-web-proxy
+  ports:
+    - {name: http, port: 80, targetPort: http, protocol: TCP}
+    - {name: metrics, port: {{ $w.metrics.port }}, targetPort: metrics, protocol: TCP}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+spec:
+  replicas: {{ $w.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  template:
+    metadata:
+      labels: {{- include "afumbrella.webProxyLabels" . | nindent 8 }}
+    spec:
+      serviceAccountName: rooms-web-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # A mounted Secret (extraVolumes) is group-readable by the proxy's group.
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: oauth2-proxy
+          image: {{ $w.image }}
+          args:
+            {{- range $k := keys $args | sortAlpha }}
+            {{- $v := index $args $k }}
+            {{- if kindIs "slice" $v }}
+            {{- range $v }}
+            - {{ printf "--%s=%s" $k . | quote }}
+            {{- end }}
+            {{- else }}
+            - {{ printf "--%s=%s" $k $v | quote }}
+            {{- end }}
+            {{- end }}
+            - --http-address=0.0.0.0:4180
+            - {{ printf "--metrics-address=0.0.0.0:%v" $w.metrics.port | quote }}
+            {{- range $k := keys ($w.extraArgs | default dict) | sortAlpha }}
+            - {{ printf "--%s=%v" $k (index $w.extraArgs $k) | quote }}
+            {{- end }}
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: {{ $w.existingSecret }}, key: {{ $w.keys.clientID }}}}
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $w.existingSecret }}, key: {{ $w.keys.clientSecret }}}}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom: {secretKeyRef: {name: {{ $w.existingSecret }}, key: {{ $w.keys.cookieSecret }}}}
+            # maku's bearers: the CLI client's tokens from the same issuer (skip-jwt-bearer-tokens).
+            # $(VAR) expands an earlier entry.
+            - name: CLI_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: {{ $oidc.existingSecret }}, key: {{ $okeys.cli | default "cli-client-id" }}}}
+            - name: OAUTH2_PROXY_EXTRA_JWT_ISSUERS
+              value: {{ printf "%s=$(CLI_CLIENT_ID)" $h.issuer | quote }}
+            {{- if eq ($h.preset | default "zitadel") "zitadel" }}
+            # ZITADEL puts the project in aud only when asked with this scope.
+            - name: PROJECT_ID
+              valueFrom: {secretKeyRef: {name: {{ $oidc.existingSecret }}, key: {{ $okeys.project | default "project-id" }}}}
+            - name: OAUTH2_PROXY_SCOPE
+              value: "openid profile email offline_access urn:zitadel:iam:org:project:id:$(PROJECT_ID):aud"
+            {{- end }}
+            {{- with $w.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+          ports:
+            - {name: http, containerPort: 4180, protocol: TCP}
+            - {name: metrics, containerPort: {{ $w.metrics.port }}, protocol: TCP}
+          livenessProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          resources: {{- toYaml $w.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          {{- with $w.extraVolumeMounts }}
+          volumeMounts: {{- toYaml . | nindent 12 }}
+          {{- end }}
+      {{- with $w.extraVolumes }}
+      volumes: {{- toYaml . | nindent 8 }}
+      {{- end }}
+{{- if gt (int $w.replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rooms-web-proxy
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.webProxyLabels" . | nindent 4 }}
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+{{- end }}
+{{- end }}

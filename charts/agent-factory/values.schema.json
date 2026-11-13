@@ -2,6 +2,22 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "agent-factory values",
   "description": "The umbrella's own keys. maku and maku-factory are free objects until their values change in rollout steps 2 to 6 (PR4).",
+  "definitions": {
+    "parentRef": {
+      "description": "A Gateway API parentRef.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1},
+        "namespace": {"type": "string"},
+        "sectionName": {"type": "string"},
+        "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+        "group": {"type": "string"},
+        "kind": {"type": "string"}
+      }
+    }
+  },
   "type": "object",
   "additionalProperties": false,
   "properties": {
@@ -162,6 +178,106 @@
       "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean"}
+      }
+    },
+    "expose": {
+      "description": "Exposure (D19): one HTTPRoute or Ingress per enabled surface; none renders nothing.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "mode": {"type": "string", "enum": ["none", "httproute", "ingress"]},
+        "httproute": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "parentRefs": {"type": "array", "items": {"$ref": "#/definitions/parentRef"}},
+            "timeouts": {"description": "The web route's, rendered only when set.", "type": "object", "additionalProperties": false, "properties": {"request": {"type": "string", "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$"}, "backendRequest": {"type": "string", "pattern": "^([0-9]{1,5}(h|m|s|ms)){1,4}$"}}}
+          }
+        },
+        "ingress": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "className": {"type": "string"},
+            "annotations": {"type": "object", "additionalProperties": {"type": "string"}}
+          }
+        },
+        "web": {
+          "description": "The broker's human listener, through the web front door (webProxy).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "hostnames": {"description": "RFC 1123 names.", "type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", "maxLength": 253}, "uniqueItems": true},
+            "parentRefs": {"description": "httproute: replaces expose.httproute.parentRefs.", "type": "array", "items": {"$ref": "#/definitions/parentRef"}},
+            "className": {"description": "ingress: replaces expose.ingress.className.", "type": "string"},
+            "annotations": {"description": "ingress: merged over expose.ingress.annotations.", "type": "object", "additionalProperties": {"type": "string"}},
+            "tls": {"description": "ingress: the user's Secrets.", "type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["secretName"], "properties": {"secretName": {"type": "string", "minLength": 1}, "hosts": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", "maxLength": 253}}}}}
+          }
+        },
+        "slack": {
+          "description": "POST /slack/events, to the Slack App (with slack.enabled).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "hostnames": {"description": "RFC 1123 names.", "type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", "maxLength": 253}, "uniqueItems": true},
+            "parentRefs": {"description": "httproute: replaces expose.httproute.parentRefs.", "type": "array", "items": {"$ref": "#/definitions/parentRef"}},
+            "className": {"description": "ingress: replaces expose.ingress.className.", "type": "string"},
+            "annotations": {"description": "ingress: merged over expose.ingress.annotations.", "type": "object", "additionalProperties": {"type": "string"}},
+            "tls": {"description": "ingress: the user's Secrets.", "type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["secretName"], "properties": {"secretName": {"type": "string", "minLength": 1}, "hosts": {"type": "array", "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$", "maxLength": 253}}}}}
+          }
+        },
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "from": {"description": "mode kubernetes: NetworkPolicy peers of the gateway's or ingress controller's pods.", "type": "array", "items": {"type": "object"}},
+            "cilium": {"type": "object", "additionalProperties": false, "properties": {"fromEntities": {"description": "mode cilium: the gateway's or ingress's Cilium identity.", "type": "array", "items": {"type": "string", "minLength": 1}}}}
+          }
+        }
+      }
+    },
+    "webProxy": {
+      "description": "The web front door (D19): oauth2-proxy, its arguments derived from maku.broker.human.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"description": "By digest.", "type": "string", "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"},
+        "replicas": {"type": "integer", "minimum": 1},
+        "existingSecret": {"description": "The web client and the cookie secret (D14).", "type": "string"},
+        "keys": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "clientID": {"type": "string", "minLength": 1},
+            "clientSecret": {"type": "string", "minLength": 1},
+            "cookieSecret": {"type": "string", "minLength": 1}
+          }
+        },
+        "cookieRefresh": {"type": "string", "pattern": "^([0-9]{1,5}(h|m|s)){1,3}$"},
+        "cookieSameSite": {"type": "string", "enum": ["strict", "lax"]},
+        "metrics": {"type": "object", "additionalProperties": false, "properties": {"port": {"type": "integer", "minimum": 1024, "maximum": 65535}}},
+        "extraArgs": {"description": "Appended as --key=value; a derived key is refused.", "type": "object", "additionalProperties": {"type": ["string", "boolean", "integer"]}},
+        "extraEnv": {"type": "array", "items": {"type": "object"}},
+        "extraVolumes": {"type": "array", "items": {"type": "object"}},
+        "extraVolumeMounts": {"type": "array", "items": {"type": "object"}},
+        "networkPolicy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "idp": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "to": {"type": "array", "items": {"type": "object"}},
+                "port": {"type": "integer", "minimum": 0, "maximum": 65535}
+              }
+            }
+          }
+        },
+        "resources": {"type": "object"}
       }
     },
     "maku": {

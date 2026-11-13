@@ -1,0 +1,246 @@
+# The exposure probe's objects (plan v4 step 6, Task 9), in namespace probe. __PROXY_IMAGE__,
+# __PY_IMAGE__ and __ISSUER__ are filled by probe.sh. The Secret probe-proxy and the ConfigMap
+# probe-scripts are created by probe.sh.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: echo, namespace: probe}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: echo}}
+  template:
+    metadata: {labels: {app: echo}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: echo
+          image: __PY_IMAGE__
+          command: [python3, -u, /app/echo.py]
+          env: [{name: PING_EVERY, value: "30"}]
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {tcpSocket: {port: 8080}, periodSeconds: 2}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: scripts, mountPath: /app}]
+      volumes: [{name: scripts, configMap: {name: probe-scripts}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: echo, namespace: probe}
+spec:
+  selector: {app: echo}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: client, namespace: probe}
+spec:
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: client
+      image: __PY_IMAGE__
+      command: [sleep, infinity]
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts:
+        - {name: scripts, mountPath: /app}
+        - {name: ca, mountPath: /etc/e2e/ca}
+  volumes:
+    - {name: scripts, configMap: {name: probe-scripts}}
+    - {name: ca, secret: {secretName: e2e-stub-ca}}
+---
+# The Gateway, on agentgateway: one HTTP listener, the user's gateway terminating TLS stands in.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata: {name: probe-gw, namespace: probe}
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - {name: http, protocol: HTTP, port: 8080, allowedRoutes: {namespaces: {from: Same}}}
+---
+# X1: the Slack surface: POST /slack/events exactly, and nothing else.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: slack, namespace: probe}
+spec:
+  parentRefs: [{name: probe-gw}]
+  hostnames: [slack.probe.test]
+  rules:
+    - matches: [{path: {type: Exact, value: /slack/events}, method: POST}]
+      backendRefs: [{name: echo, port: 80}]
+---
+# X2, X3: the web surface's header removal, by exact name, without timeouts.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: web, namespace: probe}
+spec:
+  parentRefs: [{name: probe-gw}]
+  hostnames: [web.probe.test]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /}}]
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - X-Forwarded-Access-Token
+              - X-Forwarded-User
+              - X-Forwarded-Email
+              - X-Forwarded-Groups
+              - X-Forwarded-Preferred-Username
+              - X-Auth-Request-User
+              - X-Auth-Request-Email
+              - X-Auth-Request-Preferred-Username
+              - X-Auth-Request-Groups
+              - X-Auth-Request-Access-Token
+              - X-Forwarded-Uri
+              - X-Forwarded-Host
+              - X-Forwarded-Proto
+      backendRefs: [{name: echo, port: 80}]
+---
+# X3, X6: the same with timeouts.request 0s (Envoy-based gateways' WebSocket setting).
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: web-timeouts, namespace: probe}
+spec:
+  parentRefs: [{name: probe-gw}]
+  hostnames: [web-t.probe.test]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /}}]
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token, X-Forwarded-Uri, X-Forwarded-Host, X-Forwarded-Proto]}
+      backendRefs: [{name: echo, port: 80}]
+      timeouts: {request: 0s}
+---
+# X3: the whole web chain: the gateway, oauth2-proxy, the backend.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata: {name: proxied, namespace: probe}
+spec:
+  parentRefs: [{name: probe-gw}]
+  hostnames: [proxied.probe.test]
+  rules:
+    - matches: [{path: {type: PathPrefix, value: /}}]
+      filters:
+        - type: RequestHeaderModifier
+          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token, X-Forwarded-Uri, X-Forwarded-Host, X-Forwarded-Proto]}
+      backendRefs: [{name: proxy, port: 80}]
+---
+# X1, X3: Traefik (k3s's ingress controller): the Slack path exactly, and a WebSocket host.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: {name: probe, namespace: probe}
+spec:
+  ingressClassName: traefik
+  rules:
+    - host: slack.probe.test
+      http:
+        paths: [{path: /slack/events, pathType: Exact, backend: {service: {name: echo, port: {number: 80}}}}]
+    - host: ws.probe.test
+      http:
+        paths: [{path: /, pathType: Prefix, backend: {service: {name: echo, port: {number: 80}}}}]
+---
+# X4, X5: oauth2-proxy as the chart derives it (EX4), in front of the backend. proxy reads the
+# top-level groups claim, proxy-nested realm_access.roles.
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: proxy, namespace: probe}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: proxy}}
+  template:
+    metadata: {labels: {app: proxy}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: proxy
+          image: __PROXY_IMAGE__
+          args:
+            - --provider=oidc
+            - --oidc-issuer-url=__ISSUER__
+            - --redirect-url=http://web.probe.test/oauth2/callback
+            - --upstream=http://echo.probe.svc.cluster.local
+            - --http-address=0.0.0.0:4180
+            - --metrics-address=0.0.0.0:44180
+            - --email-domain=*
+            - --pass-authorization-header=true
+            - --pass-access-token=true
+            - --skip-auth-strip-headers=true
+            - --pass-user-headers=true
+            - --pass-basic-auth=false
+            - --set-xauthrequest=false
+            - --cookie-secure=true
+            - --cookie-httponly=true
+            - --cookie-samesite=strict
+            - --cookie-refresh=1h
+            - --reverse-proxy=false
+            - --skip-provider-button=true
+            - --skip-jwt-bearer-tokens=true
+            - --extra-jwt-issuers=__ISSUER__=maku-cli
+            - --skip-auth-route=GET=^/\.well-known/roomctl$
+            - --skip-auth-route=GET=^/link/github/callback$
+            - --oidc-groups-claim=groups
+            - --allowed-group=agents-admin
+            - --allowed-group=agents-member
+          env:
+            - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+            - {name: OAUTH2_PROXY_CLIENT_ID, valueFrom: {secretKeyRef: {name: probe-proxy, key: client-id}}}
+            - {name: OAUTH2_PROXY_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: probe-proxy, key: client-secret}}}
+            - {name: OAUTH2_PROXY_COOKIE_SECRET, valueFrom: {secretKeyRef: {name: probe-proxy, key: cookie-secret}}}
+          ports: [{name: http, containerPort: 4180}, {name: metrics, containerPort: 44180}]
+          readinessProbe: {httpGet: {path: /ready, port: http}, periodSeconds: 2}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: ca, mountPath: /etc/e2e/ca}]
+      volumes: [{name: ca, secret: {secretName: e2e-stub-ca}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: proxy, namespace: probe}
+spec:
+  selector: {app: proxy}
+  ports: [{name: http, port: 80, targetPort: http}]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: proxy-nested, namespace: probe}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app: proxy-nested}}
+  template:
+    metadata: {labels: {app: proxy-nested}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65532, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: proxy
+          image: __PROXY_IMAGE__
+          args:
+            - --provider=oidc
+            - --oidc-issuer-url=__ISSUER__
+            - --redirect-url=http://web.probe.test/oauth2/callback
+            - --upstream=http://echo.probe.svc.cluster.local
+            - --http-address=0.0.0.0:4180
+            - --email-domain=*
+            - --pass-authorization-header=true
+            - --pass-access-token=true
+            - --skip-jwt-bearer-tokens=true
+            - --extra-jwt-issuers=__ISSUER__=maku-cli
+            - --oidc-groups-claim=realm_access.roles
+            - --allowed-group=agents-member
+          env:
+            - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+            - {name: OAUTH2_PROXY_CLIENT_ID, valueFrom: {secretKeyRef: {name: probe-proxy, key: client-id}}}
+            - {name: OAUTH2_PROXY_CLIENT_SECRET, valueFrom: {secretKeyRef: {name: probe-proxy, key: client-secret}}}
+            - {name: OAUTH2_PROXY_COOKIE_SECRET, valueFrom: {secretKeyRef: {name: probe-proxy, key: cookie-secret}}}
+          ports: [{name: http, containerPort: 4180}]
+          readinessProbe: {httpGet: {path: /ready, port: http}, periodSeconds: 2}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: ca, mountPath: /etc/e2e/ca}]
+      volumes: [{name: ca, secret: {secretName: e2e-stub-ca}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: proxy-nested, namespace: probe}
+spec:
+  selector: {app: proxy-nested}
+  ports: [{name: http, port: 80, targetPort: http}]

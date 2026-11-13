@@ -1,0 +1,156 @@
+{{- if .Values.preflight.enabled }}
+{{- $sb := include "ap.sandbox" . | fromJson -}}
+{{- $mode := include "ap.netMode" . -}}
+{{- $secrets := list -}}
+{{- range (include "ap.preflightSecrets" . | fromJson).secrets }}{{ $secrets = append $secrets .name }}{{ end -}}
+{{- $crds := list -}}
+{{- range list "agentruns" "factories" "mergepolicies" "repositories" "rooms" "tasks" }}{{ $crds = append $crds (printf "%s.maku.ogenki.io" .) }}{{ end -}}
+{{- range .Values.preflight.extraCRDs }}{{ $crds = append $crds .name }}{{ end -}}
+{{- $cluster := printf "maku-%s-%s-preflight" .Release.Namespace .Release.Name -}}
+{{- /* An empty resourceNames would grant get on every Secret in the namespace: never render it. The
+broker's TLS pair is always one, so this guards against a values change that drops it. */ -}}
+{{- if not $secrets -}}
+{{- fail "preflight.enabled: no Secret of docs/install-secrets.md resolves from the values, and an empty list would grant get on every Secret" -}}
+{{- end -}}
+# The install's preflight (v4 D24, step 7 R2): a Helm test hook, and a suspended CronJob from which
+# `maku preflight` and Argo CD users create a Job. Both run one pod template (ap.preflightPod).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+---
+# Get by name only: the registry's Secrets the values enable, never a list of every Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+    resourceNames: {{ $secrets | sortAlpha | uniq | toJson }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: {{ .Release.Name }}-preflight}
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}-preflight, namespace: {{ .Release.Namespace }}}
+---
+# A release-unique name (D2): two installs share a cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+rules:
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get]
+    resourceNames: {{ $crds | toJson }}
+  {{- with $sb.class }}
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    verbs: [get]
+    resourceNames: [{{ . }}]
+  {{- end }}
+  - nonResourceURLs: [/version]
+    verbs: [get]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $cluster }}
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: {{ $cluster }}}
+subjects:
+  - {kind: ServiceAccount, name: {{ .Release.Name }}-preflight, namespace: {{ .Release.Namespace }}}
+{{- if eq $mode "kubernetes" }}
+---
+# Egress to the API server and the components' ops port only (IN3): each component checks its own path.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: preflight
+  policyTypes: [Ingress, Egress]
+  egress:
+    {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}
+    - to:
+        - podSelector:
+            matchExpressions:
+              - {key: app.kubernetes.io/name, operator: In, values: [room-broker, run-controller, agent-factory]}
+      ports: [{port: 9090, protocol: TCP}]
+{{- else if eq $mode "cilium" }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: preflight
+  ingress: [{}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            {{- range .Values.apiServerPorts }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+    - toEndpoints:
+        - matchExpressions:
+            - {key: app.kubernetes.io/name, operator: In, values: [room-broker, run-controller, agent-factory]}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+{{- end }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Release.Name }}-preflight-test
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: {{ include "ap.preflightSeconds" . }}
+  template: {{- include "ap.preflightPod" . | nindent 4 }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ .Release.Name }}-preflight
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+spec:
+  # Never scheduled: `kubectl create job --from=cronjob/{{ .Release.Name }}-preflight` runs it.
+  schedule: "@yearly"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # Kept a day for `maku preflight` and `kubectl logs` to read, then collected.
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: {{ include "ap.preflightSeconds" . }}
+      template: {{- include "ap.preflightPod" . | nindent 8 }}
+{{- end }}

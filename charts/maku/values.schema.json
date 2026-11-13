@@ -9,6 +9,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "webProxy": {"description": "Open :8080 to the umbrella's web front door alone (v4 D19).", "type": "boolean"},
         "githubLink": {
           "description": "The GitHub account link's OAuth client by Secret (v4 D8, oidc mode): mounted at /etc/room-broker/github-link, filling human.githubLink's unset keys.",
           "type": "object",
@@ -212,6 +213,20 @@
         "extraPorts": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 65535}},
         "maxTunnels": {"type": "integer", "minimum": 1},
         "maxTunnelsPerClient": {"type": "integer", "minimum": 1}
+      }
+    },
+    "preflight": {
+      "description": "The install's preflight (v4 D24): a Helm test hook and a suspended CronJob running the run-controller image's preflight.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"type": "object", "additionalProperties": false, "properties": {"repository": {"type": "string"}, "tag": {"type": "string"}}},
+        "timeout": {"type": "string", "pattern": "^([0-9]+(s|m|h))+$"},
+        "strict": {"type": "boolean"},
+        "extraCRDs": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "version"],
+          "properties": {"name": {"type": "string", "pattern": "^[a-z0-9.-]+$"}, "version": {"type": "string", "pattern": "^v[0-9a-z]+$"}}}},
+        "resources": {"type": "object"}
       }
     },
     "sandbox": {

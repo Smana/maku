@@ -11,10 +11,19 @@ spec:
     matchLabels:
       app.kubernetes.io/name: run-controller
   policyTypes: [Ingress, Egress]
-  {{- with .Values.networkPolicies.kubernetes.metricsFrom }}
+  {{- if or .Values.networkPolicies.kubernetes.metricsFrom .Values.preflight.enabled }}
   ingress:
+    {{- with .Values.networkPolicies.kubernetes.metricsFrom }}
     - from: {{- toYaml . | nindent 8 }}
       ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+    {{- if .Values.preflight.enabled }}
+    # The install's preflight collects /preflight on the ops port (v4 D24).
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: preflight}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
   {{- end }}
   egress:
     {{- include "ap.npDNSAndAPIServer" . | nindent 4 }}

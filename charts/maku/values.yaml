@@ -162,6 +162,11 @@ broker:
   # release's unless these labels set io.kubernetes.pod.namespace.
   factoryPodLabels:
     app.kubernetes.io/name: agent-factory
+  # The web front door (v4 D19): true opens the human listener, :8080, to the umbrella's oauth2-proxy
+  # pods (app.kubernetes.io/name: rooms-web-proxy) and to nothing else, in networkPolicies.mode cilium
+  # and kubernetes. The umbrella requires it to equal its webProxy.enabled. Off: :8080 is admitted by
+  # no rule but networkPolicy.extraIngress.
+  webProxy: false
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
@@ -301,6 +306,26 @@ runController:
   tracing:
     otlpEndpoint: ""
     collector: {namespace: "", labels: {}}
+
+# The install's preflight (v4 D24): the run-controller image's `preflight` subcommand checks, seam by
+# seam, whether the install can work: the Kubernetes version, the CRDs, the RuntimeClass, and each
+# Secret of docs/install-secrets.md the values enable, with its keys. It runs as a Helm test hook
+# (`helm test <release>`) and as a suspended CronJob, <release>-preflight, from which `maku preflight`
+# and Argo CD users create a Job. Off by default; a failing check names its fix (docs/install.md).
+#   image      empty: the run-controller's
+#   timeout    the Job's activeDeadlineSeconds
+#   strict     a warning fails too (CI uses it)
+#   extraCRDs  [{name, version}]: CRDs the values outside this chart need (agentgateway's, Gateway
+#              API's, prometheus-operator's, external-secrets.io's)
+preflight:
+  enabled: false
+  image: {repository: "", tag: ""}
+  timeout: 5m
+  strict: false
+  extraCRDs: []
+  resources:
+    requests: {cpu: 20m, memory: 32Mi}
+    limits: {cpu: 200m, memory: 128Mi}
 
 # The run pod's sandbox (D18). These keys are the spec's; the run-controller's older keys stay
 # honoured until rollout step 8 deletes them:

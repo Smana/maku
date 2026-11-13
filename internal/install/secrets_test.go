@@ -35,16 +35,21 @@ func TestDocs(t *testing.T) {
 
 // The chart's _seams.tpl is the data too: task chart:seams writes it.
 func TestSeamsTemplate(t *testing.T) {
-	got, err := os.ReadFile(filepath.Join(root, "charts/agent-factory/templates/_seams.tpl"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := Template()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got) != want {
-		t.Fatal("charts/agent-factory/templates/_seams.tpl differs from Seams: run task chart:seams")
+	for path, gen := range map[string]func() (string, error){
+		"charts/agent-factory/templates/_seams.tpl": Template,
+		"charts/maku/templates/_seams.tpl":          MakuTemplate,
+	} {
+		got, err := os.ReadFile(filepath.Join(root, path))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := gen()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != want {
+			t.Fatalf("%s differs from Seams: run task chart:seams", path)
+		}
 	}
 }
 
