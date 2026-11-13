@@ -211,3 +211,145 @@ func TestMakuConfigMigrateRefusesAChange(t *testing.T) {
 		t.Fatalf("%s", out.String())
 	}
 }
+
+// splitANR writes ai-native-ref's objects in the binding shape, each edited by edit first.
+func splitANR(t *testing.T, edit func(objs []resources.Object)) string {
+	t.Helper()
+	raw, err := os.ReadFile(anrObjects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objs, err := resources.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objs, err = resources.Split(objs, "agent-system"); err != nil {
+		t.Fatal(err)
+	}
+	if edit != nil {
+		edit(objs)
+	}
+	out, err := resources.Encode(objs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "objects.yaml")
+	if err := os.WriteFile(p, out, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+func editPolicy(objs []resources.Object, name string, gen int64, set map[string]any) {
+	for i := range objs {
+		if objs[i].Kind == resources.KindMergePolicy && objs[i].Name == name {
+			objs[i].Generation = gen
+			for k, v := range set {
+				objs[i].Spec[k] = v
+			}
+		}
+	}
+}
+
+// B11, Q5: --base prints each changed policy's consumers, live ones first, a live relaxation
+// marked LIVE, and a consumer the change no longer resolves for with its reason.
+func TestMakuConfigValidateBase(t *testing.T) {
+	residual := anrResidual(t)
+	base := splitANR(t, func(objs []resources.Object) {
+		editPolicy(objs, "dead-links", 3, nil)
+		editPolicy(objs, "docs-links", 1, map[string]any{"maxModifiedLines": 10})
+	})
+	next := splitANR(t, func(objs []resources.Object) {
+		editPolicy(objs, "dead-links", 4, map[string]any{"monitor": map[string]any{"oracleRuns": 2, "followUpWindow": "168h", "flux": map[string]any{"within": "30m"}}})
+		editPolicy(objs, "docs-links", 2, map[string]any{"maxModifiedLines": 50})
+	})
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", base, next}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	want := `MergePolicy dead-links (generation 3 -> 4):
+  ai-native-ref     shadow  -                                                     refused: MissingParameter: monitor.flux needs Repository.spec.merge.fluxSource
+  cloud-native-ref  shadow  relaxation: monitor changed or removed: its evidence  resolves
+MergePolicy docs-links (generation 1 -> 2):
+  LIVE cloud-native-ref  live    relaxation: maxModifiedLines raised or removed  resolves
+  ai-native-ref          shadow  relaxation: maxModifiedLines raised or removed  resolves
+  runlore                shadow  relaxation: maxModifiedLines raised or removed  resolves
+  runlore-kb             shadow  relaxation: maxModifiedLines raised or removed  resolves
+ok: 17 accepted
+`
+	if out.String() != want {
+		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
+	}
+	out.Reset()
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", base, "--expect-unchanged", next})
+	if err == nil || !strings.Contains(out.String(), "changed: Smana/ai-native-ref dead-links: served before only") {
+		t.Fatalf("got %v\n%s", err, out.String())
+	}
+}
+
+// B17, ANR-1: the legacy objects and their split resolve to the same classes, and --resolved prints
+// them as the frozen snapshot ai-native-ref keeps.
+func TestMakuConfigValidateResolvedAndUnchanged(t *testing.T) {
+	residual := anrResidual(t)
+	split := splitANR(t, nil)
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base", anrObjects, "--expect-unchanged", split}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	want, err := os.ReadFile("testdata/anr-resolved.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, objs := range []string{anrObjects, split} {
+		out.Reset()
+		if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--resolved", objs}); err != nil {
+			t.Fatalf("%v\n%s", err, out.String())
+		}
+		_, json, ok := strings.Cut(out.String(), "\n{") // after the legacy shape's warnings
+		got := "{" + json
+		if !ok && strings.HasPrefix(out.String(), "{") {
+			got = out.String()
+		}
+		if got != string(want) {
+			t.Fatalf("%s: --resolved is not testdata/anr-resolved.json:\n%s", objs, got)
+		}
+	}
+}
+
+// Q10: a binding over a guardrail is one guardrail: line, and validate fails; within them, the
+// count is printed.
+func TestMakuConfigValidateGuardrails(t *testing.T) {
+	residual := anrResidual(t)
+	guarded := func(maxPerDay int) string {
+		return splitANR(t, func(objs []resources.Object) {
+			for i := range objs {
+				if objs[i].Kind == resources.KindFactory {
+					objs[i].Spec["mergeGuardrails"] = map[string]any{"maxPerDay": maxPerDay}
+				}
+			}
+		})
+	}
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(1)})
+	if err == nil || !strings.Contains(err.Error(), "2 bindings over a guardrail") {
+		t.Fatalf("got %v\n%s", err, out.String())
+	}
+	for _, line := range []string{
+		"guardrail: Repository/cloud-native-ref deps-patch: maxPerDay 2 is over the guardrail's 1\n",
+		"guardrail: Repository/runlore-kb kb-entries: maxPerDay 5 is over the guardrail's 1\n",
+	} {
+		if !strings.Contains(out.String(), line) {
+			t.Fatalf("missing %q in:\n%s", line, out.String())
+		}
+	}
+	out.Reset()
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(5)}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "guardrails: 23 bindings within\n") {
+		t.Fatalf("%s", out.String())
+	}
+}

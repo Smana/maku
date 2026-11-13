@@ -3,14 +3,20 @@
 package app
 
 import (
+	"cmp"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
+	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -68,6 +74,10 @@ func (r Maku) config(args []string) error {
 		return err
 	case "validate":
 		cfgPath := fs.String("config", "", "the factory config file")
+		var base manifestList
+		fs.Var(&base, "base", "the manifests before the change (e.g. origin/main's), for each changed policy's consumers; repeatable")
+		resolved := fs.Bool("resolved", false, "print each repository's resolved classes as JSON")
+		unchanged := fs.Bool("expect-unchanged", false, "with --base: fail when any resolved class differs from the base's")
 		pos, err := flags(fs, args)
 		if err != nil {
 			return err
@@ -98,6 +108,20 @@ func (r Maku) config(args []string) error {
 		}
 		if len(res.Refused) > 0 {
 			return fmt.Errorf("config validate: %d refused", len(res.Refused))
+		}
+		if *unchanged && len(base) == 0 {
+			return errors.New("config validate: --expect-unchanged compares with --base")
+		}
+		if len(base) > 0 {
+			if err := r.blastRadius(file, base, res, *unchanged); err != nil {
+				return err
+			}
+		}
+		if over, err := r.guardrailLines(res); err != nil || over > 0 {
+			return cmp.Or(err, fmt.Errorf("config validate: %d bindings over a guardrail", over))
+		}
+		if *resolved {
+			return r.printResolved(res.Config)
 		}
 		_, err = fmt.Fprintf(r.Out, "ok: %d accepted\n", len(res.Accepted))
 		return err
@@ -178,6 +202,98 @@ func (r Maku) printRefusals(res resources.Result) error {
 		}
 	}
 	return nil
+}
+
+// blastRadius prints each changed policy's consumers against the base manifests (B11, Q5): live
+// consumers first, each relaxation of a live one marked LIVE. With unchanged, any resolved class
+// that differs from the base's is an error.
+func (r Maku) blastRadius(file []byte, paths []string, next resources.Result, unchanged bool) error {
+	objs, err := readManifests(paths)
+	if err != nil {
+		return fmt.Errorf("config validate: --base: %w", err)
+	}
+	base, err := resources.Assemble(file, objs)
+	if err != nil {
+		return fmt.Errorf("config validate: --base: %w", err)
+	}
+	w := tabwriter.NewWriter(r.Out, 0, 4, 2, ' ', 0) // buffered: Flush returns the write error
+	for _, p := range policyview.Impact(base, next) {
+		gen := ""
+		if p.BaseGeneration != 0 || p.Generation != 0 {
+			gen = fmt.Sprintf(" (generation %d -> %d)", p.BaseGeneration, p.Generation)
+		}
+		_, _ = fmt.Fprintf(w, "MergePolicy %s%s:\n", p.Policy, gen)
+		for _, c := range p.Consumers {
+			mark, change, result := "", c.Change, "resolves"
+			if len(c.Why) > 0 {
+				change += ": " + strings.Join(c.Why, "; ")
+			}
+			if c.Mode == config.ModeLive && c.Change == mergepolicy.KindRelaxation {
+				mark = "LIVE "
+			}
+			if !c.Resolves {
+				result = "refused: " + c.Reason
+			}
+			_, _ = fmt.Fprintf(w, "  %s%s\t%s\t%s\t%s\n", mark, c.Repository, c.Mode, change, result)
+		}
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if !unchanged {
+		return nil
+	}
+	if base.Config == nil || next.Config == nil {
+		return errors.New("config validate: --expect-unchanged: no config to compare")
+	}
+	d := resources.Equal(base.Config, next.Config)
+	for _, line := range d {
+		if _, err := fmt.Fprintf(r.Out, "changed: %s\n", line); err != nil {
+			return err
+		}
+	}
+	if len(d) > 0 {
+		return fmt.Errorf("config validate: %d resolved settings differ from --base", len(d))
+	}
+	return nil
+}
+
+// guardrailLines prints one line per binding over a guardrail (Q10, PR10) and, with guardrails
+// set and none over, how many bindings are within. It returns how many are over.
+func (r Maku) guardrailLines(res resources.Result) (int, error) {
+	over, within := 0, 0
+	for _, b := range res.Bindings {
+		switch {
+		case b.Reason == config.ReasonGuardrailMismatch:
+			over++
+			msg := strings.TrimPrefix(b.Message, "class "+b.Name+": ")
+			if _, err := fmt.Fprintf(r.Out, "guardrail: Repository/%s %s: %s\n", b.Repository, b.Name, msg); err != nil {
+				return over, err
+			}
+		case b.Accepted:
+			within++
+		}
+	}
+	if over == 0 && res.Config != nil && !reflect.ValueOf(res.Config.MergeGuardrails).IsZero() {
+		_, err := fmt.Fprintf(r.Out, "guardrails: %d bindings within\n", within)
+		return 0, err
+	}
+	return over, nil
+}
+
+// printResolved prints each repository's resolved classes as JSON, sorted by repository and
+// class: the snapshot a migration pull request keeps unchanged.
+func (r Maku) printResolved(c *config.Config) error {
+	out := map[string]map[string]config.Class{}
+	for _, rc := range c.Repos() {
+		out[rc.Name] = rc.Classes
+	}
+	b, err := json.MarshalIndent(out, "", "  ")
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(r.Out, "%s\n", b)
+	return err
 }
 
 // writeIn writes b to p, 0600, through an os.Root on p's directory: the file stays in the
