@@ -405,6 +405,14 @@ out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set maku-gateway.net
 ykind PodMonitor 'select(.metadata.name == "maku-gateway") | .kind == "PodMonitor"' 'maku-gateway mode none: the PodMonitor needs no allowFrom'
 out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set-json 'maku-gateway.metrics.allowFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" || { echo "FAIL: monitoring with maku-gateway does not render" >&2; fail=1; out=''; }
 ykind PodMonitor 'select(.metadata.name == "maku-gateway") | (.spec.selector.matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway" and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'maku-gateway: the model-gateway proxies PodMonitor'
+# the gateway group's rules read the job that PodMonitor sets
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set monitoring.prometheusRule.enabled=true \
+  --set-json 'maku-gateway.metrics.allowFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')"
+job="$(yq ea 'select(.kind == "PodMonitor" and .metadata.name == "maku-gateway") | .spec.podMetricsEndpoints[0].relabelings[] | select(.targetLabel == "job") | .replacement' - <<<"$out")"
+[[ $job == model-gateway ]] || { echo "FAIL: the maku-gateway PodMonitor sets job '$job'" >&2; fail=1; }
+n="$(yq ea 'select(.kind == "PrometheusRule") | .spec.groups[] | select(.name == "maku-gateway") | .rules | length' - <<<"$out")"
+k="$(yq ea -o=json -I=0 'select(.kind == "PrometheusRule") | .spec.groups[] | select(.name == "maku-gateway") | .rules[] | .expr' - <<<"$out" | grep -cF "job=\\\"$job\\\"")"
+[[ $n == 7 && $k == 7 ]] || { echo "FAIL: $k of the gateway group's $n rules read the PodMonitor's job $job" >&2; fail=1; }
 notes="$(helm install af . -n maku --dry-run=client "${gwd[@]}" "${mon[@]}" --set maku-gateway.networkPolicy.mode=none --set agentgateway.enabled=true 2>/dev/null | sed -n '/^NOTES:/,$p')"
 grep -qF 'agentgateway.monitoring.enabled' <<<"$notes" || { echo "FAIL: NOTES does not tell agentgateway.monitoring.enabled with monitoring on" >&2; fail=1; }
 
@@ -413,7 +421,7 @@ rule=(--set monitoring.prometheusRule.enabled=true --set-json 'monitoring.promet
 # groups GROUPS: the rendered rule's group names, in order
 groups() { yq ea 'select(.kind == "PrometheusRule") | [.spec.groups[].name] | join(" ")' - <<<"$out"; }
 # alerts: the rendered alert names, sorted
-alerts() { yq ea '[select(.kind == "PrometheusRule") | .spec.groups[].rules[] | .alert // .record] | sort | join(" ")' - <<<"$out"; }
+alerts() { yq ea '[select(.kind == "PrometheusRule") | .spec.groups[].rules[] | (.alert // .record)] | sort | join(" ")' - <<<"$out"; }
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}")" || { echo "FAIL: monitoring.prometheusRule.enabled does not render" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms maku-factory maku-run-path" ]] || { echo "FAIL: the demo's groups are '$(groups)', want 'maku-rooms maku-factory maku-run-path'" >&2; fail=1; }
 ykind PrometheusRule '(.metadata.name == "maku" and .metadata.namespace == "maku" and .metadata.labels.release == "prom")' 'one PrometheusRule maku, with monitoring.prometheusRule.labels'
@@ -445,7 +453,23 @@ ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.aler
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set slack.enabled=true)"
 [[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-slack" ]] || { echo "FAIL: slack.enabled: groups '$(groups)'" >&2; fail=1; }
 out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}")"
-[[ "$(groups)" == "maku-rooms maku-factory maku-run-path" ]] || { echo "FAIL: maku-gateway.enabled: groups '$(groups)', want no gateway group yet" >&2; fail=1; }
+# PR B2 (Task 22): maku-gateway.enabled adds maku-gateway, on the gateway's job and the runs' subject
+[[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-gateway" ]] || { echo "FAIL: maku-gateway.enabled: groups '$(groups)', want the maku-gateway group last" >&2; fail=1; }
+got="$(yq ea '[select(.kind == "PrometheusRule") | .spec.groups[] | select(.name == "maku-gateway") | .rules[] | (.alert // .record)] | join(" ")' - <<<"$out")"
+[[ $got == "AgentRouterMetricContractBroken AgentGateway5xxRatioHigh AgentGatewayModelErrorRatioHigh AgentGatewayUnauthorizedBurst AgentGatewayCostUnpriced agent_cost:gateway_run_usd AgentCostCrossCheckMismatch" ]] || { echo "FAIL: the maku-gateway group holds '$got'" >&2; fail=1; }
+ykind PrometheusRule '.spec.groups[].rules[] | select(.record == "agent_cost:gateway_run_usd") | .expr == "sum by (run) (label_replace(increase(agentgateway_gen_ai_client_cost_usd_total{job=\"model-gateway\", namespace=\"maku\", ar_agent=~\"system:serviceaccount:agents:run-.+\"}[6h]), \"run\", \"$1\", \"ar_agent\", \"system:serviceaccount:agents:run-(.+)\"))"' 'the cross-check record reads the gateway job and the runs subject, $1 intact'
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(to_yaml | test("__[A-Z_]+__|agent-system|agent-gateway\"|xplane-|\\$\\{|cached_input|cache_creation_input|gen_ai_client_token_usage_sum\\{(.*)namespace=\"agent")) | (.alert // .record)' 'a gateway rule keeps a placeholder or a cloud-native-ref name'
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.expr | test("(^|[^_])gen_ai_(client|server)_")) | (.alert // .record)' 'a gateway rule reads a relabelled gen_ai_* name, not agentgateway_*'
+# a namePrefix with a dot is escaped where it is a regex
+out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}" --set maku.runs.namePrefix=r.n- --set maku-gateway.runs.namePrefix=r.n-)" || { echo "FAIL: a dotted namePrefix does not render" >&2; fail=1; out=''; }
+rec="$(yq ea 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.record == "agent_cost:gateway_run_usd") | .expr' - <<<"$out")"
+grep -qF 'ar_agent=~"system:serviceaccount:agents:r\\.n-.+"' <<<"$rec" && grep -qF '"system:serviceaccount:agents:r\\.n-(.+)"' <<<"$rec" ||
+  { echo "FAIL: the run subject is not regex-escaped (PromQL doubles the backslash): $rec" >&2; fail=1; }
+# without maku-factory, no ledger: the cross-check's record and alert are left out
+out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}" --set maku-factory.enabled=false --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared \
+  --set maku-factory.config.runs.gatewayIdentity=false --set maku.runController.gitReadSecret=git-read)" || { echo "FAIL: the gateway without the factory does not render" >&2; fail=1; out=''; }
+[[ "$(groups)" == "maku-rooms maku-run-path maku-gateway" ]] || { echo "FAIL: no factory: groups '$(groups)'" >&2; fail=1; }
+grep -qE 'AgentCostCrossCheckMismatch|agent_cost:gateway_run_usd' <<<"$(alerts)" && { echo "FAIL: the cross-check renders without maku-factory" >&2; fail=1; }
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runController.enabled=false --set maku-factory.enabled=false \
   --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
