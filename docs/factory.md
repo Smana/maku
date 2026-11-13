@@ -2271,7 +2271,7 @@ coordination's execute admission reads it ([prerequisites](#execution-prerequisi
 | R3 | The publisher can write | The octo-sts publisher policy, or the minter's publisher grant with `hardening.publisher.minter` |
 | R4 | T1 to T4 all enforce | The live config. T5 is not a readiness fact |
 | R5 | Reads are filtered | The live config ([reads filtered](#hardening-reads-filtered)) |
-| R6 | A drill passed for this Maku version and hardening hash within `drills.maxAge` | The broker's drill reports ([drills](#hardening-drills)) |
+| R6 | The newest drill for this Maku version and hardening hash passed, within `drills.maxAge`: a newer fail hides an older pass | The broker's drill reports ([drills](#hardening-drills)) |
 | R7 | Not the laptop demo | The live config |
 
 Every fact is read afresh on every call; a fact that cannot be read is a refusal (`error`).
@@ -2281,9 +2281,12 @@ Every fact is read afresh on every call; a fact that cannot be read is a refusal
   `maku_factory_hardening_missing{repository,missing}`. A change is logged once. The gauge is never
   read as an answer.
 - **The API.** `GET /v1/hardening/readiness` answers an operator, a human in the admin group:
-  `{"repositories": [{repository, hardened, missing, drill}]}`, computed afresh. Anyone else
-  gets 403.
-- **The Evidence page** shows the repository's readiness row in words.
+  `{"repositories": [{repository, hardened, missing, drill}]}`. Anyone else gets 403.
+- **The Evidence page** shows any reader of the repository whether it is hardened, not hardened,
+  or could not be read: never which facts are missing, which stay on the operators' route.
+- **One read a minute.** A readiness read costs up to five GitHub reads with the factory App, and
+  the Evidence page polls: the page and the route share one read per repository for 60 seconds,
+  concurrent views included. Coordination's admission never uses it: it reads afresh.
 - **On the run-controller** R2 reads the minter's role table, which v4 step 3 ships (owner ruling
   HR42, option A). Without `runTokens.perRun`, R2 answers `sandbox_write_token`.
 
@@ -2301,9 +2304,12 @@ hardening:
 `layers.classifierEnforce` promotes T5 to enforce for the types it names, on repositories at mode
 `enforce` only. A hit on a promoted type refuses `injection_suspected`, and an unreachable
 classifier refuses `classifier_unavailable`. Every other type keeps T5 in audit. The list needs
-`agentGuard.url` and a repository at mode `enforce`, and it enters the hardening hash, so a
-promotion needs a new passing drill before R6 holds again. `layers.classifier: enforce` stays
-refused.
+`agentGuard.url`, `layers.classifier` not off, and a repository at mode `enforce`. It enters the
+hardening hash, so a promotion needs a new passing drill before R6 holds again; so does pointing
+`agentGuard.url` at another classifier. `layers.classifier: enforce` stays refused.
+
+The list is global: promoting a type promotes it on every repository at mode `enforce`. A type
+whose numbers hold on one repository but not another is not promoted.
 
 Promote a type only on its numbers, read from the drill reports and
 `maku_factory_hardening_t5_total`:

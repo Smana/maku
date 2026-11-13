@@ -98,7 +98,7 @@ func (s *Server) policyEvidence(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.Readiness != nil && cfg.Hardening.ModeFor(repo).AtLeast(hardening.ModeAudit) { // H5: the readiness row
-		h := s.readinessOf(r.Context(), repo)
+		h := readerView(s.readinessOf(r.Context(), repo))
 		rep.Hardening = &h
 	}
 	reply(w, http.StatusOK, rep)

@@ -123,7 +123,9 @@ type Server struct {
 	// Readiness is each repository's hardening readiness (H5, HR41), served to operators and on the
 	// Evidence page; nil serves neither.
 	Readiness hardening.Readiness
-	Readers   func(repository string) ForgeThreads
+	// readinessCache serves the page's and the route's readiness for readinessTTL.
+	readinessCache *readinessCache
+	Readers        func(repository string) ForgeThreads
 	// Trust is each repository's fence-file hardening block, its trust floor; nil reads the floor
 	// and the central minAuthorTrust.
 	Trust *hardening.RepositoryPolicies
@@ -175,6 +177,9 @@ func (s *Server) Handler() http.Handler {
 	cfg := s.Cfg.Current()
 	if s.forgeReads == nil {
 		s.forgeReads = &forgeReadCache{}
+	}
+	if s.readinessCache == nil {
+		s.readinessCache = &readinessCache{}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)

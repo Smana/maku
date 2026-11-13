@@ -125,13 +125,13 @@ type Report struct {
 	RepositoryRef string `json:"-"`
 }
 
-// Readiness is one repository's hardening readiness as the Evidence page and the readiness route
-// show it: hardened, the facts that do not hold (hardening.Missing, or error), and the passing
-// drill it relied on.
+// Readiness is one repository's hardening readiness. The operators' route shows it whole: hardened,
+// the facts that do not hold (hardening.Missing, or error), and the passing drill it relied on. The
+// Evidence page shows a reader hardened, and error alone.
 type Readiness struct {
 	Repository string   `json:"repository"`
 	Hardened   bool     `json:"hardened"`
-	Missing    []string `json:"missing"`
+	Missing    []string `json:"missing,omitempty"`
 	Drill      string   `json:"drill,omitempty"`
 }
 

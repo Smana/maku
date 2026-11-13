@@ -752,18 +752,17 @@ describe("pending evidence", () => {
     expect([...app.querySelectorAll("button")].filter((b) => b.textContent === "Promote to live")).toHaveLength(1);
   });
 
-  it("writes the repository's hardening readiness in words (H5)", async () => {
-    expect(hardeningLine({ repository: "o/r", hardened: true, missing: [], drill: "drill-1" }))
-      .toBe("Hardened: every readiness fact holds, on drill drill-1.");
-    expect(hardeningLine({ repository: "o/r", hardened: false, missing: ["mode_not_enforce", "drill_stale_or_failed", "error"] }))
-      .toBe("Not hardened: the hardening mode is below enforce; no passing drill for this version and configuration; a fact could not be read.");
+  it("writes the repository's hardening readiness, ready or not, never its gaps (H5)", async () => {
+    expect(hardeningLine({ repository: "o/r", hardened: true })).toBe("Hardened: every readiness fact holds.");
+    expect(hardeningLine({ repository: "o/r", hardened: false })).toBe("Not hardened: an operator can see which readiness facts are missing.");
+    expect(hardeningLine({ repository: "o/r", hardened: false, missing: ["error"] })).toBe("Hardening readiness could not be read just now.");
     const p = page();
-    p.report.hardening = { repository: p.report.repository, hardened: false, missing: ["read_filter_off"] };
+    p.report.hardening = { repository: p.report.repository, hardened: false };
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref",
       fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": p, "/api/policy/repositories": { repositories: [] } }));
     const row = app.querySelector(".hardening-readiness");
-    expect(row?.textContent).toBe("Not hardened: reads are not filtered.");
+    expect(row?.textContent).toBe("Not hardened: an operator can see which readiness facts are missing.");
     expect((row as HTMLElement | null)?.dataset.hardened).toBe("false");
   });
 

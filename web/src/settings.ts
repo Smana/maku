@@ -46,26 +46,14 @@ export interface Report {
 }
 
 // One repository's hardening readiness: hardened, and the facts that do not hold.
-export interface Readiness { repository: string; hardened: boolean; missing: string[]; drill?: string }
+export interface Readiness { repository: string; hardened: boolean; missing?: string[]; drill?: string }
 
-// The readiness facts in words (R1 to R7), and error when one could not be read.
-const MISSING_WORDS: Record<string, string> = {
-  mode_not_enforce: "the hardening mode is below enforce",
-  sandbox_write_token: "a sandbox role's token can write",
-  publisher_policy: "no publisher can write",
-  layer_not_enforced: "a threat-check layer (T1 to T4) is not enforced",
-  read_filter_off: "reads are not filtered",
-  drill_stale_or_failed: "no passing drill for this version and configuration",
-  demo_profile: "the laptop demo is never hardened",
-  error: "a fact could not be read",
-};
-
-// hardeningLine is the repository's readiness as one sentence (H5): hardened and the drill it
-// relied on, or each fact that does not hold.
+// hardeningLine is the repository's readiness as one sentence (H5). The page shows a reader ready,
+// not ready or error only: which facts are missing stays on the operators' route.
 export function hardeningLine(h: Readiness): string {
-  if (h.hardened) return `Hardened: every readiness fact holds${h.drill ? `, on drill ${h.drill}` : ""}.`;
-  const why = h.missing.map((m) => MISSING_WORDS[m] ?? m.replaceAll("_", " "));
-  return `Not hardened: ${why.join("; ")}.`;
+  if (h.missing?.includes("error")) return "Hardening readiness could not be read just now.";
+  if (h.hardened) return "Hardened: every readiness fact holds.";
+  return "Not hardened: an operator can see which readiness facts are missing.";
 }
 
 export interface Step2 { row: string; status: string; detail?: string }

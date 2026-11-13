@@ -386,6 +386,9 @@ func (c *Config) validateClassifierEnforce(bad func(string, ...any)) {
 	if h.AgentGuard.URL == "" {
 		bad("hardening.layers.classifierEnforce needs agentGuard.url: a promoted T5 with no classifier refuses every output")
 	}
+	if h.Layers.Classifier == hardening.ModeOff {
+		bad("hardening.layers.classifierEnforce is set but layers.classifier is off: it would promote nothing")
+	}
 	if !slices.ContainsFunc(c.Repos(), func(r Repository) bool { return h.ModeFor(r.Name) == hardening.ModeEnforce }) {
 		bad("hardening.layers.classifierEnforce needs a repository at mode enforce: it applies to no other")
 	}
@@ -637,8 +640,8 @@ func strictJSON(b []byte, v any) error {
 }
 
 // Hash is the sha256 of the effective hardening configuration: the key a drill report proves
-// (R6), so any change to the block needs a new passing drill. T5 enters as its effective mode, so
-// adding or removing the classifier moves the hash and moving it to another host does not.
+// (R6), so any change to the block needs a new passing drill. T5 enters as its effective mode and,
+// while it runs, its URL's sha256: adding, removing or moving the classifier moves the hash.
 func (h Hardening) Hash() string {
 	// The enforced lists are omitted when empty, so a file without them keeps its pre-H2 hash.
 	b, _ := json.Marshal(struct { // a struct of strings, slices and maps: Marshal cannot fail
@@ -648,9 +651,21 @@ func (h Hardening) Hash() string {
 		Enforce                                  []hardening.OutputType            `json:",omitempty"`
 		RepositoryEnforce                        map[string][]hardening.OutputType `json:",omitempty"`
 		ClassifierEnforce                        []hardening.OutputType            `json:",omitempty"`
+		ClassifierURL                            string                            `json:",omitempty"`
 	}{string(h.Mode), h.MinAuthorTrust, string(h.EffectiveClassifier()), h.Drills.MaxAge.String(),
-		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes(), h.EnforcedFor(""), h.repositoryEnforce(), h.classifierEnforce()})
+		h.BlockedUsers, h.LabelAllowlist, h.repositoryModes(), h.EnforcedFor(""), h.repositoryEnforce(), h.classifierEnforce(),
+		h.classifierURLHash()})
 	s := sha256.Sum256(b)
+	return hex.EncodeToString(s[:])
+}
+
+// classifierURLHash is the sha256 of the classifier's URL while T5 runs, "" otherwise: pointing T5 at
+// another classifier moves the hash, so it needs a new passing drill (#531's review).
+func (h Hardening) classifierURLHash() string {
+	if h.EffectiveClassifier() == hardening.ModeOff {
+		return ""
+	}
+	s := sha256.Sum256([]byte(h.AgentGuard.URL))
 	return hex.EncodeToString(s[:])
 }
 
