@@ -31,6 +31,7 @@ import (
 	"github.com/Smana/maku/internal/factory/narrate"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/factory/taskid"
+	"github.com/Smana/maku/internal/hardening"
 )
 
 // LabelStop asks the factory to stop the task of the issue or PR carrying it (§6.1).
@@ -291,8 +292,12 @@ func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (stri
 
 // issueTask is the Task of issue n's snapshot, requested by requestedBy.
 func (p *IssuePoller) issueTask(cfg *config.Config, n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
+	labels := map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}
+	if slices.Contains(iss.Labels, hardening.DrillInjectionLabel) { // a planted drill issue (HR38)
+		labels[v1alpha1.LabelDrillInjection] = "true"
+	}
 	return &v1alpha1.Task{
-		ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: p.Namespace, Labels: map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}},
+		ObjectMeta: metav1.ObjectMeta{Name: taskid.Name(key), Namespace: p.Namespace, Labels: labels},
 		Spec: v1alpha1.TaskSpec{
 			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo(cfg).Name, n), Key: key,
 				RequestedBy: requestedBy, Trust: "untrusted", ContentSHA256: sum},

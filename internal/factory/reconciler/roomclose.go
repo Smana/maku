@@ -55,6 +55,14 @@ func (r *Reconciler) roomState(ctx context.Context, cfg *config.Config, t *v1alp
 			return false, "", left, nil // a maintainer may still ask for the revert, which posts facts again
 		}
 	}
+	if drillHolds(t) {
+		// HR38: the drill runner reads the runs' claims (their canaries) and the room; it scores
+		// the task, then annotates it. Past the cap the room closes unscored.
+		if !atCap {
+			return false, "", min(drillWait, max(capLeft, time.Second)), nil
+		}
+		capped = capDrillUnscored
+	}
 	if r.verdictHolds(cfg, t) {
 		// room.monitor_verdict rides the facts (K2): a sealed log takes none
 		return false, "", monitorEvery, nil
@@ -87,6 +95,14 @@ func (r *Reconciler) verdictHolds(cfg *config.Config, t *v1alpha1.Task) bool {
 	return t.Spec.Origin != "" && r.monitorDue(cfg, t) && (t.Status.Monitor == nil || t.Status.Monitor.Verdict == "")
 }
 
+// drillHolds: a drill task's room stays open until the drill runner has scored it (HR38).
+func drillHolds(t *v1alpha1.Task) bool {
+	return t.Labels[v1alpha1.LabelDrillInjection] == "true" && t.Annotations[v1alpha1.AnnotationDrillScored] == ""
+}
+
+// drillWait is how often an unscored drill task's room is looked at again.
+const drillWait = 5 * time.Minute
+
 // humanDriverWait is how long a room a person drives is left before it is looked at again.
 const humanDriverWait = 2 * time.Minute
 
@@ -98,6 +114,8 @@ const roomCloseCap = 24 * time.Hour
 const (
 	capHumanDriver = "human_driver"
 	capFactsDue    = "facts_due"
+	// capDrillUnscored: a drill task the drill runner never scored (HR38).
+	capDrillUnscored = "drill_unscored"
 )
 
 // closeRoom deletes the room, which the room controller finalizes: it ends the room's runs and

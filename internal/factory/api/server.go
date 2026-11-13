@@ -178,6 +178,9 @@ func (s *Server) Handler() http.Handler {
 	// HR35: the broker's forge_read; it admits system:broker alone and refuses a repository that is
 	// not in hardening mode enforce, so it reads nothing while H4 is off.
 	mux.HandleFunc(ForgeReadRoute, s.forgeRead)
+	if cfg.Hardening.Drills.GatewayLog.URL != "" && !cfg.Demo { // HR38: served while the drill runner is on
+		mux.HandleFunc(DrillsRoute, s.postDrill)
+	}
 	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4, D4: off until a principal is declared
 		mux.HandleFunc("POST /v1/tasks", s.createTask)
 	}

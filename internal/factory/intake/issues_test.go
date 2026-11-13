@@ -743,3 +743,30 @@ func TestThePassThatEngagesTheStopCreatesNoTask(t *testing.T) {
 		t.Fatalf("a Task was created in the pass that engaged the stop: %d", len(l.Items))
 	}
 }
+
+// HR38: an issue a drill planter labelled factory/drill-injection makes a drill task, which the
+// drill manifest route and the room's close read; any other issue's task carries no such label.
+func TestADrillIssueMakesADrillTask(t *testing.T) {
+	for name, tc := range map[string]struct {
+		labels []string
+		want   string
+	}{
+		"planted":   {[]string{"factory/ready", "factory/drill-injection"}, "true"},
+		"an issue":  {[]string{"factory/ready"}, ""},
+		"lookalike": {[]string{"factory/drill"}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := forgetest.NewFake()
+			labelled(f, 7, "Smana")
+			f.SetIssue(forge.Issue{Number: 7, Title: "Fix the link", Body: "docs/a.md links to a moved page.", Labels: tc.labels})
+			p, c := poller(t, f)
+			if err := p.Poll(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			ts := tasks(t, c)
+			if len(ts) != 1 || ts[0].Labels[v1alpha1.LabelDrillInjection] != tc.want {
+				t.Fatalf("%d tasks, labels %v", len(ts), ts[0].Labels)
+			}
+		})
+	}
+}

@@ -384,6 +384,10 @@ func (c *Config) TrustPolicy(repository string, floor hardening.Level) hardening
 	return pol
 }
 
+// DrillPrincipal is the drill planter's system principal on the factory API: the
+// api.systemPrincipals value the drill manifest route admits (HR38).
+const DrillPrincipal = "system:drill"
+
 // BrokerPrincipal is the room broker's system principal on the factory API: the api.systemPrincipals
 // value forge_read's route admits (HR35).
 const BrokerPrincipal = "system:broker"
