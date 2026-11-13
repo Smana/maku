@@ -10,7 +10,7 @@
 #       from the in-cluster apiserver (source: apiserver), without and then with the anonymous
 #       discovery binding; a token for another audience from the same ServiceAccount is refused.
 #   P2  CEL over jwt.aud, a list: `exists(... startsWith ...)` on the listener, `in` on the route; the
-#       listener's subject Require holds beside the route's: a non-run ServiceAccount with the right
+#       listener's subject Require is enforced with the route's: a non-run ServiceAccount with the right
 #       audience is refused.
 #   P3  path and model: /m/<alias>/v1/chat/completions, matched exactly, reaches the provider at its own
 #       path and nothing else does; the model is the alias's mapped model whatever the body said, and
@@ -119,7 +119,7 @@ out="$(call "$INT/m/tier-light/v1/chat/completions" /tokens/internal-tier-light 
 out="$(call "$PUB/m/tier-frontier/v1/chat/completions" /tokens/public-tier-light tier-frontier)"
 [[ ${out%% *} == 403 ]] && pass "P2 in: a tier-light token on the tier-frontier route is 403" || fail "P2 a tier-light token on tier-frontier: ${out:0:200}"
 out="$(kubectl -n agents exec bystander -- python3 /app/client.py "$PUB/m/tier-light/v1/chat/completions" /tokens/public-tier-light tier-light)"
-[[ ${out%% *} == 403 ]] && pass "P2 the listener's subject Require holds beside the route's: a non-run ServiceAccount with the right audience is 403" \
+[[ ${out%% *} == 403 ]] && pass "P2 a non-run ServiceAccount holding the right audience is 403: the listener's subject Require is enforced together with the route's audience Require" \
   || fail "P2 a non-run ServiceAccount with maku-gateway.public.tier-light: ${out:0:200}"
 
 echo "==> P3: path and model"

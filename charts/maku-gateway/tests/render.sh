@@ -217,6 +217,9 @@ out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium \
 yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress[2] | ([.fromEndpoints[] | .matchLabels | to_entries | map(.key + \"=\" + .value) | join(\"+\")] | join(\",\")) + \" \" + .toPorts[0].ports[0].port" \
   'k8s:app.kubernetes.io/name=vmagent+k8s:io.cilium.k8s.namespace.labels.kubernetes.io/metadata.name=observability,k8s:app=scraper+k8s:io.kubernetes.pod.namespace=maku 15020' \
   'mode cilium: metrics.allowFrom becomes fromEndpoints on 15020'
+out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium --set-json 'metrics.allowFrom=[{"namespaceSelector":{},"podSelector":{"matchLabels":{"app":"vm"}}}]')"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress[2].fromEndpoints[0] | (.matchExpressions[0].key + \" \" + .matchExpressions[0].operator) + \" \" + (.matchLabels | to_entries | map(.key + \"=\" + .value) | join(\"+\"))" \
+  'k8s:io.kubernetes.pod.namespace Exists k8s:app=vm' 'mode cilium: namespaceSelector {} is every namespace, not the release namespace'
 rejects 'mode cilium with an ipBlock scraper' 'metrics.allowFrom[0]: mode cilium translates namespaceSelector and podSelector matchLabels only' \
   "${cnref[@]}" --set networkPolicy.mode=cilium --set 'metrics.allowFrom[0].ipBlock.cidr=10.0.0.0/8'
 

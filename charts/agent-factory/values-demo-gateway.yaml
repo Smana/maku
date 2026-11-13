@@ -1,6 +1,7 @@
 # The laptop demo with the model gateway (v4 step 4, docs/gateway.md): runs call agentgateway with
 # their own projected token, and no provider key enters the runs namespace. Layer it on the demo:
-#   helm install af-crds charts/agent-factory-crds -n maku --create-namespace --set agentgateway-crds.enabled=true
+#   helm install af-crds charts/agent-factory-crds -n maku --create-namespace
+#   kubectl apply --server-side -f config/agentgateway   # agentgateway's CRDs (docs/gateway.md)
 #   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
 #   helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml \
 #     -f charts/agent-factory/values-demo-gateway.yaml \

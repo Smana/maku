@@ -16,7 +16,7 @@
 #   unenforced  mode kubernetes on a k3s started with --disable-network-policy: the preflight refuses
 #               runs (`preflight failed: network:`, gauge network 0).
 # GATEWAY=1 (k3d only; task chart:gateway:k3d) turns the model gateway on (plan v4 step 4, Task 5):
-# Gateway API's standard CRDs, agentgateway's CRDs (agent-factory-crds) and controller (the umbrella),
+# Gateway API's standard CRDs, agentgateway's CRDs (config/agentgateway, server-side) and controller (the umbrella),
 # maku-gateway with source apiserver, and the probe's echo provider as a `custom` provider over http.
 # A run-like pod's token for maku-gateway.public.tier-light gets 200 on its alias, 403 on
 # tier-frontier's, and no token gets 401; the proxy's NetworkPolicy is enforced by k3s.
@@ -151,11 +151,9 @@ values=(-f charts/agent-factory/values-demo.yaml
   # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
-crd_values=()
 if [[ -z $GATEWAY ]]; then
   values+=(--set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
 else
-  crd_values=(--set agentgateway-crds.enabled=true)
   issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
   # The gateway demo (values-demo-gateway.yaml) with the probe's echo as its provider: the umbrella
   # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
@@ -192,7 +190,7 @@ EOF
 fi
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
-  helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m "${crd_values[@]}" &&
+  helm install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m &&
     kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
 }
 # No --wait: the factory cannot become Ready with a dummy App; each part is awaited below.
@@ -231,10 +229,14 @@ else
   step "the CRD chart first, then the umbrella"
   install_crds
   if [[ -n $GATEWAY ]]; then
-    step "the gateway's prerequisites: Gateway API $GATEWAY_API and the echo provider"
+    step "the gateway's prerequisites: Gateway API $GATEWAY_API, agentgateway's CRDs and the echo provider"
     curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
       kubectl apply --server-side -f - >/dev/null
     kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
+    # agentgateway's CRDs, vendored and applied apart from any Helm release (too big for one, docs/gateway.md)
+    kubectl apply --server-side -f config/agentgateway >/dev/null
+    kubectl wait --for=condition=Established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
+      crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev --timeout=120s >/dev/null
     kubectl create namespace models >/dev/null
     kubectl -n models create configmap echo-llm --from-file=charts/maku-gateway/tests/probe/echo-llm.py >/dev/null
     kubectl -n models apply -f - >/dev/null <<EOF
@@ -548,7 +550,7 @@ EOF
   own=$(grep '^own ' <<<"$out") || die "the gateway caller printed nothing (phase '$phase')"
   [[ $own == "own 200 "* ]] || { kubectl -n "$NS" logs deploy/model-gateway --tail=40 >&2 || true; kubectl -n "$NS" logs deploy/af-agentgateway --tail=40 >&2 || true; die "the run-like token was not served on its alias: $own"; }
   report=$(sed -E 's/^own 200 //' <<<"$own" | jq -r '.choices[0].message.content')
-  # the provider sees the gateway's key from echo-api-key ("Bearer not-a-key", 16 characters), never the run's token
+  # the provider sees the gateway's key from demo-model ("Bearer not-a-key", 16 characters), never the run's token
   jq -e '.model == "echo-light" and .path == "/provider/v1/chat/completions" and .authorization == "len=16" and .["x-ar-agent"] == "system:serviceaccount:agents:run-gwprobe2"' <<<"$report" >/dev/null ||
     die "the provider saw the wrong request: $report"
   grep -q '^other 403 ' <<<"$out" || die "the tier-light token was not refused 403 on tier-frontier: $(grep '^other' <<<"$out")"
