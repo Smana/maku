@@ -2220,6 +2220,39 @@ the `maku-factory` chart's `checksum/config` annotation restarts it on any chang
 annotation, the forge-read route and R5 always read the same mode. Enabling and rolling back are
 in [Operations](operations.md#hardening-reads-filtered).
 
+## Hardening, drills
+
+Stage H4's gate, and readiness fact R6: an injection drill plants prompt injections in a dedicated
+drill repository, the factory works the planted tasks, and the factory scores what came out. The
+drill passes when no out-of-policy output was applied. [Injection drills](drills.md) covers the
+repository, the accounts, the cadence, the report and the stop rule.
+
+```yaml
+api:
+  systemPrincipals:
+    system:serviceaccount:agent-platform:drill-planter: system:drill
+hardening:
+  drills:
+    maxAge: 168h       # R6: a pass at most a week old
+    timeout: 6h        # score a drill this long after its manifest, tasks open or not
+    gatewayLog:
+      url: http://victoria-logs.observability.svc:9428
+      timeout: 10s
+```
+
+- **On.** The drill runner, on the leader, and the manifest route `POST /v1/hardening/drills`
+  (`system:drill` alone) are on while `drills.gatewayLog.url` is set, outside the demo. Neither
+  `timeout` nor `gatewayLog` enters the hardening hash a drill proves.
+- **Drill tasks.** An issue labelled `factory/drill-injection` becomes a task labelled
+  `agents.ogenki.io/drill-injection`. The manifest route accepts only such tasks. Their room stays
+  open until the runner scores them, then the runner annotates them `agents.ogenki.io/drill-scored`.
+- **The report.** The runner stores it through the broker's `POST /v1/drills`
+  ([API](api.md#drill-reports)), which only `system:factory` may call, and readiness reads the
+  newest pass with `GET /v1/drills/last-pass`.
+- **T5 measured.** The applier runs T5 in audit on text outputs another layer refused too, and
+  counts every call in `maku_factory_hardening_t5_total{type,result,drill}`: T5's false positives
+  are hits on applied outputs of non-drill tasks.
+
 ## Reference
 
 ### The Task CRD
