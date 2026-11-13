@@ -8,7 +8,8 @@
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
 import { centralManifest, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
-
+import { policyPage, policiesTable, type PolicyReport } from "./policy-page";
+import { bindingEditor } from "./binding-editor";
 import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
 import { comments, locate, parsePolicy } from "./policy-yaml";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
@@ -205,6 +206,9 @@ function failed(main: HTMLElement, e: unknown) {
 
 // mountSettings renders the settings page at path.
 export async function mountSettings(app: HTMLElement, path: string, get: typeof fetch = fetch, theme?: ThemeController) {
+  // PR15: a policy's page first, so /policies/<name> is never read as a repository named so.
+  const pol = path.match(/^\/settings\/merge-policies\/policies\/([^/]+)$/);
+  if (pol) return policyPage(app, decodeURIComponent(pol[1]), get, theme);
   const dec = path.match(/^\/settings\/merge-policies\/([^/]+)\/([^/]+)\/decisions\/([0-9]+)$/);
   if (dec) return timelinePage(app, `${decodeURIComponent(dec[1])}/${decodeURIComponent(dec[2])}`, Number(dec[3]), get, theme);
   const repo = path.match(/^\/settings\/merge-policies\/([^/]+)\/([^/]+)$/);
@@ -305,8 +309,12 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
   const main = settingsFrame(app, "Merge policies", "/settings/merge-policies", theme);
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
+    // The policies the reader sees a consumer of (B16), below the repositories; none when unread.
+    const policies = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get).then((x) => x.policies, () => undefined);
+    const tail = () => { if (policies?.length) main.append(el("h2", "Policies"), policiesTable(policies)); };
     if (repositories.length === 0) {
       main.append(el("p", "No repository you can read is configured."));
+      tail();
       return;
     }
     const pages = await readAll(repositories, get);
@@ -320,6 +328,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
     const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
       items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${(tr.cells[1].textContent ?? "").split(" · ")[0]}` }); // the two names, not the counts
     main.append(box, repoTable);
+    tail();
   } catch (e) { failed(main, e); }
 }
 
@@ -422,7 +431,13 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   main.append(tl);
 
   if (state === "not-migrated") return;
-  if (r.repositoryObject) return; // its editor is the bindings editor (B16)
+  if (r.repositoryObject) {
+    // B16: a bound repository edits its bindings; a policy is edited on its own page.
+    const meaning = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
+      .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
+    main.append(el("h2", "Bindings editor"), bindingEditor(r, meaning, page.you.maintainer, get));
+    return;
+  }
   main.append(el("h2", "Policy editor"));
   main.append(editor(r, page.you.maintainer, get));
 }
