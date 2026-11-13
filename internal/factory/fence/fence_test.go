@@ -218,3 +218,20 @@ func TestKickRefreshesBetweenPeriods(t *testing.T) {
 	f.Kick()
 	wait("a kick did not refresh before the hour", func() bool { return f.Owned("o/a") })
 }
+
+// Review of #540: a repository dropped from the list is heard once, so its gauges and its
+// visibility go with it.
+func TestRefreshForgetsADroppedRepository(t *testing.T) {
+	repos := []string{"Smana/a", "Smana/b"}
+	var forgotten []string
+	f := &Fence{Name: "aws-0", Repositories: func() []string { return repos }, Every: time.Minute, Stale: time.Hour, Now: time.Now,
+		Read:     func(context.Context, string) ([]byte, bool, error) { return []byte("factory: aws-0\n"), true, nil },
+		OnForget: func(_ context.Context, repo string) { forgotten = append(forgotten, repo) }}
+	_ = f.Refresh(t.Context())
+	repos = []string{"Smana/a"}
+	_ = f.Refresh(t.Context())
+	_ = f.Refresh(t.Context())
+	if !slices.Equal(forgotten, []string{"smana/b"}) {
+		t.Fatalf("forgotten %v, want [smana/b] once", forgotten)
+	}
+}

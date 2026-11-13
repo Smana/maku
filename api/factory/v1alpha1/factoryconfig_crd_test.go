@@ -41,6 +41,7 @@ const (
 	msgReviewBinding  = "review is bound with mode off and no parameter"
 	msgEntryClasses   = "bind docs-links and revert when any policy is bound (OD-8)"
 	msgFileBindings   = "classAuthority repository: the repository's file holds the bindings (MP15)"
+	msgPrivateCode    = "privateCode.acknowledged is true or absent: false says nothing (D3)"
 )
 
 // Factory resources D3, D7, D10, D11: namespaced, a status subresource, the printer columns, the
@@ -52,7 +53,7 @@ func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 		"repositories": {"kind: Repository", "scope: Namespaced", "subresources:", "name: Repo", "name: Factory", "name: Accepted", "name: Connected",
 			"spec.factoryRef is fixed once set", "spec.repository is fixed once set", "mergePolicies:", "x-kubernetes-list-type: map",
 			"name: Classes", "name: Live", "policyGeneration:", "mergeDefaulted:",
-			msgReviewBinding, msgEntryClasses, msgFileBindings},
+			msgReviewBinding, msgEntryClasses, msgFileBindings, msgPrivateCode, "privateCode:"},
 		"mergepolicies": {"kind: MergePolicy", "scope: Namespaced", "subresources:", "name: Repo", "name: Consumers", "name: Current", "name: Live", "name: Accepted",
 			"servedGeneration:",
 			"spec.repositoryRef is fixed once set", "a class is live or shadow, never both", "requires:",

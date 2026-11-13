@@ -55,3 +55,21 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 		t.Fatalf("%+v %v %q", tl, err, seen)
 	}
 }
+
+// v4 D3: the factory's banner codes, read with the caller's own token, never without one.
+func TestInstallReadsTheFactorysCodes(t *testing.T) {
+	var seen string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen = r.Method + " " + r.URL.RequestURI() + " " + r.Header.Get("Authorization")
+		_, _ = w.Write([]byte(`{"unsafe":["private_code_unacknowledged"]}`))
+	}))
+	defer srv.Close()
+	f := Factory{URL: srv.URL, HC: srv.Client()}
+	if _, err := f.Install(t.Context(), ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("no token: %v", err)
+	}
+	got, err := f.Install(t.Context(), "tok")
+	if err != nil || len(got) != 1 || got[0] != "private_code_unacknowledged" || seen != "GET /v1/install Bearer tok" {
+		t.Fatalf("%q %v %q", got, err, seen)
+	}
+}
