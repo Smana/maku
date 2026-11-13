@@ -24,6 +24,10 @@ const (
 	RoleRetention Role = "rooms_retention"
 )
 
+// ErrUnavailable is a database Check could not ask: unreachable, or not answering. Unlike a
+// refusal, it may pass on a retry.
+var ErrUnavailable = errors.New("database unavailable")
+
 // minServerVersion is Postgres 16 (D26), as server_version_num.
 const minServerVersion = 160000
 
@@ -62,7 +66,7 @@ func Check(ctx context.Context, q querier, role Role) (Server, error) {
 	)
 	if err := q.QueryRow(ctx, checkSQL).Scan(&num, &s.Version, &s.User, &super, &bypass, &member,
 		&broker, &retainer, &s.TLS); err != nil {
-		return s, fmt.Errorf("database check: %w", err)
+		return s, fmt.Errorf("database check: %w: %w", ErrUnavailable, err)
 	}
 	var errs []error
 	if num < minServerVersion {

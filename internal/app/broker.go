@@ -118,7 +118,7 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if dsn == "" {
 		return errors.New("room-broker retention: ROOMS_DATABASE_URL is not set")
 	}
-	st, err := store.Open(ctx, dsn, store.RoleRetention)
+	st, err := openRetrying(ctx, log, dsn, store.RoleRetention, retentionConnectWait)
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
@@ -142,6 +142,29 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
 	return nil
+}
+
+// retentionConnectWait bounds how long the retention job retries a database it cannot reach. A
+// CNI that enforces NetworkPolicy (kube-router) admits a new pod's address a few seconds after it
+// starts, so a one-shot job's first connections can be refused.
+var retentionConnectWait = 2 * time.Minute
+
+// openRetrying is store.Open, retried every 5 s while the database is unavailable, up to wait. A
+// refusal (the version, the role, row-level security) is returned at once.
+func openRetrying(ctx context.Context, log *slog.Logger, dsn string, role store.Role, wait time.Duration) (*store.Store, error) {
+	deadline := time.Now().Add(wait)
+	for {
+		st, err := store.Open(ctx, dsn, role)
+		if err == nil || !errors.Is(err, store.ErrUnavailable) || time.Now().After(deadline) {
+			return st, err
+		}
+		log.Info("database unavailable, retrying", "role", string(role))
+		select {
+		case <-ctx.Done():
+			return nil, err
+		case <-time.After(5 * time.Second):
+		}
+	}
 }
 
 // runIntentSamples is `maku-broker intent-samples [--days N]`: the last N days (default 7) of an

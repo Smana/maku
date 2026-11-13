@@ -80,6 +80,21 @@ func TestRunBrokerRefuses(t *testing.T) {
 	}
 }
 
+// The retention job retries a database it cannot reach, until its wait ends, and names the last
+// failure: a new pod's first connections can be refused while the CNI admits its address.
+func TestOpenRetrying(t *testing.T) {
+	var buf strings.Builder
+	start := time.Now()
+	_, err := openRetrying(t.Context(), slog.New(slog.NewTextHandler(&buf, nil)),
+		"postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1", store.RoleRetention, 6*time.Second)
+	if !errors.Is(err, store.ErrUnavailable) {
+		t.Fatalf("openRetrying = %v, want store.ErrUnavailable", err)
+	}
+	if n := strings.Count(buf.String(), "database unavailable, retrying"); n < 1 || time.Since(start) < 5*time.Second {
+		t.Fatalf("retried %d times in %s, want at least once over the wait", n, time.Since(start))
+	}
+}
+
 // A plain database connection is said once and set on rooms_db_tls{role}, never refused: the demo's
 // in-cluster hop is plain. An encrypted one says nothing.
 func TestWarnPlainDB(t *testing.T) {
