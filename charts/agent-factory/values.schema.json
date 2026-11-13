@@ -111,6 +111,16 @@
             "kubeStateMetrics": {"description": "Render the rules that read kube-state-metrics' kube_* series.", "type": "boolean"},
             "docsURL": {"description": "The runbook_url base. Empty: the release's docs on GitHub.", "type": "string", "pattern": "^(https?://[^\\s\"\\\\]+)?$"}
           }
+        },
+        "dashboards": {
+          "description": "The product dashboards, one ConfigMap each, for Grafana's dashboard sidecar or a grafana-operator configMapRef.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "labels": {"description": "Replace the sidecar's label set (grafana_dashboard: \"1\").", "type": "object", "additionalProperties": {"type": "string"}},
+            "annotations": {"description": "Added to each ConfigMap, e.g. grafana_folder.", "type": "object", "additionalProperties": {"type": "string"}}
+          }
         }
       }
     },

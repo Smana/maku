@@ -450,5 +450,35 @@ out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runContro
   --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
 
+# v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, rendered only when asked
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name' 'dashboards off renders a dashboard ConfigMap'
+dash=(--set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.annotations={"grafana_folder":"Agents"}')
+uids='agent-factory,agent-fleet,agent-identity,agent-room,agent-run,agents-overview'
+dashboards() { yq ea -r '[select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .metadata.name | sub("^maku-dashboard-"; "")] | sort | join(",")' - <<<"$out"; }
+dashcheck() { # dashcheck WANT_UIDS: every dashboard ConfigMap holds <uid>.json, parses, keeps its uid, and is clean
+  [[ "$(dashboards)" == "$1" ]] || { echo "FAIL: dashboards '$(dashboards)', want '$1'" >&2; fail=1; }
+  ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.grafana_dashboard == "1" and .metadata.annotations.grafana_folder == "Agents" and .metadata.namespace == "maku")' 'each dashboard ConfigMap has the sidecar label and the annotations'
+  local u body
+  for u in ${1//,/ }; do
+    body="$(yq ea -r "select(.kind == \"ConfigMap\" and .metadata.name == \"maku-dashboard-$u\") | .data.\"$u.json\"" - <<<"$out")"
+    [[ "$(jq -r .uid <<<"$body" 2>/dev/null)" == "$u" ]] || { echo "FAIL: maku-dashboard-$u does not hold $u.json with uid $u" >&2; fail=1; continue; }
+    ! grep -qE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|__[A-Z_]+__|\$\{private_domain_name\}' <<<"$body" ||
+      { echo "FAIL: maku-dashboard-$u keeps a Flux escape, a cloud-native-ref name, a logs or traces panel or a placeholder: $(grep -oE '\$\$\{|agent-system|xplane-|VictoriaLogs|VictoriaTraces|victoriametrics-logs|jaeger|__[A-Z_]+__' <<<"$body" | sort -u | tr '\n' ' ')" >&2; fail=1; }
+    (( $(wc -c <<<"$body") < 900 * 1024 )) || { echo "FAIL: maku-dashboard-$u is 900 KiB or more" >&2; fail=1; }
+  done
+}
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}")" || { echo "FAIL: monitoring.dashboards.enabled does not render" >&2; fail=1; out=''; }
+dashcheck "$uids"
+grep -qF 'job=\"agent-factory\"' <<<"$out" || { echo "FAIL: the overview reads the factory's job" >&2; fail=1; }
+grep -qF 'ar_agent=\"system:serviceaccount:agents:run-${run}\"' <<<"$out" || { echo "FAIL: the run dashboard reads the run's subject (runs.namespace, runs.namePrefix)" >&2; fail=1; }
+out="$(helm template af . -n maku "${gwd[@]}" "${dash[@]}")" || { echo "FAIL: dashboards with maku-gateway do not render" >&2; fail=1; out=''; }
+dashcheck "agent-factory,agent-fleet,agent-gateway,agent-identity,agent-room,agent-run,agents-overview"
+grep -qF 'job=\"model-gateway\", namespace=\"maku\"' <<<"$out" || { echo "FAIL: the gateway panels read maku-gateway's job and namespace" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.labels={"grafana_dashboard":"1","team":"agents"}')"
+ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and .metadata.labels.grafana_dashboard == "1")' 'monitoring.dashboards.labels replace the sidecar label set'
+out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }
+grep -qF 'http://localhost:18080/r/${room}' <<<"$out" || { echo "FAIL: the room links follow maku.broker.publicURL" >&2; fail=1; }
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"
