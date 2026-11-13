@@ -41,8 +41,10 @@ func listShape(t *testing.T, base string, edit func(top, entry map[string]any)) 
 // PR7: the repository rules that name classes read the bound names, so a binding that did not
 // resolve (its class absent) never refuses the repository.
 func TestBoundNamesHoldTheRepositoryRules(t *testing.T) {
-	bound := func(names ...string) func(_, e map[string]any) {
-		return func(_, e map[string]any) {
+	bound := func(names ...string) func(top, e map[string]any) {
+		return func(top, e map[string]any) {
+			// A loops row and the label allowlist read the bound names too.
+			top["loops"] = map[string]any{"dead-links": map[string]any{"stallSteps": 10}}
 			e["classes"] = map[string]any{"docs-links": map[string]any{"shadow": true}, "revert": map[string]any{"shadow": true}}
 			e["bound"] = toAnySlice(names)
 			e["schedules"] = []any{map[string]any{"name": "dead-links-weekly", "cron": "0 6 * * 1", "class": "dead-links",
@@ -62,6 +64,7 @@ func TestBoundNamesHoldTheRepositoryRules(t *testing.T) {
 	}{
 		{[]string{"docs-links", "dead-links"}, "class revert is required (OD-8)"},
 		{[]string{"docs-links", "revert"}, `schedule dead-links-weekly: class "dead-links" is review or a declared class`},
+		{[]string{"docs-links", "revert"}, `loops.dead-links: "dead-links" is not default, review or a class a repository declares`},
 	} {
 		if _, err := ParseAssembled(listShape(t, good, bound(tc.names...))); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("bound %v: %v, want %q", tc.names, err, tc.want)
