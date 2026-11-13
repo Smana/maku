@@ -2312,14 +2312,27 @@ def persisted(env: dict, root: str = CONVERSATIONS_DIR) -> bool:
     return os.path.isfile(os.path.join(root, cid.hex, "base_state.json"))
 
 
+# What turns agent-server's own tracing on (OpenHands' observability, lmnr) and parents it on the
+# run's span. Its spans carry prompts, model answers and tool input and output, so whatever the agent
+# read, a token included: agent-server gets none of these unless AGENT_TRACE_CONTENT is "1", for a
+# collector that filters span attributes. Off, the run exports its own root span only.
+AGENT_SERVER_TRACE_KEYS = ("OTEL_EXPORTER_OTLP_ENDPOINT", "OTEL_EXPORTER_OTLP_TRACES_ENDPOINT", "OTEL_ENDPOINT",
+                           "LMNR_PROJECT_API_KEY", "LMNR_SPAN_CONTEXT", "OPENHANDS_OBSERVABILITY_PARENT_SPAN_CONTEXT",
+                           "OTEL_BSP_SCHEDULE_DELAY")
+
+
 def server_env(env: dict) -> dict:
     """agent-server's environment, with an OH_SECRET_KEY made for this pod when unset.
 
     The key encrypts the secrets and MCP OAuth state agent-server stores. A run
     is single-use, so a per-pod key loses nothing and nothing is seeded by hand.
-    A suspendable run's key outlives its pod, on its PVC (run_key).
+    A suspendable run's key outlives its pod, on its PVC (run_key). Its tracing
+    is off unless AGENT_TRACE_CONTENT=1 (AGENT_SERVER_TRACE_KEYS).
     """
     out = dict(env)
+    if env.get("AGENT_TRACE_CONTENT") != "1":
+        for k in AGENT_SERVER_TRACE_KEYS:
+            out.pop(k, None)
     if "OH_SECRET_KEY" not in out:
         out["OH_SECRET_KEY"] = run_key() if suspendable(env) else secrets.token_urlsafe(32)
     out["PYTHONPATH"] = os.pathsep.join(p for p in (SITE_DIR, env.get("PYTHONPATH")) if p)
