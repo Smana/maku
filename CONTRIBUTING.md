@@ -23,8 +23,9 @@ wrapper then falls back to whatever golangci-lint is on PATH (it refuses a v1).
 
 `task check` must exit 0 before every commit and push. It runs fourteen steps (SPDX headers, tidy,
 lint, vuln, test, CRD check, chart check, quickstart check, migrations, docs lint, old-name check,
-operator scripts, UI test, UI check); CI's required `check`
-job runs the same command. What each step catches is in the [table in AGENTS.md](AGENTS.md#quality-gate-run-before-every-commit).
+operator scripts, UI test, UI check). CI runs the same steps on four runners, `check-static`
+(`task check:static`, all but the tests) and three disjoint slices of the tests (`check-test`,
+`task test:shard`), joined by the required `check` job. What each step catches is in the [table in AGENTS.md](AGENTS.md#quality-gate-run-before-every-commit).
 
 Every new `.go` file starts with:
 

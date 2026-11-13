@@ -194,3 +194,22 @@ func TestAReviewClassDeclaresOnlyTheEvaluationKeys(t *testing.T) {
 		})
 	}
 }
+
+// R30 on both resolve paths: the guardrails leave review as declared, so a class-shape file and a
+// binding resolve it alike.
+func TestBothPathsResolveReviewAlikeUnderGuardrails(t *testing.T) {
+	c := central()
+	c.MergeGuardrails = config.MergeGuardrails{MaxPerDay: 2, MandatoryChecks: []string{"lint"}, ProtectedFiles: []string{"^x$"}}
+	file, err := Resolve("review", ClassPolicy{Harness: "plain"}, c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, refusal := config.Resolve("review", config.PolicySpec{Class: config.Class{Harness: "plain"}}, config.Binding{Name: "review", Mode: config.ModeOff},
+		policyContext(c), config.Merge{})
+	if refusal != nil {
+		t.Fatal(refusal)
+	}
+	if config.ResolvedHash(file.Class) != config.ResolvedHash(bound) || file.Class.MaxPerDay != 0 || file.Class.HoldoutChecks != nil {
+		t.Fatalf("file %+v\nbinding %+v", file.Class, bound)
+	}
+}

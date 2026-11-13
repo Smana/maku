@@ -69,6 +69,9 @@ oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
 # v2 D4: the ZITADEL reader ({"pat", "githubIdpId"}) that resolves an API caller to their GitHub
 # login, read at config.api.access.readerFile. Optional: without it every human run is refused.
+# Deprecated (v4 D8): set config.api.access.links: broker to read each human's GitHub account link
+# from the broker instead; with both, the reader is read only for an account with no link. v4 step 8
+# removes it.
 zitadelReaderSecret: agent-factory-zitadel-reader
 # Factory interfaces F4: the sponsored principals' ZITADEL client ids, one key `<name>-client-id`
 # each, and `project-id`, the project every sponsored token's audience must hold. Read at

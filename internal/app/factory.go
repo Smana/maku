@@ -639,7 +639,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	// The two groups R23 admits: api.groups, which defaults to the values the broker's config carries.
 	groups := policy.Groups{Admin: cfg.API.Groups.Admin, Member: cfg.API.Groups.Member}
-	access := conns.access(log, cfg, perms)
+	access := conns.access(log, cfg, perms, broker)
 	people, _ := access.(api.PersonResolver) // D1: the login the write check reads is the person charged
 	auth := &api.Authenticator{Humans: humansV, Groups: groups, ClientIDs: clientIDs,
 		Systems: systemsV, SystemAllow: cfg.API.SystemPrincipals,

@@ -137,7 +137,7 @@ func TestMigrateANRConfig(t *testing.T) {
 		t.Fatalf("Decode(Migrate(anr)): %v", err)
 	}
 	r, err := Assemble(residual, objs)
-	if err != nil || len(r.Refused) != 0 || len(r.Accepted) != 7 {
+	if err != nil || len(r.Refused) != 0 || len(r.Accepted) != 16 { // a Factory, three Repositories and twelve class policies
 		t.Fatalf("err %v, refused %+v, accepted %d", err, r.Refused, len(r.Accepted))
 	}
 }

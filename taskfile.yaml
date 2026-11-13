@@ -4,11 +4,16 @@ tasks:
   check:
     desc: Every gate CI runs. Cite its exit code as evidence.
     cmds:
+      - task: check:static
+      - task: test
+
+  check:static:
+    desc: Every gate of check but the Go tests (CI runs those as test:shard, on several runners).
+    cmds:
       - task: spdx
       - task: tidy
       - task: lint
       - task: vuln
-      - task: test
       - task: crd:check
       - task: chart:check
       - task: quickstart:check
@@ -48,10 +53,11 @@ tasks:
       - bash hack/names.sh
 
   scripts:
-    desc: The operator scripts under scripts/, against fakes.
+    desc: The operator scripts under scripts/, and hack/ci-changes.sh, against fakes.
     cmds:
       - bash scripts/shadow-merge-tally_test.sh
       - bash scripts/stall-steps_test.sh
+      - bash hack/ci-changes_test.sh
 
   vuln:
     desc: Known vulnerabilities reachable from our code, the stdlib included.
@@ -65,6 +71,16 @@ tasks:
       - go test -race -count=1 ./...
     env:
       # envtest's kube-apiserver and etcd, downloaded once per version into the user cache.
+      KUBEBUILDER_ASSETS:
+        sh: go tool setup-envtest use -p path 1.36.x
+
+  test:shard:
+    desc: "One of N disjoint slices of test, by test name (hack/test-shard.sh): task test:shard SHARD=1 SHARDS=3"
+    requires:
+      vars: [SHARD, SHARDS]
+    cmds:
+      - bash hack/test-shard.sh {{.SHARD}} {{.SHARDS}}
+    env:
       KUBEBUILDER_ASSETS:
         sh: go tool setup-envtest use -p path 1.36.x
 

@@ -297,8 +297,12 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 		mo.Flux.Source = m.FluxSource
 	}
 
-	if over := ApplyGuardrails(&cl, ctx.Guardrails); over != "" {
-		return refuse(ReasonGuardrailMismatch, "class %s: %s", name, over)
+	// The guardrails cap what merges: review merges nothing (R30), and a cap or check they gave it
+	// would be a field review may not hold.
+	if name != "review" {
+		if over := ApplyGuardrails(&cl, ctx.Guardrails); over != "" {
+			return refuse(ReasonGuardrailMismatch, "class %s: %s", name, over)
+		}
 	}
 
 	var problems []string

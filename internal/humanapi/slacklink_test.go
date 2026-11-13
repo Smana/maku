@@ -320,3 +320,18 @@ func TestLinkPageReferrerPolicy(t *testing.T) {
 		}
 	}
 }
+
+// With the GitHub account link on, the no-GitHub refusal sends the human to /link/github, not to an
+// IdP profile.
+func TestSlackLinkSendsTheUnlinkedToTheGitHubLink(t *testing.T) {
+	links := newMemLinks()
+	w := world(nil, "nogh")
+	e := setup(t, mcpOn, withSponsored(sponsoredP), slackLinkOn(links), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.GitHubLink = &GitHubLinker{Store: newMemGitHub(), OAuth: newFakeGitHub(), WebOrigin: "https://github.example.test"}
+	})
+	code := mint(t, e, "U02DEF", "")
+	if _, page := linkReq(t, e, http.MethodGet, "/link/slack?code="+code, header("nogh"), nil); !strings.Contains(page, "link your GitHub account on /link/github") ||
+		strings.Contains(page, "ZITADEL") {
+		t.Fatalf("the notice: %s", page)
+	}
+}
