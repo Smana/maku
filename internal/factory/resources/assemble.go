@@ -12,6 +12,7 @@ package resources
 
 import (
 	"cmp"
+	"encoding/json"
 	"fmt"
 	"slices"
 	"strings"
@@ -58,12 +59,18 @@ type Result struct {
 	Accepted []Object  // in the order they were added
 	Refused  []Refusal // sorted by Kind, then Name
 	Warnings []string  // e.g. the file's catalogue keys a Factory replaces
+	// Bindings are the outcomes of the served Repositories' bindings, by Repository then in list
+	// order (B9). A binding that is not Accepted never refuses its Repository.
+	Bindings []BindingOutcome
+	// Resolved are the bindings resolved this time, for the caller to keep as Options.LastResolved.
+	Resolved map[BindingKey]ResolvedClass
 }
 
 // CatalogueKeys are the top-level file keys a Factory replaces (D12), in the file's spelling.
 var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "harnessProfiles", "mergeGuardrails", "evaluation", "mergeDefaults"}
 
-// candidate is one element of the candidate set: a Factory, or a Repository with its MergePolicy.
+// candidate is one element of the candidate set: a Factory, a Repository with its per-repository
+// MergePolicy, or a Repository holding its own merge and bindings (policy nil).
 type candidate struct {
 	factory *Object
 	repo    *Object
@@ -71,8 +78,11 @@ type candidate struct {
 }
 
 func (c candidate) objects() []Object {
-	if c.factory != nil {
+	switch {
+	case c.factory != nil:
 		return []Object{*c.factory}
+	case c.policy == nil:
+		return []Object{*c.repo}
 	}
 	return []Object{*c.repo, *c.policy}
 }
@@ -93,7 +103,16 @@ func (c candidate) objects() []Object {
 //
 // Assemble keeps no history. D5's "keep the last accepted version" is the caller's: it substitutes
 // each refused object's last accepted spec, when it has one, and calls Assemble again.
-func Assemble(file []byte, objs []Object) (Result, error) {
+//
+// Reusable merge policies (B1-B9): a class-shape MergePolicy is judged alone and is never a
+// candidate. A Repository with merge or mergePolicies is a candidate alone, its bindings resolved
+// before Parse under the merged catalogue; a binding that does not resolve drops its class, or
+// puts back opts' last resolved one, and never refuses the Repository (Result.Bindings).
+func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
+	var opt Options
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	// The map below keeps a duplicated switch block's last copy silently: read the raw bytes first.
 	if err := config.CheckBlocks(file); err != nil {
 		return Result{}, fmt.Errorf("config file: %w", err)
@@ -112,17 +131,23 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 		res.Refused = append(res.Refused, Refusal{Kind: o.Kind, Name: o.Name, Reason: reason, Message: fmt.Sprintf(format, a...)})
 	}
 	refuseInvalid := func(c candidate, msg string) {
-		if c.factory != nil {
+		switch {
+		case c.factory != nil:
 			refuse(*c.factory, v1alpha1.ReasonInvalid, "%s", msg)
-			return
+		case c.policy == nil:
+			refuse(*c.repo, v1alpha1.ReasonInvalid, "%s", msg)
+		default:
+			refuse(*c.policy, v1alpha1.ReasonInvalid, "%s", msg)
+			refuse(*c.repo, v1alpha1.ReasonInvalid, "not served: MergePolicy %s was refused", c.policy.Name)
 		}
-		refuse(*c.policy, v1alpha1.ReasonInvalid, "%s", msg)
-		refuse(*c.repo, v1alpha1.ReasonInvalid, "not served: MergePolicy %s was refused", c.policy.Name)
 	}
 
-	set := structural(base, name, objs, refuse)
+	set, policies := structural(base, name, objs, refuse, func(w string) { res.Warnings = append(res.Warnings, w) })
+	tryParse := func(set []candidate) (*config.Config, []string, resolution, error) {
+		return assemble(base, set, policies, opt)
+	}
 
-	cfg, warnings, err := tryParse(base, set)
+	cfg, warnings, rs, err := tryParse(set)
 	for err != nil && len(set) > 0 {
 		cur := err.Error()
 		// Success first: a removal that makes Parse succeed names the culprit. Only when none
@@ -134,7 +159,7 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 		culprit, dropped, changed := -1, -1, -1
 		curLines := errLines(cur)
 		for i := range set {
-			_, _, e := tryParse(base, slices.Concat(set[:i:i], set[i+1:]))
+			_, _, _, e := tryParse(slices.Concat(set[:i:i], set[i+1:]))
 			if e == nil {
 				culprit = i
 				break
@@ -164,22 +189,28 @@ func Assemble(file []byte, objs []Object) (Result, error) {
 			if factoryOut {
 				// Without the Factory the file may hold no catalogue: what then fails is that, not
 				// the pairs, which stay unrefused. The caller puts the Factory's last good back.
-				cfg, warnings, err = tryParse(base, set)
+				cfg, warnings, rs, err = tryParse(set)
 				if err != nil {
 					break
 				}
 			}
 		}
-		cfg, warnings, err = tryParse(base, set)
+		cfg, warnings, rs, err = tryParse(set)
 	}
 
 	for _, c := range set {
 		res.Accepted = append(res.Accepted, c.objects()...)
 	}
+	res.Accepted = append(res.Accepted, rs.accepted...)
+	res.Refused = append(res.Refused, rs.refused...)
 	slices.SortFunc(res.Refused, func(a, b Refusal) int {
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Name, b.Name))
 	})
-	res.Config, res.Warnings = cfg, warnings
+	res.Bindings, res.Resolved = rs.bindings, rs.resolved
+	if cfg != nil {
+		cfg.Policies = rs.policies
+	}
+	res.Config, res.Warnings = cfg, append(res.Warnings, warnings...)
 	return res, err
 }
 
@@ -199,20 +230,25 @@ func containsAll(have, want []string) bool {
 	return true
 }
 
-// structural applies the refusals that need no Parse and returns the candidate set: pairs sorted
-// by the Repository's name, then the Factory.
-func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any)) []candidate {
-	var factories, repos, policies []Object
+// structural applies the refusals that need no Parse and returns the candidate set (pairs and
+// bound Repositories sorted by the Repository's name, then the Factory) and the class-shape
+// policies, sorted by name.
+func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any), warn func(string)) ([]candidate, []Object) {
+	var factories, repos, policies, classPolicies []Object
 	for _, o := range objs {
-		switch o.Kind {
-		case KindFactory:
+		switch {
+		case o.Kind == KindFactory:
 			factories = append(factories, o)
-		case KindRepository:
+		case o.Kind == KindRepository:
 			repos = append(repos, o)
-		case KindMergePolicy:
+		case o.Kind == KindMergePolicy && legacyPolicy(o):
+			warn(fmt.Sprintf("MergePolicy %s is in the per-repository shape, removed in the next minor: maku config migrate", o.Name))
 			policies = append(policies, o)
+		case o.Kind == KindMergePolicy:
+			classPolicies = append(classPolicies, o)
 		}
 	}
+	slices.SortFunc(classPolicies, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
 
 	// Factories: only this factory's, and only the first by name.
 	var factory *Object
@@ -265,13 +301,19 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 			usable = append(usable, r)
 		}
 	}
-	usableNames := map[string]bool{}
+	usableNames, boundNames := map[string]bool{}, map[string]bool{}
 	for _, r := range usable {
 		usableNames[r.Name] = true
+		boundNames[r.Name] = boundRepository(r)
 	}
 	policyOf := map[string]Object{}
 	for _, p := range live {
 		ref := str(p.Spec, "repositoryRef")
+		if boundNames[ref] {
+			// B8, plan PR8: the Repository's own bindings and a per-repository policy never together.
+			refuse(p, v1alpha1.ReasonDefinedTwice, "Repository %s holds its own merge and mergePolicies: delete this per-repository MergePolicy (B8)", ref)
+			continue
+		}
 		if !usableNames[ref] {
 			refuse(p, v1alpha1.ReasonMissingRef, "Repository %q is not served", ref)
 			continue
@@ -282,6 +324,15 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 	slices.SortFunc(usable, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
 	var set []candidate
 	for _, r := range usable {
+		if boundNames[r.Name] {
+			if count[r.Name] > 0 {
+				refuse(r, v1alpha1.ReasonDefinedTwice, "a per-repository MergePolicy names Repository %q, which holds its own merge and mergePolicies: delete that MergePolicy (B8)", r.Name)
+				continue
+			}
+			r := r
+			set = append(set, candidate{repo: &r})
+			continue
+		}
 		p, ok := policyOf[r.Name]
 		if !ok {
 			refuse(r, v1alpha1.ReasonNoMergePolicy, "no MergePolicy names Repository %q", r.Name)
@@ -293,7 +344,7 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 	if factory != nil {
 		set = append(set, candidate{factory: factory})
 	}
-	return set
+	return set, classPolicies
 }
 
 // fileRepositoryNames lowercases the names of the file's repositories, in both shapes.
@@ -315,24 +366,41 @@ func fileRepositoryNames(base map[string]any) map[string]bool {
 	return names
 }
 
-// tryParse merges set into a copy of base and parses it.
-func tryParse(base map[string]any, set []candidate) (*config.Config, []string, error) {
-	m, warnings, err := merge(base, set)
+// assemble merges set into a copy of base, resolving the bound Repositories' bindings against the
+// class policies, and parses it.
+func assemble(base map[string]any, set []candidate, policies []Object, opts Options) (*config.Config, []string, resolution, error) {
+	m, warnings, rs, err := merge(base, set, policies, opts)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, rs, err
 	}
 	c, err := parseMap(m)
-	return c, warnings, err
+	return c, warnings, rs, err
 }
 
-// merge builds one map from a deep copy of base and the set.
-func merge(base map[string]any, set []candidate) (map[string]any, []string, error) {
+// merge builds one map from a deep copy of base and the set: the Factory first, since resolving a
+// binding reads the merged catalogue (plan PR7), then each Repository's entry.
+func merge(base map[string]any, set []candidate, policies []Object, opts Options) (map[string]any, []string, resolution, error) {
+	var rs resolution
 	m, err := cloneMap(base)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, rs, err
 	}
 	var warnings []string
+	set = slices.Clone(set)
+	slices.SortStableFunc(set, func(a, b candidate) int { return cmp.Compare(boolInt(a.factory == nil), boolInt(b.factory == nil)) })
+	var ctx config.PolicyContext
+	var ctxErr error
+	read := false
+	readContext := func() {
+		read = true
+		if ctx, ctxErr = policyContext(m); ctxErr == nil {
+			judgePolicies(policies, ctx, &rs)
+		}
+	}
 	for _, c := range set {
+		if c.factory == nil && !read {
+			readContext()
+		}
 		if c.factory != nil {
 			f := c.factory
 			for _, k := range CatalogueKeys {
@@ -375,17 +443,71 @@ func merge(base map[string]any, set []candidate) (map[string]any, []string, erro
 				entry[k] = v
 			}
 		}
-		for _, k := range []string{"classes", "merge"} {
-			if v, ok := c.policy.Spec[k]; ok {
-				entry[k] = v
+		if c.policy != nil {
+			for _, k := range []string{"classes", "merge"} {
+				if v, ok := c.policy.Spec[k]; ok {
+					entry[k] = v
+				}
 			}
+		} else if err := boundEntry(entry, *c.repo, m, ctx, ctxErr, opts, &rs); err != nil {
+			return nil, nil, rs, err
 		}
 		list, _ := m["repositories"].([]any)
 		m["repositories"] = append(list, entry)
 	}
+	if !read { // no Repository: the policies are still judged
+		readContext()
+	}
 	// The spec values are shared with the caller's objects; round-trip so nothing is aliased.
 	m, err = cloneMap(m)
-	return m, warnings, err
+	return m, warnings, rs, err
+}
+
+func boolInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// boundEntry fills a bound Repository's entry (plan Task 8): its merge as written (Parse applies
+// mergeDefaults), its resolved classes, its bound names and its bindings as written. When the
+// policy context does not decode, no binding resolves, and Parse refuses the Factory.
+func boundEntry(entry map[string]any, r Object, m map[string]any, ctx config.PolicyContext, ctxErr error, opts Options, rs *resolution) error {
+	if v, ok := r.Spec["merge"]; ok {
+		entry["merge"] = v
+	}
+	classes := map[string]config.Class{}
+	if ctxErr == nil {
+		refused := map[string]bool{}
+		for _, f := range rs.refused {
+			refused[f.Name] = true
+		}
+		defaults, _ := m["mergeDefaults"].(map[string]any)
+		classes = resolveBindings(r, defaults, ctx, refused, opts, rs)
+	}
+	raw, err := json.Marshal(classes)
+	if err != nil {
+		return err
+	}
+	var cm map[string]any
+	if err := json.Unmarshal(raw, &cm); err != nil {
+		return err
+	}
+	entry["classes"] = cm
+	if v, ok := r.Spec["mergePolicies"]; ok {
+		entry["bindings"] = v
+		var bound []any
+		if list, ok := v.([]any); ok {
+			for _, b := range list {
+				if b, ok := b.(map[string]any); ok {
+					bound = append(bound, b["name"])
+				}
+			}
+		}
+		entry["bound"] = bound
+	}
+	return nil
 }
 
 // cloneMap deep-copies m through YAML, which is enough at these sizes.
@@ -409,7 +531,7 @@ func parseMap(m map[string]any) (*config.Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	return config.Parse(b)
+	return config.ParseAssembled(b)
 }
 
 func str(m map[string]any, k string) string {
