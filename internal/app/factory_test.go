@@ -231,6 +231,18 @@ func TestDemoStartupChoices(t *testing.T) {
 	}
 }
 
+// Review #518: runs.gatewayIdentity stamps every run spec.meteredBy gateway; without it, none.
+func TestMeteredByFollowsTheGatewayIdentity(t *testing.T) {
+	cfg := &config.Config{}
+	if got := meteredBy(cfg); got != "" {
+		t.Fatalf("no identity: %q", got)
+	}
+	cfg.Runs.GatewayIdentity = true
+	if got := meteredBy(cfg); got != "gateway" {
+		t.Fatalf("with the identity: %q, want gateway", got)
+	}
+}
+
 // Outside demo mode today's path holds: an unreadable CA, a bad meter.url and an unreachable
 // JWKS fail at start.
 func TestNonDemoStartupStillFailsFast(t *testing.T) {

@@ -425,6 +425,8 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return fmt.Sprintf("runs live in namespace %q", c.Namespace)
 	case r.Spec.Suspendable:
 		return "spec.suspendable runs need cloud-native-ref's runtime"
+	case r.Spec.MeteredBy == "gateway" && !c.Gateway():
+		return "spec.meteredBy gateway needs model.mode gateway: in model.mode secret the run makes no ar_agent series, so the factory's meter would price it at $0"
 	case r.Spec.DataClass == "internal" && !c.Gateway():
 		return "spec.dataClass internal needs the model gateway, which this runtime does not have"
 	case r.Spec.DataClass == "internal" && len(c.Model.Gateway.Aliases.Internal) == 0:

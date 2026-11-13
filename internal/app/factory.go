@@ -200,6 +200,16 @@ func usageSource(cfg *config.Config) (meter.Source, error) {
 	return meter.NewVM(cfg.Meter.URL, cfg.Meter.Query, cfg.Runs.Kind, httpx.New(vmTimeout, nil))
 }
 
+// meteredBy is what the factory stamps on each run it creates (spec.meteredBy, review #518): gateway
+// under runs.gatewayIdentity, so a run-controller in model.mode secret refuses the run rather than
+// start one the meter would price at $0.
+func meteredBy(cfg *config.Config) string {
+	if cfg.Runs.GatewayIdentity {
+		return runs.MeteredByGateway
+	}
+	return ""
+}
+
 // throttle maps gateway 429s to runs: PromQL on meter.url (meter.throttle.promQuery, GW10), else
 // VictoriaLogs (meter.logsURL); nil with neither.
 func throttle(cfg *config.Config) (meter.Throttled, error) {
@@ -488,7 +498,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err != nil {
 		return err
 	}
-	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs.Kind}
+	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs.Kind, MeteredBy: meteredBy(cfg)}
 	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
 	if perRun != nil {
 		rc.Created = perRun.Ensure // the first token, right after the claim exists (plan PR5)
@@ -716,7 +726,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Cfg: live, OnCost: runCost(m), OnLateCost: m.LateCost, OnSpend: m.RunSpend, OnSettled: m.RunSettled, Costs: costs,
 			OnFallback: func(ctx context.Context, why string) { m.RunBudgetFallback(ctx, "run", why) },
 			OnUnpriced: m.ModelUnpriced, OnInputExcludesCache: m.InputExcludesCache,
-			Throttle:  throttled,
+			Throttle: throttled, GatewayIdentity: cfg.Runs.GatewayIdentity,
 			B1Ceiling: config.RunTokenCeiling, Now: time.Now,
 			Day:          func(p string, spent, c int64) { m.BudgetDay(ctx, p, spent, c) },
 			OnUsageError: m.MeterUsageReadError, OnSucceeded: m.MeterSucceeded, OnOvershoot: m.RunOvershoot,

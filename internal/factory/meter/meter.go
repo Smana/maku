@@ -267,6 +267,9 @@ type Meter struct {
 	PerReplica bool
 	// Throttle maps gateway 429s to runs; nil: no 429 mapping (VL implements it).
 	Throttle Throttled
+	// GatewayIdentity is the config's runs.gatewayIdentity: every run should reach the gateway's
+	// series, so one that succeeded with none is unpriced, never $0 (review #518).
+	GatewayIdentity bool
 	// Cfg is the live config, read once per tick (factory resources D12): budgets (the daily
 	// ceilings, enforced only when EnforcePrincipal, R3's shadow first), meter.prices, each
 	// tier's USD run cap (RunUSD), and harnessProfiles, which bound a run's cost profile label
@@ -792,6 +795,12 @@ func (m *Meter) Tick(ctx context.Context) error {
 		case !seen:
 			if e := m.last[r.ID]; e.usdKnown {
 				usd[r.ID], costs[r.ID] = e.usd, Cost{MicroUSD: e.usd}
+			} else if m.GatewayIdentity && r.Phase == "Succeeded" {
+				// Review #518's backstop: a run that succeeded and never reached the gateway's series
+				// was not metered (a run-controller in model.mode secret, a scrape missing the
+				// gateway). Unpriced, never $0.
+				why = FallbackUnpriced
+				m.unpriced(ctx, r, r.Model)
 			}
 		case !u.Typed:
 			why = FallbackUntyped
