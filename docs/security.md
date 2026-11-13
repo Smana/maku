@@ -296,6 +296,11 @@ the cluster's issuer keys. Where those keys come from changes what the cluster e
 The keys are public, and the binding is Kubernetes' documented setting for OIDC discovery. Where the
 apiserver is reachable beyond the cluster, prefer `url` or `inline`.
 
+To keep `apiserver` but narrow it, Kubernetes 1.32 and later accept an `AuthenticationConfiguration`
+(`--authentication-config`) whose `anonymous.conditions` admit anonymous requests on named paths only:
+list `/.well-known/openid-configuration` and `/openid/v1/jwks`, and leave `--anonymous-auth` unset.
+Every other anonymous request is then refused at authentication, before any binding is consulted.
+
 ## Network
 
 These policies live in cloud-native-ref. Default deny everywhere; one allow per flow.
