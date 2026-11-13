@@ -55,6 +55,15 @@ TAG="${TAG:-e2e}"
 NS=maku
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
+# wait_established CRD...: just after a server-side apply, `kubectl wait` can fail before the CRDs
+# are served (once: an accessor error), so it is retried a few times before the last, failing try.
+wait_established() {
+  for _ in 1 2 3 4; do
+    kubectl wait --for=condition=Established "$@" --timeout=120s >/dev/null && return
+    sleep 3
+  done
+  kubectl wait --for=condition=Established "$@" --timeout=120s >/dev/null
+}
 
 work="$(mktemp -d)"
 export KUBECONFIG="$work/kubeconfig"
@@ -244,8 +253,8 @@ else
     kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
     # agentgateway's CRDs, vendored and applied apart from any Helm release (too big for one, docs/gateway.md)
     kubectl apply --server-side -f config/agentgateway >/dev/null
-    kubectl wait --for=condition=Established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
-      crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev --timeout=120s >/dev/null
+    wait_established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
+      crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev
     kubectl create namespace models >/dev/null
     kubectl -n models create configmap echo-llm --from-file=charts/maku-gateway/tests/probe/echo-llm.py >/dev/null
     kubectl -n models apply -f - >/dev/null <<EOF
