@@ -92,7 +92,7 @@ monitor:
 # publisher's token under each enforced repository's .github/chainguard/publisher.sts.yaml. Empty:
 # no token, and config.hardening.enforceOutputs must stay empty unless the minter publishes.
 # Unused with config.hardening.publisher.minter: true (v4 D10), where the factory mints the
-# publisher's token from the agents App (runTokens.appSecret) and reads no projected token.
+# publisher's token from the agents App (apps.agents.existingSecret, or its alias runTokens.appSecret) and reads no projected token.
 hardening:
   publisher:
     audience: ""

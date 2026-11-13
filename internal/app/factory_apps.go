@@ -64,19 +64,18 @@ func checkAppGrants(ctx context.Context, app string, need minter.Permissions, ch
 }
 
 // appGrantChecks is the startup check under runTokens.perRun (D12, plan Task 14): the agents App's
-// installations against its required set (the role table's union), and the factory App's against
-// its own. It runs once, on the leader, over the repositories served at start.
-func appGrantChecks(cfg *config.Config, served func() []string, gauge permissionGauge, log *slog.Logger) manager.Runnable {
-	app := func(idFile, keyFile string, t minter.Table) *minter.Minter {
-		return &minter.Minter{Client: &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil), IDFile: idFile,
-			KeyFile: keyFile, Installations: &forge.Installations{}}, Table: t, Log: log}
-	}
-	agentsID, agentsKey, _ := cfg.RunTokenApp()
-	agents := app(agentsID, agentsKey, nil) // nil: minter.Roles
-	factory := app(cfg.GitHub.AppIDFile, cfg.GitHub.PrivateKeyFile, minter.Table{"factory": {Base: factoryAppNeed(cfg)}})
+// installations against its required set (the role table's union), through agents (agentsMinter;
+// nil skips it), and the factory App's against its own. It runs once, on the leader, over the
+// repositories served at start.
+func appGrantChecks(cfg *config.Config, agents *minter.Minter, served func() []string, gauge permissionGauge, log *slog.Logger) manager.Runnable {
+	factory := &minter.Minter{Client: &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil),
+		IDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile, Installations: &forge.Installations{}},
+		Table: minter.Table{"factory": {Base: factoryAppNeed(cfg)}}, Log: log}
 	return manager.RunnableFunc(func(ctx context.Context) error {
 		repos := served()
-		checkAppGrants(ctx, "agents", githubapps.Agents(), agents, repos, gauge, log)
+		if agents != nil {
+			checkAppGrants(ctx, "agents", githubapps.Agents(), agents, repos, gauge, log)
+		}
 		checkAppGrants(ctx, "factory", factoryAppNeed(cfg), factory, repos, gauge, log)
 		return nil
 	})
