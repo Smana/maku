@@ -2086,7 +2086,9 @@ For each push request, in the run's order:
    fast-forward of the branch or a rebase onto `main`. A submodule, a symlink leaving the tree,
    a `.git` path, a binary file or a blob over 1 MiB is refused.
 2. **The caps.** The task's class caps, `maxPatchFiles` and `maxModifiedLines`, apply to the
-   cumulative change from the merge base: past them, `push_size`.
+   cumulative change from the merge base: past them, `push_size`. A class the repository does not
+   declare takes the strictest cap any declared class sets; with none set, every push is
+   `push_size`.
 3. **T1 to T4 at enforce, T5 at most audit,** on the changed paths, the added lines and the
    commit messages. A blocked path is refused. A path that needs approval holds the push.
 4. **The push.** The factory records the push's head on the task

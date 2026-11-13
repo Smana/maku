@@ -573,7 +573,8 @@ the run supersedes the approval.
 - **A lost push reply.** The factory records the push's head on the task
   (`agents.ogenki.io/push-intent`) before `git push`. If the reply is lost, the next inspection
   reads the branch at that head and answers `applied`. If the task cannot be written, nothing is
-  pushed and the request waits for the next tick. Only the latest push of a task is recorded.
+  pushed and the request waits for the next tick. Only the latest push of a task is recorded. A
+  lost lease or a rejection clears the record, so only an ambiguous failure (a timeout) keeps it.
 - **Old blobs are not sized.** The factory sizes every blob the bundle adds, from its header,
   without fetching anything. Blobs the remote already holds (the old side of a change, or a file
   reverted to earlier content) are read by the diff in one batched fetch: `core.bigFileThreshold`
