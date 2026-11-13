@@ -53,7 +53,7 @@ func TestReviewMayBeDeclaredForChecksAndTestFirstOnly(t *testing.T) {
 }
 
 func TestATemplateListingTheTesterLoadsWithoutItAndWarns(t *testing.T) {
-	c, err := Parse([]byte(listShaped(t, good)))
+	c, err := Parse([]byte(good))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,7 +66,7 @@ func TestATemplateListingTheTesterLoadsWithoutItAndWarns(t *testing.T) {
 }
 
 func TestALiveClassWithoutHoldoutsWarns(t *testing.T) {
-	c, err := Parse([]byte(strings.Replace(listShaped(t, good), "docs-links: {shadow: true}", "docs-links: {live: true}", 1)))
+	c, err := Parse([]byte(strings.Replace(good, "docs-links: {shadow: true}", "docs-links: {live: true}", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}

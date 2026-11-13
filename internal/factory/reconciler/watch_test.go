@@ -105,9 +105,9 @@ func TestRequestChangesStartsARevision(t *testing.T) {
 // submitted them in; one a maintainer later approved over, a comment and a dismissal are not.
 func TestEveryNewMaintainerReviewIsQueued(t *testing.T) {
 	g := newRig(t, awaiting(), roomOf("3buqdlot"))
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "alice")
 	approved := forge.Review{ID: 960, Author: "BOB", State: "APPROVED", At: now.Add(-time.Minute)} // logins fold case
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "bob")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "bob")
 	g.f.SetPR(pr12(
 		changes(950, "Smana", "rename the file", 20*time.Minute),
 		changes(905, "ALICE", "created first, submitted second", 10*time.Minute), // logins fold case
@@ -576,7 +576,7 @@ func TestRetryToleratesClockSkew(t *testing.T) {
 // is the one narrated, and every new one is acted on once.
 func TestTheNewestRetryOnTheIssueOrThePR(t *testing.T) {
 	g := newRig(t, escalatedTask(true), roomOf("3buqdlot"))
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "alice")
 	pr := pr12()
 	pr.Comments = []forge.Comment{{ID: 90, Author: "alice", Body: "Looked at it.\r\n/factory retry \r\nThanks", At: now.Add(-time.Minute)}}
 	g.f.SetPR(pr)
@@ -590,7 +590,7 @@ func TestTheNewestRetryOnTheIssueOrThePR(t *testing.T) {
 	}
 	// The newest wins wherever it sits: here the issue's, read after the pull request's.
 	g = newRig(t, escalatedTask(true), roomOf("3buqdlot"))
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "alice")
 	pr.Comments = []forge.Comment{retryBy(92, "alice", 5*time.Minute)}
 	g.f.SetPR(pr)
 	g.f.SetComments(7, retryBy(93, "Smana", time.Minute))
@@ -755,7 +755,7 @@ func TestAMaintainerRestartsTheWait(t *testing.T) {
 	since := metav1.NewTime(now.Add(-15 * 24 * time.Hour))
 	tk.Status.PhaseSince = &since
 	g := newRig(t, tk)
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "alice")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "alice")
 	pr := pr12(forge.Review{ID: 1, Author: "Smana", State: "COMMENTED", At: now.Add(-time.Hour)})
 	pr.Comments = []forge.Comment{{ID: 2, Author: "someone", At: now.Add(-time.Minute)}}
 	g.f.SetPR(pr)

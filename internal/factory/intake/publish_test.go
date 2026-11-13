@@ -66,7 +66,7 @@ func publishing(t *testing.T, text string, tk *v1alpha1.Task, actors ...string) 
 	f.SetLabeled(LabelPublish, forge.Item{Number: 7})
 	f.SetIssue(forge.Issue{Number: 7, Title: "RunLore: A on r", Body: "stub"})
 	p, c := poller(t, f, tk)
-	p.Cfg.Current().Maintainers = []string{"Smana"}
+	p.Cfg.Current().Repositories[0].Maintainers = []string{"Smana"}
 	p.Now = func() time.Time { return t0.Add(time.Hour) }
 	p.Redact = testRedactor(t)
 	p.Proposal = func(context.Context, *v1alpha1.Task) (string, error) {
@@ -575,7 +575,7 @@ const proposalWithFiles = proposalOK + "\n## Files\n- `observability/base/rules/
 func startsPublishing(t *testing.T, starts bool, text string, tk *v1alpha1.Task) (*IssuePoller, *forgetest.Fake, client.Client) {
 	t.Helper()
 	p, f, c := publishing(t, text, tk, "Smana")
-	p.Cfg.Current().Classes = hostClasses()
+	p.Cfg.Current().Repositories[0].Classes = hostClasses()
 	p.Cfg.Current().API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, PublishStarts: starts}}
 	return p, f, c
 }

@@ -25,7 +25,7 @@ func gateInputs() ArmInputs {
 		Files: changed("[x](https://example.com/old)", "[x](https://example.com/new)"), DiffRead: true,
 		Stats: []forge.FileStat{{Path: testFile, Status: "modified", Additions: 1, Deletions: 1}}}
 	in.Cfg = armCfg()
-	in.Cfg.Current().Classes["dead-links"] = declaredClass()
+	in.Cfg.Current().Repositories[0].Classes["dead-links"] = declaredClass()
 	return in
 }
 
@@ -60,7 +60,7 @@ func TestEachDeclaredConditionRefusesAlone(t *testing.T) {
 		}, "human", "holdout_red"},
 		"a rename from a protected file": {func(in *ArmInputs) {
 			in.Stats[0].Status, in.Stats[0].Previous = "renamed", "docs/specs/x.md"
-			in.Cfg.Current().Classes["dead-links"] = withoutModifyOnly(in.Cfg.Current().Classes["dead-links"])
+			in.Cfg.Current().Repositories[0].Classes["dead-links"] = withoutModifyOnly(in.Cfg.Current().Repositories[0].Classes["dead-links"])
 		}, "human", "file_protected"},
 		"the holdout foreign":  {func(in *ArmInputs) { in.Checks.Runs[2].App = 1 }, "human", "holdout_red"},
 		"the holdout running":  {func(in *ArmInputs) { in.Checks.Runs[2].State = "PENDING" }, "wait", "holdout_pending"},
@@ -95,7 +95,7 @@ func TestDiffConditionsWaitForTheDiff(t *testing.T) {
 // as today; a declared class with nothing but a switch is decided by the base alone.
 func TestTheBaseHoldsForAClassThatDeclaresNothing(t *testing.T) {
 	in := gateInputs()
-	in.Cfg.Current().Classes["dead-links"] = config.Class{Shadow: true}
+	in.Cfg.Current().Repositories[0].Classes["dead-links"] = config.Class{Shadow: true}
 	in.Stats, in.Files = []forge.FileStat{{Path: "README.md", Status: "added", Additions: 99}}, changed("a", "b")
 	if d := DecideArm(in); d.Verdict != "shadow" || d.Reason != "shadow_would_arm" {
 		t.Fatalf("no declared condition: the base alone decides, %+v", d)
@@ -139,7 +139,7 @@ func TestAllowedFilesAnchorsTheWholePattern(t *testing.T) {
 	in := gateInputs()
 	cl := declaredClass()
 	cl.AllowedFiles = []string{`^docs/.+\.md|website/.+\.md$`}
-	in.Cfg.Current().Classes["dead-links"] = cl
+	in.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	in.Stats[0].Path = "docs/a.md.sh"
 	if d := DecideArm(in); d.Reason != "file_not_allowed" {
 		t.Fatalf("a branch anchored on one side allowed %s: %+v", in.Stats[0].Path, d)

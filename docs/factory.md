@@ -2618,10 +2618,10 @@ run tokens ignore it.
 The public-only check runs at start-up and on each labelled issue, so a repository made private
 after start-up is caught only when an issue is labelled.
 
-**The legacy single-repository shape still loads**, for one minor release: top-level `repository`,
-`maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` and `schedules` read as a
-one-entry `repositories` with `control` on that repository, and its `api.repositories` stays the
-allowlist as written. A file mixing the two shapes fails the start.
+**The single-repository shape is removed** (v4 step 8): a file with a top-level `repository`,
+`maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` or `schedules` fails the start,
+naming each key. Serve the repository from a `Repository` object; `maku config migrate` still reads
+the old file and writes it ([upgrading](upgrading.md#the-single-repository-config)).
 
 **Each repository has its own GitHub connections**, the factory App's and the merger's, one pair
 per entry; a repository either App is not installed on is refused alone: it is not served, its `Repository`

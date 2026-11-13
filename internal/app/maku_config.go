@@ -172,6 +172,10 @@ func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns string) (
 		if err != nil {
 			return nil, nil, nil, err
 		}
+		// The factory refuses the single-repository shape (R7); migrate still converts it.
+		if raw, err = resources.LiftLegacy(raw); err != nil {
+			return nil, nil, nil, err
+		}
 		if before, err = config.Parse(raw); err != nil {
 			return nil, nil, nil, err
 		}

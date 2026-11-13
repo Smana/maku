@@ -17,7 +17,7 @@ func centralApprovalRig(t *testing.T, docsLinks config.Class) *rig {
 	t.Helper()
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	docsLinks.RequiresApproval = []config.ApprovalLeaf{{ChangedFiles: []string{"."}}}
-	g.r.Cfg.Current().Classes = map[string]config.Class{"docs-links": docsLinks, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": docsLinks, "revert": {Shadow: true}}
 	files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
 	g.f.SetFiles(files.Base, files.Head)
 	g.f.SetChecks(12, green("SUCCESS"))
@@ -84,7 +84,7 @@ func TestUnrelatedClassEditKeepsGrants(t *testing.T) {
 	g := centralApprovalRig(t, config.Class{Live: true})
 	g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
 	g.r.Grants = &fakeGrants{list: []grant.Grant{boundGrant(centralHash(g))}}
-	classes := g.r.Cfg.Current().Classes
+	classes := g.r.Cfg.Current().Repositories[0].Classes
 	classes["revert"] = config.Class{Shadow: true, HoldoutChecks: []string{"another check"}}
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging {
 		t.Fatalf("another class's edit suspended the grant: %s %s", tk.Status.Phase, tk.Status.Reason)
@@ -93,9 +93,9 @@ func TestUnrelatedClassEditKeepsGrants(t *testing.T) {
 	g = centralApprovalRig(t, config.Class{Live: true})
 	g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
 	g.r.Grants = &fakeGrants{list: []grant.Grant{boundGrant(centralHash(g))}}
-	dl := g.r.Cfg.Current().Classes["docs-links"]
+	dl := g.r.Cfg.Current().Repositories[0].Classes["docs-links"]
 	dl.ProtectedFiles = []string{"^nothing-here/"} // a tightening: still a new definition
-	g.r.Cfg.Current().Classes["docs-links"] = dl
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = dl
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != reasonApprovalRequired {
 		t.Fatalf("this class's edit kept the grant: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}

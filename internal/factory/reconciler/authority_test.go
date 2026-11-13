@@ -20,7 +20,7 @@ func cutOverRig(t *testing.T, snap mergepolicy.Snapshot, err error) *rig {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	rc := g.r.Cfg.Current().Repos()[0]
 	rc.Classes, rc.ClassAuthority = nil, config.ClassAuthorityRepository
-	g.r.Cfg.Current().Repositories, g.r.Cfg.Current().Classes = []config.Repository{rc}, nil
+	g.r.Cfg.Current().Repositories, g.r.Cfg.Current().Repositories[0].Classes = []config.Repository{rc}, nil
 	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, RepositoryAuthority: true}
 	g.r.Cfg.Current().SetClassSource(func(string) (map[string]config.Class, bool) {
 		out := map[string]config.Class{}

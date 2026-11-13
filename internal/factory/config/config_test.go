@@ -19,9 +19,6 @@ import (
 
 const good = `
 factory: aws-0
-repository: Smana/cloud-native-ref
-maintainers: [Smana]
-triggerLabel: factory/ready
 factoryLogin: ogenki-agent-factory[bot]
 agentsLogin: ogenki-agents[bot]
 roomsURL: https://rooms.priv.gcp.ogenki.io
@@ -30,19 +27,6 @@ github: {appIDFile: /etc/agent-factory-github/app_id, privateKeyFile: /etc/agent
 poll: {issues: 60s, tasks: 30s, meter: 30s}
 defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
 triage: {classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", controlPercent: 10}
-classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}, tests: {}, dashboards: {}}
-merge:
-  requiredChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Rendered manifest diff 📝", "Check the shell scripts 💻", "Check the documentation links 🔗", "Validate Vector Log Parsing Configuration (vlsingle)", "Validate Vector Log Parsing Configuration (vlcluster)"]
-  verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Check the shell scripts 💻", "Check the documentation links 🔗"]
-  leakScanCheck: "Security scanning 🔒"
-  policyBotLogin: ogenki-merge-gate[bot]
-  mergerLogin: ogenki-agent-merger[bot]
-  autoMergesPerDay: 10
-  fixRuns: 2
-  checkReruns: 1
-  verifyFor: 30m
-  revertWindow: 168h
-  breaker: {window: 10, maxReverts: 1}
 tiers:
   light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20}
   standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
@@ -56,7 +40,6 @@ caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, 
 budgets: {enforceTask: false, enforcePrincipal: false, factoryDailyUSD: 42.50, humanDailyUSD: 8.50}
 api:
   listen: ":8443"
-  repositories: [Smana/cloud-native-ref]
   humanIssuer: https://auth.ogenki.io
   humanJWKS: https://auth.ogenki.io/oauth/v2/keys
   clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]
@@ -70,6 +53,23 @@ meter:
   query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:xplane-run-.+", gen_ai_token_type=~"input|output"})'
   logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428
   throttleQuery: '_time:2m kubernetes.pod_namespace:"agent-gateway" AND kubernetes.pod_labels.gateway.networking.k8s.io/gateway-name:"agent-router" | unpack_json | filter log.http.status:429 AND log.reason:RateLimit | stats by (log.x_ar_agent) count() hits'
+repositories:
+  - name: Smana/cloud-native-ref
+    maintainers: [Smana]
+    triggerLabel: factory/ready
+    classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}, tests: {}, dashboards: {}}
+    merge:
+      requiredChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Rendered manifest diff 📝", "Check the shell scripts 💻", "Check the documentation links 🔗", "Validate Vector Log Parsing Configuration (vlsingle)", "Validate Vector Log Parsing Configuration (vlcluster)"]
+      verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Check the shell scripts 💻", "Check the documentation links 🔗"]
+      leakScanCheck: "Security scanning 🔒"
+      policyBotLogin: ogenki-merge-gate[bot]
+      mergerLogin: ogenki-agent-merger[bot]
+      autoMergesPerDay: 10
+      fixRuns: 2
+      checkReruns: 1
+      verifyFor: 30m
+      revertWindow: 168h
+      breaker: {window: 10, maxReverts: 1}
 `
 
 func TestGoodConfigParses(t *testing.T) {
@@ -201,8 +201,8 @@ func TestAwaitingCIForDefaultsToADay(t *testing.T) {
 		want time.Duration
 	}{
 		"omitted": {good, 24 * time.Hour},
-		"zero":    {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 0s", 1), 0},
-		"set":     {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: 6h", 1), 6 * time.Hour},
+		"zero":    {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n      awaitingCIFor: 0s", 1), 0},
+		"set":     {strings.Replace(good, "revertWindow: 168h", "revertWindow: 168h\n      awaitingCIFor: 6h", 1), 6 * time.Hour},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if name != "omitted" && c.raw == good {
@@ -360,7 +360,7 @@ func TestBadConfigsFail(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
 		"no factory name":                {"factory: aws-0\n", "", "factory is required: the name repositories' .github/agent-factory.yaml give this factory (v2 D7)"},
 		"a factory name not a DNS label": {"factory: aws-0", "factory: AWS_0", `factory "AWS_0" is not a DNS label`},
-		"unknown key":                    {"triggerLabel: factory/ready", "triggerLabel: factory/ready\ntrigerLabel: x", `unknown field "trigerLabel"`},
+		"unknown key":                    {"triggerLabel: factory/ready", "triggerLabel: factory/ready\n    trigerLabel: x", `unknown field "trigerLabel"`},
 		"run tokens > ceiling":           {"runTokens: 4000000", "runTokens: 6000000", "tier frontier: runTokens must be 1..5000000"},
 		"run tokens below one":           {"runTokens: 300000,", "runTokens: 0,", "tier light: runTokens must be 1..5000000"},
 		"task below run tokens":          {"taskTokens: 600000,", "taskTokens: 200000,", "tier light: taskTokens below runTokens"},
@@ -381,13 +381,9 @@ func TestBadConfigsFail(t *testing.T) {
 		"no maintainer":         {"maintainers: [Smana]", "maintainers: []", "maintainers is empty"},
 		"a bot maintainer":      {"maintainers: [Smana]", `maintainers: [Smana, "renovate[bot]"]`, `maintainer "renovate[bot]" is an App`},
 		"the factory App":       {"maintainers: [Smana]", `maintainers: ["Ogenki-Agent-Factory[BOT]"]`, `maintainer "Ogenki-Agent-Factory[BOT]" is an App`},
-		"the factory App by name": {"maintainers: [Smana]\ntriggerLabel: factory/ready\nfactoryLogin: ogenki-agent-factory[bot]",
-			"maintainers: [My-Factory]\ntriggerLabel: factory/ready\nfactoryLogin: my-factory", `maintainer "My-Factory" is an App`},
-		"the agents App by name": {"maintainers: [Smana]\ntriggerLabel: factory/ready\nfactoryLogin: ogenki-agent-factory[bot]\nagentsLogin: ogenki-agents[bot]",
-			"maintainers: [my-agents]\ntriggerLabel: factory/ready\nfactoryLogin: ogenki-agent-factory[bot]\nagentsLogin: my-agents", `maintainer "my-agents" is an App`},
-		"the agents App, bare": {"maintainers: [Smana]", "maintainers: [ogenki-agents]", `maintainer "ogenki-agents" is an App`},
-		"bad duration":         {"issues: 60s", "issues: 60", "a duration is a string"},
-		"unknown model":        {"model: agent-default, runTokens: 1500000", "model: gpt-5, runTokens: 1500000", `tier standard: model "gpt-5" is not a C5 logical name`},
+		"the agents App, bare":  {"maintainers: [Smana]", "maintainers: [ogenki-agents]", `maintainer "ogenki-agents" is an App`},
+		"bad duration":          {"issues: 60s", "issues: 60", "a duration is a string"},
+		"unknown model":         {"model: agent-default, runTokens: 1500000", "model: gpt-5, runTokens: 1500000", `tier standard: model "gpt-5" is not a C5 logical name`},
 		// Ruling SI: the reconciler creates Tasks from these names, and the Task CRD's enum refuses others.
 		"a template off the CRD enum": {"  solo: {roles: [implementer]}\n", "  solo: {roles: [implementer]}\n  duo: {roles: [implementer]}\n",
 			"template duo is not one of solo, pair, trio, investigate"},
@@ -415,7 +411,7 @@ func TestBadConfigsFail(t *testing.T) {
 			"verifyChecks: []", "merge.verifyChecks is empty"},
 		// R42 (review G6): the secret scan cannot be dropped from either list silently.
 		"leak scan not required":     {"leakScanCheck: \"Security scanning 🔒\"", "leakScanCheck: \"Trivy\"", "merge.leakScanCheck"},
-		"no leak scan":               {"  leakScanCheck: \"Security scanning 🔒\"\n", "", "merge.leakScanCheck"},
+		"no leak scan":               {"      leakScanCheck: \"Security scanning 🔒\"\n", "", "merge.leakScanCheck"},
 		"policy bot not a bot":       {"policyBotLogin: ogenki-merge-gate[bot]", "policyBotLogin: ogenki-merge-gate", "merge.policyBotLogin"},
 		"merger not a bot":           {"mergerLogin: ogenki-agent-merger[bot]", "mergerLogin: ogenki-agent-merger", "merge.mergerLogin"},
 		"negative auto merges":       {"autoMergesPerDay: 10", "autoMergesPerDay: -1", "merge.autoMergesPerDay must be 0 or more"},
@@ -425,7 +421,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"revert window not positive": {"revertWindow: 168h", "revertWindow: 0s", "merge.revertWindow must be positive"},
 		"follow-ups over the window": {"breaker: {window: 10, maxReverts: 1}", "breaker: {window: 10, maxReverts: 1, maxFollowUps: 11}", "merge.breaker needs 0 ≤ maxFollowUps ≤ window (MC8)"},
 		"follow-ups negative":        {"breaker: {window: 10, maxReverts: 1}", "breaker: {window: 10, maxReverts: 1, maxFollowUps: -1}", "merge.breaker needs 0 ≤ maxFollowUps ≤ window (MC8)"},
-		"await ci bound negative":    {"revertWindow: 168h", "revertWindow: 168h\n  awaitingCIFor: -1m", "merge.awaitingCIFor must be 0 (no bound) or positive"},
+		"await ci bound negative":    {"revertWindow: 168h", "revertWindow: 168h\n      awaitingCIFor: -1m", "merge.awaitingCIFor must be 0 (no bound) or positive"},
 		// R41 (review G5): the breaker's window must be able to trip: 1 ≤ maxReverts ≤ window.
 		"breaker never trips":       {"maxReverts: 1}", "maxReverts: 0}", "merge.breaker needs 1 ≤ maxReverts ≤ window"},
 		"breaker window 0":          {"breaker: {window: 10", "breaker: {window: 0", "merge.breaker needs 1 ≤ maxReverts ≤ window"},
@@ -439,8 +435,8 @@ func TestBadConfigsFail(t *testing.T) {
 		"issues poll not positive":  {"issues: 60s", "issues: 0s", "poll.issues must be positive"},
 		"tasks poll negative":       {"tasks: 30s", "tasks: -1s", "poll.tasks must be positive"},
 		"meter poll not positive":   {"meter: 30s", "meter: 0s", "poll.meter must be positive"},
-		"repository not owner/name": {"repository: Smana/cloud-native-ref", "repository: ../x", `repository "../x" is not owner/name`},
-		"repository with a path":    {"repository: Smana/cloud-native-ref", "repository: Smana/cloud-native-ref/x", "is not owner/name"},
+		"repository not owner/name": {"name: Smana/cloud-native-ref", "name: ../x", `repository "../x" is not owner/name`},
+		"repository with a path":    {"name: Smana/cloud-native-ref", "name: Smana/cloud-native-ref/x", "is not owner/name"},
 		// Ruling SC: the broker's :8443 is TLS, verified against the mounted CA.
 		"broker not https":       {`url: "https://room-broker`, `url: "http://room-broker`, "must be an https:// URL"},
 		"broker without host":    {`"https://room-broker.agent-system.svc.cluster.local:8443"`, `"https://"`, `broker.url "https://" must be an https:// URL`},
@@ -486,10 +482,8 @@ func TestBadConfigsFail(t *testing.T) {
 		"no api issuer":    {"humanIssuer: https://auth.ogenki.io", "humanIssuer: ''", "api.humanIssuer is required"},
 		"no api jwks, an http issuer": {"humanIssuer: https://auth.ogenki.io\n  humanJWKS: https://auth.ogenki.io/oauth/v2/keys",
 			"humanIssuer: http://auth.ogenki.io\n  humanJWKS: ''", "api.humanJWKS is required unless api.humanIssuer is https://"},
-		"api without repositories":      {"repositories: [Smana/cloud-native-ref]", "repositories: []", "api.repositories is empty"},
-		"api repository not owner/name": {"repositories: [Smana/cloud-native-ref]", "repositories: ['../x']", `api.repository "../x" is not owner/name`},
-		"api without client ids":        {"clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]", "clientIDFiles: []", "api.clientIDFiles is empty"},
-		"api system issuer alone":       {"humanIssuer: https://auth.ogenki.io", "humanIssuer: https://auth.ogenki.io\n  systemIssuer: https://accounts.example", "api.systemIssuer and api.systemJWKS are both set or both empty"},
+		"api without client ids":  {"clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]", "clientIDFiles: []", "api.clientIDFiles is empty"},
+		"api system issuer alone": {"humanIssuer: https://auth.ogenki.io", "humanIssuer: https://auth.ogenki.io\n  systemIssuer: https://accounts.example", "api.systemIssuer and api.systemJWKS are both set or both empty"},
 		// FA-8 §1: every replica serves the RunLore intake, so its block is as required as api's.
 		"no runlore listen":       {`listen: ":8080"`, `listen: ''`, "runlore.listen is required"},
 		"no runlore token file":   {"tokenFile: /etc/agent-factory-intake/token", "tokenFile: ''", "runlore.tokenFile is required"},
@@ -497,12 +491,12 @@ func TestBadConfigsFail(t *testing.T) {
 		"runlore confidence zero": {"minConfidence: 0.75", "minConfidence: 0", "runlore.minConfidence must be in (0, 1]"},
 		"runlore cap negative":    {"dailyCap: 5", "dailyCap: -1", "runlore.dailyCap must be 0 or more"},
 		// §1 schedules: the name keys the task, the cron must fire, the class must exist.
-		"schedule name twice":       {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix links}, {name: a, cron: \"0 7 * * 1\", class: review, text: renovate}]\ncaps: {activeTasks: 3,", `schedule name "a" is used twice`},
-		"schedule name uppercase":   {"caps: {activeTasks: 3,", "schedules: [{name: Link-Rot, cron: \"0 6 * * 1\", class: review, text: fix}]\ncaps: {activeTasks: 3,", `must match ^[a-z0-9-]{1,40}$`},
-		"schedule cron unparsable":  {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 oops\", class: review, text: fix}]\ncaps: {activeTasks: 3,", `schedule a: cron "0 6 oops" does not parse`},
-		"schedule class undeclared": {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 * * 1\", class: ops, text: fix}]\ncaps: {activeTasks: 3,", `schedule a: class "ops" is review or a declared class`},
-		"schedule text empty":       {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: \"\"}]\ncaps: {activeTasks: 3,", "schedule a: text must be 1..14336 bytes"},
-		"schedule probe unknown":    {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, probe: dependabot-red}]\ncaps: {activeTasks: 3,", `schedule a: probe "dependabot-red" is not renovate-red`},
+		"schedule name twice":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix links}, {name: a, cron: \"0 7 * * 1\", class: review, text: renovate}]\n", `schedule name "a" is used twice`},
+		"schedule name uppercase":   {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: Link-Rot, cron: \"0 6 * * 1\", class: review, text: fix}]\n", `must match ^[a-z0-9-]{1,40}$`},
+		"schedule cron unparsable":  {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 oops\", class: review, text: fix}]\n", `schedule a: cron "0 6 oops" does not parse`},
+		"schedule class undeclared": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: ops, text: fix}]\n", `schedule a: class "ops" is review or a declared class`},
+		"schedule text empty":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: \"\"}]\n", "schedule a: text must be 1..14336 bytes"},
+		"schedule probe unknown":    {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, probe: dependabot-red}]\n", `schedule a: probe "dependabot-red" is not renovate-red`},
 		// A run cap in USD: priced, or the rollout fails (never an unpriced model metered at $0).
 		"runUSD without a price": {"runTokens: 1500000,", "runUSD: 2.55, runTokens: 1500000,", "tier standard: runUSD and taskUSD need meter.prices.agent-default"},
 		"negative taskUSD":       {"runTokens: 1500000,", "taskUSD: -1, runTokens: 1500000,", "tier standard: taskUSD must be a positive amount"},
@@ -518,7 +512,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"a price without its cache-read rate": {"  logsURL:", "  prices: {agent-default: {input: 1.40, output: 4.40}}\n  logsURL:",
 			"meter.prices.agent-default: input, cacheRead and output must be positive"},
 		"an unknown price field":      {"  logsURL:", "  prices: {agent-default: {input: 1.40, cached: 0.26, output: 4.40}}\n  logsURL:", `unknown field "cached"`},
-		"schedule data class unknown": {"caps: {activeTasks: 3,", "schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, dataClass: secret}]\ncaps: {activeTasks: 3,", `schedule a: dataClass "secret" is public or internal`},
+		"schedule data class unknown": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, dataClass: secret}]\n", `schedule a: dataClass "secret" is public or internal`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(good, c.from, c.to, 1)
@@ -536,9 +530,9 @@ func TestBadConfigsFail(t *testing.T) {
 // §1: schedules start tasks from config. The block parses, and a trusted entry carries its
 // class, data class and probe.
 func TestSchedules(t *testing.T) {
-	raw := good + `schedules:
-  - {name: link-rot, cron: "0 6 * * 1", class: docs-links, text: Fix broken external links.}
-  - {name: renovate-red, cron: "0 6 * * 1", class: review, text: Fix red Renovate PRs., dataClass: internal, probe: renovate-red}
+	raw := good + `    schedules:
+      - {name: link-rot, cron: "0 6 * * 1", class: docs-links, text: Fix broken external links.}
+      - {name: renovate-red, cron: "0 6 * * 1", class: review, text: Fix red Renovate PRs., dataClass: internal, probe: renovate-red}
 `
 	c, err := Parse([]byte(raw))
 	if err != nil {
@@ -600,8 +594,8 @@ func TestDeploymentFactsDefaultAndOverride(t *testing.T) {
 		t.Fatalf("omitted api.groups default to the platform's: %+v", c.API.Groups)
 	}
 	raw := strings.Replace(good, "api:", "api:\n  groups: {admin: ops-admin, member: ops-member}", 1)
-	raw += "schedules:\n  - {name: renovate-red, cron: \"0 6 * * 1\", class: review, text: Fix red PRs., probe: renovate-red}\n" +
-		"  - {name: other, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red, probeAuthor: \"mend[bot]\"}\n"
+	raw += "    schedules:\n      - {name: renovate-red, cron: \"0 6 * * 1\", class: review, text: Fix red PRs., probe: renovate-red}\n" +
+		"      - {name: other, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red, probeAuthor: \"mend[bot]\"}\n"
 	if raw == good {
 		t.Fatal("the edit did not apply")
 	}
@@ -627,7 +621,7 @@ func TestValidateNamesAMissingDeploymentFact(t *testing.T) {
 		"probe author": {func(c *Config) { c.Repositories[0].Schedules[0].ProbeAuthor = "" }, "schedule a: probeAuthor is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(good + "schedules:\n  - {name: a, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red}\n"))
+			c, err := Parse([]byte(good + "    schedules:\n      - {name: a, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red}\n"))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -875,4 +869,20 @@ func TestAPIPresets(t *testing.T) {
 // apiWith adds lines to good's api block, which runlore follows.
 func apiWith(base, lines string) string {
 	return strings.Replace(base, "runlore:\n", lines+"runlore:\n", 1)
+}
+
+// A maintainer that is the factory's or the agents' App by its configured name is refused: the two
+// logins sit far from the repository's maintainers, so each case edits both.
+func TestAnAppByNameIsNoMaintainer(t *testing.T) {
+	for name, c := range map[string]struct{ login, to, maintainer string }{
+		"the factory App by name": {"factoryLogin: ogenki-agent-factory[bot]", "factoryLogin: my-factory", "My-Factory"},
+		"the agents App by name":  {"agentsLogin: ogenki-agents[bot]", "agentsLogin: my-agents", "my-agents"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(strings.Replace(good, c.login, c.to, 1), "maintainers: [Smana]", "maintainers: ["+c.maintainer+"]", 1)
+			if _, err := Parse([]byte(raw)); err == nil || !strings.Contains(err.Error(), `maintainer "`+c.maintainer+`" is an App`) {
+				t.Fatalf("err = %v", err)
+			}
+		})
+	}
 }

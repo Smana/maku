@@ -27,7 +27,7 @@ func profileCfg(harness bool) *config.Config {
 		review.Harness = "review-floor"
 	}
 	c.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
-	c.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "review": review, "tests": {}}
+	c.Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "review": review, "tests": {}}
 	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
 		tr := c.Tiers[name]
 		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
@@ -117,9 +117,9 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 func TestClassLabelledTaskIsOfferedProfileChoices(t *testing.T) {
 	cf := profileCfg(true)
 	cf.HarnessProfiles["review-careful"] = config.HarnessProfile{Template: "pair", Description: "Two reviews."}
-	review := cf.Classes["review"]
+	review := cf.Repositories[0].Classes["review"]
 	review.HarnessAllowed = []string{"review-careful"}
-	cf.Classes["review"] = review
+	cf.Repositories[0].Classes["review"] = review
 	g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), "class:review")
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Profile == nil || tk.Status.Profile.Source != "floor" || tk.Status.Profile.Cohort != triage.CohortTreatment {

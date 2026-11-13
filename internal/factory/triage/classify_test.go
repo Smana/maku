@@ -63,13 +63,14 @@ func (f *fakeC7) Classify(_ context.Context, r C7Request) (C7Response, error) {
 }
 
 func testCfg() *config.Config {
-	return &config.Config{Maintainers: []string{"Smana"},
+	return &config.Config{
+		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
+			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}, "tests": {}, "dashboards": {}}}},
 		Tiers: map[string]config.Tier{
 			"light":    {Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20},
 			"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45},
 			"frontier": {Model: "agent-default", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}},
-		Triage:  config.Triage{ClassifierURL: "http://c7.test/v1/classify", ControlPercent: 0},
-		Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}, "tests": {}, "dashboards": {}}}
+		Triage: config.Triage{ClassifierURL: "http://c7.test/v1/classify", ControlPercent: 0}}
 }
 
 func issueTask() *v1alpha1.Task {
@@ -123,9 +124,9 @@ func TestControlGroupRunsAtFrontier(t *testing.T) {
 // A class label is read against the task's repository: its classes and its maintainers (v2 D1).
 func TestClassifyReadsTheTasksRepository(t *testing.T) {
 	cfg := testCfg()
-	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Classes}
+	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
 	b := config.Repository{Name: "Smana/b", Maintainers: []string{"Other"}, Classes: map[string]config.Class{"revert": {}}}
-	cfg.Maintainers, cfg.Classes, cfg.Repositories = nil, nil, []config.Repository{a, b}
+	cfg.Repositories = []config.Repository{a, b}
 	for name, c := range map[string]struct{ repo, actor, want string }{
 		"A's class by A's maintainer": {"Smana/a", "Smana", "docs-links"},
 		"A's maintainer on B":         {"Smana/b", "Smana", "review"},
@@ -151,9 +152,9 @@ func TestClassifyReadsTheTasksRepository(t *testing.T) {
 // v2 D8: the class label is read on the task's repository: B's issue #7 is not A's.
 func TestClassifyReadsTheIssueOnItsRepository(t *testing.T) {
 	cfg := testCfg()
-	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Classes}
-	b := config.Repository{Name: "Smana/b", Maintainers: []string{"Smana"}, Classes: cfg.Classes}
-	cfg.Maintainers, cfg.Classes, cfg.Repositories = nil, nil, []config.Repository{a, b}
+	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
+	b := config.Repository{Name: "Smana/b", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
+	cfg.Repositories = []config.Repository{a, b}
 	onA, onB := forgetest.NewFake(), forgetest.NewFake()
 	onA.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs-links"}})
 	onA.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs-links", At: time.Now()})
@@ -184,7 +185,7 @@ func TestClassifyReadsTheIssueOnItsRepository(t *testing.T) {
 func TestAnOracleClassRunsSoloOnLight(t *testing.T) {
 	cfg := testCfg()
 	cfg.Triage.ControlPercent = 100
-	cfg.Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}}
+	cfg.Repositories[0].Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}}
 	c7 := &fakeC7{resp: C7Response{Tier: "frontier", Classifier: "semantic-router"}}
 	d, err := Classify{C: c7, Forge: forgetest.NewFake()}.Triage(context.Background(), cfg,
 		&v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "dead-links", Text: "x", DataClass: "public"}})
@@ -221,7 +222,7 @@ func TestClassifyWithoutAClassifierURLMakesNoCall(t *testing.T) {
 // a sponsored principal's task, and an api task of a principal the config does not declare, do not.
 func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 	cfg := testCfg()
-	cfg.Repositories = []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, Classes: cfg.Classes}}
+	cfg.Repositories = []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}}
 	cfg.API.Sponsored = []config.Sponsored{{Name: "slack-app"}}
 	cfg.API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}}}
 	for name, c := range map[string]struct {
@@ -251,7 +252,7 @@ func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 // class: label names another. The factory's own label never counts.
 func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 	cfg := testCfg()
-	cfg.Classes["alert-rules"] = config.Class{}
+	cfg.Repositories[0].Classes["alert-rules"] = config.Class{}
 	for name, c := range map[string]struct {
 		predicted, origin, label, actor, want string
 	}{
@@ -440,8 +441,8 @@ func TestTriageResolvesThePin(t *testing.T) {
 			cf := testCfg()
 			cf.Evaluation.ControlPercent = 100
 			cf.HarnessProfiles = map[string]config.HarnessProfile{"docs-floor": {}, "docs-pair": {Template: "pair"}, "links": {}}
-			cf.Classes["docs"] = config.Class{Harness: "docs-floor", HarnessAllowed: []string{"docs-pair"}}
-			cf.Classes["docs-links"] = config.Class{Live: true, Harness: "links"}
+			cf.Repositories[0].Classes["docs"] = config.Class{Harness: "docs-floor", HarnessAllowed: []string{"docs-pair"}}
+			cf.Repositories[0].Classes["docs-links"] = config.Class{Live: true, Harness: "links"}
 			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
 			if err != nil || d.Pin != c.want || d.Pinned != c.want.Honoured() || d.Cohort != c.cohort {
 				t.Fatalf("%+v (%v), want pin %+v cohort %s", d, err, c.want, c.cohort)

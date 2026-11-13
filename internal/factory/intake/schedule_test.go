@@ -34,12 +34,11 @@ func TestLastSlot(t *testing.T) {
 }
 
 func schedulerCfg() *config.Config {
-	return &config.Config{Repository: "Smana/cloud-native-ref", Defaults: config.Defaults{DataClass: "public"},
-		Classes: map[string]config.Class{"docs-links": {Shadow: true}},
-		Schedules: []config.Schedule{
-			{Name: "link-rot", Cron: "0 6 * * 1", Class: "docs-links", Text: "Fix broken external links."},
-			{Name: "renovate-red", Cron: "0 6 * * 1", Class: "review", Text: "Fix red Renovate PRs.", Probe: "renovate-red", ProbeAuthor: "renovate[bot]"},
-		}}
+	return &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Classes: map[string]config.Class{"docs-links": {Shadow: true}}, Schedules: []config.Schedule{
+		{Name: "link-rot", Cron: "0 6 * * 1", Class: "docs-links", Text: "Fix broken external links."},
+		{Name: "renovate-red", Cron: "0 6 * * 1", Class: "review", Text: "Fix red Renovate PRs.", Probe: "renovate-red", ProbeAuthor: "renovate[bot]"},
+	}}}, Defaults: config.Defaults{DataClass: "public"},
+	}
 }
 
 func scheduler(f *forgetest.Fake, c *fake.ClientBuilder, stopped func(context.Context) bool,
@@ -93,8 +92,7 @@ func TestSchedulerIgnoresOldSlots(t *testing.T) {
 	// Tuesday 06:20: the Monday slot is a day old, and only a slot of the last hour fires.
 	sch := scheduler(f, fake.NewClientBuilder().WithScheme(s),
 		func(context.Context) bool { return false }, time.Date(2026, 10, 13, 6, 20, 0, 0, time.UTC),
-		&config.Config{Repository: "Smana/cloud-native-ref", Defaults: config.Defaults{DataClass: "public"},
-			Schedules: []config.Schedule{{Name: "link-rot", Cron: "0 6 * * 1", Class: "docs-links", Text: "Fix broken external links."}}})
+		&config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Schedules: []config.Schedule{{Name: "link-rot", Cron: "0 6 * * 1", Class: "docs-links", Text: "Fix broken external links."}}}}, Defaults: config.Defaults{DataClass: "public"}})
 	if err := sch.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}

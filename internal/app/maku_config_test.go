@@ -70,6 +70,29 @@ func TestMakuConfigMigrateThenValidate(t *testing.T) {
 	}
 }
 
+// R7: the factory refuses the single-repository shape, and maku config migrate still reads it,
+// from the last release's file, into objects the residual serves.
+func TestMakuConfigMigrateReadsTheLegacyShape(t *testing.T) {
+	dir := t.TempDir()
+	residual := filepath.Join(dir, "residual.yaml")
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	legacy := "../factory/resources/testdata/legacy-single-repository.yaml"
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", legacy, "--residual", residual}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "kind: Repository") || !strings.Contains(out.String(), "repository: Smana/cloud-native-ref") {
+		t.Fatalf("manifests: %s", out.String())
+	}
+	raw, err := os.ReadFile(residual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\nrepository:") || strings.Contains(string(raw), "controlIssue") {
+		t.Fatalf("the residual keeps the old shape:\n%s", raw)
+	}
+}
+
 func TestMakuConfigValidateReportsRefusals(t *testing.T) {
 	dir, file := writeConfigFixture(t)
 	orphan := filepath.Join(dir, "orphan.yaml")

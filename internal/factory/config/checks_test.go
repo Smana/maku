@@ -12,7 +12,7 @@ import (
 // the docs class switched on.
 func withChecks(t *testing.T, egress string) string {
 	t.Helper()
-	raw := listShaped(t, good)
+	raw := good
 	raw = strings.Replace(raw, "  - name: Smana/cloud-native-ref\n", "  - name: Smana/cloud-native-ref\n    checks: {egress: "+egress+"}\n", 1)
 	return strings.Replace(raw, "docs: {}", "docs: {checks: true}", 1)
 }

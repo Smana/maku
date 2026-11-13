@@ -30,10 +30,11 @@ var required = []string{"Pre-commit checks", "Kubernetes validation"}
 const testFile = "website/content/docs/a.md"
 
 func armCfg() *config.Config {
-	return &config.Config{Maintainers: []string{"Smana"}, AgentsLogin: "ogenki-agents[bot]",
+	return &config.Config{AgentsLogin: "ogenki-agents[bot]",
 		Templates: map[string]config.Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}},
-		Classes:   map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}},
-		Merge:     config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", AutoMergesPerDay: 10}}
+		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
+			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}},
+			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", AutoMergesPerDay: 10}}}}
 }
 
 func green(policy string) forge.Checks {
@@ -69,7 +70,7 @@ func changed(base, headText string) struct{ Base, Head map[string]string } {
 // decides but is not armed while docs-links is shadow (R32).
 func TestHeadAndVerdictMustBeFresh(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	approve := func(sha string) []v1alpha1.RunRecord {
 		return []v1alpha1.RunRecord{{ID: "r3vnwr3v", Role: "reviewer", Trigger: "review", Verdict: "approve", HeadSHA: sha}}
 	}
@@ -118,7 +119,7 @@ func TestDecideArmWithoutPolicyBot(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := armCfg()
-			cf.Merge.PolicyBot = c.bot
+			cf.Repositories[0].Merge.PolicyBot = c.bot
 			d := DecideArm(ArmInputs{PR: agentPR(), Checks: c.checks, Task: armTask("docs-links", "solo", ""), Cfg: cf,
 				ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
 			if d.Reason != c.reason {
@@ -195,7 +196,7 @@ func TestDecideArm(t *testing.T) {
 // never armed; a foreign trailer is never even "would arm".
 func TestAShadowClassWouldArmAndNeverArms(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	if d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
 		Cfg: cfg, ReportedHead: head}); d.Verdict != "shadow" || d.Reason != "shadow_would_arm" || d.Matched != "docs-links" {
 		t.Fatalf("%+v", d)
@@ -212,14 +213,14 @@ func TestAShadowClassWouldArmAndNeverArms(t *testing.T) {
 // records shadow_would_arm and the decision says what a live class would have met.
 func TestAShadowDecisionIgnoresThePauseAndTheCaps(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true}
-	cfg.Merge.AutoMergesPerDay = 1
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
+	cfg.Repositories[0].Merge.AutoMergesPerDay = 1
 	d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg,
 		ReportedHead: head, Paused: true, ArmedToday: 1, Files: changed("[a](https://x/old)", "[a](https://x/new)"), DiffRead: true})
 	if d.Verdict != "shadow" || d.Reason != "shadow_would_arm" || !d.Paused || !d.Capped {
 		t.Fatalf("%+v", d)
 	}
-	cfg.Classes["docs-links"] = config.Class{Live: true}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Live: true}
 	if d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg,
 		ReportedHead: head, Paused: true, Files: changed("[a](https://x/old)", "[a](https://x/new)"), DiffRead: true}); d.Reason != "class_paused" {
 		t.Fatalf("a live class is paused: %+v", d)
@@ -230,12 +231,11 @@ func TestAShadowDecisionIgnoresThePauseAndTheCaps(t *testing.T) {
 // live, would only on B, where it is shadow, and waits on C, whose own required check has not run.
 func TestDecideArmReadsTheTasksRepository(t *testing.T) {
 	cfg := armCfg()
-	a := config.Repository{Name: "Smana/a", Maintainers: cfg.Maintainers, Classes: cfg.Classes, Merge: cfg.Merge}
+	a := config.Repository{Name: "Smana/a", Maintainers: cfg.Repositories[0].Maintainers, Classes: cfg.Repositories[0].Classes, Merge: cfg.Repositories[0].Merge}
 	b := a
 	b.Name, b.Classes = "Smana/b", map[string]config.Class{"docs-links": {Shadow: true}, "revert": {}}
 	strict := b
 	strict.Name, strict.Merge.RequiredChecks = "Smana/c", append(slices.Clone(required), "B's own check")
-	cfg.Maintainers, cfg.Classes, cfg.Merge = nil, nil, config.Merge{}
 	cfg.Repositories = []config.Repository{a, b, strict}
 	for repo, want := range map[string]string{"Smana/a": "arm", "Smana/b": "shadow", "Smana/c": "wait"} {
 		tk := armTask("docs-links", "solo", "")
@@ -274,8 +274,8 @@ func TestAMaintainersApprovalArmsWhenTheSwitchIsOn(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
-			cfg.Merge.ApproveToMerge = c.on
-			cfg.Classes["docs-links"] = config.Class{Shadow: true}
+			cfg.Repositories[0].Merge.ApproveToMerge = c.on
+			cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 			pr := agentPR()
 			pr.Reviews, pr.ReviewsTruncated = c.reviews, c.truncated
 			tk := armTask("docs-links", "solo", "")
@@ -340,8 +340,8 @@ func TestAnApprovalBindsToTheHeadsPush(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
-			cfg.Merge.ApproveToMerge = true
-			cfg.Classes["docs-links"] = config.Class{Shadow: true}
+			cfg.Repositories[0].Merge.ApproveToMerge = true
+			cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 			pr := agentPR()
 			pr.Reviews = []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: c.submitted}}
 			tk := armTask("docs-links", "solo", "")
@@ -393,7 +393,7 @@ func TestASameSecondRequestForChangesVetoes(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
-			cfg.Merge.ApproveToMerge = true
+			cfg.Repositories[0].Merge.ApproveToMerge = true
 			pr := agentPR()
 			pr.Reviews = reviews
 			d := DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg, ReportedHead: head,
@@ -410,9 +410,9 @@ func TestASameSecondRequestForChangesVetoes(t *testing.T) {
 // either order.
 func TestAValidApprovalArmsBesideAMovedOne(t *testing.T) {
 	cfg := armCfg()
-	cfg.Maintainers = append(cfg.Maintainers, "octocat")
-	cfg.Merge.ApproveToMerge = true
-	cfg.Classes["docs-links"] = config.Class{Shadow: true}
+	cfg.Repositories[0].Maintainers = append(cfg.Repositories[0].Maintainers, "octocat")
+	cfg.Repositories[0].Merge.ApproveToMerge = true
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	pr := agentPR()
 	moved := forge.Review{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: pushedAt.Add(-time.Minute)}
 	valid := forge.Review{ID: 2, Author: "octocat", State: "APPROVED", Commit: head, At: now.Add(3 * time.Minute)}
@@ -431,13 +431,13 @@ func TestAValidApprovalArmsBesideAMovedOne(t *testing.T) {
 // not a human's.
 func TestAnApprovalArmsOutsideTheCaps(t *testing.T) {
 	for name, spent := range map[string]func(*ArmInputs){
-		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Current().Merge.AutoMergesPerDay },
+		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Current().Repositories[0].Merge.AutoMergesPerDay },
 		"the class's cap": func(in *ArmInputs) { in.ClassArmedToday = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
-			cfg.Merge.ApproveToMerge = true
-			cfg.Classes["docs-links"] = config.Class{Live: true, MaxPerDay: 1}
+			cfg.Repositories[0].Merge.ApproveToMerge = true
+			cfg.Repositories[0].Classes["docs-links"] = config.Class{Live: true, MaxPerDay: 1}
 			pr := agentPR()
 			pr.Reviews = []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now}}
 			in := ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg, ReportedHead: head,
@@ -458,8 +458,8 @@ func TestAnApprovalArmsOutsideTheCaps(t *testing.T) {
 // an adopted pull request's head still hands off; it never arms the merger.
 func TestAnAdoptedPullRequestsApprovalHandsOffWithTheSwitchOn(t *testing.T) {
 	cfg := armCfg()
-	cfg.Merge.ApproveToMerge = true
-	cfg.Classes["deps-patch"] = depsPatchClass()
+	cfg.Repositories[0].Merge.ApproveToMerge = true
+	cfg.Repositories[0].Classes["deps-patch"] = depsPatchClass()
 	pr := forge.PR{Author: bot, HeadRef: "renovate/kyverno-3.x", HeadSHA: head,
 		Reviews: []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now}}}
 	d := DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("deps-patch", "solo", ""), Cfg: cfg})
@@ -472,7 +472,7 @@ func TestAnAdoptedPullRequestsApprovalHandsOffWithTheSwitchOn(t *testing.T) {
 // the refusals a human merged unchanged.
 func TestADecisionCarriesItsRows(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true, MaxPatchFiles: 3, MaxModifiedLines: 20}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, MaxPatchFiles: 3, MaxModifiedLines: 20}
 	tk := armTask("docs-links", "pair", "approve")
 	tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: "r3vnwr3v", Role: "reviewer", Verdict: "approve", HeadSHA: head,
 		Provenance: v1alpha1.RunProvenance{ServedModels: []string{"glm-5.3"}}})
@@ -490,7 +490,7 @@ func TestADecisionCarriesItsRows(t *testing.T) {
 // "-" for them (R-m7); the reviewer model is known whatever the refusal, "none" without a run.
 func TestARefusalLeavesItsLaterRowsUnread(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true, MaxPatchFiles: 3, MaxModifiedLines: 20}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, MaxPatchFiles: 3, MaxModifiedLines: 20}
 	tk := armTask("docs-links", "pair", "approve")
 	d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: tk, Cfg: cfg, ReportedHead: oldHead})
 	want := decision.Rows{MaxFiles: 3, MaxLines: 20, Evidence: "head_unreported", Reviewer: "none"}
@@ -508,7 +508,7 @@ func TestARefusalLeavesItsLaterRowsUnread(t *testing.T) {
 // steering_path refuses before the declared rows, on a diff it read: the record keeps the counts.
 func TestASteeringRefusalKeepsTheCounts(t *testing.T) {
 	cfg := armCfg()
-	cfg.Classes["docs-links"] = config.Class{Shadow: true}
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	cfg.Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 	d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg, ReportedHead: head,
 		DiffRead: true, Stats: []forge.FileStat{{Path: steering.Dir + "docs.md", Additions: 2, Deletions: 1}}})
@@ -535,8 +535,8 @@ func TestTheGateReadsTheHeadsPushForAnApproval(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Current().Merge.ApproveToMerge = true
-			g.r.Cfg.Current().Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+			g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
+			g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
 			pr, _ := g.f.PullRequest(t.Context(), 12)
 			pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
 			g.f.SetPR(pr)

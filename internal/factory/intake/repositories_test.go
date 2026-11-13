@@ -25,7 +25,6 @@ import (
 
 // twoRepositories: B has its own maintainer and label, and the control issue lives on A (v2 D1, D2).
 func twoRepositories(p *IssuePoller) {
-	p.Cfg.Current().Repository, p.Cfg.Current().Maintainers, p.Cfg.Current().TriggerLabel = "", nil, ""
 	p.Cfg.Current().Repositories = []config.Repository{
 		{Name: "Smana/a", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"},
 		{Name: "Smana/b", Maintainers: []string{"Other"}, TriggerLabel: "factory/go"},
@@ -191,7 +190,7 @@ func TestTheSameIssueNumberOnTwoRepositories(t *testing.T) {
 // v2 D6: RunLore's task names the repository the config gives it, not the first by accident.
 func TestRunLoreFilesOnItsConfiguredRepository(t *testing.T) {
 	h, c, _ := runlore(t)
-	h.Cfg.Current().Repository = ""
+	h.Cfg.Current().Repositories[0].Name = ""
 	h.Cfg.Current().Repositories = []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}
 	h.Cfg.Current().RunLore.Repository = "Smana/b"
 	if w := send(h, "s3cret", finding); w.Code != 201 {

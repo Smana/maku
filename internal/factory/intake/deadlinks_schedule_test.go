@@ -35,9 +35,7 @@ func deadLinksScheduler(t *testing.T, cl config.Class, objs ...v1alpha1.Task) *S
 	f.SetRuns([]forge.WorkflowRun{{ID: 2, Event: "schedule", Branch: "main", Conclusion: "success"},
 		{ID: 1, Event: "schedule", Branch: "main", Conclusion: "success"}}, map[int64][]byte{1: art, 2: art})
 	f.SetMainFiles(map[string]string{"docs/a.md": "[a](https://example.com/gone)"})
-	cfg := &config.Config{Repository: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, Defaults: config.Defaults{DataClass: "public"},
-		Classes:   map[string]config.Class{"dead-links": cl},
-		Schedules: []config.Schedule{{Name: "dead-links", Cron: "0 5 * * *", Class: "dead-links", Text: "Fix the dead links below.", Probe: "dead-links"}}}
+	cfg := &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, Classes: map[string]config.Class{"dead-links": cl}, Schedules: []config.Schedule{{Name: "dead-links", Cron: "0 5 * * *", Class: "dead-links", Text: "Fix the dead links below.", Probe: "dead-links"}}}}, Defaults: config.Defaults{DataClass: "public"}}
 	return scheduler(f, c, func(context.Context) bool { return false }, now, cfg)
 }
 
@@ -158,7 +156,7 @@ func TestTheStoredTextStaysWithinTheTextCap(t *testing.T) {
 	cl.Oracle.MaxFindings = 16
 	sch := deadLinksScheduler(t, cl)
 	sch.Cfg.Current().Caps.MaxTextBytes = 2000
-	sch.Cfg.Current().Schedules[0].Text = strings.Repeat("x", 900)
+	sch.Cfg.Current().Repositories[0].Schedules[0].Text = strings.Repeat("x", 900)
 	var fs []string
 	body := ""
 	for i := range 16 {
@@ -181,7 +179,7 @@ func TestTheStoredTextStaysWithinTheTextCap(t *testing.T) {
 	// A schedule text that leaves no room starts no task, and the pair is not retried every tick.
 	sch = deadLinksScheduler(t, cl)
 	sch.Cfg.Current().Caps.MaxTextBytes = 2000
-	sch.Cfg.Current().Schedules[0].Text = strings.Repeat("x", 1999)
+	sch.Cfg.Current().Repositories[0].Schedules[0].Text = strings.Repeat("x", 1999)
 	if err := sch.Tick(t.Context()); err != nil || len(scheduledTasks(t, sch)) != 0 {
 		t.Fatalf("no room, no task: %v", err)
 	}
