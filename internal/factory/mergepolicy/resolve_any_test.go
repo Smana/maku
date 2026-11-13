@@ -98,7 +98,7 @@ func TestExportSkipsAPinnedProfile(t *testing.T) {
 		"a-pinned": {Tier: "light"}, "b-looped": {Loop: config.LoopOff}, "c-solo": {Template: "solo"}, "z-plain": {},
 	}}
 	rc := &config.Repository{Classes: map[string]config.Class{"docs-links": {Live: true}}}
-	f, err := Export(rc, c)
+	f, err := ExportClasses(rc, c)
 	if err != nil {
 		t.Fatal(err)
 	}

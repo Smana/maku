@@ -90,6 +90,17 @@ monitoring:
     kubeStateMetrics: false
     # Each alert's runbook_url base. Empty: https://github.com/Smana/maku/blob/v<appVersion>/docs.
     docsURL: ""
+  # The product dashboards (docs/observability.md#dashboards), one ConfigMap each, maku-dashboard-<uid>,
+  # holding <uid>.json: agents-overview, agent-factory, agent-room, agent-run, agent-identity,
+  # agent-fleet, and agent-gateway with maku-gateway.enabled. labels: the set Grafana's dashboard
+  # sidecar watches; empty, grafana_dashboard: "1". Set, they replace it (they are not merged with
+  # it). annotations are added, e.g. {grafana_folder: Agents}. A grafana-operator
+  # user points a GrafanaDashboard's configMapRef at each one. The uids are cloud-native-ref's, so
+  # broker.human.dashboards links keep resolving.
+  dashboards:
+    enabled: false
+    labels: {}
+    annotations: {}
 
 # The Slack App (D20). Its subchart arrives in a later v4 step 6 PR; until then, true only adds the
 # maku-slack alert group, for a Slack App installed outside this chart.

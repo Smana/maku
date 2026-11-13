@@ -255,6 +255,14 @@ func TestMergePolicyFileConditions(t *testing.T) {
 		{"diverges", func(string) (mergepolicy.Snapshot, bool) {
 			return mergepolicy.Snapshot{HasClasses: true, Divergences: []string{"d1", "d2", "d3", "d4", "d5", "d6", "d7"}}, true
 		}, metav1.ConditionTrue, metav1.ConditionFalse, "Valid", "Diverges", "d5", ""},
+		{"a binding refused", func(string) (mergepolicy.Snapshot, bool) {
+			f := &mergepolicy.File{MergePolicies: []config.Binding{{Name: "docs-links"}, {Name: "foo"}, {Name: "revert"}}}
+			return mergepolicy.Snapshot{HasClasses: true, File: f,
+				Refused: map[string]config.BindingRefusal{"foo": {Reason: "MissingRef", Message: "the factory serves no MergePolicy foo"}}}, true
+		}, metav1.ConditionTrue, metav1.ConditionTrue, "Valid", "InSync", "", "binding foo: MissingRef: the factory serves no MergePolicy foo"},
+		{"a deprecation", func(string) (mergepolicy.Snapshot, bool) {
+			return mergepolicy.Snapshot{HasClasses: true, Deprecations: []string{"class docs: conditions.any is deprecated"}}, true
+		}, metav1.ConditionTrue, metav1.ConditionTrue, "Valid", "InSync", "", "deprecated: class docs: conditions.any is deprecated"},
 		{"not read yet", func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, false }, metav1.ConditionUnknown, metav1.ConditionUnknown, "NotRead", "NotRead", "", ""},
 		{"read is off", nil, metav1.ConditionUnknown, metav1.ConditionUnknown, "PolicyReadOff", "PolicyReadOff", "", ""},
 	}

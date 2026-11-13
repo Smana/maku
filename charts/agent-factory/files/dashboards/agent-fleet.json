@@ -1,0 +1,620 @@
+{
+  "title": "Agent fleet",
+  "uid": "agent-fleet",
+  "tags": [
+    "agents"
+  ],
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "links": [
+    {
+      "title": "Agents",
+      "type": "dashboards",
+      "tags": [
+        "agents"
+      ],
+      "asDropdown": false,
+      "includeVars": true,
+      "keepTime": true,
+      "icon": "dashboard",
+      "tooltip": "Every dashboard of the Agents folder: overview, fleet, factory, gateway, identity, room, run"
+    }
+  ],
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Runs",
+      "description": "Every run in the range, one row each: role, data class, payer, room, its latest phase, why it ended, its pull request, start and tokens. A run id opens its Agent run page, a payer its spend page, a room its Agent room page.",
+      "gridPos": {
+        "x": 0,
+        "y": 0,
+        "w": 24,
+        "h": 12
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "format": "table",
+          "expr": "topk by (run_id) (1, max_over_time(timestamp(agentrun_info{namespace=\"__RUNS_NAMESPACE__\"})[$__range:1m]))"
+        },
+        {
+          "refId": "B",
+          "instant": true,
+          "format": "table",
+          "expr": "max by (run_id, phase) (last_over_time(agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\"}[$__range]) == 1) and on (run_id, phase) topk by (run_id) (1, max_over_time(timestamp(agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\"})[$__range:1m]) and (last_over_time(agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\"}[$__range]) == 1))"
+        },
+        {
+          "refId": "C",
+          "instant": true,
+          "format": "table",
+          "expr": "topk by (run_id) (1, max_over_time(timestamp(agentrun_outcome_info{namespace=\"__RUNS_NAMESPACE__\"})[$__range:1m]))"
+        },
+        {
+          "refId": "F",
+          "instant": true,
+          "format": "table",
+          "expr": "topk by (run_id) (1, max_over_time(timestamp(agentrun_pull_request_info{namespace=\"__RUNS_NAMESPACE__\"})[$__range:1m]))"
+        },
+        {
+          "refId": "D",
+          "instant": true,
+          "format": "table",
+          "expr": "max by (run_id) (last_over_time(agentrun_started_timestamp_seconds{namespace=\"__RUNS_NAMESPACE__\"}[$__range]) > 0) * 1000"
+        },
+        {
+          "refId": "G",
+          "instant": true,
+          "format": "table",
+          "expr": "max by (run_id, room, payer) (label_replace(label_replace(max_over_time(maku_factory_run_charge_info[$__range]), \"run_id\", \"$1\", \"run\", \"(.*)\"), \"payer\", \"$1\", \"principal\", \"(.*)\"))"
+        },
+        {
+          "refId": "E",
+          "instant": true,
+          "format": "table",
+          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value #D": "started",
+              "Value #E": "tokens"
+            }
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "run_id",
+                "role",
+                "data_class",
+                "payer",
+                "room",
+                "phase",
+                "reason",
+                "pull_request",
+                "started",
+                "tokens"
+              ]
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "started",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "run_id"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this run",
+                    "url": "/d/agent-run/agent-run?var-run=${__value.text}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "payer"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Spend of this principal",
+                    "url": "/d/agent-identity/agent-identity?var-principal=${__value.text}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "room"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Open this room",
+                    "url": "/d/agent-room/agent-room?var-room=${__value.text}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "started"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "dateTimeAsIso"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "pull_request"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Pull request",
+                    "url": "${__value.text}",
+                    "targetBlank": true
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Runs by phase",
+      "description": "Runs per phase over time, each run at its latest phase only: a replaced kube-state-metrics pod leaves a stale series that would otherwise count one run twice.",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "x": 0,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "expr": "sum by (phase) (max by (run_id, phase) (agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\"} == 1) and on (run_id, phase) topk by (run_id) (1, timestamp(agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\"} == 1)))"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Tokens per run",
+      "description": "Input plus output tokens per second through the model gateway, one line per live run (the rate of a run, not its total: a run that ended has no line; totals are in the Runs table).",
+      "gridPos": {
+        "x": 8,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{ar_agent}}",
+          "expr": "sum by (ar_agent) (rate(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__rate_interval]))"
+        }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "timeseries",
+      "title": "Model provider refusals",
+      "description": "Runs the model provider refused per hour, by cause and role (billing, auth, quota). A provider-wide outage appears here even when no run tokens are recorded.",
+      "gridPos": {
+        "x": 16,
+        "y": 12,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "interval": "1h",
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 80,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{cause}} / {{role}}",
+          "expr": "sum by (cause, role) (increase(maku_factory_model_refused_total[1h]))"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Tier vs tokens and steps per run",
+      "description": "One row per run: its tier, the tokens it used and the steps it logged. A tier that costs the same as a cheaper one is not earning its price.",
+      "gridPos": {
+        "x": 0,
+        "y": 26,
+        "w": 16,
+        "h": 10
+      },
+      "datasource": {
+        "type": "datasource",
+        "uid": "-- Mixed --"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true,
+          "format": "table",
+          "expr": "max by (run_id, tier) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", tier!=\"\"}[$__range]))"
+        },
+        {
+          "refId": "B",
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "instant": true,
+          "format": "table",
+          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "merge",
+          "options": {}
+        },
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "Value #B": "tokens"
+            }
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "run_id",
+                "tier",
+                "tokens",
+                "steps"
+              ]
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "tokens",
+                "desc": true
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "bargauge",
+      "title": "Tokens by tier",
+      "description": "Input plus output tokens in the range, summed by the run's tier.",
+      "gridPos": {
+        "x": 16,
+        "y": 26,
+        "w": 8,
+        "h": 10
+      },
+      "options": {
+        "displayMode": "basic"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{tier}}",
+          "expr": "sum by (tier) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run_id) group_left (tier) max by (run_id, tier) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", tier!=\"\"}[$__range])))"
+        }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "timeseries",
+      "title": "Sandbox pods by phase",
+      "description": "Run pods of the agents namespace by pod phase (kube-state-metrics). Pending for long is a node to scale up or an image to pull (AgentSandboxPodPending). Moved here from the retired Agent platform dashboard.",
+      "gridPos": {
+        "x": 0,
+        "y": 36,
+        "w": 12,
+        "h": 7
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "legendFormat": "{{phase}}",
+          "expr": "sum by (phase) (kube_pod_status_phase{namespace=\"__RUNS_NAMESPACE__\"})"
+        }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Spend by model and principal",
+      "gridPos": {
+        "x": 0,
+        "y": 43,
+        "w": 24,
+        "h": 8
+      },
+      "description": "What the runs of the range priced to, by the served model and the principal each run was charged to (the factory's run charge info, the join the identity page's Runs table uses). Priced from the gateway's tokens at the meter's price per token; a principal opens its spend page.",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "format": "table",
+          "expr": "sum by (gen_ai_request_model, principal) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left (principal) max by (run, principal) (max_over_time(maku_factory_run_charge_info[$__range])))"
+        }
+      ],
+      "transformations": [
+        {
+          "id": "organize",
+          "options": {
+            "renameByName": {
+              "gen_ai_request_model": "model",
+              "Value": "spend"
+            }
+          }
+        },
+        {
+          "id": "filterFieldsByName",
+          "options": {
+            "include": {
+              "names": [
+                "model",
+                "principal",
+                "spend"
+              ]
+            }
+          }
+        },
+        {
+          "id": "sortBy",
+          "options": {
+            "sort": [
+              {
+                "field": "model"
+              }
+            ]
+          }
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "no priced run in this range"
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "spend"
+            },
+            "properties": [
+              {
+                "id": "unit",
+                "value": "currencyUSD"
+              },
+              {
+                "id": "decimals",
+                "value": 2
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "principal"
+            },
+            "properties": [
+              {
+                "id": "links",
+                "value": [
+                  {
+                    "title": "Spend of this principal",
+                    "url": "/d/agent-identity/agent-identity?var-principal=${__value.text}&${__url_time_range}"
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "id": 10,
+      "type": "bargauge",
+      "title": "Runs by effort",
+      "description": "Runs in the range, counted by the reasoning effort they were started with (maku_rooms_run_info, the broker's one series per live run, so a run that ended before the range's start does not count; effort is none, minimal, low, medium, high, xhigh or max).",
+      "gridPos": {
+        "x": 0,
+        "y": 51,
+        "w": 8,
+        "h": 6
+      },
+      "options": {
+        "displayMode": "basic"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "noValue": "0",
+          "color": {
+            "mode": "fixed",
+            "fixedColor": "blue"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "blue",
+                "value": null
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "instant": true,
+          "legendFormat": "{{effort}}",
+          "expr": "count by (effort) (max by (run, effort) (max_over_time(maku_rooms_run_info[$__range])))"
+        }
+      ]
+    }
+  ]
+}

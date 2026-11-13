@@ -449,7 +449,7 @@ func (d *desirer) fileConditions(cs *[]metav1.Condition, gen int64, repository s
 	case !snap.HasClasses:
 		d.set(cs, gen, ConditionRepositoryFileValid, metav1.ConditionFalse, "Invalid", "the file declares no classes")
 	default:
-		d.set(cs, gen, ConditionRepositoryFileValid, metav1.ConditionTrue, "Valid", "")
+		d.set(cs, gen, ConditionRepositoryFileValid, metav1.ConditionTrue, "Valid", fileNotes(snap))
 	}
 	switch {
 	case snap.Err != nil || !snap.HasClasses:
@@ -464,6 +464,32 @@ func (d *desirer) fileConditions(cs *[]metav1.Condition, gen int64, repository s
 	default:
 		d.set(cs, gen, ConditionInSync, metav1.ConditionTrue, "InSync", "")
 	}
+}
+
+// fileNotes is a valid file's message (B15, plan PR4): the bindings that do not resolve, in file
+// order, and the deprecations, each list cut at maxDivergences. The file stays valid with either.
+func fileNotes(snap mergepolicy.Snapshot) string {
+	var refused []string
+	if snap.File != nil {
+		for _, b := range snap.File.MergePolicies {
+			if r, ok := snap.Refused[b.Name]; ok {
+				refused = append(refused, fmt.Sprintf("binding %s: %s: %s", b.Name, r.Reason, r.Message))
+			}
+		}
+	}
+	var deprecated []string
+	for _, d := range snap.Deprecations {
+		deprecated = append(deprecated, "deprecated: "+d)
+	}
+	var parts []string
+	for _, list := range [][]string{refused, deprecated} {
+		shown := list[:min(len(list), maxDivergences)]
+		if more := len(list) - len(shown); more > 0 {
+			shown = append(shown, fmt.Sprintf("and %d more", more))
+		}
+		parts = append(parts, shown...)
+	}
+	return strings.Join(parts, "; ")
 }
 
 func truncate(s string, n int) string {

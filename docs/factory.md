@@ -566,7 +566,7 @@ another on one branch, and only the implementer writes. `templates.<name>.roles`
 
 | Template | Picked when |
 |---|---|
-| `investigate` | The task came from RunLore, by `/intake/runlore` or as an [internal principal](#internal-principals); its data class is forced to `internal` |
+| `investigate` | The task came from RunLore, by `/intake/runlore` or as an [internal principal](#internal-principals); its data class is forced to `internal`. Its triager searches RunLore's knowledge base with `kb_search` and `kb_get` when the broker's `roomTools.knowledge` is set ([RunLore](integration.md#runlore)); without it, the prompt's "if they are available" leaves them out |
 | `solo` | A class with an `oracle` (such as `dead-links`), always at `light`, without the classifier; otherwise class `docs-links`, tier below `frontier` |
 | `pair` | Class `docs-links` at `frontier`, or any other class below `frontier` |
 | `trio` | Any other class at `frontier` |
