@@ -75,6 +75,8 @@ type Claims struct {
 	ClientID string `json:"client_id,omitempty"`
 	// ProjectRoles is the roles claim ZITADEL asserts natively: role name to granting orgs.
 	ProjectRoles map[string]json.RawMessage `json:"urn:zitadel:iam:org:project:roles,omitempty"`
+	// raw is the whole claim set, for a configured roles claim (RoleNames); never marshalled.
+	raw map[string]json.RawMessage
 }
 
 // GroupNames is the groups claim our ZITADEL action sets on ID tokens, else the
@@ -258,11 +260,17 @@ func (v *Verifier) parseWith(ctx context.Context, raw string, opts ...jwt.Parser
 	return c, nil
 }
 
-// issuedTo is the app a ZITADEL token was issued to: azp on an ID token,
-// client_id on a JWT access token, which has no azp (review C1). A token that
-// names two different apps names none.
+// issuedTo is the app a token was issued to: azp on an ID token, client_id on a
+// JWT access token, which has no azp (review C1), else the one element of aud (an
+// OIDC ID token without azp names its client in aud alone). A token that names two
+// different apps names none.
 func (c *Claims) issuedTo() string {
 	switch {
+	case c.AuthorizedParty == "" && c.ClientID == "":
+		if len(c.Audience) == 1 {
+			return c.Audience[0]
+		}
+		return ""
 	case c.AuthorizedParty == "":
 		return c.ClientID
 	case c.ClientID == "" || c.ClientID == c.AuthorizedParty:
