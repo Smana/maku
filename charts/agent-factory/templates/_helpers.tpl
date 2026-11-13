@@ -44,5 +44,42 @@ the broker maku runs, so both must name the same ones. */}}
 {{- if ne ($gw.broker.namespace | default .Release.Namespace) .Release.Namespace -}}
 {{- fail (printf "maku-gateway.broker.namespace %q must be the release namespace %q, where the umbrella runs the broker" $gw.broker.namespace .Release.Namespace) -}}
 {{- end -}}
+{{- include "afumbrella.gatewayClients" . -}}
+{{- end -}}
+{{- end }}
+
+{{/* The broker's clients on the gateway (plan v4 step 4, Task 12, GW8). A gateway that serves the
+planner or the classifier needs the broker pointed at it (maku.broker.modelGateway), on its clients
+port and audience prefix. A broker that derives a client's route from that gateway needs the gateway
+to serve that client: otherwise every plan or classification would answer 404. */}}
+{{- define "afumbrella.gatewayClients" -}}
+{{- $gw := index .Values "maku-gateway" -}}
+{{- $mg := .Values.maku.broker.modelGateway | default dict -}}
+{{- $human := .Values.maku.broker.human | default dict -}}
+{{- $clients := $gw.clients | default dict -}}
+{{- $served := list -}}
+{{- range $c := list "planner" "classifier" -}}
+{{- if (index $clients $c | default dict).enabled -}}{{- $served = append $served $c -}}{{- end -}}
+{{- end -}}
+{{- if and $served (ne ($mg.service | default "") $gw.name) -}}
+{{- fail (printf "maku-gateway.clients.%s.enabled needs maku.broker.modelGateway.service %q (got %q): the broker calls the gateway's clients listener" (first $served) $gw.name ($mg.service | default "")) -}}
+{{- end -}}
+{{- if eq ($mg.service | default "") $gw.name -}}
+{{- if ne ($mg.namespace | default .Release.Namespace) .Release.Namespace -}}
+{{- fail (printf "maku.broker.modelGateway.namespace %q must be the release namespace %q, where the umbrella runs maku-gateway" $mg.namespace .Release.Namespace) -}}
+{{- end -}}
+{{- if ne (int $mg.port) (int $gw.listeners.clients) -}}
+{{- fail (printf "maku.broker.modelGateway.port %v must equal maku-gateway.listeners.clients %v" $mg.port $gw.listeners.clients) -}}
+{{- end -}}
+{{- if ne $mg.audiencePrefix $gw.audiencePrefix -}}
+{{- fail (printf "maku.broker.modelGateway.audiencePrefix %q must equal maku-gateway.audiencePrefix %q: the gateway checks each client's audience" $mg.audiencePrefix $gw.audiencePrefix) -}}
+{{- end -}}
+{{- $plan := dig "intake" "plan" dict $human -}}
+{{- if and $plan.enabled (not $plan.url) (not (has "planner" $served)) -}}
+{{- fail "maku.broker.human.intake.plan routes through maku-gateway (no url set), but maku-gateway.clients.planner.enabled is false: give the planner its provider and model there" -}}
+{{- end -}}
+{{- if and $human.slackIntents (not $human.slackIntents.url) (not (has "classifier" $served)) -}}
+{{- fail "maku.broker.human.slackIntents routes through maku-gateway (no url set), but maku-gateway.clients.classifier.enabled is false: give the classifier its provider and model there" -}}
+{{- end -}}
 {{- end -}}
 {{- end }}

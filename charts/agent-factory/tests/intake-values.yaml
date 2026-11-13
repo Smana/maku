@@ -23,11 +23,20 @@ maku:
       mcp:
         enabled: true
         sessionStart: [owner/repo]
+        # The Slack App's principal, which slackIntents names (the classifier is on, in shadow).
+        sponsored:
+          - {name: slack-app, clientIDFile: /etc/e2e/config/sponsored-client-id}
+      # Neither block names a url or a key file: modelGateway derives both, the model gateway's
+      # clients listener and the broker's projected token per client (plan v4 step 4, Task 12).
+      slackIntents:
+        principal: slack-app
+        teamID: T0E2ETEST
       intake:
         plan:
           enabled: true
-          url: https://e2e-stub.e2e.svc.cluster.local/v1
-          apiKeyFile: /etc/e2e/config/planner-key
+          # The stub's planner answers whatever the effort; the mistral leg proves its preset
+          # rewrites this to "none" on the wire.
+          reasoningEffort: low
           repositories: [owner/repo]
           maxRounds: 2
           classes:
@@ -35,6 +44,8 @@ maku:
               roles: [scoper, implementer, reviewer]
               ceilingUSD: 1
               source: class:docs
+    modelGateway:
+      service: model-gateway
     extraEnv:
       - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
       - {name: ROOMS_GITHUB_APP_DIR, value: /etc/e2e/github}
@@ -89,3 +100,27 @@ maku-factory:
       docs: {scope: scoper, judge: tier-light}
       docs-links: {scope: scoper, judge: tier-light}
       review: {scope: scoper, judge: tier-light}
+
+# The model gateway (plan v4 step 4, Task 12): the upstream controller and maku-gateway, the planner
+# and the classifier as clients, the stub as a `custom` provider over plain http. intake.sh sets
+# identity.issuer from the cluster.
+agentgateway:
+  enabled: true
+maku-gateway:
+  enabled: true
+  replicas: 1
+  identity:
+    jwks: {source: apiserver, allowAnonymousDiscovery: true}
+  providers:
+    stub:
+      preset: custom
+      existingSecret: e2e-provider-key
+      host: e2e-stub.e2e.svc.cluster.local
+      port: 8080
+      path: /v1/chat/completions
+      tls: false
+      egress:
+        peers: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+  clients:
+    planner: {enabled: true, provider: stub, model: stub-frontier}
+    classifier: {enabled: true, provider: stub, model: stub-light}

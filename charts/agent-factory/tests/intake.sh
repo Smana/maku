@@ -3,6 +3,10 @@
 #
 # Proves governed intake revisions against a real broker on a throwaway k3d cluster. Every external
 # dependency is the in-cluster e2e-stub: no real GitHub, OIDC or model endpoint is contacted.
+#
+# The planner and the classifier call the model gateway's clients listener (plan v4 step 4, Task 12):
+# agentgateway's controller and maku-gateway run in the release, the stub is their `custom` provider
+# over plain http, and the broker holds a projected token per client, never a provider key.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 # shellcheck source=hack/quickstart/versions.env
@@ -14,6 +18,10 @@ TAG=e2e
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 VALUES=charts/agent-factory/tests/intake-values.yaml
 STUB=charts/agent-factory/tests/e2e-stub.yaml
+# The gateway probe's floor (charts/maku-gateway/tests/probe), as install.sh's gateway leg.
+GATEWAY_API=v1.2.1
+# The provider key the gateway sends the stub, from its Secret (D14): the stub records its digest.
+PROVIDER_KEY=e2e-gateway-key
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
 assert_eq() { [[ $1 == "$2" ]] || die "$3: got '$1', want '$2'"; }
@@ -93,6 +101,7 @@ created=false
 stub_port=
 stub_url=
 broker_port=
+gw_port=
 pf_pids=()
 dump() {
   $created && [[ -s $KUBECONFIG ]] || return 0
@@ -101,7 +110,7 @@ dump() {
   kubectl -n "$NS" get tasks -o jsonpath='{range .items[*]}{.metadata.name}{" phase="}{.status.phase}{" statusComment="}{.status.statusComment}{"\n"}{end}' >&2 || true
   kubectl -n "$NS" describe pods >&2 || true
   kubectl get events -A --sort-by=.lastTimestamp >&2 || true
-  for d in room-broker run-controller agent-factory; do
+  for d in room-broker run-controller agent-factory model-gateway intake-agentgateway; do
     kubectl -n "$NS" logs "deploy/$d" --all-containers --tail=120 >&2 || true
   done
   for p in $(kubectl -n agents get pods -o name 2>/dev/null); do kubectl -n agents logs "$p" --all-containers --prefix --tail=80 >&2 || true; done
@@ -198,7 +207,10 @@ step "create the k3d cluster $NAME"
 created=true
 k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
   --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
+  --k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0' \
   --kubeconfig-update-default=false --kubeconfig-switch-context=false
+# anonymous-auth: agentgateway's controller fetches the apiserver's JWKS anonymously (probe P1); k3s
+# turns anonymous requests off, where kubeadm and kind leave them on.
 k3d kubeconfig get "$NAME" >"$KUBECONFIG"
 for image in maku-broker maku-run-controller maku-factory maku-e2e-stub; do
   k3d image import -c "$NAME" "ghcr.io/smana/$image:$TAG"
@@ -232,12 +244,15 @@ kubectl -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.
 printf 'rooms-proxy' >"$work/client-id"
 printf 'roomctl' >"$work/roomctl-client-id"
 printf 'project' >"$work/project-id"
-printf 'e2e-planner-key' >"$work/planner-key"
+printf 'slack-app' >"$work/sponsored-client-id"
 printf '{"pat":"e2e-throwaway","githubIdpId":"github"}' >"$work/reader.json"
+# No planner or classifier key: the broker calls the gateway with its projected tokens.
 kubectl -n "$NS" create secret generic e2e-broker-config \
   --from-file=client-id="$work/client-id" --from-file=roomctl-client-id="$work/roomctl-client-id" \
-  --from-file=project-id="$work/project-id" --from-file=planner-key="$work/planner-key" \
+  --from-file=project-id="$work/project-id" --from-file=sponsored-client-id="$work/sponsored-client-id" \
   --from-file=reader.json="$work/reader.json"
+# The stub provider's key, which the gateway reads by name (D14).
+kubectl -n "$NS" create secret generic e2e-provider-key --from-literal=apiKey="$PROVIDER_KEY"
 kubectl apply -f "$STUB"
 cat >"$work/coredns-custom.yaml" <<'EOF'
 apiVersion: v1
@@ -277,16 +292,24 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set "maku.runController.images.bridge.tag=$bridge"
   --set maku-factory.replicas=1
   --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem")
-values+=(-f "$VALUES")
-helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m
+values+=(-f "$VALUES" --set "maku-gateway.identity.issuer=$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)")
+# The system roots, not the throwaway CA this script trusts elsewhere (SSL_CERT_FILE).
+(unset SSL_CERT_FILE; curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml") |
+  kubectl apply --server-side -f - >/dev/null
+kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
+helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m --set agentgateway-crds.enabled=true
 kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
+kubectl wait --for=condition=Established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev --timeout=120s
 helm install intake charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m
 
-step "wait for the database and controllers"
+step "wait for the database, the controllers and the model gateway"
 kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s
 kubectl -n "$NS" rollout status deploy/room-broker --timeout=180s
 kubectl -n "$NS" rollout status deploy/run-controller --timeout=180s
 kubectl -n "$NS" rollout status deploy/agent-factory --timeout=180s
+kubectl -n "$NS" rollout status deploy/intake-agentgateway --timeout=180s
+kubectl -n "$NS" wait --for=condition=Programmed gateway/model-gateway --timeout=180s
+kubectl -n "$NS" rollout status deploy/model-gateway --timeout=180s
 
 start_port_forward() {
   local ns=$1 resource=$2 remote=$3 log=$4 variable=$5 pid line port
@@ -341,7 +364,7 @@ done
   --issuer https://e2e-stub.e2e.svc.cluster.local --client-id roomctl --project-id project \
   --factory-login 'maku-demo[bot]'
 jq -n --arg token "$(cat "$work/token")" '{access_token: $token, token_type: "Bearer"}' >"$work/config/maku/token.json"
-text='Document the verification command.'
+text='Document the verification command in README.md.'
 
 step "planner: one ranked g1 marker and its broker-owned hash"
 "$client" plan --text "$text" --repo owner/repo --out "$work/plan.json" >"$work/plan.out"
@@ -354,6 +377,19 @@ jq -e '.round == 1 and .gaps[0].id == "g1" and (.issues | length == 1)' "$work/p
 body=$(jq -r '.issues[0].body' "$work/plan.json")
 assert_eq "$(grep -oF '[NEEDS CLARIFICATION:' <<<"$body" | wc -l | tr -d ' ')" 1 'initial clarification marker count'
 grep -qF '[NEEDS CLARIFICATION: g1 ' <<<"$body" || die 'the initial marker is not g1'
+
+step "planner: the plan came through the gateway's /clients/planner/v1, the model forced, the key the gateway's"
+# The stub records what each model call carried, its Authorization as a digest. Through the gateway
+# the model is clients.planner's mapped model and the bearer is the provider key from its Secret: the
+# broker's projected token never reaches the provider.
+key_digest="sha256:$(printf 'Bearer %s' "$PROVIDER_KEY" | sha256sum | cut -d' ' -f1)"
+last_received() { # last_received ROLE: the stub's last recorded call of that role
+  curl_stub "$stub_url/__received" | jq -c --arg role "$1" '[.[] | select(.role == $role)] | last'
+}
+got=$(last_received planner)
+jq -e --arg auth "$key_digest" '.model == "stub-frontier" and .path == "/v1/chat/completions" and
+  .authorization == $auth and .reasoning_effort == "low" and .temperature == 0' <<<"$got" >/dev/null ||
+  die "the provider did not receive the planner's call through the gateway: $got"
 
 step "planner: a candidate revision gets a new hash and no remaining gaps"
 jq '.issues[0].body |= (gsub("\\[NEEDS CLARIFICATION: g1 [^]]+\\]"; "task check") + "\n\n## Decisions\nD1 [g1]: run task check, because it verifies the change")' \
@@ -414,6 +450,57 @@ jq -e '.result.isError == true and (.result.content[0].text | contains("unresolv
   "$work/mcp-draft.out" >/dev/null || { cat "$work/mcp-draft.out" >&2; die 'issue_draft did not return unresolved_marker'; }
 curl_stub "$stub_url/__counts" >"$work/counts-final.json"
 assert_eq "$(jq -r '.planner' "$work/counts-final.json")" 2 'planner calls after final checks'
+
+step "classifier: the broker's call through /clients/classifier/v1, on its own audience"
+# The broker serves intent_classify to the Slack App only, behind a sponsored IdP client and a verified
+# Slack link the stub does not emulate. The call itself is the broker's code (internal/intent), made by
+# the scenario client with a token of the broker's own ServiceAccount, through the gateway.
+start_port_forward "$NS" svc/model-gateway 8082 "$work/port-forward-gateway.log" gw_port
+kubectl -n "$NS" create token room-broker --audience maku-gateway.client.classifier --duration 10m >"$work/classifier-token"
+kubectl -n "$NS" create token room-broker --audience maku-gateway.client.planner --duration 10m >"$work/planner-token"
+"$client" classify --url "http://127.0.0.1:$gw_port/clients/classifier/v1" --token-file "$work/classifier-token" \
+  --reply 'where is it at?' >"$work/classify.out"
+assert_eq "$(field intent "$work/classify.out")" status 'classifier intent'
+assert_eq "$(field outcome "$work/classify.out")" ok 'classifier outcome'
+got=$(last_received classifier)
+jq -e --arg auth "$key_digest" '.model == "stub-light" and .authorization == $auth and .temperature == 0' <<<"$got" >/dev/null ||
+  die "the provider did not receive the classifier's call through the gateway: $got"
+
+step "a client's token answers 403 on the other client's route"
+gw_status() { # gw_status TOKEN_FILE PATH: the gateway's status for one completion
+  curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $(cat "$1")" -H 'Content-Type: application/json' \
+    --data '{"model":"tier-frontier","messages":[{"role":"user","content":"hello"}]}' "http://127.0.0.1:$gw_port$2"
+}
+assert_eq "$(gw_status "$work/classifier-token" /clients/planner/v1/chat/completions)" 403 'the classifier token on the planner route'
+assert_eq "$(gw_status "$work/planner-token" /clients/classifier/v1/chat/completions)" 403 'the planner token on the classifier route'
+
+# quirk PRESET MODEL CHECK WHAT: the planner on a provider of that preset, then one plan whose call the
+# stub must have received as CHECK says. A preset owns its endpoint (only `custom` takes one), so the
+# rendered backend is pointed at the stub after the upgrade: its transformations stay the chart's.
+quirk() {
+  local preset=$1 model=$2 check=$3 what=$4 got=''
+  step "planner on the $preset preset: $what"
+  helm upgrade intake charts/agent-factory -n "$NS" "${values[@]}" \
+    --set-json "maku-gateway.providers.$preset={\"preset\":\"$preset\",\"existingSecret\":\"e2e-provider-key\"}" \
+    --set "maku-gateway.clients.planner.provider=$preset" --set "maku-gateway.clients.planner.model=$model" --timeout 5m >/dev/null
+  kubectl -n "$NS" patch agentgatewaybackend "$preset-planner" --type=json -p '[
+    {"op":"replace","path":"/spec/ai/provider/host","value":"e2e-stub.e2e.svc.cluster.local"},
+    {"op":"replace","path":"/spec/ai/provider/port","value":8080},
+    {"op":"replace","path":"/spec/ai/provider/custom/formats/0/path","value":"/v1/chat/completions"},
+    {"op":"remove","path":"/spec/policies/tls"}]' >/dev/null
+  for _ in $(seq 30); do
+    if "$client" plan --text "$text" --repo owner/repo --out "$work/quirk-$preset.json" >"$work/quirk-$preset.out" 2>&1; then
+      got=$(last_received planner)
+      jq -e --arg model "$model" '.model == $model' <<<"$got" >/dev/null && break
+    fi
+    sleep 2
+  done
+  jq -e --arg model "$model" --arg auth "$key_digest" ".model == \$model and .authorization == \$auth and ($check)" <<<"$got" >/dev/null ||
+    { cat "$work/quirk-$preset.out" >&2; die "the $preset preset: $what (the provider received $got)"; }
+}
+quirk mistral mistral-small-2603 '.reasoning_effort == "none"' 'reasoning_effort "none" on the wire, though the broker sent low'
+quirk moonshot k3.1-pro '.temperature == 1 and .top_p == "<absent>"' 'temperature 1 and no top_p on the wire, though the broker sent 0'
+echo 'ok: the planner and the classifier through the gateway, provider quirks applied'
 
 issue_body=$(cat <<'EOF'
 # Document the verification command
