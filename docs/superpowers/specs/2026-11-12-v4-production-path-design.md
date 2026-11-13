@@ -178,8 +178,8 @@ Decided after the plans for steps 2 and 3 and hardening H1–H5 were written:
 | Step 7 R9 (D23, D2) | The GKE proof is a fresh second install on gcp-0, in its own namespace, from `maku install --print` output with test-organization Apps (owner, 2026-11-13) |
 | Step 7 R10 (D2) | The aggregated ClusterRoles `maku-factory-admin`, `maku-mergepolicy-editor` and `maku-viewer` move into `agent-factory-crds`. Every other cluster-scoped object gets a release-prefixed name, so two installs can share a cluster (owner, 2026-11-13) |
 | Step 7 R11 (D23) | k3d (k3s in Docker) counts as the k3s install (owner, 2026-11-13) |
-| Step 8 R1 | Step 8 ships as two minors: deprecation signals first (S8.1), then removals (S8.2). A removal merges only after its signal has read zero for seven days (owner, 2026-11-13) |
-| Step 8 R2 | A removal needs zero on both gcp-0 and aws-0, unless the owner has decommissioned aws-0 (owner, 2026-11-13) |
+| Step 8 R1 (superseded by R11) | Step 8 ships as two minors: deprecation signals first (S8.1), then removals (S8.2). A removal merges only after its signal has read zero for seven days (owner, 2026-11-13) |
+| Step 8 R2 (superseded by R11) | A removal needs zero on both gcp-0 and aws-0, unless the owner has decommissioned aws-0 (owner, 2026-11-13) |
 | Step 8 R3 (D10 read) | octo-sts support is deleted entirely once the XR is gone. D10's "optional" is met by the per-run minter (owner, 2026-11-13) |
 | Step 8 R4 (D7) | `model.mode: secret` stays as a demo-only mode, refused without `demoValues` and shown on the banner as `model_key_in_sandbox` (owner, 2026-11-13) |
 | Step 8 R5 | `factory_slack_*` is renamed `maku_slack_app_*` in step 8, with no dual export (owner, 2026-11-13) |
@@ -188,6 +188,7 @@ Decided after the plans for steps 2 and 3 and hardening H1–H5 were written:
 | Step 8 R8 (D13) | The values schema-diff gate ships report-only. Only the owner's v4.0.0 release PR arms it (owner, 2026-11-13) |
 | Step 8 R9 (D3) | The private-code warning becomes a refusal in step 8, once the gauge reads 0 on both clouds (owner, 2026-11-13) |
 | Step 8 R10 (D9) | The broker's unreadable-ledger bridge (#521) becomes a refusal in step 8, once `maku_rooms_schema_unverified` reads 0 on both clouds (owner, 2026-11-13) |
+| Step 8 R11 | Supersedes Step 8 R1 and R2. Step 8 ships as one minor with no deprecation-signal minor and no seven-day or both-clouds gate. Each removal merges as soon as ANR and cnref no longer use the path, as their own CI and renders show (owner, 2026-11-13) |
 
 ## Not here
 
