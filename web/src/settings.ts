@@ -36,11 +36,36 @@ export interface MergePolicyStatus {
 export interface Report {
   repository: string; minimum: number; policyError?: string; classes: ClassReport[]; readAt: string;
   evidenceAt?: string; evidenceError?: string;
+  // The repository's hardening readiness (H5), present at hardening mode audit or above.
+  hardening?: Readiness;
   file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
   // Set when the repository is served from a MergePolicy object: its name, its manifest as the
   // factory renders it, the file name to save that under, and its classes in the file's shape.
   mergePolicy?: string; mergePolicyStatus?: MergePolicyStatus; manifest?: string; manifestPath?: string; served?: PolicyFile;
+}
+
+// One repository's hardening readiness: hardened, and the facts that do not hold.
+export interface Readiness { repository: string; hardened: boolean; missing: string[]; drill?: string }
+
+// The readiness facts in words (R1 to R7), and error when one could not be read.
+const MISSING_WORDS: Record<string, string> = {
+  mode_not_enforce: "the hardening mode is below enforce",
+  sandbox_write_token: "a sandbox role's token can write",
+  publisher_policy: "no publisher can write",
+  layer_not_enforced: "a threat-check layer (T1 to T4) is not enforced",
+  read_filter_off: "reads are not filtered",
+  drill_stale_or_failed: "no passing drill for this version and configuration",
+  demo_profile: "the laptop demo is never hardened",
+  error: "a fact could not be read",
+};
+
+// hardeningLine is the repository's readiness as one sentence (H5): hardened and the drill it
+// relied on, or each fact that does not hold.
+export function hardeningLine(h: Readiness): string {
+  if (h.hardened) return `Hardened: every readiness fact holds${h.drill ? `, on drill ${h.drill}` : ""}.`;
+  const why = h.missing.map((m) => MISSING_WORDS[m] ?? m.replaceAll("_", " "));
+  return `Not hardened: ${why.join("; ")}.`;
 }
 
 export interface Step2 { row: string; status: string; detail?: string }
@@ -331,6 +356,11 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   fl.dataset.prominent = String(file.prominent);
   main.append(fl);
 
+  if (r.hardening) {
+    const h = el("p", hardeningLine(r.hardening), "hardening-readiness");
+    h.dataset.hardened = String(r.hardening.hardened);
+    main.append(h);
+  }
   main.append(el("h2", "Classes"));
   const guard = el("ul", undefined, "guardrails");
   for (const g of describeGuardrails(r.guardrails)) guard.append(el("li", g));
