@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 const orphanPolicy = `apiVersion: maku.ogenki.io/v1alpha1
@@ -62,7 +64,7 @@ func TestMakuConfigMigrateThenValidate(t *testing.T) {
 	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, manifests}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "ok: 3 accepted") {
+	if !strings.Contains(out.String(), "ok: 7 accepted") {
 		t.Fatalf("output: %s", out.String())
 	}
 }
@@ -136,5 +138,76 @@ func TestMakuConfigValidateRefusesADuplicatedSwitchBlock(t *testing.T) {
 	err = m.run(t.Context(), []string{"config", "validate", "--config", file, orphan})
 	if err == nil || !strings.Contains(err.Error(), "hardening is written twice") {
 		t.Fatalf("error: %v\n%s", err, out.String())
+	}
+}
+
+const anrObjects = "../factory/resources/testdata/anr-objects.yaml"
+
+// anrResidual is ai-native-ref's config file once its catalogue and repositories are objects.
+func anrResidual(t *testing.T) string {
+	t.Helper()
+	raw, err := os.ReadFile("../factory/resources/testdata/anr.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, residual, err := resources.Migrate(raw, "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p := filepath.Join(t.TempDir(), "residual.yaml")
+	if err := os.WriteFile(p, residual, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// B17: ai-native-ref's live objects convert to policies and bindings that validate, and the
+// conversion proved no resolved class changes.
+func TestMakuConfigMigrateManifests(t *testing.T) {
+	residual := anrResidual(t)
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	if err := m.run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", anrObjects}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	objs, err := resources.Decode(out.Bytes())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objs) != 17 { // the Factory, four Repositories, twelve class policies
+		t.Fatalf("%d objects:\n%s", len(objs), out.String())
+	}
+	manifests := filepath.Join(t.TempDir(), "manifests.yaml")
+	if err := os.WriteFile(manifests, out.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, manifests}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "ok: 17 accepted") || strings.Contains(out.String(), "per-repository shape") {
+		t.Fatalf("%s", out.String())
+	}
+}
+
+// PR10: a conversion that would change a resolved class (here, guardrails now capping every
+// binding) is refused, each change named.
+func TestMakuConfigMigrateRefusesAChange(t *testing.T) {
+	residual := anrResidual(t)
+	raw, err := os.ReadFile(anrObjects)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capped := filepath.Join(t.TempDir(), "objects.yaml")
+	if err := os.WriteFile(capped, []byte(strings.Replace(string(raw), "  harnessProfiles:", "  mergeGuardrails: {maxPerDay: 2}\n  harnessProfiles:", 1)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	err = Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", capped})
+	if err == nil || !strings.Contains(err.Error(), "would change") {
+		t.Fatalf("got %v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "changed: Smana/runlore-kb kb-entries: served before only") || strings.Contains(out.String(), "apiVersion") {
+		t.Fatalf("%s", out.String())
 	}
 }
