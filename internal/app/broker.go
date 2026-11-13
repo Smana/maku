@@ -206,15 +206,34 @@ func runIntentSamples(ctx context.Context, w io.Writer, args []string, getenv fu
 	return nil
 }
 
+// schemaUnverifiedUntil ends the bridge for a ledger the broker's role cannot read. It exists for
+// one install: cnref's broker, whose schema the Atlas operator applies into a ledger only its owner
+// reads, until ANR follow-up 4 gives the broker broker.database.ownerSecret. Its first migrate then
+// adopts that ledger into public.room_broker_revisions, which the broker reads, and the bridge is
+// unused. From this date an unreadable ledger is refused like any other unknown schema.
+var schemaUnverifiedUntil = time.Date(2027, time.March, 1, 0, 0, 0, 0, time.UTC)
+
 // schemaCurrent refuses to serve a schema older or newer than this binary's. A ledger the broker's
-// role cannot read (the Atlas operator's, before its first migrate) is logged and served.
-func schemaCurrent(ctx context.Context, st interface{ SchemaCurrent(context.Context) error }, log *slog.Logger) error {
+// role cannot read is served, with a warning and maku_rooms_schema_unverified at 1, until
+// schemaUnverifiedUntil; gauge reports which of the two the broker started with.
+func schemaCurrent(ctx context.Context, st interface{ SchemaCurrent(context.Context) error }, log *slog.Logger,
+	now time.Time, gauge func(unverified bool)) error {
 	err := st.SchemaCurrent(ctx)
-	if errors.Is(err, store.ErrSchemaUnverified) {
-		log.Warn("schema version unverified: the broker's role cannot read the migration ledger")
+	switch {
+	case errors.Is(err, store.ErrSchemaUnverified):
+		gauge(true)
+		if !now.Before(schemaUnverifiedUntil) {
+			return fmt.Errorf("%w: the bridge for an unreadable ledger ended on %s: set broker.database.ownerSecret, "+
+				"so migrate adopts the ledger into one the broker reads (docs/database.md)", err, schemaUnverifiedUntil.Format(time.DateOnly))
+		}
+		log.Warn("schema version unverified: the broker's role cannot read the migration ledger; "+
+			"set broker.database.ownerSecret before the bridge ends", "until", schemaUnverifiedUntil.Format(time.DateOnly))
 		return nil
+	case err != nil:
+		return err
 	}
-	return err
+	gauge(false)
+	return nil
 }
 
 // warnPlainDB says once that the database connection is not encrypted, and sets rooms_db_tls for
@@ -273,7 +292,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	defer st.Close()
-	if err := schemaCurrent(ctx, st, log); err != nil {
+	if err := schemaCurrent(ctx, st, log, time.Now(), m.SchemaUnverified); err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
 	warnPlainDB(log, st.Server, m.DBTLS)

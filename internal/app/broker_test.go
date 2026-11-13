@@ -122,27 +122,38 @@ type schemaFunc func(context.Context) error
 
 func (f schemaFunc) SchemaCurrent(ctx context.Context) error { return f(ctx) }
 
-// serve refuses a schema it was not built for, and serves one it cannot read, saying so.
+// serve refuses a schema it was not built for. One it cannot read (the Atlas operator's ledger,
+// before ANR sets ownerSecret) is a bridge: served with a warning and maku_rooms_schema_unverified
+// at 1 until schemaUnverifiedUntil, refused from then on.
 func TestServeSchemaCurrent(t *testing.T) {
 	behind := errors.New("the schema is at 1, this broker needs 2: run migrate (broker.database.ownerSecret)")
+	before, after := schemaUnverifiedUntil.Add(-time.Hour), schemaUnverifiedUntil
 	for _, c := range []struct {
-		name string
-		err  error
-		want error
-		warn bool
+		name    string
+		err     error
+		now     time.Time
+		refused string
+		warn    bool
+		gauge   string
 	}{
-		{"current", nil, nil, false},
-		{"behind", behind, behind, false},
-		{"unverified", store.ErrSchemaUnverified, nil, true},
+		{"current", nil, before, "", false, "false"},
+		{"behind", behind, before, "run migrate", false, ""},
+		{"unverified, inside the bridge", store.ErrSchemaUnverified, before, "", true, "true"},
+		{"unverified, past the bridge", store.ErrSchemaUnverified, after, "set broker.database.ownerSecret", false, "true"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var buf strings.Builder
-			err := schemaCurrent(t.Context(), schemaFunc(func(context.Context) error { return c.err }), slog.New(slog.NewTextHandler(&buf, nil)))
-			if !errors.Is(err, c.want) || (c.want == nil) != (err == nil) {
-				t.Fatalf("schemaCurrent = %v, want %v", err, c.want)
+			gauge := ""
+			err := schemaCurrent(t.Context(), schemaFunc(func(context.Context) error { return c.err }),
+				slog.New(slog.NewTextHandler(&buf, nil)), c.now, func(on bool) { gauge = fmt.Sprint(on) })
+			if (c.refused == "") != (err == nil) || (err != nil && !strings.Contains(err.Error(), c.refused)) {
+				t.Fatalf("schemaCurrent = %v, want refused %q", err, c.refused)
 			}
 			if got := strings.Contains(buf.String(), "schema version unverified"); got != c.warn {
 				t.Fatalf("warned %v, want %v: %s", got, c.warn, buf.String())
+			}
+			if gauge != c.gauge {
+				t.Fatalf("gauge = %q, want %q", gauge, c.gauge)
 			}
 		})
 	}
