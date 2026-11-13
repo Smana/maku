@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 )
@@ -1066,12 +1067,30 @@ type API struct {
 	TLS          *ServerTLS `json:"tls,omitempty"`
 	Repositories []string   `json:"repositories"` // OD-6: cloud-native-ref only
 	HumanIssuer  string     `json:"humanIssuer"`
-	HumanJWKS    string     `json:"humanJWKS"`
+	// HumanJWKS is optional when HumanIssuer is https: its discovery document names jwks_uri.
+	HumanJWKS string `json:"humanJWKS"`
 	// Files holding the rooms-proxy and maku client ids (from agents-secrets).
 	ClientIDFiles []string `json:"clientIDFiles"`
 	// ProjectIDFile holds the ZITADEL project id a sponsored token's aud must hold, as the broker's
-	// human.projectIDFile pins the human path; required while api.sponsored is non-empty.
+	// human.projectIDFile pins the human path; required while api.sponsored is non-empty. It is
+	// the zitadel preset's audience file.
 	ProjectIDFile string `json:"projectIDFile,omitempty"`
+	// Preset is "" or "zitadel" (today's token rules), or "generic": any OIDC issuer, its groups
+	// read from RolesClaim (v4 D8). It mirrors the broker's human.preset.
+	Preset string `json:"preset,omitempty"`
+	// TokenUse is what the broker forwards and maku sends: "id", an ID token whose aud holds a
+	// client of ClientIDFiles (generic's default), or "access" (zitadel's only one).
+	TokenUse string `json:"tokenUse,omitempty"`
+	// Audience, or AudienceFile read at use, is the aud value a human access token (token use
+	// access) and a sponsored token must hold under preset generic.
+	Audience     string `json:"audience,omitempty"`
+	AudienceFile string `json:"audienceFile,omitempty"`
+	// RolesClaim names the claim holding Groups' values, or an RFC 6901 pointer to it: required
+	// with preset generic.
+	RolesClaim string `json:"rolesClaim,omitempty"`
+	// SponsoredClientClaim names the claim holding a sponsored token's client id, for an IdP
+	// that puts it elsewhere than azp or client_id (Okta's cid).
+	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
 	// Groups defaults to agents-admin and agents-member.
 	Groups Groups `json:"groups"`
 	// Empty today (R23): no system caller of POST /v1/runs exists.
@@ -1091,6 +1110,78 @@ type API struct {
 	// InternalPrincipals are sponsored principals allowed internal data (RunLore agent-to-agent
 	// RA2): empty ships, and POST /v1/tasks stays a 404 while this and Sponsored are both empty (D4).
 	InternalPrincipals []InternalPrincipal `json:"internalPrincipals,omitempty"`
+}
+
+// The api block's presets (v4 D8), as the broker's human block names them.
+const (
+	PresetZITADEL = "zitadel"
+	PresetGeneric = "generic"
+)
+
+// The token uses (v4 D8, PR3).
+const (
+	TokenUseID     = authn.TokenUseID
+	TokenUseAccess = authn.TokenUseAccess
+)
+
+// EffectivePreset is the configured preset; an empty one is zitadel.
+func (a API) EffectivePreset() string {
+	if a.Preset == "" {
+		return PresetZITADEL
+	}
+	return a.Preset
+}
+
+// EffectiveTokenUse is the configured token use, else the preset's: zitadel's access, generic's id.
+func (a API) EffectiveTokenUse() string {
+	switch {
+	case a.TokenUse != "":
+		return a.TokenUse
+	case a.EffectivePreset() == PresetGeneric:
+		return TokenUseID
+	}
+	return TokenUseAccess
+}
+
+// validatePreset checks the keys each preset reads, naming both keys where an old and a new one
+// conflict (D25).
+func (a API) validatePreset(bad func(string, ...any)) {
+	if !authn.ValidRolesClaim(a.RolesClaim) {
+		bad("api.rolesClaim: not a claim name or an RFC 6901 pointer (~0 and ~1 are its only escapes)")
+	}
+	switch a.EffectivePreset() {
+	case PresetZITADEL:
+		if a.Audience != "" {
+			bad("api.audience: the zitadel preset's audience is api.projectIDFile")
+		}
+		if a.AudienceFile != "" {
+			bad("api.audienceFile: the zitadel preset's audience is api.projectIDFile")
+		}
+		if a.TokenUse != "" && a.TokenUse != TokenUseAccess {
+			bad("api.tokenUse: the zitadel preset uses access")
+		}
+	case PresetGeneric:
+		if a.RolesClaim == "" {
+			bad("api.rolesClaim is required with preset generic (the claim holding groups.admin and groups.member)")
+		}
+		if a.ProjectIDFile != "" {
+			bad("api.projectIDFile: the zitadel preset's; use api.audienceFile with tokenUse access")
+		}
+		if a.Audience != "" && a.AudienceFile != "" {
+			bad("api.audience, api.audienceFile: set one, not both")
+		}
+		switch a.EffectiveTokenUse() {
+		case TokenUseAccess:
+			if a.Audience == "" && a.AudienceFile == "" {
+				bad("api.audience, api.audienceFile: tokenUse access needs exactly one (an aud value every human token must hold)")
+			}
+		case TokenUseID:
+		default:
+			bad("api.tokenUse: %q is not id or access", a.TokenUse)
+		}
+	default:
+		bad("api.preset: %q is not zitadel or generic", a.Preset)
+	}
 }
 
 // ServerTLS is a listener's key pair: two mounted files, re-read on renewal. Both are set, or the
@@ -1229,7 +1320,13 @@ func (c *Config) validateSponsored(bad func(string, ...any)) {
 		which = "api.internalPrincipals"
 	}
 	declared := len(c.API.Sponsored)+len(c.API.InternalPrincipals) > 0
-	if declared && c.API.ProjectIDFile == "" {
+	switch {
+	case !declared:
+	case c.API.EffectivePreset() == PresetGeneric:
+		if c.API.Audience == "" && c.API.AudienceFile == "" {
+			bad("%s needs api.audience or api.audienceFile with preset generic: a token's audience is pinned", which)
+		}
+	case c.API.ProjectIDFile == "":
 		bad("%s needs api.projectIDFile: a token's audience is pinned to the project", which)
 	}
 	if declared && len(c.Meter.Prices) == 0 {
@@ -1952,15 +2049,23 @@ func (c *Config) Validate() error {
 		key, value string
 		human      bool
 	}{
-		{"api.listen", c.API.Listen, false}, {"api.humanIssuer", c.API.HumanIssuer, true}, {"api.humanJWKS", c.API.HumanJWKS, true},
+		{"api.listen", c.API.Listen, false}, {"api.humanIssuer", c.API.HumanIssuer, true},
 	} {
 		if f.value == "" && (!c.Demo || !f.human) {
 			bad("%s is required", f.key)
 		}
 	}
-	if c.Demo && (c.API.HumanIssuer != "" || c.API.HumanJWKS != "" || len(c.API.ClientIDFiles) > 0 ||
-		c.API.Groups.Admin != "" || c.API.Groups.Member != "") {
+	// Without humanJWKS, an https issuer's discovery document names jwks_uri.
+	if c.API.HumanJWKS == "" && !c.Demo && !httpsURL(c.API.HumanIssuer) {
+		bad("api.humanJWKS is required unless api.humanIssuer is https:// (its discovery document names jwks_uri)")
+	}
+	a := c.API
+	if c.Demo && (a.HumanIssuer != "" || a.HumanJWKS != "" || len(a.ClientIDFiles) > 0 || a.Groups.Admin != "" || a.Groups.Member != "" ||
+		a.Preset != "" || a.TokenUse != "" || a.Audience != "" || a.AudienceFile != "" || a.RolesClaim != "" || a.SponsoredClientClaim != "") {
 		bad("demo: the factory API takes no human tokens")
+	}
+	if !c.Demo {
+		c.API.validatePreset(bad)
 	}
 	if c.Demo && c.API.Access != nil {
 		bad("demo: api.access needs an identity provider")
@@ -2518,4 +2623,9 @@ func (m Merge) AwaitingCIBound() time.Duration {
 		return 0
 	}
 	return m.AwaitingCIFor.Duration
+}
+
+func httpsURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
 }

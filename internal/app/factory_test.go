@@ -264,6 +264,35 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 	if _, err := humanVerifier(ctx, cfg); err == nil {
 		t.Fatal("an unreachable JWKS must fail construction")
 	}
+	// v4 D8: without humanJWKS the issuer's discovery document names it, fetched as eagerly.
+	cfg.API.HumanIssuer, cfg.API.HumanJWKS = "https://127.0.0.1:1", ""
+	if _, err := humanVerifier(ctx, cfg); err == nil {
+		t.Fatal("an unreachable discovery document must fail construction")
+	}
+}
+
+// v4 D8: the audience a generic token must hold is api.audience, or the file api.audienceFile
+// names, read at use; the zitadel preset's is api.projectIDFile.
+func TestAPIAudience(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "audience")
+	writeID(t, file, "api://rooms")
+	for name, c := range map[string]struct {
+		api  config.API
+		want string
+	}{
+		"zitadel: the project id file": {config.API{ProjectIDFile: file}, "api://rooms"},
+		"generic: the literal":         {config.API{Preset: config.PresetGeneric, Audience: "https://api.rooms"}, "https://api.rooms"},
+		"generic: the file":            {config.API{Preset: config.PresetGeneric, AudienceFile: file}, "api://rooms"},
+		"generic: none":                {config.API{Preset: config.PresetGeneric}, ""},
+		"zitadel: an unreadable file":  {config.API{ProjectIDFile: filepath.Join(dir, "absent")}, ""},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := apiAudience(c.api)(); got != c.want {
+				t.Fatalf("got %q, want %q", got, c.want)
+			}
+		})
+	}
 }
 
 // Demo mode's run tokens are for the served repositories of one account, written in the runs'

@@ -7,6 +7,7 @@ package api
 import (
 	"fmt"
 	"net/http"
+	"slices"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -27,6 +28,15 @@ type Authenticator struct {
 	SystemAllow map[string]string // ServiceAccount sub → system:<component>; empty ships: none exists yet
 	// Sponsored is F4's third branch; nil while api.sponsored is empty.
 	Sponsored *authn.Sponsored
+	// TokenUse is what the broker forwards and maku sends (v4 D8): "" or access, a JWT access
+	// token; id, an ID token whose aud holds the client it was issued to.
+	TokenUse string
+	// RolesClaim names the claim holding the groups, or an RFC 6901 pointer; "" is the zitadel
+	// preset's groups, else the project roles' keys.
+	RolesClaim string
+	// Audience, when set, is the aud value a human access token must hold (preset generic, token
+	// use access); "" refuses. Nil is the zitadel preset, whose human path pins the client alone.
+	Audience func() string
 }
 
 // Authenticate maps r to its caller's principal, from the bearer token alone.
@@ -45,10 +55,11 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		// A refusal here is only a client mismatch until every id failed; it must
 		// not mask the system branch, so it is skipped, not returned.
 		c, err := a.Humans.VerifyAuthorizedParty(r.Context(), raw, id)
-		if err != nil {
+		if err != nil || !a.audienceHeld(c, id) {
 			continue
 		}
-		p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: c.GroupNames(),
+		groups, _ := c.RoleNames(a.RolesClaim) // a refused claim holds no group: refused below, never a member
+		p := authn.Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: groups,
 			ClientID: id, Expiry: c.ExpiresAt.Time, AccessToken: raw}
 		if !a.Groups.Admitted(p) {
 			// No claims in the message: it reaches logs (authn package rule).
@@ -74,4 +85,17 @@ func (a *Authenticator) Authenticate(r *http.Request) (authn.Principal, error) {
 		return authn.Principal{}, fmt.Errorf("%w: demo_no_human_tokens", authn.ErrUnauthenticated)
 	}
 	return authn.Principal{}, fmt.Errorf("%w: no accepted issuer or client", authn.ErrUnauthenticated)
+}
+
+// audienceHeld is the aud rule of the token use: an ID token's aud holds its client (OIDC Core); a
+// generic access token's holds the configured audience; the zitadel preset's is not read here.
+func (a *Authenticator) audienceHeld(c *authn.Claims, client string) bool {
+	switch {
+	case a.TokenUse == authn.TokenUseID:
+		return slices.Contains(c.Audience, client)
+	case a.Audience != nil:
+		aud := a.Audience()
+		return aud != "" && slices.Contains(c.Audience, aud)
+	}
+	return true
 }
