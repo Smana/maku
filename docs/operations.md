@@ -25,6 +25,8 @@ over 60 s; it never depends on the broker.
 
 ## Metrics
 
+Traces, from the factory and from each run, are in [Observability](observability.md#traces).
+
 Scraped from `:9090/metrics` by a `VMServiceScrape`. The broker records them through the
 OpenTelemetry metric API with a Prometheus exporter that adds no suffix, so the names below are
 exposed byte for byte.

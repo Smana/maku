@@ -29,6 +29,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
+| [Observability](observability.md) | Traces: who emits them, the two endpoints, what run tracing opens on the network |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |
 | [The group move](maku-group-migration.md) | v0.31.0's quiet window: `Room` and `Task` to `maku.ogenki.io`, and its rollback |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
@@ -42,7 +43,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | New here | [README](../README.md) → [Concepts](concepts.md) → [Architecture](architecture.md) |
 | A maintainer with a factory issue or PR | [The factory](factory.md) → [Web UI](web-ui.md) → [Concepts](concepts.md) |
 | A developer who wants the CLI | [maku](cli.md) → [Web UI](web-ui.md) |
-| Operating a cluster | [Architecture](architecture.md) → [Integration](integration.md) → [chart README](../charts/maku-factory/README.md) → [Operations](operations.md) → [Security](security.md) |
+| Operating a cluster | [Architecture](architecture.md) → [Integration](integration.md) → [chart README](../charts/maku-factory/README.md) → [Operations](operations.md) → [Observability](observability.md) → [Security](security.md) |
 | Changing the code | [AGENTS.md](../AGENTS.md) → [Development](development.md) → [Event envelope](event-envelope.md) → [Room log](room-log.md) → [API](api.md) |
 
 Design sources: the [rooms design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md),
