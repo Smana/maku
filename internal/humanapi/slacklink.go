@@ -257,12 +257,18 @@ func (s *Server) slackLinkRoutes(mux *http.ServeMux) {
 // session links or unlinks (ruling P18): a maku or MCP bearer can set any Origin, so a local
 // agent on the developer's token must never confirm a link in their name.
 func (s *Server) linkHuman(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
+	return s.webHuman(w, r, func(ctx context.Context) { s.linkCounted(ctx, linkNotWeb) })
+}
+
+// webHuman is the signed-in human behind a request only a web UI session may make, or the refusal
+// written; notWeb counts a principal that is not one.
+func (s *Server) webHuman(w http.ResponseWriter, r *http.Request, notWeb func(context.Context)) (authn.Principal, bool) {
 	p, ok := s.principal(w, r)
 	if !ok {
 		return p, false
 	}
 	if p.Kind != envelope.ActorHuman || p.Sub == "" || s.WebClient == nil || p.ClientID == "" || p.ClientID != s.WebClient() {
-		s.linkCounted(r.Context(), linkNotWeb)
+		notWeb(r.Context())
 		http.Error(w, "the rooms web UI's session is required", http.StatusForbidden)
 		return p, false
 	}

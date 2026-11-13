@@ -7,6 +7,7 @@
 // container, or a one-off outside the Atlas operator). `maku-broker migrate-group --from <group>
 // --to <group> [--apply]` moves Rooms and Tasks between API groups (dry run without `--apply`).
 // `maku-broker intent-samples [--days N]` prints an opted-in channel's labelled replies as JSON lines.
+// `maku-broker github-unlink --sub <sub>` is the break-glass removal of an account's GitHub link.
 // Its wiring is app.RunBroker.
 package main
 

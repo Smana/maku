@@ -165,6 +165,9 @@ type Server struct {
 	// SlackLink is the Slack self-serve link (human.slackLink): its two tools for the Slack App and
 	// the /link/slack page. Nil serves neither.
 	SlackLink *SlackLinker
+	// GitHubLink is the GitHub account link (human.githubLink, v4 D8): /link/github and the admin's
+	// DELETE /api/links/github/{sub}. Nil serves neither.
+	GitHubLink *GitHubLinker
 	// Grants is human.approvalMemory: the saved approval grants' page and API (merge policy stage
 	// 5). Nil serves neither.
 	Grants GrantStore
@@ -269,6 +272,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.SlackLink != nil {
 		s.slackLinkRoutes(mux)
+	}
+	if s.GitHubLink != nil {
+		s.githubLinkRoutes(mux)
 	}
 	if s.Grants != nil { // human.approvalMemory (merge policy stage 5): off, every path is a 404
 		s.grantRoutes(mux, index)

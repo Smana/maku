@@ -118,6 +118,9 @@ type HumanConfig struct {
 	// SlackLink turns on the Slack self-serve link: the Slack App mints one-time codes, and a
 	// signed-in human confirms one on /link/slack. Off unless set.
 	SlackLink *SlackLinkConfig `json:"slackLink,omitempty"`
+	// GitHubLink turns on the GitHub account link (v4 D8): each human links their GitHub account once,
+	// through GitHub's OAuth flow, on /link/github. Off unless set.
+	GitHubLink *GitHubLinkConfig `json:"githubLink,omitempty"`
 	// SlackDecide turns on POST /api/slack/decisions: the Slack App's Approve/Deny buttons decide a
 	// forge.push approval. Off unless set: the path is then the mux's 404.
 	SlackDecide *SlackDecideConfig `json:"slackDecide,omitempty"`
@@ -405,6 +408,46 @@ type SlackLinkConfig struct {
 	Principal  string `json:"principal"`
 	TeamID     string `json:"teamID"`
 	Repository string `json:"repository"`
+}
+
+// GitHubLinkConfig is human.githubLink: the OAuth client the link runs GitHub's web flow with (the
+// factory App's, or an OAuth App's; its callback URL is <publicURL>/link/github/callback), read at
+// use from the two files, GitHub's site, and how long a link stays active without its human signing
+// in (the Slack App acting for them is refused past it).
+type GitHubLinkConfig struct {
+	ClientIDFile     string   `json:"clientIDFile"`
+	ClientSecretFile string   `json:"clientSecretFile"`
+	WebURL           string   `json:"webURL,omitempty"`
+	ActiveWindow     Duration `json:"activeWindow,omitempty"`
+}
+
+// The GitHub link's defaults and bound.
+const (
+	DefaultGitHubWebURL       = "https://github.com"
+	DefaultGitHubActiveWindow = 168 * time.Hour
+	MaxGitHubActiveWindow     = 720 * time.Hour
+)
+
+func (l GitHubLinkConfig) validate(publicURL string) []error {
+	var errs []error
+	if l.ClientIDFile == "" {
+		errs = append(errs, errors.New("human.githubLink.clientIDFile: is required"))
+	}
+	if l.ClientSecretFile == "" {
+		errs = append(errs, errors.New("human.githubLink.clientSecretFile: is required"))
+	}
+	if u, err := url.Parse(l.WebURL); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil ||
+		strings.Trim(u.Path, "/") != "" || u.RawQuery != "" || u.Fragment != "" {
+		errs = append(errs, fmt.Errorf("human.githubLink.webURL: %q must be https://<host>, GitHub's site or a GHES's", l.WebURL))
+	}
+	if w := l.ActiveWindow.Duration; w <= 0 || w > MaxGitHubActiveWindow {
+		errs = append(errs, fmt.Errorf("human.githubLink.activeWindow: must be above 0 and at most %s", MaxGitHubActiveWindow))
+	}
+	// The flow's cookie is Secure, and its callback a redirect GitHub sends the browser to.
+	if u, err := url.Parse(publicURL); err != nil || u.Scheme != "https" || u.Host == "" {
+		errs = append(errs, fmt.Errorf("publicURL %q: human.githubLink needs https: its cookie is Secure and GitHub redirects the browser to <publicURL>/link/github/callback", publicURL))
+	}
+	return errs
 }
 
 // slackTeamRE is a Slack workspace id, as the App's.
@@ -922,6 +965,14 @@ func (c *Config) ApplyDefaults() {
 	if a := c.Human.Access; a != nil && a.TTL.Duration == 0 {
 		a.TTL.Duration = MaxAccessTTL
 	}
+	if l := c.Human.GitHubLink; l != nil {
+		if l.WebURL == "" {
+			l.WebURL = DefaultGitHubWebURL
+		}
+		if l.ActiveWindow.Duration == 0 {
+			l.ActiveWindow.Duration = DefaultGitHubActiveWindow
+		}
+	}
 	if c.Human.EffectiveMode() == HumanModeLocal {
 		// Validate refuses any other value: the Origin check is the only gate, so it accepts
 		// authn.LoopbackOrigins(publicURL) (publicURL's port under localhost, 127.0.0.1 and [::1]) and nothing else. A bare `human: {mode: local}` is the port-forward on the
@@ -976,6 +1027,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Human.validate(slices.Collect(maps.Values(c.SystemPrincipals)))...)
+	if l := c.Human.GitHubLink; l != nil && c.Human.EffectiveMode() != HumanModeLocal {
+		errs = append(errs, l.validate(c.PublicURL)...)
+	}
 	if len(c.Human.MCP.Sponsored) > 0 && c.FactoryURL == "" {
 		errs = append(errs, errors.New("human.mcp.sponsored needs factoryURL: run_create posts to the factory's POST /v1/tasks"))
 	}
@@ -1097,6 +1151,7 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.scopes", len(h.Scopes) > 0, "there is no IdP to ask"},
 			{"human.access", h.Access != nil, "the local user is an admin, and D7 gates members only"},
 			{"human.slackLink", h.SlackLink != nil, "a link code names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.githubLink", h.GitHubLink != nil, "the local user is an admin with no GitHub account to link"},
 			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackIntents", h.SlackIntents != nil, "a classification names a sponsored principal and a Slack link, neither of which mode local has"},
 		} {
