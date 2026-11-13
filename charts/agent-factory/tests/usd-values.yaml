@@ -1,0 +1,49 @@
+# Test only: intake.sh USD=1 (task chart:usd:k3d), layered after intake-values.yaml. The factory-level
+# USD proof, which settles step 4's GW10 ("once a run settles in dollars"): the runs call the model
+# gateway with their own token (model.mode gateway, runs.gatewayIdentity), agentgateway prices each
+# call from its catalog, which takes meter.prices (GW12), and the factory's meter reads agentgateway's
+# token series from the test-only VictoriaMetrics (metrics-stub.yaml). intake.sh then holds the run's
+# settled USD in the factory's ledger against the gateway's cost counter for that run.
+demo:
+  model:
+    # Refused with model.mode gateway: the gateway holds the provider (e2e-provider-key).
+    baseURL: ""
+    name: ""
+
+maku:
+  runController:
+    model:
+      mode: gateway
+      gateway:
+        aliases: {public: [agent-default, tier-light], internal: []}
+
+maku-factory:
+  config:
+    runs:
+      gatewayIdentity: true
+    meter:
+      url: http://vmsingle.metrics.svc.cluster.local:8428
+      query: 'sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})'
+      throttle:
+        promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status="429", reason="RateLimit", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m])) > 0'
+      # USD per million tokens. The stub answers 1000 input and 100 output tokens a call
+      # (hack/e2e-stub), so a call costs 1000 x 1000/1e6 + 100 x 2000/1e6 = 1.2 USD: large enough that
+      # the 1 % tolerance is not lost in rounding. Keyed by the provider's model and by the alias, so
+      # whichever one gen_ai_request_model carries is priced.
+      prices:
+        stub-default: {input: 1000, cacheRead: 100, output: 2000}
+        stub-light: {input: 1000, cacheRead: 100, output: 2000}
+        agent-default: {input: 1000, cacheRead: 100, output: 2000}
+        tier-light: {input: 1000, cacheRead: 100, output: 2000}
+        # the broker's planner and classifier clients (intake-values.yaml): the catalog prices all it serves
+        stub-frontier: {input: 1000, cacheRead: 100, output: 2000}
+
+maku-gateway:
+  aliases:
+    public:
+      agent-default: {provider: stub, model: stub-default}
+      tier-light: {provider: stub, model: stub-light}
+  # The VictoriaMetrics stub scrapes the gateway's pods on 15020 from its own namespace.
+  metrics:
+    allowFrom:
+      - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: metrics}}

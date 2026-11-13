@@ -192,6 +192,11 @@ tasks:
     cmds:
       - bash charts/agent-factory/tests/install.sh kind
 
+  chart:usd:k3d:
+    desc: "The factory-level USD proof on k3d: a gateway-mode run, priced by agentgateway's catalog, settles in the factory's ledger at the gateway's cost for it (intake.sh USD=1)"
+    cmds:
+      - USD=1 bash charts/agent-factory/tests/intake.sh
+
   chart:identity:k3d:
     desc: Prove the broker in preset generic against the in-cluster stub issuer on throwaway k3d (docker, k3d; not part of check)
     cmds:
