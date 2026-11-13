@@ -234,7 +234,9 @@ type Set struct {
 	handoffToMerge       metric.Float64Histogram
 	maxCost              metric.Float64Counter
 	apiIntake            metric.Int64Counter
-	coord                coordination
+	// agent_factory_human_roles_claim_refused_total{reason}: the broker's twin (v4 D8).
+	rolesClaimRefused metric.Int64Counter
+	coord             coordination
 
 	spendMu sync.Mutex
 	spend   map[string]map[string]float64 // the meter's last live spend, run then model
@@ -304,6 +306,15 @@ func (s *Set) Sponsors(by map[string]string) {
 // MaxCost adds an admitted request's ceiling to its principal's total (SI9).
 func (s *Set) MaxCost(ctx context.Context, microUSD int64) {
 	s.maxCost.Add(ctx, float64(microUSD)/1e6, metric.WithAttributes(principalOf(ctx)))
+}
+
+// HumanRolesClaimRefused counts one human token whose roles claim gave no group: reason is missing,
+// type or bounds (authn.RolesClaim*). Nil-safe; the claim's value and the person never label a series.
+func (s *Set) HumanRolesClaimRefused(ctx context.Context, reason string) {
+	if s == nil {
+		return
+	}
+	s.rolesClaimRefused.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", oneOf(reason, []string{"missing", "type", "bounds"}))))
 }
 
 // APIIntake counts one POST /v1/tasks by its principal and outcome.
@@ -591,6 +602,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.apiIntake, err = meter.Int64Counter("agent_factory_api_intake_total",
 		metric.WithDescription("POST /v1/tasks requests, by sponsored principal and outcome (factory interfaces F4)."))
+	check(err)
+	s.rolesClaimRefused, err = meter.Int64Counter("agent_factory_human_roles_claim_refused_total",
+		metric.WithDescription("Human tokens whose roles claim gave no group, by the closed reason: missing, type or bounds."))
 	check(err)
 	sponsorInfo, err := meter.Int64ObservableGauge("agent_factory_principal_sponsor_info",
 		metric.WithDescription("1 for each sponsored principal, labelled with the maintainer accountable for it (SI9)."))

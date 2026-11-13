@@ -1,0 +1,229 @@
+# The factory's alerts (group maku-factory), ported from ai-native-ref's vmrule-agent-factory.yaml at
+# 1529b3b, plus the three step 3 alerts docs/operations.md stated before any rule shipped them.
+# Placeholders as in rooms.yaml. The factory's leader-only gauges are read with max().
+name: maku-factory
+rules:
+  - alert: AgentFactoryIntakeErrors
+    expr: sum(rate(maku_factory_intake_errors_total[5m])) > 0
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "The agent factory has failed to poll its triggers for 15 minutes"
+      description: "Labelled issues are not becoming tasks. Only the leader polls, so read every replica: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep 'poll failed'. A 401 from GitHub means the factory App key or installation changed."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: AgentFactoryAutoMergeReverted
+    expr: sum(increase(maku_factory_pr_outcomes_total{outcome="reverted"}[15m])) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "A merged agent PR was reverted"
+      description: "Unless the revert PR carries factory/drill (a drill: the breaker does not count it, and this alert fires on the planned drill too), its class is paused by the breaker until clean mature merges lift it (recoverAfter). Read why on the task: kubectl get task -n __NAMESPACE__ -o wide | grep Reverted"
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: AgentFactoryMergeRegression
+    expr: sum by (class, repository) (increase(maku_factory_monitor_verdicts_total{verdict="regression"}[15m])) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "The post-merge monitor found a regression after a {{ $labels.class }} merge"
+      description: "The class is demoted at its next decision; nothing was reverted. The PR carries factory/monitor:regression and the monitor's comment says which signal."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  # A class the breaker holds for a week is a class nobody is unpausing. Any class but the empty one:
+  # the gauge is also recorded for shadow and unarmed classes, where a pause is inert (the
+  # description says so); an install that wants only its live classes leaves this rule out
+  # (monitoring.prometheusRule.disabled) and keeps its own variant.
+  - alert: AgentFactoryClassPausedLong
+    expr: max by (repository, class) (maku_factory_class_paused{class!=""}) == 1
+    for: 7d
+    labels:
+      severity: warning
+    annotations:
+      summary: "{{ $labels.class }} on {{ $labels.repository }} has been paused for 7 days"
+      description: "The breaker holds the class. Three clean mature merges lift it (recoverAfter); factory/drill lifts it only if added before factory/revert. Read the window: scripts/shadow-merge-tally.sh --repo {{ $labels.repository }} --class {{ $labels.class }} --outcomes --since <date> in Smana/maku. The gauge keeps its last value, so a class with no monitor can stay at 1 after it recovered, and a shadow or unarmed class's pause is inert: check the class's mode and recent PRs before acting."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  # spent is unclamped, so a day past its cap keeps firing; the meter records yesterday's principals
+  # at 0 on a day's first tick.
+  - alert: AgentFactoryDailyBudgetHigh
+    expr: maku_factory_budget_spent_usd / maku_factory_budget_cap_usd > 0.8
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "{{ $labels.principal }} has spent more than 80 % of today's budget in USD"
+      description: "Past the cap, runs are refused (429) or revoked with budget-principal once budgets.enforcePrincipal is on; until then nothing is refused and AgentPersonCapShadowRefusal fires instead. The caps are budgets.factoryDailyUSD and humanDailyUSD. Resets at 00:00 UTC."
+      runbook_url: "__DOCS__/operations.md#budget-signals"
+      dashboard: "/d/agent-factory"
+  # One alert per would-be refusal, by the key over. The counter has no series until its first
+  # increment.
+  - alert: AgentPersonCapShadowRefusal
+    expr: sum by (principal) (increase(maku_factory_run_revocations_total{reason="budget-principal-shadow"}[15m])) > 0
+    labels:
+      severity: info
+    annotations:
+      summary: "{{ $labels.principal }}'s day is spent: a run was admitted that enforcePrincipal would refuse"
+      description: "Shadow only: nothing was refused. It is a false refusal if the run should have been admitted (wrong person charged, or a day filled by reservations the meter later released). Read the day's ledger, in micro-USD: kubectl get cm -n __NAMESPACE__ agent-factory-ledger-usd-<YYYYMMDD> -o yaml"
+      runbook_url: "__DOCS__/operations.md#budget-signals"
+      dashboard: "/d/agent-factory"
+  # Waiting phases (Queued, AwaitingHuman, Escalated) are excluded: they wait by design.
+  - alert: AgentFactoryTaskStuck
+    expr: max by (task, phase) (maku_factory_task_phase_seconds{phase=~"Received|Triaged|Implementing|Reviewing|AwaitingCI|AutoMerging|Verifying"}) > 7200
+    for: 5m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Agent factory task {{ $labels.task }} has been {{ $labels.phase }} for over 2 hours"
+      description: "kubectl get task -n __NAMESPACE__ {{ $labels.task }} -o yaml; the factory's logs carry task.id={{ $labels.task }}."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: AgentFactoryKillSwitchEngaged
+    expr: max(maku_factory_kill_switch_engaged) == 1
+    labels:
+      severity: info
+    annotations:
+      summary: "The agent factory's stop is engaged"
+      description: "Resume: kubectl -n __NAMESPACE__ delete configmap agent-factory-stop, and remove factory/stop from the control issue."
+      runbook_url: "__DOCS__/operations.md#escalated-tasks-and-the-kill-switch"
+      dashboard: "/d/agent-factory"
+  # Readiness ignores GitHub, so this per-replica gauge is the only signal.
+  - alert: FactoryGitHubUnreachable
+    expr: maku_factory_github_up == 0
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Agent factory replica {{ $labels.pod }} has not reached GitHub for 10 minutes"
+      description: "No task advances while GitHub is unreachable, and the replicas stay Ready. Check githubstatus.com, then the App key: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep -i github. The loops recover by themselves when GitHub returns."
+      runbook_url: "__DOCS__/operations.md#factory-failures"
+      dashboard: "/d/agent-factory"
+  # Leader-only gauge, hence max() and absent(). for: 1m because enforced admission already refuses
+  # (503 meter_blind) once the heartbeat is 5 minutes old.
+  - alert: AgentFactoryMeterBlind
+    expr: (time() - max(maku_factory_meter_last_success_timestamp_seconds) > 300) or absent(maku_factory_meter_last_success_timestamp_seconds)
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "The agent factory's meter has not read token usage for over 5 minutes"
+      description: "With budgets.enforcePrincipal on, new runs are refused (503 meter_blind) and Queued tasks wait with waiting_meter_blind; active runs continue to their deadline and are revoked on recovery. Read the leader's logs: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep -i meter"
+      runbook_url: "__DOCS__/operations.md#budget-signals"
+      dashboard: "/d/agent-factory"
+  # The fence gauge is per replica; max() so one replica's stale read does not page.
+  - alert: AgentFactoryRepositoryNotOwned
+    expr: max by (repository) (maku_factory_repository_owned) == 0
+    for: 20m
+    labels:
+      severity: warning
+    annotations:
+      summary: "The agent factory does not own {{ $labels.repository }}"
+      description: "Its .github/agent-factory.yaml on the default branch is absent, unparsable, or names another factory (a read failing for 15 minutes counts too): no intake, schedules, API runs or merges there. Check the file, then: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep -i fence"
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  # Coordination's counters are born at their first increment, which increase() reads as 0, so each
+  # compares with the window's start, absence read as 0.
+  - alert: AgentFactoryCoordinationRecoveryRequired
+    expr: max by (repository) (maku_factory_coordination_recovery_age_seconds) > 900
+    labels:
+      severity: warning
+    annotations:
+      summary: "A coordination family on {{ $labels.repository }} has waited on its recovery for over 15 minutes"
+      description: "The parent proposes exactly one next action and never takes it itself. Open the parent's room page and act on it, or revise the plan. kubectl get task -n __NAMESPACE__ -o wide | grep Coordinating"
+      runbook_url: "__DOCS__/operations.md#coordination"
+      dashboard: "/d/agent-factory"
+  - alert: AgentFactoryCoordinationIntegrationFailed
+    expr: sum by (repository, purpose, result) (clamp_min(maku_factory_coordination_integration_runs_total{result=~"checks_failed|infrastructure_failed"} - (maku_factory_coordination_integration_runs_total offset 15m or maku_factory_coordination_integration_runs_total * 0), 0)) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "A {{ $labels.purpose }} integration run on {{ $labels.repository }} ended {{ $labels.result }}"
+      description: "The dependent merge stays held (beforeDependentMerge) or the parent stays incomplete (final); the parent proposes one recovery. checks_failed: the exact heads do not work together. infrastructure_failed: the integration Task escalated, resume it within the plan's maxRuns. kubectl get task -n __NAMESPACE__ -o wide | grep Coordinating"
+      runbook_url: "__DOCS__/operations.md#coordination"
+      dashboard: "/d/agent-factory"
+  # The checks re-run at each child's admission and resume. The counter also counts a filing refused
+  # for the same reasons, which never had the authority: the description says how to tell them apart.
+  - alert: AgentFactoryCoordinationAuthorizationLost
+    expr: sum by (repository, reason) (clamp_min(maku_factory_coordination_admission_refusals_total{reason=~"repository_permission|repository_not_owned|app_unavailable|class_not_allowed|policy_changed"} - (maku_factory_coordination_admission_refusals_total offset 15m or maku_factory_coordination_admission_refusals_total * 0), 0)) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "Coordination on {{ $labels.repository }} was refused: {{ $labels.reason }}"
+      description: "New admission there and in its dependents stops; existing per-repository gates still decide current work. Restore the fence, the App installation, the maintainer's write or the class, then a maintainer of {{ $labels.repository }} authorizes the child again (authorize_child), or revise the plan. A refusal at filing (no child Task yet) is a plan that never had the authority. kubectl get task -n __NAMESPACE__ -o wide | grep Coordinating"
+      runbook_url: "__DOCS__/operations.md#coordination"
+      dashboard: "/d/agent-factory"
+  # Per primary, not per family: no family label exists, so one moving family hides a stalled
+  # sibling on the same primary.
+  - alert: AgentFactoryCoordinationStalled
+    expr: |
+      (sum by (repository) (maku_factory_tasks{phase="Coordinating"}) > 0)
+      unless on (repository) (
+           sum by (repository) (clamp_min(maku_factory_coordination_families_total - (maku_factory_coordination_families_total offset 24h or maku_factory_coordination_families_total * 0), 0)) > 0
+        or sum by (repository) (clamp_min(maku_factory_coordination_plan_versions_total - (maku_factory_coordination_plan_versions_total offset 24h or maku_factory_coordination_plan_versions_total * 0), 0)) > 0
+        or sum by (repository) (clamp_min(maku_factory_coordination_integration_runs_total - (maku_factory_coordination_integration_runs_total offset 24h or maku_factory_coordination_integration_runs_total * 0), 0)) > 0
+        or sum by (repository) (clamp_min(maku_factory_coordination_wait_seconds_count - (maku_factory_coordination_wait_seconds_count offset 24h or maku_factory_coordination_wait_seconds_count * 0), 0)) > 0
+      )
+    for: 15m
+    labels:
+      severity: warning
+    annotations:
+      summary: "No coordination family on {{ $labels.repository }} has changed state for 24 hours"
+      description: "A parent is Coordinating with no family filed or done, plan version, integration run or ended wait on that primary in 24 hours. It usually waits on a person: a confirmation, a child authorization or the one recovery the parent page shows. kubectl get task -n __NAMESPACE__ -o wide | grep Coordinating, then the parent's room page."
+      runbook_url: "__DOCS__/operations.md#coordination"
+      dashboard: "/d/agent-factory"
+  # A model served a run with no meter.prices row: the run is held to its token caps, never metered
+  # at $0, but a USD cap cannot bite on it.
+  - alert: AgentModelUnpriced
+    expr: sum by (model) (increase(maku_factory_meter_unpriced_model_runs_total[1h])) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "Model {{ $labels.model }} served agent runs without a price"
+      description: "Add its row to the factory's meter.prices, from the provider's list price (input, cacheRead, output, and cacheWrite where the provider bills it). Until then its runs are capped in tokens. The leader's log names each run: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep 'without a price'"
+      runbook_url: "__DOCS__/operations.md#budget-signals"
+      dashboard: "/d/agent-factory"
+  # Every gateway counts cache tokens inside `input`. The meter counts each run whose input reads
+  # below its cache tokens, once per model, and prices it right. The counter is born at its first
+  # increment: compare with an hour ago, absence read as 0.
+  - alert: AgentMeterInputExcludesCache
+    expr: sum by (model) (clamp_min(maku_factory_meter_input_excludes_cache_runs_total - (maku_factory_meter_input_excludes_cache_runs_total offset 1h or maku_factory_meter_input_excludes_cache_runs_total * 0), 0)) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "A gateway counted {{ $labels.model }}'s input without its cache tokens"
+      description: "The meter priced those runs right, as fresh input. Any cost computed from the gateway's own token counters under-counts them. A gateway path or the provider changed its usage shape. The leader's log names each run: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=agent-factory --prefix | grep 'without its cache tokens'"
+      runbook_url: "__DOCS__/operations.md#budget-signals"
+      dashboard: "/d/agent-factory"
+  # Step 3 (D11): an agent token merged past the factory's own merge. The outcome's series is born at
+  # its first increment, which increase() reads as 0: compare with 15 minutes ago, absence read as 0,
+  # so the first such merge fires.
+  - alert: FactoryAgentMerged
+    expr: sum by (repository) (clamp_min(maku_factory_pr_outcomes_total{outcome="agent_merged"} - (maku_factory_pr_outcomes_total{outcome="agent_merged"} offset 15m or maku_factory_pr_outcomes_total{outcome="agent_merged"} * 0), 0)) > 0
+    labels:
+      severity: warning
+    annotations:
+      summary: "An agent token merged a pull request on {{ $labels.repository }} past the factory's own merge"
+      description: "Find it in the factory's error log (the agents App merged a pull request), check the ruleset requires maku/merge-gate from the posting App, that the agents App is not one of its bypass actors and that no run holds a person's token, and review the merged change."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: FactoryMergeGateNotRequired
+    expr: min by (repository) (maku_factory_merge_gate_required) == 0
+    for: 30m
+    labels:
+      severity: warning
+    annotations:
+      summary: "{{ $labels.repository }}'s ruleset no longer requires maku/merge-gate"
+      description: "The default branch no longer requires maku/merge-gate from the App that posts it, so a merge can bypass the factory's gate. Restore the rule: docs/factory.md, branch protection for the merge gate."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: FactoryMergeGateRulesUnread
+    expr: sum by (repository) (increase(maku_factory_merge_gate_rules_unread_total[30m])) > 0
+    for: 30m
+    labels:
+      severity: warning
+    annotations:
+      summary: "The factory cannot read whether {{ $labels.repository }} requires maku/merge-gate"
+      description: "maku_factory_merge_gate_required is stale meanwhile. The factory's log names the failed read: the merger App id file, the repository, or the branch rules."
+      runbook_url: "__DOCS__/operations.md#factory-alerts"
+      dashboard: "/d/agent-factory"

@@ -481,10 +481,11 @@ func TestBadConfigsFail(t *testing.T) {
 			"api.tls needs certFile and keyFile both"},
 		"api tls without its cert": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {keyFile: /etc/agent-factory-api-tls/tls.key}\n",
 			"api.tls needs certFile and keyFile both"},
-		"an empty api tls":              {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {}\n", "api.tls needs certFile and keyFile both"},
-		"no api listen":                 {`listen: ":8443"`, `listen: ''`, "api.listen is required"},
-		"no api issuer":                 {"humanIssuer: https://auth.ogenki.io", "humanIssuer: ''", "api.humanIssuer is required"},
-		"no api jwks":                   {"humanJWKS: https://auth.ogenki.io/oauth/v2/keys", "humanJWKS: ''", "api.humanJWKS is required"},
+		"an empty api tls": {`  listen: ":8443"` + "\n", `  listen: ":8443"` + "\n  tls: {}\n", "api.tls needs certFile and keyFile both"},
+		"no api listen":    {`listen: ":8443"`, `listen: ''`, "api.listen is required"},
+		"no api issuer":    {"humanIssuer: https://auth.ogenki.io", "humanIssuer: ''", "api.humanIssuer is required"},
+		"no api jwks, an http issuer": {"humanIssuer: https://auth.ogenki.io\n  humanJWKS: https://auth.ogenki.io/oauth/v2/keys",
+			"humanIssuer: http://auth.ogenki.io\n  humanJWKS: ''", "api.humanJWKS is required unless api.humanIssuer is https://"},
 		"api without repositories":      {"repositories: [Smana/cloud-native-ref]", "repositories: []", "api.repositories is empty"},
 		"api repository not owner/name": {"repositories: [Smana/cloud-native-ref]", "repositories: ['../x']", `api.repository "../x" is not owner/name`},
 		"api without client ids":        {"clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]", "clientIDFiles: []", "api.clientIDFiles is empty"},
@@ -816,4 +817,62 @@ func TestCheckShape(t *testing.T) {
 			}
 		})
 	}
+}
+
+// v4 D8: the api block's presets mirror the broker's human block. No preset is zitadel, today's
+// rules; generic reads any OIDC issuer, and humanJWKS is optional with an https issuer.
+func TestAPIPresets(t *testing.T) {
+	const zitadelAPI = "  humanJWKS: https://auth.ogenki.io/oauth/v2/keys\n"
+	generic := strings.Replace(good, zitadelAPI, "  preset: generic\n  rolesClaim: /realm_access/roles\n", 1)
+	t.Run("no preset is zitadel, token use access", func(t *testing.T) {
+		c, err := Parse([]byte(good))
+		if err != nil || c.API.EffectivePreset() != PresetZITADEL || c.API.EffectiveTokenUse() != TokenUseAccess {
+			t.Fatalf("%v %+v", err, c.API)
+		}
+	})
+	t.Run("an https issuer needs no humanJWKS", func(t *testing.T) {
+		if _, err := Parse([]byte(strings.Replace(good, zitadelAPI, "", 1))); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("generic defaults to token use id", func(t *testing.T) {
+		c, err := Parse([]byte(generic))
+		if err != nil || c.API.EffectivePreset() != PresetGeneric || c.API.EffectiveTokenUse() != TokenUseID {
+			t.Fatalf("%v %+v", err, c.API)
+		}
+	})
+	t.Run("generic access with an audience file, and the sponsored client claim", func(t *testing.T) {
+		if _, err := Parse([]byte(apiWith(generic, "  tokenUse: access\n  audienceFile: /etc/agent-factory-oidc/audience\n  sponsoredClientClaim: cid\n"))); err != nil {
+			t.Fatal(err)
+		}
+	})
+	for _, c := range []struct{ name, body, want string }{
+		{"an unknown preset", apiWith(good, "  preset: okta\n"), `api.preset: "okta" is not zitadel or generic`},
+		{"an unknown token use", apiWith(generic, "  tokenUse: refresh\n"), `api.tokenUse: "refresh" is not id or access`},
+		{"generic without rolesClaim", strings.Replace(generic, "  rolesClaim: /realm_access/roles\n", "", 1),
+			"api.rolesClaim is required with preset generic (the claim holding groups.admin and groups.member)"},
+		{"generic with projectIDFile", apiWith(generic, "  projectIDFile: /p\n"), "api.projectIDFile: the zitadel preset's; use api.audienceFile with tokenUse access"},
+		{"generic access without an audience", apiWith(generic, "  tokenUse: access\n"), "api.audience, api.audienceFile: tokenUse access needs exactly one"},
+		{"generic with both audiences", apiWith(generic, "  audience: a\n  audienceFile: /a\n"), "api.audience, api.audienceFile: set one, not both"},
+		{"zitadel with an audience", apiWith(good, "  audience: a\n"), "api.audience: the zitadel preset's audience is api.projectIDFile"},
+		{"zitadel with an audience file", apiWith(good, "  audienceFile: /a\n"), "api.audienceFile: the zitadel preset's audience is api.projectIDFile"},
+		{"zitadel with token use id", apiWith(good, "  tokenUse: id\n"), "api.tokenUse: the zitadel preset uses access"},
+		{"a malformed pointer", strings.Replace(generic, "/realm_access/roles", "/realm~2access", 1), "api.rolesClaim: not a claim name or an RFC 6901 pointer"},
+		{"a sponsored client claim under zitadel", apiWith(good, "  sponsoredClientClaim: cid\n"),
+			"api.sponsoredClientClaim: the zitadel preset names the client in azp or client_id"},
+		{"a sponsored client claim outside the allowlist", apiWith(generic, "  sponsoredClientClaim: sub\n"),
+			`api.sponsoredClientClaim: "sub" is not cid, azp, client_id or appid`},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Parse([]byte(c.body))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+// apiWith adds lines to good's api block, which runlore follows.
+func apiWith(base, lines string) string {
+	return strings.Replace(base, "runlore:\n", lines+"runlore:\n", 1)
 }

@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/yaml"
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
 )
@@ -175,6 +176,12 @@ type Config struct {
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
 	// Evaluation is the team evaluation's cohort and mode: observe unless set.
 	Evaluation Evaluation `json:"evaluation,omitzero"`
+	// MergeDefaults are the merge settings a repository omits, key by key (Q8): each top-level key
+	// is taken whole, so a set breaker or list replaces the default's. Parse applies them.
+	MergeDefaults *Merge `json:"mergeDefaults,omitempty"`
+	// Policies are the accepted class-shape MergePolicies, by name, set by resources.Assemble: the
+	// stage-4 file and the settings pages resolve against the definitions the factory serves (PR17).
+	Policies map[string]ServedPolicy `json:"-"`
 	// Hash is the sha256 of the parsed file; tasks carry it (status.configHash).
 	Hash string `json:"-"`
 	// Generations are the object generations this config was served under (Live.Publish); Parse
@@ -424,6 +431,24 @@ type Repository struct {
 	// ClassAuthority is central (the default) or repository: its classes are then its
 	// .github/agent-factory.yaml's, with policyManagement.repositoryAuthority on (stage 4, MP15).
 	ClassAuthority string `json:"classAuthority,omitempty"`
+	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
+	// alone (a config file setting them is refused): every binding's name, resolved or not, and the
+	// bindings as written. Classes holds the ones that resolved (B9), so the rules that name a class
+	// read Bound, and a dropped binding never refuses its repository (plan PR7).
+	Bound    []string  `json:"bound,omitempty"`
+	Bindings []Binding `json:"bindings,omitempty"`
+	// MergeDefaulted are the merge keys taken from mergeDefaults (Q8), sorted.
+	MergeDefaulted []string `json:"-"`
+}
+
+// declares reports whether the repository declares class name: for a bound repository, a bound
+// name, resolved or not (B9, plan PR7); otherwise a declared class.
+func (r *Repository) declares(name string) bool {
+	if len(r.Bound) > 0 {
+		return slices.Contains(r.Bound, name)
+	}
+	_, ok := r.Classes[name]
+	return ok
 }
 
 // TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
@@ -1066,12 +1091,30 @@ type API struct {
 	TLS          *ServerTLS `json:"tls,omitempty"`
 	Repositories []string   `json:"repositories"` // OD-6: cloud-native-ref only
 	HumanIssuer  string     `json:"humanIssuer"`
-	HumanJWKS    string     `json:"humanJWKS"`
+	// HumanJWKS is optional when HumanIssuer is https: its discovery document names jwks_uri.
+	HumanJWKS string `json:"humanJWKS"`
 	// Files holding the rooms-proxy and maku client ids (from agents-secrets).
 	ClientIDFiles []string `json:"clientIDFiles"`
 	// ProjectIDFile holds the ZITADEL project id a sponsored token's aud must hold, as the broker's
-	// human.projectIDFile pins the human path; required while api.sponsored is non-empty.
+	// human.projectIDFile pins the human path; required while api.sponsored is non-empty. It is
+	// the zitadel preset's audience file.
 	ProjectIDFile string `json:"projectIDFile,omitempty"`
+	// Preset is "" or "zitadel" (today's token rules), or "generic": any OIDC issuer, its groups
+	// read from RolesClaim (v4 D8). It mirrors the broker's human.preset.
+	Preset string `json:"preset,omitempty"`
+	// TokenUse is what the broker forwards and maku sends: "id", an ID token whose aud holds a
+	// client of ClientIDFiles (generic's default), or "access" (zitadel's only one).
+	TokenUse string `json:"tokenUse,omitempty"`
+	// Audience, or AudienceFile read at use, is the aud value a human access token (token use
+	// access) and a sponsored token must hold under preset generic.
+	Audience     string `json:"audience,omitempty"`
+	AudienceFile string `json:"audienceFile,omitempty"`
+	// RolesClaim names the claim holding Groups' values, or an RFC 6901 pointer to it: required
+	// with preset generic.
+	RolesClaim string `json:"rolesClaim,omitempty"`
+	// SponsoredClientClaim names the claim holding a sponsored token's client id under preset
+	// generic, for an IdP that puts it elsewhere than azp or client_id: cid (Okta) or appid (Entra).
+	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
 	// Groups defaults to agents-admin and agents-member.
 	Groups Groups `json:"groups"`
 	// Empty today (R23): no system caller of POST /v1/runs exists.
@@ -1091,6 +1134,84 @@ type API struct {
 	// InternalPrincipals are sponsored principals allowed internal data (RunLore agent-to-agent
 	// RA2): empty ships, and POST /v1/tasks stays a 404 while this and Sponsored are both empty (D4).
 	InternalPrincipals []InternalPrincipal `json:"internalPrincipals,omitempty"`
+}
+
+// The api block's presets (v4 D8), as the broker's human block names them.
+const (
+	PresetZITADEL = "zitadel"
+	PresetGeneric = "generic"
+)
+
+// The token uses (v4 D8, PR3).
+const (
+	TokenUseID     = authn.TokenUseID
+	TokenUseAccess = authn.TokenUseAccess
+)
+
+// EffectivePreset is the configured preset; an empty one is zitadel.
+func (a API) EffectivePreset() string {
+	if a.Preset == "" {
+		return PresetZITADEL
+	}
+	return a.Preset
+}
+
+// EffectiveTokenUse is the configured token use, else the preset's: zitadel's access, generic's id.
+func (a API) EffectiveTokenUse() string {
+	switch {
+	case a.TokenUse != "":
+		return a.TokenUse
+	case a.EffectivePreset() == PresetGeneric:
+		return TokenUseID
+	}
+	return TokenUseAccess
+}
+
+// validatePreset checks the keys each preset reads, naming both keys where an old and a new one
+// conflict (D25).
+func (a API) validatePreset(bad func(string, ...any)) {
+	if !authn.ValidRolesClaim(a.RolesClaim) {
+		bad("api.rolesClaim: not a claim name or an RFC 6901 pointer (~0 and ~1 are its only escapes)")
+	}
+	if cc := a.SponsoredClientClaim; cc != "" && !authn.ValidClientClaim(cc) {
+		bad("api.sponsoredClientClaim: %q is not cid, azp, client_id or appid", cc)
+	}
+	switch a.EffectivePreset() {
+	case PresetZITADEL:
+		if a.SponsoredClientClaim != "" {
+			bad("api.sponsoredClientClaim: the zitadel preset names the client in azp or client_id")
+		}
+		if a.Audience != "" {
+			bad("api.audience: the zitadel preset's audience is api.projectIDFile")
+		}
+		if a.AudienceFile != "" {
+			bad("api.audienceFile: the zitadel preset's audience is api.projectIDFile")
+		}
+		if a.TokenUse != "" && a.TokenUse != TokenUseAccess {
+			bad("api.tokenUse: the zitadel preset uses access")
+		}
+	case PresetGeneric:
+		if a.RolesClaim == "" {
+			bad("api.rolesClaim is required with preset generic (the claim holding groups.admin and groups.member)")
+		}
+		if a.ProjectIDFile != "" {
+			bad("api.projectIDFile: the zitadel preset's; use api.audienceFile with tokenUse access")
+		}
+		if a.Audience != "" && a.AudienceFile != "" {
+			bad("api.audience, api.audienceFile: set one, not both")
+		}
+		switch a.EffectiveTokenUse() {
+		case TokenUseAccess:
+			if a.Audience == "" && a.AudienceFile == "" {
+				bad("api.audience, api.audienceFile: tokenUse access needs exactly one (an aud value every human token must hold)")
+			}
+		case TokenUseID:
+		default:
+			bad("api.tokenUse: %q is not id or access", a.TokenUse)
+		}
+	default:
+		bad("api.preset: %q is not zitadel or generic", a.Preset)
+	}
 }
 
 // ServerTLS is a listener's key pair: two mounted files, re-read on renewal. Both are set, or the
@@ -1229,7 +1350,13 @@ func (c *Config) validateSponsored(bad func(string, ...any)) {
 		which = "api.internalPrincipals"
 	}
 	declared := len(c.API.Sponsored)+len(c.API.InternalPrincipals) > 0
-	if declared && c.API.ProjectIDFile == "" {
+	switch {
+	case !declared:
+	case c.API.EffectivePreset() == PresetGeneric:
+		if c.API.Audience == "" && c.API.AudienceFile == "" {
+			bad("%s needs api.audience or api.audienceFile with preset generic: a token's audience is pinned", which)
+		}
+	case c.API.ProjectIDFile == "":
 		bad("%s needs api.projectIDFile: a token's audience is pinned to the project", which)
 	}
 	if declared && len(c.Meter.Prices) == 0 {
@@ -1546,7 +1673,13 @@ func CheckShape(raw []byte) error {
 }
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
-func Parse(raw []byte) (*Config, error) {
+func Parse(raw []byte) (*Config, error) { return parse(raw, false) }
+
+// ParseAssembled is Parse for resources.Assemble alone: a repository entry may carry the bound
+// names and the bindings of its Repository object, which a config file never sets.
+func ParseAssembled(raw []byte) (*Config, error) { return parse(raw, true) }
+
+func parse(raw []byte, assembled bool) (*Config, error) {
 	if err := CheckBlocks(raw); err != nil {
 		return nil, err
 	}
@@ -1554,7 +1687,13 @@ func Parse(raw []byte) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	dec := json.NewDecoder(bytes.NewReader(j))
+	// PR6: mergeDefaults fill each repository's merge at map level, before decoding, so a key
+	// the entry omits and a key it sets are told apart. The hash stays the file's own.
+	defaulted, taken, err := applyMergeDefaults(j)
+	if err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader(defaulted))
 	dec.DisallowUnknownFields()
 	c := Config{Budgets: Budgets{EnforceTask: true}} // decoding keeps a default the file omits
 	if err := dec.Decode(&c); err != nil {
@@ -1562,6 +1701,15 @@ func Parse(raw []byte) (*Config, error) {
 	}
 	if err := c.normalize(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
+	}
+	for i := range c.Repositories {
+		r := &c.Repositories[i]
+		if !assembled && (r.Bound != nil || r.Bindings != nil) {
+			return nil, fmt.Errorf("config: %s: bound and bindings are set by the factory from Repository objects: bind policies in a Repository's mergePolicies", r.Name)
+		}
+		if i < len(taken) {
+			r.MergeDefaulted = taken[i]
+		}
 	}
 	c.Runs.Kind = c.Runs.WithDefaults()
 	if err := c.Runs.Validate(); err != nil {
@@ -1952,15 +2100,23 @@ func (c *Config) Validate() error {
 		key, value string
 		human      bool
 	}{
-		{"api.listen", c.API.Listen, false}, {"api.humanIssuer", c.API.HumanIssuer, true}, {"api.humanJWKS", c.API.HumanJWKS, true},
+		{"api.listen", c.API.Listen, false}, {"api.humanIssuer", c.API.HumanIssuer, true},
 	} {
 		if f.value == "" && (!c.Demo || !f.human) {
 			bad("%s is required", f.key)
 		}
 	}
-	if c.Demo && (c.API.HumanIssuer != "" || c.API.HumanJWKS != "" || len(c.API.ClientIDFiles) > 0 ||
-		c.API.Groups.Admin != "" || c.API.Groups.Member != "") {
+	// Without humanJWKS, an https issuer's discovery document names jwks_uri.
+	if c.API.HumanJWKS == "" && !c.Demo && !httpsURL(c.API.HumanIssuer) {
+		bad("api.humanJWKS is required unless api.humanIssuer is https:// (its discovery document names jwks_uri)")
+	}
+	a := c.API
+	if c.Demo && (a.HumanIssuer != "" || a.HumanJWKS != "" || len(a.ClientIDFiles) > 0 || a.Groups.Admin != "" || a.Groups.Member != "" ||
+		a.Preset != "" || a.TokenUse != "" || a.Audience != "" || a.AudienceFile != "" || a.RolesClaim != "" || a.SponsoredClientClaim != "") {
 		bad("demo: the factory API takes no human tokens")
+	}
+	if !c.Demo {
+		c.API.validatePreset(bad)
 	}
 	if c.Demo && c.API.Access != nil {
 		bad("demo: api.access needs an identity provider")
@@ -2064,7 +2220,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	c.validateAuthority(r, bad)
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
 	for _, name := range []string{"docs-links", "revert"} {
-		if _, ok := r.Classes[name]; !ok && !cutOver {
+		if !r.declares(name) && !cutOver {
 			bad("class %s is required (OD-8)", name)
 		}
 	}
@@ -2102,7 +2258,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
 		if e.Class != "review" && !cutOver {
-			if _, ok := r.Classes[e.Class]; !ok {
+			if !r.declares(e.Class) {
 				bad("schedule %s: class %q is review or a declared class", e.Name, e.Class)
 			}
 		}
@@ -2112,7 +2268,8 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		switch e.Probe {
 		case "", "renovate-red":
 		case "dead-links":
-			if o := r.Classes[e.Class].Oracle; !cutOver && (o == nil || o.Probe != "dead-links") {
+			// A bound class whose binding did not resolve is absent: its policy was checked alone (B9).
+			if cl, ok := r.Classes[e.Class]; !cutOver && (ok || !slices.Contains(r.Bound, e.Class)) && (cl.Oracle == nil || cl.Oracle.Probe != "dead-links") {
 				bad("schedule %s: probe dead-links needs class %q to declare oracle.probe dead-links", e.Name, e.Class)
 			}
 		default:
@@ -2429,8 +2586,7 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
 		row := c.Loops[name]
 		if name != "default" && name != "review" && !slices.ContainsFunc(c.Repos(), func(r Repository) bool {
-			_, ok := r.Classes[name]
-			return ok
+			return r.declares(name)
 		}) && !slices.ContainsFunc(slices.Collect(maps.Values(c.HarnessProfiles)), func(p HarnessProfile) bool {
 			return string(p.Loop) == name && name != string(LoopOff)
 		}) {
@@ -2518,4 +2674,9 @@ func (m Merge) AwaitingCIBound() time.Duration {
 		return 0
 	}
 	return m.AwaitingCIFor.Duration
+}
+
+func httpsURL(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
 }

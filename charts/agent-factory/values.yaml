@@ -55,3 +55,43 @@ agentgateway:
   resources:
     requests: {cpu: 100m, memory: 128Mi}
     limits: {cpu: "1", memory: 512Mi}
+
+# Observability (D21; docs/observability.md), every switch off. Monitoring objects render only when
+# asked, never on a guess at the cluster's CRDs, so offline renders (Flux, Argo CD, helm template) are
+# deterministic: the prometheus-operator CRDs (monitoring.coreos.com/v1) must exist when one is on.
+# The VictoriaMetrics operator converts them.
+monitoring:
+  # ServiceMonitors for the broker and the factory, PodMonitors for the run-controller, the egress
+  # proxy (networkPolicies.mode kubernetes) and the model-gateway proxies (maku-gateway.enabled). The
+  # scraper must be admitted wherever a default-deny policy holds the target: in maku's mode
+  # kubernetes, maku.networkPolicies.kubernetes.metricsFrom; in its mode cilium, cilium.fromEndpoints
+  # below; with maku-gateway's policy on, maku-gateway.metrics.allowFrom. The render fails otherwise.
+  # labels: added to each object, for a Prometheus whose selector wants them (e.g. release:
+  # kube-prometheus-stack).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+    # maku's mode cilium: Cilium endpoint selectors of the scraper's pods, e.g.
+    # [{matchLabels: {io.kubernetes.pod.namespace: monitoring, app.kubernetes.io/name: prometheus}}].
+    # They are admitted on :9090 of the broker and the run-controller (CNP maku-metrics).
+    cilium:
+      fromEndpoints: []
+  # One PrometheusRule, maku, with a group per component, each rendered only with it: maku-rooms
+  # (maku), maku-run-path (maku.runController), maku-factory (maku-factory), maku-slack
+  # (slack.enabled). docs/operations.md#alerts lists every alert. In PromQL, tested by promtool.
+  prometheusRule:
+    enabled: false
+    labels: {}
+    # Alert names to leave out, e.g. one an install keeps its own variant of. A name no group holds
+    # fails the render.
+    disabled: []
+    # The rules that read kube-state-metrics' kube_* series (AgentSandboxPodPending).
+    kubeStateMetrics: false
+    # Each alert's runbook_url base. Empty: https://github.com/Smana/maku/blob/v<appVersion>/docs.
+    docsURL: ""
+
+# The Slack App (D20). Its subchart arrives in a later v4 step 6 PR; until then, true only adds the
+# maku-slack alert group, for a Slack App installed outside this chart.
+slack:
+  enabled: false

@@ -1,0 +1,67 @@
+# Keycloak realm import for hack/oidc-probe/probe.sh only: a throwaway realm, never a deployment's.
+# One realm, "agents": a confidential web client and a public CLI client (device grant on), each
+# with a "groups" mapper, a confidential machine client (client credentials), and one user in the group
+# agents-member who also holds the realm role agents-member (realm_access.roles).
+# probe.sh converts this file to the JSON Keycloak imports.
+realm: agents
+enabled: true
+accessTokenLifespan: 300
+roles:
+  realm:
+    - name: agents-member
+groups:
+  - name: agents-member
+    realmRoles: [agents-member]
+users:
+  - username: alice
+    enabled: true
+    email: alice@example.com
+    emailVerified: true
+    firstName: Alice
+    lastName: Probe
+    credentials:
+      - type: password
+        value: probe-password
+        temporary: false
+    groups: [/agents-member]
+clients:
+  - clientId: maku-web
+    enabled: true
+    publicClient: false
+    secret: probe-web-secret
+    standardFlowEnabled: true
+    directAccessGrantsEnabled: true
+    redirectUris: [http://127.0.0.1:9/callback]
+    protocolMappers:
+      - name: groups
+        protocol: openid-connect
+        protocolMapper: oidc-group-membership-mapper
+        config:
+          claim.name: groups
+          full.path: "false"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+  - clientId: maku-cli
+    enabled: true
+    publicClient: true
+    standardFlowEnabled: false
+    directAccessGrantsEnabled: true
+    attributes:
+      oauth2.device.authorization.grant.enabled: "true"
+    protocolMappers:
+      - name: groups
+        protocol: openid-connect
+        protocolMapper: oidc-group-membership-mapper
+        config:
+          claim.name: groups
+          full.path: "false"
+          id.token.claim: "true"
+          access.token.claim: "true"
+          userinfo.token.claim: "true"
+  - clientId: maku-slack
+    enabled: true
+    publicClient: false
+    secret: probe-slack-secret
+    standardFlowEnabled: false
+    serviceAccountsEnabled: true

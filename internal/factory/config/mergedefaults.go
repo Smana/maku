@@ -3,6 +3,9 @@
 package config
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
 	"maps"
 	"slices"
 )
@@ -53,4 +56,47 @@ func deepCopyValue(v any) any {
 		return out
 	}
 	return v
+}
+
+// applyMergeDefaults applies the file's mergeDefaults to each repository's merge (plan PR6): every
+// repositories entry, and the legacy single-repository shape's merge. It returns j unchanged when
+// mergeDefaults is unset, else the defaulted JSON and, per repository in order, the keys taken.
+// Numbers are kept as written, so an integer never round-trips through a float.
+func applyMergeDefaults(j []byte) ([]byte, [][]string, error) {
+	dec := json.NewDecoder(bytes.NewReader(j))
+	dec.UseNumber()
+	var m map[string]any
+	if err := dec.Decode(&m); err != nil {
+		return nil, nil, err
+	}
+	defaults, ok := m["mergeDefaults"].(map[string]any)
+	if !ok {
+		return j, nil, nil
+	}
+	var taken [][]string
+	fill := func(entry map[string]any) error {
+		merge, ok := entry["merge"].(map[string]any)
+		if !ok && entry["merge"] != nil {
+			return fmt.Errorf("merge is not a map")
+		}
+		out, keys := ApplyMergeDefaults(defaults, merge)
+		entry["merge"] = out
+		taken = append(taken, keys)
+		return nil
+	}
+	if _, legacy := m["repository"]; legacy {
+		if err := fill(m); err != nil {
+			return nil, nil, err
+		}
+	}
+	list, _ := m["repositories"].([]any)
+	for _, e := range list {
+		if entry, ok := e.(map[string]any); ok {
+			if err := fill(entry); err != nil {
+				return nil, nil, fmt.Errorf("repositories %v: %w", entry["name"], err)
+			}
+		}
+	}
+	out, err := json.Marshal(m)
+	return out, taken, err
 }

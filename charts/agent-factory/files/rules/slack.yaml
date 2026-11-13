@@ -1,0 +1,26 @@
+# The Slack decision path's alerts (group maku-slack), ported from ai-native-ref's
+# vmrule-agent-factory.yaml at 1529b3b; rendered with slack.enabled. Both are aggregates by necessity:
+# maku_rooms_slack_decisions_total carries {result, decision} and factory_slack_requests_total
+# {route, outcome}, no user, principal, room or approval (unbounded, and a privacy problem). Each
+# description says what the logs answer instead.
+name: maku-slack
+rules:
+  - alert: SlackDecisionsSpike
+    expr: sum(increase(maku_rooms_slack_decisions_total{result="approved"}[10m])) > 5
+    labels:
+      severity: warning
+    annotations:
+      summary: "More than five forge.push approvals were decided from Slack in ten minutes"
+      description: "The metric carries only {result, decision}, so this aggregate stands in for a per-person clause: six approvals in ten minutes from anywhere is already worth reading. Take the broker's 'slack decision' lines for those decisions (team, approval, user, result, decision) and the room log for the approvals they closed. An unexpected burst is the shape of a compromised App pod casting decisions as linked humans. Check the rooms' policies too: no forge.push approval should be decided from Slack in an unattended room."
+      runbook_url: "__DOCS__/operations.md#slack-alerts"
+      dashboard: "/d/agent-factory"
+  - alert: SlackCardUpdatesFailing
+    expr: sum(rate(factory_slack_requests_total{route=~"interactions|webhooks", outcome="error"}[10m])) > 0
+    for: 1h
+    labels:
+      severity: warning
+    annotations:
+      summary: "The Slack App has failed an approval-card update for an hour"
+      description: "The cards are then lying about being live. factory_slack_requests_total carries {route, outcome} and no approval id, so one flapping card and a hundred failures read the same: take the App's 'card update failed' lines (approval, channel, err) to tell them apart. Causes: a revoked chat:write, a removed message, Slack refusing metadata. The decisions themselves still land: the store, not the card, is the fence."
+      runbook_url: "__DOCS__/operations.md#slack-alerts"
+      dashboard: "/d/agent-factory"

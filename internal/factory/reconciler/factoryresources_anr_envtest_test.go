@@ -8,11 +8,17 @@ import (
 	"strings"
 	"testing"
 
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/runtime"
+	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 	"sigs.k8s.io/yaml"
 
+	"github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/configsource"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -72,5 +78,71 @@ func admit(t *testing.T, c client.Client, file, ns string, want int) {
 	// One Factory, and a Repository and a MergePolicy for each repository.
 	if created != want && !t.Failed() {
 		t.Fatalf("%s: created %d objects, want %d", file, created, want)
+	}
+}
+
+// ai-native-ref's live objects (testdata/anr-objects.yaml) pass admission, and a Source serves
+// its four repositories from them, every object accepted.
+func TestANRObjectsServeFourRepositories(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
+	}
+	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "config", "crd")}, ErrorIfCRDPathMissing: true}
+	restCfg, err := env.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = env.Stop() }()
+	s := runtime.NewScheme()
+	_ = clientgoscheme.AddToScheme(s)
+	_ = v1alpha1.AddToScheme(s)
+	c, err := client.New(restCfg, client.Options{Scheme: s})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := t.Context()
+	const ns = "agent-system"
+	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join("..", "resources", "testdata", "anr-objects.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, doc := range strings.Split(string(raw), "\n---\n") {
+		var u unstructured.Unstructured
+		if err := yaml.Unmarshal([]byte(doc), &u.Object); err != nil {
+			t.Fatal(err)
+		}
+		if len(u.Object) == 0 || u.GetKind() == "" {
+			continue
+		}
+		if err := c.Create(ctx, &u); err != nil {
+			t.Errorf("create %s %s: %v", u.GetKind(), u.GetName(), err)
+		}
+	}
+	anr, err := os.ReadFile(filepath.Join("..", "resources", "testdata", "anr.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, residual, err := resources.Migrate(anr, ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	src := &configsource.Source{Reader: c, Namespace: ns, File: residual}
+	if err := src.Sync(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(src.Live.Current().Repos()); n != 4 {
+		t.Fatalf("%d repositories served, want 4", n)
+	}
+	out, _ := src.Outcomes()
+	if len(out) != 9 {
+		t.Fatalf("%d outcomes, want 9 (one Factory, four Repositories, four MergePolicies)", len(out))
+	}
+	for _, o := range out {
+		if !o.Accepted {
+			t.Errorf("%s %s refused: %s %s", o.Kind, o.Name, o.Reason, o.Message)
+		}
 	}
 }

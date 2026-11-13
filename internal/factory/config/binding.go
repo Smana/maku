@@ -90,6 +90,12 @@ type PolicySpec struct {
 	Requires []string `json:"requires,omitempty"`
 }
 
+// ServedPolicy is an accepted class-shape MergePolicy and the generation the factory serves.
+type ServedPolicy struct {
+	Spec       PolicySpec
+	Generation int64
+}
+
 // PolicyContext is what resolving a binding reads from the factory: the harness profiles a class
 // names, and the guardrails that cap every binding (B14).
 type PolicyContext struct {
@@ -257,6 +263,28 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		}
 	}
 
+	return finish(name, cl, ctx, m)
+}
+
+// Recheck runs a class resolved earlier through the checks that read the factory and the
+// repository rather than the policy (B9, B14): the Flux source, the guardrails, the class rules,
+// the harness profiles, policyBot and testFirst, under the current context and merge. A last
+// resolved class put back must pass them, or it would refuse its whole repository at Parse. It
+// never aliases cl.
+func Recheck(name string, cl Class, ctx PolicyContext, m Merge) (Class, *BindingRefusal) {
+	out, reason, problems := finish(name, *cl.DeepCopy(), ctx, m)
+	if reason != "" {
+		return Class{}, &BindingRefusal{Reason: reason, Message: strings.Join(problems, "; ")}
+	}
+	return out, nil
+}
+
+// finish is resolve's last part, from the repository's facts on: what a class must pass whatever
+// policy and binding made it.
+func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, []string) {
+	refuse := func(reason, f string, a ...any) (Class, string, []string) {
+		return Class{}, reason, []string{fmt.Sprintf(f, a...)}
+	}
 	// The repository's fact: the Flux source its monitors watch.
 	if mo := cl.Monitor; mo != nil && mo.Flux != nil {
 		if m.FluxSource == "" {
@@ -274,6 +302,10 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	validateClass(name, cl, bad)
 	for _, v := range VariantProblemsIn(ctx.HarnessProfiles, name, cl) {
 		bad("class %s: %s", name, v)
+	}
+	// validateRepository's rule on a live class, here so it drops the binding, not the repository.
+	if !m.UsesPolicyBot() && cl.Live && len(cl.AllowedFiles) == 0 {
+		bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
 	}
 	if m.ContractCheck == "" {
 		if cl.TestFirst {
