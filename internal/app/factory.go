@@ -144,6 +144,9 @@ func warnConfig(log *slog.Logger, cfg *config.Config, m holdoutGauge) {
 	for _, w := range cfg.Warnings {
 		log.Warn("config warning", "warning", w)
 	}
+	if w := roleTableWarning(cfg, minter.Roles); w != "" {
+		log.Warn("config warning", "warning", w)
+	}
 	if m == nil {
 		return
 	}

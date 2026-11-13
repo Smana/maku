@@ -445,7 +445,9 @@ untraced on the XR (its rules still say `gh pr create`).
 2. **The publisher.** Set the chart's `hardening.publisher.audience`, an egress policy from the
    factory to the octo-sts host, and `hardening.publisher.octoSTS`. A maintainer merges
    `.github/chainguard/publisher.sts.yaml` in the repository: the factory's ServiceAccount
-   subject, `contents: read`, `pull_requests: write`, `issues: write`.
+   subject, `contents: read`, `pull_requests: write`, `issues: write`. With per-run tokens, set
+   `hardening.publisher.minter: true` instead: the factory mints the publisher's token from the
+   agents App with the role table's publisher row, and no policy file or projected token is needed.
 3. **The gateway profile.** `output_pr`, `output_comment`, `output_labels` and `output_issue` are
    added to the implementer and tester capability profiles.
 4. **The XR rendering.** The composition renders `MCP_READ_ONLY_TOOLS`, `SAFE_OUTPUTS` and the
@@ -477,7 +479,31 @@ start, naming HR13, unless `runTokens.perRun` scopes each run's token). `push` (
 |---|---|---|---|
 | `maku_factory_hardening_output_seconds` | histogram | `repository`, `type` | From a run's `output_requested` to the factory's answer (AC7: p95 at most 2 s per non-push output) |
 | `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
-| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role's or the publisher's (`role="publisher"`) octo-sts policy grants, as the last fence pass read it; a pair a later pass no longer reads is 0 |
+| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it: from its octo-sts policy on the XR, or from the [role table](factory.md#run-tokens-the-role-table) under `runTokens.perRun` (the publisher's under `hardening.publisher.minter`). A pair a later pass no longer reads is 0 |
+
+### Leaving the XR with an enforced repository (HR13)
+
+A repository with `enforceOutputs` runs on cloud-native-ref's XR and octo-sts until its runs get
+per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` set unless
+`runTokens.perRun` is on, because a shared token could still write what the factory publishes.
+The way out, in this order:
+
+1. **The Maku release** carries the per-run minter and its publisher (v4 step 3, PRs A to C), with
+   `minter.Roles = TableHR12`, the owner's ruling.
+2. **The values** set `runTokens.enabled`, `runTokens.perRun`, the agents App's Secret
+   (`runTokens.appSecret`), `runController.gitTokens: perRun` and, in the factory's config,
+   `hardening.publisher.minter: true` with `hardening.publisher.octoSTS.url` removed. The
+   publisher's token then comes from the agents App, so `hardening.publisher.audience` may go.
+3. **The start-up log** carries no HR13 refusal and no `runTokens.perRun: the role table leaves the
+   implementer pull_requests: write` warning. That warning fires only when the role table keeps
+   the implementer's write under enforcement (D10 as written): such repositories stay on the XR.
+4. **The gauge** shows, for that repository, `role="implementer", permission="pull_requests",
+   access="read"` and `role="publisher", permission="pull_requests", access="write"`.
+5. **The cut-over** moves `runs.group` with the step 2 runbook: stop intake, drain the runs, flip
+   `runs.group`, lift the stop. The flip is global, so every repository moves together.
+
+Readiness's R2 under `runTokens.perRun` reads the same table (HR42): it stays missing while the
+implementer and tester hold `contents: write`, which goes with `push` at H3.
 
 ### Factory alerts
 

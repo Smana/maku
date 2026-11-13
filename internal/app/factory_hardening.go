@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"time"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -123,6 +124,35 @@ func tableGrants(live func() *config.Config, table minter.Table) tokenGrants {
 		}
 		return roles, pub
 	}
+}
+
+// roleTableWarning is HR13's warning under per-run tokens (plan PR13): the enforced repositories in
+// which table leaves the implementer pull_requests: write although the factory publishes its pull
+// requests, comments or labels (D10 as written), so a run could still write them directly. Empty
+// under any other token source, or a table that takes the write away (HR12, the owner's ruling). It
+// lives here, not in the config's warnings, because the config cannot import the minter's table.
+func roleTableWarning(cfg *config.Config, table minter.Table) string {
+	if cfg.TokenSource() != hardening.TokenSourceMinter {
+		return ""
+	}
+	var repos []string
+	for _, r := range cfg.Repos() {
+		enforced := cfg.Hardening.EnforcedFor(r.Name)
+		if !slices.ContainsFunc(enforced, func(t hardening.OutputType) bool {
+			return t == hardening.PR || t == hardening.Comment || t == hardening.Labels
+		}) {
+			continue
+		}
+		if p, err := table.For(minter.Implementer, enforced); err != nil || p["pull_requests"] == "write" {
+			repos = append(repos, r.Name)
+		}
+	}
+	if len(repos) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("runTokens.perRun: the role table leaves the implementer pull_requests: write in %s although the factory publishes "+
+		"its pull requests, comments or labels, so that enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
+		strings.Join(repos, ", "))
 }
 
 // sandboxPermissionObserver is a fence observer that, on each pass over a repository with an

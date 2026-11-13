@@ -212,6 +212,40 @@ func TestTokenSourceReadiness(t *testing.T) {
 	}
 }
 
+// Plan PR13 (HR13): under per-run tokens an enforced repository leaves the XR without HR13's
+// refusal, but a role table in which the implementer keeps pull_requests: write once pr is enforced
+// (D10 as written) leaves that enforcement advisory: the factory warns, naming the repository.
+func TestRoleTableWarning(t *testing.T) {
+	const repo = "Smana/ai-native-ref"
+	for name, tc := range map[string]struct {
+		perRun bool
+		table  minter.Table
+		warn   bool
+	}{
+		"per-run, HR12":       {true, minter.TableHR12, false},
+		"per-run, D10":        {true, minter.TableD10, true},
+		"the XR, D10":         {false, minter.TableD10, false},
+		"the factory's table": {true, minter.Roles, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit,
+				EnforceOutputs: []hardening.OutputType{hardening.PR}}})
+			cfg.Repositories = []config.Repository{{Name: repo}, {Name: "Smana/cloud-native-ref"}}
+			if tc.perRun {
+				cfg.Runs = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
+				cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
+			}
+			w := roleTableWarning(cfg, tc.table)
+			if (w != "") != tc.warn {
+				t.Fatalf("warning %q, want one: %v", w, tc.warn)
+			}
+			if tc.warn && (!strings.Contains(w, repo) || strings.Contains(w, "cloud-native-ref") || !strings.Contains(w, "pull_requests: write")) {
+				t.Fatalf("warning %q", w)
+			}
+		})
+	}
+}
+
 type fakePolicies map[string]string
 
 func (f fakePolicies) DefaultBranchFile(_ context.Context, path string) (string, string, bool, error) {
