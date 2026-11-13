@@ -116,3 +116,23 @@ func TestHardeningShadowIsCounted(t *testing.T) {
 		}
 	}
 }
+
+// H3 (HR27): how long a protected-path push waited for its approval, by repository and how the
+// approval closed, the decision a closed set.
+func TestHardeningApprovalWait(t *testing.T) {
+	ctx := WithRepository(t.Context(), "Smana/cloud-native-ref")
+	s, scrape := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return false })
+	s.ListRepositories("Smana/cloud-native-ref")
+	s.HardeningApprovalWait(ctx, "approved", 90*time.Second)
+	s.HardeningApprovalWait(ctx, "whatever the broker said", time.Hour)
+	body := scrape()
+	for _, want := range []string{
+		`maku_factory_hardening_approval_wait_seconds_bucket{decision="approved",repository="Smana/cloud-native-ref",le="300"} 1`,
+		`maku_factory_hardening_approval_wait_seconds_bucket{decision="approved",repository="Smana/cloud-native-ref",le="60"} 0`,
+		`maku_factory_hardening_approval_wait_seconds_count{decision="other",repository="Smana/cloud-native-ref"} 1`,
+	} {
+		if !strings.Contains(body, want+"\n") {
+			t.Errorf("missing %s\n%s", want, body)
+		}
+	}
+}

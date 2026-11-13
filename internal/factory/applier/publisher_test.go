@@ -3,6 +3,7 @@
 package applier
 
 import (
+	"context"
 	"crypto/x509"
 	"io"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/forge/forgetest"
+	"github.com/Smana/maku/internal/factory/gitbundle"
 	"github.com/Smana/maku/internal/httpx"
 )
 
@@ -77,5 +79,34 @@ func TestConnectPublishers(t *testing.T) {
 	}
 	if _, err := (&OctoSTSTokens{}).For("owner/repo"); err == nil {
 		t.Error("an unconfigured octo-sts gave a token source")
+	}
+}
+
+// staticTokens is a PublisherTokens whose sources answer one token.
+type staticTokens struct{}
+
+type staticSource string
+
+func (s staticSource) Token(context.Context) (string, error) { return string(s), nil }
+
+func (staticTokens) For(string) (forge.TokenSource, error) { return staticSource("ghs_publisher"), nil }
+
+// HR24: the pusher is one mirror per repository under the cache root, its token the publisher's,
+// from the same PublisherTokens; no root is no pusher.
+func TestConnectPushers(t *testing.T) {
+	connect := ConnectPushers(staticTokens{}, t.TempDir())
+	a, err := connect(t.Context(), "Owner/Repo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := connect(t.Context(), "owner/repo")
+	if err != nil || a != b {
+		t.Fatalf("a second spelling made another mirror: %v", err)
+	}
+	if _, ok := a.(*gitbundle.Mirror); !ok {
+		t.Fatalf("pusher %T", a)
+	}
+	if _, err := ConnectPushers(staticTokens{}, "")(t.Context(), "owner/repo"); err == nil {
+		t.Error("no cache root gave a pusher")
 	}
 }
