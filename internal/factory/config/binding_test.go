@@ -150,6 +150,9 @@ func TestResolve(t *testing.T) {
 			reason: ReasonInvalid, msg: `class x: profile "tf": testFirst needs merge.contractCheck`},
 		"testFirst with a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
 			merge: Merge{ContractCheck: "contract"}, check: func(t *testing.T, c Class) { want(t, c.TestFirst, "testFirst") }},
+		// The repository rule a live class without allowedFiles breaks, judged per binding (B9).
+		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
+			merge: Merge{PolicyBot: new(false)}, reason: ReasonInvalid, msg: "class x: merge.policyBot: false needs allowedFiles on every live class"},
 		"an unknown harness": {policy: func(p *PolicySpec) { p.Harness = "nope" }, reason: ReasonInvalid, msg: `harness "nope" is not in harnessProfiles (TE2)`},
 		"live on the policy": {policy: func(p *PolicySpec) { p.Live = true }, reason: ReasonInvalid, msg: "mode is the binding's"},
 	} {

@@ -393,6 +393,9 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 		for cl := range r.Classes {
 			reserved[cl] = true
 		}
+		for _, cl := range r.Bound {
+			reserved[cl] = true
+		}
 		maintainers = append(maintainers, r.Maintainers...)
 	}
 	for _, l := range h.LabelAllowlist {

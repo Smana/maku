@@ -90,6 +90,12 @@ type PolicySpec struct {
 	Requires []string `json:"requires,omitempty"`
 }
 
+// ServedPolicy is an accepted class-shape MergePolicy and the generation the factory serves.
+type ServedPolicy struct {
+	Spec       PolicySpec
+	Generation int64
+}
+
 // PolicyContext is what resolving a binding reads from the factory: the harness profiles a class
 // names, and the guardrails that cap every binding (B14).
 type PolicyContext struct {
@@ -274,6 +280,10 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	validateClass(name, cl, bad)
 	for _, v := range VariantProblemsIn(ctx.HarnessProfiles, name, cl) {
 		bad("class %s: %s", name, v)
+	}
+	// validateRepository's rule on a live class, here so it drops the binding, not the repository.
+	if !m.UsesPolicyBot() && cl.Live && len(cl.AllowedFiles) == 0 {
+		bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
 	}
 	if m.ContractCheck == "" {
 		if cl.TestFirst {
