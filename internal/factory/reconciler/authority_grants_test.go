@@ -42,7 +42,7 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 			if len(tc.grants.calls) == 0 || !strings.HasPrefix(tc.grants.calls[0], "lookup smana/cloud-native-ref docs-links "+rigHash+" ") {
 				t.Fatalf("%q", tc.grants.calls)
 			}
-			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != strings.Contains(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1 reviewer=") {
+			if c := strings.Join(g.f.Comments(12), "\n"); tc.grant != recordHas(c, " policy=0123456789ab grant=aaaaaaaaaaaaaaaaaaaaaaaaaa:1") {
 				t.Fatalf("%s", c)
 			}
 		})

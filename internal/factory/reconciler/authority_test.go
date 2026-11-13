@@ -46,7 +46,7 @@ func TestACutOverRepositoryMergesOnItsOwnPolicy(t *testing.T) {
 	if len(g.f.Armed()) != 1 {
 		t.Fatalf("armed %v", g.f.Armed())
 	}
-	if c := strings.Join(g.f.Comments(12), "\n"); c != "" && !strings.Contains(c, " policy=0123456789ab reviewer=") {
+	if c := strings.Join(g.f.Comments(12), "\n"); c != "" && !recordHas(c, " policy=0123456789ab") {
 		t.Fatalf("%s", c)
 	}
 }

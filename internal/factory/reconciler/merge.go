@@ -394,8 +394,14 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 // the would-arm or the arm. It is a marker line of its own (R-m11), so the event's marker, and the
 // tally that reads it, are unchanged.
 func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
-	_, _, gen := cfg.GenerationsFor(t.Spec.Repository)
+	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, t.Spec.PredictedClass)
 	d.Rows.Generation = gen
+	if bound { // PR13: repogen= marks a decision of a bound class
+		d.Rows.RepoGeneration = repo
+	}
+	if cl, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
+		d.Rows.Resolved = config.ShortHash(config.ResolvedHash(cl))
+	}
 	reason := cmp.Or(d.Reason, "armed")
 	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, reason, d.Rows)
 	if r.Decisions != nil {
