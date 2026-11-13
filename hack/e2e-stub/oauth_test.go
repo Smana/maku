@@ -24,19 +24,32 @@ func TestOAuthWebFlow(t *testing.T) {
 	sum := sha256.Sum256([]byte(verifier))
 	q := url.Values{"client_id": {"Iv1.e2e"}, "redirect_uri": {"https://rooms.e2e.test/link/github/callback"}, "state": {"st8"},
 		"code_challenge": {base64.RawURLEncoding.EncodeToString(sum[:])}, "code_challenge_method": {"S256"}}
-	resp, err := c.Get(ts.URL + "/login/oauth/authorize?" + q.Encode())
-	if err != nil {
-		t.Fatal(err)
+	get := func(path string) *http.Response {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := c.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
 	}
+	resp := get("/login/oauth/authorize?" + q.Encode())
 	_ = resp.Body.Close()
-	loc, err := url.Parse(resp.Header.Get("Location"))
-	if resp.StatusCode != http.StatusFound || err != nil || loc.Host != "rooms.e2e.test" || loc.Query().Get("state") != "st8" || loc.Query().Get("code") == "" {
+	loc, perr := url.Parse(resp.Header.Get("Location"))
+	if resp.StatusCode != http.StatusFound || perr != nil || loc.Host != "rooms.e2e.test" || loc.Query().Get("state") != "st8" || loc.Query().Get("code") == "" {
 		t.Fatalf("authorize: %d %q", resp.StatusCode, resp.Header.Get("Location"))
 	}
 	code := loc.Query().Get("code")
 	exchange := func(v string) map[string]string {
 		form := url.Values{"client_id": {"Iv1.e2e"}, "client_secret": {"s"}, "code": {code}, "code_verifier": {v}}
-		resp, err := c.Post(ts.URL+"/login/oauth/access_token", "application/x-www-form-urlencoded", strings.NewReader(form.Encode()))
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/login/oauth/access_token", strings.NewReader(form.Encode()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		resp, err := c.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -53,9 +66,9 @@ func TestOAuthWebFlow(t *testing.T) {
 	if again := exchange(verifier); again["error"] != "bad_verification_code" {
 		t.Fatalf("a second exchange of one code: %v", again)
 	}
-	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/user", nil)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodGet, ts.URL+"/user", nil)
 	req.Header.Set("Authorization", "Bearer "+tok)
-	resp, err = c.Do(req)
+	resp, err := c.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +77,7 @@ func TestOAuthWebFlow(t *testing.T) {
 	if resp.StatusCode != http.StatusOK || !strings.Contains(string(raw), `"login":"dev"`) || !strings.Contains(string(raw), `"id":123`) {
 		t.Fatalf("user: %d %s", resp.StatusCode, raw)
 	}
-	req, _ = http.NewRequest(http.MethodDelete, ts.URL+"/applications/Iv1.e2e/token", strings.NewReader(`{"access_token":"`+tok+`"}`))
+	req, _ = http.NewRequestWithContext(t.Context(), http.MethodDelete, ts.URL+"/applications/Iv1.e2e/token", strings.NewReader(`{"access_token":"`+tok+`"}`))
 	req.SetBasicAuth("Iv1.e2e", "s")
 	resp, err = c.Do(req)
 	if err != nil {
@@ -79,7 +92,7 @@ func TestOAuthWebFlow(t *testing.T) {
 		t.Fatalf("counts: %s", raw)
 	}
 	// A wrong verifier gets nothing.
-	resp, _ = c.Get(ts.URL + "/login/oauth/authorize?" + q.Encode())
+	resp = get("/login/oauth/authorize?" + q.Encode())
 	_ = resp.Body.Close()
 	loc, _ = url.Parse(resp.Header.Get("Location"))
 	code = loc.Query().Get("code")

@@ -151,7 +151,7 @@ func (o OAuth) do(req *http.Request, what string, out any) error {
 	if o.HC == nil {
 		return errors.New("github oauth: an HTTP client is required")
 	}
-	resp, err := o.HC.Do(req)
+	resp, err := o.HC.Do(req) //nolint:gosec // G704: the host is human.githubLink.webURL or the API base, both configuration, checked https; the tainted values are the form and the token
 	if err != nil {
 		return fmt.Errorf("github oauth: %s: GitHub is unreachable", what)
 	}

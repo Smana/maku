@@ -20,7 +20,7 @@ type fakeOAuth struct {
 	exchange func(form url.Values) (int, string)
 }
 
-func (f *fakeOAuth) handler(t *testing.T) http.Handler {
+func (f *fakeOAuth) handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /login/oauth/access_token", func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Accept") != "application/json" || r.ParseForm() != nil {
@@ -57,7 +57,7 @@ func (f *fakeOAuth) handler(t *testing.T) http.Handler {
 
 func oauthFor(t *testing.T, f *fakeOAuth) OAuth {
 	t.Helper()
-	ts := httptest.NewTLSServer(f.handler(t))
+	ts := httptest.NewTLSServer(f.handler())
 	t.Cleanup(ts.Close)
 	return OAuth{WebURL: ts.URL, APIURL: ts.URL + "/", HC: ts.Client()}
 }
@@ -133,9 +133,12 @@ func TestOAuthExchangeUserRevoke(t *testing.T) {
 // Plain http, credentials in the URL, or a user reply out of shape are refused.
 func TestOAuthRefusesBadEndpointsAndReplies(t *testing.T) {
 	ctx := t.Context()
-	for _, o := range []OAuth{{WebURL: "http://github.example.test", APIURL: "https://api.example.test/", HC: http.DefaultClient},
-		{WebURL: "https://u:p@github.example.test", APIURL: "https://api.example.test/", HC: http.DefaultClient},
-		{WebURL: "https://github.example.test", APIURL: "http://api.example.test/", HC: http.DefaultClient}} {
+	never := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Error("a refused endpoint was called") }))
+	t.Cleanup(never.Close)
+	hc := never.Client()
+	for _, o := range []OAuth{{WebURL: "http://github.example.test", APIURL: "https://api.example.test/", HC: hc},
+		{WebURL: "https://u:p@github.example.test", APIURL: "https://api.example.test/", HC: hc},
+		{WebURL: "https://github.example.test", APIURL: "http://api.example.test/", HC: hc}} {
 		if _, err := o.ExchangeCode(ctx, "c", "s", "x", "v", "https://r/cb"); err == nil {
 			t.Fatalf("%+v: exchanged", o)
 		}

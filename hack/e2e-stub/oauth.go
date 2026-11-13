@@ -57,7 +57,7 @@ func (o *oauthFlow) authorize(w http.ResponseWriter, r *http.Request) {
 	back.Set("code", code)
 	back.Set("state", q.Get("state"))
 	redirect.RawQuery = back.Encode()
-	http.Redirect(w, r, redirect.String(), http.StatusFound)
+	http.Redirect(w, r, redirect.String(), http.StatusFound) //nolint:gosec // G710: the e2e stub redirects to the redirect_uri it was sent, as GitHub does to a registered callback
 }
 
 func (o *oauthFlow) exchange(w http.ResponseWriter, r *http.Request) {
