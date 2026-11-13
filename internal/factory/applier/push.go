@@ -349,8 +349,8 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	hreq := hardening.Request{Type: hardening.Push, Payload: payload, Files: paths, Added: in.Added,
 		Approved: approved, Canary: rs.claim.Canary}
 	v := c.Check(ctx, &n, hreq)
-	if v.Refusal != "" && v.Refusal != hardening.RefuseNeedsApproval {
-		v = c.Measure(ctx, hreq, v) // HR39: T5 reads the added lines another layer refused, in audit
+	if v.Refusal != "" {
+		v = c.Measure(ctx, hreq, v) // HR39: T5 reads a T4 refusal's added lines, already past T3, in audit
 	}
 	a.countT5(ctx, t, hardening.Push, v.T5)
 	switch v.Refusal {

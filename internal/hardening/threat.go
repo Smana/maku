@@ -174,13 +174,19 @@ func (c Checker) Check(ctx context.Context, n *Counts, req Request) Verdict {
 	return v
 }
 
-// Measure runs T5 in audit on an output another layer refused (HR39): layers stop at the first
-// refusal, so without it T5 would never see what T2 or T3 caught, and its detection could not be
-// set against theirs. The finding joins v.Audit and its answer v.T5; v's refusal is unchanged. An
-// output with nothing to read (a schema failure, a push whose bundle was never read) is not
-// measured, nor is one T5 already answered, nor anything while T5 is off.
+// measured are the refusals whose output T5 may still read (HR39, #520's review): a T1 target
+// refusal, whose text is otherwise well formed, and a push's T4 refusals, whose added lines already
+// passed T3. A T3 refusal is never measured (the text holds a secret or the canary, and T5 would send
+// it out of the factory), nor a cap refusal (a run could drive the classifier's load with it), nor a
+// T2 withholding (only its placeholder is left).
+var measured = []Refusal{RefuseTarget, RefuseBlockedPath, RefuseDiffUnavailable}
+
+// Measure runs T5 in audit on an output another layer refused (HR39), so T5's detection on the
+// drills can be set against the pattern layers'. Only a refusal in measured is read, and only once
+// T3's scan of the very texts T5 would read finds neither a secret nor the canary: with no scanner,
+// nothing is sent. The finding joins v.Audit and its answer v.T5; v's refusal is unchanged.
 func (c Checker) Measure(ctx context.Context, req Request, v Verdict) Verdict {
-	if v.Refusal == "" || v.T5 != "" || c.Layers.Classifier == ModeOff {
+	if v.T5 != "" || c.Layers.Classifier == ModeOff || !slices.Contains(measured, v.Refusal) {
 		return v
 	}
 	p, _ := DecodeOutput(req.Type, req.Payload, c.LabelAllowlist)
@@ -188,10 +194,13 @@ func (c Checker) Measure(ctx context.Context, req Request, v Verdict) Verdict {
 		return v
 	}
 	if c.Layers.Sanitise != ModeOff {
-		p, _ = sanitiseOutput(p, req.OwnIssue)
+		var rep TextReport
+		if p, rep = sanitiseOutput(p, req.OwnIssue); rep.Withheld {
+			return v
+		}
 	}
 	texts := slices.DeleteFunc(published(p, req), func(s string) bool { return s == "" })
-	if len(texts) == 0 {
+	if len(texts) == 0 || c.secrets(texts, req.Canary) != "" {
 		return v
 	}
 	r := c.classify(ctx, texts)

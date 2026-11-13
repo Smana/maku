@@ -118,9 +118,13 @@ type Applier struct {
 	// are still applied (DefaultAnswerWait); for as long again, what is still unanswered is
 	// refused output_expired, and then the run is no longer read.
 	Interval, AnswerWait time.Duration
-	Now                  func() time.Time
-	Metrics              Metrics
-	Log                  *slog.Logger
+	// Drill reports whether the repository's drill-labelled tasks are drill tasks: the drills are on
+	// and it is the drill repository (config.DrillTask). nil counts no T5 call as a drill's, so a
+	// drill label never hides a false positive while drills are off.
+	Drill   func(repo string) bool
+	Now     func() time.Time
+	Metrics Metrics
+	Log     *slog.Logger
 
 	rooms map[string]*roomState
 }
@@ -467,6 +471,9 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	if c.Layers.Classifier.AtLeast(hardening.ModeAudit) {
 		t5 = hardening.ModeAudit
 	}
+	if req.redacted {
+		t5 = hardening.ModeOff // the broker's redaction found a secret: nothing of this payload goes to T5 (#520's review)
+	}
 	c.Layers = hardening.LayersFor(hardening.ModeEnforce, t5)
 	hreq := hardening.Request{Type: typ, Payload: req.rec.Payload, OwnIssue: t.Spec.Issue, Canary: rs.claim.Canary}
 	v := c.Check(ctx, &n, hreq)
@@ -479,7 +486,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		v.Refusal = hardening.RefuseSecret
 	}
 	if v.Refusal != "" {
-		v = c.Measure(ctx, hreq, v) // HR39: T5 reads what another layer refused, in audit
+		v = c.Measure(ctx, hreq, v) // HR39: T5 reads a refusal it may, in audit
 	}
 	a.countT5(ctx, t, typ, v.T5)
 	if v.Refusal != "" {
@@ -499,7 +506,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	case err != nil:
 		return err
 	case refusal != "":
-		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n)
+		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n, v.Audit...) // T5 read it in Check: its finding stays
 	}
 	sanitised, err := json.Marshal(v.Payload)
 	if err != nil {
@@ -533,7 +540,8 @@ type t5Metrics interface {
 // positives are hits on applied outputs of non-drill tasks.
 func (a *Applier) countT5(ctx context.Context, t *v1alpha1.Task, typ hardening.OutputType, result string) {
 	if m, ok := a.Metrics.(t5Metrics); ok && result != "" {
-		m.HardeningT5(ctx, string(typ), result, t.Labels[v1alpha1.LabelDrillInjection] == "true")
+		drill := t.Labels[v1alpha1.LabelDrillInjection] == "true" && a.Drill != nil && a.Drill(t.Spec.Repository)
+		m.HardeningT5(ctx, string(typ), result, drill)
 	}
 }
 
