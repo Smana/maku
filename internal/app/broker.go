@@ -521,7 +521,17 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID:        projectID,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe}, nil
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
+		FactoryInstall: factoryInstall(cfg)}, nil
+}
+
+// factoryInstall reads the factory's banner codes (v4 D3) with the caller's own token: nil while no
+// factory is configured.
+func factoryInstall(cfg config.Config) func(ctx context.Context, accessToken string) ([]string, error) {
+	if cfg.FactoryURL == "" {
+		return nil
+	}
+	return runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}.Install
 }
 
 // catalogueCache is the broker's reader of the factory's catalogue (profile choice at intake,

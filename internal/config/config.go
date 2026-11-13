@@ -756,7 +756,15 @@ const (
 	UnsafeAllowRunc         = "unsafe_allow_runc"   // runs have no sandbox RuntimeClass
 	UnsafeNetworkPolicyNone = "network_policy_none" // nothing confines a run's network
 	UnsafeSharedGitToken    = "shared_git_token"    // every role shares one write token
+
+	// UnsafePrivateCodeUnacknowledged is the factory's code, never the chart's: a served repository
+	// is private code without spec.privateCode.acknowledged (v4 D3). The broker reads it from the
+	// factory's GET /v1/install; install.unsafe refuses it.
+	UnsafePrivateCodeUnacknowledged = "private_code_unacknowledged"
 )
+
+// FactoryInstallCodes are the codes the broker takes from the factory's GET /v1/install.
+var FactoryInstallCodes = []string{UnsafePrivateCodeUnacknowledged}
 
 // Install is what the chart says about the install. Unsafe lists the settings that weaken a run's
 // isolation; the web UI shows a banner on every page while it is non-empty.

@@ -10,7 +10,7 @@
 //     generation the Source observed when it has an outcome for the object, the object's own
 //     otherwise. Conditions: Accepted (all kinds), Connected, RepositoryFileValid and InSync
 //     (Repository; the per-repository MergePolicy keeps the last two until the next minor),
-//     BindingsValid (a Repository with bindings), Ready (Factory).
+//     BindingsValid (a Repository with bindings), PrivateCode (Repository, v4 D3), Ready (Factory).
 //   - A refused object's other conditions are still computed when its repository is served, from
 //     the last good version the factory serves.
 //   - A nil Inputs.Snapshot means policyManagement.read is off: RepositoryFileValid and InSync are
@@ -74,7 +74,14 @@ type Inputs struct {
 	Stopped   bool
 	// GitHubUp is true when no served repository's checked connection is unhealthy.
 	GitHubUp bool
+	// Visibility is the repository's visibility as the last fence pass read it (v4 D3): public,
+	// private, internal, VisibilityUnknown after a failed read, "" before the first. nil reads
+	// none: PrivateCode is then NotChecked.
+	Visibility func(repository string) string
 }
+
+// VisibilityUnknown is a visibility read that failed: it counts as private (D3 fails closed).
+const VisibilityUnknown = "unknown"
 
 // Status is the desired status of every object passed to Desired, by object name.
 type Status struct {
@@ -215,8 +222,10 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 	}
 	if rc, ok := d.served[strings.ToLower(name)]; ok {
 		d.servedRepository(&st, r, &rc, o, g)
+		d.privateCode(&st.Conditions, g, &rc)
 	} else {
 		d.fileConditions(&st.Conditions, g, "", false)
+		d.set(&st.Conditions, g, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotServed", "")
 	}
 	for _, p := range sortedByName(policies) {
 		// Several MergePolicies naming the Repository are all refused: it names none of them.
@@ -294,6 +303,30 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Re
 	}
 	st.ClassCount = len(st.Classes)
 	d.fileConditions(&st.Conditions, g, rc.Name, true)
+}
+
+// privateCode is a served repository's PrivateCode (v4 D3, step 7 R1): True when its code is public
+// or acknowledged, False with D3's sentence otherwise. A visibility that could not be read counts
+// as private. The work continues either way in this release.
+func (d *desirer) privateCode(cs *[]metav1.Condition, gen int64, rc *config.Repository) {
+	vis := ""
+	if d.in.Visibility != nil {
+		vis = d.in.Visibility(rc.Name)
+	}
+	switch {
+	case vis == "":
+		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotChecked", "")
+	case vis == "public":
+		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionTrue, "Public", "")
+	case rc.PrivateCodeAcknowledged():
+		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionTrue, "Acknowledged", "")
+	case vis == VisibilityUnknown:
+		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionFalse, v1alpha1.ReasonUnacknowledged,
+			"its visibility could not be read, so it counts as private. "+config.PrivateCodeSentence)
+	default:
+		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionFalse, v1alpha1.ReasonUnacknowledged,
+			"the repository is "+vis+". "+config.PrivateCodeSentence)
+	}
 }
 
 func sortedByName(ps []v1alpha1.MergePolicy) []v1alpha1.MergePolicy {

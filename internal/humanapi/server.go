@@ -186,6 +186,9 @@ type Server struct {
 	// Unsafe is the install's unsafe settings (config install.unsafe, v4 D18), which GET /api/install
 	// shows every signed-in human and the web UI turns into a banner on every page.
 	Unsafe []string
+	// FactoryInstall is the factory's banner codes (GET /v1/install, v4 D3), read with the caller's
+	// own token; nil, or a caller without one, reads none.
+	FactoryInstall func(ctx context.Context, accessToken string) ([]string, error)
 	// Policy is the promotion workflow (policyManagement.promotion, merge policy stage 6): the
 	// settings pages and the policy API. Nil serves neither: each path is the mux's 404.
 	Policy *Policy

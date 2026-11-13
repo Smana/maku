@@ -26,7 +26,10 @@ func TestInstallUnsafe(t *testing.T) {
 	if !slices.Equal(c.Install.Unsafe, all) {
 		t.Fatalf("the three codes: %v", c.Install.Unsafe)
 	}
-	for _, body := range []string{"install:\n  unsafe: [bogus]\n", "install:\n  unsafe: [unsafe_allow_runc, unsafe_allow_runc]\n"} {
+	for _, body := range []string{"install:\n  unsafe: [bogus]\n",
+		"install:\n  unsafe: [unsafe_allow_runc, unsafe_allow_runc]\n",
+		"install:\n  unsafe: [private_code_unacknowledged]\n", // the factory's code, never the chart's (v4 D3)
+	} {
 		if _, err := Load(write(t, valid+body)); err == nil || !strings.Contains(err.Error(), "install.unsafe") {
 			t.Fatalf("%q: got %v, want an error naming install.unsafe", body, err)
 		}

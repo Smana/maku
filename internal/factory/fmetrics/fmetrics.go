@@ -168,6 +168,7 @@ type Set struct {
 	hardeningT5          metric.Int64Counter
 	sandboxPermission    metric.Int64Gauge
 	mergeGateRequired    metric.Int64Gauge
+	privateCode          metric.Int64Gauge
 	appPermissionMissing metric.Int64Gauge
 	mergeGateUnread      metric.Int64Counter
 	timeToPR             metric.Float64Histogram
@@ -402,6 +403,9 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
+	check(err)
+	s.privateCode, err = meter.Int64Gauge("agent_factory_private_code_unacknowledged",
+		metric.WithDescription("1 when a served repository's code is private, internal or of unread visibility and its Repository has no spec.privateCode.acknowledged, else 0, by repository, as the last fence pass read it (v4 D3; a warning in this release, a refusal from the next)."))
 	check(err)
 	s.appPermissionMissing, err = meter.Int64Gauge("agent_factory_github_app_permission_missing",
 		metric.WithDescription("1 for each permission an App's installation (agents or factory) lacks on a served repository, against the App's required set, under runTokens.perRun, as read when this replica became leader and never refreshed since; 0 when every served installation was read and grants it (D12)."))
@@ -1025,6 +1029,16 @@ func (s *Set) MergeGateRequired(ctx context.Context, repository string, required
 		v = 1
 	}
 	s.mergeGateRequired.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
+}
+
+// PrivateCodeUnacknowledged sets whether repository serves private code without
+// spec.privateCode.acknowledged (v4 D3).
+func (s *Set) PrivateCodeUnacknowledged(ctx context.Context, repository string, unacknowledged bool) {
+	v := int64(0)
+	if unacknowledged {
+		v = 1
+	}
+	s.privateCode.Record(ctx, v, metric.WithAttributes(attribute.String("repository", s.repository(repository))))
 }
 
 // githubApps is the App label's closed set (D12).

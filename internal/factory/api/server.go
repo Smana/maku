@@ -132,6 +132,8 @@ type Server struct {
 	// Writers is v2 D5's write check on a login, read for a factory/vouch label whose labeller is
 	// not a maintainer; nil vouches for maintainers' labels only.
 	Writers func(ctx context.Context, repository, login string) (bool, error)
+	// InstallUnsafe is the factory's banner codes (GET /v1/install, v4 D3); nil lists none.
+	InstallUnsafe func() []string
 	// forgeReads is forge_read's per-(run, target) answer cache (forgeReadTTL).
 	forgeReads *forgeReadCache
 }
@@ -205,6 +207,7 @@ func (s *Server) Handler() http.Handler {
 	}
 	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
 	mux.HandleFunc(catalogueRoute, s.catalogue)
+	mux.HandleFunc(InstallRoute, s.install) // v4 D3: the banner's factory codes
 	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
 		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
 		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
