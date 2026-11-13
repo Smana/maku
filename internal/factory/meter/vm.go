@@ -121,6 +121,7 @@ func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
 			continue
 		}
 		typ, typed := s.Metric["gen_ai_token_type"]
+		typ = normalizedType(typ)
 		if typed && !countedType(typ) {
 			continue // reasoning, a subset of output, and unknown types
 		}

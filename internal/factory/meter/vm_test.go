@@ -163,6 +163,51 @@ func TestCostFollowsTheGatewaySeries(t *testing.T) {
 	}
 }
 
+// GW10: agentgateway's own cache token types (input_cache_read, input_cache_write) price a run as
+// the relabelled names do, so a plain Prometheus scrape meters runs without ANR's relabel. The
+// reply's run is a portable one (maku.ogenki.io, run-<id>): read under that kind, skipped under the
+// XR's; reasoning is still not counted.
+func TestCostFollowsTheAgentgatewaySeries(t *testing.T) {
+	raw, err := os.ReadFile("testdata/query_reply_agentgateway.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	portable := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"}
+	series, err := parseSeries(raw, portable.RunSubject())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(series) != 4 {
+		t.Fatalf("series %+v: want input, output and the two cache types, never reasoning", series)
+	}
+	u := sumUsage(series)["cf4ato2x"]
+	if u.Input != 1_000_000 || u.CacheRead != 800_000 || u.CacheWrite != 50_000 || u.Output != 100_000 || !u.Typed {
+		t.Fatalf("usage %+v", u)
+	}
+	if m := u.Models["glm-5.3"]; m.CacheRead != 800_000 || m.CacheWrite != 50_000 {
+		t.Fatalf("by model %+v", u.Models)
+	}
+	p := config.Price{Input: 1.40, CacheRead: 0.26, CacheWrite: 1.40, Output: 4.40}
+	if got := cost(p, u); got != 928_000 {
+		t.Fatalf("cost = %d micro-USD, want 928000, as the relabelled reply", got)
+	}
+	xr, err := parseSeries(raw, runwatch.DefaultKind.RunSubject())
+	if err != nil || len(xr) != 0 {
+		t.Fatalf("the XR kind read a portable run's series: %+v %v", xr, err)
+	}
+}
+
+func TestVMNormalizesAgentgatewayTokenTypes(t *testing.T) {
+	for typ, want := range map[string]string{
+		"input": "input", "output": "output", "cached_input": "cached_input", "cache_creation_input": "cache_creation_input",
+		"input_cache_read": "cached_input", "input_cache_write": "cache_creation_input", "reasoning": "reasoning",
+	} {
+		if got := normalizedType(typ); got != want {
+			t.Errorf("%s: %s, want %s", typ, got, want)
+		}
+	}
+}
+
 // D9: the meter reads the run subjects of the kind it was given, not a process-wide one, and
 // refuses to start without one.
 func TestTheMeterReadsItsKindsSubjects(t *testing.T) {
