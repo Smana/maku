@@ -226,3 +226,35 @@ are set, and a render error naming both keys when only one is. Mutates block. */
 {{- fail (printf "%s.url and %s.apiKeyFile: set both or neither (broker.modelGateway fills both when neither is set): one alone would pair the gateway's token with another endpoint, or another key with the gateway" .key .key) -}}
 {{- end -}}
 {{- end -}}
+
+{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (the default),
+else the resolved gateway: url, ports, audiencePrefix, aliases. Read it with
+`include "ap.runModelGateway" . | fromJson`. An empty service is maku-gateway's default name, model-gateway,
+and an empty namespace the release's, which is where the umbrella runs it. */}}
+{{- define "ap.runModelGateway" -}}
+{{- $m := .Values.runController.model | default dict -}}
+{{- $mode := $m.mode | default "secret" -}}
+{{- if eq $mode "gateway" -}}
+{{- $g := $m.gateway | default dict -}}
+{{- $svc := $g.service | default "model-gateway" -}}
+{{- $ns := $g.namespace | default .Release.Namespace -}}
+{{- $prefix := $g.audiencePrefix | default "maku-gateway" -}}
+{{- $aliases := $g.aliases | default dict -}}
+{{- if not $aliases.public -}}
+{{- fail "runController.model.gateway.aliases.public is required with model.mode gateway: the aliases the gateway's public listener serves (maku-gateway aliases.public's keys)" -}}
+{{- end -}}
+{{- /* The prefix is pasted into the run-pod policy's CEL: only lowercase labels and dots. */ -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$" $prefix) -}}
+{{- fail (printf "runController.model.gateway.audiencePrefix %q must be dot-separated lowercase labels" $prefix) -}}
+{{- end -}}
+{{- $ports := $g.ports | default dict -}}
+{{- dict "url" (printf "http://%s.%s.svc.%s" $svc $ns .Values.clusterDomain)
+  "ports" (dict "public" ($ports.public | default 8080 | int) "internal" ($ports.internal | default 8081 | int))
+  "audiencePrefix" $prefix
+  "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list)) | toJson -}}
+{{- else if eq $mode "secret" -}}
+{}
+{{- else -}}
+{{- fail (printf "runController.model.mode %q must be secret or gateway" $mode) -}}
+{{- end -}}
+{{- end -}}

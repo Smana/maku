@@ -20,6 +20,8 @@
 # maku-gateway with source apiserver, and the probe's echo provider as a `custom` provider over http.
 # A run-like pod's token for maku-gateway.public.tier-light gets 200 on its alias, 403 on
 # tier-frontier's, and no token gets 401; the proxy's NetworkPolicy is enforced by k3s.
+# The leg layers values-demo-gateway.yaml: the run-controller runs in model.mode gateway, agents holds no
+# provider key, and a run the leg creates reaches its model through the gateway as its own ServiceAccount.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -40,7 +42,8 @@ NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 [[ -z $GATEWAY ]] || NAME="$NAME-gateway"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
-TAG=e2e
+# TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
+TAG="${TAG:-e2e}"
 NS=maku
 step() { printf '\n==> %s\n' "$*"; }
 die() { echo "FAIL: $*" >&2; exit 1; }
@@ -140,7 +143,6 @@ step "install"
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
 helm dependency build charts/agent-factory >/dev/null
 values=(-f charts/agent-factory/values-demo.yaml
-  --set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy
   --set demo.githubApp.id=123456 --set-file demo.githubApp.privateKey="$work/app.pem"
   --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true
   --set maku.broker.image.tag=$TAG --set maku.runController.image.tag=$TAG --set maku-factory.image.tag=$TAG
@@ -149,21 +151,24 @@ values=(-f charts/agent-factory/values-demo.yaml
   # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
-if [[ -n $GATEWAY ]]; then
+if [[ -z $GATEWAY ]]; then
+  values+=(--set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
+else
   issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
+  # The gateway demo (values-demo-gateway.yaml) with the probe's echo as its provider: the umbrella
+  # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
+  # characters on the wire), and the run-controller runs in model.mode gateway.
   cat >"$work/gateway.yaml" <<EOF
-agentgateway:
-  enabled: true
+maku:
+  runController:
+    model:
+      gateway:
+        aliases: {public: [agent-default, tier-frontier, tier-light], internal: []}
 maku-gateway:
-  enabled: true
-  replicas: 1
   identity:
     issuer: $issuer
-    jwks: {source: apiserver, allowAnonymousDiscovery: true}
   providers:
-    echo:
-      preset: custom
-      existingSecret: echo-api-key
+    demo:
       host: echo-llm.models.svc.cluster.local
       port: 8080
       path: /provider/v1/chat/completions
@@ -172,14 +177,16 @@ maku-gateway:
         peers: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: models}}}]
   aliases:
     public:
-      tier-light: {provider: echo, model: echo-light}
-      tier-frontier: {provider: echo, model: echo-frontier}
+      agent-default: {provider: demo, model: echo-default}
+      tier-light: {provider: demo, model: echo-light}
+      tier-frontier: {provider: demo, model: echo-frontier}
   modelCatalog:
     prices:
       echo-light: {input: 1.00, cacheRead: 0.10, output: 2.00}
 EOF
   # the gateway's caller below runs the echo image in agents: the run-pod policy must allow it
-  values+=(-f "$work/gateway.yaml" --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
+  values+=(-f charts/agent-factory/values-demo-gateway.yaml -f "$work/gateway.yaml" --set demo.model.apiKey=not-a-key
+    --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
 fi
 # Not --wait: Helm's status poller once held a fresh CI cluster's rooms CRD "InProgress" for 2m; Established is what matters.
 install_crds() {
@@ -222,7 +229,7 @@ else
   step "the CRD chart first, then the umbrella"
   install_crds
   if [[ -n $GATEWAY ]]; then
-    step "the gateway's prerequisites: Gateway API $GATEWAY_API, agentgateway's CRDs, the echo provider, its key Secret"
+    step "the gateway's prerequisites: Gateway API $GATEWAY_API, agentgateway's CRDs and the echo provider"
     curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
       kubectl apply --server-side -f - >/dev/null
     kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
@@ -262,8 +269,6 @@ spec:
   selector: {app.kubernetes.io/name: echo-llm}
   ports: [{name: http, port: 8080, targetPort: http}]
 EOF
-    # the provider's key, by name (D14): the echo ignores it, the gateway must find it
-    kubectl -n "$NS" create secret generic echo-api-key --from-literal=apiKey=not-a-key >/dev/null
   fi
   install_umbrella
 fi
@@ -545,13 +550,70 @@ EOF
   own=$(grep '^own ' <<<"$out") || die "the gateway caller printed nothing (phase '$phase')"
   [[ $own == "own 200 "* ]] || { kubectl -n "$NS" logs deploy/model-gateway --tail=40 >&2 || true; kubectl -n "$NS" logs deploy/af-agentgateway --tail=40 >&2 || true; die "the run-like token was not served on its alias: $own"; }
   report=$(sed -E 's/^own 200 //' <<<"$own" | jq -r '.choices[0].message.content')
-  # the provider sees the gateway's key from echo-api-key ("Bearer not-a-key", 16 characters), never the run's token
+  # the provider sees the gateway's key from demo-model ("Bearer not-a-key", 16 characters), never the run's token
   jq -e '.model == "echo-light" and .path == "/provider/v1/chat/completions" and .authorization == "len=16" and .["x-ar-agent"] == "system:serviceaccount:agents:run-gwprobe2"' <<<"$report" >/dev/null ||
     die "the provider saw the wrong request: $report"
   grep -q '^other 403 ' <<<"$out" || die "the tier-light token was not refused 403 on tier-frontier: $(grep '^other' <<<"$out")"
   grep -q '^none 401 ' <<<"$out" || die "a call without a token was not refused 401: $(grep '^none' <<<"$out")"
   kubectl -n agents delete pod gw-caller --now --wait=false >/dev/null 2>&1 || true
   echo "ok: 200 on its alias (model echo-light, sub run-gwprobe2, the provider key from its Secret, never the token), 403 on another alias, 401 without a token"
+
+  step "a run in model.mode gateway: its own token, no provider key in the runs namespace"
+  ! kubectl -n agents get secret agent-model >/dev/null 2>&1 || die "agent-model exists in agents: model.mode gateway puts no provider key there"
+  ! kubectl -n agents get secret -o name | grep -v -E '/(agent-git|agent-git-read|run-[a-z2-7]{8}-git)$' || die "a Secret other than git tokens exists in agents"
+  # A run created as the factory creates it (the dummy App starts none, and only the factory may create
+  # AgentRuns). Its token Secret is written as the minter writes it, with a dummy token: the harness
+  # clones a public repository anonymously, then calls its model, agent-default, through the gateway.
+  run=run-gwrunab2
+  kubectl apply --as="$sa:agent-factory" -f - >/dev/null <<EOF
+apiVersion: maku.ogenki.io/v1alpha1
+kind: AgentRun
+metadata: {name: $run, namespace: agents}
+spec:
+  role: implementer
+  repository: ${GATEWAY_RUN_REPO:-Smana/maku-demo}
+  principal: system:factory
+  dataClass: public
+  model: agent-default
+  task: {text: "Reply with one short sentence; change nothing."}
+  budget: {maxMinutes: 10}
+EOF
+  uid=$(kubectl -n agents get agentruns.maku.ogenki.io "$run" -o jsonpath='{.metadata.uid}')
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $run-git
+  namespace: agents
+  labels: {app.kubernetes.io/managed-by: maku-factory, maku.ogenki.io/run: $run}
+  annotations: {maku.ogenki.io/expires-at: "$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"}
+  ownerReferences: [{apiVersion: maku.ogenki.io/v1alpha1, kind: AgentRun, name: $run, uid: $uid}]
+stringData: {token: dummy-not-a-token}
+EOF
+  for _ in $(seq 90); do kubectl -n agents get pod "$run" >/dev/null 2>&1 && break; sleep 2; done
+  kubectl -n agents get pod "$run" >/dev/null 2>&1 || { kubectl -n agents get agentrun "$run" -o yaml >&2; die "the run-controller created no pod for $run"; }
+  pod=$(kubectl -n agents get pod "$run" -o json)
+  jq -e '[.spec.volumes[] | select(.secret.secretName == "agent-model")] | length == 0' <<<"$pod" >/dev/null || die "the run pod mounts agent-model"
+  jq -e '[.spec.volumes[] | select(.name == "model-token") | .projected.sources[].serviceAccountToken | .audience + " " + (.expirationSeconds | tostring)] == ["maku-gateway.public.agent-default 1200"]' <<<"$pod" >/dev/null ||
+    die "the run pod's token is not maku-gateway.public.agent-default for the deadline plus 600 s: $(jq -c '.spec.volumes' <<<"$pod")"
+  jq -e '[.spec.containers[0].env[] | select(.name == "LLM_BASE_URL" or .name == "LLM_API_KEY_FILE" or .name == "MODEL") | .value] == ["agent-default", "http://model-gateway.'"$NS"'.svc.cluster.local:8080/m/agent-default/v1", "/run/agent/model/token"]' <<<"$pod" >/dev/null ||
+    die "the run pod's model env is wrong: $(jq -c '[.spec.containers[0].env[] | select(.name | test("MODEL|LLM_"))]' <<<"$pod")"
+  echo "ok: the run pod holds its own token (maku-gateway.public.agent-default, 1200 s) and no model Secret"
+  # The harness's first model call: the provider reports the verified subject the gateway forwarded.
+  sub="system:serviceaccount:agents:$run"
+  seen=0
+  for _ in $(seq 150); do
+    if kubectl -n models logs deploy/echo-llm 2>/dev/null | jq -c "select(.[\"x-ar-agent\"] == \"$sub\")" 2>/dev/null | grep -q .; then seen=1; break; fi
+    sleep 4
+  done
+  ((seen)) || { kubectl -n agents logs "$run" -c harness --tail=60 >&2 || true; kubectl -n "$NS" logs deploy/model-gateway --tail=40 >&2 || true; die "the run's harness never reached its model through the gateway as $sub"; }
+  kubectl -n models logs deploy/echo-llm | jq -c "select(.[\"x-ar-agent\"] == \"$sub\")" | head -1
+  # The gateway's access log names the run by its token's subject (x_ar_agent), the field ANR's dashboards read.
+  kubectl -n "$NS" logs deploy/model-gateway --tail=400 | grep -F "$sub" | grep -qF x_ar_agent || die "the gateway's access log has no x_ar_agent=$sub"
+  kubectl -n "$NS" logs deploy/model-gateway --tail=400 | grep -F "$sub" | head -1 | cut -c1-400
+  phase=$(kubectl -n agents get agentrun "$run" -o jsonpath='{.status.phase}')
+  echo "ok: the run reached its model through the gateway as $sub (run phase now '$phase'); agents holds no provider key"
+  kubectl -n agents delete agentrun "$run" --wait=false >/dev/null 2>&1 || true
 fi
 
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"

@@ -127,6 +127,61 @@ func TestInvalid(t *testing.T) {
 	}
 }
 
+// gatewayConfig is goodConfig in model.mode gateway (v4 step 4, GW3): no model Secret.
+var gatewayConfig = strings.Replace(goodConfig, "modelSecret: agent-model\n", "", 1) + `model:
+  mode: gateway
+  gateway:
+    url: http://model-gateway.maku.svc.cluster.local
+    serviceAccount: {namespace: maku, name: run-controller}
+    aliases:
+      public: [agent-default, tier-light, tier-standard, kimi-frontier]
+      internal: [tier-standard]
+`
+
+func gatewayTestConfig(t *testing.T) Config {
+	t.Helper()
+	c, err := cfgFrom(t, gatewayConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+func TestLoadConfigModelMode(t *testing.T) {
+	c := testConfig(t)
+	if c.Model.Mode != ModelModeSecret || c.ModelSecret != "agent-model" {
+		t.Fatalf("default: mode %q modelSecret %q, want secret and agent-model", c.Model.Mode, c.ModelSecret)
+	}
+	g := gatewayTestConfig(t)
+	if g.Model.Mode != ModelModeGateway || g.Model.Gateway.Ports.Public != 8080 || g.Model.Gateway.Ports.Internal != 8081 ||
+		g.Model.Gateway.AudiencePrefix != "maku-gateway" {
+		t.Fatalf("gateway defaults: %+v", g.Model)
+	}
+	for name, tc := range map[string]struct{ body, want string }{
+		"both":         {gatewayConfig + "modelSecret: agent-model\n", "model.mode gateway and modelSecret: choose one (the gateway holds the keys)"},
+		"no url":       {strings.Replace(gatewayConfig, "    url: http://model-gateway.maku.svc.cluster.local\n", "", 1), "model.gateway.url"},
+		"https":        {strings.Replace(gatewayConfig, "http://model-gateway", "https://model-gateway", 1), "model.gateway.url"},
+		"short svc":    {strings.Replace(gatewayConfig, ".maku.svc.cluster.local", ".maku.svc", 1), "model.gateway.url"},
+		"public host":  {strings.Replace(gatewayConfig, "model-gateway.maku.svc.cluster.local", "gw.example.com", 1), "model.gateway.url"},
+		"url port":     {strings.Replace(gatewayConfig, "cluster.local\n", "cluster.local:8080\n", 1), "model.gateway.url"},
+		"url path":     {strings.Replace(gatewayConfig, "cluster.local\n", "cluster.local/v1\n", 1), "model.gateway.url"},
+		"no aliases":   {strings.Replace(gatewayConfig, "      public: [agent-default, tier-light, tier-standard, kimi-frontier]\n", "", 1), "model.gateway.aliases.public"},
+		"bad alias":    {strings.Replace(gatewayConfig, "[tier-standard]", "[Tier_X]", 1), "model.gateway.aliases.internal"},
+		"bad port":     {gatewayConfig + "    ports: {public: 70000}\n", "model.gateway.ports.public"},
+		"no sa":        {strings.Replace(gatewayConfig, "    serviceAccount: {namespace: maku, name: run-controller}\n", "", 1), "model.gateway.serviceAccount"},
+		"bad prefix":   {gatewayConfig + "    audiencePrefix: \"a b\"\n", "model.gateway.audiencePrefix"},
+		"bad mode":     {goodConfig + "model: {mode: direct}\n", "model.mode"},
+		"secret, none": {strings.Replace(goodConfig, "modelSecret: agent-model\n", "", 1), "modelSecret is required"},
+		"secret with gateway": {goodConfig + "model:\n  gateway:\n    url: http://model-gateway.maku.svc.cluster.local\n",
+			"model.gateway is set but model.mode is secret"},
+	} {
+		_, err := cfgFrom(t, tc.body)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s: err %v, want it to mention %q", name, err, tc.want)
+		}
+	}
+}
+
 func TestModelFrom(t *testing.T) {
 	m, err := ModelFrom(map[string][]byte{"api_key": []byte("k"), "model": []byte("claude-sonnet-5-5")})
 	if err != nil || m.BaseURL != "https://api.anthropic.com/v1" || m.Host != "api.anthropic.com" || m.Port != 443 {

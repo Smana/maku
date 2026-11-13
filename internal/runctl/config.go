@@ -6,6 +6,7 @@
 package runctl
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"math"
@@ -13,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -59,9 +61,13 @@ type Config struct {
 	// EgressProxy is the in-cluster CONNECT proxy, required in kubernetes mode.
 	EgressProxy EgressProxy `json:"egressProxy,omitempty"`
 	// DNS selects the cluster DNS pods a kubernetes-mode run's NetworkPolicy opens on 53.
-	DNS         DNS    `json:"dns,omitempty"`
-	ModelSecret string `json:"modelSecret"`
-	GitSecret   string `json:"gitSecret"`
+	DNS DNS `json:"dns,omitempty"`
+	// ModelSecret holds the provider key and model the harness calls directly (model.mode secret, the
+	// default). It is refused in gateway mode, where the gateway holds the keys.
+	ModelSecret string `json:"modelSecret,omitempty"`
+	// Model is how runs reach a model: secret (ModelSecret) or gateway (v4 step 4, D7).
+	Model     ModelConfig `json:"model,omitzero"`
+	GitSecret string      `json:"gitSecret"`
 	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
 	// write token implementer and tester runs mount. Unset, those roles are refused unless
 	// UnsafeSharedGitToken lets them share gitSecret, as a laptop's one PAT does.
@@ -94,6 +100,120 @@ type EgressProxy struct {
 	Namespace string            `json:"namespace"`
 	Labels    map[string]string `json:"labels"`
 	DenyCIDRs []string          `json:"denyCIDRs,omitempty"`
+}
+
+// The values of ModelConfig.Mode.
+const (
+	// ModelModeSecret: the harness calls the provider named by modelSecret with its key (3a R4).
+	ModelModeSecret = "secret"
+	// ModelModeGateway: the harness calls the model gateway with the run's own projected token, on its
+	// data class's listener and its claim's alias (v4 step 4, GW3). No provider key enters the pod.
+	ModelModeGateway = "gateway"
+)
+
+// ModelConfig is the run-controller's model mode.
+type ModelConfig struct {
+	Mode    string  `json:"mode,omitempty"`
+	Gateway Gateway `json:"gateway,omitzero"`
+}
+
+// Gateway is the model gateway (agentgateway, maku-gateway) that gateway-mode runs call.
+type Gateway struct {
+	// URL is http://<service>.<namespace>.svc.<cluster-domain>, with no port or path: the port is the
+	// run's data class's listener, the path its alias.
+	URL   string       `json:"url,omitempty"`
+	Ports GatewayPorts `json:"ports,omitzero"`
+	// AudiencePrefix starts every token audience: <prefix>.<dataClass>.<alias>.
+	AudiencePrefix string `json:"audiencePrefix,omitempty"`
+	// Aliases are the aliases each listener serves (maku-gateway aliases.<class>'s keys): a run whose
+	// alias its listener does not serve is refused before its pod exists.
+	Aliases GatewayAliases `json:"aliases,omitzero"`
+	// ServiceAccount is the run-controller's own, which the gateway-token-ttl preflight requests a
+	// token for, at the longest run's lifetime (GW9).
+	ServiceAccount ServiceAccountRef `json:"serviceAccount,omitzero"`
+}
+
+// ServiceAccountRef names a ServiceAccount.
+type ServiceAccountRef struct {
+	Namespace string `json:"namespace,omitempty"`
+	Name      string `json:"name,omitempty"`
+}
+
+// GatewayPorts are the listeners' ports, one per data class.
+type GatewayPorts struct {
+	Public   int `json:"public,omitempty"`
+	Internal int `json:"internal,omitempty"`
+}
+
+// GatewayAliases are the aliases served per data class.
+type GatewayAliases struct {
+	Public   []string `json:"public,omitempty"`
+	Internal []string `json:"internal,omitempty"`
+}
+
+// Gateway reports whether runs call the model gateway.
+func (c Config) Gateway() bool { return c.Model.Mode == ModelModeGateway }
+
+// aliasRE is a gateway alias: a path segment, and an audience's last label.
+var aliasRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
+
+// audiencePrefixRE is dot-separated alias-like labels.
+var audiencePrefixRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$`)
+
+// model checks the model mode: modelSecret in secret mode; in gateway mode, the gateway's in-cluster
+// URL, its ports, its audience prefix and its aliases, and no modelSecret.
+func (c Config) model() []error {
+	g := c.Model.Gateway
+	switch c.Model.Mode {
+	case ModelModeSecret:
+		var errs []error
+		if c.ModelSecret == "" {
+			errs = append(errs, errors.New("modelSecret is required"))
+		}
+		if !reflect.ValueOf(g).IsZero() {
+			errs = append(errs, errors.New("model.gateway is set but model.mode is secret: set model.mode gateway, or remove model.gateway"))
+		}
+		return errs
+	case ModelModeGateway:
+	default:
+		return []error{fmt.Errorf("model.mode %q must be %q or %q", c.Model.Mode, ModelModeSecret, ModelModeGateway)}
+	}
+	var errs []error
+	if c.ModelSecret != "" {
+		errs = append(errs, errors.New("model.mode gateway and modelSecret: choose one (the gateway holds the keys)"))
+	}
+	u, err := url.Parse(g.URL)
+	if err != nil || u.Scheme != "http" || u.Port() != "" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || !brokerHostRE.MatchString(u.Hostname()) {
+		errs = append(errs, fmt.Errorf("model.gateway.url %q must be http://<service>.<namespace>.svc.<cluster-domain>, with no port or path: the run's data class picks the port", g.URL))
+	}
+	for _, p := range []struct {
+		class string
+		port  int
+	}{{"public", g.Ports.Public}, {"internal", g.Ports.Internal}} {
+		if !validPort(strconv.Itoa(p.port)) {
+			errs = append(errs, fmt.Errorf("model.gateway.ports.%s %d is not 1-65535", p.class, p.port))
+		}
+	}
+	if !audiencePrefixRE.MatchString(g.AudiencePrefix) {
+		errs = append(errs, fmt.Errorf("model.gateway.audiencePrefix %q must be dot-separated lowercase labels", g.AudiencePrefix))
+	}
+	if g.ServiceAccount.Namespace == "" || g.ServiceAccount.Name == "" {
+		errs = append(errs, errors.New("model.gateway.serviceAccount.namespace and .name are required: the run-controller's own ServiceAccount, for the gateway-token-ttl preflight"))
+	}
+	if len(g.Aliases.Public) == 0 {
+		errs = append(errs, errors.New("model.gateway.aliases.public is required: the aliases the gateway's public listener serves"))
+	}
+	for _, cl := range []struct {
+		class   string
+		aliases []string
+	}{{"public", g.Aliases.Public}, {"internal", g.Aliases.Internal}} {
+		for _, a := range cl.aliases {
+			if !aliasRE.MatchString(a) {
+				errs = append(errs, fmt.Errorf("model.gateway.aliases.%s: %q is not an alias", cl.class, a))
+			}
+		}
+	}
+	return errs
 }
 
 // Port is URL's port (validated at load).
@@ -158,6 +278,12 @@ func LoadConfig(path string) (Config, error) {
 	if c.DNS.Namespace == "" && len(c.DNS.Labels) == 0 {
 		c.DNS = DNS{Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}}
 	}
+	c.Model.Mode = cmp.Or(c.Model.Mode, ModelModeSecret)
+	if c.Gateway() {
+		g := &c.Model.Gateway
+		g.Ports.Public, g.Ports.Internal = cmp.Or(g.Ports.Public, 8080), cmp.Or(g.Ports.Internal, 8081)
+		g.AudiencePrefix = cmp.Or(g.AudiencePrefix, "maku-gateway")
+	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -179,7 +305,7 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("networkPolicy %q must be %q, %q or %q", c.NetworkPolicy, NetworkPolicyCilium, NetworkPolicyKubernetes, NetworkPolicyNone))
 	}
 	req("namespace", c.Namespace)
-	req("modelSecret", c.ModelSecret)
+	errs = append(errs, c.model()...)
 	switch c.GitTokens {
 	case GitTokensShared:
 		req("gitSecret", c.GitSecret)
@@ -299,10 +425,17 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 		return fmt.Sprintf("runs live in namespace %q", c.Namespace)
 	case r.Spec.Suspendable:
 		return "spec.suspendable runs need cloud-native-ref's runtime"
-	case r.Spec.DataClass == "internal":
+	case r.Spec.DataClass == "internal" && !c.Gateway():
 		return "spec.dataClass internal needs the model gateway, which this runtime does not have"
+	case r.Spec.DataClass == "internal" && len(c.Model.Gateway.Aliases.Internal) == 0:
+		return "spec.dataClass internal needs the model gateway's internal listener, which this runtime does not serve: set model.gateway.aliases.internal"
 	case c.RuntimeClassName == "" && !c.AllowUnsandboxed:
 		return "runtimeClassName is empty and allowUnsandboxed is false: refusing to run unsandboxed"
+	}
+	if c.Gateway() {
+		if why := c.gatewayInvalid(r); why != "" {
+			return why
+		}
 	}
 	if !c.PerRun() && readOnly(r.Spec.Role) && c.GitReadSecret == "" && !c.UnsafeSharedGitToken {
 		return fmt.Sprintf("role %s needs a read-only token: set runController.gitReadSecret (or unsafeSharedGitToken on a laptop)", r.Spec.Role)
@@ -375,9 +508,63 @@ func addUnique(list []string, h string) []string {
 
 // Model is the provider the harness calls directly (3a R4), from modelSecret. Judge is the
 // optional judge_model: the completion judge's model on the same endpoint, "" for the run's own.
+// In gateway mode (GatewayModel), Name and Judge are the run's aliases, and JudgeBaseURL the judge
+// alias's path on the same listener.
 type Model struct {
 	BaseURL, Name, Host, Judge string
+	JudgeBaseURL               string
 	Port                       int
+}
+
+// defaultAlias is spec.model's CRD default.
+const defaultAlias = "agent-default"
+
+// class is the run's data class, public unless internal: the gateway listener and the audience's middle label.
+func class(r *v1alpha1.AgentRun) string {
+	if r.Spec.DataClass == "internal" {
+		return "internal"
+	}
+	return "public"
+}
+
+// alias is the run's model alias, its CRD default when unset.
+func alias(r *v1alpha1.AgentRun) string { return cmp.Or(r.Spec.Model, defaultAlias) }
+
+// GatewayModel is a gateway-mode run's model: the gateway's listener for the run's data class, under
+// /m/<alias>/v1 for the run's alias and its judge's (GW5). Host and Port are the listener's, so the
+// run's policies admit the gateway's namespace on it as for any in-cluster model.
+func (c Config) GatewayModel(r *v1alpha1.AgentRun) Model {
+	g := c.Model.Gateway
+	u, _ := url.Parse(g.URL) // validated at load
+	port := g.Ports.Public
+	if class(r) == "internal" {
+		port = g.Ports.Internal
+	}
+	base := fmt.Sprintf("http://%s:%d/m/", u.Hostname(), port)
+	m := Model{BaseURL: base + alias(r) + "/v1", Name: alias(r), Host: u.Hostname(), Port: port}
+	if j := r.Spec.Loop.JudgeModel; j != "" {
+		m.Judge, m.JudgeBaseURL = j, base+j+"/v1"
+	}
+	return m
+}
+
+// audience is a gateway token's audience for alias on the run's listener: <prefix>.<class>.<alias> (GW3).
+func (c Config) audience(r *v1alpha1.AgentRun, alias string) string {
+	return c.Model.Gateway.AudiencePrefix + "." + class(r) + "." + alias
+}
+
+// gatewayInvalid refuses a gateway-mode run whose alias, or judge alias, its listener does not serve (GW6).
+func (c Config) gatewayInvalid(r *v1alpha1.AgentRun) string {
+	served := c.Model.Gateway.Aliases.Public
+	if class(r) == "internal" {
+		served = c.Model.Gateway.Aliases.Internal
+	}
+	for _, a := range []struct{ field, alias string }{{"spec.model", alias(r)}, {"spec.loop.judgeModel", r.Spec.Loop.JudgeModel}} {
+		if a.alias != "" && !slices.Contains(served, a.alias) {
+			return fmt.Sprintf("%s %s is not served on the %s listener (maku-gateway aliases.%s)", a.field, a.alias, class(r), class(r))
+		}
+	}
+	return ""
 }
 
 const defaultBaseURL = "https://api.anthropic.com/v1"
