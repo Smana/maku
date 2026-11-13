@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -175,7 +176,7 @@ func TestMakuConfigure(t *testing.T) {
 	var cfg maku.Config
 	fi, _ := os.Stat(filepath.Join(dir, "config.json"))
 	if err := maku.LoadJSON(filepath.Join(dir, "config.json"), &cfg); err != nil || fi.Mode().Perm() != 0o600 ||
-		cfg != (maku.Config{URL: "https://rooms.priv.example", Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
+		!reflect.DeepEqual(cfg, maku.Config{URL: "https://rooms.priv.example", Issuer: "https://auth.example", ClientID: "cli", ProjectID: "29184"}) {
 		t.Fatalf("%+v %v %v", cfg, err, fi.Mode().Perm())
 	}
 	if err := r.Run(t.Context(), []string{"token"}); err == nil || !strings.Contains(err.Error(), "maku login") {

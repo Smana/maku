@@ -66,8 +66,19 @@ func Discover(ctx context.Context, hc *http.Client, issuer string) (Discovery, e
 	if !httpsURL(d.JWKSURI) {
 		return Discovery{}, errors.New("discovery: jwks_uri is not an absolute https:// URL")
 	}
+	// A client sends a refresh token, a device code or a client secret to these: never in clear.
+	for name, ep := range map[string]string{"token_endpoint": d.TokenEndpoint,
+		"device_authorization_endpoint": d.DeviceAuthorizationEndpoint, "authorization_endpoint": d.AuthorizationEndpoint} {
+		if ep != "" && !httpsURL(ep) {
+			return Discovery{}, fmt.Errorf("discovery: %s is not an absolute https:// URL", name)
+		}
+	}
 	return d, nil
 }
+
+// HTTPSEndpoint reports whether raw is an absolute https:// URL with no userinfo: what a client
+// checks again before it sends a credential to an endpoint it read or stored.
+func HTTPSEndpoint(raw string) bool { return httpsURL(raw) }
 
 func httpsURL(raw string) bool {
 	u, err := url.Parse(raw)

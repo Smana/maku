@@ -95,6 +95,9 @@ spec:
             {{- if $b.factoryCA.secretName }}
             - {name: factory-ca, mountPath: /etc/room-broker/factory-ca, readOnly: true}
             {{- end }}
+            {{- if dig "oidc" "existingSecret" "" $b }}
+            - {name: oidc, mountPath: /etc/room-broker/oidc, readOnly: true}
+            {{- end }}
             {{- if $b.database.caSecret }}
             - {name: db-ca, mountPath: /etc/room-broker/db-ca, readOnly: true}
             {{- end }}
@@ -117,6 +120,11 @@ spec:
         {{- if $b.factoryCA.secretName }}
         - name: factory-ca
           secret: {secretName: {{ $b.factoryCA.secretName }}, items: [{key: ca.crt, path: ca.crt}]}
+        {{- end }}
+        {{- with dig "oidc" "existingSecret" "" $b }}
+        # The OIDC client ids (v4 D8), read at use: a rotated Secret needs no restart.
+        - name: oidc
+          secret: {secretName: {{ . }}, defaultMode: 0440}
         {{- end }}
         {{- with $b.database.caSecret }}
         # The database's CA (broker.database.caSecret), for sslmode=verify-full in the DSNs.

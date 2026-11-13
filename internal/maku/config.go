@@ -16,6 +16,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/Smana/maku/internal/authn"
 )
 
 // The human listener's modes, as the broker reports one at /.well-known/roomctl: the same two values
@@ -29,15 +31,52 @@ const (
 // (GET /api/roomctl) shows every value.
 type Config struct {
 	URL       string `json:"url"`       // the rooms host, https://rooms.<private domain>
-	Issuer    string `json:"issuer"`    // ZITADEL
+	Issuer    string `json:"issuer"`    // the OIDC issuer (ZITADEL under the zitadel preset)
 	ClientID  string `json:"clientID"`  // the maku native app
-	ProjectID string `json:"projectID"` // a token's aud must hold it, and ZITADEL adds it only when asked
+	ProjectID string `json:"projectID"` // zitadel: a token's aud must hold it, and ZITADEL adds it only when asked
 	// FactoryLogin is the factory App's GitHub login. need_answer trusts public bounce comments from
 	// this login alone; empty disables that fallback while leaving authorized room_brief questions available.
 	FactoryLogin string `json:"factoryLogin,omitempty"`
 	// HumanMode is the broker's human listener mode as discovery reported it: "local" means no IdP and
 	// no token, and the three values above are empty. Empty is OIDC, an older broker's answer.
 	HumanMode string `json:"humanMode,omitempty"`
+	// Preset, TokenUse, Scopes and Audience are the broker's human block as /.well-known/roomctl
+	// reports it (v4 D8). An empty preset is zitadel: an older broker's answer, and today's config.
+	Preset   string   `json:"preset,omitempty"`
+	TokenUse string   `json:"tokenUse,omitempty"`
+	Scopes   []string `json:"scopes,omitempty"`
+	Audience string   `json:"audience,omitempty"`
+	// DeviceAuthURL and TokenURL are the issuer's endpoints, read from its discovery document by
+	// configure. Empty, zitadel uses its fixed paths and generic discovers them at login.
+	DeviceAuthURL string `json:"deviceAuthorizationEndpoint,omitempty"`
+	TokenURL      string `json:"tokenEndpoint,omitempty"`
+}
+
+// The broker's presets and token uses, as /.well-known/roomctl reports them (v4 D8).
+const (
+	PresetZITADEL  = "zitadel"
+	PresetGeneric  = "generic"
+	TokenUseID     = "id"
+	TokenUseAccess = "access"
+)
+
+// EffectivePreset is the configured preset; an empty one is zitadel.
+func (c Config) EffectivePreset() string {
+	if c.Preset == "" {
+		return PresetZITADEL
+	}
+	return c.Preset
+}
+
+// EffectiveTokenUse is the configured token use, else the preset's: zitadel's access, generic's id.
+func (c Config) EffectiveTokenUse() string {
+	switch {
+	case c.TokenUse != "":
+		return c.TokenUse
+	case c.EffectivePreset() == PresetGeneric:
+		return TokenUseID
+	}
+	return TokenUseAccess
 }
 
 // Validate refuses a plain-http URL, which would carry the bearer token in clear, and a missing id.
@@ -60,8 +99,25 @@ func (c Config) Validate() error {
 				return fmt.Errorf("%s %q is not an https URL", name, raw)
 			}
 		}
-		if c.ClientID == "" || c.ProjectID == "" {
-			return errors.New("the client id and the project id are both required")
+		switch c.EffectivePreset() {
+		case PresetZITADEL:
+			if c.ClientID == "" || c.ProjectID == "" {
+				return errors.New("the client id and the project id are both required")
+			}
+		case PresetGeneric:
+			if c.ClientID == "" {
+				return errors.New("the client id is required")
+			}
+		default:
+			return fmt.Errorf("preset %q is not zitadel or generic: upgrade maku", c.Preset)
+		}
+		for name, ep := range map[string]string{"deviceAuthorizationEndpoint": c.DeviceAuthURL, "tokenEndpoint": c.TokenURL} {
+			if ep != "" && !authn.HTTPSEndpoint(ep) {
+				return fmt.Errorf("%s %q is not an https URL: run maku configure again", name, ep)
+			}
+		}
+		if u := c.EffectiveTokenUse(); u != TokenUseID && u != TokenUseAccess {
+			return fmt.Errorf("tokenUse %q is not id or access: upgrade maku", c.TokenUse)
 		}
 		return nil
 	default:

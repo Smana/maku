@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"errors"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -192,6 +193,12 @@ func TestTheShadowRecordCarriesItsHead(t *testing.T) {
 	}
 }
 
+// recordHas is whether comment c carries a record whose fields before reviewer= end with tail; a
+// declared class's resolved= (B13) may sit between them.
+func recordHas(c, tail string) bool {
+	return regexp.MustCompile(regexp.QuoteMeta(tail) + `( resolved=[0-9a-f]{12})? reviewer=`).MatchString(c)
+}
+
 // AM8: the comment a decision posts carries its record on a line of its own (R-m11), the would-arm,
 // the hand-off and the arm alike, and leaves the event's marker as the tally reads it. Counts of a
 // diff the decision did not read print "-" (R-m7); a diff read keeps them, steering_path's included.
@@ -231,7 +238,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 			classes(g, config.Class{Shadow: true})
 			g.f.SetChecks(12, green("PENDING"))
 			return g
-		}, "decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
+		}, "class=docs-links decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
 		{"steering_path, diff read", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
@@ -256,8 +263,15 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 			var logs bytes.Buffer
 			g.r.Log = slog.New(slog.NewTextHandler(&logs, nil))
 			g.reconcile(t, "3buqdlot", 1)
-			if c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n"); !strings.Contains(c, tc.want) {
-				t.Fatalf("%q\nwant %q", c, tc.want)
+			// B13: a declared class's record names its resolved hash, before reviewer=.
+			want := tc.want
+			if m := regexp.MustCompile(`class=(\S+)`).FindStringSubmatch(want); m != nil {
+				if cl, ok := g.r.Cfg.Current().RepositoryFor(awaiting().Spec.Repository).Class(m[1]); ok {
+					want = strings.Replace(want, " reviewer=", " resolved="+config.ShortHash(config.ResolvedHash(cl))+" reviewer=", 1)
+				}
+			}
+			if c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n"); !strings.Contains(c, want) {
+				t.Fatalf("%q\nwant %q", c, want)
 			}
 			// The same record, as the log line every non-wait decision writes.
 			if l := logs.String(); !strings.Contains(l, `msg="merge decision"`) || !strings.Contains(l, "head=abc") || !strings.Contains(l, "rows=") {

@@ -4,6 +4,7 @@ package catalogue
 
 import (
 	"encoding/json"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -195,8 +196,23 @@ func TestBuildGenerations(t *testing.T) {
 	cfg.Generations = config.Generations{Factory: 12, Repos: map[string]config.RepoGenerations{
 		"smana/cloud-native-ref": {Repository: 4, MergePolicy: 9}}}
 	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
-	if c.Generations != (Generations{Factory: 12, Repository: 4, MergePolicy: 9}) {
+	if !reflect.DeepEqual(c.Generations, Generations{Factory: 12, Repository: 4, MergePolicy: 9}) {
 		t.Fatalf("generations = %+v", c.Generations)
+	}
+}
+
+// B19, plan PR1: a bound repository's generations are per class; mergePolicy is 0.
+func TestBuildGenerationsPerClass(t *testing.T) {
+	cfg := live()
+	cfg.Generations = config.Generations{Factory: 12, Repos: map[string]config.RepoGenerations{
+		"smana/cloud-native-ref": {Repository: 4, Classes: map[string]config.ClassGeneration{"dead-links": {Policy: 4, PolicyName: "dead-links"}}}}}
+	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
+	if c.Generations.MergePolicy != 0 || c.Generations.MergePolicies["dead-links"] != 4 || len(c.Generations.MergePolicies) != 1 {
+		t.Fatalf("generations = %+v", c.Generations)
+	}
+	b, err := json.Marshal(c.Generations)
+	if err != nil || !strings.Contains(string(b), `"mergePolicies":{"dead-links":4}`) {
+		t.Fatalf("%s %v", b, err)
 	}
 }
 

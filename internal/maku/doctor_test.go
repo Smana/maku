@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
 	"sync"
@@ -94,7 +95,7 @@ func TestDiscoverReadsTheBrokersPublicEndpoint(t *testing.T) {
 		t.Fatalf("%v at %q", err, path)
 	}
 	// url is the one asked for, not the broker's own idea of it: a proxy may differ.
-	if got != (Config{URL: srv.URL, Issuer: "https://auth.example", ClientID: "3434@agents", ProjectID: "29184"}) {
+	if !reflect.DeepEqual(got, Config{URL: srv.URL, Issuer: "https://auth.example", ClientID: "3434@agents", ProjectID: "29184"}) {
 		t.Fatalf("%+v", got)
 	}
 
@@ -489,7 +490,7 @@ func TestDiscoverLocal(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	got, err := Discover(t.Context(), srv.Client(), srv.URL+"/")
-	if err != nil || got != (Config{URL: srv.URL, HumanMode: HumanModeLocal}) {
+	if err != nil || !reflect.DeepEqual(got, Config{URL: srv.URL, HumanMode: HumanModeLocal}) {
 		t.Fatalf("%+v %v", got, err)
 	}
 

@@ -23,9 +23,13 @@ type Resolved struct {
 	// Branches are Class with each branch of any added, one variant per branch; nil without any.
 	Branches []config.Class
 	Approval []string // requiresApproval's paths
-	Profile  config.HarnessProfile
+	// Approvals are requiresApproval's leaves as written: what a grant's hash reads, so the class
+	// and its in-sync central one hash alike (B13).
+	Approvals []config.ApprovalLeaf
+	Profile   config.HarnessProfile
 	// PolicyGeneration is a binding's: the generation of the MergePolicy its class was resolved
-	// from, the last resolved one's when that one serves (B9, B12); 0 for a class-shape file.
+	// from, the last resolved one's when that one serves (B9, B12); 0 for a class the file defines
+	// itself.
 	PolicyGeneration int64
 }
 
@@ -93,6 +97,7 @@ func Resolve(name string, p ClassPolicy, c *config.Config) (Resolved, error) {
 	r := Resolved{Profile: profile}
 	for _, a := range p.RequiresApproval {
 		r.Approval = append(r.Approval, a.ChangedFiles...)
+		r.Approvals = append(r.Approvals, config.ApprovalLeaf{ChangedFiles: slices.Clone(a.ChangedFiles)})
 	}
 	for _, branch := range p.Conditions.Any {
 		v := clone(cl)
@@ -323,6 +328,7 @@ func resolvedOf(cl config.Class) Resolved {
 	r := Resolved{Class: cl}
 	for _, a := range cl.RequiresApproval {
 		r.Approval = append(r.Approval, a.ChangedFiles...)
+		r.Approvals = append(r.Approvals, config.ApprovalLeaf{ChangedFiles: slices.Clone(a.ChangedFiles)})
 	}
 	return r
 }

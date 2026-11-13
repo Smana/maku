@@ -15,7 +15,25 @@ import (
 
 const stubIssuer = "https://e2e-stub.e2e.svc.cluster.local"
 
-func (s *Stub) token(w http.ResponseWriter, _ *http.Request) {
+func (s *Stub) token(w http.ResponseWriter, r *http.Request) {
+	// v4 D8: client credentials with an audience are a generic issuer's (Auth0's shape): a JWT
+	// naming the client in azp and holding the audience. Every other request keeps the ZITADEL
+	// shaped access token the existing scenarios read.
+	if err := r.ParseForm(); err == nil && r.PostForm.Get("grant_type") == "client_credentials" && r.PostForm.Get("audience") != "" {
+		client, _, ok := r.BasicAuth()
+		if !ok {
+			client = r.PostForm.Get("client_id")
+		}
+		now := time.Now()
+		raw, err := signJWT(s.key, map[string]any{"iss": stubIssuer, "sub": client, "azp": client,
+			"aud": r.PostForm.Get("audience"), "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix()})
+		if err != nil {
+			http.Error(w, "token signing failed", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{"access_token": raw, "token_type": "Bearer", "expires_in": 3600})
+		return
+	}
 	raw, err := signAccessToken(s.key, time.Now())
 	if err != nil {
 		http.Error(w, "token signing failed", http.StatusInternalServerError)
@@ -29,11 +47,7 @@ func (s *Stub) token(w http.ResponseWriter, _ *http.Request) {
 }
 
 func signAccessToken(key *rsa.PrivateKey, now time.Time) (string, error) {
-	header, err := json.Marshal(map[string]string{"alg": "RS256", "kid": signingKeyID, "typ": "JWT"})
-	if err != nil {
-		return "", err
-	}
-	claims, err := json.Marshal(map[string]any{
+	return signJWT(key, map[string]any{
 		"iss":       stubIssuer,
 		"sub":       "dev",
 		"client_id": "roomctl",
@@ -43,6 +57,15 @@ func signAccessToken(key *rsa.PrivateKey, now time.Time) (string, error) {
 		"nbf":       now.Unix(),
 		"exp":       now.Add(time.Hour).Unix(),
 	})
+}
+
+// signJWT signs claims with the stub's key, as RS256 under its one kid.
+func signJWT(key *rsa.PrivateKey, body map[string]any) (string, error) {
+	header, err := json.Marshal(map[string]string{"alg": "RS256", "kid": signingKeyID, "typ": "JWT"})
+	if err != nil {
+		return "", err
+	}
+	claims, err := json.Marshal(body)
 	if err != nil {
 		return "", err
 	}

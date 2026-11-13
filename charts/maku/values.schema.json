@@ -9,6 +9,23 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "oidc": {
+          "description": "The OIDC client ids by Secret (v4 D8, oidc mode): mounted at /etc/room-broker/oidc, filling the human block's unset id files.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {"$ref": "#/definitions/secretName"},
+            "keys": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "web": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"},
+                "cli": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"},
+                "project": {"type": "string", "minLength": 1, "pattern": "^[-._a-zA-Z0-9]+$"}
+              }
+            }
+          }
+        },
         "roomTools": {
           "type": "object",
           "additionalProperties": true,

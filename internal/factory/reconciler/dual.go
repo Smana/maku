@@ -64,7 +64,7 @@ func (r *Reconciler) dual(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 	}
 	snap, ok := r.Policy(t.Spec.Repository)
 	if r.grantsOn(cfg) && needsGrants(in, snap, ok) { // stage 5: read immediately before the decision
-		in.Grants = r.grantRead(ctx, cfg, t, snap.Hash)
+		in.Grants = r.grantRead(ctx, cfg, t, snapshotHash(snap.Classes[t.Spec.PredictedClass]))
 	}
 	repo, agreement := dualOf(central, in, snap, ok)
 	d.Rows.Policy, d.Rows.Dual = shortHash(snap.Hash), agreement

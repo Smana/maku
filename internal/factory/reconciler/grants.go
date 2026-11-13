@@ -38,6 +38,58 @@ func needsGrants(in ArmInputs, snap mergepolicy.Snapshot, ok bool) bool {
 		slices.ContainsFunc(r.Variants(), func(v config.Class) bool { return v.Live })
 }
 
+// needsGrantsUnder is needsGrants for the policy that decides: the repository's snapshot when it
+// is authoritative, else the central class, live with a requiresApproval subset, the diff read.
+func needsGrantsUnder(in ArmInputs, cfg *config.Config, p gatePolicy) bool {
+	if p.on {
+		return p.err == nil && needsGrants(in, p.snap, true)
+	}
+	cl, ok := cfg.RepositoryFor(in.Task.Spec.Repository).Class(in.Task.Spec.PredictedClass)
+	return ok && cl.Live && len(cl.RequiresApproval) > 0 && in.DiffRead
+}
+
+// snapshotHash is a repository policy's class as a grant binds to it (B13): its variants'
+// resolved hash, the requiresApproval leaves included as written, as config.ResolvedHash reads a
+// central class's, so a class and its in-sync file hash alike and an edit to the subset suspends
+// grants. A Resolved that keeps only the flattened subset hashes it as one leaf.
+func snapshotHash(res mergepolicy.Resolved) string {
+	leaves := res.Approvals
+	if len(leaves) == 0 && len(res.Approval) > 0 {
+		leaves = []config.ApprovalLeaf{{ChangedFiles: res.Approval}}
+	}
+	vs := slices.Clone(res.Variants())
+	for i := range vs {
+		if len(vs[i].RequiresApproval) == 0 && len(leaves) > 0 {
+			v := *vs[i].DeepCopy()
+			v.RequiresApproval = make([]config.ApprovalLeaf, len(leaves))
+			for j, l := range leaves {
+				v.RequiresApproval[j] = config.ApprovalLeaf{ChangedFiles: slices.Clone(l.ChangedFiles)}
+			}
+			vs[i] = v
+		}
+	}
+	return config.ResolvedHash(vs...)
+}
+
+// grantHash is the hash the grants of t's decision bind to (B13, Q9): the resolved hash of the
+// class that decides, the repository policy's under its authority, else the central class's.
+// False when no class decides: a policy that gives no authority, or a class not declared.
+func (r *Reconciler) grantHash(cfg *config.Config, t *v1alpha1.Task, p gatePolicy) (string, bool) {
+	class := t.Spec.PredictedClass
+	if p.on {
+		res, ok := p.snap.Classes[class]
+		if p.err != nil || !ok {
+			return "", false
+		}
+		return snapshotHash(res), true
+	}
+	cl, ok := r.repo(cfg, t).Class(class)
+	if !ok {
+		return "", false
+	}
+	return config.ResolvedHash(cl), true
+}
+
 // grantRead looks the task's class's grants up immediately before a decision, never from a cache
 // (MP13): a failed lookup is a read that authorizes nothing. It records the active count and the
 // events the broker made on the way.
@@ -75,13 +127,13 @@ func (r *Reconciler) grantHolds(ctx context.Context, cfg *config.Config, t *v1al
 	if !ok || !r.grantsOn(cfg) {
 		return false
 	}
-	snap, read := r.decidingPolicy(cfg, t)
-	if !read || snap.Err != nil {
+	hash, ok := r.decidingHash(cfg, t)
+	if !ok {
 		return false
 	}
-	gr := r.grantRead(ctx, cfg, t, snap.Hash)
+	gr := r.grantRead(ctx, cfg, t, hash)
 	return gr.Read && slices.ContainsFunc(gr.List, func(g grant.Grant) bool {
-		return g.ID == id && g.Version == version && g.Status == grant.StatusActive && g.BoundTo(snap.Hash) && gr.At.Before(g.ExpiresAt)
+		return g.ID == id && g.Version == version && g.Status == grant.StatusActive && g.BoundTo(hash) && gr.At.Before(g.ExpiresAt)
 	})
 }
 
@@ -136,15 +188,9 @@ func (r *Reconciler) disableGrant(ctx context.Context, cfg *config.Config, t *v1
 	return nil
 }
 
-// decidingPolicy is the policy a grant of t's decision is bound to: a cut-over repository's
-// authority snapshot (stage 4), which gives none while it gives no authority, or else the snapshot
-// dual evaluation reads.
-func (r *Reconciler) decidingPolicy(cfg *config.Config, t *v1alpha1.Task) (mergepolicy.Snapshot, bool) {
-	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
-		return p.snap, p.err == nil
-	}
-	if r.Policy == nil {
-		return mergepolicy.Snapshot{}, false
-	}
-	return r.Policy(t.Spec.Repository)
+// decidingHash is the hash a grant of t's decision is bound to, read again before the merge: the
+// class that decided it (grantHash), a cut-over repository's authority snapshot's while it gives
+// authority, else the central class's.
+func (r *Reconciler) decidingHash(cfg *config.Config, t *v1alpha1.Task) (string, bool) {
+	return r.grantHash(cfg, t, r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository))
 }

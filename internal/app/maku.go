@@ -25,6 +25,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 	"golang.org/x/term"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/maku/skill"
@@ -221,7 +222,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		if err != nil {
 			return err
 		}
-		if err := maku.SaveJSON(tokPath, tok); err != nil {
+		if err := maku.SaveToken(tokPath, tok); err != nil {
 			return err
 		}
 		_, err = fmt.Fprintln(r.Out, "logged in; maku rooms lists the rooms you can read, maku doctor checks the setup")
@@ -339,7 +340,8 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		}
 		cfg.URL = base
 	}
-	cfg.URL, cfg.Issuer = strings.TrimRight(cfg.URL, "/"), strings.TrimRight(cfg.Issuer, "/")
+	// The issuer is kept as given: OIDC Discovery compares it byte for byte, and Auth0's ends in "/".
+	cfg.URL = strings.TrimRight(cfg.URL, "/")
 	// A plain-http broker is a local install's loopback listener: refused before any request unless it
 	// is on this machine, whatever the answer would say (Discover enforces it too, for its callers).
 	u, err := url.Parse(cfg.URL)
@@ -350,11 +352,11 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		return fmt.Errorf("configure: url %q: a plain-http broker is only a local install's loopback listener "+
 			"(http://localhost:<port>): use the https rooms URL", cfg.URL)
 	}
+	hc := r.HC
+	if hc == nil {
+		hc = httpx.New(makuTimeout, nil)
+	}
 	if cfg.Issuer == "" || cfg.ClientID == "" || cfg.ProjectID == "" {
-		hc := r.HC
-		if hc == nil {
-			hc = httpx.New(makuTimeout, nil)
-		}
 		found, err := maku.Discover(ctx, hc, cfg.URL)
 		if err != nil {
 			return fmt.Errorf("configure: %w", err)
@@ -362,6 +364,22 @@ func (r Maku) configure(ctx context.Context, path string, args []string) error {
 		cfg.Issuer, cfg.ClientID, cfg.ProjectID = cmp.Or(cfg.Issuer, found.Issuer), cmp.Or(cfg.ClientID, found.ClientID), cmp.Or(cfg.ProjectID, found.ProjectID)
 		cfg.FactoryLogin = cmp.Or(cfg.FactoryLogin, found.FactoryLogin)
 		cfg.HumanMode = found.HumanMode
+		cfg.Preset, cfg.TokenUse, cfg.Scopes, cfg.Audience = found.Preset, found.TokenUse, found.Scopes, found.Audience
+	}
+	// Any OIDC issuer (v4 D8): its device and token endpoints are where its discovery document says,
+	// read once here and stored. The zitadel preset keeps ZITADEL's fixed paths.
+	if cfg.HumanMode != maku.HumanModeLocal && cfg.EffectivePreset() == maku.PresetGeneric {
+		d, err := authn.Discover(ctx, hc, cfg.Issuer)
+		if err != nil {
+			return fmt.Errorf("configure: the issuer %s: %w", maku.SafeText(cfg.Issuer), err)
+		}
+		if d.DeviceAuthorizationEndpoint == "" || d.TokenEndpoint == "" {
+			return fmt.Errorf("configure: the issuer %s serves no device authorization endpoint: maku cannot sign in to it", maku.SafeText(cfg.Issuer))
+		}
+		if !authn.HTTPSEndpoint(d.DeviceAuthorizationEndpoint) || !authn.HTTPSEndpoint(d.TokenEndpoint) {
+			return fmt.Errorf("configure: the issuer %s names a device or token endpoint that is not https", maku.SafeText(cfg.Issuer))
+		}
+		cfg.DeviceAuthURL, cfg.TokenURL = d.DeviceAuthorizationEndpoint, d.TokenEndpoint
 	}
 	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("configure: %w", err)
@@ -408,7 +426,24 @@ func (r Maku) ConfirmConfig(next, old maku.Config, yes bool) error {
 	line("url", next.URL, old.URL)
 	line("issuer", next.Issuer, old.Issuer)
 	line("client id", next.ClientID, old.ClientID)
-	line("project id", next.ProjectID, old.ProjectID)
+	if next.EffectivePreset() == maku.PresetGeneric || old.EffectivePreset() == maku.PresetGeneric {
+		// Any OIDC issuer (v4 D8): every value that steers the sign-in or the token's audience is
+		// shown, so a broker cannot change one unseen.
+		host := func(raw string) string {
+			if u, err := url.Parse(raw); err == nil && u.Host != "" {
+				return u.Host
+			}
+			return raw
+		}
+		line("preset", next.EffectivePreset(), old.Preset)
+		line("token use", next.EffectiveTokenUse(), old.TokenUse)
+		line("scopes", strings.Join(next.Scopes, " "), strings.Join(old.Scopes, " "))
+		line("audience", next.Audience, old.Audience)
+		line("device at", host(next.DeviceAuthURL), host(old.DeviceAuthURL))
+		line("tokens at", host(next.TokenURL), host(old.TokenURL))
+	} else {
+		line("project id", next.ProjectID, old.ProjectID)
+	}
 	if !sameRegistrableDomain(next.URL, next.Issuer) {
 		_, _ = fmt.Fprintf(hints, "warning: the issuer %s is not under the same domain as %s: a broker could point you at an identity provider of its own\n",
 			maku.SafeText(next.Issuer), maku.SafeText(next.URL))

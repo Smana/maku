@@ -334,6 +334,20 @@ bad() {
   msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
   grep -qF -- "$want" <<<"$msg" || { echo "FAIL: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
 }
+# v4 D8, PR2: the broker and the factory read one identity; a disagreement names both keys.
+idv=("${args[@]}" -f tests/identity-values.yaml)
+out="$(helm template af . -n maku "${idv[@]}")"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.preset == "generic" and .human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and (.human | has("projectIDFile") | not))' 'the identity values render the generic broker with its ids by Secret'
+fapi=(--set maku-factory.config.api.humanIssuer=https://e2e-stub.e2e.svc.cluster.local --set maku-factory.config.api.preset=generic
+      --set maku-factory.config.api.rolesClaim=groups)
+helm template af . -n maku "${idv[@]}" "${fapi[@]}" >/dev/null || { echo 'FAIL: an agreeing broker and factory must render' >&2; fail=1; }
+bad 'maku.broker.human.rolesClaim "groups" and maku-factory.config.api.rolesClaim "roles" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.rolesClaim=roles
+bad 'maku.broker.human.preset "generic" and maku-factory.config.api.preset "zitadel" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.preset=zitadel
+bad 'maku.broker.human.tokenUse "id" and maku-factory.config.api.tokenUse "access" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.tokenUse=access
+bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-factory.config.api.humanIssuer "https://other" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.humanIssuer=https://other
+bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
+bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
+bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
 bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
   --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
 bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \

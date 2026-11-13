@@ -107,6 +107,7 @@ expect "$(grep -o 'conclusive=.*drill=[0-9]*' <<<"$out")" "conclusive=2 inconclu
 # said) and reverts-drill.json. The newest factory record of each pull request counts:
 #   #21 would-arm a21 files=1/3 lines=12/20 glm-5.3, merged at a21, drill-reverted
 #   #22 holdout_red hand-off, then the newer would-arm a22 files=2/3 lines=4/20 glm-5.3, merged at a22
+#       (a bound class's record: policygen=4 repogen=7 resolved=, counted like its neighbours)
 #   #23 would-arm a23 files=1/3 lines=8/20 kimi-k3, merged at b23 (changed)
 #   #24 hand-off patch_too_large a24 files=1/3 lines=30/20, merged at a24
 #   #25 hand-off patch_too_large a25 files=-/3 lines=-/20 (diff unread), merged at a25
