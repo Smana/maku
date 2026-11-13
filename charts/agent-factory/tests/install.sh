@@ -119,6 +119,19 @@ onexit() {
 }
 trap onexit EXIT
 
+# k3d_import IMAGE: k3d image import, checked in the node and retried. k3d reports success even when
+# the node's ctr fails to ingest the tarball ("short read ... unexpected EOF"), which leaves the pod in
+# ErrImageNeverPull minutes later; the image is only imported once containerd lists it.
+k3d_import() {
+  for _ in 1 2 3; do
+    k3d image import -c "$NAME" "$1"
+    docker exec "k3d-$NAME-server-0" ctr -n k8s.io images ls -q | grep -qxF "$1" && return
+    echo "k3d image import: $1 is not in the node; importing again" >&2
+    sleep 2
+  done
+  die "k3d image import: $1 never reached the node"
+}
+
 step "build the images from this checkout"
 images=(maku-broker maku-run-controller maku-factory)
 for i in "${images[@]}"; do
@@ -151,7 +164,7 @@ case "$CLUSTER_KIND" in
     k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait "${k3s_args[@]}" \
       --kubeconfig-update-default=false --kubeconfig-switch-context=false
     k3d kubeconfig get "$NAME" >"$KUBECONFIG"
-    for i in "${images[@]}"; do k3d image import -c "$NAME" "ghcr.io/smana/$i:$TAG"; done ;;
+    for i in "${images[@]}"; do k3d_import "ghcr.io/smana/$i:$TAG"; done ;;
   kind)
     ! kind get clusters 2>/dev/null | grep -qx "$NAME" || { trap - EXIT; die "cluster $NAME exists"; }
     kind create cluster --name "$NAME" --image "$KIND_NODE_IMAGE" --wait 120s --kubeconfig "$KUBECONFIG"

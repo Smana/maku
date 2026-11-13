@@ -1,0 +1,23 @@
+# Test-only values for task chart:identity:k3d and render.sh (v4 D8): the broker in preset generic
+# against the in-cluster e2e stub, a generic OIDC issuer. Every id and endpoint belongs to the
+# throwaway cluster. The factory stays in demo mode: it takes no human token there.
+maku:
+  broker:
+    publicURL: https://rooms.e2e.test
+    oidc:
+      existingSecret: e2e-broker-oidc
+    human:
+      mode: oidc
+      preset: generic
+      tokenUse: id
+      issuer: https://e2e-stub.e2e.svc.cluster.local
+      rolesClaim: groups
+      origin: https://rooms.e2e.test
+      groups: {admin: agents-admin, member: agents-member}
+    extraEnv:
+      - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+    extraVolumes:
+      - name: e2e-ca
+        secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+    extraVolumeMounts:
+      - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}

@@ -47,6 +47,37 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- end -}}
 {{- include "afumbrella.gateway" . -}}
+{{- include "afumbrella.identity" . -}}
+{{- end }}
+
+{{/* The humans' identity agreement (v4 D8, PR2): the broker forwards each human's token to the
+factory, which verifies it again, so both must read the same issuer, preset, token use, roles claim,
+group names, audience and sponsored client claim. The client ids and an audienceFile are files,
+read at use, so a render cannot compare them. Checked once the factory takes human tokens (config.api.humanIssuer set) and the
+broker is in oidc mode; each refusal names both keys. Empty values compare as their defaults. */}}
+{{- define "afumbrella.identity" -}}
+{{- $h := .Values.maku.broker.human | default dict -}}
+{{- $a := dig "config" "api" dict (index .Values "maku-factory") -}}
+{{- if and .Values.maku.enabled (index .Values "maku-factory" "enabled") (ne ($h.mode | default "oidc") "local") $a.humanIssuer -}}
+{{- $hp := $h.preset | default "zitadel" -}}
+{{- $ap := $a.preset | default "zitadel" -}}
+{{- $use := dict "zitadel" "access" "generic" "id" -}}
+{{- $hg := $h.groups | default dict -}}
+{{- $ag := $a.groups | default dict -}}
+{{- range $pair := list
+  (list "preset" "preset" $hp $ap)
+  (list "issuer" "humanIssuer" ($h.issuer | default "") $a.humanIssuer)
+  (list "tokenUse" "tokenUse" ($h.tokenUse | default (get $use $hp) | default "") ($a.tokenUse | default (get $use $ap) | default ""))
+  (list "rolesClaim" "rolesClaim" ($h.rolesClaim | default "") ($a.rolesClaim | default ""))
+  (list "groups.admin" "groups.admin" ($hg.admin | default "") ($ag.admin | default "agents-admin"))
+  (list "groups.member" "groups.member" ($hg.member | default "") ($ag.member | default "agents-member"))
+  (list "audience" "audience" ($h.audience | default "") ($a.audience | default ""))
+  (list "mcp.sponsoredClientClaim" "sponsoredClientClaim" (dig "mcp" "sponsoredClientClaim" "" $h) ($a.sponsoredClientClaim | default "")) -}}
+{{- if ne (index $pair 2) (index $pair 3) -}}
+{{- fail (printf "maku.broker.human.%s %q and maku-factory.config.api.%s %q must be equal: the factory verifies the token the broker forwards" (index $pair 0) (index $pair 2) (index $pair 1) (index $pair 3)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end }}
 
 {{/* The model gateway's agreement with maku (plan v4 step 4, Task 5): the gateway admits the runs and

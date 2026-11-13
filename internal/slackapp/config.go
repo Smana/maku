@@ -22,19 +22,28 @@ const minMaxCost = 0.01
 
 // Config is the App's config file, loaded strictly as the broker's config is.
 type Config struct {
-	TeamID            string             `json:"teamID"`
-	BotUserIDFile     string             `json:"botUserIDFile"`
-	BotTokenFile      string             `json:"botTokenFile"`
-	SigningSecretFile string             `json:"signingSecretFile"`
-	WebhookKeyFile    string             `json:"webhookKeyFile"`
-	BrokerURL         string             `json:"brokerURL"`
-	RoomsURL          string             `json:"roomsURL"`
-	IssuerURL         string             `json:"issuerURL"`
-	ClientIDFile      string             `json:"clientIDFile"`
-	ClientSecretFile  string             `json:"clientSecretFile"`
-	ProjectIDFile     string             `json:"projectIDFile"`
-	Namespace         string             `json:"namespace"`
-	Channels          map[string]Channel `json:"channels"`
+	TeamID            string `json:"teamID"`
+	BotUserIDFile     string `json:"botUserIDFile"`
+	BotTokenFile      string `json:"botTokenFile"`
+	SigningSecretFile string `json:"signingSecretFile"`
+	WebhookKeyFile    string `json:"webhookKeyFile"`
+	BrokerURL         string `json:"brokerURL"`
+	RoomsURL          string `json:"roomsURL"`
+	IssuerURL         string `json:"issuerURL"`
+	ClientIDFile      string `json:"clientIDFile"`
+	ClientSecretFile  string `json:"clientSecretFile"`
+	ProjectIDFile     string `json:"projectIDFile"`
+	// Preset is "" or "zitadel" (today's token request: ZITADEL's fixed path, the project's
+	// audience scope, ProjectIDFile required), or "generic": any OIDC issuer (v4 D8).
+	Preset string `json:"preset,omitempty"`
+	// TokenURL is the token endpoint under generic; empty, the issuer's discovery document names it.
+	TokenURL string `json:"tokenURL,omitempty"`
+	// Scopes and Audience are the generic client-credentials request's: the audience is sent as a
+	// parameter (Auth0), and is the value the broker's and the factory's audience pin.
+	Scopes    []string           `json:"scopes,omitempty"`
+	Audience  string             `json:"audience,omitempty"`
+	Namespace string             `json:"namespace"`
+	Channels  map[string]Channel `json:"channels"`
 	// Proposals is the proposal message's switch (CD7): off, a mention drafts as it does today.
 	Proposals Proposals `json:"proposals,omitempty"`
 	// The three listeners (M11): Slack's events (public), the broker's webhooks (cluster only),
@@ -145,6 +154,7 @@ func (c Config) validate() error {
 			errs = append(errs, fmt.Errorf("%s %q must be an http(s) URL", name, v))
 		}
 	}
+	errs = append(errs, c.validatePreset()...)
 	if !teamRE.MatchString(c.TeamID) {
 		errs = append(errs, fmt.Errorf("teamID %q is not a Slack workspace id", c.TeamID))
 	}
@@ -232,4 +242,44 @@ func canonicalRepo(listed []string, repo string) (string, bool) {
 func servesRepo(listed []string, repo string) bool {
 	_, ok := canonicalRepo(listed, repo)
 	return ok
+}
+
+// The presets of the App's token request (v4 D8), as the broker's human block names them.
+const (
+	PresetZITADEL = "zitadel"
+	PresetGeneric = "generic"
+)
+
+// EffectivePreset is the configured preset; an empty one is zitadel.
+func (c Config) EffectivePreset() string {
+	if c.Preset == "" {
+		return PresetZITADEL
+	}
+	return c.Preset
+}
+
+// validatePreset checks the keys each preset reads, naming both where they conflict (D25).
+func (c Config) validatePreset() []error {
+	var errs []error
+	if c.TokenURL != "" {
+		if u, err := url.Parse(c.TokenURL); err != nil || u.Hostname() == "" || u.Scheme != "https" {
+			errs = append(errs, errors.New("tokenURL must be an absolute https URL"))
+		}
+	}
+	switch c.EffectivePreset() {
+	case PresetZITADEL:
+		for name, set := range map[string]bool{"audience": c.Audience != "", "scopes": len(c.Scopes) > 0, "tokenURL": c.TokenURL != ""} {
+			if set {
+				errs = append(errs, fmt.Errorf("%s: the zitadel preset's audience is projectIDFile, at ZITADEL's token endpoint", name))
+			}
+		}
+	case PresetGeneric:
+		if c.ProjectIDFile != "" {
+			errs = append(errs, errors.New("projectIDFile: the zitadel preset's; set audience under preset generic"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("preset %q is not zitadel or generic", c.Preset))
+	}
+	sort.Slice(errs, func(i, j int) bool { return errs[i].Error() < errs[j].Error() })
+	return errs
 }

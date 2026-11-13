@@ -162,3 +162,62 @@ func TestOIDCUserAndGitHubLink(t *testing.T) {
 		t.Fatalf("links = %+v", links)
 	}
 }
+
+// claimsOf decodes a stub token's payload: the stub's own signer, checked by TestOIDCJWKSAndToken.
+func claimsOf(t *testing.T, raw string) (map[string]any, map[string]any) {
+	t.Helper()
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		t.Fatalf("a token of %d segments", len(parts))
+	}
+	var head, body map[string]any
+	for i, out := range []*map[string]any{&head, &body} {
+		b, err := base64.RawURLEncoding.DecodeString(parts[i])
+		if err != nil || json.Unmarshal(b, out) != nil {
+			t.Fatalf("segment %d: %v", i, err)
+		}
+	}
+	return head, body
+}
+
+// v4 D8: the stub is a generic OIDC issuer too: a discovery document, an ID token minted on demand
+// for any sub, client and groups, and client credentials naming the client in azp.
+func TestOIDCGenericIssuer(t *testing.T) {
+	_, ts := newStubServer(t)
+	status, raw := request(t, ts, http.MethodGet, "/.well-known/openid-configuration", nil)
+	disc := decodeResponse[map[string]any](t, raw)
+	if status != http.StatusOK || disc["issuer"] != stubIssuer || disc["jwks_uri"] != stubIssuer+"/oauth/v2/keys" ||
+		disc["token_endpoint"] != stubIssuer+"/token" {
+		t.Fatalf("%d %v", status, disc)
+	}
+	status, raw = request(t, ts, http.MethodGet, "/test/id-token?sub=alice&aud=rooms-web&groups=agents-member,other", nil)
+	if status != http.StatusOK {
+		t.Fatalf("id-token status %d", status)
+	}
+	head, c := claimsOf(t, decodeResponse[map[string]string](t, raw)["id_token"])
+	if head["typ"] != "JWT" || c["iss"] != stubIssuer || c["sub"] != "alice" || c["aud"] != "rooms-web" || c["azp"] != nil ||
+		!reflect.DeepEqual(c["groups"], []any{"agents-member", "other"}) {
+		t.Fatalf("%v %v", head, c)
+	}
+	_, raw = request(t, ts, http.MethodGet, "/test/id-token?sub=bob&aud=rooms-web", nil)
+	if _, c := claimsOf(t, decodeResponse[map[string]string](t, raw)["id_token"]); c["groups"] != nil {
+		t.Fatalf("no groups asked, some given: %v", c)
+	}
+	if status, _ := request(t, ts, http.MethodGet, "/test/id-token?aud=rooms-web", nil); status != http.StatusBadRequest {
+		t.Fatalf("no sub: %d", status)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, ts.URL+"/token",
+		strings.NewReader("grant_type=client_credentials&audience=maku-api"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.SetBasicAuth("slack-app", "secret")
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	var tok map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&tok)
+	if _, c := claimsOf(t, tok["access_token"].(string)); c["azp"] != "slack-app" || c["sub"] != "slack-app" || c["aud"] != "maku-api" {
+		t.Fatalf("client credentials: %v", c)
+	}
+}
