@@ -123,3 +123,22 @@ tests:
       - {eval_time: 2m30s, alertname: RoomWebhookDisabled, exp_alerts: []}
       - {eval_time: 4m, alertname: RoomWebhookDisabled, exp_alerts: [{exp_labels: {severity: warning, subscriber: slack-app}}]}
       - {eval_time: 8m, alertname: RoomWebhookDisabled, exp_alerts: []}
+  # RoomKnowledgeFailing: 3 of every 5 forwarded calls time out (60%), held 30 minutes; the 100 role
+  # and 100 argument refusals a minute are not the endpoint's failure and do not dilute the ratio.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_search", outcome="ok"}', values: '0+2x60'}
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_search", outcome="timeout"}', values: '0+3x60'}
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_get", outcome="refused"}', values: '0+100x60'}
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_search", outcome="invalid_arguments"}', values: '0+100x60'}
+    alert_rule_test:
+      - {eval_time: 20m, alertname: RoomKnowledgeFailing, exp_alerts: []}
+      - {eval_time: 35m, alertname: RoomKnowledgeFailing, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # Its boundary: 2 of every 5 fail (40%), upstream_error and timeout together; silent.
+  - interval: 1m
+    input_series:
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_search", outcome="ok"}', values: '0+3x60'}
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_search", outcome="upstream_error"}', values: '0+1x60'}
+      - {series: 'maku_rooms_knowledge_calls_total{namespace="maku", tool="kb_get", outcome="timeout"}', values: '0+1x60'}
+    alert_rule_test:
+      - {eval_time: 45m, alertname: RoomKnowledgeFailing, exp_alerts: []}

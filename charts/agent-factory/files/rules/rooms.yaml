@@ -141,3 +141,18 @@ rules:
       description: "Three deliveries were given up. Fix the receiver (its key, or the service behind it), bump generation on the webhooks entry in the broker's config and restart the broker: a webhooks change applies only at restart. The events of the disabled window are not replayed."
       runbook_url: "__DOCS__/operations.md#webhooks"
       dashboard: "/d/agent-factory"
+  # RunLore's knowledge endpoint (EX11), rendered only with maku.broker.roomTools.knowledge.url: more
+  # than half the forwarded calls failed or timed out, held 30 minutes. A role or arguments the broker
+  # refused are not the endpoint's failure, so the ratio leaves them out.
+  - alert: RoomKnowledgeFailing
+    expr: |
+      sum(rate(maku_rooms_knowledge_calls_total{outcome=~"upstream_error|timeout"}[10m]))
+        / sum(rate(maku_rooms_knowledge_calls_total{outcome!~"refused|invalid_arguments"}[10m])) > 0.5
+    for: 30m
+    labels:
+      severity: warning
+    annotations:
+      summary: "More than half of the knowledge base calls fail"
+      description: "Triager runs get knowledge_unavailable or knowledge_timeout from kb_search and kb_get, and investigate without RunLore's knowledge base. Check the endpoint broker.roomTools.knowledge.url names, and the broker's log: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=room-broker | grep 'knowledge call failed'"
+      runbook_url: "__DOCS__/operations.md#room-alerts"
+      dashboard: "/d/agent-room"

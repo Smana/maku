@@ -3,7 +3,7 @@
 #
 # The PrometheusRule under promtool (v4 step 6, Task 6). Renders it with production-shaped values, so
 # every group and every rule is in (an issuer, networkPolicies.mode kubernetes, kube-state-metrics,
-# slack.enabled), extracts .spec, runs `promtool check rules`, then `promtool test rules` on
+# slack.enabled, a knowledge endpoint), extracts .spec, runs `promtool check rules`, then `promtool test rules` on
 # tests/monitoring/*.test.yaml. Those read rules.yaml, the rule with its annotations stripped:
 # promtool compares annotations exactly, and only annotations.test.yaml (rules-annotated.yaml) owns
 # them. Every alert must be named by at least one test.
@@ -21,6 +21,8 @@ helm template af . -n maku \
   --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 \
   --set maku.broker.human.mode=oidc --set maku.broker.human.issuer=https://idp.example.test \
   --set maku.networkPolicies.mode=kubernetes \
+  --set maku.broker.roomTools.knowledge.url=http://runlore.runlore.svc.cluster.local:8080/mcp \
+  --set-json 'maku.broker.roomTools.knowledge.networkPolicy.to=[{"podSelector":{"matchLabels":{"app.kubernetes.io/name":"runlore"}}}]' \
   --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
   --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
   --set monitoring.prometheusRule.kubeStateMetrics=true --set monitoring.prometheusRule.docsURL=https://docs.example.test \

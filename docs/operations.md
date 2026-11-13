@@ -116,6 +116,7 @@ sets, `room-broker`, in the release namespace.
 | `RoomVerdictsNotReachingGitHub` | Posting errors, and no successful post in 30 min | 30 min | The factory App's key; egress to `api.github.com` |
 | `RoomApprovalPendingTooLong` | An approval has waited over 15 min | — | Decide it; undecided, it is denied at 30 min (attended) or `approvals.ttl` (unattended) |
 | `RoomWebhookDisabled` | A webhook subscriber was disabled after three given-up deliveries | 1 min | [Webhooks](#webhooks) |
+| `RoomKnowledgeFailing` | More than half of the knowledge calls forwarded to `roomTools.knowledge.url` failed (`upstream_error`) or timed out, role and argument refusals left out; rendered only with `maku.broker.roomTools.knowledge.url` | 30 min | The endpoint, the broker's egress to it (`knowledge.networkPolicy.to`), and the broker's `knowledge call failed` log lines. Triager runs investigate without the knowledge base meanwhile |
 
 Bridge logs:
 
