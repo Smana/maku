@@ -142,7 +142,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 		p, ok := res.policies[b.Name]
 		switch {
 		case !ok && refusedPolicies[b.Name]:
-			entries[i].out = config.BindingRefusal{Reason: v1alpha1.ReasonMissingRef, Message: fmt.Sprintf("MergePolicy %s is refused, and none was served before", b.Name)}
+			entries[i].out = config.BindingRefusal{Reason: v1alpha1.ReasonMissingRef, Message: fmt.Sprintf("MergePolicy %s is refused", b.Name)}
 		case !ok:
 			entries[i].out = config.BindingRefusal{Reason: v1alpha1.ReasonMissingRef, Message: fmt.Sprintf("no MergePolicy %s", b.Name)}
 		default:
@@ -188,10 +188,16 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 			res.resolved[k] = ResolvedClass{Class: e.cl, PolicyGeneration: e.gen}
 		} else {
 			o.Reason, o.Message = e.out.Reason, e.out.Message
-			// D5: the last resolved class, unless it is the ambiguity refused, or would make one.
+			// D5: the last resolved class, unless it is the ambiguity refused, or would make one. It is
+			// checked again under today's catalogue and merge (B9, B14): one that no longer holds
+			// would refuse the whole Repository at Parse, so it is dropped.
 			if last, ok := opts.LastResolved[k]; ok && e.out.Reason != config.ReasonAmbiguousAdoption && !ambiguousWithAny(last.Class, classes) {
-				classes[b.Name] = *last.Class.DeepCopy()
-				o.Served, o.PolicyGeneration = true, last.PolicyGeneration
+				if cl, refusal := config.Recheck(b.Name, last.Class, ctx, merge); refusal != nil {
+					o.Message += "; its last resolved class no longer holds: " + refusal.Message
+				} else {
+					classes[b.Name] = cl
+					o.Served, o.PolicyGeneration = true, last.PolicyGeneration
+				}
 			}
 		}
 		res.bindings = append(res.bindings, o)

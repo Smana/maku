@@ -291,3 +291,19 @@ func want(t *testing.T, ok bool, what string) {
 		t.Fatalf("want %s", what)
 	}
 }
+
+// Recheck reads today's repository facts: the Flux source is the current one, a removed source
+// drops the class, and the class handed in is never changed.
+func TestRecheck(t *testing.T) {
+	cl := Class{Shadow: true, Monitor: &Monitor{FollowUpWindow: Duration{time.Hour}, Flux: &FluxWatch{Source: "flux-system/old", Within: Duration{30 * time.Minute}}}}
+	got, refused := Recheck("x", cl, PolicyContext{}, Merge{FluxSource: "flux-system/new"})
+	if refused != nil {
+		t.Fatalf("refused: %+v", refused)
+	}
+	if got.Monitor.Flux.Source != "flux-system/new" || cl.Monitor.Flux.Source != "flux-system/old" {
+		t.Fatalf("got %+v %+v, the input %q", got.Monitor.Flux, refused, cl.Monitor.Flux.Source)
+	}
+	if _, refused := Recheck("x", cl, PolicyContext{}, Merge{}); refused == nil || refused.Reason != ReasonMissingParameter {
+		t.Fatalf("without a source: %+v", refused)
+	}
+}

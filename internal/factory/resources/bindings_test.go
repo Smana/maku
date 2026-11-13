@@ -374,3 +374,90 @@ func TestABadPolicyNeverRefusesARepository(t *testing.T) {
 		t.Fatalf("the last good generation serves: %+v", b)
 	}
 }
+
+// B9, B14 (review of #522): a last resolved class put back is checked again under the current
+// catalogue and merge. One that no longer holds is dropped, never handed to Parse, where it would
+// refuse the whole Repository.
+func TestPutBackClassIsRechecked(t *testing.T) {
+	// docs is absent: its binding is MissingRef, so its last class is put back.
+	for _, tc := range []struct {
+		name   string
+		file   func(string) string
+		merge  func(map[string]any)
+		last   config.Class
+		served bool
+		check  func(*testing.T, config.Class)
+	}{
+		{name: "a harness profile the Factory removed", last: config.Class{Harness: "removed"}},
+		{name: "testFirst once contractCheck is gone", last: config.Class{Checks: true, TestFirst: true}},
+		{name: "live without allowedFiles once policyBot is off", last: config.Class{Live: true, HoldoutChecks: []string{"validate"}},
+			merge: func(m map[string]any) { m["policyBot"] = false; m["gateStatus"] = true }},
+		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2},
+			file: func(f string) string {
+				return strings.Replace(f, "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
+			}},
+		{name: "an unset cap inherits the guardrail", last: config.Class{Shadow: true}, served: true,
+			file: func(f string) string {
+				return strings.Replace(f, "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
+			},
+			check: func(t *testing.T, c config.Class) {
+				if c.MaxPerDay != 1 {
+					t.Fatalf("maxPerDay %d, want the guardrail's 1", c.MaxPerDay)
+				}
+			}},
+		{name: "a class that still holds", last: config.Class{Shadow: true}, served: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := string(file(t))
+			if tc.file != nil {
+				f = tc.file(f)
+			}
+			r := boundRepo(t, "maku", "Smana/maku", 1, anrBindings)
+			if tc.merge != nil {
+				tc.merge(r.Spec["merge"].(map[string]any))
+			}
+			res, err := Assemble([]byte(f), append(specPolicies(t)[:3:3], r), Options{LastResolved: map[BindingKey]ResolvedClass{
+				{"maku", "docs"}: {Class: tc.last, PolicyGeneration: 1}}})
+			if err != nil {
+				t.Fatal(err, res.Refused)
+			}
+			if refused(res, KindRepository, "maku") != "" {
+				t.Fatalf("a stale last class refused the Repository: %+v", res.Refused)
+			}
+			b := binding(res, "maku", "docs")
+			c, ok := res.Config.RepositoryFor("Smana/maku").Classes["docs"]
+			if b.Served != tc.served || ok != tc.served || b.Reason != v1alpha1.ReasonMissingRef {
+				t.Fatalf("served %v (class present %v), want %v: %+v", b.Served, ok, tc.served, b)
+			}
+			if !tc.served && !strings.Contains(b.Message, "last resolved class no longer holds") {
+				t.Fatalf("message %q must say why the last class is not served", b.Message)
+			}
+			if tc.check != nil {
+				tc.check(t, c)
+			}
+		})
+	}
+}
+
+// A refused policy's message does not claim nothing was served when a last class is put back.
+func TestRefusedPolicyMessageWithAPutBack(t *testing.T) {
+	bad := classPolicy(t, "docs", 2, "live: true\n")
+	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], bad, boundRepo(t, "maku", "Smana/maku", 1, anrBindings)),
+		Options{LastResolved: map[BindingKey]ResolvedClass{{"maku", "docs"}: {Class: config.Class{Shadow: true}, PolicyGeneration: 1}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := binding(r, "maku", "docs"); !b.Served || strings.Contains(b.Message, "none was served") {
+		t.Fatalf("outcome %+v", b)
+	}
+}
+
+// bound and bindings are Assemble's alone: the config file's own entries may not carry them.
+func TestFileEntriesCannotCarryBindings(t *testing.T) {
+	for _, k := range []string{"bound: [docs-links, revert]", "bindings: [{name: docs-links, mode: shadow}]"} {
+		f := strings.Replace(string(file(t)), "    triggerLabel: factory/ready\n", "    triggerLabel: factory/ready\n    "+k+"\n", 1)
+		if _, err := Assemble([]byte(f), nil); err == nil || !strings.Contains(err.Error(), "set by the factory from Repository objects") {
+			t.Errorf("%s in the file: %v", k, err)
+		}
+	}
+}

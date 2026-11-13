@@ -124,6 +124,18 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	if base == nil {
 		base = map[string]any{}
 	}
+	// bound and bindings reach Parse only from Repository objects (ParseAssembled admits them):
+	// the file's own entries are refused them here, as Parse refuses them in a file alone.
+	if list, ok := base["repositories"].([]any); ok {
+		for _, e := range list {
+			entry, _ := e.(map[string]any)
+			for _, k := range []string{"bound", "bindings"} {
+				if _, ok := entry[k]; ok {
+					return Result{}, fmt.Errorf("config file: %s: bound and bindings are set by the factory from Repository objects: bind policies in a Repository's mergePolicies", str(entry, "name"))
+				}
+			}
+		}
+	}
 	name, _ := base["factory"].(string)
 
 	var res Result
