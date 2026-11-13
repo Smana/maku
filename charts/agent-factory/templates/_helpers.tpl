@@ -152,13 +152,34 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- end -}}
 {{- end }}
 
-{{/* Monitoring (plan v4 step 6, EX12). In maku's networkPolicies.mode kubernetes, the broker's, the
-run-controller's and the egress proxy's NetworkPolicies admit :9090 only from metricsFrom: a scrape
-object with no scraper there would read nothing but `up == 0`. */}}
+{{/* maku's networkPolicies mode, as its ap.netMode reads it: mode wins; unset, enabled decides
+(true, the default: cilium). maku's own helper validates the value. */}}
+{{- define "afumbrella.makuNetMode" -}}
+{{- $np := (.Values.maku | default dict).networkPolicies | default dict -}}
+{{- $np.mode | default (ternary "cilium" "none" (ne (toString $np.enabled) "false")) -}}
+{{- end }}
+
+{{/* Monitoring (plan v4 step 6, EX12). A scrape object whose target sits behind a default-deny
+policy that does not admit the scraper reads nothing but `up == 0`, and the Down alerts fire forever:
+the render fails instead. maku mode kubernetes: the broker's, the run-controller's and the egress
+proxy's NetworkPolicies admit :9090 from metricsFrom. maku mode cilium: the umbrella's CNP
+maku-metrics admits cilium.fromEndpoints. maku-gateway: its policy admits metrics.allowFrom on
+:15020, unless its mode is none. */}}
 {{- define "afumbrella.monitoring" -}}
 {{- $sm := dig "serviceMonitor" dict (.Values.monitoring | default dict) -}}
 {{- $maku := .Values.maku | default dict -}}
-{{- if and $sm.enabled $maku.enabled (eq (dig "networkPolicies" "mode" "" $maku) "kubernetes") (not (dig "networkPolicies" "kubernetes" "metricsFrom" list $maku)) -}}
+{{- if $sm.enabled -}}
+{{- $mode := include "afumbrella.makuNetMode" . -}}
+{{- if and $maku.enabled (eq $mode "kubernetes") (not (dig "networkPolicies" "kubernetes" "metricsFrom" list $maku)) -}}
 {{- fail "monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090 (name your Prometheus pods there)" -}}
+{{- end -}}
+{{- if and $maku.enabled (eq $mode "cilium") (not (dig "cilium" "fromEndpoints" list $sm)) -}}
+{{- fail "monitoring.serviceMonitor.enabled in maku.networkPolicies.mode cilium needs monitoring.serviceMonitor.cilium.fromEndpoints: the scraper could not reach :9090 (select your Prometheus pods there)" -}}
+{{- end -}}
+{{- $gw := index .Values "maku-gateway" | default dict -}}
+{{- $gwMode := dig "networkPolicy" "mode" "" $gw | default "kubernetes" -}}
+{{- if and $gw.enabled (ne $gwMode "none") (not (dig "metrics" "allowFrom" list $gw)) -}}
+{{- fail (printf "monitoring.serviceMonitor.enabled with maku-gateway.networkPolicy.mode %q needs maku-gateway.metrics.allowFrom: the scraper could not reach :15020 (name your Prometheus pods there)" $gwMode) -}}
+{{- end -}}
 {{- end -}}
 {{- end }}

@@ -56,13 +56,21 @@ agentgateway:
 # The VictoriaMetrics operator converts them.
 monitoring:
   # ServiceMonitors for the broker and the factory, PodMonitors for the run-controller, the egress
-  # proxy (networkPolicies.mode kubernetes) and the model-gateway proxies (maku-gateway.enabled). In
-  # mode kubernetes the scraper must be in maku.networkPolicies.kubernetes.metricsFrom. labels: added
-  # to each object, for a Prometheus whose selector wants them (e.g. release: kube-prometheus-stack).
+  # proxy (networkPolicies.mode kubernetes) and the model-gateway proxies (maku-gateway.enabled). The
+  # scraper must be admitted wherever a default-deny policy holds the target: in maku's mode
+  # kubernetes, maku.networkPolicies.kubernetes.metricsFrom; in its mode cilium, cilium.fromEndpoints
+  # below; with maku-gateway's policy on, maku-gateway.metrics.allowFrom. The render fails otherwise.
+  # labels: added to each object, for a Prometheus whose selector wants them (e.g. release:
+  # kube-prometheus-stack).
   serviceMonitor:
     enabled: false
     interval: 30s
     labels: {}
+    # maku's mode cilium: Cilium endpoint selectors of the scraper's pods, e.g.
+    # [{matchLabels: {io.kubernetes.pod.namespace: monitoring, app.kubernetes.io/name: prometheus}}].
+    # They are admitted on :9090 of the broker and the run-controller (CNP maku-metrics).
+    cilium:
+      fromEndpoints: []
   # One PrometheusRule, maku, with a group per component, each rendered only with it: maku-rooms
   # (maku), maku-run-path (maku.runController), maku-factory (maku-factory), maku-slack
   # (slack.enabled). docs/operations.md#alerts lists every alert. In PromQL, tested by promtool.

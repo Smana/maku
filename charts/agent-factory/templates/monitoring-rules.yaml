@@ -14,7 +14,8 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- $drop := $r.disabled | default list -}}
 {{- if $maku.enabled -}}
 {{- $on = append $on "rooms" -}}
-{{- if not $issuer }}{{ $drop = append $drop "RoomAuthnHumanIssuerNeverFetched" }}{{ end -}}
+{{- /* local mode has no identity provider: the broker never fetches a human issuer's keys. */ -}}
+{{- if or (not $issuer) (eq (dig "broker" "human" "mode" "oidc" $maku) "local") }}{{ $drop = append $drop "RoomAuthnHumanIssuerNeverFetched" }}{{ end -}}
 {{- if $maku.runController.enabled -}}
 {{- $on = append $on "run-path" -}}
 {{- if ne (dig "networkPolicies" "mode" "" $maku) "kubernetes" }}{{ $drop = append $drop "EgressProxyDown" }}{{ end -}}

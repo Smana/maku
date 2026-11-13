@@ -49,4 +49,26 @@ spec:
         - {targetLabel: job, replacement: {{ .job | default .app }}}
       {{- end }}
 {{- end }}
+{{- if and $maku.enabled (eq (include "afumbrella.makuNetMode" .) "cilium") }}
+{{- /* maku's CNPs are default-deny and admit :9090 from the host only; Cilium unions the allows of
+every CNP selecting an endpoint, so this adds the scraper and nothing else. The factory has no CNP
+of maku's: it needs none. */}}
+{{- $apps := list "room-broker" -}}
+{{- if $maku.runController.enabled }}{{ $apps = append $apps "run-controller" }}{{ end }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: maku-metrics
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: {{ toJson $apps }}}
+  ingress:
+    - fromEndpoints: {{- toYaml $sm.cilium.fromEndpoints | nindent 8 }}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+{{- end }}
 {{- end }}

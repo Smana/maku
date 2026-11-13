@@ -385,10 +385,27 @@ out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" --set maku.networkPol
 ykind PodMonitor 'select(.metadata.name == "maku-egress-proxy") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "egress-proxy" and .spec.podMetricsEndpoints[0].port == "metrics")' 'kubernetes mode: the egress proxy PodMonitor'
 bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090' \
   "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes
-# maku-gateway adds its proxies' PodMonitor (the pod's metrics port, 15020)
-out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}")" || { echo "FAIL: monitoring with maku-gateway does not render" >&2; fail=1; out=''; }
+# cilium mode (maku's default): the broker's and the run-controller's CNPs admit :9090 only from the
+# scraper monitoring.serviceMonitor.cilium.fromEndpoints names, in one extra CNP rendered only with
+# monitoring on; empty, the render fails
+cil=(--set maku.networkPolicies.enabled=true)
+ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'monitoring off renders the scrape CNP'
+out="$(helm template af . -n maku "${args[@]}" "${cil[@]}")"
+ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'cilium mode without monitoring renders the scrape CNP'
+bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode cilium needs monitoring.serviceMonitor.cilium.fromEndpoints: the scraper could not reach :9090' \
+  "${args[@]}" "${mon[@]}" "${cil[@]}"
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" "${cil[@]}" \
+  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"io.kubernetes.pod.namespace":"monitoring","app.kubernetes.io/name":"prometheus"}}]')" ||
+  { echo "FAIL: monitoring in cilium mode does not render" >&2; fail=1; out=''; }
+ykind CiliumNetworkPolicy 'select(.metadata.name == "maku-metrics") | ((.spec.endpointSelector.matchExpressions[0].values | join(",")) == "room-broker,run-controller" and .spec.ingress[0].fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "prometheus" and .spec.ingress[0].toPorts[0].ports[0].port == "9090" and (.spec | has("egress") | not))' 'cilium mode: the scrape CNP admits the scraper on :9090 to the broker and the run-controller, and adds no egress'
+# maku-gateway adds its proxies' PodMonitor (the pod's metrics port, 15020); its NetworkPolicy must
+# admit the scraper (metrics.allowFrom), unless its mode is none
+bad 'monitoring.serviceMonitor.enabled with maku-gateway.networkPolicy.mode "kubernetes" needs maku-gateway.metrics.allowFrom: the scraper could not reach :15020' "${gwd[@]}" "${mon[@]}"
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set maku-gateway.networkPolicy.mode=none)" || { echo "FAIL: monitoring with maku-gateway mode none does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-gateway") | .kind == "PodMonitor"' 'maku-gateway mode none: the PodMonitor needs no allowFrom'
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set-json 'maku-gateway.metrics.allowFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" || { echo "FAIL: monitoring with maku-gateway does not render" >&2; fail=1; out=''; }
 ykind PodMonitor 'select(.metadata.name == "maku-gateway") | (.spec.selector.matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway" and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'maku-gateway: the model-gateway proxies PodMonitor'
-notes="$(helm install af . -n maku --dry-run=client "${gwd[@]}" "${mon[@]}" --set agentgateway.enabled=true 2>/dev/null | sed -n '/^NOTES:/,$p')"
+notes="$(helm install af . -n maku --dry-run=client "${gwd[@]}" "${mon[@]}" --set maku-gateway.networkPolicy.mode=none --set agentgateway.enabled=true 2>/dev/null | sed -n '/^NOTES:/,$p')"
 grep -qF 'agentgateway.monitoring.enabled' <<<"$notes" || { echo "FAIL: NOTES does not tell agentgateway.monitoring.enabled with monitoring on" >&2; fail=1; }
 
 # v4 step 6 Task 5 (D21, EX13): the product alerts, one PrometheusRule `maku`, a group per component
@@ -422,6 +439,8 @@ ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanI
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
 ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations.md#room-alerts"' 'docsURL replaces the docs base'
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set slack.enabled=true)"
 [[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-slack" ]] || { echo "FAIL: slack.enabled: groups '$(groups)'" >&2; fail=1; }

@@ -28,10 +28,25 @@ monitoring:
 The run-controller and the egress proxy have no metrics Service, so `PodMonitor`s scrape them and a
 default render gains no Service. Each object sets the `job` label the alerts read.
 
-In `maku.networkPolicies.mode kubernetes` the broker's, the run-controller's and the egress proxy's
-NetworkPolicies admit `:9090` only from `maku.networkPolicies.kubernetes.metricsFrom`; the render fails
-while it is empty, since the scraper could not reach them. The model-gateway proxies admit their
-scraper from `maku-gateway.metrics.allowFrom`.
+A target behind a default-deny policy must admit the scraper, or its scrape reads only `up == 0` and
+its `Down` alert fires for ever. So the render fails, naming the key, while the scraper is not admitted:
+
+| Policy | The scraper is admitted by |
+|---|---|
+| `maku.networkPolicies.mode kubernetes` | `maku.networkPolicies.kubernetes.metricsFrom` (NetworkPolicy peers), on the broker, the run-controller and the egress proxy |
+| `maku.networkPolicies.mode cilium` (maku's default) | `monitoring.serviceMonitor.cilium.fromEndpoints` (Cilium endpoint selectors), in the umbrella's CNP `maku-metrics` on the broker and the run-controller, rendered only with monitoring on |
+| `maku-gateway.networkPolicy.mode` other than `none` | `maku-gateway.metrics.allowFrom`, on the proxies' `:15020` |
+
+```yaml
+monitoring:
+  serviceMonitor:
+    enabled: true
+    cilium:
+      fromEndpoints:
+        - matchLabels: {io.kubernetes.pod.namespace: monitoring, app.kubernetes.io/name: prometheus}
+```
+
+The factory has no default-deny policy of maku's, so it needs no entry.
 
 The metric families are listed in [Operations](operations.md#metrics) and
 [Factory metrics](operations.md#factory-metrics).
@@ -39,7 +54,9 @@ The metric families are listed in [Operations](operations.md#metrics) and
 ## Alerts
 
 `monitoring.prometheusRule.enabled` renders one `PrometheusRule`, `maku`: a group per enabled
-component, every rule in PromQL with `runbook_url` and `dashboard` annotations.
+component, every rule in PromQL with `runbook_url` and `dashboard` annotations. The release
+namespace, `maku.runs.namespace`, `maku.broker.human.issuer` and `monitoring.prometheusRule.docsURL`
+are substituted into it, so the schema refuses a double quote or a backslash in them.
 [Operations](operations.md#alerts) lists each alert and the values that shape the rule.
 
 ## Traces

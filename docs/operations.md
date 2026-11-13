@@ -109,7 +109,7 @@ sets, `room-broker`, in the release namespace.
 | `RoomBridgeItemsRefused` | The broker answered `400` to a lone harness item | — | The bridge and the broker disagree on the envelope: the broker logs `bridge item refused` |
 | `RoomBridgeItemsUnstorable` | Items kept as stubs, `invalid_value` or `key_collision` (info) | — | Expected now and then; a steady rate is a harness pattern worth a look |
 | `RoomAuthnJWKSStale` | An issuer's keys have not been refreshed for 6 h | 5 min | The broker's egress to that issuer; at 24 h its tokens are refused |
-| `RoomAuthnHumanIssuerNeverFetched` | The broker is up and has never fetched `human.issuer`'s keys; rendered only with an issuer | 30 min | The broker's egress to the issuer: every human is refused until it does |
+| `RoomAuthnHumanIssuerNeverFetched` | The broker is up and has never fetched `human.issuer`'s keys; rendered only with an issuer, outside `human.mode: local` | 30 min | The broker's egress to the issuer: every human is refused until it does |
 | `RoomRejectedActionsSpike` | More than 30 actions refused in 10 min | — | Someone is probing, or the UI disagrees with the policy |
 | `RoomVerdictsNotReachingGitHub` | Posting errors, and no successful post in 30 min | 30 min | The factory App's key; egress to `api.github.com` |
 | `RoomApprovalPendingTooLong` | An approval has waited over 15 min | — | Decide it; undecided, it is denied at 30 min (attended) or `approvals.ttl` (unattended) |
