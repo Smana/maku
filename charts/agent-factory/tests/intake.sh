@@ -298,7 +298,7 @@ values+=(-f "$VALUES" --set "maku-gateway.identity.issuer=$(kubectl get --raw /.
   kubectl apply --server-side -f - >/dev/null
 kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
 # The CRD chart rendered and applied, not installed as a release: with agentgateway's CRDs the
-# release's Helm Secret exceeds the apiserver's 1 MiB object limit. The CRDs are the chart's own.
+# release's Helm Secret can exceed the apiserver's 1 MiB object limit (about 2.5 MB rendered). The CRDs are the chart's own.
 helm template intake-crds charts/agent-factory-crds -n "$NS" --set agentgateway-crds.enabled=true |
   kubectl apply --server-side -f - >/dev/null
 kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
