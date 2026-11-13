@@ -956,9 +956,8 @@ func TestRoomToolsAuth(t *testing.T) {
 	}
 }
 
-// Hardening H3a: roomTools.pushRepositories is the broker's own gate on output_push, beside the
-// run's annotation. Until push is enforced (PR 6) every entry is refused, as the factory refuses
-// push in enforceOutputs; an absent or empty list is valid.
+// Hardening H3: roomTools.pushRepositories is the broker's own gate on output_push, beside the
+// run's annotation. An absent or empty list serves no push; an entry is owner/name.
 func TestRoomToolsPushRepositories(t *testing.T) {
 	for _, body := range []string{valid, valid + "roomTools: {pushRepositories: []}\n"} {
 		c, err := Load(write(t, body))
@@ -969,9 +968,18 @@ func TestRoomToolsPushRepositories(t *testing.T) {
 			t.Fatalf("push repositories %v", got)
 		}
 	}
-	if _, err := Load(write(t, valid+"roomTools: {pushRepositories: [Smana/ai-native-ref]}\n")); err == nil ||
-		!strings.Contains(err.Error(), "roomTools.pushRepositories") {
-		t.Fatalf("want a roomTools.pushRepositories refusal, got %v", err)
+	c, err := Load(write(t, valid+"roomTools: {pushRepositories: [Smana/ai-native-ref]}\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.PushRepositories(); len(got) != 1 || got[0] != "Smana/ai-native-ref" {
+		t.Fatalf("push repositories %v", got)
+	}
+	for _, bad := range []string{"ai-native-ref", "Smana/", "/x", "a/b/c", "' Smana/x'"} {
+		if _, err := Load(write(t, valid+"roomTools: {pushRepositories: ["+bad+"]}\n")); err == nil ||
+			!strings.Contains(err.Error(), "roomTools.pushRepositories") {
+			t.Fatalf("%s: want a roomTools.pushRepositories refusal, got %v", bad, err)
+		}
 	}
 }
 
