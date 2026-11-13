@@ -12,7 +12,7 @@
 # PR D's follow-up: layered with tests/usd-values.yaml, the runs call the model gateway with their own
 # token, agentgateway prices each call from its catalog, and the factory's meter reads the gateway's
 # token series from a test-only VictoriaMetrics (tests/metrics-stub.yaml). The first scoper run, once it
-# ends, must settle in the factory's ledger (agent_factory_run_settled_usd) at the gateway's own cost
+# ends, must settle in the factory's ledger (maku_factory_run_settled_usd) at the gateway's own cost
 # counter for that run (max_over_time: the run's series is born at its first priced call), within 1 %,
 # with no unpriced catalog lookup and no unpriced model in the meter. Then the script stops.
 set -euo pipefail
