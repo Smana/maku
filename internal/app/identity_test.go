@@ -140,3 +140,48 @@ func TestGenericIssuerReachesRooms(t *testing.T) {
 		t.Fatalf("the refused roles claim is not counted:\n%s", body)
 	}
 }
+
+// Review of #524: the broker's sponsored principals take human.mcp.sponsoredClientClaim, as the
+// factory's take api.sponsoredClientClaim, so both admit the same Okta-shaped Slack App token.
+func TestBrokerSponsoredClientClaim(t *testing.T) {
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	slack := filepath.Join(dir, "slack-app")
+	writeID(t, slack, "0oa-slack")
+	const iss = "https://okta.example/oauth2/default"
+	cfg := config.Config{
+		RunIssuers: []config.IssuerConfig{{Issuer: clusterIssuer, JWKSURL: clusterIssuer + "/keys", SubPattern: `^run-(\w+)$`}},
+		Human: config.HumanConfig{Preset: config.PresetGeneric, Issuer: iss, JWKSURL: iss + "/v1/keys", RolesClaim: "groups",
+			Audience: "api://rooms", Origin: "https://rooms.example.test",
+			MCP: config.MCPConfig{Enabled: true, SponsoredClientClaim: "cid",
+				Sponsored: []config.SponsoredConfig{{Name: "slack-app", ClientIDFile: slack}}}},
+	}
+	build := func(_ context.Context, issuer, _ string, _ bool) (*authn.Verifier, error) {
+		return authn.NewVerifierWithKeyfunc(issuer, func(*jwt.Token) (any, error) { return &key.PublicKey, nil }), nil
+	}
+	_, m := newMetrics(t)
+	a, err := authenticators(t.Context(), cfg, m, build, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tok := func(claims jwt.MapClaims) string {
+		c := jwt.MapClaims{"iss": iss, "sub": "0oa-slack", "aud": "api://rooms", "exp": time.Now().Add(time.Hour).Unix()}
+		for k, v := range claims {
+			c[k] = v
+		}
+		raw, err := jwt.NewWithClaims(jwt.SigningMethodRS256, c).SignedString(key)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return raw
+	}
+	if p, err := a.sponsored.Authenticate(t.Context(), tok(jwt.MapClaims{"cid": "0oa-slack"})); err != nil || p.ID != "system:slack-app" {
+		t.Fatalf("Okta's cid: %+v %v", p, err)
+	}
+	if _, err := a.sponsored.Authenticate(t.Context(), tok(jwt.MapClaims{"cid": "0oa-slack", "azp": "0oa-other"})); err == nil {
+		t.Fatal("cid outvoted azp naming another client")
+	}
+}

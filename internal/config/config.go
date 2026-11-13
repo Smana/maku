@@ -572,6 +572,10 @@ type MCPConfig struct {
 	// Sponsored are the service accounts that may call run_create (factory interfaces F4, R13);
 	// each is also declared in the factory's api.sponsored, which decides everything else.
 	Sponsored []SponsoredConfig `json:"sponsored,omitempty"`
+	// SponsoredClientClaim names the claim holding a sponsored token's client id under preset
+	// generic, for an IdP that puts it elsewhere than azp or client_id: cid (Okta) or appid
+	// (Entra). It mirrors the factory's api.sponsoredClientClaim, so both admit the same principals.
+	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
 	// SessionStart lists the repositories ("owner/name") whose issue_draft says canStart: the
 	// handoff prompt may start the factory there for a caller who writes to them. Empty, none does.
 	SessionStart []string `json:"sessionStart,omitempty"`
@@ -1111,6 +1115,9 @@ func (h HumanConfig) validate(system []string) []error {
 		if len(h.MCP.SessionStart) > 0 {
 			errs = append(errs, errors.New("human.mcp.sessionStart: mode local takes no sessionStart repository"))
 		}
+		if h.MCP.SponsoredClientClaim != "" {
+			errs = append(errs, errors.New("human.mcp.sponsoredClientClaim: mode local takes no sponsored principal"))
+		}
 		// Dashboards are optional in either mode and checked the same way.
 		return append(errs, validateDashboards(h.Dashboards)...)
 	}
@@ -1300,8 +1307,14 @@ func (h HumanConfig) validatePreset() []error {
 			break
 		}
 	}
+	if cc := h.MCP.SponsoredClientClaim; cc != "" && !authn.ValidClientClaim(cc) {
+		errs = append(errs, fmt.Errorf("human.mcp.sponsoredClientClaim: %q is not cid, azp, client_id or appid", cc))
+	}
 	switch h.EffectivePreset() {
 	case PresetZITADEL:
+		if h.MCP.SponsoredClientClaim != "" {
+			errs = append(errs, errors.New("human.mcp.sponsoredClientClaim: the zitadel preset names the client in azp or client_id"))
+		}
 		if h.ProjectIDFile == "" {
 			errs = append(errs, errors.New("human.projectIDFile: is required"))
 		}

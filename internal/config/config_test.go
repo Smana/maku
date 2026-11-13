@@ -1110,10 +1110,12 @@ func TestHumanPresets(t *testing.T) {
 			t.Fatalf("%v %+v", err, c.Human.Scopes)
 		}
 	})
-	t.Run("a generic sponsored principal with an audience", func(t *testing.T) {
-		body := generic + "  audience: api://rooms\n" + sponsoredMCP + "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
-		if _, err := Load(write(t, body)); err != nil {
-			t.Fatal(err)
+	t.Run("a generic sponsored principal with an audience and Okta's cid", func(t *testing.T) {
+		body := generic + "  audience: api://rooms\n" + sponsoredMCP + "    sponsoredClientClaim: cid\n" +
+			"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+		c, err := Load(write(t, body))
+		if err != nil || c.Human.MCP.SponsoredClientClaim != "cid" {
+			t.Fatalf("%v %+v", err, c.Human.MCP)
 		}
 	})
 	for _, c := range []struct {
@@ -1139,6 +1141,10 @@ func TestHumanPresets(t *testing.T) {
 		{"an empty scope", generic + "  scopes: ['']\n", "human.scopes: an empty or spaced scope"},
 		{"no jwksURL and an http issuer", strings.Replace(zitadel, "issuer: https://auth.example.test", "issuer: http://auth.example.test", 1),
 			"human: jwksURL must be an absolute https:// URL"},
+		{"a sponsored client claim outside the allowlist", generic + "  audience: api://rooms\n" + sponsoredMCP + "    sponsoredClientClaim: sub\n",
+			`human.mcp.sponsoredClientClaim: "sub" is not cid, azp, client_id or appid`},
+		{"a sponsored client claim under zitadel", valid + sponsoredMCP + "    sponsoredClientClaim: cid\n",
+			"human.mcp.sponsoredClientClaim: the zitadel preset names the client in azp or client_id"},
 		{"a generic sponsored principal without an audience", generic + sponsoredMCP,
 			"human.mcp.sponsored needs human.audience or human.audienceFile with preset generic"},
 	} {

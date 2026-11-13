@@ -189,7 +189,7 @@ func authenticators(ctx context.Context, cfg config.Config, m *metrics.Set, buil
 		}
 		web, maku := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile)
 		sponsored = &authn.Sponsored{V: hv, Clients: clients, Exclude: func() []string { return []string{web(), maku()} },
-			Audience: humanAudience(h)}
+			Audience: humanAudience(h), ClientClaim: h.MCP.SponsoredClientClaim, Generic: h.EffectivePreset() == config.PresetGeneric}
 	}
 	return auth{runs: runs, systems: authn.NewSystems(sys, cfg.SystemPrincipals), humans: humans, verifiers: all,
 		sponsored: sponsored, roomTokens: roomTokens, roomPatterns: roomPatterns}, nil
