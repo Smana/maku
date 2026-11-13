@@ -9,7 +9,7 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- $issuer := dig "broker" "human" "issuer" "" $maku -}}
 {{- $docs := $r.docsURL | default (printf "https://github.com/Smana/maku/blob/v%s/docs" .Chart.AppVersion) | trimSuffix "/" -}}
 {{- $runsNS := dig "runs" "namespace" "agents" $maku -}}
-{{- $files := list "rooms" "factory" "run-path" "slack" -}}
+{{- $files := list "rooms" "factory" "run-path" "slack" "gateway" -}}
 {{- $on := list -}}
 {{- $drop := $r.disabled | default list -}}
 {{- if $maku.enabled -}}
@@ -24,6 +24,23 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
 {{- end -}}
 {{- if (index .Values "maku-factory").enabled }}{{ $on = append $on "factory" }}{{ end -}}
 {{- if (.Values.slack | default dict).enabled }}{{ $on = append $on "slack" }}{{ end -}}
+{{- $gw := index .Values "maku-gateway" | default dict -}}
+{{- if $gw.enabled -}}
+{{- $on = append $on "gateway" -}}
+{{- /* A priced catalog: maku-gateway's own prices, or the factory's meter.prices through the
+umbrella (GW12, templates/gateway-catalog.yaml). Without one every lookup misses and no cost is
+counted, so the lookup alert and the cross-check have nothing to judge. The cross-check also
+compares with the factory's ledger gauge: no factory meter (meter.url), no ledger. */ -}}
+{{- $factory := index .Values "maku-factory" | default dict -}}
+{{- $cat := $gw.modelCatalog | default dict -}}
+{{- $priced := and $cat.enabled (or $cat.prices (and $cat.umbrellaPrices (dig "config" "meter" "prices" dict $factory))) -}}
+{{- if not $priced }}{{ $drop = append $drop "AgentGatewayCostUnpriced" }}{{ end -}}
+{{- if or (not $priced) (not $factory.enabled) (not (dig "config" "meter" "url" "" $factory)) }}{{ $drop = concat $drop (list "agent_cost:gateway_run_usd" "AgentCostCrossCheckMismatch") }}{{ end -}}
+{{- end -}}
+{{- /* The runs' subject prefix, regex-escaped: the gateway group reads it only inside =~ and
+label_replace, and a PromQL string needs each backslash doubled. */ -}}
+{{- $gwRuns := $gw.runs | default dict -}}
+{{- $runSubject := printf "system:serviceaccount:%s:%s" ($gwRuns.namespace | default $runsNS) ($gwRuns.namePrefix | default "run-") | regexQuoteMeta | replace "\\" "\\\\" -}}
 {{- $known := list -}}
 {{- $groups := list -}}
 {{- range $f := $files -}}
@@ -31,6 +48,8 @@ groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, ne
   | replace "__NAMESPACE__" $.Release.Namespace
   | replace "__RUNS_NAMESPACE__" $runsNS
   | replace "__HUMAN_ISSUER__" $issuer
+  | replace "__GATEWAY_NAME__" ($gw.name | default "model-gateway")
+  | replace "__RUN_SUBJECT__" $runSubject
   | replace "__DOCS__" $docs -}}
 {{- $g := fromYaml $text -}}
 {{- if hasKey $g "Error" }}{{ fail (printf "files/rules/%s.yaml: %s" $f $g.Error) }}{{ end -}}

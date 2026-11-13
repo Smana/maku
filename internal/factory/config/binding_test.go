@@ -153,6 +153,14 @@ func TestResolve(t *testing.T) {
 		// The repository rule a live class without allowedFiles breaks, judged per binding (B9).
 		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
 			merge: Merge{PolicyBot: new(false)}, reason: ReasonInvalid, msg: "class x: merge.policyBot: false needs allowedFiles on every live class"},
+		// The variant floor reads the templates (TE2): checked per binding, never left to Parse,
+		// where it would refuse every consumer Repository.
+		"a variant below its floor": {class: "x", ctx: PolicyContext{
+			HarnessProfiles: map[string]HarnessProfile{"rich": {Template: "pair"}, "base": {Template: "solo"}},
+			Templates:       map[string]Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}}},
+			policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "rich", HarnessAllowed: []string{"base"}}} },
+			bind:   func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
+			reason: ReasonInvalid, msg: `harnessAllowed "base" drops roles of the floor (TE2)`},
 		"an unknown harness": {policy: func(p *PolicySpec) { p.Harness = "nope" }, reason: ReasonInvalid, msg: `harness "nope" is not in harnessProfiles (TE2)`},
 		"live on the policy": {policy: func(p *PolicySpec) { p.Live = true }, reason: ReasonInvalid, msg: "mode is the binding's"},
 	} {

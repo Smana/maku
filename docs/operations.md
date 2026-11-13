@@ -82,8 +82,8 @@ rest. Neither carries a run or room label.
 
 The umbrella chart renders them as one `PrometheusRule`, `maku`, with `monitoring.prometheusRule.enabled`
 ([observability](observability.md)). It holds one group per component, each rendered only with its
-component: `maku-rooms` (below), [`maku-factory`](#factory-alerts), [`maku-run-path`](#run-path-alerts)
-and [`maku-slack`](#slack-alerts). The VictoriaMetrics operator converts it to a `VMRule`. Every rule is
+component: `maku-rooms` (below), [`maku-factory`](#factory-alerts), [`maku-run-path`](#run-path-alerts),
+[`maku-slack`](#slack-alerts) and [`maku-gateway`](#gateway-alerts). The VictoriaMetrics operator converts it to a `VMRule`. Every rule is
 PromQL, evaluated by promtool in `charts/agent-factory/tests/monitoring.sh`, and carries two
 annotations: `runbook_url`, this page's section for its group, and `dashboard`, the Grafana path
 `/d/<uid>`.
@@ -692,6 +692,32 @@ approval label.
 |---|---|---|---|
 | `SlackDecisionsSpike` | More than five `forge.push` approvals decided from Slack in 10 min | — | The broker's `slack decision` lines and the room log: a burst is the shape of a compromised App pod |
 | `SlackCardUpdatesFailing` | The App has failed approval-card updates | 1 h | The App's `card update failed` lines: a revoked `chat:write`, a removed message |
+
+### Gateway alerts
+
+Group `maku-gateway`, with `maku-gateway.enabled`. Every rule reads agentgateway's own names, as the
+meter does ([metering the runs](gateway.md#metering-the-runs)), on the job the chart's `PodMonitor`
+sets (`maku-gateway.name`) in the release namespace. `AgentGatewayCostUnpriced` and the cost
+cross-check need a priced catalog (`maku-gateway.modelCatalog.prices`, or the factory's
+`meter.prices` through the umbrella); the cross-check also reads the factory's
+`maku_factory_run_settled_usd`, so its record `agent_cost:gateway_run_usd` and its alert render only
+with `maku-factory.enabled` and its `meter.url`.
+
+The record takes a run's cost as each gateway series' highest value in 6 h, summed over the proxies
+that served it: a run's series is born at its first priced call, so `increase()` would drop that
+call's cost, and a run that ends before the first scrape entirely. A proxy container that restarts
+mid-run resets its series: the record then reads the pre-restart total until the spend after the
+restart passes it, which can raise a mismatch the ledger is right about. A replaced pod is a new
+series and is summed.
+
+| Alert | Fires when | For | First step |
+|---|---|---|---|
+| `AgentRouterMetricContractBroken` | Model routes answer 200 with no `agentgateway_gen_ai_client_token_usage_count` increase, or a token type other than `input`, `output`, `input_cache_read`, `input_cache_write` appears | 15 min | An agentgateway upgrade renamed what `meter.query` reads: the meter reads zero or misprices until the query follows |
+| `AgentGateway5xxRatioHigh` | Over 5 % of the gateway's answers are 5xx, and more than five in 10 min | 10 min | Split by `route` and `reason`: `UpstreamFailure` or `Timeout` is the provider, `Internal` the proxy |
+| `AgentGatewayModelErrorRatioHigh` | Over 10 % of model calls carry an `error_type` | 10 min | The access log's `http.status` and `error` fields name the cause |
+| `AgentGatewayUnauthorizedBurst` | More than 20 `JwtAuth` or `Authorization` refusals in 5 min | — | Replayed or foreign tokens, or a caller whose token projection broke |
+| `AgentGatewayCostUnpriced` | A catalog lookup other than `Exact`, by caller, model and status | — | `Missing` or `Unpriced`: add the model to `meter.prices` (or `maku-gateway.modelCatalog.prices`). `NoCatalog`: the catalog is not mounted |
+| `AgentCostCrossCheckMismatch` | A run's ledger total and the gateway's priced cost differ by more than max(1 %, $0.01) once its cost stopped moving, or the gateway priced spend the ledger never saw | 15 min | Neither side is presumed right: a double charge, a lost ledger write, a catalog price that differs from `meter.prices`, an unpriced lookup, a scrape gap |
 
 ### Factory failures
 

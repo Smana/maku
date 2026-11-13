@@ -1,0 +1,143 @@
+# maku-gateway under promtool. The cross-check and the unpriced lookup are ported from ai-native-ref's
+# test-agent-cost-crosscheck-alerts.sh at 1529b3b (agree, off, floor, live, unseen; the Missing
+# lookup), on the runs' subject (system:serviceaccount:agents:run-) and without its Envoy case
+# (maku-gateway has no Envoy path). Unlike ANR's, the cost series start above zero, as a run's
+# per-run counter does, with no leading zeros, and add small, early and split. The rest is one case
+# per rule, on agentgateway's own names.
+rule_files: [rules.yaml]
+evaluation_interval: 30s
+tests:
+  # A run's cost series is born at its first priced call, so it starts above zero: no leading zeros.
+  # Every run but live and early spends for about 10 minutes, then stops (by 9.5 m); the ledger holds
+  # its total throughout.
+  #  agree: 10.00 both sides.   off: gateway 10.00, ledger 10.15 (1.5%).   floor: 0.20 vs 0.205.
+  #  live: still spending, ledger behind.   unseen: gateway 3.00, no ledger series.
+  #  small: $0.20, all of it before the first scrape, ledger 0.20: a single sample, never a mismatch.
+  #  early: $0.20 before the first scrape and no ledger: the gateway priced spend the ledger never saw.
+  #  split: two proxies served the run, 6 + 4, ledger 10: summed, they agree.
+  - interval: 30s
+    input_series:
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-agree"}', values: '1+0.5x18 10x101'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="agree"}', values: '10x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-off"}', values: '1+0.5x18 10x101'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="off"}', values: '10.15x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-floor"}', values: '0.1 0.2x119'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="floor"}', values: '0.205x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-live"}', values: '0.5+0.5x119'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="live"}', values: '0.5x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-unseen"}', values: '0.15+0.15x18 3x101'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-small"}', values: '0.2x120'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="small"}', values: '0.2x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-early"}', values: '0.2x120'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", pod="model-gateway-a", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-split"}', values: '1+0.5x10 6x109'}
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", pod="model-gateway-b", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-split"}', values: '4x120'}
+      - {series: 'maku_factory_run_settled_usd{job="agent-factory", namespace="maku", pod="agent-factory-0", run="split"}', values: '10x120'}
+    alert_rule_test:
+      # early is idle from its first sample: pending at 0, firing from 15 m.
+      - {eval_time: 14m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
+      - {eval_time: 20m, alertname: AgentCostCrossCheckMismatch, exp_alerts: [{exp_labels: {severity: warning, run: early}}]}
+      # off and unseen stop moving at 9.5 m, idle from 19.5 m; for 15 m: not before 34.5 m.
+      - {eval_time: 33m, alertname: AgentCostCrossCheckMismatch, exp_alerts: [{exp_labels: {severity: warning, run: early}}]}
+      - eval_time: 36m
+        alertname: AgentCostCrossCheckMismatch
+        exp_alerts:
+          - exp_labels: {severity: warning, run: early}
+          - exp_labels: {severity: warning, run: "off"}
+          - exp_labels: {severity: warning, run: unseen}
+      # early's series is 40 m old, its cost never moved: its gauge would be gone, the branch resolves.
+      - eval_time: 45m
+        alertname: AgentCostCrossCheckMismatch
+        exp_alerts:
+          - exp_labels: {severity: warning, run: "off"}
+          - exp_labels: {severity: warning, run: unseen}
+      # unseen's cost last moved at 9.5 m: the branch resolves 40 m later.
+      - eval_time: 55m
+        alertname: AgentCostCrossCheckMismatch
+        exp_alerts:
+          - exp_labels: {severity: warning, run: "off"}
+  # A run outside the runs' subject (another namespace's ServiceAccount) is not cross-checked.
+  - interval: 30s
+    input_series:
+      - {series: 'agentgateway_gen_ai_client_cost_usd_total{job="model-gateway", namespace="maku", gen_ai_request_model="m1", ar_agent="system:serviceaccount:other:run-x"}', values: '0.15+0.15x18 3x101'}
+    alert_rule_test:
+      - {eval_time: 36m, alertname: AgentCostCrossCheckMismatch, exp_alerts: []}
+  # A Missing lookup, two scrapes of it.
+  - interval: 30s
+    input_series:
+      - {series: 'agentgateway_cost_catalog_lookups_total{job="model-gateway", namespace="maku", status="Exact", gen_ai_request_model="m1", ar_agent="system:serviceaccount:agents:run-ok"}', values: '0+5x40'}
+      - {series: 'agentgateway_cost_catalog_lookups_total{job="model-gateway", namespace="maku", status="Missing", gen_ai_request_model="glm-9", ar_agent="system:serviceaccount:agents:run-bad"}', values: '0 0 0 1 2 2x30'}
+    alert_rule_test:
+      - {eval_time: 1m, alertname: AgentGatewayCostUnpriced, exp_alerts: []}
+      - eval_time: 3m
+        alertname: AgentGatewayCostUnpriced
+        exp_alerts:
+          - exp_labels: {severity: warning, status: Missing, gen_ai_request_model: glm-9, ar_agent: "system:serviceaccount:agents:run-bad"}
+  # AgentRouterMetricContractBroken: model calls answered 200 for 15 minutes with no token series fire;
+  # with the token series they do not.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="200"}', values: '0+10x40'}
+    alert_rule_test:
+      - {eval_time: 14m, alertname: AgentRouterMetricContractBroken, exp_alerts: []}
+      - {eval_time: 20m, alertname: AgentRouterMetricContractBroken, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="200"}', values: '0+10x40'}
+      - {series: 'agentgateway_gen_ai_client_token_usage_count{job="model-gateway", namespace="maku", gen_ai_request_model="m1", gen_ai_token_type="input"}', values: '0+10x40'}
+      - {series: 'agentgateway_gen_ai_client_token_usage_sum{job="model-gateway", namespace="maku", gen_ai_request_model="m1", gen_ai_token_type="input"}', values: '0+1000x40'}
+      - {series: 'agentgateway_gen_ai_client_token_usage_sum{job="model-gateway", namespace="maku", gen_ai_request_model="m1", gen_ai_token_type="input_cache_read"}', values: '0+1000x40'}
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentRouterMetricContractBroken, exp_alerts: []}
+  # The models list answers 200 and spends no token: not a model call.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-list", status="200"}', values: '0+10x40'}
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentRouterMetricContractBroken, exp_alerts: []}
+  # A token type the meter does not price (the relabelled era's cached_input) fires.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_gen_ai_client_token_usage_sum{job="model-gateway", namespace="maku", gen_ai_request_model="m1", gen_ai_token_type="cached_input"}', values: '0+1000x40'}
+    alert_rule_test:
+      - {eval_time: 14m, alertname: AgentRouterMetricContractBroken, exp_alerts: []}
+      - {eval_time: 16m, alertname: AgentRouterMetricContractBroken, exp_alerts: [{exp_labels: {severity: warning}}]}
+  # AgentGateway5xxRatioHigh: 10 of 70 requests a minute are 503 (14 %) for 10 minutes; 1 of 61 is not.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="200"}', values: '0+60x40'}
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="503"}', values: '0+10x40'}
+    alert_rule_test:
+      - {eval_time: 9m, alertname: AgentGateway5xxRatioHigh, exp_alerts: []}
+      - {eval_time: 22m, alertname: AgentGateway5xxRatioHigh, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="200"}', values: '0+60x40'}
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="503"}', values: '0+1x40'}
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentGateway5xxRatioHigh, exp_alerts: []}
+  # AgentGatewayModelErrorRatioHigh: 20 of 80 model calls a minute fail (25 %) for 10 minutes; 5 of
+  # 65 (7.7 %) do not.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="maku", gen_ai_request_model="m1"}', values: '0+60x40'}
+      - {series: 'agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="maku", gen_ai_request_model="m1", error_type="_OTHER"}', values: '0+20x40'}
+    alert_rule_test:
+      - {eval_time: 9m, alertname: AgentGatewayModelErrorRatioHigh, exp_alerts: []}
+      - {eval_time: 22m, alertname: AgentGatewayModelErrorRatioHigh, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="maku", gen_ai_request_model="m1"}', values: '0+60x40'}
+      - {series: 'agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="maku", gen_ai_request_model="m1", error_type="_OTHER"}', values: '0+5x40'}
+    alert_rule_test:
+      - {eval_time: 30m, alertname: AgentGatewayModelErrorRatioHigh, exp_alerts: []}
+  # AgentGatewayUnauthorizedBurst: 50 refusals in 5 minutes fire; 10 do not.
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="401", reason="JwtAuth"}', values: '0+10x20'}
+    alert_rule_test:
+      - {eval_time: 6m, alertname: AgentGatewayUnauthorizedBurst, exp_alerts: [{exp_labels: {severity: warning}}]}
+  - interval: 1m
+    input_series:
+      - {series: 'agentgateway_requests_total{job="model-gateway", namespace="maku", route="maku/maku-models-public-agent-default", status="403", reason="Authorization"}', values: '0+2x20'}
+    alert_rule_test:
+      - {eval_time: 6m, alertname: AgentGatewayUnauthorizedBurst, exp_alerts: []}
