@@ -917,6 +917,66 @@ class CheckpointTest(unittest.TestCase):
             agent_run.checkpoint(self.env, time.monotonic() - 1)
 
 
+class EnforcedPushTest(unittest.TestCase):
+    """Hardening H3 (HR23, HR33): with push in SAFE_OUTPUTS the harness's own pushes are requested as push
+    outputs, through agent_push.request, against the checkpoint's bare remote and a fake factory."""
+
+    setUp = CheckpointTest.setUp
+    BRANCH = CheckpointTest.BRANCH
+
+    def factory(self, answers=("applied",)):
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from test_agent_push import FakeFactory
+
+        f = FakeFactory(self, self.remote, answers, self.BRANCH)
+        self.env.update(SAFE_OUTPUTS="pr,push", MCP_URL=f.url, REAL_GIT="/usr/bin/git")
+        return f
+
+    def remote_has_branch(self):
+        return subprocess.run(["git", "--git-dir", self.remote, "rev-parse", "--verify", "--quiet", self.BRANCH],
+                              capture_output=True).returncode == 0
+
+    def test_the_checkpoint_requests_and_does_not_wait(self):
+        f = self.factory()
+        with open(os.path.join(self.repo, "wip.md"), "w") as out:
+            out.write("half done\n")
+        result = agent_run.checkpoint(self.env, time.monotonic() + 7)
+        self.assertEqual(result, "requested a checkpoint commit (output 0123456789abcdef)")
+        self.assertEqual(f.names(), ["output_push"], "no output_status: the applier answers after the run")
+        self.assertEqual(f.calls[0][1], "1", "the harness marker")
+        self.assertFalse(self.remote_has_branch(), "the harness pushed nothing itself")
+
+    def test_a_checkpoint_over_the_cap_is_push_size_with_no_call(self):
+        f = self.factory()
+        with open(os.path.join(self.repo, "wip.md"), "w") as out:
+            out.write("half done\n")
+        sys.path.insert(0, HERE)
+        import agent_push
+
+        with mock.patch.object(agent_push, "MAX_BUNDLE", 10), self.assertRaisesRegex(RuntimeError, "push_size"):
+            agent_run.checkpoint(self.env, time.monotonic() + 7)
+        self.assertEqual(f.calls, [])
+
+    def contract_commit(self):
+        def git(*args):
+            return subprocess.run(["git", "-C", self.repo, *args], capture_output=True, text=True).stdout.strip()
+
+        return git("commit-tree", git("write-tree"), "-p", git("rev-parse", "HEAD"), "-m", "test: the test contract")
+
+    def test_the_contract_is_requested_and_waits_for_the_answer(self):
+        f = self.factory(["requested", "applied"])
+        sha = self.contract_commit()
+        self.assertIsNone(agent_run.push_contract(self.env, sha))
+        self.assertEqual(f.names(), ["output_push", "output_status", "output_status"])
+        self.assertEqual(f.heads(f.bundles[0]), ["%s refs/heads/%s" % (sha, self.BRANCH)])
+        out = subprocess.run(["git", "--git-dir", self.remote, "rev-parse", self.BRANCH], capture_output=True, text=True)
+        self.assertEqual(out.stdout.strip(), sha, "the factory applied it")
+
+    def test_a_refused_contract_returns_the_reason(self):
+        self.factory(["refused"])
+        self.assertEqual(agent_run.push_contract(self.env, self.contract_commit()), "push_history")
+
+
 class GitHub(http.server.BaseHTTPRequestHandler):
     revoked = []
 

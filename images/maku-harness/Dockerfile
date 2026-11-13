@@ -76,13 +76,17 @@ RUN /usr/local/bin/python -m pip install --no-cache-dir --root-user-action=ignor
       -r /tmp/checks-requirements.txt \
  && rm /tmp/checks-requirements.txt
 
-COPY --chmod=0755 agent_run.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py coordination_integration.py /opt/agent/
+COPY --chmod=0755 agent_run.py agent_push.py agent_checks.py test_contract.py git_credential_agent.py loop_policy.py pr_footer.py coordination_integration.py /opt/agent/
 COPY --chmod=0755 site /opt/agent/site
 COPY --chmod=0755 gh /usr/local/bin/gh
+# The git shim (hardening H3, HR23): /usr/local/bin precedes /usr/bin on PATH, so `git push` reaches agent-push
+# when the factory applies the run's pushes; everything else execs /usr/bin/git.
+COPY --chmod=0755 git /usr/local/bin/git
 COPY --chmod=0755 commit-msg /etc/agent/git-hooks/commit-msg
 COPY --chmod=0755 pre-commit /etc/agent/git-hooks/pre-commit
 COPY gitconfig /etc/gitconfig
 RUN ln -s /opt/agent/agent_run.py /usr/local/bin/agent-run \
+ && ln -s /opt/agent/agent_push.py /usr/local/bin/agent-push \
  && ln -s /opt/agent/agent_checks.py /usr/local/bin/agent-checks \
  && ln -s /opt/agent/test_contract.py /usr/local/bin/test-contract \
  && ln -s /opt/agent/git_credential_agent.py /usr/local/bin/git-credential-agent
@@ -102,6 +106,8 @@ COPY --chown=10001:10001 tests /opt/agent/tests
 COPY --chown=10001:10001 requirements.txt checks-requirements.txt /opt/agent/
 # search's grep and glob run only on ripgrep: a base image or a package change that drops it fails here.
 RUN rg --version
+# The git shim must come first on PATH, ahead of the real git it execs.
+RUN [ "$(command -v git)" = /usr/local/bin/git ] && [ -x /usr/bin/git ]
 USER root
 # pytest for test-contract's pytest fixture (v3 feature 4): the test stage only, never the shipped image.
 RUN /usr/local/bin/python -m pip install --no-cache-dir --root-user-action=ignore --require-hashes --only-binary=:all: \

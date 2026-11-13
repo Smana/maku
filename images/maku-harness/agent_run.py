@@ -600,6 +600,7 @@ class ProgressNotes:
         self.names = None
         self.session = None
         self.rid = 0
+        self.timeout = NOTE_TIMEOUT_S  # agent_push raises it: a bundle is up to 8 MiB
 
     def intend(self, call_id: str, command: str) -> None:
         """An action was issued: remember what it would reach, and note the start at once."""
@@ -690,7 +691,7 @@ class ProgressNotes:
         if bearer:
             headers["Authorization"] = bearer
         req = urllib.request.Request(self.url, data=json.dumps(body).encode(), method="POST", headers=headers)
-        with urllib.request.urlopen(req, timeout=NOTE_TIMEOUT_S) as resp:
+        with urllib.request.urlopen(req, timeout=self.timeout) as resp:
             self.session = resp.headers.get("Mcp-Session-Id") or self.session
             raw = resp.read(1 << 20).decode(errors="replace")
         if notify:
@@ -745,9 +746,9 @@ class ProgressNotes:
             raise RuntimeError(message[:200])
         return True
 
-    def harness_call(self, tool: str, arguments: dict) -> None:
-        """Calls one of the harness's own room tools, which the broker lists only to its client: raises
-        when it is not stored. An HTTP 4xx (an expired session) redoes the handshake once."""
+    def harness_call(self, tool: str, arguments: dict) -> dict:
+        """Calls one of the harness's own room tools, which the broker lists only to its client, and returns
+        its result: raises when it is not stored. An HTTP 4xx (an expired session) redoes the handshake once."""
         self.traceparent = None
         for attempt in range(2):
             try:
@@ -757,7 +758,7 @@ class ProgressNotes:
                 result = self.rpc("tools/call", {"name": name, "arguments": arguments})
                 if result.get("isError"):
                     raise RuntimeError(_text({"content": result.get("content")})[:200])
-                return
+                return result
             except urllib.error.HTTPError as exc:
                 if attempt or not 400 <= exc.code < 500:
                     raise
@@ -932,9 +933,37 @@ def push_url(env: dict) -> str:
     return "https://github.com/%s.git" % env["REPOSITORY"]
 
 
+def push_output(env: dict):
+    """agent-push, beside this file, when the factory applies the run's pushes (SAFE_OUTPUTS names push, H3);
+    None otherwise, and the harness pushes as it always has."""
+    if "push" not in [s.strip() for s in env.get("SAFE_OUTPUTS", "").split(",")]:
+        return None
+    sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+    import agent_push
+
+    return agent_push
+
+
 def push_contract(env: dict, sha: str) -> str | None:
     """Pushes sha to the run's branch (F1-R5), never forced; the refusal, or None. From a scratch repository that
-    borrows the clone's objects, so nothing in the agent-writable clone config (url, rewrites, hooks) applies."""
+    borrows the clone's objects, so nothing in the agent-writable clone config (url, rewrites, hooks) applies.
+    When the factory applies the run's pushes (HR23), sha is requested as a push output and its answer waited
+    for: a push held for a maintainer's approval stands, and the factory pushes it once approved."""
+    ap = push_output(env)
+    if ap:
+        try:
+            mcp = ap.client(env)
+            output_id = ap.request(env, sha, REPO_DIR, mcp=mcp)
+            if output_id is None:
+                return None
+            status = ap.wait(env, output_id, mcp)
+        except Exception as exc:  # noqa: BLE001 -- the end note says why (F1-R7)
+            return redact(_short(exc, 200))
+        _, line = ap.settle(REPO_DIR, env, env["BRANCH"], sha, output_id, status)
+        print("agent-run contract: " + line, flush=True)
+        if status.get("status") in ("applied", "waiting"):
+            return None
+        return redact(_short(status.get("reason") or line, 200))
     ac = checks_module()
     objects = os.path.join(REPO_DIR, _git_out("rev-parse", "--git-path", "objects"))
     with tempfile.TemporaryDirectory() as scratch:
@@ -2061,6 +2090,16 @@ def checkpoint(env: dict, deadline: float) -> str:
     refused = "checkpoint refused (%s), " % unfit if unfit else ""
     if not git("rev-list", "-1", "HEAD", "--not", "--remotes=origin").stdout.strip():
         return refused + "nothing to push"
+    ap = push_output(env)
+    if ap:
+        # HR33: requested, never waited for; the factory answers it after the run. Over the cap it is push_size.
+        try:
+            output_id = ap.request(env, "HEAD", REPO_DIR, deadline)
+        except ap.PushSize as exc:
+            raise RuntimeError(refused + str(exc)) from None
+        if output_id is None:
+            return refused + "nothing to push"
+        return refused + "requested %s(output %s)" % ("a checkpoint commit " if committed else "", output_id)
     pushed = git("push", "-q", "origin", "HEAD:refs/heads/" + env["BRANCH"])
     if pushed.returncode:
         raise RuntimeError("push refused: " + pushed.stderr.strip())
