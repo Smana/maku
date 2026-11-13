@@ -84,7 +84,8 @@ Every existing install keeps working (D25):
 - D25 (additive);
 - D26 (support floor);
 - "Rollout", step 6;
-- the 2026-11-12 owner rulings: PR9 (the unsafe settings stay a banner) and Release (a minor is cut per step, after the step's last PR).
+- the 2026-11-12 owner rulings: PR9 (the unsafe settings stay a banner) and Release (a minor is cut per step, after the step's last PR);
+- the 2026-11-13 step 6 rulings R1 to R6 (below; the spec's D6, D19 and D20 are amended with this plan).
 
 **Read against:**
 - Maku `origin/main` `be93df29`. Merged:
@@ -96,35 +97,33 @@ Every existing install keeps working (D25):
   Not merged: step 4 PR D and all of step 5. PR D (web front door) and PR G (production gate) below name the step 5 seams they read.
 - ANR `origin/main` `1529b3b`.
 
-**Branch:** eight PRs, each from `origin/main` once its dependencies merge and its rulings (below) are given.
+**Branch:** eight PRs, each from `origin/main` once its dependencies merge.
 
 | PR | Branch | Tasks | Size | Order |
 |---|---|---|---|---|
-| A, traces end to end (D21) | `feat/v4-obs-traces` | 1–3 | M | **blocked on R1** |
+| A, traces end to end (D21) | `feat/v4-obs-traces` | 1–3 | M | any time |
 | B, scrape objects and alerts (D21) | `feat/v4-obs-alerts` | 4–6 | M | any time (without the `maku-gateway` group, which is B2) |
 | B2, the model-gateway alert group (D21) | `feat/v4-obs-gateway-alerts` | 22 | S | after B and step 4 PR D (Maku #518: agentgateway's native metric names) |
 | C, dashboards (D21) | `feat/v4-obs-dashboards` | 7–8 | L | after B (it extends B's `monitoring` block) |
-| D, exposure and the web front door (D19) | `feat/v4-expose` | 9–12 | L | **blocked on R2 and R4**; after step 5 PR B (it reads `human.preset`, `rolesClaim`, `scopes`, `broker.oidc`) and step 5 PR C (it reads `human.githubLink` for the `/link/github/callback` skip route) |
-| E, the Slack subchart, broker parity, component egress (D20, D6) | `feat/v4-slack-subchart` | 13–16 | L | **blocked on R3**; after D (its route is D's `slack` surface) |
-| F, RunLore's MCP endpoint (D20) | `feat/v4-runlore-mcp` | 17–18 | M | **blocked on R5** |
-| G, `profile: production` renders | `feat/v4-profile-production` | 19–21 | M | **blocked on R6**; last; needs D, E and step 5 PR D (DSN Secrets) |
+| D, exposure and the web front door (D19) | `feat/v4-expose` | 9–12 | L | after step 5 PR B (it reads `human.preset`, `rolesClaim`, `scopes`, `broker.oidc`) and step 5 PR C (it reads `human.githubLink` for the `/link/github/callback` skip route) |
+| E, the Slack subchart, broker parity, component egress (D20, D6) | `feat/v4-slack-subchart` | 13–16 | L | after D (its route is D's `slack` surface) |
+| F, RunLore's MCP endpoint (D20) | `feat/v4-runlore-mcp` | 17–18 | M | any time |
+| G, `profile: production` renders | `feat/v4-profile-production` | 19–21 | M | last; needs D, E and step 5 PR D (DSN Secrets) |
 
 The step's v0.4x minor is cut after PR G. A, B, B2, C and F may also ship in interim minors.
 
-## Rulings needed before PR A
+## Owner rulings (settled 2026-11-13)
 
-These are owner rulings, not the plan's. The plan recommends an answer for each, but no PR that depends on one starts until the owner has given it. A "no" sends the dependent PR back to planning; it does not block the others.
+The owner answered yes to each, as the plan recommended. The spec records them in its owner rulings table, and its D6, D19 and D20 are amended in the same PR as this plan.
 
-| # | Ruling (yes/no) | Recommendation | Blocks |
+| # | Ruling | Answer | Used by |
 |---|---|---|---|
-| R1 | May D6's run egress widen to the OTLP collector when `runController.tracing` is configured (EX15; EX17's D6 line)? | Yes: it exists only when configured, and it is the only way a run's span reaches a collector | PR A |
-| R2 | May D19 be amended to "only the Slack events path must be public; the factory polls GitHub and needs no public path" (EX3; EX17's D19 line)? | Yes: the factory has no GitHub webhook endpoint today | PR D |
-| R3 | May D20 be amended to "the minimal install is the three core Deployments plus Postgres and agentgateway; the egress proxy (D6) and the web front door (D19, oidc) come with their seams" (EX17's D20 line)? | Yes: it states what the chart already installs | PR E |
-| R4 | May the oauth2-proxy web front door be an umbrella template rather than the subchart step 5's PR11 named (EX4)? | Yes: its arguments derive from `maku.broker.human`, and Helm cannot compute a subchart's values | PR D |
-| R5 | May RunLore's knowledge tools reach runs through a broker pass-through on `:8090` rather than MCP federation in `maku-gateway` (EX11)? | Yes: D6's run egress and the harness's single MCP entry stay unchanged | PR F |
-| R6 | May `profile: production` render in step 6 rather than step 7 (EX16)? | Yes: D22's shrink needs cnref on the umbrella, and step 1's PR3 named steps 2 to 6 | PR G |
-
-PRs B, B2 and C depend on no ruling.
+| R1 | May D6's run egress widen to the OTLP collector when `runController.tracing` is configured (EX15; EX17's D6 line)? | Yes, to the collector's OTLP port only, and only when tracing is configured | PR A |
+| R2 | May D19 be amended to "only the Slack events path must be public; the factory polls GitHub and needs no public path" (EX3; EX17's D19 line)? | Yes | PR D |
+| R3 | May D20 be amended to "the minimal install is the three core Deployments plus Postgres and agentgateway; the egress proxy (D6) and the web front door (D19, oidc) come with their seams" (EX17's D20 line)? | Yes | PR E |
+| R4 | May the oauth2-proxy web front door be an umbrella template rather than the subchart step 5's PR11 named (EX4)? | Yes | PR D |
+| R5 | May RunLore's knowledge tools reach runs through a broker pass-through on `:8090` rather than MCP federation in `maku-gateway` (EX11)? | Yes | PR F |
+| R6 | May `profile: production` render in step 6 rather than step 7 (EX16)? | Yes | PR G |
 
 ## Global Constraints
 
@@ -236,7 +235,7 @@ PRs B, B2 and C depend on no ruling.
     - **Rendering the Gateway itself:** the Gateway belongs to the platform. A per-surface parentRef is the seam.
 
 - **EX3 (what must be public: the Slack events path only).**
-  - GitHub needs no public path: the factory polls (EX1). The spec's "the webhook paths (GitHub, Slack)" gets a one-line amendment in PR D's commit.
+  - GitHub needs no public path: the factory polls (EX1). The spec's D19 is amended accordingly (R2).
   - Step 5's `/link/github/callback` is a browser redirect, not a call from GitHub. It rides the web host, which may stay private.
   - The factory's `:8082` (broker only) and `:8080` (RunLore, in-cluster) are never exposed. ANR's `factory.${private_domain_name}` route goes in follow-up 3.
   - `docs/exposure.md` gives one table: each surface, its callers, whether it must be public, and its path.
@@ -458,7 +457,7 @@ PRs B, B2 and C depend on no ruling.
   - **The message** lists every missing seam on its own line, with the key and the doc.
   - **Staged adoption:** `maku.enabled: false` with `maku-factory.enabled: true` is a valid production render. That is cnref's first follow-up: one component, one seam, at a time (D25).
 
-- **EX17 (spec amendments, one line each, in the PR that makes them true, once the owner has given the matching ruling: R1, R2, R3):**
+- **EX17 (spec amendments, made in this plan's PR under rulings R1, R2 and R3):**
   - **D19 (PR D):** "only the Slack events path must be public; the factory polls GitHub and needs no public path".
   - **D20 (PR E):** "the minimal install is the three core Deployments plus Postgres and agentgateway; the egress proxy (D6) and the web front door (D19, oidc) come with their seams".
   - **D6 (PR A):** "and the OTLP collector, when tracing is configured".
@@ -513,8 +512,7 @@ PRs B, B2 and C depend on no ruling.
 - Modify:
   - `docs/README.md`;
   - `docs/operations.md` (a pointer);
-  - `docs/upgrading.md` (`runController.tracing`);
-  - `docs/superpowers/specs/2026-11-12-v4-production-path-design.md` (EX17's D6 line).
+  - `docs/upgrading.md` (`runController.tracing`).
 
 - [ ] **Step 1: write them.** Run `task docs`. Expected: PASS.
 - [ ] **Step 2: commit** `docs: traces end to end`. Then `task check`, and open PR A with EX15 and the nightly note in the body.
@@ -723,8 +721,7 @@ Starts after PR B and step 4 PR D (Maku #518) merge: its expressions use agentga
   - `taskfile.yaml` (`chart:expose:k3d`);
   - `charts/agent-factory/tests/install.sh` (`EXPOSE=httproute|ingress`; Traefik on for `ingress`);
   - `docs/identity.md` (step 5's oauth2-proxy section becomes "rendered by the chart");
-  - `docs/README.md`, `docs/upgrading.md`;
-  - the spec's D19 line (EX17).
+  - `docs/README.md`, `docs/upgrading.md`.
 
 - [ ] **Step 1: failing cases:**
   - **render, zitadel preset:**
@@ -747,7 +744,7 @@ Starts after PR B and step 4 PR D (Maku #518) merge: its expressions use agentga
 
   Expected: FAIL.
 - [ ] **Step 2: implement.** Rerun, then `task chart:check` and `task check`. Expected: PASS.
-- [ ] **Step 3: commit** `feat(charts): the web front door, rendered from the broker's identity keys`. Open PR D with EX2 to EX6, Task 9's results and the spec amendment in the body.
+- [ ] **Step 3: commit** `feat(charts): the web front door, rendered from the broker's identity keys`. Open PR D with EX2 to EX6, Task 9's results and ruling R4 in the body.
 
 ## PR E: the Slack subchart, broker parity and component egress (D20, D6)
 
@@ -822,8 +819,7 @@ Starts after PR B and step 4 PR D (Maku #518) merge: its expressions use agentga
   - `tests/render.sh`;
   - `charts/agent-factory/values-slack.example.yaml` (create);
   - `internal/install/secrets.go` and `docs/install-secrets.md` (step 5's registry: the three Slack seams, `webProxy`, and `broker.webhooks[*]`). If step 5 PR E has not merged, these are a follow-up row (After this step);
-  - `docs/slack.md` (an "Install" section; ANR paths become an example);
-  - the spec's D20 line (EX17).
+  - `docs/slack.md` (an "Install" section; ANR paths become an example).
 
 - [ ] **Step 1: failing cases:**
   - default and demo renders are byte-identical;
@@ -991,7 +987,7 @@ Starts after PR B and step 4 PR D (Maku #518) merge: its expressions use agentga
 
 ## After this step (not in these PRs)
 
-- **Owner decisions** (the ones PRs build on are R1 to R6, before PR A):
+- **Owner decisions** (R1 to R6 are settled; see above):
   - **Renaming `factory_slack_*` to `maku_slack_app_*`:** a breaking metric rename, so before v4.0.0 or never.
 - **ANR follow-ups** (D22; each its own PR after the step's Maku minor, each recorded with a gcp-0 live check in the session ledger, aws-0 after). They adopt the umbrella one component at a time:
   1. **The factory under the umbrella.**
