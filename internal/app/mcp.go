@@ -14,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/Smana/maku/internal/config"
+	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/mcp"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/runrequest"
@@ -94,7 +95,19 @@ func roomToolsServer(cfg config.Config, a auth, getenv func(string) string, room
 		s.Tools = roomTools(roomLog, red, push)
 	}
 	s.Tools = append(s.Tools, forgeReadTools(cfg, roomLog)...)
+	s.Tools = append(s.Tools, knowledgeTools(cfg, m)...)
 	return s
+}
+
+// knowledgeTools are kb_search and kb_get forwarded to roomTools.knowledge.url (EX11), counted on
+// rooms_knowledge_calls_total; none while it is unset.
+func knowledgeTools(cfg config.Config, m *metrics.Set) []mcp.Tool {
+	k := cfg.Knowledge()
+	if k.URL == "" {
+		return nil
+	}
+	return mcp.KnowledgeTools(mcp.KnowledgeConfig{URL: k.URL, Tools: k.Tools, Roles: k.Roles, Timeout: k.Timeout.Duration, MaxBytes: k.MaxBytes},
+		httpx.New(k.Timeout.Duration, nil), m.KnowledgeCall)
 }
 
 // forgeReadTools is forge_read while roomTools.forgeReadTokenFile is set (hardening H4, HR35): read
