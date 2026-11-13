@@ -33,7 +33,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -421,62 +421,29 @@ func generations(accepted []resources.Object) config.Generations {
 	return g
 }
 
-// list reads the three kinds. A kind with no CRD is zero objects, logged once.
+// list reads the three kinds, as the API server stores them: unstructured, so a field the author
+// omitted stays omitted (resources.Object's contract; plan PR5). A typed list would write every
+// field without omitempty as present, and mergeDefaults could never fill a key (Q8). A kind with no
+// CRD is zero objects, logged once.
 func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 	var objs []resources.Object
-	add := func(kind resources.Kind, name string, gen int64, item any) error {
-		u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(item)
-		if err != nil {
-			return fmt.Errorf("%s %s: %w", kind, name, err)
-		}
-		spec, _ := u["spec"].(map[string]any)
-		if spec == nil {
-			spec = map[string]any{}
-		}
-		objs = append(objs, resources.Object{Kind: kind, Name: name, Namespace: s.Namespace, Generation: gen, Spec: spec})
-		return nil
-	}
-	in := client.InNamespace(s.Namespace)
 	var absent bool
-	check := func(err error) (bool, error) {
-		if err == nil {
-			return false, nil
-		}
-		if meta.IsNoMatchError(err) {
-			absent = true
-			return true, nil
-		}
-		return false, err
-	}
-
-	var fl v1alpha1.FactoryList
-	if skip, err := check(s.Reader.List(ctx, &fl, in)); err != nil {
-		return nil, fmt.Errorf("list Factory: %w", err)
-	} else if !skip {
-		for i := range fl.Items {
-			if err := add(resources.KindFactory, fl.Items[i].Name, fl.Items[i].Generation, &fl.Items[i]); err != nil {
-				return nil, err
+	for _, kind := range []resources.Kind{resources.KindFactory, resources.KindRepository, resources.KindMergePolicy} {
+		var l unstructured.UnstructuredList
+		l.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind(string(kind) + "List"))
+		if err := s.Reader.List(ctx, &l, client.InNamespace(s.Namespace)); err != nil {
+			if meta.IsNoMatchError(err) {
+				absent = true
+				continue
 			}
+			return nil, fmt.Errorf("list %s: %w", kind, err)
 		}
-	}
-	var rl v1alpha1.RepositoryList
-	if skip, err := check(s.Reader.List(ctx, &rl, in)); err != nil {
-		return nil, fmt.Errorf("list Repository: %w", err)
-	} else if !skip {
-		for i := range rl.Items {
-			if err := add(resources.KindRepository, rl.Items[i].Name, rl.Items[i].Generation, &rl.Items[i]); err != nil {
-				return nil, err
+		for _, u := range l.Items {
+			spec, _ := u.Object["spec"].(map[string]any)
+			if spec == nil {
+				spec = map[string]any{}
 			}
-		}
-	}
-	var pl v1alpha1.MergePolicyList
-	if skip, err := check(s.Reader.List(ctx, &pl, in)); err != nil {
-		return nil, fmt.Errorf("list MergePolicy: %w", err)
-	} else if !skip {
-		for i := range pl.Items {
-			if err := add(resources.KindMergePolicy, pl.Items[i].Name, pl.Items[i].Generation, &pl.Items[i]); err != nil {
-				return nil, err
-			}
+			objs = append(objs, resources.Object{Kind: kind, Name: u.GetName(), Namespace: s.Namespace, Generation: u.GetGeneration(), Spec: spec})
 		}
 	}
 	s.crdsAbsent = absent
