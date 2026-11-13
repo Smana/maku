@@ -60,10 +60,11 @@
       }
     },
     "postgres": {
-      "description": "The single-replica rooms database.",
+      "description": "The single-replica rooms database, demo-only (v4 D9).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
+        "enabled": {"description": "The bundled Postgres: demo-only (v4 D9). Off, the broker reads the DSN Secrets maku.broker.database names.", "type": "boolean"},
         "image": {"type": "string", "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"},
         "storage": {"type": "string", "pattern": "^[0-9]+(Mi|Gi|Ti)$"},
         "storageClassName": {"type": "string"},

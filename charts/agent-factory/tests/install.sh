@@ -27,6 +27,10 @@
 # a PromQL throttle, runs.gatewayIdentity and a split on review, and the config loads. The run's tokens
 # reach VictoriaMetrics under agentgateway's own names, labelled with its subject, and the meter's
 # parser prices that reply above zero (internal/factory/meter TestRecordedAgentgatewayReply).
+# EXTERNAL_DB=1 (k3d only; task chart:install:k3d:external-db) brings its own Postgres (v4 D9): a plain
+# postgres:16 in namespace external-db, outside the chart, bootstrapped with docs/database.md's SQL block
+# as written, its three DSN Secrets created by hand, and postgres.enabled=false. The broker migrates it
+# from empty and serves, and every leg's manual run of the retention CronJob purges as rooms_retention.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -42,6 +46,11 @@ GATEWAY="${GATEWAY:-}"
 [[ -z $GATEWAY || $CLUSTER_KIND == k3d ]] || { echo "FAIL: GATEWAY=1 runs on k3d only" >&2; exit 2; }
 METERING="${METERING:-}"
 [[ -z $METERING || -n $GATEWAY ]] || { echo "FAIL: METERING=1 needs GATEWAY=1" >&2; exit 2; }
+EXTERNAL_DB="${EXTERNAL_DB:-}"
+[[ -z $EXTERNAL_DB || ($CLUSTER_KIND == k3d && $NETPOL == none && -z $GATEWAY && -z ${ADOPT:-}) ]] ||
+  { echo "FAIL: EXTERNAL_DB=1 runs on k3d alone, without NETPOL, GATEWAY or ADOPT" >&2; exit 2; }
+# The external database's image: postgres:16, the support floor (D26), by digest.
+EXTERNAL_PG_IMAGE=docker.io/library/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
 ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
@@ -49,6 +58,7 @@ NAME="maku-chart-$CLUSTER_KIND"
 [[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
 [[ -z $GATEWAY ]] || NAME="$NAME-gateway"
 [[ -z $METERING ]] || NAME="$NAME-metering"
+[[ -z $EXTERNAL_DB ]] || NAME="$NAME-external-db"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
 TAG="${TAG:-e2e}"
@@ -159,6 +169,7 @@ values=(-f charts/agent-factory/values-demo.yaml
   # the NetworkPolicy probe below runs PROBE_IMAGE in agents: the run-pod policy must allow it
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
+[[ -z $EXTERNAL_DB ]] || values+=(--set postgres.enabled=false)
 if [[ -z $GATEWAY ]]; then
   values+=(--set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
 else
@@ -283,6 +294,54 @@ EOF
       kubectl apply -f charts/agent-factory/tests/metrics-stub.yaml >/dev/null
     fi
   fi
+  if [[ -n $EXTERNAL_DB ]]; then
+    step "EXTERNAL_DB: a plain postgres:16 outside the chart, bootstrapped with docs/database.md"
+    kubectl create namespace external-db >/dev/null
+    kubectl -n external-db apply -f - >/dev/null <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pg}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: pg}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: pg}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: $EXTERNAL_PG_IMAGE
+          env:
+            - {name: POSTGRES_PASSWORD, value: e2e-superuser-only}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -h, 127.0.0.1, -U, postgres]}, periodSeconds: 3}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}, {name: run, mountPath: /var/run/postgresql}]
+      volumes: [{name: data, emptyDir: {}}, {name: run, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pg}
+spec:
+  selector: {app.kubernetes.io/name: pg}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+EOF
+    kubectl -n external-db rollout status deploy/pg --timeout=180s
+    # The page's first sql block, as written: the five statements and the \connect between them.
+    awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/bootstrap.sql"
+    [[ $(grep -c '^CREATE ROLE' "$work/bootstrap.sql") == 3 ]] || die "docs/database.md's first sql block is not the bootstrap"
+    kubectl -n external-db exec -i deploy/pg -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/bootstrap.sql"
+    for r in owner broker retention; do
+      pw=$(sed -nE "s/^CREATE ROLE rooms_$r LOGIN PASSWORD '([^']+)';$/\1/p" "$work/bootstrap.sql")
+      [[ -n $pw ]] || die "no password for rooms_$r in the bootstrap"
+      kubectl -n "$NS" create secret generic "rooms-$r-dsn" \
+        --from-literal=uri="postgresql://rooms_$r:$pw@pg.external-db.svc:5432/rooms?sslmode=disable" >/dev/null
+    done
+    echo "ok: postgres:16 bootstrapped from docs/database.md, three DSN Secrets created"
+  fi
   install_umbrella
 fi
 
@@ -295,12 +354,29 @@ if [[ $NETPOL != none ]]; then
 fi
 
 step "readiness"
-kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s
+if [[ -z $EXTERNAL_DB ]]; then
+  kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s
+else
+  ! kubectl -n "$NS" get sts rooms-db >/dev/null 2>&1 || die "postgres.enabled=false still installed the bundled rooms-db"
+fi
 kubectl -n "$NS" rollout status deploy/room-broker --timeout=180s
 kubectl -n "$NS" rollout status deploy/run-controller --timeout=180s
 init=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=room-broker -o jsonpath='{.items[0].status.initContainerStatuses[*].state.terminated.reason}')
 [[ "$init" == *Completed* ]] || die "the broker's migrate init container did not complete: '$init'"
 echo "ok: Postgres, broker (migrate init: $init) and run-controller are Ready"
+if [[ -n $EXTERNAL_DB ]]; then
+  mig=$(kubectl -n "$NS" logs deploy/room-broker -c migrate)
+  [[ $(grep -c 'migration applied' <<<"$mig") -ge 16 ]] || { echo "$mig" >&2; die "migrate did not apply the schema to the external Postgres"; }
+  grep -q 'schema up to date' <<<"$mig" || die "migrate did not finish on the external Postgres"
+  echo "ok: the broker migrated postgres:16 from empty and serves"
+fi
+
+step "the retention CronJob (v4 D9): a manual run connects as rooms_retention and purges"
+kubectl -n "$NS" create job --from=cronjob/room-broker-retention retention-now >/dev/null || die "no CronJob room-broker-retention"
+kubectl -n "$NS" wait --for=condition=Complete job/retention-now --timeout=180s ||
+  { kubectl -n "$NS" logs job/retention-now >&2 || true; die "the retention job did not complete"; }
+kubectl -n "$NS" logs job/retention-now | grep -F 'purged expired rooms' || die "the retention job did not purge"
+kubectl -n "$NS" delete job retention-now --wait=false >/dev/null
 
 step "the factory parses its config, mounts everything and reports the dummy App"
 found=0
@@ -380,6 +456,7 @@ objs=$(kubectl get all,cm,secret -A -o name) || die "kubectl could not list the 
 ! grep -E 'ciliumnetworkpolic|cert-manager' <<<"$objs" || die "a Cilium or cert-manager object exists"
 echo "ok: the cluster has none of those APIs, and the install needed none"
 
+if [[ -z $EXTERNAL_DB ]]; then
 step "plain NetworkPolicies: a run-labelled pod cannot reach rooms-db, the broker's pods can"
 kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
 # probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432. Returns 0 when nc connected and
@@ -439,6 +516,7 @@ else
   echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
 fi
 kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
+fi
 
 if [[ $NETPOL != none ]]; then
   step "networkPolicies.mode kubernetes ($NETPOL): the egress proxy, the policies and the run-controller's network preflight"

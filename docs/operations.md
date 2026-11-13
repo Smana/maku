@@ -65,6 +65,7 @@ events.
 | `maku_rooms_approvals_pending` | gauge | — | Undecided approvals in open rooms: the sum of the Rooms' `status.pendingApprovals` |
 | `maku_rooms_approvals_oldest_pending_seconds` | gauge | — | Age of the oldest undecided approval in an open room, set by the leader's approval sweep every 30 s; 0 on a replica that stopped leading |
 | `maku_rooms_approval_decision_seconds` | histogram | — | Request to decision |
+| `maku_rooms_db_tls` | gauge | `role` (`rooms_broker`) | 1 while the broker's database connection is encrypted, 0 while it is plain: a plain connection is logged once at start and served (the demo's in-cluster hop is plain). See [the database](database.md) |
 
 Two more count what bridges tell their rooms. Nothing dials into a sandbox, so the bridge serves
 no metrics: the broker counts these events as it appends them, and exports them on `:9090` with the
@@ -138,7 +139,9 @@ and ServiceAccount when you are done.
 
 ## Retention
 
-The CronJob `room-broker-retention` runs daily at 03:17. Run it by hand to check it:
+The CronJob `room-broker-retention` runs daily at 03:17, as `rooms_retention`. The maku chart renders
+it when `broker.database.retentionSecret` names that role's DSN Secret ([the database](database.md)),
+on `broker.retention.schedule`. Run it by hand to check it:
 
 ```bash
 kubectl create job -n agent-system --from=cronjob/room-broker-retention retention-check
@@ -190,6 +193,9 @@ the harnesses still hold.
 | A run ends `pod_lost` | The pod died before the harness finished and before its deadline | Expected for evictions; `deadline` means it hit `maxMinutes` |
 | Duplicate harness events after a bridge restart | The harness skipped an unreadable event file | A known limit, confined to that run; nothing to repair |
 | `RoomStalled` | The run is silent: a stuck harness, or a bridge that lost the broker | Bridge logs; the harness's step log in VictoriaLogs |
+| Broker, `migrate` or the retention job exits at start with `Maku needs 16 or later`, `connected as`, `bypasses row-level security` or `create the login roles` | The database is not one the log may run on: a server below 16, a DSN Secret holding another role's credentials, or a role with `SUPERUSER`, `BYPASSRLS` or membership in `rooms_owner` | Fix the server or the role as [the database](database.md#three-roles-one-dsn-secret-each) says; nothing was written |
+| Broker exits at start with `the schema is at <v>, this broker needs <w>` | The schema is behind the broker's image, and nothing migrated it | Set `broker.database.ownerSecret` so the `migrate` init container runs, or let the Atlas operator apply the image's release first |
+| `migrate` refuses the Atlas operator's ledger (`nothing was adopted`) | The operator's revisions are not exactly the first shipped files, complete and with their hashes, or `rooms_owner` cannot read `atlas_schema_revisions` | Let the operator finish or repair its revision, or grant `rooms_owner` `USAGE` and `SELECT` on that schema; then restart the pod |
 | A migration that builds an index `CONCURRENTLY` failed (`20260929120000_verdicts`, `20261001130000_delivery_indexes`, `20261001140000_brief_index`, `20261005130000_approval_indexes`, `20261008120000_task_facts_index`), or `\d events` in `psql` shows the index `INVALID` | `CREATE INDEX CONCURRENTLY` runs outside a transaction: a failure leaves an `INVALID` index behind, and the re-run refuses with "already exists" | Drop it by hand before the migration is retried: as `rooms_owner`, `DROP INDEX CONCURRENTLY <index>;` (`events_agent_verdicts`, `events_deliveries`, `events_acks`, `events_brief`, `approvals_pending`, `events_decisions`, `events_decision_acks`, `events_tool_results` or `events_task_facts`), then let the Atlas operator re-run it |
 | A run of the `maku.ogenki.io` kind waits Pending, condition `Ready` reason `PreflightPending` | The run controller's [preflight](#the-run-controllers-preflight) has no result yet, or a check holds runs (a git Secret not yet filled, the egress proxy still starting) | The condition's message names the check. It clears by itself once the check passes |
 | A run ends Failed, condition `Invalid` reason `PreflightFailed` | A preflight check refuses runs: the RuntimeClass is missing, or the CNI does not enforce NetworkPolicy | The message names the check and its fix. Runs that already have a pod are untouched; start the refused run again once `maku_run_controller_preflight_passed` is 1 |

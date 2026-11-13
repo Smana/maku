@@ -130,6 +130,11 @@ tasks:
     cmds:
       - bash charts/agent-factory/tests/install.sh k3d
 
+  chart:install:k3d:external-db:
+    desc: The demo on k3d against a plain postgres:16 outside the chart, bootstrapped with docs/database.md (v4 D9)
+    cmds:
+      - EXTERNAL_DB=1 bash charts/agent-factory/tests/install.sh k3d
+
   chart:install:k3d:netpol:
     desc: The demo on k3d in networkPolicies.mode kubernetes, enforced (the preflight passes) and unenforced (it refuses runs)
     cmds:
