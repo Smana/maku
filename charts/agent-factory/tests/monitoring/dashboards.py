@@ -338,6 +338,21 @@ fleet_runs = json.dumps(next((p for p in flat(boards["agent-fleet"]["panels"]) i
 if "/d/agent-identity/agent-identity?var-principal=${__value.text}" not in fleet_runs:
     errors.append("agent-fleet Runs: a payer opens its Spend per identity page")
 
+# No collapsed row is left without panels (its logs or traces panels gone).
+for uid, bd in boards.items():
+    for p in flat(bd.get("panels", [])):
+        if p.get("type") == "row" and p.get("collapsed") and not p.get("panels"):
+            errors.append(f"{uid}: the collapsed row {p.get('title')!r} holds no panel")
+
+# Every agentgateway_* selector is scoped to the gateway's job and namespace, as the chart's
+# agent_cost:gateway_run_usd rule is: another gateway's series never reach these panels.
+for uid, bd in boards.items():
+    for p in flat(bd.get("panels", [])):
+        for t in p.get("targets", []):
+            for m in re.finditer(r"(agentgateway_[a-z_]+)\{((?:[^{}]|\$\{[^}]*\})*)\}", t.get("expr", "")):
+                if 'job="model-gateway"' not in m.group(2) or 'namespace="maku"' not in m.group(2):
+                    errors.append(f"{uid} {p.get('title')} {t['refId']}: {m.group(1)} without the gateway's job and namespace")
+
 # No dashboard reads a run's gateway series with a bare increase(): it would drop the first call.
 BORN = PER_RUN + ("agentgateway_gen_ai_server_request_duration_count",)
 for uid, bd in boards.items():
