@@ -22,7 +22,6 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
-	"github.com/Smana/maku/internal/factory/intake"
 	"github.com/Smana/maku/internal/hardening"
 )
 
@@ -281,7 +280,7 @@ func (s *Server) issueVouched(ctx context.Context, cfg *config.Config, gh ForgeT
 	editedAfter := func(at time.Time) bool { return iss.LastEditedAt.After(at) || iss.TitleEditedAt.After(at) }
 	if t.Spec.Source.Kind == "issue" {
 		want := t.Spec.Source.ContentSHA256
-		if _, sum, _ := intake.Snapshot(iss); sum == want || (want == "" && !editedAfter(t.CreationTimestamp.Time)) {
+		if sum := forge.SnapshotSHA256(iss); sum == want || (want == "" && !editedAfter(t.CreationTimestamp.Time)) {
 			return true, nil // the hash alone decides when there is one: no intake-to-creation window
 		}
 	}
@@ -300,7 +299,7 @@ func (s *Server) vouchedAt(ctx context.Context, cfg *config.Config, gh ForgeThre
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("read the vouch on %d: %w", n, err)
 	}
-	_, last, ok := intake.Generation(evs, cfg.RepositoryFor(repo).IsMaintainer)
+	_, last, ok := forge.Generation(evs, cfg.RepositoryFor(repo).IsMaintainer)
 	switch {
 	case last.Actor == "":
 		return time.Time{}, false, nil

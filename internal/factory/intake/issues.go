@@ -8,8 +8,6 @@ package intake
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -275,13 +273,7 @@ func (p *IssuePoller) Poll(ctx context.Context) error {
 // when the latest label is not a maintainer's: that is the label currently on the issue, and it
 // starts nothing (§1).
 func Generation(evs []forge.LabelEvent, isMaintainer func(string) bool) (int, forge.LabelEvent, bool) {
-	if len(evs) == 0 {
-		return 0, forge.LabelEvent{}, false
-	}
-	evs = slices.Clone(evs)
-	slices.SortStableFunc(evs, func(a, b forge.LabelEvent) int { return a.At.Compare(b.At) })
-	last := evs[len(evs)-1]
-	return len(evs), last, isMaintainer(last.Actor)
+	return forge.Generation(evs, isMaintainer)
 }
 
 // Snapshot is the text the task keeps, sanitised (G2), and the sha256 of the issue as the
@@ -290,13 +282,11 @@ func Generation(evs []forge.LabelEvent, isMaintainer func(string) bool) (int, fo
 func Snapshot(i forge.Issue) (string, string, sanitize.Report) { return snapshot(i, sanitize.Text) }
 
 func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (string, string, sanitize.Report) {
-	raw := "# " + i.Title + "\n\n" + i.Body
-	sum := sha256.Sum256([]byte(raw))
-	text, rep := clean(raw)
+	text, rep := clean(forge.SnapshotRaw(i))
 	if len(text) > maxSnapshot {
 		text = strings.ToValidUTF8(text[:maxSnapshot], "")
 	}
-	return text, hex.EncodeToString(sum[:]), rep
+	return text, forge.SnapshotSHA256(i), rep
 }
 
 // issueTask is the Task of issue n's snapshot, requested by requestedBy.
