@@ -4,10 +4,14 @@ package store
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/Smana/maku/internal/store/migrations"
 )
@@ -24,8 +28,9 @@ const (
 	RoleRetention Role = "rooms_retention"
 )
 
-// ErrUnavailable is a database Check could not ask: unreachable, or not answering. Unlike a
-// refusal, it may pass on a retry.
+// ErrUnavailable is a database Check could not ask: unreachable, not answering, starting up or out
+// of connections. Unlike a refusal (a wrong password, a missing database, a certificate the client
+// cannot verify), it may pass on a retry.
 var ErrUnavailable = errors.New("database unavailable")
 
 // minServerVersion is Postgres 16 (D26), as server_version_num.
@@ -42,31 +47,45 @@ type Server struct {
 // querier is a *pgx.Conn or a *pgxpool.Pool.
 type querier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
 // checkSQL reads every fact Check judges in one statement, so a pool answers it on one backend.
-// pg_has_role is strict: with no rooms_owner role it gives NULL, read as "not a member".
+// pg_has_role is strict: with no rooms_owner role it gives NULL, read as "not a member". The two
+// lists are the other roles this one may SET ROLE to that are superusers or BYPASSRLS, and the
+// tables it owns (or may act as the owner of) whose policies their owner skips (no FORCE).
 const checkSQL = `SELECT current_setting('server_version_num')::int, current_setting('server_version'),
 	current_user::text, r.rolsuper, r.rolbypassrls,
 	coalesce(pg_has_role(current_user, to_regrole('rooms_owner'), 'MEMBER'), false),
 	to_regrole('rooms_broker') IS NOT NULL, to_regrole('rooms_retention') IS NOT NULL,
-	coalesce((SELECT s.ssl FROM pg_stat_ssl s WHERE s.pid = pg_backend_pid()), false)
+	coalesce((SELECT s.ssl FROM pg_stat_ssl s WHERE s.pid = pg_backend_pid()), false),
+	coalesce((SELECT string_agg(x.rolname, ', ' ORDER BY x.rolname) FROM pg_roles x
+		WHERE (x.rolsuper OR x.rolbypassrls) AND x.oid <> r.oid AND pg_has_role(current_user, x.oid, 'MEMBER')), ''),
+	coalesce((SELECT string_agg(c.oid::regclass::text, ', ' ORDER BY c.oid::regclass::text) FROM pg_class c
+		WHERE c.relkind IN ('r', 'p') AND c.relrowsecurity AND NOT c.relforcerowsecurity
+		AND pg_has_role(current_user, c.relowner, 'MEMBER')), '')
 	FROM pg_roles r WHERE r.rolname = current_user`
 
 // Check refuses a connection the room log must not run on, with one message per failure: a
 // server below Postgres 16, a role other than the one expected, a role that bypasses row-level
-// security (superuser, BYPASSRLS, or, for the broker and the retention job, membership in the
-// owner role), and, for the owner, a missing login role the migrations GRANT to. The room log's
+// security (superuser, BYPASSRLS, membership in a role that is either, and, for the broker and the
+// retention job, membership in the owner role or owning a table without FORCE ROW LEVEL SECURITY),
+// and, for the owner, a missing login role the migrations GRANT to. The owner owns every table
+// the files create, so owning one is its job, not a bypass. The room log's
 // immutability rests on the grants and the policies (T12, SC-10), so none of these is a warning.
 func Check(ctx context.Context, q querier, role Role) (Server, error) {
 	var (
 		s                                       Server
 		num                                     int
 		super, bypass, member, broker, retainer bool
+		bypassRoles, unforced                   string
 	)
 	if err := q.QueryRow(ctx, checkSQL).Scan(&num, &s.Version, &s.User, &super, &bypass, &member,
-		&broker, &retainer, &s.TLS); err != nil {
-		return s, fmt.Errorf("database check: %w: %w", ErrUnavailable, err)
+		&broker, &retainer, &s.TLS, &bypassRoles, &unforced); err != nil {
+		if unavailable(err) {
+			return s, fmt.Errorf("database check: %w: %w", ErrUnavailable, err)
+		}
+		return s, fmt.Errorf("database check: %w", err)
 	}
 	var errs []error
 	if num < minServerVersion {
@@ -75,13 +94,56 @@ func Check(ctx context.Context, q querier, role Role) (Server, error) {
 	if s.User != string(role) {
 		errs = append(errs, wrongRole(s.User, role))
 	}
-	if super || bypass || (role != RoleOwner && member) {
-		errs = append(errs, fmt.Errorf("%s bypasses row-level security: the room log would be writable", s.User))
+	var why []string
+	if super {
+		why = append(why, "a superuser")
+	}
+	if bypass {
+		why = append(why, "BYPASSRLS")
+	}
+	if bypassRoles != "" && !super {
+		why = append(why, "a member of "+bypassRoles+", superuser or BYPASSRLS")
+	}
+	if role != RoleOwner && member {
+		why = append(why, "a member of "+ownerRole)
+	}
+	if role != RoleOwner && unforced != "" && !super {
+		why = append(why, "the owner of "+unforced+", without FORCE ROW LEVEL SECURITY")
+	}
+	if len(why) > 0 {
+		errs = append(errs, fmt.Errorf("%s bypasses row-level security (%s): the room log would be writable",
+			s.User, strings.Join(why, "; ")))
 	}
 	if role == RoleOwner && (!broker || !retainer) {
 		errs = append(errs, errors.New("create the login roles rooms_broker and rooms_retention first (docs/database.md)"))
 	}
 	return s, errors.Join(errs...)
+}
+
+// unavailable tells a database a retry may reach from one no retry fixes. A Postgres error is
+// transient only in classes 08 (connection exception), 53 (insufficient resources: too many
+// connections) and 57 (the server starting up or shutting down); 28 (authentication), 3D (no such
+// database) and every other class are refusals, and so is a certificate the client cannot verify
+// or a server that refuses TLS. Anything else (refused, reset, timed out) is the network's.
+func unavailable(err error) bool {
+	var pg *pgconn.PgError
+	if errors.As(err, &pg) {
+		switch pg.Code[:min(2, len(pg.Code))] {
+		case "08", "53", "57":
+			return true
+		}
+		return false
+	}
+	var (
+		authority x509.UnknownAuthorityError
+		host      x509.HostnameError
+		invalid   x509.CertificateInvalidError
+		verify    *tls.CertificateVerificationError
+	)
+	if errors.As(err, &authority) || errors.As(err, &host) || errors.As(err, &invalid) || errors.As(err, &verify) {
+		return false
+	}
+	return !strings.Contains(err.Error(), "server refused TLS connection")
 }
 
 // wrongRole names the role connected and the one this command runs as. The owner's message is
@@ -104,7 +166,7 @@ var ErrSchemaUnverified = errors.New("the schema version is unverified: this rol
 
 // newestVersionSQL reads the ledger's newest version, granted to rooms_broker on its version
 // column alone (Migrate): the broker reads which files ran, never writes the ledger.
-const newestVersionSQL = `SELECT coalesce(max(version), '') FROM room_broker_revisions`
+const newestVersionSQL = `SELECT coalesce(max(version), '') FROM public.room_broker_revisions`
 
 // SchemaCurrent is serve's check that the schema is the one this binary was built for: the newest
 // recorded revision must be the newest embedded file. A ledger behind names migrate; a ledger
@@ -138,7 +200,8 @@ func schemaCurrent(ctx context.Context, q querier, files []migrations.File) erro
 	return nil
 }
 
-// newestApplied reads the newest applied version from room_broker_revisions, else from the Atlas
+// newestApplied reads the newest applied version from public.room_broker_revisions, where
+// createRevisions makes it whatever the search_path, else from the Atlas
 // operator's ledger (a cnref database before its first migrate): "" when the database holds
 // neither ledger, ErrSchemaUnverified when the one it holds is not readable by this role.
 func newestApplied(ctx context.Context, q querier) (string, error) {
@@ -149,10 +212,12 @@ func newestApplied(ctx context.Context, q querier) (string, error) {
 	}
 	sql, args := newestVersionSQL, []any{}
 	if !exists {
-		if err := q.QueryRow(ctx, atlasLedgerSQL).Scan(&exists, &readable); err != nil {
+		l, err := findAtlasLedger(ctx, q)
+		if err != nil {
 			return "", fmt.Errorf("schema check: %w", err)
 		}
-		sql, args = newestAtlasVersionSQL, []any{atlasCloudIdentifier}
+		exists, readable = l.table != "", l.readable
+		sql, args = fmt.Sprintf(newestAtlasVersionSQL, l.table), []any{atlasCloudIdentifier}
 	}
 	if !exists {
 		return "", nil
@@ -169,5 +234,5 @@ func newestApplied(ctx context.Context, q querier) (string, error) {
 
 // newestAtlasVersionSQL is the operator's newest complete revision: a partial or failed one has
 // not finished its file.
-const newestAtlasVersionSQL = `SELECT coalesce(max(version), '') FROM atlas_schema_revisions.atlas_schema_revisions
+const newestAtlasVersionSQL = `SELECT coalesce(max(version), '') FROM %s
 	WHERE version <> $1 AND applied = total AND coalesce(error, '') = ''`

@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5"
 
@@ -16,12 +17,52 @@ import (
 // bookkeeping row, never a migration.
 const atlasCloudIdentifier = ".atlas_cloud_identifier"
 
-// atlasLedgerSQL finds the Atlas operator's ledger through the catalog, which any role reads, and
-// says whether the connected role may read it.
-const atlasLedgerSQL = `SELECT count(*) > 0,
-	coalesce(bool_and(has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')), false)
+// atlasLedgerSQL finds the Atlas operator's ledger through the catalog, which any role reads, in
+// each schema Atlas may have put it: atlas_schema_revisions (its default), or the schema its URL
+// named, public or the connection's current one. It says whether the connected role may read it.
+const atlasLedgerSQL = `SELECT n.nspname, has_schema_privilege(n.oid, 'USAGE') AND has_table_privilege(c.oid, 'SELECT')
 	FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
-	WHERE n.nspname = 'atlas_schema_revisions' AND c.relname = 'atlas_schema_revisions'`
+	WHERE c.relname = 'atlas_schema_revisions' AND c.relkind IN ('r', 'p')
+	AND n.nspname IN ('atlas_schema_revisions', 'public', current_schema())
+	ORDER BY n.nspname`
+
+// atlasLedger is the operator's ledger: table is its quoted, qualified name, "" when there is none.
+type atlasLedger struct {
+	table    string
+	readable bool
+}
+
+// findAtlasLedger locates the operator's ledger. Two of them is ambiguous, and refused as Atlas
+// refuses it: which one recorded the database's history cannot be told.
+func findAtlasLedger(ctx context.Context, q querier) (atlasLedger, error) {
+	rows, err := q.Query(ctx, atlasLedgerSQL)
+	if err != nil {
+		return atlasLedger{}, fmt.Errorf("find the Atlas operator's ledger: %w", err)
+	}
+	defer rows.Close()
+	var (
+		found    []string
+		readable bool
+	)
+	for rows.Next() {
+		var schema string
+		if err := rows.Scan(&schema, &readable); err != nil {
+			return atlasLedger{}, fmt.Errorf("find the Atlas operator's ledger: %w", err)
+		}
+		found = append(found, schema)
+	}
+	if err := rows.Err(); err != nil {
+		return atlasLedger{}, fmt.Errorf("find the Atlas operator's ledger: %w", err)
+	}
+	switch len(found) {
+	case 0:
+		return atlasLedger{}, nil
+	case 1:
+		return atlasLedger{table: pgx.Identifier{found[0], "atlas_schema_revisions"}.Sanitize(), readable: readable}, nil
+	}
+	return atlasLedger{}, fmt.Errorf("the Atlas operator's ledger is ambiguous: atlas_schema_revisions exists in schemas %s; "+
+		"keep the one Atlas writes and drop the others", strings.Join(found, ", "))
+}
 
 type atlasRevision struct {
 	version, hash, err string
@@ -35,6 +76,21 @@ type atlasRevision struct {
 // transaction, so migrate applies only what is pending and nothing twice (D25). Anything else is
 // refused, naming the version, with nothing written. The Atlas ledger is left as it is.
 func adopt(ctx context.Context, conn *pgx.Conn, files []migrations.File, log *slog.Logger) error {
+	l, err := findAtlasLedger(ctx, conn)
+	if err != nil {
+		return fmt.Errorf("migrate: %w; nothing was adopted", err)
+	}
+	if l.table == "" {
+		return nil
+	}
+	if !l.readable {
+		return fmt.Errorf("migrate: the Atlas operator's ledger %s is not readable by %s: "+
+			"grant it USAGE on the schema and SELECT on the table, then re-run; nothing was adopted", l.table, ownerRole)
+	}
+	revs, err := atlasRevisions(ctx, conn, l.table)
+	if err != nil {
+		return err
+	}
 	// An empty ledger of ours is no history: a first run that failed on its first file leaves one
 	// behind, and must not hide the operator's ledger from the next run.
 	ours, err := recorded(ctx, conn)
@@ -42,22 +98,9 @@ func adopt(ctx context.Context, conn *pgx.Conn, files []migrations.File, log *sl
 		return err
 	}
 	if len(ours) > 0 {
-		return nil // our own ledger wins; the operator's, if any, is history
-	}
-	var present, readable bool
-	if err := conn.QueryRow(ctx, atlasLedgerSQL).Scan(&present, &readable); err != nil {
-		return fmt.Errorf("migrate: adopt: %w", err)
-	}
-	if !present {
-		return nil
-	}
-	if !readable {
-		return fmt.Errorf("migrate: the Atlas operator's ledger atlas_schema_revisions is not readable by %s: "+
-			"grant it USAGE on the schema and SELECT on the table, then re-run; nothing was adopted", ownerRole)
-	}
-	revs, err := atlasRevisions(ctx, conn)
-	if err != nil {
-		return err
+		// Our ledger wins, unless the operator went on migrating past it: those files ran outside
+		// migrate's record, and applying them again would fail halfway or apply them twice.
+		return notAhead(revs, ours)
 	}
 	if err := adoptable(revs, files); err != nil {
 		return err
@@ -87,9 +130,9 @@ func adopt(ctx context.Context, conn *pgx.Conn, files []migrations.File, log *sl
 	return nil
 }
 
-func atlasRevisions(ctx context.Context, conn *pgx.Conn) ([]atlasRevision, error) {
+func atlasRevisions(ctx context.Context, conn *pgx.Conn, table string) ([]atlasRevision, error) {
 	rows, err := conn.Query(ctx, `SELECT version, applied, total, coalesce(error, ''), hash
-		FROM atlas_schema_revisions.atlas_schema_revisions WHERE version <> $1 ORDER BY version`, atlasCloudIdentifier)
+		FROM `+table+` WHERE version <> $1 ORDER BY version`, atlasCloudIdentifier)
 	if err != nil {
 		return nil, fmt.Errorf("migrate: adopt: read the Atlas operator's ledger: %w", err)
 	}
@@ -106,6 +149,23 @@ func atlasRevisions(ctx context.Context, conn *pgx.Conn) ([]atlasRevision, error
 		return nil, fmt.Errorf("migrate: adopt: %w", err)
 	}
 	return revs, nil
+}
+
+// notAhead refuses an operator's ledger holding a revision, finished or not, past the newest one
+// migrate recorded.
+func notAhead(revs []atlasRevision, ours map[string]string) error {
+	newest := ""
+	for v := range ours {
+		newest = max(newest, v)
+	}
+	for _, r := range revs {
+		if r.version > newest {
+			return fmt.Errorf("migrate: the Atlas operator applied version %s after migrate's last revision %s: "+
+				"the two ledgers disagree, so nothing was applied; stop the operator (drop atlasSchema from the claim) "+
+				"and reconcile room_broker_revisions by hand", r.version, newest)
+		}
+	}
+	return nil
 }
 
 // adoptable accepts the operator's revisions only when they are, in order, the first len(revs)

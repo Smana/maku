@@ -155,10 +155,12 @@ func checksum(body string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-const createRevisions = `CREATE TABLE IF NOT EXISTS room_broker_revisions (
+// The ledger is always public.room_broker_revisions, as the files' own objects are public's: a
+// table of that name earlier in a role's search_path is never written nor read.
+const createRevisions = `CREATE TABLE IF NOT EXISTS public.room_broker_revisions (
 	version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`
 
-const grantRevisions = `GRANT SELECT (version) ON room_broker_revisions TO rooms_broker`
+const grantRevisions = `GRANT SELECT (version) ON public.room_broker_revisions TO rooms_broker`
 
 // recorded reads the ledger, which a database that was never migrated does not have yet: an
 // absent table is an empty history, never an error.
@@ -171,7 +173,7 @@ func recorded(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
 	if !exists {
 		return applied, nil
 	}
-	rows, err := conn.Query(ctx, "SELECT version, checksum FROM room_broker_revisions")
+	rows, err := conn.Query(ctx, "SELECT version, checksum FROM public.room_broker_revisions")
 	if err != nil {
 		return nil, fmt.Errorf("migrate: revisions: %w", err)
 	}
@@ -189,7 +191,7 @@ func recorded(ctx context.Context, conn *pgx.Conn) (map[string]string, error) {
 	return applied, nil
 }
 
-const recordSQL = "INSERT INTO room_broker_revisions (version, checksum) VALUES ($1, $2)"
+const recordSQL = "INSERT INTO public.room_broker_revisions (version, checksum) VALUES ($1, $2)"
 
 // apply runs a file and records it. A transactional file records inside its own transaction, so a
 // SIGTERM or a lost COMMIT ack cannot leave it applied but unrecorded (no file is idempotent). A

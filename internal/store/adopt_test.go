@@ -118,7 +118,7 @@ func TestAdoptRefuses(t *testing.T) {
 			"revision " + second + " has hash x"},
 		{"a ledger rooms_owner cannot read", "ALTER SCHEMA atlas_schema_revisions OWNER TO postgres; " +
 			"ALTER TABLE atlas_schema_revisions.atlas_schema_revisions OWNER TO postgres",
-			"atlas_schema_revisions is not readable by rooms_owner"},
+			"is not readable by rooms_owner"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			owner, super := atlasMigrated(t)
@@ -148,11 +148,12 @@ func TestAdoptBesideAnEmptyLedgerOfOurs(t *testing.T) {
 	}
 }
 
-// Our own ledger wins: with both present, the operator's is never read, whatever it holds.
+// Our own ledger wins: with both present, the operator's is never adopted from, whatever its
+// rows below ours hold (TestAdoptRefusesAnAtlasLedgerAheadOfOurs covers a row past them).
 func TestAdoptIgnoresAtlasBesideOurLedger(t *testing.T) {
-	owner, _, _, super := testDB(t)
-	exec(t, super, atlasFixture)
-	exec(t, super, "UPDATE atlas_schema_revisions.atlas_schema_revisions SET error = 'boom'")
+	owner, _, _, _ := testDB(t)
+	exec(t, owner, atlasFixture)
+	exec(t, owner, "UPDATE atlas_schema_revisions.atlas_schema_revisions SET error = 'boom'")
 	var buf bytes.Buffer
 	if n, err := Migrate(t.Context(), owner, logTo(&buf)); err != nil || n != 0 {
 		t.Fatalf("Migrate = %d, %v, want 0 applied and the Atlas ledger ignored", n, err)
@@ -201,4 +202,78 @@ func TestSchemaCurrentReadsTheAtlasLedger(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Atlas puts its ledger in atlas_schema_revisions, or in the schema its URL names (public, or the
+// connection's current schema): migrate finds it in any of them, and refuses to choose between two.
+func TestAdoptFindsTheLedgerWhereAtlasPutsIt(t *testing.T) {
+	const move = "ALTER TABLE atlas_schema_revisions.atlas_schema_revisions SET SCHEMA public; DROP SCHEMA atlas_schema_revisions"
+	t.Run("public", func(t *testing.T) {
+		owner, super := atlasMigrated(t)
+		exec(t, super, move)
+		var buf bytes.Buffer
+		if n, err := migrate(t.Context(), owner, mustFiles(t)[:atlasFiles], logTo(&buf)); err != nil || n != 0 ||
+			!strings.Contains(buf.String(), "adopted 14 revisions") {
+			t.Fatalf("migrate = %d, %v, want the public ledger adopted:\n%s", n, err, buf.String())
+		}
+	})
+	t.Run("ambiguous", func(t *testing.T) {
+		owner, super := atlasMigrated(t)
+		exec(t, super, "CREATE TABLE public.atlas_schema_revisions (LIKE atlas_schema_revisions.atlas_schema_revisions INCLUDING ALL); "+
+			"ALTER TABLE public.atlas_schema_revisions OWNER TO rooms_owner")
+		n, err := Migrate(t.Context(), owner, slog.New(slog.DiscardHandler))
+		if err == nil || n != 0 || !strings.Contains(err.Error(), "ambiguous") {
+			t.Fatalf("Migrate = %d, %v, want the ambiguous-ledger refusal", n, err)
+		}
+		if got := query(t, super, "SELECT (to_regclass('public.room_broker_revisions') IS NULL)::text"); got != "true" {
+			t.Fatal("an ambiguous ledger left room_broker_revisions behind")
+		}
+	})
+	t.Run("current schema", func(t *testing.T) {
+		owner, super := atlasMigrated(t)
+		exec(t, super, "CREATE SCHEMA app AUTHORIZATION rooms_owner; "+
+			"ALTER TABLE atlas_schema_revisions.atlas_schema_revisions SET SCHEMA app; DROP SCHEMA atlas_schema_revisions")
+		conn, err := pgx.Connect(t.Context(), owner)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = conn.Close(context.WithoutCancel(t.Context())) }()
+		if _, err := conn.Exec(t.Context(), "SET search_path = app, public"); err != nil {
+			t.Fatal(err)
+		}
+		l, err := findAtlasLedger(t.Context(), conn)
+		if err != nil || l.table != `"app"."atlas_schema_revisions"` || !l.readable {
+			t.Fatalf("findAtlasLedger = %+v, %v, want app's, readable", l, err)
+		}
+	})
+}
+
+// A database our ledger already covers, which the Atlas operator then migrated further, is
+// refused rather than re-applied: the operator ran files migrate has not recorded.
+func TestAdoptRefusesAnAtlasLedgerAheadOfOurs(t *testing.T) {
+	owner, super := atlasMigrated(t)
+	files := mustFiles(t)
+	if n, err := migrate(t.Context(), owner, files[:atlasFiles], slog.New(slog.DiscardHandler)); err != nil || n != 0 {
+		t.Fatalf("adopt: %d, %v", n, err)
+	}
+	next := files[atlasFiles]
+	exec(t, super, "INSERT INTO atlas_schema_revisions.atlas_schema_revisions SELECT $1, description, type, applied, total, "+
+		"executed_at, execution_time, error, error_stmt, $2, partial_hashes, operator_version "+
+		"FROM atlas_schema_revisions.atlas_schema_revisions WHERE version = $3", next.Version, next.AtlasHash, files[0].Version)
+	n, err := Migrate(t.Context(), owner, slog.New(slog.DiscardHandler))
+	if err == nil || n != 0 || !strings.Contains(err.Error(), "the Atlas operator applied version "+next.Version+" after") {
+		t.Fatalf("Migrate = %d, %v, want the ahead refusal naming %s", n, err, next.Version)
+	}
+	if got := query(t, super, "SELECT count(*)::text FROM room_broker_revisions"); got != "14" {
+		t.Fatalf("our ledger holds %s revisions after the refusal, want 14", got)
+	}
+}
+
+func mustFiles(t *testing.T) []migrations.File {
+	t.Helper()
+	files, err := migrations.Files()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
