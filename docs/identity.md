@@ -187,14 +187,16 @@ oauth2-proxy sets the same:
 | `pass-authorization-header` | `true`: the ID token in `Authorization` |
 | `pass-access-token` | `true`: the access token in `X-Forwarded-Access-Token`, overwriting the client's |
 | `skip-auth-strip-headers` | `true`: a skip-auth route forwards no client `X-Forwarded-Access-Token` |
-| `pass-user-headers`, `pass-basic-auth`, `set-xauthrequest` | `false`: the broker reads none of them |
+| `pass-user-headers` | `true`: with `skip-auth-strip-headers`, the four `X-Forwarded-*` user headers are oauth2-proxy's on every request, never the client's |
+| `pass-basic-auth`, `set-xauthrequest` | `false`: the broker reads neither |
 | `skip-jwt-bearer-tokens` | `true`, with `extra-jwt-issuers=<issuer>=<cli client id>` (`OAUTH2_PROXY_EXTRA_JWT_ISSUERS`, the id from `broker.oidc.existingSecret`'s `cli` key): maku's bearer passes |
 | `oidc-groups-claim`, `allowed-group` | the roles claim and both agents groups, only when `rolesClaim` is a top-level name. oauth2-proxy cannot read a pointer (`/realm_access/roles`), so the broker alone checks it |
 | `scope` | `generic`: `openid profile email offline_access` plus `human.scopes`. `zitadel`: the same plus the project scope, with `project-id` from the OIDC Secret (`OAUTH2_PROXY_SCOPE`) |
 | `email-domain` | `*`: the broker decides who may enter |
 | `cookie-name`, `cookie-secure`, `cookie-httponly`, `cookie-samesite` | `_rooms`, `true`, `true`, `strict` (`webProxy.cookieSameSite`) |
 | `cookie-refresh` | below the ID token's lifetime (`webProxy.cookieRefresh`, `1h`) |
-| `reverse-proxy`, `skip-provider-button` | `true` |
+| `reverse-proxy` | `false`: oauth2-proxy then never reads a client's `X-Forwarded-Uri`, which would otherwise select a skip-auth route. The redirect URL is fixed, so nothing needs it |
+| `skip-provider-button` | `true` |
 | `skip-auth-route` | `GET=^/\.well-known/roomctl$`, plus `GET=^/link/github/callback$` with the [GitHub account link](github-link.md) |
 
 ## The IdPs

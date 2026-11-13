@@ -10,12 +10,13 @@
 # code is the number of failures.
 #   X1  an HTTPRoute Exact /slack/events + POST answers 404 to GET and to /slack/eventsx; Traefik's
 #       Exact Ingress path answers 404 to /slack/eventsx
-#   X2  RequestHeaderModifier removes each of the ten identity headers a client brings
+#   X2  RequestHeaderModifier removes each of the ten identity headers a client brings, and its
+#       X-Forwarded-Uri, -Host and -Proto
 #   X3  a WebSocket, pinged every 30 s as /v1/ws is, stays open X3_SECONDS (360) through agentgateway
 #       with and without timeouts, through Traefik, and through agentgateway then oauth2-proxy
 #   X4  oauth2-proxy never forwards a client's X-Forwarded-Access-Token: not with a CLI bearer
-#       (skip-jwt-bearer-tokens), not with a session, not on a skip-auth route; which other identity
-#       headers it passes is recorded
+#       (skip-jwt-bearer-tokens), not with a session, not on a skip-auth route; it overwrites the
+#       X-Forwarded user headers; a client's X-Forwarded-Uri never selects a skip-auth route
 #   X5  oidc-groups-claim with a nested claim (realm_access.roles): read or not, recorded
 #   X6  HTTPRoute.spec.rules[].timeouts is kept by the standard CRDs at GATEWAY_API (v1.2.1)
 # Usage: probe.sh   (docker, k3d, helm, kubectl, jq, openssl; network for the images and Gateway API's
@@ -158,14 +159,18 @@ record "X1 Traefik: GET /slack/events answers $(status "$out"): Ingress has no m
 
 echo "==> X2: the web route removes each identity header"
 names=(X-Forwarded-Access-Token X-Forwarded-User X-Forwarded-Email X-Forwarded-Groups X-Forwarded-Preferred-Username
-  X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token)
+  X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token
+  X-Forwarded-Uri X-Forwarded-Host X-Forwarded-Proto)
 forged=()
 for n in "${names[@]}"; do forged+=(-H "$n: forged"); done
 out="$(eventually 200 http GET http://web.probe.test/api/rooms --via "$GW" "${forged[@]}" -H 'X-Probe: kept')"
 [[ $(jq -r '.body.headers["x-probe"]' <<<"$out") == kept ]] || fail "X2 the route did not reach the backend: $out"
 for n in "${names[@]}"; do
   got="$(jq -r --arg h "${n,,}" '.body.headers[$h] // "<absent>"' <<<"$out")"
-  [[ $got == '<absent>' ]] && pass "X2 $n is removed" || fail "X2 $n reached the backend as '$got'"
+  # The gateway may set X-Forwarded-Host and -Proto itself, after the filter: the client's never arrives.
+  if [[ $got == '<absent>' ]]; then pass "X2 $n is removed"
+  elif [[ $n == X-Forwarded-[HP]* && $got != forged ]]; then pass "X2 the client's $n is removed (the gateway's own: $got)"
+  else fail "X2 $n reached the backend as '$got'"; fi
 done
 
 echo "==> X4: oauth2-proxy never forwards a client's X-Forwarded-Access-Token"
@@ -177,9 +182,22 @@ if [[ $xfat == forged ]]; then fail "X4 a CLI bearer: the forged X-Forwarded-Acc
 elif [[ $xfat == "$cli" ]]; then pass "X4 a CLI bearer: X-Forwarded-Access-Token is overwritten with the bearer itself (both headers equal: never a web session)"
 else pass "X4 a CLI bearer: X-Forwarded-Access-Token is '${xfat:0:24}', not the forged value"; fi
 [[ $(jq -r '.body.headers.authorization' <<<"$out") == "Bearer $cli" ]] && pass "X4 a CLI bearer: Authorization is the bearer" || fail "X4 Authorization: $(jq -c .body.headers <<<"$out")"
-for n in "${names[@]:1}"; do
+# pass-user-headers with skip-auth-strip-headers: the user headers are oauth2-proxy's own, never the client's.
+for n in X-Forwarded-User X-Forwarded-Email X-Forwarded-Groups X-Forwarded-Preferred-Username; do
+  got="$(jq -r --arg h "${n,,}" '.body.headers[$h] // "<absent>"' <<<"$out")"
+  [[ $got != forged ]] && pass "X4 a CLI bearer: $n is oauth2-proxy's ($got), not the client's" || fail "X4 a CLI bearer: the client's $n reached the upstream"
+done
+for n in X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token; do
   got="$(jq -r --arg h "${n,,}" '.body.headers[$h] // "<absent>"' <<<"$out")"
   record "X4 oauth2-proxy with a CLI bearer passes $n: $([[ $got == forged ]] && echo "the client's (passed through)" || echo "no ($got)")"
+done
+# The security review of #545: with --reverse-proxy=true, oauth2-proxy trusts a client's X-Forwarded-Uri,
+# which then matched the skip-auth route. With false, the request's own path decides.
+for h in 'X-Forwarded-Uri: /.well-known/roomctl' 'X-Forwarded-Uri: /link/github/callback'; do
+  out="$(c http GET "$PROXY/api/rooms" -H "$h" -H 'X-Forwarded-Host: evil.test' -H 'X-Forwarded-Proto: https')"
+  [[ $(status "$out") == 302 && $(jq -r .location <<<"$out") == "$ISSUER/oauth/v2/authorize?"* ]] &&
+    pass "X4 GET /api/rooms with '$h' and no session redirects to sign in: a client's forwarded path is not trusted" ||
+    fail "X4 GET /api/rooms with '$h' skipped sign-in: $out"
 done
 out="$(c http GET "$PROXY/.well-known/roomctl" "${forged[@]}" -H "Authorization: Bearer forged")"
 [[ $(status "$out") == 200 ]] && pass "X4 GET /.well-known/roomctl is a skip-auth route (no session)" || fail "X4 GET /.well-known/roomctl: $out"

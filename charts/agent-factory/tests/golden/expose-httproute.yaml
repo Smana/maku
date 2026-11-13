@@ -18,8 +18,9 @@ spec:
     - matches:
         - path: {type: PathPrefix, value: /}
       filters:
-        # oauth2-proxy sets the identity headers, so a client may not bring its own. Gateway API's
-        # remove takes exact names, no wildcards; oauth2-proxy strips them again behind this route.
+        # oauth2-proxy sets the identity headers, so a client may not bring its own, nor forwarded
+        # headers a proxy might trust. Gateway API's remove takes exact names, no wildcards;
+        # oauth2-proxy overwrites the identity headers again behind this route.
         - type: RequestHeaderModifier
           requestHeaderModifier:
             remove:
@@ -33,6 +34,9 @@ spec:
               - X-Auth-Request-Preferred-Username
               - X-Auth-Request-Groups
               - X-Auth-Request-Access-Token
+              - X-Forwarded-Uri
+              - X-Forwarded-Host
+              - X-Forwarded-Proto
       backendRefs:
         - name: rooms-web-proxy
           port: 80

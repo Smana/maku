@@ -278,6 +278,11 @@ if [[ -n $EXPOSE ]]; then
     done
     echo "ok   POST /link/github/callback and GET /link/github still need a session"
   fi
+  # The security review of #545: a client's X-Forwarded-Uri must never select a skip-auth route.
+  out="$(c http GET "$web/api/rooms" -H 'X-Forwarded-Uri: /.well-known/roomctl')"
+  [[ $(status "$out") == 302 && $(jq -r .location <<<"$out") == https://e2e-stub.e2e.svc.cluster.local/oauth/v2/authorize?* ]] ||
+    die "GET /api/rooms with X-Forwarded-Uri: /.well-known/roomctl skipped sign-in: $out"
+  echo "ok   GET /api/rooms with a forged X-Forwarded-Uri still redirects to sign in"
   cli="$(id_token admin maku-cli agents-admin)"
   out="$(c http GET "$web/api/rooms" -H "Authorization: Bearer $cli")"
   [[ $(status "$out") == 200 && $(jq '.body | length' <<<"$out") -ge 1 ]] || die "a CLI bearer through the front door: $out"

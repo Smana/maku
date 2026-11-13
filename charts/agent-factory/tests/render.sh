@@ -604,10 +604,11 @@ out="$(helm template af . -n maku "${exs[@]}")" || { echo 'FAIL: expose httprout
 golden expose-httproute
 jkind HTTPRoute 'select(.metadata.name == "rooms-web") | (.spec.hostnames == ["rooms.example.test"] and (.spec.rules | length) == 1 and .spec.rules[0].matches == [{"path": {"type": "PathPrefix", "value": "/"}}] and .spec.rules[0].backendRefs == [{"name": "rooms-web-proxy", "port": 80}] and (.spec.rules[0] | has("timeouts") | not))' 'the web route: PathPrefix /, rooms-web-proxy:80, no timeouts unless set'
 for h in X-Forwarded-Access-Token X-Forwarded-User X-Forwarded-Email X-Forwarded-Groups X-Forwarded-Preferred-Username \
-  X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token; do
+  X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token \
+  X-Forwarded-Uri X-Forwarded-Host X-Forwarded-Proto; do
   jkind HTTPRoute "select(.metadata.name == \"rooms-web\") | [.spec.rules[0].filters[] | select(.type == \"RequestHeaderModifier\") | .requestHeaderModifier.remove[] | select(. == \"$h\")] | length == 1" "the web route removes $h"
 done
-jkind HTTPRoute 'select(.metadata.name == "rooms-web") | ([.spec.rules[0].filters[].requestHeaderModifier.remove[] | select(test("[*]"))] | length == 0) and (.spec.rules[0].filters[0].requestHeaderModifier.remove | length) == 10' 'the web route removes exactly ten names, none a wildcard'
+jkind HTTPRoute 'select(.metadata.name == "rooms-web") | ([.spec.rules[0].filters[].requestHeaderModifier.remove[] | select(test("[*]"))] | length == 0) and (.spec.rules[0].filters[0].requestHeaderModifier.remove | length) == 13' 'the web route removes exactly thirteen names, none a wildcard'
 jkind HTTPRoute 'select(.metadata.name == "rooms-web") | .spec.parentRefs == [{"name": "gw", "namespace": "infra", "sectionName": "https"}]' 'the web route attaches to expose.httproute.parentRefs'
 jkind HTTPRoute 'select(.metadata.name == "factory-slack-events") | (.spec.parentRefs == [{"name": "public", "namespace": "infra", "sectionName": "factory-slack"}] and .spec.hostnames == ["factory-slack.example.test"] and .spec.rules == [{"matches": [{"path": {"type": "Exact", "value": "/slack/events"}, "method": "POST"}], "backendRefs": [{"name": "factory-slack-app", "port": 8080}]}])' 'the Slack route: its own parentRefs, Exact POST /slack/events, factory-slack-app:8080, nothing else'
 out="$(helm template af . -n maku "${exw[@]}" --set-json 'expose.httproute.timeouts={"request":"0s"}')"

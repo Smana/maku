@@ -282,7 +282,8 @@ admit, so the gateway's pods must be named. */}}
 {{- end }}
 
 {{/* The identity headers oauth2-proxy may set (EX2), which the web route removes from every client
-request by exact name. A YAML list. */}}
+request by exact name, and the forwarded headers a proxy trusting its client would read (the security
+review of #545: X-Forwarded-Uri once selected a skip-auth route). A YAML list. */}}
 {{- define "afumbrella.identityHeaders" -}}
 - X-Forwarded-Access-Token
 - X-Forwarded-User
@@ -294,6 +295,9 @@ request by exact name. A YAML list. */}}
 - X-Auth-Request-Preferred-Username
 - X-Auth-Request-Groups
 - X-Auth-Request-Access-Token
+- X-Forwarded-Uri
+- X-Forwarded-Host
+- X-Forwarded-Proto
 {{- end }}
 
 {{/* The web front door's checks (EX4): it derives its arguments from the broker's oidc identity, so it
@@ -327,8 +331,19 @@ needs that identity, its Secrets by name (D14), and the broker's agreement (maku
 {{- end -}}
 {{- $derived := include "afumbrella.webProxyArgs" . | fromJson -}}
 {{- range $k := keys ($w.extraArgs | default dict) | sortAlpha -}}
-{{- if or (hasKey $derived $k) (has $k (list "client-id" "client-secret" "cookie-secret" "extra-jwt-issuers" "scope" "http-address" "metrics-address")) -}}
-{{- fail (printf "webProxy.extraArgs.%s: the chart derives it from maku.broker.human and webProxy (docs/exposure.md); it may not be overridden" $k) -}}
+{{- /* Derived, or a flag that would widen what passes the front door: a trusted forwarder's headers
+(trusted-ip, reverse-proxy), more unauthenticated routes or domains, or a config file that replaces the
+flags. */ -}}
+{{- $forbidden := list "client-id" "client-secret" "cookie-secret" "extra-jwt-issuers" "scope" "http-address" "metrics-address"
+  "trusted-ip" "skip-auth-regex" "skip-auth-preflight" "whitelist-domain" "config" "alpha-config" "reverse-proxy"
+  "pass-user-headers" "skip-auth-strip-headers" -}}
+{{- if or (hasKey $derived $k) (has $k $forbidden) -}}
+{{- fail (printf "webProxy.extraArgs.%s: the chart derives it or forbids it (docs/exposure.md#the-web-front-door); it may not be set" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- range ($w.extraEnv | default list) -}}
+{{- if hasPrefix "OAUTH2_PROXY_" (.name | default "") -}}
+{{- fail (printf "webProxy.extraEnv %s: oauth2-proxy reads it as a flag, which only the chart sets (use webProxy.extraArgs)" .name) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -366,7 +381,7 @@ scope come from the environment, built from Secrets, never from a rendered value
   "pass-authorization-header" "true"
   "pass-access-token" "true"
   "skip-auth-strip-headers" "true"
-  "pass-user-headers" "false"
+  "pass-user-headers" "true"
   "pass-basic-auth" "false"
   "set-xauthrequest" "false"
   "cookie-name" "_rooms"
@@ -374,7 +389,7 @@ scope come from the environment, built from Secrets, never from a rendered value
   "cookie-httponly" "true"
   "cookie-samesite" $w.cookieSameSite
   "cookie-refresh" $w.cookieRefresh
-  "reverse-proxy" "true"
+  "reverse-proxy" "false"
   "skip-provider-button" "true"
   "skip-jwt-bearer-tokens" "true"
   "skip-auth-route" $skip -}}

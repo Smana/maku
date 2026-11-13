@@ -146,7 +146,7 @@ The owner answered yes to each, as the plan recommended. The spec records them i
     - in local mode, where the broker binds loopback;
     - in oidc mode without `webProxy.enabled`, because the broker expects oauth2-proxy's headers.
   - The Slack route matches `POST /slack/events` exactly and nothing else. Every other path on that host is the gateway's 404.
-  - A client never brings its own identity headers. The web route strips them (HTTPRoute), and oauth2-proxy strips them again (`skip-auth-strip-headers`, proved in Task 9). Under step 5's `tokenUse: id` the access header is not parsed, so this strip is what keeps P18.
+  - A client never brings its own identity headers. The web route strips them (HTTPRoute), and oauth2-proxy overwrites them again: `X-Forwarded-Access-Token` through `pass-access-token`, the four `X-Forwarded-*` user headers through `pass-user-headers`, both stripped on skip-auth routes (`skip-auth-strip-headers`, proved in Task 9). It runs with `reverse-proxy=false`, so a client's `X-Forwarded-Uri` never selects a skip-auth route (PR D's security review). Under step 5's `tokenUse: id` the access header is not parsed, so this strip is what keeps P18.
   - Monitoring objects render only when asked: no `.Capabilities` guessing, so offline renders (Flux, Argo CD, `helm template`) are deterministic.
   - A knowledge call that fails is a tool error, never a partial answer.
   - The production gate names every missing seam in one message.
@@ -261,8 +261,8 @@ The owner answered yes to each, as the plan recommended. The spec records them i
     - `provider=oidc`, `oidc-issuer-url` = `human.issuer`;
     - `redirect-url` = `<broker.publicURL>/oauth2/callback`;
     - `upstream` = `http://room-broker.<ns>.svc.<domain>:8080`;
-    - `pass-authorization-header`, `pass-access-token`, `skip-auth-strip-headers=true`, `pass-user-headers=false`, `pass-basic-auth=false`, `set-xauthrequest=false`;
-    - `cookie-secure`, `cookie-samesite=strict`, `cookie-refresh`, `reverse-proxy`, `skip-provider-button`;
+    - `pass-authorization-header`, `pass-access-token`, `skip-auth-strip-headers=true`, `pass-user-headers=true` (it overwrites the user headers; amended by PR D's security review), `pass-basic-auth=false`, `set-xauthrequest=false`;
+    - `cookie-secure`, `cookie-samesite=strict`, `cookie-refresh`, `reverse-proxy=false` (true trusts a client's `X-Forwarded-Uri`; amended by PR D's security review), `skip-provider-button`;
     - `skip-jwt-bearer-tokens` with `OAUTH2_PROXY_EXTRA_JWT_ISSUERS=<issuer>=<cli client id>`. The CLI id is read from step 5's `broker.oidc.existingSecret` key `cli-client-id` through `$(VAR)` expansion;
     - `skip-auth-route`: `GET=^/\.well-known/roomctl$`, plus `GET=^/link/github/callback$` when `human.githubLink` is set;
     - `metrics-address=:44180`.

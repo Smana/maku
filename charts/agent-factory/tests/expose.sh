@@ -50,9 +50,9 @@ has_arg '--provider=oidc' 'the provider'
 has_arg '--oidc-issuer-url=https://e2e-stub.e2e.svc.cluster.local' 'the issuer is human.issuer'
 has_arg '--redirect-url=https://rooms.e2e.test/oauth2/callback' 'the callback is publicURL/oauth2/callback'
 has_arg '--upstream=http://room-broker.maku.svc.cluster.local:8080' "the upstream is the broker's :8080"
-for a in --pass-authorization-header=true --pass-access-token=true --skip-auth-strip-headers=true --pass-user-headers=false \
+for a in --pass-authorization-header=true --pass-access-token=true --skip-auth-strip-headers=true --pass-user-headers=true \
   --pass-basic-auth=false --set-xauthrequest=false --cookie-secure=true --cookie-httponly=true --cookie-samesite=strict \
-  --cookie-refresh=1h --reverse-proxy=true --skip-provider-button=true --skip-jwt-bearer-tokens=true --email-domain=* \
+  --cookie-refresh=1h --reverse-proxy=false --skip-provider-button=true --skip-jwt-bearer-tokens=true --email-domain=* \
   --http-address=0.0.0.0:4180 --metrics-address=0.0.0.0:44180 '--skip-auth-route=GET=^/\.well-known/roomctl$'; do
   has_arg "$a" 'EX4'
 done
@@ -107,9 +107,17 @@ no_arg '^--allowed-group=' 'zitadel without a roles claim: allowed-group'
 # extraArgs: appended; a derived key is refused, naming it
 render "${wp[@]}" --set webProxy.extraArgs.silence-ping-logging=true
 has_arg '--silence-ping-logging=true' 'extraArgs are appended'
-for k in upstream skip-auth-strip-headers cookie-secure client-secret extra-jwt-issuers; do
+# Security review of #545: reverse-proxy=true trusts every client's X-Forwarded-Uri, which then matches
+# a skip-auth route; trusted-ip, skip-auth-regex, the config files and the rest widen what passes.
+for k in upstream skip-auth-strip-headers cookie-secure client-secret extra-jwt-issuers trusted-ip skip-auth-regex \
+  skip-auth-preflight whitelist-domain config alpha-config reverse-proxy pass-user-headers; do
   bad "webProxy.extraArgs.$k: the chart derives it" "${wp[@]}" --set "webProxy.extraArgs.$k=x"
 done
+
+# extraEnv may not set oauth2-proxy's own options: its OAUTH2_PROXY_* variables are its flags
+bad 'webProxy.extraEnv OAUTH2_PROXY_REVERSE_PROXY: oauth2-proxy reads it as a flag' "${wp[@]}" --set-json 'webProxy.extraEnv=[{"name":"OAUTH2_PROXY_REVERSE_PROXY","value":"true"}]'
+render "${wp[@]}" --set-json 'webProxy.extraEnv=[{"name":"SSL_CERT_FILE","value":"/ca.crt"}]'
+[[ $(env_of SSL_CERT_FILE .value) == /ca.crt ]] || { echo 'FAIL: extraEnv SSL_CERT_FILE is not passed' >&2; fail=1; }
 
 # fail closed
 bad 'webProxy.existingSecret is empty: name the Secret holding the web client and the cookie secret (keys client-id, client-secret, cookie-secret; D14)' "${wp[@]}" --set webProxy.existingSecret=

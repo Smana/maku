@@ -76,15 +76,36 @@ for a team that routes it itself.
 
 | | `httproute` | `ingress` |
 |---|---|---|
-| web | `rooms-web`: `PathPrefix /` to `rooms-web-proxy:80`, removing the ten identity headers below; `timeouts` when set | `rooms-web`: `Prefix /` to `rooms-web-proxy:80` |
+| web | `rooms-web`: `PathPrefix /` to `rooms-web-proxy:80`, removing the thirteen headers below; `timeouts` when set | `rooms-web`: `Prefix /` to `rooms-web-proxy:80` |
 | slack | `factory-slack-events`: `Exact /slack/events` with `method: POST` to `factory-slack-app:8080`. Every other path and method is the gateway's 404 | `factory-slack-events`: `pathType: Exact` `/slack/events`. Ingress has no method match: the Slack App answers anything but `POST` with 405 |
 
 The web route removes these request headers by exact name, because Gateway API's `remove` takes no
-wildcards: `X-Forwarded-Access-Token`, `X-Forwarded-User`, `X-Forwarded-Email`,
-`X-Forwarded-Groups`, `X-Forwarded-Preferred-Username`, `X-Auth-Request-User`,
-`X-Auth-Request-Email`, `X-Auth-Request-Preferred-Username`, `X-Auth-Request-Groups` and
-`X-Auth-Request-Access-Token`. Ingress has no portable header removal, so in `ingress` mode the strip
-rests on oauth2-proxy alone ([what the probe proved](#what-the-probe-proved)).
+wildcards:
+
+- the identity headers oauth2-proxy sets: `X-Forwarded-Access-Token`, `X-Forwarded-User`,
+  `X-Forwarded-Email`, `X-Forwarded-Groups`, `X-Forwarded-Preferred-Username`,
+  `X-Auth-Request-User`, `X-Auth-Request-Email`, `X-Auth-Request-Preferred-Username`,
+  `X-Auth-Request-Groups` and `X-Auth-Request-Access-Token`;
+- the forwarded headers a proxy that trusted its client would read: `X-Forwarded-Uri`,
+  `X-Forwarded-Host` and `X-Forwarded-Proto`. The front door runs with `reverse-proxy=false`, so it
+  reads none of them: a forged `X-Forwarded-Uri` naming a skip-auth path still meets sign-in.
+
+Ingress has no portable header removal. In `ingress` mode, oauth2-proxy overwrites
+`X-Forwarded-Access-Token` and the four `X-Forwarded-*` user headers on every request, skip-auth
+routes included. A client's `X-Auth-Request-*` headers still reach the broker, which reads none of
+them ([what the probe proved](#what-the-probe-proved)).
+
+**HSTS** is the gateway's or the Ingress controller's job, beside TLS: the front door sets no response
+headers of its own. For example, on Gateway API:
+
+```yaml
+# a filter on your HTTPS listener's routes, or your gateway's own policy
+- type: ResponseHeaderModifier
+  responseHeaderModifier:
+    set: [{name: Strict-Transport-Security, value: max-age=31536000; includeSubDomains}]
+```
+
+and on ingress-nginx, the controller's `hsts` setting (on by default for TLS hosts).
 
 **WebSockets.** The rooms page holds `/v1/ws` open for up to an hour, and the broker pings it every
 30 seconds. A gateway whose default request timeout would cut it needs
@@ -109,8 +130,9 @@ broker's `:8080` to these pods, and to nothing else.
 | `existingSecret` | required | the web client and the cookie secret (D14): keys `client-id`, `client-secret`, `cookie-secret` (`keys` renames them). The cookie secret is 32 random bytes: `openssl rand -base64 32 \| tr -- '+/' '-_'` |
 | `cookieRefresh` | `1h` | under the ID token's lifetime |
 | `cookieSameSite` | `strict` | `lax` when the IdP is on another site than the web host: a strict CSRF cookie does not come back from a cross-site sign-in |
-| `extraArgs` | `{}` | appended as `--key=value`; a key the chart derives fails the render, naming it |
-| `extraEnv`, `extraVolumes`, `extraVolumeMounts` | `[]` | e.g. a private IdP CA (`SSL_CERT_FILE`) |
+| `extraArgs` | `{}` | appended as `--key=value`. A key the chart derives fails the render, naming it, and so does one that would widen what passes: `trusted-ip`, `reverse-proxy`, `skip-auth-regex`, `skip-auth-preflight`, `whitelist-domain`, `config`, `alpha-config`, `pass-user-headers`, `skip-auth-strip-headers` |
+| `extraEnv` | `[]` | e.g. a private IdP CA (`SSL_CERT_FILE`). An `OAUTH2_PROXY_*` variable fails the render: oauth2-proxy reads it as a flag |
+| `extraVolumes`, `extraVolumeMounts` | `[]` | e.g. the CA's Secret |
 | `networkPolicy.idp.to`, `.port` | the issuer | the IdP's egress: in mode cilium, `toFQDNs` on the issuer's host; in mode kubernetes, every public address. Set them for an in-cluster IdP |
 
 It also needs `maku.broker.human.issuer`, an `https` `maku.broker.publicURL` (the sign-in returns to
@@ -131,7 +153,8 @@ With `monitoring.serviceMonitor.enabled`, a ServiceMonitor scrapes it.
 
 A team that runs its own oauth2-proxy sets `expose.web.enabled: false` and `webProxy.enabled: false`,
 and routes to it itself. Its proxy must do what the chart's does: overwrite
-`X-Forwarded-Access-Token` on every request, and strip it on its skip-auth routes. Open the broker's
+`X-Forwarded-Access-Token` on every request, strip it on its skip-auth routes, and never trust a
+client's `X-Forwarded-Uri` (`reverse-proxy=false`, or a `trusted-ip` that holds only your gateway). Open the broker's
 `:8080` to it alone with `maku.broker.networkPolicy.extraIngress`. Routing the web straight to the
 broker is never safe: a client could then send an access header of its own and pass as a web
 session.
@@ -162,9 +185,10 @@ e2e stub issuer.
 | | What was asserted | Result |
 |---|---|---|
 | X1 | The Slack route answers only `POST /slack/events` | agentgateway answers 404 to `GET /slack/events`, `/slack/eventsx`, `/slack/events/x`, `/slack` and `/`. Traefik's `Exact` path answers 404 to the other paths, and passes `GET /slack/events`: Ingress has no method match, so the App's 405 is the guard |
-| X2 | The web route removes each of the ten identity headers | all ten removed |
+| X2 | The web route removes each of the ten identity headers and the three forwarded headers | all removed; the gateway may set its own `X-Forwarded-Host` and `-Proto` after the filter |
 | X3 | `/v1/ws`, pinged every 30 s, stays open 6 minutes | through agentgateway with and without `timeouts`, through Traefik, and through agentgateway then oauth2-proxy |
-| X4 | oauth2-proxy never forwards a client's `X-Forwarded-Access-Token` | with a CLI bearer it is overwritten with the bearer (both headers equal: never a web session); with a session it is the session's own access token; on a skip-auth route it is stripped. A client's other nine identity headers pass oauth2-proxy unchanged, so in `ingress` mode they reach the broker as sent: the broker reads only `Authorization` and `X-Forwarded-Access-Token` |
+| X4 | oauth2-proxy never forwards a client's `X-Forwarded-Access-Token` or user headers | with a CLI bearer it is overwritten with the bearer (both headers equal: never a web session); with a session it is the session's own access token; on a skip-auth route it is stripped. `pass-user-headers` overwrites the four `X-Forwarded-*` user headers. A client's `X-Auth-Request-*` headers pass unchanged: the broker reads only `Authorization` and `X-Forwarded-Access-Token` |
+| X4 | A forwarded path never selects a skip-auth route | with `reverse-proxy=false`, `GET /api/rooms` with `X-Forwarded-Uri: /.well-known/roomctl` (or the GitHub callback) and no session redirects to sign in |
 | X4 | The skip-auth routes and the cookies | `GET /.well-known/roomctl` and `GET /link/github/callback?…` pass without a session; `POST /link/github/callback`, `GET /link/github` and `/link/github/callbackx` redirect to sign in. The cookies are `Secure`, `HttpOnly`, `SameSite=Strict`. A bearer in no agents group is 403 |
 | X5 | `oidc-groups-claim` with a nested claim (`realm_access.roles`) | not read: a member's bearer is 403. So the chart sets `allowed-group` only for a top-level roles claim |
 | X6 | `HTTPRoute.spec.rules[].timeouts` on the v1.2.1 standard CRDs | kept, and agentgateway accepts the route |

@@ -91,6 +91,9 @@ spec:
               - X-Auth-Request-Preferred-Username
               - X-Auth-Request-Groups
               - X-Auth-Request-Access-Token
+              - X-Forwarded-Uri
+              - X-Forwarded-Host
+              - X-Forwarded-Proto
       backendRefs: [{name: echo, port: 80}]
 ---
 # X3, X6: the same with timeouts.request 0s (Envoy-based gateways' WebSocket setting).
@@ -104,7 +107,7 @@ spec:
     - matches: [{path: {type: PathPrefix, value: /}}]
       filters:
         - type: RequestHeaderModifier
-          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token]}
+          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token, X-Forwarded-Uri, X-Forwarded-Host, X-Forwarded-Proto]}
       backendRefs: [{name: echo, port: 80}]
       timeouts: {request: 0s}
 ---
@@ -119,7 +122,7 @@ spec:
     - matches: [{path: {type: PathPrefix, value: /}}]
       filters:
         - type: RequestHeaderModifier
-          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token]}
+          requestHeaderModifier: {remove: [X-Forwarded-Access-Token, X-Forwarded-User, X-Forwarded-Email, X-Forwarded-Groups, X-Forwarded-Preferred-Username, X-Auth-Request-User, X-Auth-Request-Email, X-Auth-Request-Preferred-Username, X-Auth-Request-Groups, X-Auth-Request-Access-Token, X-Forwarded-Uri, X-Forwarded-Host, X-Forwarded-Proto]}
       backendRefs: [{name: proxy, port: 80}]
 ---
 # X1, X3: Traefik (k3s's ingress controller): the Slack path exactly, and a WebSocket host.
@@ -163,14 +166,14 @@ spec:
             - --pass-authorization-header=true
             - --pass-access-token=true
             - --skip-auth-strip-headers=true
-            - --pass-user-headers=false
+            - --pass-user-headers=true
             - --pass-basic-auth=false
             - --set-xauthrequest=false
             - --cookie-secure=true
             - --cookie-httponly=true
             - --cookie-samesite=strict
             - --cookie-refresh=1h
-            - --reverse-proxy=true
+            - --reverse-proxy=false
             - --skip-provider-button=true
             - --skip-jwt-bearer-tokens=true
             - --extra-jwt-issuers=__ISSUER__=maku-cli
