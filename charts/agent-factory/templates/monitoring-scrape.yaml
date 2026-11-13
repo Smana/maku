@@ -20,6 +20,9 @@ PrometheusRule's `up` selectors read. */}}
 {{- if (index .Values "maku-factory").enabled -}}
 {{- $scrapes = append $scrapes (dict "kind" "ServiceMonitor" "name" "agent-factory" "app" "agent-factory") -}}
 {{- end -}}
+{{- if .Values.webProxy.enabled -}}
+{{- $scrapes = append $scrapes (dict "kind" "ServiceMonitor" "name" "rooms-web-proxy" "app" "rooms-web-proxy") -}}
+{{- end -}}
 {{- $gw := index .Values "maku-gateway" -}}
 {{- if $gw.enabled -}}
 {{- /* The proxies agentgateway provisions for the Gateway: their pod port metrics is 15020. */ -}}

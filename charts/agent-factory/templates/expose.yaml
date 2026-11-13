@@ -1,0 +1,83 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 (D19, EX2, EX5): one HTTPRoute or Ingress per enabled surface. The web goes to the
+web front door (rooms-web-proxy), never to the broker; the Slack surface is POST /slack/events and
+nothing else. TLS is the gateway's or the Ingress's: no Certificate is rendered here. */ -}}
+{{- $x := .Values.expose -}}
+{{- $on := include "afumbrella.exposed" . | fromJson -}}
+{{- $surfaces := list -}}
+{{- if $on.web -}}
+{{- $surfaces = append $surfaces (dict "key" "web" "name" "rooms-web" "service" "rooms-web-proxy" "port" 80 "path" "/" "exact" false) -}}
+{{- end -}}
+{{- if $on.slack -}}
+{{- $surfaces = append $surfaces (dict "key" "slack" "name" "factory-slack-events" "service" "factory-slack-app" "port" 8080 "path" "/slack/events" "exact" true) -}}
+{{- end -}}
+{{- range $surfaces }}
+{{- $s := index $x .key }}
+{{- if eq $x.mode "httproute" }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "afumbrella.labels" $ | nindent 4 }}
+spec:
+  parentRefs: {{- toYaml ($s.parentRefs | default $x.httproute.parentRefs) | nindent 4 }}
+  hostnames: {{- toYaml $s.hostnames | nindent 4 }}
+  rules:
+    {{- if .exact }}
+    # Exactly POST /slack/events: every other path and method on this host is the gateway's 404.
+    - matches:
+        - path: {type: Exact, value: {{ .path }}}
+          method: POST
+    {{- else }}
+    - matches:
+        - path: {type: PathPrefix, value: {{ .path }}}
+      filters:
+        # oauth2-proxy sets the identity headers, so a client may not bring its own, nor forwarded
+        # headers a proxy might trust. Gateway API's remove takes exact names, no wildcards;
+        # oauth2-proxy overwrites the identity headers again behind this route.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove: {{- include "afumbrella.identityHeaders" $ | nindent 14 }}
+    {{- end }}
+      backendRefs:
+        - name: {{ .service }}
+          port: {{ .port }}
+      {{- if and (eq .key "web") $x.httproute.timeouts }}
+      timeouts: {{- toYaml $x.httproute.timeouts | nindent 8 }}
+      {{- end }}
+{{- else }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .name }}
+  namespace: {{ $.Release.Namespace }}
+  labels: {{- include "afumbrella.labels" $ | nindent 4 }}
+  {{- with merge (deepCopy ($s.annotations | default dict)) ($x.ingress.annotations | default dict) }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  ingressClassName: {{ $s.className | default $x.ingress.className }}
+  {{- with $s.tls }}
+  tls: {{- toYaml . | nindent 4 }}
+  {{- end }}
+  rules:
+    {{- $svc := . }}
+    {{- range $s.hostnames }}
+    - host: {{ . }}
+      http:
+        paths:
+          {{- if $svc.exact }}
+          # Ingress has no method match: the Slack App answers anything but POST with 405.
+          {{- end }}
+          - path: {{ $svc.path }}
+            pathType: {{ ternary "Exact" "Prefix" $svc.exact }}
+            backend:
+              service:
+                name: {{ $svc.service }}
+                port: {number: {{ $svc.port }}}
+    {{- end }}
+{{- end }}
+{{- end }}

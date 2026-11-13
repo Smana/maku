@@ -92,6 +92,14 @@ spec:
             matchLabels: {app.kubernetes.io/name: agent-factory}
         - namespaceSelector:
             matchLabels: {kubernetes.io/metadata.name: agents}
+        # The web front door signs people in here, and the expose leg's client plays the browser
+        # (identity.sh EXPOSE, plan v4 step 6 Task 12).
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: rooms-web-proxy}
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: e2e-client}
       ports:
         - {protocol: TCP, port: https}
     # The model gateway's proxy reaches the stub as its provider, over plain http (plan v4 step 4).

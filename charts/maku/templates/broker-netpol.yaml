@@ -52,6 +52,14 @@ spec:
     - from: {{- toYaml . | nindent 8 }}
       ports: [{port: 9090, protocol: TCP}]
     {{- end }}
+    {{- if .Values.broker.webProxy }}
+    # The human listener, from the web front door alone (the umbrella's rooms-web-proxy): it sets
+    # the identity headers the broker reads, so nothing may reach :8080 around it.
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: rooms-web-proxy}
+      ports: [{port: 8080, protocol: TCP}]
+    {{- end }}
     {{- if .Values.preflight.enabled }}
     # The install's preflight collects /preflight on the ops port (v4 D24).
     - from:

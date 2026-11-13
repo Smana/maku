@@ -1,0 +1,38 @@
+# Test-only values for task chart:expose:k3d (identity.sh EXPOSE=httproute|ingress; v4 step 6, Task 12),
+# layered on identity-values.yaml: the web exposed through the web front door, against the in-cluster
+# e2e stub issuer, in networkPolicies.mode kubernetes (k3s enforces it). The mode's own keys (the
+# Gateway or the IngressClass, and the controller's pods) are set by the script.
+maku:
+  networkPolicies:
+    enabled: true
+    mode: kubernetes
+  broker:
+    webProxy: true
+    networkPolicy:
+      # The broker verifies against the stub issuer's keys.
+      extraEgress:
+        - to:
+            - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}
+              podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}
+          ports: [{port: 8443, protocol: TCP}]
+webProxy:
+  enabled: true
+  existingSecret: e2e-rooms-proxy
+  replicas: 1
+  # The stub issuer's throwaway CA.
+  extraEnv:
+    - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+  extraVolumes:
+    - name: e2e-ca
+      secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+  extraVolumeMounts:
+    - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+  networkPolicy:
+    idp:
+      to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}
+          podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}
+      port: 8443
+expose:
+  web:
+    hostnames: [rooms.e2e.test]

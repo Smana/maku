@@ -162,6 +162,11 @@ broker:
   # release's unless these labels set io.kubernetes.pod.namespace.
   factoryPodLabels:
     app.kubernetes.io/name: agent-factory
+  # The web front door (v4 D19): true opens the human listener, :8080, to the umbrella's oauth2-proxy
+  # pods (app.kubernetes.io/name: rooms-web-proxy) and to nothing else, in networkPolicies.mode cilium
+  # and kubernetes. The umbrella requires it to equal its webProxy.enabled. Off: :8080 is admitted by
+  # no rule but networkPolicy.extraIngress.
+  webProxy: false
   # oidc mode: the https URL humans reach the broker at. local mode: http://localhost:<the port you
   # forward>, default http://localhost:8080; the broker answers that port only.
   publicURL: ""
