@@ -363,6 +363,7 @@ ykind ExternalSecret 'select(.metadata.name=="agent-factory-intake") | (.metadat
 ynone 'select(.kind=="Secret" and (.metadata.name=="db-broker" or .metadata.name=="agent-factory-intake"))' 'never a Secret beside an ExternalSecret of the same name'
 bad 'externalSecrets.enabled needs externalSecrets.storeRef.name' "${esv[@]}" --set externalSecrets.storeRef.name=
 bad 'externalSecrets.secrets.databaseBroker: key uri is required (docs/install-secrets.md)' "${esv[@]}" --set 'externalSecrets.secrets.databaseBroker.template=null'
+bad 'externalSecrets.secrets.databaseBroker: key dsn is required (docs/install-secrets.md)' "${esv[@]}" --set maku.broker.database.secretKey=dsn
 bad 'externalSecrets.secrets.nope: not a seam id (docs/install-secrets.md)' "${esv[@]}" --set-json 'externalSecrets.secrets.nope={"dataFrom":[{"extract":{"key":"x"}}]}'
 bad 'externalSecrets.secrets.factoryApp: the demo writes agent-factory-github from demo.githubApp' "${esv[@]}" --set-json 'externalSecrets.secrets.factoryApp={"dataFrom":[{"extract":{"key":"x"}}]}'
 bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enabled) writes rooms-broker-dsn' "${args[@]}" -f tests/externalsecrets-values.yaml \

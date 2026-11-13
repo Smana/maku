@@ -52,7 +52,9 @@ const (
 type Key struct {
 	Name     string `json:"name"`
 	Required bool   `json:"required"`
-	Doc      string `json:"-"`
+	// From is a values path, in the seam's chart, that renames this key when set.
+	From string `json:"from,omitempty"`
+	Doc  string `json:"-"`
 }
 
 // Seam is one Secret an install provides: its id, who reads it and how, the chart value that
@@ -60,11 +62,10 @@ type Key struct {
 type Seam struct {
 	ID        string    `json:"id"`
 	Component string    `json:"component"`
-	Chart     string    `json:"chart"`             // the chart whose values name it
-	Value     string    `json:"value"`             // its values path in that chart; "" is a fixed name
-	Alias     string    `json:"alias,omitempty"`   // an older values path, read when Value is empty
-	KeyFrom   string    `json:"keyFrom,omitempty"` // a values path that renames the one key
-	Default   string    `json:"default"`           // the name when the values set none; "" is none
+	Chart     string    `json:"chart"`           // the chart whose values name it
+	Value     string    `json:"value"`           // its values path in that chart; "" is a fixed name
+	Alias     string    `json:"alias,omitempty"` // an older values path, read when Value is empty
+	Default   string    `json:"default"`         // the name when the values set none; "" is none
 	Namespace Namespace `json:"namespace"`
 	Keys      []Key     `json:"keys"`
 	ReadAs    ReadAs    `json:"readAs"`
@@ -84,7 +85,7 @@ type Seam struct {
 }
 
 var (
-	uri       = []Key{{Name: "uri", Required: true, Doc: "the role's DSN, `postgresql://…`; the key is `broker.database.secretKey`"}}
+	uri       = []Key{{Name: "uri", Required: true, From: "broker.database.secretKey", Doc: "the role's DSN, `postgresql://…`"}}
 	tlsPair   = []Key{{Name: "tls.crt", Required: true}, {Name: "tls.key", Required: true}}
 	caCrt     = []Key{{Name: "ca.crt", Required: true}}
 	githubApp = []Key{{Name: "app_id", Required: true}, {Name: "private_key", Required: true}}
@@ -92,13 +93,13 @@ var (
 
 // Seams is every Secret the charts and components read, in docs order.
 var Seams = []Seam{
-	{ID: "databaseBroker", Component: "room-broker", Chart: "maku", Value: "broker.database.brokerSecret", KeyFrom: "broker.database.secretKey",
+	{ID: "databaseBroker", Component: "room-broker", Chart: "maku", Value: "broker.database.brokerSecret",
 		Default: "rooms-broker-dsn", Namespace: Release, Keys: uri, ReadAs: Env, Generated: GeneratedPostgres,
 		Doc: "The broker's DSN, as `rooms_broker` (`ROOMS_DATABASE_URL`)"},
-	{ID: "databaseOwner", Component: "room-broker (migrate)", Chart: "maku", Value: "broker.database.ownerSecret", KeyFrom: "broker.database.secretKey",
+	{ID: "databaseOwner", Component: "room-broker (migrate)", Chart: "maku", Value: "broker.database.ownerSecret",
 		Default: "rooms-owner-dsn", Namespace: Release, Keys: uri, ReadAs: Env, Optional: true, Generated: GeneratedPostgres,
 		Doc: "The migrations' DSN, as `rooms_owner` (`ROOMS_MIGRATION_DATABASE_URL`); without it nothing is migrated"},
-	{ID: "databaseRetention", Component: "room-broker-retention", Chart: "maku", Value: "broker.database.retentionSecret", KeyFrom: "broker.database.secretKey",
+	{ID: "databaseRetention", Component: "room-broker-retention", Chart: "maku", Value: "broker.database.retentionSecret",
 		Default: "rooms-retention-dsn", Namespace: Release, Keys: uri, ReadAs: Env, Optional: true, Generated: GeneratedPostgres,
 		Doc: "The retention CronJob's DSN, as `rooms_retention`; without it no CronJob renders"},
 	{ID: "databaseCA", Component: "room-broker", Chart: "maku", Value: "broker.database.caSecret", Namespace: Release, Keys: caCrt, ReadAs: File,
@@ -107,9 +108,15 @@ var Seams = []Seam{
 		Keys:   []Key{{Name: "postgres", Required: true}, {Name: "rooms_owner", Required: true}, {Name: "rooms_broker", Required: true}, {Name: "rooms_retention", Required: true}},
 		ReadAs: Env, Generated: GeneratedPostgres, Doc: "The bundled Postgres's passwords (`postgres.enabled`, the demo only)"},
 	{ID: "brokerOIDC", Component: "room-broker", Chart: "maku", Value: "broker.oidc.existingSecret", Namespace: Release,
-		Keys: []Key{{Name: "web-client-id", Required: true, Doc: "oauth2-proxy's client id"}, {Name: "cli-client-id", Doc: "maku's client id"},
-			{Name: "project-id", Doc: "the ZITADEL project id (preset zitadel)"}},
+		Keys: []Key{{Name: "web-client-id", Required: true, From: "broker.oidc.keys.web", Doc: "oauth2-proxy's client id"},
+			{Name: "cli-client-id", From: "broker.oidc.keys.cli", Doc: "maku's client id"},
+			{Name: "project-id", From: "broker.oidc.keys.project", Doc: "the ZITADEL project id (preset zitadel)"}},
 		ReadAs: File, MountPath: "/etc/room-broker/oidc", Optional: true, Doc: "The OIDC client ids (ids, not secrets): `human.clientIDFile`, `roomctlClientIDFile`, `projectIDFile`"},
+	{ID: "githubLink", Component: "room-broker", Chart: "maku", Value: "broker.githubLink.existingSecret", Namespace: Release,
+		Keys: []Key{{Name: "client_id", Required: true, From: "broker.githubLink.keys.clientID"},
+			{Name: "client_secret", Required: true, From: "broker.githubLink.keys.clientSecret"}},
+		ReadAs: File, MountPath: "/etc/room-broker/github-link", Optional: true,
+		Doc: "The GitHub account link's OAuth client (`human.githubLink`): the factory App's, or an OAuth App's. Its state is bound by a per-flow nonce, so no key material is stored"},
 	{ID: "brokerTLS", Component: "room-broker", Chart: "maku", Value: "broker.tls.secretName", Default: "room-broker-tls", Namespace: Release,
 		Keys: tlsPair, ReadAs: File, MountPath: "/etc/room-broker/tls", Generated: GeneratedUmbrella, Doc: "The broker's :8443 serving pair"},
 	{ID: "brokerCA", Component: "run-controller", Chart: "maku", Value: "broker.tls.caSecretName", Default: "room-broker-ca", Namespace: Release,
@@ -182,6 +189,9 @@ func Table() string {
 			k1 := "`" + k.Name + "`"
 			if k.Required {
 				k1 += " (required)"
+			}
+			if k.From != "" {
+				k1 += ", renamed by `" + k.From + "`"
 			}
 			keys = append(keys, k1)
 		}

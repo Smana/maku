@@ -12,6 +12,8 @@ maku:
       caSecret: db-ca
     oidc:
       existingSecret: broker-oidc
+    githubLink:
+      existingSecret: gh-link
     factoryCA:
       secretName: factory-api-ca
     factoryURL: https://agent-factory.maku.svc.cluster.local:8082

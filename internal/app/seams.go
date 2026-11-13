@@ -19,8 +19,11 @@ func readMounted(p string) ([]byte, error) { return os.ReadFile(filepath.Clean(p
 // at use, as before.
 func checkBrokerSecrets(cfg config.Config, read func(string) ([]byte, error)) error {
 	h := cfg.Human
-	return install.CheckFiles(read, h.ClientIDFile, h.RoomctlClientIDFile, h.ProjectIDFile, h.AudienceFile,
-		cfg.FactoryCAFile, cfg.TLS.CertFile, cfg.TLS.KeyFile)
+	files := []string{h.ClientIDFile, h.RoomctlClientIDFile, h.ProjectIDFile, h.AudienceFile, cfg.FactoryCAFile, cfg.TLS.CertFile, cfg.TLS.KeyFile}
+	if l := h.GitHubLink; l != nil {
+		files = append(files, l.ClientIDFile, l.ClientSecretFile)
+	}
+	return install.CheckFiles(read, files...)
 }
 
 // checkFactorySecrets is checkBrokerSecrets for the factory's config.

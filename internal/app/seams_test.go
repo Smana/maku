@@ -38,6 +38,16 @@ func TestBrokerSecretSeams(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("got %v, want %q", err, want)
 	}
+	// The plan's case: the GitHub link's client secret mounted empty.
+	cfg.Human.GitHubLink = &config.GitHubLinkConfig{ClientIDFile: "/etc/room-broker/github-link/client_id",
+		ClientSecretFile: "/etc/room-broker/github-link/client_secret"}
+	all["/etc/room-broker/oidc/cli-client-id"] = "maku-cli"
+	all["/etc/room-broker/github-link/client_id"], all["/etc/room-broker/github-link/client_secret"] = "Iv1.abc", ""
+	err = checkBrokerSecrets(cfg, fakeFiles(all))
+	want = "githubLink: Secret broker.githubLink.existingSecret key client_secret is missing or empty (docs/install-secrets.md)"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
+	}
 	// Files outside every chart mount are not this check's: a hand-written manifest's paths.
 	if err := checkBrokerSecrets(config.Config{Human: config.HumanConfig{ClientIDFile: "/etc/e2e/config/client-id"}}, fakeFiles(nil)); err != nil {
 		t.Fatal(err)
