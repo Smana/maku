@@ -29,6 +29,12 @@ const (
 
 	// ConditionBindingsValid is false on a Repository while any of its bindings is refused (B10).
 	ConditionBindingsValid = "BindingsValid"
+
+	// ConditionPrivateCode is false on a served Repository whose code is private, internal or of
+	// unread visibility while spec.privateCode.acknowledged is unset (v4 D3): a warning in this
+	// release, a refusal from the next (step 7 R1).
+	ConditionPrivateCode = "PrivateCode"
+	ReasonUnacknowledged = "Unacknowledged"
 )
 
 // FactoryTriage is the live part of triage (D12): the classifier's URL stays in the values.
@@ -144,6 +150,10 @@ type RepositorySpec struct {
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=32
 	MergePolicies []config.Binding `json:"mergePolicies,omitempty"`
+	// PrivateCode states that a private or internal repository's code is sent to the configured
+	// models, which are usually SaaS (v4 D3). A private repository without it is warned in this
+	// release (the PrivateCode condition) and refused from the next.
+	PrivateCode *config.PrivateCode `json:"privateCode,omitempty"`
 }
 
 // RepositoryStatus is what the factory made of its Repository (D11, narrowed for v1).

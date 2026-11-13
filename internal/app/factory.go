@@ -439,8 +439,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// Outcomes would deadlock).
 	var policyWatch *mergepolicy.Watch // nil while policyManagement.read is off
 	recorder := &decision.Recorder{}
+	// v4 D3 (step 7 R1): each fence pass reads every served repository's visibility; private code
+	// without spec.privateCode.acknowledged is warned (the condition, the gauge, the banner).
+	privateCode := &privateCodeTracker{Live: live.Current, Log: log, Readers: func(repo string) repoInfoReader {
+		if c, ok := conns.get(repo); ok && c.gh != nil {
+			return c.gh
+		}
+		return nil // a nil interface, never a typed-nil *forge.GitHub
+	}}
 	statusWriter := &statuswriter.Writer{Client: mgr.GetClient(), Reader: mgr.GetAPIReader(), Namespace: ns, Log: log,
-		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, log)}
+		Inputs: factoryStatusInputs(ns, src, mgr.GetClient(), conns, func() *mergepolicy.Watch { return policyWatch }, recorder, privateCode.Visibility, log)}
 	src.OnSynced = statusWriter.Kick
 	if err := src.Watch(ctx, mgr.GetCache(), kinds); err != nil {
 		return err
@@ -475,7 +483,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	m.Sponsors(sponsors)
 	// v2 D7: a repository is acted on only while its default branch names this factory.
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names, Read: conns.fenceFile,
-		Every: fenceEvery, Stale: fenceStale, Now: time.Now, OnState: m.RepositoryOwned, Log: log}
+		Every: fenceEvery, Stale: fenceStale, Now: time.Now, Log: log}
+	privateCode.Record = m.PrivateCodeUnacknowledged
+	fenced.OnState = func(ctx context.Context, repo string, owned bool) {
+		m.RepositoryOwned(ctx, repo, owned)
+		privateCode.Observe(ctx, repo, owned)
+	}
+	fenced.OnForget = func(_ context.Context, repo string) {
+		m.ForgetRepository(repo)
+		privateCode.Forget(repo)
+	}
 	// Stages 1, 3 and 5 (merge policy): observed and compared, each merge decision decided again
 	// under it, and its approval subset's grants consulted there. Stage 4: a cut-over repository
 	// is decided on it, and every reader reads its classes from it, aged out at the fence's window.
@@ -659,6 +676,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	apiSrv := &api.Server{Auth: auth, Log: log,
 		Cfg: live, Groups: groups, Runs: rc, Rooms: ledgers, Namespace: ns, Stopped: stopped, SlackLinks: broker, Logins: logins,
 		NewRunID: taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned,
+		InstallUnsafe: privateCode.InstallUnsafe,
 		Forges: func(repo string) api.IssueFiler {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {

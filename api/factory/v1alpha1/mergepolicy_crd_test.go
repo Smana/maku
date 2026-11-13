@@ -245,3 +245,28 @@ func TestRepositoryAdmission(t *testing.T) {
 		})
 	}
 }
+
+// v4 D3, step 7 plan IN9: privateCode.acknowledged is true or absent; an explicit false says
+// nothing and is refused.
+func TestRepositoryPrivateCodeAdmission(t *testing.T) {
+	a := startAdmission(t)
+	for name, tc := range map[string]struct{ privateCode, want string }{
+		"acknowledged": {privateCode: "{acknowledged: true}"},
+		"false":        {privateCode: "{acknowledged: false}", want: msgPrivateCode},
+		"empty":        {privateCode: "{}", want: "Required value"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := edit(t, anrRepository, "pc-"+name, map[string]string{"spec.privateCode": tc.privateCode})
+			err := a.create(t, m)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
