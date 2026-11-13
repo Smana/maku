@@ -2,7 +2,7 @@
 
 // Package runctl is the run-controller (adoption 3a): it reconciles maku.ogenki.io AgentRuns
 // into the pod, ServiceAccount, ConfigMaps and CiliumNetworkPolicy that cloud-native-ref's
-// Crossplane composition builds, minus the gateway, octo-sts, traces, Kueue and suspend.
+// Crossplane composition builds, minus the gateway, octo-sts, Kueue and suspend.
 package runctl
 
 import (
@@ -83,6 +83,66 @@ type Config struct {
 	// roomTools.auth tokenreview. Set, a run with a room gets MCP_URL and a projected token of audience
 	// room-tools for the harness alone. Unset, the harness wires no MCP server.
 	RoomToolsURL string `json:"roomToolsURL,omitempty"`
+	// Tracing hands each run's harness the OTLP/HTTP endpoint it exports its span to, under the
+	// task's trace (v4 D21). Unset, runs export nothing and their policies are unchanged.
+	Tracing Tracing `json:"tracing,omitzero"`
+}
+
+// Tracing is where runs export their span, and the collector pods their policy opens its port to:
+// the one addition to D6's run egress, made only when configured (step 6 R1).
+type Tracing struct {
+	// OTLPEndpoint is the OTLP/HTTP base URL, http(s)://<service>.<namespace>.svc.<cluster-domain>:<port>:
+	// the harness posts to <endpoint>/v1/traces.
+	OTLPEndpoint string `json:"otlpEndpoint,omitempty"`
+	// Collector selects the collector's pods, in the endpoint's namespace.
+	Collector Collector `json:"collector,omitzero"`
+}
+
+// Collector is the OTLP collector's namespace and pod labels.
+type Collector struct {
+	Namespace string            `json:"namespace,omitempty"`
+	Labels    map[string]string `json:"labels,omitempty"`
+}
+
+// enabled is that runs export their span.
+func (t Tracing) enabled() bool { return t.OTLPEndpoint != "" }
+
+// host is OTLPEndpoint's host (validated at load).
+func (t Tracing) host() string {
+	u, _ := url.Parse(t.OTLPEndpoint)
+	return u.Hostname()
+}
+
+// port is OTLPEndpoint's port, which the URL must name (validated at load): the policies open the
+// collector's backend port, and a guessed 80 or 443 would drop every span silently.
+func (t Tracing) port() int {
+	u, _ := url.Parse(t.OTLPEndpoint)
+	n, _ := strconv.Atoi(u.Port())
+	return n
+}
+
+// validate checks the endpoint: an in-cluster Service by its fully qualified name, as the run's DNS
+// allowlist and ndots:1 resolver need, with an explicit port; and the collector's selector, in the
+// endpoint's namespace, which the run's policy opens that port to.
+func (t Tracing) validate() []error {
+	if !t.enabled() {
+		if !reflect.ValueOf(t.Collector).IsZero() {
+			return []error{errors.New("tracing.collector is set without tracing.otlpEndpoint: set both, or neither")}
+		}
+		return nil
+	}
+	var errs []error
+	u, err := url.Parse(t.OTLPEndpoint)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || !validPort(u.Port()) || u.User != nil ||
+		u.RawQuery != "" || u.Fragment != "" || !brokerHostRE.MatchString(u.Hostname()) {
+		return []error{fmt.Errorf("tracing.otlpEndpoint %q must be http(s)://<service>.<namespace>.svc.<cluster-domain>:<port>, the collector's OTLP/HTTP port", t.OTLPEndpoint)}
+	}
+	if t.Collector.Namespace == "" || len(t.Collector.Labels) == 0 {
+		errs = append(errs, errors.New("tracing.collector: name the collector's pods (namespace, labels) so the run's policy can reach it"))
+	} else if ns, _ := inClusterNamespace(u.Hostname()); ns != t.Collector.Namespace {
+		errs = append(errs, fmt.Errorf("tracing.collector.namespace %q is not the endpoint's namespace %q: the run's policy would open the wrong pods", t.Collector.Namespace, ns))
+	}
+	return errs
 }
 
 // Broker is where the bridge connects, and what the CNP lets it reach.
@@ -339,6 +399,7 @@ func (c Config) validate() error {
 		errs = append(errs, fmt.Errorf("broker.url host %q must be <service>.<namespace>.svc.<cluster-domain>, e.g. room-broker.agent-platform.svc.cluster.local", u.Hostname()))
 	}
 	errs = append(errs, c.roomToolsURL()...)
+	errs = append(errs, c.Tracing.validate()...)
 	if len(c.Broker.Labels) == 0 {
 		errs = append(errs, errors.New("broker.labels: the CNP needs at least one to select the broker"))
 	}

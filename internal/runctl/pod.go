@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/util/intstr"
 
 	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
+	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/runwatch"
 )
 
@@ -179,6 +180,7 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		raw, _ := json.Marshal(policy) // a map of numbers and strings
 		env = append(env, corev1.EnvVar{Name: "AGENT_LOOP", Value: string(raw)})
 	}
+	env = append(env, tracingEnv(r, c)...)
 	harness := corev1.Container{
 		Name: "harness", Image: c.Images.Harness, Env: env,
 		StartupProbe:    &corev1.Probe{ProbeHandler: corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: localGet("/ready")}}, PeriodSeconds: 5, FailureThreshold: 60, TimeoutSeconds: 5},
@@ -347,4 +349,18 @@ func egressProfiles(r *v1alpha1.AgentRun) string {
 func brokerHost(c Config) string {
 	u, _ := url.Parse(c.Broker.URL) // validated at load
 	return u.Hostname()
+}
+
+// tracingEnv is the harness's trace (v4 D21): the collector's OTLP/HTTP endpoint, and TRACEPARENT
+// from the factory's annotation when it is valid W3C, so the run's span is a child of its task's.
+// A malformed annotation only costs the parent: the harness then starts a fresh trace.
+func tracingEnv(r *v1alpha1.AgentRun, c Config) []corev1.EnvVar {
+	if !c.Tracing.enabled() {
+		return nil
+	}
+	env := []corev1.EnvVar{{Name: "OTEL_EXPORTER_OTLP_ENDPOINT", Value: c.Tracing.OTLPEndpoint}}
+	if tp := r.Annotations[runs.AnnTraceparent]; runs.ValidTraceparent(tp) {
+		env = append(env, corev1.EnvVar{Name: "TRACEPARENT", Value: tp})
+	}
+	return env
 }
