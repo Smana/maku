@@ -188,7 +188,7 @@
       "id": 6,
       "type": "timeseries",
       "title": "Tokens by type (as the run meter reads them)",
-      "description": "Tokens per second by type as the factory's meter counts them: input, output, cached_input, cache_creation_input.",
+      "description": "Tokens per second by type as the factory's meter counts them: input, output, input_cache_read, input_cache_write.",
       "gridPos": {
         "x": 16,
         "y": 8,

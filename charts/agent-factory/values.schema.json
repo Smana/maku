@@ -118,7 +118,7 @@
           "additionalProperties": false,
           "properties": {
             "enabled": {"type": "boolean"},
-            "labels": {"description": "Replace the sidecar's label set (grafana_dashboard: \"1\").", "type": "object", "additionalProperties": {"type": "string"}},
+            "labels": {"description": "The sidecar's label set. Empty: grafana_dashboard: \"1\". Set: replaces it.", "type": "object", "additionalProperties": {"type": "string"}},
             "annotations": {"description": "Added to each ConfigMap, e.g. grafana_folder.", "type": "object", "additionalProperties": {"type": "string"}}
           }
         }

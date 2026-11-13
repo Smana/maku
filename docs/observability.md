@@ -62,7 +62,7 @@ are substituted into it, so the schema refuses a double quote or a backslash in 
 ## Dashboards
 
 `monitoring.dashboards.enabled` renders one ConfigMap per dashboard, `maku-dashboard-<uid>`, holding
-`<uid>.json`. Each carries `monitoring.dashboards.labels` (default `grafana_dashboard: "1"`, the label
+`<uid>.json`. Each carries `monitoring.dashboards.labels` (empty by default, which renders `grafana_dashboard: "1"`, the label
 Grafana's dashboard sidecar watches) and `monitoring.dashboards.annotations`, such as
 `grafana_folder: Agents`.
 

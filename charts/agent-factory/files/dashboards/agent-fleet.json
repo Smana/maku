@@ -89,7 +89,7 @@
           "refId": "E",
           "instant": true,
           "format": "table",
-          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
+          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
         }
       ],
       "transformations": [
@@ -279,7 +279,7 @@
         {
           "refId": "A",
           "legendFormat": "{{ar_agent}}",
-          "expr": "sum by (ar_agent) (rate(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"system:serviceaccount:agents:.*\", gen_ai_token_type=~\"input|output\"}[$__rate_interval]))"
+          "expr": "sum by (ar_agent) (rate(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__rate_interval]))"
         }
       ]
     },
@@ -354,7 +354,7 @@
           },
           "instant": true,
           "format": "table",
-          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
+          "expr": "label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")"
         }
       ],
       "transformations": [
@@ -438,7 +438,7 @@
           "refId": "A",
           "instant": true,
           "legendFormat": "{{tier}}",
-          "expr": "sum by (tier) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run_id) group_left (tier) max by (run_id, tier) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", tier!=\"\"}[$__range])))"
+          "expr": "sum by (tier) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run_id) group_left (tier) max by (run_id, tier) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", tier!=\"\"}[$__range])))"
         }
       ]
     },
@@ -491,7 +491,7 @@
           "refId": "A",
           "instant": true,
           "format": "table",
-          "expr": "sum by (gen_ai_request_model, principal) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left (principal) max by (run, principal) (max_over_time(maku_factory_run_charge_info[$__range])))"
+          "expr": "sum by (gen_ai_request_model, principal) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left (principal) max by (run, principal) (max_over_time(maku_factory_run_charge_info[$__range])))"
         }
       ],
       "transformations": [

@@ -510,7 +510,7 @@
           "refId": "A",
           "instant": true,
           "legendFormat": "{{gen_ai_token_type}}",
-          "expr": "sum by (gen_ai_token_type) (label_replace(sum by (ar_agent, gen_ai_token_type) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output|input_cache_read|input_cache_write\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
+          "expr": "sum by (gen_ai_token_type) (label_replace(sum by (ar_agent, gen_ai_token_type) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output|input_cache_read|input_cache_write\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
         }
       ]
     },
@@ -524,7 +524,7 @@
         "w": 4,
         "h": 8
       },
-      "description": "cached_input over input, as the agent-gateway dashboard's prompt-cache panel computes it.",
+      "description": "Cache reads (input_cache_read) over input, for this principal's runs.",
       "fieldConfig": {
         "defaults": {
           "unit": "percentunit",
@@ -558,7 +558,7 @@
         {
           "refId": "A",
           "instant": true,
-          "expr": "sum(label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=\"input_cache_read\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range]))) / sum(label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=\"input\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
+          "expr": "sum(label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=\"input_cache_read\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range]))) / sum(label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=\"input\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\") * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
         }
       ]
     },
@@ -612,13 +612,13 @@
           "refId": "F",
           "instant": true,
           "format": "table",
-          "expr": "((sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")))) and on (run_id) label_replace(max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])), \"run_id\", \"$1\", \"run\", \"(.*)\")"
+          "expr": "((sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")))) and on (run_id) label_replace(max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])), \"run_id\", \"$1\", \"run\", \"(.*)\")"
         },
         {
           "refId": "G",
           "instant": true,
           "format": "table",
-          "expr": "sum by (run_id, gen_ai_request_model) (label_replace(sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")), \"run_id\", \"$1\", \"run\", \"(.*)\")) and on (run_id) label_replace(max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])), \"run_id\", \"$1\", \"run\", \"(.*)\")"
+          "expr": "sum by (run_id, gen_ai_request_model) (label_replace(sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")), \"run_id\", \"$1\", \"run\", \"(.*)\")) and on (run_id) label_replace(max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])), \"run_id\", \"$1\", \"run\", \"(.*)\")"
         }
       ],
       "transformations": [
@@ -868,7 +868,7 @@
           "refId": "A",
           "instant": true,
           "legendFormat": "{{gen_ai_request_model}}",
-          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
+          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
         }
       ]
     },
@@ -905,7 +905,7 @@
         {
           "refId": "A",
           "legendFormat": "{{gen_ai_request_model}}",
-          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[1d] offset -1d)), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[1d] offset -1d)))"
+          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[1d] offset -1d)), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[1d] offset -1d)))"
         }
       ]
     },
@@ -952,7 +952,7 @@
           "refId": "A",
           "instant": true,
           "legendFormat": "{{gen_ai_request_model}}",
-          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
+          "expr": "sum by (gen_ai_request_model) (sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) * on (run) group_left () max by (run) (max_over_time(maku_factory_run_charge_info{principal=\"${principal}\"}[$__range])))"
         }
       ]
     },

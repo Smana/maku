@@ -445,7 +445,7 @@
       "id": 13,
       "type": "timeseries",
       "title": "Spend per UTC day: ledger vs gateway",
-      "description": "Each day's spend in the factory's ledger (maku_factory_run_settled_usd, each run's day maximum, summed over runs: a run is charged once, where the per-principal spent figures overlap) against agentgateway's priced counter over the same day, one point per UTC day. The day's cross-check holds within max(1 %, 0.10 USD); scripts/ops/cost-crosscheck.py --day reads the same two sides and names the runs. A run that crosses midnight counts on both days, whole. The ledger counts runs through Envoy that the gateway counter does not price.",
+      "description": "Each day's spend in the factory's ledger (maku_factory_run_settled_usd, each run's day maximum, summed over runs: a run is charged once, where the per-principal spent figures overlap) against agentgateway's priced counter over the same day, one point per UTC day. The day's cross-check holds within max(1 %, 0.10 USD). A run that crosses midnight counts on both days, whole. The gateway side counts a run's first priced call: a run born that day reads its whole counter.",
       "gridPos": {
         "x": 0,
         "y": 40,

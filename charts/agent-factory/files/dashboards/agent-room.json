@@ -159,7 +159,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range])))",
+          "expr": "sum(sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range])))",
           "instant": true
         }
       ]
@@ -211,7 +211,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(sum by (run_id) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range])))",
+          "expr": "sum(sum by (run_id) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range])))",
           "instant": true
         }
       ]
@@ -569,13 +569,13 @@
         },
         {
           "refId": "E",
-          "expr": "(sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\"))) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))",
+          "expr": "(sum by (run_id) (label_replace(sum by (ar_agent) (sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_cost_usd_total{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\"}[$__range]))), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\"))) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))",
           "instant": true,
           "format": "table"
         },
         {
           "refId": "F",
-          "expr": "(sum by (run_id) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\"))) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))",
+          "expr": "(sum by (run_id) (label_replace(sum by (ar_agent) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run_id\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\"))) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))",
           "instant": true,
           "format": "table"
         },
@@ -589,7 +589,7 @@
           "refId": "H",
           "instant": true,
           "format": "table",
-          "expr": "sum by (run_id, gen_ai_request_model) (label_replace(sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")), \"run_id\", \"$1\", \"run\", \"(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))"
+          "expr": "sum by (run_id, gen_ai_request_model) (label_replace(sum by (run, gen_ai_request_model) (label_replace(sum by (ar_agent, gen_ai_request_model) (max_over_time(agentgateway_gen_ai_client_token_usage_sum{job=\"__GATEWAY_NAME__\", namespace=\"__NAMESPACE__\", ar_agent=~\"__RUN_SUBJECT__.*\", gen_ai_token_type=~\"input|output\"}[$__range])), \"run\", \"$1\", \"ar_agent\", \"__RUN_SUBJECT__(.*)\")), \"run_id\", \"$1\", \"run\", \"(.*)\")) and on (run_id) max by (run_id) (last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", task=\"${room}\", task!=\"\"}[$__range]) or last_over_time(agentrun_info{namespace=\"__RUNS_NAMESPACE__\", branch=\"agent/${room}\"}[$__range]))"
         },
         {
           "refId": "I",
