@@ -51,6 +51,8 @@ func New() *Stub {
 		writeJSON(w, http.StatusOK, s.Received())
 	})
 	mux.HandleFunc("GET /oauth/v2/keys", s.jwks)
+	mux.HandleFunc("GET /.well-known/openid-configuration", s.discovery)
+	mux.HandleFunc("GET /test/id-token", s.testIDToken)
 	mux.HandleFunc("POST /token", s.token)
 	mux.HandleFunc("GET /v2/users/dev", s.activeUser)
 	mux.HandleFunc("POST /v2/users/dev/links/_search", s.gitHubLink)

@@ -526,8 +526,31 @@ bad 'runController.model.gateway.aliases.public is required' --set runController
 bad "at '/runController/model/mode'" --set runController.model.mode=direct
 bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
 
+# v4 D8: broker.oidc.existingSecret mounts the OIDC ids and fills the file paths the human block
+# leaves unset; a path the block sets wins. projectIDFile is the zitadel preset's alone.
+oidcv=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
+       --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
+       --set broker.human.issuer=https://idp.example.com --set broker.human.origin=https://rooms.example.com
+       --set broker.human.groups.admin=a --set broker.human.groups.member=m --set runController.enabled=false)
+ozit="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.oidc.existingSecret=room-broker-oidc)"
+out="$ozit"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and .human.roomctlClientIDFile == "/etc/room-broker/oidc/cli-client-id" and .human.projectIDFile == "/etc/room-broker/oidc/project-id")' 'broker.oidc fills the three id files under the zitadel preset'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name == "oidc") | .secret.secretName == "room-broker-oidc"' 'broker.oidc names its Secret'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "oidc") | (.mountPath == "/etc/room-broker/oidc" and .readOnly == true)' 'broker.oidc mounts at /etc/room-broker/oidc'
+ogen="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.oidc.existingSecret=room-broker-oidc \
+  --set broker.human.preset=generic --set broker.human.rolesClaim=groups --set broker.human.clientIDFile=/c --set broker.oidc.keys.cli=maku)"
+out="$ogen"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.clientIDFile == "/c" and .human.roomctlClientIDFile == "/etc/room-broker/oidc/maku" and (.human | has("projectIDFile") | not))' 'a set clientIDFile wins; generic takes no projectIDFile; a renamed key is followed'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p)"
+ynone 'select(.kind=="Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' 'no broker.oidc, no oidc volume'
+if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.oidc.existingSecret=x >/dev/null 2>&1; then
+  echo 'FAIL: broker.oidc in local mode must be refused' >&2; fail=1; fi
+
 # both rendered configs load through the broker's real loader
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ozit" >"$tmp/oidc-zitadel.yaml"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$ogen" >"$tmp/oidc-generic.yaml"
+go run ./tests/loadconfig broker "$tmp/oidc-zitadel.yaml" "$tmp/oidc-generic.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$p" >"$tmp/production.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fwd" >"$tmp/forwarded.yaml"

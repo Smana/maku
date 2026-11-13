@@ -104,6 +104,15 @@ broker:
   # refused, here and at start, unless factoryInsecure is true (S-1, D6).
   factoryURL: ""
   factoryInsecure: false
+  # The OIDC client ids (v4 D8, oidc mode): a Secret mounted at /etc/room-broker/oidc. Set, it fills
+  # human.clientIDFile, human.roomctlClientIDFile and (preset zitadel) human.projectIDFile with its
+  # keys' paths, wherever the human block leaves them unset: a path the block sets wins.
+  oidc:
+    existingSecret: ""
+    keys:
+      web: web-client-id
+      cli: cli-client-id
+      project: project-id
   # The Secret (key ca.crt) of the CA that signs the factory's api certificate, mounted at
   # /etc/room-broker/factory-ca and read on every run request. Empty: the system roots.
   factoryCA:
