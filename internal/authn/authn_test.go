@@ -347,11 +347,31 @@ func TestRoleNames(t *testing.T) {
 			t.Fatalf("RoleNames(\"\") = %v, %v; GroupNames %v", got, err, c.GroupNames())
 		}
 	}
-	// A token whose groups claim is not an array still verifies: the claim is read by RoleNames.
+	// The zitadel rule keeps today's behaviour: no bound on the names (review of #524).
+	if got, err := claimsOf(t, string(tooMany)).RoleNames(""); err != nil || len(got) != 257 {
+		t.Fatalf("the zitadel rule dropped %d names: %v", len(got), err)
+	}
+	// A token whose groups claim is not an array verifies under the generic preset, which reads it
+	// with RoleNames; the zitadel and machine paths refuse it whole, as before.
 	s := newSigner(t)
+	for _, groups := range []any{"agents-member", 3, map[string]any{"a": 1}} {
+		raw := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
+			"exp": time.Now().Add(time.Hour).Unix(), "groups": groups})
+		if _, err := s.verifier().parseGeneric(t.Context(), raw); err != nil {
+			t.Fatalf("generic, groups %v: %v", groups, err)
+		}
+		if _, err := s.verifier().parseWith(t.Context(), raw); !errors.Is(err, ErrUnauthenticated) {
+			t.Fatalf("strict, groups %v: %v", groups, err)
+		}
+	}
 	raw := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
+		"exp": time.Now().Add(time.Hour).Unix(), "urn:zitadel:iam:org:project:roles": []string{"x"}})
+	if _, err := s.verifier().parseWith(t.Context(), raw); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("strict, an array of project roles: %v", err)
+	}
+	raw = sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": "web",
 		"exp": time.Now().Add(time.Hour).Unix(), "groups": "agents-member"})
-	c, err := s.verifier().parseWith(t.Context(), raw)
+	c, err := s.verifier().parseGeneric(t.Context(), raw)
 	if err != nil {
 		t.Fatal(err)
 	}

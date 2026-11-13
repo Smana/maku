@@ -10,6 +10,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/Smana/maku/internal/envelope"
 )
 
@@ -119,13 +121,17 @@ func (h *Humans) verifyID(ctx context.Context, raw string) (*Claims, string, err
 	if h.zitadel {
 		return h.verifyZITADEL(ctx, raw, func(c *Claims) string { return c.AuthorizedParty })
 	}
-	c, err := h.v.parseWith(ctx, raw)
+	c, err := h.v.parseGeneric(ctx, raw)
 	if err != nil {
 		return nil, "", err
 	}
-	cli := c.issuedTo()
+	cli := c.issuedToGeneric()
 	if cli == "" || !slices.Contains(h.clients(), cli) || !slices.Contains(c.Audience, cli) {
 		return nil, "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
+	}
+	// An RFC 9068 access token is never an ID token, though its aud may be the client (Dex's is).
+	if c.isAccessToken() {
+		return nil, "", fmt.Errorf("%w: an access token is not an ID token", ErrUnauthenticated)
 	}
 	if c.Subject == "" {
 		return nil, "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
@@ -140,7 +146,11 @@ func (h *Humans) verifyAccess(ctx context.Context, raw string) (*Claims, string,
 	if h.use != TokenUseAccess {
 		return nil, "", fmt.Errorf("%w: token use id verifies no access token", ErrUnauthenticated)
 	}
-	c, err := h.v.parse(ctx, raw, h.audience())
+	aud := h.audience()
+	if aud == "" {
+		return nil, "", fmt.Errorf("%w: no audience to check", ErrUnauthenticated)
+	}
+	c, err := h.v.parseGeneric(ctx, raw, jwt.WithAudience(aud))
 	if err != nil {
 		return nil, "", err
 	}
@@ -237,6 +247,12 @@ func (h *Humans) Authenticate(r *http.Request) (Principal, error) {
 // forwards to the factory. maku presents its own; a web session presents the web client's beside a
 // distinct access token, which is never parsed (it may be opaque): its only part is P18's rule that
 // a bearer oauth2-proxy let through, both headers equal, is never a web session.
+//
+// That rule holds only behind a proxy that sets X-Forwarded-Access-Token itself on every request,
+// overwriting whatever the client sent (oauth2-proxy's pass-access-token, with
+// skip-jwt-bearer-tokens): a client that could set the header could pass the web client's ID token
+// as a web session. The broker must never be reachable around that proxy; PR B's proxy arguments
+// and docs/identity.md carry the requirement.
 func (h *Humans) authenticateID(r *http.Request, raw string) (Principal, error) {
 	id, client, err := h.verifyID(r.Context(), raw)
 	if err != nil {

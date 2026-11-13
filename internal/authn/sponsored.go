@@ -34,9 +34,20 @@ type Sponsored struct {
 	// the human path pins it, else the configured audience. Unset or unreadable, nobody is admitted.
 	Audience func() string
 	// ClientClaim names the string claim holding the client id, for an IdP that puts it elsewhere
-	// (Okta's cid). "" reads azp, else client_id, else a one-element aud.
+	// (Okta's cid): one of ValidClientClaim's, else nobody is admitted. azp or client_id naming
+	// another client still refuses. "" reads azp, else client_id.
 	ClientClaim string
+	// Generic is the generic preset: the roles claim is not judged here, and with no ClientClaim
+	// a one-element aud may name the client. Unset is the zitadel preset, byte for byte.
+	Generic bool
 }
+
+// clientClaims are the claims a sponsored token may name its client in: Okta's cid, Entra's appid,
+// and the two OAuth names. Any other claim (sub, email) could be chosen by the token's subject.
+var clientClaims = []string{"cid", "azp", "client_id", "appid"}
+
+// ValidClientClaim reports whether claim may name a sponsored token's client.
+func ValidClientClaim(claim string) bool { return slices.Contains(clientClaims, claim) }
 
 // Authenticate maps raw to its sponsored principal, or ErrUnauthenticated.
 func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, error) {
@@ -81,16 +92,32 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 
 // verify checks raw, a token issued to clientID: by azp or client_id, or by ClientClaim when set.
 func (s *Sponsored) verify(ctx context.Context, raw, clientID string) (*Claims, error) {
-	if s.ClientClaim == "" {
+	switch {
+	case s.ClientClaim == "" && s.Generic:
+		return s.V.VerifyClient(ctx, raw, clientID)
+	case s.ClientClaim == "":
 		return s.V.VerifyAuthorizedParty(ctx, raw, clientID)
+	case !ValidClientClaim(s.ClientClaim):
+		return nil, fmt.Errorf("%w: not a client claim", ErrUnauthenticated)
 	}
-	c, err := s.V.parseWith(ctx, raw)
+	parse := s.V.parseWith
+	if s.Generic {
+		parse = s.V.parseGeneric
+	}
+	c, err := parse(ctx, raw)
 	if err != nil {
 		return nil, err
 	}
 	var got string
 	if v, ok := c.raw[s.ClientClaim]; !ok || json.Unmarshal(v, &got) != nil || got != clientID {
 		return nil, fmt.Errorf("%w: not issued to the client", ErrWrongAudience)
+	}
+	// The configured claim never outvotes azp or client_id naming another client.
+	if c.AuthorizedParty != "" && c.AuthorizedParty != clientID || c.ClientID != "" && c.ClientID != clientID {
+		return nil, fmt.Errorf("%w: not issued to the client", ErrWrongAudience)
+	}
+	if c.Subject == "" {
+		return nil, fmt.Errorf("%w: no subject", ErrUnauthenticated)
 	}
 	return c, nil
 }

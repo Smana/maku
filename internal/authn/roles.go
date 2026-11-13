@@ -55,23 +55,25 @@ func (c *Claims) UnmarshalJSON(b []byte) error {
 	}
 	*c = Claims(p.plain)
 	c.raw = raw
-	// Today's typed reads: an array of strings, an object; any other shape reads as absent.
-	_ = json.Unmarshal(p.Groups, &c.Groups)
-	_ = json.Unmarshal(p.ProjectRoles, &c.ProjectRoles)
+	// Today's typed reads: an array of strings, an object. Another shape reads as absent here and
+	// is marked, so the strict parse refuses the token as decoding it always did.
+	if len(p.Groups) > 0 && json.Unmarshal(p.Groups, &c.Groups) != nil {
+		c.Groups, c.rolesMalformed = nil, true
+	}
+	if len(p.ProjectRoles) > 0 && json.Unmarshal(p.ProjectRoles, &c.ProjectRoles) != nil {
+		c.ProjectRoles, c.rolesMalformed = nil, true
+	}
 	return nil
 }
 
 // RoleNames is the group names the roles claim holds. claim is a claim name, or an RFC 6901 pointer
 // into the claim set when it starts with "/"; "" is GroupNames, the zitadel preset's rule. The value
 // may be an array of strings, an object (its keys, sorted) or one string. A missing claim, another
-// shape, or one over the bounds is a *RolesClaimError and no names.
+// shape, or one over the bounds is a *RolesClaimError and no names. The bounds apply to a
+// configured claim only: the zitadel rule keeps today's behaviour.
 func (c *Claims) RoleNames(claim string) ([]string, error) {
 	if claim == "" {
-		names := c.GroupNames()
-		if err := roleBounds(names); err != nil {
-			return nil, err
-		}
-		return names, nil
+		return c.GroupNames(), nil // the zitadel preset's rule, unbounded as it always was
 	}
 	v, ok := c.lookup(claim)
 	if !ok {

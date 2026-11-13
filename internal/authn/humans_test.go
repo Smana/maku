@@ -469,3 +469,39 @@ func TestHumansGenericAccess(t *testing.T) {
 		t.Fatal("no audience admitted maku's access token")
 	}
 }
+
+// Under token use id an RFC 9068 access token (typ at+jwt) is never an ID token, even where its
+// aud is the client, as Dex's is (review of #524).
+func TestHumansTokenUseIDRefusesAccessTokens(t *testing.T) {
+	s := newSigner(t)
+	h := s.genericHumans(TokenUseID, "", "groups", nil)
+	for _, typ := range []string{"at+jwt", "AT+JWT", "application/at+jwt"} {
+		t.Run(typ, func(t *testing.T) {
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": cliClient,
+				"exp": time.Now().Add(time.Hour).Unix(), "groups": []string{"agents-member"}})
+			tok.Header["typ"] = typ
+			raw, err := tok.SignedString(s.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p, err := h.Authenticate(request(t, raw)); !errors.Is(err, ErrUnauthenticated) {
+				t.Fatalf("an access token passed as an ID token: %+v %v", p, err)
+			}
+			if _, err := s.verifier().VerifyIDToken(t.Context(), raw, cliClient); !errors.Is(err, ErrUnauthenticated) {
+				t.Fatalf("VerifyIDToken: %v", err)
+			}
+		})
+	}
+}
+
+// The zitadel preset refuses a token whose groups claim is malformed, as before the generic preset
+// (review of #524); the generic preset reads it with RoleNames.
+func TestHumansZITADELMalformedGroups(t *testing.T) {
+	s := newSigner(t)
+	web := []string{webClient, project}
+	id := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": web, "azp": webClient,
+		"client_id": webClient, "exp": time.Now().Add(time.Hour).Unix(), "groups": "agents-member"})
+	if _, err := s.humans(project, cliClient).VerifyHuman(t.Context(), id); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("zitadel admitted a string groups claim: %v", err)
+	}
+}
