@@ -6,7 +6,7 @@
 
 import { api } from "./api";
 import { ago } from "./duration";
-import type { Evidence, MergePolicyStatus, Report } from "./settings";
+import type { Condition, Evidence, Report } from "./settings";
 
 // A refusal's bounded code, as the broker writes it, else the status.
 async function refusal(r: Response): Promise<string> {
@@ -98,6 +98,8 @@ export type PolicyState = "central" | "repository" | "not-migrated";
 // policyState says who holds the merge authority: no MergePolicy is not-migrated; the object's
 // authority (else its classes' sources, when it carries no status) says central or repository.
 export function policyState(r: Report): PolicyState {
+  // A bound repository (B3): its Repository's status says who declares the classes.
+  if (r.repositoryObject) return r.repositoryStatus?.status.authority === "repository" ? "repository" : "central";
   if (!r.mergePolicy) return "not-migrated";
   const authority = r.mergePolicyStatus?.status.authority;
   if (authority === "repository" || r.classes.some((c) => c.source === "repository")) return "repository";
@@ -129,7 +131,7 @@ const unknownWhy: Record<string, string> = {
 
 // conditionWords reads each condition of a MergePolicy's status in the page's words; a type it
 // does not know shows as sent.
-export function conditionWords(st?: MergePolicyStatus): { word: string; tone: Tone; message?: string }[] {
+export function conditionWords(st?: { status: { conditions?: Condition[] } }): { word: string; tone: Tone; message?: string }[] {
   return (st?.status.conditions ?? []).map((c) => {
     const message = c.message || undefined;
     switch (c.type) {
@@ -147,6 +149,10 @@ export function conditionWords(st?: MergePolicyStatus): { word: string; tone: To
         if (c.status === "Unknown" && c.reason === "PolicyReadOff") return { word: "File not read", tone: "unknown" as Tone, message };
         if (c.status === "Unknown" && c.reason && Object.hasOwn(unknownWhy, c.reason)) return { word: "Not compared yet", tone: "unknown" as Tone, message };
         break;
+      case "BindingsValid":
+        if (c.status === "True") return { word: "Bindings valid", tone: "ok" as Tone };
+        if (c.status === "False") return { word: "Bindings refused", tone: "bad" as Tone, message };
+        break;
       case "RepositoryFileValid":
         if (c.status === "True") return { word: "Repository file valid", tone: "ok" as Tone };
         if (c.status === "False") return { word: "Repository file invalid", tone: "bad" as Tone, message };
@@ -156,7 +162,9 @@ export function conditionWords(st?: MergePolicyStatus): { word: string; tone: To
   });
 }
 
-const condition = (r: Report, type: string) => r.mergePolicyStatus?.status.conditions?.find((c) => c.type === type);
+// status is what serves the classes: the Repository of a bound repository (B10), else its MergePolicy.
+export const servingStatus = (r: Report) => (r.repositoryObject ? r.repositoryStatus : r.mergePolicyStatus);
+const condition = (r: Report, type: string) => servingStatus(r)?.status.conditions?.find((c) => c.type === type);
 
 // fileLine says what the repository's .github/agent-factory.yaml is to its classes now, and only
 // what the report shows to be true; prominent only when it needs the reader's attention: an
@@ -168,21 +176,22 @@ export function fileLine(r: Report): { text: string; prominent: boolean } {
     if (r.policyError) return { text: `The repository's policy file is ${r.policyError}: the central classes are shown.`, prominent: true };
     return { text: `Classes come from ${F}.`, prominent: false };
   }
+  const who = r.repositoryObject ? "the Repository" : "the MergePolicy";
   const valid = condition(r, "RepositoryFileValid");
   const sync = condition(r, "InSync");
   const invalid = !!r.policyError || valid?.status === "False" || sync?.reason === "FileInvalid";
   if (state === "repository") {
     if (invalid) return { text: `${F} is invalid: auto-merge is paused until it is fixed.`, prominent: true };
-    return { text: `The classes come from ${F}, which the MergePolicy defers to.`, prominent: false };
+    return { text: `The classes come from ${F}, which ${who} defers to.`, prominent: false };
   }
-  if (invalid) return { text: `${F} is invalid; the MergePolicy serves the classes.`, prominent: false };
-  if (sync?.status === "True") return { text: `${F} matches the MergePolicy.`, prominent: false };
+  if (invalid) return { text: `${F} is invalid; ${who} serves the classes.`, prominent: false };
+  if (sync?.status === "True") return { text: `${F} matches ${who}.`, prominent: false };
   if (sync?.status === "False") {
     const n = differences(sync.message);
-    return { text: `${F} differs from the MergePolicy${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; the MergePolicy wins.`, prominent: false };
+    return { text: `${F} differs from ${who}${n ? ` in ${n} place${n > 1 ? "s" : ""}` : ""}; ${who} wins.`, prominent: false };
   }
-  const why = sync?.reason && Object.hasOwn(unknownWhy, sync.reason) ? unknownWhy[sync.reason] : "the MergePolicy has no status yet";
-  return { text: `${F} has not been compared with the MergePolicy yet (${why}).`, prominent: false };
+  const why = sync?.reason && Object.hasOwn(unknownWhy, sync.reason) ? unknownWhy[sync.reason] : `${who} has no status yet`;
+  return { text: `${F} has not been compared with ${who} yet (${why}).`, prominent: false };
 }
 
 // timeText is iso as a <time>: how long ago in words for a past time, the locale's date for a

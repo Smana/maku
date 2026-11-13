@@ -27,6 +27,10 @@ ynone() {
   got=$(yq "$1" - <<<"$out") || { echo "FAIL: yq errored: $2" >&2; fail=1; return; }
   [ -z "$got" ] || { echo "FAIL: $2" >&2; fail=1; }
 }
+# jkind KIND 'jq expr' 'message': as ykind, in jq (yq compares only scalars, never maps or lists).
+jkind() {
+  yq ea -o=json -I0 "select(.kind == \"$1\")" - <<<"$out" | jq -s -e "map($2) | (length > 0 and all)" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
+}
 # secret_field NAME KEY: the decoded value of one Secret data key.
 secret_field() { yq ea "select(.kind == \"Secret\" and .metadata.name == \"$1\") | .data.\"$2\"" - <<<"$out" | base64 -d; }
 
@@ -622,6 +626,68 @@ out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabl
 ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and (.metadata.labels | has("grafana_dashboard") | not))' 'monitoring.dashboards.labels replace the sidecar label (grafana_dashboard: "1"), never merge with it'
 out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }
 grep -qF 'http://localhost:18080/r/${room}' <<<"$out" || { echo "FAIL: the room links follow maku.broker.publicURL" >&2; fail=1; }
+
+# v4 step 6 Task 10 (D19, EX2, EX6): expose.mode, httproute, ingress or none (the default: the demo
+# golden above holds it byte for byte). Each fail-closed rule names its keys.
+ynone 'select(.kind == "HTTPRoute" or .kind == "Ingress") | .kind' 'expose.mode none renders a route'
+exnp='[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"gateway"}}}]'
+exw=("${idv[@]}" --set maku.networkPolicies.mode=kubernetes --set-json "expose.networkPolicy.from=$exnp"
+     --set webProxy.enabled=true --set webProxy.existingSecret=rooms-proxy --set maku.broker.webProxy=true
+     --set expose.mode=httproute --set-json 'expose.web.hostnames=["rooms.example.test"]'
+     --set-json 'expose.httproute.parentRefs=[{"name":"gw","namespace":"infra","sectionName":"https"}]')
+helm template af . -n maku "${exw[@]}" >/dev/null || { echo 'FAIL: a complete expose.mode httproute does not render' >&2; fail=1; }
+bad 'expose.web.hostnames is empty: name the hosts the web is served at' "${exw[@]}" --set-json 'expose.web.hostnames=[]'
+bad 'expose.web.parentRefs and expose.httproute.parentRefs are empty: name the Gateway (and its listener) the web route attaches to' "${exw[@]}" --set-json 'expose.httproute.parentRefs=[]'
+helm template af . -n maku "${exw[@]}" --set-json 'expose.httproute.parentRefs=[]' --set-json 'expose.web.parentRefs=[{"name":"gw"}]' >/dev/null ||
+  { echo 'FAIL: expose.web.parentRefs alone does not satisfy the parentRefs rule' >&2; fail=1; }
+bad 'expose.web.className and expose.ingress.className are empty: name the IngressClass the web Ingress uses' "${exw[@]}" --set expose.mode=ingress
+helm template af . -n maku "${exw[@]}" --set expose.mode=ingress --set expose.web.className=traefik >/dev/null ||
+  { echo 'FAIL: expose.mode ingress with expose.web.className does not render' >&2; fail=1; }
+bad 'expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local)' "${exw[@]}" --set maku.broker.human.mode=local --set maku.broker.publicURL=http://localhost:8080 --set maku.broker.oidc.existingSecret=
+bad "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" "${exw[@]}" --set webProxy.enabled=false
+bad 'expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller' "${exw[@]}" --set-json 'expose.networkPolicy.from=[]'
+bad "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" "${exw[@]}" --set maku.networkPolicies.mode=none
+bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
+bad 'expose.web needs maku.enabled: the web surface is the broker' "${exw[@]}" --set maku.enabled=false
+helm template af . -n maku "${exw[@]}" --set expose.web.enabled=false >/dev/null || { echo 'FAIL: expose.web.enabled false does not render' >&2; fail=1; }
+bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" --set slack.enabled=true
+helm template af . -n maku "${exw[@]}" --set slack.enabled=true --set expose.slack.enabled=false >/dev/null ||
+  { echo 'FAIL: slack.enabled with expose.slack.enabled false does not render' >&2; fail=1; }
+
+# v4 step 6 Task 11 (D19, EX2, EX5): the routes. The goldens hold each mode's routes, byte for byte:
+# UPDATE_GOLDEN=1 regenerates them.
+routes() { yq ea 'select(.kind == "HTTPRoute" or .kind == "Ingress")' - <<<"$out"; }
+golden() { # golden NAME: the render's routes equal tests/golden/NAME.yaml
+  [[ ${UPDATE_GOLDEN:-} == 1 ]] && routes >"tests/golden/$1.yaml"
+  routes | diff -u "tests/golden/$1.yaml" - >&2 || { echo "FAIL: the routes differ from tests/golden/$1.yaml" >&2; fail=1; }
+}
+exs=("${exw[@]}" --set slack.enabled=true --set-json 'expose.slack.hostnames=["factory-slack.example.test"]'
+     --set-json 'expose.slack.parentRefs=[{"name":"public","namespace":"infra","sectionName":"factory-slack"}]')
+out="$(helm template af . -n maku "${exs[@]}")" || { echo 'FAIL: expose httproute with both surfaces does not render' >&2; fail=1; out=''; }
+golden expose-httproute
+jkind HTTPRoute 'select(.metadata.name == "rooms-web") | (.spec.hostnames == ["rooms.example.test"] and (.spec.rules | length) == 1 and .spec.rules[0].matches == [{"path": {"type": "PathPrefix", "value": "/"}}] and .spec.rules[0].backendRefs == [{"name": "rooms-web-proxy", "port": 80}] and (.spec.rules[0] | has("timeouts") | not))' 'the web route: PathPrefix /, rooms-web-proxy:80, no timeouts unless set'
+for h in X-Forwarded-Access-Token X-Forwarded-User X-Forwarded-Email X-Forwarded-Groups X-Forwarded-Preferred-Username \
+  X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Username X-Auth-Request-Groups X-Auth-Request-Access-Token \
+  X-Forwarded-Uri X-Forwarded-Host X-Forwarded-Proto; do
+  jkind HTTPRoute "select(.metadata.name == \"rooms-web\") | [.spec.rules[0].filters[] | select(.type == \"RequestHeaderModifier\") | .requestHeaderModifier.remove[] | select(. == \"$h\")] | length == 1" "the web route removes $h"
+done
+jkind HTTPRoute 'select(.metadata.name == "rooms-web") | ([.spec.rules[0].filters[].requestHeaderModifier.remove[] | select(test("[*]"))] | length == 0) and (.spec.rules[0].filters[0].requestHeaderModifier.remove | length) == 13' 'the web route removes exactly thirteen names, none a wildcard'
+jkind HTTPRoute 'select(.metadata.name == "rooms-web") | .spec.parentRefs == [{"name": "gw", "namespace": "infra", "sectionName": "https"}]' 'the web route attaches to expose.httproute.parentRefs'
+jkind HTTPRoute 'select(.metadata.name == "factory-slack-events") | (.spec.parentRefs == [{"name": "public", "namespace": "infra", "sectionName": "factory-slack"}] and .spec.hostnames == ["factory-slack.example.test"] and .spec.rules == [{"matches": [{"path": {"type": "Exact", "value": "/slack/events"}, "method": "POST"}], "backendRefs": [{"name": "factory-slack-app", "port": 8080}]}])' 'the Slack route: its own parentRefs, Exact POST /slack/events, factory-slack-app:8080, nothing else'
+out="$(helm template af . -n maku "${exw[@]}" --set-json 'expose.httproute.timeouts={"request":"0s"}')"
+jkind HTTPRoute 'select(.metadata.name == "rooms-web") | .spec.rules[0].timeouts == {"request": "0s"}' 'expose.httproute.timeouts reaches the web route'
+ynone 'select(.kind == "HTTPRoute" and .metadata.name == "factory-slack-events") | .kind' 'the Slack surface renders without slack.enabled'
+exi=("${exs[@]}" --set expose.mode=ingress --set expose.ingress.className=nginx --set expose.slack.className=public
+     --set-json 'expose.ingress.annotations={"cert-manager.io/cluster-issuer":"letsencrypt","a":"common"}'
+     --set-json 'expose.web.annotations={"a":"web"}'
+     --set-json 'expose.web.tls=[{"secretName":"rooms-tls","hosts":["rooms.example.test"]}]')
+out="$(helm template af . -n maku "${exi[@]}")" || { echo 'FAIL: expose ingress does not render' >&2; fail=1; out=''; }
+golden expose-ingress
+jkind Ingress 'select(.metadata.name == "rooms-web") | (.spec.ingressClassName == "nginx" and .spec.rules == [{"host": "rooms.example.test", "http": {"paths": [{"path": "/", "pathType": "Prefix", "backend": {"service": {"name": "rooms-web-proxy", "port": {"number": 80}}}}]}}] and .spec.tls == [{"secretName": "rooms-tls", "hosts": ["rooms.example.test"]}] and .metadata.annotations == {"a": "web", "cert-manager.io/cluster-issuer": "letsencrypt"})' 'the web Ingress: Prefix /, its class, the annotations merged (the surface wins), its tls passed through'
+jkind Ingress 'select(.metadata.name == "factory-slack-events") | (.spec.ingressClassName == "public" and .spec.rules[0].http.paths == [{"path": "/slack/events", "pathType": "Exact", "backend": {"service": {"name": "factory-slack-app", "port": {"number": 8080}}}}] and (.spec | has("tls") | not))' 'the Slack Ingress: Exact /slack/events, its own class'
+for k in Certificate Issuer ClusterIssuer; do
+  ynone "select(.kind == \"$k\") | .kind" "an exposed render has a $k: TLS is the user's (EX5)"
+done
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

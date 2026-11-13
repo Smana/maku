@@ -48,6 +48,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- include "afumbrella.gateway" . -}}
 {{- include "afumbrella.identity" . -}}
+{{- include "afumbrella.expose" . -}}
+{{- include "afumbrella.webProxy" . -}}
 {{- include "afumbrella.preflight" . -}}
 {{- end }}
 
@@ -227,6 +229,199 @@ maku-metrics admits cilium.fromEndpoints. maku-gateway: its policy admits metric
 {{- fail (printf "monitoring.serviceMonitor.enabled with maku-gateway.networkPolicy.mode %q needs maku-gateway.metrics.allowFrom: the scraper could not reach :15020 (name your Prometheus pods there)" $gwMode) -}}
 {{- end -}}
 {{- end -}}
+{{- end }}
+
+{{/* Exposure (plan v4 step 6, EX2, EX6; D19): the surfaces expose.mode renders, as JSON
+{"web": bool, "slack": bool}. Read it with `include "afumbrella.exposed" . | fromJson`. */}}
+{{- define "afumbrella.exposed" -}}
+{{- $x := .Values.expose | default dict -}}
+{{- $on := ne ($x.mode | default "none") "none" -}}
+{{- $web := and $on (ne (toString (dig "web" "enabled" true $x)) "false") -}}
+{{- $slack := and $on (dig "enabled" false (.Values.slack | default dict)) (ne (toString (dig "slack" "enabled" true $x)) "false") -}}
+{{- dict "web" $web "slack" $slack | toJson -}}
+{{- end }}
+
+{{/* The exposure rules (EX2, EX6), checked by the profile gate. Each surface needs its hosts and, by
+mode, its parentRefs or IngressClass. The web is the broker's :8080 through the web front door, and
+never around it: the broker in oidc mode reads oauth2-proxy's identity headers, so it needs the proxy
+and a network policy that admits only the proxy. Default-deny would drop every request a policy does not
+admit, so the gateway's pods must be named. */}}
+{{- define "afumbrella.expose" -}}
+{{- $x := .Values.expose | default dict -}}
+{{- $surfaces := include "afumbrella.exposed" . | fromJson -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- $netMode := include "afumbrella.makuNetMode" . -}}
+{{- range $name := list "web" "slack" -}}
+{{- if index $surfaces $name -}}
+{{- $s := index $x $name | default dict -}}
+{{- if eq $name "web" -}}
+{{- if not $maku.enabled -}}
+{{- fail "expose.web needs maku.enabled: the web surface is the broker" -}}
+{{- end -}}
+{{- if not $s.hostnames -}}
+{{- fail "expose.web.hostnames is empty: name the hosts the web is served at" -}}
+{{- end -}}
+{{- if eq (dig "broker" "human" "mode" "oidc" $maku) "local" -}}
+{{- fail "expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local); set it to oidc, or expose.web.enabled false" -}}
+{{- end -}}
+{{- if not (dig "enabled" false ($.Values.webProxy | default dict)) -}}
+{{- fail "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" -}}
+{{- end -}}
+{{- if eq $netMode "none" -}}
+{{- fail "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
+{{- end -}}
+{{- else if not $s.hostnames -}}
+{{- fail "expose.slack.hostnames is empty: name the host Slack posts its events to" -}}
+{{- end -}}
+{{- if and (eq $x.mode "httproute") (not $s.parentRefs) (not (dig "httproute" "parentRefs" list $x)) -}}
+{{- fail (printf "expose.%s.parentRefs and expose.httproute.parentRefs are empty: name the Gateway (and its listener) the %s route attaches to" $name $name) -}}
+{{- end -}}
+{{- if and (eq $x.mode "ingress") (not $s.className) (not (dig "ingress" "className" "" $x)) -}}
+{{- fail (printf "expose.%s.className and expose.ingress.className are empty: name the IngressClass the %s Ingress uses" $name $name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if or $surfaces.web $surfaces.slack -}}
+{{- if and (eq $netMode "kubernetes") (not (dig "networkPolicy" "from" list $x)) -}}
+{{- fail "expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller (maku.networkPolicies.mode kubernetes is default-deny)" -}}
+{{- end -}}
+{{- if and (eq $netMode "cilium") (not (dig "networkPolicy" "cilium" "fromEntities" list $x)) -}}
+{{- fail "expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller (maku.networkPolicies.mode cilium is default-deny)" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/* The identity headers oauth2-proxy may set (EX2), which the web route removes from every client
+request by exact name, and the forwarded headers a proxy trusting its client would read (the security
+review of #545: X-Forwarded-Uri once selected a skip-auth route). A YAML list. */}}
+{{- define "afumbrella.identityHeaders" -}}
+- X-Forwarded-Access-Token
+- X-Forwarded-User
+- X-Forwarded-Email
+- X-Forwarded-Groups
+- X-Forwarded-Preferred-Username
+- X-Auth-Request-User
+- X-Auth-Request-Email
+- X-Auth-Request-Preferred-Username
+- X-Auth-Request-Groups
+- X-Auth-Request-Access-Token
+- X-Forwarded-Uri
+- X-Forwarded-Host
+- X-Forwarded-Proto
+{{- end }}
+
+{{/* The web front door's checks (EX4): it derives its arguments from the broker's oidc identity, so it
+needs that identity, its Secrets by name (D14), and the broker's agreement (maku.broker.webProxy opens
+:8080 to it alone). Without a default-deny policy the broker would be reachable around it. */}}
+{{- define "afumbrella.webProxy" -}}
+{{- $w := .Values.webProxy | default dict -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- $b := $maku.broker | default dict -}}
+{{- if $w.enabled -}}
+{{- if not $maku.enabled -}}
+{{- fail "webProxy.enabled needs maku.enabled: the web front door is the broker's" -}}
+{{- end -}}
+{{- if eq (dig "human" "mode" "oidc" $b) "local" -}}
+{{- fail "webProxy.enabled needs maku.broker.human.mode oidc: in local mode the broker serves one loopback user, no identity provider" -}}
+{{- end -}}
+{{- if not (dig "human" "issuer" "" $b) -}}
+{{- fail "webProxy.enabled needs maku.broker.human.issuer: oauth2-proxy signs people in there" -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" ($b.publicURL | default "")) -}}
+{{- fail (printf "webProxy.enabled needs maku.broker.publicURL, https (got %q): the sign-in returns to <publicURL>/oauth2/callback" ($b.publicURL | default "")) -}}
+{{- end -}}
+{{- if not $w.existingSecret -}}
+{{- fail (printf "webProxy.existingSecret is empty: name the Secret holding the web client and the cookie secret (keys %s, %s, %s; D14)" $w.keys.clientID $w.keys.clientSecret $w.keys.cookieSecret) -}}
+{{- end -}}
+{{- if not (dig "oidc" "existingSecret" "" $b) -}}
+{{- fail "webProxy.enabled needs maku.broker.oidc.existingSecret: its cli key is the CLI client oauth2-proxy lets maku's bearers through for" -}}
+{{- end -}}
+{{- if eq (include "afumbrella.makuNetMode" .) "none" -}}
+{{- fail "webProxy.enabled needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
+{{- end -}}
+{{- $derived := include "afumbrella.webProxyArgs" . | fromJson -}}
+{{- range $k := keys ($w.extraArgs | default dict) | sortAlpha -}}
+{{- /* Derived, or a flag that would widen what passes the front door: a trusted forwarder's headers
+(trusted-ip, reverse-proxy), more unauthenticated routes or domains, or a config file that replaces the
+flags. */ -}}
+{{- $forbidden := list "client-id" "client-secret" "cookie-secret" "extra-jwt-issuers" "scope" "http-address" "metrics-address"
+  "trusted-ip" "skip-auth-regex" "skip-auth-preflight" "whitelist-domain" "config" "alpha-config" "reverse-proxy"
+  "pass-user-headers" "skip-auth-strip-headers" -}}
+{{- if or (hasKey $derived $k) (has $k $forbidden) -}}
+{{- fail (printf "webProxy.extraArgs.%s: the chart derives it or forbids it (docs/exposure.md#the-web-front-door); it may not be set" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- range ($w.extraEnv | default list) -}}
+{{- if hasPrefix "OAUTH2_PROXY_" (.name | default "") -}}
+{{- fail (printf "webProxy.extraEnv %s: oauth2-proxy reads it as a flag, which only the chart sets (use webProxy.extraArgs)" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (toString (dig "webProxy" false $b)) (toString ($w.enabled | default false)) -}}
+{{- fail (printf "maku.broker.webProxy (%v) must equal webProxy.enabled (%v): it opens the broker's :8080 to the web front door, and to it alone" (dig "webProxy" false $b) ($w.enabled | default false)) -}}
+{{- end -}}
+{{- end }}
+
+{{/* The GitHub account link is on (step 5 PR C): broker.githubLink's Secret, or human.githubLink set
+directly. Its callback is a browser redirect from github.com, which arrives without the SameSite
+session cookie, so it is a skip-auth route. */}}
+{{- define "afumbrella.githubLink" -}}
+{{- $b := (.Values.maku | default dict).broker | default dict -}}
+{{- if or (dig "githubLink" "existingSecret" "" $b) (dig "human" "githubLink" dict $b) }}true{{ end -}}
+{{- end }}
+
+{{/* oauth2-proxy's derived arguments (EX4), as JSON {name: value | [values]}: each is rendered
+--name=value, once per value of a list. The client, the cookie secret, the CLI issuer and (zitadel) the
+scope come from the environment, built from Secrets, never from a rendered value. */}}
+{{- define "afumbrella.webProxyArgs" -}}
+{{- $w := .Values.webProxy -}}
+{{- $b := .Values.maku.broker -}}
+{{- $h := $b.human | default dict -}}
+{{- $preset := $h.preset | default "zitadel" -}}
+{{- $skip := list "GET=^/\\.well-known/roomctl$" -}}
+{{- if include "afumbrella.githubLink" . -}}
+{{- $skip = append $skip "GET=^/link/github/callback$" -}}
+{{- end -}}
+{{- $a := dict
+  "provider" "oidc"
+  "oidc-issuer-url" $h.issuer
+  "redirect-url" (printf "%s/oauth2/callback" (trimSuffix "/" $b.publicURL))
+  "upstream" (printf "http://room-broker.%s.svc.%s:8080" .Release.Namespace .Values.clusterDomain)
+  "email-domain" "*"
+  "pass-authorization-header" "true"
+  "pass-access-token" "true"
+  "skip-auth-strip-headers" "true"
+  "pass-user-headers" "true"
+  "pass-basic-auth" "false"
+  "set-xauthrequest" "false"
+  "cookie-name" "_rooms"
+  "cookie-secure" "true"
+  "cookie-httponly" "true"
+  "cookie-samesite" $w.cookieSameSite
+  "cookie-refresh" $w.cookieRefresh
+  "reverse-proxy" "false"
+  "skip-provider-button" "true"
+  "skip-jwt-bearer-tokens" "true"
+  "skip-auth-route" $skip -}}
+{{- if eq $preset "generic" -}}
+{{- $scopes := list "openid" "profile" "email" "offline_access" -}}
+{{- range ($h.scopes | default list) }}{{ if not (has . $scopes) }}{{ $scopes = append $scopes . }}{{ end }}{{ end -}}
+{{- $_ := set $a "scope" (join " " $scopes) -}}
+{{- end -}}
+{{- /* Defense in depth: oauth2-proxy reads a top-level claim name (Task 9, X5); the broker stays the
+authority, refusing a token in no agents group. A pointer (/a/b) or a dotted name is left to it. */ -}}
+{{- if regexMatch "^[A-Za-z0-9_:-]+$" ($h.rolesClaim | default "") -}}
+{{- $_ := set $a "oidc-groups-claim" $h.rolesClaim -}}
+{{- $_ := set $a "allowed-group" (list (dig "groups" "admin" "" $h) (dig "groups" "member" "" $h)) -}}
+{{- end -}}
+{{- toJson $a -}}
+{{- end }}
+
+{{/* The web front door's labels: its name is what the broker's policies admit on :8080. */}}
+{{- define "afumbrella.webProxyLabels" -}}
+{{ include "afumbrella.labels" . }}
+app.kubernetes.io/name: rooms-web-proxy
+app.kubernetes.io/component: web-proxy
 {{- end }}
 
 {{/* afumbrella.at: the value at a dotted path of a values map, as {"v": value}; null when absent.

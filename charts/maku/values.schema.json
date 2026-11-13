@@ -9,6 +9,7 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "webProxy": {"description": "Open :8080 to the umbrella's web front door alone (v4 D19).", "type": "boolean"},
         "githubLink": {
           "description": "The GitHub account link's OAuth client by Secret (v4 D8, oidc mode): mounted at /etc/room-broker/github-link, filling human.githubLink's unset keys.",
           "type": "object",

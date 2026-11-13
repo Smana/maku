@@ -21,6 +21,14 @@ check() { grep -qF -- "$1" <<<"$out" || { echo "FAIL: $2" >&2; fail=1; }; }
 ykind() {
   yq ea -e "[select(.kind == \"$1\") | $2] | (length > 0 and all)" - <<<"$out" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
 }
+# jkind KIND 'jq expr' 'message': as ykind, in jq (yq compares only scalars, never maps or lists).
+jkind() {
+  yq ea -o=json -I0 "select(.kind == \"$1\")" - <<<"$out" | jq -s -e "map($2) | (length > 0 and all)" >/dev/null 2>&1 || { echo "FAIL: $3" >&2; fail=1; }
+}
+# jnone 'jq expr' 'message': the expression yields nothing over every object.
+jnone() {
+  [[ -z $(yq ea -o=json -I0 '.' - <<<"$out" | jq -c "$1" 2>&1) ]] || { echo "FAIL: $2" >&2; fail=1; }
+}
 # yq query that must succeed and print nothing: ynone 'expr' 'message'.
 ynone() {
   local got
@@ -762,6 +770,16 @@ if helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set 'brok
 # a bare tag is refused unless e2e.unpinnedImages
 if helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set broker.image.tag=v1 >/dev/null 2>&1; then
   echo 'FAIL: a bare image tag must be refused' >&2; fail=1; fi
+# v4 step 6 Task 12 (D19): broker.webProxy opens the human listener, :8080, to the web front door's
+# pods alone, in both policy modes; off (the default), no rule admits :8080.
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=$m)"
+  jnone 'select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") | select(.metadata.name == "room-broker") | .spec.ingress[] | select(((.ports // []) | map(.port) | any(. == 8080)) or ((.toPorts // []) | map(.ports[].port) | any(. == "8080")))' "mode $m: without broker.webProxy a rule admits :8080"
+  out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=$m --set broker.webProxy=true)"
+done
+jkind NetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.ports // []) | map(.port) | any(. == 8080))] == [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "rooms-web-proxy"}}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]' 'mode kubernetes: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.webProxy=true)"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] == [{"fromEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "rooms-web-proxy"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' 'mode cilium: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
 helm template ap . -n x -f values-quickstart.yaml --set e2e.unpinnedImages=true --set broker.image.tag=e2e --set runController.image.tag=e2e \
   --set runController.images.harness.tag=e2e --set runController.images.bridge.tag=e2e \
   | grep -q 'imagePullPolicy: Never' || { echo 'FAIL: e2e.unpinnedImages renders Never' >&2; fail=1; }
