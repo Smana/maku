@@ -1905,7 +1905,8 @@ owned**.
 Stage H2. For a repository that opts in, a writer run no longer opens, edits, comments on or
 labels pull requests and issues itself. It requests each write with an `output_*` tool, and the
 factory checks it with T1 to T4 at enforce (T5 at most audit) and applies it, or refuses it.
-`push` stays in the sandbox until H3. Nothing is enforced unless a repository is listed.
+`push` joins at H3 ([Hardening, push enforced](#hardening-push-enforced)). Nothing is enforced
+unless a repository is listed.
 
 ```yaml
 hardening:
@@ -1924,7 +1925,7 @@ hardening:
 
 The rules for `enforceOutputs`, each checked at startup:
 
-- **Types.** The list takes `pr`, `comment`, `labels` and `issue`. `push` is refused until H3.
+- **Types.** The list takes `pr`, `comment`, `labels`, `issue` and, from H3, `push`.
 - **Inheritance.** A repository's list replaces the central one, and must hold every central type.
 - **Mode.** A listed repository needs a mode of at least `audit`.
 - **Publisher.** Any list needs `publisher.octoSTS.url`. Set the chart's
@@ -1990,7 +1991,8 @@ flowchart LR
   object. On cloud-native-ref's XR, an applied pull request or comment whose every body edit since
   its answer is a person's (a ticked checklist) is logged `human_edit` instead: not counted, still
   checked as in H1.
-  Pushes are shadowed as in H1. What the tracer does not observe is listed in
+  Pushes are shadowed as in H1 unless the repository enforces `push`
+  ([below](#hardening-push-enforced)). What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reads each
   sandbox role's and the publisher's octo-sts policy and reports their permissions.
@@ -2001,6 +2003,103 @@ directly. `runTokens.perRun` lifts this: each run's token then comes from the
 [role table](#run-tokens-the-role-table), where an enforced output takes its write away.
 Readiness stays `false`: `mode: enforce` is still refused. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
+
+## Hardening, push enforced
+
+Stage H3. For a repository whose `enforceOutputs` names `push`, a writer run no longer pushes to
+GitHub. Its `git push` becomes a request: the harness bundles the branch and hands the bundle to
+the broker, and the factory checks it and pushes it as the publisher. A push that touches a
+protected path waits for a maintainer's approval of that bundle's digest. `mode` stays `audit`:
+`mode: enforce` arrives with stage H4, and means every output type enforced and reads filtered.
+
+```yaml
+hardening:
+  mode: audit
+  applier:
+    approvalTTL: 24h            # default; how long a protected-path push waits, at most 168h
+    mirrorMaxBytes: 1073741824  # default; one repository's mirror, at least 64 MiB
+  repositories:
+    Smana/ai-native-ref: {mode: audit, enforceOutputs: [comment, issue, labels, pr, push]}
+```
+
+The broker serves `output_push` only to a repository its own config names as well:
+
+```yaml
+roomTools:
+  pushRepositories: [Smana/ai-native-ref]   # owner/name; empty by default
+```
+
+The factory needs a git cache: the `maku-factory` chart's `hardening.gitCache.sizeLimit` (e.g.
+`2Gi`) mounts an `emptyDir` at `/var/cache/maku/git` and sets `MAKU_GIT_CACHE`. A repository that
+enforces `push` without it refuses the factory's start.
+
+```mermaid
+flowchart LR
+  G["agent: git push"] -->|"git shim"| AP["agent-push<br/>git bundle create"]
+  AP -->|"output_push (harness only)"| BR["broker<br/>bundle store"]
+  BR -->|"output_requested"| LOG[("room log")]
+  LOG --> APL["applier<br/>inspect, caps, T1–T4, T5 audit"]
+  APL -->|"protected path"| APR["approval of the digest<br/>room page or Slack"]
+  APR -->|"approval_decided"| LOG
+  APL -->|"git push --force-with-lease<br/>publisher token"| GH[("GitHub")]
+  APL -->|"output_waiting / applied / refused"| LOG
+```
+
+### What a run sees
+
+- **Its `git push`.** With `push` in `SAFE_OUTPUTS`, the harness's `git` shim runs `agent-push`
+  for `git push`, and passes every other subcommand to git. `agent-push` bundles
+  `refs/heads/agent/<task>`, calls `output_push`, then polls `output_status` for up to 90 s, and
+  prints `applied <sha>`, `refused <reason>` or `waiting for a maintainer's approval (<id>)`. A
+  delete, a tag or another branch exits 3. A bundle over 8 MiB exits 1 with `push_size` before
+  any call. The shim is advisory: the run's token is the boundary (below).
+- **Its rules.** The implementer's rule 2 reads "Push only to `<branch>`, with git push: the
+  factory checks the push and applies it. A change to a protected path waits for a maintainer's
+  approval; check it with output_status." A tester is told the platform pushes its tests through
+  the factory.
+- **The harness's own pushes.** The tester's contract push requests and waits. The disruption
+  checkpoint requests and does not wait, within its 7 s budget; the applier answers it after the
+  run, inside `answerWait`.
+
+### What the factory checks
+
+For each push request, in the run's order:
+
+1. **The bundle.** It reads the bundle from the broker and inspects it with `git` in a bare,
+   blobless mirror of the repository, with fsck on, no hooks, and the token only in the
+   environment. The bundle must carry exactly `refs/heads/agent/<task>`, and land as a
+   fast-forward of the branch or a rebase onto `main`. A submodule, a symlink leaving the tree,
+   a `.git` path, a binary file or a blob over 1 MiB is refused.
+2. **The caps.** The task's class caps, `maxPatchFiles` and `maxModifiedLines`, apply to the
+   cumulative change from the merge base: past them, `push_size`.
+3. **T1 to T4 at enforce, T5 at most audit,** on the changed paths, the added lines and the
+   commit messages. A blocked path is refused. A path that needs approval holds the push.
+4. **The push.** The factory records the push's head on the task
+   (`agents.ogenki.io/push-intent`), then pushes with `--force-with-lease` as the publisher.
+   The answer is `output_applied`, whose object is `https://github.com/<repo>/commit/<head>`.
+
+**A push that needs approval** is answered `output_waiting` with an approval id. The run's later
+requests wait behind it. A maintainer decides on the room page (it requires repository write) or
+on the Slack card, which shows the short digest and the protected paths. Approved, the bundle is
+inspected again and pushed. Denied or past `approvalTTL`, it is refused `approval_denied` or
+`approval_expired`. A later push of the same run supersedes it (`output_superseded`). While a push
+waits, the task stays `Implementing` with reason `push_awaiting_approval`.
+
+**The tracer** reads the task branch's pushes at a run's end. Each agents-App push must match an
+`output_applied` push by its head SHA, or it is `untraced_write`.
+
+### The tokens
+
+With `push` enforced the role table takes `contents: write` from the implementer and the tester
+(`push`: `contents: read` in [the role table](#run-tokens-the-role-table)), and gives it to the
+publisher. On the run-controller, `runTokens.perRun` mints each run from that table. On
+cloud-native-ref's XR, the repository's policy files follow it: `publisher.sts.yaml` gains
+`contents: write`, then `agent-implementer.sts.yaml` and `agent-tester.sts.yaml` drop to
+`contents: read`. Until they do, the run's token can still push directly, and the tracer reports
+it. GitHub refuses a push that changes `.github/workflows/**` from a token without
+`workflows: write`: unless the publisher's policy adds it, an approved workflow push is refused
+`output_unavailable`. Enabling and rolling back are in
+[Operations](operations.md#hardening-push-enforced).
 
 ## Reference
 

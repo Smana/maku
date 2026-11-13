@@ -4,6 +4,21 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Push enforced (v0.4x, hardening stage H3)
+
+Opt-in per repository; without `push` in an `enforceOutputs` list nothing changes.
+
+| Key | Chart | What it does |
+|---|---|---|
+| `config.hardening.repositories.<repo>.enforceOutputs: [..., push]` | `maku-factory` | The factory pushes the run's bundle as the publisher ([Hardening, push enforced](factory.md#hardening-push-enforced)) |
+| `hardening.gitCache.sizeLimit` | `maku-factory` | The push applier's mirror cache. Required once a repository enforces `push`: without it the factory refuses to start |
+| `config.hardening.applier.approvalTTL`, `mirrorMaxBytes` | `maku-factory` | How long a protected-path push waits (24 h, at most 168 h), and one mirror's size limit (1 GiB, at least 64 MiB) |
+| `broker.roomTools.pushRepositories` | `maku` | The repositories the broker serves `output_push` to; list the same ones |
+
+`mode: enforce` is now refused with "enforce arrives with stage H4". The factory and broker
+configs are decoded strictly: upgrade the charts and the images together. The order of the steps
+is in [Operations](operations.md#hardening-push-enforced).
+
 ## Per-run tokens (v0.4x, v4 rollout step 3)
 
 Two opt-in keys, which go together; without them nothing changes (`gitTokens: shared` stays the
