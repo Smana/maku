@@ -646,7 +646,8 @@ A repository listed in `enforceOutputs` goes one stage further
 
 Residuals with non-code outputs enforced:
 
-- `push` still writes from the sandbox (H3), and the run still reads raw text with `gh` (H4).
+- `push` writes from the sandbox unless the repository enforces it (below), and the run still
+  reads raw text with `gh` (H4).
 - Until the role policy drops `pull_requests: write`, the run's token can still write directly,
   with `gh api`, curl, or gh with a token from the credential helper. The harness's `gh` wrapper
   turns the obvious commands away, but it is advisory. The tracer reports what it observes, and
@@ -665,6 +666,38 @@ Residuals with non-code outputs enforced:
 - Agents-App issues are read by author since the run started, so two concurrent runs of the
   agents App each count the other's issues. On a repository that enforces `issue`, the tracer can
   over-count them as untraced.
+
+A repository whose `enforceOutputs` names `push` goes one stage further
+([Hardening, push enforced](factory.md#hardening-push-enforced)):
+
+- **What is enforced.** The harness turns the run's `git push` into a git bundle, requested
+  through the harness-only `output_push`. The factory inspects the bundle outside the sandbox, in
+  a bare, blobless mirror with fsck on, no hooks, an https-only transport list, a timeout and an
+  output cap per call, and the publisher's token only in git's environment. It checks one ref
+  (`agent/<task>`), fast-forward or rebase onto `main`, the tree (no submodule, escaping
+  symlink, `.git` path or binary file), each new blob's size, the class caps, then T1 to T4.
+- **Who pushes.** The publisher, with `--force-with-lease`. A protected path waits for a
+  maintainer's approval bound to the bundle's digest, decided on the room page or the Slack card
+  by someone with repository write.
+- **What is checked after.** Each agents-App push to the task branch must match an applied
+  push's head, or it is `untraced_write`.
+- **What closes the bypass.** The implementer's and tester's tokens lose `contents: write`: the
+  role table does it for per-run tokens, and the role policies on the XR. This also closes the
+  agent-merge residual above.
+
+Residuals with push enforced:
+
+- The `git` shim is advisory. Until the role policy drops `contents: write`, the run can still
+  push directly, and the tracer reports it without stopping it.
+- An approved push that changes `.github/workflows/**` is refused `output_unavailable` unless the
+  publisher's policy holds `workflows: write` (HR31).
+- Blobs the remote already holds (a change's old side, or content reverted to it) are not sized
+  before the diff reads them. `core.bigFileThreshold` (1 MiB) turns a large one into a binary
+  change, which is refused.
+- A push whose reply is lost is answered by its recorded intent on the task
+  (`agents.ogenki.io/push-intent`). The record holds the task's latest push only.
+- The run-controller path needs `runTokens.perRun` (HR13), so the role table is what removes the
+  write there. On the XR the policy files must follow it by hand; the permission gauge shows them.
 
 ## Reporting a vulnerability
 

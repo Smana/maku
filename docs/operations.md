@@ -474,13 +474,15 @@ After an upgrade that changes the T2 sanitiser, pull requests and comments appli
 compared with the new T2's text and show as untraced once: confirm those predate the upgrade
 before rolling back. Never move
 an enforced repository to a run path whose sandbox token no role policy scopes (the factory refuses to
-start, naming HR13, unless `runTokens.perRun` scopes each run's token). `push` (H3) and raw reads (H4) stay open in this stage.
+start, naming HR13, unless `runTokens.perRun` scopes each run's token). `push` stays open in this stage
+until the repository enforces it ([below](#hardening-push-enforced)), and raw reads until H4.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `maku_factory_hardening_output_seconds` | histogram | `repository`, `type` | From a run's `output_requested` to the factory's answer (AC7: p95 at most 2 s per non-push output) |
 | `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
 | `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it: from its octo-sts policy on the XR, or from the [role table](factory.md#run-tokens-the-role-table) under `runTokens.perRun` (the publisher's under `hardening.publisher.minter`). A pair a later pass no longer reads is 0 |
+| `maku_factory_hardening_approval_wait_seconds` | histogram | `repository`, `decision` | How long a protected-path push waited for its approval, by how it closed: `approved`, `denied`, `expired`, `superseded` |
 
 ### Leaving the XR with an enforced repository (HR13)
 
@@ -522,6 +524,64 @@ per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` s
 
 Readiness's R2 under `runTokens.perRun` reads the same table (HR42): it stays missing while the
 implementer and tester hold `contents: write`, which goes with `push` at H3.
+
+### Hardening, push enforced
+
+[Stage H3](factory.md#hardening-push-enforced) for one repository that already enforces the
+non-code outputs. Each step lands and is checked before the next.
+
+1. **The Maku release** runs on the cluster: the factory image with `git`, and the harness image
+   with the `git` shim. With no `push` in any `enforceOutputs` it changes nothing.
+2. **The publisher gains `contents: write`.** A maintainer merges `publisher.sts.yaml` with
+   `contents: write`, plus `workflows: write` only if the repository wants approved workflow
+   pushes. Under `hardening.publisher.minter` the role table already grants it.
+3. **The config.** The `maku-factory` chart's `hardening.gitCache.sizeLimit` (e.g. `2Gi`), and
+   `hardening.applier.approvalTTL` if 24 h does not suit. Add `push` to the repository's
+   `enforceOutputs`, and the repository to the broker's `roomTools.pushRepositories`. Restart
+   both. Listing only one of the two serves no push: the broker serves `output_push` to a
+   repository its own list names, and the factory applies pushes only for its `enforceOutputs`. The factory refuses to start without `MAKU_GIT_CACHE`. The Slack channel's
+   `approvals: true` lets a maintainer decide on the card as well as on the room page.
+4. **The capability profiles.** `output_status` is added to the implementer and tester profiles.
+   `output_push` is harness-only and never in a model's profile. On the XR, the agent-mcp route's
+   request-body limit allows 12 MiB on `/mcp`, and the composition renders `push` in
+   `SAFE_OUTPUTS`.
+5. **The sandbox tokens lose `contents: write`, last.** Only after a canary task's push arrived
+   through `output_applied`:
+   - on the XR, a maintainer changes `agent-implementer.sts.yaml` and `agent-tester.sts.yaml` to
+     `contents: read`;
+   - on the run-controller, `runTokens.perRun` mints from the role table, which already takes it
+     away for a run whose `safe-outputs` names `push`.
+
+**Rollback**, in this order:
+
+1. Restore `contents: write` in the implementer's and tester's role policies (the XR).
+2. Remove `push` from `enforceOutputs` and the repository from `roomTools.pushRepositories`, and
+   restart both. Runs created before the restart keep their annotation: let them end.
+
+**Stop rules.** Roll back on any `untraced_write` of type `push`, on a push stuck unanswered past
+`answerWait`, or on a task held `push_awaiting_approval` with no approval on the room page.
+
+**What a maintainer sees.** A push that touches a protected path posts an approval on the room
+page and, with `approvals: true`, on the Slack card, with the short digest and the protected
+paths. Deciding needs repository write. The decision applies to that digest only: a later push of
+the run supersedes the approval.
+
+**Residuals.**
+
+- **Workflow pushes.** GitHub refuses a push that changes `.github/workflows/**` from a token
+  without `workflows: write`. Unless the publisher's policy adds it, an approved workflow push is
+  refused `output_unavailable` (HR31).
+- **A lost push reply.** The factory records the push's head on the task
+  (`agents.ogenki.io/push-intent`) before `git push`. If the reply is lost, the next inspection
+  reads the branch at that head and answers `applied`. If the task cannot be written, nothing is
+  pushed and the request waits for the next tick. Only the latest push of a task is recorded. A
+  lost lease or a rejection clears the record, so only an ambiguous failure (a timeout) keeps it.
+- **Old blobs are not sized.** The factory sizes every blob the bundle adds, from its header,
+  without fetching anything. Blobs the remote already holds (the old side of a change, or a file
+  reverted to earlier content) are read by the diff in one batched fetch: `core.bigFileThreshold`
+  (1 MiB) makes a large one read as binary, and a binary change is refused.
+- **Until step 5, the sandbox can still push.** The token is the boundary: the `git` shim is
+  advisory, and the tracer reports a direct push as `untraced_write` but does not stop it.
 
 ### Factory alerts
 

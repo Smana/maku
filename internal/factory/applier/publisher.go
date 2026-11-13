@@ -17,9 +17,10 @@ import (
 
 // ConnectPushers is the applier's Pushers (H3, HR24): one gitbundle mirror per repository under
 // root (MAKU_GIT_CACHE), git sending the publisher's token from the same tokens as the publisher's
-// API connection. An empty root connects nothing.
-func ConnectPushers(tokens PublisherTokens, root string) func(ctx context.Context, repo string) (Pusher, error) {
-	cache := &gitbundle.Cache{Root: root, Token: func(ctx context.Context, repo string) (string, error) {
+// API connection, each mirror re-created past maxBytes (gitbundle.DefaultMaxBytes when 0). An
+// empty root connects nothing.
+func ConnectPushers(tokens PublisherTokens, root string, maxBytes int64) func(ctx context.Context, repo string) (Pusher, error) {
+	cache := &gitbundle.Cache{Root: root, MaxBytes: maxBytes, Token: func(ctx context.Context, repo string) (string, error) {
 		src, err := tokens.For(repo)
 		if err != nil {
 			return "", err

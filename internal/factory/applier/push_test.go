@@ -43,6 +43,13 @@ type fakePusher struct {
 	pushErr    error
 	inspected  int
 	pushed     []gitbundle.Inspection
+	discarded  int
+}
+
+func (p *fakePusher) Discard(context.Context, gitbundle.Inspection) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.discarded++
 }
 
 func (p *fakePusher) Inspect(_ context.Context, _ []byte, branch, base string) (gitbundle.Inspection, error) {

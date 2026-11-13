@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/gitbundle"
@@ -43,9 +45,69 @@ const reasonHeld = "push_awaiting_approval"
 var errLater = errors.New("applier: answered on a later tick")
 
 // Pusher inspects a run's bundle and pushes it as the publisher; *gitbundle.Mirror implements it.
+// Discard drops what an inspection fetched, for a push the applier refuses or holds after it.
 type Pusher interface {
 	Inspect(ctx context.Context, bundle []byte, branch, base string) (gitbundle.Inspection, error)
 	Push(ctx context.Context, in gitbundle.Inspection) error
+	Discard(ctx context.Context, in gitbundle.Inspection)
+}
+
+// AnnotationPushIntent records, on the task, the push the applier is about to make: "<output id>
+// <head>", written before git push (#505's review). A push whose reply is lost (a timeout, a
+// crash, a restart) lands with no answer; the next inspection reads the branch at that head, and
+// this record, not the room's applied pushes, says the factory put it there, so it is answered
+// applied rather than refused push_ref and reported untraced_write. Only the latest push is kept:
+// a run's requests are answered one at a time, in order. A push the remote definitively refused
+// (a lost lease, a rejection) clears it, so another hand's push of the same head is never read as
+// the factory's (#513's review); only an ambiguous failure (a timeout, a reset) keeps it.
+const AnnotationPushIntent = "agents.ogenki.io/push-intent"
+
+// intended reports whether the task records the factory's own push of head for output id, and
+// this applier has not cleared that record since.
+func (a *Applier) intended(t *v1alpha1.Task, rs *runState, id, head string) bool {
+	return t.Annotations[AnnotationPushIntent] == id+" "+head && !rs.room.voided[id+" "+head]
+}
+
+// clearIntent forgets the push's intent after the remote definitively refused it: in memory at
+// once, and on the task. A task that cannot be written keeps a record this applier still ignores;
+// the error leaves the request pending, so the next tick writes it again.
+func (a *Applier) clearIntent(ctx context.Context, t *v1alpha1.Task, rs *runState, id, head string) error {
+	rs.room.voided[id+" "+head] = true
+	if t.Annotations[AnnotationPushIntent] != id+" "+head {
+		return nil
+	}
+	orig := t.DeepCopy()
+	delete(t.Annotations, AnnotationPushIntent)
+	if a.Tasks == nil {
+		return nil
+	}
+	if err := a.Tasks.Patch(ctx, t, client.MergeFrom(orig)); err != nil {
+		*t = *orig
+		return fmt.Errorf("clear the push's intent: %w", err)
+	}
+	return nil
+}
+
+// recordIntent writes the push's intent on the task before the push. Without a writer it is set
+// on this tick's copy of the task alone, which the next tick's read replaces: the factory sets one.
+func (a *Applier) recordIntent(ctx context.Context, t *v1alpha1.Task, rs *runState, id, head string) error {
+	delete(rs.room.voided, id+" "+head) // this push begins again
+	if t.Annotations[AnnotationPushIntent] == id+" "+head {
+		return nil
+	}
+	orig := t.DeepCopy()
+	if t.Annotations == nil {
+		t.Annotations = map[string]string{}
+	}
+	t.Annotations[AnnotationPushIntent] = id + " " + head
+	if a.Tasks == nil {
+		return nil
+	}
+	if err := a.Tasks.Patch(ctx, t, client.MergeFrom(orig)); err != nil {
+		*t = *orig
+		return fmt.Errorf("record the push's intent: %w", err)
+	}
+	return nil
 }
 
 // PushRooms is the broker's half of a push (HR22, HR28); rooms.Client implements it.
@@ -245,11 +307,18 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	case err != nil:
 		return fmt.Errorf("inspect the push's bundle: %w", err)
 	}
+	pushed := false
+	defer func() {
+		if !pushed { // a refusal, a hold or a retry after the inspection: its fetched ref goes
+			p.Discard(ctx, in)
+		}
+	}()
 	if in.OldHead != "" && in.OldHead == in.Head {
 		// HR26: the branch is at the bundle's head already. Answered applied with no push only when
-		// an applied push of the task put that head there; otherwise another hand pushed it, and an
-		// answer would launder that write for the tracer.
-		if !rs.room.pushed[strings.ToLower(commitURL(t, in.Head))] {
+		// an applied push of the task put that head there, or the task records this very push as
+		// begun and no definitive refusal cleared it (its reply lost); otherwise another hand pushed
+		// it, and an answer would launder that write for the tracer.
+		if !rs.room.pushed[strings.ToLower(commitURL(t, in.Head))] && !a.intended(t, rs, req.rec.ID, in.Head) {
 			a.Log.Warn("output applier: the branch is at the push's head already, and no applied push put it there",
 				"task.id", t.Name, "run.id", rec.ID, "output.id", req.rec.ID)
 			return refuse(hardening.RefusePushRef)
@@ -259,7 +328,8 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 		}
 		return a.pushApplied(ctx, t, rec.ID, rs, req, n, in, nil)
 	}
-	if files, lines := a.caps(t); (files > 0 && in.Cumulative.Files > files) || (lines > 0 && in.Cumulative.Lines > lines) {
+	if files, lines := a.caps(t); files < 0 || lines < 0 || (files > 0 && in.Cumulative.Files > files) ||
+		(lines > 0 && in.Cumulative.Lines > lines) {
 		return refuse(hardening.RefusePushSize)
 	}
 	c := a.Checker(t.Spec.Repository)
@@ -292,7 +362,17 @@ func (a *Applier) checkPush(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1
 	if a.stopped(ctx) {
 		return errStopped
 	}
+	if err := a.recordIntent(ctx, t, rs, req.rec.ID, in.Head); err != nil {
+		return err
+	}
 	err = p.Push(ctx, in)
+	pushed = err == nil
+	if errors.Is(err, gitbundle.ErrLeaseLost) || errors.Is(err, gitbundle.ErrPushRejected) {
+		// Definitive: the push did not land, so its intent goes (#513's review).
+		if cerr := a.clearIntent(ctx, t, rs, req.rec.ID, in.Head); cerr != nil {
+			return cerr
+		}
+	}
 	switch {
 	case errors.Is(err, gitbundle.ErrLeaseLost):
 		// The next tick inspects again: a branch moved to this very head by another hand is then

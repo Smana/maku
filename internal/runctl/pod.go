@@ -19,9 +19,9 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
-// servedOutputs are the safe-output types the broker serves (hardening H2): push stays in the
-// sandbox until H3, so a claim naming it does not reach the tool.
-var servedOutputs = []string{"comment", "issue", "labels", "pr"}
+// servedOutputs are the safe-output types the broker serves: H2's four, and push from stage H3,
+// which the harness's shim requests through output_push (HR23).
+var servedOutputs = []string{"comment", "issue", "labels", "pr", "push"}
 
 // safeOutputs is the run's served safe-output types, sorted, from the factory's annotation (HR14).
 func safeOutputs(r *v1alpha1.AgentRun) []string {
@@ -221,6 +221,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 			readOnly := roomToolsReadOnly
 			for _, t := range outputs {
 				readOnly += ",room-broker__output_" + t
+			}
+			if slices.Contains(outputs, "push") { // the rules send a waiting push to output_status
+				readOnly += ",room-broker__output_status"
 			}
 			bridgeEnv = append(bridgeEnv, corev1.EnvVar{Name: "MCP_BARE_SERVER", Value: "room-broker"},
 				corev1.EnvVar{Name: "MCP_READ_ONLY_TOOLS", Value: readOnly})

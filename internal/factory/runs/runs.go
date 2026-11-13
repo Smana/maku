@@ -75,8 +75,8 @@ const (
 	AnnLabelAllowlist = runwatch.LabelAllowlistAnnotation
 )
 
-// safeOutputTypes are the types a claim may name as safe outputs: push stays in the sandbox (H3).
-var safeOutputTypes = []string{"comment", "issue", "labels", "pr"}
+// safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
+var safeOutputTypes = []string{"comment", "issue", "labels", "pr", "push"}
 
 // canaryRE is hardening.NewCanary's shape.
 var canaryRE = regexp.MustCompile(`^mkc-[0-9a-f]{20}$`)

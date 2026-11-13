@@ -104,10 +104,13 @@ type Applier struct {
 	Pushers   func(ctx context.Context, repo string) (Pusher, error)
 	PushRooms PushRooms
 	// Caps is the task's class caps on a push's cumulative change, changed files and lines; 0 is
-	// no cap, and nil caps nothing (HR25).
+	// no cap, a negative value refuses every push push_size, and nil caps nothing (HR25).
 	Caps func(t *v1alpha1.Task) (files, lines int)
 	// ApprovalTTL is how long a protected-path push waits for a maintainer (DefaultApprovalTTL).
 	ApprovalTTL time.Duration
+	// Tasks persists a push's intent on its task before the push (AnnotationPushIntent); with nil
+	// a push whose reply is lost is refused push_ref on the next tick (HR26's residual).
+	Tasks client.Writer
 	// AgentsLogin and FactoryLogin are the publisher's and the factory App's logins: the
 	// applier recognises its own writes only by them.
 	AgentsLogin, FactoryLogin string
@@ -133,6 +136,9 @@ type roomState struct {
 	// pushed are the room's applied push objects, every run's, lower-cased: the heads the factory
 	// itself put on the branch (HR26).
 	pushed map[string]bool
+	// voided are the push intents ("<output id> <head>") this applier cleared after a definitive
+	// refusal: never read as the factory's push, even before the task's record is gone.
+	voided map[string]bool
 }
 
 type runState struct {
@@ -270,7 +276,7 @@ func (a *Applier) stopped(ctx context.Context) bool {
 func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
-		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{}}
+		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{}, voided: map[string]bool{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
 	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
