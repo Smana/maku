@@ -724,11 +724,13 @@ A scrape that renames them (ai-native-ref's `vmpodscrape.yaml`) uses
 `meter.throttle.promQuery`:
 
 ```
-sum by (ar_agent) (increase(agentgateway_requests_total{status="429", ar_agent=~"system:serviceaccount:<runs ns>:<namePrefix>.+"}[2m])) > 0
+sum by (ar_agent) (increase(agentgateway_requests_total{status="429", reason="RateLimit", ar_agent=~"system:serviceaccount:<runs ns>:<namePrefix>.+"}[2m])) > 0
 ```
 
 A series above zero names its run as throttled. Like VictoriaLogs' rows, a run is read only from
-the verified `ar_agent`, and a failed lookup costs only that tick's fleet mapping.
+the verified `ar_agent`, and a failed lookup costs only that tick's fleet mapping. Keep
+`reason="RateLimit"`: the counter also counts a provider's 429s passed through, and a throttled run is
+revoked as `budget-fleet` ([the gateway](gateway.md#metering-the-runs)).
 Every gateway path the platform runs counts the cache tokens inside `input`: agentgateway 1.6's
 Chat Completions to Messages translation, streamed or not, and Z.ai's `prompt_tokens`. A model
 whose `input` is below `cached_input + cache_creation_input` comes from a gateway that leaves them

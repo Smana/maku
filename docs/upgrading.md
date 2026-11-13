@@ -29,6 +29,9 @@ Runs already started keep their pods and their key until they end. The run contr
 factory decode their configs strictly, so a `model:` block, `runs.gatewayIdentity` and
 `meter.throttle` need this release's images: chart and images move together. The refusal messages
 of `loops.<class>.models` and `split` on a portable runtime now name `runs.gatewayIdentity`.
+Under `runs.gatewayIdentity` the factory stamps each AgentRun `spec.meteredBy: gateway`: upgrade
+`agent-factory-crds` first, since an older AgentRun CRD prunes the field, and a secret-mode run
+controller then starts the run unmetered.
 
 ## Push enforced (v0.4x, hardening stage H3)
 

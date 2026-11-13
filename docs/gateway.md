@@ -269,6 +269,33 @@ portable factory (`runs.group: maku.ogenki.io`) lack `runs.gatewayIdentity: true
 `cloud.ogenki.io`, whose AgentRun always carries the identity. Without the key, a configured meter
 starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
 
+**The handshake, run by run.** The umbrella's render check does not reach an install that runs
+`maku-factory` and `maku` as separate releases, as ANR does. So the factory stamps each AgentRun it
+creates under `runs.gatewayIdentity` with `spec.meteredBy: gateway`, which the CRD keeps immutable
+from creation. A run controller in `model.mode: secret` refuses such a run before its pod exists:
+`spec.meteredBy gateway needs model.mode gateway`, as it refuses `dataClass: internal`. Without the
+stamp, a secret-mode run would make no `ar_agent` series. It would end at $0, `familyUSD` would
+never be spent, and its `loops.<class>.models` alias would be ignored.
+
+**The backstop, and what it leaves.** Under `runs.gatewayIdentity`, a run that succeeded with no
+gateway series gets the fallback verdict: unpriced, not $0. The meter names its model once
+(`maku_factory_meter_unpriced_model_runs_total`) and the task's USD cap does not count it as free.
+Two cases remain:
+
+- **A run still live with no series** is not flagged: it may not have called its model yet.
+- **A run that fails or is revoked with no series** is not flagged either. It spent nothing the
+  gateway saw, or a scrape missed it.
+
+A scrape that drops the gateway (wrong `metrics.allowFrom`, a missing scrape target) therefore shows
+as unpriced succeeded runs. It never shows as cheap ones.
+
+**The 429s.** `agentgateway_requests_total{status="429"}` counts every 429 the gateway answered,
+its own and a provider's passed through. The meter revokes a run its throttle query names, as
+`budget-fleet`, so the query keeps the gateway's own: `reason="RateLimit"`, the label agentgateway
+sets on a local rate limit (ai-native-ref's budget runbook records it). maku-gateway renders no rate
+limit of its own, so on it the query names no run: a provider's 429 reaches the harness as the
+provider's answer, and the meter never revokes the run for it.
+
 ## The planner and the classifier
 
 The broker makes two kinds of model call: the planner (`intake_plan`, alias `tier-frontier`) and the

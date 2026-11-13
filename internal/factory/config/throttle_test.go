@@ -13,7 +13,7 @@ import (
 func TestMeterThrottleSource(t *testing.T) {
 	const (
 		logsURL  = "  logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428\n"
-		promLine = "  throttle: {promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status=\"429\"}[2m])) > 0'}\n"
+		promLine = "  throttle: {promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status=\"429\", reason=\"RateLimit\"}[2m])) > 0'}\n"
 	)
 	_, rest, ok := strings.Cut(good, "  throttleQuery:")
 	if !ok {

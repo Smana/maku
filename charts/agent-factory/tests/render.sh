@@ -293,7 +293,8 @@ yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config")
   { echo "FAIL: the gateway demo's factory config does not parse:" >&2; cat "$tmp/parse-gw.log" >&2; fail=1; }
 # Task 17: the metering leg's values (install.sh METERING=1): a meter with a PromQL throttle and a split
 # on the portable kind, which the factory accepts with runs.gatewayIdentity.
-mout="$(helm template af . -n maku "${gwd[@]}" -f tests/metering-values.yaml)" || { echo "FAIL: the metering values do not render" >&2; fail=1; mout=''; }
+mout="$(helm template af . -n maku "${gwd[@]}" -f tests/metering-values.yaml \
+  --set maku-gateway.aliases.public.agent-default.model=echo-default --set maku-gateway.aliases.public.tier-light.model=echo-light)" || { echo "FAIL: the metering values do not render" >&2; fail=1; mout=''; }
 yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mout" >"$tmp/metering-config.yaml"
 yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != null and .runs.gatewayIdentity' "$tmp/metering-config.yaml" >/dev/null 2>&1 ||
   { echo "FAIL: the metering config lacks its split, throttle or identity" >&2; fail=1; }
@@ -305,11 +306,19 @@ grep -qE 'name: metrics' <<<"$(yq 'select(.kind == "NetworkPolicy" and .metadata
 catalogs() { yq ea '[select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog")] | length' - <<<"$out"; }
 [[ "$(catalogs)" == 1 ]] || { echo "FAIL: the gateway demo renders $(catalogs) model catalogs, want 1" >&2; fail=1; }
 ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | (.providers | length) == 0' 'the gateway demo without prices: an empty catalog'
-out="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4},"agent-default":{"input":1,"cacheRead":0.1,"output":2}}')" ||
+out="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4},"m2":{"input":3,"cacheRead":0.3,"output":9},"agent-default":{"input":1,"cacheRead":0.1,"output":2}}')" ||
   { echo "FAIL: the gateway demo with factory prices does not render" >&2; fail=1; out=''; }
 [[ "$(catalogs)" == 1 ]] || { echo "FAIL: factory prices render $(catalogs) model catalogs, want 1" >&2; fail=1; }
-ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | .providers.demo.models | ((keys | join(",")) == "m1" and .m1.rates.input == "1.40" and .m1.rates.cacheRead == "0.26" and .m1.rates.output == "4.40" and (.m1.rates | length) == 3)' \
-  'the catalog defaults to maku-factory.config.meter.prices, the served models only'
+ykind ConfigMap 'select(.metadata.name=="model-gateway-model-catalog") | .data."catalog.json" | from_yaml | .providers.demo.models | ((keys | join(",")) == "m1,m2" and .m1.rates.input == "1.40" and .m1.rates.cacheRead == "0.26" and .m1.rates.output == "4.40" and (.m1.rates | length) == 3)' \
+  'the catalog defaults to maku-factory.config.meter.prices, the served models only (agent-default is no provider model)'
+# the umbrella-rendered catalog carries maku-gateway's own labels, as the subchart's objects do
+[[ "$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .metadata.labels' - <<<"$out")" == \
+   "$(yq ea 'select(.kind == "NetworkPolicy" and .metadata.name == "model-gateway") | .metadata.labels' - <<<"$out")" ]] ||
+  { echo "FAIL: the umbrella's catalog does not carry maku-gateway's labels" >&2; fail=1; }
+# once the factory prices anything, a served model without a row fails the render (review #518)
+msg="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4}}' 2>&1 >/dev/null || true)"
+grep -qF 'maku-gateway serves m2 (tier-light, provider demo) but maku-factory.config.meter.prices has no row for it' <<<"$msg" ||
+  { echo "FAIL: a served model with no factory price does not fail the render (got: $msg)" >&2; fail=1; }
 out="$(helm template af . -n maku "${gwd[@]}" --set-json 'maku-factory.config.meter.prices={"m1":{"input":1.4,"cacheRead":0.26,"output":4.4}}' \
   --set-json 'maku-gateway.modelCatalog.prices={"m2":{"input":3,"cacheRead":0.3,"output":9}}')" ||
   { echo "FAIL: the gateway demo with its own prices does not render" >&2; fail=1; out=''; }

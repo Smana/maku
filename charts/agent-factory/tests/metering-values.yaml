@@ -9,7 +9,7 @@ maku-factory:
       url: http://vmsingle.metrics.svc.cluster.local:8428
       query: 'sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})'
       throttle:
-        promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status="429", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m])) > 0'
+        promQuery: 'sum by (ar_agent) (increase(agentgateway_requests_total{status="429", reason="RateLimit", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m])) > 0'
       prices:
         agent-default: {input: 1.00, cacheRead: 0.10, output: 2.00}
         echo-default: {input: 1.00, cacheRead: 0.10, output: 2.00}
