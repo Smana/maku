@@ -47,7 +47,7 @@ type HumanOptions struct {
 	// Origin is the only Origin a browser request may carry (T9).
 	Origin string
 	// RolesRefused counts a roles claim that gave no group, by a RolesClaim* reason. Optional.
-	RolesRefused func(reason string)
+	RolesRefused func(ctx context.Context, reason string)
 }
 
 // Humans re-validates what oauth2-proxy forwards (§3, S5): the ID token in
@@ -65,7 +65,7 @@ type Humans struct {
 	maku     func() string // "" until phase 6
 	roles    string
 	origin   string
-	refused  func(reason string)
+	refused  func(ctx context.Context, reason string)
 }
 
 // NewHumans authenticates the humans of one ZITADEL project: the zitadel preset, token use access.
@@ -171,19 +171,19 @@ func (h *Humans) verifyZITADEL(ctx context.Context, raw string, client func(*Cla
 
 // groups is the token's group names by the roles claim. One that gives none is counted, and the
 // principal holds no group: never admitted as a member (fail closed).
-func (h *Humans) groups(c *Claims) []string {
+func (h *Humans) groups(ctx context.Context, c *Claims) []string {
 	names, err := c.RoleNames(h.roles)
 	if err != nil {
 		if rc := (*RolesClaimError)(nil); errors.As(err, &rc) && h.refused != nil {
-			h.refused(rc.Reason)
+			h.refused(ctx, rc.Reason)
 		}
 		return nil
 	}
 	return names
 }
 
-func (h *Humans) principal(c *Claims, client string, exp time.Time, credential string) Principal {
-	return Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: h.groups(c),
+func (h *Humans) principal(ctx context.Context, c *Claims, client string, exp time.Time, credential string) Principal {
+	return Principal{Kind: envelope.ActorHuman, ID: "human:" + c.Subject, Sub: c.Subject, Groups: h.groups(ctx, c),
 		ClientID: client, Expiry: exp, AccessToken: credential}
 }
 
@@ -207,7 +207,7 @@ func (h *Humans) Authenticate(r *http.Request) (Principal, error) {
 	// the web UI's would make that bearer a web session (review M5).
 	if cli := h.maku(); cli != "" && cli != h.web() {
 		if ac, client, err := h.verifyAccess(r.Context(), raw); err == nil && client == cli {
-			return h.principal(ac, cli, ac.ExpiresAt.Time, raw), nil
+			return h.principal(r.Context(), ac, cli, ac.ExpiresAt.Time, raw), nil
 		}
 	}
 	id, idClient, err := h.verifyID(r.Context(), raw)
@@ -229,7 +229,7 @@ func (h *Humans) Authenticate(r *http.Request) (Principal, error) {
 	if ac.ExpiresAt.Before(exp) {
 		exp = ac.ExpiresAt.Time
 	}
-	return h.principal(id, idClient, exp, access), nil
+	return h.principal(r.Context(), id, idClient, exp, access), nil
 }
 
 // authenticateID is token use id (PR3): the ID token is the credential, and what the broker
@@ -242,10 +242,10 @@ func (h *Humans) authenticateID(r *http.Request, raw string) (Principal, error) 
 		return Principal{}, err
 	}
 	if cli := h.maku(); cli != "" && cli != h.web() && client == cli {
-		return h.principal(id, cli, id.ExpiresAt.Time, raw), nil
+		return h.principal(r.Context(), id, cli, id.ExpiresAt.Time, raw), nil
 	}
 	if access := r.Header.Get(ForwardedAccessHeader); access == "" || access == raw {
 		return Principal{}, fmt.Errorf("%w: a web session needs a distinct access token", ErrUnauthenticated)
 	}
-	return h.principal(id, client, id.ExpiresAt.Time, raw), nil
+	return h.principal(r.Context(), id, client, id.ExpiresAt.Time, raw), nil
 }

@@ -21,6 +21,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/Smana/maku/internal/authn"
 	fconfig "github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
@@ -76,14 +77,32 @@ const (
 type HumanConfig struct {
 	// Mode is "" or "oidc" (the ZITADEL-backed default), or "local": one loopback user behind a
 	// port-forward, for an install with no IdP (adoption 3b).
-	Mode                string       `json:"mode,omitempty"`
-	Issuer              string       `json:"issuer"`
-	JWKSURL             string       `json:"jwksURL"`
-	ClientIDFile        string       `json:"clientIDFile"`                  // the rooms-proxy client id, from agents-secrets
-	RoomctlClientIDFile string       `json:"roomctlClientIDFile,omitempty"` // phase 6
-	ProjectIDFile       string       `json:"projectIDFile"`                 // a human token's aud must hold it (Ruling AS)
-	Origin              string       `json:"origin"`
-	Groups              GroupsConfig `json:"groups"`
+	Mode string `json:"mode,omitempty"`
+	// Preset is "" or "zitadel" (today's token rules, byte for byte), or "generic": any OIDC issuer,
+	// its roles claim named by RolesClaim (v4 D8).
+	Preset string `json:"preset,omitempty"`
+	Issuer string `json:"issuer"`
+	// JWKSURL is optional when Issuer is https: its discovery document names jwks_uri.
+	JWKSURL             string `json:"jwksURL"`
+	ClientIDFile        string `json:"clientIDFile"`                  // the rooms-proxy client id, from agents-secrets
+	RoomctlClientIDFile string `json:"roomctlClientIDFile,omitempty"` // phase 6
+	ProjectIDFile       string `json:"projectIDFile"`                 // a human token's aud must hold it (Ruling AS)
+	// TokenUse is what a human presents: "id" (the ID token is the credential, generic's default)
+	// or "access" (the ID-plus-access pair, zitadel's only one).
+	TokenUse string `json:"tokenUse,omitempty"`
+	// Audience, or AudienceFile read at use, is the aud value every access token must hold under
+	// preset generic: required with tokenUse access, and with a sponsored principal. The zitadel
+	// preset's is ProjectIDFile.
+	Audience     string `json:"audience,omitempty"`
+	AudienceFile string `json:"audienceFile,omitempty"`
+	// RolesClaim names the claim holding Groups' values, or an RFC 6901 pointer to it when it
+	// starts with "/": required with preset generic. Unset under zitadel: groups, else the keys
+	// of urn:zitadel:iam:org:project:roles.
+	RolesClaim string `json:"rolesClaim,omitempty"`
+	// Scopes are added to openid profile email offline_access by maku login.
+	Scopes []string     `json:"scopes,omitempty"`
+	Origin string       `json:"origin"`
+	Groups GroupsConfig `json:"groups"`
 	// Access turns on D7: a member sees a room only if they can read its repository
 	// on GitHub. Unset, rooms are visible to admins only, never to every member.
 	Access *AccessConfig `json:"access,omitempty"`
@@ -330,6 +349,43 @@ func (h HumanConfig) EffectiveMode() string {
 		return HumanModeOIDC
 	}
 	return h.Mode
+}
+
+// The human block's presets (v4 D8).
+const (
+	// PresetZITADEL keeps today's token rules: the project id in every token's aud, the groups
+	// claim or the project roles, token use access. An empty preset is this one.
+	PresetZITADEL = "zitadel"
+	// PresetGeneric reads any OIDC issuer: a configured roles claim, token use id by default.
+	PresetGeneric = "generic"
+)
+
+// What a human presents (v4 D8, PR3).
+const (
+	// TokenUseID makes the ID token the credential.
+	TokenUseID = authn.TokenUseID
+	// TokenUseAccess is the ID-plus-access pair for the web, and maku's access token as a bearer.
+	TokenUseAccess = authn.TokenUseAccess
+)
+
+// EffectivePreset is the preset the broker serves: an empty one is zitadel, the deployment every
+// existing config carries.
+func (h HumanConfig) EffectivePreset() string {
+	if h.Preset == "" {
+		return PresetZITADEL
+	}
+	return h.Preset
+}
+
+// EffectiveTokenUse is the configured token use, else the preset's: zitadel's access, generic's id.
+func (h HumanConfig) EffectiveTokenUse() string {
+	switch {
+	case h.TokenUse != "":
+		return h.TokenUse
+	case h.EffectivePreset() == PresetGeneric:
+		return TokenUseID
+	}
+	return TokenUseAccess
 }
 
 // EffectiveGroups is the two group names the listener admits and the policy matrix reads. Local
@@ -1029,6 +1085,12 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.clientIDFile", h.ClientIDFile != "", "there is no OAuth client"},
 			{"human.roomctlClientIDFile", h.RoomctlClientIDFile != "", "there is no maku client"},
 			{"human.projectIDFile", h.ProjectIDFile != "", "no token carries a project audience"},
+			{"human.preset", h.Preset != "", "there is no IdP to shape a token"},
+			{"human.tokenUse", h.TokenUse != "", "there is no token to present"},
+			{"human.audience", h.Audience != "", "no token carries an audience"},
+			{"human.audienceFile", h.AudienceFile != "", "no token carries an audience"},
+			{"human.rolesClaim", h.RolesClaim != "", "the local user's groups are fixed"},
+			{"human.scopes", len(h.Scopes) > 0, "there is no IdP to ask"},
 			{"human.access", h.Access != nil, "the local user is an admin, and D7 gates members only"},
 			{"human.slackLink", h.SlackLink != nil, "a link code names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
@@ -1055,13 +1117,14 @@ func (h HumanConfig) validate(system []string) []error {
 	if h.EffectiveMode() != HumanModeOIDC {
 		return []error{fmt.Errorf("human: mode %q is not oidc or local", h.Mode)}
 	}
-	errs = append(errs, issuer("human", IssuerConfig{Issuer: h.Issuer, JWKSURL: h.JWKSURL}, false)...)
+	// Without jwksURL, an https issuer's discovery document names jwks_uri, read at the first token.
+	if h.JWKSURL != "" || !isHTTPS(h.Issuer) {
+		errs = append(errs, issuer("human", IssuerConfig{Issuer: h.Issuer, JWKSURL: h.JWKSURL}, false)...)
+	}
 	if h.ClientIDFile == "" {
 		errs = append(errs, errors.New("human.clientIDFile: is required"))
 	}
-	if h.ProjectIDFile == "" {
-		errs = append(errs, errors.New("human.projectIDFile: is required"))
-	}
+	errs = append(errs, h.validatePreset()...)
 	// Compared verbatim with the Origin header, which is scheme://host[:port].
 	if u, err := url.Parse(h.Origin); err != nil || u.Scheme != "https" || u.Host == "" || u.Scheme+"://"+u.Host != h.Origin {
 		errs = append(errs, errors.New("human.origin: must be https://host[:port], as a browser sends it"))
@@ -1217,4 +1280,64 @@ func issuer(field string, is IssuerConfig, run bool) []error {
 		return errs
 	}
 	return []error{fmt.Errorf("%s: mode %q is not jwks or tokenreview", field, is.Mode)}
+}
+
+func isHTTPS(raw string) bool {
+	u, err := url.Parse(raw)
+	return err == nil && u.Scheme == "https" && u.Host != "" && u.User == nil
+}
+
+// validatePreset checks the keys each preset reads, naming both keys where an old and a new one
+// conflict (D25).
+func (h HumanConfig) validatePreset() []error {
+	var errs []error
+	if !authn.ValidRolesClaim(h.RolesClaim) {
+		errs = append(errs, errors.New("human.rolesClaim: not a claim name or an RFC 6901 pointer (~0 and ~1 are its only escapes)"))
+	}
+	for _, sc := range h.Scopes {
+		if sc == "" || strings.ContainsAny(sc, " \t\n") {
+			errs = append(errs, errors.New("human.scopes: an empty or spaced scope"))
+			break
+		}
+	}
+	switch h.EffectivePreset() {
+	case PresetZITADEL:
+		if h.ProjectIDFile == "" {
+			errs = append(errs, errors.New("human.projectIDFile: is required"))
+		}
+		if h.Audience != "" {
+			errs = append(errs, errors.New("human.audience: the zitadel preset's audience is human.projectIDFile"))
+		}
+		if h.AudienceFile != "" {
+			errs = append(errs, errors.New("human.audienceFile: the zitadel preset's audience is human.projectIDFile"))
+		}
+		if h.TokenUse != "" && h.TokenUse != TokenUseAccess {
+			errs = append(errs, errors.New("human.tokenUse: the zitadel preset uses access"))
+		}
+	case PresetGeneric:
+		if h.RolesClaim == "" {
+			errs = append(errs, errors.New("human.rolesClaim: is required with preset generic (the claim holding groups.admin and groups.member)"))
+		}
+		if h.ProjectIDFile != "" {
+			errs = append(errs, errors.New("human.projectIDFile: the zitadel preset's; use human.audienceFile with tokenUse access"))
+		}
+		if h.Audience != "" && h.AudienceFile != "" {
+			errs = append(errs, errors.New("human.audience, human.audienceFile: tokenUse access needs exactly one"))
+		}
+		switch h.EffectiveTokenUse() {
+		case TokenUseAccess:
+			if h.Audience == "" && h.AudienceFile == "" {
+				errs = append(errs, errors.New("human.audience, human.audienceFile: tokenUse access needs exactly one (an aud value every human token must hold)"))
+			}
+		case TokenUseID:
+		default:
+			errs = append(errs, fmt.Errorf("human.tokenUse: %q is not id or access", h.TokenUse))
+		}
+		if len(h.MCP.Sponsored) > 0 && h.Audience == "" && h.AudienceFile == "" {
+			errs = append(errs, errors.New("human.mcp.sponsored needs human.audience or human.audienceFile with preset generic: a sponsored token's aud must hold it"))
+		}
+	default:
+		errs = append(errs, fmt.Errorf("human.preset: %q is not zitadel or generic", h.Preset))
+	}
+	return errs
 }

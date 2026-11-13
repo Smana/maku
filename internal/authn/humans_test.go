@@ -3,6 +3,7 @@
 package authn
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"maps"
@@ -301,7 +302,7 @@ func (s signer) oidcToken(t *testing.T, claims jwt.MapClaims) string {
 	return sign(t, jwt.SigningMethodRS256, s.key, "", c)
 }
 
-func (s signer) genericHumans(use, audience, roles string, refused func(string)) *Humans {
+func (s signer) genericHumans(use, audience, roles string, refused func(context.Context, string)) *Humans {
 	return NewHumansWith(s.verifier(), HumanOptions{TokenUse: use, Audience: func() string { return audience }, RolesClaim: roles,
 		Web: func() string { return webClient }, CLI: func() string { return cliClient }, Origin: uiOrigin, RolesRefused: refused})
 }
@@ -408,7 +409,7 @@ func TestHumansRolesClaim(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			var got []string
-			h := s.genericHumans(TokenUseID, "", c.roles, func(reason string) { got = append(got, reason) })
+			h := s.genericHumans(TokenUseID, "", c.roles, func(_ context.Context, reason string) { got = append(got, reason) })
 			claims := jwt.MapClaims{"sub": "2918", "aud": cliClient}
 			maps.Copy(claims, c.claims)
 			p, err := h.Authenticate(request(t, s.oidcToken(t, claims)))

@@ -232,6 +232,10 @@ type Set struct {
 	intentClassifies      metric.Int64Counter
 	intentClassifySeconds metric.Float64Histogram
 
+	// rooms_human_roles_claim_refused_total{reason}: human tokens whose roles claim gave no group
+	// (v4 D8), by the closed reason authn.RolesClaim* names.
+	rolesClaimRefused metric.Int64Counter
+
 	// slack is the Slack App's two proposal families (CD7, CD25). The broker's Set carries them so their
 	// names, descriptions and label vocabularies have one spelling; only the App records on them, and
 	// it makes its own with NewSlackProposals rather than building a Set, whose room gauges are the
@@ -339,6 +343,9 @@ func New(meter metric.Meter) (*Set, error) {
 	s.intentClassifySeconds, err = meter.Float64Histogram("intent_classify_duration_seconds",
 		metric.WithDescription("One intent_classify, its model call included."),
 		metric.WithExplicitBucketBoundaries(0.05, 0.1, 0.25, 0.5, 1, 2, 3, 5, 10))
+	check(err)
+	s.rolesClaimRefused, err = meter.Int64Counter("rooms_human_roles_claim_refused_total",
+		metric.WithDescription("Human tokens whose roles claim gave no group, by the closed reason: missing, type or bounds."))
 	check(err)
 	// needs_list_total{surface,principal,outcome} -> maku_needs_list_total (MakuName's needs_ case):
 	// needs/v1's adoption, per door and per caller.
@@ -659,6 +666,12 @@ func (s *Set) IntakePlanTokens(ctx context.Context, surface, kind string, n int6
 // capped or error. The reply, the person and the label never label a series.
 func (s *Set) IntentClassify(ctx context.Context, outcome string) {
 	s.intentClassifies.Add(ctx, 1, metric.WithAttributes(attribute.String("outcome", outcome)))
+}
+
+// HumanRolesClaimRefused counts one human token whose roles claim gave no group: reason is
+// missing, type or bounds. The claim's value and the person never label a series.
+func (s *Set) HumanRolesClaimRefused(ctx context.Context, reason string) {
+	s.rolesClaimRefused.Add(ctx, 1, metric.WithAttributes(attribute.String("reason", reason)))
 }
 
 // IntentClassifySeconds records one classification's duration, the model call included.

@@ -35,13 +35,18 @@ const (
 type newVerifier func(ctx context.Context, issuer, jwksURL string, lazy bool) (*authn.Verifier, error)
 
 // jwksVerifier is the broker's newVerifier: a JWKS fetched through httpx, its
-// refreshes logged.
-func jwksVerifier(log *slog.Logger) newVerifier {
+// refreshes logged. An empty JWKS URL reads it from the issuer's discovery document, lazily
+// whatever lazy says (only the humans' issuer may omit it). opts are for tests.
+func jwksVerifier(log *slog.Logger, opts ...authn.Option) newVerifier {
+	opts = append([]authn.Option{authn.WithLogger(log)}, opts...)
 	return func(ctx context.Context, issuer, jwksURL string, lazy bool) (*authn.Verifier, error) {
-		if lazy {
-			return authn.NewLazyVerifier(issuer, jwksURL, authn.WithLogger(log))
+		switch {
+		case jwksURL == "":
+			return authn.NewDiscoveringVerifier(issuer, opts...)
+		case lazy:
+			return authn.NewLazyVerifier(issuer, jwksURL, opts...)
 		}
-		return authn.NewVerifier(ctx, issuer, jwksURL, authn.WithLogger(log))
+		return authn.NewVerifier(ctx, issuer, jwksURL, opts...)
 	}
 }
 
@@ -168,7 +173,13 @@ func authenticators(ctx context.Context, cfg config.Config, m *metrics.Set, buil
 		groups := h.EffectiveGroups()
 		humans = authn.NewLocal(h.Origin, []string{groups.Admin, groups.Member})
 	} else {
-		humans = authn.NewHumans(hv, idFile(h.ProjectIDFile), idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile), h.Origin)
+		var refused func(context.Context, string)
+		if m != nil {
+			refused = m.HumanRolesClaimRefused
+		}
+		humans = authn.NewHumansWith(hv, authn.HumanOptions{TokenUse: h.EffectiveTokenUse(),
+			ZITADEL: h.EffectivePreset() == config.PresetZITADEL, Audience: humanAudience(h), RolesClaim: h.RolesClaim,
+			Web: idFile(h.ClientIDFile), CLI: idFile(h.RoomctlClientIDFile), Origin: h.Origin, RolesRefused: refused})
 	}
 	var sponsored *authn.Sponsored
 	if len(h.MCP.Sponsored) > 0 {
@@ -178,10 +189,23 @@ func authenticators(ctx context.Context, cfg config.Config, m *metrics.Set, buil
 		}
 		web, maku := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile)
 		sponsored = &authn.Sponsored{V: hv, Clients: clients, Exclude: func() []string { return []string{web(), maku()} },
-			Audience: idFile(h.ProjectIDFile)}
+			Audience: humanAudience(h)}
 	}
 	return auth{runs: runs, systems: authn.NewSystems(sys, cfg.SystemPrincipals), humans: humans, verifiers: all,
 		sponsored: sponsored, roomTokens: roomTokens, roomPatterns: roomPatterns}, nil
+}
+
+// humanAudience reads the aud value a human or sponsored access token must hold: the zitadel
+// preset's project id, else the configured audience, from its file when one is set.
+func humanAudience(h config.HumanConfig) func() string {
+	switch {
+	case h.EffectivePreset() == config.PresetZITADEL:
+		return idFile(h.ProjectIDFile)
+	case h.AudienceFile != "":
+		return idFile(h.AudienceFile)
+	}
+	aud := h.Audience
+	return func() string { return aud }
 }
 
 // idFile reads an id from a mounted file on every call, so an id the IdP mints
