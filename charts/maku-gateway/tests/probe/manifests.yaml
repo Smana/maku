@@ -78,6 +78,40 @@ spec:
           - serviceAccountToken: {audience: maku-gateway.internal.tier-light, expirationSeconds: 3600, path: internal-tier-light}
           - serviceAccountToken: {audience: room-broker, expirationSeconds: 3600, path: room-broker}
 ---
+# A bystander in the runs namespace whose ServiceAccount is not named like a run, holding the right
+# audience: the listener's subject check alone must refuse it (the route requires only the audience).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bystander
+  namespace: agents
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: bystander
+  namespace: agents
+spec:
+  serviceAccountName: bystander
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: caller
+      image: docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+      command: ["sleep", "3600"]
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+      volumeMounts:
+        - {name: app, mountPath: /app, readOnly: true}
+        - {name: tokens, mountPath: /tokens, readOnly: true}
+  volumes:
+    - name: app
+      configMap: {name: probe-scripts}
+    - name: tokens
+      projected:
+        sources:
+          - serviceAccountToken: {audience: maku-gateway.public.tier-light, expirationSeconds: 3600, path: public-tier-light}
+---
 apiVersion: gateway.networking.k8s.io/v1
 kind: Gateway
 metadata:
@@ -273,7 +307,8 @@ spec:
         - {field: temperature, expression: '1'}
         - {field: top_p, expression: 'null'}
 ---
-# One HTTPRoute per alias: a rule name (sectionName) needs Gateway API v1.4, a route does not.
+# One HTTPRoute per alias (a rule name, sectionName, needs Gateway API v1.4; a route does not), matching
+# the chat path exactly and rewriting it to the backend's typed route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -282,10 +317,10 @@ metadata:
 spec:
   parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /m/tier-light/}}]
+    - matches: [{path: {type: Exact, value: /m/tier-light/v1/chat/completions}}]
       filters:
         - type: URLRewrite
-          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -296,10 +331,10 @@ metadata:
 spec:
   parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /m/tier-frontier/}}]
+    - matches: [{path: {type: Exact, value: /m/tier-frontier/v1/chat/completions}}]
       filters:
         - type: URLRewrite
-          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -310,10 +345,10 @@ metadata:
 spec:
   parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /m/kimi-frontier/}}]
+    - matches: [{path: {type: Exact, value: /m/kimi-frontier/v1/chat/completions}}]
       filters:
         - type: URLRewrite
-          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: moonshot-kimi-frontier}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -324,10 +359,10 @@ metadata:
 spec:
   parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: public}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /m/mistral-light/}}]
+    - matches: [{path: {type: Exact, value: /m/mistral-light/v1/chat/completions}}]
       filters:
         - type: URLRewrite
-          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: mistral-mistral-light}]
 ---
 apiVersion: gateway.networking.k8s.io/v1
@@ -338,10 +373,10 @@ metadata:
 spec:
   parentRefs: [{group: gateway.networking.k8s.io, kind: Gateway, name: model-gateway, sectionName: internal}]
   rules:
-    - matches: [{path: {type: PathPrefix, value: /m/tier-light/}}]
+    - matches: [{path: {type: Exact, value: /m/tier-light/v1/chat/completions}}]
       filters:
         - type: URLRewrite
-          urlRewrite: {path: {type: ReplacePrefixMatch, replacePrefixMatch: /}}
+          urlRewrite: {path: {type: ReplaceFullPath, replaceFullPath: /v1/chat/completions}}
       backendRefs: [{group: agentgateway.dev, kind: AgentgatewayBackend, name: echo-tier-light}]
 ---
 # One Require per alias route: the token's audience names this listener and this alias (P2's `in`).

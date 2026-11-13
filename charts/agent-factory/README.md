@@ -86,7 +86,8 @@ audience prefix must match `maku-gateway`'s, or the render fails. `values-demo-g
 `values-demo.yaml`, is the demo in that mode: the demo key becomes the provider's Secret `demo-model` in
 the release namespace, and no `agent-model` exists. The planner keeps its URL until the broker's
 gateway mode arrives. `task chart:gateway:k3d` proves the gateway on
-k3d. The upstream archives are pinned by `dependencies.sha256`, which `task chart:deps` checks.
+k3d. agentgateway is vendored (the controller chart under `vendor/`, its CRDs in `agent-factory-crds`) and
+pinned in `charts/agentgateway.sha256`, which `task chart:deps` checks: no install needs the network for it.
 
 ## Spec-intake k3d test
 

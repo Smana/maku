@@ -116,6 +116,13 @@ ykind AgentgatewayBackend 'select(.metadata.name == "model-gateway-jwks") | ((.s
 ykind ClusterRoleBinding '(.roleRef.name == "system:service-account-issuer-discovery") and (.subjects[0].name == "system:unauthenticated")' 'the anonymous discovery binding'
 rejects 'source apiserver without the binding' 'identity.jwks.source apiserver needs identity.jwks.allowAnonymousDiscovery: true' "${minimal[@]}" --set identity.jwks.source=apiserver
 rejects 'source url without a url' 'identity.jwks.url is required' "${minimal[@]}" --set identity.jwks.url=
+# source inline: the issuer's public keys in the values, no anonymous access to the apiserver
+jwks='{"keys":[{"kty":"RSA","kid":"k1","n":"AQAB","e":"AQAB","use":"sig","alg":"RS256"}]}'
+inline="$(mktemp)"; JWKS="$jwks" yq -n '.identity.jwks = {"source": "inline", "inline": strenv(JWKS)}' >"$inline"
+out="$(render "${minimal[@]}" -f "$inline")"; rm -f "$inline"
+yeq "$(pol listener-public) | .spec.traffic.jwtAuthentication.providers[0].jwks.inline" "$jwks" 'source inline puts the keyset in the policy'
+yeq '[select(.kind == "ClusterRoleBinding" or (.kind == "AgentgatewayBackend" and .metadata.name == "model-gateway-jwks"))] | length' 0 'source inline: no discovery binding, no apiserver backend'
+rejects 'source inline without a keyset' 'identity.jwks.inline is required with identity.jwks.source inline' "${minimal[@]}" --set identity.jwks.source=inline
 rejects 'an image without a digest' 'image.digest is required' "${minimal[@]}" --set image.digest=
 out="$(render "${minimal[@]}" --set replicas=1)"
 yeq '[select(.kind == "AgentgatewayParameters") | .spec.podDisruptionBudget] | map(select(. != null)) | length' 0 'one replica: no PDB (it would block every drain)'
@@ -141,12 +148,16 @@ yeq "[select(.kind == \"AgentgatewayBackend\") | .metadata.name] | sort | join(\
   'anthropic-agent-default,anthropic-tier-frontier,anthropic-tier-light,anthropic-tier-standard,mistral-mistral-light,mistral-mistral-standard,moonshot-kimi-frontier,zai-agent-default,zai-planner,zai-tier-frontier,zai-tier-light,zai-tier-standard' \
   'one backend per alias row and per client'
 r='maku-models-public-kimi-frontier'
-yeq "$(route $r) | .spec.parentRefs[0].name + \"/\" + .spec.parentRefs[0].sectionName + \" \" + .spec.rules[0].matches[0].path.type + \" \" + .spec.rules[0].matches[0].path.value" \
-  'model-gateway/public PathPrefix /m/kimi-frontier/' 'the alias route matches /m/kimi-frontier/ on public'
-yeq "$(route $r) | .spec.rules[0].filters[0].urlRewrite.path.type + \" \" + .spec.rules[0].filters[0].urlRewrite.path.replacePrefixMatch + \" \" + .spec.rules[0].backendRefs[0].name" \
-  'ReplacePrefixMatch / moonshot-kimi-frontier' 'rewritten to / and sent to its backend'
+# Exact paths only: with the gateway's key, a caller reaches the provider's chat endpoint and nothing else.
+yeq "$(route $r) | .spec.parentRefs[0].name + \"/\" + .spec.parentRefs[0].sectionName + \" \" + ([.spec.rules[] | .matches[0].path.type + \" \" + .matches[0].path.value + \">\" + .filters[0].urlRewrite.path.type + \" \" + .filters[0].urlRewrite.path.replaceFullPath + \">\" + .backendRefs[0].name] | join(\",\"))" \
+  'model-gateway/public Exact /m/kimi-frontier/v1/chat/completions>ReplaceFullPath /v1/chat/completions>moonshot-kimi-frontier' \
+  'the alias route matches its chat path exactly, rewritten to the backend route'
+yeq "$(route maku-models-internal-tier-light) | [.spec.rules[] | .matches[0].path.value + \">\" + .filters[0].urlRewrite.path.replaceFullPath] | join(\",\")" \
+  '/m/tier-light/v1/chat/completions>/v1/chat/completions,/m/tier-light/v1/messages>/v1/messages' 'an anthropic alias also serves Messages, exactly'
+yeq "[select(.kind == \"HTTPRoute\") | .spec.rules[].matches[].path.type] | unique | join(\",\")" 'Exact' 'no route matches a prefix'
 yeq "$(rpol $r) | .spec.traffic.authorization.action + \" \" + (.spec.traffic.authorization.policy.matchExpressions | join(\",\"))" \
-  'Require "maku-gateway.public.kimi-frontier" in jwt.aud' "the route requires the alias's audience"
+  'Require "maku-gateway.public.kimi-frontier" in jwt.aud,jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")' \
+  "the route requires the alias's audience and, again, a run's subject"
 yeq "[select(.kind == \"HTTPRoute\") | .metadata.name] | sort | join(\",\")" \
   'maku-clients-planner,maku-models-internal-agent-default,maku-models-internal-list,maku-models-internal-tier-frontier,maku-models-internal-tier-light,maku-models-internal-tier-standard,maku-models-public-agent-default,maku-models-public-kimi-frontier,maku-models-public-list,maku-models-public-mistral-light,maku-models-public-mistral-standard,maku-models-public-tier-frontier,maku-models-public-tier-light,maku-models-public-tier-standard' \
   "a route per listener's alias rows, none for an alias the listener does not serve"
@@ -157,11 +168,11 @@ yeq "$(route maku-models-public-list) | [.spec.rules[0].matches[] | .path.type +
 yeq "$(rpol maku-models-public-list) | (.spec.traffic.directResponse.status | tostring) + \" \" + .spec.traffic.directResponse.body" \
   '404 {"error":"model listing is not served on the model gateway"}' 'and answered 404'
 yeq "$(route maku-clients-planner) | .spec.parentRefs[0].sectionName + \" \" + .spec.rules[0].matches[0].path.value + \" \" + .spec.rules[0].backendRefs[0].name" \
-  'clients /clients/planner/ zai-planner' "the planner's route on the clients listener"
+  'clients /clients/planner/v1/chat/completions zai-planner' "the planner's route on the clients listener"
 yeq "$(be zai-planner) | ([.spec.policies.ai.transformations[] | .field + \"=\" + .expression] | join(\",\")) + \" \" + .spec.policies.ai.modelAliases.\"tier-frontier\"" \
   'model="tier-frontier" glm-5.3' 'the planner forced to tier-frontier, mapped to glm-5.3'
 yeq "$(rpol maku-clients-planner) | .spec.traffic.authorization.policy.matchExpressions | join(\",\")" \
-  '"maku-gateway.client.planner" in jwt.aud' "the planner's route requires its audience"
+  '"maku-gateway.client.planner" in jwt.aud,jwt.sub == "system:serviceaccount:maku:room-broker"' "the planner's route requires its audience and the broker's subject"
 cat="$(yq ea 'select(.kind == "ConfigMap" and .metadata.name == "model-gateway-model-catalog") | .data."catalog.json"' - <<<"$out")"
 want="$(yq '.data."catalog.json"' tests/golden/anr-model-catalog.yaml)"
 [[ "$(jq -S . <<<"$cat")" == "$(jq -S . <<<"$want")" ]] || { echo "FAIL: the catalog differs from ANR's model-catalog.yaml:" >&2; diff <(jq -S . <<<"$want") <(jq -S . <<<"$cat") >&2; fail=1; }
@@ -197,6 +208,17 @@ yeq '[select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy")] | leng
 out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium)"
 yeq '[select(.kind == "NetworkPolicy")] | length' 0 'mode cilium: no NetworkPolicy'
 yeq "select(.kind == \"CiliumNetworkPolicy\") | [.spec.egress[] | .toFQDNs[]?.matchName] | sort | join(\",\")" 'api.anthropic.com,api.kimi.ai,api.mistral.ai,api.z.ai' "mode cilium: every provider's host by FQDN"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress | length" 2 'mode cilium: no scraper unless metrics.allowFrom'
+# metrics.allowFrom's NetworkPolicy peers, translated to Cilium endpoint selectors (cnref runs Cilium)
+out="$(render "${cnref[@]}" --set networkPolicy.mode=cilium \
+  --set 'metrics.allowFrom[0].namespaceSelector.matchLabels.kubernetes\.io/metadata\.name=observability' \
+  --set 'metrics.allowFrom[0].podSelector.matchLabels.app\.kubernetes\.io/name=vmagent' \
+  --set 'metrics.allowFrom[1].podSelector.matchLabels.app=scraper')"
+yeq "select(.kind == \"CiliumNetworkPolicy\") | .spec.ingress[2] | ([.fromEndpoints[] | .matchLabels | to_entries | map(.key + \"=\" + .value) | join(\"+\")] | join(\",\")) + \" \" + .toPorts[0].ports[0].port" \
+  'k8s:app.kubernetes.io/name=vmagent+k8s:io.cilium.k8s.namespace.labels.kubernetes.io/metadata.name=observability,k8s:app=scraper+k8s:io.kubernetes.pod.namespace=maku 15020' \
+  'mode cilium: metrics.allowFrom becomes fromEndpoints on 15020'
+rejects 'mode cilium with an ipBlock scraper' 'metrics.allowFrom[0]: mode cilium translates namespaceSelector and podSelector matchLabels only' \
+  "${cnref[@]}" --set networkPolicy.mode=cilium --set 'metrics.allowFrom[0].ipBlock.cidr=10.0.0.0/8'
 
 [[ $fail == 0 ]] || exit 1
 echo "maku-gateway chart render checks passed"

@@ -467,7 +467,8 @@ spec:
 ---
 # Source: maku-gateway/templates/routes.yaml
 # The pin (GW5): the listener admits any audience of its class; this route admits only its own.
-# A caller that rewrites its path to another alias holds no token for it: 403.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
 apiVersion: agentgateway.dev/v1alpha1
 kind: AgentgatewayPolicy
 metadata:
@@ -489,6 +490,7 @@ spec:
       policy:
         matchExpressions:
           - '"maku-gateway.public.tier-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
 
 ---
 # Source: maku-gateway/templates/routes.yaml
@@ -556,8 +558,9 @@ spec:
 
 ---
 # Source: maku-gateway/templates/routes.yaml
-# /m/tier-light/ on public: the prefix is rewritten to /, so a caller's base URL is
-# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1.
+# /m/tier-light on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
@@ -577,14 +580,14 @@ spec:
   rules:
     - matches:
         - path:
-            type: PathPrefix
-            value: /m/tier-light/
+            type: Exact
+            value: /m/tier-light/v1/chat/completions
       filters:
         - type: URLRewrite
           urlRewrite:
             path:
-              type: ReplacePrefixMatch
-              replacePrefixMatch: /
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
       backendRefs:
         - group: agentgateway.dev
           kind: AgentgatewayBackend

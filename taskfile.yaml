@@ -103,9 +103,9 @@ tasks:
       - git diff --exit-code -- config/crd api charts
 
   chart:deps:
-    desc: Build the charts' dependencies and check each upstream archive against its pinned sha256
+    desc: Check the vendored agentgateway CRDs and controller chart against charts/agentgateway.sha256 (offline)
     cmds:
-      - bash hack/chart-deps.sh
+      - bash hack/agentgateway-vendor.sh check
 
   chart:check:
     desc: Lint and render the CRD, factory, gateway and umbrella charts.

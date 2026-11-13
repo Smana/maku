@@ -5,6 +5,7 @@ package reconciler
 import (
 	"context"
 	"errors"
+	"maps"
 	"regexp"
 	"slices"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
+	"github.com/Smana/maku/internal/factory/filefence"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/steering"
@@ -138,7 +140,8 @@ func DecideArm(in ArmInputs) ArmDecision {
 	if rc == nil {
 		return notServedDecision(in)
 	}
-	return decide(in, cfg, rc, gateOf(rc, in.Task.Spec.PredictedClass))
+	cl := gateOf(rc, in.Task.Spec.PredictedClass)
+	return withGatePath(decide(in, cfg, rc, cl), in, rc, cl.ProtectedFiles)
 }
 
 // decide is DecideArm's rule on the class cl, wherever it was read: the central config, or a
@@ -172,7 +175,7 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 			// No approval can bind to this head: hand it off as a commit not the task's runs',
 			// with the bypass instructions, rather than asking for an approval that cannot count.
 			return human("human_commit_in_pr", "review")
-		case "approved":
+		case "approved": // a gate path is held once, over every variant, by withGatePath
 			return ArmDecision{Verdict: "arm", Reason: "maintainer_approved", Matched: "review", Approver: rv.Author}
 		}
 	} else {
@@ -223,6 +226,27 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 		return human("auto_merge_cap", class)
 	}
 	return ArmDecision{Verdict: "arm", Matched: class}
+}
+
+// withGatePath holds policy-bot's S9 without it: with merge.policyBot false, a maintainer's
+// approval never arms a change to a gate path, or a rename from one; it is handed off as
+// gate_path, a human merge on GitHub. The gate paths are the protectedFiles of every class of the
+// repository's central config plus extra (the decided class's, and every class and variant of a
+// repository-authoritative policy): a repository retiring policy-bot moves its .policy.yml gate
+// list there (D11). It applies once, to the final decision, so no variant of an any-branch class
+// can arm over a gate path. The reconciler reads an approved head's diff whenever policy-bot is off.
+func withGatePath(d ArmDecision, in ArmInputs, rc *config.Repository, extra []string) ArmDecision {
+	if d.Verdict != "arm" || d.Reason != "maintainer_approved" || rc.Merge.UsesPolicyBot() || !in.DiffRead {
+		return d
+	}
+	protected := slices.Clone(extra)
+	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
+		protected = append(protected, rc.Classes[name].ProtectedFiles...)
+	}
+	if len(protected) == 0 || filefence.ProtectedFiles(config.Class{ProtectedFiles: protected}, in.Stats) == "" {
+		return d
+	}
+	return ArmDecision{Verdict: "human", Reason: "gate_path", Matched: "gate", Rows: d.Rows}
 }
 
 // recordOf is the record's start (AM8), known before any row is read: the class's caps, the
