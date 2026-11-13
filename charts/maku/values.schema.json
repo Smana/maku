@@ -214,6 +214,20 @@
         "maxTunnelsPerClient": {"type": "integer", "minimum": 1}
       }
     },
+    "preflight": {
+      "description": "The install's preflight (v4 D24): a Helm test hook and a suspended CronJob running the run-controller image's preflight.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "image": {"type": "object", "additionalProperties": false, "properties": {"repository": {"type": "string"}, "tag": {"type": "string"}}},
+        "timeout": {"type": "string", "pattern": "^([0-9]+(s|m|h))+$"},
+        "strict": {"type": "boolean"},
+        "extraCRDs": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["name", "version"],
+          "properties": {"name": {"type": "string", "pattern": "^[a-z0-9.-]+$"}, "version": {"type": "string", "pattern": "^v[0-9a-z]+$"}}}},
+        "resources": {"type": "object"}
+      }
+    },
     "sandbox": {
       "description": "The run pod's sandbox (D18). The old runController.runtimeClassName and allowUnsandboxed keys stay honoured.",
       "type": "object",

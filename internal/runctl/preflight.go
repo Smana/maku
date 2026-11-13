@@ -180,8 +180,15 @@ func (p *Preflight) runtimeClass(ctx context.Context) (verdict, error) {
 }
 
 func (p *Preflight) runtimeClassRefusal(ctx context.Context) (string, bool, error) {
-	name := p.Cfg.RuntimeClassName
-	err := p.Client.Get(ctx, client.ObjectKey{Name: name}, &nodev1.RuntimeClass{})
+	return RuntimeClassRefusal(ctx, p.Client, p.Cfg.RuntimeClassName)
+}
+
+// RuntimeClassRefusal is the run-controller's RuntimeClass check, shared with the install's
+// preflight pod so the two cannot disagree (v4 D18): a refusal naming the fix when the class is
+// absent, a refusal with soon when the reader may not get it (an RBAC denial, which a fresh binding
+// may yet fix), or an error when the API cannot answer.
+func RuntimeClassRefusal(ctx context.Context, c client.Reader, name string) (refusal string, soon bool, err error) {
+	err = c.Get(ctx, client.ObjectKey{Name: name}, &nodev1.RuntimeClass{})
 	switch {
 	case apierrors.IsNotFound(err):
 		return fmt.Sprintf("RuntimeClass %q not found: install the sandbox runtime on your nodes, or set sandbox.runtimeClassName", name), false, nil

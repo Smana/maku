@@ -381,3 +381,77 @@ the human block turns it on. */}}
 []
 {{- end -}}
 {{- end }}
+
+{{/* ap.at: the value at a dotted path of a values map, as {"v": value}; null when absent. */}}
+{{- define "ap.at" -}}
+{{- $cur := .v -}}
+{{- range (splitList "." .path) -}}
+{{- if kindIs "map" $cur }}{{ $cur = index $cur . }}{{ else }}{{ $cur = nil }}{{ end -}}
+{{- end -}}
+{{- dict "v" $cur | toJson -}}
+{{- end -}}
+
+{{/* The preflight's Secrets (v4 D24): each seam of the registry (_seams.tpl, task chart:seams) in the
+release namespace whose value names a Secret, with its required keys as the values rename them, as
+{"secrets": [{seam, namespace, name, keys}]}. The run-controller checks the runs namespace's own. */}}
+{{- define "ap.preflightSecrets" -}}
+{{- $out := list -}}
+{{- range (include "ap.seams" . | fromJson).seams -}}
+{{- if and (eq .namespace "release") .value (not .mountOptional) -}}
+{{- $name := (include "ap.at" (dict "v" $.Values "path" .value) | fromJson).v | default "" -}}
+{{- if $name -}}
+{{- $keys := list -}}
+{{- if not .dynamicKeys -}}
+{{- range .keys -}}
+{{- if .required -}}
+{{- $k := .name -}}
+{{- if .from }}{{ $k = (include "ap.at" (dict "v" $.Values "path" .from) | fromJson).v | default .name }}{{ end -}}
+{{- $keys = append $keys $k -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $out = append $out (dict "seam" .id "namespace" $.Release.Namespace "name" $name "keys" $keys) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- dict "secrets" $out | toJson -}}
+{{- end -}}
+
+{{/* preflight.timeout in seconds: "5m" is 300. */}}
+{{- define "ap.preflightSeconds" -}}
+{{- $t := .Values.preflight.timeout | default "5m" -}}
+{{- $n := regexFind "^[0-9]+" $t | int -}}
+{{- if hasSuffix "h" $t }}{{ mul $n 3600 }}{{ else if hasSuffix "m" $t }}{{ mul $n 60 }}{{ else }}{{ $n }}{{ end -}}
+{{- end -}}
+
+{{/* The preflight's pod template, shared by the test hook and the CronJob so the two cannot drift. */}}
+{{- define "ap.preflightPod" -}}
+{{- $p := .Values.preflight -}}
+{{- $img := .Values.runController.image -}}
+{{- if $p.image.repository }}{{ $img = $p.image }}{{ end -}}
+metadata:
+  labels: {{- include "ap.labelsFor" (dict "root" . "name" "preflight") | nindent 4 }}
+spec:
+  serviceAccountName: {{ .Release.Name }}-preflight
+  automountServiceAccountToken: true # the API server is its first peer
+  enableServiceLinks: false
+  restartPolicy: Never
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    seccompProfile: {type: RuntimeDefault}
+  containers:
+    - name: preflight
+      image: {{ include "ap.image" (dict "root" . "image" $img) }}
+      {{- include "ap.pullPolicy" . | nindent 6 }}
+      args: [preflight, --config, /etc/maku-preflight/config.json{{ if $p.strict }}, --strict{{ end }}]
+      terminationMessagePolicy: File
+      securityContext: {{- include "ap.containerSecurityContext" . | nindent 8 }}
+      resources: {{- toYaml $p.resources | nindent 8 }}
+      volumeMounts:
+        - {name: config, mountPath: /etc/maku-preflight, readOnly: true}
+  volumes:
+    - name: config
+      configMap: {name: {{ .Release.Name }}-preflight}
+{{- end -}}
