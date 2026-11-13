@@ -20,7 +20,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 
 | Variable | Effect when set | When unset |
 |---|---|---|
-| `LLM_API_KEY_FILE` | the model API key is read from this file (maku-run-controller only) | the placeholder key; the identity-proxy injects the real one |
+| `LLM_API_KEY_FILE` | the model API key is read from this file (maku-run-controller only): the provider key, or in the run-controller's `model.mode: gateway` the run's own gateway token | the placeholder key; the identity-proxy injects the real one |
 | `GIT_TOKEN_FILE` | the git credential helper prints this file's token; it never calls octo-sts, and revokes it on exit only with `GIT_TOKEN_REVOCABLE=1` (maku-run-controller only; `gitTokens: perRun` sets it, a PAT never is) | octo-sts exchange through identity-proxy `:4001`, revoked on exit |
 | `MCP_URL` | the platform MCP entry and progress notes are wired | no platform tools, no progress notes |
 | `MCP_TOKEN_FILE` | every MCP request (the platform entry's, re-read per POST by `site/sitecustomize.py`, and the progress notes') carries `Authorization: Bearer <the file>`: the portable runtime's room tools token, which the broker's `:8090` verifies itself | no `Authorization`: a gateway in front authenticates the run |
@@ -28,6 +28,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `AGENT_RUN_SECONDS` | the pod's deadline: the final checks are skipped (`skipped: deadline`) when less than the declaration's budget plus 2 min is left | the final checks always run |
 | `AGENT_LOOP` | an implementer runs under the [loop policy](#loop-policy): a JSON object holding any of `stallSteps`, `continuations` and `judgeModel`; `{}` is 80, 2 and `tier-light` | no judge and no stall rule: the run ends when its conversation does |
 | `JUDGE_BASE_URL` | the judge posts to `$JUDGE_BASE_URL/chat/completions` with `JUDGE_MODEL` as its model (required: without it the judge is unavailable and says so on stderr), on the key `LLM_API_KEY_FILE` names; for a runtime with no identity proxy (maku-run-controller) | the identity proxy's `/judge/v1`, as below |
+| `JUDGE_API_KEY_FILE` | with `JUDGE_BASE_URL`, the judge's bearer is this file, read at each judge call: the run-controller's gateway token for the judge's alias (`model.mode: gateway`) | the judge uses `LLM_API_KEY_FILE`'s key |
 | `COORDINATION_MANIFEST`, `COORDINATION_MANIFEST_SHA256` | a triager runs the [coordination integration](#coordination-integration) on these exact bytes, and no conversation | today's run |
 | `AGENT_SEARCH` | `1`: an implementer gets the `search` tool and its rule, once `agent_search` imports (else `agent-run: search off: …` and a run as today); the ledger's tool calls join the step count the loop policy's stall rule reads, and `agent-run search: N calls, S steps, T tokens, outcomes …` closes the log | no search tool |
 

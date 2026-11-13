@@ -137,7 +137,7 @@ tasks:
       - NETPOL=unenforced bash charts/agent-factory/tests/install.sh k3d
 
   chart:gateway:k3d:
-    desc: The demo on k3d with the model gateway on (agentgateway, its CRDs, maku-gateway); a run-like token reaches its alias only
+    desc: The gateway demo on k3d (values-demo-gateway.yaml, agentgateway, its CRDs); a run-like token reaches its alias only, and a run in model.mode gateway reaches its model with its own token
     cmds:
       - GATEWAY=1 bash charts/agent-factory/tests/install.sh k3d
 

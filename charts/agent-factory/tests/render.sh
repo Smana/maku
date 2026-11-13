@@ -274,6 +274,43 @@ helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gatewa
   --set maku.broker.human.intake.plan.apiKeyFile=/etc/planner/key >/dev/null 2>&1 ||
   { echo "FAIL: a planner with its own url and apiKeyFile does not render beside the gateway" >&2; fail=1; }
 
+# The gateway demo (plan v4 step 4, Task 10): runs call the gateway with their own token, and no provider
+# key reaches the runs namespace. values-demo.yaml alone stays the golden above, byte for byte.
+gwd=("${img[@]}" -f values-demo.yaml -f values-demo-gateway.yaml --set demo.model.apiKey=k1
+     --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1
+     --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local
+     --set maku-gateway.providers.demo.host=api.example.test
+     --set maku-gateway.aliases.public.agent-default.model=m1 --set maku-gateway.aliases.public.tier-light.model=m2)
+out="$(helm template af . -n maku "${gwd[@]}")" || { echo "FAIL: the gateway demo does not render" >&2; fail=1; out=''; }
+ynone 'select(.kind == "Secret" and .metadata.name == "agent-model")' 'the gateway demo renders no agent-model'
+ynone 'select(.kind == "Secret" and .metadata.namespace == "agents")' 'the gateway demo renders no Secret in the runs namespace'
+ykind Secret 'select(.metadata.name == "demo-model") | (.metadata.namespace == "maku" and .stringData.apiKey == "k1")' 'the demo key is its provider'"'"'s Secret, in the release namespace'
+ykind AgentgatewayBackend '(.metadata.name == "demo-agent-default" or .metadata.name == "demo-tier-light" or .metadata.name == "model-gateway-jwks")' 'the demo provider serves agent-default'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (has("modelSecret") | not))' 'the gateway demo: the run-controller calls this release'"'"'s model-gateway'
+yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/rc-gateway.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml") || fail=1
+# bad WANT ARGS...: the render fails naming WANT.
+bad() {
+  local want="$1" msg; shift
+  msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
+  grep -qF -- "$want" <<<"$msg" || { echo "FAIL: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
+}
+bad 'maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service' "${args[@]}" \
+  --set maku.runController.model.mode=gateway --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
+bad "maku.runController.model.gateway.aliases.public [agent-default] must be maku-gateway.aliases.public's keys [agent-default, tier-light]" "${gwd[@]}" \
+  --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}'
+bad 'maku.runController.model.gateway.audiencePrefix "other" must equal maku-gateway.audiencePrefix "maku-gateway"' "${gwd[@]}" --set maku.runController.model.gateway.audiencePrefix=other
+bad 'maku.runController.model.gateway.ports (8090, 8081) must equal maku-gateway.listeners' "${gwd[@]}" --set maku.runController.model.gateway.ports.public=8090
+bad 'maku.runController.model.gateway.service "elsewhere" must be empty or maku-gateway.name "model-gateway"' "${gwd[@]}" --set maku.runController.model.gateway.service=elsewhere
+bad 'demo.model.baseURL: with maku.runController.model.mode gateway' "${gwd[@]}" --set demo.model.baseURL=http://model.example.test/v1
+bad 'maku-factory.config.runs.gatewayIdentity is true but maku.runController.model.mode is "secret"' "${args[@]}" --set maku-factory.config.runs.gatewayIdentity=true
+# ANR's form: an external gateway, maku-gateway off.
+out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 --set maku.runController.model.mode=gateway \
+  --set maku.runController.model.gateway.service=agentgateway --set maku.runController.model.gateway.namespace=ai \
+  --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}')" || { echo "FAIL: an external gateway does not render" >&2; fail=1; out=''; }
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .model.gateway.url == "http://agentgateway.ai.svc.cluster.local"' 'an external gateway by service and namespace'
+ynone 'select(.kind == "Gateway")' 'an external gateway renders no Gateway'
+
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
 mine="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f "$tmp/mine.yaml")" || { echo "FAIL: values-mine.example.yaml does not render" >&2; fail=1; mine=''; }

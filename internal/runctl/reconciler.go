@@ -235,16 +235,12 @@ const runTokenMargin = 5 * time.Minute
 // first absent one: the chart, or the factory's minter, may write them after the controller starts.
 func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun, now time.Time) (Model, []byte, hold, error) {
 	c := r.Cfg
-	ms := &corev1.Secret{}
-	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.ModelSecret}, ms)
-	if apierrors.IsNotFound(err) {
-		return Model{}, nil, missingSecret(fmt.Sprintf("Secret %s/%s not found", c.Namespace, c.ModelSecret)), nil
-	} else if err != nil {
+	m, why, err := r.model(ctx, run)
+	if err != nil {
 		return Model{}, nil, hold{}, err
 	}
-	m, err := ModelFrom(ms.Data)
-	if err != nil {
-		return Model{}, nil, missingSecret(err.Error()), nil
+	if why != "" {
+		return Model{}, nil, missingSecret(why), nil
 	}
 	if c.PerRun() {
 		if h, err := r.runToken(ctx, run, now); err != nil || h.why != "" {
@@ -295,6 +291,26 @@ func (r *Reconciler) runToken(ctx context.Context, run *v1alpha1.AgentRun, now t
 		return hold{"SecretExpiring", fmt.Sprintf("Secret %s expires within %s: waiting for the factory to refresh it", ref, runTokenMargin)}, nil
 	}
 	return hold{}, nil
+}
+
+// model is the run's model: in gateway mode from config alone (no Secret), else from modelSecret.
+func (r *Reconciler) model(ctx context.Context, run *v1alpha1.AgentRun) (Model, string, error) {
+	c := r.Cfg
+	if c.Gateway() {
+		return c.GatewayModel(run), "", nil
+	}
+	ms := &corev1.Secret{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: c.Namespace, Name: c.ModelSecret}, ms)
+	if apierrors.IsNotFound(err) {
+		return Model{}, fmt.Sprintf("Secret %s/%s not found", c.Namespace, c.ModelSecret), nil
+	} else if err != nil {
+		return Model{}, "", err
+	}
+	m, err := ModelFrom(ms.Data)
+	if err != nil {
+		return Model{}, err.Error(), nil
+	}
+	return m, "", nil
 }
 
 // create makes every owned object, the pod last so its volumes and ServiceAccount exist.

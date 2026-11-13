@@ -381,6 +381,32 @@ Residual risks of `kubernetes` mode:
   control still tells an ingress-only CNI apart, but the network check cannot be skipped: choose
   another mode on such a CNI.
 
+### The run's model credential
+
+The run controller hands each run one of two model credentials (`runController.model.mode`,
+[the model gateway](gateway.md#runs-through-the-gateway)):
+
+| Mode | In the sandbox | Its residual |
+|---|---|---|
+| `secret` (default) | the provider key from `agent-model`, a file the harness reads | a key with no expiry, valid at the provider for anything, readable by every command the model runs |
+| `gateway` | the run's own projected ServiceAccount tokens: one for `<prefix>.<dataClass>.<spec.model>`, and one for the judge's alias with a judge | a stolen token is valid until it expires (the run's deadline plus 10 minutes), only at the gateway, only on its alias and data class; its spend is metered to its run |
+
+In `gateway` mode no provider key enters the runs namespace. The gateway holds the keys, verifies each token offline,
+and sends the provider its own key, never the token. The token is not rotated: the harness reads it
+once, and gVisor raises no inotify event for a rotated file. So it lives the pod's deadline plus 10
+minutes. The run controller's preflight (`gateway-token-ttl`) refuses gateway runs when the apiserver
+caps token lifetimes under the longest run's. That check needs `create` on `serviceaccounts/token`
+for the run controller's own ServiceAccount, by name, and nothing else. Its token is bound to the
+controller's own pod (`POD_NAME` and `POD_UID` from the downward API), so the apiserver stops
+accepting it when that pod goes. Its audience, `<prefix>.preflight`, is one that no gateway route and
+no run admits. The run-pod policy adds two rules in this mode:
+- a projected token's audience is `room-broker`, `room-tools`, `<prefix>.public.<alias>` or
+  `<prefix>.internal.<alias>`, never the apiserver's, the broker's client audiences or another service's;
+- no pod reads `modelSecret`: no Secret volume, projected source, `env` `secretKeyRef` or `envFrom` in
+  any container or init container.
+
+The run controller's Role no longer reads that Secret.
+
 ## The run pod's admission
 
 With the run-controller, the `maku` chart holds the runs namespace with in-tree admission (v4 D17),

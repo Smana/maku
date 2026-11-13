@@ -175,7 +175,8 @@ def redact(text: str) -> str:
         cached = None
     if cached:
         text = text.replace(cached, REDACTED)
-    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("MCP_TOKEN_FILE", REDACTED)):
+    for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("JUDGE_API_KEY_FILE", REDACTED_KEY),
+                        ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)
         if value:
             text = text.replace(value, marker)
@@ -271,10 +272,10 @@ def child_spans(provider, parent):
     return lambda name: tracer.start_span(name, context=ctx)
 
 
-def _api_key(env: dict) -> str:
-    # The run-controller's runtime mounts the provider key (adoption 3a); behind the
-    # identity-proxy the harness only ever holds the placeholder.
-    path = env.get("LLM_API_KEY_FILE")
+def _api_key(env: dict, var: str = "LLM_API_KEY_FILE") -> str:
+    # The run-controller's runtime mounts the provider key (adoption 3a), or in its gateway mode the
+    # run's own gateway token; behind the identity-proxy the harness only ever holds the placeholder.
+    path = env.get(var)
     if not path:
         return PLACEHOLDER_KEY
     # Read directly, not through _read_secret: an unreadable key must raise, never fall back
@@ -1698,9 +1699,13 @@ def ask_judge(env: dict, model: str, message: str) -> tuple[str, str] | None:
     runtime, no proxy) it is a direct chat-completions call whose model is the environment's JUDGE_MODEL,
     not model."""
     direct = env.get("JUDGE_BASE_URL")
+    key_var = "LLM_API_KEY_FILE"
+    if direct and env.get("JUDGE_API_KEY_FILE"):
+        key_var = "JUDGE_API_KEY_FILE"
     if direct:
         # No identity proxy (the portable runtime): the judge calls a chat-completions endpoint directly,
-        # on the agent's key file, with the model JUDGE_MODEL names.
+        # on its own key file when JUDGE_API_KEY_FILE names one (the gateway's token for the judge's
+        # alias), else the agent's, with the model JUDGE_MODEL names. The file is read at each call.
         model = env.get("JUDGE_MODEL") or ""
         if not model:
             print("agent-run judge unavailable: JUDGE_BASE_URL is set without JUDGE_MODEL", file=sys.stderr, flush=True)
@@ -1722,7 +1727,7 @@ def ask_judge(env: dict, model: str, message: str) -> tuple[str, str] | None:
             "messages": [{"role": "system", "content": loop_policy.JUDGE_SYSTEM}, {"role": "user", "content": message}]}
     try:
         req = urllib.request.Request(url, data=json.dumps(body).encode(), method="POST",
-                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + _api_key(env)})
+                                     headers={"Content-Type": "application/json", "Authorization": "Bearer " + _api_key(env, key_var)})
         with NO_REDIRECT.open(req, timeout=JUDGE_TIMEOUT_S) as resp:
             reply = json.loads(resp.read(1 << 20))
         content = reply["choices"][0]["message"]["content"]

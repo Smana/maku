@@ -67,6 +67,8 @@ type Preflight struct {
 	ProbeStart, ProbePoll time.Duration
 	// ProbeSuffix names the probe pod (default 8 random characters of [a-z2-7]).
 	ProbeSuffix func() string
+	// Self is the run-controller's own pod, which the gateway-token-ttl check binds its token to.
+	Self PodRef
 
 	mu  sync.Mutex
 	res Result
@@ -125,6 +127,9 @@ func (p *Preflight) checks() []check {
 	var cs []check
 	if p.Cfg.RuntimeClassName != "" {
 		cs = append(cs, check{name: "runtimeClass", run: p.runtimeClass})
+	}
+	if p.Cfg.Gateway() {
+		cs = append(cs, check{name: "gateway-token-ttl", run: p.gatewayTokenTTL})
 	}
 	if !p.Cfg.PerRun() { // no shared Secret: each run's own is checked before its pod (Reconciler.inputs)
 		cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
