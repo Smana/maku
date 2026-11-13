@@ -80,3 +80,22 @@ func TestThePolicyPrintsAloneUnderRepositoryAuthority(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+// B12, B13: a bound class's decision names the Repository generation and the resolved class's
+// hash, after policygen= and before reviewer=; without them the marker is today's exactly.
+func TestMarkerBindingFields(t *testing.T) {
+	base := Rows{Reviewer: "glm-5.3", Generation: 4}
+	plain := Marker("abc", "c", "shadow", "shadow_would_arm", base)
+	if !strings.HasSuffix(plain, " capped=- policygen=4 reviewer=glm-5.3 -->") {
+		t.Fatal(plain)
+	}
+	bound := base
+	bound.RepoGeneration, bound.Resolved = 7, "0123456789ab"
+	got := Marker("abc", "c", "shadow", "shadow_would_arm", bound)
+	if !strings.HasSuffix(got, " policygen=4 repogen=7 resolved=0123456789ab reviewer=glm-5.3 -->") {
+		t.Fatal(got)
+	}
+	if strings.Replace(got, " repogen=7 resolved=0123456789ab", "", 1) != plain {
+		t.Fatalf("the new fields change nothing else:\n%s\n%s", got, plain)
+	}
+}
