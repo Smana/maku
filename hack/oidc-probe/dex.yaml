@@ -1,0 +1,40 @@
+# Dex for hack/oidc-probe/probe.sh only: a throwaway issuer, never a deployment's.
+# staticPasswords serve the password grant (O2 without groups, O3); the mockCallback connector
+# serves an authorization-code login whose identity carries groups (O2's roles claim).
+issuer: http://127.0.0.1:5556/dex
+storage:
+  type: memory
+web:
+  http: 0.0.0.0:5556
+oauth2:
+  skipApprovalScreen: true
+  passwordConnector: local
+  grantTypes:
+    - authorization_code
+    - refresh_token
+    - password
+    - urn:ietf:params:oauth:grant-type:device_code
+    - client_credentials
+enablePasswordDB: true
+staticPasswords:
+  - email: alice@example.com
+    # bcrypt of "probe-password"
+    hash: "$2y$10$gdTe1PR4fr.bPH2Od9oI1.HXALflbrEOhcjWW/5ETd6ExJ63QL0b6"
+    username: alice
+    userID: 08a8684b-db88-4b73-90a9-3cd1661f5466
+connectors:
+  - type: mockCallback
+    id: mock
+    name: Mock
+staticClients:
+  - id: maku-web
+    name: maku-web
+    secret: probe-web-secret
+    redirectURIs: [http://127.0.0.1:9/callback]
+  - id: maku-cli
+    name: maku-cli
+    public: true
+    redirectURIs: [http://127.0.0.1:9/callback]
+  - id: maku-slack
+    name: maku-slack
+    secret: probe-slack-secret

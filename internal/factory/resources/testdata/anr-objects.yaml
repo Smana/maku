@@ -1,0 +1,315 @@
+# ai-native-ref's tooling/base/agent-factory/resources/*.yaml at Smana/ai-native-ref@1529b3be60bf (origin/main,
+# 2026-11-12), in kustomization.yaml's order, ${cluster_name} replaced by aws-0. Comments dropped.
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Factory
+metadata:
+  name: aws-0
+  namespace: agent-system
+spec:
+  harnessProfiles:
+    plain: {}
+    checked: {checks: true}
+    adopted-none: {template: none}
+  control: {repository: Smana/cloud-native-ref, issue: 2188}  # factory/stop here stops every repository
+  defaults: {dataClass: public, predictedClass: review}
+  triage:
+    controlPercent: 10  # OD-14
+  tiers:
+    light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20, runUSD: 0.51, taskUSD: 1.02}
+    standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45, runUSD: 2.55, taskUSD: 5.10}
+    frontier: {model: agent-default, runTokens: 4000000, taskTokens: 8000000, runMinutes: 90, runUSD: 6.80, taskUSD: 13.60}
+  templates:
+    solo: {roles: [implementer]}
+    pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
+    trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
+    investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
+  caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5, preferRevisions: true}
+  facts: {finalSpend: true}
+  brief: {ciEvidence: true}
+  budgets:
+    enforceTask: true
+    enforcePrincipal: false
+    factoryDailyUSD: 42.50
+    humanDailyUSD: 8.50
+    perPerson: {enabled: true}
+  resume: {maxPerTask: 2}
+  loops:
+    default: {scope: "off"}
+    docs: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
+    scripts: {scope: scoper, split: {maxChildren: 4, familyUSD: 20.40, childTier: standard, anyTier: true}, judge: tier-light}
+    docs-links: {models: {reviewer: {frontier: kimi-frontier}}}
+    revert: {models: {reviewer: {frontier: kimi-frontier}}}
+    dead-links: {models: {reviewer: {frontier: kimi-frontier}}}
+    deps-patch: {models: {reviewer: {frontier: kimi-frontier}}}
+  prices:
+    glm-5.3: {input: 1.40, cacheRead: 0.26, output: 4.40, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}
+    glm-5.3-flashx: {input: 0.37, cacheRead: 0.075, output: 1.25, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}
+    glm-5.3-flash: {input: 0.15, cacheRead: 0.03, output: 0.50, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}
+    k3.1-pro: {input: 2.00, cacheRead: 0.20, cacheWrite: 2.00, output: 10.00, source: "https://platform.kimi.ai/docs/pricing/chat", checkedAt: "2026-10-28"}
+    mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50, source: "https://mistral.ai/pricing", checkedAt: "2026-10-28"}
+    mistral-small-2603: {input: 0.15, cacheRead: 0.015, output: 0.60, source: "https://mistral.ai/pricing", checkedAt: "2026-10-28"}
+    claude-opus-5-5: {input: 4.00, cacheRead: 0.20, cacheWrite: 5.00, output: 20.00, source: "https://platform.claude.com/docs/en/about-claude/pricing", checkedAt: "2026-10-16"}
+    claude-sonnet-5-5: {input: 2.00, cacheRead: 0.10, cacheWrite: 2.50, output: 10.00, source: "https://platform.claude.com/docs/en/about-claude/pricing", checkedAt: "2026-10-16"}
+    claude-haiku-5-5: {input: 0.50, cacheRead: 0.05, cacheWrite: 0.625, output: 2.50, source: "https://platform.claude.com/docs/en/about-claude/pricing", checkedAt: "2026-10-16"}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: cloud-native-ref
+  namespace: agent-system
+spec:
+  factoryRef: aws-0
+  repository: Smana/cloud-native-ref
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+  checks: {egress: [pypi]}
+  schedules:
+    - name: link-rot
+      cron: "0 6 * * 1"  # Mondays, 06:00 UTC
+      class: docs-links
+      text: |
+        Find broken external Markdown link targets ([text](url) or [ref]: url) under docs/
+        and website/content/, outside docs/superpowers/, docs/specs/ and
+        website/content/docs/decisions/. Fix those with an obvious replacement on the same
+        host, changing only the link target: leave code blocks, prose and link text alone,
+        change fewer than 21 lines in total and add or delete no file. If none is broken,
+        change nothing and open no pull request.
+    - name: dead-links
+      cron: "0 7 * * *"  # daily, after the 04:23 UTC scan
+      class: dead-links
+      probe: dead-links
+      text: Fix the dead external links listed below.
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: cloud-native-ref
+  namespace: agent-system
+spec:
+  repositoryRef: cloud-native-ref
+  classes:
+    docs-links: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
+    revert: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
+    docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
+    tests: {}
+    dashboards: {}
+    scripts: {checks: false, testFirst: false}
+    review: {checks: false, testFirst: false}
+    alert-rules:
+      shadow: true
+      allowedFiles: ['^observability/.+\.ya?ml$']
+      monitor: {verification: {within: 2h}, followUpWindow: 2h}
+    dead-links:
+      shadow: true  # since the gcp-0 session of 2026-10-27 (runbook 15 §2): decided, never armed
+      allowedFiles: ['^(docs|website/content)/.+\.md$']
+      protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/']
+      modifyOnly: true
+      maxModifiedLines: 20
+      diffShape: links-only
+      holdoutChecks: ["External links 🔗"]
+      oracle: {probe: dead-links, workflow: dead-links.yaml, maxFindings: 10}
+      monitor: {oracleRuns: 2, followUpWindow: 168h}
+      maxPerDay: 1
+    deps-patch:
+      shadow: true
+      author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
+      diffShape: semver-patch
+      allowedFiles: ['^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$']
+      protectedFiles:
+        - '^security/base/zitadel/'
+        - '^security/(aws|gcp)-0/zitadel/'
+        - '^flux/sources/helmrepo-zitadel\.yaml$'
+        - '^infrastructure/base/crossplane/configuration-core/'
+        - '^flux/sources/gitrepo-gateway-api\.yaml$'
+        - '^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$'
+      modifyOnly: true
+      maxPatchFiles: 3
+      maxModifiedLines: 10
+      releaseAgeCheck: renovate/stability-days
+      maxPerDay: 2
+      monitor: {flux: {source: flux-system/flux-system, within: 1h}, followUpWindow: 168h}
+    deps-minor:
+      shadow: true
+      author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
+      diffShape: semver-minor
+      allowedFiles: ['^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$']
+      protectedFiles:
+        - '^security/base/zitadel/'
+        - '^security/(aws|gcp)-0/zitadel/'
+        - '^flux/sources/helmrepo-zitadel\.yaml$'
+        - '^infrastructure/base/crossplane/configuration-core/'
+        - '^flux/sources/gitrepo-gateway-api\.yaml$'
+        - '^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$'
+      modifyOnly: true
+      maxPatchFiles: 3
+      maxModifiedLines: 10
+      releaseAgeCheck: renovate/stability-days
+      monitor: {flux: {source: flux-system/flux-system, within: 1h}, followUpWindow: 168h}
+  merge:
+    requiredChecks:
+      - "Pre-commit checks 🛃"
+      - "Security scanning 🔒"
+      - "Kubernetes validation ☸"
+      - "Rendered manifest diff 📝"
+      - "Check the shell scripts 💻"
+      - "Check the documentation links 🔗"
+      - "Validate Vector Log Parsing Configuration (vlsingle)"
+      - "Validate Vector Log Parsing Configuration (vlcluster)"
+    verifyChecks:
+      - "Pre-commit checks 🛃"
+      - "Security scanning 🔒"
+      - "Kubernetes validation ☸"
+      - "Check the shell scripts 💻"
+      - "Check the documentation links 🔗"
+    contractCheck: "Test contract 🧪"  # required on a task with a contract (TF8, row 2b); report-only otherwise
+    policyBotLogin: ogenki-merge-gate[bot]
+    mergerLogin: ogenki-agent-merger[bot]
+    autoMergesPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
+    fixRuns: 2
+    checkReruns: 1
+    verifyFor: 30m
+    revertWindow: 168h
+    leakScanCheck: "Security scanning 🔒"  # R42: TruffleHog's check run, in both lists above
+    awaitingCIFor: 24h
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: ai-native-ref
+  namespace: agent-system
+spec:
+  factoryRef: aws-0
+  repository: Smana/ai-native-ref
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+  checks: {egress: [golang, pypi]}
+  schedules:
+    - name: ai-native-ref-dead-links
+      cron: "15 7 * * *"  # after the 04:41 scan; the host's slot is 07:00
+      class: dead-links
+      probe: dead-links
+      text: Fix the dead external links listed below.
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: ai-native-ref
+  namespace: agent-system
+spec:
+  repositoryRef: ai-native-ref
+  classes:
+    docs-links: {shadow: true, holdoutChecks: [validate]}
+    revert: {shadow: true, holdoutChecks: [validate]}
+    docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
+    tests: {}
+    dashboards: {}
+    scripts: {}
+    dead-links:
+      shadow: true  # since the gcp-0 session of 2026-10-27 (runbook 15 §2): decided, never armed
+      allowedFiles: ['^(docs|website/content)/.+\.md$']
+      protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/']
+      modifyOnly: true
+      maxModifiedLines: 20
+      diffShape: links-only
+      holdoutChecks: ["External links 🔗"]
+      oracle: {probe: dead-links, workflow: dead-links.yaml, maxFindings: 10}
+      monitor: {oracleRuns: 2, followUpWindow: 168h}
+      maxPerDay: 1
+  merge:
+    requiredChecks: [validate, lint]
+    verifyChecks: [validate, lint]
+    policyBotLogin: ogenki-merge-gate[bot]
+    mergerLogin: ogenki-agent-merger[bot]
+    autoMergesPerDay: 2
+    fixRuns: 1
+    checkReruns: 0  # a cancelled check goes to a human
+    verifyFor: 30m
+    revertWindow: 168h
+    leakScanCheck: lint
+    awaitingCIFor: 24h
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: runlore-kb
+  namespace: agent-system
+spec:
+  factoryRef: aws-0
+  repository: Smana/runlore-kb
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: runlore-kb
+  namespace: agent-system
+spec:
+  repositoryRef: runlore-kb
+  classes:
+    docs-links: {shadow: true, holdoutChecks: [validate]}
+    revert: {shadow: true, holdoutChecks: [validate]}
+    kb-entries:
+      shadow: true
+      author: {adopt: {logins: ["runlore[bot]"], branches: ["^runlore/kb-"]}}
+      diffShape: added-entry
+      allowedFiles: ['^incidents/[^/]+\.md$']
+      companionFiles: ['^index\.md$', '^log\.md$']
+      requiredLabel: ready-to-merge
+      holdoutChecks: [validate]
+      maxPerDay: 5
+  merge:
+    requiredChecks: [validate, leak-scan]
+    verifyChecks: [validate, leak-scan]
+    policyBotLogin: ogenki-merge-gate[bot]
+    mergerLogin: ogenki-agent-merger[bot]
+    autoMergesPerDay: 5
+    fixRuns: 1
+    checkReruns: 0
+    verifyFor: 30m
+    revertWindow: 168h
+    leakScanCheck: leak-scan
+    awaitingCIFor: 24h
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: runlore
+  namespace: agent-system
+spec:
+  factoryRef: aws-0
+  repository: Smana/runlore
+  maintainers: [Smana]
+  triggerLabel: factory/ready
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: runlore
+  namespace: agent-system
+spec:
+  repositoryRef: runlore
+  classes:
+    docs-links: {shadow: true, holdoutChecks: [build]}
+    revert: {shadow: true, holdoutChecks: [build]}
+  merge:
+    requiredChecks: [build]
+    verifyChecks: [build]
+    policyBotLogin: ogenki-merge-gate[bot]
+    mergerLogin: ogenki-agent-merger[bot]
+    autoMergesPerDay: 5
+    fixRuns: 1
+    checkReruns: 0
+    verifyFor: 30m
+    revertWindow: 168h
+    leakScanCheck: build
+    awaitingCIFor: 24h
+    approveToMerge: true
+    breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}

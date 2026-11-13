@@ -471,11 +471,11 @@ D, E and F may run in parallel once C merges. Release N, a v0.4x minor, is cut a
 - [ ] **Step 1: failing tests** (`bindings_test.go`, table-driven over manifests in YAML strings):
   - **Bindings resolve:** the spec's two policies and a Repository serve `config.Repository.Classes["dead-links"]` equal to cloud-native-ref's legacy class (written out).
   - **Isolation (B9):**
-    - `dead-links` at generation 4 adds `requiredLabel` to `requires`;
-    - ai-native-ref's binding supplies none: the outcome is `MissingParameter`, and the class is absent from ai-native-ref's served classes;
+    - `dead-links` at generation 4 adds `monitor.flux: {within: 30m}` (not `requiredLabel` in `requires`: it needs `author.adopt`, so the policy would be refused alone);
+    - ai-native-ref's `merge` sets no `fluxSource`: the outcome is `MissingParameter`, and the class is absent from ai-native-ref's served classes;
     - with `Options.LastResolved[{ai-native-ref, dead-links}]` set, the outcome is `Accepted: false, Served: true` and the class is the last resolved one;
     - the Repository and its other classes are accepted;
-    - cloud-native-ref's binding supplies the label and serves generation 4.
+    - a consumer whose `merge` sets `fluxSource` serves generation 4.
   - **`MissingRef`:** a binding to an absent policy. The same for a policy refused `Invalid` with no last good.
   - **`AmbiguousAdoption` (PR9):**
     - two adopted policies, both `semver-patch`, logins `renovate[bot]` and `Renovate[bot]`, prefixes `^renovate/` and `^renovate/deps-`: the second in list order is refused, naming both;
@@ -485,7 +485,7 @@ D, E and F may run in parallel once C merges. Release N, a v0.4x minor, is cut a
     - a Repository with bindings and a legacy MergePolicy naming it: both are refused `DefinedTwice`;
     - with the Repository's last good put back (no bindings), the legacy pair serves.
   - **Guardrails (B14):** `mergeGuardrails.maxPerDay: 1` and a binding `maxPerDay: 2` give `GuardrailMismatch`; the binding without its own cap inherits 1.
-  - **Legacy untouched:** `testdata/anr.yaml` plus the four legacy policies assemble to the same `config.Config` as on main (a deep-equal against a frozen JSON in `testdata/anr-legacy-config.json`, written once from main). The four legacy warnings are in `Result.Warnings`.
+  - **Legacy untouched:** `testdata/anr-objects.yaml` (the Factory, four Repositories and four legacy policies) over the file `Migrate(testdata/anr.yaml)` leaves (`anr.yaml` holds three repositories) assemble to the same `config.Config` as on main (a deep-equal against a frozen JSON in `testdata/anr-legacy-config.json`, written once from main). The four legacy warnings are in `Result.Warnings`.
   - **A bad policy never refuses a Repository:**
     - a class policy refused `Invalid` leaves every consumer on its last good generation (serving `PolicyGeneration` 3);
     - with no last good, it leaves each consumer's binding `MissingRef` and the Repository accepted.

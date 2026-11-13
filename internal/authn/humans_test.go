@@ -3,8 +3,10 @@
 package authn
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"maps"
 	"slices"
 	"strings"
 	"testing"
@@ -289,5 +291,217 @@ func TestProjectRolesClaim(t *testing.T) {
 	}
 	if got := c.GroupNames(); !slices.Equal(got, []string{"agents-admin"}) {
 		t.Fatalf("got %v", got)
+	}
+}
+
+// oidcToken mints a token of any claim set from the test issuer, expiring in an hour unless set.
+func (s signer) oidcToken(t *testing.T, claims jwt.MapClaims) string {
+	t.Helper()
+	c := jwt.MapClaims{"iss": issuer, "exp": time.Now().Add(time.Hour).Unix()}
+	maps.Copy(c, claims)
+	return sign(t, jwt.SigningMethodRS256, s.key, "", c)
+}
+
+func (s signer) genericHumans(use, audience, roles string, refused func(context.Context, string)) *Humans {
+	return NewHumansWith(s.verifier(), HumanOptions{TokenUse: use, Audience: func() string { return audience }, RolesClaim: roles,
+		Web: func() string { return webClient }, CLI: func() string { return cliClient }, Origin: uiOrigin, RolesRefused: refused})
+}
+
+// The zitadel preset through the options is the old constructor, case for case.
+func TestHumansZITADELOptions(t *testing.T) {
+	s := newSigner(t)
+	h := NewHumansWith(s.verifier(), HumanOptions{TokenUse: TokenUseAccess, ZITADEL: true, Audience: func() string { return project },
+		Web: func() string { return webClient }, CLI: func() string { return cliClient }, Origin: uiOrigin})
+	web := []string{webClient, project}
+	r := request(t, s.humanToken(t, "2918", web, webClient, []string{"agents-member"}, time.Hour))
+	r.Header.Set(ForwardedAccessHeader, s.accessToken(t, "2918", web, webClient, nil, time.Hour))
+	if p, err := h.Authenticate(r); err != nil || p.ClientID != webClient || !slices.Equal(p.Groups, []string{"agents-member"}) {
+		t.Fatalf("%+v %v", p, err)
+	}
+	// The zitadel rule still needs the project in aud, where a generic ID token holds its client alone.
+	if _, err := h.VerifyHuman(t.Context(), s.humanToken(t, "2918", []string{webClient}, webClient, nil, time.Hour)); !errors.Is(err, ErrWrongAudience) {
+		t.Fatalf("the zitadel rule still needs the project in aud: %v", err)
+	}
+}
+
+// Token use id: the ID token is the credential (PR3). A web session is the ID token for the web
+// client plus a distinct access token, which is never parsed; the CLI presents its own ID token.
+func TestHumansTokenUseID(t *testing.T) {
+	s := newSigner(t)
+	id := func(sub string, aud any, extra jwt.MapClaims) string {
+		c := jwt.MapClaims{"sub": sub, "aud": aud, "groups": []string{"agents-member"}}
+		maps.Copy(c, extra)
+		return s.oidcToken(t, c)
+	}
+	webID := id("2918", webClient, nil)
+	cliID := id("2918", cliClient, nil)
+	const opaque = "opaque-access-token"
+	type want struct {
+		err    error
+		client string
+	}
+	cases := []struct {
+		name           string
+		bearer, access string
+		want           want
+	}{
+		{"a web session: the ID token and an opaque access token", webID, opaque, want{client: webClient}},
+		{"a web session with azp", id("2918", []string{webClient}, jwt.MapClaims{"azp": webClient}), opaque, want{client: webClient}},
+		{"the CLI's ID token as the bearer", cliID, "", want{client: cliClient}},
+		{"the CLI's bearer let through oauth2-proxy (both headers)", cliID, cliID, want{client: cliClient}},
+		{"the web ID token presented alone", webID, "", want{err: ErrUnauthenticated}},
+		{"equal headers (P18)", webID, webID, want{err: ErrUnauthenticated}},
+		{"aud for another client", id("2918", "grafana", nil), opaque, want{err: ErrWrongAudience}},
+		{"aud holding ours and another, no azp", id("2918", []string{webClient, "grafana"}, nil), opaque, want{err: ErrWrongAudience}},
+		{"azp naming another client", id("2918", []string{webClient, "grafana"}, jwt.MapClaims{"azp": "grafana"}), opaque,
+			want{err: ErrWrongAudience}},
+		{"azp ours, aud not", id("2918", "grafana", jwt.MapClaims{"azp": webClient}), opaque, want{err: ErrWrongAudience}},
+		{"no subject", id("", webClient, nil), opaque, want{err: ErrUnauthenticated}},
+		{"expired", id("2918", webClient, jwt.MapClaims{"exp": time.Now().Add(-time.Hour).Unix()}), opaque, want{err: ErrTokenExpired}},
+	}
+	h := s.genericHumans(TokenUseID, "", "groups", nil)
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := request(t, c.bearer)
+			if c.access != "" {
+				r.Header.Set(ForwardedAccessHeader, c.access)
+			}
+			p, err := h.Authenticate(r)
+			if c.want.err != nil {
+				if !errors.Is(err, c.want.err) || !errors.Is(err, ErrUnauthenticated) {
+					t.Fatalf("got %+v, %v; want %v", p, err, c.want.err)
+				}
+				return
+			}
+			if err != nil || p.ID != "human:2918" || p.ClientID != c.want.client || p.AccessToken != c.bearer ||
+				!slices.Equal(p.Groups, []string{"agents-member"}) || p.Expiry.IsZero() {
+				t.Fatalf("got %#v %v", p, err)
+			}
+		})
+	}
+	t.Run("the refusal of a web ID token alone names the rule", func(t *testing.T) {
+		_, err := h.Authenticate(request(t, webID))
+		if err == nil || !strings.Contains(err.Error(), "a web session needs a distinct access token") {
+			t.Fatalf("%v", err)
+		}
+	})
+}
+
+// A token whose roles claim gives nothing is still a principal, with no group: the policy's
+// "not in an agents group" refuses it, never this authenticator, and the reason is counted.
+func TestHumansRolesClaim(t *testing.T) {
+	s := newSigner(t)
+	cases := []struct {
+		name, roles string
+		claims      jwt.MapClaims
+		want        []string
+		refused     string
+	}{
+		{"Keycloak's pointer", "/realm_access/roles", jwt.MapClaims{"realm_access": map[string]any{"roles": []string{"agents-admin"}}},
+			[]string{"agents-admin"}, ""},
+		{"Okta's groups", "groups", jwt.MapClaims{"groups": []string{"agents-member", "everyone"}}, []string{"agents-member", "everyone"}, ""},
+		{"Auth0's namespaced claim", "https://ns.example/roles", jwt.MapClaims{"https://ns.example/roles": []string{"agents-member"}},
+			[]string{"agents-member"}, ""},
+		{"Authentik's single string", "groups", jwt.MapClaims{"groups": "agents-member"}, []string{"agents-member"}, ""},
+		{"no roles claim", "groups", jwt.MapClaims{}, nil, RolesClaimMissing},
+		{"a number", "groups", jwt.MapClaims{"groups": 7}, nil, RolesClaimType},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var got []string
+			h := s.genericHumans(TokenUseID, "", c.roles, func(_ context.Context, reason string) { got = append(got, reason) })
+			claims := jwt.MapClaims{"sub": "2918", "aud": cliClient}
+			maps.Copy(claims, c.claims)
+			p, err := h.Authenticate(request(t, s.oidcToken(t, claims)))
+			if err != nil || !slices.Equal(p.Groups, c.want) {
+				t.Fatalf("got %+v, %v; want groups %v", p, err, c.want)
+			}
+			if c.refused == "" && len(got) > 0 || c.refused != "" && !slices.Equal(got, []string{c.refused}) {
+				t.Fatalf("counted %v, want %q", got, c.refused)
+			}
+		})
+	}
+}
+
+// Token use access over a generic issuer (Auth0): the ID token is checked as OIDC Core says (aud
+// holds its client), the access token by the configured audience and its azp or client_id.
+func TestHumansGenericAccess(t *testing.T) {
+	s := newSigner(t)
+	const api = "https://api.rooms.example"
+	webID := s.oidcToken(t, jwt.MapClaims{"sub": "2918", "aud": webClient, "groups": []string{"agents-member"}})
+	access := func(sub, azp string, aud any) string {
+		return s.oidcToken(t, jwt.MapClaims{"sub": sub, "aud": aud, "azp": azp, "groups": []string{"agents-member"}})
+	}
+	h := s.genericHumans(TokenUseAccess, api, "groups", nil)
+	cases := []struct {
+		name           string
+		bearer, access string
+		client         string // "" refuses
+	}{
+		{"a web session", webID, access("2918", webClient, []string{api, "https://idp.example/userinfo"}), webClient},
+		{"maku's access token", access("2918", cliClient, api), "", cliClient},
+		{"an access token without the audience", webID, access("2918", webClient, "other-api"), ""},
+		{"an access token for another sub", webID, access("9999", webClient, api), ""},
+		{"an access token issued to maku in a web session", webID, access("2918", cliClient, api), ""},
+		{"equal headers", webID, webID, ""},
+		{"no access token", webID, "", ""},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			r := request(t, c.bearer)
+			if c.access != "" {
+				r.Header.Set(ForwardedAccessHeader, c.access)
+			}
+			p, err := h.Authenticate(r)
+			if c.client == "" {
+				if !errors.Is(err, ErrUnauthenticated) {
+					t.Fatalf("got %+v, %v", p, err)
+				}
+				return
+			}
+			if err != nil || p.ClientID != c.client || !slices.Equal(p.Groups, []string{"agents-member"}) {
+				t.Fatalf("got %+v, %v", p, err)
+			}
+		})
+	}
+	// No audience configured (an unreadable file) refuses every access token.
+	if _, err := s.genericHumans(TokenUseAccess, "", "groups", nil).Authenticate(request(t, access("2918", cliClient, api))); err == nil {
+		t.Fatal("no audience admitted maku's access token")
+	}
+}
+
+// Under token use id an RFC 9068 access token (typ at+jwt) is never an ID token, even where its
+// aud is the client, as Dex's is (review of #524).
+func TestHumansTokenUseIDRefusesAccessTokens(t *testing.T) {
+	s := newSigner(t)
+	h := s.genericHumans(TokenUseID, "", "groups", nil)
+	for _, typ := range []string{"at+jwt", "AT+JWT", "application/at+jwt"} {
+		t.Run(typ, func(t *testing.T) {
+			tok := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": cliClient,
+				"exp": time.Now().Add(time.Hour).Unix(), "groups": []string{"agents-member"}})
+			tok.Header["typ"] = typ
+			raw, err := tok.SignedString(s.key)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p, err := h.Authenticate(request(t, raw)); !errors.Is(err, ErrUnauthenticated) {
+				t.Fatalf("an access token passed as an ID token: %+v %v", p, err)
+			}
+			if _, err := s.verifier().VerifyIDToken(t.Context(), raw, cliClient); !errors.Is(err, ErrUnauthenticated) {
+				t.Fatalf("VerifyIDToken: %v", err)
+			}
+		})
+	}
+}
+
+// The zitadel preset refuses a token whose groups claim is malformed, as before the generic preset
+// (review of #524); the generic preset reads it with RoleNames.
+func TestHumansZITADELMalformedGroups(t *testing.T) {
+	s := newSigner(t)
+	web := []string{webClient, project}
+	id := sign(t, jwt.SigningMethodRS256, s.key, "", jwt.MapClaims{"iss": issuer, "sub": "2918", "aud": web, "azp": webClient,
+		"client_id": webClient, "exp": time.Now().Add(time.Hour).Unix(), "groups": "agents-member"})
+	if _, err := s.humans(project, cliClient).VerifyHuman(t.Context(), id); !errors.Is(err, ErrUnauthenticated) {
+		t.Fatalf("zitadel admitted a string groups claim: %v", err)
 	}
 }

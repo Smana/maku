@@ -1,0 +1,723 @@
+{
+ "Hash": "51e1f8493df0c0b7c76bd11319aa30b598647e50706c7876a8bb7614b4a97f33",
+ "Config": {
+  "repositories": [
+   {
+    "name": "Smana/ai-native-ref",
+    "maintainers": [
+     "Smana"
+    ],
+    "triggerLabel": "factory/ready",
+    "classes": {
+     "dashboards": {},
+     "dead-links": {
+      "shadow": true,
+      "allowedFiles": [
+       "^(docs|website/content)/.+\\.md$"
+      ],
+      "protectedFiles": [
+       "^docs/(superpowers|specs)/",
+       "^website/content/docs/decisions/"
+      ],
+      "modifyOnly": true,
+      "maxModifiedLines": 20,
+      "diffShape": "links-only",
+      "holdoutChecks": [
+       "External links 🔗"
+      ],
+      "maxPerDay": 1,
+      "oracle": {
+       "probe": "dead-links",
+       "workflow": "dead-links.yaml",
+       "maxFindings": 10
+      },
+      "monitor": {
+       "oracleRuns": 2,
+       "followUpWindow": "168h0m0s"
+      }
+     },
+     "docs": {
+      "checks": true
+     },
+     "docs-links": {
+      "shadow": true,
+      "holdoutChecks": [
+       "validate"
+      ]
+     },
+     "revert": {
+      "shadow": true,
+      "holdoutChecks": [
+       "validate"
+      ]
+     },
+     "scripts": {},
+     "tests": {}
+    },
+    "merge": {
+     "requiredChecks": [
+      "validate",
+      "lint"
+     ],
+     "verifyChecks": [
+      "validate",
+      "lint"
+     ],
+     "leakScanCheck": "lint",
+     "policyBotLogin": "ogenki-merge-gate[bot]",
+     "mergerLogin": "ogenki-agent-merger[bot]",
+     "autoMergesPerDay": 2,
+     "fixRuns": 1,
+     "checkReruns": 0,
+     "verifyFor": "30m0s",
+     "revertWindow": "168h0m0s",
+     "awaitingCIFor": "24h0m0s",
+     "breaker": {
+      "window": 10,
+      "maxReverts": 1,
+      "maxFollowUps": 1,
+      "recoverAfter": 3
+     },
+     "approveToMerge": true
+    },
+    "schedules": [
+     {
+      "name": "ai-native-ref-dead-links",
+      "cron": "15 7 * * *",
+      "class": "dead-links",
+      "text": "Fix the dead external links listed below.",
+      "probe": "dead-links",
+      "probeAuthor": "renovate[bot]"
+     }
+    ],
+    "checks": {
+     "egress": [
+      "golang",
+      "pypi"
+     ]
+    }
+   },
+   {
+    "name": "Smana/cloud-native-ref",
+    "maintainers": [
+     "Smana"
+    ],
+    "triggerLabel": "factory/ready",
+    "classes": {
+     "alert-rules": {
+      "shadow": true,
+      "allowedFiles": [
+       "^observability/.+\\.ya?ml$"
+      ],
+      "monitor": {
+       "verification": {
+        "within": "2h0m0s"
+       },
+       "followUpWindow": "2h0m0s"
+      }
+     },
+     "dashboards": {},
+     "dead-links": {
+      "shadow": true,
+      "allowedFiles": [
+       "^(docs|website/content)/.+\\.md$"
+      ],
+      "protectedFiles": [
+       "^docs/(superpowers|specs)/",
+       "^website/content/docs/decisions/"
+      ],
+      "modifyOnly": true,
+      "maxModifiedLines": 20,
+      "diffShape": "links-only",
+      "holdoutChecks": [
+       "External links 🔗"
+      ],
+      "maxPerDay": 1,
+      "oracle": {
+       "probe": "dead-links",
+       "workflow": "dead-links.yaml",
+       "maxFindings": 10
+      },
+      "monitor": {
+       "oracleRuns": 2,
+       "followUpWindow": "168h0m0s"
+      }
+     },
+     "deps-minor": {
+      "shadow": true,
+      "allowedFiles": [
+       "^(apps|flux|infrastructure|observability|security|tooling)/.+\\.ya?ml$"
+      ],
+      "protectedFiles": [
+       "^security/base/zitadel/",
+       "^security/(aws|gcp)-0/zitadel/",
+       "^flux/sources/helmrepo-zitadel\\.yaml$",
+       "^infrastructure/base/crossplane/configuration-core/",
+       "^flux/sources/gitrepo-gateway-api\\.yaml$",
+       "^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\\.yaml$"
+      ],
+      "modifyOnly": true,
+      "maxPatchFiles": 3,
+      "maxModifiedLines": 10,
+      "diffShape": "semver-minor",
+      "monitor": {
+       "flux": {
+        "source": "flux-system/flux-system",
+        "within": "1h0m0s"
+       },
+       "followUpWindow": "168h0m0s"
+      },
+      "author": {
+       "adopt": {
+        "logins": [
+         "renovate[bot]"
+        ],
+        "branches": [
+         "^renovate/"
+        ]
+       }
+      },
+      "releaseAgeCheck": "renovate/stability-days"
+     },
+     "deps-patch": {
+      "shadow": true,
+      "allowedFiles": [
+       "^(apps|flux|infrastructure|observability|security|tooling)/.+\\.ya?ml$"
+      ],
+      "protectedFiles": [
+       "^security/base/zitadel/",
+       "^security/(aws|gcp)-0/zitadel/",
+       "^flux/sources/helmrepo-zitadel\\.yaml$",
+       "^infrastructure/base/crossplane/configuration-core/",
+       "^flux/sources/gitrepo-gateway-api\\.yaml$",
+       "^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\\.yaml$"
+      ],
+      "modifyOnly": true,
+      "maxPatchFiles": 3,
+      "maxModifiedLines": 10,
+      "diffShape": "semver-patch",
+      "maxPerDay": 2,
+      "monitor": {
+       "flux": {
+        "source": "flux-system/flux-system",
+        "within": "1h0m0s"
+       },
+       "followUpWindow": "168h0m0s"
+      },
+      "author": {
+       "adopt": {
+        "logins": [
+         "renovate[bot]"
+        ],
+        "branches": [
+         "^renovate/"
+        ]
+       }
+      },
+      "releaseAgeCheck": "renovate/stability-days"
+     },
+     "docs": {
+      "checks": true
+     },
+     "docs-links": {
+      "live": true,
+      "holdoutChecks": [
+       "Check the documentation links 🔗"
+      ]
+     },
+     "revert": {
+      "live": true,
+      "holdoutChecks": [
+       "Check the documentation links 🔗"
+      ]
+     },
+     "review": {},
+     "scripts": {},
+     "tests": {}
+    },
+    "merge": {
+     "requiredChecks": [
+      "Pre-commit checks 🛃",
+      "Security scanning 🔒",
+      "Kubernetes validation ☸",
+      "Rendered manifest diff 📝",
+      "Check the shell scripts 💻",
+      "Check the documentation links 🔗",
+      "Validate Vector Log Parsing Configuration (vlsingle)",
+      "Validate Vector Log Parsing Configuration (vlcluster)"
+     ],
+     "verifyChecks": [
+      "Pre-commit checks 🛃",
+      "Security scanning 🔒",
+      "Kubernetes validation ☸",
+      "Check the shell scripts 💻",
+      "Check the documentation links 🔗"
+     ],
+     "contractCheck": "Test contract 🧪",
+     "leakScanCheck": "Security scanning 🔒",
+     "policyBotLogin": "ogenki-merge-gate[bot]",
+     "mergerLogin": "ogenki-agent-merger[bot]",
+     "autoMergesPerDay": 1,
+     "fixRuns": 2,
+     "checkReruns": 1,
+     "verifyFor": "30m0s",
+     "revertWindow": "168h0m0s",
+     "awaitingCIFor": "24h0m0s",
+     "breaker": {
+      "window": 10,
+      "maxReverts": 1,
+      "maxFollowUps": 1,
+      "recoverAfter": 3
+     },
+     "approveToMerge": true
+    },
+    "schedules": [
+     {
+      "name": "link-rot",
+      "cron": "0 6 * * 1",
+      "class": "docs-links",
+      "text": "Find broken external Markdown link targets ([text](url) or [ref]: url) under docs/\nand website/content/, outside docs/superpowers/, docs/specs/ and\nwebsite/content/docs/decisions/. Fix those with an obvious replacement on the same\nhost, changing only the link target: leave code blocks, prose and link text alone,\nchange fewer than 21 lines in total and add or delete no file. If none is broken,\nchange nothing and open no pull request.\n",
+      "probeAuthor": "renovate[bot]"
+     },
+     {
+      "name": "dead-links",
+      "cron": "0 7 * * *",
+      "class": "dead-links",
+      "text": "Fix the dead external links listed below.",
+      "probe": "dead-links",
+      "probeAuthor": "renovate[bot]"
+     }
+    ],
+    "checks": {
+     "egress": [
+      "pypi"
+     ]
+    }
+   },
+   {
+    "name": "Smana/runlore",
+    "maintainers": [
+     "Smana"
+    ],
+    "triggerLabel": "factory/ready",
+    "classes": {
+     "docs-links": {
+      "shadow": true,
+      "holdoutChecks": [
+       "build"
+      ]
+     },
+     "revert": {
+      "shadow": true,
+      "holdoutChecks": [
+       "build"
+      ]
+     }
+    },
+    "merge": {
+     "requiredChecks": [
+      "build"
+     ],
+     "verifyChecks": [
+      "build"
+     ],
+     "leakScanCheck": "build",
+     "policyBotLogin": "ogenki-merge-gate[bot]",
+     "mergerLogin": "ogenki-agent-merger[bot]",
+     "autoMergesPerDay": 5,
+     "fixRuns": 1,
+     "checkReruns": 0,
+     "verifyFor": "30m0s",
+     "revertWindow": "168h0m0s",
+     "awaitingCIFor": "24h0m0s",
+     "breaker": {
+      "window": 10,
+      "maxReverts": 1,
+      "maxFollowUps": 1,
+      "recoverAfter": 3
+     },
+     "approveToMerge": true
+    }
+   },
+   {
+    "name": "Smana/runlore-kb",
+    "maintainers": [
+     "Smana"
+    ],
+    "triggerLabel": "factory/ready",
+    "classes": {
+     "docs-links": {
+      "shadow": true,
+      "holdoutChecks": [
+       "validate"
+      ]
+     },
+     "kb-entries": {
+      "shadow": true,
+      "allowedFiles": [
+       "^incidents/[^/]+\\.md$"
+      ],
+      "diffShape": "added-entry",
+      "holdoutChecks": [
+       "validate"
+      ],
+      "maxPerDay": 5,
+      "author": {
+       "adopt": {
+        "logins": [
+         "runlore[bot]"
+        ],
+        "branches": [
+         "^runlore/kb-"
+        ]
+       }
+      },
+      "companionFiles": [
+       "^index\\.md$",
+       "^log\\.md$"
+      ],
+      "requiredLabel": "ready-to-merge"
+     },
+     "revert": {
+      "shadow": true,
+      "holdoutChecks": [
+       "validate"
+      ]
+     }
+    },
+    "merge": {
+     "requiredChecks": [
+      "validate",
+      "leak-scan"
+     ],
+     "verifyChecks": [
+      "validate",
+      "leak-scan"
+     ],
+     "leakScanCheck": "leak-scan",
+     "policyBotLogin": "ogenki-merge-gate[bot]",
+     "mergerLogin": "ogenki-agent-merger[bot]",
+     "autoMergesPerDay": 5,
+     "fixRuns": 1,
+     "checkReruns": 0,
+     "verifyFor": "30m0s",
+     "revertWindow": "168h0m0s",
+     "awaitingCIFor": "24h0m0s",
+     "breaker": {
+      "window": 10,
+      "maxReverts": 1,
+      "maxFollowUps": 1,
+      "recoverAfter": 3
+     },
+     "approveToMerge": true
+    }
+   }
+  ],
+  "control": {
+   "repository": "Smana/cloud-native-ref",
+   "issue": 2188
+  },
+  "intake": {
+   "overlap": {
+    "mode": "off"
+   }
+  },
+  "factoryLogin": "ogenki-agent-factory[bot]",
+  "agentsLogin": "ogenki-agents[bot]",
+  "factory": "aws-0",
+  "roomsURL": "https://rooms.priv.cloud.ogenki.io",
+  "broker": {
+   "url": "https://room-broker.agent-system.svc.cluster.local:8443",
+   "caFile": "/etc/agent-factory/openbao-ca/ca.crt",
+   "tokenFile": "/var/run/secrets/agents/rooms/token"
+  },
+  "github": {
+   "appIDFile": "/etc/agent-factory-github/app_id",
+   "privateKeyFile": "/etc/agent-factory-github/private_key",
+   "mergerAppIDFile": "/etc/agent-factory-merger/app_id",
+   "mergerKeyFile": "/etc/agent-factory-merger/private_key"
+  },
+  "poll": {
+   "issues": "1m0s",
+   "tasks": "30s",
+   "meter": "30s"
+  },
+  "defaults": {
+   "template": "",
+   "tier": "",
+   "dataClass": "public",
+   "predictedClass": "review"
+  },
+  "triage": {
+   "classifierURL": "",
+   "controlPercent": 10
+  },
+  "tiers": {
+   "frontier": {
+    "model": "agent-default",
+    "runTokens": 4000000,
+    "taskTokens": 8000000,
+    "runMinutes": 90,
+    "runUSD": 6.8,
+    "taskUSD": 13.6
+   },
+   "light": {
+    "model": "agent-default",
+    "runTokens": 300000,
+    "taskTokens": 600000,
+    "runMinutes": 20,
+    "runUSD": 0.51,
+    "taskUSD": 1.02
+   },
+   "standard": {
+    "model": "agent-default",
+    "runTokens": 1500000,
+    "taskTokens": 3000000,
+    "runMinutes": 45,
+    "runUSD": 2.55,
+    "taskUSD": 5.1
+   }
+  },
+  "templates": {
+   "investigate": {
+    "roles": [
+     "triager"
+    ]
+   },
+   "pair": {
+    "roles": [
+     "implementer",
+     "reviewer"
+    ],
+    "maxReviewRounds": 2
+   },
+   "solo": {
+    "roles": [
+     "implementer"
+    ]
+   },
+   "trio": {
+    "roles": [
+     "implementer",
+     "reviewer"
+    ],
+    "maxReviewRounds": 2
+   }
+  },
+  "caps": {
+   "activeTasks": 3,
+   "concurrentRuns": 4,
+   "tasksPerDay": 20,
+   "maxTextBytes": 14336,
+   "maxPendingMinutes": 30,
+   "escalatedHours": 168,
+   "awaitingHumanWIP": 5,
+   "preferRevisions": true
+  },
+  "facts": {
+   "finalSpend": true
+  },
+  "brief": {
+   "ciEvidence": true
+  },
+  "budgets": {
+   "enforceTask": true,
+   "enforcePrincipal": false,
+   "factoryDailyUSD": 42.5,
+   "humanDailyUSD": 8.5,
+   "perPerson": {
+    "enabled": true,
+    "dailyUSD": 8.5
+   }
+  },
+  "resume": {
+   "maxPerTask": 2
+  },
+  "scoper": {
+   "nudgeAt": 25,
+   "maxToolCalls": 40
+  },
+  "meter": {
+   "url": "http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428",
+   "query": "sum by (ar_agent, gen_ai_request_model, gen_ai_token_type) (gen_ai_client_token_usage_sum{ar_agent=~\"system:serviceaccount:agents:xplane-run-.+\", gen_ai_token_type=~\"input|cached_input|cache_creation_input|output\"})",
+   "logsURL": "http://victoria-logs-victoria-logs-single-server.observability.svc:9428",
+   "throttleQuery": "_time:2m kubernetes.pod_namespace:\"agent-gateway\" AND kubernetes.pod_labels.gateway.networking.k8s.io/gateway-name:\"agent-router\" | unpack_json | filter log.http.status:429 AND log.reason:RateLimit | stats by (log.x_ar_agent) count() hits",
+   "prices": {
+    "claude-haiku-5-5": {
+     "input": 0.5,
+     "cacheRead": 0.05,
+     "cacheWrite": 0.625,
+     "output": 2.5,
+     "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "claude-opus-5-5": {
+     "input": 4,
+     "cacheRead": 0.2,
+     "cacheWrite": 5,
+     "output": 20,
+     "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "claude-sonnet-5-5": {
+     "input": 2,
+     "cacheRead": 0.1,
+     "cacheWrite": 2.5,
+     "output": 10,
+     "source": "https://platform.claude.com/docs/en/about-claude/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "glm-5.3": {
+     "input": 1.4,
+     "cacheRead": 0.26,
+     "output": 4.4,
+     "source": "https://docs.z.ai/guides/overview/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "glm-5.3-flash": {
+     "input": 0.15,
+     "cacheRead": 0.03,
+     "output": 0.5,
+     "source": "https://docs.z.ai/guides/overview/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "glm-5.3-flashx": {
+     "input": 0.37,
+     "cacheRead": 0.075,
+     "output": 1.25,
+     "source": "https://docs.z.ai/guides/overview/pricing",
+     "checkedAt": "2026-10-16"
+    },
+    "k3.1-pro": {
+     "input": 2,
+     "cacheRead": 0.2,
+     "cacheWrite": 2,
+     "output": 10,
+     "source": "https://platform.kimi.ai/docs/pricing/chat",
+     "checkedAt": "2026-10-28"
+    },
+    "mistral-medium-2604": {
+     "input": 1.5,
+     "cacheRead": 0.15,
+     "output": 7.5,
+     "source": "https://mistral.ai/pricing",
+     "checkedAt": "2026-10-28"
+    },
+    "mistral-small-2603": {
+     "input": 0.15,
+     "cacheRead": 0.015,
+     "output": 0.6,
+     "source": "https://mistral.ai/pricing",
+     "checkedAt": "2026-10-28"
+    }
+   }
+  },
+  "tracing": {
+   "otlpEndpoint": "agent-traces-collector.observability.svc.cluster.local:4317"
+  },
+  "api": {
+   "listen": ":8082",
+   "repositories": [
+    "Smana/ai-native-ref",
+    "Smana/cloud-native-ref",
+    "Smana/runlore",
+    "Smana/runlore-kb"
+   ],
+   "humanIssuer": "https://auth.cloud.ogenki.io",
+   "humanJWKS": "https://auth.cloud.ogenki.io/oauth/v2/keys",
+   "clientIDFiles": [
+    "/etc/agent-factory-oidc/rooms-proxy-client-id",
+    "/etc/agent-factory-oidc/roomctl-client-id"
+   ],
+   "groups": {
+    "admin": "agents-admin",
+    "member": "agents-member"
+   },
+   "access": {
+    "readerFile": "/etc/agent-factory-zitadel-reader/reader.json",
+    "ttl": "5m0s"
+   }
+  },
+  "runlore": {
+   "listen": "",
+   "tokenFile": "",
+   "minConfidence": 0,
+   "dailyCap": 0
+  },
+  "coordination": {
+   "mode": "off",
+   "maxChildren": 2
+  },
+  "hardening": {},
+  "runs": {
+   "group": "cloud.ogenki.io",
+   "namespace": "agents",
+   "namePrefix": "xplane-run-"
+  },
+  "loops": {
+   "dead-links": {
+    "models": {
+     "reviewer": {
+      "frontier": "kimi-frontier"
+     }
+    }
+   },
+   "default": {
+    "scope": "off"
+   },
+   "deps-patch": {
+    "models": {
+     "reviewer": {
+      "frontier": "kimi-frontier"
+     }
+    }
+   },
+   "docs": {
+    "stallSteps": 60,
+    "continuations": 2,
+    "judge": "tier-light",
+    "scope": "scoper",
+    "search": true
+   },
+   "docs-links": {
+    "models": {
+     "reviewer": {
+      "frontier": "kimi-frontier"
+     }
+    }
+   },
+   "revert": {
+    "models": {
+     "reviewer": {
+      "frontier": "kimi-frontier"
+     }
+    }
+   },
+   "scripts": {
+    "judge": "tier-light",
+    "scope": "scoper",
+    "split": {
+     "maxChildren": 4,
+     "familyUSD": 20.4,
+     "childTier": "standard",
+     "anyTier": true
+    }
+   }
+  },
+  "harnessProfiles": {
+   "adopted-none": {
+    "template": "none"
+   },
+   "checked": {
+    "checks": true
+   },
+   "plain": {}
+  },
+  "policyManagement": {
+   "read": true,
+   "simulation": true,
+   "dualEvaluation": true,
+   "promotion": true
+  }
+ }
+}

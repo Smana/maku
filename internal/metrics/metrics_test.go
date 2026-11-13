@@ -812,3 +812,29 @@ func TestPolicyChangeIsBounded(t *testing.T) {
 		t.Fatalf("%s", body)
 	}
 }
+
+// v4 D8: a roles claim that gave no group is counted by its closed reason only.
+func TestHumanRolesClaimRefused(t *testing.T) {
+	ctx := t.Context()
+	exp, err := NewExporter(BrokerBuildInfo, "test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = exp.Shutdown(ctx) }()
+	s, err := New(exp.Meter())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.HumanRolesClaimRefused(ctx, "missing")
+	s.HumanRolesClaimRefused(ctx, "missing")
+	s.HumanRolesClaimRefused(ctx, "bounds")
+	got := series(scrape(t, exp.Handler()))
+	for key, want := range map[string]string{
+		`maku_rooms_human_roles_claim_refused_total{reason="missing"}`: "2",
+		`maku_rooms_human_roles_claim_refused_total{reason="bounds"}`:  "1",
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+}

@@ -362,5 +362,93 @@ if [[ -n $mine ]]; then
   (cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/mine-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse2.log" 2>&1) || { echo "FAIL: the example's config does not parse:" >&2; cat "$tmp/parse2.log" >&2; fail=1; }
 fi
 
+# v4 step 6 Task 4 (D21, EX12): opt-in ServiceMonitors and PodMonitors. Off (the default), none;
+# the golden above already holds the demo byte for byte.
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.kind == "ServiceMonitor" or .kind == "PodMonitor" or .kind == "PrometheusRule") | .kind' 'monitoring off renders a monitoring object'
+mon=(--set monitoring.serviceMonitor.enabled=true --set-json 'monitoring.serviceMonitor.labels={"release":"prom"}')
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}")" || { echo "FAIL: monitoring.serviceMonitor.enabled does not render" >&2; fail=1; out=''; }
+got=$(yq ea '[select(.kind == "ServiceMonitor" or .kind == "PodMonitor") | .kind + "/" + .metadata.name] | sort | join(" ")' - <<<"$out")
+want="PodMonitor/maku-run-controller ServiceMonitor/agent-factory ServiceMonitor/room-broker"
+[[ $got == "$want" ]] || { echo "FAIL: the scrape objects are '$got', want '$want'" >&2; fail=1; }
+ykind ServiceMonitor '((.spec.endpoints | length) == 1 and .spec.endpoints[0].port == "metrics" and .spec.endpoints[0].path == "/metrics" and .spec.endpoints[0].interval == "30s")' 'each ServiceMonitor scrapes port metrics, /metrics, every 30s'
+ykind ServiceMonitor 'select(.metadata.name == "room-broker") | .spec.selector.matchLabels."app.kubernetes.io/name" == "room-broker"' 'the broker ServiceMonitor selects the room-broker Service'
+ykind ServiceMonitor 'select(.metadata.name == "agent-factory") | .spec.selector.matchLabels."app.kubernetes.io/name" == "agent-factory"' 'the factory ServiceMonitor selects the agent-factory Service'
+ykind PodMonitor '((.spec.podMetricsEndpoints | length) == 1 and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'each PodMonitor scrapes the pod port metrics, /metrics'
+ykind PodMonitor 'select(.metadata.name == "maku-run-controller") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "run-controller" and (.spec.podMetricsEndpoints[0].relabelings[] | select(.targetLabel == "job") | .replacement) == "run-controller")' 'the run-controller PodMonitor selects its pods, job run-controller'
+ykind ServiceMonitor '(.metadata.labels.release == "prom" and .metadata.namespace == "maku")' 'monitoring.serviceMonitor.labels reach the ServiceMonitors'
+ykind PodMonitor '(.metadata.labels.release == "prom" and .metadata.namespace == "maku")' 'monitoring.serviceMonitor.labels reach the PodMonitors'
+# kubernetes mode adds the egress proxy's PodMonitor, and needs a scraper the policies admit
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes \
+  --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" ||
+  { echo "FAIL: monitoring in kubernetes mode does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-egress-proxy") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "egress-proxy" and .spec.podMetricsEndpoints[0].port == "metrics")' 'kubernetes mode: the egress proxy PodMonitor'
+bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090' \
+  "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes
+# cilium mode (maku's default): the broker's and the run-controller's CNPs admit :9090 only from the
+# scraper monitoring.serviceMonitor.cilium.fromEndpoints names, in one extra CNP rendered only with
+# monitoring on; empty, the render fails
+cil=(--set maku.networkPolicies.enabled=true)
+ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'monitoring off renders the scrape CNP'
+out="$(helm template af . -n maku "${args[@]}" "${cil[@]}")"
+ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'cilium mode without monitoring renders the scrape CNP'
+bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode cilium needs monitoring.serviceMonitor.cilium.fromEndpoints: the scraper could not reach :9090' \
+  "${args[@]}" "${mon[@]}" "${cil[@]}"
+out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" "${cil[@]}" \
+  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"io.kubernetes.pod.namespace":"monitoring","app.kubernetes.io/name":"prometheus"}}]')" ||
+  { echo "FAIL: monitoring in cilium mode does not render" >&2; fail=1; out=''; }
+ykind CiliumNetworkPolicy 'select(.metadata.name == "maku-metrics") | ((.spec.endpointSelector.matchExpressions[0].values | join(",")) == "room-broker,run-controller" and .spec.ingress[0].fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "prometheus" and .spec.ingress[0].toPorts[0].ports[0].port == "9090" and (.spec | has("egress") | not))' 'cilium mode: the scrape CNP admits the scraper on :9090 to the broker and the run-controller, and adds no egress'
+# maku-gateway adds its proxies' PodMonitor (the pod's metrics port, 15020); its NetworkPolicy must
+# admit the scraper (metrics.allowFrom), unless its mode is none
+bad 'monitoring.serviceMonitor.enabled with maku-gateway.networkPolicy.mode "kubernetes" needs maku-gateway.metrics.allowFrom: the scraper could not reach :15020' "${gwd[@]}" "${mon[@]}"
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set maku-gateway.networkPolicy.mode=none)" || { echo "FAIL: monitoring with maku-gateway mode none does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-gateway") | .kind == "PodMonitor"' 'maku-gateway mode none: the PodMonitor needs no allowFrom'
+out="$(helm template af . -n maku "${gwd[@]}" "${mon[@]}" --set-json 'maku-gateway.metrics.allowFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" || { echo "FAIL: monitoring with maku-gateway does not render" >&2; fail=1; out=''; }
+ykind PodMonitor 'select(.metadata.name == "maku-gateway") | (.spec.selector.matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway" and .spec.podMetricsEndpoints[0].port == "metrics" and .spec.podMetricsEndpoints[0].path == "/metrics")' 'maku-gateway: the model-gateway proxies PodMonitor'
+notes="$(helm install af . -n maku --dry-run=client "${gwd[@]}" "${mon[@]}" --set maku-gateway.networkPolicy.mode=none --set agentgateway.enabled=true 2>/dev/null | sed -n '/^NOTES:/,$p')"
+grep -qF 'agentgateway.monitoring.enabled' <<<"$notes" || { echo "FAIL: NOTES does not tell agentgateway.monitoring.enabled with monitoring on" >&2; fail=1; }
+
+# v4 step 6 Task 5 (D21, EX13): the product alerts, one PrometheusRule `maku`, a group per component
+rule=(--set monitoring.prometheusRule.enabled=true --set-json 'monitoring.prometheusRule.labels={"release":"prom"}')
+# groups GROUPS: the rendered rule's group names, in order
+groups() { yq ea 'select(.kind == "PrometheusRule") | [.spec.groups[].name] | join(" ")' - <<<"$out"; }
+# alerts: the rendered alert names, sorted
+alerts() { yq ea '[select(.kind == "PrometheusRule") | .spec.groups[].rules[] | .alert // .record] | sort | join(" ")' - <<<"$out"; }
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}")" || { echo "FAIL: monitoring.prometheusRule.enabled does not render" >&2; fail=1; out=''; }
+[[ "$(groups)" == "maku-rooms maku-factory maku-run-path" ]] || { echo "FAIL: the demo's groups are '$(groups)', want 'maku-rooms maku-factory maku-run-path'" >&2; fail=1; }
+ykind PrometheusRule '(.metadata.name == "maku" and .metadata.namespace == "maku" and .metadata.labels.release == "prom")' 'one PrometheusRule maku, with monitoring.prometheusRule.labels'
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select((.annotations.runbook_url // "") == "" or (.annotations.dashboard // "") == "") | .alert' 'every rule carries runbook_url and dashboard'
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.expr | test("agent-system|xplane-|\\$\\{")) | .alert' 'an expression names agent-system, xplane- or ${'
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(to_yaml | test("__[A-Z_]+__|agent-system|xplane-|\\$\\{")) | .alert' 'a rule keeps a placeholder, agent-system, xplane- or ${'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomStalled") | .annotations.summary == "Room {{ $labels.room }} has a running run and no event for 30 minutes"' '{{ $labels.room }} survives the render'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .expr == "absent(up{job=\"room-broker\", namespace=\"maku\"} == 1)"' 'RoomBrokerDown reads the release namespace'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | (.annotations.runbook_url | test("^https://github.com/Smana/maku/blob/v[^/]+/docs/operations.md#room-alerts$"))' 'runbook_url defaults to the release docs'
+all="$(alerts)"
+for a in RoomAuthnHumanIssuerNeverFetched EgressProxyDown AgentSandboxPodPending; do
+  grep -qw "$a" <<<"$all" && { echo "FAIL: the demo renders $a (no issuer, mode none, no kube-state-metrics)" >&2; fail=1; }
+done
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["AgentFactoryClassPausedLong"]')"
+want="$(sed 's/ AgentFactoryClassPausedLong / /' <<<" $all ")"
+[[ " $(alerts) " == "$want" ]] || { echo "FAIL: disabled [AgentFactoryClassPausedLong] does not remove exactly that rule" >&2; fail=1; }
+bad 'monitoring.prometheusRule.disabled names NoSuchAlert, which no group holds' "${args[@]}" "${rule[@]}" --set-json 'monitoring.prometheusRule.disabled=["NoSuchAlert"]'
+# the issuer, mode kubernetes and kube-state-metrics each bring their rule; docsURL replaces the docs
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.mode=oidc --set maku.broker.human.issuer=https://idp.example.test \
+  --set maku.networkPolicies.mode=kubernetes --set monitoring.prometheusRule.kubeStateMetrics=true --set monitoring.prometheusRule.docsURL=https://docs.example.test/maku/)" ||
+  { echo "FAIL: the rule with an issuer, mode kubernetes and kube-state-metrics does not render" >&2; fail=1; out=''; }
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | (.expr | test("issuer=\"https://idp.example.test\""))' 'the human issuer reaches its rule'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "EgressProxyDown") | .expr == "absent(up{job=\"egress-proxy\", namespace=\"maku\"} == 1)"' 'mode kubernetes: EgressProxyDown'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "AgentSandboxPodPending") | (.expr | test("namespace=\"agents\""))' 'kubeStateMetrics: AgentSandboxPodPending on the runs namespace'
+ykind PrometheusRule '.spec.groups[].rules[] | select(.alert == "RoomBrokerDown") | .annotations.runbook_url == "https://docs.example.test/maku/operations.md#room-alerts"' 'docsURL replaces the docs base'
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
+ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
+# slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set slack.enabled=true)"
+[[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-slack" ]] || { echo "FAIL: slack.enabled: groups '$(groups)'" >&2; fail=1; }
+out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}")"
+[[ "$(groups)" == "maku-rooms maku-factory maku-run-path" ]] || { echo "FAIL: maku-gateway.enabled: groups '$(groups)', want no gateway group yet" >&2; fail=1; }
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runController.enabled=false --set maku-factory.enabled=false \
+  --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
+[[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

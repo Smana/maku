@@ -26,6 +26,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -33,7 +34,7 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	toolscache "k8s.io/client-go/tools/cache"
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -54,6 +55,10 @@ type Outcome struct {
 	ServedGeneration   int64  // the generation in the published config; 0 when not served
 	Accepted           bool   // the current generation is served
 	Reason, Message    string // why not, when !Accepted (a v1alpha1.Reason*)
+	// Bindings are a bound Repository's bindings, in list order (B9, B10).
+	Bindings []resources.BindingOutcome
+	// Consumers are the bindings of a class-shape MergePolicy, by Repository (B10).
+	Consumers []resources.BindingOutcome
 }
 
 // Synced is the last Sync's completion: when, and its error (nil on success). The error is a list
@@ -86,14 +91,18 @@ type Source struct {
 	OnSynced func()
 	Now      func() time.Time // time.Now when nil
 
-	mu         sync.Mutex // serializes Sync and guards what follows
-	lastGood   map[key]resources.Object
-	outcomes   []Outcome
-	synced     Synced
-	warnings   []string      // the last set logged
-	crdsAbsent bool          // the last Sync found the CRDs absent
-	crdsLogged bool          // the absence was logged once
-	refusedLog map[key]int64 // the generation of each refusal already logged
+	mu       sync.Mutex // serializes Sync and guards what follows
+	lastGood map[key]resources.Object
+	// lastResolved is each binding's last resolved class (B9, D5): in memory only, so none after
+	// a restart (D14).
+	lastResolved map[resources.BindingKey]resources.ResolvedClass
+	outcomes     []Outcome
+	synced       Synced
+	warnings     []string                        // the last set logged
+	crdsAbsent   bool                            // the last Sync found the CRDs absent
+	crdsLogged   bool                            // the absence was logged once
+	refusedLog   map[key]int64                   // the generation of each refusal already logged
+	bindingLog   map[resources.BindingKey]string // each binding refusal already logged
 
 	kickOnce sync.Once
 	kick     chan struct{}
@@ -227,7 +236,8 @@ func (s *Source) sync(ctx context.Context) error {
 	}
 	listed := slices.Clone(objs)
 
-	r, aerr := resources.Assemble(s.File, objs)
+	opts := resources.Options{LastResolved: s.lastResolved}
+	r, aerr := resources.Assemble(s.File, objs, opts)
 
 	// D5: put each refused object's last good version back and assemble again.
 	first := map[key]resources.Refusal{}
@@ -246,7 +256,7 @@ func (s *Source) sync(ctx context.Context) error {
 		}
 	}
 	if len(replaced) > 0 {
-		r, aerr = resources.Assemble(s.File, objs)
+		r, aerr = resources.Assemble(s.File, objs, opts)
 	}
 	if w := slices.Sorted(slices.Values(r.Warnings)); !slices.Equal(w, s.warnings) {
 		for _, x := range w {
@@ -266,7 +276,7 @@ func (s *Source) sync(ctx context.Context) error {
 		return nil
 	}
 
-	r.Config.Generations = generations(r.Accepted)
+	r.Config.Generations = generations(r.Accepted, r.Bindings)
 	if s.Live == nil {
 		s.Live = config.NewLive(r.Config)
 	} else {
@@ -291,8 +301,22 @@ func (s *Source) sync(ctx context.Context) error {
 		}
 	}
 	s.lastGood = good
+	// The bindings resolved now are the new last resolved; one served from its last resolved class
+	// keeps it; a binding that is gone, or dropped with nothing served, is forgotten.
+	resolved := maps.Clone(r.Resolved)
+	for _, b := range r.Bindings {
+		k := resources.BindingKey{Repository: b.Repository, Name: b.Name}
+		if last, ok := s.lastResolved[k]; ok && !b.Accepted && b.Served {
+			if resolved == nil {
+				resolved = map[resources.BindingKey]resources.ResolvedClass{}
+			}
+			resolved[k] = last
+		}
+	}
+	s.lastResolved = resolved
 	s.outcomes = outcomes(listed, r, first, nil)
 	s.logRefusals()
+	s.logBindingRefusals(listed, r.Bindings)
 	s.synced = Synced{At: s.now()}
 	return nil
 }
@@ -316,6 +340,31 @@ func (s *Source) logRefusals() {
 			"serving", o.ServedGeneration, "reason", o.Reason, "error", first)
 	}
 	s.refusedLog = next
+}
+
+// logBindingRefusals logs each refused binding once per Repository and policy generation, at WARN,
+// as logRefusals does for objects: B9's refusals never refuse the object, so it would not.
+func (s *Source) logBindingRefusals(listed []resources.Object, bindings []resources.BindingOutcome) {
+	gen := map[key]int64{}
+	for _, o := range listed {
+		gen[key{o.Kind, o.Name}] = o.Generation
+	}
+	next := map[resources.BindingKey]string{}
+	for _, b := range bindings {
+		if b.Accepted {
+			continue
+		}
+		k := resources.BindingKey{Repository: b.Repository, Name: b.Name}
+		sig := fmt.Sprintf("%d/%d/%s", gen[key{resources.KindRepository, b.Repository}], gen[key{resources.KindMergePolicy, b.Name}], b.Reason)
+		next[k] = sig
+		if s.bindingLog[k] == sig {
+			continue
+		}
+		first, _, _ := strings.Cut(b.Message, "\n")
+		s.log().Warn("binding refused", "repository", b.Repository, "policy", b.Name,
+			"served", b.Served, "servedGeneration", b.PolicyGeneration, "reason", b.Reason, "error", first)
+	}
+	s.bindingLog = next
 }
 
 // outcomes reports every listed object; first holds the first-pass refusals of replaced objects.
@@ -346,6 +395,14 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 			oc.Repository = repoOf[ref]
 		}
 		oc.ServedGeneration = served[k]
+		for _, b := range r.Bindings {
+			switch {
+			case o.Kind == resources.KindRepository && b.Repository == o.Name:
+				oc.Bindings = append(oc.Bindings, b)
+			case o.Kind == resources.KindMergePolicy && b.Name == o.Name && !hasKey(o.Spec, "repositoryRef"):
+				oc.Consumers = append(oc.Consumers, b)
+			}
+		}
 		switch f, ok := first[k]; {
 		case ok && hasAccepted(r, k) && oc.ServedGeneration == o.Generation:
 			// Refused only because its pair was (a Repository whose MergePolicy changed): the
@@ -373,14 +430,20 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 	return out
 }
 
+func hasKey(m map[string]any, k string) bool {
+	_, ok := m[k]
+	return ok
+}
+
 // hasAccepted is true when k is among r's accepted objects, whatever its generation.
 func hasAccepted(r resources.Result, k key) bool {
 	return slices.ContainsFunc(r.Accepted, func(o resources.Object) bool { return o.Kind == k.kind && o.Name == k.name })
 }
 
-// generations are the generations the accepted objects were served at. Repos stays nil when no
-// repository object is served: Live.Publish compares with reflect.DeepEqual.
-func generations(accepted []resources.Object) config.Generations {
+// generations are the generations the accepted objects were served at, and each served binding's
+// policy generation (B12). Repos stays nil when no repository object is served: Live.Publish
+// compares with reflect.DeepEqual.
+func generations(accepted []resources.Object, bindings []resources.BindingOutcome) config.Generations {
 	var g config.Generations
 	repoOf := map[string]string{} // Repository object name -> lowercased owner/name
 	for _, o := range accepted {
@@ -418,65 +481,43 @@ func generations(accepted []resources.Object) config.Generations {
 			g.Repos[repoOf[ref]] = e
 		}
 	}
+	for _, b := range bindings {
+		if !b.Served || repoOf[b.Repository] == "" {
+			continue
+		}
+		e := g.Repos[repoOf[b.Repository]]
+		if e.Classes == nil {
+			e.Classes = map[string]config.ClassGeneration{}
+		}
+		e.Classes[b.Name] = config.ClassGeneration{Policy: b.PolicyGeneration, PolicyName: b.Name}
+		g.Repos[repoOf[b.Repository]] = e
+	}
 	return g
 }
 
-// list reads the three kinds. A kind with no CRD is zero objects, logged once.
+// list reads the three kinds, as the API server stores them: unstructured, so a field the author
+// omitted stays omitted (resources.Object's contract; plan PR5). A typed list would write every
+// field without omitempty as present, and mergeDefaults could never fill a key (Q8). A kind with no
+// CRD is zero objects, logged once.
 func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 	var objs []resources.Object
-	add := func(kind resources.Kind, name string, gen int64, item any) error {
-		u, err := runtime.DefaultUnstructuredConverter.ToUnstructured(item)
-		if err != nil {
-			return fmt.Errorf("%s %s: %w", kind, name, err)
-		}
-		spec, _ := u["spec"].(map[string]any)
-		if spec == nil {
-			spec = map[string]any{}
-		}
-		objs = append(objs, resources.Object{Kind: kind, Name: name, Namespace: s.Namespace, Generation: gen, Spec: spec})
-		return nil
-	}
-	in := client.InNamespace(s.Namespace)
 	var absent bool
-	check := func(err error) (bool, error) {
-		if err == nil {
-			return false, nil
-		}
-		if meta.IsNoMatchError(err) {
-			absent = true
-			return true, nil
-		}
-		return false, err
-	}
-
-	var fl v1alpha1.FactoryList
-	if skip, err := check(s.Reader.List(ctx, &fl, in)); err != nil {
-		return nil, fmt.Errorf("list Factory: %w", err)
-	} else if !skip {
-		for i := range fl.Items {
-			if err := add(resources.KindFactory, fl.Items[i].Name, fl.Items[i].Generation, &fl.Items[i]); err != nil {
-				return nil, err
+	for _, kind := range []resources.Kind{resources.KindFactory, resources.KindRepository, resources.KindMergePolicy} {
+		var l unstructured.UnstructuredList
+		l.SetGroupVersionKind(v1alpha1.GroupVersion.WithKind(string(kind) + "List"))
+		if err := s.Reader.List(ctx, &l, client.InNamespace(s.Namespace)); err != nil {
+			if meta.IsNoMatchError(err) {
+				absent = true
+				continue
 			}
+			return nil, fmt.Errorf("list %s: %w", kind, err)
 		}
-	}
-	var rl v1alpha1.RepositoryList
-	if skip, err := check(s.Reader.List(ctx, &rl, in)); err != nil {
-		return nil, fmt.Errorf("list Repository: %w", err)
-	} else if !skip {
-		for i := range rl.Items {
-			if err := add(resources.KindRepository, rl.Items[i].Name, rl.Items[i].Generation, &rl.Items[i]); err != nil {
-				return nil, err
+		for _, u := range l.Items {
+			spec, _ := u.Object["spec"].(map[string]any)
+			if spec == nil {
+				spec = map[string]any{}
 			}
-		}
-	}
-	var pl v1alpha1.MergePolicyList
-	if skip, err := check(s.Reader.List(ctx, &pl, in)); err != nil {
-		return nil, fmt.Errorf("list MergePolicy: %w", err)
-	} else if !skip {
-		for i := range pl.Items {
-			if err := add(resources.KindMergePolicy, pl.Items[i].Name, pl.Items[i].Generation, &pl.Items[i]); err != nil {
-				return nil, err
-			}
+			objs = append(objs, resources.Object{Kind: kind, Name: u.GetName(), Namespace: s.Namespace, Generation: u.GetGeneration(), Spec: spec})
 		}
 	}
 	s.crdsAbsent = absent

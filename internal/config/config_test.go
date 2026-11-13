@@ -426,7 +426,8 @@ func TestHumanLocalMode(t *testing.T) {
 	if _, err := Load(write(t, strings.Replace(localConfig, "http://localhost:8080", "http://rooms.example.com", 1))); err == nil {
 		t.Fatal("local mode with a non-loopback publicURL must be refused")
 	}
-	for _, extra := range []string{"  origin: https://elsewhere.example\n", "  groups:\n    admin: a\n    member: b\n"} {
+	for _, extra := range []string{"  origin: https://elsewhere.example\n", "  groups:\n    admin: a\n    member: b\n",
+		"  preset: generic\n", "  tokenUse: id\n", "  audience: a\n", "  audienceFile: /a\n", "  rolesClaim: groups\n", "  scopes: [groups]\n"} {
 		if _, err := Load(write(t, localConfig+extra)); err == nil {
 			t.Fatalf("local mode must refuse %q", extra)
 		}
@@ -1123,3 +1124,97 @@ func TestPolicyManagementConfig(t *testing.T) {
 		}
 	}
 }
+
+// v4 D8: the human block's presets. No preset is the zitadel deployment of today, byte for byte;
+// generic reads any OIDC issuer, its roles claim configured.
+func TestHumanPresets(t *testing.T) {
+	zitadel := strings.Replace(valid, "  jwksURL: https://auth.example.test/oauth/v2/keys\n", "", 1)
+	generic := strings.NewReplacer(
+		"  jwksURL: https://auth.example.test/oauth/v2/keys\n", "",
+		"  projectIDFile: /etc/room-broker/oidc/project-id\n", "  preset: generic\n  rolesClaim: /realm_access/roles\n",
+	).Replace(valid)
+	t.Run("no preset is zitadel, token use access", func(t *testing.T) {
+		c, err := Load(write(t, valid))
+		if err != nil || c.Human.EffectivePreset() != PresetZITADEL || c.Human.EffectiveTokenUse() != TokenUseAccess {
+			t.Fatalf("%v %q %q", err, c.Human.EffectivePreset(), c.Human.EffectiveTokenUse())
+		}
+	})
+	t.Run("an https issuer needs no jwksURL: discovery names it", func(t *testing.T) {
+		if _, err := Load(write(t, zitadel)); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("generic defaults to token use id", func(t *testing.T) {
+		c, err := Load(write(t, generic))
+		if err != nil || c.Human.EffectivePreset() != PresetGeneric || c.Human.EffectiveTokenUse() != TokenUseID {
+			t.Fatalf("%v %+v", err, c.Human)
+		}
+	})
+	t.Run("generic with token use access and an audience", func(t *testing.T) {
+		if _, err := Load(write(t, generic+"  tokenUse: access\n  audience: https://api.rooms.example\n")); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := Load(write(t, generic+"  tokenUse: access\n  audienceFile: /etc/room-broker/oidc/audience\n")); err != nil {
+			t.Fatal(err)
+		}
+	})
+	t.Run("generic with scopes", func(t *testing.T) {
+		c, err := Load(write(t, generic+"  scopes: [groups]\n"))
+		if err != nil || len(c.Human.Scopes) != 1 {
+			t.Fatalf("%v %+v", err, c.Human.Scopes)
+		}
+	})
+	t.Run("a generic sponsored principal with an audience and Okta's cid", func(t *testing.T) {
+		body := generic + "  audience: api://rooms\n" + sponsoredMCP + "    sponsoredClientClaim: cid\n" +
+			"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+		c, err := Load(write(t, body))
+		if err != nil || c.Human.MCP.SponsoredClientClaim != "cid" {
+			t.Fatalf("%v %+v", err, c.Human.MCP)
+		}
+	})
+	for _, c := range []struct {
+		name, body, want string
+	}{
+		{"an unknown preset", valid + "  preset: okta\n", `human.preset: "okta" is not zitadel or generic`},
+		{"an unknown token use", generic + "  tokenUse: refresh\n", `human.tokenUse: "refresh" is not id or access`},
+		{"generic without rolesClaim", strings.Replace(generic, "  rolesClaim: /realm_access/roles\n", "", 1),
+			"human.rolesClaim: is required with preset generic (the claim holding groups.admin and groups.member)"},
+		{"generic with projectIDFile", generic + "  projectIDFile: /p\n",
+			"human.projectIDFile: the zitadel preset's; use human.audienceFile with tokenUse access"},
+		{"generic access without an audience", generic + "  tokenUse: access\n",
+			"human.audience, human.audienceFile: tokenUse access needs exactly one"},
+		{"generic access with both audiences", generic + "  tokenUse: access\n  audience: a\n  audienceFile: /a\n",
+			"human.audience, human.audienceFile: set one, not both"},
+		{"zitadel with an audience", valid + "  audience: a\n", "human.audience: the zitadel preset's audience is human.projectIDFile"},
+		{"zitadel with an audience file", valid + "  audienceFile: /a\n", "human.audienceFile: the zitadel preset's audience is human.projectIDFile"},
+		{"zitadel with token use id", valid + "  tokenUse: id\n", "human.tokenUse: the zitadel preset uses access"},
+		{"zitadel still needs its project", strings.Replace(valid, "  projectIDFile: /etc/room-broker/oidc/project-id\n", "", 1),
+			"human.projectIDFile: is required"},
+		{"a malformed pointer", strings.Replace(generic, "/realm_access/roles", "/realm~2access", 1),
+			"human.rolesClaim: not a claim name or an RFC 6901 pointer"},
+		{"an empty scope", generic + "  scopes: ['']\n", "human.scopes: an empty or spaced scope"},
+		{"no jwksURL and an http issuer", strings.Replace(zitadel, "issuer: https://auth.example.test", "issuer: http://auth.example.test", 1),
+			"human: jwksURL must be an absolute https:// URL"},
+		{"a sponsored client claim outside the allowlist", generic + "  audience: api://rooms\n" + sponsoredMCP + "    sponsoredClientClaim: sub\n",
+			`human.mcp.sponsoredClientClaim: "sub" is not cid, azp, client_id or appid`},
+		{"a sponsored client claim under zitadel", valid + sponsoredMCP + "    sponsoredClientClaim: cid\n",
+			"human.mcp.sponsoredClientClaim: the zitadel preset names the client in azp or client_id"},
+		{"a generic sponsored principal without an audience", generic + sponsoredMCP,
+			"human.mcp.sponsored needs human.audience or human.audienceFile with preset generic"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := Load(write(t, c.body))
+			if err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+const sponsoredMCP = `  roomctlClientIDFile: /etc/room-broker/oidc/cli-client-id
+  mcp:
+    enabled: true
+    sponsored:
+      - name: slack-app
+        clientIDFile: /etc/room-broker/sponsored/slack-app
+`

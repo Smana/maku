@@ -206,8 +206,8 @@ func TestAssembleFactoryCulpritKeepsTheFilesCatalogue(t *testing.T) {
 	if len(r.Refused) != 1 || r.Config.RepositoryFor("Smana/maku") == nil {
 		t.Fatalf("the pair must be served: %+v", r.Refused)
 	}
-	if !equalJSON(t, want.Tiers, r.Config.Tiers) || !equalJSON(t, want.Caps, r.Config.Caps) || len(r.Warnings) != 0 {
-		t.Fatalf("the file's catalogue must stay, without warnings: %v", r.Warnings)
+	if !equalJSON(t, want.Tiers, r.Config.Tiers) || !equalJSON(t, want.Caps, r.Config.Caps) || strings.Contains(strings.Join(r.Warnings, "\n"), "is ignored") {
+		t.Fatalf("the file's catalogue must stay, without a replaced-catalogue warning: %v", r.Warnings)
 	}
 }
 
