@@ -7,14 +7,25 @@
 # The planner and the classifier call the model gateway's clients listener (plan v4 step 4, Task 12):
 # agentgateway's controller and maku-gateway run in the release, the stub is their `custom` provider
 # over plain http, and the broker holds a projected token per client, never a provider key.
+#
+# USD=1 (task chart:usd:k3d; the demo-e2e nightly's usd job) is the factory-level USD proof, step 4
+# PR D's follow-up: layered with tests/usd-values.yaml, the runs call the model gateway with their own
+# token, agentgateway prices each call from its catalog, and the factory's meter reads the gateway's
+# token series from a test-only VictoriaMetrics (tests/metrics-stub.yaml). The first scoper run, once it
+# ends, must settle in the factory's ledger (maku_factory_run_settled_usd) at the gateway's own cost
+# counter for that run (max_over_time: the run's series is born at its first priced call), within 1 %,
+# with no unpriced catalog lookup and no unpriced model in the meter. Then the script stops.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 # shellcheck source=hack/quickstart/versions.env
 . hack/quickstart/versions.env
 
+USD="${USD:-}"
 NAME=maku-intake-k3d
+[[ -z $USD ]] || NAME=maku-usd-k3d
 NS=maku
-TAG=e2e
+# TAG: the local images' tag; parallel runs on one Docker host set their own.
+TAG="${TAG:-e2e}"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 VALUES=charts/agent-factory/tests/intake-values.yaml
 STUB=charts/agent-factory/tests/e2e-stub.yaml
@@ -262,7 +273,9 @@ kubectl -n "$NS" create secret generic e2e-broker-config \
   --from-file=reader.json="$work/reader.json"
 # The stub provider's key, which the gateway reads by name (D14).
 kubectl -n "$NS" create secret generic e2e-provider-key --from-literal=apiKey="$PROVIDER_KEY"
-kubectl apply -f "$STUB"
+sed "s#ghcr.io/smana/maku-e2e-stub:e2e#ghcr.io/smana/maku-e2e-stub:$TAG#" "$STUB" | kubectl apply -f -
+# The USD proof's VictoriaMetrics, scraping the gateway's pods: the factory's meter and the assertions read it.
+[[ -z $USD ]] || kubectl apply -f charts/agent-factory/tests/metrics-stub.yaml >/dev/null
 cat >"$work/coredns-custom.yaml" <<'EOF'
 apiVersion: v1
 kind: ConfigMap
@@ -302,6 +315,7 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set maku-factory.replicas=1
   --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem")
 values+=(-f "$VALUES" --set "maku-gateway.identity.issuer=$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)")
+[[ -z $USD ]] || values+=(-f charts/agent-factory/tests/usd-values.yaml)
 # The system roots, not the throwaway CA this script trusts elsewhere (SSL_CERT_FILE).
 (unset SSL_CERT_FILE; curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml") |
   kubectl apply --server-side -f - >/dev/null
@@ -510,22 +524,25 @@ quirk() {
   jq -e --arg model "$model" --arg auth "$key_digest" ".model == \$model and .authorization == \$auth and ($check)" <<<"$got" >/dev/null ||
     { cat "$work/quirk-$preset.out" >&2; die "the $preset preset: $what (the provider received $got)"; }
 }
-quirk mistral mistral-small-2603 '.reasoning_effort == "none"' 'reasoning_effort "none" on the wire, though the broker sent low'
-quirk moonshot k3.1-pro '.temperature == 1' 'temperature 1 on the wire, though the broker sent 0'
+# The USD proof keeps the stub provider: a preset leg would serve models its catalog does not price.
+if [[ -z $USD ]]; then
+  quirk mistral mistral-small-2603 '.reasoning_effort == "none"' 'reasoning_effort "none" on the wire, though the broker sent low'
+  quirk moonshot k3.1-pro '.temperature == 1' 'temperature 1 on the wire, though the broker sent 0'
 
-step "planner on the moonshot preset: a caller's top_p never reaches the provider"
-# The broker sends no top_p, so this call sends one itself, on the planner's route with a fresh token
-# of the broker's ServiceAccount (the quirk legs outlast the first one's ten minutes).
-kubectl -n "$NS" create token room-broker --audience maku-gateway.client.planner --duration 10m >"$work/planner-token"
-code=$(curl -sS -o "$work/top-p.out" -w '%{http_code}' -H "Authorization: Bearer $(cat "$work/planner-token")" \
-  -H 'Content-Type: application/json' \
-  --data '{"model":"tier-frontier","temperature":0,"top_p":0.5,"messages":[{"role":"user","content":"hello"}]}' \
-  "http://127.0.0.1:$gw_port/clients/planner/v1/chat/completions")
-[[ $code == 200 ]] || { cat "$work/top-p.out" >&2; die "the planner route answered $code to a call carrying top_p"; }
-got=$(last_received other)
-jq -e '.model == "k3.1-pro" and .temperature == 1 and .top_p == "<absent>"' <<<"$got" >/dev/null ||
-  die "the moonshot preset: the provider received top_p or another temperature, though the caller sent top_p 0.5 ($got)"
-echo 'ok: the planner and the classifier through the gateway, provider quirks applied'
+  step "planner on the moonshot preset: a caller's top_p never reaches the provider"
+  # The broker sends no top_p, so this call sends one itself, on the planner's route with a fresh token
+  # of the broker's ServiceAccount (the quirk legs outlast the first one's ten minutes).
+  kubectl -n "$NS" create token room-broker --audience maku-gateway.client.planner --duration 10m >"$work/planner-token"
+  code=$(curl -sS -o "$work/top-p.out" -w '%{http_code}' -H "Authorization: Bearer $(cat "$work/planner-token")" \
+    -H 'Content-Type: application/json' \
+    --data '{"model":"tier-frontier","temperature":0,"top_p":0.5,"messages":[{"role":"user","content":"hello"}]}' \
+    "http://127.0.0.1:$gw_port/clients/planner/v1/chat/completions")
+  [[ $code == 200 ]] || { cat "$work/top-p.out" >&2; die "the planner route answered $code to a call carrying top_p"; }
+  got=$(last_received other)
+  jq -e '.model == "k3.1-pro" and .temperature == 1 and .top_p == "<absent>"' <<<"$got" >/dev/null ||
+    die "the moonshot preset: the provider received top_p or another temperature, though the caller sent top_p 0.5 ($got)"
+  echo 'ok: the planner and the classifier through the gateway, provider quirks applied'
+fi
 
 issue_body=$(cat <<'EOF'
 # Document the verification command
@@ -561,6 +578,73 @@ assert_eq "$(field question.text "$work/question-brief.out")" \
   'Which command or observation proves the change is done?' 'structured scoper question'
 assert_eq "$(field question.recommended "$work/question-brief.out")" \
   'Run task check to prove the change.' 'structured scoper recommendation'
+
+if [[ -n $USD ]]; then
+  step "USD: the scoper run settles in the factory's ledger at the gateway's cost for it"
+  kubectl -n metrics rollout status deploy/vmsingle --timeout=120s >/dev/null
+  vmq() { kubectl get --raw "/api/v1/namespaces/metrics/services/vmsingle:8428/proxy/api/v1/query?query=$(jq -rn --arg q "$1" '$q|@uri')"; }
+  vmval() { vmq "$1" | jq -r '.data.result[0].value[1] // empty'; }
+  factory_metrics() {
+    local pod
+    pod=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o jsonpath='{.items[0].metadata.name}')
+    kubectl get --raw "/api/v1/namespaces/$NS/pods/$pod:9090/proxy/metrics"
+  }
+  run=$(kubectl -n agents get agentruns.maku.ogenki.io -o json | jq -r '[.items[] | select(.spec.role == "triager")] | sort_by(.metadata.creationTimestamp) | .[0].metadata.name // empty')
+  [[ $run =~ ^run-[a-z2-7]{8}$ ]] || die "no scoper AgentRun in agents: '$run'"
+  id=${run#run-}
+  jq -e '.spec.meteredBy == "gateway"' <<<"$(kubectl -n agents get agentruns.maku.ogenki.io "$run" -o json)" >/dev/null ||
+    die "$run is not metered by the gateway (spec.meteredBy)"
+  subject="system:serviceaccount:agents:$run"
+  gwsel="job=\"model-gateway\", namespace=\"$NS\", ar_agent=\"$subject\""
+  settled='' gw=''
+  for _ in $(seq 90); do
+    settled=$(factory_metrics 2>/dev/null | sed -nE "s/^[a-z_]*run_settled_usd\{[^}]*run=\"$id\"[^}]*\} ([0-9.e+-]+)$/\1/p" | head -1)
+    gw=$(vmval "sum(max_over_time(agentgateway_gen_ai_client_cost_usd_total{$gwsel}[1h]))" 2>/dev/null || true)
+    if [[ -n $settled && -n $gw ]] && awk -v s="$settled" 'BEGIN { exit !(s > 0) }'; then break; fi
+    sleep 5
+  done
+  if [[ -z $gw ]] || ! awk -v g="$gw" 'BEGIN { exit !(g > 0) }'; then
+    vmq "count by (__name__, job, namespace) ({__name__=~\"agentgateway_gen_ai.*\", ar_agent=\"$subject\"})" >&2 || true
+    die "the gateway priced nothing for $run (agentgateway_gen_ai_client_cost_usd_total: '$gw')"
+  fi
+  if [[ -z $settled ]] || ! awk -v s="$settled" 'BEGIN { exit !(s > 0) }'; then
+    die "the factory settled no USD for $run (run_settled_usd: '$settled')"
+  fi
+  awk -v s="$settled" -v g="$gw" 'BEGIN { d = s - g; if (d < 0) d = -d; t = 0.01 * g; if (t < 0.0001) t = 0.0001; exit !(d <= t) }' ||
+    die "$run settled $settled USD in the factory's ledger, but the gateway priced it $gw USD (over 1 %)"
+  echo "ok: $run settled $settled USD; the gateway's cost counter reads $gw USD"
+  # Not unpriced: every catalog lookup for the run found its model, and the meter priced every model.
+  unpriced=$(vmval "sum(max_over_time(agentgateway_cost_catalog_lookups_total{$gwsel, status!=\"Exact\"}[1h]))" || true)
+  [[ -z $unpriced || $unpriced == 0 ]] || die "the gateway's catalog missed $unpriced lookups for $run: $(vmq "max_over_time(agentgateway_cost_catalog_lookups_total{$gwsel}[1h])")"
+  ! factory_metrics | grep -E '^[a-z_]*meter_unpriced_model_runs_total\{' | grep -vE ' 0$' ||
+    die "the factory's meter left a model unpriced"
+  echo "ok: no unpriced catalog lookup for $run, and no unpriced model in the meter"
+  # The labels the dashboards split by, on the real agentgateway (step 6 PR C's open question).
+  series() { kubectl get --raw "/api/v1/namespaces/metrics/services/vmsingle:8428/proxy/api/v1/series?match%5B%5D=$(jq -rn --arg q "$1" '$q|@uri')"; }
+  costlabels=$(series "agentgateway_gen_ai_client_cost_usd_total{$gwsel}" | jq -c '[.data[] | keys[]] | unique')
+  durlabels=$(series "agentgateway_gen_ai_server_request_duration_count{$gwsel}" | jq -c '[.data[] | keys[]] | unique')
+  echo "labels: agentgateway_gen_ai_client_cost_usd_total $costlabels"
+  echo "labels: agentgateway_gen_ai_server_request_duration_count $durlabels"
+  jq -e 'index("gen_ai_request_model") != null' <<<"$costlabels" >/dev/null ||
+    die "agentgateway_gen_ai_client_cost_usd_total carries no gen_ai_request_model: the dashboards' spend by model reads one series"
+  echo "ok: the cost counter carries gen_ai_request_model"
+  # A failed provider call, to read the error label the dashboards' error ratios select on (error_type).
+  kubectl -n "$NS" create token room-broker --audience maku-gateway.client.planner --duration 10m >"$work/planner-token"
+  code=$(curl -sS -o "$work/fail.out" -w '%{http_code}' -H "Authorization: Bearer $(cat "$work/planner-token")" -H 'Content-Type: application/json' \
+    --data '{"model":"tier-frontier","messages":[{"role":"user","content":"e2e-stub: fail this call"}]}' \
+    "http://127.0.0.1:$gw_port/clients/planner/v1/chat/completions")
+  [[ $code == 5* ]] || die "the stub's failing call answered $code through the gateway, want a 5xx"
+  errlabels=''
+  for _ in $(seq 24); do
+    errlabels=$(series "agentgateway_gen_ai_server_request_duration_count{job=\"model-gateway\", namespace=\"$NS\", error_type=~\".+\"}" | jq -c '[.data[] | keys[]] | unique')
+    [[ $errlabels != '[]' ]] && break
+    sleep 5
+  done
+  echo "labels on a failed call: $(series "agentgateway_gen_ai_server_request_duration_count{job=\"model-gateway\", namespace=\"$NS\"}" | jq -c '[.data[] | to_entries[] | select(.key | test("error|status"))] | unique')"
+  [[ $errlabels != '[]' ]] || die "a failed provider call left no agentgateway_gen_ai_server_request_duration_count series with error_type: the dashboards' error ratios read nothing"
+  echo "ok: a failed provider call carries error_type"
+  exit 0
+fi
 
 step "need_answer: append only D2 and leave the maintainer to re-apply ready"
 issue_view "$issue" >"$work/before-answer.json"

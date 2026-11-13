@@ -4,6 +4,21 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Secrets by name (v0.4x, v4 rollout step 5)
+
+Every Secret an install reads is listed in [install Secrets](install-secrets.md), with its keys.
+Two new keys, off by default, so a release that sets neither renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku.broker.reloader` | `false` | Annotates the broker's Deployment for Stakater Reloader, so a rotated DSN Secret rolls it ([rotation](install-secrets.md#rotation)) |
+| `externalSecrets` | `enabled: false` | The umbrella renders an `ExternalSecret` for each seam listed under `externalSecrets.secrets`, against `storeRef`, a store you run ([ExternalSecrets](install-secrets.md#externalsecrets)) |
+
+The broker and the factory now check the files of the chart's mounted Secrets at start. A missing or
+empty one stops the start, and the message names the seam, the Secret and its key. Before, the
+component started and refused at the first use. An optional mount (the intake's token, the ZITADEL
+reader, the sponsored ids, the merger App) is still refused at use, as before.
+
 ## The GitHub account link (v0.4x, v4 rollout step 5)
 
 New keys, all off by default, so a release that sets none of them renders and runs as before:

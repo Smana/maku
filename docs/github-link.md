@@ -131,3 +131,11 @@ active human has linked, remove both `readerFile`s; v4 step 8 deletes them.
 `unlinked`, `admin_unlinked`, `state_invalid`, `cookie_mismatch`, `sub_mismatch`,
 `github_account_taken`, `github_error`, `not_web`, `too_many_pending`, `bad_origin`, `error`. No log
 line, metric, error or page carries a code, a state, a nonce, a verifier or a token.
+
+## The proof
+
+`task chart:identity:k3d` runs the flow end to end on a throwaway k3d cluster, with the e2e stub as
+the generic OIDC issuer, GitHub's OAuth web flow and the factory App's API, and no ZITADEL reader: a
+member with no link sees no room, links through the stub's redirect and the confirm, reads the room
+through the link, and is unlinked again by an admin. The stub counts the revoked user token and
+proves no ZITADEL endpoint was called.

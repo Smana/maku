@@ -43,6 +43,9 @@ data:
             replacement: "$1:15020"
           - source_labels: [__meta_kubernetes_pod_name]
             target_label: pod
+          # namespace, as a prometheus-operator PodMonitor sets it: the chart's rules and dashboards select on it
+          - source_labels: [__meta_kubernetes_namespace]
+            target_label: namespace
 ---
 apiVersion: apps/v1
 kind: Deployment
