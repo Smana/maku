@@ -142,7 +142,7 @@ func TestSweepBundles(t *testing.T) {
 	if err := run(ctx, retention, `SELECT bundle FROM output_bundles`); err == nil {
 		t.Fatal("the retention role read a bundle")
 	}
-	r, err := Open(ctx, retention)
+	r, err := Open(ctx, retention, RoleRetention)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -46,9 +46,10 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 		return 0, fmt.Errorf("migrate: connect: %w", err)
 	}
 	defer func() { _ = conn.Close(context.WithoutCancel(ctx)) }()
-	// The role first: nothing below may touch the schema as anyone but its owner.
-	if err := requireOwner(ctx, conn); err != nil {
-		return 0, err
+	// The server and the role first: nothing below may touch the schema on a server below 16, as
+	// anyone but its owner, or before the roles the files GRANT to exist.
+	if _, err := Check(ctx, conn, RoleOwner); err != nil {
+		return 0, fmt.Errorf("migrate: %w", err)
 	}
 	if err := lock(ctx, conn, log); err != nil {
 		return 0, err
@@ -70,6 +71,11 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 	if _, err := conn.Exec(ctx, createRevisions); err != nil {
 		return 0, fmt.Errorf("migrate: revisions table: %w", err)
 	}
+	// The broker reads which files ran (SchemaCurrent), on the version column alone: it never
+	// writes the ledger, nor reads anything else in it.
+	if _, err := conn.Exec(ctx, grantRevisions); err != nil {
+		return 0, fmt.Errorf("migrate: revisions grant: %w", err)
+	}
 	n := 0
 	for _, f := range pending {
 		if err := apply(ctx, conn, f); err != nil {
@@ -79,21 +85,6 @@ func migrate(ctx context.Context, dsn string, files []migrations.File, log *slog
 		n++
 	}
 	return n, nil
-}
-
-// requireOwner refuses a connection whose role is not the schema's owner. Every migration would
-// fail on it a statement later, having left whatever the earlier files created behind; and a
-// ledger written by a role that does not own the migrations hides which side is wrong.
-func requireOwner(ctx context.Context, conn *pgx.Conn) error {
-	var user string
-	if err := conn.QueryRow(ctx, "SELECT current_user").Scan(&user); err != nil {
-		return fmt.Errorf("migrate: current_user: %w", err)
-	}
-	if user != ownerRole {
-		return fmt.Errorf("migrate: connected as %q: the migrations run as %s, which owns every table, "+
-			"policy and index they create, so give the migrate DSN %s's credentials", user, ownerRole, ownerRole)
-	}
-	return nil
 }
 
 // lock takes the advisory lock by polling. A blocking pg_advisory_lock would leave the waiter
@@ -161,6 +152,8 @@ func checksum(body string) string {
 
 const createRevisions = `CREATE TABLE IF NOT EXISTS room_broker_revisions (
 	version text PRIMARY KEY, checksum text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now())`
+
+const grantRevisions = `GRANT SELECT (version) ON room_broker_revisions TO rooms_broker`
 
 // recorded reads the ledger, which a database that was never migrated does not have yet: an
 // absent table is an empty history, never an error.

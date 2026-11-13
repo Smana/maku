@@ -67,7 +67,7 @@ func TestRunBrokerRefuses(t *testing.T) {
 		{"intent-samples with no days", []string{"intent-samples", "--days", "0"}, env(), "--days is at least 1"},
 		{"intent-samples with an argument", []string{"intent-samples", "extra"}, env(), `unexpected argument "extra"`},
 		{"retention with a database that does not answer", []string{"retention"},
-			env("ROOMS_DATABASE_URL", "postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1"), "list expired rooms"},
+			env("ROOMS_DATABASE_URL", "postgres://rooms_retention@127.0.0.1:1/rooms?connect_timeout=1"), "room-broker retention: store: database check"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
@@ -75,6 +75,59 @@ func TestRunBrokerRefuses(t *testing.T) {
 			err := RunBroker(ctx, slog.New(slog.DiscardHandler), c.args, c.getenv)
 			if err == nil || !strings.Contains(err.Error(), c.want) {
 				t.Fatalf("RunBroker = %v, want an error naming %q", err, c.want)
+			}
+		})
+	}
+}
+
+// A plain database connection is said once and set on rooms_db_tls{role}, never refused: the demo's
+// in-cluster hop is plain. An encrypted one says nothing.
+func TestWarnPlainDB(t *testing.T) {
+	for _, tls := range []bool{false, true} {
+		var buf strings.Builder
+		log := slog.New(slog.NewTextHandler(&buf, nil))
+		var got []string
+		warnPlainDB(log, store.Server{User: "rooms_broker", TLS: tls}, func(role string, on bool) { got = append(got, fmt.Sprint(role, on)) })
+		if want := fmt.Sprint("rooms_broker", tls); len(got) != 1 || got[0] != want {
+			t.Fatalf("tls %v: gauge set %v, want once to %q", tls, got, want)
+		}
+		if n := strings.Count(buf.String(), "not encrypted"); n != map[bool]int{false: 1, true: 0}[tls] {
+			t.Fatalf("tls %v: warned %d times:\n%s", tls, n, buf.String())
+		}
+	}
+	// the retention job has no metrics: it logs only
+	var buf strings.Builder
+	warnPlainDB(slog.New(slog.NewTextHandler(&buf, nil)), store.Server{User: "rooms_retention"}, nil)
+	if !strings.Contains(buf.String(), "role=rooms_retention") {
+		t.Fatalf("no warning for the retention job: %s", buf.String())
+	}
+}
+
+type schemaFunc func(context.Context) error
+
+func (f schemaFunc) SchemaCurrent(ctx context.Context) error { return f(ctx) }
+
+// serve refuses a schema it was not built for, and serves one it cannot read, saying so.
+func TestServeSchemaCurrent(t *testing.T) {
+	behind := errors.New("the schema is at 1, this broker needs 2: run migrate (broker.database.ownerSecret)")
+	for _, c := range []struct {
+		name string
+		err  error
+		want error
+		warn bool
+	}{
+		{"current", nil, nil, false},
+		{"behind", behind, behind, false},
+		{"unverified", store.ErrSchemaUnverified, nil, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			var buf strings.Builder
+			err := schemaCurrent(t.Context(), schemaFunc(func(context.Context) error { return c.err }), slog.New(slog.NewTextHandler(&buf, nil)))
+			if !errors.Is(err, c.want) || (c.want == nil) != (err == nil) {
+				t.Fatalf("schemaCurrent = %v, want %v", err, c.want)
+			}
+			if got := strings.Contains(buf.String(), "schema version unverified"); got != c.warn {
+				t.Fatalf("warned %v, want %v: %s", got, c.warn, buf.String())
 			}
 		})
 	}
