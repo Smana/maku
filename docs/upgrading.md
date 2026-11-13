@@ -4,6 +4,52 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Reusable merge policies (v0.4x, release N)
+
+A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`
+binds the ones it uses under `spec.mergePolicies`, with its own `spec.merge`
+([factory resources](merge-policies.md#factory-resources)). This release reads both shapes; the next
+minor refuses the per-repository one. Nothing changes until a manifest does: a repository served from
+a per-repository `MergePolicy` is decided exactly as before, with one warning per such object at
+every start (`MergePolicy <name> is in the per-repository shape, removed in the next minor: maku
+config migrate`).
+
+1. Upgrade the chart and the CRDs (`agent-factory-crds`), then bump the factory.
+2. Convert, offline, and check that no resolved class changes:
+
+   ```bash
+   maku config migrate --config factory.yaml --manifests resources.yaml > bound.yaml
+   maku config validate --config factory.yaml --base-ref origin/main --expect-unchanged bound.yaml
+   ```
+
+   `migrate` writes nothing unless every resolved class and merge setting is unchanged, and prints a
+   `changed:` line for each difference.
+3. Commit the converted manifests in one pull request per repository: the policies it is the first
+   to need, its `Repository` with `merge` and `mergePolicies`, and its per-repository `MergePolicy`
+   deleted. Flux applies the new objects, then prunes the old one; between the two the `Repository`
+   is refused `DefinedTwice` and the previous version keeps serving.
+4. Check what the factory serves:
+
+   ```bash
+   kubectl get mergepolicy,repository -n agent-system
+   ```
+
+   Every policy's `CONSUMERS` and `CURRENT` match, and each `Repository` is `Accepted` with
+   `BindingsValid` `True`.
+5. A repository's own `.github/agent-factory.yaml` with `classes:` is rewritten in the binding shape
+   with `maku policy export`.
+
+Before the next minor, check that no per-repository object and no `classes:` file is left:
+
+```bash
+kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
+```
+
+and that no repository's `.github/agent-factory.yaml` still has a `classes:` key. The next minor
+removes the per-repository fields from the CRD (the API server then prunes them on read, leaving an
+empty class policy with `CONSUMERS 0`) and refuses a file in the `classes:` shape, `conditions.any`
+included.
+
 ## Exposure and the web front door (v0.4x, v4 rollout step 6)
 
 New keys, all off by default, so a release that sets none of them renders as before:

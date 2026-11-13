@@ -1,7 +1,10 @@
 # Reusable merge policies: design
 
-**Status:** design, agreed with the owner on 2026-11-12 in a grilling (Q1–Q15, recorded under
-[Owner decisions](#owner-decisions)). The owner stated the problem and agreed the model in principle
+**Status:** built (release N: Maku PRs #517, #519, #522, #528, #533, #535, #538, #546, #551 and the
+docs); the per-repository shape is removed in release N+1. Design agreed with the owner on
+2026-11-12 in a grilling (Q1–Q15, recorded under [Owner decisions](#owner-decisions)). Amended while
+building: `requires` may name `holdoutChecks` (plan PR3, owner ruling 2026-11-13); Q13's "`author:
+any`" is read as the file's `conditions.any` (plan PR4), deprecated in N and refused in N+1. The owner stated the problem and agreed the model in principle
 on 2026-11-11; B1–B19 below refine it. Built right after v4 rollout step 3, before v4.0 (Q15). **Builds on:** [factory resources](2026-11-09-factory-resources-design.md)
 (D3, D4, D5, D8, D10, D16), [merge policies](../../merge-policies.md), and the profile-choice spec in
 PR #470 (its catalogue). **Scope:** `api/factory/v1alpha1` (`MergePolicy` reshaped, `Repository`
