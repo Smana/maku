@@ -54,7 +54,10 @@ type keySet struct {
 // disconnects neither aborts the fetch nor burns the refresh interval: the
 // fetch it started still loads a rotated key.
 type jwksCache struct {
-	url         string
+	url string // the JWKS URL, or the discovery document's when discover is set (logs name it)
+	// discover, when set, resolves the JWKS URL from the issuer's discovery document at each fetch,
+	// so a jwks_uri the IdP moves is followed.
+	discover    func(ctx context.Context) (string, error)
 	client      *http.Client
 	log         *slog.Logger
 	now         func() time.Time
@@ -192,7 +195,14 @@ func (c *jwksCache) refreshHeld(ctx context.Context) error {
 }
 
 func (c *jwksCache) fetch(ctx context.Context) (map[string]publicKey, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url, nil)
+	target := c.url
+	if c.discover != nil {
+		var err error
+		if target, err = c.discover(ctx); err != nil {
+			return nil, err
+		}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return nil, fmt.Errorf("jwks request: %w", err)
 	}

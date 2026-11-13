@@ -416,7 +416,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		start[strings.ToLower(r)] = true
 	}
 	mode := h.EffectiveMode()
-	webClient, roomctlClient, projectID := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile), idFile(h.ProjectIDFile)
+	webClient, roomctlClient, projectID := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile), humanAudience(h)
 	if mode == config.HumanModeLocal {
 		// No IdP, so no ids to read; Serve refuses nil ones. Access stays nil too (humanSide sets
 		// it only from a human.access block, which local mode refuses): the local user is an

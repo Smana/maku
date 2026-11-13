@@ -75,6 +75,13 @@ type Claims struct {
 	ClientID string `json:"client_id,omitempty"`
 	// ProjectRoles is the roles claim ZITADEL asserts natively: role name to granting orgs.
 	ProjectRoles map[string]json.RawMessage `json:"urn:zitadel:iam:org:project:roles,omitempty"`
+	// raw is the whole claim set, for a configured roles claim (RoleNames); never marshalled.
+	raw map[string]json.RawMessage
+	// rolesMalformed is a groups or ZITADEL roles claim of another shape than the typed field's:
+	// the zitadel preset and the machine paths refuse such a token whole, as they always have.
+	rolesMalformed bool
+	// typ is the token's typ header, which tells an RFC 9068 access token from an ID token.
+	typ string
 }
 
 // GroupNames is the groups claim our ZITADEL action sets on ID tokens, else the
@@ -239,10 +246,24 @@ func (v *Verifier) parse(ctx context.Context, raw, audience string) (*Claims, er
 }
 
 // parseWith checks raw's signature, algorithm, iss, exp, nbf and iat, adding
-// opts to the parser.
+// opts to the parser. A groups or ZITADEL roles claim of another shape refuses the
+// token, as decoding it into the typed fields always did.
 func (v *Verifier) parseWith(ctx context.Context, raw string, opts ...jwt.ParserOption) (*Claims, error) {
+	c, err := v.parseGeneric(ctx, raw, opts...)
+	if err != nil {
+		return nil, err
+	}
+	if c.rolesMalformed {
+		return nil, fmt.Errorf("%w: malformed roles claim", ErrUnauthenticated)
+	}
+	return c, nil
+}
+
+// parseGeneric is parseWith for the generic preset, which reads a configured roles
+// claim with RoleNames and judges its shape there.
+func (v *Verifier) parseGeneric(ctx context.Context, raw string, opts ...jwt.ParserOption) (*Claims, error) {
 	c := &Claims{}
-	_, err := jwt.ParseWithClaims(raw, c, func(t *jwt.Token) (any, error) {
+	tok, err := jwt.ParseWithClaims(raw, c, func(t *jwt.Token) (any, error) {
 		// Before any key lookup, so another issuer's kid never refreshes this JWKS.
 		if iss, err := t.Claims.GetIssuer(); err != nil || iss != v.issuer {
 			return nil, ErrWrongIssuer
@@ -255,6 +276,7 @@ func (v *Verifier) parseWith(ctx context.Context, raw string, opts ...jwt.Parser
 	if err != nil {
 		return nil, classify(err)
 	}
+	c.typ, _ = tok.Header["typ"].(string)
 	return c, nil
 }
 
@@ -269,6 +291,58 @@ func (c *Claims) issuedTo() string {
 		return c.AuthorizedParty
 	}
 	return ""
+}
+
+// issuedToGeneric is issuedTo under the generic preset: a token naming no client
+// in azp or client_id is issued to the one element of its aud, as an OIDC ID token
+// without azp is (OIDC Core). Never the zitadel preset's rule.
+func (c *Claims) issuedToGeneric() string {
+	if c.AuthorizedParty == "" && c.ClientID == "" && len(c.Audience) == 1 {
+		return c.Audience[0]
+	}
+	return c.issuedTo()
+}
+
+// isAccessToken reports an RFC 9068 access token by its typ header.
+func (c *Claims) isAccessToken() bool {
+	return strings.EqualFold(c.typ, "at+jwt") || strings.EqualFold(c.typ, "application/at+jwt")
+}
+
+// VerifyClient is VerifyAuthorizedParty under the generic preset: the client is
+// azp, else client_id, else a one-element aud, and the roles claim is judged by
+// RoleNames rather than by the decoder.
+func (v *Verifier) VerifyClient(ctx context.Context, raw, clientID string) (*Claims, error) {
+	if clientID == "" {
+		return nil, fmt.Errorf("%w: no client to check", ErrUnauthenticated)
+	}
+	c, err := v.parseGeneric(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	if c.issuedToGeneric() != clientID {
+		return nil, fmt.Errorf("%w: not issued to %s", ErrWrongAudience, clientID)
+	}
+	if c.Subject == "" {
+		return nil, fmt.Errorf("%w: no subject", ErrUnauthenticated)
+	}
+	return c, nil
+}
+
+// VerifyIDToken checks raw, an ID token issued to clientID (token use id): its aud
+// holds the client (OIDC Core), and it is not an RFC 9068 access token, whose aud
+// may also be the client (Dex's is).
+func (v *Verifier) VerifyIDToken(ctx context.Context, raw, clientID string) (*Claims, error) {
+	c, err := v.VerifyClient(ctx, raw, clientID)
+	if err != nil {
+		return nil, err
+	}
+	if !slices.Contains(c.Audience, clientID) {
+		return nil, fmt.Errorf("%w: aud does not hold %s", ErrWrongAudience, clientID)
+	}
+	if c.isAccessToken() {
+		return nil, fmt.Errorf("%w: an access token is not an ID token", ErrUnauthenticated)
+	}
+	return c, nil
 }
 
 // VerifyAuthorizedParty checks raw, a token issued to the named client: its azp,

@@ -32,3 +32,21 @@ func TestSponsoredSeries(t *testing.T) {
 		}
 	}
 }
+
+// v4 D8: the factory counts a roles claim that gave no group by its closed reason only.
+func TestHumanRolesClaimRefused(t *testing.T) {
+	s, scrape := rig(t, nil, func() bool { return true })
+	s.HumanRolesClaimRefused(context.Background(), "missing")
+	s.HumanRolesClaimRefused(context.Background(), "a value")
+	out := scrape()
+	for _, want := range []string{
+		`maku_factory_human_roles_claim_refused_total{reason="missing"} 1` + "\n",
+		`maku_factory_human_roles_claim_refused_total{reason="other"} 1` + "\n",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("missing %s", want)
+		}
+	}
+	var none *Set
+	none.HumanRolesClaimRefused(context.Background(), "missing")
+}
