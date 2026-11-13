@@ -486,21 +486,38 @@ start, naming HR13, unless `runTokens.perRun` scopes each run's token). `push` (
 A repository with `enforceOutputs` runs on cloud-native-ref's XR and octo-sts until its runs get
 per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` set unless
 `runTokens.perRun` is on, because a shared token could still write what the factory publishes.
-The way out, in this order:
+`runTokens.enabled` and `runTokens.perRun` are themselves refused until `runs.group` is
+`maku.ogenki.io`, so the keys and the flip are one config change. The way out, in this order:
 
 1. **The Maku release** carries the per-run minter and its publisher (v4 step 3, PRs A to C), with
    `minter.Roles = TableHR12`, the owner's ruling.
-2. **The values** set `runTokens.enabled`, `runTokens.perRun`, the agents App's Secret
-   (`runTokens.appSecret`), `runController.gitTokens: perRun` and, in the factory's config,
-   `hardening.publisher.minter: true` with `hardening.publisher.octoSTS.url` removed. The
-   publisher's token then comes from the agents App, so `hardening.publisher.audience` may go.
-3. **The start-up log** carries no HR13 refusal and no `runTokens.perRun: the role table leaves the
+2. **The agents App** is installed on each enforced repository and grants every permission of the
+   [role table](factory.md#run-tokens-the-role-table), the publisher's row included:
+   `pull_requests: write` and `issues: write`. A missing grant fails the publisher's mint with
+   `permission_not_granted` (`maku_factory_run_token_mints_total{role="publisher"}`), and every
+   enforced request waits unanswered.
+3. **Stop intake and drain.** Engage the kill switch
+   (`kubectl create configmap agent-factory-stop -n agent-system`) and wait until no run is live.
+4. **One config change, inside the drain:**
+   - the factory's config sets `runs.group: maku.ogenki.io`, `runTokens: {enabled: true, perRun:
+     true, …}` and `hardening.publisher.minter: true`, with `hardening.publisher.octoSTS.url`
+     removed;
+   - the values set the agents App's Secret (`runTokens.appSecret`) and
+     `runController.gitTokens: perRun`. The publisher's token then comes from the agents App, so
+     `hardening.publisher.audience` may go.
+
+   The flip is global: every repository moves together.
+5. **Check the start-up log.** No HR13 refusal, and no `runTokens.perRun: the role table leaves the
    implementer pull_requests: write` warning. That warning fires only when the role table keeps
-   the implementer's write under enforcement (D10 as written): such repositories stay on the XR.
-4. **The gauge** shows, for that repository, `role="implementer", permission="pull_requests",
-   access="read"` and `role="publisher", permission="pull_requests", access="write"`.
-5. **The cut-over** moves `runs.group` with the step 2 runbook: stop intake, drain the runs, flip
-   `runs.group`, lift the stop. The flip is global, so every repository moves together.
+   the implementer's write under enforcement (D10 as written); such repositories stay on the XR.
+6. **Lift the stop** (delete `agent-factory-stop`), and after the first fence pass **check the
+   gauge**: for that repository, `role="implementer", permission="pull_requests", access="read"`
+   and `role="publisher", permission="pull_requests", access="write"`.
+
+**Rollback**, inside the same stop and drain: restore `runs.group` to the XR (`cloud.ogenki.io`, or omit it) and
+`hardening.publisher.octoSTS.url` (with `hardening.publisher.audience`), drop
+`hardening.publisher.minter` and the `runTokens` block, and set `runController.gitTokens` back to
+`shared`.
 
 Readiness's R2 under `runTokens.perRun` reads the same table (HR42): it stays missing while the
 implementer and tester hold `contents: write`, which goes with `push` at H3.

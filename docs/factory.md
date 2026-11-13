@@ -1999,7 +1999,9 @@ flowchart LR
 - **The publisher's token** comes from octo-sts (`hardening.publisher.octoSTS.url`), or, with
   `hardening.publisher.minter: true`, from the factory's own minter: the agents App
   (`runTokens.enabled`), the role table's publisher row, cached until ten minutes before it
-  expires. The two are refused together. Either way the publisher is the agents App, so its login
+  expires or until the repository's enforced set changes. The agents App's installation on each
+  enforced repository must then grant `pull_requests: write` and `issues: write`. The two sources
+  are refused together. Either way the publisher is the agents App, so its login
   is `agentsLogin`.
 
 With `runs` not cloud-native-ref's XR, the factory refuses to start while `enforceOutputs` is set

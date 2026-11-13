@@ -103,6 +103,37 @@ func TestPublisherToken(t *testing.T) {
 	}
 }
 
+// A token minted under one enforced set is not reused under another: push enforced adds
+// contents: write, so the cached read token must not serve it.
+func TestPublisherTokenFollowsTheEnforcedSet(t *testing.T) {
+	app := &fakeApp{installations: map[string]int64{"o/r": 9}}
+	p, _ := newPublisher(app, nil)
+	var mu sync.Mutex
+	enforced := []hardening.OutputType{hardening.PR}
+	p.Enforced = func(string) []hardening.OutputType { mu.Lock(); defer mu.Unlock(); return enforced }
+	src, err := p.For("o/r")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 2 {
+		if _, err := src.Token(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mu.Lock()
+	enforced = []hardening.OutputType{hardening.Push, hardening.PR}
+	mu.Unlock()
+	if _, err := src.Token(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if len(app.mints) != 2 || app.mints[1].perms["contents"] != "write" || app.mints[0].perms["contents"] != "read" {
+		t.Fatalf("mints %+v: a changed enforced set must mint afresh", app.mints)
+	}
+	if _, err := src.Token(t.Context()); err != nil || len(app.mints) != 2 {
+		t.Fatalf("an unchanged set re-minted: %d mints, %v", len(app.mints), err)
+	}
+}
+
 // A failed mint is the minter's error, never a token, and the next call mints again.
 func TestPublisherTokenFails(t *testing.T) {
 	app := &fakeApp{installations: map[string]int64{}}

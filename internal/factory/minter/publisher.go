@@ -5,6 +5,7 @@ package minter
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -68,29 +69,35 @@ func (p *PublisherTokens) now() time.Time {
 	return p.Now()
 }
 
-// publisherSource is one repository's publisher token, cached until ten minutes before it expires.
+// publisherSource is one repository's publisher token, cached until ten minutes before it expires
+// and only while the repository's enforced set is the one it was minted under: the publisher's
+// permissions follow that set (push adds contents: write), so a changed set mints afresh.
 type publisherSource struct {
 	p    *PublisherTokens
 	repo string
 
-	mu  sync.Mutex
-	tok forge.Token
+	mu       sync.Mutex
+	tok      forge.Token
+	enforced []hardening.OutputType // the set tok was minted under
 }
 
-// Token returns the cached token while it has more than ten minutes to live, else mints. A failed
-// mint returns the minter's error, which never carries a token.
+// Token returns the cached token while it has more than ten minutes to live and the enforced set is
+// unchanged, else mints. A failed mint returns the minter's error, which never carries a token.
 func (s *publisherSource) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.tok.Value != "" && s.p.now().Before(s.tok.ExpiresAt.Add(-publisherRefreshWithin)) {
+	enforced := slices.Clone(s.p.Enforced(s.repo))
+	slices.Sort(enforced)
+	enforced = slices.Compact(enforced)
+	if s.tok.Value != "" && slices.Equal(enforced, s.enforced) && s.p.now().Before(s.tok.ExpiresAt.Add(-publisherRefreshWithin)) {
 		return s.tok.Value, nil
 	}
-	tok, err := s.p.Minter.Mint(ctx, s.repo, Publisher, s.p.Enforced(s.repo))
+	tok, err := s.p.Minter.Mint(ctx, s.repo, Publisher, enforced)
 	if err != nil {
-		s.tok = forge.Token{}
+		s.tok, s.enforced = forge.Token{}, nil
 		return "", err
 	}
-	s.tok = tok
+	s.tok, s.enforced = tok, enforced
 	return tok.Value, nil
 }
 
