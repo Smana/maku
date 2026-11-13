@@ -288,6 +288,23 @@ kk="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set ne
   --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"ipBlock":{"cidr":"10.0.0.0/8"}}]')"
 out="$kk"
 ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.to[0].ipBlock.cidr == "10.0.0.0/8") | ((.to | length) == 1 and (.ports | length) == 1 and .ports[0].port == 443)' 'kubernetes: the broker reaches the knowledge peers on 443 only'
+# networkPolicy.port overrides the URL's: a policy matches the pod's port, after service translation
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${kurl[@]}" --set broker.roomTools.knowledge.networkPolicy.port=9000 \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"matchLabels":{"app.kubernetes.io/name":"runlore"}}]')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."app.kubernetes.io/name" == "runlore") | .toPorts[0].ports[0].port == "9000"' 'networkPolicy.port overrides the URL port'
+# cilium: an external https endpoint is a toFQDNs (or toCIDR) peer, its own rule, beside any selector
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"toFQDNs":[{"matchName":"kb.example.com"}]},{"toCIDR":["203.0.113.0/24"]}]')"
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(has("toFQDNs")) | (.toFQDNs[0].matchName == "kb.example.com" and .toPorts[0].ports[0].port == "443" and (has("toEndpoints") | not))' 'cilium: a toFQDNs peer for an external endpoint, on 443'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(has("toCIDR")) | (.toCIDR[0] == "203.0.113.0/24" and .toPorts[0].ports[0].port == "443")' 'cilium: a toCIDR peer'
+ynone 'select(.kind=="CiliumNetworkPolicy" and .metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0] | has("toFQDNs")) | .toEndpoints' 'cilium: a peer is never nested under toEndpoints'
+bad 'broker.roomTools.knowledge.networkPolicy.to[0] sets toPorts' --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp \
+  --set-json 'broker.roomTools.knowledge.networkPolicy.to=[{"toFQDNs":[{"matchName":"kb.example.com"}],"toPorts":[]}]'
+# the schema refuses what the broker would: a timeout over 12 s, an external http URL, credentials
+bad '/broker/roomTools/knowledge/timeout' --set broker.roomTools.knowledge.url=https://kb.example.com/mcp --set broker.roomTools.knowledge.timeout=13s
+bad '/broker/roomTools/knowledge/timeout' --set broker.roomTools.knowledge.url=https://kb.example.com/mcp --set broker.roomTools.knowledge.timeout=30s
+bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=http://kb.example.com/mcp
+bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=https://u:p@kb.example.com/mcp
 bad 'broker.roomTools.knowledge.networkPolicy.to is empty' --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp
 kn0="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set networkPolicies.enabled=false "${kurl[@]}")"
 out="$kn0"

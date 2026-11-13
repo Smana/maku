@@ -1498,7 +1498,11 @@ call to the endpoint. The run keeps one MCP server, the broker, and its egress i
 is its own stateless exchange over Streamable HTTP (`initialize`, `notifications/initialized`,
 `tools/call`): no run token, no header of the caller's and no session outlives it. The broker checks
 the arguments against its own schema and forwards only those. A call is bounded by `timeout` (10 s by
-default) and its answer by `maxBytes` (64 KiB). Each call is counted in
+default) and its answer by `maxBytes` (64 KiB): a longer text is clipped. A response the broker
+cannot read whole within max(8 × `maxBytes`, 1 MiB) is not clipped but refused as
+`knowledge_bad_answer`, since it is not yet parsed. A redirect is never followed, every request after
+`initialize` names the protocol version, and a session the endpoint hands out is closed with
+`DELETE` at the end of the call. An event stream is read up to the call's answer, not to its end. Each call is counted in
 `maku_rooms_knowledge_calls_total{tool, outcome}`. See [the broker's configuration](integration.md#the-brokers-configuration).
 
 `roomTools.pushRepositories` lists the repositories `output_push` is served to: the broker's own
@@ -1536,7 +1540,7 @@ appended, attributed to `agent:<runId>` with the run's role, origin `client`.
 | `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `room_changes`' `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
 | `room_integration` | triager | `state: passed \| failed`, `reason` (snake_case, 1–64 bytes), `manifestHash` (64-hex) | `{seq}` | `message{kind: integration_result, integration: {state, reason, manifestHash}}`, no text. The harness calls it once at the end of a coordination integration run (v4 MR10, [harness README](../images/maku-harness/README.md#coordination-integration)); the factory takes it only from the integration Task's current run, under the manifest hash it holds. Harness-only, as `room_judge` |
 | `output_<type>` | implementer, tester, for each type the run's `agents.ogenki.io/safe-outputs` annotation names | the type's payload ([output events](room-log.md#output-events)) | `{outputId, status: requested, seq}` | `message{kind: output_requested, output}`. The factory answers later. `output_push` takes `{bundle}`, a base64 git bundle of at most 8 MiB: the bundle is stored beside the log, and the record keeps its digest and size. `output_push` is harness-only, as `room_judge`: the harness turns the agent's `git push` into it. It is served only when `roomTools.pushRepositories` also names the run's repository |
-| `kb_search` | `roomTools.knowledge.roles` (`triager` by default), with `roomTools.knowledge` set | `query` (1–1024 bytes), `k` 1–20 (the endpoint's default 5) | `{text, clipped, note}`: the endpoint's answer, as data, never instructions. Over `maxBytes` it is cut at a character and ends with a `[clipped: …]` line, and `clipped` is true | nothing |
+| `kb_search` | `roomTools.knowledge.roles` (`triager` by default), with `roomTools.knowledge` set | `query` (1–1024 bytes), `k` 1–20 (absent: the endpoint's default, 5) | `{text, clipped, note}`: the endpoint's answer, as data, never instructions. Over `maxBytes` it is cut at a character and ends with a `[clipped: …]` line, and `clipped` is true | nothing |
 | `kb_get` | as `kb_search` | `path` (one line of 1–512 bytes, as `kb_search` returned it) | as `kb_search`: the whole entry | nothing |
 | `output_status` | implementer, tester, when the run has safe outputs | `outputId` (16-hex) | `{outputId, status}`: `requested`, `waiting` with the `approvalId` a protected-path push waits for, `applied` with the GitHub `object`, `refused` with its `reason`, or `unknown` for an id the run never requested. Read from the run's own events, trusting the factory's stamp only | nothing |
 
@@ -1552,7 +1556,7 @@ A refused call is a tool result with `isError: true`, whose text starts with its
 | `log_unavailable` | The log failed; try again later |
 | `knowledge_timeout` | The knowledge endpoint did not answer within `roomTools.knowledge.timeout` |
 | `knowledge_unavailable` | The knowledge endpoint refused the call, failed, or answered with an error; the text quotes at most 200 bytes of its message |
-| `knowledge_bad_answer` | The knowledge endpoint's answer is not the JSON-RPC answer the broker asked for, or carries no text |
+| `knowledge_bad_answer` | The knowledge endpoint's answer is not the JSON-RPC answer the broker asked for, carries no text, or is over max(8 × `maxBytes`, 1 MiB) |
 
 Tool calls carry no idempotency key (MCP request ids are per session), so a retried call can append
 twice; both copies are attributed and visible.

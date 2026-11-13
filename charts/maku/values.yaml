@@ -95,10 +95,14 @@ broker:
       timeout: 10s                # 1s to 12s, under :8090's 15 s bound on one call
       maxBytes: 65536             # at most 262144
       # The peers the broker's egress opens on the URL's port, required in networkPolicies.mode
-      # cilium (Cilium endpoint selectors) and kubernetes (NetworkPolicy peers: namespaceSelector,
-      # podSelector, ipBlock).
+      # cilium and kubernetes. cilium: endpoint selectors (matchLabels, matchExpressions), or whole
+      # peers (toFQDNs, toCIDR, toCIDRSet, toEntities, toEndpoints) for an endpoint outside the
+      # cluster, e.g. {toFQDNs: [{matchName: kb.example.com}]}. kubernetes: NetworkPolicy peers
+      # (namespaceSelector, podSelector, ipBlock). port overrides the URL's: a policy matches the
+      # pod's port after service translation, so a Service whose targetPort differs needs it.
       networkPolicy:
         to: []
+        # port: 8080
   # Hardening H4 (HR35): forgeRead.audience (the factory's system audience, agent-factory) mounts a
   # projected token for it and serves forge_read on :8090 to runs annotated forge-api: deny, read
   # and filtered by the factory at factoryURL, whose api.systemPrincipals maps this ServiceAccount

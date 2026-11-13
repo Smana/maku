@@ -179,8 +179,13 @@ tokenreview): the Service, the broker CNP and the run controller then open it to
 {{/*
 broker.roomTools.knowledge (EX11), as JSON: {} while url is unset, else {config, port, to}. config is
 the broker's roomTools.knowledge block (every key but networkPolicy, with the defaults filled), port
-the URL's (443 for https, 80 for http, unless it names one), and to the peers the broker's egress
-opens on it. A default-deny mode with no peer would refuse every call, so it fails the render.
+networkPolicy.port, else the URL's (443 for https, 80 for http, unless it names one), and to the
+peers the broker's egress opens on it. A policy matches the destination pod's port, after service
+translation: a URL through a Service whose targetPort differs needs networkPolicy.port. In cilium
+mode an entry of to is an endpoint selector, grouped under one toEndpoints rule, or a whole peer
+(toFQDNs, toCIDR, toCIDRSet, toEntities, toEndpoints), rendered as its own rule: an external https
+endpoint is a toFQDNs or toCIDR peer. A default-deny mode with no peer would refuse every call, so it
+fails the render.
 */}}
 {{- define "ap.knowledge" -}}
 {{- $k := (.Values.broker.roomTools | default dict).knowledge | default dict -}}
@@ -188,7 +193,11 @@ opens on it. A default-deny mode with no peer would refuse every call, so it fai
 {{- $u := urlParse $k.url -}}
 {{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
 {{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- with ($k.networkPolicy | default dict).port }}{{ $port = toString . }}{{ end -}}
 {{- $to := ($k.networkPolicy | default dict).to | default list -}}
+{{- range $i, $e := $to -}}
+{{- if hasKey $e "toPorts" }}{{ fail (printf "broker.roomTools.knowledge.networkPolicy.to[%d] sets toPorts: the port is the URL's, or networkPolicy.port" $i) }}{{ end -}}
+{{- end -}}
 {{- if and (ne (include "ap.netMode" .) "none") (not $to) -}}
 {{- fail (printf "broker.roomTools.knowledge.networkPolicy.to is empty: networkPolicies.mode %s denies the broker's egress to broker.roomTools.knowledge.url but to these peers" (include "ap.netMode" .)) -}}
 {{- end -}}
