@@ -42,7 +42,7 @@ gateway's broker ServiceAccount is not `room-broker`.
 | `listeners` | `public: 8080`, `internal: 8081`, `clients: 8082` | One listener per data class, and one for the broker's clients |
 | `audiencePrefix` | `maku-gateway` | Every accepted audience starts with it |
 | `identity.issuer` | (required) | The cluster's ServiceAccount issuer (`kubectl get --raw /.well-known/openid-configuration`) |
-| `identity.jwks.source` | `url` | `url`: `jwks.url` is the issuer's public JWKS (GKE, EKS). `apiserver`: the in-cluster apiserver's (kind, k3d, kubeadm) |
+| `identity.jwks.source` | `url` | `url`: `jwks.url` is the issuer's public JWKS (GKE, EKS). `apiserver`: the in-cluster apiserver's (kind, k3d, kubeadm). `inline`: `jwks.inline`, the keyset itself |
 | `identity.jwks.allowAnonymousDiscovery` | `false` | Required with `source: apiserver`; see [the JWKS](#the-jwks) |
 | `runs` | `agents`, `run-` | The runs this gateway serves; must equal the factory's and the broker's |
 | `broker` | `room-broker` in the release namespace | The clients listener's only caller |
@@ -99,8 +99,10 @@ Whether K3.1 Pro refuses `temperature: 0` or ignores it is unverified; the prese
     and an audience starting `<prefix>.<listener>.`.
   - `clients` requires the broker's exact sub and an audience starting `<prefix>.client.`.
   - The audiences are checked in CEL, not in the JWT provider's audience list, which agentgateway caps.
-- **The route** for an alias requires its own audience. A caller that rewrites its path to another
-  alias holds no token for it, and gets 403. That pins each run to its claim's model and judge.
+- **The route** for an alias requires its own audience, and the listener's subject again. A caller that
+  rewrites its path to another alias holds no token for it, and gets 403. That pins each run to its
+  claim's model and judge. Each route matches exact paths (`/m/<alias>/v1/chat/completions`, and
+  `/v1/messages` for an `anthropic` provider), so the provider key reaches no other provider endpoint.
 - **The headers.** The gateway strips any incoming `x-ar-agent`, `x-ar-human`, `x-ai-gateway-client-id`
   and `agent-session-id`, sets `x-ar-agent` to the verified sub, and removes the token before the provider.
   Metrics carry `ar_agent` and the access log `x_ar_agent`, both the verified sub, which is what the
@@ -120,6 +122,10 @@ fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verifie
 - An apiserver that admits anonymous requests. kubeadm and kind do. k3s does not:
   start it with `--kube-apiserver-arg=anonymous-auth=true`.
 
+Both widen the cluster ([Security](security.md#the-model-gateways-identity)). `source: inline` avoids them:
+`jwks.inline` holds the keyset (`kubectl get --raw /openid/v1/jwks`), and nothing is fetched. Its cost is
+rotation: when the issuer rotates its signing keys, update the value and upgrade, or new tokens get 401.
+
 ## Network
 
 `networkPolicy.mode` `kubernetes` (the default) renders a default-deny NetworkPolicy on the proxy pods:
@@ -128,7 +134,7 @@ fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verifie
 |---|---|---|
 | in | run pods (label `agents.ogenki.io/run-id`) in the runs namespace | `public`, `internal` |
 | in | the broker's pods | `clients` |
-| in | `metrics.allowFrom` | 15020 |
+| in | `metrics.allowFrom` (in `cilium` mode, label selectors only) | 15020 |
 | out | the cluster DNS | 53 |
 | out | the controller (`networkPolicy.controller`) | 9978 (xDS) |
 | out | each provider: its `egress.peers`, else its `egress.cidrs`, else any address outside `networkPolicy.exceptCIDRs` | the provider's port |
@@ -142,7 +148,8 @@ fetches it, so the controller's own network policy must allow the JWKS source.
 - `task chart:gateway:probe` asserts what the chart relies on, against agentgateway on a throwaway k3d:
   - the JWKS from the apiserver, which needs the anonymous discovery binding;
   - CEL over `jwt.aud`;
-  - the path rewrite and the forced model;
+  - a non-run ServiceAccount holding the right audience is refused;
+  - the exact paths, their rewrite and the forced model;
   - the presets on the wire;
   - the metrics labels;
   - the Gateway API floor (v1.2.1, one HTTPRoute per alias).

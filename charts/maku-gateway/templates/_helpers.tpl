@@ -123,6 +123,9 @@ data:
 {{- if and (eq $jwks.source "url") (not $jwks.url) -}}
 {{- fail "identity.jwks.url is required with identity.jwks.source url: the issuer's public JWKS" -}}
 {{- end -}}
+{{- if and (eq $jwks.source "inline") (not $jwks.inline) -}}
+{{- fail "identity.jwks.inline is required with identity.jwks.source inline: the issuer's public JWKS (kubectl get --raw /openid/v1/jwks)" -}}
+{{- end -}}
 {{- if and (eq $jwks.source "apiserver") (not $jwks.allowAnonymousDiscovery) -}}
 {{- fail "identity.jwks.source apiserver needs identity.jwks.allowAnonymousDiscovery: true: agentgateway's controller fetches the apiserver's JWKS anonymously (probe P1), so system:unauthenticated must hold system:service-account-issuer-discovery" -}}
 {{- end -}}

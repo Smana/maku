@@ -48,6 +48,10 @@ spec:
       providers:
         - issuer: {{ $v.identity.issuer }}
           jwks:
+            {{- if eq $jwks.source "inline" }}
+            # source inline: nothing is fetched; re-render when the issuer rotates its keys.
+            inline: {{ $jwks.inline | toJson }}
+            {{- else }}
             remote:
               {{- if eq $jwks.source "apiserver" }}
               backendRef:
@@ -58,6 +62,7 @@ spec:
               {{- else }}
               url: {{ $jwks.url }}
               {{- end }}
+            {{- end }}
           validation:
             requiredClaims:
               - exp

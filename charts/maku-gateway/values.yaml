@@ -41,11 +41,15 @@ clusterDomain: cluster.local
 #                          allowAnonymousDiscovery: true, which binds system:service-account-issuer-discovery
 #                          to system:unauthenticated (public keys only; Kubernetes' documented setting
 #                          for OIDC discovery), and an apiserver that admits anonymous requests.
+#   jwks.source inline     jwks.inline is the issuer's public JWKS as JSON (`kubectl get --raw
+#                          /openid/v1/jwks`): no fetch and no anonymous access, but re-render it
+#                          whenever the issuer rotates its signing keys.
 identity:
   issuer: ""
   jwks:
     source: url
     url: ""
+    inline: ""
     allowAnonymousDiscovery: false
 
 # The runs this gateway serves: a run's token subject is system:serviceaccount:<namespace>:<namePrefix><8 base32>.

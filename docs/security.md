@@ -208,6 +208,20 @@ before printing.
 
 Details and the tests that prove them: [room log](room-log.md#the-guarantees).
 
+## The model gateway's identity
+
+The model gateway ([gateway](gateway.md)) verifies each caller's projected ServiceAccount token against
+the cluster's issuer keys. Where those keys come from changes what the cluster exposes:
+
+| `identity.jwks.source` | The keys | What it widens |
+|---|---|---|
+| `url` | the issuer's public JWKS URL (GKE, EKS) | nothing in the cluster |
+| `apiserver` | the in-cluster `/openid/v1/jwks`, fetched by agentgateway's controller with no credential | `allowAnonymousDiscovery: true` binds `system:service-account-issuer-discovery` to `system:unauthenticated`: any unauthenticated client that reaches the apiserver can read the discovery document and the public keys. On k3s, the apiserver must also run with `anonymous-auth=true`, which lets every unauthenticated request reach authorization, where only the bindings that name `system:unauthenticated` admit it |
+| `inline` | the keyset in the values | nothing, but the value must be updated when the issuer rotates its keys, or new tokens get 401 |
+
+The keys are public, and the binding is Kubernetes' documented setting for OIDC discovery. Where the
+apiserver is reachable beyond the cluster, prefer `url` or `inline`.
+
 ## Network
 
 These policies live in cloud-native-ref. Default deny everywhere; one allow per flow.

@@ -116,6 +116,13 @@ ykind AgentgatewayBackend 'select(.metadata.name == "model-gateway-jwks") | ((.s
 ykind ClusterRoleBinding '(.roleRef.name == "system:service-account-issuer-discovery") and (.subjects[0].name == "system:unauthenticated")' 'the anonymous discovery binding'
 rejects 'source apiserver without the binding' 'identity.jwks.source apiserver needs identity.jwks.allowAnonymousDiscovery: true' "${minimal[@]}" --set identity.jwks.source=apiserver
 rejects 'source url without a url' 'identity.jwks.url is required' "${minimal[@]}" --set identity.jwks.url=
+# source inline: the issuer's public keys in the values, no anonymous access to the apiserver
+jwks='{"keys":[{"kty":"RSA","kid":"k1","n":"AQAB","e":"AQAB","use":"sig","alg":"RS256"}]}'
+inline="$(mktemp)"; JWKS="$jwks" yq -n '.identity.jwks = {"source": "inline", "inline": strenv(JWKS)}' >"$inline"
+out="$(render "${minimal[@]}" -f "$inline")"; rm -f "$inline"
+yeq "$(pol listener-public) | .spec.traffic.jwtAuthentication.providers[0].jwks.inline" "$jwks" 'source inline puts the keyset in the policy'
+yeq '[select(.kind == "ClusterRoleBinding" or (.kind == "AgentgatewayBackend" and .metadata.name == "model-gateway-jwks"))] | length' 0 'source inline: no discovery binding, no apiserver backend'
+rejects 'source inline without a keyset' 'identity.jwks.inline is required with identity.jwks.source inline' "${minimal[@]}" --set identity.jwks.source=inline
 rejects 'an image without a digest' 'image.digest is required' "${minimal[@]}" --set image.digest=
 out="$(render "${minimal[@]}" --set replicas=1)"
 yeq '[select(.kind == "AgentgatewayParameters") | .spec.podDisruptionBudget] | map(select(. != null)) | length' 0 'one replica: no PDB (it would block every drain)'
