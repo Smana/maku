@@ -1209,3 +1209,18 @@ func TestLoadGitHubLink(t *testing.T) {
 		t.Fatalf("mode local: %v", err)
 	}
 }
+
+// With the GitHub account link, human.access needs no ZITADEL reader, and the https issuer rule (the
+// reader's PAT goes to the issuer) holds only while a reader is set.
+func TestLoadAccessFromTheGitHubLink(t *testing.T) {
+	c, err := Load(write(t, valid+"  access:\n    ttl: 2m\n"+githubLink))
+	if err != nil || c.Human.Access.ReaderFile != "" || c.Human.GitHubLink == nil {
+		t.Fatalf("access from the link alone: %+v %v", c.Human.Access, err)
+	}
+	if _, err := Load(write(t, valid+access+githubLink)); err != nil {
+		t.Fatalf("both sources, the reader behind the link: %v", err)
+	}
+	if _, err := Load(write(t, valid+"  access:\n    ttl: 2m\n")); err == nil || !strings.Contains(err.Error(), "human.access.readerFile: is required unless human.githubLink is set") {
+		t.Fatalf("neither source: %v", err)
+	}
+}

@@ -1289,15 +1289,17 @@ func (h HumanConfig) validate(system []string) []error {
 		errs = append(errs, i.validate(h.MCP.Sponsored)...)
 	}
 	if a := h.Access; a != nil {
-		if a.ReaderFile == "" {
-			errs = append(errs, errors.New("human.access.readerFile: is required"))
+		// The login comes from the GitHub account link, the ZITADEL reader, or both (the reader then
+		// only for an account with no link, plan step 5 PR5).
+		if a.ReaderFile == "" && h.GitHubLink == nil {
+			errs = append(errs, errors.New("human.access.readerFile: is required unless human.githubLink is set"))
 		}
 		if a.TTL.Duration <= 0 || a.TTL.Duration > MaxAccessTTL {
 			errs = append(errs, fmt.Errorf("human.access.ttl: must be above 0 and at most %s (D7)", MaxAccessTTL))
 		}
 		// The reader's PAT is sent to the issuer: never in clear, never with userinfo.
-		if u, err := url.Parse(h.Issuer); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-			errs = append(errs, errors.New("human.issuer: must be https://host when human.access is set"))
+		if u, err := url.Parse(h.Issuer); a.ReaderFile != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil) {
+			errs = append(errs, errors.New("human.issuer: must be https://host when human.access.readerFile is set"))
 		}
 	}
 	return errs

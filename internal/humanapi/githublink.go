@@ -21,6 +21,7 @@ import (
 	"go.opentelemetry.io/otel/metric"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/store"
 )
 
@@ -515,4 +516,41 @@ func (s *Server) githubAdminUnlink(w http.ResponseWriter, r *http.Request) {
 		s.ghCounted(r.Context(), ghAdminUnlinked)
 	}
 	writeJSON(w, map[string]any{"unlinked": gone})
+}
+
+// touchEvery bounds how often one replica asks the store to refresh a sub's last_seen_at; the store
+// itself writes at most hourly.
+const (
+	touchEvery    = 10 * time.Minute
+	maxTouchCache = 10_000
+)
+
+// touchGitHub refreshes the authenticated human's link before their request is checked for activity
+// (plan PR5): a human presenting a token is active by construction, since the IdP stops minting
+// tokens for a deactivated user. A refresh that moved the link drops the resolver's cached state, so
+// a link that had aged past activeWindow is active again on this very request. A failed refresh is
+// logged; the activity check that follows reads the store and fails closed on its own.
+func (s *Server) touchGitHub(ctx context.Context, p authn.Principal) {
+	if s.GitHubLink == nil || p.Kind != envelope.ActorHuman || p.Sub == "" {
+		return
+	}
+	now := s.now()
+	s.touchMu.Lock()
+	if last, ok := s.touched[p.Sub]; ok && now.Sub(last) < touchEvery {
+		s.touchMu.Unlock()
+		return
+	}
+	if s.touched == nil || len(s.touched) >= maxTouchCache {
+		s.touched = map[string]time.Time{}
+	}
+	s.touched[p.Sub] = now
+	s.touchMu.Unlock()
+	moved, err := s.GitHubLink.Store.TouchGitHubLink(ctx, p.Sub, now)
+	if err != nil {
+		s.log().Warn("github link not refreshed", "err", err)
+		return
+	}
+	if moved {
+		s.githubChanged(p.Sub)
+	}
 }

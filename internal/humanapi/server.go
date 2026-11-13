@@ -223,6 +223,9 @@ type Server struct {
 	readLimits map[string]*rate.Limiter // room list and summary reads per principal, per replica
 
 	folds foldCache // each recently read room's summary fold (audit S-9)
+
+	touchMu sync.Mutex
+	touched map[string]time.Time // each sub's last GitHub link touch, per replica
 }
 
 // Routes is the :8080 handler.
@@ -421,6 +424,7 @@ func (s *Server) principal(w http.ResponseWriter, r *http.Request) (authn.Princi
 		http.Error(w, "not in an agents group", http.StatusForbidden)
 		return p, false
 	}
+	s.touchGitHub(r.Context(), p)
 	switch err := s.active(r.Context(), p); {
 	case errors.Is(err, ghidentity.ErrInactive):
 		s.rejected(r.Context(), reasonUserInactive)

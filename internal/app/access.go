@@ -19,6 +19,7 @@ import (
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/repoaccess"
+	"github.com/Smana/maku/internal/store"
 )
 
 // zitadelTimeout bounds one ZITADEL link read.
@@ -98,10 +99,13 @@ func intakePublicity(gh gitHubVisibilities, ttl time.Duration) intake.Publicity 
 	return intake.NewPublicity(lookup, ttl, time.Now)
 }
 
-// roomAccess is D7's check from human.access: the caller's GitHub login from their ZITADEL
-// link, then its permission on the room's repository, both through gh and cached for the
-// config's TTL. Without human.access it returns nils, and the human API shows rooms to admins only.
-func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now func() time.Time) (*ghidentity.Resolver, *repoaccess.Checker, error) {
+// roomAccess is D7's check from human.access: the caller's GitHub login, then its permission on the
+// room's repository, both through gh and cached for the config's TTL. The login comes from the
+// caller's GitHub account link (human.githubLink, read through links) and, during the move off
+// ZITADEL, from their ZITADEL IdP link (human.access.readerFile) for a sub with no account link
+// (plan step 5 PR5). Without human.access it returns nils, and the human API shows rooms to admins
+// only.
+func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now func() time.Time, links ghidentity.LinkReader) (*ghidentity.Resolver, *repoaccess.Checker, error) {
 	if h.Access == nil {
 		return nil, nil, nil
 	}
@@ -110,17 +114,40 @@ func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now 
 	}
 	ttl := h.Access.TTL.Duration
 	id := &ghidentity.Resolver{IDPID: githubIDP, TTL: ttl, Now: now,
-		Active: readerActive(zitadel, h.Issuer, h.Access.ReaderFile), Links: readerLinks(zitadel, h.Issuer, h.Access.ReaderFile),
 		LoginOf: func(ctx context.Context, repo string, id int64) (string, error) {
 			owner, name, _ := strings.Cut(repo, "/")
 			login, err := gh.UserLogin(ctx, owner, name, id)
 			return login, unseen(err)
 		}}
+	var readerActiveOf func(context.Context, string) (bool, error)
+	var readerLinksOf func(context.Context, string) ([]ghidentity.Link, error)
+	if h.Access.ReaderFile != "" {
+		readerActiveOf, readerLinksOf = readerActive(zitadel, h.Issuer, h.Access.ReaderFile), readerLinks(zitadel, h.Issuer, h.Access.ReaderFile)
+	}
+	if l := h.GitHubLink; l != nil {
+		if links == nil {
+			return nil, nil, errors.New("human.githubLink needs the rooms database to read the links from")
+		}
+		id.Links = ghidentity.Chain(ghidentity.StoreLinks(links, githubIDP), readerLinksOf)
+		id.Active = ghidentity.StoreActive(links, l.ActiveWindow.Duration, now, readerActiveOf)
+	} else {
+		id.Links, id.Active = readerLinksOf, readerActiveOf
+	}
 	perm := func(ctx context.Context, owner, repo, login string) (string, error) {
 		p, err := gh.Permission(ctx, owner, repo, login)
 		return p, unseen(err)
 	}
 	return id, &repoaccess.Checker{Perm: perm, TTL: ttl, Now: now}, nil
+}
+
+// storeLinks reads the broker's github_links for the resolver.
+func storeLinks(st interface {
+	GitHubLinkOf(ctx context.Context, sub string) (store.GitHubLink, bool, error)
+}) ghidentity.LinkReader {
+	return func(ctx context.Context, sub string) (ghidentity.LinkRecord, bool, error) {
+		l, found, err := st.GitHubLinkOf(ctx, sub)
+		return ghidentity.LinkRecord{GitHubID: l.GitHubID, LastSeenAt: l.LastSeenAt}, found, err
+	}
 }
 
 // unseen marks a repository the App cannot see, or cannot name in a path, as one nobody reads

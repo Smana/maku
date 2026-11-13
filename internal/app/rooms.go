@@ -17,6 +17,7 @@ import (
 
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/ghidentity"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/metrics"
@@ -51,9 +52,18 @@ func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Cl
 	if err != nil {
 		return nil, err
 	}
-	identity, access, err := roomAccess(cfg.Human, gh, httpx.New(zitadelTimeout, nil), time.Now)
+	var links ghidentity.LinkReader
+	if st, ok := roomLog.(interface {
+		GitHubLinkOf(ctx context.Context, sub string) (store.GitHubLink, bool, error)
+	}); ok && cfg.Human.GitHubLink != nil {
+		links = storeLinks(st)
+	}
+	identity, access, err := roomAccess(cfg.Human, gh, httpx.New(zitadelTimeout, nil), time.Now, links)
 	if err != nil {
 		return nil, err
+	}
+	if a := cfg.Human.Access; a != nil && a.ReaderFile != "" && cfg.Human.GitHubLink != nil {
+		log.Warn("human.access.readerFile is deprecated: the GitHub account link is read first, and the ZITADEL reader only for an account with no link; remove readerFile once every human has linked (v4 step 8 deletes it)")
 	}
 	if err := add(leaseLoop(roomLog, log, nil)); err != nil {
 		return nil, fmt.Errorf("driver lease: %w", err)

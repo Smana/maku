@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/ghidentity"
 	"github.com/Smana/maku/internal/store"
 )
 
@@ -448,5 +449,39 @@ func TestGitHubUnlinkAndAdminUnlink(t *testing.T) {
 	}
 	if got := strings.Join(m.events[2:], ","); got != "dana:unlinked:dana,eve:admin_unlinked:root" {
 		t.Fatalf("events %s", got)
+	}
+}
+
+// Each authenticated request of a linked human refreshes its link (at most every touchEvery per
+// replica), and a link aged past activeWindow is active again on that request: the resolver's cached
+// inactive state is dropped. An unlinked human is never refused for it.
+func TestGitHubLinkTouchedByTheHumansRequests(t *testing.T) {
+	e, m, _, _, now := ghEnv(t)
+	m.links["dana"] = store.GitHubLink{Sub: "dana", GitHubID: 4242, Login: "dana", LinkedAt: now.Add(-200 * time.Hour), LastSeenAt: now.Add(-200 * time.Hour)}
+	read := func(ctx context.Context, sub string) (ghidentity.LinkRecord, bool, error) {
+		l, ok, err := m.GitHubLinkOf(ctx, sub)
+		return ghidentity.LinkRecord{GitHubID: l.GitHubID, LastSeenAt: l.LastSeenAt}, ok, err
+	}
+	id := &ghidentity.Resolver{IDPID: "github", TTL: 5 * time.Minute, Now: func() time.Time { return *now },
+		Links:   ghidentity.StoreLinks(read, "github"),
+		Active:  ghidentity.StoreActive(read, 168*time.Hour, func() time.Time { return *now }, nil),
+		LoginOf: func(context.Context, string, int64) (string, error) { return "dana", nil }}
+	e.srv.Identity = id
+	e.srv.GitHubLink.Changed = id.Forget
+	// The Slack App acting for dana (no request of hers) finds her inactive, and caches it.
+	if err := id.CheckActive(t.Context(), "dana"); !errors.Is(err, ghidentity.ErrInactive) {
+		t.Fatalf("aged past the window: %v", err)
+	}
+	if status, body, _ := ghReq(t, e, http.MethodGet, "/api/rooms", header("dana"), nil); status != http.StatusOK {
+		t.Fatalf("dana's own request: %d %s", status, body)
+	}
+	if l, _ := m.linked("dana"); !l.LastSeenAt.Equal(*now) {
+		t.Fatalf("not touched: %s", l.LastSeenAt)
+	}
+	if err := id.CheckActive(t.Context(), "dana"); err != nil {
+		t.Fatalf("after her request: %v", err)
+	}
+	if status, _, _ := ghReq(t, e, http.MethodGet, "/api/rooms", header("nolink"), nil); status != http.StatusOK {
+		t.Fatalf("an unlinked human: %d", status)
 	}
 }
