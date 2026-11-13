@@ -160,12 +160,14 @@ type PlanConfig struct {
 	// deployment that has not declared the block answers `unknown tool`, as run_create does to a
 	// human token today.
 	Enabled bool `json:"enabled,omitempty"`
-	// URL is the in-cluster AI Gateway data-plane Service, straight to it: a package never
-	// hard-codes a platform endpoint, and factoryURL is configured the same way.
+	// URL is the model gateway's in-cluster route (agentgateway, `maku-gateway`: its clients
+	// listener's /clients/planner/v1), straight to it: a package never hard-codes a platform
+	// endpoint, and factoryURL is configured the same way.
 	URL string `json:"url,omitempty"`
 	// Model is the pinned alias, and the only value it may hold (CD17); empty takes PlanModel.
 	Model string `json:"model,omitempty"`
-	// APIKeyFile is the mounted `planner` key, read at use so a rotation needs no restart.
+	// APIKeyFile is the `planner` client's bearer (the broker's projected token, or a mounted key),
+	// read at use so a rotation needs no restart.
 	APIKeyFile string `json:"apiKeyFile,omitempty"`
 	// Deadline bounds the one model call; empty takes DefaultPlanDeadline.
 	Deadline Duration `json:"deadline,omitzero"`
@@ -390,8 +392,9 @@ const (
 type SlackIntentsConfig struct {
 	Principal string `json:"principal"`
 	TeamID    string `json:"teamID"`
-	// URL is the in-cluster AI Gateway data-plane Service, and APIKeyFile the mounted `classifier`
-	// key, read at use so a rotation needs no restart.
+	// URL is the model gateway's in-cluster route (agentgateway, `maku-gateway`: its clients
+	// listener's /clients/classifier/v1), and APIKeyFile the `classifier` client's bearer (the
+	// broker's projected token), read at use so a rotation needs no restart.
 	URL        string `json:"url"`
 	APIKeyFile string `json:"apiKeyFile"`
 	// Model is the pinned alias, and the only value it may hold; empty takes ClassifyModel.

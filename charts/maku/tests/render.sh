@@ -268,6 +268,66 @@ si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCont
 out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
 
+# broker.modelGateway (plan v4 step 4, GW8): the planner and the classifier call the model gateway's
+# clients listener, each with its own projected token. The chart fills url and apiKeyFile only where
+# the verbatim human block leaves them unset: a block's own url or key file wins (D25).
+mgtmp="$(mktemp -d)"; trap 'rm -rf "$mgtmp"' EXIT
+mgplan=(--set broker.factoryURL=https://agent-factory.agent-system.svc:8082
+  --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true --set broker.human.access.readerFile=/a
+  --set broker.human.intake.plan.enabled=true --set 'broker.human.intake.plan.repositories={owner/repo}'
+  --set-json 'broker.human.intake.plan.classes={"docs":{"roles":["implementer"],"ceilingUSD":1,"source":"class:docs"}}')
+mgsi=(--set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s'
+  --set broker.human.slackIntents.principal=slack-app --set broker.human.slackIntents.teamID=T01ABC)
+brokercfg() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$1"; }
+mgp="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+  --set broker.modelGateway.service=model-gateway)"
+out="$mgp"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.intake.plan.url == "http://model-gateway.agent-system.svc.corp.local:8082/clients/planner/v1" and .human.intake.plan.apiKeyFile == "/var/run/secrets/maku/model-gateway/planner")' 'modelGateway: the planner gets the clients listener URL and its token file'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents == null)' 'modelGateway: an absent slackIntents stays absent'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name == "model-gateway") | (.projected.sources | map(.serviceAccountToken | .path + "=" + .audience + "@" + (.expirationSeconds | tostring)) | join(",")) == "planner=maku-gateway.client.planner@3600,classifier=maku-gateway.client.classifier@3600"' 'modelGateway: one projected token per client, 3600 s, read at use'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "model-gateway") | (.mountPath == "/var/run/secrets/maku/model-gateway" and .readOnly == true)' 'modelGateway: the tokens are mounted read-only'
+ykind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.toEndpoints[0].matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway") | (.toEndpoints[0].matchLabels."io.kubernetes.pod.namespace" == "agent-system" and (.toPorts[0].ports | map(.port) | join(",")) == "8082")' 'modelGateway: the broker CNP reaches the gateway pods on the clients port'
+brokercfg "$mgp" >"$mgtmp/planner-gateway.yaml"
+mgo="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+  --set broker.modelGateway.service=model-gateway \
+  --set broker.human.intake.plan.url=http://llm.other-gateway.svc.cluster.local:8080/v1 \
+  --set broker.human.intake.plan.apiKeyFile=/etc/room-broker/planner/key)"
+out="$mgo"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.intake.plan.url == "http://llm.other-gateway.svc.cluster.local:8080/v1" and .human.intake.plan.apiKeyFile == "/etc/room-broker/planner/key")' 'modelGateway: a block that sets its url and apiKeyFile keeps both (D25)'
+mgs="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" "${mgplan[@]}" "${mgsi[@]}" \
+  --set broker.modelGateway.service=model-gateway --set broker.modelGateway.namespace=gateways --set broker.modelGateway.port=9082 \
+  --set broker.modelGateway.audiencePrefix=mgw --set networkPolicies.mode=kubernetes)"
+out="$mgs"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.url == "http://model-gateway.gateways.svc.corp.local:9082/clients/classifier/v1" and .human.slackIntents.apiKeyFile == "/var/run/secrets/maku/model-gateway/classifier" and .human.intake.plan.url == "http://model-gateway.gateways.svc.corp.local:9082/clients/planner/v1")' 'modelGateway: an existing slackIntents gets the classifier route; namespace and port follow the values'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name == "model-gateway") | (.projected.sources | map(.serviceAccountToken.audience) | join(",")) == "mgw.client.planner,mgw.client.classifier"' 'modelGateway: the audiences follow audiencePrefix'
+ykind NetworkPolicy 'select(.metadata.name=="room-broker") | .spec.egress[] | select(.to[0].podSelector.matchLabels."gateway.networking.k8s.io/gateway-name" == "model-gateway") | (.to[0].namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "gateways" and (.ports | map(.port) | join(",")) == "9082")' 'modelGateway: the broker NetworkPolicy reaches the gateway pods on the clients port'
+brokercfg "$mgs" >"$mgtmp/slackintents-gateway.yaml"
+# unset modelGateway: no volume, no egress, no derived key
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+  --set broker.human.intake.plan.url=http://gw.ai.svc:8080/v1 --set broker.human.intake.plan.apiKeyFile=/k)"
+ynone 'select(.kind=="Deployment") | .spec.template.spec.volumes[] | select(.name == "model-gateway")' 'no modelGateway: no token volume'
+ynone 'select(.kind=="CiliumNetworkPolicy") | .spec.egress[] | select(.toEndpoints[0].matchLabels."gateway.networking.k8s.io/gateway-name")' 'no modelGateway: no egress to a gateway'
+bad '/broker/modelGateway/port' --set broker.modelGateway.service=model-gateway --set broker.modelGateway.port=0
+# A url without its apiKeyFile (or the reverse) would pair the gateway's token with another endpoint,
+# or another key with the gateway: the pair is filled only when both are unset, else the render fails.
+mgbad() { # mgbad 'expected message' --set ...: the oidc-mode render with modelGateway on must fail with it
+  local want="$1" err; shift
+  if err="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+      --set broker.modelGateway.service=model-gateway "$@" 2>&1 >/dev/null)"; then
+    echo "FAIL: $* must not render" >&2; fail=1
+  elif ! grep -qF -- "$want" <<<"$err"; then
+    echo "FAIL: $* failed, but not with \"$want\": $err" >&2; fail=1
+  fi
+}
+mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.url=https://api.openai.com/v1
+mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.apiKeyFile=/etc/planner/key
+mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
+  --set broker.human.slackIntents.url=https://api.openai.com/v1
+mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
+  --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key
+
 # sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
 # is the old one, byte for byte (runtimeClassName: gvisor), plus PR B's unsafeSharedGitToken (the
 # quickstart's one PAT).
@@ -433,7 +493,7 @@ for r in "$q" "$nonp"; do
 done
 
 # both rendered configs load through the broker's real loader
-tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
+tmp="$(mktemp -d)"; trap 'rm -rf "$tmp" "$mgtmp"' EXIT
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$q" >"$tmp/quickstart.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$p" >"$tmp/production.yaml"
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$fwd" >"$tmp/forwarded.yaml"
@@ -446,6 +506,8 @@ yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$u
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
 go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1
+go run ./tests/loadconfig broker-planner-gateway "$mgtmp/planner-gateway.yaml" || fail=1
+go run ./tests/loadconfig broker-slackintents-gateway "$mgtmp/slackintents-gateway.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-on "$tmp/production.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$rt" >"$tmp/roomtools-tokenreview.yaml"

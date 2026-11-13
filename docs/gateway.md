@@ -101,7 +101,8 @@ headroom for a larger upstream schema. It sets no keep annotation, so uninstalli
 
 Both switches are off by default, so a release that sets none of them renders exactly what it did
 before. The umbrella fails the render when `maku-gateway.runs` differs from `maku.runs`, or when the
-gateway's broker ServiceAccount is not `room-broker`.
+gateway's broker ServiceAccount is not `room-broker`. It also fails when the gateway and the broker
+disagree about [the clients](#the-planner-and-the-classifier).
 
 ## Values
 
@@ -197,6 +198,75 @@ Both widen the cluster ([Security](security.md#the-model-gateways-identity)). `s
 `jwks.inline` holds the keyset (`kubectl get --raw /openid/v1/jwks`), and nothing is fetched. Its cost is
 rotation: when the issuer rotates its signing keys, update the value and upgrade, or new tokens get 401.
 
+## The planner and the classifier
+
+The broker makes two kinds of model call: the planner (`intake_plan`, alias `tier-frontier`) and the
+Slack intent classifier (`intent_classify`, alias `tier-light`). Both go to the `clients` listener
+(8082), which admits one subject only, `system:serviceaccount:<release namespace>:room-broker`. Each
+client has its own route and its own audience:
+
+| Client | Route | Token audience | Gateway values |
+|---|---|---|---|
+| planner | `/clients/planner/v1` | `<audiencePrefix>.client.planner` | `clients.planner: {enabled, provider, model}` |
+| classifier | `/clients/classifier/v1` | `<audiencePrefix>.client.classifier` | `clients.classifier: {enabled, provider, model}` |
+
+A token for one client gets 403 on the other client's route. The gateway forces the model to the
+client's alias and maps it to `clients.<client>.model`, so the broker's pinned aliases stay as they are.
+
+**The broker's side** is `maku.broker.modelGateway`:
+
+```yaml
+maku:
+  broker:
+    modelGateway:
+      service: model-gateway     # the Gateway's name; empty turns it off
+      namespace: ""              # "" is the release namespace
+      port: 8082                 # the clients listener
+      audiencePrefix: maku-gateway
+```
+
+With `service` set, the broker's pod mounts one projected token per client at
+`/var/run/secrets/maku/model-gateway/{planner,classifier}`. Each token lasts 3600 s, and the broker
+reads it at each call, so the kubelet's rotation needs no restart. The broker's network policy may
+reach the gateway's pods on `port`. The chart then fills two blocks of the broker's config:
+
+- `human.intake.plan`, when it is enabled: `url` becomes `http://<service>.<namespace>.svc.<clusterDomain>:<port>/clients/planner/v1`, and `apiKeyFile` becomes the planner's token;
+- `human.slackIntents`, only when the block exists: the classifier's route and token.
+
+The two keys are filled together, and only when the block sets neither. A block that sets both keeps
+them, so a broker that reaches another gateway with a static key keeps working until you remove the
+pair. A block that sets only one of them fails the render, naming both keys. Filling the other key
+would pair the gateway's token with your endpoint, or your key with the gateway.
+
+In the umbrella, the render fails when:
+- `maku-gateway` serves a client but `maku.broker.modelGateway.service` does not name its Gateway;
+- the broker's `namespace`, `port` or `audiencePrefix` disagree with the gateway's;
+- the broker derives a client's route from the gateway, but the gateway does not serve that client.
+
+Some notes on choosing the clients' models:
+
+- **The classifier never runs on a model that always reasons.** Its 64 tokens would go to reasoning,
+  and the reply would be empty, so the render fails ([Presets](#presets)).
+- **The planner may.** Set `human.intake.plan.reasoningEffort: low` beside it. cloud-native-ref runs
+  the planner on Z.ai `glm-5.3`, which always reasons:
+
+  ```yaml
+  maku-gateway:
+    clients:
+      planner: {enabled: true, provider: zai, model: glm-5.3}
+  maku:
+    broker:
+      modelGateway: {service: model-gateway}
+      human:
+        intake:
+          plan: {enabled: true, reasoningEffort: low}   # url and apiKeyFile come from modelGateway
+  ```
+- **The classifier's provider sees replies from every room it serves.** Choose one whose data terms suit
+  the workspace's data.
+
+The broker still attributes spend through its own `Usage` and daily caps. The gateway attributes the
+same calls to the broker's `jwt.sub` and the route, which is enough for dashboards.
+
 ## Network
 
 `networkPolicy.mode` `kubernetes` (the default) renders a default-deny NetworkPolicy on the proxy pods:
@@ -226,3 +296,10 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - the Gateway API floor (v1.2.1, one HTTPRoute per alias).
 - `task chart:gateway:k3d` installs the demo with the gateway on, and checks three calls from a run-like
   pod: 200 on its alias, 403 on another alias, 401 with no token.
+- `task chart:intake:k3d` runs the planner and the classifier through the clients listener, with the
+  e2e stub as a `custom` provider. It checks what the provider received:
+  - the mapped model, and the provider key rather than the broker's token;
+  - with the planner on a `mistral` provider, `reasoning_effort: "none"`, though the broker sent `low`;
+  - on a `moonshot` provider, `temperature: 1` and no `top_p`, though the broker sent 0.
+
+  It also checks that a planner token gets 403 on the classifier's route, and the reverse.

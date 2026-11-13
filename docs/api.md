@@ -865,7 +865,7 @@ the factory in `maku_intake_catalogue_reads_total{outcome="hit"|"miss"|"error"}`
 ### The planner on `/mcp`
 
 `intake_plan` and `plan_check` are the governed planner (CD5, CD17, CD18, CD27): a sentence becomes
-`plan/v2` through one bounded call to the AI Gateway, and the plan's hash is the value every later
+`plan/v2` through one bounded call to the model gateway ([`maku-gateway`](gateway.md#the-planner-and-the-classifier)), and the plan's hash is the value every later
 door re-validates before anything is filed. They are **off** unless the broker's config sets
 `human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
 `run_create` is to a human token. `config.Load` refuses the switch unless it also has

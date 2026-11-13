@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Command loadconfig loads each file through a component's real config loader:
-// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|run-controller FILE...`. render.sh feeds
+// `loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller FILE...`. render.sh feeds
 // it the chart's rendered config.yaml, so a template edit the component would refuse — or a roomTools
 // switch that disagrees with the values — fails chart:check, not a rollout.
 package main
@@ -9,6 +9,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/runctl"
@@ -16,7 +17,7 @@ import (
 
 func main() {
 	if len(os.Args) < 3 {
-		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|run-controller FILE...")
+		fmt.Fprintln(os.Stderr, "usage: loadconfig broker|broker-roomtools-on|broker-roomtools-off|broker-roomtools-tokenreview|broker-slackintents|broker-planner-gateway|broker-slackintents-gateway|run-controller FILE...")
 		os.Exit(2)
 	}
 	var load func(string) error
@@ -61,6 +62,26 @@ func main() {
 			}
 			return nil
 		}
+	case "broker-planner-gateway", "broker-slackintents-gateway":
+		// broker.modelGateway (GW8): the derived route and token file decode to the clients listener's
+		// planner route (and, with slackIntents, the classifier's) and the projected token.
+		load = func(p string) error {
+			c, err := config.Load(p)
+			if err != nil {
+				return err
+			}
+			if err := gatewayRoute("human.intake.plan", c.Human.Intake.Plan.URL, c.Human.Intake.Plan.APIKeyFile, "planner"); err != nil {
+				return err
+			}
+			if os.Args[1] == "broker-planner-gateway" {
+				return nil
+			}
+			si, on := c.SlackIntents()
+			if !on {
+				return fmt.Errorf("slackIntents is off, want on")
+			}
+			return gatewayRoute("human.slackIntents", si.URL, si.APIKeyFile, "classifier")
+		}
 	case "run-controller":
 		load = func(p string) error { _, err := runctl.LoadConfig(p); return err }
 	default:
@@ -77,4 +98,16 @@ func main() {
 	if failed {
 		os.Exit(1)
 	}
+}
+
+// gatewayRoute checks one client's derived keys: the clients listener's /clients/<client>/v1 route
+// and the projected token's file.
+func gatewayRoute(key, url, keyFile, client string) error {
+	if !strings.HasPrefix(url, "http://") || !strings.HasSuffix(url, "/clients/"+client+"/v1") {
+		return fmt.Errorf("%s.url %q is not the gateway's /clients/%s/v1 route", key, url, client)
+	}
+	if want := "/var/run/secrets/maku/model-gateway/" + client; keyFile != want {
+		return fmt.Errorf("%s.apiKeyFile %q, want %q", key, keyFile, want)
+	}
+	return nil
 }

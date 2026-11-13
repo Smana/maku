@@ -235,7 +235,8 @@ grep -qF 'must have that name' <<<"$msg" || { echo "FAIL: an existingSecret the 
 # The model gateway (plan v4 step 4, Task 5; D25): off by default, so the demo golden above is the
 # byte-identical proof. On, with cnref-like values, its objects render in the release namespace.
 yq -e '.maku-gateway.enabled == false and .agentgateway.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku-gateway and agentgateway" >&2; fail=1; }
-yq '{"maku-gateway": .}' ../maku-gateway/tests/values-cnref-like.yaml >"$tmp/gateway.yaml"
+# cnref-like values serve the planner, so the broker is pointed at the gateway (Task 12, GW8)
+yq '{"maku-gateway": ., "maku": {"broker": {"modelGateway": {"service": "model-gateway"}}}}' ../maku-gateway/tests/values-cnref-like.yaml >"$tmp/gateway.yaml"
 gw="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml")" || { echo "FAIL: the demo with the gateway does not render" >&2; fail=1; gw=''; }
 # objects < RENDER: every object of a render as kind/namespace/name, the release namespace when unset.
 objects() { yq e 'select(.kind != null) | .kind + "/" + (.metadata.namespace // "maku") + "/" + .metadata.name' - | grep -vx -- '---' | sort; }
@@ -251,6 +252,27 @@ msg="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku
 grep -qF 'maku-gateway.runs (namespace "other", namePrefix "run-") must equal maku.runs (namespace "agents", namePrefix "run-")' <<<"$msg" || { echo "FAIL: a runs mismatch does not fail naming both keys (got: $msg)" >&2; fail=1; }
 msg="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gateway.broker.serviceAccount=other 2>&1 >/dev/null || true)"
 grep -qF 'maku-gateway.broker.serviceAccount "other" must be the broker' <<<"$msg" || { echo "FAIL: a broker ServiceAccount mismatch does not fail (got: $msg)" >&2; fail=1; }
+# The broker's clients (Task 12, GW8): the gateway serving the planner and the broker pointed at it agree.
+[[ "$(yq ea 'select(.kind == "Deployment" and .metadata.name == "room-broker") | .spec.template.spec.volumes[] | select(.name == "model-gateway") | .projected.sources | map(.serviceAccountToken.audience) | join(",")' - <<<"$gw")" == "maku-gateway.client.planner,maku-gateway.client.classifier" ]] ||
+  { echo "FAIL: the umbrella with the gateway does not mount the broker's client tokens" >&2; fail=1; }
+gwbad() { # gwbad 'expected message' --set ...: the gateway render must fail with it
+  local want="$1" msg; shift
+  msg="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" "$@" 2>&1 >/dev/null || true)"
+  grep -qF -- "$want" <<<"$msg" || { echo "FAIL: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
+}
+gwbad 'maku-gateway.clients.planner.enabled needs maku.broker.modelGateway.service "model-gateway" (got "")' --set maku.broker.modelGateway.service=
+gwbad 'maku.broker.modelGateway.port 9000 must equal maku-gateway.listeners.clients 8082' --set maku.broker.modelGateway.port=9000
+gwbad 'maku.broker.modelGateway.audiencePrefix "other" must equal maku-gateway.audiencePrefix "maku-gateway"' --set maku.broker.modelGateway.audiencePrefix=other
+gwbad 'maku.broker.modelGateway.namespace "elsewhere" must be the release namespace "maku"' --set maku.broker.modelGateway.namespace=elsewhere
+gwbad 'maku.broker.human.intake.plan routes through maku-gateway (no url set), but maku-gateway.clients.planner.enabled is false' \
+  --set maku-gateway.clients.planner.enabled=false --set maku.broker.human.intake.plan.enabled=true
+gwbad 'maku.broker.human.slackIntents routes through maku-gateway (no url set), but maku-gateway.clients.classifier.enabled is false' \
+  --set maku.broker.human.slackIntents.principal=slack-app
+# a block with its own url and apiKeyFile keeps working beside the gateway (D25)
+helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gateway.clients.planner.enabled=false \
+  --set maku.broker.human.intake.plan.enabled=true --set maku.broker.human.intake.plan.url=http://gw.ai.svc:8080/v1 \
+  --set maku.broker.human.intake.plan.apiKeyFile=/etc/planner/key >/dev/null 2>&1 ||
+  { echo "FAIL: a planner with its own url and apiKeyFile does not render beside the gateway" >&2; fail=1; }
 
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
 sed -e 's#sk-change-me#k1#' -e 's#id: "123456"#id: "123"#' -e 's#my-app\[bot\]#maku-demo[bot]#' values-mine.example.yaml >"$tmp/mine.yaml"
