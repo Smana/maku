@@ -549,7 +549,7 @@ ykind PrometheusRule '.spec.groups[] | select(.name == "maku-rooms") | .rules[] 
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
 ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
-out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set slack.enabled=true)"
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" -f values-slack.example.yaml --set expose.mode=none)"
 [[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-slack" ]] || { echo "FAIL: slack.enabled: groups '$(groups)'" >&2; fail=1; }
 # PR B2 (Task 22): maku-gateway.enabled adds maku-gateway, on the gateway's job and the runs' subject.
 # The gateway demo prices nothing and has no meter: no lookup to judge, no ledger to cross-check.
@@ -646,8 +646,8 @@ bad "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode no
 bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
 bad 'expose.web needs maku.enabled: the web surface is the broker' "${exw[@]}" --set maku.enabled=false
 helm template af . -n maku "${exw[@]}" --set expose.web.enabled=false >/dev/null || { echo 'FAIL: expose.web.enabled false does not render' >&2; fail=1; }
-bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" --set slack.enabled=true
-helm template af . -n maku "${exw[@]}" --set slack.enabled=true --set expose.slack.enabled=false >/dev/null ||
+bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" -f values-slack.example.yaml --set slack.networkPolicy.mode=kubernetes --set-json 'expose.slack.hostnames=[]'
+helm template af . -n maku "${exw[@]}" -f values-slack.example.yaml --set slack.networkPolicy.mode=kubernetes --set expose.slack.enabled=false >/dev/null ||
   { echo 'FAIL: slack.enabled with expose.slack.enabled false does not render' >&2; fail=1; }
 
 # v4 step 6 Task 11 (D19, EX2, EX5): the routes. The goldens hold each mode's routes, byte for byte:
@@ -657,7 +657,7 @@ golden() { # golden NAME: the render's routes equal tests/golden/NAME.yaml
   [[ ${UPDATE_GOLDEN:-} == 1 ]] && routes >"tests/golden/$1.yaml"
   routes | diff -u "tests/golden/$1.yaml" - >&2 || { echo "FAIL: the routes differ from tests/golden/$1.yaml" >&2; fail=1; }
 }
-exs=("${exw[@]}" --set slack.enabled=true --set-json 'expose.slack.hostnames=["factory-slack.example.test"]'
+exs=("${exw[@]}" -f values-slack.example.yaml --set slack.networkPolicy.mode=kubernetes --set-json 'expose.slack.hostnames=["factory-slack.example.test"]'
      --set-json 'expose.slack.parentRefs=[{"name":"public","namespace":"infra","sectionName":"factory-slack"}]')
 out="$(helm template af . -n maku "${exs[@]}")" || { echo 'FAIL: expose httproute with both surfaces does not render' >&2; fail=1; out=''; }
 golden expose-httproute
@@ -684,6 +684,53 @@ jkind Ingress 'select(.metadata.name == "factory-slack-events") | (.spec.ingress
 for k in Certificate Issuer ClusterIssuer; do
   ynone "select(.kind == \"$k\") | .kind" "an exposed render has a $k: TLS is the user's (EX5)"
 done
+
+# v4 step 6 Task 15 (D20, EX7, EX8): the Slack App as the opt-in subchart `slack`, wired by agreement.
+# Off (the default), nothing of it renders: the demo golden above holds that byte for byte.
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.metadata.name == "factory-slack-app") | .kind' 'slack off renders the App'
+slk=("${idv[@]}" -f values-slack.example.yaml --set expose.mode=none)
+out="$(helm template af . -n maku "${slk[@]}")" || { echo 'FAIL: values-slack.example.yaml does not render' >&2; fail=1; out=''; }
+jkind Deployment 'select(.metadata.name == "factory-slack-app") | .spec.replicas == 1' 'slack.enabled renders the App'
+jkind ConfigMap 'select(.metadata.name == "factory-slack-threads") | has("data") | not' 'and its thread map'
+jkind Deployment 'select(.metadata.name == "room-broker") | [.spec.template.spec.volumes[] | select(.name == "webhook-slack-app") | .secret.secretName] == ["room-broker-webhook-slack-app"]' "the broker mounts the App's webhook key"
+bad "slack.enabled needs the App's subscriber in maku.broker.webhooks: name slack-app, network cluster, url http://factory-slack-app.maku.svc.cluster.local:8081/webhooks, existingSecret room-broker-webhook-slack-app" "${slk[@]}" --set-json 'maku.broker.webhooks=[]'
+bad 'maku.broker.webhooks[slack-app].url "http://factory-slack-app.maku.svc.cluster.local:8080/webhooks" must be http://factory-slack-app.maku.svc.cluster.local:8081/webhooks' "${slk[@]}" --set 'maku.broker.webhooks[0].url=http://factory-slack-app.maku.svc.cluster.local:8080/webhooks'
+bad 'maku.broker.webhooks[slack-app].existingSecret "other" must equal slack.webhookSecret "room-broker-webhook-slack-app"' "${slk[@]}" --set 'maku.broker.webhooks[0].existingSecret=other'
+bad 'slack.principal "slack-app" must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the broker lacks it' "${slk[@]}" --set-json 'maku.broker.human.mcp.sponsored=[]'
+bad 'slack.principal "slack-app" must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the factory lacks it' "${slk[@]}" --set-json 'maku-factory.config.api.sponsored=[]'
+bad 'slack.brokerURL "http://room-broker.other.svc.cluster.local:8080" must be the broker'"'"'s human listener, http://room-broker.maku.svc.cluster.local:8080' "${slk[@]}" --set slack.brokerURL=http://room-broker.other.svc.cluster.local:8080
+bad 'maku.broker.webhooks[slack-app] targets factory-slack-app, but slack.enabled is false: every event would go to a subscriber that does not exist' "${slk[@]}" --set slack.enabled=false
+# the example with monitoring and the Slack surface: its route, its ServiceMonitor, its rule group
+out="$(helm template af . -n maku "${slk[@]}" --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
+  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"app":"prom"}}]' --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set slack.networkPolicy.mode=cilium \
+  --set expose.mode=httproute --set expose.web.enabled=false --set-json 'expose.httproute.parentRefs=[{"name":"public"}]')" ||
+  { echo 'FAIL: the example with monitoring and the Slack surface does not render' >&2; fail=1; out=''; }
+jkind HTTPRoute 'select(.metadata.name == "factory-slack-events") | .spec.hostnames == ["factory-slack.example.com"]' 'the Slack surface routes to the App'
+jkind ServiceMonitor 'select(.metadata.name == "factory-slack-app") | .spec.selector.matchLabels."app.kubernetes.io/name" == "factory-slack-app" and .spec.endpoints[0].port == "metrics"' "the App's ServiceMonitor"
+jkind PrometheusRule '[.spec.groups[].name] | index("maku-slack") != null' 'the maku-slack rule group'
+
+bad 'slack.networkPolicy.mode "none" must equal maku.networkPolicies.mode "kubernetes"' "${slk[@]}" --set maku.networkPolicies.mode=kubernetes --set maku.runController.enabled=true
+
+# v4 step 6 Task 16 (D6): the factory's default-deny, off by default (the golden holds it), per mode.
+ynone 'select((.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") and .metadata.name == "agent-factory") | .kind' 'networkPolicies.factory off renders the factory policy'
+fnp=("${args[@]}" --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+bad 'networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes' "${fnp[@]}"
+bad 'networkPolicies.factory.enabled and networkPolicies.plain both select the factory' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set networkPolicies.plain=true
+bad 'networkPolicies.factory.meter.port is required with its to' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set-json 'networkPolicies.factory.meter.to=[{"podSelector":{}}]'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes \
+  --set-json 'networkPolicies.factory.intakeFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"runlore"}}}]' \
+  --set-json 'networkPolicies.factory.otlp={"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"obs"}}}],"port":4317}' \
+  --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" ||
+  { echo 'FAIL: networkPolicies.factory in mode kubernetes does not render' >&2; fail=1; out=''; }
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | (.ports[0].port | tostring) + ":" + (.from | tostring)] == ["8082:[{\"podSelector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"room-broker\"}}}]", "8080:[{\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"runlore\"}}}]", "9090:[{\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"monitoring\"}}}]"]' "kubernetes: the factory admits the broker on :8082, intakeFrom on :8080, the scraper on :9090, nothing else"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | (.ports | map(.port | tostring) | join("+"))] == ["53+53", "443+6443", "8443", "443", "4317"] and .spec.egress[3].to[0].ipBlock.cidr == "0.0.0.0/0" and (.spec.egress[3].to[0].ipBlock.except | index("10.0.0.0/8")) != null' "kubernetes: the factory reaches DNS, the apiserver, the broker's :8443, public 443 (GitHub) and the collector, nothing else"
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes)"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | ([.spec.ingress[].ports[0].port] | index(8080)) == null' 'kubernetes: an empty intakeFrom closes :8080'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+  --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')" ||
+  { echo 'FAIL: networkPolicies.factory in mode cilium does not render' >&2; fail=1; out=''; }
+jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | (.spec.ingress | length) == 2 and .spec.ingress[1].fromEntities == ["host"] and .spec.egress[3] == {"toFQDNs": [{"matchName": "ghes.example.test"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]} and (.spec.egress | length) == 4' 'cilium: the broker and the kubelet in; DNS, the apiserver, the broker and the GHES out'
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

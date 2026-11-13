@@ -21,6 +21,59 @@ sequenceDiagram
   A->>S: thread line
 ```
 
+## Install
+
+The umbrella chart installs the App as the subchart `slack` (`charts/maku-slack`), off by default. Turn
+it on with [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml), which
+holds the four blocks that must agree. Helm cannot set one subchart's values from another's, so the
+render checks them and fails naming the key that disagrees:
+
+| Block | What it must say |
+|---|---|
+| `slack` | the App: its image, `issuerURL`, `roomsURL`, and `config` (`teamID`, `channels`, `proposals`) |
+| `maku.broker.webhooks` | an entry named `slack.principal` (`slack-app`), `network: cluster`, `url: http://factory-slack-app.<namespace>.svc.<clusterDomain>:8081/webhooks`, `existingSecret` equal to `slack.webhookSecret` |
+| `maku.broker.human.mcp.sponsored` | an entry named `slack-app` |
+| `maku-factory.config.api.sponsored` | an entry named `slack-app` |
+
+`slack.enabled: false` with a broker subscriber that still targets `factory-slack-app` fails too: every
+event would go to a subscriber that does not exist, and the broker would disable it.
+
+**What it renders:** one replica (`factory-slack-app`), its Service (`events` 8080, `webhooks` 8081,
+`metrics` 9090), a ServiceAccount, a Role with `get` and `update` on `factory-slack-threads` alone, the
+thread map, and the config built from `slack.config` plus the derived file paths and addresses.
+
+**The Secrets, by name:**
+
+- `slackSecret` holds `signing-secret`, `bot-token` and `bot-user-id`.
+- `principalSecret` holds `client-id` and `client-secret`, plus `project-id` under the zitadel preset.
+- `webhookSecret` holds `signing-key`. The broker mounts the same Secret.
+
+**Exposure.** Only `POST /slack/events` must be public, through [`expose.slack`](exposure.md).
+
+**Network.** `slack.networkPolicy.mode` must equal `maku.networkPolicies.mode`, and the App then
+admits:
+
+- Slack's events from the gateway;
+- the webhooks from the broker;
+- the metrics from the scraper.
+
+It reaches DNS, the apiserver, the broker's `:8080`, `slack.com` and the IdP.
+
+**Off removes** the App, its route, its ServiceMonitor and the `maku-slack` alert group. Without it the
+factory loses:
+
+- mention intake and proposals;
+- thread lines;
+- `forge.push` cards;
+- `@factory link`.
+
+MCP, the CLI and the web UI are unaffected.
+
+**The thread map survives upgrades.** It is rendered with no `data` and kept on uninstall. A Flux
+`driftDetection` or Argo CD sync still needs the ignore rule in
+[the chart's README](../charts/maku-slack/README.md#the-thread-map-survives-upgrades). An install
+whose map already exists hands it to Helm first, as that README says.
+
 ## Manifest
 
 The App is one workspace's: create it from this manifest, install it, and put the signing secret and the bot token in the secret store.

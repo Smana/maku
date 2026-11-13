@@ -4,6 +4,21 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+
+## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.4x, v4 rollout step 6)
+
+New keys, all off by default, so a release that sets none of them renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `slack` (the `maku-slack` subchart) | `enabled: false` | the Slack App ([Slack App, Install](slack.md#install)). Its values must agree with `maku.broker.webhooks` and both `sponsored` lists (`values-slack.example.yaml`) |
+| `maku.broker.webhooks`, `suspend`, `policyManagement`, `coordination` | unset | the broker's own blocks, verbatim. A webhook may name its key's Secret (`existingSecret`, `key`) and its peers (`networkPolicy.to`) |
+| `networkPolicies.factory` | `enabled: false` | the factory's default-deny, in maku's mode; refused beside the demo's `networkPolicies.plain` |
+
+**`slack.enabled: true` now installs the App.** Before this release, `slack.enabled: true` only added
+the `maku-slack` alert group, for an App installed outside the chart. It now renders the App and checks
+its agreements, so an install that kept its own App either moves it to the subchart, or turns
+`slack.enabled` off (and loses that alert group).
 ## Exposure and the web front door (v0.4x, v4 rollout step 6)
 
 New keys, all off by default, so a release that sets none of them renders as before:

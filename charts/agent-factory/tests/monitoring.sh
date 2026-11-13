@@ -29,7 +29,7 @@ helm template af . -n maku \
   --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
   --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
   --set monitoring.prometheusRule.kubeStateMetrics=true --set monitoring.prometheusRule.docsURL=https://docs.example.test \
-  --set slack.enabled=true |
+  -f values-slack.example.yaml --set expose.mode=none --set slack.networkPolicy.mode=kubernetes |
   yq ea 'select(.kind == "PrometheusRule" and .metadata.name == "maku") | .spec' - >"$tmp/rules-annotated.yaml"
 fail=0
 groups="$(yq '[.groups[].name] | join(" ")' "$tmp/rules-annotated.yaml")"

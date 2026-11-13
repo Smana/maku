@@ -58,5 +58,17 @@ helm template s . -n agent-system --set e2e.unpinnedImages=true --set image.tag=
 # the support floor (D26)
 msg="$(helm template s . "${base[@]}" --kube-version 1.29.0 2>&1 >/dev/null || true)"
 grep -qF kubeVersion <<<"$msg" || { echo "FAIL: Kubernetes 1.29 renders" >&2; fail=1; }
+
+# Task 16 (D6): the App's default-deny, per mode, exactly the flows docs/slack.md lists. Off (none), none.
+out="$(helm template s . -n agent-system "${base[@]}")"
+[[ -z $(yq 'select(.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") | .kind' - <<<"$out") ]] || { echo 'FAIL: mode none renders a policy' >&2; fail=1; }
+out="$(helm template s . -n agent-system "${base[@]}" --set networkPolicy.mode=kubernetes \
+  --set-json 'networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"gateway"}}}]' \
+  --set-json 'networkPolicy.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')"
+jkind NetworkPolicy "$d | .spec.ingress == [{\"from\": [{\"namespaceSelector\": {\"matchLabels\": {\"kubernetes.io/metadata.name\": \"gateway\"}}}], \"ports\": [{\"port\": 8080, \"protocol\": \"TCP\"}]}, {\"from\": [{\"podSelector\": {\"matchLabels\": {\"app.kubernetes.io/name\": \"room-broker\"}}}], \"ports\": [{\"port\": 8081, \"protocol\": \"TCP\"}]}, {\"from\": [{\"namespaceSelector\": {\"matchLabels\": {\"kubernetes.io/metadata.name\": \"monitoring\"}}}], \"ports\": [{\"port\": 9090, \"protocol\": \"TCP\"}]}]" 'kubernetes ingress: events from the gateway, webhooks from the broker, metrics from the scraper, nothing else'
+jkind NetworkPolicy "$d | [.spec.egress[] | (.ports | map(.port | tostring) | join(\"+\"))] == [\"53+53\", \"443+6443\", \"8080\", \"443\"] and .spec.egress[2].to == [{\"podSelector\": {\"matchLabels\": {\"app.kubernetes.io/name\": \"room-broker\"}}}] and .spec.egress[3].to[0].ipBlock.cidr == \"0.0.0.0/0\" and (.spec.egress[3].to[0].ipBlock.except | index(\"10.0.0.0/8\")) != null" "kubernetes egress: DNS, the apiserver, the broker's :8080, public 443 (Slack and an https IdP)"
+out="$(helm template s . -n agent-system "${base[@]}" --set networkPolicy.mode=cilium --set-json 'networkPolicy.cilium.metricsFromEndpoints=[{"matchLabels":{"app":"prom"}}]')"
+jkind CiliumNetworkPolicy "$d | [.spec.ingress[] | (.fromEntities // .fromEndpoints | tostring) + \":\" + .toPorts[0].ports[0].port] == [\"[\\\"ingress\\\"]:8080\", \"[{\\\"matchLabels\\\":{\\\"io.kubernetes.pod.namespace\\\":\\\"agent-system\\\",\\\"app.kubernetes.io/name\\\":\\\"room-broker\\\"}}]:8081\", \"[\\\"host\\\"]:9090\", \"[{\\\"matchLabels\\\":{\\\"app\\\":\\\"prom\\\"}}]:9090\"]" 'cilium ingress: the ingress entity on 8080, the broker on 8081, the kubelet and the scraper on 9090'
+jkind CiliumNetworkPolicy "$d | (.spec.egress[3] == {\"toFQDNs\": [{\"matchName\": \"slack.com\"}], \"toPorts\": [{\"ports\": [{\"port\": \"443\", \"protocol\": \"TCP\"}]}]}) and (.spec.egress[4].toFQDNs == [{\"matchName\": \"idp.example.test\"}]) and (.spec.egress | length) == 5" "cilium egress: DNS, the apiserver, the broker, slack.com and the issuer's host"
 [[ $fail == 0 ]] || exit 1
 echo "maku-slack render checks passed"

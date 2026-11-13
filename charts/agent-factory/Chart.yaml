@@ -19,6 +19,13 @@ dependencies:
     version: 0.0.0
     repository: file://../maku-gateway
     condition: maku-gateway.enabled
+  # The Slack App (D20), off by default; its values are slack.* (alias), checked against the broker's
+  # and the factory's (afumbrella.slack).
+  - name: maku-slack
+    alias: slack
+    version: 0.0.0
+    repository: file://../maku-slack
+    condition: slack.enabled
   # The upstream controller, off by default and where the cluster already runs one. Vendored by
   # hack/agentgateway-vendor.sh and pinned in hack/agentgateway.sha256 (`task chart:deps`), so
   # building the umbrella needs no network.

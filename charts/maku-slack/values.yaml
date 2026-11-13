@@ -49,3 +49,37 @@ resources:
   limits: {cpu: 200m, memory: 128Mi}
 
 clusterDomain: cluster.local
+
+# The App's default-deny (D6; v4 step 6, Task 16). The umbrella requires mode to equal
+# maku.networkPolicies.mode. Ingress: Slack's events (:8080) from the gateway or ingress controller,
+# the webhooks (:8081) from the broker, the metrics (:9090) from the scraper and the kubelet. Egress:
+# DNS, the apiserver (the thread map), the broker's :8080, Slack (slack.com) and the IdP, on 443.
+networkPolicy:
+  mode: none # none | kubernetes | cilium
+  # kubernetes: NetworkPolicy peers of the gateway's or ingress controller's pods, for :8080.
+  from: []
+  # kubernetes: the scraper's peers, for :9090.
+  metricsFrom: []
+  dns:
+    namespace: kube-system
+    labels: {k8s-app: kube-dns}
+  # The apiserver after service translation (empty cidrs: any address on these ports).
+  apiServer:
+    cidrs: []
+    ports: [443, 6443]
+  # kubernetes: Slack and the IdP are public addresses, these excepted (NetworkPolicy has no FQDN).
+  privateCIDRs: [10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16, 100.64.0.0/10, 169.254.0.0/16]
+  # The IdP's egress, on the issuer's port (port 0: the URL's). Empty: public addresses (kubernetes),
+  # toFQDNs on the issuer's host (cilium). Set: peers (kubernetes) or whole Cilium peers.
+  idp:
+    to: []
+    port: 0
+  # kubernetes: more egress rules, verbatim.
+  extraEgress: []
+  cilium:
+    # Cilium's own Gateway and Ingress are the ingress entity.
+    fromEntities: [ingress]
+    # The scraper's endpoint selectors, for :9090.
+    metricsFromEndpoints: []
+    # More egress rules, verbatim (cloud-native-ref gcp-0's patch to reach its IdP).
+    extraEgress: []
