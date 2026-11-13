@@ -44,7 +44,7 @@ func TestMigratedANRConfigPassesAdmission(t *testing.T) {
 	for _, f := range []struct {
 		file, ns string
 		want     int
-	}{{"anr.yaml", "default", 7}, {"file.yaml", "kube-public", 3}} {
+	}{{"anr.yaml", "default", 16}, {"file.yaml", "kube-public", 7}} {
 		admit(t, c, f.file, f.ns, f.want)
 	}
 }
@@ -75,7 +75,7 @@ func admit(t *testing.T, c client.Client, file, ns string, want int) {
 		}
 		created++
 	}
-	// One Factory, and a Repository and a MergePolicy for each repository.
+	// One Factory, a Repository for each repository and a MergePolicy for each class (B17).
 	if created != want && !t.Failed() {
 		t.Fatalf("%s: created %d objects, want %d", file, created, want)
 	}

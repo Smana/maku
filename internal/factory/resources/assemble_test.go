@@ -357,7 +357,11 @@ func TestAssembleBadFactoryMessageHasNoFalseRepositoryErrors(t *testing.T) {
 		strings.Contains(x.Message, "not a listed repository") {
 		t.Fatalf("Factory refusal: %+v", x)
 	}
-	if len(r.Refused) != 1 {
-		t.Fatalf("only the Factory is at fault: %+v", r.Refused)
+	// No Repository is blamed. A class policy naming a profile only the refused Factory held is
+	// refused alone (B9): the catalogue it is judged under is the file's.
+	for _, x := range r.Refused {
+		if x.Kind == KindRepository || (x.Kind == KindMergePolicy && !strings.Contains(x.Message, "is not in harnessProfiles")) {
+			t.Fatalf("only the Factory is at fault: %+v", r.Refused)
+		}
 	}
 }
