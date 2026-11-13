@@ -131,25 +131,30 @@ func host(raw string) string {
 // oidc reads the issuer's discovery document (or the configured JWKS URL) and fetches the keys, as
 // the broker's verifier does.
 func (b brokerChecks) oidc(ctx context.Context) preflight.Result {
-	h := b.Human
-	if h.EffectiveMode() == config.HumanModeLocal {
+	if b.Human.EffectiveMode() == config.HumanModeLocal {
 		return skip("mode local: no identity provider")
 	}
-	jwks := h.JWKSURL
+	return oidcCheck(ctx, b.HC, b.Human.Issuer, b.Human.JWKSURL)
+}
+
+// oidcCheck reads issuer's discovery document when jwksURL is empty, then fetches the keys: the
+// broker's and the factory's verifiers' own path.
+func oidcCheck(ctx context.Context, hc *http.Client, issuer, jwksURL string) preflight.Result {
+	jwks := jwksURL
 	if jwks == "" {
-		d, err := authn.Discover(ctx, b.HC, h.Issuer)
+		d, err := authn.Discover(ctx, hc, issuer)
 		switch {
 		case errors.Is(err, authn.ErrIssuerMismatch):
-			return failed("oidc_issuer_mismatch", fmt.Sprintf("%s's discovery document names another issuer: human.issuer must be its issuer, byte for byte", host(h.Issuer)))
+			return failed("oidc_issuer_mismatch", fmt.Sprintf("%s's discovery document names another issuer: the configured issuer must be its issuer, byte for byte", host(issuer)))
 		case err != nil:
-			return failed("oidc_discovery", fmt.Sprintf("%s's discovery document does not read", host(h.Issuer)))
+			return failed("oidc_discovery", fmt.Sprintf("%s's discovery document does not read", host(issuer)))
 		}
 		jwks = d.JWKSURI
 	}
-	if _, err := authn.NewVerifier(ctx, h.Issuer, jwks, authn.WithHTTPClient(b.HC)); err != nil {
+	if _, err := authn.NewVerifier(ctx, issuer, jwks, authn.WithHTTPClient(hc)); err != nil {
 		return failed("oidc_jwks", fmt.Sprintf("the JWKS at %s does not fetch or holds no usable key", host(jwks)))
 	}
-	return pass(host(h.Issuer) + ": discovery and its keys")
+	return pass(host(issuer) + ": discovery and its keys")
 }
 
 // githubLink probes the link's OAuth client with a code that cannot exist: GitHub then judges the

@@ -48,6 +48,16 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end -}}
 {{- include "afumbrella.gateway" . -}}
 {{- include "afumbrella.identity" . -}}
+{{- include "afumbrella.preflight" . -}}
+{{- end }}
+
+{{/* The preflight (v4 D24) collects the factory's /preflight, whose exposure check reads the
+namespace's routes: the factory's Role grants that read only with its own preflight.enabled. */}}
+{{- define "afumbrella.preflight" -}}
+{{- $mf := index .Values "maku-factory" | default dict -}}
+{{- if and .Values.maku.enabled (dig "preflight" "enabled" false .Values.maku) $mf.enabled (not (dig "preflight" "enabled" false $mf)) -}}
+{{- fail "maku.preflight.enabled needs maku-factory.preflight.enabled: the factory's exposure check reads the namespace's HTTPRoutes and Ingresses, which only that grants" -}}
+{{- end -}}
 {{- end }}
 
 {{/* The humans' identity agreement (v4 D8, PR2): the broker forwards each human's token to the

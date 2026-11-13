@@ -114,3 +114,9 @@ config: {}
 # CI only: images loaded into the node have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false
+
+# The install's preflight (v4 D24): the factory serves its checks at GET /preflight on :9090 (always
+# on, like /metrics); enabled grants its Role get and list on the namespace's HTTPRoutes and
+# Ingresses, which the exposure check reads. Set it with maku.preflight.enabled.
+preflight:
+  enabled: false

@@ -291,6 +291,11 @@ out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.
   --set config.api.tokenUse=id --set config.api.rolesClaim=/realm_access/roles --set config.api.humanJWKS=)
 ykind ConfigMap '.data."config.yaml" | from_yaml | .api | (.preset == "generic" and .tokenUse == "id" and .rolesClaim == "/realm_access/roles")' "config.api's identity keys render verbatim"
 ykind Deployment "$(vol oidc).secret.secretName == \"agent-factory-oidc\"" "the generic preset reads the same client ids volume"
+# v4 D24: the exposure check's read of the namespace's routes, granted only with preflight.enabled.
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000)
+ynone 'select(.kind == "Role" and .metadata.name == "agent-factory") | .rules[] | select(.resources[0] == "httproutes" or .resources[0] == "ingresses")' "no preflight, no route grant"
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000 --set preflight.enabled=true)
+ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == null) | (.rules | map(select(.resources[0] == "httproutes" or .resources[0] == "ingresses") | .verbs | join(",")) | join(" ")) == "get,list get,list"' "preflight.enabled grants get and list on HTTPRoutes and Ingresses, nothing more"
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
 ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
 ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"
