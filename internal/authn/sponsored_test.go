@@ -3,6 +3,7 @@
 package authn
 
 import (
+	"maps"
 	"testing"
 	"time"
 
@@ -111,6 +112,43 @@ func TestSponsoredInternalFlag(t *testing.T) {
 			p, err := s.Authenticate(t.Context(), tok)
 			if err != nil || !p.Sponsored || p.Internal != c.want {
 				t.Fatalf("%+v %v", p, err)
+			}
+		})
+	}
+}
+
+// A generic issuer's client-credentials token: the client in azp, or in a configured claim (Okta's
+// cid), and the configured audience in aud.
+func TestSponsoredGeneric(t *testing.T) {
+	sg := newSigner(t)
+	const slack, api = "0oa-slack", "api://rooms"
+	tok := func(claims jwt.MapClaims) string {
+		c := jwt.MapClaims{"iss": issuer, "sub": slack, "aud": api, "exp": time.Now().Add(time.Hour).Unix()}
+		maps.Copy(c, claims)
+		return sign(t, jwt.SigningMethodRS256, sg.key, "", c)
+	}
+	s := func(claim string) *Sponsored {
+		return &Sponsored{V: sg.verifier(), Clients: []SponsoredClient{{Name: "slack-app", ClientID: func() string { return slack }}},
+			Audience: func() string { return api }, ClientClaim: claim}
+	}
+	cases := []struct {
+		name, claim string
+		raw         string
+		ok          bool
+	}{
+		{"azp", "", tok(jwt.MapClaims{"azp": slack}), true},
+		{"azp, another audience", "", tok(jwt.MapClaims{"azp": slack, "aud": "other"}), false},
+		{"cid, by the configured claim (Okta)", "cid", tok(jwt.MapClaims{"cid": slack}), true},
+		{"cid without the configured claim", "", tok(jwt.MapClaims{"cid": slack}), false},
+		{"the configured claim naming another client", "cid", tok(jwt.MapClaims{"cid": "0oa-other", "azp": slack}), false},
+		{"the configured claim not a string", "cid", tok(jwt.MapClaims{"cid": 7}), false},
+		{"the configured claim, another audience", "cid", tok(jwt.MapClaims{"cid": slack, "aud": "other"}), false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p, err := s(c.claim).Authenticate(t.Context(), c.raw)
+			if c.ok != (err == nil) || c.ok && (p.ID != "system:slack-app" || p.ClientID != slack) {
+				t.Fatalf("got %+v, %v; want ok %v", p, err, c.ok)
 			}
 		})
 	}

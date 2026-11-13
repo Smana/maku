@@ -4,6 +4,7 @@ package authn
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -29,9 +30,12 @@ type Sponsored struct {
 	V       *Verifier
 	Clients []SponsoredClient
 	Exclude func() []string
-	// Audience is the project id a token's aud must hold, as the human path pins it; unset or
-	// unreadable, nobody is admitted.
+	// Audience is the value a token's aud must hold: the project id under the zitadel preset, as
+	// the human path pins it, else the configured audience. Unset or unreadable, nobody is admitted.
 	Audience func() string
+	// ClientClaim names the string claim holding the client id, for an IdP that puts it elsewhere
+	// (Okta's cid). "" reads azp, else client_id, else a one-element aud.
+	ClientClaim string
 }
 
 // Authenticate maps raw to its sponsored principal, or ErrUnauthenticated.
@@ -65,7 +69,7 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 		if slices.Index(ids, id) != i || slices.Contains(ids[i+1:], id) { // shared: ambiguous, so nobody's
 			continue
 		}
-		cl, err := s.V.VerifyAuthorizedParty(ctx, raw, id)
+		cl, err := s.verify(ctx, raw, id)
 		if err != nil || cl.ExpiresAt == nil || cl.Subject == "" || !slices.Contains(cl.Audience, aud) {
 			continue
 		}
@@ -73,4 +77,20 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 			Expiry: cl.ExpiresAt.Time, AccessToken: raw, Sponsored: true, Internal: c.Internal}, nil
 	}
 	return Principal{}, refused
+}
+
+// verify checks raw, a token issued to clientID: by azp or client_id, or by ClientClaim when set.
+func (s *Sponsored) verify(ctx context.Context, raw, clientID string) (*Claims, error) {
+	if s.ClientClaim == "" {
+		return s.V.VerifyAuthorizedParty(ctx, raw, clientID)
+	}
+	c, err := s.V.parseWith(ctx, raw)
+	if err != nil {
+		return nil, err
+	}
+	var got string
+	if v, ok := c.raw[s.ClientClaim]; !ok || json.Unmarshal(v, &got) != nil || got != clientID {
+		return nil, fmt.Errorf("%w: not issued to the client", ErrWrongAudience)
+	}
+	return c, nil
 }
