@@ -297,7 +297,10 @@ values+=(-f "$VALUES" --set "maku-gateway.identity.issuer=$(kubectl get --raw /.
 (unset SSL_CERT_FILE; curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml") |
   kubectl apply --server-side -f - >/dev/null
 kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s
-helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m --set agentgateway-crds.enabled=true
+# agentgateway's CRDs from the vendored files, not through agentgateway-crds.enabled: with them, the
+# CRD release's Helm Secret exceeds the apiserver's 1 MiB object limit.
+kubectl apply --server-side -f charts/agent-factory-crds/files/agentgateway/ >/dev/null
+helm install intake-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m
 kubectl wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s
 kubectl wait --for=condition=Established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev --timeout=120s
 helm install intake charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m
