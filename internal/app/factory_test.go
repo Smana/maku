@@ -215,8 +215,8 @@ func TestDemoStartupChoices(t *testing.T) {
 	if _, ok := src.(meter.Off); !ok {
 		t.Fatalf("usageSource = %T, want meter.Off", src)
 	}
-	if throttle(demo) != nil {
-		t.Fatal("no logsUrl, no throttle reader")
+	if th, err := throttle(demo); th != nil || err != nil {
+		t.Fatalf("no throttle source, no throttle reader: %v %v", th, err)
 	}
 	v, err := humanVerifier(t.Context(), demo)
 	if v != nil || err != nil {
@@ -242,6 +242,10 @@ func TestNonDemoStartupStillFailsFast(t *testing.T) {
 	cfg.Meter.URL = "ftp://vm"
 	if _, err := usageSource(cfg); err == nil {
 		t.Fatal("a bad meter.url must fail")
+	}
+	cfg.Meter.Throttle.PromQuery = "q"
+	if _, err := throttle(cfg); err == nil {
+		t.Fatal("a bad meter.url must fail the PromQL throttle too")
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()

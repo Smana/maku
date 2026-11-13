@@ -197,6 +197,26 @@ func TestCostFollowsTheAgentgatewaySeries(t *testing.T) {
 	}
 }
 
+// GW10: meter.throttle.promQuery names the runs the gateway 429'd lately, by the verified ar_agent:
+// a run's series above zero is throttled; zero, another kind's subject and a non-run are not.
+func TestVMRecentlyThrottled(t *testing.T) {
+	v := vmServer(t, http.StatusOK, `{"status":"success","data":{"resultType":"vector","result":[
+		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"},"value":[1727430000,"3"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-aaaaaaaa"},"value":[1727430000,"0.5"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-bbbbbbbb"},"value":[1727430000,"0"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-cccccccc"},"value":[1727430000,"4"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:agent-probe"},"value":[1727430000,"9"]},
+		{"metric":{},"value":[1727430000,"9"]}]}}`)
+	got, err := v.RecentlyThrottled(t.Context())
+	if err != nil || !maps.Equal(got, map[string]bool{"7f3cq2xz": true, "aaaaaaaa": true}) {
+		t.Fatalf("%v %v", got, err)
+	}
+	if _, err := vmServer(t, http.StatusOK, `{"status":"error"}`).RecentlyThrottled(t.Context()); err == nil {
+		t.Fatal("an error reply named no failure")
+	}
+	var _ Throttled = v
+}
+
 func TestVMNormalizesAgentgatewayTokenTypes(t *testing.T) {
 	for typ, want := range map[string]string{
 		"input": "input", "output": "output", "cached_input": "cached_input", "cache_creation_input": "cache_creation_input",

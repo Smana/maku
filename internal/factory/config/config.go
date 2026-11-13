@@ -977,10 +977,20 @@ type Meter struct {
 	// ThrottleQuery is the LogsQL that names them: the last minutes of 429s with Envoy's RL
 	// flag on agent-router, grouped by the verified identity header.
 	ThrottleQuery string `json:"throttleQuery"`
+	// Throttle is the other source of the gateway's 429s: a PromQL query on URL (GW10). Outside the
+	// demo, it or the pair LogsURL and ThrottleQuery is required, never both.
+	Throttle MeterThrottle `json:"throttle,omitzero"`
 	// Prices are by the model that served the tokens (gen_ai_request_model, once Query groups by
 	// it: ByModel), else by the tier's logical model (C5), which the run's claim names. Pricing a
 	// run also needs Query grouped by gen_ai_token_type; an untyped reply meters in tokens.
 	Prices map[string]Price `json:"prices,omitempty"`
+}
+
+// MeterThrottle reads the gateway's 429s from meter.url (GW10).
+type MeterThrottle struct {
+	// PromQuery is an instant query on meter.url whose series name the runs the gateway answered
+	// with a 429 lately, labelled ar_agent: the verified identity, never a client-supplied one.
+	PromQuery string `json:"promQuery,omitempty"`
 }
 
 // Tracing is where task spans go (R46): the trace collector's platform port. Empty: tracing off.
@@ -1709,7 +1719,10 @@ func (c *Config) Validate() error {
 	} else if ctl.Issue > 0 && !seenRepo[strings.ToLower(ctl.Repository)] {
 		bad("control.repository %q is not a listed repository", ctl.Repository)
 	}
-	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
+	logsSet := c.Meter.LogsURL != "" || c.Meter.ThrottleQuery != ""
+	promSet := c.Meter.Throttle.PromQuery != ""
+	demoMeterSet := c.Meter.URL != "" || c.Meter.Query != "" || logsSet || promSet
+	meterRequired := !c.Demo || demoMeterSet // demo: a meter is all its keys or none; any one set brings the production rules
 	for _, f := range []struct {
 		key, value   string
 		demoOptional bool // demo: the laptop has no metrics backend
@@ -1718,12 +1731,23 @@ func (c *Config) Validate() error {
 		{"roomsURL", c.RoomsURL, false}, {"broker.url", c.Broker.URL, false}, {"broker.caFile", c.Broker.CAFile, false},
 		{"broker.tokenFile", c.Broker.TokenFile, false}, {"github.appIDFile", c.GitHub.AppIDFile, false},
 		{"github.privateKeyFile", c.GitHub.PrivateKeyFile, false}, {"meter.url", c.Meter.URL, true}, {"meter.query", c.Meter.Query, true},
-		{"meter.logsURL", c.Meter.LogsURL, true}, {"meter.throttleQuery", c.Meter.ThrottleQuery, true},
 	} {
-		// demo: a meter is all four keys or none; any one set brings the production rules.
-		if f.value == "" && (!c.Demo || !f.demoOptional || (strings.HasPrefix(f.key, "meter.") && demoMeterSet)) {
+		if f.value == "" && (!f.demoOptional || meterRequired) {
 			bad("%s is required", f.key)
 		}
+	}
+	// GW10: the gateway's 429s come from one source, PromQL on meter.url or VictoriaLogs.
+	switch {
+	case !meterRequired:
+	case promSet && logsSet:
+		bad("meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one")
+	case promSet:
+	case !logsSet:
+		bad("meter.throttle.promQuery, or meter.logsURL with meter.throttleQuery, is required")
+	case c.Meter.LogsURL == "":
+		bad("meter.logsURL is required")
+	case c.Meter.ThrottleQuery == "":
+		bad("meter.throttleQuery is required")
 	}
 	// GP-18: the broker serves TLS only, and the factory never talks to it in the clear; the demo too
 	// (its chart generates the broker's CA).

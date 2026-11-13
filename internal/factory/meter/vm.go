@@ -69,6 +69,41 @@ func (v *VM) RunUsage(ctx context.Context) (map[string]Usage, error) {
 // not a run's, whose value is not a finite, non-negative count, or whose gen_ai_token_type the
 // meter does not price (reasoning, a subset of output, and unknown types), is no reading.
 func (v *VM) RunSeries(ctx context.Context) ([]Series, error) {
+	raw, err := v.instant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return parseSeries(raw, v.subject)
+}
+
+// RecentlyThrottled reads the VM's query as meter.throttle.promQuery (GW10): run id → throttled,
+// for each series whose ar_agent is one of the kind's run subjects and whose value is above zero.
+// ar_agent is the gateway's verified jwt.sub, never a client-supplied header.
+func (v *VM) RecentlyThrottled(ctx context.Context) (map[string]bool, error) {
+	raw, err := v.instant(ctx)
+	if err != nil {
+		return nil, err
+	}
+	result, err := parseVector(raw)
+	if err != nil {
+		return nil, err
+	}
+	out := map[string]bool{}
+	for _, s := range result {
+		m := v.subject.FindStringSubmatch(s.Metric["ar_agent"])
+		if m == nil {
+			continue
+		}
+		str, _ := s.Value[1].(string)
+		if f, err := strconv.ParseFloat(str, 64); err == nil && f > 0 && !math.IsInf(f, 0) {
+			out[m[1]] = true
+		}
+	}
+	return out, nil
+}
+
+// instant runs the VM's query once and returns the reply's body.
+func (v *VM) instant(ctx context.Context) ([]byte, error) {
 	target := v.base.JoinPath("api/v1/query")
 	target.RawQuery = url.Values{"query": {v.query}}.Encode()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
@@ -87,20 +122,22 @@ func (v *VM) RunSeries(ctx context.Context) ([]Series, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("meter: query: status %d", resp.StatusCode)
 	}
-	return parseSeries(raw, v.subject)
+	return raw, nil
 }
 
-// parseSeries reads the body of an api/v1/query reply into the runs' series. subject captures a
-// run's id from its ar_agent label.
-func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
+// vectorSample is one series of an api/v1/query vector.
+type vectorSample struct {
+	Metric map[string]string `json:"metric"`
+	Value  [2]any            `json:"value"`
+}
+
+// parseVector reads the body of an api/v1/query reply that must be a successful vector.
+func parseVector(raw []byte) ([]vectorSample, error) {
 	var body struct {
 		Status string `json:"status"`
 		Data   struct {
-			ResultType string `json:"resultType"`
-			Result     []struct {
-				Metric map[string]string `json:"metric"`
-				Value  [2]any            `json:"value"`
-			} `json:"result"`
+			ResultType string         `json:"resultType"`
+			Result     []vectorSample `json:"result"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(raw, &body); err != nil {
@@ -109,8 +146,18 @@ func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
 	if body.Status != "success" || body.Data.ResultType != "vector" {
 		return nil, fmt.Errorf("meter: query: status %q, result %q: want a success and a vector", body.Status, body.Data.ResultType)
 	}
+	return body.Data.Result, nil
+}
+
+// parseSeries reads the body of an api/v1/query reply into the runs' series. subject captures a
+// run's id from its ar_agent label.
+func parseSeries(raw []byte, subject *regexp.Regexp) ([]Series, error) {
+	result, err := parseVector(raw)
+	if err != nil {
+		return nil, err
+	}
 	var out []Series
-	for _, s := range body.Data.Result {
+	for _, s := range result {
 		m := subject.FindStringSubmatch(s.Metric["ar_agent"])
 		if m == nil {
 			continue
