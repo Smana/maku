@@ -290,12 +290,19 @@ func TestWriterBindings(t *testing.T) {
 		t.Fatalf("repository/cloud-native-ref %v, want Classes 2, Live 1", got)
 	}
 
-	// A second pass writes nothing: the stored status round-trips.
-	before := r.ResourceVersion
+	// A second pass writes nothing: the stored status round-trips, on both kinds.
+	var p v1alpha1.MergePolicy
+	if err := c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: "dead-links"}, &p); err != nil {
+		t.Fatal(err)
+	}
+	before, beforeP := r.ResourceVersion, p.ResourceVersion
 	if err := w.WriteOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if err := c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: "ai-native-ref"}, &r); err != nil || r.ResourceVersion != before {
-		t.Fatalf("a second pass wrote: %s -> %s (%v)", before, r.ResourceVersion, err)
+		t.Fatalf("a second pass wrote the Repository: %s -> %s (%v)", before, r.ResourceVersion, err)
+	}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: envNS, Name: "dead-links"}, &p); err != nil || p.ResourceVersion != beforeP {
+		t.Fatalf("a second pass wrote the MergePolicy: %s -> %s (%v)", beforeP, p.ResourceVersion, err)
 	}
 }

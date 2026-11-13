@@ -3,6 +3,7 @@
 package statuswriter
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -161,5 +162,34 @@ func TestDesiredBindingMessageBounded(t *testing.T) {
 	out := Desired(in, nil, repos, policies, metav1.NewTime(time.Now()))
 	if n := len(binding(t, out.Repositories["ai-native-ref"], "dead-links").Message); n != 1024 {
 		t.Fatalf("message of %d characters", n)
+	}
+}
+
+// consumers[] holds at most the CRD's 64 entries, or Status().Update is refused and the status
+// freezes; the counts are over every consumer.
+func TestDesiredConsumersBounded(t *testing.T) {
+	in, repos, policies := bindingsWorld()
+	var consumers []resources.BindingOutcome
+	for i := range 65 {
+		consumers = append(consumers, resources.BindingOutcome{Repository: fmt.Sprintf("r%02d", i), Name: "dead-links", Mode: "live",
+			PolicyGeneration: 4, Accepted: true, Served: true})
+	}
+	in.Outcomes[3].Consumers = consumers
+	p := Desired(in, nil, repos, policies, now).MergePolicies["dead-links"]
+	if len(p.Consumers) != maxConsumers || p.ConsumerCount != 65 || p.CurrentCount != 65 || p.LiveCount != 65 {
+		t.Fatalf("%d consumers listed, counts %d %d %d", len(p.Consumers), p.ConsumerCount, p.CurrentCount, p.LiveCount)
+	}
+}
+
+// A live binding that serves nothing merges nothing: the policy's liveCount, like the Repository's,
+// counts only served live consumers.
+func TestDesiredPolicyLiveCountNeedsServed(t *testing.T) {
+	in, repos, policies := bindingsWorld()
+	in.Outcomes[3].Consumers = []resources.BindingOutcome{
+		{Repository: "a", Name: "dead-links", Mode: "live", Reason: config.ReasonMissingParameter},
+		{Repository: "b", Name: "dead-links", Mode: "live", PolicyGeneration: 4, Accepted: true, Served: true},
+	}
+	if p := Desired(in, nil, repos, policies, now).MergePolicies["dead-links"]; p.LiveCount != 1 {
+		t.Fatalf("liveCount %d, want 1", p.LiveCount)
 	}
 }

@@ -52,6 +52,7 @@ const (
 	maxDivergences     = 5
 	maxLastDecisionLen = 63
 	maxBindingMessage  = 1024
+	maxConsumers       = 64 // MergePolicyStatus.consumers MaxItems (B10)
 )
 
 // Inputs are what the factory knows besides the objects themselves.
@@ -230,7 +231,7 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 	return st
 }
 
-// served_ fills what a served repository's status says in both shapes (B10, plan PR14): its
+// servedRepository fills what a served repository's status says in both shapes (B10, plan PR14): its
 // classes, counts, authority, file conditions and resolved merge; and, for a bound one, each
 // binding's outcome and BindingsValid.
 func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Repository, rc *config.Repository, o *configsource.Outcome, g int64) {
@@ -378,13 +379,16 @@ func (d *desirer) classPolicy(o *configsource.Outcome, g int64, st v1alpha1.Merg
 		if cs.Accepted && cs.ServedGeneration == g {
 			st.CurrentCount++
 		}
-		if b.Mode == config.ModeLive {
+		if b.Mode == config.ModeLive && b.Served {
 			st.LiveCount++
 		}
 		st.Consumers = append(st.Consumers, cs)
 	}
 	slices.SortFunc(st.Consumers, func(a, b v1alpha1.ConsumerStatus) int { return cmp.Compare(a.Repository, b.Repository) })
+	// The counts are over every consumer; the list is cut to the schema's bound, or the status
+	// update would be refused and the status freeze.
 	st.ConsumerCount = len(st.Consumers)
+	st.Consumers = st.Consumers[:min(len(st.Consumers), maxConsumers)]
 	return st
 }
 
