@@ -646,6 +646,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}}
 	pollers.Sync(conns.names())
 	runnables = append(runnables, pollers)
+	if perRun != nil { // D12: both Apps' installations against their required sets, once
+		runnables = append(runnables, appGrantChecks(cfg, conns.names, m.GitHubAppPermissionMissing, log))
+	}
 	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
 		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {
 			return fmt.Errorf("runlore.repository %s has no GitHub connection", cfg.RunLoreRepository())

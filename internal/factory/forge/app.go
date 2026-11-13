@@ -40,6 +40,9 @@ func permissions() map[string]string {
 	return map[string]string{"contents": "read", "issues": "write", "pull_requests": "write", "metadata": "read"}
 }
 
+// FactoryPermissions is the factory App's token scope, a fresh copy (v4 D12: githubapps reads it).
+func FactoryPermissions() map[string]string { return permissions() }
+
 // MergerPermissions is the merger App's installation-token scope (TW4, R16): the merge-side
 // calls read checks and statuses, write contents on the merger's own revert branches, and arm
 // and merge pull requests — and nothing else. Like the factory's, it is the App's ceiling: a

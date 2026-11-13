@@ -47,9 +47,11 @@ proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a 
 `values-demo.yaml` (`profile: demo`) makes it the laptop demo: no Cilium (`maku.networkPolicies.enabled: false`), the broker
 in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
 (`allowUnsandboxed`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
-mode on one GitHub App. The two Secrets come from `demo.model` (`agent-model`, in the runs namespace)
-and `demo.githubApp` (`agent-factory-github`), or exist already (`existingSecret`, which must carry the
-name the subchart reads). `agent-git` and `agent-git-read` (the run tokens) are the factory's to write. To point it at your repository, copy
+mode on one GitHub App (`maku-factory.apps.merger.mode: factory` folds the merger into it; a
+production install runs two Apps, see [GitHub Apps](../../docs/github-apps.md)). The two Secrets come
+from `demo.model` (`agent-model`, in the runs namespace) and `demo.githubApp` (`agent-factory-github`,
+or the name in `maku-factory.apps.factory.existingSecret`), or exist already (`existingSecret`, which
+must carry the name the subchart reads). `agent-git` and `agent-git-read` (the run tokens) are the factory's to write. To point it at your repository, copy
 [`values-mine.example.yaml`](values-mine.example.yaml): Helm replaces a list whole, so a values file
 must restate the whole `maku-factory.config.repositories[0]` entry, not one field of it. The
 placeholders to change are `name` (`owner/repo`), `maintainers`, `merge.mergerLogin`,
