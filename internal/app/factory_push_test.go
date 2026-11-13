@@ -62,10 +62,22 @@ func TestFactoryPushWiring(t *testing.T) {
 	if f, l := a.Caps(task); f != 7 || l != 70 {
 		t.Fatalf("caps %d %d", f, l)
 	}
+	// #513's review: an undeclared class takes the strictest declared caps, never none.
+	cfg.Repositories[0].Classes["config"] = config.Class{MaxPatchFiles: 3}
 	task.Spec.PredictedClass = "absent"
-	if f, l := a.Caps(task); f != 0 || l != 0 {
+	if f, l := a.Caps(task); f != 3 || l != 70 {
 		t.Fatalf("an undeclared class's caps %d %d", f, l)
 	}
+	task.Spec.PredictedClass = ""
+	if f, l := a.Caps(task); f != 3 || l != 70 {
+		t.Fatalf("no class's caps %d %d", f, l)
+	}
+	cfg.Repositories[0].Classes = map[string]config.Class{"docs": {}}
+	task.Spec.PredictedClass = "absent"
+	if f, l := a.Caps(task); f != -1 || l != -1 {
+		t.Fatalf("no declared cap: %d %d, want -1 -1 (push_size)", f, l)
+	}
+	cfg.Repositories[0].Classes = map[string]config.Class{"docs": {MaxPatchFiles: 7, MaxModifiedLines: 70}}
 
 	if _, err := safeOutputApplier(cfg, deps(nil)); err == nil || !strings.Contains(err.Error(), "MAKU_GIT_CACHE") {
 		t.Fatalf("no git cache started: %v", err)

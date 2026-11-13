@@ -109,6 +109,30 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 	return a, nil
 }
 
+// pushCaps are the task's class caps on a push (HR25). A class the repository does not declare
+// never means no cap (#513's review): it takes the strictest cap any declared class sets, each
+// dimension alone, and with none set anywhere, -1, which refuses the push push_size.
+func pushCaps(cfg *config.Config, t *v1alpha1.Task) (files, lines int) {
+	r := cfg.RepositoryFor(t.Spec.Repository)
+	if cl, ok := r.Class(t.Spec.PredictedClass); ok {
+		return cl.MaxPatchFiles, cl.MaxModifiedLines
+	}
+	files, lines = -1, -1
+	if r == nil {
+		return files, lines
+	}
+	strictest := func(cur, v int) int {
+		if v > 0 && (cur < 0 || v < cur) {
+			return v
+		}
+		return cur
+	}
+	for _, cl := range r.Classes {
+		files, lines = strictest(files, cl.MaxPatchFiles), strictest(lines, cl.MaxModifiedLines)
+	}
+	return files, lines
+}
+
 // gitCacheEnv is the factory's mirror root, which the chart sets with hardening.gitCache.sizeLimit.
 const gitCacheEnv = "MAKU_GIT_CACHE"
 
@@ -139,10 +163,7 @@ func wirePush(cfg *config.Config, d applierDeps, tokens applier.PublisherTokens,
 	a.Pushers = applier.ConnectPushers(tokens, root, cfg.Hardening.Applier.MirrorMaxBytes)
 	a.PushRooms, a.Tasks = d.PushRooms, d.Tasks
 	a.ApprovalTTL = cfg.Hardening.Applier.ApprovalTTL.Duration
-	a.Caps = func(t *v1alpha1.Task) (files, lines int) {
-		cl, _ := d.Live().RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass)
-		return cl.MaxPatchFiles, cl.MaxModifiedLines
-	}
+	a.Caps = func(t *v1alpha1.Task) (files, lines int) { return pushCaps(d.Live(), t) }
 	return nil
 }
 

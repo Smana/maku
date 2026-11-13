@@ -57,8 +57,8 @@ func roomMCP(key string, patterns []*regexp.Regexp, roomLog mcp.Log, red mcp.Red
 
 // roomTools are :8090's tools: the room tools, then the safe-output tools, gated per run (HR14),
 // so a run whose claim names no enforced type lists exactly the room tools. The store keeps push
-// bundles and reads output answers (HR22, HR27); output_push is served only to a repository push
-// names, which config refuses until push is enforced.
+// bundles and reads output answers (HR22, HR27); output_push is served only to a repository
+// roomTools.pushRepositories names (stage H3), and only to a run whose claim names push.
 func roomTools(roomLog mcp.Log, red mcp.Redactor, push []string) []mcp.Tool {
 	out := mcp.OutputConfig{PushRepositories: push}
 	if b, ok := roomLog.(mcp.BundleStore); ok {
