@@ -144,13 +144,14 @@ func (h *Humans) verifyAccess(ctx context.Context, raw string) (*Claims, string,
 	if err != nil {
 		return nil, "", err
 	}
-	if cli := c.issuedTo(); cli == "" || !slices.Contains(h.clients(), cli) {
+	cli := c.issuedTo()
+	if cli == "" || !slices.Contains(h.clients(), cli) {
 		return nil, "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
 	}
 	if c.Subject == "" {
 		return nil, "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
 	}
-	return c, c.issuedTo(), nil
+	return c, cli, nil
 }
 
 // verifyZITADEL is the zitadel preset's rule: aud holds the project id and the client that client
