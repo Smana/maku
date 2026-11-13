@@ -1,7 +1,7 @@
 name: image
 # One multi-arch image: each platform built on its own native runner and pushed by digest, then the
-# two joined under the tag. No QEMU: the harness's arm64 half took 22-28 min emulated and set the
-# length of every release and PR prerelease. Called by release.yaml (the tag) and ci.yaml's
+# two joined under the tag, unless the caller joins them (inputs.join). No QEMU: the harness's arm64
+# half took 22-28 min emulated and set the length of every release and PR prerelease. Called by release.yaml (the tag) and ci.yaml's
 # prerelease (v<next-patch>-pr<N>.<sha8>).
 # It never signs: keyless cosign names the workflow that runs the signing step, and the documented
 # identity is the caller's (release.yaml for a release). The index's digest goes to the caller as
@@ -17,6 +17,13 @@ on:
         description: The tag, and the VERSION build arg
         required: true
         type: string
+      join:
+        description: >-
+          Join the platforms under the tag (merge). False builds and pushes by digest only, and leaves
+          the digest-<image>-* artifacts for the caller to join (ci.yaml's prerelease-publish).
+        required: false
+        type: boolean
+        default: true
 permissions: {}
 
 jobs:
@@ -81,6 +88,7 @@ jobs:
 
   merge:
     needs: build
+    if: inputs.join
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
