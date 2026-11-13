@@ -94,7 +94,7 @@ func (staticTokens) For(string) (forge.TokenSource, error) { return staticSource
 // HR24: the pusher is one mirror per repository under the cache root, its token the publisher's,
 // from the same PublisherTokens; no root is no pusher.
 func TestConnectPushers(t *testing.T) {
-	connect := ConnectPushers(staticTokens{}, t.TempDir())
+	connect := ConnectPushers(staticTokens{}, t.TempDir(), 0)
 	a, err := connect(t.Context(), "Owner/Repo")
 	if err != nil {
 		t.Fatal(err)
@@ -106,7 +106,7 @@ func TestConnectPushers(t *testing.T) {
 	if _, ok := a.(*gitbundle.Mirror); !ok {
 		t.Fatalf("pusher %T", a)
 	}
-	if _, err := ConnectPushers(staticTokens{}, "")(t.Context(), "owner/repo"); err == nil {
+	if _, err := ConnectPushers(staticTokens{}, "", 0)(t.Context(), "owner/repo"); err == nil {
 		t.Error("no cache root gave a pusher")
 	}
 }

@@ -4,6 +4,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
+	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/applier"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
@@ -35,6 +37,12 @@ type applierDeps struct {
 	Log       *slog.Logger
 	// Tokens is the publisher's token source; nil is octo-sts from hardening.publisher.octoSTS.
 	Tokens applier.PublisherTokens
+	// PushRooms is the broker's bundle and approval routes, and Tasks the writer a push's intent is
+	// recorded with (H3); both are used only while a repository enforces push.
+	PushRooms applier.PushRooms
+	Tasks     client.Writer
+	// Getenv reads MAKU_GIT_CACHE, the push applier's mirror root (os.Getenv when nil).
+	Getenv func(string) string
 }
 
 // safeOutputApplier is the applier for cfg (hardening H2, HR15): nil, and no publisher built, while
@@ -62,7 +70,7 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 	base := forge.Options{APIURL: githubAPIURL(), UserAgent: "agent-factory-publisher/" + version.Version,
 		HTTP: httpx.New(githubTimeout, nil), Now: time.Now}
 	ports := d.Hardened
-	return &applier.Applier{Reader: d.Reader, Namespace: d.Namespace, Rooms: d.Rooms, Runs: d.Runs,
+	a := &applier.Applier{Reader: d.Reader, Namespace: d.Namespace, Rooms: d.Rooms, Runs: d.Runs,
 		Publisher: applier.ConnectPublishers(tokens, base), Factory: d.Factory,
 		Checker: func(repo string) hardening.Checker {
 			c, h := ports.Checker, d.Live().Hardening
@@ -76,7 +84,48 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 		Enforced:    func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) },
 		AgentsLogin: cfg.AgentsLogin, FactoryLogin: cfg.FactoryLogin,
 		Interval: cfg.Hardening.Applier.Interval.Duration, AnswerWait: cfg.Hardening.Applier.AnswerWait.Duration,
-		Now: time.Now, Metrics: d.Metrics, Log: d.Log}, nil
+		Now: time.Now, Metrics: d.Metrics, Log: d.Log}
+	if err := wirePush(cfg, d, tokens, a); err != nil {
+		return nil, err
+	}
+	return a, nil
+}
+
+// gitCacheEnv is the factory's mirror root, which the chart sets with hardening.gitCache.sizeLimit.
+const gitCacheEnv = "MAKU_GIT_CACHE"
+
+// wirePush gives the applier its push half (H3, HR24 to HR27) while any repository enforces push:
+// a gitbundle mirror per repository under MAKU_GIT_CACHE, git sending the publisher's token; the
+// broker's bundle and approval routes; the task writer that records a push's intent before git
+// push; the class caps on the push's cumulative change; and the approval TTL. A repository that
+// enforces push with no MAKU_GIT_CACHE, no broker or no task writer refuses the start: every push
+// would otherwise wait unanswered for its run's whole answerWait. Without push nothing is built.
+func wirePush(cfg *config.Config, d applierDeps, tokens applier.PublisherTokens, a *applier.Applier) error {
+	if !cfg.Hardening.EnforcesPush() {
+		return nil
+	}
+	getenv := d.Getenv
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	root := getenv(gitCacheEnv)
+	switch {
+	case root == "" || !filepath.IsAbs(root):
+		return fmt.Errorf("a repository enforces push but %s is not an absolute path: set the chart's hardening.gitCache.sizeLimit, "+
+			"or take push out of enforceOutputs", gitCacheEnv)
+	case d.PushRooms == nil:
+		return errors.New("a repository enforces push but the factory has no broker system client: set broker.url and the system token")
+	case d.Tasks == nil:
+		return errors.New("a repository enforces push but the applier has no task writer")
+	}
+	a.Pushers = applier.ConnectPushers(tokens, root, cfg.Hardening.Applier.MirrorMaxBytes)
+	a.PushRooms, a.Tasks = d.PushRooms, d.Tasks
+	a.ApprovalTTL = cfg.Hardening.Applier.ApprovalTTL.Duration
+	a.Caps = func(t *v1alpha1.Task) (files, lines int) {
+		cl, _ := d.Live().RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass)
+		return cl.MaxPatchFiles, cl.MaxModifiedLines
+	}
+	return nil
 }
 
 // policyReader reads a repository's default-branch file; *forge.GitHub implements it.

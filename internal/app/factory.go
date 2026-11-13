@@ -487,7 +487,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return c.gh
 			}
 			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log})
+		}, Hardened: hardened, Live: live.Current, Metrics: m, Log: log,
+		PushRooms: broker, Tasks: mgr.GetClient(), Getenv: os.Getenv})
 	if err != nil {
 		return err
 	}
