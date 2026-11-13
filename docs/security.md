@@ -596,7 +596,8 @@ A repository listed in `enforceOutputs` goes one stage further
   `output_*` tools. The factory applies each one after T1 to T4 at enforce, or refuses it with a
   bounded reason.
 - **Whose voice.** Agent text is published as the agents App, through the octo-sts `publisher`
-  identity, never as the factory App. Only `issue` is filed by the factory App, as
+  identity or, with `hardening.publisher.minter`, a token the factory mints from the agents App
+  with the role table's publisher row, never as the factory App. Only `issue` is filed by the factory App, as
   `factory/proposed`.
 - **What is checked after.** At a run's end the tracer reads back the task's pull request (its
   title and body), the agents App's comments on the task's issue and pull request, and the labels
