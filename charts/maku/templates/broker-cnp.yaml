@@ -84,6 +84,15 @@ spec:
       toPorts:
         - ports: [{port: {{ .port | quote }}, protocol: TCP}]
     {{- end }}
+    {{- with include "ap.modelGateway" . | fromJson }}
+    # The planner and the classifier: the model gateway's clients listener (broker.modelGateway).
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .namespace }}
+            gateway.networking.k8s.io/gateway-name: {{ .service }}
+      toPorts:
+        - ports: [{port: {{ .port | quote }}, protocol: TCP}]
+    {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

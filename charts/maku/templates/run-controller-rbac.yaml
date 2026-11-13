@@ -52,7 +52,7 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     {{- /* model.mode gateway reads no model Secret: the gateway holds the keys. */}}
-    resourceNames: [{{ if not (include "ap.modelGateway" . | fromJson) }}{{ $c.modelSecret | quote }}, {{ end }}{{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
+    resourceNames: [{{ if not (include "ap.runModelGateway" . | fromJson) }}{{ $c.modelSecret | quote }}, {{ end }}{{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
     verbs: [get]
   {{- end }}
   - apiGroups: [coordination.k8s.io]
@@ -94,7 +94,7 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-ca}
 subjects:
   - {kind: ServiceAccount, name: run-controller, namespace: {{ .Release.Namespace }}}
-{{- if include "ap.modelGateway" . | fromJson }}
+{{- if include "ap.runModelGateway" . | fromJson }}
 ---
 # The gateway-token-ttl preflight (v4 step 4, GW9) requests one token for this ServiceAccount at the
 # longest run's lifetime, to learn whether the apiserver caps token expiry under it. Its own name only.

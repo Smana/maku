@@ -36,7 +36,7 @@ data:
       namespace: {{ $k.dns.namespace | quote }}
       labels: {{- toYaml $k.dns.labels | nindent 8 }}
     {{- end }}
-    {{- $gw := include "ap.modelGateway" . | fromJson }}
+    {{- $gw := include "ap.runModelGateway" . | fromJson }}
     {{- if $gw }}
     # Runs call the model gateway with their own projected token (v4 step 4, GW3): no provider key
     # enters the runs namespace, and modelSecret is not read.

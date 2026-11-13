@@ -1,6 +1,7 @@
 {{- $b := .Values.broker -}}
 {{- $local := include "ap.local" . -}}
 {{- $img := include "ap.image" (dict "root" . "image" $b.image) -}}
+{{- $mg := include "ap.modelGateway" . | fromJson -}}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -89,6 +90,9 @@ spec:
             {{- if $b.factoryCA.secretName }}
             - {name: factory-ca, mountPath: /etc/room-broker/factory-ca, readOnly: true}
             {{- end }}
+            {{- with $mg.tokens }}
+            - {name: model-gateway, mountPath: {{ . }}, readOnly: true}
+            {{- end }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -102,6 +106,16 @@ spec:
         {{- if $b.factoryCA.secretName }}
         - name: factory-ca
           secret: {secretName: {{ $b.factoryCA.secretName }}, items: [{key: ca.crt, path: ca.crt}]}
+        {{- end }}
+        {{- if $mg.service }}
+        # The model gateway's clients (GW8): one token per client, each audience its own route's, so
+        # the planner's token cannot call the classifier's route or the reverse. The broker reads the
+        # file at each call, so the kubelet's rotation reaches it with no restart.
+        - name: model-gateway
+          projected:
+            sources:
+              - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.planner, expirationSeconds: 3600, path: planner}
+              - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.classifier, expirationSeconds: 3600, path: classifier}
         {{- end }}
         {{- with $b.extraVolumes }}
         {{- toYaml . | nindent 8 }}

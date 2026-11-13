@@ -47,7 +47,7 @@ data:
       mode: local
     {{- else }}
     human:
-      {{- toYaml (omit $b.human "mode") | nindent 6 }}
+      {{- include "ap.human" . | nindent 6 }}
     {{- end }}
     {{- with $b.roomTools }}
     roomTools:

@@ -176,11 +176,62 @@ tokenreview): the Service, the broker CNP and the run controller then open it to
 {{- if and (ne (toString $rt.enabled) "false") (eq ($rt.auth | default "key") "tokenreview") -}}true{{- end -}}
 {{- end -}}
 
-{{/* The run-controller's model gateway (v4 step 4, GW3), as JSON: {} in model.mode secret (the default),
-else the resolved gateway: url, ports, audiencePrefix, aliases. Read it with
-`include "ap.modelGateway" . | fromJson`. An empty service is maku-gateway's default name, model-gateway,
-and an empty namespace the release's, which is where the umbrella runs it. */}}
+{{/*
+broker.modelGateway (plan v4 step 4, GW8), as JSON: {} when service is unset, else {service,
+namespace, port, audiencePrefix, base, tokens}. base is the clients listener's URL, to which
+/clients/<client>/v1 is appended; tokens the directory of the projected tokens, one file per client.
+*/}}
 {{- define "ap.modelGateway" -}}
+{{- $g := .Values.broker.modelGateway | default dict -}}
+{{- if $g.service -}}
+{{- $ns := $g.namespace | default .Release.Namespace -}}
+{{- dict "service" $g.service "namespace" $ns "port" (int $g.port) "audiencePrefix" $g.audiencePrefix
+      "base" (printf "http://%s.%s.svc.%s:%d" $g.service $ns .Values.clusterDomain (int $g.port))
+      "tokens" "/var/run/secrets/maku/model-gateway" | toJson -}}
+{{- else -}}
+{}
+{{- end -}}
+{{- end -}}
+
+{{/*
+The human block as the broker reads it (oidc mode): the values' block, with the model gateway's
+routes filled in where the block leaves both url and apiKeyFile unset (D25: a pair you set wins).
+The planner's only when it is enabled; the classifier's only when human.slackIntents exists. One of
+the two set alone fails the render: the gateway's token would go to another endpoint, or another
+key to the gateway.
+*/}}
+{{- define "ap.human" -}}
+{{- $h := omit (deepCopy .Values.broker.human) "mode" -}}
+{{- $g := include "ap.modelGateway" . | fromJson -}}
+{{- if $g.service -}}
+{{- $plan := dig "intake" "plan" dict $h -}}
+{{- if $plan.enabled -}}
+{{- include "ap.gatewayPair" (dict "block" $plan "key" "broker.human.intake.plan" "url" (printf "%s/clients/planner/v1" $g.base) "token" (printf "%s/planner" $g.tokens)) -}}
+{{- end -}}
+{{- with $h.slackIntents -}}
+{{- include "ap.gatewayPair" (dict "block" . "key" "broker.human.slackIntents" "url" (printf "%s/clients/classifier/v1" $g.base) "token" (printf "%s/classifier" $g.tokens)) -}}
+{{- end -}}
+{{- end -}}
+{{- toYaml $h -}}
+{{- end -}}
+
+{{/* One client's url and apiKeyFile: both filled from the gateway when both are unset, kept when both
+are set, and a render error naming both keys when only one is. Mutates block. */}}
+{{- define "ap.gatewayPair" -}}
+{{- $b := .block -}}
+{{- if and (not $b.url) (not $b.apiKeyFile) -}}
+{{- $_ := set $b "url" .url -}}
+{{- $_ := set $b "apiKeyFile" .token -}}
+{{- else if not (and $b.url $b.apiKeyFile) -}}
+{{- fail (printf "%s.url and %s.apiKeyFile: set both or neither (broker.modelGateway fills both when neither is set): one alone would pair the gateway's token with another endpoint, or another key with the gateway" .key .key) -}}
+{{- end -}}
+{{- end -}}
+
+{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (the default),
+else the resolved gateway: url, ports, audiencePrefix, aliases. Read it with
+`include "ap.runModelGateway" . | fromJson`. An empty service is maku-gateway's default name, model-gateway,
+and an empty namespace the release's, which is where the umbrella runs it. */}}
+{{- define "ap.runModelGateway" -}}
 {{- $m := .Values.runController.model | default dict -}}
 {{- $mode := $m.mode | default "secret" -}}
 {{- if eq $mode "gateway" -}}

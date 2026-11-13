@@ -729,7 +729,7 @@ func plannerConfig() config.Config {
 		Access: &config.AccessConfig{ReaderFile: "/etc/room-broker/zitadel/reader.json",
 			TTL: config.Duration{Duration: 90 * time.Second}},
 		Intake: config.IntakeConfig{Plan: config.PlanConfig{
-			Enabled: true, URL: "http://ai-gateway.envoy-gateway-system.svc:8080/v1",
+			Enabled: true, URL: "http://model-gateway.maku.svc:8082/clients/planner/v1",
 			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, MaxRounds: 4, Fallback: "composer",
 			ReasoningEffort: "low",
 			Repositories:    []string{"Smana/AI-Native-Ref"},
@@ -796,7 +796,7 @@ func TestIntakeIsWiredFromConfig(t *testing.T) {
 		c.CeilingUSD != 2 || c.Source != "class:docs-links.taskUSD" {
 		t.Fatalf("classes = %+v", in.Classes)
 	}
-	if in.Model == nil || in.Model.URL != "http://ai-gateway.envoy-gateway-system.svc:8080/v1" ||
+	if in.Model == nil || in.Model.URL != "http://model-gateway.maku.svc:8082/clients/planner/v1" ||
 		in.Model.Alias != config.PlanModel || in.Model.APIKeyFile != "/etc/room-broker/planner/api-key" ||
 		in.Model.Deadline != config.DefaultPlanDeadline || in.Model.HC == nil || in.Model.ReasoningEffort != "low" {
 		t.Fatalf("model = %+v", in.Model)

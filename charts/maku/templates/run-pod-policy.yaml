@@ -67,7 +67,7 @@ spec:
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
       message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
-    {{- with include "ap.modelGateway" . | fromJson }}
+    {{- with include "ap.runModelGateway" . | fromJson }}
     {{- if not (regexMatch "^[a-z0-9.-]+$" $.Values.runController.modelSecret) }}
     {{- fail (printf "runController.modelSecret %q cannot go into the run-pod policy: a Secret name holds only a-z, 0-9, . and -" $.Values.runController.modelSecret) }}
     {{- end }}

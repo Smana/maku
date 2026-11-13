@@ -766,7 +766,7 @@ func TestIntakePlanConfig(t *testing.T) {
 	cfg, err := Load(write(t, valid+"\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n"+
 		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n"+
 		"  intake:\n    plan:\n"+
-		"      enabled: true\n      url: http://ai-gateway.envoy-gateway-system.svc.cluster.local:8080/v1\n"+
+		"      enabled: true\n      url: http://model-gateway.maku.svc.cluster.local:8082/clients/planner/v1\n"+
 		"      apiKeyFile: /etc/room-broker/planner/api-key\n      repositories: [Smana/ai-native-ref]\n"+
 		"      classes:\n        docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"))
 	if err != nil {

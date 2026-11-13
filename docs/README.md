@@ -17,6 +17,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
+| [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
 | [Merge policies](merge-policies.md) | A repository's own merge classes: the model, the six rollout switches, every field, recipes, checking and promoting, grants, reasons, rollback |
 | [maku](cli.md) | Install and verify, configure, every command, the factory-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |

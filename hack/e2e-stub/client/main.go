@@ -36,7 +36,7 @@ func main() {
 
 func run(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writer) error {
 	if len(args) == 0 {
-		return errors.New("usage: client plan|revise|accept-rest|answer|status [flags]")
+		return errors.New("usage: client plan|revise|accept-rest|answer|status|classify [flags]")
 	}
 	var err error
 	switch args[0] {
@@ -50,6 +50,8 @@ func run(ctx context.Context, args []string, _ io.Reader, stdout, stderr io.Writ
 		err = runAnswer(ctx, args[1:], stdout, stderr)
 	case "status":
 		err = runStatus(ctx, args[1:], stdout, stderr)
+	case "classify":
+		err = runClassify(ctx, args[1:], stdout, stderr)
 	default:
 		err = fmt.Errorf("unknown subcommand %q", args[0])
 	}
