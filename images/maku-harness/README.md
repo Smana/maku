@@ -21,7 +21,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | Variable | Effect when set | When unset |
 |---|---|---|
 | `LLM_API_KEY_FILE` | the model API key is read from this file (maku-run-controller only): the provider key, or in the run-controller's `model.mode: gateway` the run's own gateway token | the placeholder key; the identity-proxy injects the real one |
-| `GIT_TOKEN_FILE` | the git credential helper prints this file's token; it never calls octo-sts and never revokes (maku-run-controller only) | octo-sts exchange through identity-proxy `:4001`, revoked on exit |
+| `GIT_TOKEN_FILE` | the git credential helper prints this file's token; it never calls octo-sts, and revokes it on exit only with `GIT_TOKEN_REVOCABLE=1` (maku-run-controller only; `gitTokens: perRun` sets it, a PAT never is) | octo-sts exchange through identity-proxy `:4001`, revoked on exit |
 | `MCP_URL` | the platform MCP entry and progress notes are wired | no platform tools, no progress notes |
 | `MCP_TOKEN_FILE` | every MCP request (the platform entry's, re-read per POST by `site/sitecustomize.py`, and the progress notes') carries `Authorization: Bearer <the file>`: the portable runtime's room tools token, which the broker's `:8090` verifies itself | no `Authorization`: a gateway in front authenticates the run |
 | `AGENT_CHECKS` | `1`: the toolchain installs in the background after the clone, the rules gain the repository-checks rule, and a `finished` implementer run checks its head, notes the result in the room and emits the span `agent-run.checks` | today's run |

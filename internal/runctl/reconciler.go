@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
 
@@ -82,6 +83,8 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			case PreflightPassed:
 			case PreflightFailed:
 				fail(st, now, "PreflightFailed", res.Check+": "+res.Message)
+				// A run held by a waiting preflight before keeps no stale PreflightPending beside phase Failed.
+				setCond(st, "Ready", metav1.ConditionFalse, "PreflightFailed", res.Check+": "+res.Message)
 				return ctrl.Result{}, r.writeStatus(ctx, run, *st)
 			default:
 				why := "waiting for the run-controller's preflight"
@@ -104,12 +107,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 		return ctrl.Result{}, r.writeStatus(ctx, run, merge(*st, Observe(run.Status, revoked, pod, gone, now)))
 	}
 	if pod == nil && !gone {
-		m, ca, missing, err := r.inputs(ctx, run)
+		m, ca, hold, err := r.inputs(ctx, run, now)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
-		if missing != "" {
-			pending(st, "SecretMissing", missing)
+		if hold.why != "" {
+			pending(st, hold.reason, hold.why)
 			return ctrl.Result{RequeueAfter: secretRetry}, r.writeStatus(ctx, run, *st)
 		}
 		stale, err := r.create(ctx, run, runID, m, ca)
@@ -219,27 +222,72 @@ func (r *Reconciler) secretKey(ctx context.Context, ns, name, key string) (val [
 	return s.Data[key], len(s.Data[key]) == 0, nil
 }
 
-// inputs reads the model Secret, the presence of the git Secret run's role mounts, and the broker
-// CA. missing names the first absent one: the chart may create them after the controller starts.
-func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun) (Model, []byte, string, error) {
+// hold is why a run's pod waits: a Pending reason and its message; why "" means none.
+type hold struct{ reason, why string }
+
+func missingSecret(why string) hold { return hold{"SecretMissing", why} }
+
+// runTokenMargin is the least life a per-run token must have left for a pod to start on it: the
+// factory rewrites it 10 minutes before expiry, and the kubelet takes a minute or two to sync.
+const runTokenMargin = 5 * time.Minute
+
+// inputs reads the model Secret, the git Secret run mounts, and the broker CA. A hold names the
+// first absent one: the chart, or the factory's minter, may write them after the controller starts.
+func (r *Reconciler) inputs(ctx context.Context, run *v1alpha1.AgentRun, now time.Time) (Model, []byte, hold, error) {
 	c := r.Cfg
 	m, why, err := r.model(ctx, run)
 	if why != "" || err != nil {
-		return Model{}, nil, why, err
+		return Model{}, nil, missingSecret(why), err
 	}
-	git := c.GitSecretFor(run.Spec.Role)
-	if _, missing, err := r.secretKey(ctx, c.Namespace, git, "token"); err != nil {
-		return Model{}, nil, "", err
-	} else if missing {
-		return Model{}, nil, fmt.Sprintf("Secret %s/%s has no token", c.Namespace, git), nil
+	if c.PerRun() {
+		if h, err := r.runToken(ctx, run, now); err != nil || h.why != "" {
+			return Model{}, nil, h, err
+		}
+	} else {
+		git := c.GitSecretFor(run)
+		if _, missing, err := r.secretKey(ctx, c.Namespace, git, "token"); err != nil {
+			return Model{}, nil, hold{}, err
+		} else if missing {
+			return Model{}, nil, missingSecret(fmt.Sprintf("Secret %s/%s has no token", c.Namespace, git)), nil
+		}
 	}
 	ca, missing, err := r.secretKey(ctx, c.Broker.Namespace, c.Broker.CASecret, "ca.crt")
 	if err != nil {
-		return Model{}, nil, "", err
+		return Model{}, nil, hold{}, err
 	} else if missing {
-		return Model{}, nil, fmt.Sprintf("Secret %s/%s has no ca.crt", c.Broker.Namespace, c.Broker.CASecret), nil
+		return Model{}, nil, missingSecret(fmt.Sprintf("Secret %s/%s has no ca.crt", c.Broker.Namespace, c.Broker.CASecret)), nil
 	}
-	return m, ca, "", nil
+	return m, ca, hold{}, nil
+}
+
+// runToken checks run's own token Secret (plan PR5): present, the factory's (its label, its run
+// label and an ownerReference to this very run), holding a token, and not expiring within
+// runTokenMargin. It is read only before a pod starts: a running pod is never stopped for a later
+// expiry, the factory refreshes the Secret in place.
+func (r *Reconciler) runToken(ctx context.Context, run *v1alpha1.AgentRun, now time.Time) (hold, error) {
+	name := runwatch.RunTokenSecret(run.Name)
+	ref := r.Cfg.Namespace + "/" + name
+	s := &corev1.Secret{}
+	err := r.APIReader.Get(ctx, types.NamespacedName{Namespace: r.Cfg.Namespace, Name: name}, s)
+	if apierrors.IsNotFound(err) {
+		return missingSecret(fmt.Sprintf("Secret %s not found: the factory mints the run's token", ref)), nil
+	} else if err != nil {
+		return hold{}, err
+	}
+	owned := slices.ContainsFunc(s.OwnerReferences, func(o metav1.OwnerReference) bool {
+		return o.UID == run.UID && o.Kind == "AgentRun" && o.Name == run.Name
+	})
+	if !owned || s.Labels[runwatch.RunTokenManagedByLabel] != runwatch.RunTokenManagedBy || s.Labels[runwatch.RunTokenRunLabel] != run.Name {
+		return missingSecret(fmt.Sprintf("Secret %s: the run's token Secret is not the factory's", ref)), nil
+	}
+	if len(s.Data[runwatch.RunTokenKey]) == 0 {
+		return missingSecret(fmt.Sprintf("Secret %s has no token", ref)), nil
+	}
+	exp, err := time.Parse(time.RFC3339, s.Annotations[runwatch.RunTokenExpiresAnnotation])
+	if err != nil || exp.Sub(now) < runTokenMargin {
+		return hold{"SecretExpiring", fmt.Sprintf("Secret %s expires within %s: waiting for the factory to refresh it", ref, runTokenMargin)}, nil
+	}
+	return hold{}, nil
 }
 
 // model is the run's model: in gateway mode from config alone (no Secret), else from modelSecret.

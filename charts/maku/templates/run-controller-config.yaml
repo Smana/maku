@@ -53,6 +53,16 @@ data:
     {{- else }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     {{- end }}
+    {{- if eq ($c.gitTokens | default "shared") "perRun" }}
+    {{- if $c.unsafeSharedGitToken }}
+    {{- fail "runController.gitTokens perRun and runController.unsafeSharedGitToken: choose one" }}
+    {{- end }}
+    {{- if $c.gitReadSecret }}
+    {{- fail "runController.gitTokens perRun and runController.gitReadSecret: choose one (set gitReadSecret to \"\"): each run mounts its own Secret, minted for its role" }}
+    {{- end }}
+    # Each run mounts its own Secret, <run name>-git, minted by the factory (D10).
+    gitTokens: perRun
+    {{- else }}
     gitSecret: {{ required "runController.gitSecret is required" $c.gitSecret | quote }}
     {{- if $c.unsafeSharedGitToken }}
     # Every role mounts gitSecret: a reviewer or triager could push (a laptop's one PAT).
@@ -61,6 +71,7 @@ data:
     gitReadSecret: {{ $c.gitReadSecret | quote }}
     {{- else }}
     {{- fail "runController.gitReadSecret is empty and runController.unsafeSharedGitToken is false: reviewer and triager runs need a read-only token; name its Secret, or share gitSecret on a laptop" }}
+    {{- end }}
     {{- end }}
     broker:
       url: {{ printf "https://room-broker.%s.svc.%s:8443" .Release.Namespace .Values.clusterDomain | quote }}

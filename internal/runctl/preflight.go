@@ -129,7 +129,9 @@ func (p *Preflight) checks() []check {
 	if p.Cfg.Gateway() {
 		cs = append(cs, check{name: "gateway-token-ttl", run: p.gatewayTokenTTL})
 	}
-	cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
+	if !p.Cfg.PerRun() { // no shared Secret: each run's own is checked before its pod (Reconciler.inputs)
+		cs = append(cs, check{name: "gitSecrets", run: p.gitSecrets})
+	}
 	if p.Cfg.NetworkPolicy == NetworkPolicyKubernetes {
 		cs = append(cs, check{name: "network", run: p.network})
 	}

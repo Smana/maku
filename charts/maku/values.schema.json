@@ -5,6 +5,50 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "runController": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "gitTokens": {
+          "description": "Where a run's git token comes from (D10): shared (gitSecret and gitReadSecret) or perRun (each run's own Secret, minted by the factory).",
+          "type": "string",
+          "enum": ["shared", "perRun"]
+        },
+        "model": {
+          "description": "How runs reach a model (v4 step 4): secret (modelSecret, the default) or gateway (the model gateway, with the run's own token).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"type": "string", "enum": ["secret", "gateway"]},
+            "gateway": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "service": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"},
+                "namespace": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"},
+                "ports": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "public": {"type": "integer", "minimum": 1, "maximum": 65535},
+                    "internal": {"type": "integer", "minimum": 1, "maximum": 65535}
+                  }
+                },
+                "audiencePrefix": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"},
+                "aliases": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "public": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}},
+                    "internal": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}}
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "networkPolicies": {
       "description": "The network mode (D6). enabled is the old key; mode wins when set.",
       "type": "object",
@@ -88,45 +132,6 @@
           "description": "More image repositories a run pod may use, without tag or digest.",
           "type": "array",
           "items": {"type": "string", "pattern": "^[a-z0-9]([-a-z0-9._/:]*[a-z0-9])?$", "not": {"pattern": "(@|:[^/]*$)"}}
-        }
-      }
-    },
-    "runController": {
-      "type": "object",
-      "additionalProperties": true,
-      "properties": {
-        "model": {
-          "description": "How runs reach a model (v4 step 4): secret (modelSecret, the default) or gateway (the model gateway, with the run's own token).",
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "mode": {"type": "string", "enum": ["secret", "gateway"]},
-            "gateway": {
-              "type": "object",
-              "additionalProperties": false,
-              "properties": {
-                "service": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"},
-                "namespace": {"type": "string", "pattern": "^([a-z0-9]([-a-z0-9]*[a-z0-9])?)?$"},
-                "ports": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "public": {"type": "integer", "minimum": 1, "maximum": 65535},
-                    "internal": {"type": "integer", "minimum": 1, "maximum": 65535}
-                  }
-                },
-                "audiencePrefix": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$"},
-                "aliases": {
-                  "type": "object",
-                  "additionalProperties": false,
-                  "properties": {
-                    "public": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}},
-                    "internal": {"type": "array", "uniqueItems": true, "items": {"$ref": "#/definitions/alias"}}
-                  }
-                }
-              }
-            }
-          }
         }
       }
     },

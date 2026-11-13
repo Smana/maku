@@ -44,7 +44,13 @@ bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { ec
 # install banner; no RuntimeClass ClusterRole (no class).
 ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the demo runs namespace enforces Pod Security restricted'
 got=$(yq ea '[select(.kind == "ResourceQuota" or .kind == "ValidatingAdmissionPolicy" or .kind == "ValidatingAdmissionPolicyBinding" or (.kind == "ClusterRole" and (.metadata.name | test("runtimeclass$")))) | .kind + "/" + .metadata.name] | sort | join(" ")' - <<<"$out")
-want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
+# Step 3 PR B (D10): the demo runs on per-run tokens. The factory's config says perRun, its runs
+# Role writes Secrets without reading them, the run-controller mounts each run's own Secret
+ykind ConfigMap 'select(.metadata.name == "agent-factory-config") | (.data."config.yaml" | from_yaml | .runTokens | ((.perRun == true) and (has("enabled") | not)))' 'demo: the factory mints per run, from its own App'
+ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."config.yaml" | from_yaml | (.gitTokens == "perRun" and (has("gitSecret") | not)))' 'demo: the run-controller mounts each run its own Secret'
+ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == "agents") | ((.rules | map(select(.resources | contains(["secrets"])))) | ((length == 1) and ((.[0].verbs | join(",")) == "create,patch,delete")))' 'demo: the factory writes run token Secrets and reads none'
+# Step 3 PR B (D10) adds the AgentRun creator and patch-limit policies and the run token policy.
+want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-agentrun-creators ValidatingAdmissionPolicy/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/maku-maku-run-token-secrets ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-agentrun-creators ValidatingAdmissionPolicyBinding/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/maku-maku-run-token-secrets ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
 [[ $got == "$want" ]] || { echo "FAIL: the demo's step-2 objects are '$got', want '$want'" >&2; fail=1; }
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "unsafe_allow_runc,network_policy_none"' 'the demo shows its two unsafe settings: runc and no network policy'
 # PR6: the skeleton disables both subcharts, so nothing but the umbrella's own templates renders
@@ -81,7 +87,7 @@ done
 [[ "$(secret_field room-broker-ca ca.crt)" != *"PRIVATE KEY"* ]] || { echo "FAIL: room-broker-ca carries a key" >&2; fail=1; }
 
 # the cluster domain flows into the SANs
-dom="$(helm template af . -n demo "${args[@]}" --set clusterDomain=example.test --set maku.clusterDomain=example.test --set maku-factory.clusterDomain=example.test | yq ea 'select(.kind == "Secret" and .metadata.name == "room-broker-tls") | .data."tls.crt"' - | base64 -d | openssl x509 -noout -ext subjectAltName)"
+dom="$(helm template af . -n demo "${args[@]}" --set 'maku.agentRunPolicies.creators={system:serviceaccount:demo:agent-factory}' --set clusterDomain=example.test --set maku.clusterDomain=example.test --set maku-factory.clusterDomain=example.test | yq ea 'select(.kind == "Secret" and .metadata.name == "room-broker-tls") | .data."tls.crt"' - | base64 -d | openssl x509 -noout -ext subjectAltName)"
 grep -qF 'DNS:room-broker.demo.svc.example.test' <<<"$dom" || { echo "FAIL: clusterDomain does not reach the SANs" >&2; fail=1; }
 
 # the umbrella's helpers must not replace the subcharts': the factory keeps its name label (a selector/template mismatch broke the first live install)
@@ -194,6 +200,18 @@ done
 # clusterDomain must agree at the three places that carry it
 msg="$(helm template af . -n maku "${args[@]}" --set clusterDomain=a.test --set maku.clusterDomain=a.test 2>&1 >/dev/null || true)"
 grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { echo "FAIL: a clusterDomain that differs from maku-factory's does not fail" >&2; fail=1; }
+# v4 D10: per-run tokens are two halves, and only the factory may create the runs it mints for
+for half in "--set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read" \
+            "--set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=perRun --set maku.runController.gitReadSecret="; do
+  # shellcheck disable=SC2086 # two --set pairs, split on purpose
+  msg="$(helm template af . -n maku "${args[@]}" $half 2>&1 >/dev/null || true)"
+  grep -qF 'go together' <<<"$msg" || { echo "FAIL: $half renders: perRun and gitTokens perRun go together" >&2; fail=1; }
+done
+msg="$(helm template af . -n maku "${args[@]}" --set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=perRun \
+  --set maku.agentRunPolicies.creators=null 2>&1 >/dev/null || true)"
+grep -qF 'maku-factory.runTokens.perRun needs maku.agentRunPolicies.creators' <<<"$msg" || { echo "FAIL: perRun without agentRunPolicies.creators renders" >&2; fail=1; }
+msg="$(helm template af . -n other "${args[@]}" 2>&1 >/dev/null || true)"
+grep -qF 'does not name this release' <<<"$msg" || { echo "FAIL: the demo in another namespace renders with creators naming maku's factory" >&2; fail=1; }
 # secrets: rendered from values, or not at all when an existing Secret is named
 ykind Secret 'select(.metadata.name == "agent-model") | (.metadata.namespace == "agents" and .stringData.base_url == "http://model.example.test/v1" and .stringData.model == "m1" and .stringData.api_key == "k1")' 'agent-model in the runs namespace from demo.model'
 ykind Secret 'select(.metadata.name == "agent-factory-github") | (.metadata.namespace == "maku" and .stringData.app_id == "123" and .stringData.private_key == "pem1")' 'agent-factory-github from demo.githubApp'

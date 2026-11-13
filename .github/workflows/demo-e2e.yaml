@@ -196,12 +196,42 @@ jobs:
           [[ $issue =~ ^[0-9]+$ ]] || { echo "::error::could not file the issue: $url"; exit 1; }
           gh issue edit "$issue" -R "$DEMO_REPO" --add-label factory/ready # its own step: the label event must fire
           echo "filed and labelled $DEMO_REPO#$issue factory/ready at $start"
+          # v4 D10: each run holds its own token Secret, <run>-git, while it lives, gone once it ends.
+          export KUBECONFIG="$PWD/.demo/kubeconfig"
+          tokens=()
+          see_tokens() {
+            local s
+            for s in $(kubectl -n agents get secrets -l maku.ogenki.io/run -o jsonpath='{range .items[?(@.metadata.annotations.maku\.ogenki\.io/expires-at)]}{.metadata.name}{" "}{end}' 2>/dev/null); do
+              [[ " ${tokens[*]} " == *" $s "* ]] || { tokens+=("$s"); echo "run token Secret $s (with its expires-at)"; }
+            done
+          }
+          tokens_gone() {
+            local deadline=$((SECONDS + 900)) s run left fin
+            while ((SECONDS < deadline)); do
+              left=0
+              for s in "${tokens[@]}"; do
+                kubectl -n agents get secret "$s" >/dev/null 2>&1 || continue
+                left=1
+                run=${s%-git}
+                fin=$(kubectl -n agents get agentruns.maku.ogenki.io "$run" -o jsonpath='{.status.finishedAt}' 2>/dev/null || true)
+                if [[ -n $fin ]] && (($(date -u +%s) - $(date -u -d "$fin" +%s) > 120)); then
+                  echo "::error::$s outlived its run by over 2 minutes (finished at $fin)"; return 1
+                fi
+              done
+              ((left)) || return 0
+              sleep 10
+            done
+            echo "::error::run token Secrets still there after 15 minutes: ${tokens[*]}"; return 1
+          }
           deadline=$((SECONDS + 1800))
           while ((SECONDS < deadline)); do
+            see_tokens
             sha=$(gh api "repos/$DEMO_REPO/pulls?state=all&sort=created&direction=desc&per_page=30" \
               --jq "[.[] | select(.user.login == \"$bot\" and .created_at > \"$start\" and ((.body // \"\") | test(\"#$issue\\\\b\")))][0].head.sha // empty" 2>/dev/null || true)
             if [[ -n $sha ]] && { gh api "repos/$DEMO_REPO/commits/$sha/statuses" --jq '.[].context' 2>/dev/null || true; } | grep -qxF maku/merge-gate; then
               echo "a new pull request by $bot for #$issue has the status maku/merge-gate on $sha"
+              ((${#tokens[@]})) || { echo "::error::no run token Secret <run>-git was seen during the runs (v4 D10)"; exit 1; }
+              tokens_gone || exit 1
               {
                 echo "### demo-e2e nightly passed"
                 echo

@@ -153,7 +153,7 @@ values=(-f charts/agent-factory/values-demo.yaml
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 crd_values=()
 if [[ -z $GATEWAY ]]; then
-  values+=(--set demo.model.baseURL=http://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
+  values+=(--set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
 else
   crd_values=(--set agentgateway-crds.enabled=true)
   issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
@@ -271,10 +271,9 @@ EOF
   install_umbrella
 fi
 
-if [[ $NETPOL != none || -n $GATEWAY ]]; then
+if [[ $NETPOL != none ]]; then
   # The preflight checks the git Secrets before the network: the dummy App never fills them, so the
-  # network legs fill both with a dummy token right away, before the run-controller's first tick. The
-  # gateway leg starts a run, which waits for the preflight too.
+  # network legs fill both with a dummy token right away, before the run-controller's first tick.
   for s in agent-git agent-git-read; do
     kubectl -n agents create secret generic "$s" --from-literal=token=dummy-not-a-token >/dev/null
   done
@@ -304,18 +303,56 @@ reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o j
 ! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
-step "the run token writer may fill both run Secrets, and the run-controller may read both"
-# The dummy App never mints, so neither Secret is written: the Roles that let it are what is proved.
+step "per-run tokens (v4 D10): the factory writes run token Secrets and reads none; a run waits for its own"
+# The dummy App never mints, and the factory never passes start-up: the Roles, the admission policy
+# and the run-controller's wait are what is proved. The nightly proves a real mint.
 sa=system:serviceaccount:$NS
-for s in agent-git agent-git-read; do
-  kubectl auth can-i update "secret/$s" -n agents --as="$sa:agent-factory" >/dev/null || die "the factory cannot update $s"
-  kubectl auth can-i get "secret/$s" -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read $s"
+for v in create patch delete; do
+  kubectl auth can-i "$v" secrets -n agents --as="$sa:agent-factory" >/dev/null || die "the factory cannot $v Secrets in agents"
 done
-if kubectl -n agents get secret agent-git-read >/dev/null 2>&1; then
-  echo "ok: agent-git-read exists"
-else
-  echo "ok: agent-git-read is not written: the factory logged the dummy App's failure above"
-fi
+for v in get list watch; do
+  ! kubectl auth can-i "$v" secrets -n agents --as="$sa:agent-factory" >/dev/null || die "the factory may $v Secrets in agents"
+done
+kubectl auth can-i get secret/run-abcdefgh-git -n agents --as="$sa:run-controller" >/dev/null || die "the run-controller cannot read a run's token Secret"
+# The policy bounds the factory's writes: an apply over agent-model is refused, and answers no object.
+# Server-side apply, as the minter writes: one PATCH, no read first (kubectl patch reads, which RBAC refuses).
+for _ in $(seq 30); do
+  refused=$(printf '%s\n' 'apiVersion: v1' 'kind: Secret' 'metadata: {name: agent-model, namespace: agents, labels: {x: "y"}}' |
+    kubectl apply --server-side --force-conflicts --field-manager=probe --dry-run=server --as="$sa:agent-factory" -f - 2>&1) && refused=""
+  grep -qF 'ValidatingAdmissionPolicy' <<<"$refused" && break
+  sleep 2
+done
+grep -qF 'run token Secrets' <<<"$refused" || die "the factory's patch of agent-model was not refused by the run token policy: $refused"
+echo "ok: the factory's patch of agent-model is refused (run token policy)"
+# A run the factory creates waits Pending for its own Secret. In the unenforced leg the network
+# preflight refuses every run first (by design): the run must end Failed, PreflightFailed, with no pod.
+kubectl apply --as="$sa:agent-factory" -f - <<EOF
+apiVersion: maku.ogenki.io/v1alpha1
+kind: AgentRun
+metadata: {name: run-abcdefgh, namespace: agents}
+spec:
+  role: implementer
+  repository: Smana/demo
+  baseRef: main
+  principal: system:factory
+  dataClass: public
+  task: {text: "a run that never starts"}
+  budget: {maxMinutes: 5}
+EOF
+want='Pending/SecretMissing/*run-abcdefgh-git*' what="waits Pending (SecretMissing) for its own token Secret"
+[[ $NETPOL != unenforced ]] || { want='Failed/PreflightFailed/network:*' what="is refused by the network preflight (PreflightFailed)"; }
+reason=""
+for _ in $(seq 60); do
+  reason=$(kubectl -n agents get agentruns.maku.ogenki.io run-abcdefgh -o jsonpath='{.status.phase}/{.status.conditions[?(@.type=="Ready")].reason}/{.status.conditions[?(@.type=="Ready")].message}') || reason=""
+  # shellcheck disable=SC2053 # $want is a glob on purpose
+  [[ $reason == $want ]] && break
+  sleep 3
+done
+# shellcheck disable=SC2053
+[[ $reason == $want ]] || die "the run is '$reason', want $want: a run without its token Secret $what"
+! kubectl -n agents get pod run-abcdefgh >/dev/null 2>&1 || die "a pod started without the run's token Secret"
+echo "ok: a run without its token Secret $what, with no pod"
+kubectl -n agents delete agentruns.maku.ogenki.io run-abcdefgh --wait=false >/dev/null
 
 step "no Cilium, cert-manager or CNPG objects"
 # By API group: a core name such as `certificates` is not cert-manager's.
@@ -521,22 +558,35 @@ EOF
 
   step "a run in model.mode gateway: its own token, no provider key in the runs namespace"
   ! kubectl -n agents get secret agent-model >/dev/null 2>&1 || die "agent-model exists in agents: model.mode gateway puts no provider key there"
-  ! kubectl -n agents get secret -o name | grep -v -e '/agent-git$' -e '/agent-git-read$' || die "a Secret other than the git tokens exists in agents"
-  # A run the run-controller starts as it would for the factory (the dummy App starts none). The harness
-  # clones a public repository anonymously, then calls its model: agent-default, through the gateway.
+  ! kubectl -n agents get secret -o name | grep -v -E '/(agent-git|agent-git-read|run-[a-z2-7]{8}-git)$' || die "a Secret other than git tokens exists in agents"
+  # A run created as the factory creates it (the dummy App starts none, and only the factory may create
+  # AgentRuns). Its token Secret is written as the minter writes it, with a dummy token: the harness
+  # clones a public repository anonymously, then calls its model, agent-default, through the gateway.
   run=run-gwrunab2
-  kubectl apply -f - >/dev/null <<EOF
+  kubectl apply --as="$sa:agent-factory" -f - >/dev/null <<EOF
 apiVersion: maku.ogenki.io/v1alpha1
 kind: AgentRun
 metadata: {name: $run, namespace: agents}
 spec:
   role: implementer
   repository: ${GATEWAY_RUN_REPO:-Smana/maku-demo}
-  principal: "human:local"
+  principal: system:factory
   dataClass: public
   model: agent-default
   task: {text: "Reply with one short sentence; change nothing."}
   budget: {maxMinutes: 10}
+EOF
+  uid=$(kubectl -n agents get agentruns.maku.ogenki.io "$run" -o jsonpath='{.metadata.uid}')
+  kubectl apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: $run-git
+  namespace: agents
+  labels: {app.kubernetes.io/managed-by: maku-factory, maku.ogenki.io/run: $run}
+  annotations: {maku.ogenki.io/expires-at: "$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)"}
+  ownerReferences: [{apiVersion: maku.ogenki.io/v1alpha1, kind: AgentRun, name: $run, uid: $uid}]
+stringData: {token: dummy-not-a-token}
 EOF
   for _ in $(seq 90); do kubectl -n agents get pod "$run" >/dev/null 2>&1 && break; sleep 2; done
   kubectl -n agents get pod "$run" >/dev/null 2>&1 || { kubectl -n agents get agentrun "$run" -o yaml >&2; die "the run-controller created no pod for $run"; }

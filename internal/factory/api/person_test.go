@@ -60,7 +60,7 @@ func TestTheAPIChargesThePersonOfTheToken(t *testing.T) {
 		if w := post(s.Handler(), "alice", base()); w.Code != http.StatusCreated {
 			t.Fatalf("%d %s", w.Code, w.Body)
 		}
-		if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: "human:291", MaxMicroUSD: 3_400_000}) || st.created[0].ChargedTo != "" {
+		if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: "human:291", MaxMicroUSD: 3_400_000, Repository: "Smana/cloud-native-ref", Role: "implementer"}) || st.created[0].ChargedTo != "" {
 			t.Fatalf("%+v %+v", r, st.created[0])
 		}
 	})
@@ -78,7 +78,7 @@ func TestTheAPIChargesThePersonOfTheToken(t *testing.T) {
 		if w := post(s.Handler(), "alice", base()); w.Code != http.StatusCreated {
 			t.Fatalf("%d %s", w.Code, w.Body)
 		}
-		if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: runs.PrincipalFactory, Person: alice, MaxMicroUSD: 3_400_000}) ||
+		if r := entry(t, s, "7f3cq2xz"); r != (ledger.Reservation{Principal: runs.PrincipalFactory, Person: alice, MaxMicroUSD: 3_400_000, Repository: "Smana/cloud-native-ref", Role: "implementer"}) ||
 			st.created[0].ChargedTo != alice || st.created[0].Principal != "human:291" {
 			t.Fatalf("the gateway principal stays the token's, the charge is alice's: %+v %+v", r, st.created[0])
 		}

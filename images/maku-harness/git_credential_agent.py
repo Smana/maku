@@ -6,7 +6,9 @@ scoped to $REPOSITORY and $ROLE (octo-sts, C6), and caches it in memory
 (/run/agent/git is a Memory emptyDir, T3). `token` prints it for gh.
 `revoke` deletes it at GitHub; agent-run calls it on its way out, after the
 checkpoint push (disruption design §2). With `GIT_TOKEN_FILE` set (run-controller,
-adoption 3a) it prints that file's token and never exchanges or revokes.
+adoption 3a) it prints that file's token and never exchanges; it revokes that token
+only with `GIT_TOKEN_REVOCABLE=1`, the run-controller's perRun mode, where the
+factory minted it for this run alone (D10). A user's PAT is never revoked.
 """
 import fcntl
 import json
@@ -74,11 +76,25 @@ def _exchange() -> str:
     return new_token
 
 
+def _read(path: str) -> str:
+    with open(path) as f:
+        return f.read().strip()
+
+
 def token() -> str:
     path = _token_file()
+    if path and os.environ.get("GIT_TOKEN_REVOCABLE") != "1":
+        return _read(path)  # a PAT: never revoked, nothing to serialize with
     if path:
-        with open(path) as f:
-            return f.read().strip()
+        # The run's minted token (perRun): read under revoke()'s lock, so a read never
+        # interleaves with the revoke on the way out.
+        lock_fd = os.open(CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX)
+            return _read(path)
+        finally:
+            fcntl.flock(lock_fd, fcntl.LOCK_UN)
+            os.close(lock_fd)
     # Serialize concurrent `get`s on the cache file itself: two credential
     # helper invocations racing here must not both exchange and stomp on
     # each other's cache write.
@@ -92,7 +108,8 @@ def token() -> str:
 
 
 def revoke() -> None:
-    if _token_file():
+    path = _token_file()
+    if path and os.environ.get("GIT_TOKEN_REVOCABLE") != "1":
         return  # the user's PAT is theirs to revoke, not the run's
     # Serialize with token() on the same lock to ensure revoke atomically
     # reads, revokes, and deletes the cache. Without this, a concurrent
@@ -101,6 +118,16 @@ def revoke() -> None:
     lock_fd = os.open(CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
     try:
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        if path:
+            # The run's own minted token (perRun): the factory deletes its Secret at the run's end.
+            try:
+                with open(path) as f:
+                    value = f.read().strip()
+            except OSError:
+                return
+            if value:
+                _revoke_value(value)
+            return
         try:
             with open(CACHE) as f:
                 value = json.load(f)["token"]

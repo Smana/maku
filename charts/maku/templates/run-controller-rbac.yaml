@@ -42,11 +42,19 @@ rules:
     resources: [networkpolicies]
     verbs: [get, create]
   {{- end }}
+  {{- if eq ($c.gitTokens | default "shared") "perRun" }}
+  # gitTokens perRun: each run's own <run name>-git, a name not known in advance. get alone, never
+  # list or watch; the controller already creates pods that mount any Secret here (plan PR3).
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+  {{- else }}
   - apiGroups: [""]
     resources: [secrets]
     {{- /* model.mode gateway reads no model Secret: the gateway holds the keys. */}}
     resourceNames: [{{ if not (include "ap.modelGateway" . | fromJson) }}{{ $c.modelSecret | quote }}, {{ end }}{{ $c.gitSecret | quote }}{{ if not $c.unsafeSharedGitToken }}, {{ $c.gitReadSecret | quote }}{{ end }}]
     verbs: [get]
+  {{- end }}
   - apiGroups: [coordination.k8s.io]
     resources: [leases]
     verbs: [get, create, update]

@@ -55,6 +55,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/meter"
+	"github.com/Smana/maku/internal/factory/minter"
 	"github.com/Smana/maku/internal/factory/policyview"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -64,6 +65,7 @@ import (
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
@@ -237,6 +239,31 @@ func runTokens(cfg *config.Config, served func() []string, c client.Client, log 
 		w.Every = 30 * time.Minute
 	}
 	return ws, nil
+}
+
+// perRunTokens is the per-run minter (v4 D10, runTokens.perRun): one token per run, for its
+// repository and role, from the App cfg.RunTokenApp names, written as the run's own Secret. nil
+// when runTokens.perRun is off: the shared writer, if any, stays (D25). Installations are looked up
+// per repository, so the shared writer's one-owner limit does not apply.
+func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
+	appIDFile, keyFile, ok := cfg.RunTokenApp()
+	if !ok || !cfg.RunTokens.PerRun {
+		return nil
+	}
+	app := &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil), IDFile: appIDFile, KeyFile: keyFile,
+		Installations: &forge.Installations{}}
+	mt := &minter.Minter{Client: app, Log: log}
+	var rm minter.RefusalMetrics
+	if met != nil {
+		mt.Metrics, rm = met, met
+	}
+	return &minter.RunTokens{Minter: mt, Client: c, Runs: runsCache, Tasks: c, Kind: cfg.Runs, TaskNamespace: ns,
+		Reserved: func(ctx context.Context, id string) (string, string, bool, error) {
+			r, ok, err := ledger.Held(ctx, ledgers, ns, time.Now(), id)
+			return r.Repository, r.Role, ok, err
+		},
+		Enforced: func(repo string) []hardening.OutputType { return current().Hardening.EnforcedFor(repo) },
+		Metrics:  rm, Log: log, Now: time.Now}
 }
 
 // oneOwner splits the repositories into their one owner and their names: one App installation
@@ -428,6 +455,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return err
 	}
 	rc := runs.Client{C: mgr.GetClient(), Kind: cfg.Runs}
+	perRun := perRunTokens(cfg, live.Current, mgr.GetClient(), mgr.GetCache(), ledgers, ns, m, log)
+	if perRun != nil {
+		rc.Created = perRun.Ensure // the first token, right after the claim exists (plan PR5)
+	}
 	perms := conns.permissions(cfg.API.Access)
 	var c7 triage.Classifier // nil while triage.classifierURL is unset: no HTTP client, no call
 	if cfg.Triage.ClassifierURL != "" {
@@ -591,12 +622,16 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if evidenceRefresh != nil {
 		runnables = append(runnables, evidenceRefresh)
 	}
-	tokens, err := runTokens(cfg, conns.names, ledgers, log)
-	if err != nil {
-		return err
-	}
-	for _, w := range tokens {
-		runnables = append(runnables, w)
+	if perRun != nil {
+		runnables = append(runnables, perRun)
+	} else {
+		tokens, err := runTokens(cfg, conns.names, ledgers, log)
+		if err != nil {
+			return err
+		}
+		for _, w := range tokens {
+			runnables = append(runnables, w)
+		}
 	}
 	// One issue poller per served repository, following the set as publishes change it (D12).
 	pollers := &intake.Pollers{Log: log, New: func(name string) (*intake.IssuePoller, bool) {
