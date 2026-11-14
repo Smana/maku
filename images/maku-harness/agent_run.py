@@ -429,6 +429,18 @@ def wait_ready(deadline_s: int = 120, server=None) -> None:
     raise TimeoutError("agent-server never became ready")
 
 
+def boot(start_span=None, wait=wait_ready) -> None:
+    """The agent-run.boot span over the wait for agent-server's /ready: it ends when ready
+    answers, or with the error that aborts the start. Tracing off (no start_span) is a no-op."""
+    span = start_span(BOOT_SPAN) if start_span else None
+    try:
+        wait()
+    except Exception as exc:  # noqa: BLE001 -- the span records why the start aborted
+        _end(span, type(exc).__name__)
+        raise
+    _end(span, None)
+
+
 def outcome(status: str) -> int | None:
     """0 on success, 1 on failure, None while the conversation runs."""
     if status in TERMINAL_OK:
@@ -788,6 +800,7 @@ NOTE_MAX = 280
 CHECKS_SKIPS = {"deadline", "no result", "unreadable result"}
 CHECKS_RESULTS = {"pass", "fail", "timeout", "skip"}
 CHECKS_SPAN, INSTALL_SPAN = "agent-run.checks", "agent-run.checks.install"
+BOOT_SPAN, CLONE_SPAN = "agent-run.boot", "agent-run.clone"
 
 
 def checks_module():
@@ -1387,18 +1400,30 @@ def _verified(ref: str) -> bool:
     return subprocess.run(["git", "-C", REPO_DIR, "rev-parse", "--verify", "--quiet", ref], capture_output=True).returncode == 0
 
 
-def clone(env: dict) -> bool:
-    """Clones the repo and checks the run's branch out; True when it resumed a pushed one."""
-    subprocess.run(["git", "clone", "--no-tags", "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR], check=True)
-    # Resume the run's branch when an earlier run of the same task pushed it (R7).
-    resumed = _verified("origin/" + env["BRANCH"])
-    if resumed:
-        start = "origin/" + env["BRANCH"]
-    elif _verified("origin/" + env["BASE_REF"]):
-        start = "origin/" + env["BASE_REF"]
-    else:
-        start = env["BASE_REF"]  # a commit
-    subprocess.run(["git", "-C", REPO_DIR, "checkout", "-B", env["BRANCH"], start], check=True)
+def clone(env: dict, start_span=None) -> bool:
+    """Clones the repo and checks the run's branch out; True when it resumed a pushed one.
+    The agent-run.clone span records the resume and the clone filter ("none" until the
+    blobless clone lands); a failure ends it with the error and still fails the run."""
+    span = start_span(CLONE_SPAN) if start_span else None
+    try:
+        subprocess.run(["git", "clone", "--no-tags", "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR],
+                       check=True)
+        # Resume the run's branch when an earlier run of the same task pushed it (R7).
+        resumed = _verified("origin/" + env["BRANCH"])
+        if resumed:
+            start = "origin/" + env["BRANCH"]
+        elif _verified("origin/" + env["BASE_REF"]):
+            start = "origin/" + env["BASE_REF"]
+        else:
+            start = env["BASE_REF"]  # a commit
+        subprocess.run(["git", "-C", REPO_DIR, "checkout", "-B", env["BRANCH"], start], check=True)
+    except Exception as exc:  # noqa: BLE001 -- the span records why the clone failed
+        _end(span, type(exc).__name__)
+        raise
+    if span:
+        span.set_attribute("resumed", resumed)
+        span.set_attribute("filter", "none")
+    _end(span, None)
     return resumed
 
 
@@ -2365,8 +2390,8 @@ def main() -> int:
     server = subprocess.Popen(SERVER_CMD, cwd="/", env=server_env({**env, **trace_env}))
     cid, steps, code, end, signalled, read = None, None, None, None, False, False
     try:
-        wait_ready(server=server)
         # agent-server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
+        boot(child_spans(provider, span), wait=lambda: wait_ready(server=server))
         if coordination_integration.requested(env):
             code = integration(env)
             return code
@@ -2374,7 +2399,7 @@ def main() -> int:
         # request reattaches the stored conversation and starts nothing. agent-run sends it nothing
         # either: it waits on a call's approval, a new message would reject that call, and a bare
         # run would execute it unconfirmed. The bridge answers it from the room's decision.
-        resumed = persisted(env) or clone(env)
+        resumed = persisted(env) or clone(env, start_span=child_spans(provider, span))
         disable_push(env)
         decl = declared(env)
         base = ""
