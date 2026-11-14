@@ -23,6 +23,9 @@ maku:
   enabled: false
 maku-factory:
   enabled: false
+  # The cluster's shared ClusterRoles are agent-factory-crds' (step 7 R10), so several installs share
+  # one set: the factory chart renders none of them under the umbrella.
+  clusterRoles: false
 
 # ExternalSecrets (v4 D14; docs/install-secrets.md#externalsecrets), off by default: one for each seam
 # listed under secrets, against the store named here (never rendered by this chart). Each target is

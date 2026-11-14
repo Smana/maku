@@ -83,6 +83,11 @@ extraEnv: []
 extraVolumes: []
 extraVolumeMounts: []
 # The post-merge monitor (merge gate classes MC7, R34). `flux.enabled` renders the read-only
+# The cluster's shared roles (D2, step 7 R10): maku-factory-admin, maku-mergepolicy-editor and
+# maku-viewer, aggregated into the built-in admin, edit and view roles, and agent-factory-flux-reader
+# (with monitor.flux). One set serves every install in a cluster, so agent-factory-crds renders them and
+# the umbrella sets false here. true: this chart renders them, as it did before the CRD chart.
+clusterRoles: true
 # ClusterRole that lets a class's `monitor.flux` read Flux's objects: get on gitrepositories, list
 # on kustomizations and helmreleases, no watch. Off by default; enable it with the first
 # monitored class that declares `monitor.flux`.

@@ -1,4 +1,7 @@
-{{- /* Factory resources D7: the built-in admin, edit and view roles take these, as they take a Deployment's. */}}
+{{- /* Factory resources D7: the built-in admin, edit and view roles take these, as they take a Deployment's.
+They are the cluster's, one set for every install (D2, step 7 R10): agent-factory-crds renders them, and
+the umbrella turns them off here (clusterRoles: false). This chart alone keeps them, as before. */}}
+{{- if .Values.clusterRoles }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -34,3 +37,4 @@ rules:
   - apiGroups: [maku.ogenki.io]
     resources: [factories, repositories, mergepolicies]
     verbs: [get, list, watch]
+{{- end }}

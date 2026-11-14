@@ -13,8 +13,15 @@ out="$(helm template af-crds .)"
 names="$(yq ea '[select(.kind == "CustomResourceDefinition") | .metadata.name] | sort | join(",")' - <<<"$out")"
 want='agentruns.maku.ogenki.io,factories.maku.ogenki.io,mergepolicies.maku.ogenki.io,repositories.maku.ogenki.io,rooms.maku.ogenki.io,tasks.maku.ogenki.io'
 [[ $names == "$want" ]] || { echo "FAIL: the chart renders CRDs '$names', want '$want'" >&2; fail=1; }
-other="$(yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") | .kind] | join(",")' - <<<"$out")"
-[[ -z $other ]] || { echo "FAIL: the chart renders more than CRDs: $other" >&2; fail=1; }
+# Beside the CRDs, only the cluster's shared ClusterRoles (step 7 R10), kept as the CRDs are; none with
+# clusterRoles false.
+other="$(yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") | .kind + "/" + .metadata.name] | sort | join(",")' - <<<"$out")"
+[[ $other == "ClusterRole/agent-factory-flux-reader,ClusterRole/maku-factory-admin,ClusterRole/maku-mergepolicy-editor,ClusterRole/maku-viewer" ]] ||
+  { echo "FAIL: the chart renders, beside the CRDs, '$other'" >&2; fail=1; }
+none="$(helm template af-crds . --set clusterRoles=false | yq ea '[select(.kind != null and .kind != "CustomResourceDefinition") | .kind] | join(",")' -)"
+[[ -z $none ]] || { echo "FAIL: clusterRoles=false still renders $none" >&2; fail=1; }
+nokeep="$(helm template af-crds . --set keep=false | yq ea '[select(.kind == "ClusterRole") | .metadata.annotations."helm.sh/resource-policy" // ""] | join("")' -)"
+[[ -z $nokeep ]] || { echo "FAIL: keep=false still keeps the ClusterRoles" >&2; fail=1; }
 
 for f in "$crddir"/maku.ogenki.io_*.yaml; do
   name="$(yq '.metadata.name' "$f")"
