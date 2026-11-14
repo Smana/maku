@@ -39,6 +39,10 @@ want hack/install-e2e/lib.sh -- install=true
 want hack/e2e-stub/github.go -- install=true
 want internal/broker/x.go -- install=false
 want docs/install.md -- install=false
+# The values contract's report (ci.yaml, v4 step 8 CL7): the charts and its own script.
+want charts/maku/values.schema.json -- charts=true
+want hack/values-contract.sh -- charts=true
+want internal/install/x.go docs/upgrading.md -- charts=false
 
 # Not a merge commit: an error, never "nothing changed".
 if GITHUB_EVENT_NAME=pull_request GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh" >/dev/null 2>&1; then
@@ -46,5 +50,5 @@ if GITHUB_EVENT_NAME=pull_request GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh
 fi
 # Any other event: everything runs.
 out=$(GITHUB_EVENT_NAME=push GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh")
-grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out" && grep -qx install=true <<<"$out"
+grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out" && grep -qx install=true <<<"$out" && grep -qx charts=true <<<"$out"
 echo "==> ci-changes_test: ok"
