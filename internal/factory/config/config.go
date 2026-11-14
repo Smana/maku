@@ -1078,8 +1078,8 @@ type API struct {
 	SystemIssuer     string            `json:"systemIssuer,omitempty"`
 	SystemJWKS       string            `json:"systemJWKS,omitempty"`
 	SystemPrincipals map[string]string `json:"systemPrincipals,omitempty"`
-	// Access is v2 D4's lookup: the ZITADEL reader secret (the broker's {"pat", "githubIdpId"}) that
-	// resolves a caller to their GitHub login, and how long an answer is trusted. Without it the
+	// Access is v2 D4's lookup: the broker's GitHub account links that resolve a caller to their
+	// GitHub login (v4 D8), and how long an answer is trusted. Without it the
 	// API refuses every human run: write on the repository is checked, never assumed.
 	Access *Access `json:"access,omitempty"`
 	// SystemRepositories is v2 D6: the repositories each system principal (a systemPrincipals
@@ -1179,12 +1179,10 @@ type ServerTLS struct {
 }
 
 // Access is api.access (v2 D4). The caller's GitHub login comes from the broker's GitHub account
-// links (Links: broker, GET /v1/links/github), the ZITADEL reader (ReaderFile), or both: the reader
-// then only for an account with no link, while the install moves off it (v4 step 5 PR5).
+// links (Links: broker, GET /v1/links/github), the only identity source (v4 D8).
 type Access struct {
-	ReaderFile string   `json:"readerFile"`
-	Links      string   `json:"links,omitempty"`
-	TTL        Duration `json:"ttl"`
+	Links string   `json:"links,omitempty"`
+	TTL   Duration `json:"ttl"`
 }
 
 // LinksBroker is api.access.links' one value: the broker's GitHub account links.
@@ -1793,8 +1791,9 @@ var legacyKeys = []string{"repository", "maintainers", "triggerLabel", "controlI
 var removedRunTokenKeys = [][2]string{{"appIDFile", "github.agentsAppIDFile"}, {"privateKeyFile", "github.agentsKeyFile"}}
 
 // refuseLegacy names each single-repository key j holds at its top level, with the Repository
-// object that replaced it, and each removed runTokens alias, with its github.agents* key, so the
-// file fails on what it means rather than on an unknown field.
+// object that replaced it, each removed runTokens alias, with its github.agents* key, and the ZITADEL
+// reader's api.access.readerFile, with the broker's links, so the file fails on what it means rather
+// than on an unknown field.
 func refuseLegacy(j []byte) error {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(j, &top) != nil {
@@ -1805,6 +1804,15 @@ func refuseLegacy(j []byte) error {
 		if _, ok := top[k]; ok {
 			errs = append(errs, fmt.Errorf("%s is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, "+
 				"which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)", k))
+		}
+	}
+	var api struct {
+		Access map[string]json.RawMessage `json:"access"`
+	}
+	if raw, ok := top["api"]; ok && json.Unmarshal(raw, &api) == nil {
+		if _, ok := api.Access["readerFile"]; ok {
+			errs = append(errs, errors.New("api.access.readerFile was removed in v4 step 8 (D8): the broker's GitHub account links are the only identity source; "+
+				"set api.access.links: broker and remove readerFile (docs/upgrading.md#the-zitadel-reader)"))
 		}
 	}
 	var rt map[string]json.RawMessage
@@ -2113,21 +2121,14 @@ func (c *Config) Validate() error {
 		bad("api.systemIssuer and api.systemJWKS are both set or both empty (R23)")
 	}
 	if a := c.API.Access; a != nil {
-		if a.Links != "" && a.Links != LinksBroker {
-			bad("api.access.links %q is not \"\" or broker", a.Links)
+		if a.Links != LinksBroker {
+			bad("api.access.links must be broker: the broker's GitHub account links are the only identity source (v4 D8)")
 		}
 		if a.Links == LinksBroker && c.Broker.URL == "" {
 			bad("api.access.links broker needs broker.url: the links are read from the broker's system API")
 		}
-		if a.ReaderFile == "" && a.Links == "" {
-			bad("api.access.readerFile is required unless api.access.links is broker")
-		}
 		if a.TTL.Duration <= 0 || a.TTL.Duration > MaxAccessTTL {
 			bad("api.access.ttl must be above 0 and at most %s (v2 D4)", MaxAccessTTL)
-		}
-		// The reader's PAT is sent to the issuer: never in clear, never with userinfo.
-		if u, err := url.Parse(c.API.HumanIssuer); a.ReaderFile != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil) {
-			bad("api.humanIssuer must be https://host when api.access.readerFile is set")
 		}
 	}
 	for _, id := range slices.Sorted(maps.Keys(c.API.SystemRepositories)) {

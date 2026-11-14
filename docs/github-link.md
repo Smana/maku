@@ -3,8 +3,9 @@
 Each human links their GitHub account to their rooms account once, in the broker, through GitHub's
 OAuth web flow. The broker stores the numeric GitHub id GitHub proved, never a token. Rooms, the
 factory and the Slack App resolve that id to the current login at each use, through the factory
-App, so a renamed account keeps working. The link replaces ZITADEL's GitHub IdP link and the
-`human.access.readerFile` / `api.access.readerFile` reader that read it.
+App, so a renamed account keeps working. The link is the only identity source: `human.access` in
+the broker and `api.access` in the factory need it. It replaced ZITADEL's GitHub IdP link and the
+reader that read it, which v4 step 8 removed ([upgrading](upgrading.md#the-zitadel-reader)).
 
 ## Turning it on
 
@@ -21,7 +22,7 @@ App, so a renamed account keeps working. The link replaces ZITADEL's GitHub IdP 
        # webURL: https://ghes.example.com   # a GHES; its API is <webURL>/api/v3 (ROOMS_GITHUB_API_URL)
        # activeWindow: 168h
      human:
-       access: {ttl: 5m}   # the room-access check; readerFile is optional once the link is set
+       access: {ttl: 5m}   # the room-access check, which needs the link
    ```
 
    The chart mounts the Secret at `/etc/room-broker/github-link` and fills `human.githubLink` (keys
@@ -32,7 +33,7 @@ App, so a renamed account keeps working. The link replaces ZITADEL's GitHub IdP 
    `skip-auth-route: GET=^/link/github/callback$`: its session cookie is `SameSite=Strict`, so the
    redirect from github.com arrives without it. The callback links nothing (below).
 5. **The factory** reads the links from the broker: set `maku-factory.config.api.access.links: broker`
-   (it needs `broker.url`).
+   (it needs `broker.url`). `api.access` refuses any other source.
 6. **Each human opens `/link/github`** once and presses *Link GitHub*.
 
 `human.githubLink` is refused in `human.mode: local` (the loopback user is an admin with no GitHub
@@ -109,21 +110,12 @@ most hourly). A linked account is active while `now - last_seen_at ≤ activeWin
 **The residual** is a deactivated person whose Slack link keeps acting up to `activeWindow` after
 their last sign-in. A smaller window shortens it; an admin unlink ends it at once.
 
-## Moving off the ZITADEL reader
+## A human with no link
 
-With `human.githubLink` and `human.access.readerFile` both set, the link is read first and the
-reader's links only for an account with no link. The reader's user state still rules every account,
-linked or not, so a deactivation in ZITADEL applies at once, not after `activeWindow`. The broker
-drops a ZITADEL link to a GitHub id another account holds through its account link: one GitHub id is
-one account across both sources, and the account link wins. The broker logs that `readerFile` is
-deprecated.
-
-**The residual during the move.** The factory's run-request API reads the broker's link by `sub`
-only, so it cannot tell that a ZITADEL link names an id another account linked in the broker. An
-account whose ZITADEL link and another account's GitHub link name the same id can resolve to that
-login there until the reader is removed. Moving every human onto the link, then removing both
-`readerFile`s, closes it. The factory does the same with `api.access.links: broker` beside `readerFile`. Once every
-active human has linked, remove both `readerFile`s; v4 step 8 deletes them.
+A human with no link has no GitHub login: nothing else is asked. The room list shows them no room
+(`X-Rooms-Access: unlinked`; an admin still sees every room), `issue_draft` and the Slack App's
+self-serve link answer `not_linked`, and the factory's run-request API refuses their runs
+(`repository_permission`). Opening `/link/github` once ends it.
 
 ## Signals
 

@@ -120,14 +120,13 @@ type Server struct {
 	Limits Limits
 	// Queue serves the system queue routes (SP3 R9); nil answers them 501.
 	Queue QueueStore
-	// SlackLinks serves GET /v1/links/slack to SlackLinkReader alone (the factory, system:factory);
-	// either unset refuses it.
-	SlackLinks      SlackLinks
-	SlackLinkReader string
-	// GitHubLinks serves GET /v1/links/github to LinkReader alone (the factory, system:factory), with
-	// GitHubActiveWindow (human.githubLink.activeWindow) applied; either unset refuses it.
-	GitHubLinks        GitHubLinks
+	// LinkReader is the one system principal that reads the links (the factory, system:factory).
+	// SlackLinks serves GET /v1/links/slack, and GitHubLinks GET /v1/links/github with
+	// GitHubActiveWindow (human.githubLink.activeWindow) applied, to it alone; a store or LinkReader
+	// unset refuses the route.
 	LinkReader         string
+	SlackLinks         SlackLinks
+	GitHubLinks        GitHubLinks
 	GitHubActiveWindow time.Duration
 	// Grants serves the grant routes (merge policy stage 5) to GrantClient alone (the factory,
 	// system:factory); either unset refuses them.

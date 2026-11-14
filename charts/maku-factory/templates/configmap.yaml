@@ -7,6 +7,14 @@
 {{- if hasKey (dig "hardening" "publisher" dict $cfg) "octoSTS" -}}
 {{- fail "config.hardening.publisher.octoSTS was removed in v4 step 8: set config.hardening.publisher.minter (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
 {{- end -}}
+{{- /* v4 step 8 (D8): the ZITADEL reader is removed; the broker's GitHub account links are the only
+identity source. */ -}}
+{{- if hasKey .Values "zitadelReaderSecret" -}}
+{{- fail "zitadelReaderSecret was removed in v4 step 8 (D8): set config.api.access.links: broker, the broker's GitHub account links (docs/upgrading.md#the-zitadel-reader)" -}}
+{{- end -}}
+{{- if hasKey (dig "api" "access" dict $cfg) "readerFile" -}}
+{{- fail "config.api.access.readerFile was removed in v4 step 8 (D8): set config.api.access.links: broker, the broker's GitHub account links (docs/upgrading.md#the-zitadel-reader)" -}}
+{{- end -}}
 {{- if eq (dig "runs" "group" "" $cfg) "cloud.ogenki.io" -}}
 {{- fail "config.runs.group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5): runs are the run-controller's, maku.ogenki.io (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
 {{- end -}}

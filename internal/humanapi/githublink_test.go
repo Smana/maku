@@ -469,7 +469,7 @@ func TestGitHubLinkTouchedByTheHumansRequests(t *testing.T) {
 	}
 	id := &ghidentity.Resolver{IDPID: "github", TTL: 5 * time.Minute, Now: func() time.Time { return *now },
 		Links:   ghidentity.StoreLinks(read, "github"),
-		Active:  ghidentity.StoreActive(read, 168*time.Hour, func() time.Time { return *now }, nil),
+		Active:  ghidentity.StoreActive(read, 168*time.Hour, func() time.Time { return *now }),
 		LoginOf: func(context.Context, string, int64) (string, error) { return "dana", nil }}
 	e.srv.Identity = id
 	e.srv.GitHubLink.Changed = id.Forget

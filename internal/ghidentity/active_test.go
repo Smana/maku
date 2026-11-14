@@ -5,16 +5,13 @@ package ghidentity_test
 import (
 	"context"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/Smana/maku/internal/ghidentity"
 )
 
-// stateWorld is one ZITADEL user whose state the test flips, counting state reads.
+// stateWorld is one user whose state the test flips, counting state reads.
 type stateWorld struct {
 	active, down bool
 	reads        int
@@ -66,7 +63,7 @@ func TestAStateReadErrorFailsClosed(t *testing.T) {
 	r := w.resolver()
 	err := r.CheckActive(context.Background(), "u1")
 	if err == nil || errors.Is(err, ghidentity.ErrInactive) {
-		t.Fatalf("a ZITADEL error: %v, want an error that is not ErrInactive", err)
+		t.Fatalf("a state read error: %v, want an error that is not ErrInactive", err)
 	}
 	if _, err := r.Login(context.Background(), "u1", "Smana/x"); err == nil {
 		t.Fatal("Login must fail closed on a state error")
@@ -74,43 +71,5 @@ func TestAStateReadErrorFailsClosed(t *testing.T) {
 	w.down = false
 	if err := r.CheckActive(context.Background(), "u1"); err != nil || w.reads != 3 {
 		t.Fatalf("the failure was cached: %v after %d reads", err, w.reads)
-	}
-}
-
-func TestZitadelActiveReadsTheUsersState(t *testing.T) {
-	for _, tc := range []struct {
-		code   int
-		body   string
-		active bool
-		err    bool
-	}{
-		{200, `{"user":{"userId":"u1","state":"USER_STATE_ACTIVE"}}`, true, false},
-		{200, `{"user":{"userId":"u1","state":"USER_STATE_INACTIVE"}}`, false, false},
-		{200, `{"user":{"userId":"u1","state":"USER_STATE_LOCKED"}}`, false, false},
-		{200, `{"user":{"userId":"u1","state":"USER_STATE_INITIAL"}}`, false, false},
-		{200, `{"user":{"userId":"u1","state":"USER_STATE_DELETED"}}`, false, false},
-		{200, `{"user":{"userId":"u1"}}`, false, false},
-		{404, `{"code":5,"message":"User could not be found"}`, false, false}, // deleted
-		{500, `boom`, false, true},
-		{403, `no`, false, true},
-		{200, `not json`, false, true},
-	} {
-		var path, auth, method string
-		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			path, auth, method = r.URL.EscapedPath(), r.Header.Get("Authorization"), r.Method
-			w.WriteHeader(tc.code)
-			_, _ = w.Write([]byte(tc.body))
-		}))
-		active, err := ghidentity.ZitadelActive(srv.Client(), srv.URL+"/", pat)(context.Background(), "a/b")
-		srv.Close()
-		if active != tc.active || (err != nil) != tc.err {
-			t.Errorf("%d %s: %v %v", tc.code, tc.body, active, err)
-		}
-		if err != nil && strings.Contains(err.Error(), pat) {
-			t.Errorf("the error leaks the PAT: %v", err)
-		}
-		if method != http.MethodGet || path != "/v2/users/a%2Fb" || auth != "Bearer "+pat {
-			t.Fatalf("request: %s %s %q", method, path, auth)
-		}
 	}
 }

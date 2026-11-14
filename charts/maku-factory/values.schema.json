@@ -46,6 +46,7 @@
     },
     "githubSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set apps.factory.existingSecret (docs/upgrading.md#the-old-app-keys)"]},
     "mergerSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set apps.merger.existingSecret (docs/upgrading.md#the-old-app-keys)"]},
+    "zitadelReaderSecret": {"description": "Removed in v4 step 8 (D8). The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set config.api.access.links: broker, the broker's GitHub account links (docs/upgrading.md#the-zitadel-reader)"]},
     "runTokens": {
       "type": "object",
       "additionalProperties": false,

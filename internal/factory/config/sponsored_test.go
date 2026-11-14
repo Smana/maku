@@ -72,7 +72,7 @@ func TestSponsoredConfig(t *testing.T) {
 			}
 		})
 	}
-	links := strings.Replace(withSponsored(strings.Replace(slackApp, `smana}}`, `smana}, slackLinks: true}`, 1)), "api:\n", "api:\n  access: {readerFile: /r, ttl: 5m}\n", 1)
+	links := strings.Replace(withSponsored(strings.Replace(slackApp, `smana}}`, `smana}, slackLinks: true}`, 1)), "api:\n", "api:\n  access: {links: broker, ttl: 5m}\n", 1)
 	if cfg, err := Parse([]byte(links)); err != nil || !cfg.SponsoredBy("system:slack-app").OnBehalfOf.SlackLinks {
 		t.Fatalf("self-serve links with access: %v", err)
 	}

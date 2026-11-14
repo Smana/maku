@@ -24,15 +24,6 @@ type githubLinkReply struct {
 	Active     bool      `json:"active"`
 }
 
-// linkReader is the one system principal that reads the links (the factory): LinkReader, else the
-// older SlackLinkReader.
-func (s *Server) linkReader() string {
-	if s.LinkReader != "" {
-		return s.LinkReader
-	}
-	return s.SlackLinkReader
-}
-
 // githubLink: GET /v1/links/github?sub=, the link reader's only. The answer is the numeric GitHub id,
 // never a login: the factory resolves that itself through its App, rename-safe. A sub with no link
 // is a 404 not_linked.
@@ -41,7 +32,7 @@ func (s *Server) githubLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if reader := s.linkReader(); s.GitHubLinks == nil || reader == "" || p.ID != reader {
+	if s.GitHubLinks == nil || s.LinkReader == "" || p.ID != s.LinkReader {
 		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
 		return
 	}

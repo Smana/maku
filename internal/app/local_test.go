@@ -90,7 +90,7 @@ func TestHumanServerModes(t *testing.T) {
 	}
 	oidc := config.Config{PublicURL: "https://rooms.example", Human: config.HumanConfig{Issuer: humanIssuer,
 		Origin: "https://rooms.example", Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"}}}
-	o := server(oidc, authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), oidc.Human.Origin))
+	o := server(oidc, zitadelHumans(oidc.Human.Origin))
 	if o.Groups != (policy.Groups{Admin: "agents-admin", Member: "agents-member"}) || o.Origins != nil || o.HumanMode != config.HumanModeOIDC {
 		t.Fatalf("oidc server: groups %+v origins %q mode %q", o.Groups, o.Origins, o.HumanMode)
 	}

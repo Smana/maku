@@ -54,6 +54,18 @@ func (l *fakeActLog) Append(_ context.Context, d envelope.Draft) (envelope.Event
 
 func (*fakeActLog) DriverSeen(context.Context, string, string, bool) error { return nil }
 
+// zitadelHumans is the human authenticator of the zitadel preset, token use access, every client id
+// unreadable, at origin.
+func zitadelHumans(origin string) *authn.Humans {
+	return authn.NewHumansWith(authn.NewVerifierWithKeyfunc(humanIssuer, nil), authn.HumanOptions{TokenUse: authn.TokenUseAccess,
+		ZITADEL: true, Audience: idFile(""), Web: idFile(""), CLI: idFile(""), Origin: origin})
+}
+
+// GitHubLinkOf: nobody is linked, so a human.access check starts with no GitHub login for anyone.
+func (*fakeActLog) GitHubLinkOf(context.Context, string) (store.GitHubLink, bool, error) {
+	return store.GitHubLink{}, false, nil
+}
+
 func (*fakeActLog) OpenApprovals(context.Context, string) ([]store.Approval, error) { return nil, nil }
 
 func (*fakeActLog) SealedSince(context.Context, time.Time, int) ([]store.RoomState, error) {
@@ -98,7 +110,7 @@ func TestHumanSide(t *testing.T) {
 	_, m := newMetrics(t)
 	log := slog.New(slog.DiscardHandler)
 	cfg := config.Config{Runs: runwatch.DefaultKind, Human: config.HumanConfig{Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"}}}
-	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	humans := zitadelHumans("https://rooms.example.test")
 	rooms := fake.NewClientBuilder().Build()
 	hub := fanout.New(fakeRoomLog{}, nil, log)
 	var added []manager.Runnable
