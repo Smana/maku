@@ -4,6 +4,14 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The runs namespace's default-deny, optional (v0.4x)
+
+`networkPolicies.runsNamespaceDefaultDeny` (default `true`: the render is unchanged) controls the
+runs namespace's `default-deny` policy, in mode `cilium` or `kubernetes`. An install whose platform
+owns the runs namespace's default-deny sets it to `false`, and the chart renders none, so the two no
+longer conflict. The platform's policy must then deny both directions, as the chart's does: each run's
+own policy adds only its allowances on top of it.
+
 ## The clean-up (v0.4x, v4 rollout step 8)
 
 Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at

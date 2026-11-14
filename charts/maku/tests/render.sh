@@ -518,6 +518,17 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 ynone 'select(.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy")' 'mode none: no policy at all'
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=cilium)"
 ykind CiliumNetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'mode cilium: the default-deny CNP'
+# runsNamespaceDefaultDeny: false, for a platform that owns agents/default-deny: no default-deny in
+# either mode, and every other policy and the Namespace as before.
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=$m --set networkPolicies.runsNamespaceDefaultDeny=false)"
+  ynone 'select(.metadata.name == "default-deny")' "mode $m, runsNamespaceDefaultDeny false: no default-deny"
+  ykind Namespace '.metadata.name == "agents"' "mode $m, runsNamespaceDefaultDeny false: the runs namespace still renders"
+  ykind "$([[ $m == cilium ]] && echo CiliumNetworkPolicy || echo NetworkPolicy)" 'select(.metadata.name=="room-broker") | .metadata.namespace == null' "mode $m, runsNamespaceDefaultDeny false: the broker's policy still renders"
+  out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=$m --set networkPolicies.runsNamespaceDefaultDeny=true)"
+  ykind "$([[ $m == cilium ]] && echo CiliumNetworkPolicy || echo NetworkPolicy)" 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' "mode $m, runsNamespaceDefaultDeny true: the default-deny"
+done
+bad "at '/networkPolicies/runsNamespaceDefaultDeny'" --set-string networkPolicies.runsNamespaceDefaultDeny=no
 bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
 bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
 # the proxy trusts the egress annotation because the run-pod policy alone lets the run-controller write it
