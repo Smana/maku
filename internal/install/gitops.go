@@ -35,7 +35,8 @@ func fluxFiles(in Inputs, vals map[string]any) ([]byte, error) {
 	a := in.Answers
 	ns, rel, ver := in.ns(), a.String("release"), a.String("version")
 	oci := func(name string) map[string]any {
-		return map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository",
+		// v1beta2: Flux serves OCIRepository as v1 only from 2.6, and the floor is 2.4 (D26).
+		return map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1beta2", "kind": "OCIRepository",
 			"metadata": map[string]any{"name": name, "namespace": ns},
 			"spec": map[string]any{"interval": "10m", "url": chartRegistry + "/" + name, "ref": map[string]any{"tag": chartVersion(ver)},
 				"layerSelector": map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}}}

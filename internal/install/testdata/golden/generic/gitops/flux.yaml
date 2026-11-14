@@ -5,7 +5,7 @@ kind: Namespace
 metadata:
   name: maku
 ---
-apiVersion: source.toolkit.fluxcd.io/v1
+apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
 metadata:
   name: agent-factory-crds
@@ -19,7 +19,7 @@ spec:
     tag: 0.48.0
   url: oci://ghcr.io/smana/charts/agent-factory-crds
 ---
-apiVersion: source.toolkit.fluxcd.io/v1
+apiVersion: source.toolkit.fluxcd.io/v1beta2
 kind: OCIRepository
 metadata:
   name: agent-factory
