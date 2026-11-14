@@ -12,6 +12,7 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
+	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -56,14 +57,7 @@ func (r Maku) preflight(ctx context.Context, args []string) error {
 // kubeCluster is client-go's kubeconfig loading, as kubectl's: --kubeconfig, else KUBECONFIG, else
 // ~/.kube/config; the context's namespace, else default.
 func kubeCluster(kubeconfig, kubecontext string) (maku.PreflightCluster, string, error) {
-	rules := clientcmd.NewDefaultClientConfigLoadingRules()
-	rules.ExplicitPath = kubeconfig
-	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: kubecontext})
-	rest, err := cc.ClientConfig()
-	if err != nil {
-		return maku.PreflightCluster{}, "", err
-	}
-	ns, _, err := cc.Namespace()
+	rest, ns, err := kubeConfig(kubeconfig, kubecontext)
 	if err != nil {
 		return maku.PreflightCluster{}, "", err
 	}
@@ -82,4 +76,21 @@ func kubeCluster(kubeconfig, kubecontext string) (maku.PreflightCluster, string,
 	return maku.PreflightCluster{Client: c, Logs: func(ctx context.Context, namespace, pod string) ([]byte, error) {
 		return cs.CoreV1().Pods(namespace).GetLogs(pod, &corev1.PodLogOptions{}).DoRaw(ctx)
 	}}, ns, nil
+}
+
+// kubeConfig is client-go's kubeconfig loading, as kubectl's (preflight's and repo check's): the REST
+// config and the context's namespace, else default.
+func kubeConfig(kubeconfig, kubecontext string) (*rest.Config, string, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	rules.ExplicitPath = kubeconfig
+	cc := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, &clientcmd.ConfigOverrides{CurrentContext: kubecontext})
+	cfg, err := cc.ClientConfig()
+	if err != nil {
+		return nil, "", err
+	}
+	ns, _, err := cc.Namespace()
+	if err != nil {
+		return nil, "", err
+	}
+	return cfg, ns, nil
 }
