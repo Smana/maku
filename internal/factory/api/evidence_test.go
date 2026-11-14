@@ -59,13 +59,21 @@ func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (any, erro
 	return map[string]any{"repository": repo, "pullRequest": pr}, nil
 }
 
+// managed is stage manage when on, else read: the stage below promotion.
+func managed(on bool) config.PolicyManagement {
+	if on {
+		return config.PolicyManagement{Stage: config.StageManage}
+	}
+	return config.PolicyManagement{Stage: config.StageRead}
+}
+
 func evidenceServer(on bool) (*Server, *fakeEvidence) {
 	f := &fakeEvidence{}
 	return &Server{
 		Auth: byToken{"human": coordHuman, "reader": coordReader, "slack": coordSlack,
 			"flaky":      authn.Principal{Kind: coordHuman.Kind, ID: "human:9", Sub: "9"},
 			"onlyreader": authn.Principal{Kind: coordHuman.Kind, ID: "human:5", Sub: "5"}},
-		Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Promotion: on},
+		Cfg: &config.Config{PolicyManagement: managed(on),
 			Repositories: []config.Repository{{Name: coordPrimary}, {Name: coordOther}}},
 		Access: readAccess{coordAccess{principals: map[string]bool{"human:291|" + coordPrimary: true}}}, Evidence: f, Editor: &fakeEditor{},
 	}, f

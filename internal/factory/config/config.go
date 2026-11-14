@@ -529,7 +529,7 @@ func (c *Config) Repos() []Repository { return c.withSource(c.Repositories) }
 // withSource is rs with each cut-over repository's classes read from the source, on a copy: the
 // config itself is never written. Without a cut-over repository it is rs.
 func (c *Config) withSource(rs []Repository) []Repository {
-	if c.classSource == nil || !c.PolicyManagement.RepositoryAuthority ||
+	if c.classSource == nil || !c.PolicyManagement.Manages() ||
 		!slices.ContainsFunc(rs, func(r Repository) bool { return r.ClassAuthority == ClassAuthorityRepository }) {
 		return rs
 	}

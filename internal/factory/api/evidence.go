@@ -36,7 +36,7 @@ type ReadChecker interface {
 
 // promotionOn is whether policyManagement.promotion serves the evidence routes: off is a 404.
 func (s *Server) promotionOn(cfg *config.Config) bool {
-	return cfg.PolicyManagement.Promotion && s.Evidence != nil
+	return cfg.PolicyManagement.Manages() && s.Evidence != nil
 }
 
 // policyReader is a human caller; sponsored and system principals read no evidence.

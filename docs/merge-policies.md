@@ -2,10 +2,11 @@
 
 A merge class is defined once, as a `MergePolicy` the factory serves; a repository binds the
 classes it uses, with their mode and its own parameters, in `.github/agent-factory.yaml` or in its
-`Repository` object. The factory's central config bounds what every binding may say. Six switches
-under `policyManagement` roll the repository file out, all off by default. **Until
-`repositoryAuthority` cuts a repository over, the factory's own config and objects alone decide its
-merges**: the repository's file is read, compared, re-decided and simulated, never acted on.
+`Repository` object. The factory's central config bounds what every binding may say.
+`policyManagement.stage` (`read`, `simulate`, `manage`; `manage` by default) sets how far the
+repository file is rolled out. **Until a repository's entry sets `classAuthority: repository`, the
+factory's own config and objects alone decide its merges**: the repository's file is read, compared,
+re-decided and simulated, never acted on.
 
 | You want to | Go to |
 |---|---|
@@ -235,6 +236,11 @@ flowchart LR
   s4 --> s6["6 · promotion<br/>settings UI, evidence"]
 ```
 
+`policyManagement.stage` groups the six switches below, which it replaces: `read` is stage 1,
+`simulate` adds stages 2 and 3, `manage` (the default) adds 4, 5 and 6. The switches still load, are
+read as the highest stage they cover, and set the Factory's `Deprecated` condition; `stage` and a
+switch set together fail config load.
+
 | Stage | Switch (factory) | Needs | Does | Merge authority | Exit, as the code measures it | Off |
 |---|---|---|---|---|---|---|
 | 1 | `read` | — | Each fence read parses, validates and resolves the file and compares it with the central classes | Central | `maku_factory_policy_central_divergence == 0` and no `maku_factory_policy_load_errors_total` series | Unset: no observation; the gauge keeps its last value until restart |
@@ -253,10 +259,11 @@ config breaking a rule below fails the rollout, so a bad flip never runs.
 
 | Rule | Message |
 |---|---|
+| `stage` is `read`, `simulate` or `manage`, and is not set with a switch | `policyManagement.stage "…" is one of read, simulate, manage`, `policyManagement: stage and the six switches are not set together` |
 | `dualEvaluation`, `approvalMemory`, `repositoryAuthority` each need `read` | `policyManagement.<switch> needs read: …` |
-| `classAuthority: repository` needs the switch | `classAuthority repository needs policyManagement.repositoryAuthority` |
+| `classAuthority: repository` needs stage `manage` | `classAuthority repository needs policyManagement.stage manage (or the repositoryAuthority switch)` |
 | A cut-over entry declares no `classes` | `classAuthority repository: classes are declared centrally too, two authoritative sources (MP15): remove them` |
-| Broker `promotion` needs `factoryURL` | `policyManagement.promotion needs factoryURL: …` |
+| Broker `promotion` or `stage: manage`, set explicitly, needs `factoryURL` | `policyManagement.promotion needs factoryURL: …`. Left at the default, a broker without `factoryURL` starts and serves no settings page |
 
 ## Reference
 
@@ -379,7 +386,8 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0: no guardrail | A class above it is refused; a class without one inherits it |
 | `mergeGuardrails.minPromotionEvidence` | int | 0, read as 20 | 0 or ≥ 20; fewer needs an operator's exception per request |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | 0 to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
-| `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | See [the stages](#rollout-stages) |
+| `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](#rollout-stages) |
+| `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | Deprecated: read as the highest stage they cover; not set with `stage` |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
 | `classes.<c>.harnessAllowed` | list of profile names | none | Each in `harnessProfiles`, none below `harness` (roles, tier, the loop row's `scope` and `judge`); refused on a `live` or `shadow` class. Carried into the gate's class only when set |
 | `classes.<c>.escalation` | `{outOfBudget, notConverged}` | none: the group goes to the human | Each a profile of `harnessAllowed`; refused on a `live` or `shadow` class |

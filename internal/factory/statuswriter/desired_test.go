@@ -186,6 +186,7 @@ func TestRepositoryAuthorityAndClasses(t *testing.T) {
 	})
 	t.Run("repository authority needs the central switch", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
+		c.PolicyManagement.Stage = config.StageRead
 		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "central" {
 			t.Errorf("authority %q", got.Authority)
 		}

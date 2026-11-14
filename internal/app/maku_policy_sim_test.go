@@ -13,12 +13,18 @@ import (
 // simulationArgs is boundManifests with policyManagement.simulation on.
 func simulationArgs(t *testing.T) []string {
 	t.Helper()
+	return policyManagementArgs(t, "{simulation: true}")
+}
+
+// policyManagementArgs is boundManifests with the factory config's policyManagement set to pm.
+func policyManagementArgs(t *testing.T, pm string) []string {
+	t.Helper()
 	args := boundManifests(t)
 	raw, err := os.ReadFile(args[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(args[1], append(raw, []byte("policyManagement: {simulation: true}\n")...), 0o600); err != nil {
+	if err := os.WriteFile(args[1], append(raw, []byte("policyManagement: "+pm+"\n")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return args
@@ -76,12 +82,12 @@ func TestPolicyDiff(t *testing.T) {
 
 // The switch a simulator that disagrees with the gate turns off (stage 2).
 func TestSimulateAndDiffNeedTheSwitch(t *testing.T) {
-	args := boundManifests(t)
+	args := policyManagementArgs(t, "{stage: read}")
 	policy := exportedPolicy(t, args)
 	for _, verb := range []string{"simulate", "diff"} {
 		var out bytes.Buffer
 		err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), append(append([]string{"policy", verb}, args...), policy, policy))
-		if err == nil || !strings.Contains(err.Error(), "policyManagement.simulation") {
+		if err == nil || !strings.Contains(err.Error(), "policyManagement.stage is read") {
 			t.Fatalf("%s: got %v", verb, err)
 		}
 	}

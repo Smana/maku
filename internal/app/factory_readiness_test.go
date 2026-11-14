@@ -106,7 +106,7 @@ func TestPrerequisitesWired(t *testing.T) {
 			}
 		})
 	}
-	cfg.PolicyManagement.RepositoryAuthority = false
+	cfg.PolicyManagement.Stage = config.StageRead
 	if err := gate(ok()); !errors.Is(err, coordination.ErrPrerequisites) || !strings.Contains(err.Error(), "class authority") {
 		t.Fatalf("no class authority: %v", err)
 	}

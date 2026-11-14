@@ -119,7 +119,7 @@ func current(cfg *config.Config, rep evidence.Report) *mergepolicy.File {
 }
 
 func simulate(cfg *config.Config, rc *config.Repository, policy map[string]mergepolicy.Resolved) Simulation {
-	if !cfg.PolicyManagement.Simulation {
+	if !cfg.PolicyManagement.Simulates() {
 		return Simulation{}
 	}
 	cases, err := reconciler.ConformanceCases(rc.Name)
