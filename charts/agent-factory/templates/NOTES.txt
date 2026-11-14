@@ -7,8 +7,8 @@ Network policy: mode kubernetes: default-deny NetworkPolicies, one per run, and 
 {{- if not ((.Values.maku.networkPolicies | default dict).kubernetes | default dict).apiServerCIDRs }}
 Residual: maku.networkPolicies.kubernetes.apiServerCIDRs is empty, so the broker, the run-controller and the egress proxy may reach any address on the apiserver ports (443, 6443). Set it to the apiserver's addresses (kubectl get endpointslice -n default -l kubernetes.io/service-name=kubernetes); the broker's other 443 flows then need broker.networkPolicy.extraEgress.
 {{- end }}
-{{- else }}
-Network policy: only plain NetworkPolicies on the database and the factory's API; runs keep their egress. Not for untrusted repositories.
+{{- else if eq ((.Values.maku.networkPolicies | default dict).mode | default "") "none" }}
+Network policy: mode none: nothing confines the runs' network (the install banner says so); only the bundled Postgres, if on, admits the broker alone. Not for untrusted repositories.
 {{- end }}
 {{- if and .Values.monitoring.serviceMonitor.enabled .Values.agentgateway.enabled }}
 Monitoring: the umbrella scrapes the model-gateway proxies (PodMonitor maku-gateway) but not the agentgateway controller. Set agentgateway.monitoring.enabled=true for the controller's ServiceMonitor, with agentgateway.monitoring.proxy.podMonitor.enabled=false so the proxies are not scraped twice.

@@ -119,7 +119,7 @@ func TestFactoryStarts(t *testing.T) {
 	}
 }
 
-// Every written values.yaml renders under profile production, and kubeconform accepts the render.
+// Every written values.yaml renders under the production defaults, and kubeconform accepts the render.
 // Skipped without helm only.
 func TestValuesRender(t *testing.T) {
 	helm, err := exec.LookPath("helm")

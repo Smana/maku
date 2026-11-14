@@ -6,12 +6,12 @@ The umbrella chart: `maku` and `maku-factory` (`file://`), plus what a plain kin
 
 | Part | What it means |
 |---|---|
-| Production-safe defaults | `values.yaml` is a skeleton that renders nothing on its own. `profile` is required: `demo` or `production` |
-| Production | `profile: production` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo's own values: `demoValues`, `postgres.enabled`, `networkPolicies.plain`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. [Install on your cluster](../../docs/install.md) walks it, from `maku install --print` to the preflight; or start from [`values-production.example.yaml`](values-production.example.yaml). [docs/upgrading.md](../../docs/upgrading.md#from-the-demo-to-production) lists the seams |
-| The demo | `-f values-demo.yaml` carries every demo default and `profile: demo`. `--set profile=demo` alone fails with `profile demo needs -f values-demo.yaml` |
+| Production defaults | `values.yaml` is a skeleton that renders nothing on its own. The defaults are production (v4 D13): `profile` was removed in rollout step 8, and the schema refuses it |
+| Production | Every render without `demoValues` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo-only values, naming `values-demo.yaml`: `postgres.enabled`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. [Install on your cluster](../../docs/install.md) walks it, from `maku install --print` to the preflight; or start from [`values-production.example.yaml`](values-production.example.yaml). [docs/upgrading.md](../../docs/upgrading.md#from-the-demo-to-production) lists the seams |
+| The demo | `-f values-demo.yaml` carries every demo default and `demoValues: true`, the one switch that admits the demo-only values |
 | Secrets by name | Every Secret the charts read is listed, with its keys, in [install Secrets](../../docs/install-secrets.md). `externalSecrets.enabled` (off) renders an `ExternalSecret` for each one listed under `externalSecrets.secrets`, against the `storeRef` you name, and never a store |
-| The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: an unknown profile, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
-| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first. It upgrades the CRDs with every tool and keeps them on uninstall. The subcharts keep their own `crds/` until rollout step 8, so a GitOps tool skips them: Argo CD `skipCrds: true`, Flux `crds: Skip`. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
+| The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: a removed key (`profile`, `networkPolicies.plain`) with a message naming its replacement, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
+| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first, and alone carries them: it upgrades the CRDs with every tool and keeps them on uninstall. The subcharts have no `crds/` since rollout step 8. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
 | The support floor | `kubeVersion: ">=1.30.0-0"` in this chart and both subcharts. Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version` |
 | Stability | Values may still change in a 0.x minor until v4.0.0, each change with a section in [docs/upgrading.md](../../docs/upgrading.md). From v4.0.0, a breaking value change happens only in a major version |
 
@@ -44,16 +44,18 @@ The demo adds what a plain kind or k3d cluster lacks:
   daily retention CronJob, `room-broker-retention`.
 
 The bundled Postgres is demo-only (v4 D9), behind `postgres.enabled`: `values.yaml` turns it off,
-`values-demo.yaml` on, and any profile but `demo` with it on fails the render. To bring your own
+`values-demo.yaml` on, and without its `demoValues` on fails the render. To bring your own
 Postgres 16 or later, even under the demo, set `postgres.enabled: false`, create the three roles and
 their DSN Secrets as [the database](../../docs/database.md) says, and keep the Secret names under
 `maku.broker.database`. `task chart:install:k3d:external-db` proves it on k3d against a plain
 `postgres:16` outside the chart.
 
-`networkPolicies.plain` (default true) renders two plain NetworkPolicies: `rooms-db` admits 5432 only from
-the broker's and the retention job's pods, and the factory's pod admits the broker to the API port (8082) and anyone to the ops/probe port (9090); the intake port (8080) is closed, as the demo configures none. Egress is untouched (runs need GitHub
-and the model). The install test asserts a run-labelled pod in `agents` cannot reach `rooms-db` on both
-k3d (kube-router) and kind v0.33 (kindnet enforces NetworkPolicy; the test only notes it, not fails, if a kind node does not).
+The bundled Postgres carries its own NetworkPolicy, `rooms-db`: it admits 5432 only from the broker's
+and the retention job's pods, and leaves egress untouched. The install test asserts a run-labelled pod
+in `agents` cannot reach `rooms-db` on both k3d (kube-router) and kind v0.33 (kindnet enforces
+NetworkPolicy; the test only notes it, not fails, if a kind node does not). The demo's other ingress
+policy, `networkPolicies.plain`, was removed in rollout step 8: the factory's own default-deny,
+`networkPolicies.factory`, replaces it in `maku.networkPolicies.mode` `kubernetes` or `cilium`.
 
 `--set maku.networkPolicies.mode=kubernetes` confines the runs too, on a CNI that enforces
 NetworkPolicy: default-deny in `agents`, one NetworkPolicy per run, and the egress proxy holding each
@@ -63,7 +65,7 @@ The run controller's preflight then refuses runs until it proves the CNI enforce
 proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a k3s started with
 `--disable-network-policy` (it refuses runs).
 
-`values-demo.yaml` (`profile: demo`) makes it the laptop demo: no Cilium (`maku.networkPolicies.mode: none`), the broker
+`values-demo.yaml` (`demoValues: true`) makes it the laptop demo: no Cilium (`maku.networkPolicies.mode: none`), the broker
 in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
 (`maku.sandbox.unsafeAllowRunc`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
 mode on one GitHub App (`maku-factory.apps.merger.mode: factory` folds the merger into it; a

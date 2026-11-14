@@ -1,4 +1,4 @@
-# Written by maku install --print v0.48.0: profile production, every seam answered.
+# Written by maku install --print v0.48.0: the production defaults, every seam answered.
 # It holds no secret value: the Secrets are under secrets/ (git-ignored), or ExternalSecrets.
 agentgateway:
   enabled: true
@@ -202,7 +202,6 @@ monitoring:
 networkPolicies:
   factory:
     enabled: true
-profile: production
 slack:
   enabled: false
 webProxy:

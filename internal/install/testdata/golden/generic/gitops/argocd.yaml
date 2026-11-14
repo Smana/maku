@@ -289,7 +289,6 @@ spec:
               - namespaceSelector:
                   matchLabels:
                     kubernetes.io/metadata.name: monitoring
-        profile: production
         slack:
           enabled: false
         webProxy:

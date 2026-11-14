@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, for Grafana's dashboard
 sidecar (or a grafana-operator GrafanaDashboard's configMapRef). The JSON is a plain file
 (files/dashboards/<uid>.json) read with .Files.Get and replace, never tpl, so Grafana's {{label}}

@@ -51,7 +51,7 @@ ykind Deployment 'select(.metadata.name=="room-broker") | (.spec.template.spec.c
 ykind Deployment 'select(.metadata.name=="room-broker") | (.spec.template.spec.containers[0] | (.livenessProbe.httpGet.path == "/healthz" and .readinessProbe.httpGet.path == "/readyz" and .startupProbe.httpGet.path == "/startupz" and .readinessProbe.httpGet.port == 9090))' 'probes on the ops port'
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].image | test("^ghcr[.]io/smana/maku-broker:")' 'the broker image is maku-broker; the Deployment keeps its name'
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true' 'restricted securityContext'
-ykind Deployment 'select(.metadata.name=="room-broker") | (.spec.template.spec.containers[0].env | map(.name) | sort | join(",")) == "POD_NAMESPACE,ROOMS_CONFIG,ROOMS_DATABASE_URL"' 'the three env vars brokerEnv requires'
+ykind Deployment 'select(.metadata.name=="room-broker") | (.spec.template.spec.containers[0].env | map(.name) | sort | join(",")) == "MAKU_PREFLIGHT,POD_NAMESPACE,ROOMS_CONFIG,ROOMS_DATABASE_URL"' 'the three env vars brokerEnv requires, and the preflight'"'"'s switch (on by default, v4 step 8)'
 ykind Service 'select(.metadata.name=="room-broker") | (.spec.ports | map(.port) | sort | join(",")) == "8443,9090"' 'local mode does not expose :8080'
 ykind ClusterRoleBinding 'select(.roleRef.name=="system:auth-delegator") | .subjects[0].name == "room-broker"' 'tokenreview RBAC'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="room-broker") | .rules[] | select(.resources[]=="agentruns") | (.apiGroups[0] == "maku.ogenki.io" and ((.verbs|sort|join(",")) == "delete,get,list,patch,watch"))' 'AgentRun verbs in the runs namespace'
@@ -80,15 +80,16 @@ ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-contro
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | ((.resourceNames | join(",")) == "agent-model,agent-git" and (.verbs | join(",")) == "get")' 'get on the model and git Secrets by name; the quickstart shares one PAT, so no read Secret'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.unsafeSharedGitToken == true and (has("gitReadSecret") | not))' 'the quickstart shares its one PAT across roles (unsafeSharedGitToken), with no read Secret'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.metadata.namespace == null and (.rules[0].resourceNames | join(",")) == "room-broker-ca" and (.rules[0].verbs | join(",")) == "get")' 'get on the CA-only Secret by name, in the release namespace'
-ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "room-broker-tls")' 'no Role reads the broker key pair (S-3)'
+ynone 'select(.kind=="Role" and .metadata.labels."app.kubernetes.io/name" != "preflight") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "room-broker-tls")' 'no Role but the preflight'"'"'s reads the broker key pair (S-3)'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | select(.resourceNames == null)' 'no Role grants Secrets without resourceNames (S-3)'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.endpointSelector.matchLabels."app.kubernetes.io/name" == "run-controller" and (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "443,6443"))' 'controller CNP: apiserver on apiServerPorts, own selector'
 ykind RuntimeClass '(.handler == "runsc" and .metadata.name == "gvisor")' 'RuntimeClass gvisor'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the quickstart renders no factory object'
-ynone 'select(.kind == "CustomResourceDefinition")' 'templates render no CRD: crds/ holds Room and AgentRun only'
-# crds/ only shows with --include-crds: assert it holds exactly Room and AgentRun
-crds="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --include-crds | yq ea 'select(.kind == "CustomResourceDefinition") | .spec.names.kind' - | grep -v "^---$" | sort | paste -sd,)"
-[[ $crds == "AgentRun,Room" ]] || { echo "FAIL: crds/ holds \"$crds\", want AgentRun,Room" >&2; fail=1; }
+# v4 step 8: the chart ships no CRD, in templates or crds/: agent-factory-crds alone carries them, so
+# no upgrade of this chart can create, replace or delete one.
+ynone 'select(.kind == "CustomResourceDefinition")' 'templates render no CRD'
+crds="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --include-crds | yq ea 'select(.kind == "CustomResourceDefinition") | .metadata.name' -)"
+[[ -z $crds && ! -e crds ]] || { echo "FAIL: the chart ships CRDs ($crds): agent-factory-crds alone carries them" >&2; fail=1; }
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'the broker runs on the default runtime: kubectl port-forward cannot reach a runsc pod'
 
 # production-shaped render (cloud-native-ref): no migrate, no tokenreview binding, and no run
@@ -102,10 +103,10 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
       --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}'
       --set networkPolicies.mode=cilium)
-p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
+p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set preflight.enabled=false)"
 out="$p"
 # D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
-# step 2: no new object, no new key. Regenerate only for a change meant to reach that install:
+# step 2: no new object, no new key (preflight.enabled false: its default flipped in step 8). Regenerate only for a change meant to reach that install:
 # UPDATE_GOLDEN=1 bash charts/maku/tests/render.sh, then review the diff.
 if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$p" >tests/golden/xr.yaml; fi
 printf '%s\n' "$p" | diff -u tests/golden/xr.yaml - >&2 || { echo "FAIL: the XR render (runController.enabled=false) differs from tests/golden/xr.yaml" >&2; fail=1; }
@@ -128,7 +129,8 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2); the default gateway mode reads no model Secret'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitReadSecret == "agent-git-read" and (has("unsafeSharedGitToken") | not))' 'the controller config names the read-only Secret by default'
-ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role reads the key pair broker.tls.secretName names'
+# The preflight's Role gets it by name to check its keys (v4 D24); it runs only on helm test or maku preflight.
+ynone 'select(.kind=="Role" and .metadata.labels."app.kubernetes.io/name" != "preflight") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role but the preflight'"'"'s reads the key pair broker.tls.secretName names'
 ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
 ykind CiliumNetworkPolicy 'select(.metadata.name=="run-controller") | (.spec.egress[] | select(.toEntities[0]=="kube-apiserver") | (.toPorts[0].ports | map(.port) | join(",")) == "6443")' 'controller CNP follows apiServerPorts'
 
@@ -546,7 +548,8 @@ bad 'networkPolicies.mode kubernetes needs runPodPolicy.enabled' --set networkPo
 bad "at '/networkPolicies/mode'" --set networkPolicies.mode=calico
 
 # The egress proxy and the components' NetworkPolicies, kubernetes mode only (plan Task 13, PR13).
-out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes \
+# preflight.enabled false: its own rules are asserted with it below (v4 D24).
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes --set preflight.enabled=false \
   --set broker.roomTools.enabled=true --set broker.roomTools.auth=tokenreview --set broker.factoryURL=https://agent-factory.maku.svc:8082 \
   --set-json 'networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
   --set-json 'egressProxy.extraPorts=[8443]')"
@@ -673,8 +676,13 @@ ykind Deployment 'select(.metadata.name=="room-broker") | .metadata.annotations.
 out="$p"
 ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .metadata.annotations | select(. != null)' 'no reloader, no Deployment annotation'
 
-# v4 D24 (step 7 PR A): the preflight runner, off by default; on, eight objects from one pod template.
+# v4 D24 (step 7 PR A): the preflight runner, on by default since step 8: the test hook Job and the
+# suspended CronJob; off, no preflight object.
 out="$q"
+ykind Job 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .metadata.annotations."helm.sh/hook" == "test"' 'the default renders the preflight test hook (v4 step 8)'
+ykind CronJob 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.suspend == true' 'the default renders the suspended preflight CronJob (v4 step 8)'
+qoff="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set preflight.enabled=false)"
+out="$qoff"
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "preflight")' 'preflight off renders no preflight object'
 pf="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=kubernetes \
   --set broker.database.ownerSecret=owner-dsn --set preflight.enabled=true --set preflight.strict=true \
@@ -703,7 +711,7 @@ out="$pfq"
 ykind ConfigMap 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .data."config.json" | from_json | (.components | map(.name + "=" + .url) | join(" ")) == "broker=http://room-broker.x.svc.cluster.local:9090 run-controller=http://run-controller.x.svc.cluster.local:9090 factory=http://agent-factory.x.svc.cluster.local:9090"' 'the preflight collects the broker, the run-controller and the factory on :9090'
 ykind Service 'select(.metadata.name == "run-controller") | (.spec.ports[0].port == 9090 and .spec.selector."app.kubernetes.io/name" == "run-controller")' 'the run-controller ops Service, for the preflight'
 ykind Deployment 'select(.metadata.name == "room-broker" or .metadata.name == "run-controller") | (.spec.template.spec.containers[0].env | map(select(.name == "MAKU_PREFLIGHT") | .value) | join(",")) == "true"' 'preflight.enabled serves /preflight on the broker'"'"'s and the run-controller'"'"'s ops ports'
-out="$q"
+out="$qoff"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "MAKU_PREFLIGHT")' 'no preflight, no /preflight on any ops port'
 ynone 'select(.kind == "Service" and .metadata.name == "run-controller")' 'no preflight, no run-controller Service'
 cnp="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set preflight.enabled=true)"
@@ -784,7 +792,7 @@ go run ./tests/loadconfig run-controller-gateway "$tmp/rc-gateway.yaml" "$tmp/rc
 # refs, caSecret mounts in the migrate init container, the broker and the job, and egress.cidrs points
 # the broker's and the job's database egress at an external database in both network modes.
 out="$q"
-ynone 'select(.kind == "CronJob")' 'the quickstart renders no retention CronJob'
+ynone 'select(.kind == "CronJob" and .metadata.labels."app.kubernetes.io/name" != "preflight")' 'the quickstart renders no retention CronJob'
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.database.retentionSecret=r)"
 ykind CronJob 'select(.metadata.name == "room-broker-retention") | .spec.jobTemplate.spec.template.spec | ((.containers | length) == 1 and (.containers[0].args | join(",")) == "retention" and (.containers[0].env | ((length == 1) and .[0].name == "ROOMS_DATABASE_URL" and .[0].valueFrom.secretKeyRef.name == "r" and .[0].valueFrom.secretKeyRef.key == "uri")))' 'retentionSecret: the CronJob reads its uri as ROOMS_DATABASE_URL and nothing else'
 ykind CronJob 'select(.metadata.name == "room-broker-retention") | (.spec.schedule == "17 3 * * *" and .spec.concurrencyPolicy == "Forbid" and .spec.jobTemplate.spec.activeDeadlineSeconds == 900 and .spec.jobTemplate.spec.template.spec.automountServiceAccountToken == false and (.spec.jobTemplate.spec.template.spec.containers[0].image | test("^ghcr[.]io/smana/maku-broker:")) and .spec.jobTemplate.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem == true and .spec.jobTemplate.spec.template.spec.containers[0].resources.limits.memory == "64Mi")' 'the CronJob: ANR schedule, Forbid, 900 s, the broker image, no token, restricted, limited'

@@ -4,7 +4,7 @@ Written by `maku install --print`. Nothing here has been applied.
 
 | Path | What it is |
 |---|---|
-| `values.yaml` | the umbrella's values, `profile: production`: no secret value |
+| `values.yaml` | the umbrella's values (the defaults are production): no secret value |
 | `crds/values.yaml` | `agent-factory-crds`' values |
 | `factory/` | the `Factory`, one `Repository` per repository, and the classes' `MergePolicy` objects |
 | `github/` | the merge gate's ruleset, and the `gh` commands that create it |

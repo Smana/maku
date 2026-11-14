@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 (D21, EX13): the product alerts, one PrometheusRule with a group per component. The
 groups are plain files (files/rules/*.yaml) read with .Files.Get and replace, never tpl, so
 {{ $labels.x }} reaches Prometheus as written and promtool tests what renders

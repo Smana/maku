@@ -126,7 +126,6 @@ demo_render_values() {
     umask 077
     {
       echo "# Written by task demo; holds the model key and the App key: keep it out of Git."
-      echo "profile: demo"
       echo "demo:"
       echo "  model:"
       echo "    apiKey: $($q "$MODEL_API_KEY")"

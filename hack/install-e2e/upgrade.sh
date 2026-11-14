@@ -150,6 +150,9 @@ upgrade() {
   h upgrade "$RELEASE-crds" charts/agent-factory-crds -n "$NS" -f "$OUT/crds/values.yaml" --timeout 2m >/dev/null
   k apply --server-side -f config/agentgateway >/dev/null
   wait_crds -l app.kubernetes.io/part-of=agent-factory crd
+  # The migration a user makes (docs/upgrading.md#the-chart-contract): profile is removed in v4 step 8,
+  # and the schema refuses a values file that still sets it. A release before step 8 wrote it.
+  yq -i 'del(.profile)' "$OUT/values.yaml"
   local args
   mapfile -t args < <(umbrella_args)
   h dependency build charts/agent-factory >/dev/null

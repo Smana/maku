@@ -40,7 +40,7 @@
 #   - a pod under the factory's policy reaches DNS but not a private address outside its peers.
 #
 # PROFILE=production (with EXPOSE=httproute; task chart:production:k3d; plan v4 step 6, Task 21) installs
-# profile production (tests/production-k3d-values.yaml), with no demo value: a test-only RuntimeClass
+# the production defaults (tests/production-k3d-values.yaml), with no demo value: a test-only RuntimeClass
 # gvisor whose handler is runc (sandbox.runtimeClassName resolves, unsafeAllowRunc stays refused; no run
 # starts), a plain postgres:16 outside the chart bootstrapped with docs/database.md, the broker's TLS
 # Secrets by name, the prometheus-operator CRDs alone (no operator), and the factory with the stub as its
@@ -241,7 +241,7 @@ YAML
         --set-json 'expose.slack.hostnames=["factory-slack.e2e.test"]'
         --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/slack-app-client-id'
         --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG"
-        --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+        --set networkPolicies.factory.enabled=true)
     fi
   else
     expose+=(--set expose.ingress.className=traefik
@@ -338,7 +338,7 @@ YAML
   h install identity charts/maku-factory -n "$NS" --skip-crds -f <(yq '.maku-factory' "$PROD_VALUES") "${factory[@]}" --timeout 5m >/dev/null
   k -n "$NS" rollout status deploy/agent-factory --timeout=180s
   uid="$(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}')"
-  h upgrade identity charts/agent-factory -n "$NS" --set profile=production -f <(yq '{"maku-factory": .maku-factory}' "$PROD_VALUES") \
+  h upgrade identity charts/agent-factory -n "$NS" -f <(yq '{"maku-factory": .maku-factory}' "$PROD_VALUES") \
     --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG" --timeout 5m >/dev/null
   k -n "$NS" rollout status deploy/agent-factory --timeout=180s
   [[ $(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the upgrade to the umbrella replaced the factory's Deployment"
@@ -346,12 +346,12 @@ YAML
     die "the release's history is not maku-factory then agent-factory: $(h history identity -n "$NS")"
   echo "ok   maku-factory alone upgraded to the umbrella (maku.enabled false): the same release, the factory's Deployment UID kept"
 
-  step "production: maku and the rest on, profile production"
+  step "production: maku and the rest on, the production defaults"
   h upgrade identity charts/agent-factory -n "$NS" -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" -f "$PROD_VALUES" \
     --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
     --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG" --timeout 5m >/dev/null
   [[ $(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "turning maku on replaced the factory's Deployment"
-  ! k -n "$NS" get sts rooms-db >/dev/null 2>&1 || die "profile production installed the bundled rooms-db"
+  ! k -n "$NS" get sts rooms-db >/dev/null 2>&1 || die "the production install installed the bundled rooms-db"
 else
   step "install the umbrella: the broker in preset generic, its ids by Secret"
   h install identity charts/agent-factory -n "$NS" \
@@ -614,8 +614,8 @@ if [[ $PROFILE == production ]]; then
   [[ $sms == *room-broker* && $sms == *agent-factory* ]] || die "the ServiceMonitors are '$sms', want the broker's and the factory's"
   echo "ok   the PrometheusRule maku and the ServiceMonitors ($sms) exist"
   unsafe="$(k -n "$NS" get configmap room-broker-config -o jsonpath='{.data.config\.yaml}' | yq '.install.unsafe // [] | join(",")')"
-  [[ -z $unsafe ]] || die "profile production shows unsafe settings: $unsafe"
-  echo "ok   profile production shows no unsafe setting"
+  [[ -z $unsafe ]] || die "the production install shows unsafe settings: $unsafe"
+  echo "ok   the production install shows no unsafe setting"
 fi
 
 echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}${SLACK:+ (slack)}$([[ $PROFILE == production ]] && echo " (production)")"

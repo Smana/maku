@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 (D19, EX6): the web front door's policies, in maku.networkPolicies' mode. Ingress:
 the gateway's or ingress controller's pods on :4180, the scraper on the metrics port. Egress: DNS,
 the broker's :8080, and the IdP on the issuer's port. The broker's own policy admits :8080 from these

@@ -118,7 +118,7 @@ func readme(in Inputs, t Tree) []byte {
 	var b strings.Builder
 	fmt.Fprintf(&b, "# maku %s, %s in namespace %s\n\nWritten by `maku install --print`. Nothing here has been applied.\n\n", ver, rel, ns)
 	b.WriteString("| Path | What it is |\n|---|---|\n")
-	b.WriteString("| `values.yaml` | the umbrella's values, `profile: production`: no secret value |\n")
+	b.WriteString("| `values.yaml` | the umbrella's values (the defaults are production): no secret value |\n")
 	b.WriteString("| `crds/values.yaml` | `agent-factory-crds`' values |\n")
 	b.WriteString("| `factory/` | the `Factory`, one `Repository` per repository, and the classes' `MergePolicy` objects |\n")
 	b.WriteString("| `github/` | the merge gate's ruleset, and the `gh` commands that create it |\n")

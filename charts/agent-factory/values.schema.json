@@ -25,13 +25,9 @@
       "description": "Helm's global values, passed to every subchart.",
       "type": "object"
     },
-    "profile": {
-      "description": "What the chart is for: demo (-f values-demo.yaml), or production, which checks the seams of each enabled component and fails naming every missing one (docs/upgrading.md#from-the-demo-to-production). Unset renders nothing.",
-      "type": "string",
-      "enum": ["", "demo", "production"]
-    },
+    "profile": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: the defaults are production; the demo is -f values-demo.yaml (docs/upgrading.md#the-chart-contract)"]},
     "demoValues": {
-      "description": "Set only by values-demo.yaml: the profile gate's proof that the demo's defaults are present.",
+      "description": "Set only by values-demo.yaml: the one switch that admits the demo-only settings (the bundled Postgres, sandbox.unsafeAllowRunc, model.mode secret, the factory's demo mode). Without it, every render checks the seams of each enabled component.",
       "type": "boolean"
     },
     "clusterDomain": {
@@ -122,7 +118,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "plain": {"type": "boolean"},
+        "plain": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: replaced by the default-deny policies of each component (networkPolicies.factory, maku.networkPolicies.mode); docs/upgrading.md#the-chart-contract"]},
         "factory": {
           "description": "The factory's default-deny (D6), in maku's networkPolicies mode.",
           "type": "object",

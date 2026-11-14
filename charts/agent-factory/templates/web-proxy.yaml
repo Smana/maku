@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 (D19, EX4): the web front door, oauth2-proxy, in front of the broker's :8080. Its
 arguments are derived from maku.broker.human (afumbrella.webProxyArgs); its credentials are Secrets by
 name (D14), read through the environment. */ -}}

@@ -276,7 +276,6 @@ spec:
         networkPolicies:
           factory:
             enabled: true
-        profile: production
         slack:
           enabled: false
         webProxy:

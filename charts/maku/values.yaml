@@ -335,14 +335,15 @@ runController:
 # seam, whether the install can work: the Kubernetes version, the CRDs, the RuntimeClass, and each
 # Secret of docs/install-secrets.md the values enable, with its keys. It runs as a Helm test hook
 # (`helm test <release>`) and as a suspended CronJob, <release>-preflight, from which `maku preflight`
-# and Argo CD users create a Job. Off by default; a failing check names its fix (docs/install.md).
+# and Argo CD users create a Job. On by default since v4 step 8 (the hook runs only on `helm test`, and
+# the CronJob is suspended); a failing check names its fix (docs/install.md).
 #   image      empty: the run-controller's
 #   timeout    the Job's activeDeadlineSeconds
 #   strict     a warning fails too (CI uses it)
 #   extraCRDs  [{name, version}]: CRDs the values outside this chart need (agentgateway's, Gateway
 #              API's, prometheus-operator's, external-secrets.io's)
 preflight:
-  enabled: false
+  enabled: true
   image: {repository: "", tag: ""}
   timeout: 5m
   strict: false

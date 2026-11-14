@@ -2,7 +2,9 @@
 
 Deploys the agent factory: two replicas of the `maku-factory` controller (Deployment `agent-factory`) behind a
 PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and a Role in
-`config.runs.namespace`, default `agents`, `templates/rbac.yaml`), and the `Task` CRD (`crds/`). It ships as
+`config.runs.namespace`, default `agents`, `templates/rbac.yaml`). It ships no CRD: install
+[agent-factory-crds](../agent-factory-crds/README.md) first, which carries the `Task`, `Factory`,
+`Repository` and `MergePolicy` CRDs (rollout step 8 removed this chart's `crds/`). It ships as
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour

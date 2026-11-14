@@ -13,7 +13,7 @@ hand them to Flux or Argo CD.
 flowchart LR
   wizard["maku install --print"] --> files["values.yaml, Secrets,<br/>factory objects, ruleset,<br/>GitOps files"]
   files --> crds["agent-factory-crds<br/>agentgateway CRDs"]
-  crds --> umbrella["agent-factory<br/>(profile: production)"]
+  crds --> umbrella["agent-factory<br/>(the production defaults)"]
   umbrella --> objects["Factory, Repository,<br/>MergePolicy"]
   objects --> ruleset["the merge gate's ruleset"]
   ruleset --> preflight["helm test<br/>(the preflight)"]
@@ -21,8 +21,8 @@ flowchart LR
 
 ## What you bring
 
-Each seam is something your cluster or your organization provides. `profile: production` checks the
-seams of every component you turn on, and its render fails naming each one you have not set, with its
+Each seam is something your cluster or your organization provides. The chart's defaults are
+production: every render checks the seams of every component you turn on, and its render fails naming each one you have not set, with its
 key and its doc ([from the demo to production](upgrading.md#from-the-demo-to-production)).
 
 | Seam | Required | You bring | The chart's default | Without it |
@@ -60,7 +60,7 @@ The directory it writes:
 
 | Path | What it holds |
 |---|---|
-| `values.yaml` | the umbrella's values, `profile: production`, every image by digest, no secret value |
+| `values.yaml` | the umbrella's values, every image by digest, no secret value |
 | `crds/values.yaml` | the CRD chart's values |
 | `factory/` | the `Factory`, one `Repository` per repository, and a `MergePolicy` per class, every class in shadow |
 | `github/` | the merge gate's ruleset and the `gh` commands that create it, which it never runs |
@@ -107,8 +107,8 @@ test hook: run the preflight by hand, as below.
 
 ## Check it: the preflight
 
-`maku.preflight.enabled: true`, which `maku install --print` writes, renders the install's preflight
-twice: a Helm test hook, which `helm test <release>` runs, and a suspended CronJob for tools that run no
+`maku.preflight.enabled` and `maku-factory.preflight.enabled`, both on by default since rollout step 8
+(and written by `maku install --print`), render the install's preflight twice: a Helm test hook, which `helm test <release>` runs, and a suspended CronJob for tools that run no
 hooks:
 
 ```bash
@@ -183,7 +183,7 @@ depends on them. The [Repository reference](factory.md#private-code) has the det
 Every run pod runs under the RuntimeClass `maku.sandbox.runtimeClassName` names (D18), and the
 run-pod admission policy refuses any other. The nodes, and the runtime on them, are yours.
 `sandbox.unsafeAllowRunc` runs agents on the node's own runtime: the demo and kind only, and the
-render refuses it under `profile: production`.
+render refuses it without the demo's `demoValues`.
 
 | Platform | The runtime | `sandbox.runtimeClassName` |
 |---|---|---|
@@ -229,7 +229,7 @@ Two things stay the cluster's, so one install at most renders them:
 ## Upgrading
 
 Every release that changes an install step has a section in [upgrading](upgrading.md), and
-`profile: production` fails a render that misses a seam a newer release requires, naming it.
+the chart fails a render that misses a seam a newer release requires, naming it.
 [From the demo to production](upgrading.md#from-the-demo-to-production) lists the seams the gate
 checks, and [adopting the umbrella from `maku-factory`](upgrading.md#adopting-the-umbrella-from-maku-factory)
 moves an existing factory release under the umbrella without replacing its Deployment.
