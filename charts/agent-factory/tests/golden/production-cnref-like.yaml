@@ -437,34 +437,6 @@ data:
       intake:
         plan:
           apiKeyFile: /var/run/secrets/maku/model-gateway/planner
-          classes:
-            docs:
-              ceilingUSD: 2
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:docs.taskUSD
-            docs-links:
-              ceilingUSD: 2
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:docs-links.taskUSD
-            review:
-              ceilingUSD: 2
-              roles:
-              - implementer
-              - reviewer
-              source: class:review.taskUSD
-            scripts:
-              ceilingUSD: 5.1
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:scripts.taskUSD
           dailyPlans: 50
           deadline: 20s
           enabled: true
@@ -1392,7 +1364,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: 7fd4a7047b6d941c186e2c273d99d0e44483d5cb317e4b9d36c37a363fbd21c7
+        checksum/config: 574c670d014b21ba9a3e266c4432489223a0e2f44fce34babc0bf5ac9d7df3d5
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker

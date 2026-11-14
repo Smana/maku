@@ -40,7 +40,7 @@ func TestProfileAgreement(t *testing.T) {
 		})
 	}
 	t.Run("a pinned task counts nothing", func(t *testing.T) {
-		g := pinRig(t, resolveCfg("observe", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "profile:review-search")
+		g := pinRig(t, resolveCfg("observe", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "workflow:review-search")
 		tk := g.reconcile(t, "3buqdlot", 1)
 		tk.Spec.Intake = &v1alpha1.TaskIntake{Suggested: "review-search"}
 		if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, nil); err != nil {

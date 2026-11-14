@@ -25,12 +25,12 @@ func TestNoLoopRowIsTodaysRun(t *testing.T) {
 	}
 }
 
-// loopRig is a rig whose review class (the rig's default) has a loop row read at triage.
+// loopRig is a rig whose default loops row, read at triage, every task without a workflow runs (WF10).
 func loopRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	steps := int32(40)
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {StallSteps: &steps}}
 	return g, g.reconcile(t, "3buqdlot", 3)
 }
 
@@ -90,7 +90,7 @@ func TestALoopRowReachesImplementerClaimsOnly(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			g, tk := loopRig(t)
 			if tc.changeConfig {
-				g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+				g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {StallSteps: &steps}}
 			}
 			s := g.r.implementerSpec(g.r.Cfg.Current(), tk, "text")
 			s.Role = tc.role
@@ -127,7 +127,7 @@ func TestALostLoopRunIsNotCountedBeforeItsResume(t *testing.T) {
 // A search-only claim (no loop row) the cluster refuses escalates the same way.
 func TestARefusedSearchClaimEscalates(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Search: true}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Search: true}}
 	creates := 0
 	g.runs.refuse = func(s runs.Spec) error {
 		if s.Role != "implementer" {
@@ -147,7 +147,7 @@ func TestARefusedSearchClaimEscalates(t *testing.T) {
 func TestARefusedLoopClaimEscalates(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	steps := int32(40)
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {StallSteps: &steps}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {StallSteps: &steps}}
 	creates := 0
 	g.runs.refuse = func(s runs.Spec) error {
 		if s.Role != "implementer" {

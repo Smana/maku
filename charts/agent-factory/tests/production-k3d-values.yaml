@@ -82,10 +82,9 @@ maku-factory:
       query: sum by (ar_agent, gen_ai_request_model, gen_ai_token_type) (gen_ai_client_token_usage_sum)
       throttle:
         promQuery: 'sum(rate(agentgateway_requests_total{status="429"}[2m]))'
-    defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
+    defaults: {dataClass: public, predictedClass: review}
     loops:
-      review: {scope: scoper, judge: tier-light}
-      docs-links: {scope: scoper, judge: tier-light}
+      standard: {scope: scoper, judge: tier-light}
     repositories:
       - name: owner/repo
         maintainers: [dev]
@@ -113,7 +112,6 @@ maku-factory:
     templates:
       solo: {roles: [implementer, reviewer], maxReviewRounds: 2}
       pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-      trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
       investigate: {roles: [triager]}
     caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
 monitoring:

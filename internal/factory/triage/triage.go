@@ -58,9 +58,11 @@ func BudgetFor(cfg *config.Config, tier string) v1alpha1.Budget {
 		RunMicroUSD: config.MicroUSD(c.RunUSD), TaskMicroUSD: config.MicroUSD(c.TaskUSD)}
 }
 
-// Static is phase 1's triage: the config's defaults for every task, at the standard tier, with the
-// template of the repository's default workflow (pair when it names none).
-type Static struct{}
+// Static is phase 1's triage: the config's defaults for every task, at the standard tier, with
+// Template, else the template of the repository's default workflow (pair when it names none).
+type Static struct {
+	Template string
+}
 
 // Triage returns the defaults; a task's own data class wins over the default one.
 func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
@@ -69,8 +71,12 @@ func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) 
 	if dataClass == "" {
 		dataClass = d.DataClass
 	}
+	template := s.Template
+	if template == "" {
+		template = cfg.DefaultTemplate(cfg.RepositoryFor(t.Spec.Repository))
+	}
 	const tier = "standard"
-	return Decision{Template: cfg.DefaultTemplate(cfg.RepositoryFor(t.Spec.Repository)), PredictedClass: d.PredictedClass, DataClass: dataClass,
+	return Decision{Template: template, PredictedClass: d.PredictedClass, DataClass: dataClass,
 		Budget:         BudgetFor(cfg, tier),
 		Classification: v1alpha1.Classification{Tier: tier, Classifier: "static", Fallback: "static"},
 		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)}, nil

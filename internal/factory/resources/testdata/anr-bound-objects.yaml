@@ -30,45 +30,21 @@ spec:
     predictedClass: review
   facts:
     finalSpend: true
-  harnessProfiles:
+  workflows:
     adopted-none:
       template: none
     checked:
       checks: true
     plain: {}
   loops:
-    dead-links:
-      models:
-        reviewer:
-          frontier: kimi-frontier
     default:
       scope: "off"
-    deps-patch:
-      models:
-        reviewer:
-          frontier: kimi-frontier
-    docs:
+    careful:
       continuations: 2
       judge: tier-light
       scope: scoper
       search: true
       stallSteps: 60
-    docs-links:
-      models:
-        reviewer:
-          frontier: kimi-frontier
-    revert:
-      models:
-        reviewer:
-          frontier: kimi-frontier
-    scripts:
-      judge: tier-light
-      scope: scoper
-      split:
-        anyTier: true
-        childTier: standard
-        familyUSD: 20.4
-        maxChildren: 4
   prices:
     claude-haiku-5-5:
       cacheRead: 0.05
@@ -142,11 +118,6 @@ spec:
     solo:
       roles:
       - implementer
-    trio:
-      maxReviewRounds: 2
-      roles:
-      - implementer
-      - reviewer
   tiers:
     frontier:
       model: agent-default

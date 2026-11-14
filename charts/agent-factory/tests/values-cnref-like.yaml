@@ -57,11 +57,6 @@ maku:
           dailyPlans: 50
           fallback: "off"
           repositories: [Smana/ai-native-ref, Smana/runlore-kb, Smana/runlore, Smana/cloud-native-ref]
-          classes:
-            docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2.00, source: "class:docs-links.taskUSD"}
-            docs: {roles: [scoper, implementer, reviewer], ceilingUSD: 2.00, source: "class:docs.taskUSD"}
-            scripts: {roles: [scoper, implementer, reviewer], ceilingUSD: 5.10, source: "class:scripts.taskUSD"}
-            review: {roles: [implementer, reviewer], ceilingUSD: 2.00, source: "class:review.taskUSD"}
       needs: {enabled: true}
       mcp:
         enabled: true

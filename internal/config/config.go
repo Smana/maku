@@ -172,10 +172,6 @@ const (
 // Z.ai's glm-5.3 names low, high and max.
 var planEfforts = []string{"low", "medium", "high"}
 
-// planRoles are the roles the factory runs. A class's template names them, and a role the factory
-// does not have would be a plan it cannot run.
-var planRoles = []string{"scoper", "tester", "implementer", "reviewer", "triager"}
-
 // PlanConfig is human.intake.plan: the switch, the route to the gateway, the cap, the repositories
 // the planner may ever name (CD5) and the class table its roles and money come from (CD17).
 type PlanConfig struct {

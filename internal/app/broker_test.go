@@ -27,6 +27,7 @@ import (
 	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	fconfig "github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/humanapi"
@@ -827,8 +828,7 @@ func TestIntakeIsWiredFromConfig(t *testing.T) {
 	if !in.Allow["smana/ai-native-ref"] || in.Allow["Smana/AI-Native-Ref"] {
 		t.Fatalf("allow = %v", in.Allow)
 	}
-	if c := in.Classes["docs-links"]; !slices.Equal(c.Roles, []string{"scoper", "implementer", "reviewer"}) ||
-		c.CeilingUSD != 2 || c.Source != "class:docs-links.taskUSD" {
+	if len(in.Classes) != 0 { // a plan's classes are the factory's catalog's (WF13)
 		t.Fatalf("classes = %+v", in.Classes)
 	}
 	if in.Model == nil || in.Model.URL != "http://model-gateway.maku.svc:8082/clients/planner/v1" ||
@@ -949,9 +949,9 @@ func TestCoordinationPlannerWiredBesideIntake(t *testing.T) {
 	if s.Coordination == nil || s.Coordination.Mode != fconfig.CoordinationPlan || s.Coordination.Resolve == nil {
 		t.Fatalf("%+v", s.Coordination)
 	}
-	pol, err := s.Coordination.Resolve(t.Context(), "smana/ai-native-ref", "docs-links", "standard")
-	if err != nil || strings.Join(pol.Roles, ",") != "implementer,reviewer" || pol.TaskMicroUSD != 2_000_000 || pol.RunMicroUSD != 200_000 {
-		t.Fatalf("%+v %v", pol, err)
+	// No class table (WF13): without the factory's catalog, every class is unknown.
+	if _, err := s.Coordination.Resolve(t.Context(), "smana/ai-native-ref", "docs-links", "standard"); !errors.Is(err, coordination.ErrUnknownClass) {
+		t.Fatalf("%v", err)
 	}
 	cfg.Human.Intake = config.IntakeConfig{}
 	if s, err := buildHumans(t, cfg, vis); err != nil || s.Coordination != nil {

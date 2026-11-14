@@ -50,7 +50,7 @@ func testFirstCareful(c *config.Config) {
 	if c.HarnessProfiles == nil {
 		c.HarnessProfiles = map[string]config.HarnessProfile{}
 	}
-	c.HarnessProfiles["careful"] = config.HarnessProfile{Checks: true}
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "solo", Checks: true}
 	c.Repositories[0].Workflow = config.RepositoryWorkflow{Default: "careful", TestFirst: true}
 }
 
@@ -115,7 +115,7 @@ func TestTestFirstOffOrAnInternalTaskRunsTodaysSequence(t *testing.T) {
 
 func TestTheScoperRunsBeforeTheTester(t *testing.T) {
 	g := testerRigCfg(t, nil, func(c *config.Config) {
-		c.Loops = map[string]config.Loop{"scripts": {Scope: config.ScopeScoper}}
+		c.Loops = map[string]config.Loop{"careful": {Scope: config.ScopeScoper}}
 		c.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	})
 	if s := g.runs.specs[rid(0)]; s.Role != "triager" {
@@ -447,7 +447,10 @@ func TestAHandoffToTheTesterIsContractDisputed(t *testing.T) {
 		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
 	}
 	// The same handoff on a task without a contract is today's path: the run's pull request is reviewed.
-	g = testerRigCfg(t, func(tk *v1alpha1.Task) { tk.Spec.PredictedClass = "docs" }, func(c *config.Config) { setDefaultTemplate(c, "pair") })
+	g = testerRigCfg(t, nil, func(c *config.Config) {
+		c.Repositories[0].Workflow.Default = "standard" // the tester runs in careful only (WF7)
+		setDefaultTemplate(c, "pair")
+	})
 	g.log.evs = append(g.log.evs, envelope.Event{Seq: 1, RunID: rid(0), Type: envelope.Handoff, Origin: envelope.OriginClient,
 		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + rid(0), Role: "implementer"},
 		Payload: envelope.Must(envelope.HandoffPayload{FromRole: "implementer", ToRole: "tester", Summary: "x", Commit: head1})})

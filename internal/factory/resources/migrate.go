@@ -21,7 +21,7 @@ import (
 // split into class-shape MergePolicies and the Repository's bindings (split, B17). A file still in
 // the single-repository shape, which the factory refuses, is read as its one-entry list first (R7).
 func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
-	if file, err = LiftLegacy(file); err != nil {
+	if file, err = Upgrade(file); err != nil {
 		return nil, nil, err
 	}
 	var base map[string]any
@@ -30,13 +30,6 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	}
 	if base == nil {
 		base = map[string]any{}
-	}
-	// WF9, WF13: the settings release N warned about are rewritten as release N+1 reads them; a
-	// loops row named after a class has no mechanical home, so Parse refuses it with the upgrade note.
-	if upgradeWorkflows(base) {
-		if file, err = yaml.Marshal(base); err != nil {
-			return nil, nil, err
-		}
 	}
 	// Parse's refusals (an empty factory name, an entry without a name) are Migrate's: what it
 	// would split must already be a valid file.
@@ -243,6 +236,22 @@ func offFields(spec map[string]any, visit func(path string, row map[string]any, 
 			}
 		}
 	}
+}
+
+// Upgrade is file as this release reads it: lifted from the single-repository shape (LiftLegacy), and
+// with the workflow settings release N warned about rewritten (upgradeWorkflows, WF9, WF13). A loops
+// row named after a class has no mechanical home, so Parse refuses it with the upgrade note. A file
+// that needs neither is returned as is.
+func Upgrade(file []byte) ([]byte, error) {
+	file, err := LiftLegacy(file)
+	if err != nil {
+		return nil, err
+	}
+	var base map[string]any
+	if yaml.Unmarshal(file, &base) != nil || !upgradeWorkflows(base) {
+		return file, nil // a file that does not read is Parse's to refuse
+	}
+	return yaml.Marshal(base)
 }
 
 // upgradeWorkflows rewrites in base the settings of the workflows design that release N warned

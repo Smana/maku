@@ -149,12 +149,11 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 			"frontier": map[string]any{"model": "agent-default", "runTokens": 1000, "taskTokens": 2000, "runMinutes": 5}},
 		"templates": map[string]any{"solo": map[string]any{"roles": []any{"implementer"}},
 			"pair":        map[string]any{"roles": []any{"implementer", "reviewer"}},
-			"trio":        map[string]any{"roles": []any{"implementer", "tester", "reviewer"}},
 			"investigate": map[string]any{"roles": []any{"triager"}}},
-		"defaults": map[string]any{"template": "solo", "tier": "standard", "dataClass": "public", "predictedClass": "review"},
+		"defaults": map[string]any{"dataClass": "public", "predictedClass": "review"},
 		"caps":     map[string]any{"activeTasks": 1, "concurrentRuns": 1, "tasksPerDay": 1, "maxTextBytes": 14336, "awaitingHumanWIP": 1},
 		"triage":   map[string]any{"controlPercent": 20},
-		"harnessProfiles": map[string]any{"base": map[string]any{"template": "solo"},
+		"workflows": map[string]any{"base": map[string]any{"template": "solo"},
 			"rich": map[string]any{"template": "pair"}},
 		"evaluation": map[string]any{"controlPercent": 30, "mode": "apply"},
 	}}
@@ -407,14 +406,10 @@ func TestAssembleCarriesPrivateCode(t *testing.T) {
 	}
 }
 
-// WF9: a Factory's workflows are read as harnessProfiles, with no warning that a later release
-// refuses them; the file's harnessProfiles is the catalogue's, so the Factory replaces it.
+// WF9: a Factory's workflows are read, with no warning.
 func TestWorkflowsIsReadAsHarnessProfiles(t *testing.T) {
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
-	profiles := f.Spec["harnessProfiles"].(map[string]any)
-	delete(f.Spec, "harnessProfiles")
-	profiles["mine"] = map[string]any{"template": "pair"}
-	f.Spec["workflows"] = profiles
+	f.Spec["workflows"].(map[string]any)["mine"] = map[string]any{"template": "pair"}
 	r, err := Assemble(file(t), with(t, f))
 	if err != nil {
 		t.Fatal(err)
@@ -432,12 +427,12 @@ func TestWorkflowsIsReadAsHarnessProfiles(t *testing.T) {
 	}
 }
 
-// Review focus 4: a Factory that sets both workflows and harnessProfiles is refused, naming both.
-func TestWorkflowsAndHarnessProfilesTogetherRefused(t *testing.T) {
+// WF13: a Factory that still spells its workflows harnessProfiles is refused, naming the new key.
+func TestHarnessProfilesRefused(t *testing.T) {
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
-	f.Spec["workflows"] = map[string]any{"a": map[string]any{"template": "pair"}}
+	f.Spec["harnessProfiles"] = map[string]any{"a": map[string]any{"template": "pair"}}
 	r, _ := Assemble(file(t), with(t, f))
-	if x := refusal(r, KindFactory, "aws-0"); x == nil || !strings.Contains(x.Message, "workflows and harnessProfiles: set one") {
+	if x := refusal(r, KindFactory, "aws-0"); x == nil || !strings.Contains(x.Message, "harnessProfiles: renamed workflows") {
 		t.Fatalf("got %+v", r.Refused)
 	}
 }
@@ -458,12 +453,10 @@ func fileCatalogue(t *testing.T) map[string]any {
 	return spec
 }
 
-// The file's workflows is catalogue like its harnessProfiles: a Factory replaces it, so the two
-// names never meet in one config.
+// The file's workflows is catalogue: a Factory replaces it.
 func TestFileWorkflowsIsReplacedByTheFactory(t *testing.T) {
-	raw := strings.Replace(string(file(t)), "harnessProfiles:", "workflows:", 1)
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
-	r, err := Assemble([]byte(raw), with(t, f))
+	r, err := Assemble(file(t), with(t, f))
 	if err != nil || refused(r, KindFactory, "aws-0") != "" {
 		t.Fatalf("%v: %+v", err, r.Refused)
 	}

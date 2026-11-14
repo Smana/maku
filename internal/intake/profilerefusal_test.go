@@ -42,8 +42,8 @@ func TestProfileRefusalSentences(t *testing.T) {
 		}
 	}
 
-	t.Run("the task facts' validator holds the same list", func(t *testing.T) {
-		if !slices.Equal(envelope.ProfileRefusalCodes, intake.ProfileRefusals) {
+	t.Run("the task facts' validator holds the list, and the codes of facts written before WF4", func(t *testing.T) {
+		if !slices.Equal(envelope.ProfileRefusalCodes[:len(intake.ProfileRefusals)], intake.ProfileRefusals) {
 			t.Fatalf("envelope %v, intake %v", envelope.ProfileRefusalCodes, intake.ProfileRefusals)
 		}
 	})

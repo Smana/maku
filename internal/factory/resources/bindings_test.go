@@ -318,8 +318,6 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 		served bool
 		check  func(*testing.T, config.Class)
 	}{
-		{name: "a harness profile the Factory removed", last: config.Class{Harness: "removed"}},
-		{name: "testFirst once contractCheck is gone", last: config.Class{Checks: true, TestFirst: true}},
 		{name: "live without allowedFiles once policyBot is off", last: config.Class{Live: true, HoldoutChecks: []string{"validate"}},
 			merge: func(m map[string]any) { m["policyBot"] = false; m["gateStatus"] = true }},
 		// MR6: a class put back is bounded like one resolved now.
@@ -394,24 +392,8 @@ func TestFileEntriesCannotCarryBindings(t *testing.T) {
 	}
 }
 
-// TE2's floor reads the catalogue's templates: a policy whose variant is below its floor is
-// refused alone (B9), never handed to Parse, where it would refuse each consumer Repository.
-func TestAPolicyBelowItsFloorIsRefusedAlone(t *testing.T) {
-	below := classPolicy(t, "docs", 2, "harness: rich\nharnessAllowed: [base]\n")
-	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], below, boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if x := refusal(r, KindMergePolicy, "docs"); x == nil || x.Reason != v1alpha1.ReasonInvalid || !strings.Contains(x.Message, "drops roles of the floor") {
-		t.Fatalf("docs: %+v", x)
-	}
-	if refused(r, KindRepository, "maku") != "" || r.Config.RepositoryFor("Smana/maku") == nil {
-		t.Fatalf("the consumer stays served: %+v", r.Refused)
-	}
-}
-
-// WF2: a policy may name a shipped workflow its Factory does not define, as a class of the file may:
-// the policy check reads the profiles Parse fills.
+// WF7: a policy's harness fields are read by nothing, so a policy naming a workflow, shipped or not,
+// resolves.
 func TestAPolicyMayNameAShippedWorkflow(t *testing.T) {
 	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], classPolicy(t, "docs", 1, "harness: standard\nharnessAllowed: [careful]\n"),
 		boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
@@ -423,32 +405,6 @@ func TestAPolicyMayNameAShippedWorkflow(t *testing.T) {
 	}
 	if b := binding(r, "maku", "docs"); !b.Accepted {
 		t.Fatalf("docs binding: %+v", b)
-	}
-}
-
-// The floor check reads the templates as Parse validates them: Parse drops the deprecated tester
-// role only after Validate, so a floor whose template still lists tester is judged with it in both
-// places. Stripping it before the policy check would accept a policy that Parse then refuses in
-// every consumer Repository.
-func TestFloorReadsTemplatesAsParseValidates(t *testing.T) {
-	f := strings.Replace(string(file(t)), "  rich: {template: pair,", "  tested: {template: trio}\n  rich: {template: pair,", 1)
-	// Parse, on a class of the file's own repository: trio's tester counts at validation.
-	legacy := strings.Replace(f, "docs: {harness: base, harnessAllowed: [rich], escalation: {notConverged: rich}}", "docs: {harness: tested, harnessAllowed: [rich]}", 1)
-	_, perr := config.Parse([]byte(legacy))
-	if perr == nil || !strings.Contains(perr.Error(), `harnessAllowed "rich" drops roles of the floor`) {
-		t.Fatalf("Parse: %v", perr)
-	}
-	// The policy check agrees.
-	r, err := Assemble([]byte(f), append(specPolicies(t)[:3:3], classPolicy(t, "docs", 1, "harness: tested\nharnessAllowed: [rich]\n"),
-		boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if x := refusal(r, KindMergePolicy, "docs"); x == nil || !strings.Contains(x.Message, `harnessAllowed "rich" drops roles of the floor`) {
-		t.Fatalf("docs: %+v", x)
-	}
-	if refused(r, KindRepository, "maku") != "" {
-		t.Fatalf("the consumer stays served: %+v", r.Refused)
 	}
 }
 

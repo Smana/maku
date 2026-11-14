@@ -355,7 +355,7 @@ func TestASplitFamilyIsCountedOnceOnTheParent(t *testing.T) {
 			}
 			p = g.settled(t, "3buqdlot")
 			g.reconcile(t, "3buqdlot", 2)
-			want := []string{"task_outcome review treatment review-floor floor review-wide " + c.want + " 1"}
+			want := []string{"task_outcome review treatment review-floor repository review-wide " + c.want + " 1"}
 			if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) || p.Status.Profile == nil || !p.Status.Profile.Counted {
 				t.Fatalf("%v, want %v; %+v", got, want, p.Status.Profile)
 			}
@@ -575,7 +575,7 @@ func TestAnUnresolvedTaskThatFailsIsCounted(t *testing.T) {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	tk = g.settled(t, "3buqdlot")
-	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor floor none stopped") || !tk.Status.Profile.Counted {
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 1 || !strings.HasPrefix(got[0], "task_outcome review treatment review-floor repository none stopped") || !tk.Status.Profile.Counted {
 		t.Fatalf("%v %+v", got, tk.Status.Profile)
 	}
 }

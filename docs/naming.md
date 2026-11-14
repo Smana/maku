@@ -151,9 +151,8 @@ Wordmark: Space Grotesk 700, lowercase `maku`, tracking −3%. Body: Space Grote
 
 **Workflow** is which agents work on a task: `quick`, `standard`, `careful`, and `none` for an
 adopted pull request. It is the one noun a person reads for it; the code and the API keep their names
-(`HarnessProfile`, `harnessProfiles`, `classes.<c>.harness`, `Task.status.profile`, the `profile`
-metric label): a named row of `template`, `tier`, `checks`, `testFirst` and `loop`, not a sequence a
-user edits. A GitHub Actions workflow is always called that, in full: `oracle.workflow`, the holdout
+(`HarnessProfile`, `Task.status.profile`, the `profile` metric label): a `workflows` row of
+`template`, `tier`, `checks`, `loop` and `escalation`, not a sequence a user edits. A GitHub Actions workflow is always called that, in full: `oracle.workflow`, the holdout
 workflows and `.github/workflows/`. The other meanings of "profile" have their own names: **role
 permissions** (what a role's token and tools may do), **approval mode** (`approvals.profile`,
 attended or unattended) and **egress allow-list** (the destinations a run may reach).

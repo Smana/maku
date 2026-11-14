@@ -180,7 +180,7 @@ func TestMigrateANRConfig(t *testing.T) {
 }
 
 func TestDecodeRefusesABooleanOff(t *testing.T) {
-	for _, spec := range []string{"{loops: {default: {scope: off}}}", "{harnessProfiles: {plain: {loop: false}}}"} {
+	for _, spec := range []string{"{loops: {default: {scope: off}}}", "{workflows: {plain: {loop: false}}}"} {
 		_, err := Decode([]byte("apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: f}\nspec: " + spec + "\n"))
 		if err == nil || !strings.Contains(err.Error(), `not a boolean`) || !strings.Contains(err.Error(), "spec.") {
 			t.Errorf("%s: %v", spec, err)
@@ -220,4 +220,35 @@ func classesUnderDefaults(cs map[string]config.Class) map[string]config.Class {
 		out[n] = underDefaults(n, c)
 	}
 	return out
+}
+
+// WF9, WF13: migrate rewrites the workflow settings release N warned about: harnessProfiles is
+// written workflows, a workflow's trio is pair, and the dead keys are dropped.
+func TestMigrateRewritesTheRemovedWorkflowSettings(t *testing.T) {
+	old := strings.Replace(string(file(t)), "workflows:", "harnessProfiles:", 1)
+	old = strings.Replace(old, "defaults: {", "defaults: {template: solo, tier: standard, ", 1)
+	old = strings.Replace(old, "triage: {", `triage: {classifierURL: "http://c7", `, 1)
+	old = strings.Replace(old, "templates:\n", "templates:\n  trio: {roles: [implementer, reviewer]}\n", 1)
+	if _, err := config.Parse([]byte(old)); err == nil {
+		t.Fatal("the old file parses: the edits did not apply")
+	}
+	manifests, _, err := Migrate([]byte(old), "ns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, gone := range []string{"harnessProfiles", "trio", "classifierURL"} {
+		if strings.Contains(string(manifests), gone) {
+			t.Errorf("%s is written:\n%s", gone, manifests)
+		}
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := object(objs, KindFactory, "aws-0").Spec["defaults"].(map[string]any); d["template"] != nil || d["tier"] != nil {
+		t.Errorf("defaults: %v", d)
+	}
+	if !strings.Contains(string(manifests), "workflows:") {
+		t.Errorf("workflows is not written:\n%s", manifests)
+	}
 }

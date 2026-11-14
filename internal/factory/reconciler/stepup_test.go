@@ -49,14 +49,14 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	tk.Spec.Budget = triage.BudgetFor(cf, "standard")
 	start := metav1.NewTime(now.Add(-time.Hour))
 	tk.Status = v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing, RoomRef: "3buqdlot", PhaseSince: &start,
-		Profile: &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Reason: "none", Checks: true, Resolved: true},
+		Profile: &v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Reason: "none", Checks: true, Resolved: true},
 		Runs:    []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial", StartSeq: 1, Started: &start}}}
 	if edit != nil {
 		edit(tk)
 	}
 	g := newRig(t, tk, roomOf("3buqdlot"))
 	g.r.Cfg = cf
-	g.r.Triage = triage.Static{}
+	g.r.Triage = triage.Static{Template: "solo"}
 	st := tk.Status
 	tk = g.get(t)
 	tk.Status = st
@@ -232,7 +232,7 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 		t.Fatalf("%+v", tk.Status)
 	}
 	stored := g.get(t)
-	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "floor" {
+	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "repository" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
 	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
@@ -405,7 +405,7 @@ func TestARoundsExhaustedReviewSteps(t *testing.T) {
 	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{
 		"review-floor": {Escalation: &config.Escalation{NotConverged: "review-search"}}, "review-search": {Loop: "review-search"}}
 	tk := g.get(t)
-	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Resolved: true}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
 		t.Fatal(err)
 	}
@@ -496,7 +496,7 @@ func TestAReplayRecoversThePersistedStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := g.get(t) // the spec write landed, the status write never happened
-	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "floor" {
+	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "repository" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
 	escalate(g.r.Cfg.Current(), nil)

@@ -646,13 +646,6 @@ func (r *Reconciler) repo(cfg *config.Config, t *v1alpha1.Task) *config.Reposito
 	return cfg.RepositoryFor(t.Spec.Repository)
 }
 
-// class is the task's repository's class name, the zero class when the repository does not declare
-// it or the config does not serve the repository.
-func (r *Reconciler) class(cfg *config.Config, t *v1alpha1.Task, name string) config.Class {
-	cl, _ := r.repo(cfg, t).Class(name)
-	return cl
-}
-
 func (r *Reconciler) narrator(ctx context.Context, cfg *config.Config) narrate.Narrator {
 	return narrate.Narrator{Forge: r.gh(ctx), Login: cfg.FactoryLogin}
 }

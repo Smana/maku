@@ -110,7 +110,7 @@ func (f *flakyTriage) Triage(ctx context.Context, cfg *config.Config, t *v1alpha
 func TestTheTraceIsMintedOnce(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
 	g.r.Trace = &fakeSink{}
-	g.r.Triage = &flakyTriage{Triager: triage.Static{}, fail: true}
+	g.r.Triage = &flakyTriage{Triager: triage.Static{Template: "solo"}, fail: true}
 	if _, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err == nil {
 		t.Fatal("the triage error is returned")
 	}

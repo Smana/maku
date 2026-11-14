@@ -307,6 +307,39 @@ func TestRepositoryPrivateCodeAdmission(t *testing.T) {
 	}
 }
 
+// WF3, WF7: a Repository names its default workflow and opts in to the tester; the name is bounded.
+func TestRepositoryWorkflowAdmission(t *testing.T) {
+	a := startAdmission(t)
+	for name, tc := range map[string]struct{ workflow, want string }{
+		"careful":         {workflow: "{default: careful, testFirst: true}"},
+		"a name too long": {workflow: "{default: " + strings.Repeat("x", 300) + "}", want: "Too long"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := edit(t, anrRepository, "wf-"+strings.ReplaceAll(name, " ", "-"), map[string]string{"spec.workflow": tc.workflow})
+			err := a.create(t, m)
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("refused: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+// WF9, WF13: a Factory still spelling its workflows harnessProfiles is refused, strictly, as a field
+// the CRD no longer declares.
+func TestFactoryHarnessProfilesRefused(t *testing.T) {
+	a := startAdmission(t)
+	u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: hp, namespace: "+a.ns+"}\nspec: {harnessProfiles: {a: {template: pair}}}\n")
+	if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), "harnessProfiles") {
+		t.Fatalf("got %v", err)
+	}
+}
+
 // ai-native-ref's live objects (testdata/anr-live-objects.yaml, copied from its main) pass this
 // CRD's admission strictly: the binding-shape Repositories with partial merge blocks over the
 // Factory's mergeDefaults, durations as written, and the twelve class policies. Strict field

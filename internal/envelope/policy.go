@@ -65,10 +65,13 @@ type ProfileFact struct {
 // status.profile.source enum. floor is a task triaged before the workflow left the class.
 var ProfileSources = []string{"label", "schedule", "revert", "oracle", "repository", "floor", "control", "treatment", "scoper", "escalation"}
 
-// ProfileRefusalCodes is intake's closed list of profile refusals (intake.ProfileRefusals, held equal
-// by its test): envelope sits below intake, so the facts' validator keeps its own copy.
+// ProfileRefusalCodes is intake's closed list of profile refusals (intake.ProfileRefusals, held within
+// it by its test), and the four codes a task triaged before the workflow left the class may carry
+// (profile_not_allowed, class_profile_fixed, class_no_profiles, profile_internal; WF4): envelope sits
+// below intake, so the facts' validator keeps its own copy.
 var ProfileRefusalCodes = []string{"profile_unknown", "profile_not_offered", "not_maintainer", "profile_conflict",
-	"profile_no_tests_paths", "catalogue_unavailable"}
+	"profile_no_tests_paths", "catalogue_unavailable",
+	"profile_not_allowed", "class_profile_fixed", "class_no_profiles", "profile_internal"}
 
 func (p ProfileFact) validate() error {
 	switch {

@@ -475,8 +475,8 @@ func TestRunCreateProfileBoundByPlan(t *testing.T) {
 		class, profile string
 		want           string
 	}{
-		"honoured":          {"review", "review-frontier", ""},
-		"the factory's":     {"review", "", ""},
+		"honoured":           {"review", "review-frontier", ""},
+		"the factory's":      {"review", "", ""},
 		"a live class (WF4)": {"docs-links", "review-frontier", ""},
 		"refused at intake":  {"review", "ghost", "profile_unknown"},
 	} {

@@ -98,9 +98,7 @@ maku-factory:
           revertWindow: 168h
           breaker: {window: 10, maxReverts: 1}
     loops:
-      docs: {scope: scoper, judge: tier-light}
-      docs-links: {scope: scoper, judge: tier-light}
-      review: {scope: scoper, judge: tier-light}
+      standard: {scope: scoper, judge: tier-light}
 
 # The model gateway (plan v4 step 4, Task 12): the upstream controller and maku-gateway, the planner
 # and the classifier as clients, the stub as a `custom` provider over plain http. intake.sh sets

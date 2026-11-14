@@ -26,7 +26,7 @@
 # its model through the gateway as its own ServiceAccount.
 # METERING=1 (with GATEWAY=1; task chart:metering:k3d) adds the metering proof (plan v4 step 4, Task 17):
 # tests/metering-values.yaml gives the factory a meter on a test-only VictoriaMetrics (tests/metrics-stub.yaml),
-# a PromQL throttle, runs.gatewayIdentity and a split on review, and the config loads. The run's tokens
+# a PromQL throttle, runs.gatewayIdentity and a split on standard, and the config loads. The run's tokens
 # reach VictoriaMetrics under agentgateway's own names, labelled with its subject, and the meter's
 # parser prices that reply above zero (internal/factory/meter TestRecordedAgentgatewayReply).
 # EXTERNAL_DB=1 (k3d only; task chart:install:k3d:external-db) brings its own Postgres (v4 D9): a plain

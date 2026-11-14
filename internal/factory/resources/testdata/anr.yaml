@@ -11,7 +11,7 @@ factory: aws-0
 # evidence to the broker's settings pages; it changes no class. The central config stays the
 # only merge authority: repositoryAuthority is off.
 policyManagement: {read: true, simulation: true, dualEvaluation: true, promotion: true}
-harnessProfiles:
+workflows:
   plain: {}
   checked: {checks: true}
   adopted-none: {template: none}
@@ -324,8 +324,6 @@ tiers:
 templates:
   solo: {roles: [implementer]}
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-  # TF2, TO1: the tester writes the tests first (testFirst), never a verdict; trio is pair's shape until the bench.
-  trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
 # CD22: a revision of another task runs before new intake. One wait reason, no reservation; the review
 # WIP cap and the run slot are still checked first. The pinned release's decoder reads the key; an older
@@ -369,7 +367,7 @@ loops:
   # twice (0..5). judge tier-light: the completion judge's alias (the claim's judgeModel),
   # reading the scoper's checks; without the capability profiles' P4 sidecar (#103) its
   # /judge/v1 route is refused and the judge is silently skipped.
-  docs: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
+  careful: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
   # scripts: the splitter's class for the gcp-0 session of 2026-10-27 (runbook 17 §2, splitter
   # design SL3). split needs scope: scoper on the same row, and a row is read whole, so the scoper
   # is on for scripts too. maxChildren 4 (2..5); familyUSD 20.40, the parent's and every part's
@@ -380,7 +378,6 @@ loops:
   # Harness roles HR7: judge tier-light switches the loop on for scripts too (stallSteps 80,
   # continuations 2 by default), so split parts and test-first tasks are judged; the judge reads
   # the head's GitHub check runs, so checks: false on the class is fine.
-  scripts: {scope: scoper, split: {maxChildren: 4, familyUSD: 20.40, childTier: standard, anyTier: true}, judge: tier-light}
   # A second-family reviewer on the classes the merge gate may merge without a person: the
   # live ones and the two shadowed toward going live. A reviewer on the implementer's model
   # shares its blind spots, and here its approval is the only review. The reviewer runs on
@@ -388,10 +385,6 @@ loops:
   # Public tasks only (maku pins no provider alias on an internal task); Kimi processes in
   # China. A row with only models keeps the loop and the scoper off. ADR-0058 kept the GLM
   # reviewer because no other family had a public route; Kimi has had one since v3.
-  docs-links: {models: {reviewer: {frontier: kimi-frontier}}}
-  revert: {models: {reviewer: {frontier: kimi-frontier}}}
-  dead-links: {models: {reviewer: {frontier: kimi-frontier}}}
-  deps-patch: {models: {reviewer: {frontier: kimi-frontier}}}
 # search: true on the docs row (above) offers that class's implementer runs the search tool
 # (agent-platform v3 feature 5): a read-only child on the run's token, 40 iterations, 300k
 # tokens, 300 s, six a run. No other class has it (D4): the gcp-0 session of 2026-10-27 flips

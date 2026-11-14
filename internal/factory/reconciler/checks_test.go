@@ -14,29 +14,33 @@ import (
 	"github.com/Smana/maku/internal/runwatch"
 )
 
-// v3 feature 3 (RC8, offline proof 7): a switched-on class's public implementer, tester and reviewer claims
-// carry spec.loop.checks and the repository's egress; every other claim is today's.
+// v3 feature 3 (RC8, offline proof 7), WF7: a task whose workflow switches checks on has its public
+// implementer, tester and reviewer claims carry spec.loop.checks and the repository's egress; every
+// other claim is today's. A task without a workflow reads its repository's default's.
 func TestASwitchedOnClassChecksItsPublicImplementerAndReviewer(t *testing.T) {
 	g := newRig(t)
 	repo := g.r.Cfg.Current().Repos()[0]
-	repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {}, "docs": {Checks: true}, "tests": {}}
 	repo.Checks = config.Checks{Egress: []string{"golang", "pypi"}}
 	g.r.Cfg.Current().Repositories = []config.Repository{repo}
-	task := func(class, dataClass string) *v1alpha1.Task {
+	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{"checked": {Checks: true}, "standard": {}}
+	task := func(workflow, dataClass string) *v1alpha1.Task {
 		tk := issueTask("3buqdlot", 7, "fix")
-		tk.Spec.PredictedClass, tk.Spec.DataClass = class, dataClass
+		tk.Spec.PredictedClass, tk.Spec.DataClass = "review", dataClass
+		if workflow != "" {
+			tk.Status.Profile = &v1alpha1.ProfileStatus{Name: workflow, Checks: g.r.Cfg.Current().HarnessProfiles[workflow].Checks}
+		}
 		tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12"}
 		return tk
 	}
-	on := []runs.Spec{g.r.implementerSpec(g.r.Cfg.Current(), task("docs", "public"), "brief"), g.r.verifierSpec(g.r.Cfg.Current(), task("docs", "public"), "reviewer"),
-		g.r.testerSpec(g.r.Cfg.Current(), task("docs", "public"), "brief")}
+	on := []runs.Spec{g.r.implementerSpec(g.r.Cfg.Current(), task("checked", "public"), "brief"), g.r.verifierSpec(g.r.Cfg.Current(), task("checked", "public"), "reviewer"),
+		g.r.testerSpec(g.r.Cfg.Current(), task("checked", "public"), "brief")}
 	for _, s := range on {
 		if !s.Checks || !reflect.DeepEqual(s.EgressProfiles, []string{"golang", "pypi"}) {
 			t.Fatalf("%s: checks %v egress %v, want on with [golang pypi]", s.Role, s.Checks, s.EgressProfiles)
 		}
 	}
-	off := []runs.Spec{g.r.testerSpec(g.r.Cfg.Current(), task("docs", "internal"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("docs", "internal"), "brief"),
-		g.r.implementerSpec(g.r.Cfg.Current(), task("tests", "public"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("review", "public"), "brief")}
+	off := []runs.Spec{g.r.testerSpec(g.r.Cfg.Current(), task("checked", "internal"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("checked", "internal"), "brief"),
+		g.r.implementerSpec(g.r.Cfg.Current(), task("standard", "public"), "brief"), g.r.implementerSpec(g.r.Cfg.Current(), task("", "public"), "brief")}
 	for _, s := range off {
 		u := runs.Build(runwatch.DefaultKind, s)
 		for _, key := range []string{"loop", "egress"} {

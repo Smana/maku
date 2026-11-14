@@ -91,7 +91,7 @@ func scoperRigOf(t *testing.T, edit func(*v1alpha1.Task)) *rig {
 	tk := issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves")
 	edit(tk)
 	g := newRig(t, tk)
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper}}
 	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	g.reconcile(t, "3buqdlot", 3)
 	return g

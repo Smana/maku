@@ -42,7 +42,7 @@ func TestClassModelsPickAPublicRunsAlias(t *testing.T) {
 			tk.Spec.DataClass = c.dataClass
 			g := teamRigFor(t, "pair", tk, func(g *rig) {
 				if c.models != nil {
-					g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Models: c.models}}
+					g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Models: c.models}}
 				}
 				pair := g.r.Cfg.Current().Templates["pair"]
 				pair.ReviewerModel = c.reviewerModel
@@ -74,7 +74,7 @@ func TestAProviderJudgeIsPublicOnly(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.DataClass = class
 			g := newRig(t, tk)
-			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Judge: "mistral-light"}}
 			got := g.reconcile(t, "3buqdlot", 3)
 			if got.Spec.Loop == nil || got.Spec.Loop.JudgeModel != want {
 				t.Fatalf("judge %+v, want %q", got.Spec.Loop, want)
@@ -87,7 +87,7 @@ func TestAProviderJudgeIsPublicOnly(t *testing.T) {
 // never gets a claim: runs.Spec.Validate refuses an internal run that names a provider alias.
 func TestAnInternalRunWithAProviderJudgeIsRefused(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "x"))
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Judge: "mistral-light"}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Judge: "mistral-light"}}
 	g.runs.refuse = func(s runs.Spec) error { return s.Validate() }
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Spec.Loop == nil || tk.Spec.Loop.JudgeModel != "mistral-light" {
@@ -132,7 +132,7 @@ func TestPinModelForEveryRole(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t)
 			g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
-			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Models: row}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Models: row}}
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.DataClass, tk.Spec.PredictedClass, tk.Spec.Template = c.dataClass, "review", "solo"
 			tk.Spec.Budget = v1alpha1.Budget{Tier: "standard", Model: "agent-default", RunTokens: 1_500_000, RunMinutes: 45}

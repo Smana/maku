@@ -91,8 +91,8 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 		percent int
 		want    v1alpha1.ProfileStatus
 	}{
-		"unlabelled":              {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Checks: true}},
-		"labelled":                {"class:review", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Checks: true}},
+		"unlabelled":              {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Checks: true}},
+		"labelled":                {"class:review", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Checks: true}},
 		"labelled, in the cohort": {"class:review", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
 		"in the cohort":           {"", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
 	} {
@@ -112,20 +112,16 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 	}
 }
 
-// P8: a maintainer's class: label no longer freezes the task as labeled, so a class with a choice
-// still offers it to the scoper.
+// P8, WF4: a class: label is no pin, so the task is offered every workflow as a choice.
 func TestClassLabelledTaskIsOfferedProfileChoices(t *testing.T) {
 	cf := profileCfg(true)
 	cf.HarnessProfiles["review-careful"] = config.HarnessProfile{Template: "pair", Description: "Two reviews."}
-	review := cf.Repositories[0].Classes["review"]
-	review.HarnessAllowed = []string{"review-careful"}
-	cf.Repositories[0].Classes["review"] = review
 	g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), "class:review")
 	tk := g.reconcile(t, "3buqdlot", 1)
-	if tk.Status.Profile == nil || tk.Status.Profile.Source != "floor" || tk.Status.Profile.Cohort != triage.CohortTreatment {
+	if tk.Status.Profile == nil || tk.Status.Profile.Source != "repository" || tk.Status.Profile.Cohort != triage.CohortTreatment {
 		t.Fatalf("%+v", tk.Status.Profile)
 	}
-	if got := g.r.profileChoices(cf, tk); len(got) != 2 || got[1].Name != "review-careful" {
+	if got := g.r.profileChoices(cf, tk); len(got) != 2 || got[0].Name != "review-floor" || !got[0].Floor || got[1].Name != "review-careful" {
 		t.Fatalf("choices %+v", got)
 	}
 }
@@ -209,7 +205,23 @@ func TestNoHarnessIsToday(t *testing.T) {
 			if !ok {
 				t.Fatalf("no golden task for %q", name)
 			}
-			if got := normalizedTask(t, tk); !reflect.DeepEqual(want, got) {
+			got := normalizedTask(t, tk)
+			// Since the loops rows are keyed by workflow (WF10, stage B), a task with no workflow reads
+			// default's row, not its class's: the loop keys are left out of the comparison.
+			for _, m := range []any{want, got} {
+				if spec, ok := m.(map[string]any)["spec"].(map[string]any); ok {
+					delete(spec, "loop")
+					delete(spec, "scopeMode")
+					delete(spec, "search")
+				}
+			}
+			if name == "labelled issue" { // the class: label is narrated once since it is read by nothing (WF13)
+				if st, ok := got.(map[string]any)["status"].(map[string]any); ok {
+					delete(st, "narrated")
+					delete(st, "statusComment")
+				}
+			}
+			if !reflect.DeepEqual(want, got) {
 				w, _ := json.MarshalIndent(want, "", "  ")
 				g, _ := json.MarshalIndent(got, "", "  ")
 				t.Fatalf("the task differs from main's\n got %s\nwant %s", g, w)
@@ -281,7 +293,7 @@ func TestProfileSpec(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "fix it")
 			tk.Spec.MaxMicroUSD = c.maxMicroUSD
 			tk.Spec.Budget = triage.Ceiling(triage.BudgetFor(cf, c.tier), c.maxMicroUSD)
-			g.r.profileSpec(g.r.Cfg.Current(), tk, "review", c.p)
+			g.r.profileSpec(g.r.Cfg.Current(), tk, "review-floor", c.p) // a workflow without a loop reads the row named after it
 			if b := tk.Spec.Budget; b.Tier != c.wantTier || b.TaskMicroUSD != c.wantTask {
 				t.Fatalf("budget %+v", b)
 			}
@@ -327,19 +339,12 @@ func TestRunsReadTheFrozenProfile(t *testing.T) {
 	}
 }
 
-// treatmentCfg is profileCfg with a careful workflow review allows, named as evaluation.treatment
-// (WF8): a frontier tier and its own judged loop row, so its spec is told apart from the floor's.
+// treatmentCfg is profileCfg with a careful workflow named as evaluation.treatment (WF8): a
+// frontier tier and its own judged loop row, so its spec is told apart from the default's.
 func treatmentCfg(percent int) *config.Config {
 	c := profileCfg(true)
 	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "pair", Tier: "frontier", Loop: "careful"}
 	c.Loops["careful"] = config.Loop{Scope: config.ScopeScoper, Judge: "tier-light", Search: true}
-	classes := c.Repositories[0].Classes
-	review := classes["review"]
-	review.HarnessAllowed = []string{"careful"}
-	classes["review"] = review
-	// a shadow class that names careful anyway: the arm still never runs it (Review Focus 3)
-	classes["docs-links"] = config.Class{Shadow: true, Harness: "review-floor", HarnessAllowed: []string{"careful"}}
-	classes["tests"] = config.Class{Harness: "review-floor"}
 	c.Evaluation.ControlPercent, c.Evaluation.Treatment = percent, "careful"
 	return c
 }
@@ -367,30 +372,59 @@ func TestControlArmRunsTheFloor(t *testing.T) {
 	}
 }
 
-// Review Focus 3: a treatment-cohort task that cannot run the treatment workflow runs its floor with
-// source floor, so the measurement's source=~"control|treatment" leaves it out.
+// Review Focus 3, stage B: a treatment-cohort task whose workflow its source chose (a schedule, a
+// revert) keeps it with that source, and one with no treatment set keeps the repository's default
+// with source repository, so the measurement's source=~"control|treatment" leaves both out. A live
+// or shadow class no longer excludes a task: the class names no workflow (WF4).
 func TestTreatmentArmFallsBackAndIsLabelled(t *testing.T) {
 	schedule := issueTask("3buqdlot", 0, "fix it")
 	schedule.Spec.Source.Kind = "schedule"
+	revert := issueTask("3buqdlot", 7, "fix it")
+	revert.Spec.PredictedClass = "revert"
 	for name, c := range map[string]struct {
-		task  *v1alpha1.Task
-		class string
+		task         *v1alpha1.Task
+		name, source string
 	}{
-		"a shadow class":          {issueTask("3buqdlot", 7, "fix it"), "docs-links"},
-		"a schedule":              {schedule, "review"},
-		"a class not allowing it": {issueTask("3buqdlot", 7, "fix it"), "tests"},
-		"an unset treatment":      {issueTask("3buqdlot", 7, "fix it"), "review"},
+		"a schedule":         {schedule, "quick", "schedule"},
+		"a revert":           {revert, "quick", "revert"},
+		"an unset treatment": {issueTask("3buqdlot", 7, "fix it"), "review-floor", "repository"},
+		"a shadow class":     {issueTask("3buqdlot", 7, "fix it"), "careful", "treatment"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := treatmentCfg(0)
+			cf.HarnessProfiles["quick"] = config.HarnessProfile{Template: "solo"}
 			if name == "an unset treatment" {
 				cf.Evaluation.Treatment = ""
 			}
-			p := (&Reconciler{}).floorProfile(cf, c.task, triage.Decision{PredictedClass: c.class, Cohort: triage.CohortTreatment})
-			if p == nil || p.Name != "review-floor" || p.Source != "floor" || p.Cohort != triage.CohortTreatment {
-				t.Fatalf("got %+v, want its floor with source floor", p)
+			p := (&Reconciler{}).floorProfile(cf, c.task, triage.Decision{PredictedClass: c.task.Spec.PredictedClass, Cohort: triage.CohortTreatment})
+			if p == nil || p.Name != c.name || p.Source != c.source || p.Cohort != triage.CohortTreatment {
+				t.Fatalf("got %+v, want %s from %s", p, c.name, c.source)
 			}
 		})
+	}
+}
+
+// WF8, comparison 2: the treatment may run fewer roles than the default (quick drops the reviewer):
+// the class no longer holds a floor (WF4), and the gate holds an unreviewed change for a human.
+func TestTreatmentMayDropTheReviewer(t *testing.T) {
+	cf := treatmentCfg(0)
+	cf.HarnessProfiles["quick"] = config.HarnessProfile{Template: "solo"}
+	cf.Evaluation.Treatment = "quick"
+	p := (&Reconciler{}).floorProfile(cf, issueTask("3buqdlot", 7, "fix it"), triage.Decision{PredictedClass: "review", Cohort: triage.CohortTreatment})
+	if p == nil || p.Name != "quick" || p.Source != "treatment" {
+		t.Fatalf("got %+v", p)
+	}
+}
+
+// WF7: the tester runs where the repository opts in and the task runs careful, whatever its class.
+func TestTestFirstFollowsTheRepository(t *testing.T) {
+	cf := treatmentCfg(0)
+	cf.Repositories[0].Workflow.TestFirst = true
+	for name, want := range map[string]bool{"careful": true, "review-floor": false} {
+		d := triage.Decision{PredictedClass: "review", Cohort: triage.CohortLabeled, Pinned: true, Pin: triage.Pin{Name: name}}
+		if p := (&Reconciler{}).floorProfile(cf, issueTask("3buqdlot", 7, "fix it"), d); p == nil || p.TestFirst != want {
+			t.Fatalf("%s: got %+v, want testFirst %v", name, p, want)
+		}
 	}
 }
 

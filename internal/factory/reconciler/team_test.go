@@ -33,7 +33,7 @@ import (
 type staticWith string
 
 func (s staticWith) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (triage.Decision, error) {
-	d, err := triage.Static{}.Triage(ctx, cfg, t)
+	d, err := triage.Static{Template: "solo"}.Triage(ctx, cfg, t)
 	d.Template = string(s)
 	return d, err
 }
@@ -1070,9 +1070,8 @@ func reviewerRefusingRig(t *testing.T, urlOnlyRefused bool) (*rig, *int) {
 	t.Helper()
 	creates := 0
 	g := teamRigFor(t, "pair", issueTask("3buqdlot", 7, "x"), func(g *rig) {
-		repo := g.r.Cfg.Current().Repos()[0]
-		repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {}, "review": {Checks: true}}
-		g.r.Cfg.Current().Repositories = []config.Repository{repo}
+		// The repository's default workflow runs the checks (WF7): a task without one reads it.
+		g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{"standard": {Checks: true}}
 		g.runs.refuse = func(s runs.Spec) error {
 			if s.Role != "reviewer" {
 				return nil

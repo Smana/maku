@@ -94,7 +94,7 @@ merger and every run.
 ## Team evaluation
 
 The factory can offer the scoper approved workflows and record which one each task used. This
-walkthrough adds a floor and a frontier variant to the existing demo. It changes no model or App secret.
+walkthrough adds a default workflow and a frontier one to the existing demo. It changes no model or App secret.
 
 Create `.demo/evaluation.yaml`, replacing the repository, maintainer and App login placeholders and
 keeping the repository's existing values if you changed them. Helm replaces the repository list whole,
@@ -103,9 +103,10 @@ so the overlay must restate the complete entry:
 ```yaml
 maku-factory:
   config:
-    harnessProfiles:
+    workflows:
       review-floor:
         description: Default implement-and-review loop.
+        escalation: {outOfBudget: review-frontier, notConverged: review-frontier}
       review-frontier:
         tier: frontier
         description: For broad or multi-file documentation tasks that need a larger budget.
@@ -116,13 +117,10 @@ maku-factory:
       - name: owner/repo
         maintainers: [owner]
         triggerLabel: factory/ready
+        workflow: {default: review-floor}
         classes:
           docs-links: {shadow: true, allowedFiles: ['^.+\.(md|mdx|adoc|rst)$']}
           revert: {shadow: true, allowedFiles: ['^.+$']}
-          review:
-            harness: review-floor
-            harnessAllowed: [review-frontier]
-            escalation: {outOfBudget: review-frontier, notConverged: review-frontier}
         merge:
           requiredChecks: [ci]
           verifyChecks: [ci]
@@ -163,7 +161,7 @@ Under `mode: apply`, a scoper recommendation of `review-frontier` resolves the t
 with `source: scoper` and `cohort: treatment`. Set `evaluation.mode: observe` in
 `.demo/evaluation.yaml`, upgrade with the same two files, and submit another task. The same
 recommendation now records `recommended: review-frontier` and `reason: observe` while `name` remains
-`review-floor` and `source` remains `floor`.
+`review-floor` and `source` remains `repository`.
 
 Read the recommendation and outcome counters with a temporary port-forward in one shell:
 
