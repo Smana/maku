@@ -122,7 +122,7 @@ func maxLength(want int64) func(apiextensionsv1.JSONSchemaProps) bool {
 	return func(p apiextensionsv1.JSONSchemaProps) bool { return p.MaxLength != nil && *p.MaxLength == want }
 }
 
-// The maku rebrand moves the group (phase 2): the types, every generated CRD and the charts' copies
+// The maku rebrand moves the group (phase 2): the types, every generated CRD and the CRD chart's copies
 // agree on maku.ogenki.io, and no agents.ogenki.io CRD file is left to install by mistake.
 func TestEveryCRDIsUnderTheMakuGroup(t *testing.T) {
 	if GroupVersion.Group != "maku.ogenki.io" {
@@ -130,8 +130,8 @@ func TestEveryCRDIsUnderTheMakuGroup(t *testing.T) {
 	}
 	for _, f := range []string{
 		"../../config/crd/maku.ogenki.io_rooms.yaml", "../../config/crd/maku.ogenki.io_agentruns.yaml",
-		"../../config/crd/maku.ogenki.io_tasks.yaml", "../../charts/maku/crds/maku.ogenki.io_rooms.yaml",
-		"../../charts/maku/crds/maku.ogenki.io_agentruns.yaml", "../../charts/maku-factory/crds/maku.ogenki.io_tasks.yaml",
+		"../../config/crd/maku.ogenki.io_tasks.yaml", "../../charts/agent-factory-crds/files/maku.ogenki.io_rooms.yaml",
+		"../../charts/agent-factory-crds/files/maku.ogenki.io_agentruns.yaml", "../../charts/agent-factory-crds/files/maku.ogenki.io_tasks.yaml",
 	} {
 		raw, err := os.ReadFile(f)
 		if err != nil {
@@ -145,7 +145,7 @@ func TestEveryCRDIsUnderTheMakuGroup(t *testing.T) {
 			t.Errorf("%s: group %q, name %q", f, crd.Spec.Group, crd.Name)
 		}
 	}
-	for _, dir := range []string{"../../config/crd", "../../charts/maku/crds", "../../charts/maku-factory/crds"} {
+	for _, dir := range []string{"../../config/crd", "../../charts/agent-factory-crds/files"} {
 		old, err := filepath.Glob(filepath.Join(dir, "agents.ogenki.io_*.yaml"))
 		if err != nil || len(old) != 0 {
 			t.Errorf("%s still holds %v", dir, old)

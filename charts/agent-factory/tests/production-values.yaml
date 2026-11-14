@@ -1,6 +1,5 @@
 # Test-only values for tests/render.sh (v4 step 6, Task 19): the smallest production render, every
 # seam of maku and maku-factory named and nothing exposed. The images' digests come from the script.
-profile: production
 maku:
   enabled: true
   agentRunPolicies:

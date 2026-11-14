@@ -80,7 +80,9 @@ spec:
       ports: [{port: 443, protocol: TCP}]
 
 ---
-# Source: agent-factory/templates/networkpolicy.yaml
+# Source: agent-factory/templates/postgres.yaml
+# The bundled Postgres's own policy (it was networkPolicies.plain's until v4 step 8): ingress only from
+# the broker and its retention CronJob, on a CNI that enforces NetworkPolicy. Egress is not restricted.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -105,34 +107,6 @@ spec:
               app.kubernetes.io/name: room-broker-retention
       ports:
         - {protocol: TCP, port: 5432}
-
----
-# Source: agent-factory/templates/networkpolicy.yaml
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: agent-factory-api
-  namespace: maku
-  labels:
-    app.kubernetes.io/part-of: agent-factory
-    app.kubernetes.io/managed-by: Helm
-spec:
-  podSelector:
-    matchLabels:
-      app.kubernetes.io/name: agent-factory
-  policyTypes: [Ingress]
-  ingress:
-    - from:
-        - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: room-broker
-      ports:
-        - {protocol: TCP, port: 8082}
-    # The probes (startup, liveness, readiness) and the metrics are on the named port `ops` (9090):
-    # the kubelet and any scraper reach it, so no `from`.
-    - ports:
-        - {protocol: TCP, port: ops}
-    # Port 8080 (intake) is deliberately admitted by no rule: the demo configures no intake.
 
 ---
 # Source: agent-factory/charts/maku/templates/runs-quota.yaml
@@ -205,6 +179,19 @@ metadata:
   name: room-broker
   labels:
     app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+
+---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+# The install's preflight (v4 D24, step 7 R2): a Helm test hook, and a suspended CronJob from which
+# `maku preflight` and Argo CD users create a Job. Both run one pod template (ap.preflightPod).
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
     app.kubernetes.io/part-of: maku
     app.kubernetes.io/version: "0.0.0"
 
@@ -529,6 +516,21 @@ data:
       unsafe: ["unsafe_allow_runc","network_policy_none"]
 
 ---
+# Source: agent-factory/charts/maku/templates/preflight-config.yaml
+# The preflight's checks (v4 D24): the cluster's, against this release's values. maku-run-controller
+# preflight reads it strictly, so the chart and the image move together.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  config.json: "{\"cluster\":{\"crds\":[{\"name\":\"agentruns.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"factories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"mergepolicies.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"repositories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"rooms.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"tasks.maku.ogenki.io\",\"version\":\"v1alpha1\"}],\"minKubernetes\":\"1.30\",\"runtimeClass\":\"\",\"secrets\":[{\"keys\":[\"uri\"],\"name\":\"rooms-broker-dsn\",\"namespace\":\"maku\",\"seam\":\"databaseBroker\"},{\"keys\":[\"uri\"],\"name\":\"rooms-owner-dsn\",\"namespace\":\"maku\",\"seam\":\"databaseOwner\"},{\"keys\":[\"uri\"],\"name\":\"rooms-retention-dsn\",\"namespace\":\"maku\",\"seam\":\"databaseRetention\"},{\"keys\":[\"tls.crt\",\"tls.key\"],\"name\":\"room-broker-tls\",\"namespace\":\"maku\",\"seam\":\"brokerTLS\"},{\"keys\":[\"ca.crt\"],\"name\":\"room-broker-ca\",\"namespace\":\"maku\",\"seam\":\"brokerCA\"}],\"unsafeAllowRunc\":true},\"components\":[{\"name\":\"broker\",\"url\":\"http://room-broker.maku.svc.cluster.local:9090\"},{\"name\":\"run-controller\",\"url\":\"http://run-controller.maku.svc.cluster.local:9090\"},{\"name\":\"factory\",\"url\":\"http://agent-factory:9090\"}],\"timeout\":\"300s\"}"
+
+---
 # Source: agent-factory/charts/maku/templates/run-controller-config.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -783,6 +785,25 @@ rules:
   verbs: [create, patch]
 
 ---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+# A release-unique name (D2): two installs share a cluster.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-maku-af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [apiextensions.k8s.io]
+    resources: [customresourcedefinitions]
+    verbs: [get]
+    resourceNames: ["agentruns.maku.ogenki.io","factories.maku.ogenki.io","mergepolicies.maku.ogenki.io","repositories.maku.ogenki.io","rooms.maku.ogenki.io","tasks.maku.ogenki.io"]
+  - nonResourceURLs: [/version]
+    verbs: [get]
+
+---
 # Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
@@ -852,6 +873,20 @@ subjects:
   - {kind: ServiceAccount, name: room-broker, namespace: maku}
 
 ---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maku-maku-af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: maku-maku-af-preflight}
+subjects:
+  - {kind: ServiceAccount, name: af-preflight, namespace: maku}
+
+---
 # Source: agent-factory/charts/agentgateway/templates/role.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
@@ -911,6 +946,14 @@ rules:
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
+  # The install's preflight (v4 D24): the factory's exposure check reads the namespace's routes, to
+  # refuse one that reaches the broker around oauth2-proxy (F5). Read only.
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes, grpcroutes, tlsroutes]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
@@ -992,6 +1035,23 @@ rules:
   - apiGroups: [maku.ogenki.io]
     resources: [agentruns]
     verbs: [get, list, watch, delete, patch]
+
+---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+# Get by name only: the registry's Secrets the values enable, never a list of every Secret.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [get]
+    resourceNames: ["room-broker-ca","room-broker-tls","rooms-broker-dsn","rooms-owner-dsn","rooms-retention-dsn"]
 
 ---
 # Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
@@ -1145,6 +1205,20 @@ subjects:
   - {kind: ServiceAccount, name: room-broker, namespace: maku}
 
 ---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: af-preflight}
+subjects:
+  - {kind: ServiceAccount, name: af-preflight, namespace: maku}
+
+---
 # Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -1254,6 +1328,23 @@ spec:
     - {name: bridge, port: 8443, targetPort: bridge}
     - {name: metrics, port: 9090, targetPort: ops}
     - {name: room-tools, port: 8090, targetPort: 8090}
+
+---
+# Source: agent-factory/charts/maku/templates/preflight-config.yaml
+# The run-controller's ops port, for the preflight's collector only: /preflight beside /metrics.
+apiVersion: v1
+kind: Service
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector:
+    app.kubernetes.io/name: run-controller
+  ports:
+    - {name: metrics, port: 9090, targetPort: metrics}
 
 ---
 # Source: agent-factory/templates/postgres.yaml
@@ -1434,6 +1525,8 @@ spec:
             - name: POD_NAMESPACE
               valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
             - {name: FACTORY_CONFIG, value: /etc/agent-factory/config/config.yaml}
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
           ports:
             - {name: ops, containerPort: 9090, protocol: TCP}
             - {name: api, containerPort: 8082, protocol: TCP}
@@ -1548,6 +1641,8 @@ spec:
           env:
             - name: ROOMS_CONFIG
               value: /etc/room-broker/config/config.yaml
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
             - name: ROOMS_DATABASE_URL
               valueFrom:
                 secretKeyRef: {name: rooms-broker-dsn, key: uri}
@@ -1632,6 +1727,8 @@ spec:
           env:
             - name: RUN_CONTROLLER_CONFIG
               value: /etc/run-controller/config.yaml
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
             # The gateway-token-ttl preflight binds its TokenRequest to this pod (model.mode gateway).
             - name: POD_NAME
               valueFrom: {fieldRef: {fieldPath: metadata.name}}
@@ -1756,6 +1853,66 @@ spec:
         resources:
           requests:
             storage: 1Gi
+
+---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: af-preflight
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  # Never scheduled: `kubectl create job --from=cronjob/af-preflight` runs it.
+  schedule: "@yearly"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      # Kept a day for `maku preflight` and `kubectl logs` to read, then collected.
+      ttlSecondsAfterFinished: 86400
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: preflight
+            app.kubernetes.io/part-of: maku
+            app.kubernetes.io/version: "0.0.0"
+        spec:
+          serviceAccountName: af-preflight
+          automountServiceAccountToken: true # the API server is its first peer
+          enableServiceLinks: false
+          restartPolicy: Never
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: preflight
+              image: ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000
+              
+              args: [preflight, --config, /etc/maku-preflight/config.json]
+              terminationMessagePolicy: File
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              resources:
+                limits:
+                  cpu: 200m
+                  memory: 128Mi
+                requests:
+                  cpu: 20m
+                  memory: 32Mi
+              volumeMounts:
+                - {name: config, mountPath: /etc/maku-preflight, readOnly: true}
+          volumes:
+            - name: config
+              configMap: {name: af-preflight}
 
 ---
 # Source: agent-factory/charts/maku/templates/retention-cronjob.yaml
@@ -2850,3 +3007,57 @@ spec:
     namespaceSelector:
       matchLabels:
         kubernetes.io/metadata.name: agents
+---
+# Source: agent-factory/charts/maku/templates/preflight.yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: af-preflight-test
+  labels:
+    app.kubernetes.io/name: preflight
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+  annotations:
+    helm.sh/hook: test
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: preflight
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+    spec:
+      serviceAccountName: af-preflight
+      automountServiceAccountToken: true # the API server is its first peer
+      enableServiceLinks: false
+      restartPolicy: Never
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: preflight
+          image: ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000
+          
+          args: [preflight, --config, /etc/maku-preflight/config.json]
+          terminationMessagePolicy: File
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 20m
+              memory: 32Mi
+          volumeMounts:
+            - {name: config, mountPath: /etc/maku-preflight, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: af-preflight}

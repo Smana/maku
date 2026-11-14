@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 (D19, EX2, EX5): one HTTPRoute or Ingress per enabled surface. The web goes to the
 web front door (rooms-web-proxy), never to the broker; the Slack surface is POST /slack/events and
 nothing else. TLS is the gateway's or the Ingress's: no Certificate is rendered here. */ -}}

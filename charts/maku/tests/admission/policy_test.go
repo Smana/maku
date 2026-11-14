@@ -46,7 +46,7 @@ func TestTheBrokerMayChangeOnlyTheSuspendAnnotations(t *testing.T) {
 	}
 	policy := render(t, "templates/broker-agentrun-policy.yaml", 2)
 	ctrl.SetLogger(logr.Discard())
-	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "crds")}, ErrorIfCRDPathMissing: true}
+	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "agent-factory-crds", "files")}, ErrorIfCRDPathMissing: true}
 	cfg, err := e.Start()
 	if err != nil {
 		t.Fatal(err)

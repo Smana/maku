@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-// The umbrella chart's profile: demo renders a factory config; charts/agent-factory/tests/render.sh
+// The umbrella chart's demo (values-demo.yaml) renders a factory config; charts/agent-factory/tests/render.sh
 // writes it to the path in CHART_DEMO_FACTORY_CONFIG and runs this test, so the chart can never
 // drift from the rules Parse enforces. Skipped when the variable is unset.
 func TestRenderedDemoChartConfigParses(t *testing.T) {

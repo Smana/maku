@@ -36,6 +36,12 @@ yq ea '.' "$tmp/gvisor-probe.yaml" >/dev/null || bad "gvisor-probe does not pars
 for m in ca-issuer cnpg-cluster; do cat "$qs/manifests/$m.yaml.tmpl" >"$tmp/$m.yaml"; yq ea '.' "$tmp/$m.yaml" >/dev/null || bad "$m does not parse"; done
 
 # ---- the chart as up.sh installs it ----
+# The maku chart ships no CRD (v4 step 8): up.sh installs agent-factory-crds before it.
+# shellcheck disable=SC2016 # the literal "$CRDS_CHART" is what up.sh must contain
+crds_line=$(grep -n 'helm upgrade --install ap-crds "$CRDS_CHART"' "$qs/up.sh" | cut -d: -f1)
+# shellcheck disable=SC2016 # the literal "$CHART" too
+maku_line=$(grep -n 'helm upgrade --install ap "$CHART"' "$qs/up.sh" | cut -d: -f1)
+[[ -n $crds_line && -n $maku_line && $crds_line -lt $maku_line ]] || bad "up.sh does not install agent-factory-crds before the maku chart"
 dg='v0.0.0@sha256:0000'
 out=$(helm template ap charts/maku -n "$ns" -f "$qvals" --set createRunsNamespace=false \
   --set broker.image.tag="$dg" --set runController.image.tag="$dg" \

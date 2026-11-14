@@ -44,15 +44,16 @@ needs `--kube-version 1.30.0` or later.
 
 ## With the umbrella
 
-The `agent-factory` umbrella's subcharts keep their own `crds/` until rollout step 8. Once this
-chart is installed it alone manages the CRDs, so skip the umbrella's copies: Argo CD
-`skipCrds: true`, or Flux `crds: Skip` on install and upgrade. Plain Helm needs nothing, since it
-never upgrades `crds/` and skips a CRD that exists.
+This chart alone carries the CRDs: the `maku` and `maku-factory` charts have had no `crds/` since
+rollout step 8, under the umbrella or on their own. Install it first, also for `maku` or
+`maku-factory` used alone. Removing their `crds/` deletes no CRD: Helm never deletes what it installed
+from `crds/`. A release before step 8 still carries copies, which a GitOps tool skips once this chart
+is installed: Argo CD `skipCrds: true`, or Flux `crds: Skip` on install and upgrade.
 
 ## Adopting CRDs that already exist
 
-On a cluster where the CRDs came from the `maku` and `maku-factory` subcharts' `crds/` (any existing
-install), Helm refuses this chart: the CRDs exist "and cannot be imported into the current release".
+On a cluster where the CRDs came from the `maku` and `maku-factory` charts' `crds/` (any install from
+before this chart), Helm refuses this chart: the CRDs exist "and cannot be imported into the current release".
 Hand them to the release first, with the release name and namespace you install this chart under
 (here `af-crds` in `maku`):
 

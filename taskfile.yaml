@@ -106,12 +106,8 @@ tasks:
         for f in api/v1alpha1/zz_generated.deepcopy.go api/factory/v1alpha1/zz_generated.deepcopy.go internal/factory/config/zz_generated.deepcopy.go; do
           { printf '// SPDX-License-Identifier: Apache-2.0\n\n'; cat "$f"; } > "$f.tmp" && mv "$f.tmp" "$f"
         done
-      # The factory chart ships the Task CRD: Tasks are runtime objects, never in Git.
-      - cp config/crd/maku.ogenki.io_tasks.yaml config/crd/maku.ogenki.io_factories.yaml config/crd/maku.ogenki.io_repositories.yaml config/crd/maku.ogenki.io_mergepolicies.yaml charts/maku-factory/crds/
-      # The umbrella chart ships the broker's two: Rooms and the AgentRuns it watches.
-      - mkdir -p charts/maku/crds
-      - cp config/crd/maku.ogenki.io_rooms.yaml config/crd/maku.ogenki.io_agentruns.yaml charts/maku/crds/
-      # agent-factory-crds ships all six as templates (every tool upgrades them); files/ is what they render.
+      # agent-factory-crds alone ships the CRDs (v4 step 8: the subcharts have no crds/), all six as
+      # templates (every tool upgrades them); files/ is what they render.
       - mkdir -p charts/agent-factory-crds/files
       - cp config/crd/maku.ogenki.io_*.yaml charts/agent-factory-crds/files/
 

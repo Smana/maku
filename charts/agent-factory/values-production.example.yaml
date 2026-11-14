@@ -1,14 +1,14 @@
 # A production install (v4 EX16; docs/upgrading.md#from-the-demo-to-production): copy it, change every
 # line marked CHANGE, then
 #   helm install af charts/agent-factory -n maku --create-namespace -f values-production.yaml
-# with the agent-factory-crds chart installed first. Never layer it on values-demo.yaml: the render
-# refuses the demo's values. profile production checks the seams of each enabled component and fails
-# once, naming every missing one with its key and its doc. Every credential is a Secret you create
+# with the agent-factory-crds chart installed first. Never layer it on values-demo.yaml: its demoValues
+# admits the demo-only settings and skips the seam checks. The defaults are production (v4 D13): the
+# render checks the seams of each enabled component and fails once, naming every missing one with its
+# key and its doc. Every credential is a Secret you create
 # (docs/install-secrets.md lists their names and keys), or an ExternalSecret (externalSecrets).
 # It runs: Postgres you bring, through three DSN Secrets; the humans on any OIDC issuer (preset
 # generic); plain NetworkPolicies (networkPolicies.mode kubernetes); the web behind your Gateway
 # through the web front door; the model gateway; ServiceMonitors, the PrometheusRule and the dashboards.
-profile: production
 
 maku:
   enabled: true

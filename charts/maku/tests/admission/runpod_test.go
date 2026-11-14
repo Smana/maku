@@ -43,7 +43,7 @@ func startPodEnv(t *testing.T, sets ...string) podEnv {
 	}
 	policy := render(t, "templates/run-pod-policy.yaml", 2, sets...)
 	ctrl.SetLogger(logr.Discard())
-	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "crds")}, ErrorIfCRDPathMissing: true}
+	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "agent-factory-crds", "files")}, ErrorIfCRDPathMissing: true}
 	cfg, err := e.Start()
 	if err != nil {
 		t.Fatal(err)

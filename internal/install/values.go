@@ -116,7 +116,6 @@ func Values(in Inputs) (map[string]any, error) {
 	ns := in.ns()
 	factorySA := "system:serviceaccount:" + ns + ":agent-factory"
 
-	put("profile", "production")
 	// maku: the broker, the run-controller, the runs.
 	put("maku.enabled", true)
 	put("maku.broker.image.tag", in.Pins["maku-broker"])

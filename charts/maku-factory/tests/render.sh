@@ -125,9 +125,9 @@ ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | .metadata.la
 ykind ClusterRole 'select(.metadata.name == "maku-viewer") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch")' "maku-viewer is read-only on the three kinds"
 ykind ClusterRole 'select(.metadata.name == "maku-mergepolicy-editor") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-mergepolicy-editor covers only mergepolicies"
 ykind ClusterRole 'select(.metadata.name == "maku-factory-admin") | ((.rules | length) == 1 and (.rules[0].apiGroups | join(",")) == "maku.ogenki.io" and (.rules[0].resources | join(",")) == "factories,repositories,mergepolicies" and (.rules[0].verbs | join(",")) == "get,list,watch,create,update,patch,delete")' "maku-factory-admin covers the three kinds"
-for crd in factories repositories mergepolicies; do
-  [ -f "crds/maku.ogenki.io_${crd}.yaml" ] || { echo "FAIL: the chart ships the ${crd} CRD" >&2; fail=1; }
-done
+# v4 step 8: the chart ships no CRD, in templates or crds/: agent-factory-crds alone carries them.
+crds="$(helm template agent-factory . --set image.tag='v0.0.0@sha256:0000' --include-crds | yq ea 'select(.kind == "CustomResourceDefinition") | .metadata.name' -)"
+[[ -z $crds && ! -e crds ]] || { echo "FAIL: the chart ships CRDs ($crds): agent-factory-crds alone carries them" >&2; fail=1; }
 # Test-only injection is empty by default, and accepts the same env/volume shapes as the broker.
 ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].env[] | select(.name == "ROOMS_GITHUB_API_URL")' "no GitHub API override by default"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "e2e-ca")' "no extra volume by default"
@@ -287,11 +287,12 @@ out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.
   --set config.api.tokenUse=id --set config.api.rolesClaim=/realm_access/roles --set config.api.humanJWKS=)
 ykind ConfigMap '.data."config.yaml" | from_yaml | .api | (.preset == "generic" and .tokenUse == "id" and .rolesClaim == "/realm_access/roles")' "config.api's identity keys render verbatim"
 ykind Deployment "$(vol oidc).secret.secretName == \"agent-factory-oidc\"" "the generic preset reads the same client ids volume"
-# v4 D24: the exposure check's read of the namespace's routes, granted only with preflight.enabled.
-out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000)
+# v4 D24: the exposure check's read of the namespace's routes, granted only with preflight.enabled,
+# which is on by default since v4 step 8.
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000 --set preflight.enabled=false)
 ynone 'select(.kind == "Role" and .metadata.name == "agent-factory") | .rules[] | select(.resources[0] == "httproutes" or .resources[0] == "ingresses")' "no preflight, no route grant"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[].env[] | select(.name == "MAKU_PREFLIGHT")' "no preflight, no /preflight on the factory's ops port"
-out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000 --set preflight.enabled=true)
+out=$(helm template agent-factory . --namespace agent-system --set image.tag=v0.0.0@sha256:0000)
 ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == null) | (.rules | map(select(.resources[0] == "httproutes" or .resources[0] == "ingresses") | (.resources | join(",")) + "=" + (.verbs | join(","))) | join(" ")) == "httproutes,grpcroutes,tlsroutes=get,list ingresses=get,list"' "preflight.enabled grants get and list on the routes and Ingresses, nothing more"
 ykind Deployment '(.spec.template.spec.containers[0].env | map(select(.name == "MAKU_PREFLIGHT") | .value) | join(",")) == "true"' "preflight.enabled serves /preflight on the factory's ops port"
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)

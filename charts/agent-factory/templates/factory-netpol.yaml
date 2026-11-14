@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- /* v4 step 6 Task 16 (D6; step 2's PR13): default-deny for the factory, in maku.networkPolicies'
 mode. Ingress: its run API (:8082) from the broker, its intake (:8080) from intakeFrom alone (empty:
 closed), its ops port (:9090) from the scraper and the kubelet. Egress: DNS, the apiserver, the broker's

@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- if .Values.postgres.enabled }}
 apiVersion: v1
 kind: ConfigMap
@@ -123,4 +123,31 @@ spec:
         resources:
           requests:
             storage: {{ .Values.postgres.storage }}
+---
+# The bundled Postgres's own policy (it was networkPolicies.plain's until v4 step 8): ingress only from
+# the broker and its retention CronJob, on a CNI that enforces NetworkPolicy. Egress is not restricted.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rooms-db
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+        {{- if .Values.maku.broker.database.retentionSecret }}
+        # The retention CronJob (maku.broker.database.retentionSecret).
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker-retention
+        {{- end }}
+      ports:
+        - {protocol: TCP, port: 5432}
 {{- end }}

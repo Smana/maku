@@ -106,7 +106,7 @@ e2e:
 
 # The install's preflight (v4 D24): enabled serves the factory's checks at GET /preflight on :9090,
 # and grants its Role get and list on the namespace's HTTPRoutes, GRPCRoutes, TLSRoutes and
-# Ingresses, which the exposure check reads. Off, there is no /preflight. Set it with
-# maku.preflight.enabled.
+# Ingresses, which the exposure check reads. Off, there is no /preflight. On by default since v4 step 8,
+# as maku.preflight.enabled, which needs it.
 preflight:
-  enabled: false
+  enabled: true

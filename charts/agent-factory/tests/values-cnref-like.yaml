@@ -4,7 +4,6 @@
 # substitutions. tests/render.sh renders it in namespace agent-system with the images' digests and
 # compares the render with tests/golden/production-cnref-like.yaml. Not a values file to copy:
 # values-production.example.yaml is.
-profile: production
 maku:
   enabled: true
   networkPolicies: {mode: cilium}
