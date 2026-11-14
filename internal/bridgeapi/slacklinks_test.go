@@ -25,7 +25,7 @@ func (l linkTable) SlackLink(_ context.Context, team, user string) (string, bool
 // not permitted, an unlinked user is a 404, a malformed id a 400, a store failure a 503.
 func TestSlackLinkIsTheFactorysToRead(t *testing.T) {
 	s, _, _ := newServer(t)
-	s.SlackLinks, s.SlackLinkReader = linkTable{"T01ABC/U02DEF": "zsub1"}, factory
+	s.SlackLinks, s.LinkReader = linkTable{"T01ABC/U02DEF": "zsub1"}, factory
 	h := s.Routes()
 	rec := call(t, h, http.MethodGet, "/v1/links/slack?team=T01ABC&user=U02DEF", "sys:"+factory, nil)
 	if rec.Code != http.StatusOK || rec.Body.String() != "{\"sub\":\"zsub1\"}\n" {
@@ -49,7 +49,7 @@ func TestSlackLinkIsTheFactorysToRead(t *testing.T) {
 			}
 		})
 	}
-	s.SlackLinkReader = ""
+	s.LinkReader = ""
 	if rec := call(t, s.Routes(), http.MethodGet, "/v1/links/slack?team=T01ABC&user=U02DEF", "sys:"+factory, nil); rec.Code != http.StatusForbidden {
 		t.Fatalf("off: %d", rec.Code)
 	}

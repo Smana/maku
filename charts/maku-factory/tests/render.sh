@@ -46,9 +46,7 @@ check "containerPort: 8082" "the run-request API container port"
 check "name: intake" "the RunLore intake port (FA-8)"
 ykind Deployment "$(vol intake).secret.secretName == \"agent-factory-intake\"" "the intake bearer token Secret (FA-8)"
 ykind Deployment "$(mnt intake).mountPath == \"/etc/agent-factory-intake\"" "the intake token where config.runlore.tokenFile reads it"
-ykind Deployment "$(vol zitadel-reader).secret.secretName == \"agent-factory-zitadel-reader\"" "the ZITADEL reader D4 resolves callers with"
-ykind Deployment "$(vol zitadel-reader).secret.optional == true" "an absent reader refuses human runs, never blocks the pod"
-ykind Deployment "$(mnt zitadel-reader).mountPath == \"/etc/agent-factory-zitadel-reader\"" "the reader where config.api.access.readerFile reads it"
+ykind Deployment "[.spec.template.spec.volumes[] | select(.name == \"zitadel-reader\")] | length == 0" "no ZITADEL reader volume (v4 step 8, D8)"
 ykind Deployment "$(vol sponsored).secret.secretName == \"agent-factory-sponsored\"" "the sponsored principals' client ids and project id (F4)"
 ykind Deployment "$(vol sponsored).secret.optional == true" "an absent Secret refuses sponsored tokens, never blocks the pod"
 ykind Deployment "$(vol sponsored).secret.defaultMode == \"0440\"" "0440, readable through fsGroup"
@@ -239,6 +237,11 @@ refuse 'removed in v4 step 8: set apps.agents.existingSecret' --set runTokens.ap
 refuse 'githubSecret was removed in v4 step 8: set apps.factory.existingSecret' --skip-schema-validation --set githubSecret=x
 refuse 'mergerSecret was removed in v4 step 8: set apps.merger.existingSecret' --skip-schema-validation --set mergerSecret=x
 refuse 'runTokens.appSecret was removed in v4 step 8: set apps.agents.existingSecret' --skip-schema-validation --set runTokens.appSecret=x
+# v4 step 8 (D8): the ZITADEL reader is refused by name, by the schema and, with it skipped, by the
+# template; so is its config key.
+refuse 'removed in v4 step 8: set config.api.access.links: broker' --set zitadelReaderSecret=x
+refuse 'zitadelReaderSecret was removed in v4 step 8 (D8): set config.api.access.links: broker' --skip-schema-validation --set zitadelReaderSecret=x
+refuse 'config.api.access.readerFile was removed in v4 step 8 (D8): set config.api.access.links: broker' --set config.api.access.readerFile=/r
 # v4 step 8 (D5, D10, R3): the XR run kind and octo-sts are refused by name, by the schema and, with
 # it skipped, by the template.
 refuse "at '/hardening/publisher'" --set hardening.publisher.audience=octo-sts.dev

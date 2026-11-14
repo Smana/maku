@@ -46,7 +46,8 @@ func TestUpgradeWithZITADELTokens(t *testing.T) {
 	v := authn.NewVerifierWithKeyfunc(issuer, func(*jwt.Token) (any, error) { return &key.PublicKey, nil })
 	constant := func(s string) func() string { return func() string { return s } }
 	e := setup(t, func(s *Server, _ *fanout.Hub, _ *hubView) {
-		s.Humans = authn.NewHumans(v, constant(project), constant(web), constant(""), origin)
+		s.Humans = authn.NewHumansWith(v, authn.HumanOptions{TokenUse: authn.TokenUseAccess, ZITADEL: true,
+			Audience: constant(project), Web: constant(web), CLI: constant(""), Origin: origin})
 		s.WebClient = constant(web)
 	})
 	session := func(og string) http.Header {

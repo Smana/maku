@@ -70,13 +70,6 @@ type Humans struct {
 	refused  func(ctx context.Context, reason string)
 }
 
-// NewHumans authenticates the humans of one ZITADEL project: the zitadel preset, token use access.
-// The id functions are called on every request; an unreadable id returns "", which refuses.
-func NewHumans(v *Verifier, projectID, webClientID, roomctlClientID func() string, origin string) *Humans {
-	return NewHumansWith(v, HumanOptions{TokenUse: TokenUseAccess, ZITADEL: true, Audience: projectID,
-		Web: webClientID, CLI: roomctlClientID, Origin: origin})
-}
-
 // NewHumansWith authenticates the humans of one OIDC issuer, by o's token use and rules.
 func NewHumansWith(v *Verifier, o HumanOptions) *Humans {
 	none := func() string { return "" }

@@ -642,7 +642,7 @@
     "member": "agents-member"
    },
    "access": {
-    "readerFile": "/etc/agent-factory-zitadel-reader/reader.json",
+    "links": "broker",
     "ttl": "5m0s"
    }
   },

@@ -420,7 +420,6 @@ data:
     factoryInsecure: true
     human:
       access:
-        readerFile: /etc/room-broker/zitadel-reader/reader.json
         ttl: 5m
       clientIDFile: /etc/room-broker/oidc/web-client-id
       dashboards:
@@ -428,6 +427,10 @@ data:
         url: https://grafana.priv.example.test/d/agent-room/agent-room?var-room={room}
       - label: Run
         url: https://grafana.priv.example.test/d/agent-run/agent-run?var-run={run}
+      githubLink:
+        activeWindow: 168h
+        clientIDFile: /etc/room-broker/github-link/client_id
+        clientSecretFile: /etc/room-broker/github-link/client_secret
       groups:
         admin: agents-admin
         member: agents-member
@@ -556,7 +559,7 @@ metadata:
     app.kubernetes.io/part-of: maku
     app.kubernetes.io/version: "0.0.0"
 data:
-  config.json: "{\"cluster\":{\"crds\":[{\"name\":\"agentruns.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"factories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"mergepolicies.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"repositories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"rooms.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"tasks.maku.ogenki.io\",\"version\":\"v1alpha1\"}],\"minKubernetes\":\"1.30\",\"runtimeClass\":\"gvisor\",\"secrets\":[{\"keys\":[\"uri\"],\"name\":\"rooms-broker-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseBroker\"},{\"keys\":[\"uri\"],\"name\":\"rooms-owner-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseOwner\"},{\"keys\":[\"uri\"],\"name\":\"rooms-retention-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseRetention\"},{\"keys\":[\"web-client-id\"],\"name\":\"room-broker-oidc\",\"namespace\":\"agent-system\",\"seam\":\"brokerOIDC\"},{\"keys\":[\"tls.crt\",\"tls.key\"],\"name\":\"room-broker-tls\",\"namespace\":\"agent-system\",\"seam\":\"brokerTLS\"},{\"keys\":[\"ca.crt\"],\"name\":\"room-broker-ca\",\"namespace\":\"agent-system\",\"seam\":\"brokerCA\"}],\"unsafeAllowRunc\":false},\"components\":[{\"name\":\"broker\",\"url\":\"http://room-broker.agent-system.svc.cluster.local:9090\"},{\"name\":\"run-controller\",\"url\":\"http://run-controller.agent-system.svc.cluster.local:9090\"},{\"name\":\"factory\",\"url\":\"http://agent-factory.agent-system.svc.cluster.local:9090\"}],\"timeout\":\"300s\"}"
+  config.json: "{\"cluster\":{\"crds\":[{\"name\":\"agentruns.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"factories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"mergepolicies.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"repositories.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"rooms.maku.ogenki.io\",\"version\":\"v1alpha1\"},{\"name\":\"tasks.maku.ogenki.io\",\"version\":\"v1alpha1\"}],\"minKubernetes\":\"1.30\",\"runtimeClass\":\"gvisor\",\"secrets\":[{\"keys\":[\"uri\"],\"name\":\"rooms-broker-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseBroker\"},{\"keys\":[\"uri\"],\"name\":\"rooms-owner-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseOwner\"},{\"keys\":[\"uri\"],\"name\":\"rooms-retention-dsn\",\"namespace\":\"agent-system\",\"seam\":\"databaseRetention\"},{\"keys\":[\"web-client-id\"],\"name\":\"room-broker-oidc\",\"namespace\":\"agent-system\",\"seam\":\"brokerOIDC\"},{\"keys\":[\"client_id\",\"client_secret\"],\"name\":\"room-broker-github-link\",\"namespace\":\"agent-system\",\"seam\":\"githubLink\"},{\"keys\":[\"tls.crt\",\"tls.key\"],\"name\":\"room-broker-tls\",\"namespace\":\"agent-system\",\"seam\":\"brokerTLS\"},{\"keys\":[\"ca.crt\"],\"name\":\"room-broker-ca\",\"namespace\":\"agent-system\",\"seam\":\"brokerCA\"}],\"unsafeAllowRunc\":false},\"components\":[{\"name\":\"broker\",\"url\":\"http://room-broker.agent-system.svc.cluster.local:9090\"},{\"name\":\"run-controller\",\"url\":\"http://run-controller.agent-system.svc.cluster.local:9090\"},{\"name\":\"factory\",\"url\":\"http://agent-factory.agent-system.svc.cluster.local:9090\"}],\"timeout\":\"300s\"}"
 ---
 # Source: agent-factory/charts/maku/templates/run-controller-config.yaml
 apiVersion: v1
@@ -952,7 +955,7 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get]
-    resourceNames: ["room-broker-ca", "room-broker-oidc", "room-broker-tls", "rooms-broker-dsn", "rooms-owner-dsn", "rooms-retention-dsn"]
+    resourceNames: ["room-broker-ca", "room-broker-github-link", "room-broker-oidc", "room-broker-tls", "rooms-broker-dsn", "rooms-owner-dsn", "rooms-retention-dsn"]
 ---
 # Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
 # Everything in the runs namespace. A run's pod, ServiceAccount, ConfigMaps and CNP are created
@@ -1335,7 +1338,6 @@ spec:
             - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
             - {name: oidc, mountPath: /etc/agent-factory-oidc, readOnly: true}
             - {name: intake, mountPath: /etc/agent-factory-intake, readOnly: true}
-            - {name: zitadel-reader, mountPath: /etc/agent-factory-zitadel-reader, readOnly: true}
             - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
       volumes:
         - name: config
@@ -1363,10 +1365,6 @@ spec:
           # render test refuses it (review C1). Group bit plus fsGroup, as the App keys.
           # optional: without the token the intake refuses every request (503), never runs open (#57).
           secret: {secretName: agent-factory-intake, defaultMode: 0440, optional: true}
-        - name: zitadel-reader
-          # optional: without it the run-request API cannot resolve a caller's GitHub login, and
-          # refuses every human run (v2 D4); 0440 with fsGroup, as the other secrets.
-          secret: {secretName: agent-factory-zitadel-reader, defaultMode: 0440, optional: true}
         - name: sponsored
           # optional: without it no sponsored client id or project id reads, and every sponsored
           # token is refused; 0440 with fsGroup, as the other secrets.
@@ -1394,7 +1392,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: 536fbccffb62151e94a1772f1b5c7bec070abc6726d07390893acbcb1963f2f7
+        checksum/config: 7fd4a7047b6d941c186e2c273d99d0e44483d5cb317e4b9d36c37a363fbd21c7
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker
@@ -1469,6 +1467,7 @@ spec:
             - {name: config, mountPath: /etc/room-broker/config, readOnly: true}
             - {name: tls, mountPath: /etc/room-broker/tls, readOnly: true}
             - {name: tmp, mountPath: /tmp}
+            - {name: github-link, mountPath: /etc/room-broker/github-link, readOnly: true}
             - {name: oidc, mountPath: /etc/room-broker/oidc, readOnly: true}
             - {name: model-gateway, mountPath: /var/run/secrets/maku/model-gateway, readOnly: true}
             - {name: webhook-slack-app, mountPath: /etc/room-broker/webhooks/slack-app, readOnly: true}
@@ -1480,6 +1479,9 @@ spec:
           secret: {secretName: room-broker-tls}
         - name: tmp
           emptyDir: {}
+        # The GitHub account link's OAuth client (v4 D8), read at use: a rotated Secret needs no restart.
+        - name: github-link
+          secret: {secretName: room-broker-github-link, defaultMode: 0440}
         # The OIDC client ids (v4 D8), read at use: a rotated Secret needs no restart.
         - name: oidc
           secret: {secretName: room-broker-oidc, defaultMode: 0440}
@@ -1702,6 +1704,7 @@ spec:
             - "--reverse-proxy=false"
             - "--set-xauthrequest=false"
             - "--skip-auth-route=GET=^/\\.well-known/roomctl$"
+            - "--skip-auth-route=GET=^/link/github/callback$"
             - "--skip-auth-strip-headers=true"
             - "--skip-jwt-bearer-tokens=true"
             - "--skip-provider-button=true"
@@ -3155,6 +3158,13 @@ spec:
             gateway.networking.k8s.io/gateway-name: model-gateway
       toPorts:
         - ports: [{port: "8082", protocol: TCP}]
+    # The GitHub account link (v4 D8): the code exchange on GitHub's site, GET /user and the token's
+    # revocation on its API.
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
     # broker.webhooks (EX9): a cluster subscriber, its URL's port on its pods only.
     - toEndpoints:
         - matchLabels:

@@ -28,6 +28,7 @@ maku:
     policyManagement: {promotion: true, operators: [Smana]}
     suspend: {enabled: true, after: 5m}
     oidc: {existingSecret: room-broker-oidc}
+    githubLink: {existingSecret: room-broker-github-link}
     webProxy: true
     database:
       brokerSecret: rooms-broker-dsn
@@ -47,7 +48,6 @@ maku:
         - {label: Room metrics, url: "https://grafana.priv.example.test/d/agent-room/agent-room?var-room={room}"}
         - {label: Run, url: "https://grafana.priv.example.test/d/agent-run/agent-run?var-run={run}"}
       access:
-        readerFile: /etc/room-broker/zitadel-reader/reader.json
         ttl: 5m
       intake:
         plan:

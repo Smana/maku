@@ -326,7 +326,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	}
 	if l := cfg.Human.SlackLink; l != nil { // the self-serve link: the App mints, a human confirms, the factory reads
 		humans.SlackLink = &humanapi.SlackLinker{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID, Repository: l.Repository}
-		api.SlackLinks, api.SlackLinkReader = st, fconfig.PrincipalFactory
+		api.SlackLinks, api.LinkReader = st, fconfig.PrincipalFactory
 	}
 	if l := cfg.Human.GitHubLink; l != nil { // the GitHub account link (v4 D8): a human links, the factory reads
 		if humans.GitHubLink, err = githubLinker(l, st, humans.Identity); err != nil {

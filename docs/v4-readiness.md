@@ -22,7 +22,7 @@ kubeadm installs, the Slack retest, RunLore's live `kb_search`, the screencasts)
 ```mermaid
 flowchart LR
   s17["steps 1–7, step 8 B to E, G to J:<br/>v0.48.0 and v0.49.0"] --> dry["kubeadm dry run on v0.48.0<br/>(step 7 R8)"]
-  s8["step 8 F (#581)"] --> S8["S8, the next minor"]
+  s8["step 8 F (#581): merged"] --> S8["S8, the next minor"]
   S8 --> live["GKE and kubeadm<br/>recorded installs"]
   gcp["gcp-0 rebuilt"] --> live
   specs["five further specs<br/>(week of 2026-11-16)"] --> go
@@ -43,12 +43,12 @@ Each step's plan lists its pull requests; each step ships in a v0.4x minor.
 | 5, identity and data | [step 5](superpowers/plans/2026-11-12-v4-step-5-identity-data-plan.md) | A [#524], B [#530], C [#536] (its k3d proof [#543]), D [#521], E [#544] |
 | 6, exposure, components, observability | [step 6](superpowers/plans/2026-11-13-v4-step-6-exposure-components-observability-plan.md) | A [#526], B [#523], B2 [#529], C [#534], D [#545], E [#556], F [#527], G [#564] |
 | 7, install UX and proof | [step 7](superpowers/plans/2026-11-13-v4-step-7-install-ux-proof-plan.md) | A [#547], B [#555], C [#567], D [#540], E1 [#537], E2 [#565], F [#570], G [#573], H [#566], I [#572] (this page), R10 [#569], the wizard's render fix [#568] |
-| 8, clean-up | [step 8](superpowers/plans/2026-11-13-v4-step-8-cleanup-plan.md) | B [#574], C [#576], D [#578], E [#559], G [#577], H [#571] (private code) and [#579] (the ledger), I [#558], J [#580] (the migration note, the values contract). Open: F [#581] (the ZITADEL reader) |
+| 8, clean-up | [step 8](superpowers/plans/2026-11-13-v4-step-8-cleanup-plan.md) | B [#574], C [#576], D [#578], E [#559], G [#577], H [#571] (private code) and [#579] (the ledger), I [#558], J [#580] (the migration note, the values contract), F [#581] (the ZITADEL reader) |
 | Reusable merge policies (gates step 8 PR D) | — | A to K, the last [#563] |
 
 v0.47.0 carries steps 1 to 5, step 6 A to D and F, and step 7 A, D and E1. v0.48.0 adds the rest of
 steps 6 and 7, reusable merge policies K, and step 8 B, E, I and H's private-code half. v0.49.0 adds
-step 8 C, D, G, H's ledger half and J. PR F ships in the next minor, which completes step 8: the S8
+step 8 C, D, G, H's ledger half and J. PR F, merged in [#581], ships in the next minor, which completes step 8: the S8
 minor.
 
 ## The decisions and their evidence
@@ -62,7 +62,7 @@ minor.
 | D5 | The run-controller is the run path | [#490] | the k3d legs of `demo-e2e.yaml` | none: step 8 PR C is [#576]; ANR R3 is [ANR #376], live on gcp-0 on 2026-11-14 |
 | D6 | NetworkPolicy plus an egress proxy | [#492], [#556] (component egress) | the `k3d (kubernetes)` leg; the `run-path` preflight check ([network modes](security.md#the-run-paths-network-modes)) | none: step 8 PR B is [#574], `kind-calico` is [#570] |
 | D7 | agentgateway only | [#506], [#512], [#511], [#518], [#559] | the `k3d (gateway)` leg; the nightly USD proof [#542] ([model gateway](gateway.md)) | the Envoy AI gateway's deletion (open item 21); ANR R2 is [ANR #372], the planner moved in [ANR #387] |
-| D8 | Any OIDC issuer, a one-time GitHub link | [#524], [#530], [#536] | [#543] on k3d ([identity](identity.md), [GitHub link](github-link.md)) | step 8 PR F ([#581]); ANR removed its reader in [ANR #391], v3.25.0 |
+| D8 | Any OIDC issuer, a one-time GitHub link | [#524], [#530], [#536] | [#543] on k3d ([identity](identity.md), [GitHub link](github-link.md)) | none: step 8 PR F is [#581], in the next minor; ANR removed its reader in [ANR #391], v3.25.0 |
 | D9 | Bring your own Postgres 16 | [#521] | the `k3d (external-db)` leg ([the database](database.md)); ANR R1 on gcp-0, 2026-11-14: `maku_rooms_schema_unverified` 0 on both broker pods | none: step 8 PR H's ledger half is [#579] (step 8 R10) |
 | D10 | Per-run minted tokens | [#496], [#504], [#509] | [per-run tokens](upgrading.md#per-run-tokens-v04x-v4-rollout-step-3) | none: step 8 PR D (the shared token) is [#578], PR C (octo-sts, step 8 R3) is [#576] |
 | D11 | `maku/merge-gate` is the merge gate | [#500] | [branch protection](factory.md#branch-protection-for-the-merge-gate) | ANR retiring policy-bot; step 8 PR D (the defaults) is [#578] |
@@ -79,7 +79,7 @@ minor.
 | D22 | ANR shrinks to values and proofs | — | — | [the ANR checklist](#the-anr-shrink-checklist-d22) |
 | D23 | The proof of "any Kubernetes" | the real-model nightly in `demo-e2e.yaml` | that nightly, green on 2026-11-11, 12 and 13 ([run](https://github.com/Smana/maku/actions/runs/43412992897)) | the recorded GKE and kubeadm installs, after gcp-0's rebuild; step 7 F is [#570], G is [#573] |
 | D24 | A wizard that writes, never applies; the preflight | [#547], [#555], [#567], [#537], [#565], [#566], [#568] | [`maku install --print`](install.md#write-the-install-maku-install---print), [the preflight](install.md#check-it-the-preflight) | none: `preflight.enabled` is on by default since step 8 PR G ([#577]) |
-| D25 | Additive, then one seam at a time | v0.46.0, v0.47.0, v0.48.0, v0.49.0 | [upgrading](upgrading.md), one section per step | S8, the next minor (step 8 PR F); step 7's minor is v0.48.0 |
+| D25 | Additive, then one seam at a time | v0.46.0, v0.47.0, v0.48.0, v0.49.0 | [upgrading](upgrading.md), one section per step | S8, the next minor (it ships step 8 PR F, [#581]); step 7's minor is v0.48.0 |
 | D26 | The support floor | [#484] (`kubeVersion`), [#547] (`kubernetes` check) | [the support floor](install.md#the-support-floor) | Kubernetes 1.30, Flux 2.4 and Argo CD 2.12 on the nightly (step 7 PR G, [#573]; step 7 R6 and R7) |
 
 ## Open items
@@ -96,10 +96,10 @@ live check; **owner** is the owner's own run, release or ruling.
 | 5 | Step 8 PR B: `networkPolicies.enabled`, the old sandbox keys, `queueName` | Maku | **done** | [#574] |
 | 6 | Step 8 PR C: the XR run kind, octo-sts | Maku | **done** | [#576] |
 | 7 | Step 8 PR D: the shared token, the old Secret keys, the merge defaults | Maku | **done** | [#578] |
-| 8 | Step 8 PR F: the ZITADEL reader | Maku | its merge (16 is done) | [#581]; its rows in [the migration note](upgrading.md#the-clean-up-v04x-v4-rollout-step-8) read "pending PR F" |
+| 8 | Step 8 PR F: the ZITADEL reader | Maku | **done** | [#581], in the next minor; row 14 of [the migration note](upgrading.md#the-zitadel-reader) |
 | 9 | Step 8 PR G: `profile`, `networkPolicies.plain`, the subcharts' `crds/`, `preflight.enabled: true` | Maku | **done** | [#577] |
 | 10 | Step 8 PR H's ledger half: an unreadable ledger refused (step 8 R10) | Maku | **done** | [#579] ([#571] is the private-code half) |
-| 11 | Step 8 PR J, then the S8 minor: the migration note, the schema-diff report (report-only, step 8 R8), this page's step 8 rows | Maku | J **done**; the S8 minor: 8 | J is [#580], released in v0.49.0; [its report](upgrading.md#the-values-contract) against v0.48.0 |
+| 11 | Step 8 PR J, then the S8 minor: the migration note, the schema-diff report (report-only, step 8 R8), this page's step 8 rows | Maku | J **done**; the S8 minor: the next release | J is [#580], released in v0.49.0; [its report](upgrading.md#the-values-contract) against v0.48.0 |
 | 12 | ANR R1: the broker from the `maku` chart; `maku_rooms_schema_unverified` to 0 | ANR | **done** | [ANR #375], ANR v3.16.0. gcp-0, 2026-11-14: the `room-broker` claim deleted; the HelmRelease installed from maku 0.47.0, one helm revision; `migrate` logged `adopted 18 revisions from the Atlas operator`; the gauge 0 on both pods; the lease held by the new pod; the new CronJob's retention job completed; rooms listed through MCP |
 | 13 | ANR R3: runs off the XR (`runs.group: maku.ogenki.io`, the run-controller); Kueue and the Kyverno duplicates deleted | ANR | the Kyverno duplicates (`security/base/agent-policies/validatingpolicies.yaml` present) | [ANR #376], ANR v3.19.0: on gcp-0, 2026-11-14, issue [ANR #377] ran triager, implementer and reviewer to `Succeeded` on gVisor, and `ogenki-agents[bot]` opened [ANR #383] with a per-run token. Kueue deleted: [ANR #384], v3.20.0 |
 | 14 | ANR: the factory off octo-sts, policy-bot retired per repository, the merger folded (step 3 follow-ups 1 to 4) | ANR | policy-bot's retirement and the merger | octo-sts deleted: [ANR #385], v3.21.0. `tooling/base/policy-bot` present; `mergeDefaults` still `gateStatus: false`, `policyBot: true` |
@@ -131,7 +131,7 @@ holds the checklist; each line here is its row, read against ANR `ca4b24b`.
 | 2 | Off the XR; Kueue and the Kyverno duplicates deleted | runs on the run-controller ([ANR #376]); Kueue deleted ([ANR #384]); `security/base/agent-policies/validatingpolicies.yaml` present |
 | 3 | Off octo-sts; policy-bot retired; the gate required | octo-sts deleted ([ANR #385]); `tooling/base/policy-bot` present |
 | 4 | The planner on agentgateway; the Envoy AI gateway deleted | the model gateway ([ANR #372]) and the planner on it ([ANR #387]); `infrastructure/base/envoy-ai-gateway` and `llm-gateway` present |
-| 5 | ZITADEL, CNPG and OpenBao behind the seams; the reader PAT gone | the broker on CNPG's DSN Secrets ([ANR #375]); the reader removed ([ANR #391]) |
+| 5 | ZITADEL, CNPG and OpenBao behind the seams; the reader PAT gone | the broker on CNPG's DSN Secrets ([ANR #375]); the reader removed ([ANR #391]), and Maku's reader code with it ([#581]) |
 | 6 | Routes, the Slack subchart, the chart's rules; the duplicated manifests deleted | `tooling/base/agent-factory/slack-app` and both `vmrule-*.yaml` present; the broker's manifests replaced by a HelmRelease ([ANR #375]) |
 | 7 | The GKE install on gcp-0 before any v4 announcement | [GKE](#gke-step-7-r9) |
 

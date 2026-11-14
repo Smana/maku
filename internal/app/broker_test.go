@@ -23,7 +23,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 
-	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/config"
 	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
@@ -619,7 +618,7 @@ func TestHumanServer(t *testing.T) {
 	cfg := config.Config{PublicURL: "https://rooms.example.test", Human: config.HumanConfig{Issuer: humanIssuer,
 		ClientIDFile: clientFile, RoomctlClientIDFile: roomctlFile, ProjectIDFile: projectFile, Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"},
 		Dashboards: []config.DashboardConfig{{Label: "Room", URL: "https://grafana.example.com/d/r?var-room={room}"}}}}
-	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	humans := zitadelHumans("https://rooms.example.test")
 	m, err := metrics.New(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -764,8 +763,8 @@ func plannerConfig() config.Config {
 		Issuer: humanIssuer, Groups: config.GroupsConfig{Admin: "agents-admin", Member: "agents-member"},
 		RoomctlClientIDFile: "/etc/room-broker/maku/client-id",
 		MCP:                 config.MCPConfig{Enabled: true},
-		Access: &config.AccessConfig{ReaderFile: "/etc/room-broker/zitadel/reader.json",
-			TTL: config.Duration{Duration: 90 * time.Second}},
+		Access:              &config.AccessConfig{TTL: config.Duration{Duration: 90 * time.Second}},
+		GitHubLink:          &config.GitHubLinkConfig{ActiveWindow: config.Duration{Duration: 168 * time.Hour}},
 		Intake: config.IntakeConfig{Plan: config.PlanConfig{
 			Enabled: true, URL: "http://model-gateway.maku.svc:8082/clients/planner/v1",
 			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, MaxRounds: 4, Fallback: "composer",
@@ -787,7 +786,7 @@ func buildHumans(t *testing.T, cfg config.Config, vis gitHubVisibilities) (*huma
 	}
 	_, m := newMetrics(t)
 	log := slog.New(slog.DiscardHandler)
-	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	humans := zitadelHumans("https://rooms.example.test")
 	return humanSide(cfg, humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{}, red,
 		fanout.New(fakeRoomLog{}, nil, log), fakeRuns{}, &fakeGitHubUsers{}, vis, func(manager.Runnable) error { return nil }, m, log)
 }
@@ -929,7 +928,7 @@ func TestIntakeRefusesToStartHalfWired(t *testing.T) {
 	}
 	_, m := newMetrics(t)
 	log := slog.New(slog.DiscardHandler)
-	humans := authn.NewHumans(authn.NewVerifierWithKeyfunc(humanIssuer, nil), idFile(""), idFile(""), idFile(""), "https://rooms.example.test")
+	humans := zitadelHumans("https://rooms.example.test")
 	// humanServer is where the parts meet: an actor with no redactor is the one part no config can
 	// supply, and every plan_check would run it.
 	if _, err := humanServer(plannerConfig(), humans, fake.NewClientBuilder().Build(), "agent-system", &fakeActLog{},

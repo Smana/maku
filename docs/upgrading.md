@@ -152,14 +152,13 @@ or by a render `fail` that names its replacement, never silently ignored.
 This section is the migration note from any v0.4x release to the v4.0 candidate. Each path step 8
 removes or flips is one row below: what replaces it, the release that ships the change, and the
 subsection with the details. Rows 1 to 3, 11 to 13, 19 and 21 to 23 shipped in v0.48.0; the others
-ship in the release after it. Row 14 is pending PR F: until that ships, the ZITADEL reader still
-works, and the move to the GitHub link is the same either way.
+ship in the release after it, except row 14, which ships in the release after v0.49.0.
 
 ```mermaid
 flowchart LR
   v047["v0.47.0 or older"] --> v048["v0.48.0<br/>rows 1–3, 11–13, 19, 21–23"]
   v048 --> s8["the next v0.4x<br/>rows 4–10, 15–18, 20"]
-  s8 --> f["PR F's release<br/>row 14"]
+  s8 --> f["after v0.49.0<br/>row 14"]
   f --> v4["the v4.0 candidate"]
 ```
 
@@ -178,7 +177,7 @@ flowchart LR
 | 11 | `model.mode: secret` as the default (`maku`) | `model.mode: gateway`; `secret` is demo-only | v0.48.0 | [the gateway is the model path](#the-gateway-is-the-model-path) |
 | 12 | The Envoy AI gateway's `meter.logsURL` in the docs | `meter.throttle.promQuery` | v0.48.0 | [runs through the model gateway](#runs-through-the-model-gateway-v04x-v4-rollout-step-4) |
 | 13 | `values-demo-gateway.yaml` | `values-demo.yaml` | v0.48.0 | [the demo's model gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7) |
-| 14 | The ZITADEL reader: `human.access.readerFile`, `api.access.readerFile`, `zitadelReaderSecret` | the GitHub account link | pending PR F | [the GitHub account link](#the-github-account-link-v04x-v4-rollout-step-5) |
+| 14 | The ZITADEL reader: `human.access.readerFile`, `api.access.readerFile`, `zitadelReaderSecret` (`maku-factory`) | the GitHub account link: `human.githubLink`, `api.access.links: broker` | after v0.49.0 | [the ZITADEL reader](#the-zitadel-reader) |
 | 15 | `profile` (umbrella) | `demoValues: true`, which `values-demo.yaml` sets | after v0.48.0 | [the chart contract](#the-chart-contract) |
 | 16 | `networkPolicies.plain` (umbrella) | each component's own default-deny policies | after v0.48.0 | [the chart contract](#the-chart-contract) |
 | 17 | The `crds/` of `maku` and `maku-factory` | `agent-factory-crds` alone | after v0.48.0 | [the chart contract](#the-chart-contract) |
@@ -204,7 +203,7 @@ Before you upgrade, check that nothing still uses a removed path:
    ```
 
 2. **The configs.** The broker, the factory and the run-controller decode their configs strictly and
-   refuse a removed key at start (rows 4, 5, 9 and 21). Upgrade each chart with its images.
+   refuse a removed key at start (rows 4, 5, 9, 14 and 21). Upgrade each chart with its images.
 3. **The runtime paths,** each to print nothing or 0:
 
    ```bash
@@ -337,6 +336,29 @@ The defaults move with it:
   `.github/chainguard/*.sts.yaml` are no longer read and can be deleted.
 - **`human_edit`** (the tracer's exemption for a maintainer's edit of an applied output) now
   applies under `runTokens.perRun`, where a run's own edit is the agents App's.
+
+### The ZITADEL reader
+
+The GitHub account link is the only identity source (D8). The reader that read ZITADEL's GitHub IdP
+links with a PAT, kept beside the link since step 5, is removed:
+
+| Removed | Set instead |
+|---|---|
+| `human.access.readerFile` (broker config) | `human.githubLink` (`maku.broker.githubLink.existingSecret`); `human.access` now needs it |
+| `api.access.readerFile` (factory config) | `api.access.links: broker`, now the only value `api.access` accepts |
+| `zitadelReaderSecret` (`maku-factory`) and its mount at `/etc/agent-factory-zitadel-reader` | nothing: the factory reads the links from the broker |
+
+Each `readerFile` is refused at start, naming its replacement. The schema refuses
+`zitadelReaderSecret`, and so does the template under `--skip-schema-validation`. A human with no
+link now has no GitHub login, with no fallback: they see no room (`X-Rooms-Access: unlinked`),
+`issue_draft` answers `not_linked`, and the factory refuses their runs (`repository_permission`).
+The reader's other job, refusing at once a user deactivated in ZITADEL, is gone too: a link is active
+while its human signed in within `human.githubLink.activeWindow` (default `168h`).
+
+Before you upgrade, move every active human onto the link
+([the GitHub account link](#the-github-account-link-v04x-v4-rollout-step-5) and
+[its page](github-link.md)), then remove both `readerFile`s, `zitadelReaderSecret` and the reader's
+Secret. Delete the reader's machine user in ZITADEL afterwards: nothing reads its PAT.
 
 ### The chart contract
 
