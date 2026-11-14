@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -21,6 +22,13 @@ import (
 
 // componentTimeout bounds one component's /preflight: its own checks run within 30 s (IN3).
 const componentTimeout = 35 * time.Second
+
+// collectAttempts and collectWait retry a refused connection: kube-router, for one, admits a new
+// pod only once it has programmed the pod's address into the policies, a few seconds after start.
+// Only a dial error is retried, never an answer.
+const collectAttempts = 6
+
+var collectWait = 2 * time.Second
 
 // Duration is a JSON duration string ("30s").
 type Duration struct{ time.Duration }
@@ -137,6 +145,12 @@ func Run(ctx context.Context, d Deps, cfg RunConfig, out io.Writer, term string,
 	return r.Exit(strict)
 }
 
+// dialRefused is a connection the network refused or dropped before any byte of an answer.
+func dialRefused(err error) bool {
+	var op *net.OpError
+	return err != nil && errors.As(err, &op) && op.Op == "dial"
+}
+
 // collect reads one component's /preflight. An image without it answers 404: component_too_old.
 func collect(ctx context.Context, hc *http.Client, comp ComponentRef) []Result {
 	check := representative[comp.Name]
@@ -154,6 +168,16 @@ func collect(ctx context.Context, hc *http.Client, comp ComponentRef) []Result {
 	}
 	start := time.Now()
 	resp, err := hc.Do(req)
+	for i := 1; i < collectAttempts && dialRefused(err); i++ {
+		select {
+		case <-ctx.Done():
+		case <-time.After(collectWait):
+			start = time.Now()
+			resp, err = hc.Do(req.Clone(ctx))
+			continue
+		}
+		break
+	}
 	if err != nil {
 		if errors.Is(err, context.DeadlineExceeded) {
 			return failed(Undecided, comp.Name+" did not answer /preflight in time")
