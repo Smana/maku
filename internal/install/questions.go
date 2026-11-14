@@ -263,7 +263,17 @@ func questionTable() []Question {
 				}
 				return "", nil
 			}},
-		{ID: "apps.agentsSlug", Prompt: "The existing agents App's slug", Kind: KindString, When: off("apps.create"), Check: slug},
+		{ID: "apps.agentsSlug", Prompt: "The existing agents App's slug", Kind: KindString, When: off("apps.create"),
+			Check: func(v any, a Answers) (string, error) {
+				if _, err := slug(v, a); err != nil {
+					return "", err
+				}
+				// D12: a run's token is minted from the agents App, so it must not be the factory's.
+				if str(v) == a.String("apps.factorySlug") {
+					return "", fmt.Errorf("%q is the factory App's slug: the agents App must be a second App (D12), or each run's token carries the factory's permissions", str(v))
+				}
+				return "", nil
+			}},
 		{ID: "apps.factorySecret", Prompt: "The existing factory App's Secret (keys app_id, private_key)", Kind: KindString,
 			When: off("apps.create"), Default: fixed("agent-factory-github"),
 			Keys: []string{"maku-factory.apps.factory.existingSecret"},
