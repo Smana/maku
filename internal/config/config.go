@@ -6,6 +6,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -814,12 +815,27 @@ var repositoryRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 // sponsoredNameRE is a sponsored principal's name: a DNS label, as the factory's api.sponsored.
 var sponsoredNameRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 
-// AccessConfig is D7's GitHub check. ReaderFile is the ZITADEL link reader's mounted
-// secret, JSON {"pat", "tokenId", "githubIdpId"}, read at use: ZITADEL at the human
-// issuer resolves a member to their linked GitHub id. TTL caches each answer.
+// AccessConfig is D7's GitHub check. The login comes from the GitHub account link
+// (human.githubLink), the only identity source (v4 D8). TTL caches each answer.
 type AccessConfig struct {
-	ReaderFile string   `json:"readerFile"`
-	TTL        Duration `json:"ttl,omitempty"`
+	TTL Duration `json:"ttl,omitempty"`
+}
+
+// UnmarshalJSON decodes the block strictly, refusing the ZITADEL reader by name: readerFile was
+// removed in v4 step 8 (D8), and a file still setting it fails on what replaced it rather than on an
+// unknown field.
+func (a *AccessConfig) UnmarshalJSON(b []byte) error {
+	var keys map[string]json.RawMessage
+	if json.Unmarshal(b, &keys) == nil {
+		if _, ok := keys["readerFile"]; ok {
+			return errors.New("human.access.readerFile was removed in v4 step 8 (D8): the GitHub account link is the only identity source; " +
+				"set human.githubLink and remove readerFile (docs/upgrading.md#the-zitadel-reader)")
+		}
+	}
+	type plain AccessConfig
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	return dec.Decode((*plain)(a))
 }
 
 // MaxAccessTTL is the longest a GitHub access answer is trusted, and the default: a
@@ -1407,17 +1423,12 @@ func (h HumanConfig) validate(system []string) []error {
 		errs = append(errs, i.validate(h.MCP.Sponsored)...)
 	}
 	if a := h.Access; a != nil {
-		// The login comes from the GitHub account link, the ZITADEL reader, or both (the reader then
-		// only for an account with no link, plan step 5 PR5).
-		if a.ReaderFile == "" && h.GitHubLink == nil {
-			errs = append(errs, errors.New("human.access.readerFile: is required unless human.githubLink is set"))
+		// The login comes from the GitHub account link alone (v4 D8).
+		if h.GitHubLink == nil {
+			errs = append(errs, errors.New("human.access: needs human.githubLink, the GitHub account link the login comes from (v4 D8)"))
 		}
 		if a.TTL.Duration <= 0 || a.TTL.Duration > MaxAccessTTL {
 			errs = append(errs, fmt.Errorf("human.access.ttl: must be above 0 and at most %s (D7)", MaxAccessTTL))
-		}
-		// The reader's PAT is sent to the issuer: never in clear, never with userinfo.
-		if u, err := url.Parse(h.Issuer); a.ReaderFile != "" && (err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil) {
-			errs = append(errs, errors.New("human.issuer: must be https://host when human.access.readerFile is set"))
 		}
 	}
 	return errs

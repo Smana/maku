@@ -36,7 +36,7 @@ func TestDemoGoodParses(t *testing.T) {
 
 func TestDemoStillRefuses(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
-		"api.access set":         {"  listen: \":8443\"\n", "  listen: \":8443\"\n  access: {readerFile: /r, ttl: 1m}\n", "demo: api.access needs an identity provider"},
+		"api.access set":         {"  listen: \":8443\"\n", "  listen: \":8443\"\n  access: {links: broker, ttl: 1m}\n", "demo: api.access needs an identity provider"},
 		"a humanIssuer":          {"  listen: \":8443\"\n", "  listen: \":8443\"\n  humanIssuer: https://auth.ogenki.io\n", "demo: the factory API takes no human tokens"},
 		"prices without a meter": {"runs: {group", "meter: {prices: {agent-default: {input: 1, output: 2}}}\nruns: {group", "demo: meter.prices needs a meter, and the demo has none"},
 		"gateStatus false":       {"gateStatus: true", "gateStatus: false", "demo: merge.gateStatus must be true, or no gate verdict reaches the pull request"},

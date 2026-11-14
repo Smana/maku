@@ -651,7 +651,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		auth.Sponsored = &authn.Sponsored{V: humansV, Clients: clients, Exclude: clientIDs,
 			Audience: apiAudience(cfg.API), ClientClaim: cfg.API.SponsoredClientClaim, Generic: auth.Generic}
 	}
-	// The self-serve link: the broker's records, and the same ZITADEL resolver api.access reads.
+	// The self-serve link: the broker's records, and the same resolver api.access reads.
 	var logins api.LoginResolver
 	if ga, ok := access.(api.GitHubAccess); ok {
 		logins = ga.Identity

@@ -33,9 +33,6 @@ func checkFactorySecrets(cfg *fconfig.Config, read func(string) ([]byte, error))
 		cfg.Broker.CAFile, cfg.RunLore.TokenFile,
 		cfg.API.ProjectIDFile, cfg.API.AudienceFile}
 	files = append(files, cfg.API.ClientIDFiles...)
-	if a := cfg.API.Access; a != nil {
-		files = append(files, a.ReaderFile)
-	}
 	if t := cfg.API.TLS; t != nil {
 		files = append(files, t.CertFile, t.KeyFile)
 	}

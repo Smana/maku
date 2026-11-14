@@ -4,12 +4,8 @@ package app
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -21,9 +17,6 @@ import (
 	"github.com/Smana/maku/internal/repoaccess"
 	"github.com/Smana/maku/internal/store"
 )
-
-// zitadelTimeout bounds one ZITADEL link read.
-const zitadelTimeout = 10 * time.Second
 
 // gitHubUsers is what D7 asks the factory App; *github.App has it.
 type gitHubUsers interface {
@@ -101,16 +94,22 @@ func intakePublicity(gh gitHubVisibilities, ttl time.Duration) intake.Publicity 
 
 // roomAccess is D7's check from human.access: the caller's GitHub login, then its permission on the
 // room's repository, both through gh and cached for the config's TTL. The login comes from the
-// caller's GitHub account link (human.githubLink, read through links) and, during the move off
-// ZITADEL, from their ZITADEL IdP link (human.access.readerFile) for a sub with no account link
-// (plan step 5 PR5). Without human.access it returns nils, and the human API shows rooms to admins
-// only.
-func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now func() time.Time, links ghidentity.LinkReader, holders ghidentity.HolderReader) (*ghidentity.Resolver, *repoaccess.Checker, error) {
+// caller's GitHub account link (human.githubLink, read through links), the only identity source (v4
+// D8): a sub with no link resolves to no login, never through another source. Without human.access
+// it returns nils, and the human API shows rooms to admins only.
+func roomAccess(h config.HumanConfig, gh gitHubUsers, now func() time.Time, links ghidentity.LinkReader) (*ghidentity.Resolver, *repoaccess.Checker, error) {
 	if h.Access == nil {
 		return nil, nil, nil
 	}
 	if gh == nil {
 		return nil, nil, errors.New("human.access needs the factory App: ROOMS_GITHUB_APP_DIR is not set")
+	}
+	l := h.GitHubLink
+	if l == nil {
+		return nil, nil, errors.New("human.access needs human.githubLink: the GitHub account link is the only identity source")
+	}
+	if links == nil {
+		return nil, nil, errors.New("human.githubLink needs the rooms database to read the links from")
 	}
 	ttl := h.Access.TTL.Duration
 	id := &ghidentity.Resolver{IDPID: githubIDP, TTL: ttl, Now: now,
@@ -118,21 +117,9 @@ func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now 
 			owner, name, _ := strings.Cut(repo, "/")
 			login, err := gh.UserLogin(ctx, owner, name, id)
 			return login, unseen(err)
-		}}
-	var readerActiveOf func(context.Context, string) (bool, error)
-	var readerLinksOf func(context.Context, string) ([]ghidentity.Link, error)
-	if h.Access.ReaderFile != "" {
-		readerActiveOf, readerLinksOf = readerActive(zitadel, h.Issuer, h.Access.ReaderFile), readerLinks(zitadel, h.Issuer, h.Access.ReaderFile)
-	}
-	if l := h.GitHubLink; l != nil {
-		if links == nil {
-			return nil, nil, errors.New("human.githubLink needs the rooms database to read the links from")
-		}
-		id.Links = ghidentity.Chain(ghidentity.StoreLinks(links, githubIDP), readerLinksOf, holders)
-		id.Active = ghidentity.StoreActive(links, l.ActiveWindow.Duration, now, readerActiveOf)
-	} else {
-		id.Links, id.Active = readerLinksOf, readerActiveOf
-	}
+		},
+		Links:  ghidentity.StoreLinks(links, githubIDP),
+		Active: ghidentity.StoreActive(links, l.ActiveWindow.Duration, now)}
 	perm := func(ctx context.Context, owner, repo, login string) (string, error) {
 		p, err := gh.Permission(ctx, owner, repo, login)
 		return p, unseen(err)
@@ -143,15 +130,14 @@ func roomAccess(h config.HumanConfig, gh gitHubUsers, zitadel *http.Client, now 
 // githubLinkStore is the part of the store the resolver reads the links from; *store.Store has it.
 type githubLinkStore interface {
 	GitHubLinkOf(ctx context.Context, sub string) (store.GitHubLink, bool, error)
-	GitHubLinkHolder(ctx context.Context, githubID int64) (string, bool, error)
 }
 
-// storeLinks reads the broker's github_links for the resolver: a sub's link, and an id's holder.
-func storeLinks(st githubLinkStore) (ghidentity.LinkReader, ghidentity.HolderReader) {
+// storeLinks reads the broker's github_links for the resolver: a sub's link.
+func storeLinks(st githubLinkStore) ghidentity.LinkReader {
 	return func(ctx context.Context, sub string) (ghidentity.LinkRecord, bool, error) {
 		l, found, err := st.GitHubLinkOf(ctx, sub)
 		return ghidentity.LinkRecord{GitHubID: l.GitHubID, LastSeenAt: l.LastSeenAt}, found, err
-	}, st.GitHubLinkHolder
+	}
 }
 
 // unseen marks a repository the App cannot see, or cannot name in a path, as one nobody reads
@@ -164,61 +150,5 @@ func unseen(err error) error {
 	return err
 }
 
-// githubIDP names the GitHub IdP inside the resolver. ZITADEL mints its real id anew on every
-// build, so the id comes from the reader secret at use, and readerLinks relabels the matching
-// links with this constant.
+// githubIDP labels the GitHub account link inside the resolver.
 const githubIDP = "github"
-
-// zitadelReader is the reader secret: the read-only machine user's PAT and the GitHub IdP's id.
-// Its tokenId is the provisioning script's, unused here.
-type zitadelReader struct {
-	PAT         string `json:"pat"`
-	GitHubIDPID string `json:"githubIdpId"`
-}
-
-// readReader reads the reader secret at path, on every call, so a rotated PAT or a rebuilt IdP
-// needs no restart. A secret that is missing or incomplete is an error: the check fails closed.
-func readReader(path string) (zitadelReader, error) {
-	var r zitadelReader
-	raw, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return r, fmt.Errorf("zitadel reader: %w", err)
-	}
-	if json.Unmarshal(raw, &r) != nil || r.PAT == "" || r.GitHubIDPID == "" {
-		// Never the decoder's text: it may quote the PAT.
-		return r, errors.New(`zitadel reader: not {"pat", "githubIdpId"} JSON`)
-	}
-	return r, nil
-}
-
-// readerActive reads whether a ZITADEL user is active with the reader secret at path (#126).
-func readerActive(hc *http.Client, issuer, path string) func(ctx context.Context, user string) (bool, error) {
-	return func(ctx context.Context, user string) (bool, error) {
-		r, err := readReader(path)
-		if err != nil {
-			return false, err
-		}
-		return ghidentity.ZitadelActive(hc, issuer, r.PAT)(ctx, user)
-	}
-}
-
-// readerLinks lists a user's links to the GitHub IdP with the reader secret at path.
-func readerLinks(hc *http.Client, issuer, path string) func(ctx context.Context, user string) ([]ghidentity.Link, error) {
-	return func(ctx context.Context, user string) ([]ghidentity.Link, error) {
-		r, err := readReader(path)
-		if err != nil {
-			return nil, err
-		}
-		links, err := ghidentity.ZitadelLinks(hc, issuer, r.PAT)(ctx, user)
-		if err != nil {
-			return nil, err
-		}
-		var out []ghidentity.Link
-		for _, l := range links {
-			if l.IDPID == r.GitHubIDPID {
-				out = append(out, ghidentity.Link{IDPID: githubIDP, UserID: l.UserID})
-			}
-		}
-		return out, nil
-	}
-}

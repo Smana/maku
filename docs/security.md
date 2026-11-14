@@ -23,7 +23,7 @@ The design's threats, the controls against each, and the package or mechanism th
 | T9 | Cross-site WebSocket hijacking | `Origin` check; oauth2-proxy cookie `SameSite=Strict` | `internal/humanapi`; oauth2-proxy | — |
 | T10 | XSS from LLM output | Markdown rendered with HTML disabled; strict CSP; HttpOnly cookie | `web/`; `internal/humanapi`'s headers; oauth2-proxy | XSS could still act *as* the user through the page |
 | T11 | Denial of service | Size and rate limits; byte budgets per connection; authentication before subscription; gateway budgets bound agent loops | Payload and batch limits (`internal/envelope`, `internal/bridgeapi`); connection and rate limits (`internal/humanapi`) | A tailnet member can load the broker |
-| T12 | Broker compromise | No harness keys (events are pushed); cannot rewrite history; its own CNP; runs only through the factory API, under a live human's token and budget | The database's grants and triggers ([room log](room-log.md#the-guarantees)); the broker's RBAC | Reads every room; can request runs as a connected human; can decide pending approvals, since the triggers bind each approval row to its events, not each `approval_decided` event to a human's act, and a row check would stop nobody holding the broker's credential. The same residual covers a compromised **Slack App** pod, which holds that principal's credentials: it can cast one `forge.push` decision as any linked human without a click — it cannot invent a human, cannot decide another class, cannot escape the two standings or four-eyes, and every such decision is recorded as that person's ([the Slack App](#the-slack-app)). Its room-access reader PAT reads the whole ZITADEL organization, users and their IdP links included (`ORG_OWNER_VIEWER` is org-wide, if read-only), and the factory App's metadata reads answer any login's permission on the App's repositories |
+| T12 | Broker compromise | No harness keys (events are pushed); cannot rewrite history; its own CNP; runs only through the factory API, under a live human's token and budget | The database's grants and triggers ([room log](room-log.md#the-guarantees)); the broker's RBAC | Reads every room; can request runs as a connected human; can decide pending approvals, since the triggers bind each approval row to its events, not each `approval_decided` event to a human's act, and a row check would stop nobody holding the broker's credential. The same residual covers a compromised **Slack App** pod, which holds that principal's credentials: it can cast one `forge.push` decision as any linked human without a click — it cannot invent a human, cannot decide another class, cannot escape the two standings or four-eyes, and every such decision is recorded as that person's ([the Slack App](#the-slack-app)). It reads every account's GitHub link, and the factory App's metadata reads answer any login's permission on the App's repositories |
 | T13 | Untrusted issue text reaching a prompt | Every text written outside the platform is defused before an agent reads it: invisible and control characters removed, images and raw HTML defused, fence look-alikes replaced, repeated until nothing changes | `internal/factory/sanitize`: a text whose markup does not settle is replaced whole by `Withheld`, failing closed | It is a filter, not a boundary: egress policy and the merge gate's paths are the controls |
 | T14 | A forged `Agent-Run` trailer | Trailers are provenance hints, never authorisation; the merge gate binds commits to the agents App by push identity: every push to the branch must be the agents App's in GitHub's repository activity | The merge gate; [`images/maku-harness/README.md`](../images/maku-harness/README.md) | The binding is to the App, not the task: any implementer run can push as the bot. Commits are not signed |
 | T15 | Theft or misuse of the merger key, or of the factory pod's other GitHub keys | One workload mounts it; under policy-bot the repository's ruleset lets only that App, and a repository admin, bypass a plain merge; without it, the ruleset requires `maku/merge-gate` from that App ([the merge gate's Apps](#the-merge-gates-apps)) | The chart's `apps.merger.existingSecret` (`charts/maku-factory/values.yaml`); the ruleset | Whoever holds the key can merge. The factory pod holds the factory App's key and, with `runTokens`, the agents App's: whoever takes the pod can mint any role's token on every repository either App is installed on |
@@ -58,25 +58,20 @@ at oauth2-proxy and again by the broker. Revoking a group takes effect within th
 connections re-authenticate.
 
 **Room access.** A room is never more visible than its repository. For a member, the broker
-reads the GitHub account linked to their ZITADEL user, never a token claim: a link is added only by
-authenticating at GitHub, while user metadata is writable by machine users. It lists the user's IdP
-links with a read-only machine user's PAT (`ORG_OWNER_VIEWER`), resolves the GitHub link's numeric
-id to the current login, then asks GitHub whether that login can read the room's `repository`, both
-through the factory App's metadata reads. Answers are cached for at most 5 minutes, so an unlinked
-account or a revoked collaborator loses the room within that; past the cache, a check ZITADEL or
-GitHub cannot answer fails closed. A member with no link sees no room. `agents-admin` bypasses it.
-The same reader also reads the user's state on every human path, `agents-admin` included, since
-tokens verify offline and ZITADEL's live 12 h: a user deactivated, locked or deleted is refused
-(`user_inactive`) within the same 5 minutes, and an open WebSocket is cut on its next ping.
-**The GitHub account link** (`human.githubLink`, [GitHub account link](github-link.md)) is the
-second source of that login, and the one that needs no IdP admin API. The broker keeps each human's
-numeric GitHub id, proved by an OAuth authorization the person made at GitHub, and never a token:
-the user token is revoked as soon as `GET /user` answers. The flow is bound to the browser that
-started it (a cookie nonce, a PKCE verifier derived from it) and to the `sub` whose web session
-confirms it, so neither a link CSRF nor a stolen callback URL links one account to another's GitHub
-id. One GitHub id belongs to one account. "Active" is the link's own `last_seen_at`, refreshed by the
-human's requests: the residual is a deactivated person's Slack link acting until `activeWindow` after
-their last sign-in, ended at once by an admin unlink.
+reads the GitHub account the person linked (`human.githubLink`, [GitHub account link](github-link.md)),
+never a token claim and never another source. The broker keeps each human's numeric GitHub id, proved
+by an OAuth authorization the person made at GitHub, and never a token: the user token is revoked as
+soon as `GET /user` answers. It resolves that id to the current login, then asks GitHub whether that
+login can read the room's `repository`, both through the factory App's metadata reads. Answers are
+cached for at most 5 minutes, so an unlinked account or a revoked collaborator loses the room within
+that; past the cache, a check the link store or GitHub cannot answer fails closed. A member with no
+link sees no room (`X-Rooms-Access: unlinked`). `agents-admin` bypasses it. The link flow is bound to
+the browser that started it (a cookie nonce, a PKCE verifier derived from it) and to the `sub` whose
+web session confirms it, so neither a link CSRF nor a stolen callback URL links one account to
+another's GitHub id. One GitHub id belongs to one account. "Active" is the link's own
+`last_seen_at`, refreshed by the human's requests: a link unseen past `activeWindow` is refused
+(`user_inactive`) on every human path. The residual is a deactivated person's Slack link acting until
+`activeWindow` after their last sign-in, ended at once by an admin unlink.
 
 When the broker asks the factory for a run on a human's behalf, it forwards that human's access
 token, never an asserted `sub`, so the factory proves the principal itself.
@@ -526,7 +521,7 @@ The factory's Slack App (`cmd/maku-slack`, [docs/slack.md](slack.md)) is the onl
   | `already_decided` | Someone closed the approval first, or this same press replayed; nothing was appended |
   | `approval_expired` | The deadline had passed |
   | `not_linked` | The Slack user has no link, or the account has no GitHub identity |
-  | `link_unverified` | ZITADEL or GitHub could not be asked, and it fails closed |
+  | `link_unverified` | the broker's links or GitHub could not be asked, and it fails closed |
   | `not_permitted` | Not an approver or owner of this room, or the room is admins-only |
   | `repository_permission` | The resolved login cannot write the room's repository |
   | `four_eyes` | This human prompted the run, and the room sets four eyes |

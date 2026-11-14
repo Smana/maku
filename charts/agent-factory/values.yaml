@@ -223,7 +223,7 @@ networkPolicies:
     # Every URL maku-factory.config names opens its own egress: an external host by name (cilium
     # toFQDNs) or as public addresses (kubernetes); an in-cluster one needs its pods here, or the render
     # fails naming it. port overrides the URL's (a pod port after service translation).
-    idp: {to: [], port: 0}         # config.api.humanIssuer: discovery, JWKS (and the ZITADEL reader)
+    idp: {to: [], port: 0}         # config.api.humanIssuer: discovery, JWKS
     classifier: {to: [], port: 0}  # config.triage.classifierURL
     meter: {to: [], port: 0}       # config.meter.url
     logs: {to: [], port: 0}        # config.meter.logsURL

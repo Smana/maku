@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// Package ghidentity resolves a ZITADEL user to the GitHub login they linked (spec D7). The source
-// is the user's GitHub IdP link, never a token claim: a link is added only by authenticating at
-// GitHub, while user metadata is writable by machine users and user.write holders. It also says
-// whether the ZITADEL user is still active (#126): the broker verifies bearers offline, so only
-// this read refuses a user deactivated after their token was minted.
+// Package ghidentity resolves an identity provider's user (a token's sub) to the GitHub login they
+// linked (spec D7). The source is the GitHub account link (v4 D8), never a token claim: a link is
+// made only by authenticating at GitHub. It also says whether the user is still active (#126): the
+// broker verifies bearers offline, so only this read refuses a user who stopped signing in after
+// their token was minted.
 package ghidentity
 
 import (
@@ -16,18 +16,18 @@ import (
 	"time"
 )
 
-// Link is one of a ZITADEL user's IdP links. UserID is the external id: for GitHub, the numeric
-// user id. The link's userName is deliberately absent; it is stale after a rename.
+// Link is one of a user's links. UserID is the external id: for GitHub, the numeric user id. A
+// login is deliberately absent; it is stale after a rename.
 type Link struct{ IDPID, UserID string }
 
-// ErrInactive is a ZITADEL user that is not active: inactive, locked, deleted or initial.
+// ErrInactive is a user that is not active: their link was not seen within its window.
 var ErrInactive = errors.New("ghidentity: the user is not active")
 
-// Resolver maps a ZITADEL user to a GitHub login.
+// Resolver maps a user to a GitHub login.
 type Resolver struct {
-	// Active reports whether the ZITADEL user is active; nil skips the check.
-	Active  func(ctx context.Context, zitadelUser string) (bool, error)
-	Links   func(ctx context.Context, zitadelUser string) ([]Link, error)
+	// Active reports whether the user is active; nil skips the check.
+	Active  func(ctx context.Context, sub string) (bool, error)
+	Links   func(ctx context.Context, sub string) ([]Link, error)
 	LoginOf func(ctx context.Context, repo string, githubID int64) (string, error)
 	IDPID   string
 	TTL     time.Duration
@@ -49,8 +49,8 @@ type entry struct {
 // defaultMaxEntries bounds the cache; when it is full the oldest entry is dropped.
 const defaultMaxEntries = 10_000
 
-// CheckActive is nil when sub is an active ZITADEL user, ErrInactive when it is not, and another
-// error when ZITADEL cannot say. Both answers are cached for TTL; a failure is not, so the caller
+// CheckActive is nil when sub is an active user, ErrInactive when it is not, and another
+// error when the source cannot say. Both answers are cached for TTL; a failure is not, so the caller
 // fails closed.
 func (r *Resolver) CheckActive(ctx context.Context, sub string) error {
 	if r.Active == nil {
@@ -97,8 +97,7 @@ func (r *Resolver) Login(ctx context.Context, sub, repo string) (string, error) 
 	if err != nil {
 		return "", fmt.Errorf("ghidentity: cannot read %s's links: %w", sub, err)
 	}
-	// ZITADEL does not order the links or limit a user to one per IdP, so every match counts and
-	// two distinct ids are ambiguous: fail closed rather than pick one.
+	// Every match counts and two distinct ids are ambiguous: fail closed rather than pick one.
 	var id int64
 	for _, l := range links {
 		if l.IDPID != r.IDPID {

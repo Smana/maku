@@ -71,8 +71,11 @@ func TestLoadApprovalMemory(t *testing.T) {
 	}
 }
 
-// access is the human.access block, appended to valid.
-const access = "  access:\n    readerFile: /etc/room-broker/zitadel-reader/reader.json\n"
+// access is the human.access block and the GitHub account link it reads from, appended to valid.
+const access = githubLink + "  access:\n    ttl: 5m\n"
+
+// accessWithTTL is access with its TTL set to ttl.
+func accessWithTTL(ttl string) string { return githubLink + "  access:\n    ttl: " + ttl + "\n" }
 
 // D7: human.access turns the GitHub check on. Absent, it stays nil, and rooms are admins-only.
 func TestLoadAccess(t *testing.T) {
@@ -80,12 +83,11 @@ func TestLoadAccess(t *testing.T) {
 	if err != nil || c.Human.Access != nil {
 		t.Fatalf("no access block: %+v, %v", c.Human.Access, err)
 	}
-	c, err = Load(write(t, valid+access))
-	if err != nil || c.Human.Access == nil || c.Human.Access.ReaderFile != "/etc/room-broker/zitadel-reader/reader.json" ||
-		c.Human.Access.TTL.Duration != 5*time.Minute {
+	c, err = Load(write(t, valid+githubLink+"  access: {}\n"))
+	if err != nil || c.Human.Access == nil || c.Human.Access.TTL.Duration != 5*time.Minute {
 		t.Fatalf("the TTL defaults to 5m: %+v, %v", c.Human.Access, err)
 	}
-	c, err = Load(write(t, valid+access+"    ttl: 90s\n"))
+	c, err = Load(write(t, valid+accessWithTTL("90s")))
 	if err != nil || c.Human.Access.TTL.Duration != 90*time.Second {
 		t.Fatalf("%+v, %v", c.Human.Access, err)
 	}
@@ -213,12 +215,10 @@ func TestLoadRefuses(t *testing.T) {
 		{"no member group", replace("    member: agents-member\n", ""), "human.groups.member"},
 		{"one group for both", replace("member: agents-member", "member: agents-admin"), "human.groups"},
 		// D7: a revoked read lags by the cache at most.
-		{"an access TTL over 5 minutes", valid + access + "    ttl: 6m\n", "human.access.ttl"},
-		{"a negative access TTL", valid + access + "    ttl: -1m\n", "human.access.ttl"},
-		{"an access TTL without its unit", valid + access + "    ttl: 300\n", "duration"},
-		{"no reader file", valid + "  access:\n    ttl: 5m\n", "human.access.readerFile"},
-		{"the reader's PAT over plain http", strings.Replace(valid, "  issuer: https://auth.example.test\n", "  issuer: http://auth.example.test\n", 1) + access,
-			"human.issuer"},
+		{"an access TTL over 5 minutes", valid + accessWithTTL("6m"), "human.access.ttl"},
+		{"a negative access TTL", valid + accessWithTTL("-1m"), "human.access.ttl"},
+		{"an access TTL without its unit", valid + accessWithTTL("300"), "duration"},
+		{"no GitHub link", valid + "  access:\n    ttl: 5m\n", "human.access: needs human.githubLink"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, err := Load(write(t, c.body))
@@ -571,7 +571,7 @@ func TestLoadLocalHuman(t *testing.T) {
 			{"projectIDFile", "  projectIDFile: /etc/room-broker/oidc/project-id\n", "human.projectIDFile"},
 			{"origin", "  origin: http://localhost:18080\n", "human.origin"},
 			{"groups", "  groups:\n    admin: a\n    member: b\n", "human.groups"},
-			{"access", "  access:\n    readerFile: /etc/room-broker/access/reader\n", "human.access"},
+			{"access", "  access:\n    ttl: 5m\n", "human.access"},
 			{"slackLink", "  slackLink:\n    principal: slack-app\n    teamID: T01ABC\n    repository: Smana/ai-native-ref\n", "human.slackLink"},
 			{"mcp", "  mcp:\n    enabled: true\n", "human.mcp.enabled"},
 			{"sponsored", "  mcp:\n    sponsored:\n      - name: slack-app\n        clientIDFile: /etc/room-broker/sponsored/slack-app\n", "human.mcp.sponsored"},
@@ -772,7 +772,7 @@ func TestIntakePlanConfig(t *testing.T) {
 		}
 	}
 	cfg, err := Load(write(t, valid+"\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n"+
-		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n"+
+		"  access:\n    ttl: 5m\n"+githubLink+
 		"  intake:\n    plan:\n"+
 		"      enabled: true\n      url: http://model-gateway.maku.svc.cluster.local:8082/clients/planner/v1\n"+
 		"      apiKeyFile: /etc/room-broker/planner/api-key\n      repositories: [Smana/ai-native-ref]\n"+
@@ -897,7 +897,7 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 		{"the write check", "human.intake.plan.enabled needs human.access"},
 	}
 	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
-		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
 		"      repositories: [Smana/ai-native-ref]\n" +
 		"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
@@ -917,7 +917,7 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 			case "the /mcp listener":
 				without = strings.Replace(base, "  mcp:\n    enabled: true\n", "  mcp:\n    enabled: false\n", 1)
 			case "the write check":
-				without = strings.Replace(base, "  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n", "", 1)
+				without = strings.Replace(base, "  access:\n    ttl: 5m\n"+githubLink, "", 1)
 			}
 			if without == base {
 				t.Fatalf("%s: the fixture does not carry the part", c.name)
@@ -1056,7 +1056,7 @@ func TestCoordinationConfig(t *testing.T) {
 		t.Fatalf("omitted: %+v", c)
 	}
 	planner := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
-		"  access:\n    readerFile: /etc/room-broker/zitadel/reader.json\n" +
+		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
 		"      repositories: [Smana/a, Smana/b]\n" +
 		"      classes:\n        scripts: {roles: [implementer, reviewer], ceilingUSD: 5.1, source: class:scripts.taskUSD}\n"
@@ -1271,18 +1271,27 @@ func TestLoadGitHubLink(t *testing.T) {
 	}
 }
 
-// With the GitHub account link, human.access needs no ZITADEL reader, and the https issuer rule (the
-// reader's PAT goes to the issuer) holds only while a reader is set.
+// v4 step 8 PR F (D8): the GitHub account link is human.access's only source. Access needs the
+// link, and the ZITADEL reader's readerFile is refused by name, pointing at the link.
 func TestLoadAccessFromTheGitHubLink(t *testing.T) {
 	c, err := Load(write(t, valid+"  access:\n    ttl: 2m\n"+githubLink))
-	if err != nil || c.Human.Access.ReaderFile != "" || c.Human.GitHubLink == nil {
-		t.Fatalf("access from the link alone: %+v %v", c.Human.Access, err)
+	if err != nil || c.Human.Access == nil || c.Human.GitHubLink == nil {
+		t.Fatalf("access from the link: %+v %v", c.Human.Access, err)
 	}
-	if _, err := Load(write(t, valid+access+githubLink)); err != nil {
-		t.Fatalf("both sources, the reader behind the link: %v", err)
+	if _, err := Load(write(t, valid+"  access:\n    ttl: 2m\n")); err == nil || !strings.Contains(err.Error(), "human.access: needs human.githubLink") {
+		t.Fatalf("no link: %v", err)
 	}
-	if _, err := Load(write(t, valid+"  access:\n    ttl: 2m\n")); err == nil || !strings.Contains(err.Error(), "human.access.readerFile: is required unless human.githubLink is set") {
-		t.Fatalf("neither source: %v", err)
+	for _, body := range []string{
+		"  access:\n    readerFile: /etc/room-broker/zitadel-reader/reader.json\n    ttl: 2m\n" + githubLink,
+		"  access:\n    readerFile: \"\"\n",
+	} {
+		_, err := Load(write(t, valid+body))
+		if err == nil || !strings.Contains(err.Error(), "human.access.readerFile was removed in v4 step 8") || !strings.Contains(err.Error(), "set human.githubLink") {
+			t.Fatalf("readerFile: %v, want it refused naming human.githubLink", err)
+		}
+	}
+	if _, err := Load(write(t, valid+"  access:\n    ttl: 2m\n    pat: x\n"+githubLink)); err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("an unknown access key: %v", err)
 	}
 }
 

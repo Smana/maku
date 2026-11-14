@@ -334,7 +334,7 @@ ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.ya
 # the verbatim human block leaves them unset: a block's own url or key file wins (D25).
 mgtmp="$(mktemp -d)"; trap 'rm -rf "$mgtmp"' EXIT
 mgplan=(--set broker.factoryURL=https://agent-factory.agent-system.svc:8082
-  --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true --set broker.human.access.readerFile=/a
+  --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true --set broker.human.access.ttl=5m --set broker.githubLink.existingSecret=room-broker-github-link
   --set broker.human.intake.plan.enabled=true --set 'broker.human.intake.plan.repositories={owner/repo}'
   --set-json 'broker.human.intake.plan.classes={"docs":{"roles":["implementer"],"ceilingUSD":1,"source":"class:docs"}}')
 mgsi=(--set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s'

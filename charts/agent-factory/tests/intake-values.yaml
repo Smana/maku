@@ -6,6 +6,10 @@
 maku:
   broker:
     publicURL: https://rooms.e2e.test
+    # The GitHub account link, the only identity source (v4 D8): intake.sh seeds the stub user's link
+    # (sub dev, GitHub id 123) in the database, so no OAuth flow runs here (chart:identity:k3d proves it).
+    githubLink:
+      existingSecret: e2e-github-link
     human:
       mode: oidc
       issuer: https://e2e-stub.e2e.svc.cluster.local
@@ -16,7 +20,7 @@ maku:
       origin: https://rooms.e2e.test
       groups: {admin: agents-admin, member: agents-member}
       access:
-        readerFile: /etc/e2e/config/reader.json
+        ttl: 5m
       mcp:
         enabled: true
         sessionStart: [owner/repo]

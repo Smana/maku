@@ -265,12 +265,13 @@ printf 'rooms-proxy' >"$work/client-id"
 printf 'roomctl' >"$work/roomctl-client-id"
 printf 'project' >"$work/project-id"
 printf 'slack-app' >"$work/sponsored-client-id"
-printf '{"pat":"e2e-throwaway","githubIdpId":"github"}' >"$work/reader.json"
 # No planner or classifier key: the broker calls the gateway with its projected tokens.
 kubectl -n "$NS" create secret generic e2e-broker-config \
   --from-file=client-id="$work/client-id" --from-file=roomctl-client-id="$work/roomctl-client-id" \
-  --from-file=project-id="$work/project-id" --from-file=sponsored-client-id="$work/sponsored-client-id" \
-  --from-file=reader.json="$work/reader.json"
+  --from-file=project-id="$work/project-id" --from-file=sponsored-client-id="$work/sponsored-client-id"
+# The GitHub account link's OAuth client: never used, the link is seeded below.
+kubectl -n "$NS" create secret generic e2e-github-link --from-literal=client_id=Iv1.e2e-link \
+  --from-literal=client_secret=e2e-throwaway-secret
 # The stub provider's key, which the gateway reads by name (D14).
 kubectl -n "$NS" create secret generic e2e-provider-key --from-literal=apiKey="$PROVIDER_KEY"
 sed "s#ghcr.io/smana/maku-e2e-stub:e2e#ghcr.io/smana/maku-e2e-stub:$TAG#" "$STUB" | kubectl apply -f -
@@ -331,6 +332,10 @@ helm install intake charts/agent-factory -n "$NS" --create-namespace "${values[@
 step "wait for the database, the controllers and the model gateway"
 kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s
 kubectl -n "$NS" rollout status deploy/room-broker --timeout=180s
+# The stub user's GitHub account link (sub dev, the stub App's user 123): the only identity source
+# (v4 D8). The broker's init container has migrated the database, so the table exists.
+kubectl -n "$NS" exec rooms-db-0 -- psql -q -v ON_ERROR_STOP=1 -U postgres -d rooms -c \
+  "INSERT INTO github_links (sub, github_id, login_at_link, linked_at, last_seen_at) VALUES ('dev', 123, 'dev', now(), now())"
 kubectl -n "$NS" rollout status deploy/run-controller --timeout=180s
 kubectl -n "$NS" rollout status deploy/agent-factory --timeout=180s
 kubectl -n "$NS" rollout status deploy/intake-agentgateway --timeout=180s

@@ -286,11 +286,11 @@ api:
   clientIDFiles:
     - /etc/agent-factory-oidc/rooms-proxy-client-id
     - /etc/agent-factory-oidc/roomctl-client-id
-  # Resolves a human caller to their GitHub login (the broker's ZITADEL reader, mounted from
-  # externalsecret-zitadel-reader.yaml); write on the repository is then asked of GitHub.
+  # Resolves a human caller to their GitHub login (the broker's GitHub account links); write on
+  # the repository is then asked of GitHub.
   # Without it every human run is refused 403 repository_permission.
   access:
-    readerFile: /etc/agent-factory-zitadel-reader/reader.json
+    links: broker
     ttl: 5m
   # Sponsored principals (factory interfaces part 2), none declared (D4): a gcp-0 session declares
   # the Slack App in gcp-0's copy (runbook 18). It needs meter.prices, and projectIDFile beside it;
