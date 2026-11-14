@@ -71,6 +71,7 @@ pkg="$(mktemp -d)"; helm package . -d "$pkg" >/dev/null
 shipped="$(tar -tzf "$pkg"/agent-factory-*.tgz)"; rm -rf "$pkg"
 grep -qx 'agent-factory/values-demo.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-demo.yaml" >&2; fail=1; }
 grep -qx 'agent-factory/values-mine.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-mine.example.yaml" >&2; fail=1; }
+grep -qx 'agent-factory/values-production.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-production.example.yaml" >&2; fail=1; }
 ! grep -q '^agent-factory/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
 # --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
 msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
@@ -207,6 +208,28 @@ ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)"
 # networkPolicies.mode none stays allowed, on the install banner (PR9)
 out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.enabled=false)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "network_policy_none"' 'production in mode none lists network_policy_none on the banner (PR9)'
+# v4 step 6, Task 20: values-production.example.yaml renders as shipped, and its configs load; the
+# cloud-native-ref-shaped values (ANR at 1529b3b) render exactly tests/golden/production-cnref-like.yaml,
+# in cnref's namespace, and the broker's, the run-controller's and the Slack App's configs load strictly.
+# A deliberate change updates the golden: UPDATE_GOLDEN=1 bash charts/agent-factory/tests/render.sh.
+out="$(helm template af . -n maku -f values-production.example.yaml)" || { echo "FAIL: values-production.example.yaml does not render" >&2; fail=1; out=''; }
+for k in HTTPRoute PrometheusRule ServiceMonitor; do ykind "$k" 'true' "values-production.example.yaml renders a $k"; done
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'the production example shows no unsafe setting'
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-broker.yaml"
+yq 'select(.metadata.name == "run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-rc.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/ex-broker.yaml" && go run ./charts/maku/tests/loadconfig run-controller-gateway "$tmp/ex-rc.yaml") ||
+  { echo "FAIL: the production example's broker or run-controller config does not load" >&2; fail=1; }
+cnref=("${img[@]}" --set slack.image.tag=v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 -f tests/values-cnref-like.yaml)
+out="$(helm template agent-factory . -n agent-system "${cnref[@]}")" || { echo "FAIL: tests/values-cnref-like.yaml does not render" >&2; fail=1; out=''; }
+# The dashboards' JSON is masked (tests/monitoring.sh and Task 8's promtool checks hold it), so the
+# golden is the install's shape.
+cnref_golden() { bash tests/normalize.sh <<<"$out" | yq '(select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .data[]) |= "<dashboard JSON>"' -; }
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then cnref_golden >tests/golden/production-cnref-like.yaml; fi
+cnref_golden | diff -u tests/golden/production-cnref-like.yaml - >&2 || { echo "FAIL: the cnref-like render differs from tests/golden/production-cnref-like.yaml" >&2; fail=1; }
+for c in room-broker-config:broker run-controller-config:run-controller-gateway factory-slack-app-config:slack-app; do
+  yq "select(.metadata.name == \"${c%%:*}\") | .data.\"config.yaml\"" - <<<"$out" >"$tmp/cnref-${c#*:}.yaml"
+  (cd ../.. && go run ./charts/maku/tests/loadconfig "${c#*:}" "$tmp/cnref-${c#*:}.yaml") || { echo "FAIL: the cnref-like ${c%%:*} does not load" >&2; fail=1; }
+done
 out="$demo_out"
 
 # maku: no Cilium, local human, the portable runs group, runc

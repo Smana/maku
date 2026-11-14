@@ -1,0 +1,4814 @@
+---
+# Source: agent-factory/charts/maku/templates/agents-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: agents
+  labels:
+    # Pod Security's restricted profile, under the run-pod policy: it also holds what the policy
+    # does not (hostPort, SELinux type, AppArmor, sysctls, procMount). Run pods pass both.
+    pod-security.kubernetes.io/enforce: restricted
+  annotations:
+    # Uninstall must not delete the runs and the Secrets in them.
+    helm.sh/resource-policy: keep
+---
+# Source: agent-factory/charts/maku-gateway/templates/networkpolicy.yaml
+# Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
+# scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
+# here: the controller fetches it, and the proxies receive the keyset over xDS. Probes are node
+# traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: model-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agents}
+          podSelector:
+            matchExpressions:
+              # The run-controller's label on every run pod.
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8081, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agent-system}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {port: 8082, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+      ports:
+        - {port: 15020, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agent-system}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+      ports: [{port: 9978, protocol: TCP}]
+    # provider zai (api.z.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider moonshot (api.kimi.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider mistral (api.mistral.ai)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+    # provider anthropic (api.anthropic.com)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+---
+# Source: agent-factory/charts/maku/templates/runs-quota.yaml
+# The runs namespace's safety net (v4 D16): admission stays in the factory's slots and budgets. A run
+# over it waits Pending (QuotaExceeded); the run-controller never fails it for this.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: runs
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  hard:
+    limits.cpu: "32"
+    limits.memory: "64Gi"
+    pods: "25"
+    requests.cpu: "16"
+    requests.memory: "32Gi"
+---
+# Source: agent-factory/charts/maku-factory/templates/pdb.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  minAvailable: 1
+  # Readiness ignores GitHub, but a replica can still be unready (caches, a crash loop): a drain
+  # must evict it rather than wait for a health that cannot return (#58). Kubernetes 1.27+.
+  unhealthyPodEvictionPolicy: AlwaysAllow
+  selector:
+    matchLabels: {app.kubernetes.io/name: agent-factory}
+---
+# Source: agent-factory/templates/web-proxy.yaml
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rooms-web-proxy
+    app.kubernetes.io/component: web-proxy
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+---
+# Source: agent-factory/charts/maku-factory/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+---
+# Source: agent-factory/charts/slack/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+---
+# Source: agent-factory/templates/web-proxy.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rooms-web-proxy
+    app.kubernetes.io/component: web-proxy
+# It never calls the API server.
+automountServiceAccountToken: false
+---
+# Source: agent-factory/charts/maku-factory/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-factory-config
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+data:
+  config.yaml: |
+    agentsLogin: ogenki-agents[bot]
+    api:
+      humanIssuer: https://auth.example.test
+      listen: :8082
+      sponsored:
+      - clientIDFile: /etc/agent-factory-sponsored/slack-app-client-id
+        dailyUSD: 5
+        maxCostUSD: 2
+        name: slack-app
+        repositories:
+        - Smana/ai-native-ref
+        - Smana/cloud-native-ref
+        sponsor: Smana
+    broker:
+      caFile: /etc/agent-factory/openbao-ca/ca.crt
+      tokenFile: /var/run/secrets/agents/rooms/token
+      url: https://room-broker.agent-system.svc.cluster.local:8443
+    factory: cloud-native-ref
+    factoryLogin: ogenki-agent-factory[bot]
+    github:
+      appIDFile: /etc/agent-factory-github/app_id
+      mergerAppIDFile: /etc/agent-factory-merger/app_id
+      mergerKeyFile: /etc/agent-factory-merger/private_key
+      privateKeyFile: /etc/agent-factory-github/private_key
+    poll:
+      issues: 60s
+      meter: 30s
+      tasks: 30s
+    roomsURL: https://rooms.priv.example.test
+    runs:
+      gatewayIdentity: true
+      group: maku.ogenki.io
+      namePrefix: xplane-run-
+      namespace: agents
+---
+# Source: agent-factory/charts/maku-gateway/templates/catalog.yaml
+# The prices agentgateway merges over its built-in catalog to price each response (the access log's
+# `cost`), from the factory's meter.prices rows: edit a price there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-gateway-model-catalog
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+data:
+  catalog.json: |
+    {
+      "providers": {
+        "anthropic": {
+          "models": {
+            "claude-haiku-5-5": {
+              "rates": {
+                "cacheRead": "0.05",
+                "cacheWrite": "0.625",
+                "input": "0.50",
+                "output": "2.50"
+              }
+            },
+            "claude-opus-5-5": {
+              "rates": {
+                "cacheRead": "0.20",
+                "cacheWrite": "5.00",
+                "input": "4.00",
+                "output": "20.00"
+              }
+            },
+            "claude-sonnet-5-5": {
+              "rates": {
+                "cacheRead": "0.10",
+                "cacheWrite": "2.50",
+                "input": "2.00",
+                "output": "10.00"
+              }
+            }
+          }
+        },
+        "mistral": {
+          "models": {
+            "mistral-medium-2604": {
+              "rates": {
+                "cacheRead": "0.15",
+                "input": "1.50",
+                "output": "7.50"
+              }
+            },
+            "mistral-small-2603": {
+              "rates": {
+                "cacheRead": "0.015",
+                "input": "0.15",
+                "output": "0.60"
+              }
+            }
+          }
+        },
+        "moonshot": {
+          "models": {
+            "k3.1-pro": {
+              "rates": {
+                "cacheRead": "0.20",
+                "cacheWrite": "2.00",
+                "input": "2.00",
+                "output": "10.00"
+              }
+            }
+          }
+        },
+        "zai": {
+          "models": {
+            "glm-5.3": {
+              "rates": {
+                "cacheRead": "0.26",
+                "input": "1.40",
+                "output": "4.40"
+              }
+            },
+            "glm-5.3-flash": {
+              "rates": {
+                "cacheRead": "0.03",
+                "input": "0.15",
+                "output": "0.50"
+              }
+            },
+            "glm-5.3-flashx": {
+              "rates": {
+                "cacheRead": "0.075",
+                "input": "0.37",
+                "output": "1.25"
+              }
+            }
+          }
+        }
+      }
+    }
+---
+# Source: agent-factory/charts/maku/templates/broker-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: room-broker-config
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  # Strictly decoded by the broker (internal/config): an unknown key fails the rollout. tls is
+  # left to its default, /etc/room-broker/tls/tls.{crt,key}, where the Deployment mounts the pair.
+  config.yaml: |
+    publicURL: "https://rooms.priv.example.test"
+    runs:
+      group: maku.ogenki.io
+      namePrefix: xplane-run-
+      namespace: agents
+    runIssuers:
+      - subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'
+        issuer: "https://container.googleapis.com/v1/projects/p/locations/l/clusters/c"
+        jwksURL: "https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks"
+    systemIssuer:
+      issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+      jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+    systemPrincipals:
+      system:serviceaccount:agent-system:agent-factory: system:factory
+    factoryURL: "http://agent-factory.agent-system.svc.cluster.local:8082"
+    factoryInsecure: true
+    human:
+      access:
+        readerFile: /etc/room-broker/zitadel-reader/reader.json
+        ttl: 5m
+      clientIDFile: /etc/room-broker/oidc/web-client-id
+      dashboards:
+      - label: Room metrics
+        url: https://grafana.priv.example.test/d/agent-room/agent-room?var-room={room}
+      - label: Run
+        url: https://grafana.priv.example.test/d/agent-run/agent-run?var-run={run}
+      groups:
+        admin: agents-admin
+        member: agents-member
+      intake:
+        plan:
+          apiKeyFile: /var/run/secrets/maku/model-gateway/planner
+          classes:
+            docs:
+              ceilingUSD: 2
+              roles:
+              - scoper
+              - implementer
+              - reviewer
+              source: class:docs.taskUSD
+            docs-links:
+              ceilingUSD: 2
+              roles:
+              - scoper
+              - implementer
+              - reviewer
+              source: class:docs-links.taskUSD
+            review:
+              ceilingUSD: 2
+              roles:
+              - implementer
+              - reviewer
+              source: class:review.taskUSD
+            scripts:
+              ceilingUSD: 5.1
+              roles:
+              - scoper
+              - implementer
+              - reviewer
+              source: class:scripts.taskUSD
+          dailyPlans: 50
+          deadline: 20s
+          enabled: true
+          fallback: "off"
+          reasoningEffort: low
+          repositories:
+          - Smana/ai-native-ref
+          - Smana/runlore-kb
+          - Smana/runlore
+          - Smana/cloud-native-ref
+          url: http://model-gateway.agent-system.svc.cluster.local:8082/clients/planner/v1
+      issuer: https://auth.example.test
+      jwksURL: https://auth.example.test/oauth/v2/keys
+      mcp:
+        enabled: true
+        sessionStart: []
+        sponsored:
+        - clientIDFile: /etc/room-broker/sponsored/slack-app-client-id
+          name: slack-app
+      needs:
+        enabled: true
+      origin: https://rooms.priv.example.test
+      preset: zitadel
+      projectIDFile: /etc/room-broker/oidc/project-id
+      roomctlClientIDFile: /etc/room-broker/oidc/cli-client-id
+      slackDecide:
+        principal: slack-app
+        teamID: T07J97G2K2P
+      slackLink:
+        principal: slack-app
+        repository: Smana/ai-native-ref
+        teamID: T07J97G2K2P
+    roomTools:
+      enabled: true
+    suspend:
+      after: 5m
+      enabled: true
+    policyManagement:
+      operators:
+      - Smana
+      promotion: true
+    webhooks:
+      - events:
+        - room.task_triaged
+        - room.waiting_for_human
+        - room.pr_opened
+        - room.verdict_posted
+        - room.merged
+        - room.reverted
+        - room.budget_reached
+        - room.ended
+        - room.approval_closed
+        generation: 1
+        name: slack-app
+        network: cluster
+        repositories:
+        - Smana/ai-native-ref
+        - Smana/cloud-native-ref
+        - Smana/runlore
+        - Smana/runlore-kb
+        secretFile: /etc/room-broker/webhooks/slack-app/signing-key
+        url: http://factory-slack-app.agent-system.svc.cluster.local:8081/webhooks
+      - events:
+        - room.task_received
+        - room.task_triaged
+        - room.run_started
+        - room.run_ended
+        - room.waiting_for_human
+        - room.pr_opened
+        - room.verdict_posted
+        - room.merged
+        - room.reverted
+        - room.monitor_verdict
+        - room.budget_reached
+        - room.ended
+        name: runlore
+        network: cluster
+        repositories:
+        - Smana/cloud-native-ref
+        secretFile: /etc/room-broker/webhooks/runlore/signing-key
+        url: http://runlore.runlore.svc.cluster.local:8080/factory/webhook
+---
+# Source: agent-factory/charts/maku/templates/run-controller-config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: run-controller-config
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+data:
+  # Strictly decoded by the controller (runctl.LoadConfig). namespace and namePrefix come from
+  # `runs` alone, as the broker's do. The broker URL must be the FQDN: the run pod's resolver
+  # would otherwise try search-path names its CNP refuses.
+  config.yaml: |
+    namespace: "agents"
+    namePrefix: "xplane-run-"
+    runtimeClassName: "gvisor"
+    allowUnsandboxed: false
+    # Runs call the model gateway with their own projected token (v4 step 4, GW3): no provider key
+    # enters the runs namespace, and modelSecret is not read.
+    model:
+      mode: gateway
+      gateway:
+        url: "http://model-gateway.agent-system.svc.cluster.local"
+        ports: {public: 8080, internal: 8081}
+        audiencePrefix: "maku-gateway"
+        serviceAccount: {namespace: "agent-system", name: run-controller}
+        aliases:
+          public: ["agent-default","kimi-frontier","mistral-light","mistral-standard","tier-frontier","tier-light","tier-standard"]
+          internal: ["agent-default","tier-frontier","tier-light","tier-standard"]
+    gitSecret: "agent-git"
+    gitReadSecret: "agent-git-read"
+    broker:
+      url: "https://room-broker.agent-system.svc.cluster.local:8443"
+      namespace: "agent-system"
+      # Only the stable selector label: runctl copies every label into each run CNP once, so a
+      # version label would cut in-flight runs off from the broker on upgrade.
+      labels: {app.kubernetes.io/name: room-broker}
+      caSecret: "room-broker-ca"
+    images:
+      harness: "ghcr.io/smana/maku-harness:v0.0.0@sha256:0000"
+      bridge: "ghcr.io/smana/maku-bridge:v0.0.0@sha256:0000"
+---
+# Source: agent-factory/charts/slack/templates/config.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-slack-app-config
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+data:
+  # Strictly decoded by the App (internal/slackapp): an unknown key fails its start. Read once at
+  # start: the Deployment's checksum rolls the pod on a change.
+  config.yaml: |
+    botTokenFile: /etc/factory-slack-app/slack/bot-token
+    botUserIDFile: /etc/factory-slack-app/slack/bot-user-id
+    brokerURL: http://room-broker.agent-system.svc.cluster.local:8080
+    channels:
+      C0123ABCD:
+        approvals: true
+        maxCostUSD: 2
+        repositories:
+        - Smana/cloud-native-ref
+    clientIDFile: /etc/factory-slack-app/principal/client-id
+    clientSecretFile: /etc/factory-slack-app/principal/client-secret
+    issuerURL: https://auth.example.test
+    namespace: agent-system
+    projectIDFile: /etc/factory-slack-app/principal/project-id
+    proposals:
+      enabled: true
+    roomsURL: https://rooms.priv.example.test
+    signingSecretFile: /etc/factory-slack-app/slack/signing-secret
+    teamID: T07J97G2K2P
+    webhookKeyFile: /etc/factory-slack-app/webhook/signing-key
+---
+# Source: agent-factory/charts/slack/templates/threads-configmap.yaml
+# The Slack thread to room map, which the App writes (EX10). Rendered with no data, so Helm's
+# three-way merge never patches the App's entries, and kept on uninstall. Flux's drift detection
+# and Argo CD's sync would still reset it: README.md gives their ignore rules.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-slack-threads
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+  annotations:
+    helm.sh/resource-policy: keep
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agents-overview
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agents-overview.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-factory
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-factory.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-room
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-room.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-run
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-run.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-identity
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-identity.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-fleet
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-fleet.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/templates/monitoring-dashboards.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: maku-dashboard-agent-gateway
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    grafana_dashboard: "1"
+data:
+  agent-gateway.json: |-
+    <dashboard JSON>
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-factory-admin
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-mergepolicy-editor
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-viewer
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# The preflight (v4 D18) proves the sandbox RuntimeClass exists before any run starts. It reads it
+# uncached, by name: get on that one cluster-scoped object, never a list or watch.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-agent-system-run-controller-runtimeclass
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [node.k8s.io]
+    resources: [runtimeclasses]
+    resourceNames: ["gvisor"]
+    verbs: [get]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: maku-agent-system-run-controller-runtimeclass
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: maku-agent-system-run-controller-runtimeclass}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+# Tasks, their rooms, the stop object, the day ledgers (R50), leader election (§6.5).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list, watch, create, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks/status]
+    verbs: [get, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories/status, repositories/status, mergepolicies/status]
+    verbs: [get, update, patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms]
+    verbs: [get, list, watch, create, delete]
+  # ConfigMaps: the stop object, the meter heartbeat (agent-factory-meter), R50's day ledgers
+  # (names carry the date, so resourceNames cannot bound them) and nothing else. The Role's namespace is the bound: the factory can read and
+  # write every ConfigMap in it, its own config included, so the namespace holds no ConfigMap it
+  # must not touch. watch is for the stop object's cache.
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list, watch, create, update, delete]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+# AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
+# phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
+# demo or runTokens.enabled lets the factory keep the run-controller's agent-git and agent-git-read
+# Secrets filled with tokens minted from a GitHub App. create cannot be scoped by name in
+# Kubernetes; get and update can.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agent-factory
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch, create, patch, delete]
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+# Exactly the verbs the broker calls: the Room controller reads Rooms, updates their finalizer and
+# merge-patches their status; the human API creates (new room, fork); leader election takes a Lease and emits Events.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms]
+    verbs: [get, list, watch, create, update]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/status]
+    verbs: [patch]
+  - apiGroups: [maku.ogenki.io]
+    resources: [rooms/finalizers]
+    verbs: [update]
+  # Coordination parents (v4 MR13): the human API reads a parent, its lineage and the day ledgers
+  # live, to filter them per viewer. Read-only: never watch, never write.
+  - apiGroups: [maku.ogenki.io]
+    resources: [tasks]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [configmaps]
+    verbs: [get, list]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+# AgentRuns: watched, deleted when their Room is, and merge-patched by the suspend trigger, whose
+# patch broker-agentrun-policy.yaml bounds to three annotations. NEVER created: only the run
+# requester creates runs.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch, delete, patch]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# Everything in the runs namespace. A run's pod, ServiceAccount, ConfigMaps and CNP are created
+# and read back (the ownership check); the pod is also deleted (revoke); Secrets are read by name.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns]
+    verbs: [get, list, watch]
+  # The pod's ownerReference sets blockOwnerDeletion, which OwnerReferencesPermissionEnforcement
+  # authorizes as update on the owner's finalizers.
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns/finalizers]
+    verbs: [update]
+  - apiGroups: [maku.ogenki.io]
+    resources: [agentruns/status]
+    verbs: [update, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, create, delete]
+  - apiGroups: [""]
+    resources: [serviceaccounts, configmaps]
+    verbs: [get, create]
+  - apiGroups: [cilium.io]
+    resources: [ciliumnetworkpolicies]
+    verbs: [get, create]
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: ["agent-git", "agent-git-read"]
+    verbs: [get]
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, create, update]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [create, patch]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# The broker's CA, copied into each run: the one Secret it reads outside the runs namespace, and
+# ca.crt only: never broker.tls.secretName, whose tls.key would let the controller impersonate the broker.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller-ca
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [""]
+    resources: [secrets]
+    resourceNames: ["room-broker-ca"]
+    verbs: [get]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# The gateway-token-ttl preflight (v4 step 4, GW9) requests one token for this ServiceAccount at the
+# longest run's lifetime, to learn whether the apiserver caps token expiry under it. Its own name only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller-token
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [run-controller]
+    verbs: [create]
+---
+# Source: agent-factory/charts/slack/templates/rbac.yaml
+# The thread map and nothing else (R25): get and update on one named ConfigMap. No create: the chart
+# renders it (threads-configmap.yaml).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+rules:
+  - apiGroups: [""]
+    resources: [configmaps]
+    resourceNames: [factory-slack-threads]
+    verbs: [get, update]
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-factory}
+subjects:
+  - {kind: ServiceAccount, name: agent-factory, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku-factory/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agent-factory
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: agent-factory}
+subjects:
+  - {kind: ServiceAccount, name: agent-factory, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku/templates/broker-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: room-broker
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: room-broker}
+subjects:
+  - {kind: ServiceAccount, name: room-broker, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller
+  namespace: agents
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller-ca
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-ca}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: agent-system}
+---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller-token
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-token}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: agent-system}
+---
+# Source: agent-factory/charts/slack/templates/rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: factory-slack-app
+subjects:
+  - kind: ServiceAccount
+    name: factory-slack-app
+    namespace: agent-system
+---
+# Source: agent-factory/charts/maku-factory/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector: {app.kubernetes.io/name: agent-factory}
+  ports:
+    - {name: metrics, port: 9090, targetPort: ops, protocol: TCP}
+    - {name: api, port: 8082, targetPort: api, protocol: TCP}
+    - {name: intake, port: 8080, targetPort: intake, protocol: TCP}
+---
+# Source: agent-factory/charts/maku/templates/broker-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  selector:
+    app.kubernetes.io/name: room-broker
+  ports:
+    - {name: bridge, port: 8443, targetPort: bridge}
+    - {name: metrics, port: 9090, targetPort: ops}
+    - {name: human, port: 8080, targetPort: human}
+---
+# Source: agent-factory/charts/slack/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    app.kubernetes.io/name: factory-slack-app
+  ports:
+    # Slack's events and interactivity (public, through expose.slack), the broker's webhooks
+    # (cluster only), and the metrics with the probes.
+    - {name: events, port: 8080, targetPort: events, protocol: TCP}
+    - {name: webhooks, port: 8081, targetPort: webhooks, protocol: TCP}
+    - {name: metrics, port: 9090, targetPort: metrics, protocol: TCP}
+---
+# Source: agent-factory/templates/web-proxy.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rooms-web-proxy
+    app.kubernetes.io/component: web-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: rooms-web-proxy
+  ports:
+    - {name: http, port: 80, targetPort: http, protocol: TCP}
+    - {name: metrics, port: 44180, targetPort: metrics, protocol: TCP}
+---
+# Source: agent-factory/charts/maku-factory/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent-factory
+  labels:
+    app.kubernetes.io/name: agent-factory
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels: {app.kubernetes.io/name: agent-factory}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agent-factory
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        checksum/config: 118aa289b7f86e266e56e09794a88890d061f37aa50b44d13291175f70b3db00
+    spec:
+      serviceAccountName: agent-factory
+      automountServiceAccountToken: true # a controller: it watches Tasks and AgentRuns
+      # The factory's drains (manager 20 s, then :9090) fit inside it.
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # The kubelet gives mounted Secrets this group: with defaultMode 0440 the App key is
+        # readable by uid 65532 and nobody else (review C1).
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: {matchLabels: {app.kubernetes.io/name: agent-factory}}
+      containers:
+        - name: agent-factory
+          image: "ghcr.io/smana/maku-factory:v0.0.0@sha256:0000"
+          env:
+            - name: POD_NAMESPACE
+              valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+            - {name: FACTORY_CONFIG, value: /etc/agent-factory/config/config.yaml}
+          ports:
+            - {name: ops, containerPort: 9090, protocol: TCP}
+            - {name: api, containerPort: 8082, protocol: TCP}
+            - {name: intake, containerPort: 8080, protocol: TCP}
+          startupProbe: {httpGet: {path: /startupz, port: ops}, periodSeconds: 2, failureThreshold: 30}
+          livenessProbe: {httpGet: {path: /healthz, port: ops}, periodSeconds: 10}
+          readinessProbe: {httpGet: {path: /readyz, port: ops}, periodSeconds: 10}
+          resources:
+            limits:
+              cpu: 500m
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          # Sibling mounts, never one inside another's read-only volume.
+          volumeMounts:
+            - {name: config, mountPath: /etc/agent-factory/config, readOnly: true}
+            - {name: broker-ca, mountPath: /etc/agent-factory/openbao-ca, readOnly: true}
+            - {name: github, mountPath: /etc/agent-factory-github, readOnly: true}
+            - {name: merger, mountPath: /etc/agent-factory-merger, readOnly: true}
+            - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
+            - {name: oidc, mountPath: /etc/agent-factory-oidc, readOnly: true}
+            - {name: intake, mountPath: /etc/agent-factory-intake, readOnly: true}
+            - {name: zitadel-reader, mountPath: /etc/agent-factory-zitadel-reader, readOnly: true}
+            - {name: sponsored, mountPath: /etc/agent-factory-sponsored, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: agent-factory-config}
+        - name: broker-ca
+          secret: {secretName: openbao-ca, items: [{key: ca.crt, path: ca.crt}]}
+        - name: github
+          secret: {secretName: agent-factory-github, defaultMode: 0440}
+        - name: merger
+          # optional: a factory with every class off starts without the merger App (it fails closed); a
+          # live or shadow class makes the binary refuse the start when the key is absent: a CrashLoop
+          # with a log line, not ContainerCreating (values.yaml: hard prerequisite then).
+          secret: {secretName: agent-factory-merger, defaultMode: 0440, optional: true}
+        - name: rooms-token
+          projected:
+            sources:
+              - serviceAccountToken: {audience: rooms-system, expirationSeconds: 3600, path: token}
+        - name: oidc
+          secret: {secretName: agent-factory-oidc, defaultMode: 0444}
+        - name: intake
+          # 0440, not the plan's 0400: a 0400 Secret is root-only for uid 65532 — the chart's own
+          # render test refuses it (review C1). Group bit plus fsGroup, as the App keys.
+          # optional: without the token the intake refuses every request (503), never runs open (#57).
+          secret: {secretName: agent-factory-intake, defaultMode: 0440, optional: true}
+        - name: zitadel-reader
+          # optional: without it the run-request API cannot resolve a caller's GitHub login, and
+          # refuses every human run (v2 D4); 0440 with fsGroup, as the other secrets.
+          secret: {secretName: agent-factory-zitadel-reader, defaultMode: 0440, optional: true}
+        - name: sponsored
+          # optional: without it no sponsored client id or project id reads, and every sponsored
+          # token is refused; 0440 with fsGroup, as the other secrets.
+          secret: {secretName: agent-factory-sponsored, defaultMode: 0440, optional: true}
+---
+# Source: agent-factory/charts/maku/templates/broker-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: room-broker
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        # The broker reads its config once at start: a changed config must roll the pods.
+        checksum/config: 536fbccffb62151e94a1772f1b5c7bec070abc6726d07390893acbcb1963f2f7
+    spec:
+      # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
+      serviceAccountName: room-broker
+      automountServiceAccountToken: true # the Room and AgentRun watches, the leader lease
+      terminationGracePeriodSeconds: 30 # the broker's shutdown drains fit 23 s of it
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # Lets the nonroot broker read a 0400 Secret; also makes the optional oidc files readable.
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      initContainers:
+        # The schema, applied as the owner role before the broker starts; the broker's own role
+        # cannot alter it, so this container takes the owner's Secret and nothing else. Its
+        # variable is deliberately not ROOMS_DATABASE_URL: the two DSNs never share a name.
+        - name: migrate
+          image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+          args: [migrate]
+          env:
+            - name: ROOMS_MIGRATION_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: rooms-owner-dsn, key: uri}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            requests: {cpu: 50m, memory: 64Mi}
+            limits: {cpu: 250m, memory: 128Mi}
+      containers:
+        - name: room-broker
+          image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+          env:
+            - name: ROOMS_CONFIG
+              value: /etc/room-broker/config/config.yaml
+            - name: ROOMS_DATABASE_URL
+              valueFrom:
+                secretKeyRef: {name: rooms-broker-dsn, key: uri}
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef: {fieldPath: metadata.namespace}
+          ports:
+            - {name: bridge, containerPort: 8443}
+            - {name: human, containerPort: 8080}
+            - {name: ops, containerPort: 9090}
+          # Probes are on the ops port: the broker answers them there for the kubelet only.
+          startupProbe:
+            httpGet: {path: /startupz, port: 9090}
+            periodSeconds: 5
+            failureThreshold: 120 # a first start waits for PostgreSQL and the migration
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9090}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9090}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 500m
+              memory: 256Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+          volumeMounts:
+            # The config sits beside the TLS pair, not above it: a mount nested in a read-only
+            # ConfigMap mount cannot create its mount point.
+            - {name: config, mountPath: /etc/room-broker/config, readOnly: true}
+            - {name: tls, mountPath: /etc/room-broker/tls, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+            - {name: oidc, mountPath: /etc/room-broker/oidc, readOnly: true}
+            - {name: model-gateway, mountPath: /var/run/secrets/maku/model-gateway, readOnly: true}
+            - {name: webhook-slack-app, mountPath: /etc/room-broker/webhooks/slack-app, readOnly: true}
+            - {name: webhook-runlore, mountPath: /etc/room-broker/webhooks/runlore, readOnly: true}
+      volumes:
+        - name: config
+          configMap: {name: room-broker-config}
+        - name: tls
+          secret: {secretName: room-broker-tls}
+        - name: tmp
+          emptyDir: {}
+        # The OIDC client ids (v4 D8), read at use: a rotated Secret needs no restart.
+        - name: oidc
+          secret: {secretName: room-broker-oidc, defaultMode: 0440}
+        # The model gateway's clients (GW8): one token per client, each audience its own route's, so
+        # the planner's token cannot call the classifier's route or the reverse. The broker reads the
+        # file at each call, so the kubelet's rotation reaches it with no restart.
+        - name: model-gateway
+          projected:
+            sources:
+              - serviceAccountToken: {audience: maku-gateway.client.planner, expirationSeconds: 3600, path: planner}
+              - serviceAccountToken: {audience: maku-gateway.client.classifier, expirationSeconds: 3600, path: classifier}
+        # broker.webhooks[slack-app]'s signing key (EX9), read at each delivery.
+        - name: webhook-slack-app
+          secret: {secretName: room-broker-webhook-slack-app, defaultMode: 0440}
+        # broker.webhooks[runlore]'s signing key (EX9), read at each delivery.
+        - name: webhook-runlore
+          secret: {secretName: room-broker-webhook-runlore, defaultMode: 0440}
+---
+# Source: agent-factory/charts/maku/templates/run-controller-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  replicas: 1 # leader-elected; a second replica would only wait
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: run-controller
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: run-controller
+        app.kubernetes.io/part-of: maku
+        app.kubernetes.io/version: "0.0.0"
+      annotations:
+        # The controller reads its config once at start: a changed config must roll the pod.
+        checksum/config: f0051f83c214d7d4d746aba78a3b65749b9b22533e0d2686badaa6aa41afc5c8
+    spec:
+      serviceAccountName: run-controller
+      automountServiceAccountToken: true # the apiserver is its only peer
+      terminationGracePeriodSeconds: 40 # the manager drains for 30 s
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: run-controller
+          image: ghcr.io/smana/maku-run-controller:v0.0.0@sha256:0000
+          env:
+            - name: RUN_CONTROLLER_CONFIG
+              value: /etc/run-controller/config.yaml
+            # The gateway-token-ttl preflight binds its TokenRequest to this pod (model.mode gateway).
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
+          ports:
+            - {name: metrics, containerPort: 9090}
+            - {name: probes, containerPort: 9091}
+          livenessProbe:
+            httpGet: {path: /healthz, port: 9091}
+          readinessProbe:
+            httpGet: {path: /readyz, port: 9091}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          resources:
+            limits:
+              cpu: 250m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          volumeMounts:
+            - {name: config, mountPath: /etc/run-controller, readOnly: true}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: config
+          configMap: {name: run-controller-config}
+        - name: tmp
+          emptyDir: {}
+---
+# Source: agent-factory/charts/slack/templates/deployment.yaml
+# One replica (R26): the in-memory dedupe and the thread map's writes assume it, so a rollout
+# recreates the pod rather than run two.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: factory-slack-app
+        app.kubernetes.io/part-of: agent-factory
+        app.kubernetes.io/managed-by: Helm
+      annotations:
+        checksum/config: 94adece520ec47933207be2c3506a9a35f4000063b87747e3f041e3f5209c2c0
+    spec:
+      serviceAccountName: factory-slack-app
+      # The thread map's get and update (rbac.yaml).
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532 # the 0440 Secret files are readable through it
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: factory-slack-app
+          image: ghcr.io/smana/maku-slack:v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000
+          imagePullPolicy: IfNotPresent
+          args: ["--config", "/etc/factory-slack-app/config/config.yaml"]
+          ports:
+            - {name: events, containerPort: 8080, protocol: TCP}
+            - {name: webhooks, containerPort: 8081, protocol: TCP}
+            - {name: metrics, containerPort: 9090, protocol: TCP}
+          livenessProbe:
+            httpGet: {path: /healthz, port: metrics}
+          readinessProbe:
+            httpGet: {path: /readyz, port: metrics}
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 10m
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+          volumeMounts:
+            - {name: config, mountPath: /etc/factory-slack-app/config, readOnly: true}
+            - {name: slack, mountPath: /etc/factory-slack-app/slack, readOnly: true}
+            - {name: principal, mountPath: /etc/factory-slack-app/principal, readOnly: true}
+            - {name: webhook, mountPath: /etc/factory-slack-app/webhook, readOnly: true}
+      # Whole-Secret mounts (no subPath, no items), so a rotation reaches the files without a
+      # restart: the App re-reads each at use except botUserIDFile.
+      volumes:
+        - name: config
+          configMap: {name: factory-slack-app-config}
+        - name: slack
+          secret: {secretName: factory-slack-app, defaultMode: 0440}
+        - name: principal
+          secret: {secretName: factory-slack-principal, defaultMode: 0440}
+        - name: webhook
+          secret: {secretName: room-broker-webhook-slack-app, defaultMode: 0440}
+---
+# Source: agent-factory/templates/web-proxy.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rooms-web-proxy
+    app.kubernetes.io/component: web-proxy
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: agent-factory
+        app.kubernetes.io/managed-by: Helm
+        app.kubernetes.io/name: rooms-web-proxy
+        app.kubernetes.io/component: web-proxy
+    spec:
+      serviceAccountName: rooms-web-proxy
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        # A mounted Secret (extraVolumes) is group-readable by the proxy's group.
+        fsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: oauth2-proxy
+          image: quay.io/oauth2-proxy/oauth2-proxy:v7.15.5@sha256:8498b0d0ef0a7b29686414000a08aee467f02d0299c9ed1e006a8f33fc017916
+          args:
+            - "--cookie-httponly=true"
+            - "--cookie-name=_rooms"
+            - "--cookie-refresh=1h"
+            - "--cookie-samesite=strict"
+            - "--cookie-secure=true"
+            - "--email-domain=*"
+            - "--oidc-issuer-url=https://auth.example.test"
+            - "--pass-access-token=true"
+            - "--pass-authorization-header=true"
+            - "--pass-basic-auth=false"
+            - "--pass-user-headers=true"
+            - "--provider=oidc"
+            - "--redirect-url=https://rooms.priv.example.test/oauth2/callback"
+            - "--reverse-proxy=false"
+            - "--set-xauthrequest=false"
+            - "--skip-auth-route=GET=^/\\.well-known/roomctl$"
+            - "--skip-auth-strip-headers=true"
+            - "--skip-jwt-bearer-tokens=true"
+            - "--skip-provider-button=true"
+            - "--upstream=http://room-broker.agent-system.svc.cluster.local:8080"
+            - --http-address=0.0.0.0:4180
+            - "--metrics-address=0.0.0.0:44180"
+          env:
+            - name: OAUTH2_PROXY_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: rooms-proxy, key: client-id}}
+            - name: OAUTH2_PROXY_CLIENT_SECRET
+              valueFrom: {secretKeyRef: {name: rooms-proxy, key: client-secret}}
+            - name: OAUTH2_PROXY_COOKIE_SECRET
+              valueFrom: {secretKeyRef: {name: rooms-proxy, key: cookie-secret}}
+            # maku's bearers: the CLI client's tokens from the same issuer (skip-jwt-bearer-tokens).
+            # $(VAR) expands an earlier entry.
+            - name: CLI_CLIENT_ID
+              valueFrom: {secretKeyRef: {name: room-broker-oidc, key: cli-client-id}}
+            - name: OAUTH2_PROXY_EXTRA_JWT_ISSUERS
+              value: "https://auth.example.test=$(CLI_CLIENT_ID)"
+            # ZITADEL puts the project in aud only when asked with this scope.
+            - name: PROJECT_ID
+              valueFrom: {secretKeyRef: {name: room-broker-oidc, key: project-id}}
+            - name: OAUTH2_PROXY_SCOPE
+              value: "openid profile email offline_access urn:zitadel:iam:org:project:id:$(PROJECT_ID):aud"
+          ports:
+            - {name: http, containerPort: 4180, protocol: TCP}
+            - {name: metrics, containerPort: 44180, protocol: TCP}
+          livenessProbe:
+            httpGet: {path: /ping, port: http}
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: {path: /ready, port: http}
+            periodSeconds: 5
+          resources:
+            limits:
+              cpu: 200m
+              memory: 128Mi
+            requests:
+              cpu: 50m
+              memory: 64Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities: {drop: [ALL]}
+            seccompProfile: {type: RuntimeDefault}
+---
+# Source: agent-factory/charts/maku/templates/retention-cronjob.yaml
+# The daily purge of rooms closed longer ago than their retention, expired intent samples and old
+# push bundles (v4 D9). DELETE-only: it connects as rooms_retention, whose row-level security
+# exposes nothing else, and the binary refuses any other role.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: room-broker-retention
+  labels:
+    app.kubernetes.io/name: room-broker-retention
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  schedule: "17 3 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      # Above one room's 10 min purge statement_timeout, or a slow purge is killed by Kubernetes
+      # before Postgres can report it.
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: room-broker-retention
+            app.kubernetes.io/part-of: maku
+            app.kubernetes.io/version: "0.0.0"
+        spec:
+          restartPolicy: Never
+          # No Kubernetes API: the job talks to Postgres only.
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            seccompProfile: {type: RuntimeDefault}
+          containers:
+            - name: retention
+              image: ghcr.io/smana/maku-broker:v0.0.0@sha256:0000
+              args: [retention]
+              env:
+                - name: ROOMS_DATABASE_URL
+                  valueFrom:
+                    secretKeyRef: {name: rooms-retention-dsn, key: uri}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities: {drop: [ALL]}
+              resources:
+                limits:
+                  cpu: 200m
+                  memory: 64Mi
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# agent-default on zai (zai): the model is forced to the alias whatever the
+# body says, then mapped to glm-5.3 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-zai-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: zai-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: zai
+        formats:
+          - type: Completions
+            path: /api/paas/v4/chat/completions
+      host: api.z.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-zai-api-key
+        key: apiKey
+    tls:
+      sni: api.z.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        agent-default: "glm-5.3"
+      transformations:
+        - field: model
+          expression: '"agent-default"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# kimi-frontier on moonshot (moonshot): the model is forced to the alias whatever the
+# body says, then mapped to k3.1-pro (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-moonshot-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: moonshot-kimi-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: moonshot
+        formats:
+          - type: Completions
+            path: /coding/v1/chat/completions
+      host: api.kimi.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-moonshot-api-key
+        key: apiKey
+    tls:
+      sni: api.kimi.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        kimi-frontier: "k3.1-pro"
+      transformations:
+        - field: model
+          expression: '"kimi-frontier"'
+        # The moonshot preset: K3.1 Pro fixes temperature at 1, and the planner and the classifier send 0.
+        - field: temperature
+          expression: '1'
+        # The moonshot preset: K3.1 Pro fixes top_p.
+        - field: top_p
+          expression: 'null'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# mistral-light on mistral (mistral): the model is forced to the alias whatever the
+# body says, then mapped to mistral-small-2603 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-mistral-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mistral-mistral-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: mistral
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: api.mistral.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-mistral-api-key
+        key: apiKey
+    tls:
+      sni: api.mistral.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        mistral-light: "mistral-small-2603"
+      transformations:
+        - field: model
+          expression: '"mistral-light"'
+        # The mistral preset: agentgateway 1.6 and 1.7 cannot parse the list content Mistral's reasoning answers with, a 502 (ANR live run uyqiqv6e), and the planner sends low.
+        - field: reasoning_effort
+          expression: '"none"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# mistral-standard on mistral (mistral): the model is forced to the alias whatever the
+# body says, then mapped to mistral-medium-2604 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-mistral-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: mistral-mistral-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: mistral
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: api.mistral.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-mistral-api-key
+        key: apiKey
+    tls:
+      sni: api.mistral.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        mistral-standard: "mistral-medium-2604"
+      transformations:
+        - field: model
+          expression: '"mistral-standard"'
+        # The mistral preset: agentgateway 1.6 and 1.7 cannot parse the list content Mistral's reasoning answers with, a 502 (ANR live run uyqiqv6e), and the planner sends low.
+        - field: reasoning_effort
+          expression: '"none"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-frontier on zai (zai): the model is forced to the alias whatever the
+# body says, then mapped to glm-5.3 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-zai-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: zai-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: zai
+        formats:
+          - type: Completions
+            path: /api/paas/v4/chat/completions
+      host: api.z.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-zai-api-key
+        key: apiKey
+    tls:
+      sni: api.z.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-frontier: "glm-5.3"
+      transformations:
+        - field: model
+          expression: '"tier-frontier"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-light on zai (zai): the model is forced to the alias whatever the
+# body says, then mapped to glm-5.3-flash (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-zai-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: zai-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: zai
+        formats:
+          - type: Completions
+            path: /api/paas/v4/chat/completions
+      host: api.z.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-zai-api-key
+        key: apiKey
+    tls:
+      sni: api.z.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-light: "glm-5.3-flash"
+      transformations:
+        - field: model
+          expression: '"tier-light"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-standard on zai (zai): the model is forced to the alias whatever the
+# body says, then mapped to glm-5.3-flashx (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-zai-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: zai-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: zai
+        formats:
+          - type: Completions
+            path: /api/paas/v4/chat/completions
+      host: api.z.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-zai-api-key
+        key: apiKey
+    tls:
+      sni: api.z.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-standard: "glm-5.3-flashx"
+      transformations:
+        - field: model
+          expression: '"tier-standard"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# agent-default on anthropic (anthropic): the model is forced to the alias whatever the
+# body says, then mapped to claude-opus-5-5 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-anthropic-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: agents-anthropic-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+      modelAliases:
+        agent-default: "claude-opus-5-5"
+      transformations:
+        - field: model
+          expression: '"agent-default"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-frontier on anthropic (anthropic): the model is forced to the alias whatever the
+# body says, then mapped to claude-opus-5-5 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-anthropic-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: agents-anthropic-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+      modelAliases:
+        tier-frontier: "claude-opus-5-5"
+      transformations:
+        - field: model
+          expression: '"tier-frontier"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-light on anthropic (anthropic): the model is forced to the alias whatever the
+# body says, then mapped to claude-haiku-5-5 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-anthropic-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: agents-anthropic-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+      modelAliases:
+        tier-light: "claude-haiku-5-5"
+      transformations:
+        - field: model
+          expression: '"tier-light"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-standard on anthropic (anthropic): the model is forced to the alias whatever the
+# body says, then mapped to claude-sonnet-5-5 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-anthropic-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: anthropic-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      anthropic: {}
+  policies:
+    auth:
+      secretRef:
+        name: agents-anthropic-api-key
+        key: apiKey
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+        /v1/messages: Messages
+      modelAliases:
+        tier-standard: "claude-sonnet-5-5"
+      transformations:
+        - field: model
+          expression: '"tier-standard"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-frontier on zai (zai): the model is forced to the alias whatever the
+# body says, then mapped to glm-5.3 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret agents-zai-api-key by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: zai-planner
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: zai
+        formats:
+          - type: Completions
+            path: /api/paas/v4/chat/completions
+      host: api.z.ai
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: agents-zai-api-key
+        key: apiKey
+    tls:
+      sni: api.z.ai
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-frontier: "glm-5.3"
+      transformations:
+        - field: model
+          expression: '"tier-frontier"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/parameters.yaml
+# The generated proxy has no pod seccomp profile, no liveness probe, no limits and a LoadBalancer
+# Service by default; these fields are strategic-merge overlays on what the controller renders (its
+# container is already non-root, read-only, capabilities dropped). As cnref's parameters.yaml.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  # A controller pin change does not re-render the proxy until the Gateway is touched: bump this with
+  # the controller, then check the pod's digest.
+  image:
+    registry: cr.agentgateway.dev
+    repository: agentgateway
+    tag: "v1.6.0"
+    digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+  logging:
+    format: json
+  # The overlay that prices each response (the access log's `cost`), merged over the built-in catalog.
+  modelCatalog:
+    sources:
+      - configMap:
+          name: model-gateway-model-catalog
+  # The default (10s/60s) cut a 200s stream; min 10 / max 660 held it through the deletion of every
+  # proxy pod (cnref PoC N1). 660 = the 600s request timeout + 60s; the controller sets
+  # terminationGracePeriodSeconds from max.
+  shutdown:
+    min: 10
+    max: 660
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  deployment:
+    spec:
+      replicas: 2
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+          containers:
+            - name: agentgateway
+              securityContext:
+                seccompProfile:
+                  type: RuntimeDefault
+              livenessProbe:
+                httpGet:
+                  path: /healthz/ready
+                  port: 15021
+                periodSeconds: 10
+                failureThreshold: 6
+  service:
+    spec:
+      # Runs and the broker reach it in-cluster; a LoadBalancer would give their boundary a cloud address.
+      type: ClusterIP
+  # A drain never takes every in-flight completion. One replica gets no PDB: it would block every drain.
+  podDisruptionBudget:
+    spec:
+      minAvailable: 1
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# The identity headers are dropped before routing, so no route or backend sees a forged one, even
+# where a listener's `set` does not run.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-strip-identity-headers
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        remove:
+          - x-ar-agent
+          - x-ar-human
+          - x-ai-gateway-client-id
+          - agent-session-id
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener public: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.public."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-public
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+          jwks:
+            remote:
+              url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.public."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers) ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted", "message": "the model gateway refused this call: a gateway budget is spent (limit " + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in " + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}} : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener internal: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.internal."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-internal
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+          jwks:
+            remote:
+              url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.internal."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers) ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted", "message": "the model gateway refused this call: a gateway budget is spent (limit " + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in " + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}} : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener clients: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.client."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-clients
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: clients
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+          jwks:
+            remote:
+              url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub == "system:serviceaccount:agent-system:room-broker"'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.client."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers) ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted", "message": "the model gateway refused this call: a gateway budget is spent (limit " + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in " + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}} : null
+    # The callers' own deadlines (20 s planner, 5 s classifier) are shorter.
+    timeouts:
+      request: 60s
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# One frontend policy per Gateway: two would leave the merge to the controller.
+# Buffer: 8Mi, as cnref's agent-router (agentgateway's 2 MiB default cuts long agent contexts).
+# Telemetry: every identity label is the verified sub, under the names the factory's meter and the
+# dashboards read (ar_agent on metrics, x_ar_agent on the access log), with the priced cost.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-frontend
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  frontend:
+    http:
+      maxBufferSize: 8Mi
+    accessLog:
+      attributes:
+        add:
+          - name: x_ar_agent
+            expression: jwt.sub
+          # The request's priced cost in USD (empty when the catalog has no exact row).
+          - name: cost
+            expression: flatten(llm.cost)
+    metrics:
+      attributes:
+        add:
+          - name: ar_agent
+            expression: jwt.sub
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-agent-default
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.agent-default" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-kimi-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-kimi-frontier
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.kimi-frontier" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-mistral-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-mistral-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.mistral-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-mistral-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-mistral-standard
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.mistral-standard" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-frontier
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-frontier" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-standard
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-standard" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-internal-agent-default
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.internal.agent-default" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-internal-tier-frontier
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.internal.tier-frontier" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-internal-tier-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.internal.tier-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-internal-tier-standard
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.internal.tier-standard" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:xplane-run-[a-z2-7]{8}$")'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-clients-planner
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-clients-planner
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.client.planner" in jwt.aud'
+          - 'jwt.sub == "system:serviceaccount:agent-system:room-broker"'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-internal-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-internal-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+---
+# Source: agent-factory/charts/maku/templates/broker-certificate.yaml
+# :8443 serves TLS; the broker re-reads the pair when cert-manager renews it, so no restart.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: room-broker-tls
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  secretName: room-broker-tls
+  duration: 720h # 30d
+  renewBefore: 240h # 10d
+  commonName: room-broker.agent-system.svc.cluster.local
+  dnsNames:
+    - room-broker.agent-system.svc
+    - room-broker.agent-system.svc.cluster.local
+  issuerRef:
+    group: cert-manager.io
+    kind: ClusterIssuer
+    name: openbao
+---
+# Source: agent-factory/charts/maku/templates/agents-namespace.yaml
+# An empty rule selects no peer: enforcement on in both directions, nothing allowed. Each run's own
+# CiliumNetworkPolicy adds its allowances.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: default-deny
+  namespace: agents
+spec:
+  endpointSelector: {}
+  ingress: [{}]
+  egress: [{}]
+---
+# Source: agent-factory/charts/maku/templates/broker-cnp.yaml
+# Default deny; one allow per flow.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  ingress:
+    # Run bridges; a run's own CNP opens the matching egress.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agents
+          matchExpressions:
+            - {key: agents.ogenki.io/run-id, operator: Exists}
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    # The factory's system API calls (its rooms-system token).
+    - fromEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: agent-factory
+            io.kubernetes.pod.namespace: agent-system
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    # The human listener, from the web front door alone (the umbrella's rooms-web-proxy): it sets
+    # the identity headers the broker reads, so nothing may reach :8080 around it. The Slack App,
+    # which calls /mcp with its own bearer, is admitted by maku-slack's room-broker-from-factory-slack-app.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: rooms-web-proxy
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The Room and AgentRun watches, the leader lease and token reviews.
+    # Cilium applies L4 policy after service translation: kubernetes.default:443 is the control
+    # plane's own port (6443 on kind) by then, hence apiServerPorts.
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+            - {port: "6443", protocol: TCP}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+          matchExpressions:
+            - {key: cnpg.io/cluster, operator: Exists}
+      toPorts:
+        - ports: [{port: "5432", protocol: TCP}]
+    # start_run: POST /v1/runs to factoryURL.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: agent-factory
+            io.kubernetes.pod.namespace: agent-system
+      toPorts:
+        - ports: [{port: "8082", protocol: TCP}]
+    # The planner and the classifier: the model gateway's clients listener (broker.modelGateway).
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            gateway.networking.k8s.io/gateway-name: model-gateway
+      toPorts:
+        - ports: [{port: "8082", protocol: TCP}]
+    # broker.webhooks (EX9): a cluster subscriber, its URL's port on its pods only.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: factory-slack-app
+            io.kubernetes.pod.namespace: agent-system
+      toPorts:
+        - ports: [{port: "8081", protocol: TCP}]
+    # broker.webhooks (EX9): a cluster subscriber, its URL's port on its pods only.
+    - toEndpoints:
+        - matchLabels:
+            app.kubernetes.io/name: runlore
+            io.kubernetes.pod.namespace: runlore
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+---
+# Source: agent-factory/charts/maku/templates/broker-cnp.yaml
+# The retention job (retention-cronjob.yaml): no ingress, and egress to DNS and the database only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker-retention
+  labels:
+    app.kubernetes.io/name: room-broker-retention
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker-retention
+  ingress: [{}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+          matchExpressions:
+            - {key: cnpg.io/cluster, operator: Exists}
+      toPorts:
+        - ports: [{port: "5432", protocol: TCP}]
+---
+# Source: agent-factory/charts/maku/templates/run-controller-cnp.yaml
+# Default deny; the controller talks to the apiserver and DNS only.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: run-controller
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: run-controller
+  ingress:
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9091", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # After service translation, as the broker's: see apiServerPorts.
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+            - {port: "6443", protocol: TCP}
+---
+# Source: agent-factory/charts/slack/templates/cnp.yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  ingress:
+    # Slack's events, through the gateway or ingress (expose.slack).
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    # The broker's webhooks.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8081", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The thread map.
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+            - {port: "6443", protocol: TCP}
+    # The broker's human listener: /mcp and the link routes.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    # Slack.
+    - toFQDNs: [{matchName: slack.com}]
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    # The IdP (networkPolicy.idp: whole peers; empty, the issuer's host).
+    - toFQDNs:
+        - matchName: auth.example.test
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+---
+# Source: agent-factory/charts/slack/templates/cnp.yaml
+# The broker's half of the App's /mcp and link calls: the broker's own policy admits :8080 from the
+# web front door alone, so the App's path into it is opened here, where the App is. Policies add up:
+# this one admits the App and nothing else.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker-from-factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/name: factory-slack-app
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: factory-slack-app
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+---
+# Source: agent-factory/templates/factory-netpol.yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-factory
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8082", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            - {port: "443", protocol: TCP}
+            - {port: "6443", protocol: TCP}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    # GitHub (or networkPolicies.factory.github.to: whole Cilium peers).
+    - toFQDNs:
+        - matchName: github.com
+        - matchName: api.github.com
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    # maku-factory.config.api.humanIssuer: its host, by name.
+    - toFQDNs: [{matchName: auth.example.test}]
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: maku-metrics
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  endpointSelector:
+    matchExpressions:
+      - {key: app.kubernetes.io/name, operator: In, values: ["room-broker", "run-controller"]}
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+---
+# Source: agent-factory/templates/web-proxy-netpol.yaml
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/name: rooms-web-proxy
+    app.kubernetes.io/component: web-proxy
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  ingress:
+    # The gateway or ingress (expose.networkPolicy.cilium.fromEntities).
+    - fromEntities:
+        - ingress
+      toPorts:
+        - ports: [{port: "4180", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "4180", protocol: TCP}]
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: observability
+      toPorts:
+        - ports: [{port: "44180", protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The broker's human listener, the upstream.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: agent-system
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    # The IdP: discovery, its keys, the code exchange.
+    - toFQDNs:
+        - matchName: auth.example.test
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+---
+# Source: agent-factory/charts/maku-gateway/templates/gateway.yaml
+# The model gateway (D7). One listener per data class, as on cnref's agent-router: an internal run's
+# token never reaches a public-only provider, because that provider's routes attach to `public` only.
+# `clients` serves the broker's planner and classifier. Routes attach from this namespace only.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: public
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: internal
+      protocol: HTTP
+      port: 8081
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: clients
+      protocol: HTTP
+      port: 8082
+      allowedRoutes:
+        namespaces:
+          from: Same
+  infrastructure:
+    parametersRef:
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+      name: model-gateway
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/agent-default on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/agent-default/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-agent-default
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/kimi-frontier on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/kimi-frontier/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-kimi-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/kimi-frontier/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: moonshot-kimi-frontier
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/mistral-light on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/mistral-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-mistral-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/mistral-light/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: mistral-mistral-light
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/mistral-standard on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/mistral-standard/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-mistral-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/mistral-standard/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: mistral-mistral-standard
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-frontier on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-frontier/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-frontier/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-tier-frontier
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-light on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-tier-light
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-standard on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-standard/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-standard/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-tier-standard
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/agent-default on internal: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/agent-default/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-agent-default
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/messages
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/messages
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-agent-default
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-frontier on internal: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-frontier/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-tier-frontier
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-frontier/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-frontier
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-frontier/v1/messages
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/messages
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-frontier
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-light on internal: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-light
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/messages
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/messages
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-light
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-standard on internal: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-standard/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-tier-standard
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-standard/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-standard
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-standard/v1/messages
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/messages
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-tier-standard
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /clients/planner on clients: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/clients/planner/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-clients-planner
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: clients
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /clients/planner/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-planner
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/models
+        - path:
+            type: Exact
+            value: /m/kimi-frontier/v1/models
+        - path:
+            type: Exact
+            value: /m/mistral-light/v1/models
+        - path:
+            type: Exact
+            value: /m/mistral-standard/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-frontier/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-standard/v1/models
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: zai-agent-default
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-internal-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: agent-factory
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-frontier/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-standard/v1/models
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: anthropic-agent-default
+---
+# Source: agent-factory/templates/expose.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: rooms-web
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  parentRefs:
+    - name: platform-tailscale-general
+      namespace: infrastructure
+      sectionName: https
+  hostnames:
+    - rooms.priv.example.test
+  rules:
+    - matches:
+        - path: {type: PathPrefix, value: /}
+      filters:
+        # oauth2-proxy sets the identity headers, so a client may not bring its own, nor forwarded
+        # headers a proxy might trust. Gateway API's remove takes exact names, no wildcards;
+        # oauth2-proxy overwrites the identity headers again behind this route.
+        - type: RequestHeaderModifier
+          requestHeaderModifier:
+            remove:
+              - X-Forwarded-Access-Token
+              - X-Forwarded-User
+              - X-Forwarded-Email
+              - X-Forwarded-Groups
+              - X-Forwarded-Preferred-Username
+              - X-Auth-Request-User
+              - X-Auth-Request-Email
+              - X-Auth-Request-Preferred-Username
+              - X-Auth-Request-Groups
+              - X-Auth-Request-Access-Token
+              - X-Forwarded-Uri
+              - X-Forwarded-Host
+              - X-Forwarded-Proto
+      backendRefs:
+        - name: rooms-web-proxy
+          port: 80
+      timeouts:
+        request: 0s
+---
+# Source: agent-factory/templates/expose.yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: factory-slack-events
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  parentRefs:
+    - name: platform-public
+      namespace: infrastructure
+      sectionName: factory-slack
+  hostnames:
+    - factory-slack.example.test
+  rules:
+    # Exactly POST /slack/events: every other path and method on this host is the gateway's 404.
+    - matches:
+        - path: {type: Exact, value: /slack/events}
+          method: POST
+      backendRefs:
+        - name: factory-slack-app
+          port: 8080
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: maku-run-controller
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: run-controller
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - {targetLabel: job, replacement: run-controller}
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PodMonitor
+metadata:
+  name: maku-gateway
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: model-gateway
+  podMetricsEndpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+      relabelings:
+        - {targetLabel: job, replacement: model-gateway}
+---
+# Source: agent-factory/templates/monitoring-rules.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: maku
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  groups:
+    - name: maku-rooms
+      rules:
+        - alert: RoomBrokerDown
+          annotations:
+            dashboard: /d/agent-room
+            description: Runs keep working and their bridges buffer, but nothing reaches the room log. kubectl get pods -n agent-system -l app.kubernetes.io/name=room-broker
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: No room-broker replica is up
+          expr: absent(up{job="room-broker", namespace="agent-system"} == 1)
+          for: 5m
+          labels:
+            severity: warning
+        - alert: RoomLogAppendErrors
+          annotations:
+            dashboard: /d/agent-room
+            description: 'The rooms database refuses writes the broker sends it. Check the database the broker''s DSN names, and the broker''s log: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep -i append'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: The room log is refusing appends
+          expr: sum(increase(maku_rooms_append_errors_total[10m])) > 0
+          for: 10m
+          labels:
+            severity: warning
+        - alert: RoomRedactionsSpike
+          annotations:
+            dashboard: /d/agent-room
+            description: 'An agent is handling credentials. Read the rooms with the newest redactions: SELECT room_id, seq, redactions FROM events WHERE redactions <> ''{}'' ORDER BY ts DESC LIMIT 20'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: More than 20 secrets redacted from room logs in 15 minutes
+          expr: sum(increase(maku_rooms_redactions_total[15m])) > 20
+          labels:
+            severity: warning
+        - alert: RoomStalled
+          annotations:
+            dashboard: /d/agent-room
+            description: 'The run is Running but silent, and the room shows AwaitingHuman. Find its run: kubectl get agentrun -n agents -o custom-columns=RUN:.metadata.name,ROOM:.spec.roomRef | grep {{ $labels.room }}, then read its bridge: kubectl logs -n agents <the run''s pod> -c room-bridge'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: Room {{ $labels.room }} has a running run and no event for 30 minutes
+          expr: time() - max by (room) (maku_rooms_last_event_timestamp_seconds) > 1800
+          labels:
+            severity: warning
+        - alert: RoomBridgeHarnessStalled
+          annotations:
+            dashboard: /d/agent-room
+            description: 'The bridge''s cursor holds and its room was told a harness_error with code {{ $labels.reason }}, so the transcript stops there. List room runs: kubectl get agentrun -n agents -o custom-columns=RUN:.metadata.name,ROOM:.spec.roomRef, then read the bridge: kubectl logs -n agents <the run''s pod> -c room-bridge'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: A bridge cannot move past the harness log ({{ $labels.reason }})
+          expr: sum by (reason) (increase(maku_rooms_bridge_harness_stalls_total[10m])) > 0
+          labels:
+            severity: warning
+        - alert: RoomBridgeItemsRefused
+          annotations:
+            dashboard: /d/agent-room
+            description: 'The broker answered 400 to a lone item: the bridge and the broker disagree on the envelope. Read the broker''s refusals: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep ''bridge item refused'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: The broker refused harness items, kept as stubs in the room log
+          expr: sum(increase(maku_rooms_bridge_items_stubbed_total{reason="refused"}[10m])) > 0
+          labels:
+            severity: warning
+        - alert: RoomBridgeItemsUnstorable
+          annotations:
+            dashboard: /d/agent-room
+            description: 'invalid_value: the store rejected a value; key_collision: keys collide once redacted. Neither loses the slot. Read the broker: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep -E ''payload refused by the database|keys collide once redacted'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: Harness items were kept as stubs ({{ $labels.reason }})
+          expr: sum by (reason) (increase(maku_rooms_bridge_items_stubbed_total{reason=~"invalid_value|key_collision"}[1h])) > 0
+          labels:
+            severity: info
+        - alert: RoomAuthnJWKSStale
+          annotations:
+            dashboard: /d/agent-room
+            description: 'At 24 hours its held keys stop verifying and every token from that issuer is refused. Check the broker''s egress to the issuer: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep jwks'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: The broker has not refreshed {{ $labels.issuer }}'s JWKS for 6 hours
+          expr: time() - max by (issuer) (maku_rooms_authn_jwks_last_refresh_timestamp_seconds) > 6 * 3600
+          for: 5m
+          labels:
+            severity: warning
+        - alert: RoomAuthnHumanIssuerNeverFetched
+          annotations:
+            dashboard: /d/agent-room
+            description: 'Every human is refused until it does. Check the broker''s egress to https://auth.example.test: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep jwks'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: The broker has never fetched the human issuer's JWKS
+          expr: absent(maku_rooms_authn_jwks_last_refresh_timestamp_seconds{issuer="https://auth.example.test"}) and on () (sum(up{job="room-broker", namespace="agent-system"}) > 0)
+          for: 30m
+          labels:
+            severity: warning
+        - alert: RoomRejectedActionsSpike
+          annotations:
+            dashboard: /d/agent-room
+            description: 'A client is probing the role matrix, or a UI bug is sending actions a role cannot take. Break down by reason: sum by (reason) (increase(maku_rooms_rejected_actions_total[10m]))'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: The broker refused more than 30 actions in 10 minutes
+          expr: sum(increase(maku_rooms_rejected_actions_total[10m])) > 30
+          labels:
+            severity: warning
+        - alert: RoomVerdictsNotReachingGitHub
+          annotations:
+            dashboard: /d/agent-room
+            description: 'They stay in the room and the factory still reads them there. Check the broker''s GitHub App key and its egress to api.github.com, then the broker log: kubectl logs -n agent-system -l app.kubernetes.io/name=room-broker | grep -i verdict'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: Agents' review verdicts have not reached GitHub for 30 minutes
+          expr: sum(increase(maku_rooms_verdict_posts_total{result="error"}[20m])) > 0 unless sum(increase(maku_rooms_verdict_posts_total{result="posted"}[30m])) > 0
+          for: 30m
+          labels:
+            severity: warning
+        - alert: RoomApprovalPendingTooLong
+          annotations:
+            dashboard: /d/agent-room
+            description: A run is parked, keeping its sandbox and spending no tokens. Open the room and decide; unattended rooms auto-deny at spec.approvals.ttl.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#room-alerts
+            summary: An approval has waited more than 15 minutes
+          expr: max(maku_rooms_approvals_oldest_pending_seconds) > 900
+          labels:
+            severity: warning
+        - alert: RoomWebhookDisabled
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Three deliveries were given up. Fix the receiver (its key, or the service behind it), bump generation on the webhooks entry in the broker''s config and restart the broker: a webhooks change applies only at restart. The events of the disabled window are not replayed.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#webhooks
+            summary: 'The broker disabled its webhook subscriber {{ $labels.subscriber }}: its events are not delivered'
+          expr: max by (subscriber) (maku_rooms_webhook_disabled) == 1
+          for: 1m
+          labels:
+            severity: warning
+        - alert: RoomBrokerSchemaUnverified
+          annotations:
+            dashboard: /d/agent-room
+            description: 'The broker''s role cannot read the migration ledger, so nothing checks that the schema matches the broker''s image. Set broker.database.ownerSecret: the first migrate adopts the Atlas operator''s ledger and this clears. A future release refuses to serve without it.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/database.md#a-ledger-the-broker-cannot-read
+            summary: The broker serves a schema whose version it cannot read
+          expr: max(maku_rooms_schema_unverified{namespace="agent-system"}) == 1
+          for: 15m
+          labels:
+            severity: warning
+    - name: maku-factory
+      rules:
+        - alert: AgentFactoryIntakeErrors
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Labelled issues are not becoming tasks. Only the leader polls, so read every replica: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep ''poll failed''. A 401 from GitHub means the factory App key or installation changed.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: The agent factory has failed to poll its triggers for 15 minutes
+          expr: sum(rate(maku_factory_intake_errors_total[5m])) > 0
+          for: 15m
+          labels:
+            severity: warning
+        - alert: AgentFactoryAutoMergeReverted
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Unless the revert PR carries factory/drill (a drill: the breaker does not count it, and this alert fires on the planned drill too), its class is paused by the breaker until clean mature merges lift it (recoverAfter). Read why on the task: kubectl get task -n agent-system -o wide | grep Reverted'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: A merged agent PR was reverted
+          expr: sum(increase(maku_factory_pr_outcomes_total{outcome="reverted"}[15m])) > 0
+          labels:
+            severity: warning
+        - alert: AgentFactoryMergeRegression
+          annotations:
+            dashboard: /d/agent-factory
+            description: The class is demoted at its next decision; nothing was reverted. The PR carries factory/monitor:regression and the monitor's comment says which signal.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: The post-merge monitor found a regression after a {{ $labels.class }} merge
+          expr: sum by (class, repository) (increase(maku_factory_monitor_verdicts_total{verdict="regression"}[15m])) > 0
+          labels:
+            severity: warning
+        - alert: AgentFactoryClassPausedLong
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The breaker holds the class. Three clean mature merges lift it (recoverAfter); factory/drill lifts it only if added before factory/revert. Read the window: scripts/shadow-merge-tally.sh --repo {{ $labels.repository }} --class {{ $labels.class }} --outcomes --since <date> in Smana/maku. The gauge keeps its last value, so a class with no monitor can stay at 1 after it recovered, and a shadow or unarmed class''s pause is inert: check the class''s mode and recent PRs before acting.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: '{{ $labels.class }} on {{ $labels.repository }} has been paused for 7 days'
+          expr: max by (repository, class) (maku_factory_class_paused{class!=""}) == 1
+          for: 7d
+          labels:
+            severity: warning
+        - alert: AgentFactoryDailyBudgetHigh
+          annotations:
+            dashboard: /d/agent-factory
+            description: Past the cap, runs are refused (429) or revoked with budget-principal once budgets.enforcePrincipal is on; until then nothing is refused and AgentPersonCapShadowRefusal fires instead. The caps are budgets.factoryDailyUSD and humanDailyUSD. Resets at 00:00 UTC.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#budget-signals
+            summary: '{{ $labels.principal }} has spent more than 80 % of today''s budget in USD'
+          expr: maku_factory_budget_spent_usd / maku_factory_budget_cap_usd > 0.8
+          for: 5m
+          labels:
+            severity: warning
+        - alert: AgentPersonCapShadowRefusal
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Shadow only: nothing was refused. It is a false refusal if the run should have been admitted (wrong person charged, or a day filled by reservations the meter later released). Read the day''s ledger, in micro-USD: kubectl get cm -n agent-system agent-factory-ledger-usd-<YYYYMMDD> -o yaml'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#budget-signals
+            summary: '{{ $labels.principal }}''s day is spent: a run was admitted that enforcePrincipal would refuse'
+          expr: sum by (principal) (increase(maku_factory_run_revocations_total{reason="budget-principal-shadow"}[15m])) > 0
+          labels:
+            severity: info
+        - alert: AgentFactoryTaskStuck
+          annotations:
+            dashboard: /d/agent-factory
+            description: kubectl get task -n agent-system {{ $labels.task }} -o yaml; the factory's logs carry task.id={{ $labels.task }}.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: Agent factory task {{ $labels.task }} has been {{ $labels.phase }} for over 2 hours
+          expr: max by (task, phase) (maku_factory_task_phase_seconds{phase=~"Received|Triaged|Implementing|Reviewing|AwaitingCI|AutoMerging|Verifying"}) > 7200
+          for: 5m
+          labels:
+            severity: warning
+        - alert: AgentFactoryKillSwitchEngaged
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Resume: kubectl -n agent-system delete configmap agent-factory-stop, and remove factory/stop from the control issue.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#escalated-tasks-and-the-kill-switch
+            summary: The agent factory's stop is engaged
+          expr: max(maku_factory_kill_switch_engaged) == 1
+          labels:
+            severity: info
+        - alert: FactoryGitHubUnreachable
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'No task advances while GitHub is unreachable, and the replicas stay Ready. Check githubstatus.com, then the App key: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep -i github. The loops recover by themselves when GitHub returns.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-failures
+            summary: Agent factory replica {{ $labels.pod }} has not reached GitHub for 10 minutes
+          expr: maku_factory_github_up == 0
+          for: 10m
+          labels:
+            severity: warning
+        - alert: AgentFactoryMeterBlind
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'With budgets.enforcePrincipal on, new runs are refused (503 meter_blind) and Queued tasks wait with waiting_meter_blind; active runs continue to their deadline and are revoked on recovery. Read the leader''s logs: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep -i meter'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#budget-signals
+            summary: The agent factory's meter has not read token usage for over 5 minutes
+          expr: (time() - max(maku_factory_meter_last_success_timestamp_seconds) > 300) or absent(maku_factory_meter_last_success_timestamp_seconds)
+          for: 1m
+          labels:
+            severity: warning
+        - alert: AgentFactoryRepositoryNotOwned
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Its .github/agent-factory.yaml on the default branch is absent, unparsable, or names another factory (a read failing for 15 minutes counts too): no intake, schedules, API runs or merges there. Check the file, then: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep -i fence'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: The agent factory does not own {{ $labels.repository }}
+          expr: max by (repository) (maku_factory_repository_owned) == 0
+          for: 20m
+          labels:
+            severity: warning
+        - alert: AgentFactoryCoordinationRecoveryRequired
+          annotations:
+            dashboard: /d/agent-factory
+            description: The parent proposes exactly one next action and never takes it itself. Open the parent's room page and act on it, or revise the plan. kubectl get task -n agent-system -o wide | grep Coordinating
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#coordination
+            summary: A coordination family on {{ $labels.repository }} has waited on its recovery for over 15 minutes
+          expr: max by (repository) (maku_factory_coordination_recovery_age_seconds) > 900
+          labels:
+            severity: warning
+        - alert: AgentFactoryCoordinationIntegrationFailed
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The dependent merge stays held (beforeDependentMerge) or the parent stays incomplete (final); the parent proposes one recovery. checks_failed: the exact heads do not work together. infrastructure_failed: the integration Task escalated, resume it within the plan''s maxRuns. kubectl get task -n agent-system -o wide | grep Coordinating'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#coordination
+            summary: A {{ $labels.purpose }} integration run on {{ $labels.repository }} ended {{ $labels.result }}
+          expr: sum by (repository, purpose, result) (clamp_min(maku_factory_coordination_integration_runs_total{result=~"checks_failed|infrastructure_failed"} - (maku_factory_coordination_integration_runs_total offset 15m or maku_factory_coordination_integration_runs_total * 0), 0)) > 0
+          labels:
+            severity: warning
+        - alert: AgentFactoryCoordinationAuthorizationLost
+          annotations:
+            dashboard: /d/agent-factory
+            description: New admission there and in its dependents stops; existing per-repository gates still decide current work. Restore the fence, the App installation, the maintainer's write or the class, then a maintainer of {{ $labels.repository }} authorizes the child again (authorize_child), or revise the plan. A refusal at filing (no child Task yet) is a plan that never had the authority. kubectl get task -n agent-system -o wide | grep Coordinating
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#coordination
+            summary: 'Coordination on {{ $labels.repository }} was refused: {{ $labels.reason }}'
+          expr: sum by (repository, reason) (clamp_min(maku_factory_coordination_admission_refusals_total{reason=~"repository_permission|repository_not_owned|app_unavailable|class_not_allowed|policy_changed"} - (maku_factory_coordination_admission_refusals_total offset 15m or maku_factory_coordination_admission_refusals_total * 0), 0)) > 0
+          labels:
+            severity: warning
+        - alert: AgentFactoryCoordinationStalled
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'A parent is Coordinating with no family filed or done, plan version, integration run or ended wait on that primary in 24 hours. It usually waits on a person: a confirmation, a child authorization or the one recovery the parent page shows. kubectl get task -n agent-system -o wide | grep Coordinating, then the parent''s room page.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#coordination
+            summary: No coordination family on {{ $labels.repository }} has changed state for 24 hours
+          expr: |
+            (sum by (repository) (maku_factory_tasks{phase="Coordinating"}) > 0)
+            unless on (repository) (
+                 sum by (repository) (clamp_min(maku_factory_coordination_families_total - (maku_factory_coordination_families_total offset 24h or maku_factory_coordination_families_total * 0), 0)) > 0
+              or sum by (repository) (clamp_min(maku_factory_coordination_plan_versions_total - (maku_factory_coordination_plan_versions_total offset 24h or maku_factory_coordination_plan_versions_total * 0), 0)) > 0
+              or sum by (repository) (clamp_min(maku_factory_coordination_integration_runs_total - (maku_factory_coordination_integration_runs_total offset 24h or maku_factory_coordination_integration_runs_total * 0), 0)) > 0
+              or sum by (repository) (clamp_min(maku_factory_coordination_wait_seconds_count - (maku_factory_coordination_wait_seconds_count offset 24h or maku_factory_coordination_wait_seconds_count * 0), 0)) > 0
+            )
+          for: 15m
+          labels:
+            severity: warning
+        - alert: AgentModelUnpriced
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'Add its row to the factory''s meter.prices, from the provider''s list price (input, cacheRead, output, and cacheWrite where the provider bills it). Until then its runs are capped in tokens. The leader''s log names each run: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep ''without a price'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#budget-signals
+            summary: Model {{ $labels.model }} served agent runs without a price
+          expr: sum by (model) (increase(maku_factory_meter_unpriced_model_runs_total[1h])) > 0
+          labels:
+            severity: warning
+        - alert: AgentMeterInputExcludesCache
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The meter priced those runs right, as fresh input. Any cost computed from the gateway''s own token counters under-counts them. A gateway path or the provider changed its usage shape. The leader''s log names each run: kubectl logs -n agent-system -l app.kubernetes.io/name=agent-factory --prefix | grep ''without its cache tokens'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#budget-signals
+            summary: A gateway counted {{ $labels.model }}'s input without its cache tokens
+          expr: sum by (model) (clamp_min(maku_factory_meter_input_excludes_cache_runs_total - (maku_factory_meter_input_excludes_cache_runs_total offset 1h or maku_factory_meter_input_excludes_cache_runs_total * 0), 0)) > 0
+          labels:
+            severity: warning
+        - alert: FactoryAgentMerged
+          annotations:
+            dashboard: /d/agent-factory
+            description: Find it in the factory's error log (the agents App merged a pull request), check the ruleset requires maku/merge-gate from the posting App, that the agents App is not one of its bypass actors and that no run holds a person's token, and review the merged change.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: An agent token merged a pull request on {{ $labels.repository }} past the factory's own merge
+          expr: sum by (repository) (clamp_min(maku_factory_pr_outcomes_total{outcome="agent_merged"} - (maku_factory_pr_outcomes_total{outcome="agent_merged"} offset 15m or maku_factory_pr_outcomes_total{outcome="agent_merged"} * 0), 0)) > 0
+          labels:
+            severity: warning
+        - alert: FactoryMergeGateNotRequired
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The default branch no longer requires maku/merge-gate from the App that posts it, so a merge can bypass the factory''s gate. Restore the rule: docs/factory.md, branch protection for the merge gate.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: '{{ $labels.repository }}''s ruleset no longer requires maku/merge-gate'
+          expr: min by (repository) (maku_factory_merge_gate_required) == 0
+          for: 30m
+          labels:
+            severity: warning
+        - alert: AgentFactoryPrivateCodeUnacknowledged
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. This release warns; the next refuses it. Set the field on the Repository, or stop serving it.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/factory.md#private-code
+            summary: '{{ $labels.repository }} is private code served without spec.privateCode.acknowledged'
+          expr: max by (repository) (maku_factory_private_code_unacknowledged) == 1
+          for: 15m
+          labels:
+            severity: warning
+        - alert: FactoryMergeGateRulesUnread
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'maku_factory_merge_gate_required is stale meanwhile. The factory''s log names the failed read: the merger App id file, the repository, or the branch rules.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#factory-alerts
+            summary: The factory cannot read whether {{ $labels.repository }} requires maku/merge-gate
+          expr: sum by (repository) (increase(maku_factory_merge_gate_rules_unread_total[30m])) > 0
+          for: 30m
+          labels:
+            severity: warning
+    - name: maku-run-path
+      rules:
+        - alert: RunControllerPreflightFailing
+          annotations:
+            dashboard: /d/agent-fleet
+            description: 'New runs end Failed (PreflightFailed) or wait Pending until the check passes; runs that already have a pod are untouched. The run-controller logs the check and its fix: kubectl logs -n agent-system -l app.kubernetes.io/name=run-controller | grep ''preflight failed'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#the-run-controllers-preflight
+            summary: The run-controller's {{ $labels.check }} preflight has refused new runs for 10 minutes
+          expr: min by (check) (maku_run_controller_preflight_passed) == 0
+          for: 10m
+          labels:
+            severity: warning
+        - alert: RunControllerDown
+          annotations:
+            dashboard: /d/agent-fleet
+            description: No run starts, ends or is cleaned up while it is down; running pods keep running. kubectl get pods -n agent-system -l app.kubernetes.io/name=run-controller
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#run-path-alerts
+            summary: The run-controller is not up
+          expr: absent(up{job="run-controller", namespace="agent-system"} == 1)
+          for: 5m
+          labels:
+            severity: warning
+    - name: maku-slack
+      rules:
+        - alert: SlackDecisionsSpike
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The metric carries only {result, decision}, so this aggregate stands in for a per-person clause: six approvals in ten minutes from anywhere is already worth reading. Take the broker''s ''slack decision'' lines for those decisions (team, approval, user, result, decision) and the room log for the approvals they closed. An unexpected burst is the shape of a compromised App pod casting decisions as linked humans. Check the rooms'' policies too: no forge.push approval should be decided from Slack in an unattended room.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#slack-alerts
+            summary: More than five forge.push approvals were decided from Slack in ten minutes
+          expr: sum(increase(maku_rooms_slack_decisions_total{result="approved"}[10m])) > 5
+          labels:
+            severity: warning
+        - alert: SlackCardUpdatesFailing
+          annotations:
+            dashboard: /d/agent-factory
+            description: 'The cards are then lying about being live. maku_slack_app_requests_total carries {route, outcome} and no approval id, so one flapping card and a hundred failures read the same: take the App''s ''card update failed'' lines (approval, channel, err) to tell them apart. Causes: a revoked chat:write, a removed message, Slack refusing metadata. The decisions themselves still land: the store, not the card, is the fence.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#slack-alerts
+            summary: The Slack App has failed an approval-card update for an hour
+          expr: sum(rate(maku_slack_app_requests_total{route=~"interactions|webhooks", outcome="error"}[10m])) > 0
+          for: 1h
+          labels:
+            severity: warning
+    - name: maku-gateway
+      rules:
+        - alert: AgentRouterMetricContractBroken
+          annotations:
+            dashboard: /d/agent-gateway
+            description: An agentgateway upgrade renamed a token metric or a token type the factory's meter.query reads. The run meter, the budgets and the run page read zero or misprice until meter.query follows. Compare the gateway's /metrics on :15020 with docs/gateway.md, metering the runs.
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#gateway-alerts
+            summary: The model gateway serves model calls the meter's token contract does not see
+          expr: (sum(increase(agentgateway_requests_total{job="model-gateway", namespace="agent-system", status="200", route=~".*/maku-(models|clients)-.+", route!~".*/maku-models-[a-z]+-list"}[15m])) > 0 unless sum(increase(agentgateway_gen_ai_client_token_usage_count{job="model-gateway", namespace="agent-system"}[15m])) > 0) or count(agentgateway_gen_ai_client_token_usage_sum{job="model-gateway", namespace="agent-system", gen_ai_token_type!~"input|output|input_cache_read|input_cache_write"}) > 0
+          for: 15m
+          labels:
+            severity: warning
+        - alert: AgentGateway5xxRatioHigh
+          annotations:
+            dashboard: /d/agent-gateway
+            description: 'Split by route and reason: sum by (route, reason) (rate(agentgateway_requests_total{status=~"5.."}[10m])). UpstreamFailure or Timeout is the provider, Internal is the proxy.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#gateway-alerts
+            summary: The model gateway answers {{ $value | humanizePercentage }} of requests with a 5xx
+          expr: sum(rate(agentgateway_requests_total{job="model-gateway", namespace="agent-system", status=~"5.."}[10m])) / sum(rate(agentgateway_requests_total{job="model-gateway", namespace="agent-system"}[10m])) > 0.05 and sum(increase(agentgateway_requests_total{job="model-gateway", namespace="agent-system", status=~"5.."}[10m])) > 5
+          for: 10m
+          labels:
+            severity: warning
+        - alert: AgentGatewayModelErrorRatioHigh
+          annotations:
+            dashboard: /d/agent-gateway
+            description: 'The provider is failing or refusing. The access log''s http.status and error fields name the cause: kubectl logs -n agent-system -l gateway.networking.k8s.io/gateway-name=model-gateway'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#gateway-alerts
+            summary: '{{ $value | humanizePercentage }} of model calls through the model gateway fail'
+          expr: sum(rate(agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="agent-system", error_type=~".+"}[10m])) / sum(rate(agentgateway_gen_ai_server_request_duration_count{job="model-gateway", namespace="agent-system"}[10m])) > 0.1
+          for: 10m
+          labels:
+            severity: warning
+        - alert: AgentGatewayUnauthorizedBurst
+          annotations:
+            dashboard: /d/agent-gateway
+            description: 'Invalid tokens, a wrong audience, or a subject outside the runs namespace: replayed or foreign tokens, or a caller whose token projection broke. kubectl logs -n agent-system -l gateway.networking.k8s.io/gateway-name=model-gateway | grep -E ''JwtAuth|Authorization'''
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#gateway-alerts
+            summary: The model gateway refused {{ $value }} requests in 5 minutes
+          expr: sum(increase(agentgateway_requests_total{job="model-gateway", namespace="agent-system", reason=~"JwtAuth|Authorization"}[5m])) > 20
+          labels:
+            severity: warning
+        - alert: AgentGatewayCostUnpriced
+          annotations:
+            dashboard: /d/agent-gateway
+            description: 'A catalog lookup other than Exact adds nothing to the gateway''s cost counter. Missing or Unpriced: the model has no row in the catalog (maku-factory.config.meter.prices, or maku-gateway.modelCatalog.prices). NoCatalog: the catalog is not mounted on the proxy.'
+            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/operations.md#gateway-alerts
+            summary: The model gateway could not price {{ $labels.gen_ai_request_model }} ({{ $labels.status }}) for {{ $labels.ar_agent }}
+          expr: sum by (ar_agent, gen_ai_request_model, status) (increase(agentgateway_cost_catalog_lookups_total{job="model-gateway", namespace="agent-system", status!="Exact"}[15m])) > 0
+          labels:
+            severity: warning
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: room-broker
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: agent-factory
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: factory-slack-app
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+# Source: agent-factory/templates/monitoring-scrape.yaml
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: rooms-web-proxy
+  namespace: agent-system
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-web-proxy
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 30s
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+# Only the listed users (the factory) create AgentRuns (C3).
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-agent-system-agentrun-creators
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [CREATE]
+        resources: [agentruns]
+  validations:
+    - expression: "request.userInfo.username in ['system:serviceaccount:agent-system:agent-factory']"
+      message: "only the factory creates AgentRuns (C3): POST /v1/runs, or the room's hand-to-role"
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+# The factory's updates of an AgentRun touch three annotations only: the meter's usage-tokens, the
+# pull request and the revoke. Never the spec, never the labels.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-agent-system-agentrun-factory-patch-limit
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-factory
+      expression: "request.userInfo.username == 'system:serviceaccount:agent-system:agent-factory'"
+  variables:
+    - name: allowed
+      expression: "['agents.ogenki.io/usage-tokens', 'agents.ogenki.io/pull-request', 'agents.ogenki.io/revoked']"
+    - name: new
+      expression: "has(object.metadata.annotations) ? object.metadata.annotations : {}"
+    - name: old
+      expression: "has(oldObject.metadata.annotations) ? oldObject.metadata.annotations : {}"
+  validations:
+    - expression: "object.spec == oldObject.spec"
+      message: "the factory never changes an AgentRun's spec"
+    - expression: "(has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {})"
+      message: "the factory never changes an AgentRun's labels"
+    - expression: >-
+        variables.new.all(k, k in variables.allowed || (k in variables.old && variables.old[k] == variables.new[k])) && variables.old.all(k, k in variables.allowed || k in variables.new)
+      message: "the factory changes only the usage-tokens, pull-request and revoked annotations"
+---
+# Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml
+# The broker writes an AgentRun for one reason: the suspend trigger's merge patch of three
+# annotations (internal/suspend; runwatch's OperatingMode, RemainingSeconds and ResumedAt keys).
+# RBAC cannot bound a patch to fields, so this in-tree policy (Kubernetes 1.30+) does: an UPDATE
+# by the broker's ServiceAccount may set, change or drop those three keys and nothing else. Exact
+# keys, not the agents.ogenki.io/ prefix: the meter's, the factory's and the revoke annotations
+# share it. Every other writer passes untouched.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: room-broker-agent-system-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: ["maku.ogenki.io"]
+        apiVersions: ["*"]
+        operations: [UPDATE]
+        resources: [agentruns]
+  matchConditions:
+    - name: the-broker
+      expression: "request.userInfo.username == 'system:serviceaccount:agent-system:room-broker'"
+  variables:
+    - name: suspendKeys
+      expression: "['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 'agents.ogenki.io/resumed-at']"
+  validations:
+    - expression: >-
+        has(object.spec) == has(oldObject.spec) && (!has(object.spec) || object.spec == oldObject.spec)
+      message: the broker may not change an AgentRun's spec
+    - expression: >-
+        has(object.metadata.labels) == has(oldObject.metadata.labels) && (!has(object.metadata.labels) || object.metadata.labels == oldObject.metadata.labels)
+      message: the broker may not change an AgentRun's labels
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) && (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: the broker may not change an AgentRun's finalizers
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: the broker may not change an AgentRun's owners
+    - expression: >-
+        (!has(object.metadata.annotations) || object.metadata.annotations.all(k, k in variables.suspendKeys || (has(oldObject.metadata.annotations) && k in oldObject.metadata.annotations && oldObject.metadata.annotations[k] == object.metadata.annotations[k]))) && (!has(oldObject.metadata.annotations) || oldObject.metadata.annotations.all(k, k in variables.suspendKeys || (has(object.metadata.annotations) && k in object.metadata.annotations)))
+      message: the broker may change only the suspend annotations (operating-mode, remaining-seconds, resumed-at)
+---
+# Source: agent-factory/charts/maku/templates/run-pod-policy.yaml
+# The run pod's shape (v4 D17), held by the API server itself (Kubernetes 1.30+): no controller, no
+# Kyverno. In runs.namespace only the run-controller creates pods, and every pod there runs in the
+# sandbox, with a restricted securityContext, only emptyDir, configMap, secret and projected volumes
+# (no hostPath), CPU and memory limits on every container, and images from the run-controller's own
+# repositories (by digest unless e2e.unpinnedImages). No ephemeral container is ever added (no
+# kubectl debug into a run), and a pod's maku.ogenki.io/egress annotation, which the egress proxy
+# trusts, never changes after create.
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicy
+metadata:
+  name: maku-agent-system-run-pods
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  failurePolicy: Fail
+  matchConstraints:
+    resourceRules:
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [CREATE, UPDATE]
+        resources: [pods]
+      - apiGroups: [""]
+        apiVersions: [v1]
+        operations: [UPDATE]
+        resources: [pods/ephemeralcontainers]
+  variables:
+    - name: containers
+      expression: "object.spec.containers + (has(object.spec.initContainers) ? object.spec.initContainers : [])"
+    - name: images
+      expression: "['ghcr.io/smana/maku-harness', 'ghcr.io/smana/maku-bridge', 'ghcr.io/smana/maku-run-controller']"
+    - name: pinned
+      expression: "true"
+    - name: egress
+      expression: "has(object.metadata.annotations) && 'maku.ogenki.io/egress' in object.metadata.annotations ? object.metadata.annotations['maku.ogenki.io/egress'] : ''"
+    - name: oldEgress
+      expression: "request.operation == 'UPDATE' && has(oldObject.metadata.annotations) && 'maku.ogenki.io/egress' in oldObject.metadata.annotations ? oldObject.metadata.annotations['maku.ogenki.io/egress'] : ''"
+  validations:
+    - expression: "!has(request.subResource) || request.subResource != 'ephemeralcontainers'"
+      message: "a run pod takes no ephemeral container: no kubectl debug into a run"
+    - expression: "request.operation != 'CREATE' || request.userInfo.username == 'system:serviceaccount:agent-system:run-controller'"
+      message: "only the run-controller (system:serviceaccount:agent-system:run-controller) creates pods in agents"
+    - expression: "request.operation != 'UPDATE' || variables.egress == variables.oldEgress"
+      message: "the maku.ogenki.io/egress annotation is set at create, by the run-controller, and never changes"
+    - expression: "has(object.spec.runtimeClassName) && object.spec.runtimeClassName == 'gvisor'"
+      message: "a run pod runs under RuntimeClass \"gvisor\" (sandbox.runtimeClassName)"
+    - expression: "has(object.spec.automountServiceAccountToken) && object.spec.automountServiceAccountToken == false"
+      message: "a run pod sets automountServiceAccountToken: false"
+    - expression: >-
+        !(has(object.spec.hostNetwork) && object.spec.hostNetwork) && !(has(object.spec.hostPID) && object.spec.hostPID) && !(has(object.spec.hostIPC) && object.spec.hostIPC)
+      message: "a run pod shares no host namespace: no hostNetwork, hostPID or hostIPC"
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
+      message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
+    # model.mode gateway (v4 step 4, GW3): a run holds ServiceAccount tokens for the broker, its room
+    # tools and the model gateway's aliases only, never one the apiserver or another service accepts,
+    # and never the model Secret: no provider key enters the runs namespace.
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(s, !has(s.serviceAccountToken) || (has(s.serviceAccountToken.audience) && (s.serviceAccountToken.audience in ['room-broker', 'room-tools'] || s.serviceAccountToken.audience.startsWith('maku-gateway.public.') || s.serviceAccountToken.audience.startsWith('maku-gateway.internal.')))))
+      message: "a run pod's projected ServiceAccount tokens are for room-broker, room-tools or maku-gateway.<public|internal>.<alias> only"
+    - expression: >-
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, (!has(v.secret) || v.secret.secretName != 'agent-model') && (!has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(p, !has(p.secret) || p.secret.name != 'agent-model')))) && variables.containers.all(c, (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name != 'agent-model')) && (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) || f.secretRef.name != 'agent-model')))
+      message: "model.mode gateway: a run pod never reads the model Secret agent-model (volume, projected source, env or envFrom); the gateway holds the keys"
+    - expression: "!has(object.spec.ephemeralContainers)"
+      message: "a run pod takes no ephemeral container: no kubectl debug into a run"
+    - expression: >-
+        variables.containers.all(c, !has(c.securityContext) || !has(c.securityContext.privileged) || !c.securityContext.privileged)
+      message: "a run pod's containers are never privileged"
+    - expression: >-
+        variables.containers.all(c, has(c.securityContext) && has(c.securityContext.allowPrivilegeEscalation) && !c.securityContext.allowPrivilegeEscalation)
+      message: "every container of a run pod sets allowPrivilegeEscalation: false"
+    - expression: >-
+        variables.containers.all(c, has(c.securityContext) && has(c.securityContext.capabilities) && has(c.securityContext.capabilities.drop) && 'ALL' in c.securityContext.capabilities.drop && (!has(c.securityContext.capabilities.add) || size(c.securityContext.capabilities.add) == 0))
+      message: "every container of a run pod drops ALL capabilities and adds none"
+    - expression: >-
+        variables.containers.all(c, has(c.securityContext) && has(c.securityContext.readOnlyRootFilesystem) && c.securityContext.readOnlyRootFilesystem)
+      message: "every container of a run pod sets readOnlyRootFilesystem: true"
+    - expression: >-
+        variables.containers.all(c, has(c.securityContext) && has(c.securityContext.runAsNonRoot) ? c.securityContext.runAsNonRoot : has(object.spec.securityContext) && has(object.spec.securityContext.runAsNonRoot) && object.spec.securityContext.runAsNonRoot)
+      message: "every container of a run pod runs as non-root (runAsNonRoot: true)"
+    - expression: >-
+        variables.containers.all(c, has(c.securityContext) && has(c.securityContext.seccompProfile) ? c.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost'] : has(object.spec.securityContext) && has(object.spec.securityContext.seccompProfile) && object.spec.securityContext.seccompProfile.type in ['RuntimeDefault', 'Localhost'])
+      message: "every container of a run pod has a RuntimeDefault or Localhost seccomp profile"
+    - expression: >-
+        variables.containers.all(c, has(c.resources) && has(c.resources.limits) && 'cpu' in c.resources.limits)
+      message: "every container of a run pod sets limits.cpu"
+    - expression: >-
+        variables.containers.all(c, has(c.resources) && has(c.resources.limits) && 'memory' in c.resources.limits)
+      message: "every container of a run pod sets limits.memory"
+    - expression: >-
+        variables.containers.all(c, (c.image.split('@')[0].lastIndexOf(':') > c.image.split('@')[0].lastIndexOf('/') ? c.image.split('@')[0].substring(0, c.image.split('@')[0].lastIndexOf(':')) : c.image.split('@')[0]) in variables.images)
+      message: "a run pod's images come from ghcr.io/smana/maku-harness, ghcr.io/smana/maku-bridge, ghcr.io/smana/maku-run-controller (runController.images, runController.image, runPodPolicy.extraImages)"
+    - expression: "!variables.pinned || variables.containers.all(c, c.image.contains('@sha256:'))"
+      message: "a run pod's images are pinned by digest (@sha256:)"
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-agent-system-agentrun-creators
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-agent-system-agentrun-creators
+  validationActions: [Deny]
+---
+# Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-agent-system-agentrun-factory-patch-limit
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-agent-system-agentrun-factory-patch-limit
+  validationActions: [Deny]
+---
+# Source: agent-factory/charts/maku/templates/broker-agentrun-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: room-broker-agent-system-agentruns
+  labels:
+    app.kubernetes.io/name: room-broker
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: room-broker-agent-system-agentruns
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: agents
+---
+# Source: agent-factory/charts/maku/templates/run-pod-policy.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingAdmissionPolicyBinding
+metadata:
+  name: maku-agent-system-run-pods
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  policyName: maku-agent-system-run-pods
+  validationActions: [Deny]
+  matchResources:
+    namespaceSelector:
+      matchLabels:
+        kubernetes.io/metadata.name: agents

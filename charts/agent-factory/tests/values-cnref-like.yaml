@@ -1,0 +1,208 @@
+# Test-only: cloud-native-ref's install as umbrella values (v4 step 6, Task 20; D22), shaped like
+# ai-native-ref at 1529b3b (infrastructure/{base,gcp-0}/room-broker/config.yaml, the slack-app and
+# agent-factory overlays, the HTTPRoutes and oauth2-proxy), with example.test in place of its Flux
+# substitutions. tests/render.sh renders it in namespace agent-system with the images' digests and
+# compares the render with tests/golden/production-cnref-like.yaml. Not a values file to copy:
+# values-production.example.yaml is.
+profile: production
+maku:
+  enabled: true
+  networkPolicies: {mode: cilium}
+  runs: {group: maku.ogenki.io, namespace: agents, namePrefix: xplane-run-}
+  sandbox: {runtimeClassName: gvisor}
+  agentRunPolicies:
+    creators: ["system:serviceaccount:agent-system:agent-factory"]
+    factoryServiceAccount: agent-factory
+  broker:
+    replicas: 2
+    publicURL: https://rooms.priv.example.test
+    runIssuer:
+      issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+      jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+    systemIssuer:
+      issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+      jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+    systemPrincipals:
+      "system:serviceaccount:agent-system:agent-factory": system:factory
+    factoryURL: http://agent-factory.agent-system.svc.cluster.local:8082
+    factoryInsecure: true
+    policyManagement: {promotion: true, operators: [Smana]}
+    suspend: {enabled: true, after: 5m}
+    oidc: {existingSecret: room-broker-oidc}
+    webProxy: true
+    database:
+      brokerSecret: rooms-broker-dsn
+      ownerSecret: rooms-owner-dsn
+      retentionSecret: rooms-retention-dsn
+    tls:
+      issuerRef: {kind: ClusterIssuer, name: openbao}
+    modelGateway: {service: model-gateway}
+    human:
+      mode: oidc
+      preset: zitadel
+      issuer: https://auth.example.test
+      jwksURL: https://auth.example.test/oauth/v2/keys
+      origin: https://rooms.priv.example.test
+      groups: {admin: agents-admin, member: agents-member}
+      dashboards:
+        - {label: Room metrics, url: "https://grafana.priv.example.test/d/agent-room/agent-room?var-room={room}"}
+        - {label: Run, url: "https://grafana.priv.example.test/d/agent-run/agent-run?var-run={run}"}
+      access:
+        readerFile: /etc/room-broker/zitadel-reader/reader.json
+        ttl: 5m
+      intake:
+        plan:
+          enabled: true
+          deadline: 20s
+          reasoningEffort: low
+          dailyPlans: 50
+          fallback: "off"
+          repositories: [Smana/ai-native-ref, Smana/runlore-kb, Smana/runlore, Smana/cloud-native-ref]
+          classes:
+            docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2.00, source: "class:docs-links.taskUSD"}
+            docs: {roles: [scoper, implementer, reviewer], ceilingUSD: 2.00, source: "class:docs.taskUSD"}
+            scripts: {roles: [scoper, implementer, reviewer], ceilingUSD: 5.10, source: "class:scripts.taskUSD"}
+            review: {roles: [implementer, reviewer], ceilingUSD: 2.00, source: "class:review.taskUSD"}
+      needs: {enabled: true}
+      mcp:
+        enabled: true
+        sessionStart: []
+        sponsored:
+          - {name: slack-app, clientIDFile: /etc/room-broker/sponsored/slack-app-client-id}
+      slackLink: {principal: slack-app, teamID: T07J97G2K2P, repository: Smana/ai-native-ref}
+      slackDecide: {principal: slack-app, teamID: T07J97G2K2P}
+    webhooks:
+      - name: slack-app
+        network: cluster
+        url: http://factory-slack-app.agent-system.svc.cluster.local:8081/webhooks
+        events: [room.task_triaged, room.waiting_for_human, room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed]
+        existingSecret: room-broker-webhook-slack-app
+        repositories: [Smana/ai-native-ref, Smana/cloud-native-ref, Smana/runlore, Smana/runlore-kb]
+        generation: 1
+      - name: runlore
+        network: cluster
+        url: http://runlore.runlore.svc.cluster.local:8080/factory/webhook
+        events: [room.task_received, room.task_triaged, room.run_started, room.run_ended, room.waiting_for_human,
+                 room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.monitor_verdict,
+                 room.budget_reached, room.ended]
+        existingSecret: room-broker-webhook-runlore
+        repositories: [Smana/cloud-native-ref]
+        networkPolicy:
+          to: [{matchLabels: {io.kubernetes.pod.namespace: runlore, app.kubernetes.io/name: runlore}}]
+  runController:
+    gitTokens: shared
+    model:
+      mode: gateway
+      gateway:
+        aliases:
+          public: [agent-default, kimi-frontier, mistral-light, mistral-standard, tier-frontier, tier-light, tier-standard]
+          internal: [agent-default, tier-frontier, tier-light, tier-standard]
+maku-factory:
+  enabled: true
+  replicas: 2
+  githubSecret: agent-factory-github
+  config:
+    factory: cloud-native-ref
+    factoryLogin: ogenki-agent-factory[bot]
+    agentsLogin: ogenki-agents[bot]
+    roomsURL: https://rooms.priv.example.test
+    github:
+      appIDFile: /etc/agent-factory-github/app_id
+      privateKeyFile: /etc/agent-factory-github/private_key
+      mergerAppIDFile: /etc/agent-factory-merger/app_id
+      mergerKeyFile: /etc/agent-factory-merger/private_key
+    poll: {issues: 60s, tasks: 30s, meter: 30s}
+    broker:
+      url: https://room-broker.agent-system.svc.cluster.local:8443
+      caFile: /etc/agent-factory/openbao-ca/ca.crt
+      tokenFile: /var/run/secrets/agents/rooms/token
+    runs: {group: maku.ogenki.io, namespace: agents, namePrefix: xplane-run-, gatewayIdentity: true}
+    api:
+      listen: ":8082"
+      humanIssuer: https://auth.example.test
+      sponsored:
+        - name: slack-app
+          clientIDFile: /etc/agent-factory-sponsored/slack-app-client-id
+          sponsor: Smana
+          repositories: [Smana/ai-native-ref, Smana/cloud-native-ref]
+          dailyUSD: 5
+          maxCostUSD: 2
+maku-gateway:
+  enabled: true
+  identity:
+    issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+    jwks: {url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks}
+  runs: {namespace: agents, namePrefix: xplane-run-}
+  metrics:
+    allowFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: observability}}}]
+  providers:
+    zai: {preset: zai, existingSecret: agents-zai-api-key, key: apiKey}
+    anthropic: {preset: anthropic, existingSecret: agents-anthropic-api-key, key: apiKey, dataClasses: [internal]}
+    moonshot: {preset: moonshot, existingSecret: agents-moonshot-api-key, key: apiKey}
+    mistral: {preset: mistral, existingSecret: agents-mistral-api-key, key: apiKey}
+  aliases:
+    public:
+      agent-default: {provider: zai, model: glm-5.3}
+      tier-frontier: {provider: zai, model: glm-5.3}
+      tier-standard: {provider: zai, model: glm-5.3-flashx}
+      tier-light: {provider: zai, model: glm-5.3-flash}
+      kimi-frontier: {provider: moonshot, model: k3.1-pro}
+      mistral-standard: {provider: mistral, model: mistral-medium-2604}
+      mistral-light: {provider: mistral, model: mistral-small-2603}
+    internal:
+      agent-default: {provider: anthropic, model: claude-opus-5-5}
+      tier-frontier: {provider: anthropic, model: claude-opus-5-5}
+      tier-standard: {provider: anthropic, model: claude-sonnet-5-5}
+      tier-light: {provider: anthropic, model: claude-haiku-5-5}
+  clients:
+    planner: {enabled: true, provider: zai, model: glm-5.3}
+  modelCatalog:
+    prices:
+      glm-5.3: {input: 1.40, cacheRead: 0.26, output: 4.40}
+      glm-5.3-flashx: {input: 0.37, cacheRead: 0.075, output: 1.25}
+      glm-5.3-flash: {input: 0.15, cacheRead: 0.03, output: 0.50}
+      k3.1-pro: {input: 2.00, cacheRead: 0.20, cacheWrite: 2.00, output: 10.00}
+      mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50}
+      mistral-small-2603: {input: 0.15, cacheRead: 0.015, output: 0.60}
+      claude-opus-5-5: {input: 4.00, cacheRead: 0.20, cacheWrite: 5.00, output: 20.00}
+      claude-sonnet-5-5: {input: 2.00, cacheRead: 0.10, cacheWrite: 2.50, output: 10.00}
+      claude-haiku-5-5: {input: 0.50, cacheRead: 0.05, cacheWrite: 0.625, output: 2.50}
+slack:
+  enabled: true
+  issuerURL: https://auth.example.test
+  roomsURL: https://rooms.priv.example.test
+  slackSecret: factory-slack-app
+  principalSecret: factory-slack-principal
+  webhookSecret: room-broker-webhook-slack-app
+  config:
+    teamID: T07J97G2K2P
+    channels:
+      C0123ABCD: {repositories: [Smana/cloud-native-ref], maxCostUSD: 2, approvals: true}
+    proposals: {enabled: true}
+  networkPolicy: {mode: cilium}
+expose:
+  mode: httproute
+  httproute:
+    timeouts: {request: 0s}
+  web:
+    hostnames: [rooms.priv.example.test]
+    parentRefs: [{name: platform-tailscale-general, namespace: infrastructure, sectionName: https}]
+  slack:
+    hostnames: [factory-slack.example.test]
+    parentRefs: [{name: platform-public, namespace: infrastructure, sectionName: factory-slack}]
+webProxy:
+  enabled: true
+  existingSecret: rooms-proxy
+networkPolicies:
+  factory:
+    enabled: true
+monitoring:
+  serviceMonitor:
+    enabled: true
+    cilium:
+      fromEndpoints: [{matchLabels: {io.kubernetes.pod.namespace: observability}}]
+  prometheusRule:
+    enabled: true
+  dashboards:
+    enabled: true
+    labels: {}

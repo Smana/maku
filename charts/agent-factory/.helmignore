@@ -1,5 +1,6 @@
-# The render, schema and install tests stay in the repository. values-demo.yaml and
-# values-mine.example.yaml ship: `helm pull --untar` gives the demo and the example to copy.
+# The render, schema and install tests stay in the repository. values-demo.yaml,
+# values-mine.example.yaml and values-production.example.yaml ship: `helm pull --untar` gives the
+# demo and the examples to copy.
 tests/
 # The vendored agentgateway chart ships once, built into charts/ as the umbrella's dependency.
 vendor/
