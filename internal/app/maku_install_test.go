@@ -5,6 +5,8 @@ package app
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -134,6 +136,7 @@ func TestInstallRefusals(t *testing.T) {
 		t.Errorf("--out - with App creation: %v", err)
 	}
 	m, out := installMaku(t, "")
+	m.Err = io.Discard // its note on the Secrets it skips
 	generic := filepath.Join("..", "install", "testdata", "answers", "generic.yaml")
 	if err := m.Run(context.Background(), []string{"install", "--print", "--out", "-", "--answers", generic}); err != nil {
 		t.Fatal(err)
@@ -197,5 +200,81 @@ func TestInstallCreatesBothApps(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), "/github-apps/maku-platform-factory/installations/new") {
 		t.Errorf("no install URL printed:\n%s", out)
+	}
+}
+
+// Review of #565: every refusal of --out comes before a question or an App: GitHub returns an App's
+// key once, so a refused write after the flow would drop it and orphan the Apps.
+func TestInstallRefusesOutBeforeTheFlow(t *testing.T) {
+	ghes := filepath.Join("..", "install", "testdata", "answers", "ghes.yaml")
+	for name, setup := range map[string]func(t *testing.T, dir string) []string{
+		"a non-empty --out": func(t *testing.T, dir string) []string {
+			if err := os.WriteFile(filepath.Join(dir, "x"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		},
+		"an existing secrets/ under --force": func(t *testing.T, dir string) []string {
+			if err := os.Mkdir(filepath.Join(dir, "secrets"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			return []string{"--force"}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			extra := setup(t, dir)
+			m, _ := installMaku(t, "")
+			m.RunFlow = func(context.Context, githubapps.Flow, ...githubapps.AppManifest) ([]githubapps.App, error) {
+				t.Fatal("the App flow ran before the refusal")
+				return nil, nil
+			}
+			m.Digest = func(context.Context, string, string) (string, error) {
+				t.Fatal("the registry was read before the refusal")
+				return "", nil
+			}
+			args := append([]string{"install", "--print", "--out", dir, "--answers", ghes}, extra...)
+			if err := m.Run(context.Background(), args); err == nil {
+				t.Fatal("the write was not refused")
+			}
+		})
+	}
+	// and an interactive run is refused before its first question
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	m, out := installMaku(t, "maku\n")
+	if err := m.Run(context.Background(), []string{"install", "--print", "--out", dir}); err == nil || out.Len() != 0 {
+		t.Errorf("an interactive run into a non-empty --out: %v, asked %q", err, out)
+	}
+}
+
+// Review of #565: --out - writes no Secret, so it generates no key, and says which Secrets the user
+// brings instead of dropping them silently.
+func TestInstallOutDashNamesTheSecretsItSkips(t *testing.T) {
+	m, out := installMaku(t, "")
+	var errBuf bytes.Buffer
+	m.Err = &errBuf
+	m.Rand = bytes.NewReader(nil) // no key may be drawn
+	generic := filepath.Join("..", "install", "testdata", "answers", "generic.yaml")
+	if err := m.Run(context.Background(), []string{"install", "--print", "--out", "-", "--answers", generic}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(errBuf.String(), "rooms-web-proxy") || !strings.Contains(errBuf.String(), "--out DIR") {
+		t.Errorf("--out - does not name the Secrets it skips: %q", errBuf.String())
+	}
+	if strings.Contains(out.String(), "cookie") {
+		t.Errorf("values.yaml mentions a cookie secret:\n%s", out)
+	}
+}
+
+// Review of #565: an App's key never prints, even through a %v of the App.
+func TestAppInfoRedactsItsKeys(t *testing.T) {
+	a := install.AppInfo{ID: 1, Slug: "s", PEM: githubapps.Secret("-----BEGIN RSA PRIVATE KEY-----x"), ClientSecret: githubapps.Secret("oauth-secret")}
+	for _, s := range []string{fmt.Sprintf("%v", a), fmt.Sprintf("%+v", a), fmt.Sprintf("%#v", a)} {
+		if strings.Contains(s, "PRIVATE KEY") || strings.Contains(s, "oauth-secret") {
+			t.Errorf("an AppInfo prints its keys: %s", s)
+		}
 	}
 }

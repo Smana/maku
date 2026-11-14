@@ -134,6 +134,8 @@ func readme(in Inputs, t Tree) []byte {
 	}
 	if a.String("tls.issuer") == "" {
 		b.WriteString("- The broker's TLS Secrets `room-broker-tls` and `room-broker-ca`, and the factory's `openbao-ca` (docs/install-secrets.md).\n")
+	} else {
+		fmt.Fprintf(&b, "- The CA of the ClusterIssuer `%s`, as key `ca.crt`, in the Secrets `room-broker-ca` (the run-controller's), `openbao-ca` (the factory's, for the broker) and `%s` (the broker's, for the factory): cert-manager writes only the leaf Secrets `room-broker-tls` and `agent-factory-api-tls` (trust-manager or an ExternalSecret can fill them; docs/install-secrets.md).\n", a.String("tls.issuer"), secretFactoryCA)
 	}
 	b.WriteString("\n## Then, in order\n\n```bash\n")
 	fmt.Fprintf(&b, "helm install %s-crds %s/agent-factory-crds --version %s -n %s --create-namespace -f crds/values.yaml\n", rel, chartRegistry, chartVersion(ver), ns)

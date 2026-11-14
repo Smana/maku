@@ -24,3 +24,4 @@ meter.url: http://vmsingle.metrics.svc.cluster.local:8428
 meter.namespace: metrics
 expose.gateway: edge/edge/http
 network.gatewayNamespace: edge
+factory.insecure: true

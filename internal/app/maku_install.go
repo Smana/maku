@@ -43,6 +43,12 @@ func (r Maku) install(ctx context.Context, args []string) error {
 	if len(pos) > 0 || *out == "" {
 		return errors.New("install: --out DIR is required, and nothing is positional")
 	}
+	// Every refusal of --out first: an App's key exists once, in memory, until it is written.
+	if *out != "-" {
+		if err := install.CheckOut(*out, *force); err != nil {
+			return err
+		}
+	}
 	in := r.In
 	if in == nil {
 		in = os.Stdin
@@ -88,25 +94,27 @@ func (r Maku) install(ctx context.Context, args []string) error {
 	if err != nil {
 		return err
 	}
-	rnd := r.Rand
-	if rnd == nil {
-		rnd = rand.Reader
-	}
-	cookie, err := randomKey(rnd)
-	if err != nil {
-		return err
-	}
-	webhook, err := randomKey(rnd)
-	if err != nil {
-		return err
-	}
-	inputs := install.Inputs{Answers: a, Pins: pins, CookieSecret: cookie, WebhookKey: webhook}
+	inputs := install.Inputs{Answers: a, Pins: pins}
 	if *out == "-" {
+		// values.yaml alone: no Secret is written, so no key is generated. Say which Secrets the
+		// user brings, rather than dropping them silently.
 		vals, err := install.Render(inputs)
 		if err != nil {
 			return err
 		}
+		_, _ = fmt.Fprintln(errOut, "maku install: --out - writes values.yaml alone, and no Secret: create "+strings.Join(install.OutDashSecrets(a), ", ")+
+			" yourself (docs/install-secrets.md), or run maku install --print --out DIR, which generates the keys into secrets/")
 		_, err = r.Out.Write(vals["values.yaml"])
+		return err
+	}
+	rnd := r.Rand
+	if rnd == nil {
+		rnd = rand.Reader
+	}
+	if inputs.CookieSecret, err = randomKey(rnd); err != nil {
+		return err
+	}
+	if inputs.WebhookKey, err = randomKey(rnd); err != nil {
 		return err
 	}
 	if a.Bool("apps.create") {
@@ -156,7 +164,7 @@ func (r Maku) createApps(ctx context.Context, in *install.Inputs, hc *http.Clien
 	flow := githubapps.Flow{
 		Command: "install", GitHub: web, API: api, Owner: owner, HC: hc, Out: r.Out, Open: open, Timeout: r.DemoTimeout,
 		Save: func(i int, c githubapps.Credentials) error {
-			got[i] = install.AppInfo{ID: c.ID, Slug: c.Slug, HTMLURL: c.HTMLURL, ClientID: c.ClientID, PEM: c.PEM.Reveal(), ClientSecret: c.ClientSecret.Reveal()}
+			got[i] = install.AppInfo{ID: c.ID, Slug: c.Slug, HTMLURL: c.HTMLURL, ClientID: c.ClientID, PEM: c.PEM, ClientSecret: c.ClientSecret}
 			return nil
 		},
 	}

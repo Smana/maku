@@ -128,8 +128,9 @@ spec:
           secret:
             defaultMode: 288
             secretName: agent-factory-github
-        factoryInsecure: true
-        factoryURL: http://agent-factory.maku.svc.cluster.local:8082
+        factoryCA:
+          secretName: agent-factory-ca
+        factoryURL: https://agent-factory.maku.svc:8082
         githubLink:
           existingSecret: maku-github-link
         human:
@@ -157,6 +158,10 @@ spec:
           jwksURL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
         systemPrincipals:
           system:serviceaccount:maku:agent-factory: system:factory
+        tls:
+          issuerRef:
+            kind: ClusterIssuer
+            name: internal-ca
         webProxy: true
       enabled: true
       networkPolicies:
@@ -189,6 +194,12 @@ spec:
       sandbox:
         runtimeClassName: gvisor
     maku-factory:
+      api:
+        tls:
+          issuerRef:
+            kind: ClusterIssuer
+            name: internal-ca
+          secretName: agent-factory-api-tls
       apps:
         agents:
           existingSecret: agent-factory-agents

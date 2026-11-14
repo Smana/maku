@@ -368,6 +368,15 @@ func questionTable() []Question {
 				return map[string]any{"maku.broker.tls.issuerRef": map[string]any{"kind": "ClusterIssuer", "name": str(v)}}
 			}},
 
+		{ID: "factory.insecure", Prompt: "No ClusterIssuer: run the factory's API in plaintext (humans' bearers cross the cluster in clear; the banner says so)", Kind: KindBool,
+			When: func(a Answers) bool { return a.String("tls.issuer") == "" },
+			Check: func(v any, _ Answers) (string, error) {
+				if !boolean(v) {
+					return "", errors.New("the broker forwards each human's bearer to the factory's API: name a ClusterIssuer (tls.issuer), or accept plaintext with factory.insecure: true")
+				}
+				return "", nil
+			}},
+
 		// Database (IN7: Database).
 		{ID: "database.brokerSecret", Prompt: "The broker's DSN Secret (role rooms_broker)", Kind: KindString, Default: fixed("rooms-broker-dsn"),
 			Keys: []string{"maku.broker.database.brokerSecret"}, Values: at("maku.broker.database.brokerSecret"), Check: dnsSubdomain("the Secret name")},

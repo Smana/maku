@@ -57,13 +57,13 @@ func secretFiles(in Inputs) map[string][]byte {
 	out := map[string][]byte{}
 	if in.Agents.Created() {
 		out["agents-app.yaml"] = join(ns, secretManifest{name: in.agentsSecret(), comment: "The agents App (" + in.Agents.Slug + "): it mints each run's token (D10, D12).",
-			keys: []kv{{"app_id", strconv.FormatInt(in.Agents.ID, 10)}, {"private_key", in.Agents.PEM}}})
+			keys: []kv{{"app_id", strconv.FormatInt(in.Agents.ID, 10)}, {"private_key", in.Agents.PEM.Reveal()}}})
 	}
 	link := secretManifest{name: secretGitHubLink, comment: "The factory App's OAuth client: the GitHub account link (R5, docs/github-link.md).",
-		keys: []kv{{"client_id", in.Factory.ClientID}, {"client_secret", in.Factory.ClientSecret}}}
+		keys: []kv{{"client_id", in.Factory.ClientID}, {"client_secret", in.Factory.ClientSecret.Reveal()}}}
 	if in.Factory.Created() {
 		out["factory-app.yaml"] = join(ns, secretManifest{name: in.factorySecret(), comment: "The factory App (" + in.Factory.Slug + "), the merger folded in.",
-			keys: []kv{{"app_id", strconv.FormatInt(in.Factory.ID, 10)}, {"private_key", in.Factory.PEM}}}, link)
+			keys: []kv{{"app_id", strconv.FormatInt(in.Factory.ID, 10)}, {"private_key", in.Factory.PEM.Reveal()}}}, link)
 	} else {
 		link.comment += "\nFill client_id and client_secret from the factory App's settings page."
 		out["templates/github-link.yaml"] = join(ns, link)
@@ -151,4 +151,17 @@ func holdsKeyMaterial(b []byte, secrets ...string) bool {
 		}
 	}
 	return false
+}
+
+// OutDashSecrets is the Secrets `--out -` leaves to the user: the ones secrets/ would have held.
+func OutDashSecrets(a Answers) []string {
+	names := []string{secretWebProxy, secretBrokerOIDC, secretFactoryOIDC, secretGitHubLink}
+	if a.Bool("slack.enabled") {
+		names = append(names, secretSponsored, secretSlackWebhook)
+	}
+	if a.String("secrets.mode") != "eso" {
+		names = append(names, defaultStr(a, "database.brokerSecret", "rooms-broker-dsn"), defaultStr(a, "database.ownerSecret", "rooms-owner-dsn"),
+			defaultStr(a, "database.retentionSecret", "rooms-retention-dsn"), defaultStr(a, "models.secret", "model-provider"))
+	}
+	return names
 }

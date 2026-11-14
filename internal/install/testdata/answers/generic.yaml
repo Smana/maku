@@ -27,3 +27,4 @@ models.light: claude-haiku-5-5
 meter.url: http://vmsingle.monitoring.svc.cluster.local:8428
 expose.gateway: gateway/edge/https
 network.gatewayNamespace: gateway
+tls.issuer: internal-ca

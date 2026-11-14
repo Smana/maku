@@ -105,20 +105,8 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 // Write lays t out under dir: refused when dir holds anything unless force, and secrets/ is never
 // overwritten. secrets/ is 0700 and its files 0600 (R3); the rest is 0644, the scripts 0755.
 func Write(dir string, t Tree, force bool) error {
-	entries, err := os.ReadDir(dir)
-	switch {
-	case errors.Is(err, fs.ErrNotExist):
-	case err != nil:
+	if err := CheckOut(dir, force); err != nil {
 		return err
-	case len(entries) > 0 && !force:
-		return fmt.Errorf("%s is not empty: write into an empty directory, or pass --force (secrets/ is never overwritten)", dir)
-	}
-	if _, err := os.Stat(filepath.Join(dir, "secrets")); err == nil {
-		for _, p := range t.Paths() {
-			if strings.HasPrefix(p, "secrets/") {
-				return fmt.Errorf("%s already exists: maku never overwrites secrets/; move it away, then run again", filepath.Join(dir, "secrets"))
-			}
-		}
 	}
 	if err := os.MkdirAll(dir, 0o750); err != nil {
 		return err
@@ -140,6 +128,25 @@ func Write(dir string, t Tree, force bool) error {
 		if err := writeFile(full, t[p], mode); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// CheckOut refuses an output directory before anything is asked or created (IN6): a non-empty one
+// without force, and one holding secrets/, which is never overwritten. The command calls it first,
+// since the Apps' keys exist only once, in memory, until they are written.
+func CheckOut(dir string, force bool) error {
+	entries, err := os.ReadDir(dir)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+		return nil
+	case err != nil:
+		return err
+	case len(entries) > 0 && !force:
+		return fmt.Errorf("%s is not empty: write into an empty directory, or pass --force (secrets/ is never overwritten)", dir)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "secrets")); err == nil {
+		return fmt.Errorf("%s already exists: maku never overwrites secrets/; move it away, then run again", filepath.Join(dir, "secrets"))
 	}
 	return nil
 }

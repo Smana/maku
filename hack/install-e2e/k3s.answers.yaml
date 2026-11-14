@@ -25,3 +25,4 @@ meter.namespace: metrics
 expose.mode: ingress
 expose.ingressClass: traefik
 network.gatewayNamespace: kube-system
+factory.insecure: true

@@ -239,3 +239,54 @@ func TestValuesPinImages(t *testing.T) {
 		t.Errorf("a missing digest: %v", err)
 	}
 }
+
+// Review of #565: the factory's run API is TLS when a ClusterIssuer is named (the broker forwards each
+// human's bearer there); plaintext only on an explicit factory.insecure answer; neither is refused.
+func TestFactoryAPITLS(t *testing.T) {
+	in := inputs(t, "generic") // tls.issuer answered
+	v, err := Values(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := digMap(v, "maku.broker")
+	if b["factoryURL"] != "https://agent-factory.maku.svc:8082" || b["factoryInsecure"] != nil {
+		t.Errorf("with tls.issuer: factoryURL %v, factoryInsecure %v", b["factoryURL"], b["factoryInsecure"])
+	}
+	if digMap(v, "maku.broker.factoryCA")["secretName"] != secretFactoryCA {
+		t.Errorf("with tls.issuer: no broker.factoryCA")
+	}
+	tls := digMap(v, "maku-factory.api.tls")
+	if tls["secretName"] == nil || digMap(tls, "issuerRef")["name"] != "internal-ca" {
+		t.Errorf("with tls.issuer: maku-factory.api.tls is %v", tls)
+	}
+	a := readAnswers(t, "generic")
+	delete(a, "tls.issuer")
+	if _, _, err := Resolve(a); err == nil || !strings.Contains(err.Error(), "factory.insecure") {
+		t.Errorf("no TLS and no explicit insecure: %v", err)
+	}
+	a["factory.insecure"] = true
+	r, _, err := Resolve(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in.Answers = r
+	if v, err = Values(in); err != nil {
+		t.Fatal(err)
+	}
+	if b := digMap(v, "maku.broker"); b["factoryInsecure"] != true || b["factoryURL"] != "http://agent-factory.maku.svc.cluster.local:8082" {
+		t.Errorf("factory.insecure: %v %v", b["factoryURL"], b["factoryInsecure"])
+	}
+}
+
+// Review of #565: with cert-manager, the README still names the CA Secrets cert-manager does not write.
+func TestReadmeNamesTheCASecrets(t *testing.T) {
+	tree, err := Render(inputs(t, "generic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range []string{"room-broker-ca", "openbao-ca", secretFactoryCA} {
+		if !strings.Contains(string(tree["README.md"]), s) {
+			t.Errorf("the README does not name %s", s)
+		}
+	}
+}

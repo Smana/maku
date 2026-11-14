@@ -43,8 +43,9 @@ maku:
       secret:
         defaultMode: 288
         secretName: agent-factory-github
-    factoryInsecure: true
-    factoryURL: http://agent-factory.factory.svc.cluster.local:8082
+    factoryCA:
+      secretName: agent-factory-ca
+    factoryURL: https://agent-factory.factory.svc:8082
     githubLink:
       existingSecret: maku-github-link
       webURL: https://ghe.example.com
@@ -73,6 +74,10 @@ maku:
       jwksURL: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC/keys
     systemPrincipals:
       system:serviceaccount:factory:agent-factory: system:factory
+    tls:
+      issuerRef:
+        kind: ClusterIssuer
+        name: internal-ca
     webProxy: true
   enabled: true
   networkPolicies:
@@ -100,6 +105,12 @@ maku:
   sandbox:
     runtimeClassName: kata
 maku-factory:
+  api:
+    tls:
+      issuerRef:
+        kind: ClusterIssuer
+        name: internal-ca
+      secretName: agent-factory-api-tls
   apps:
     agents:
       existingSecret: agent-factory-agents

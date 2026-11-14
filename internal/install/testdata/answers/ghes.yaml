@@ -27,3 +27,4 @@ expose.ingressClass: nginx
 expose.tlsSecret: rooms-tls
 network.gatewayNamespace: ingress-nginx
 monitoring.enabled: false
+tls.issuer: internal-ca

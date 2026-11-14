@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/Smana/maku/internal/githubapps"
 )
 
 // AppInfo is one GitHub App the install runs on: created by the manifest flow (with its
@@ -16,8 +18,8 @@ type AppInfo struct {
 	Slug         string
 	HTMLURL      string
 	ClientID     string
-	PEM          string // created only
-	ClientSecret string // the factory App's OAuth client secret, created only (R5)
+	PEM          githubapps.Secret // created only; prints as [redacted]
+	ClientSecret githubapps.Secret // the factory App's OAuth client secret, created only (R5)
 }
 
 // Created reports whether the wizard holds the App's key: it made it.
@@ -43,8 +45,11 @@ const (
 	secretGitHubLink   = "maku-github-link" //nolint:gosec // a Secret's name, not a credential
 	secretSlackApp     = "factory-slack-app"
 	secretSlackPrinc   = "factory-slack-principal"
-	secretSlackWebhook = "room-broker-webhook-slack-app" //nolint:gosec // a Secret's name, not a credential
-	slackPrincipal     = "slack-app"
+	secretSlackWebhook = "room-broker-webhook-slack-app"
+	// secretFactoryCA holds ca.crt, the CA that signs the factory API's certificate: the broker trusts
+	// it (broker.factoryCA). cert-manager writes only the leaf's Secret.
+	secretFactoryCA = "agent-factory-ca" //nolint:gosec // a Secret's name, not a credential
+	slackPrincipal  = "slack-app"
 )
 
 func (in Inputs) factorySecret() string {
@@ -124,8 +129,16 @@ func Values(in Inputs) (map[string]any, error) {
 	put("maku.broker.human.access", map[string]any{"ttl": "5m"})
 	put("maku.broker.oidc.existingSecret", secretBrokerOIDC)
 	put("maku.broker.systemPrincipals", map[string]any{factorySA: "system:factory"})
-	put("maku.broker.factoryURL", fmt.Sprintf("http://agent-factory.%s.svc.cluster.local:8082", ns))
-	put("maku.broker.factoryInsecure", true)
+	// The factory's run API, where the broker forwards each human's bearer: TLS from the ClusterIssuer,
+	// trusted through the factory CA's Secret; plaintext only on an explicit factory.insecure answer.
+	if issuer := a.String("tls.issuer"); issuer != "" {
+		put("maku.broker.factoryURL", fmt.Sprintf("https://agent-factory.%s.svc:8082", ns))
+		put("maku.broker.factoryCA.secretName", secretFactoryCA)
+		put("maku-factory.api.tls", map[string]any{"secretName": "agent-factory-api-tls", "issuerRef": map[string]any{"kind": "ClusterIssuer", "name": issuer}})
+	} else {
+		put("maku.broker.factoryURL", fmt.Sprintf("http://agent-factory.%s.svc.cluster.local:8082", ns))
+		put("maku.broker.factoryInsecure", true)
+	}
 	put("maku.broker.webProxy", true)
 	put("maku.broker.githubLink.existingSecret", secretGitHubLink)
 	// The broker resolves GitHub ids and room access with the factory App's key (docs/integration.md).
