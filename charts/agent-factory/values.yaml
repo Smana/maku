@@ -1,7 +1,8 @@
 # The production-safe skeleton. These defaults render nothing on their own: `profile` must be set,
 # and values.schema.json rejects unknown or malformed values.
 #   - The demo is `-f values-demo.yaml` (profile: demo, with every demo default).
-#   - `profile: production` fails closed until its seams arrive (v4 rollout steps 2 to 6).
+#   - `profile: production` checks the seams of each enabled component, and fails naming every missing
+#     one (values-production.example.yaml, docs/upgrading.md#from-the-demo-to-production).
 # Install the agent-factory-crds chart first. Values may still change in 0.x minors until v4.0.0.
 profile: ""
 

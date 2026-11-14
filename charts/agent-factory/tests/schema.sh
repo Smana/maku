@@ -41,8 +41,10 @@ rejects 'a hostname that is no RFC 1123 name' 'does not match pattern' "${demo[@
 rejects 'a parentRef without a name' "missing property 'name'" "${demo[@]}" --set-json 'expose.httproute.parentRefs=[{"namespace":"infra"}]'
 rejects 'an unknown expose.web key' "additional properties 'hostname' not allowed" "${demo[@]}" --set expose.web.hostname=x
 rejects 'an unknown webProxy key' "additional properties 'enable' not allowed" "${demo[@]}" --set webProxy.enable=true
-rejects 'profile production' 'profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo' "${img[@]}" --set profile=production
-rejects 'an unset profile' 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' "${img[@]}"
+# profile production renders once its seams are named (tests/render.sh); the skeleton alone has none to check
+helm template af . -n maku "${img[@]}" --set profile=production >/dev/null || { echo "FAIL: profile production with no component on does not render" >&2; fail=1; }
+rejects 'profile production with the demo values' "demoValues: values-demo.yaml is the demo's" "${demo[@]}" --set profile=production
+rejects 'an unset profile' 'profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production)' "${img[@]}"
 rejects '--set profile=demo alone' 'profile demo needs -f values-demo.yaml' "${img[@]}" --set profile=demo "${secrets[@]}"
 
 # the demo renders, and so does a typed override of each key the schema constrains
