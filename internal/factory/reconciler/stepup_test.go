@@ -166,6 +166,13 @@ func TestNoStepInControl(t *testing.T) {
 	wantEscalated(t, g.fail(t, tk, "stalled"), "stalled")
 }
 
+// WF8: a treatment-arm task keeps its workflow to the end, as a control task keeps its floor, so
+// neither arm's figures carry a step.
+func TestNoStepInTheTreatmentArm(t *testing.T) {
+	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) { tk.Status.Profile.Source = "treatment" })
+	wantEscalated(t, g.fail(t, tk, "stalled"), "stalled")
+}
+
 func TestNoStepWithoutAResolvedProfile(t *testing.T) {
 	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) { tk.Status.Profile.Resolved = false })
 	wantEscalated(t, g.fail(t, tk, "stalled"), "stalled")

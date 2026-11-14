@@ -9,7 +9,8 @@ import (
 )
 
 // Evaluation is the team evaluation's switch: the control cohort's share of unlabelled
-// tasks, and whether the scoper's recommendation is only recorded (observe) or used (apply).
+// tasks, whether the scoper's recommendation is only recorded (observe) or used (apply), and the
+// workflow the treatment cohort runs where its class allows it (WF8); unset, both cohorts run the floor.
 // +kubebuilder:object:generate=true
 type Evaluation struct {
 	// +kubebuilder:validation:Minimum=0
@@ -17,6 +18,8 @@ type Evaluation struct {
 	ControlPercent int `json:"controlPercent,omitempty"`
 	// +kubebuilder:validation:Enum=observe;apply
 	Mode string `json:"mode,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	Treatment string `json:"treatment,omitempty"`
 }
 
 // The evaluation modes; unset is observe.
@@ -138,6 +141,11 @@ func (c *Config) validateEvaluation(bad func(string, ...any)) {
 	}
 	if p := c.Evaluation.ControlPercent; p < 0 || p > 100 {
 		bad("evaluation.controlPercent is 0 to 100")
+	}
+	if n := c.Evaluation.Treatment; n != "" {
+		if _, ok := c.HarnessProfiles[n]; !ok {
+			bad("evaluation.treatment %q is not a workflow in harnessProfiles", n)
+		}
 	}
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
