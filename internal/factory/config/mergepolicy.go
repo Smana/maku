@@ -3,6 +3,7 @@
 package config
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -54,7 +55,8 @@ type HarnessProfile struct {
 }
 
 // MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
-// paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 is no guardrail.
+// paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 takes its default
+// (MR7, WithDefaults).
 // +kubebuilder:object:generate=true
 type MergeGuardrails struct {
 	// +kubebuilder:validation:MaxItems=64
@@ -73,6 +75,30 @@ type MergeGuardrails struct {
 	// MaxGrantLifetime caps a saved approval grant's life from its creation or last renewal (merge
 	// policy stage 5): the factory's lookup expires an older grant. 0 is DefaultGrantLifetime.
 	MaxGrantLifetime Duration `json:"maxGrantLifetime,omitzero"`
+}
+
+// The guardrails' defaults (MR7): what caps a bound class when the Factory sets no guardrail.
+const (
+	DefaultGuardrailMaxPatchFiles    = 10
+	DefaultGuardrailMaxModifiedLines = 300
+	DefaultGuardrailMaxPerDay        = 5
+)
+
+// DefaultProtectedFiles are the paths no auto-merge touches whatever the Factory says: the
+// workflows, policy-bot's file and the code owners.
+func DefaultProtectedFiles() []string {
+	return []string{`^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`}
+}
+
+// WithDefaults is g with every zero cap at its default and DefaultProtectedFiles before its own
+// protected paths, each once. It never aliases g's lists.
+func (g MergeGuardrails) WithDefaults() MergeGuardrails {
+	g.ProtectedFiles = union(DefaultProtectedFiles(), g.ProtectedFiles)
+	g.MandatoryChecks = slices.Clone(g.MandatoryChecks)
+	g.MaxPatchFiles = cmp.Or(g.MaxPatchFiles, DefaultGuardrailMaxPatchFiles)
+	g.MaxModifiedLines = cmp.Or(g.MaxModifiedLines, DefaultGuardrailMaxModifiedLines)
+	g.MaxPerDay = cmp.Or(g.MaxPerDay, DefaultGuardrailMaxPerDay)
+	return g
 }
 
 // The bounds of mergeGuardrails.maxGrantLifetime: 90 days by default (the spec's), a year at most.

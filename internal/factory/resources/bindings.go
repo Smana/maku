@@ -63,6 +63,7 @@ func policyContext(m map[string]any) (config.PolicyContext, error) {
 			}
 		}
 	}
+	ctx.Guardrails = ctx.Guardrails.WithDefaults() // MR7
 	return ctx, nil
 }
 

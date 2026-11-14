@@ -4,6 +4,22 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
+
+Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file
+declares under `classes` is held to the bound rule only.
+
+| Change | Before | Now | What to do |
+|---|---|---|---|
+| The bound rule (MR6) | only a `live` class without policy-bot needed `allowedFiles` | every `live` or `shadow` class, resolved with its binding, needs `allowedFiles` or a `diffShape` (`docs-links` and `revert` have theirs built in); otherwise its binding is `Unbounded` and its class is not served | Give the policy or the binding `allowedFiles`, or bind it `disabled` |
+| Guardrail defaults (MR7) | an unset `mergeGuardrails` capped nothing | `protectedFiles` always starts with `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; an unset `maxPatchFiles`, `maxModifiedLines` or `maxPerDay` is 10, 300 or 5 | A policy or binding above one of these is `GuardrailMismatch` and names the cap (`maxModifiedLines 400 is over the guardrail's 300`): lower it, or set that guardrail on the `Factory` |
+| `evidence` on a policy (MR4) | 20 clean decisions, or `mergeGuardrails.minPromotionEvidence` when higher | `evidence: low` is 5 (a policy with a `diffShape` or an `oracle`), `standard`, the default, 20; `minPromotionEvidence` is ignored | Set `evidence: low` where a shape or an oracle checks the diff |
+| A binding's `allowedFiles` over a policy's | `ParameterTwice` | it narrows the policy's: a path must match both | none |
+
+A binding's mode may now be `disabled`; `"off"` still reads as `disabled`. `maku config migrate`
+compares the classes under the default guardrails, so a config-file class within them migrates
+unchanged, and one above them is a `changed:` line.
+
 ## The shared ClusterRoles in the CRD chart (v0.4x, v4 rollout step 7)
 
 Several installs can share a cluster (D2, R10). The roles every install shares move from the factory

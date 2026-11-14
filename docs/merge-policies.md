@@ -84,7 +84,11 @@ mergeGuardrails:
 ```
 
 Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), never a class the
-config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`). For
+config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`).
+Unset, they are not empty (`MergeGuardrails.WithDefaults`): `protectedFiles` starts with
+`^\.github/`, `^\.policy\.yml$` and `^CODEOWNERS$`, then lists the platform's, and an unset
+`maxPatchFiles`, `maxModifiedLines` or `maxPerDay` is 10, 300 or 5. A repository file is held to the
+defaults when its repository's central classes come from `Repository` bindings. For
 a repository whose classes are still the config file's, guardrails set before a cutover make the
 dual evaluation's repository decision stricter than the central one and show up as disagreements:
 land them in the cutover's own pull request.
@@ -375,9 +379,9 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `harnessProfiles.<name>` | `{template, tier, checks, testFirst, loop, description}` | none | Name like a class name. `template`: `solo`, `pair`, `trio`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `testFirst` needs `checks`; `none` takes no other key; `description` ≤ 120 bytes |
-| `mergeGuardrails.protectedFiles` | list of regexp | none | Appended to every class's `protectedFiles` |
+| `mergeGuardrails.protectedFiles` | list of regexp | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, always first | Appended to every bound class's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every class's `holdoutChecks` |
-| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0: no guardrail | A class above it is refused; a class without one inherits it |
+| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as 10, 300 and 5 | A bound class above it is refused (`GuardrailMismatch`); one without it inherits it |
 | `mergeGuardrails.minPromotionEvidence` | int | 0 | Ignored: a policy's `evidence` sets its minimum. 0 or ≥ 20 is still accepted |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | 0 to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
 | `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | See [the stages](#rollout-stages) |

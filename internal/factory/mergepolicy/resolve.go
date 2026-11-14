@@ -82,7 +82,7 @@ func ResolveBindings(f *File, rc *config.Repository, c *config.Config) (map[stri
 	if rc != nil {
 		merge = rc.Merge
 	}
-	ctx := policyContext(c)
+	ctx := policyContext(c, rc)
 	classes, refused := map[string]Resolved{}, map[string]config.BindingRefusal{}
 	served := map[string]config.Class{}
 	for _, b := range f.MergePolicies {
@@ -132,7 +132,13 @@ func resolvedOf(cl config.Class) Resolved {
 	return r
 }
 
-// policyContext is what resolving a binding reads from the factory (B14).
-func policyContext(c *config.Config) config.PolicyContext {
-	return config.PolicyContext{HarnessProfiles: c.HarnessProfiles, Guardrails: c.MergeGuardrails, Templates: c.Templates, Loops: c.Loops}
+// policyContext is what resolving a binding reads from the factory (B14). A file is held to the
+// guardrails its repository's central classes are: with their defaults (MR7) when they come from
+// Repository bindings, as written when the config file declares them, so the two compare alike.
+func policyContext(c *config.Config, rc *config.Repository) config.PolicyContext {
+	g := c.MergeGuardrails
+	if rc != nil && rc.Bound != nil {
+		g = g.WithDefaults()
+	}
+	return config.PolicyContext{HarnessProfiles: c.HarnessProfiles, Guardrails: g, Templates: c.Templates, Loops: c.Loops}
 }

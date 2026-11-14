@@ -4,6 +4,7 @@ package resources
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,8 +97,9 @@ func TestBindingsResolve(t *testing.T) {
 description: Retargets dead external links a detector found, and nothing else.
 shadow: true
 allowedFiles: ['^(docs|website/content)/.+\.md$']
-protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/']
+protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/', '^\.github/', '^\.policy\.yml$', '^CODEOWNERS$']
 modifyOnly: true
+maxPatchFiles: 10
 maxModifiedLines: 20
 diffShape: links-only
 holdoutChecks: ["External links 🔗"]
@@ -431,5 +433,31 @@ func TestFloorReadsTemplatesAsParseValidates(t *testing.T) {
 	}
 	if refused(r, KindRepository, "maku") != "" {
 		t.Fatalf("the consumer stays served: %+v", r.Refused)
+	}
+}
+
+// Review focus 1, MR7: a policy above a default guardrail, with no guardrail set, does not
+// vanish silently: its binding is GuardrailMismatch and the message names the cap and the default.
+func TestPolicyAboveDefaultGuardrailIsNamed(t *testing.T) {
+	big := classPolicy(t, "docs", 2, "allowedFiles: ['^.+\\.md$']\nmaxModifiedLines: 400\n")
+	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], big, boundRepo(t, "maku", "Smana/maku", 1, `
+- {name: docs-links, mode: shadow, holdoutChecks: [validate]}
+- {name: revert, mode: shadow, holdoutChecks: [validate]}
+- {name: docs, mode: shadow}
+`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused(r, KindMergePolicy, "docs") != "" {
+		t.Fatalf("the policy alone was refused: %+v", r.Refused)
+	}
+	b := binding(r, "maku", "docs")
+	if b == nil || b.Reason != config.ReasonGuardrailMismatch || !strings.Contains(b.Message, "maxModifiedLines 400") || !strings.Contains(b.Message, "300") {
+		t.Fatalf("docs: %+v", b)
+	}
+	// The default caps and paths reach every other bound class.
+	c := r.Config.RepositoryFor("Smana/maku").Classes["revert"]
+	if c.MaxModifiedLines != 300 || c.MaxPatchFiles != 10 || c.MaxPerDay != 5 || !slices.Contains(c.ProtectedFiles, `^CODEOWNERS$`) {
+		t.Fatalf("revert under the defaults: %+v", c)
 	}
 }
