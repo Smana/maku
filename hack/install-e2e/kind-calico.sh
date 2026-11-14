@@ -26,6 +26,8 @@ if [[ -z ${KIND_NODE:-} ]]; then
   KIND_NODE="${!v:-}"
   [[ -n $KIND_NODE ]] || die "KIND_MINOR=$KIND_MINOR: versions.env pins no kind node image for it"
 fi
+# Kubernetes 1.30, the floor, takes the last Calico that installs on it (versions.env).
+[[ $KIND_NODE != kindest/node:v1.30.* ]] || CALICO_VERSION=$CALICO_VERSION_FLOOR
 TWO_INSTALLS="${TWO_INSTALLS:-}"
 NAME="mi-${TAG//[^a-z0-9-]/-}"
 NAME="${NAME:0:30}"
