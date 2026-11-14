@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
@@ -43,6 +44,7 @@ type BindingOutcome struct {
 // resolution is what one assembly made of the class-shape policies and the bindings.
 type resolution struct {
 	policies map[string]config.ServedPolicy
+	catalog  []string  // the catalog's policies, accepted or refused, by name (MR2)
 	accepted []Object  // the class policies accepted
 	refused  []Refusal // the class policies refused alone
 	bindings []BindingOutcome
@@ -83,6 +85,9 @@ func decodeStrict(v, dst any) error {
 func judgePolicies(policies []Object, ctx config.PolicyContext, res *resolution) {
 	res.policies = map[string]config.ServedPolicy{}
 	for _, p := range policies {
+		if p.Catalog {
+			res.catalog = append(res.catalog, p.Name)
+		}
 		var spec config.PolicySpec
 		var problems []string
 		if err := decodeStrict(p.Spec, &spec); err != nil {
@@ -100,18 +105,26 @@ func judgePolicies(policies []Object, ctx config.PolicyContext, res *resolution)
 	}
 }
 
-// resolveBindings resolves one bound Repository's bindings, in list order (B4, B6, B9, B14). It
+// resolveBindings resolves one bound Repository's bindings, in list order (B4, B6, B9, B14), then
+// a shadow binding of each catalog policy it does not bind (MR2), which it returns as implied. It
 // returns the served classes; the outcomes and the newly resolved classes go to res. A binding
 // that does not resolve is dropped, or its last resolved class put back. Bindings that do not
 // decode are left to Parse, which refuses the Repository.
 func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyContext, refusedPolicies map[string]bool,
-	opts Options, res *resolution) map[string]config.Class {
+	opts Options, res *resolution) (map[string]config.Class, []config.Binding) {
 	var bindings []config.Binding
 	if raw, ok := r.Spec["mergePolicies"]; ok && raw != nil {
 		if err := decodeStrict(raw, &bindings); err != nil {
-			return nil
+			return nil, nil
 		}
 	}
+	var implied []config.Binding
+	for _, name := range res.catalog {
+		if !slices.ContainsFunc(bindings, func(b config.Binding) bool { return b.Name == name }) {
+			implied = append(implied, config.Binding{Name: name, Mode: config.ModeShadow})
+		}
+	}
+	bindings = append(bindings, implied...)
 	rm, _ := r.Spec["merge"].(map[string]any)
 	full, _ := config.ApplyMergeDefaults(mergeDefaults, rm)
 	var merge config.Merge
@@ -188,7 +201,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 		}
 		res.bindings = append(res.bindings, o)
 	}
-	return classes
+	return classes, implied
 }
 
 func mustJSON(v any) []byte {

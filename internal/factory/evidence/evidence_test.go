@@ -155,7 +155,7 @@ func TestEligibility(t *testing.T) {
 		"everything short at once": {clean(3), OutcomeTally{Bad: 2}, nil, 20, false, []string{BlockBelowMinimum, BlockBadOutcome, BlockNoDrill}, DrillNone},
 	} {
 		t.Run(name, func(t *testing.T) {
-			e := Evaluate(tc.sh, tc.out, tc.reverts, repo, tc.min)
+			e := Evaluate(tc.sh, tc.out, tc.reverts, repo, tc.min, false)
 			if e.Eligible != tc.eligible || !slices.Equal(e.Blockers, tc.blockers) || e.Drill != tc.drill || e.Minimum != tc.min {
 				t.Fatalf("%+v", e)
 			}
@@ -166,12 +166,12 @@ func TestEligibility(t *testing.T) {
 // The widening ladder (MP7: 29/46/61) is reported, never acted on: each step tolerates one more
 // bad outcome among the mature, conclusive merges.
 func TestTheWideningLadder(t *testing.T) {
-	e := Evaluate(ShadowTally{}, OutcomeTally{Merges: 50, Mature: 47, Conclusive: 46, Inconclusive: 1, Bad: 1}, nil, repo, 20)
+	e := Evaluate(ShadowTally{}, OutcomeTally{Merges: 50, Mature: 47, Conclusive: 46, Inconclusive: 1, Bad: 1}, nil, repo, 20, false)
 	want := []Step{{Merges: 29, MaxBad: 0}, {Merges: 46, MaxBad: 1, Reached: true}, {Merges: 61, MaxBad: 2}}
 	if !slices.Equal(e.Ladder, want) || !e.Widen || e.Immature != 3 || e.Pending != 1 {
 		t.Fatalf("%+v", e)
 	}
-	if e := Evaluate(ShadowTally{}, OutcomeTally{Conclusive: 28}, nil, repo, 20); e.Widen || e.Ladder[0].Reached {
+	if e := Evaluate(ShadowTally{}, OutcomeTally{Conclusive: 28}, nil, repo, 20, false); e.Widen || e.Ladder[0].Reached {
 		t.Fatalf("0 in 28 is not under 10%%: %+v", e)
 	}
 }
@@ -207,12 +207,32 @@ func TestShadowByGeneration(t *testing.T) {
 	if !slices.Equal(sh.ByGeneration, want) {
 		t.Fatalf("by generation %+v, want %+v", sh.ByGeneration, want)
 	}
-	if e := Evaluate(sh, OutcomeTally{}, nil, repo, 30); e.Clean != 32 {
+	if e := Evaluate(sh, OutcomeTally{}, nil, repo, 30, false); e.Clean != 32 {
 		t.Fatalf("clean %d, want 32: promotion counts every shadow decision (Q6)", e.Clean)
 	}
 	// The script's fixture: #22's record is a bound class's (policygen=4 repogen=7), the rest before.
 	fx := Shadow(fixture[[]PR](t, "prs-decisions.json"), fixture[[]Revert](t, "reverts-drill.json"), "docs-links", repo, logins)
 	if want := []GenerationCount{{Generation: 4, MergedUnchanged: 1}, {Before: true, MergedUnchanged: 1, Changed: 1}}; !slices.Equal(fx.ByGeneration, want) {
 		t.Fatalf("fixture by generation %+v, want %+v", fx.ByGeneration, want)
+	}
+}
+
+// The drill is per repository (merge policies review MR4): a passed drill on any of the repository's
+// pull requests counts for every class, so a class with no drilled pull request of its own is not
+// blocked on one.
+func TestDrillIsPerRepository(t *testing.T) {
+	clean := ShadowTally{MergedUnchanged: 20, Judged: []int{21}}
+	e := Evaluate(clean, OutcomeTally{}, nil, repo, 20, true)
+	if !e.Eligible || slices.Contains(e.Blockers, BlockNoDrill) || e.Drill != DrillPassed {
+		t.Fatalf("a drilled repository: %+v", e)
+	}
+	if e := Evaluate(clean, OutcomeTally{}, nil, repo, 20, false); e.Eligible || !slices.Equal(e.Blockers, []string{BlockNoDrill}) {
+		t.Fatalf("no drill in the repository: %+v", e)
+	}
+	other := []Revert{{Body: "Reverts " + repo + "#99", Labels: []Label{{Name: "factory/drill"}}, State: "MERGED"},
+		{Body: "Reverts " + repo + "#98", Labels: []Label{{Name: "factory/drill"}}, State: "OPEN"},
+		{Body: "Reverts Smana/other#97", Labels: []Label{{Name: "factory/drill"}}, State: "MERGED"}}
+	if !RepoDrilled(other, repo) || RepoDrilled(other[1:], repo) || RepoDrilled(nil, repo) {
+		t.Fatal("RepoDrilled: a merged factory/drill revert of one of the repository's pull requests, and only that")
 	}
 }

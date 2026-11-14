@@ -44,6 +44,9 @@ type Object struct {
 	Namespace  string
 	Generation int64
 	Spec       map[string]any
+	// Catalog is a MergePolicy labelled v1alpha1.LabelCatalog "true": every Repository that does
+	// not bind it evaluates it in shadow (merge policies review MR2).
+	Catalog bool
 }
 
 // Refusal is why an object is not served (Accepted=False).
@@ -435,13 +438,14 @@ func boundEntry(entry map[string]any, r Object, m map[string]any, ctx config.Pol
 		entry["merge"] = v
 	}
 	classes := map[string]config.Class{}
+	var implied []config.Binding
 	if ctxErr == nil {
 		refused := map[string]bool{}
 		for _, f := range rs.refused {
 			refused[f.Name] = true
 		}
 		defaults, _ := m["mergeDefaults"].(map[string]any)
-		classes = resolveBindings(r, defaults, ctx, refused, opts, rs)
+		classes, implied = resolveBindings(r, defaults, ctx, refused, opts, rs)
 	}
 	raw, err := json.Marshal(classes)
 	if err != nil {
@@ -452,18 +456,29 @@ func boundEntry(entry map[string]any, r Object, m map[string]any, ctx config.Pol
 		return err
 	}
 	entry["classes"] = cm
-	if v, ok := r.Spec["mergePolicies"]; ok {
-		entry["bindings"] = v
-		var bound []any
-		if list, ok := v.([]any); ok {
-			for _, b := range list {
-				if b, ok := b.(map[string]any); ok {
-					bound = append(bound, b["name"])
-				}
+	v, ok := r.Spec["mergePolicies"]
+	if !ok && len(implied) == 0 {
+		return nil
+	}
+	// The catalog's implied bindings follow the Repository's own (MR2): a binding names them, so
+	// the rules that read Bound and Bindings see them. A list that does not decode stays as
+	// written, and Parse refuses it.
+	if list, isList := v.([]any); isList || v == nil {
+		for _, b := range implied {
+			list = append(list, map[string]any{"name": b.Name, "mode": b.Mode})
+		}
+		v = list
+	}
+	entry["bindings"] = v
+	var bound []any
+	if list, ok := v.([]any); ok {
+		for _, b := range list {
+			if b, ok := b.(map[string]any); ok {
+				bound = append(bound, b["name"])
 			}
 		}
-		entry["bound"] = bound
 	}
+	entry["bound"] = bound
 	return nil
 }
 

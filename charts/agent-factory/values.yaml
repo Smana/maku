@@ -25,6 +25,16 @@ maku-factory:
   # one set: the factory chart renders none of them under the umbrella.
   clusterRoles: false
 
+# The merge policy catalog (docs/merge-policies.md#start-here), rendered with the factory: four
+# MergePolicy objects (docs-links, revert, deps-patch, docs) labelled maku.ogenki.io/catalog. Every
+# Repository evaluates each one it does not bind, in shadow; bind one with mode disabled to switch it off
+# for a repository. exclude leaves out the ones the platform keeps as its own objects: an existing
+# MergePolicy of a catalog name, unlabelled, fails the install until it is listed here.
+mergePolicies:
+  catalog:
+    enabled: true
+    exclude: []
+
 # ExternalSecrets (v4 D14; docs/install-secrets.md#externalsecrets), off by default: one for each seam
 # listed under secrets, against the store named here (never rendered by this chart). Each target is
 # the seam's resolved Secret name. A seam id is a row of docs/install-secrets.md:

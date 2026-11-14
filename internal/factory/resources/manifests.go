@@ -66,7 +66,9 @@ func Decode(raw []byte) ([]Object, error) {
 		if g, ok := meta["generation"].(float64); ok {
 			gen = int64(g)
 		}
-		objs = append(objs, Object{Kind: Kind(kind), Name: name, Namespace: str(meta, "namespace"), Generation: gen, Spec: spec})
+		labels, _ := meta["labels"].(map[string]any)
+		objs = append(objs, Object{Kind: Kind(kind), Name: name, Namespace: str(meta, "namespace"), Generation: gen, Spec: spec,
+			Catalog: Kind(kind) == KindMergePolicy && str(labels, v1alpha1.LabelCatalog) == "true"})
 	}
 	return objs, nil
 }

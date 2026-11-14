@@ -5,6 +5,16 @@ app.kubernetes.io/part-of: agent-factory
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- end }}
 
+{{/* The merge policy catalog's guard (merge policies review): an existing MergePolicy of a catalog name
+that is not labelled maku.ogenki.io/catalog is a platform's own, and the render fails naming it, before
+Helm would refuse its ownership at apply. lookup is empty under helm template; a live install reads it. */}}
+{{- define "afumbrella.catalogOwner" -}}
+{{- $o := lookup "maku.ogenki.io/v1alpha1" "MergePolicy" .namespace .name -}}
+{{- if and $o (ne (dig "metadata" "labels" "maku.ogenki.io/catalog" "" $o) "true") -}}
+{{- fail (printf "MergePolicy %s exists and is not the catalog's: add it to mergePolicies.catalog.exclude" .name) -}}
+{{- end -}}
+{{- end }}
+
 {{/* The broker Secret names, from the maku chart's own values (a subchart value is read here as .Values.maku). */}}
 {{- define "afumbrella.tlsSecret" -}}{{ .Values.maku.broker.tls.secretName | default "room-broker-tls" }}{{- end }}
 {{- define "afumbrella.caSecret" -}}{{ .Values.maku.broker.tls.caSecretName | default "room-broker-ca" }}{{- end }}

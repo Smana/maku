@@ -157,3 +157,29 @@ func TestSyncGenerationsPerClass(t *testing.T) {
 		t.Fatalf("policies %+v", cfg.Policies)
 	}
 }
+
+// MR2: the label on a listed MergePolicy makes it the catalog's: a Repository with no mergePolicies
+// evaluates it in shadow, and the policy names that Repository among its consumers.
+func TestSyncReadsTheCatalogLabel(t *testing.T) {
+	merge := fileMerge(t)
+	r := repoObj("other", "Smana/Other", 1)
+	r.Spec.Merge = &merge
+	links := config.Class{DiffShape: "links-only", ModifyOnly: true, MaxModifiedLines: 20, Evidence: config.EvidenceLow}
+	var objs []client.Object
+	for _, name := range []string{"docs-links", "revert"} {
+		p := classPolicyObj(name, 1, config.PolicySpec{Class: links})
+		p.Labels = map[string]string{v1alpha1.LabelCatalog: "true"}
+		objs = append(objs, p)
+	}
+	s, _ := source(t, append(objs, r)...)
+	if err := s.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	rc := s.Live.Current().RepositoryFor("Smana/Other")
+	if rc == nil || !rc.Classes["docs-links"].Shadow || !rc.Classes["revert"].Shadow {
+		t.Fatalf("the catalog's policies are shadow for a Repository that binds none: %+v", rc)
+	}
+	if o := outcome(t, s, resources.KindMergePolicy, "revert"); len(o.Consumers) != 1 || o.Consumers[0].Repository != "other" || o.Consumers[0].Mode != config.ModeShadow {
+		t.Fatalf("revert's consumers: %+v", o.Consumers)
+	}
+}

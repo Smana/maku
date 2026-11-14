@@ -1,0 +1,47 @@
+# The merge policy catalog's four specs, exactly as the merge policies review states them
+# (docs/superpowers/specs/2026-11-14-merge-policies-review-design.md, "The catalog"). render.sh
+# compares each rendered MergePolicy's name and spec with these; Go's resources tests assemble them.
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs-links}
+spec:
+  description: Link targets in Markdown, nothing else.
+  diffShape: links-only
+  modifyOnly: true
+  maxModifiedLines: 20
+  evidence: low
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: revert}
+spec:
+  description: A revert whose diff changes link targets only.
+  diffShape: links-only
+  modifyOnly: true
+  maxModifiedLines: 20
+  evidence: low
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: deps-patch}
+spec:
+  description: Renovate patch updates, after their release age.
+  author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
+  diffShape: semver-patch
+  modifyOnly: true
+  maxPatchFiles: 3
+  maxModifiedLines: 10
+  releaseAgeCheck: renovate/stability-days
+  maxPerDay: 2
+  evidence: low
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs}
+spec:
+  description: Prose in Markdown files, small changes.
+  allowedFiles: ['^.+\.mdx?$']
+  maxPatchFiles: 5
+  maxModifiedLines: 100
+  maxPerDay: 2
+  evidence: standard
