@@ -194,20 +194,20 @@ func TestBuildRepositoryAuthority(t *testing.T) {
 func TestBuildGenerations(t *testing.T) {
 	cfg := live()
 	cfg.Generations = config.Generations{Factory: 12, Repos: map[string]config.RepoGenerations{
-		"smana/cloud-native-ref": {Repository: 4, MergePolicy: 9}}}
+		"smana/cloud-native-ref": {Repository: 4}}}
 	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
-	if !reflect.DeepEqual(c.Generations, Generations{Factory: 12, Repository: 4, MergePolicy: 9}) {
+	if !reflect.DeepEqual(c.Generations, Generations{Factory: 12, Repository: 4}) {
 		t.Fatalf("generations = %+v", c.Generations)
 	}
 }
 
-// B19, plan PR1: a bound repository's generations are per class; mergePolicy is 0.
+// B19, plan PR1: a bound repository's generations are per class; the single mergePolicy is gone (B8).
 func TestBuildGenerationsPerClass(t *testing.T) {
 	cfg := live()
 	cfg.Generations = config.Generations{Factory: 12, Repos: map[string]config.RepoGenerations{
 		"smana/cloud-native-ref": {Repository: 4, Classes: map[string]config.ClassGeneration{"dead-links": {Policy: 4, PolicyName: "dead-links"}}}}}
 	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
-	if c.Generations.MergePolicy != 0 || c.Generations.MergePolicies["dead-links"] != 4 || len(c.Generations.MergePolicies) != 1 {
+	if c.Generations.MergePolicies["dead-links"] != 4 || len(c.Generations.MergePolicies) != 1 {
 		t.Fatalf("generations = %+v", c.Generations)
 	}
 	b, err := json.Marshal(c.Generations)
@@ -223,7 +223,7 @@ func TestCatalogueJSON(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range []string{`"ceilingUSD":2`, `"floor":"links-solo"`, `"allowed":[]`, `"escalation":null`,
-		`"generations":{"factory":0,"repository":0,"mergePolicy":0}`, `"notOffered":"no_template"`, `"approveToMerge":true`,
+		`"generations":{"factory":0,"repository":0}`, `"notOffered":"no_template"`, `"approveToMerge":true`,
 		`"maintainer":true`, `"controlPercent":20`} {
 		if !strings.Contains(string(b), want) {
 			t.Errorf("JSON lacks %s:\n%s", want, b)

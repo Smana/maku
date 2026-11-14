@@ -125,12 +125,10 @@ func TestConfigFileRefusesBound(t *testing.T) {
 	}
 }
 
-// B12: a bound class carries its own policy's generation; a legacy-served one the repository's
-// MergePolicy's.
+// B12: a bound class carries its own policy's generation; a class no binding serves, none.
 func TestClassGenerations(t *testing.T) {
 	c := &Config{Generations: Generations{Repos: map[string]RepoGenerations{
-		"smana/bound":  {Repository: 4, Classes: map[string]ClassGeneration{"dead-links": {Policy: 3, PolicyName: "dead-links"}}},
-		"smana/legacy": {Repository: 2, MergePolicy: 7, PolicyName: "legacy"},
+		"smana/bound": {Repository: 4, Classes: map[string]ClassGeneration{"dead-links": {Policy: 3, PolicyName: "dead-links"}}},
 	}}}
 	for _, tc := range []struct {
 		name, class  string
@@ -138,7 +136,7 @@ func TestClassGenerations(t *testing.T) {
 		bound        bool
 	}{
 		{"Smana/Bound", "dead-links", 3, 4, true},
-		{"Smana/legacy", "docs", 7, 2, false},
+		{"Smana/bound", "review", 0, 4, false},
 		{"Smana/none", "docs", 0, 0, false},
 	} {
 		p, r, b := c.ClassGenerations(tc.name, tc.class)

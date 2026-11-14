@@ -12,11 +12,26 @@ func TestDecodeRefusesUnknownFields(t *testing.T) {
 kind: MergePolicy
 metadata: {name: x, namespace: agent-system}
 spec:
-  repositoryRef: x
-  classes: {docs: {live: true, typo: 1}}
+  checks: true
+  typo: 1
 `))
 	if err == nil || !strings.Contains(err.Error(), "typo") {
 		t.Fatalf("an unknown field must be refused, naming it: %v", err)
+	}
+}
+
+// B8, plan PR20: the per-repository MergePolicy is refused with the way out, whatever else it holds.
+func TestDecodeRefusesThePerRepositoryShape(t *testing.T) {
+	_, err := Decode([]byte(`apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: maku, namespace: agent-system}
+spec:
+  repositoryRef: maku
+  classes: {docs: {shadow: true}}
+`))
+	want := `MergePolicy "maku": the per-repository MergePolicy was removed in this release: maku config migrate --manifests (from the previous release)`
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
 	}
 }
 

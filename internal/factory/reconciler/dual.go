@@ -34,7 +34,7 @@ func dualOf(central ArmDecision, in ArmInputs, snap mergepolicy.Snapshot, ok boo
 	r, inPolicy := snap.Classes[class]
 	var repo ArmDecision
 	if inPolicy {
-		repo = DecideArmUnder(in, r.Variants(), r.Approval)
+		repo = DecideArmUnder(in, &r.Class, r.Approval)
 	} else {
 		repo = DecideArmUnder(in, nil, nil)
 	}
@@ -49,9 +49,9 @@ func dualOf(central ArmDecision, in ArmInputs, snap mergepolicy.Snapshot, ok boo
 	return repo, dualUnexplained
 }
 
-// readsDiff is whether deciding the class reads the diff, any variant or the approval subset.
+// readsDiff is whether deciding the class reads the diff, the class or its approval subset.
 func readsDiff(r mergepolicy.Resolved, class string) bool {
-	return len(r.Approval) > 0 || slices.ContainsFunc(r.Variants(), func(v config.Class) bool { return v.ReadsDiff(class) })
+	return len(r.Approval) > 0 || r.Class.ReadsDiff(class)
 }
 
 // dual records a decision's dual evaluation, with policyManagement.dualEvaluation on: the counter,

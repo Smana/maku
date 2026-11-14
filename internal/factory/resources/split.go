@@ -24,15 +24,16 @@ type consumer struct {
 	cl   config.Class
 }
 
-// Split converts per-repository MergePolicies into class-shape policies and bindings (B17, plan
-// PR19), deterministically: one MergePolicy per class name, and each Repository a legacy policy
+// split converts per-repository MergePolicies, built in memory by Migrate from a config file's
+// repositories[] (the API no longer has the shape, B8), into class-shape policies and bindings
+// (B17, plan PR19), deterministically: one MergePolicy per class name, and each Repository a legacy policy
 // named gaining its merge (plus fluxSource) and its bindings, in class-name order. Every other
 // object passes through, so objects already in the binding shape split to themselves. A class
-// policy already among the objects under a class's name must be the definition Split would
+// policy already among the objects under a class's name must be the definition split would
 // write, or the class is refused: a shared policy is never replaced.
 //
 //   - Meaning fields must be equal across a class's consumers, compared on the decoded value;
-//     otherwise the class is refused, naming the fields that differ. Split never renames.
+//     otherwise the class is refused, naming the fields that differ. split never renames.
 //   - Fill-once fields (allowedFiles, companionFiles, requiredLabel, oracleWorkflow) go on the
 //     bindings, and into requires when every consumer sets them.
 //   - Additive lists go on the policy when every consumer has the same set (in the first
@@ -42,12 +43,12 @@ type consumer struct {
 //     binding only below it.
 //   - monitor.flux.source becomes merge.fluxSource: two sources in one repository are refused (Q14).
 //
-// Split proves nothing: Equal on the configs assembled before and after does.
-func Split(objs []Object, ns string) ([]Object, error) {
+// split proves nothing: Equal on the configs assembled before and after does.
+func split(objs []Object, ns string) ([]Object, error) {
 	out := make([]Object, 0, len(objs))
 	var legacy []Object
 	for _, o := range objs {
-		if o.Kind == KindMergePolicy && legacyPolicy(o) {
+		if o.Kind == KindMergePolicy && perRepository(o) {
 			legacy = append(legacy, o)
 			continue
 		}
@@ -155,6 +156,13 @@ func Split(objs []Object, ns string) ([]Object, error) {
 		out[i].Spec["mergePolicies"] = list
 	}
 	return append(out, policies...), nil
+}
+
+// perRepository reports whether a MergePolicy object is in the per-repository shape: Migrate's, in
+// memory, never one read from manifests or the cluster.
+func perRepository(o Object) bool {
+	_, ok := o.Spec["repositoryRef"]
+	return ok
 }
 
 // splitClass is one class's policy, and each consumer's binding by repository (PR19).

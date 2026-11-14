@@ -20,8 +20,7 @@ import (
 
 // bindingsWorld is the spec's worked case, "A shared policy invalid for one repository only":
 // dead-links at generation 4 breaks ai-native-ref's binding (it keeps generation 3) and serves
-// cloud-native-ref; docs-links' generation 4 is refused, its consumers on 3; acme/app is served
-// from a per-repository MergePolicy at generation 7.
+// cloud-native-ref; docs-links' generation 4 is refused, its consumers on 3.
 func bindingsWorld() (Inputs, []v1alpha1.Repository, []v1alpha1.MergePolicy) {
 	const anr, cnr = "Smana/ai-native-ref", "Smana/cloud-native-ref"
 	c := cfg(
@@ -30,9 +29,7 @@ func bindingsWorld() (Inputs, []v1alpha1.Repository, []v1alpha1.MergePolicy) {
 			Bound: []string{"docs-links", "dead-links"}},
 		config.Repository{Name: cnr, Classes: map[string]config.Class{"docs-links": {Live: true}, "dead-links": {Shadow: true}},
 			Bound: []string{"docs-links", "dead-links"}},
-		config.Repository{Name: repo, Classes: map[string]config.Class{"docs-links": {Live: true}, "docs": {}}},
 	)
-	c.Generations.Repos = map[string]config.RepoGenerations{"acme/app": {Repository: 3, MergePolicy: 7, PolicyName: "app"}}
 
 	anrDead := resources.BindingOutcome{Repository: "ai-native-ref", Name: "dead-links", Mode: "shadow", PolicyGeneration: 3, Served: true,
 		Reason: config.ReasonMissingParameter, Message: "monitor.flux needs Repository.spec.merge.fluxSource"}
@@ -44,12 +41,10 @@ func bindingsWorld() (Inputs, []v1alpha1.Repository, []v1alpha1.MergePolicy) {
 			Bindings: []resources.BindingOutcome{anrDocs, anrDead}},
 		{Kind: resources.KindRepository, Name: "cloud-native-ref", Repository: cnr, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true,
 			Bindings: []resources.BindingOutcome{cnrDocs, cnrDead}},
-		{Kind: resources.KindRepository, Name: "app", Repository: repo, ObservedGeneration: 3, ServedGeneration: 3, Accepted: true},
 		{Kind: resources.KindMergePolicy, Name: "dead-links", ObservedGeneration: 4, ServedGeneration: 4, Accepted: true,
 			Consumers: []resources.BindingOutcome{anrDead, cnrDead}},
 		{Kind: resources.KindMergePolicy, Name: "docs-links", ObservedGeneration: 4, ServedGeneration: 3, Reason: v1alpha1.ReasonInvalid,
 			Message: "class docs-links: mode is the binding's", Consumers: []resources.BindingOutcome{anrDocs, cnrDocs}},
-		{Kind: resources.KindMergePolicy, Name: "app", Repository: repo, ObservedGeneration: 7, ServedGeneration: 7, Accepted: true},
 	}}
 	in.Snapshot = func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{HasClasses: true}, true }
 	in.Decisions = func(r string) map[string]decision.Last {
@@ -63,9 +58,8 @@ func bindingsWorld() (Inputs, []v1alpha1.Repository, []v1alpha1.MergePolicy) {
 		r.Spec.MergePolicies = []config.Binding{{Name: "docs-links", Mode: "shadow"}, {Name: "dead-links", Mode: "shadow"}}
 		return r
 	}
-	repos := []v1alpha1.Repository{bound("ai-native-ref", anr, 2), bound("cloud-native-ref", cnr, 1), repoObj("app", repo, 3)}
-	dead, docs := policyObj("dead-links", "", 4), policyObj("docs-links", "", 4)
-	return in, repos, []v1alpha1.MergePolicy{dead, docs, policyObj("app", "app", 7)}
+	repos := []v1alpha1.Repository{bound("ai-native-ref", anr, 2), bound("cloud-native-ref", cnr, 1)}
+	return in, repos, []v1alpha1.MergePolicy{policyObj("dead-links", 4), policyObj("docs-links", 4)}
 }
 
 func binding(t *testing.T, st v1alpha1.RepositoryStatus, name string) v1alpha1.BindingStatus {
@@ -118,8 +112,10 @@ func TestDesiredBindings(t *testing.T) {
 		t.Fatalf("ai-native-ref consumer %+v", cs)
 	}
 	want(t, dead.Conditions, v1alpha1.ConditionAccepted, metav1.ConditionTrue, "Served")
-	if dead.Authority != "" || dead.ClassCount != 0 || len(dead.Classes) != 0 {
-		t.Fatalf("a class policy carries no per-repository fields: %+v", dead)
+	for _, c := range dead.Conditions {
+		if c.Type == ConditionRepositoryFileValid || c.Type == ConditionInSync {
+			t.Fatalf("a policy has no repository file: %+v", c)
+		}
 	}
 
 	docs := out.MergePolicies["docs-links"]
@@ -129,29 +125,6 @@ func TestDesiredBindings(t *testing.T) {
 	}
 	if docs.ConsumerCount != 2 || docs.CurrentCount != 0 || docs.LiveCount != 1 || docs.Consumers[1].ServedGeneration != 3 {
 		t.Fatalf("docs-links %+v", docs)
-	}
-
-	// The per-repository shape fills the same Repository fields, and keeps its own status.
-	app := out.Repositories["app"]
-	if b := binding(t, app, "docs-links"); !b.Accepted || b.PolicyGeneration != 7 || b.Mode != "live" {
-		t.Fatalf("legacy docs-links %+v", b)
-	}
-	if b := binding(t, app, "docs"); b.Mode != "off" {
-		t.Fatalf("legacy docs %+v", b)
-	}
-	if app.ClassCount != 2 || app.LiveCount != 1 || app.Authority != config.ClassAuthorityCentral || app.MergePolicy != "app" {
-		t.Fatalf("legacy repository %+v", app)
-	}
-	if c := cond(t, app.Conditions, ConditionRepositoryFileValid); c.Status != metav1.ConditionTrue {
-		t.Fatalf("legacy file condition %+v", c)
-	}
-	for _, c := range app.Conditions {
-		if c.Type == v1alpha1.ConditionBindingsValid {
-			t.Fatal("a per-repository shape has no bindings to judge")
-		}
-	}
-	if p := out.MergePolicies["app"]; p.ClassCount != 2 || p.Authority != config.ClassAuthorityCentral || p.ConsumerCount != 0 {
-		t.Fatalf("legacy policy %+v", p)
 	}
 }
 
@@ -174,7 +147,7 @@ func TestDesiredConsumersBounded(t *testing.T) {
 		consumers = append(consumers, resources.BindingOutcome{Repository: fmt.Sprintf("r%02d", i), Name: "dead-links", Mode: "live",
 			PolicyGeneration: 4, Accepted: true, Served: true})
 	}
-	in.Outcomes[3].Consumers = consumers
+	in.Outcomes[2].Consumers = consumers
 	p := Desired(in, nil, repos, policies, now).MergePolicies["dead-links"]
 	if len(p.Consumers) != maxConsumers || p.ConsumerCount != 65 || p.CurrentCount != 65 || p.LiveCount != 65 {
 		t.Fatalf("%d consumers listed, counts %d %d %d", len(p.Consumers), p.ConsumerCount, p.CurrentCount, p.LiveCount)
@@ -185,7 +158,7 @@ func TestDesiredConsumersBounded(t *testing.T) {
 // counts only served live consumers.
 func TestDesiredPolicyLiveCountNeedsServed(t *testing.T) {
 	in, repos, policies := bindingsWorld()
-	in.Outcomes[3].Consumers = []resources.BindingOutcome{
+	in.Outcomes[2].Consumers = []resources.BindingOutcome{
 		{Repository: "a", Name: "dead-links", Mode: "live", Reason: config.ReasonMissingParameter},
 		{Repository: "b", Name: "dead-links", Mode: "live", PolicyGeneration: 4, Accepted: true, Served: true},
 	}

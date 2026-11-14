@@ -11,15 +11,11 @@ import (
 const policyFile = `# the canary's policy
 factory: aws-0
 
-classes:
-  docs-links:
+mergePolicies:
+  - name: docs-links
     mode: shadow   # promoted after the drill
-    author: agents
-    harness: docs-standard
-  revert:
+  - name: revert
     mode: shadow
-    author: agents
-    harness: docs-standard
 `
 
 // Promotion changes one token, the class's mode, and nothing else of the file: comments, order
@@ -33,8 +29,8 @@ func TestProposeChangesOnlyTheClassMode(t *testing.T) {
 	if string(got) != want || line != 6 {
 		t.Fatalf("line %d:\n%s", line, got)
 	}
-	if got, _, _ := Propose([]byte(policyFile), "revert"); !strings.Contains(string(got), "  revert:\n    mode: live\n") ||
-		!strings.Contains(string(got), "docs-links:\n    mode: shadow") {
+	if got, _, _ := Propose([]byte(policyFile), "revert"); !strings.Contains(string(got), "  - name: revert\n    mode: live\n") ||
+		!strings.Contains(string(got), "docs-links\n    mode: shadow") {
 		t.Fatalf("%s", got)
 	}
 }
@@ -48,7 +44,7 @@ func TestProposeRefusesWhatIsNotAShadowClass(t *testing.T) {
 	}{
 		"absent":          {policyFile, "deps-patch", ErrNoClass},
 		"already live":    {live, "docs-links", ErrNotShadow},
-		"not a policy":    {"factory: aws-0\nclasses: [\n", "docs-links", ErrInvalidPolicy},
+		"not a policy":    {"factory: aws-0\nmergePolicies: [\n", "docs-links", ErrInvalidPolicy},
 		"a quoted shadow": {quoted, "docs-links", nil},
 	} {
 		t.Run(name, func(t *testing.T) {

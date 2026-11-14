@@ -3,7 +3,6 @@
 package mergepolicy
 
 import (
-	"strings"
 	"testing"
 	"time"
 
@@ -45,17 +44,6 @@ func TestTheSnapshotHoldsTheResolvedClasses(t *testing.T) {
 	}
 }
 
-// A file mixing a guardrail fault with an invalid class is invalid.
-func TestAMixedFileIsInvalid(t *testing.T) {
-	w, r := watchRig()
-	mixed := "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: nope}\n  revert: {mode: live, author: agents, harness: plain}\n" +
-		"  bad:\n    mode: shadow\n    author: agents\n    harness: plain\n    conditions: {all: [{allowedFiles: ['docs/.+']}]}\n"
-	w.Observe(t.Context(), "o/r", []byte(mixed))
-	if strings.Join(r.reasons, ",") != ReasonInvalid {
-		t.Fatalf("%v", r.reasons)
-	}
-}
-
 type swapSource struct{ c *config.Config }
 
 func (s *swapSource) Current() *config.Config { return s.c }
@@ -63,7 +51,7 @@ func (s *swapSource) Current() *config.Config { return s.c }
 // The config is live: the cache is keyed by the file and the config it was evaluated under, so a
 // published config re-evaluates an unchanged file.
 func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
-	w, r := watchRig()
+	w, _ := watchRig()
 	first := w.Cfg.Current().Current()
 	first.Hash = "one"
 	src := &swapSource{c: first}
@@ -74,7 +62,7 @@ func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
 		t.Fatalf("%d evaluations under one config, want 1", w.evaluations)
 	}
 	next := central()
-	next.HarnessProfiles = map[string]config.HarnessProfile{"checked": {Checks: true}}
+	delete(next.Policies, "revert")
 	next.Hash = "two"
 	next.Repositories = first.Repositories
 	src.c = next
@@ -82,10 +70,7 @@ func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
 	if w.evaluations != 2 {
 		t.Fatalf("%d evaluations after a new config, want 2", w.evaluations)
 	}
-	if s, _ := w.Snapshot("o/r"); s.Err == nil {
-		t.Fatalf("the file names harness plain, which the new config lacks: %+v", s)
-	}
-	if len(r.reasons) == 0 {
-		t.Fatal("the failed evaluation is counted")
+	if s, _ := w.Snapshot("o/r"); s.Refused["revert"].Reason == "" {
+		t.Fatalf("the file binds revert, which the new config no longer serves: %+v", s)
 	}
 }

@@ -70,35 +70,29 @@ type Result struct {
 // CatalogueKeys are the top-level file keys a Factory replaces (D12), in the file's spelling.
 var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "harnessProfiles", "mergeGuardrails", "evaluation", "mergeDefaults"}
 
-// candidate is one element of the candidate set: a Factory, a Repository with its per-repository
-// MergePolicy, or a Repository holding its own merge and bindings (policy nil).
+// candidate is one element of the candidate set: a Factory, or a Repository with its merge and
+// bindings.
 type candidate struct {
 	factory *Object
 	repo    *Object
-	policy  *Object
 }
 
-func (c candidate) objects() []Object {
-	switch {
-	case c.factory != nil:
-		return []Object{*c.factory}
-	case c.policy == nil:
-		return []Object{*c.repo}
+func (c candidate) object() Object {
+	if c.factory != nil {
+		return *c.factory
 	}
-	return []Object{*c.repo, *c.policy}
+	return *c.repo
 }
 
 // Assemble builds the factory's config from the file and the objects (factory resources D5, D8, D15).
 //
 // When the file and the candidate set do not parse together, culprits are removed greedily: the
-// first candidate (pairs by the Repository's name, then the Factory) whose removal makes the rest
-// parse is refused Invalid with the current error; when none does, the first whose removal changes
-// Parse's error is (two culprits). The search starts again on what is left, at most once per
-// candidate. When no removal changes anything, the
-// whole set is refused. A culprit pair refuses its MergePolicy with the error and its Repository
-// as "not served". An error whose every line names, as not listed, a repository whose Repository
-// was refused before Parse blames no candidate: it echoes that refusal. The Accepted objects are
-// the ones Config is built from.
+// first candidate (Repositories by name, then the Factory) whose removal makes the rest parse is
+// refused Invalid with the current error; when none does, the first whose removal changes Parse's
+// error is (two culprits). The search starts again on what is left, at most once per candidate.
+// When no removal changes anything, the whole set is refused. An error whose every line names, as
+// not listed, a repository whose Repository was refused before Parse blames no candidate: it
+// echoes that refusal. The Accepted objects are the ones Config is built from.
 //
 // An error means no servable config: the file does not read as YAML, or it does not parse once
 // every candidate is refused (after migration the file alone holds no repository). Result.Refused
@@ -107,9 +101,8 @@ func (c candidate) objects() []Object {
 // Assemble keeps no history. D5's "keep the last accepted version" is the caller's: it substitutes
 // each refused object's last accepted spec, when it has one, and calls Assemble again.
 //
-// Reusable merge policies (B1-B9): a class-shape MergePolicy is judged alone and is never a
-// candidate. A Repository with merge or mergePolicies is a candidate alone, its bindings resolved
-// before Parse under the merged catalogue; a binding that does not resolve drops its class, or
+// Reusable merge policies (B1-B9): a MergePolicy is judged alone and is never a candidate. A
+// Repository is a candidate alone, its bindings resolved before Parse under the merged catalogue; a binding that does not resolve drops its class, or
 // puts back opts' last resolved one, and never refuses the Repository (Result.Bindings).
 func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	var opt Options
@@ -149,19 +142,9 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 			refusedRepos[strings.ToLower(str(o.Spec, "repository"))] = true
 		}
 	}
-	refuseInvalid := func(c candidate, msg string) {
-		switch {
-		case c.factory != nil:
-			refuse(*c.factory, v1alpha1.ReasonInvalid, "%s", msg)
-		case c.policy == nil:
-			refuse(*c.repo, v1alpha1.ReasonInvalid, "%s", msg)
-		default:
-			refuse(*c.policy, v1alpha1.ReasonInvalid, "%s", msg)
-			refuse(*c.repo, v1alpha1.ReasonInvalid, "not served: MergePolicy %s was refused", c.policy.Name)
-		}
-	}
+	refuseInvalid := func(c candidate, msg string) { refuse(c.object(), v1alpha1.ReasonInvalid, "%s", msg) }
 
-	set, policies := structural(base, name, objs, refuse, func(w string) { res.Warnings = append(res.Warnings, w) })
+	set, policies := structural(base, name, objs, refuse)
 	tryParse := func(set []candidate) (*config.Config, []string, resolution, error) {
 		return assemble(base, set, policies, opt)
 	}
@@ -225,7 +208,7 @@ func Assemble(file []byte, objs []Object, opts ...Options) (Result, error) {
 	}
 
 	for _, c := range set {
-		res.Accepted = append(res.Accepted, c.objects()...)
+		res.Accepted = append(res.Accepted, c.object())
 	}
 	res.Accepted = append(res.Accepted, rs.accepted...)
 	res.Refused = append(res.Refused, rs.refused...)
@@ -274,25 +257,21 @@ func containsAll(have, want []string) bool {
 	return true
 }
 
-// structural applies the refusals that need no Parse and returns the candidate set (pairs and
-// bound Repositories sorted by the Repository's name, then the Factory) and the class-shape
-// policies, sorted by name.
-func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any), warn func(string)) ([]candidate, []Object) {
-	var factories, repos, policies, classPolicies []Object
+// structural applies the refusals that need no Parse and returns the candidate set (Repositories
+// sorted by name, then the Factory) and the MergePolicies, sorted by name.
+func structural(base map[string]any, name string, objs []Object, refuse func(Object, string, string, ...any)) ([]candidate, []Object) {
+	var factories, repos, policies []Object
 	for _, o := range objs {
-		switch {
-		case o.Kind == KindFactory:
+		switch o.Kind {
+		case KindFactory:
 			factories = append(factories, o)
-		case o.Kind == KindRepository:
+		case KindRepository:
 			repos = append(repos, o)
-		case o.Kind == KindMergePolicy && legacyPolicy(o):
-			warn(fmt.Sprintf("MergePolicy %s is in the per-repository shape, removed in the next minor: maku config migrate", o.Name))
+		case KindMergePolicy:
 			policies = append(policies, o)
-		case o.Kind == KindMergePolicy:
-			classPolicies = append(classPolicies, o)
 		}
 	}
-	slices.SortFunc(classPolicies, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(policies, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
 
 	// Factories: only this factory's, and only the first by name.
 	var factory *Object
@@ -309,31 +288,10 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 		}
 	}
 
-	// MergePolicies: one per Repository, each naming a Repository object.
-	repoNames := map[string]bool{}
-	for _, r := range repos {
-		repoNames[r.Name] = true
-	}
-	count := map[string]int{}
-	for _, p := range policies {
-		count[str(p.Spec, "repositoryRef")]++
-	}
-	var live []Object
-	for _, p := range policies {
-		ref := str(p.Spec, "repositoryRef")
-		switch {
-		case count[ref] > 1:
-			refuse(p, v1alpha1.ReasonDuplicatePolicy, "several MergePolicies name Repository %q", ref)
-		case !repoNames[ref]:
-			refuse(p, v1alpha1.ReasonMissingRef, "no Repository %q", ref)
-		default:
-			live = append(live, p)
-		}
-	}
-
-	// Repositories: this factory's, not already in the file, with a policy that remains.
+	// Repositories: this factory's, not already in the file.
 	fileRepos := fileRepositoryNames(base)
-	var usable []Object
+	slices.SortFunc(repos, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
+	var set []candidate
 	for _, r := range repos {
 		repository := str(r.Spec, "repository")
 		switch {
@@ -342,52 +300,14 @@ func structural(base map[string]any, name string, objs []Object, refuse func(Obj
 		case fileRepos[strings.ToLower(repository)]:
 			refuse(r, v1alpha1.ReasonDefinedTwice, "the config file already defines %s", repository)
 		default:
-			usable = append(usable, r)
-		}
-	}
-	usableNames, boundNames := map[string]bool{}, map[string]bool{}
-	for _, r := range usable {
-		usableNames[r.Name] = true
-		boundNames[r.Name] = boundRepository(r)
-	}
-	policyOf := map[string]Object{}
-	for _, p := range live {
-		ref := str(p.Spec, "repositoryRef")
-		if boundNames[ref] {
-			// B8, plan PR8: the Repository's own bindings and a per-repository policy never together.
-			refuse(p, v1alpha1.ReasonDefinedTwice, "Repository %s holds its own merge and mergePolicies: delete this per-repository MergePolicy (B8)", ref)
-			continue
-		}
-		if !usableNames[ref] {
-			refuse(p, v1alpha1.ReasonMissingRef, "Repository %q is not served", ref)
-			continue
-		}
-		policyOf[ref] = p
-	}
-
-	slices.SortFunc(usable, func(a, b Object) int { return cmp.Compare(a.Name, b.Name) })
-	var set []candidate
-	for _, r := range usable {
-		if boundNames[r.Name] {
-			// B8: a per-repository MergePolicy still naming it was refused above, alone. The
-			// Repository is the newer intent (Flux applies it before pruning the policy), and
-			// refusing it would unlist the repository for every Factory value that names it.
 			r := r
 			set = append(set, candidate{repo: &r})
-			continue
 		}
-		p, ok := policyOf[r.Name]
-		if !ok {
-			refuse(r, v1alpha1.ReasonNoMergePolicy, "no MergePolicy names Repository %q", r.Name)
-			continue
-		}
-		r := r
-		set = append(set, candidate{repo: &r, policy: &p})
 	}
 	if factory != nil {
 		set = append(set, candidate{factory: factory})
 	}
-	return set, classPolicies
+	return set, policies
 }
 
 // fileRepositoryNames lowercases the names of the file's repositories, in both shapes.
@@ -409,8 +329,8 @@ func fileRepositoryNames(base map[string]any) map[string]bool {
 	return names
 }
 
-// assemble merges set into a copy of base, resolving the bound Repositories' bindings against the
-// class policies, and parses it.
+// assemble merges set into a copy of base, resolving the Repositories' bindings against the
+// policies, and parses it.
 func assemble(base map[string]any, set []candidate, policies []Object, opts Options) (*config.Config, []string, resolution, error) {
 	m, warnings, rs, err := merge(base, set, policies, opts)
 	if err != nil {
@@ -486,13 +406,7 @@ func merge(base map[string]any, set []candidate, policies []Object, opts Options
 				entry[k] = v
 			}
 		}
-		if c.policy != nil {
-			for _, k := range []string{"classes", "merge"} {
-				if v, ok := c.policy.Spec[k]; ok {
-					entry[k] = v
-				}
-			}
-		} else if err := boundEntry(entry, *c.repo, m, ctx, ctxErr, opts, &rs); err != nil {
+		if err := boundEntry(entry, *c.repo, m, ctx, ctxErr, opts, &rs); err != nil {
 			return nil, nil, rs, err
 		}
 		list, _ := m["repositories"].([]any)
@@ -513,7 +427,7 @@ func boolInt(b bool) int {
 	return 0
 }
 
-// boundEntry fills a bound Repository's entry (plan Task 8): its merge as written (Parse applies
+// boundEntry fills a Repository's entry (plan Task 8): its merge as written (Parse applies
 // mergeDefaults), its resolved classes, its bound names and its bindings as written. When the
 // policy context does not decode, no binding resolves, and Parse refuses the Factory.
 func boundEntry(entry map[string]any, r Object, m map[string]any, ctx config.PolicyContext, ctxErr error, opts Options, rs *resolution) error {

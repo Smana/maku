@@ -100,7 +100,8 @@ type IssuePoller struct {
 	Errors  errorCounter
 	Log     *slog.Logger
 	// Demo is demo mode (config demo): a private repository's label is refused before any Task
-	// exists, and a failed visibility read leaves the label for the next poll.
+	// exists, acknowledged or not, and a failed visibility read leaves the label for the next poll.
+	// Outside the demo, only an unacknowledged private repository's label is refused (v4 D3).
 	Demo bool
 	// Ticker starts the period; nil means a time.Ticker.
 	Ticker func(d time.Duration) (c <-chan time.Time, stop func())
@@ -322,12 +323,17 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 	case !w:
 		return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
 	}
-	if p.Demo { // the demo serves public repositories only; no answer is no refusal (fail closed)
+	// The demo serves public repositories only; elsewhere private code needs its acknowledgement (v4
+	// D3, step 8 R9). No answer is no refusal: the label waits for the next poll (fail closed). A task
+	// already past this door is not touched: it finishes.
+	if p.Demo || !p.repo(cfg).PrivateCodeAcknowledged() {
 		switch public, err := p.Forge.Public(ctx); {
 		case err != nil:
 			return fmt.Errorf("repository visibility: %w", err)
-		case !public:
+		case !public && p.Demo:
 			return p.refuse(ctx, cfg, n, last, "private_repository")
+		case !public:
+			return p.refuse(ctx, cfg, n, last, "private_code_unacknowledged")
 		}
 	}
 	iss, err := p.Forge.Issue(ctx, n)

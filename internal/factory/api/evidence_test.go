@@ -196,7 +196,7 @@ func (hangingSearch) AnyMerged(ctx context.Context, _ string) (bool, error) {
 	return false, ctx.Err()
 }
 func (hangingSearch) FenceFile(context.Context) ([]byte, bool, error) {
-	return []byte("factory: aws-0\nclasses:\n  docs-links:\n    mode: shadow\n    author: agents\n    harness: docs-standard\n"), true, nil
+	return []byte("factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: shadow}\n  - {name: revert, mode: shadow}\n"), true, nil
 }
 func (hangingSearch) DefaultBranch(context.Context) (string, error) { return "main", nil }
 
@@ -212,8 +212,8 @@ func TestPolicyEvidenceAnswersWhileGitHubSearches(t *testing.T) {
 		t.Fatalf("answered in %s", took)
 	}
 	var r evidence.Report
-	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != http.StatusOK || len(r.Classes) != 1 ||
-		r.Classes[0].Evidence != nil || r.EvidenceAt != nil || r.Policy == nil {
+	if err := json.Unmarshal(w.Body.Bytes(), &r); err != nil || w.Code != http.StatusOK ||
+		r.EvidenceAt != nil || r.Policy == nil {
 		t.Fatalf("%d %s %v", w.Code, w.Body, err)
 	}
 	if strings.Contains(w.Body.String(), `"evidence":`) {

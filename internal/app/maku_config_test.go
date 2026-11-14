@@ -13,12 +13,14 @@ import (
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
+// orphanPolicy is a Repository of another factory: refused NotThisFactory.
 const orphanPolicy = `apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
+kind: Repository
 metadata:
   name: orphan
 spec:
-  repositoryRef: nothing
+  factoryRef: gcp-0
+  repository: Smana/orphan
 `
 
 const typoPolicy = `apiVersion: maku.ogenki.io/v1alpha1
@@ -26,10 +28,8 @@ kind: MergePolicy
 metadata:
   name: typo
 spec:
-  repositoryRef: nothing
-  classes:
-    docs:
-      typo: true
+  checks: true
+  typo: true
 `
 
 const configFixture = "../factory/resources/testdata/file.yaml"
@@ -105,7 +105,7 @@ func TestMakuConfigValidateReportsRefusals(t *testing.T) {
 	if err == nil || err.Error() != "config validate: 1 refused" {
 		t.Fatalf("error: %v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "MergePolicy/orphan: MissingRef") {
+	if !strings.Contains(out.String(), "Repository/orphan: NotThisFactory") {
 		t.Fatalf("output: %s", out.String())
 	}
 }
@@ -165,7 +165,12 @@ func TestMakuConfigValidateRefusesADuplicatedSwitchBlock(t *testing.T) {
 	}
 }
 
-const anrObjects = "../factory/resources/testdata/anr-objects.yaml"
+// anrObjects are ai-native-ref's objects in the per-repository shape, as of release N; anrBound
+// the same objects in the binding shape, as Migrate's converter writes them.
+const (
+	anrObjects = "../factory/resources/testdata/anr-objects.yaml"
+	anrBound   = "../factory/resources/testdata/anr-bound-objects.yaml"
+)
 
 // anrResidual is ai-native-ref's config file once its catalogue and repositories are objects.
 func anrResidual(t *testing.T) string {
@@ -185,69 +190,31 @@ func anrResidual(t *testing.T) string {
 	return p
 }
 
-// B17: ai-native-ref's live objects convert to policies and bindings that validate, and the
-// conversion proved no resolved class changes.
-func TestMakuConfigMigrateManifests(t *testing.T) {
+// B8, plan PR20: the per-repository MergePolicy is gone, so migrate takes no manifests and validate
+// refuses them, each naming the way out.
+func TestMakuConfigRefusesThePerRepositoryShape(t *testing.T) {
 	residual := anrResidual(t)
-	var out bytes.Buffer
-	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", anrObjects}); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	objs, err := resources.Decode(out.Bytes())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(objs) != 17 { // the Factory, four Repositories, twelve class policies
-		t.Fatalf("%d objects:\n%s", len(objs), out.String())
-	}
-	manifests := filepath.Join(t.TempDir(), "manifests.yaml")
-	if err := os.WriteFile(manifests, out.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, manifests}); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	if !strings.Contains(out.String(), "ok: 17 accepted") || strings.Contains(out.String(), "per-repository shape") {
-		t.Fatalf("%s", out.String())
-	}
-}
-
-// PR10: a conversion that would change a resolved class (here, guardrails now capping every
-// binding) is refused, each change named.
-func TestMakuConfigMigrateRefusesAChange(t *testing.T) {
-	residual := anrResidual(t)
-	raw, err := os.ReadFile(anrObjects)
-	if err != nil {
-		t.Fatal(err)
-	}
-	capped := filepath.Join(t.TempDir(), "objects.yaml")
-	if err := os.WriteFile(capped, []byte(strings.Replace(string(raw), "  harnessProfiles:", "  mergeGuardrails: {maxPerDay: 2}\n  harnessProfiles:", 1)), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	err = Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", capped})
-	if err == nil || !strings.Contains(err.Error(), "would change") {
-		t.Fatalf("got %v\n%s", err, out.String())
-	}
-	if !strings.Contains(out.String(), "changed: Smana/runlore-kb kb-entries: served before only") || strings.Contains(out.String(), "apiVersion") {
-		t.Fatalf("%s", out.String())
+	for verb, args := range map[string][]string{
+		"migrate":  {"config", "migrate", "--from", residual, "--manifests", anrObjects},
+		"validate": {"config", "validate", "--config", residual, anrObjects},
+	} {
+		var out bytes.Buffer
+		err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), args)
+		if err == nil || !strings.Contains(err.Error(), resources.ErrPerRepositoryRemoved) {
+			t.Errorf("%s: got %v\n%s", verb, err, out.String())
+		}
 	}
 }
 
 // splitANR writes ai-native-ref's objects in the binding shape, each edited by edit first.
 func splitANR(t *testing.T, edit func(objs []resources.Object)) string {
 	t.Helper()
-	raw, err := os.ReadFile(anrObjects)
+	raw, err := os.ReadFile(anrBound)
 	if err != nil {
 		t.Fatal(err)
 	}
 	objs, err := resources.Decode(raw)
 	if err != nil {
-		t.Fatal(err)
-	}
-	if objs, err = resources.Split(objs, "agent-system"); err != nil {
 		t.Fatal(err)
 	}
 	if edit != nil {
@@ -315,21 +282,22 @@ ok: 17 accepted
 	}
 }
 
-// B17, ANR-1: the legacy objects and their split resolve to the same classes, and --resolved prints
-// them as the frozen snapshot ai-native-ref keeps.
+// B17, ANR-1: the split objects resolve to the classes the legacy objects did (testdata/anr-resolved.json,
+// frozen from them in release N), --resolved printing them as the snapshot ai-native-ref keeps, and
+// a base equal to the change is unchanged.
 func TestMakuConfigValidateResolvedAndUnchanged(t *testing.T) {
 	residual := anrResidual(t)
 	split := splitANR(t, nil)
 	var out bytes.Buffer
 	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", anrObjects, "--expect-unchanged", split}); err != nil {
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", anrBound, "--expect-unchanged", split}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	want, err := os.ReadFile("testdata/anr-resolved.json")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, objs := range []string{anrObjects, split} {
+	for _, objs := range []string{split} {
 		var stdout, stderr bytes.Buffer
 		if err := (Maku{Dir: t.TempDir(), Out: &stdout, Err: &stderr}).run(t.Context(), []string{"config", "validate", "--config", residual, "--resolved", objs}); err != nil {
 			t.Fatalf("%v\n%s", err, stderr.String())
@@ -467,20 +435,6 @@ func TestMakuConfigValidateBaseRef(t *testing.T) {
 	}
 }
 
-// Task 19: validate names every legacy object it still reads.
-func TestMakuConfigValidateWarnsOfTheLegacyShape(t *testing.T) {
-	var out bytes.Buffer
-	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", anrResidual(t), anrObjects}); err != nil {
-		t.Fatal(err)
-	}
-	for _, n := range []string{"cloud-native-ref", "ai-native-ref", "runlore-kb", "runlore"} {
-		if !strings.Contains(out.String(), "warning: MergePolicy "+n+" is in the per-repository shape, removed in the next minor: maku config migrate\n") {
-			t.Errorf("no warning for %s:\n%s", n, out.String())
-		}
-	}
-}
-
 // B17 end to end: the migrated objects, their repository file exported in the binding shape, decide
 // every conformance fixture as the central config does.
 func TestMigratedOutputSimulatesUnchanged(t *testing.T) {
@@ -519,23 +473,6 @@ func TestMigratedOutputSimulatesUnchanged(t *testing.T) {
 		if !strings.Contains(l, " unchanged") {
 			t.Errorf("not unchanged: %s", l)
 		}
-	}
-}
-
-// Migrating objects already in the binding shape changes nothing and succeeds.
-func TestMakuConfigMigrateIsIdempotent(t *testing.T) {
-	residual := anrResidual(t)
-	split := splitANR(t, nil)
-	var out bytes.Buffer
-	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), []string{"config", "migrate", "--config", residual, "--manifests", split}); err != nil {
-		t.Fatalf("%v\n%s", err, out.String())
-	}
-	want, err := os.ReadFile(split)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if out.String() != string(want) {
-		t.Fatalf("a second migration changed the objects:\n%s", out.String())
 	}
 }
 

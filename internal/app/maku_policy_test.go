@@ -104,26 +104,23 @@ func TestPolicyCheckPrintsTheBindingErrors(t *testing.T) {
 	}
 }
 
-// PR4: check prints a legacy file's conditions.any as deprecated.
-func TestPolicyCheckPrintsTheDeprecations(t *testing.T) {
+// B8, Q13: check refuses a file in the removed classes shape, naming the way out.
+func TestPolicyCheckRefusesTheClassesShape(t *testing.T) {
 	file := filepath.Join(t.TempDir(), "agent-factory.yaml")
-	body := "factory: aws-0\nclasses:\n" +
-		"  docs-links: {mode: shadow, author: agents, harness: plain}\n  revert: {mode: shadow, author: agents, harness: plain}\n" +
-		"  docs: {mode: shadow, author: agents, harness: plain, conditions: {any: [[{allowedFiles: ['^docs/.+$']}], [{allowedFiles: ['^README$']}]]}}\n"
-	if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte("factory: aws-0\nclasses: {docs-links: {mode: live, author: agents, harness: plain}}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	_ = Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"policy", "check", "--config", policyConfig, "--repository", policyRepo(t), file})
-	if !strings.Contains(out.String(), "deprecated: class docs: conditions.any is deprecated") {
-		t.Fatalf("%s", out.String())
+	err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"policy", "check", "--config", policyConfig, "--repository", policyRepo(t), file})
+	if err == nil || !strings.Contains(err.Error(), "write mergePolicies with maku policy export") {
+		t.Fatalf("got %v", err)
 	}
 }
 
 func TestPolicyCheckNamesWhatIsWrong(t *testing.T) {
 	repo := policyRepo(t)
 	file := filepath.Join(t.TempDir(), "agent-factory.yaml")
-	if err := os.WriteFile(file, []byte("factory: aws-0\nclasses: {docs-links: {mode: live, author: agents, harness: plain}}\n"), 0o600); err != nil {
+	if err := os.WriteFile(file, []byte("factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer

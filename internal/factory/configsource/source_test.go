@@ -46,21 +46,36 @@ func repoObj(name, repository string, gen int64) *v1alpha1.Repository {
 	}
 }
 
-func policyObj(t *testing.T, name, ref string, gen int64, mutate func(*v1alpha1.MergePolicySpec)) *v1alpha1.MergePolicy {
+// fileMerge is the file's merge settings, Smana/cloud-native-ref's.
+func fileMerge(t *testing.T) config.Merge {
 	t.Helper()
 	c, err := config.Parse(file(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := c.RepositoryFor("Smana/cloud-native-ref")
-	p := &v1alpha1.MergePolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns, Generation: gen},
-		Spec:       v1alpha1.MergePolicySpec{RepositoryRef: ref, Classes: r.Classes, Merge: &r.Merge},
+	return c.RepositoryFor("Smana/cloud-native-ref").Merge
+}
+
+// servedObjs are a Repository at gen, with the file's merge, bound to docs-links, revert and docs
+// (the classes Parse needs, OD-8, and one more), and those three policies at policyGen.
+func servedObjs(t *testing.T, name, repository string, gen, policyGen int64) []client.Object {
+	t.Helper()
+	merge := fileMerge(t)
+	r := repoObj(name, repository, gen)
+	r.Spec.Merge = &merge
+	r.Spec.MergePolicies = []config.Binding{
+		{Name: "docs-links", Mode: config.ModeShadow, HoldoutChecks: []string{"validate"}},
+		{Name: "revert", Mode: config.ModeShadow, HoldoutChecks: []string{"validate"}},
+		{Name: "docs", Mode: config.ModeOff},
 	}
-	if mutate != nil {
-		mutate(&p.Spec)
-	}
-	return p
+	holdout := config.PolicySpec{Requires: []string{"holdoutChecks"}}
+	return []client.Object{r, classPolicyObj("docs-links", policyGen, holdout), classPolicyObj("revert", policyGen, holdout),
+		classPolicyObj("docs", policyGen, config.PolicySpec{})}
+}
+
+// breakRepository makes a Repository Parse refuses: a schedule of a class it does not bind.
+func breakRepository(r *v1alpha1.Repository) {
+	r.Spec.Schedules = []config.Schedule{{Name: "s", Cron: "0 6 * * 1", Class: "nothing-binds-this", Text: "a schedule"}}
 }
 
 func source(t *testing.T, objs ...client.Object) (*Source, client.Client) {
@@ -98,7 +113,7 @@ func TestSyncServesTheFileAloneWithNoObjects(t *testing.T) {
 }
 
 func TestSyncAddsARepository(t *testing.T) {
-	s, _ := source(t, repoObj("other", "Smana/Other", 3), policyObj(t, "other", "other", 5, nil))
+	s, _ := source(t, servedObjs(t, "other", "Smana/Other", 3, 5)...)
 	if err := s.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -106,34 +121,38 @@ func TestSyncAddsARepository(t *testing.T) {
 	if len(cfg.Repos()) != 2 {
 		t.Fatalf("repos: %+v", cfg.Repos())
 	}
-	if f, r, p := cfg.GenerationsFor("smana/other"); f != 0 || r != 3 || p != 5 {
-		t.Fatalf("generations: %d %d %d", f, r, p)
+	if f, r := cfg.GenerationsFor("smana/other"); f != 0 || r != 3 {
+		t.Fatalf("generations: %d %d", f, r)
 	}
-	if g := cfg.Generations.Repos["smana/other"]; g.RepositoryName != "other" || g.PolicyName != "other" {
+	if p, r, bound := cfg.ClassGenerations("smana/other", "docs"); p != 5 || r != 3 || !bound {
+		t.Fatalf("docs generations: %d %d %v", p, r, bound)
+	}
+	if g := cfg.Generations.Repos["smana/other"]; g.RepositoryName != "other" || g.Classes["docs"].PolicyName != "docs" {
 		t.Fatalf("names: %+v", g)
 	}
 	if o := outcome(t, s, resources.KindRepository, "other"); !o.Accepted || o.ServedGeneration != 3 || o.ObservedGeneration != 3 {
 		t.Fatalf("outcome: %+v", o)
 	}
 	all := outs(s)
-	if all[0].Kind != resources.KindMergePolicy || all[1].Kind != resources.KindRepository {
+	if all[0].Kind != resources.KindMergePolicy || all[len(all)-1].Kind != resources.KindRepository {
 		t.Fatalf("outcomes must sort by kind: %+v", all)
 	}
 }
 
 func TestSyncKeepsTheLastGoodVersion(t *testing.T) {
 	ctx := t.Context()
-	s, c := source(t, repoObj("other", "Smana/Other", 1), policyObj(t, "other", "other", 1, nil))
+	s, c := source(t, servedObjs(t, "other", "Smana/Other", 1, 1)...)
 	if err := s.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var p v1alpha1.MergePolicy
-	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "other"}, &p); err != nil {
+	var r v1alpha1.Repository
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "other"}, &r); err != nil {
 		t.Fatal(err)
 	}
-	p.Generation = 2
-	p.Spec.Classes = map[string]config.Class{"docs-links": {Live: true, Shadow: true}, "revert": {Shadow: true}}
-	if err := c.Update(ctx, &p); err != nil {
+	r.Generation = 2
+	r.Spec.MergePolicies = r.Spec.MergePolicies[:2] // docs unbound
+	breakRepository(&r)
+	if err := c.Update(ctx, &r); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.Sync(ctx); err != nil {
@@ -143,28 +162,29 @@ func TestSyncKeepsTheLastGoodVersion(t *testing.T) {
 	if _, ok := cfg.RepositoryFor("Smana/Other").Classes["docs"]; !ok {
 		t.Fatalf("generation 1's classes must still be served: %+v", cfg.RepositoryFor("Smana/Other").Classes)
 	}
-	if _, r, pg := cfg.GenerationsFor("Smana/Other"); r != 1 || pg != 1 {
-		t.Fatalf("generations: %d %d", r, pg)
+	if _, rg := cfg.GenerationsFor("Smana/Other"); rg != 1 {
+		t.Fatalf("generation: %d", rg)
 	}
-	o := outcome(t, s, resources.KindMergePolicy, "other")
+	o := outcome(t, s, resources.KindRepository, "other")
 	if o.Accepted || o.ServedGeneration != 1 || o.ObservedGeneration != 2 || o.Reason != v1alpha1.ReasonInvalid || o.Message == "" {
 		t.Fatalf("outcome: %+v", o)
 	}
-	if r := outcome(t, s, resources.KindRepository, "other"); !r.Accepted {
-		t.Fatalf("the repository is still served: %+v", r)
+	if p := outcome(t, s, resources.KindMergePolicy, "docs"); !p.Accepted {
+		t.Fatalf("the policy is still served: %+v", p)
 	}
 }
 
 func TestSyncDropsADeletedObject(t *testing.T) {
 	ctx := t.Context()
-	s, c := source(t, repoObj("other", "Smana/Other", 1), policyObj(t, "other", "other", 1, nil))
+	objs := servedObjs(t, "other", "Smana/Other", 1, 1)
+	s, c := source(t, objs...)
 	if err := s.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if len(s.Live.Current().Repos()) != 2 {
 		t.Fatal("repository not served")
 	}
-	for _, o := range []client.Object{repoObj("other", "", 0), policyObj(t, "other", "other", 0, nil)} {
+	for _, o := range objs {
 		if err := c.Delete(ctx, o); err != nil {
 			t.Fatal(err)
 		}
@@ -308,13 +328,11 @@ func TestARefusedObjectNotServedIsNotAcceptedAtGenerationZero(t *testing.T) {
 	}
 }
 
-// A MergePolicy whose repositoryRef names no served Repository records no generations under "".
-func TestGenerationsIgnoreAnOrphanPolicy(t *testing.T) {
-	g := generations([]resources.Object{
-		{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{"repositoryRef": "missing"}},
-	}, nil)
-	if _, ok := g.Repos[""]; ok || len(g.Repos) != 0 {
-		t.Fatalf("generations %+v, want none for an orphan policy", g.Repos)
+// A MergePolicy no served Repository binds records no generations, under "" or anywhere.
+func TestGenerationsIgnoreAnUnboundPolicy(t *testing.T) {
+	g := generations([]resources.Object{{Kind: resources.KindMergePolicy, Name: "p", Generation: 3, Spec: map[string]any{}}}, nil)
+	if len(g.Repos) != 0 {
+		t.Fatalf("generations %+v, want none for an unbound policy", g.Repos)
 	}
 }
 
@@ -355,19 +373,19 @@ func TestCRDsAbsentFollowsTheLastSync(t *testing.T) {
 // first error; a resync that finds it refused again says nothing more.
 func TestSyncLogsARefusedGenerationOnce(t *testing.T) {
 	ctx := t.Context()
-	s, c := source(t, repoObj("other", "Smana/Other", 1), policyObj(t, "other", "other", 1, nil))
+	s, c := source(t, servedObjs(t, "other", "Smana/Other", 1, 1)...)
 	var logs strings.Builder
 	s.Log = slog.New(slog.NewTextHandler(&logs, nil))
 	if err := s.Sync(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var p v1alpha1.MergePolicy
-	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "other"}, &p); err != nil {
+	var r v1alpha1.Repository
+	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "other"}, &r); err != nil {
 		t.Fatal(err)
 	}
-	p.Generation = 2
-	p.Spec.Classes = map[string]config.Class{"docs-links": {Live: true, Shadow: true}, "revert": {Shadow: true}}
-	if err := c.Update(ctx, &p); err != nil {
+	r.Generation = 2
+	breakRepository(&r)
+	if err := c.Update(ctx, &r); err != nil {
 		t.Fatal(err)
 	}
 	for range 2 {
@@ -379,7 +397,7 @@ func TestSyncLogsARefusedGenerationOnce(t *testing.T) {
 	if n := strings.Count(out, "generation refused"); n != 1 {
 		t.Fatalf("%d refusal lines, want 1:\n%s", n, out)
 	}
-	for _, w := range []string{"level=WARN", "kind=MergePolicy", "name=other", "generation=2", "serving=1", "live and shadow"} {
+	for _, w := range []string{"level=WARN", "kind=Repository", "name=other", "generation=2", "serving=1", "nothing-binds-this"} {
 		if !strings.Contains(out, w) {
 			t.Fatalf("log lacks %q:\n%s", w, out)
 		}

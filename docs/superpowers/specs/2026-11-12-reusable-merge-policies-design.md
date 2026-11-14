@@ -1,7 +1,7 @@
 # Reusable merge policies: design
 
 **Status:** built (release N: Maku PRs #517, #519, #522, #528, #533, #535, #538, #546, #551 and the
-docs); the per-repository shape is removed in release N+1. Design agreed with the owner on
+docs); release N+1, which removes the per-repository shape, built by PR K. Design agreed with the owner on
 2026-11-12 in a grilling (Q1–Q15, recorded under [Owner decisions](#owner-decisions)). Amended while
 building: `requires` may name `holdoutChecks` (plan PR3, owner ruling 2026-11-13); Q13's "`author:
 any`" is read as the file's `conditions.any` (plan PR4), deprecated in N and refused in N+1. The owner stated the problem and agreed the model in principle

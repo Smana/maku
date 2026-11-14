@@ -8,43 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/Smana/maku/internal/factory/config"
-	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
-// simulationConfig is policyConfig with policyManagement.simulation on.
-func simulationConfig(t *testing.T) string {
+// simulationArgs is boundManifests with policyManagement.simulation on.
+func simulationArgs(t *testing.T) []string {
 	t.Helper()
-	raw, err := os.ReadFile(policyConfig)
+	args := boundManifests(t)
+	raw, err := os.ReadFile(args[1])
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := filepath.Join(t.TempDir(), "factory.yaml")
-	if err := os.WriteFile(p, append(raw, []byte("policyManagement: {simulation: true}\n")...), 0o600); err != nil {
+	if err := os.WriteFile(args[1], append(raw, []byte("policyManagement: {simulation: true}\n")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return p
+	return args
 }
 
-// exportedPolicy is cfg's central classes as a class-shape file: the shape `policy export` wrote
-// before the binding shape (B16), which simulate and diff still read.
-func exportedPolicy(t *testing.T, cfg string) string {
+// exportedPolicy is the bound repository's file as `policy export` writes it (B16).
+func exportedPolicy(t *testing.T, args []string) string {
 	t.Helper()
-	c, err := config.Load(cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
-	f, err := mergepolicy.ExportClasses(c.RepositoryFor(policyRepo(t)), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := mergepolicy.Marshal(f)
-	if err != nil {
-		t.Fatal(err)
+	var out bytes.Buffer
+	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
 	}
 	p := filepath.Join(t.TempDir(), "agent-factory.yaml")
-	if err := os.WriteFile(p, raw, 0o600); err != nil {
+	if err := os.WriteFile(p, out.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return p
@@ -53,11 +41,11 @@ func exportedPolicy(t *testing.T, cfg string) string {
 const fixtures = "../factory/reconciler/testdata/conformance/"
 
 func TestPolicySimulate(t *testing.T) {
-	cfg := simulationConfig(t)
-	policy := exportedPolicy(t, cfg)
+	args := simulationArgs(t)
+	policy := exportedPolicy(t, args)
 	var out bytes.Buffer
-	err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"policy", "simulate", "--config", cfg,
-		"--repository", policyRepo(t), policy, fixtures + "01-arms.json", fixtures + "16-docs-unarmed.json"})
+	err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), append(append([]string{"policy", "simulate"}, args...),
+		policy, fixtures+"01-arms.json", fixtures+"16-docs-unarmed.json"))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
@@ -67,8 +55,8 @@ func TestPolicySimulate(t *testing.T) {
 }
 
 func TestPolicyDiff(t *testing.T) {
-	cfg := simulationConfig(t)
-	old := exportedPolicy(t, cfg)
+	args := simulationArgs(t)
+	old := exportedPolicy(t, args)
 	raw, err := os.ReadFile(old)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +66,7 @@ func TestPolicyDiff(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out bytes.Buffer
-	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), []string{"policy", "diff", "--config", cfg, "--repository", policyRepo(t), old, next}); err != nil {
+	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), append(append([]string{"policy", "diff"}, args...), old, next)); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	if !strings.Contains(out.String(), "relaxation") || !strings.Contains(out.String(), "mode raised") {
@@ -88,11 +76,11 @@ func TestPolicyDiff(t *testing.T) {
 
 // The switch a simulator that disagrees with the gate turns off (stage 2).
 func TestSimulateAndDiffNeedTheSwitch(t *testing.T) {
-	policy := exportedPolicy(t, policyConfig)
+	args := boundManifests(t)
+	policy := exportedPolicy(t, args)
 	for _, verb := range []string{"simulate", "diff"} {
 		var out bytes.Buffer
-		err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), []string{"policy", verb, "--config", policyConfig,
-			"--repository", policyRepo(t), policy, policy})
+		err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), append(append([]string{"policy", verb}, args...), policy, policy))
 		if err == nil || !strings.Contains(err.Error(), "policyManagement.simulation") {
 			t.Fatalf("%s: got %v", verb, err)
 		}

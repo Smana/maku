@@ -864,6 +864,12 @@ jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[
 jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | (.ports | map(.port | tostring) | join("+"))] == ["53+53", "443+6443", "8443", "443", "4317"] and .spec.egress[3].to[0].ipBlock.cidr == "0.0.0.0/0" and (.spec.egress[3].to[0].ipBlock.except | index("10.0.0.0/8")) != null' "kubernetes: the factory reaches DNS, the apiserver, the broker's :8443, public 443 (GitHub) and the collector, nothing else"
 out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes)"
 jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | ([.spec.ingress[].ports[0].port] | index(8080)) == null' 'kubernetes: an empty intakeFrom closes :8080'
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | select(.from[0].podSelector.matchLabels."app.kubernetes.io/name" == "preflight")] | length == 0' 'kubernetes: no preflight, no rule for it'
+# step 7 PR F's finding: the install's preflight collects the factory's /preflight on :9090 (v4 D24)
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | select(.from[0].podSelector.matchLabels."app.kubernetes.io/name" == "preflight") | .ports[0].port] == [9090]' 'kubernetes: the factory admits the preflight on :9090'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "preflight") | .toPorts[0].ports[0].port] == ["9090"]' 'cilium: the factory admits the preflight on :9090'
 out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
   --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')" ||
   { echo 'FAIL: networkPolicies.factory in mode cilium does not render' >&2; fail=1; out=''; }

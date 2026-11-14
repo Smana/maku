@@ -31,11 +31,10 @@ func (r *Reconciler) grantsOn(cfg *config.Config) bool {
 }
 
 // needsGrants is whether deciding in under the snapshot could consult a grant: a valid policy whose
-// class has a live variant and a requiresApproval subset, the diff read. Nothing else is looked up.
+// class is live with a requiresApproval subset, the diff read. Nothing else is looked up.
 func needsGrants(in ArmInputs, snap mergepolicy.Snapshot, ok bool) bool {
 	r, has := snap.Classes[in.Task.Spec.PredictedClass]
-	return ok && snap.Err == nil && has && len(r.Approval) > 0 && in.DiffRead &&
-		slices.ContainsFunc(r.Variants(), func(v config.Class) bool { return v.Live })
+	return ok && snap.Err == nil && has && len(r.Approval) > 0 && in.DiffRead && r.Class.Live
 }
 
 // needsGrantsUnder is needsGrants for the policy that decides: the repository's snapshot when it
@@ -48,8 +47,7 @@ func needsGrantsUnder(in ArmInputs, cfg *config.Config, p gatePolicy) bool {
 	return ok && cl.Live && len(cl.RequiresApproval) > 0 && in.DiffRead
 }
 
-// snapshotHash is a repository policy's class as a grant binds to it (B13): its variants'
-// resolved hash, the requiresApproval leaves included as written, as config.ResolvedHash reads a
+// snapshotHash is a repository policy's class as a grant binds to it (B13): its resolved hash, the requiresApproval leaves included as written, as config.ResolvedHash reads a
 // central class's, so a class and its in-sync file hash alike and an edit to the subset suspends
 // grants. A Resolved that keeps only the flattened subset hashes it as one leaf.
 func snapshotHash(res mergepolicy.Resolved) string {
@@ -57,18 +55,14 @@ func snapshotHash(res mergepolicy.Resolved) string {
 	if len(leaves) == 0 && len(res.Approval) > 0 {
 		leaves = []config.ApprovalLeaf{{ChangedFiles: res.Approval}}
 	}
-	vs := slices.Clone(res.Variants())
-	for i := range vs {
-		if len(vs[i].RequiresApproval) == 0 && len(leaves) > 0 {
-			v := *vs[i].DeepCopy()
-			v.RequiresApproval = make([]config.ApprovalLeaf, len(leaves))
-			for j, l := range leaves {
-				v.RequiresApproval[j] = config.ApprovalLeaf{ChangedFiles: slices.Clone(l.ChangedFiles)}
-			}
-			vs[i] = v
+	v := *res.Class.DeepCopy()
+	if len(v.RequiresApproval) == 0 && len(leaves) > 0 {
+		v.RequiresApproval = make([]config.ApprovalLeaf, len(leaves))
+		for j, l := range leaves {
+			v.RequiresApproval[j] = config.ApprovalLeaf{ChangedFiles: slices.Clone(l.ChangedFiles)}
 		}
 	}
-	return config.ResolvedHash(vs...)
+	return config.ResolvedHash(v)
 }
 
 // grantHash is the hash the grants of t's decision bind to (B13, Q9): the resolved hash of the

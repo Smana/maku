@@ -147,6 +147,24 @@ Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defa
 their old values. Each change below is breaking: a removed or flipped value is refused by the schema
 or by a render `fail` that names its replacement, never silently ignored.
 
+### Private code is refused without its acknowledgement
+
+A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory
+cannot read) without `spec.privateCode.acknowledged: true` is now refused new tasks, where step 7
+warned (D3, owner ruling R9). Its `factory/ready` gets the refusal and loses the label, the API
+answers `403 private_code_unacknowledged`, schedules and adoption start nothing there, and the
+preflight fails `private_code_unacknowledged`. Tasks already started finish.
+
+Before upgrading, check that the gauge reads 0, or acknowledge each repository it names:
+
+```bash
+kubectl -n <namespace> get repository -o custom-columns=NAME:.metadata.name,REPO:.spec.repository,PRIVATE:'.status.conditions[?(@.type=="PrivateCode")].reason'
+kubectl -n <namespace> patch repository <name> --type merge -p '{"spec":{"privateCode":{"acknowledged":true}}}'
+```
+
+That field states the repository's code is sent to the configured models, which are usually SaaS
+([private code](factory.md#private-code)). The demo still serves public repositories only.
+
 ### The gateway is the model path
 
 | Value | Before | Now |
@@ -200,12 +218,38 @@ The chart's `SlackCardUpdatesFailing` rule moves with it. Rewrite any query, rul
 keep outside the chart before the upgrade, or read both names across it
 (`maku_slack_app_requests_total or factory_slack_requests_total`).
 
+## The per-repository merge policy removed (v0.4x, release N+1)
+
+Breaking. The release after [reusable merge policies](#reusable-merge-policies-v04x-release-n)
+removes the per-repository shape:
+
+| Removed | What happens to it now |
+|---|---|
+| `MergePolicy.spec.repositoryRef`, `classes` and `merge` | Gone from the CRD. The API server prunes them on read: a forgotten per-repository object reads as an empty class policy with `CONSUMERS 0`, which serves nothing and binds nothing. `maku config validate` refuses one: `the per-repository MergePolicy was removed in this release: maku config migrate --manifests (from the previous release)` |
+| `MergePolicy.status.authority`, `classCount`, `classes`; the `REPO` column; `Repository.status.mergePolicy` | Gone. A repository's authority, classes and counts are on its `Repository` |
+| The `NoMergePolicy` and `DuplicatePolicy` reasons | Gone. A `Repository` without bindings is served with no class but `review`, or refused `Invalid` by the config's own rules |
+| `maku config migrate --manifests` | Gone: it converted per-repository manifests. `--from` still converts a config file's `repositories[]` |
+| A `.github/agent-factory.yaml` with `classes:` (and `conditions.any`) | Refused, `RepositoryFileValid` `False`: `the classes shape was removed in this release: write mergePolicies with maku policy export; under repository authority, …rewrite each class by hand as a mergePolicies binding of a MergePolicy`. Under central authority `maku policy export` writes the file; under repository authority, rewrite it by hand, and until then auto-merge pauses, as for any invalid file |
+| The catalogue's `generations.mergePolicy` (MCP `classes_list`) | Gone; `generations.mergePolicies` has each bound class's policy generation |
+| The settings page's per-repository rows and its class-file editor | Gone. A bound repository edits its bindings; a policy is edited on its own page |
+
+Before you upgrade, on every cluster:
+
+```bash
+kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
+```
+
+and no repository's `.github/agent-factory.yaml` has a `classes:` key. Convert what is left with the
+previous release's `maku config migrate --manifests` and `maku policy export` first. Then upgrade the
+CRDs (`agent-factory-crds`) and the factory together.
+
 ## Reusable merge policies (v0.4x, release N)
 
 A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`
 binds the ones it uses under `spec.mergePolicies`, with its own `spec.merge`
 ([factory resources](merge-policies.md#factory-resources)). This release reads both shapes; the next
-minor refuses the per-repository one. Nothing changes until a manifest does: a repository served from
+minor, now shipped, [removes the per-repository one](#the-per-repository-merge-policy-removed-v04x-release-n1).
+Nothing changes until a manifest does: a repository served from
 a per-repository `MergePolicy` is decided exactly as before, with one warning per such object at
 every start (`MergePolicy <name> is in the per-repository shape, removed in the next minor: maku
 config migrate`).
@@ -235,16 +279,8 @@ config migrate`).
 5. A repository's own `.github/agent-factory.yaml` with `classes:` is rewritten in the binding shape
    with `maku policy export`.
 
-Before the next minor, check that no per-repository object and no `classes:` file is left:
-
-```bash
-kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
-```
-
-and that no repository's `.github/agent-factory.yaml` still has a `classes:` key. The next minor
-removes the per-repository fields from the CRD (the API server then prunes them on read, leaving an
-empty class policy with `CONSUMERS 0`) and refuses a file in the `classes:` shape, `conditions.any`
-included.
+Before the next minor, check that no per-repository object and no `classes:` file is left: its
+[section](#the-per-repository-merge-policy-removed-v04x-release-n1) has the checks.
 
 ## Exposure and the web front door (v0.4x, v4 rollout step 6)
 

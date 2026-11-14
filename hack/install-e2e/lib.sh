@@ -230,11 +230,12 @@ secrets() {
   cert broker room-broker "DNS:room-broker.$NS.svc,DNS:room-broker.$NS.svc.cluster.local"
   k -n "$NS" create secret tls room-broker-tls --cert="$work/broker.crt" --key="$work/broker.key" >/dev/null
   for c in room-broker-ca openbao-ca; do k -n "$NS" create secret generic "$c" --from-file=ca.crt="$work/ca.crt" >/dev/null; done
-  # The Apps: a throwaway key; the stub never checks a signature.
+  # The Apps: a throwaway key; the stub never checks a signature. Two ids, as the answers name two
+  # slugs: the factory refuses an agents App that is its own (D12). The stub serves App 1's routes
+  # to either, so the factory App stays 1, the merge gate's integration_id.
   openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
-  for a in agent-factory-github agent-factory-agents; do
-    k -n "$NS" create secret generic "$a" --from-literal=app_id=1 --from-file=private_key="$work/app.pem" >/dev/null
-  done
+  k -n "$NS" create secret generic agent-factory-github --from-literal=app_id=1 --from-file=private_key="$work/app.pem" >/dev/null
+  k -n "$NS" create secret generic agent-factory-agents --from-literal=app_id=2 --from-file=private_key="$work/app.pem" >/dev/null
   k apply -n "$NS" -f "$s/client-ids.yaml" >/dev/null
   yq '.stringData."client-secret" = "e2e-throwaway"' "$s/web-proxy.yaml" | k apply -n "$NS" -f - >/dev/null
   yq '.stringData.client_id = "Iv1.e2e-link" | .stringData.client_secret = "e2e-throwaway"' "$s/templates/github-link.yaml" | k apply -n "$NS" -f - >/dev/null
@@ -283,7 +284,15 @@ ready() {
 preflight() {
   step "maku preflight --strict ($NS): every check passes, none warns"
   [[ -x $MAKU ]] || go build -o "$MAKU" ./cmd/maku
-  local rc=0
+  # run-path serves the run-controller's own preflight's last result: wait until it has one (its
+  # network probe starts a pod under the RuntimeClass, up to a few minutes on a fresh node).
+  local rc=0 rclog="$work/rc-$NS.log" found=0
+  for _ in $(seq 120); do
+    k -n "$NS" logs deploy/run-controller >"$rclog" 2>&1 || true
+    if grep -qE 'preflight (passed|failed)' "$rclog"; then found=1; break; fi
+    sleep 3
+  done
+  ((found)) || { tail -40 "$rclog" >&2; die "$NS: the run-controller's preflight decided nothing within 6 minutes"; }
   "$MAKU" preflight --namespace "$NS" --release "$RELEASE" --strict --no-outside --kubeconfig "$KUBECONFIG" --context "${CTX:-}" || rc=$?
   ((rc == 0)) || die "$NS: maku preflight --strict exited $rc"
 }
