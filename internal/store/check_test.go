@@ -249,8 +249,8 @@ func TestMigrateGrantsTheBrokerTheLedgerVersion(t *testing.T) {
 }
 
 // serve refuses a schema behind its binary, naming migrate and the owner's Secret; a schema ahead
-// keeps migrate's refusal; no ledger at all is "none"; a ledger the role cannot read is served,
-// unverified.
+// keeps migrate's refusal; no ledger at all is "none"; a ledger the role cannot read is refused,
+// naming the grant (step 8 R10).
 func TestSchemaCurrent(t *testing.T) {
 	files, err := migrations.Files()
 	if err != nil {
@@ -284,8 +284,9 @@ func TestSchemaCurrent(t *testing.T) {
 			err = st.SchemaCurrent(t.Context())
 			switch {
 			case c.unverified:
-				if !errors.Is(err, ErrSchemaUnverified) {
-					t.Fatalf("SchemaCurrent = %v, want ErrSchemaUnverified", err)
+				// refused, naming the grant migrate adds (step 8 R10)
+				if !errors.Is(err, ErrLedgerUnreadable) || !strings.Contains(err.Error(), "grants SELECT (version) ON public.room_broker_revisions TO rooms_broker") {
+					t.Fatalf("SchemaCurrent = %v, want ErrLedgerUnreadable naming the grant", err)
 				}
 			case c.want == "":
 				if err != nil {

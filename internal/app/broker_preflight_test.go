@@ -41,8 +41,8 @@ func byCheck(rs []preflight.Result) map[string]preflight.Result {
 	return out
 }
 
-// The database check maps each refusal of step 5's checks to its code; F1's unreadable ledger is a
-// warn, and no message ever holds the DSN, whatever the driver's error says.
+// The database check maps each refusal of step 5's checks to its code, an unreadable ledger
+// included (step 8 R10), and no message ever holds the DSN, whatever the driver's error says.
 func TestBrokerPreflightDatabase(t *testing.T) {
 	const dsn = "postgresql://rooms_broker:hunter2@db.example:5432/rooms"
 	for name, c := range map[string]struct {
@@ -56,7 +56,7 @@ func TestBrokerPreflightDatabase(t *testing.T) {
 		"another role":          {fmt.Errorf("x: %w", store.ErrWrongRole), nil, preflight.Fail, "db_wrong_role"},
 		"unreachable":           {fmt.Errorf("dial %s: %w", dsn, store.ErrUnavailable), nil, preflight.Fail, "db_unreachable"},
 		"a malformed DSN":       {errors.New("cannot parse `" + dsn + "`: failed to parse"), nil, preflight.Fail, "db_unreachable"},
-		"an unreadable ledger":  {nil, fmt.Errorf("x: %w", store.ErrSchemaUnverified), preflight.Warn, "schema_unverified"},
+		"an unreadable ledger":  {nil, fmt.Errorf("x: %w", store.ErrLedgerUnreadable), preflight.Fail, "db_ledger_unreadable"},
 		"a ledger behind":       {nil, fmt.Errorf("x: %w", store.ErrSchemaBehind), preflight.Fail, "db_schema_behind"},
 		"a ledger ahead":        {nil, fmt.Errorf("x: %w", store.ErrSchemaAhead), preflight.Fail, "db_schema_ahead"},
 	} {

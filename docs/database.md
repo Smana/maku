@@ -33,6 +33,7 @@ each refuse to start, with one message per failure, when:
 | The role bypasses row-level security: a superuser, `BYPASSRLS`, a member of a role that is either, or, for the broker and the retention job, a member of `rooms_owner` or the owner of a table with row-level security and no `FORCE ROW LEVEL SECURITY` | `<role> bypasses row-level security (<why>): the room log would be writable` |
 | `migrate` only: `rooms_broker` or `rooms_retention` does not exist | `create the login roles rooms_broker and rooms_retention first (docs/database.md)` |
 | The broker only: the schema is behind its binary | `the schema is at <version>, this broker needs <version>: run migrate (broker.database.ownerSecret)` |
+| The broker only: `rooms_broker` cannot read the migration ledger | `rooms_broker cannot read the migration ledger: set broker.database.ownerSecret, whose migrate grants SELECT (version) ON public.room_broker_revisions TO rooms_broker (docs/database.md)` |
 
 A database the command cannot reach is not a refusal. The retention job retries it every 5 s for two
 minutes: a CNI that enforces NetworkPolicy admits a new pod's address a few seconds after it starts.
@@ -40,15 +41,15 @@ A wrong password, a missing database or a certificate the client cannot verify f
 
 ### A ledger the broker cannot read
 
-This is a bridge for a database the Atlas operator migrated: cloud-native-ref's, before its broker
-has `ownerSecret`. `rooms_broker` cannot read the operator's ledger, so it cannot tell the schema's
-version. The broker serves anyway, logs `schema version unverified`, and sets
-`maku_rooms_schema_unverified` to 1, which the alert `RoomBrokerSchemaUnverified` fires on.
+The broker refuses to start when `rooms_broker` cannot read the migration ledger, because it then
+cannot tell the schema's version. This happens on a database the Atlas operator migrated, whose
+ledger only its owner reads, and on a `public.room_broker_revisions` whose grant was revoked. The
+preflight's `database` check fails with `db_ledger_unreadable`.
 
-Set `ownerSecret` to end it: the first `migrate` adopts the operator's ledger into
-`public.room_broker_revisions`, which the broker reads, and the gauge drops to 0. Once
-cloud-native-ref has done so, a future minor release turns an unreadable ledger into a refusal, and
-its release notes say so.
+Set `ownerSecret`: the first `migrate` adopts the operator's ledger into
+`public.room_broker_revisions` and grants `rooms_broker` `SELECT (version)` on it, every run. Until
+v4 rollout step 8 this was a warning, the gauge `maku_rooms_schema_unverified` and the alert
+`RoomBrokerSchemaUnverified`; both are gone ([upgrading](upgrading.md#an-unreadable-ledger-is-refused)).
 
 ## Bootstrap
 

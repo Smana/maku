@@ -183,9 +183,11 @@ func wrongRole(user string, role Role) error {
 	}
 }
 
-// ErrSchemaUnverified is a schema version serve could not read: its ledger exists but this role
-// cannot read it. The broker serves, and says so once.
-var ErrSchemaUnverified = errors.New("the schema version is unverified: this role cannot read the migration ledger")
+// ErrLedgerUnreadable is a schema version serve could not read: its ledger exists but this role
+// cannot read it. The broker refuses to serve it, as it refuses a schema behind or ahead (v4 D9):
+// migrate, with broker.database.ownerSecret, adopts an Atlas operator's ledger and grants the read.
+var ErrLedgerUnreadable = errors.New("rooms_broker cannot read the migration ledger: set broker.database.ownerSecret, " +
+	"whose migrate grants SELECT (version) ON public.room_broker_revisions TO rooms_broker (docs/database.md)")
 
 // newestVersionSQL reads the ledger's newest version, granted to rooms_broker on its version
 // column alone (Migrate): the broker reads which files ran, never writes the ledger.
@@ -193,7 +195,7 @@ const newestVersionSQL = `SELECT coalesce(max(version), '') FROM public.room_bro
 
 // SchemaCurrent is serve's check that the schema is the one this binary was built for: the newest
 // recorded revision must be the newest embedded file. A ledger behind names migrate; a ledger
-// ahead is migrate's own refusal. A ledger the role cannot read is ErrSchemaUnverified.
+// ahead is migrate's own refusal. A ledger the role cannot read is ErrLedgerUnreadable.
 func (s *Store) SchemaCurrent(ctx context.Context) error {
 	files, err := migrations.Files()
 	if err != nil {
@@ -226,7 +228,7 @@ func schemaCurrent(ctx context.Context, q querier, files []migrations.File) erro
 // newestApplied reads the newest applied version from public.room_broker_revisions, where
 // createRevisions makes it whatever the search_path, else from the Atlas
 // operator's ledger (a cnref database before its first migrate): "" when the database holds
-// neither ledger, ErrSchemaUnverified when the one it holds is not readable by this role.
+// neither ledger, ErrLedgerUnreadable when the one it holds is not readable by this role.
 func newestApplied(ctx context.Context, q querier) (string, error) {
 	var exists, readable bool
 	if err := q.QueryRow(ctx, `SELECT to_regclass('public.room_broker_revisions') IS NOT NULL,
@@ -246,7 +248,7 @@ func newestApplied(ctx context.Context, q querier) (string, error) {
 		return "", nil
 	}
 	if !readable {
-		return "", ErrSchemaUnverified
+		return "", ErrLedgerUnreadable
 	}
 	var v string
 	if err := q.QueryRow(ctx, sql, args...).Scan(&v); err != nil {
