@@ -34,7 +34,7 @@ func TestModelFor(t *testing.T) {
 		"an unknown data class: never":      {"docs", "", "implementer", "standard", ""},
 		"a tier without an entry":           {"docs", "public", "implementer", "light", ""},
 		"a role without an entry":           {"docs", "public", "reviewer", "frontier", ""},
-		"a row is whole: not default's":     {"docs", "public", "reviewer", "light", ""},
+		"a row inherits default's (WF10)":   {"docs", "public", "reviewer", "light", "mistral-light"},
 		"default's row reaches review":      {"review", "public", "reviewer", "light", "mistral-light"},
 		"default's row, internal":           {"review", "internal", "reviewer", "light", ""},
 	} {

@@ -246,7 +246,8 @@ spec:
                     Loop is one row of loops. A row switches its class's loop on when it sets any of the three
                     keys (D4: no row, or a row without them, is today's run); an unset key then takes the
                     design's default. Rows are keyed by class so the scoper's switch (scoper design SC2,
-                    loops.<class>.scope) joins them as one more key.
+                    loops.<class>.scope) joins them as one more key. A row inherits each key it leaves unset from
+                    default's row (WF10, rowOf).
                   properties:
                     continuations:
                       description: 'Continuations is how many not_yet verdicts continue

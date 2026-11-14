@@ -22,19 +22,15 @@ type ClassForge interface {
 	LabelEvents(ctx context.Context, number int, label string) ([]forge.LabelEvent, error)
 }
 
-// Matrix is §2's table: the predicted class and the tier choose the team.
+// Matrix is §2's table: the predicted class and the tier choose the team, never trio (WF2).
 func Matrix(class, source, tier string) string {
 	switch {
 	case source == "runlore":
 		return "investigate"
-	case class == "docs-links" && tier == "frontier":
-		return "pair"
-	case class == "docs-links":
+	case class == "docs-links" && tier != "frontier":
 		return "solo"
-	case tier == "frontier":
-		return "trio"
 	}
-	return "pair"
+	return "pair" // trio left the shipped templates (WF2): a frontier task runs pair
 }
 
 // Investigates is whether t takes the investigate template, forced by its source and never by its

@@ -29,8 +29,8 @@ func TestSplitFor(t *testing.T) {
 		"docs":       {MaxChildren: 4, FamilyUSD: 20.4, ChildTier: "standard"}, // SP3, SP5
 		"tests":      {MaxChildren: 3, FamilyUSD: 12, ChildTier: "light"},
 		"review":     {MaxChildren: 2, FamilyUSD: 20.4, ChildTier: "standard"},
-		"dashboards": nil, // a row is whole: no split of its own
-		"docs-links": nil, // default's row never splits it (SL3)
+		"dashboards": {MaxChildren: 2, FamilyUSD: 20.4, ChildTier: "standard"}, // default's split (WF10)
+		"docs-links": nil,                                                      // default's row never splits it (SL3)
 		"revert":     nil,
 	} {
 		got := cfg.SplitFor(repo, class)
