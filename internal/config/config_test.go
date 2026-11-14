@@ -18,7 +18,7 @@ publicURL: https://rooms.priv.aws.ogenki.io
 runIssuers:
   - issuer: https://oidc.eks.eu-west-3.amazonaws.com/id/X
     jwksURL: https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys
-    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'
+    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'
 systemIssuer:
   issuer: https://oidc.eks.eu-west-3.amazonaws.com/id/X
   jwksURL: https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys
@@ -242,17 +242,24 @@ func TestLoadRuns(t *testing.T) {
 	if c.Runs != runwatch.DefaultKind {
 		t.Fatalf("no runs block: %+v", c.Runs)
 	}
-	const native = "runs:\n  group: maku.ogenki.io\n  namePrefix: run-\n"
-	// The xplane-run- issuer cannot authenticate a run-<id> ServiceAccount: refused at start.
-	if _, err := Load(write(t, valid+native)); err == nil || !strings.Contains(err.Error(), "runs") || !strings.Contains(err.Error(), "runIssuers") {
+	if c.Runs != (runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"}) {
+		t.Fatalf("the default is the run-controller's kind: %+v", c.Runs)
+	}
+	const other = "runs:\n  group: maku.ogenki.io\n  namePrefix: agent-run-\n"
+	// The run- issuer cannot authenticate an agent-run-<id> ServiceAccount: refused at start.
+	if _, err := Load(write(t, valid+other)); err == nil || !strings.Contains(err.Error(), "runs") || !strings.Contains(err.Error(), "runIssuers") {
 		t.Fatalf("want a runs/runIssuers error, got %v", err)
 	}
-	c, err = Load(write(t, strings.Replace(valid, "agents:xplane-run-", "agents:run-", 1)+native))
+	c, err = Load(write(t, strings.Replace(valid, "agents:run-", "agents:agent-run-", 1)+other))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Runs != (runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"}) {
+	if c.Runs != (runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "agent-run-"}) {
 		t.Fatalf("runs %+v", c.Runs)
+	}
+	// cloud-native-ref's Crossplane AgentRun is refused by name (v4 step 8, D5).
+	if _, err := Load(write(t, valid+"runs:\n  group: cloud.ogenki.io\n  namePrefix: run-\n")); err == nil || !strings.Contains(err.Error(), "removed in v4 step 8 (D5)") {
+		t.Fatalf("want the XR's group refused, got %v", err)
 	}
 	if _, err := Load(write(t, valid+"runs:\n  namePrefix: run\n")); err == nil || !strings.Contains(err.Error(), "runs:") {
 		t.Fatalf("want a runs: error, got %v", err)
@@ -312,7 +319,7 @@ func TestExistingJWKSConfigUnchanged(t *testing.T) {
 	run := c.RunIssuers[0]
 	if run.Issuer != "https://oidc.eks.eu-west-3.amazonaws.com/id/X" ||
 		run.JWKSURL != "https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys" ||
-		run.SubPattern != `^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$` {
+		run.SubPattern != `^system:serviceaccount:agents:run-([a-z2-7]{8})$` {
 		t.Fatalf("runIssuers[0] %+v", run)
 	}
 	sys := c.SystemIssuer
@@ -346,7 +353,7 @@ func TestIssuerModesAndDefaults(t *testing.T) {
 	if c, err := Load(write(t, explicit)); err != nil || c.RunIssuers[0].Mode != IssuerModeJWKS {
 		t.Fatalf("mode: jwks is the default spelled out: %+v, %v", c.RunIssuers, err)
 	}
-	tr := "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n"
+	tr := "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'\n"
 	if c, err := Load(write(t, replaceRunIssuers(valid, tr))); err != nil || c.RunIssuers[0].EffectiveMode() != IssuerModeTokenReview {
 		t.Fatalf("a tokenreview run issuer must load: %+v, %v", c.RunIssuers, err)
 	}
@@ -383,7 +390,7 @@ func TestIssuerModesAndDefaults(t *testing.T) {
 
 // replaceRunIssuers swaps valid's runIssuers block for repl.
 func replaceRunIssuers(body, repl string) string {
-	const old = "runIssuers:\n  - issuer: https://oidc.eks.eu-west-3.amazonaws.com/id/X\n    jwksURL: https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n"
+	const old = "runIssuers:\n  - issuer: https://oidc.eks.eu-west-3.amazonaws.com/id/X\n    jwksURL: https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys\n    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'\n"
 	if !strings.Contains(body, old) {
 		panic("fixture's runIssuers block changed")
 	}
@@ -391,11 +398,11 @@ func replaceRunIssuers(body, repl string) string {
 }
 
 func TestRunIssuerTokenReviewMode(t *testing.T) {
-	tr := "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n"
+	tr := "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'\n"
 	if _, err := Load(write(t, replaceRunIssuers(valid, tr))); err != nil {
 		t.Fatalf("tokenreview issuer must load: %v", err)
 	}
-	withURL := "runIssuers:\n  - mode: tokenreview\n    issuer: https://x\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n"
+	withURL := "runIssuers:\n  - mode: tokenreview\n    issuer: https://x\n    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'\n"
 	if _, err := Load(write(t, replaceRunIssuers(valid, withURL))); err == nil {
 		t.Fatal("tokenreview with an issuer URL must be refused")
 	}
@@ -494,7 +501,7 @@ const localBare = `
 runIssuers:
   - issuer: https://oidc.eks.eu-west-3.amazonaws.com/id/X
     jwksURL: https://oidc.eks.eu-west-3.amazonaws.com/id/X/keys
-    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'
+    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'
 human:
   mode: local
 `
@@ -926,7 +933,7 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 // subject) or tokenreview (the broker verifies the run's own token). tokenreview needs a run issuer
 // in mode tokenreview: its subject patterns are the ones :8090 maps a verified subject through.
 func TestRoomToolsAuth(t *testing.T) {
-	tr := replaceRunIssuers(valid, "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$'\n")
+	tr := replaceRunIssuers(valid, "runIssuers:\n  - mode: tokenreview\n    subPattern: '^system:serviceaccount:agents:run-([a-z2-7]{8})$'\n")
 	for _, tc := range []struct {
 		name, body, want string
 	}{

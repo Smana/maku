@@ -30,7 +30,7 @@ func split(p string) []string { return strings.Split(p, ".") }
 
 func TestBuildIsTheSP1Claim(t *testing.T) {
 	u := Build(runwatch.DefaultKind, spec())
-	if u.GetName() != "xplane-run-7f3cq2xz" || u.GetNamespace() != "agents" || u.GetLabels()[LabelTask] != "3buqdlot" ||
+	if u.GetName() != "run-7f3cq2xz" || u.GetNamespace() != "agents" || u.GetLabels()[LabelTask] != "3buqdlot" ||
 		u.GetLabels()[LabelPrincipal] != "system.factory" {
 		t.Fatalf("identity %s/%s %v", u.GetNamespace(), u.GetName(), u.GetLabels())
 	}
@@ -369,8 +369,8 @@ func newClient() Client {
 
 func TestFromUnstructuredSkipsWhatIsNotARun(t *testing.T) {
 	for name, edit := range map[string]func(*unstructured.Unstructured){
-		"not xplane-run-":    func(u *unstructured.Unstructured) { u.SetName("other-7f3cq2xz") },
-		"not a C2 id":        func(u *unstructured.Unstructured) { u.SetName("xplane-run-NOTANID") },
+		"not run-":           func(u *unstructured.Unstructured) { u.SetName("other-7f3cq2xz") },
+		"not a C2 id":        func(u *unstructured.Unstructured) { u.SetName("run-NOTANID") },
 		"outside the agents": func(u *unstructured.Unstructured) { u.SetNamespace("default") },
 	} {
 		t.Run(name, func(t *testing.T) {

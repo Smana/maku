@@ -2,7 +2,7 @@
 
 // Package applier is the safe-output applier (hardening H2, UH3 to UH5): a factory runnable that
 // tails the rooms of tasks with a writer run, checks each output_requested the broker stamped as
-// the run's own, applies it through the publisher (the agents App, through octo-sts) or the
+// the run's own, applies it through the publisher (the agents App, through the minter) or the
 // factory App, and answers it with exactly one output_applied or output_refused. Only the leader
 // runs it. Nothing in it is reachable until PR 3's enforceOutputs config starts it.
 package applier

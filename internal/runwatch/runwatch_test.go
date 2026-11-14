@@ -22,7 +22,7 @@ import (
 
 func claim(name, room, phase, revoked string) *unstructured.Unstructured {
 	u := &unstructured.Unstructured{Object: map[string]any{
-		"apiVersion": "cloud.ogenki.io/v1alpha1", "kind": "AgentRun",
+		"apiVersion": "maku.ogenki.io/v1alpha1", "kind": "AgentRun",
 		"metadata": map[string]any{"name": name, "namespace": "agents"},
 		"spec": map[string]any{"role": "reviewer", "principal": "human:312345678901234567", "dataClass": "public",
 			"repository": "Smana/cloud-native-ref", "roomRef": room,
@@ -37,7 +37,7 @@ func claim(name, room, phase, revoked string) *unstructured.Unstructured {
 
 // suspendable is a suspendable run its broker suspended and resumed once.
 func suspendable() *unstructured.Unstructured {
-	u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Suspended", "")
+	u := claim("run-7f3cq2xz", "3kq7x2ma", "Suspended", "")
 	_ = unstructured.SetNestedField(u.Object, true, "spec", "suspendable")
 	u.SetAnnotations(map[string]string{OperatingModeAnnotation: "Suspended",
 		RemainingSecondsAnnotation: "900", ResumedAtAnnotation: "2026-09-27T11:00:00Z"})
@@ -55,7 +55,7 @@ func transitioned(u *unstructured.Unstructured, transition string) *unstructured
 }
 
 func TestFromUnstructured(t *testing.T) {
-	r, ok := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	r, ok := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
 	if !ok || r.ID != "7f3cq2xz" || r.Room != "3kq7x2ma" || r.Role != "reviewer" || r.MaxMinutes != 60 ||
 		r.Branch != "agent/3kq7x2ma" || len(r.EgressProfiles) != 1 || !r.Live() ||
 		!r.StartedAt.Equal(time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)) {
@@ -66,10 +66,10 @@ func TestFromUnstructured(t *testing.T) {
 		name string
 		u    func() *unstructured.Unstructured
 	}{
-		{"a claim not named xplane-run-<id> is not a run", func() *unstructured.Unstructured { return claim("not-a-run", "", "", "") }},
-		{"a run id that is not a C2 id is not a run", func() *unstructured.Unstructured { return claim("xplane-run-NOTANID1", "", "", "") }},
+		{"a claim not named run-<id> is not a run", func() *unstructured.Unstructured { return claim("not-a-run", "", "", "") }},
+		{"a run id that is not a C2 id is not a run", func() *unstructured.Unstructured { return claim("run-NOTANID1", "", "", "") }},
 		{"a claim outside the agents namespace is not a run", func() *unstructured.Unstructured {
-			u := claim("xplane-run-7f3cq2xz", "", "", "")
+			u := claim("run-7f3cq2xz", "", "", "")
 			u.SetNamespace("default")
 			return u
 		}},
@@ -81,23 +81,23 @@ func TestFromUnstructured(t *testing.T) {
 		})
 	}
 
-	defaults := claim("xplane-run-7f3cq2xz", "", "", "")
+	defaults := claim("run-7f3cq2xz", "", "", "")
 	unstructured.RemoveNestedField(defaults.Object, "spec", "budget")
 	unstructured.RemoveNestedField(defaults.Object, "status", "branch")
 	_ = unstructured.SetNestedField(defaults.Object, "agent/fork", "spec", "branch")
-	finished := transitioned(claim("xplane-run-7f3cq2xz", "", "Failed", ""), "2026-09-27T10:20:00Z")
+	finished := transitioned(claim("run-7f3cq2xz", "", "Failed", ""), "2026-09-27T10:20:00Z")
 	_ = unstructured.SetNestedField(finished.Object, "2026-09-27T10:05:00Z", "status", "finishedAt")
 	for _, c := range []struct {
 		name string
 		u    *unstructured.Unstructured
 		ok   func(Run) bool
 	}{
-		{"a revoked run is never live", claim("xplane-run-7f3cq2xz", "", "Running", "manual"), func(r Run) bool { return !r.Live() }},
-		{"a terminal run is not live", claim("xplane-run-7f3cq2xz", "", "Succeeded", ""), func(r Run) bool { return !r.Live() }},
+		{"a revoked run is never live", claim("run-7f3cq2xz", "", "Running", "manual"), func(r Run) bool { return !r.Live() }},
+		{"a terminal run is not live", claim("run-7f3cq2xz", "", "Succeeded", ""), func(r Run) bool { return !r.Live() }},
 		{"a claim with no phase yet is Pending and live", defaults, func(r Run) bool { return r.Phase == "Pending" && r.Live() }},
 		{"a claim with no budget gets the default deadline", defaults, func(r Run) bool { return r.MaxMinutes == 120 }},
 		// v2 suspend: a suspended run keeps its room, so it is neither terminal nor dead.
-		{"a suspended run is live", claim("xplane-run-7f3cq2xz", "", "Suspended", ""), func(r Run) bool {
+		{"a suspended run is live", claim("run-7f3cq2xz", "", "Suspended", ""), func(r Run) bool {
 			return r.Live() && !Terminal(r.Phase)
 		}},
 		{"a run is not suspendable unless its spec says so", defaults, func(r Run) bool {
@@ -110,7 +110,7 @@ func TestFromUnstructured(t *testing.T) {
 		{"the branch falls back to spec.branch before status has one", defaults, func(r Run) bool { return r.Branch == "agent/fork" }},
 		{
 			"with no finishedAt the end is the Ready transition",
-			transitioned(claim("xplane-run-7f3cq2xz", "", "Failed", ""), "2026-09-27T10:20:00Z"),
+			transitioned(claim("run-7f3cq2xz", "", "Failed", ""), "2026-09-27T10:20:00Z"),
 			func(r Run) bool { return r.FinishedAt.Equal(time.Date(2026, 9, 27, 10, 20, 0, 0, time.UTC)) },
 		},
 		{
@@ -129,7 +129,7 @@ func TestFromUnstructured(t *testing.T) {
 // A provider hiccup that flips Synced long after the pod was lost must not move
 // the end time past the deadline: only Ready's transition stands in for finishedAt.
 func TestALateSyncedTransitionIsNotTheEnd(t *testing.T) {
-	u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", "")
+	u := claim("run-7f3cq2xz", "3kq7x2ma", "Failed", "")
 	_ = unstructured.SetNestedSlice(u.Object, []any{
 		map[string]any{"type": "Ready", "status": "False", "lastTransitionTime": "2026-09-27T10:20:00Z"},
 		map[string]any{"type": "Synced", "status": "False", "lastTransitionTime": "2026-09-27T13:00:00Z"},
@@ -149,12 +149,12 @@ func TestWatcherFiresGoneOnceForTerminalRevokedOrDeleted(t *testing.T) {
 	var gone, changed []string
 	w.OnGone(func(_ context.Context, r Run) { gone = append(gone, r.ID) })
 	w.OnChange(func(_ context.Context, r Run) { changed = append(changed, r.ID+":"+r.Phase) })
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Succeeded", ""))
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Succeeded", ""))
-	w.Upsert(ctx, claim("xplane-run-aaaaaaaa", "3kq7x2ma", "Running", ""))
-	w.Remove(ctx, claim("xplane-run-aaaaaaaa", "3kq7x2ma", "Running", ""))
-	w.Upsert(ctx, claim("xplane-run-bbbbbbbb", "zzzzzzzz", "Running", "manual"))
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Succeeded", ""))
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Succeeded", ""))
+	w.Upsert(ctx, claim("run-aaaaaaaa", "3kq7x2ma", "Running", ""))
+	w.Remove(ctx, claim("run-aaaaaaaa", "3kq7x2ma", "Running", ""))
+	w.Upsert(ctx, claim("run-bbbbbbbb", "zzzzzzzz", "Running", "manual"))
 	w.Upsert(ctx, claim("not-a-run", "3kq7x2ma", "Running", ""))
 	if want := []string{"7f3cq2xz", "aaaaaaaa", "bbbbbbbb"}; !slices.Equal(gone, want) {
 		t.Fatalf("gone = %v, want %v", gone, want)
@@ -184,7 +184,7 @@ func TestGoneFiresBeforeChange(t *testing.T) {
 	var order []string
 	w.OnChange(func(context.Context, Run) { order = append(order, "change") })
 	w.OnGone(func(context.Context, Run) { order = append(order, "gone") })
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
 	if !slices.Equal(order, []string{"gone", "change"}) {
 		t.Fatalf("order = %v", order)
 	}
@@ -196,8 +196,8 @@ func TestOnRemoveGetsTheLastKnownState(t *testing.T) {
 	w := New(DefaultKind)
 	var removed []Run
 	w.OnRemove(func(_ context.Context, r Run) { removed = append(removed, r) })
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
-	w.Remove(ctx, claim("xplane-run-7f3cq2xz", "zzzzzzzz", "Pending", ""))
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	w.Remove(ctx, claim("run-7f3cq2xz", "zzzzzzzz", "Pending", ""))
 	if len(removed) != 1 || removed[0].Room != "3kq7x2ma" || removed[0].Phase != "Running" {
 		t.Fatalf("removed = %+v", removed)
 	}
@@ -306,7 +306,7 @@ func TestObserveAppendsEachStepOnce(t *testing.T) {
 	ctx := t.Context()
 	fs := &fakeStore{keys: map[string]bool{}, status: "error"}
 	e := &Events{Store: fs}
-	r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	r, _ := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
 	for range 2 { // the second is a replayed informer event, or a new leader
 		if err := e.Observe(ctx, r); err != nil {
 			t.Fatal(err)
@@ -334,13 +334,13 @@ func TestObserveAppendsEachStepOnce(t *testing.T) {
 }
 
 func TestObserve(t *testing.T) {
-	running, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	running, _ := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
 	pending := running
 	pending.Phase = "Pending"
 	// Failed with no finishedAt: the end is the claim's last condition transition,
 	// whenever the broker observes it (a restart after downtime changes nothing).
 	failedAt := func(transition string) Run {
-		r, _ := DefaultKind.FromUnstructured(transitioned(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", ""), transition))
+		r, _ := DefaultKind.FromUnstructured(transitioned(claim("run-7f3cq2xz", "3kq7x2ma", "Failed", ""), transition))
 		return r
 	}
 	noRoom, badRoom := running, running
@@ -402,15 +402,15 @@ func TestADeletedRunEndsOnce(t *testing.T) {
 	w := New(DefaultKind)
 	var removed []string
 	w.OnRemove(func(_ context.Context, r Run) { removed = append(removed, r.ID) })
-	w.Upsert(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
-	w.Remove(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
-	w.Remove(ctx, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")) // unknown by now
+	w.Upsert(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	w.Remove(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	w.Remove(ctx, claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")) // unknown by now
 	if len(removed) != 1 {
 		t.Fatalf("removed = %v", removed)
 	}
 	fs := &fakeStore{keys: map[string]bool{}}
 	e := &Events{Store: fs}
-	r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+	r, _ := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
 	for range 2 {
 		if err := e.ObserveDeleted(ctx, r); err != nil {
 			t.Fatal(err)
@@ -420,7 +420,7 @@ func TestADeletedRunEndsOnce(t *testing.T) {
 		t.Fatalf("drafts = %v", payloads(fs.drafts))
 	}
 
-	ended, _ := DefaultKind.FromUnstructured(claim("xplane-run-aaaaaaaa", "3kq7x2ma", "Succeeded", ""))
+	ended, _ := DefaultKind.FromUnstructured(claim("run-aaaaaaaa", "3kq7x2ma", "Succeeded", ""))
 	if err := e.ObserveDeleted(ctx, ended); err != nil || len(fs.drafts) != 4 {
 		t.Fatalf("a run that had already ended appends nothing on deletion: %v %v", err, payloads(fs.drafts))
 	}
@@ -446,12 +446,12 @@ func TestRegisterFeedsTheWatcherFromTheInformer(t *testing.T) {
 	var gone []string
 	w.OnGone(func(_ context.Context, r Run) { gone = append(gone, r.ID) })
 
-	running := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+	running := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
 	inf.Add(running)
 	if _, live, _ := w.Live("7f3cq2xz"); !live {
 		t.Fatal("an added run is not live")
 	}
-	inf.Update(running, claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Revoked", "manual"))
+	inf.Update(running, claim("run-7f3cq2xz", "3kq7x2ma", "Revoked", "manual"))
 	if r, _ := w.Get("7f3cq2xz"); r.Phase != "Revoked" {
 		t.Fatalf("an update is not applied: %+v", r)
 	}
@@ -479,7 +479,7 @@ func TestAWatcherReadsItsOwnKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	inf.Add(kindClaim("maku.ogenki.io/v1alpha1", "runs", "run-abcdefgh"))
-	inf.Add(kindClaim("cloud.ogenki.io/v1alpha1", "agents", "xplane-run-7f3cq2xz"))
+	inf.Add(kindClaim("maku.ogenki.io/v1alpha1", "agents", "run-7f3cq2xz"))
 	if _, ok := w.Get("abcdefgh"); !ok {
 		t.Fatal("the native run is not watched: Register took another kind's informer")
 	}
@@ -495,10 +495,10 @@ func TestHandlerUnwrapsATombstone(t *testing.T) {
 	ctx := t.Context()
 	w := New(DefaultKind)
 	h := handler(ctx, w)
-	h.OnAdd(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""), false)
+	h.OnAdd(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""), false)
 	h.OnAdd("not an object", false)
-	h.OnDelete(toolscache.DeletedFinalStateUnknown{Key: "agents/xplane-run-7f3cq2xz",
-		Obj: claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")})
+	h.OnDelete(toolscache.DeletedFinalStateUnknown{Key: "agents/run-7f3cq2xz",
+		Obj: claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")})
 	if len(w.All()) != 0 {
 		t.Fatalf("the tombstone's run is still watched: %v", w.All())
 	}
@@ -506,7 +506,7 @@ func TestHandlerUnwrapsATombstone(t *testing.T) {
 
 func TestReadsTheTaskURL(t *testing.T) {
 	r, ok := DefaultKind.FromUnstructured(&unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "xplane-run-7f3cq2xz", "namespace": "agents"},
+		"metadata": map[string]any{"name": "run-7f3cq2xz", "namespace": "agents"},
 		"spec": map[string]any{"role": "reviewer", "repository": "Smana/cloud-native-ref",
 			"task": map[string]any{"url": "https://github.com/Smana/cloud-native-ref/pull/12"}},
 	}})
@@ -522,7 +522,7 @@ func TestLiveTellsUnknownFromDead(t *testing.T) {
 	if _, live, known := w.Live("nosuchrn"); live || known {
 		t.Fatalf("before sync, an absent run: live %v known %v", live, known)
 	}
-	w.Upsert(t.Context(), claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
+	w.Upsert(t.Context(), claim("run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
 	if _, live, known := w.Live("7f3cq2xz"); live || !known {
 		t.Fatalf("terminal run: live %v known %v", live, known)
 	}
@@ -549,7 +549,7 @@ func TestOnLiveCountsEachLiveRunOnce(t *testing.T) {
 			t.Fatalf("%s: count = %d, want %d", step, n, want)
 		}
 	}
-	const a = "xplane-run-7f3cq2xz"
+	const a = "run-7f3cq2xz"
 	w.Upsert(ctx, claim(a, "3kq7x2ma", "Pending", ""))
 	check("live", 1)
 	w.Upsert(ctx, claim(a, "3kq7x2ma", "Running", ""))
@@ -561,15 +561,15 @@ func TestOnLiveCountsEachLiveRunOnce(t *testing.T) {
 	w.Remove(ctx, claim(a, "3kq7x2ma", "Succeeded", ""))
 	check("deleted after terminal", 0)
 
-	w.Upsert(ctx, claim("xplane-run-aaaaaaaa", "3kq7x2ma", "Running", ""))
-	w.Upsert(ctx, claim("xplane-run-bbbbbbbb", "3kq7x2ma", "Running", ""))
+	w.Upsert(ctx, claim("run-aaaaaaaa", "3kq7x2ma", "Running", ""))
+	w.Upsert(ctx, claim("run-bbbbbbbb", "3kq7x2ma", "Running", ""))
 	check("two live", 2)
-	w.Remove(ctx, claim("xplane-run-aaaaaaaa", "3kq7x2ma", "Running", ""))
+	w.Remove(ctx, claim("run-aaaaaaaa", "3kq7x2ma", "Running", ""))
 	check("deleted while live", 1)
-	w.Upsert(ctx, claim("xplane-run-bbbbbbbb", "3kq7x2ma", "Running", "manual"))
+	w.Upsert(ctx, claim("run-bbbbbbbb", "3kq7x2ma", "Running", "manual"))
 	check("revoked", 0)
-	w.Upsert(ctx, claim("xplane-run-cccccccc", "", "Running", ""))
-	w.Upsert(ctx, claim("xplane-run-dddddddd", "3kq7x2ma", "Failed", ""))
+	w.Upsert(ctx, claim("run-cccccccc", "", "Running", ""))
+	w.Upsert(ctx, claim("run-dddddddd", "3kq7x2ma", "Failed", ""))
 	check("no room, or born terminal", 0)
 }
 
@@ -613,7 +613,7 @@ func TestFromUnstructuredUnsandboxed(t *testing.T) {
 		{[]any{map[string]any{"type": "Ready", "status": "True"}}, false},
 		{nil, false},
 	} {
-		u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+		u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
 		if tc.conds != nil {
 			if err := unstructured.SetNestedSlice(u.Object, tc.conds, "status", "conditions"); err != nil {
 				t.Fatal(err)
@@ -637,7 +637,7 @@ func TestFromUnstructuredSafeOutputs(t *testing.T) {
 		"a malformed allowlist": {map[string]string{SafeOutputsAnnotation: "pr, pr,", LabelAllowlistAnnotation: "documentation"}, []string{"pr"}, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
-			u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+			u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
 			if tc.ann != nil {
 				u.SetAnnotations(tc.ann)
 			}
@@ -661,7 +661,7 @@ func TestObserveRecordsAnUnsandboxedRun(t *testing.T) {
 		{false, `state_changed:{"kind":"run_phase","phase":"Running"}`},
 	} {
 		fs := &fakeStore{keys: map[string]bool{}}
-		r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""))
+		r, _ := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""))
 		r.Unsandboxed = tc.unsandboxed
 		if err := (&Events{Store: fs}).Observe(t.Context(), r); err != nil {
 			t.Fatal(err)
@@ -676,7 +676,7 @@ func TestObserveRecordsAnUnsandboxedRun(t *testing.T) {
 // of a run's model for the room and the metric. A value outside the envelope's bound is dropped.
 func TestTheRunsModelIsTheClaims(t *testing.T) {
 	withModel := func(m any) *unstructured.Unstructured {
-		u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+		u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
 		_ = unstructured.SetNestedField(u.Object, m, "spec", "model")
 		return u
 	}
@@ -685,7 +685,7 @@ func TestTheRunsModelIsTheClaims(t *testing.T) {
 		want string
 	}{
 		"a logical model name":  {withModel("agent-default"), "agent-default"},
-		"none set":              {claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", ""), ""},
+		"none set":              {claim("run-7f3cq2xz", "3kq7x2ma", "Running", ""), ""},
 		"one outside the bound": {withModel("agent default <b>"), ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -710,7 +710,7 @@ func TestTheRunsModelIsTheClaims(t *testing.T) {
 
 // An unsandboxed run given a model: the Running step carries both.
 func TestTheRunningStepCarriesTheModelAndUnsandboxed(t *testing.T) {
-	u := claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Running", "")
+	u := claim("run-7f3cq2xz", "3kq7x2ma", "Running", "")
 	_ = unstructured.SetNestedField(u.Object, "agent-default", "spec", "model")
 	_ = unstructured.SetNestedSlice(u.Object, []any{map[string]any{"type": "Unsandboxed", "status": "True"}}, "status", "conditions")
 	r, _ := DefaultKind.FromUnstructured(u)
@@ -736,7 +736,7 @@ func TestAProviderRefusalEndsTheRunAsModelUnavailable(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			fs := &fakeStore{keys: map[string]bool{}, status: "error", errCode: c.code, errDetail: c.detail}
 			e := &Events{Store: fs}
-			r, _ := DefaultKind.FromUnstructured(claim("xplane-run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
+			r, _ := DefaultKind.FromUnstructured(claim("run-7f3cq2xz", "3kq7x2ma", "Failed", ""))
 			r.FinishedAt = r.StartedAt.Add(5 * time.Minute)
 			if err := e.Observe(t.Context(), r); err != nil {
 				t.Fatal(err)

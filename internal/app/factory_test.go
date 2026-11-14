@@ -313,7 +313,7 @@ func TestRunTokensServeTheListedRepositories(t *testing.T) {
 	if _, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
 		t.Fatalf("err = %v", err)
 	}
-	// Neither demo nor runTokens: the factory writes no Secret (octo-sts, or the operator, fills them).
+	// Neither demo nor runTokens: the factory writes no Secret (the operator fills them).
 	cfg.Demo = false
 	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || ws != nil {
 		t.Fatalf("off: %+v %v", ws, err)

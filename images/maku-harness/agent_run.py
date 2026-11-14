@@ -55,11 +55,9 @@ DEFAULT_OUTPUT_USD_PER_MTOK = "4.40"
 # A blip in the loopback connection to agent-server shouldn't fail the run;
 # a run that's actually gone stays gone, so this still fails fast.
 MAX_POLL_ERRORS = 5
-# The run's installation token as git-credential-agent caches it (T3), and every GitHub
-# token shape. An injected agent can print its token into a command or its final message,
-# and these lines reach VictoriaLogs, so both are redacted before any print.
-TOKEN_CACHE = os.environ.get("GIT_TOKEN_CACHE", "/run/agent/git/token.json")
-# File mode (adoption 3a) adds the user's fine-grained PAT and provider key: github_pat_ shape, and the files' values.
+# Every GitHub token shape, and the values of the run's token and key files (adoption 3a): an
+# injected agent can print its token into a command or its final message, and these lines reach
+# VictoriaLogs, so both are redacted before any print. github_pat_ is a user's fine-grained PAT.
 GITHUB_TOKEN = re.compile(r"gh[posu]_[A-Za-z0-9_]{20,}|github_pat_[A-Za-z0-9_]{20,}")
 REDACTED = "[REDACTED:github-token]"
 REDACTED_KEY = "[REDACTED:model-key]"
@@ -168,13 +166,6 @@ def mcp_bearer(env) -> str | None:
 
 
 def redact(text: str) -> str:
-    try:
-        with open(TOKEN_CACHE) as f:
-            cached = json.load(f).get("token")
-    except (OSError, ValueError, AttributeError):
-        cached = None
-    if cached:
-        text = text.replace(cached, REDACTED)
     for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("JUDGE_API_KEY_FILE", REDACTED_KEY),
                         ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)

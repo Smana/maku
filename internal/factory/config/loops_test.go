@@ -85,7 +85,7 @@ func TestLoopModelsAreRefusedOnThePortableRuntime(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("portable: %v, want %q", err, want)
 	}
-	if _, err := Parse([]byte(byModel + row + "runs: {group: cloud.ogenki.io}\n")); err != nil {
+	if _, err := Parse([]byte(byModel + row + "runs: {group: cloud.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), "removed in v4 step 8 (D5)") {
 		t.Fatalf("cloud-native-ref's AgentRun: %v", err)
 	}
 	if _, err := Parse([]byte(byModel + row + "runs: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {

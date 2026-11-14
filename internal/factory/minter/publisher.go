@@ -25,7 +25,7 @@ type tokenMinter interface {
 
 var _ tokenMinter = (*Minter)(nil)
 
-// PublisherTokens is the second applier.PublisherTokens (plan PR7, HR12), beside octo-sts: the
+// PublisherTokens is the applier.PublisherTokens (plan PR7, HR12): the
 // publisher's token minted from the agents App, with the role table's publisher row for the
 // repository's enforced output types. The publisher writes as the agents App, so its login stays
 // agentsLogin (HR11).

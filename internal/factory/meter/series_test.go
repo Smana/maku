@@ -24,7 +24,7 @@ import (
 func replicaReply(pods map[string]int64) string {
 	var rs []string
 	for pod, n := range pods {
-		rs = append(rs, fmt.Sprintf(`{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-aaaaaaaa","pod":%q},"value":[1727430000,"%d"]}`, pod, n))
+		rs = append(rs, fmt.Sprintf(`{"metric":{"ar_agent":"system:serviceaccount:agents:run-aaaaaaaa","pod":%q},"value":[1727430000,"%d"]}`, pod, n))
 	}
 	return `{"status":"success","data":{"resultType":"vector","result":[` + strings.Join(rs, ",") + `]}}`
 }

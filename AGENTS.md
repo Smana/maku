@@ -212,7 +212,7 @@ The factory (SP3), by the same stages. Its wiring is `internal/app/factory.go`; 
 | Out | `internal/factory/forge`, `internal/factory/narrate` | GitHub as the factory App (`internal/factory/forge/forgetest`: its test-only fake); narration, at least once |
 | Out | `internal/factory/minter` | v4 D10's per-run tokens: `Roles`, the one role table every run and publisher token is minted from, and `Minter`, a token for one repository and role from the agents App; nothing uses it until rollout step 3's PR B |
 | Out | `internal/factory/rooms` | the broker's system API over TLS |
-| Out | `internal/factory/applier` | hardening H2's safe-output applier: checks each `output_requested` and applies it as the publisher (the agents App, its token from `PublisherTokens`, octo-sts today) or the factory App, answered exactly once; not started until `enforceOutputs` exists |
+| Out | `internal/factory/applier` | hardening H2's safe-output applier: checks each `output_requested` and applies it as the publisher (the agents App, its token from `PublisherTokens`, the minter's) or the factory App, answered exactly once; not started until `enforceOutputs` exists |
 | Ops | `internal/factory/meter`, `internal/factory/fmetrics`, `internal/factory/tracing` | the run meter; the §7 metrics; one root span per task |
 | API | `internal/factory/api` | the run-request API, `POST /v1/runs` (the chart's `api` port, `:8082`; TLS 1.3 with `api.tls`) |
 
@@ -229,7 +229,7 @@ Packages that do touch the platform name their seam:
 | Package | Seam |
 |---|---|
 | `internal/authn` | issuers, subject patterns and the system allowlist are config; the audiences `room-broker` and `rooms-system` are constants in `internal/authn/jwt.go` |
-| `internal/runwatch` | the run kind (`runwatch.Kind`: group, namespace, claim-name prefix) is config, the broker's and the factory's `runs:`, built in `internal/app` and passed to each consumer; unset, `runwatch.DefaultKind`, cloud-native-ref's `cloud.ogenki.io`, `agents`, `xplane-run-`. The `agents.ogenki.io/revoked` annotation and the three suspend annotations are constants; a `RunSource` interface would replace them in a spin-out |
+| `internal/runwatch` | the run kind (`runwatch.Kind`: group, namespace, claim-name prefix) is config, the broker's and the factory's `runs:`, built in `internal/app` and passed to each consumer; unset, `runwatch.DefaultKind`, the run-controller's `maku.ogenki.io`, `agents`, `run-`; no other group is accepted (v4 step 8, D5). The `agents.ogenki.io/revoked` annotation and the three suspend annotations are constants; a `RunSource` interface would replace them in a spin-out |
 | `internal/runrequest` | the rendered claim reuses runwatch's seam plus the claim's spec fields; the factory is SP3's `POST /v1/runs`, at the configured `factoryURL` |
 | `internal/runctl` | the `maku.ogenki.io` `AgentRun` CRD (typed, `api/v1alpha1`), Cilium's `CiliumNetworkPolicy` and the run pod's layout (the bridge as a native sidecar, the broker CA at `/etc/room-broker-ca`); the runs namespace, name prefix, RuntimeClass, images, Secrets, broker URL, labels and CA Secret are config, and the egress profiles have built-in defaults (github, pypi, npm, golang, crates) |
 | `internal/roomctrl` | the `Room` CRD group |

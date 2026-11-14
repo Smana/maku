@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"net/url"
@@ -73,18 +74,11 @@ type Hardening struct {
 	Applier HardeningApplier `json:"-"`
 }
 
-// Publisher is where the publisher's token comes from: octo-sts, under each enforced repository's
-// .github/chainguard/publisher.sts.yaml (O5, HR11), or, with Minter, the factory's own minter from
-// the agents App (v4 D10, plan PR7). Either way it is the agents App, so its login is agentsLogin.
+// Publisher is where the publisher's token comes from: with Minter, the factory's own minter from
+// the agents App (v4 D10, plan PR7), so its login is agentsLogin. It is required with
+// enforceOutputs (HR11). octo-sts, the other source until v4 step 8, is removed (R3).
 type Publisher struct {
-	OctoSTS PublisherOctoSTS
-	Minter  bool
-}
-
-// PublisherOctoSTS is the exchange: octo-sts's base URL, the factory's projected ServiceAccount
-// token (the chart's hardening.publisher.audience), and the trust policy's name.
-type PublisherOctoSTS struct {
-	URL, TokenFile, Identity string
+	Minter bool
 }
 
 // HardeningApplier is the applier's poll, how long a run's end waits for its answers, how long a
@@ -100,16 +94,14 @@ type HardeningApplier struct {
 	MirrorMaxBytes int64
 }
 
-// Publisher defaults: the chart mounts the projected token here, and the policy is publisher.sts.yaml.
+// Applier defaults.
 const (
-	defaultPublisherTokenFile = "/var/run/secrets/octo-sts/token" //nolint:gosec // G101: a mount path, not a credential
-	defaultPublisherIdentity  = "publisher"
-	defaultApplierInterval    = 2 * time.Second
-	defaultApplierAnswerWait  = 5 * time.Minute
-	defaultApprovalTTL        = 24 * time.Hour
-	maxApprovalTTL            = 7 * 24 * time.Hour
-	defaultMirrorMaxBytes     = 1 << 30
-	minMirrorMaxBytes         = 64 << 20
+	defaultApplierInterval   = 2 * time.Second
+	defaultApplierAnswerWait = 5 * time.Minute
+	defaultApprovalTTL       = 24 * time.Hour
+	maxApprovalTTL           = 7 * 24 * time.Hour
+	defaultMirrorMaxBytes    = 1 << 30
+	minMirrorMaxBytes        = 64 << 20
 )
 
 // HardeningLayers sets the layers that may differ from the mode: T5 alone, since T1 to T4 run at
@@ -185,12 +177,9 @@ type hardeningFile struct {
 	} `json:"agentGuard,omitzero"`
 	EnforceOutputs []hardening.OutputType `json:"enforceOutputs,omitempty"`
 	Publisher      struct {
-		Minter  bool `json:"minter,omitempty"`
-		OctoSTS struct {
-			URL       string `json:"url,omitempty"`
-			TokenFile string `json:"tokenFile,omitempty"`
-			Identity  string `json:"identity,omitempty"`
-		} `json:"octoSTS,omitzero"`
+		Minter bool `json:"minter,omitempty"`
+		// OctoSTS is read only to refuse it by name (v4 step 8, R3).
+		OctoSTS json.RawMessage `json:"octoSTS,omitempty"`
 	} `json:"publisher,omitzero"`
 	Applier struct {
 		Interval       *Duration `json:"interval,omitempty"`
@@ -220,9 +209,13 @@ func (h *Hardening) UnmarshalJSON(b []byte) error {
 	if err := strictJSON(b, &f); err != nil {
 		return fmt.Errorf("hardening: %w", err)
 	}
+	if f.Publisher.OctoSTS != nil {
+		return errors.New("hardening: publisher.octoSTS was removed in v4 step 8 (D10, R3): set hardening.publisher.minter, " +
+			"and the factory mints the publisher's token from the agents App (docs/upgrading.md#the-xr-run-kind-and-octo-sts)")
+	}
 	*h = Hardening{Mode: hardening.ModeOff, MinAuthorTrust: f.MinAuthorTrust, BlockedUsers: f.BlockedUsers,
 		LabelAllowlist: f.LabelAllowlist, AgentGuard: AgentGuard{URL: f.AgentGuard.URL}, EnforceOutputs: f.EnforceOutputs,
-		Publisher: Publisher{OctoSTS: PublisherOctoSTS(f.Publisher.OctoSTS), Minter: f.Publisher.Minter}}
+		Publisher: Publisher{Minter: f.Publisher.Minter}}
 	h.Drills.GatewayLog.URL, h.Drills.Repository = f.Drills.GatewayLog.URL, f.Drills.Repository
 	if f.Drills.Timeout != nil {
 		h.Drills.Timeout = explicitZero(f.Drills.Timeout)
@@ -298,12 +291,6 @@ func (h *Hardening) ApplyDefaults() {
 	}
 	if h.Drills.GatewayLog.Timeout.Duration == 0 {
 		h.Drills.GatewayLog.Timeout.Duration = defaultGatewayLogTimeout
-	}
-	if h.Publisher.OctoSTS.TokenFile == "" {
-		h.Publisher.OctoSTS.TokenFile = defaultPublisherTokenFile
-	}
-	if h.Publisher.OctoSTS.Identity == "" {
-		h.Publisher.OctoSTS.Identity = defaultPublisherIdentity
 	}
 	if h.Applier.Interval.Duration == 0 {
 		h.Applier.Interval.Duration = defaultApplierInterval
@@ -449,9 +436,8 @@ const DrillPrincipal = "system:drill"
 const BrokerPrincipal = "system:broker"
 
 // validateModeEnforce holds every repository whose effective mode is enforce to what enforce means
-// (HR34, HR36): all five output types enforced, runs on the run-controller (on the XR the factory
-// cannot see the sandbox's egress, so R5 cannot hold), and a system:broker in api.systemPrincipals,
-// the one caller of the forge-read route.
+// (HR34, HR36): all five output types enforced, and a system:broker in api.systemPrincipals, the
+// one caller of the forge-read route.
 func (c *Config) validateModeEnforce(bad func(string, ...any)) {
 	h := c.Hardening
 	broker := slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
@@ -461,8 +447,6 @@ func (c *Config) validateModeEnforce(bad func(string, ...any)) {
 		}
 		key := "hardening mode enforce on " + r.Name
 		switch {
-		case !c.onRunController():
-			bad("%s: R5 cannot hold on the XR: forge_read needs the run-controller's egress (HR36)", key)
 		case !slices.Equal(h.EnforcedFor(r.Name), slices.Sorted(slices.Values(enforceable))):
 			bad("%s needs all five output types in enforceOutputs: pr, comment, labels, issue, push", key)
 		case !broker:
@@ -538,9 +522,8 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 var enforceable = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels, hardening.Issue, hardening.Push}
 
 // validateEnforce refuses an enforceOutputs list with an unknown type, a repository list
-// that drops a central type, a list on a repository in mode off, a list with no publisher (octo-sts
-// or the minter, never both), and an applier timing that is not positive (HR10, HR11, HR15, HR19,
-// plan PR7).
+// that drops a central type, a list on a repository in mode off, a list without the minter as its
+// publisher, and an applier timing that is not positive (HR10, HR11, HR15, HR19, plan PR7).
 func (h Hardening) validateEnforce(bad func(string, ...any)) {
 	types := func(key string, list []hardening.OutputType) {
 		for _, t := range list {
@@ -566,19 +549,8 @@ func (h Hardening) validateEnforce(bad func(string, ...any)) {
 			bad("%s needs the repository's mode audit at least", key)
 		}
 	}
-	p := h.Publisher.OctoSTS
-	switch {
-	case h.Publisher.Minter && p.URL != "":
-		bad("hardening.publisher.minter and hardening.publisher.octoSTS.url both name the publisher's token: choose one")
-	case h.Enforcing() && !h.Publisher.Minter:
-		if p.URL == "" {
-			bad("hardening.publisher.octoSTS.url is required with enforceOutputs, or hardening.publisher.minter: the applier writes as the publisher (HR11)")
-		} else if u, err := url.Parse(p.URL); err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
-			bad("hardening.publisher.octoSTS.url must be an https URL with a host and no credentials")
-		}
-		if !strings.HasPrefix(p.TokenFile, "/") {
-			bad("hardening.publisher.octoSTS.tokenFile must be an absolute path")
-		}
+	if h.Enforcing() && !h.Publisher.Minter {
+		bad("hardening.publisher.minter is required with enforceOutputs: the applier writes as the publisher, its token minted from the agents App (HR11)")
 	}
 	if h.Applier.Interval.Duration <= 0 {
 		bad("hardening.applier.interval must be positive")
@@ -704,29 +676,20 @@ func (c *Config) HardeningSettings(repository, makuVersion string) hardening.Set
 		TokenSource: c.TokenSource(), PublisherMinter: h.Publisher.Minter, ReadFilter: c.readFilter(repository)}
 }
 
-// readFilter is R5 as this configuration states it (HR43): the repository is at mode enforce, its
-// runs are on the run-controller (on the XR the factory cannot see the sandbox's egress), a
+// readFilter is R5 as this configuration states it (HR43): the repository is at mode enforce, a
 // ServiceAccount maps to system:broker, the forge-read route's one caller, and the factory writes
 // forge-api: deny on every run of it, which it does at mode enforce outside the demo. A
 // run-controller older than the factory would ignore the annotation: the chart pins both to one
 // version, and runbook H4-1 probes it.
 func (c *Config) readFilter(repository string) bool {
-	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce && c.onRunController() &&
+	return !c.Demo && c.Hardening.ModeFor(repository) == hardening.ModeEnforce &&
 		slices.Contains(slices.Collect(maps.Values(c.API.SystemPrincipals)), BrokerPrincipal)
 }
 
-// onRunController reports whether runs are the run-controller's: a runs group that is set and is
-// not cloud-native-ref's XR (omitted is the XR, as TokenSource reads it). Mode enforce's check and
-// R5 read the same answer.
-func (c *Config) onRunController() bool { return c.Runs.Group != "" && !c.Runs.XR() }
-
-// TokenSource is where the runs' sandbox tokens come from (plan PR8): octo-sts on the XR, the
-// minter's role table under runTokens.perRun, and otherwise a shared token that grants writes.
+// TokenSource is where the runs' sandbox tokens come from (plan PR8): the minter's role table
+// under runTokens.perRun, and otherwise a shared token that grants writes.
 func (c *Config) TokenSource() hardening.TokenSource {
-	switch {
-	case c.Runs.Group == "" || c.Runs.XR(): // omitted is the XR, as Parse defaults it
-		return hardening.TokenSourceXR
-	case c.RunTokens.PerRun:
+	if c.RunTokens.PerRun {
 		return hardening.TokenSourceMinter
 	}
 	return hardening.TokenSourceShared

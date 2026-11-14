@@ -25,10 +25,10 @@ import (
 	"github.com/Smana/maku/internal/store"
 )
 
-const sub = "system:serviceaccount:agents:xplane-run-7f3cq2xz"
+const sub = "system:serviceaccount:agents:run-7f3cq2xz"
 
 func claim(id, role, room, phase string, annotations map[string]any) *unstructured.Unstructured {
-	md := map[string]any{"name": "xplane-run-" + id, "namespace": "agents"}
+	md := map[string]any{"name": "run-" + id, "namespace": "agents"}
 	if annotations != nil {
 		md["annotations"] = annotations
 	}
@@ -61,7 +61,7 @@ func (c *clock) add(d time.Duration) {
 func newClock() *clock { return &clock{t: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)} }
 
 var (
-	subPattern = regexp.MustCompile(`^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$`)
+	subPattern = regexp.MustCompile(`^system:serviceaccount:agents:run-([a-z2-7]{8})$`)
 	objSchema  = json.RawMessage(`{"type":"object"}`)
 )
 
@@ -144,7 +144,7 @@ func TestOnlyTheRouterWithTheKeyAndAVerifiedRun(t *testing.T) {
 	unset, _ := testServer(w, c)
 	unset.Key = func() string { return "" }
 	loose, _ := testServer(w, c)
-	loose.SubPatterns = []*regexp.Regexp{regexp.MustCompile(`xplane-run-([a-z2-7]{8})`)} // unanchored: must still match the whole subject
+	loose.SubPatterns = []*regexp.Regexp{regexp.MustCompile(`run-([a-z2-7]{8})`)} // unanchored: must still match the whole subject
 
 	for _, tc := range []struct {
 		name     string
@@ -160,10 +160,10 @@ func TestOnlyTheRouterWithTheKeyAndAVerifiedRun(t *testing.T) {
 		{"a subject that names no run", s, "k", "system:serviceaccount:agents:someone", http.StatusForbidden, "mcp_identity"},
 		{"no subject", s, "k", "", http.StatusForbidden, "mcp_identity"},
 		{"a subject that only contains a run's name", loose, "k", "evil:" + sub, http.StatusForbidden, "mcp_identity"},
-		{"an unknown run", s, "k", "system:serviceaccount:agents:xplane-run-zzzzzzzz", http.StatusForbidden, "run_not_live"},
-		{"a finished run", s, "k", "system:serviceaccount:agents:xplane-run-done2345", http.StatusForbidden, "run_not_live"},
-		{"a revoked run", s, "k", "system:serviceaccount:agents:xplane-run-revokedx", http.StatusForbidden, "run_not_live"},
-		{"a run in no room", s, "k", "system:serviceaccount:agents:xplane-run-noroom23", http.StatusForbidden, "run_not_live"},
+		{"an unknown run", s, "k", "system:serviceaccount:agents:run-zzzzzzzz", http.StatusForbidden, "run_not_live"},
+		{"a finished run", s, "k", "system:serviceaccount:agents:run-done2345", http.StatusForbidden, "run_not_live"},
+		{"a revoked run", s, "k", "system:serviceaccount:agents:run-revokedx", http.StatusForbidden, "run_not_live"},
+		{"a run in no room", s, "k", "system:serviceaccount:agents:run-noroom23", http.StatusForbidden, "run_not_live"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			*rejected = nil
@@ -188,8 +188,8 @@ func (anyRun) Live(id string) (runwatch.Run, bool, bool) {
 
 func TestTheSubjectMustNameAC2Id(t *testing.T) {
 	s, _ := testServer(anyRun{}, newClock())
-	s.SubPatterns = []*regexp.Regexp{regexp.MustCompile(`^system:serviceaccount:agents:xplane-run-(.+)$`)}
-	if got := rpc(t, s, "k", "system:serviceaccount:agents:xplane-run-NOT-AN-ID", "tools/list", nil); got.status != http.StatusForbidden {
+	s.SubPatterns = []*regexp.Regexp{regexp.MustCompile(`^system:serviceaccount:agents:run-(.+)$`)}
+	if got := rpc(t, s, "k", "system:serviceaccount:agents:run-NOT-AN-ID", "tools/list", nil); got.status != http.StatusForbidden {
 		t.Fatalf("status = %d", got.status)
 	}
 }
@@ -334,7 +334,7 @@ func TestOneCallPerSecondPerRun(t *testing.T) {
 	if ok(sub) {
 		t.Fatal("the second call within a second must be refused")
 	}
-	if !ok("system:serviceaccount:agents:xplane-run-otherrun") {
+	if !ok("system:serviceaccount:agents:run-otherrun") {
 		t.Fatal("another run has its own budget")
 	}
 	c.add(999 * time.Millisecond)
@@ -432,8 +432,8 @@ func TestExactlyOneIdentity(t *testing.T) {
 	s, rejected := testServer(watcher(t, "reviewer"), newClock())
 	body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
 	for name, vals := range map[string][]string{
-		"a forged value first": {"system:serviceaccount:agents:xplane-run-otherrun", sub},
-		"a forged value after": {sub, "system:serviceaccount:agents:xplane-run-otherrun"},
+		"a forged value first": {"system:serviceaccount:agents:run-otherrun", sub},
+		"a forged value after": {sub, "system:serviceaccount:agents:run-otherrun"},
 		"the same value twice": {sub, sub},
 	} {
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))

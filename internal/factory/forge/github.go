@@ -69,8 +69,8 @@ func Connect(ctx context.Context, o Options) (*GitHub, error) {
 }
 
 // ConnectTokens is Connect with every call's token from src instead of the App key: the
-// publisher's connection, whose token octo-sts mints (hardening HR11), or any later TokenSource
-// (v4 D10's minter). o's App files and Permissions are unused. The first token is asked at once,
+// publisher's connection, whose token the factory's minter mints from the agents App (hardening
+// HR11, v4 D10). o's App files and Permissions are unused. The first token is asked at once,
 // so a source that cannot mint fails the connect.
 func ConnectTokens(ctx context.Context, o Options, src TokenSource) (*GitHub, error) {
 	if src == nil {

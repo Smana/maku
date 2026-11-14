@@ -309,7 +309,7 @@ func TestAnUnseenRunIsNotReportedUnpriced(t *testing.T) {
 
 // agentgateway 1.6 reports an Anthropic call's input with its cache tokens on the non-streaming
 // Chat Completions translation, and without them on a streamed one or native Messages. Both shapes
-// of xplane-run-wfeiraim's 8 calls on aws-0 (fresh input 18 tokens) cost what it cost.
+// of run-wfeiraim's 8 calls on aws-0 (fresh input 18 tokens) cost what it cost.
 func TestCostReadsEitherInputShape(t *testing.T) {
 	opus := served["claude-opus-5-5"]
 	for name, u := range map[string]Usage{
