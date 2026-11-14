@@ -276,8 +276,21 @@ preflight() {
     sleep 3
   done
   ((found)) || { tail -40 "$rclog" >&2; die "$NS: the run-controller's preflight decided nothing within 6 minutes"; }
-  "$MAKU" preflight --namespace "$NS" --release "$RELEASE" --strict --no-outside --kubeconfig "$KUBECONFIG" --context "${CTX:-}" || rc=$?
-  ((rc == 0)) || die "$NS: maku preflight --strict exited $rc"
+  # A factory check reads undecided until the factory's first fence pass over its repositories (up
+  # to a minute after Ready while a repository's installation is still retried): run it again then,
+  # and only then. Any other failure, or a warning, ends the step.
+  local attempt pf="$work/preflight-$NS.txt" summary
+  for attempt in 1 2 3 4 5 6; do
+    rc=0
+    "$MAKU" preflight --namespace "$NS" --release "$RELEASE" --strict --no-outside --kubeconfig "$KUBECONFIG" --context "${CTX:-}" 2>&1 | tee "$pf" || rc=${PIPESTATUS[0]}
+    ((rc != 0)) || return 0
+    summary="$(grep -E '^preflight: [0-9]+ fail' "$pf" | tail -1)"
+    if [[ ! $summary =~ \ 0\ warn, ]] || grep -qE '=(fail|warn):' <<<"${summary//=fail:undecided/}" || ((attempt == 6)); then
+      die "$NS: maku preflight --strict exited $rc"
+    fi
+    echo "undecided only (attempt $attempt): again in 20s"
+    sleep 20
+  done
 }
 
 install_e2e_main() {
