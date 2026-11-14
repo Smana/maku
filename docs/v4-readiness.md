@@ -33,7 +33,7 @@ Each step's plan lists its pull requests; each step ships in a v0.4x minor.
 | 5, identity and data | [step 5](superpowers/plans/2026-11-12-v4-step-5-identity-data-plan.md) | A [#524], B [#530], C [#536] (its k3d proof [#543]), D [#521], E [#544] |
 | 6, exposure, components, observability | [step 6](superpowers/plans/2026-11-13-v4-step-6-exposure-components-observability-plan.md) | A [#526], B [#523], B2 [#529], C [#534], D [#545], E [#556], F [#527], G [#564] |
 | 7, install UX and proof | [step 7](superpowers/plans/2026-11-13-v4-step-7-install-ux-proof-plan.md) | A [#547], B [#555], C [#567], D [#540], E1 [#537], E2 [#565], F [#570], G [#573], H [#566], I [#572] (this page), R10 [#569], the wizard's render fix [#568] |
-| 8, clean-up | [step 8](superpowers/plans/2026-11-13-v4-step-8-cleanup-plan.md) | B [#574], C [#576], E [#559], G [#577], H's private-code half [#571], I [#558]. Open: D [#578], F, H's ledger half, J |
+| 8, clean-up | [step 8](superpowers/plans/2026-11-13-v4-step-8-cleanup-plan.md) | B [#574], C [#576], E [#559], G [#577], H's private-code half [#571], I [#558]. Open: D [#578], F, H's ledger half [#579], J |
 | Reusable merge policies (gates step 8 PR D) | — | A to K, the last [#563] |
 
 v0.47.0 carries steps 1 to 5, step 6 A to D and F, and step 7 A, D and E1. v0.48.0 adds the rest of
@@ -87,7 +87,7 @@ live check; **owner** is the owner's own run, release or ruling.
 | 7 | Step 8 PR D: the shared token, the old Secret keys, the merge defaults | Maku | its review; 14's merge defaults | [#578] (open) |
 | 8 | Step 8 PR F: the ZITADEL reader | Maku | 16 | none |
 | 9 | Step 8 PR G: `profile`, `networkPolicies.plain`, the subcharts' `crds/`, `preflight.enabled: true` | Maku | **done** | [#577] |
-| 10 | Step 8 PR H's ledger half: an unreadable ledger refused (step 8 R10) | Maku | its review (12 is done) | __PR_H__ (open; [#571] is the private-code half) |
+| 10 | Step 8 PR H's ledger half: an unreadable ledger refused (step 8 R10) | Maku | its review (12 is done) | [#579] (open; [#571] is the private-code half) |
 | 11 | Step 8 PR J, then the S8 minor: the migration note, the schema-diff report (report-only, step 8 R8), this page's step 8 rows | Maku | 7, 8, 10 | none |
 | 12 | ANR R1: the broker from the `maku` chart; `maku_rooms_schema_unverified` to 0 | ANR | **done** | [ANR #375], ANR v3.16.0. gcp-0, 2026-11-14: the `room-broker` claim deleted; the HelmRelease installed from maku 0.47.0, one helm revision; `migrate` logged `adopted 18 revisions from the Atlas operator`; the gauge 0 on both pods; the lease held by the new pod; the new CronJob's retention job completed; rooms listed through MCP |
 | 13 | ANR R3: runs off the XR (`runs.group: maku.ogenki.io`, the run-controller); Kueue and the Kyverno duplicates deleted | ANR | the Kyverno duplicates (`security/base/agent-policies/validatingpolicies.yaml` present) | [ANR #376], ANR v3.19.0: on gcp-0, 2026-11-14, issue [ANR #377] ran triager, implementer and reviewer to `Succeeded` on gVisor, and `ogenki-agents[bot]` opened [ANR #383] with a per-run token. Kueue deleted: [ANR #384], v3.20.0 |
@@ -232,6 +232,7 @@ step 7 R1 to R11 and step 8 R1 to R11 (R11 supersedes R1 and R2). Still open:
 [#576]: https://github.com/Smana/maku/pull/576
 [#577]: https://github.com/Smana/maku/pull/577
 [#578]: https://github.com/Smana/maku/pull/578
+[#579]: https://github.com/Smana/maku/pull/579
 [ANR #245]: https://github.com/Smana/ai-native-ref/pull/245
 [ANR #361]: https://github.com/Smana/ai-native-ref/pull/361
 [ANR #370]: https://github.com/Smana/ai-native-ref/pull/370
