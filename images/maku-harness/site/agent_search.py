@@ -254,16 +254,37 @@ def clip(text: str, limit: int = ANSWER_MAX) -> str:
     return text[: limit - len(notice)] + notice
 
 
-def child_agent(parent_llm) -> Agent:
-    """ST2, ST3, ST4: the implementer's LLM (the proxy's /v1, the placeholder key, num_retries 0),
-    at effort low and its own metrics; the four readers, finish and think; no condenser, no MCP."""
+def child_agent(parent_llm, env=os.environ) -> Agent:
+    """ST2, ST3, ST4: at effort low and its own metrics; the four readers, finish and think; no
+    condenser, no MCP. CP7: on the run's light alias (the LIGHT_* variables) when the run holds one,
+    else the parent's model and base URL."""
     extra = dict(parent_llm.litellm_extra_body or {}, reasoning_effort=EFFORT)
-    llm = parent_llm.model_copy(update={"usage_id": "search", "stream": False, "timeout": LLM_TIMEOUT_S,
-                                        "litellm_extra_body": extra})
+    updates = {"usage_id": "search", "stream": False, "timeout": LLM_TIMEOUT_S,
+               "litellm_extra_body": extra}
+    if env.get("LIGHT_BASE_URL"):
+        updates.update(_light_update(env))
+    llm = parent_llm.model_copy(update=updates)
     llm.reset_metrics()
     return Agent(llm=llm, tools=[Tool(name=k) for k, *_ in READER_KEYS.values()], filter_tools_regex=ONLY_READERS,
                  include_default_tools=["FinishTool", "ThinkTool"], condenser=None,
                  system_prompt_kwargs={"cli_mode": True}, agent_context=AgentContext(system_message_suffix=SEARCH_SYSTEM))
+
+
+# CP7: the placeholder matches agent_run's, so a run without a light token file (the portable
+# chart's secret mode) still authenticates at the identity proxy, as the parent's calls do.
+_LIGHT_PLACEHOLDER = "injected-by-identity-proxy"
+
+
+def _light_update(env: dict) -> dict:
+    """The child's model, base URL and key from the run's light alias. The token file is read here,
+    at the child's build, as the harness reads its own key files."""
+    key = _LIGHT_PLACEHOLDER
+    if path := env.get("LIGHT_API_KEY_FILE"):
+        with open(path) as f:
+            key = f.read().strip()
+    from pydantic import SecretStr
+    return {"model": "openai/" + env["LIGHT_MODEL"], "base_url": env["LIGHT_BASE_URL"],
+            "api_key": SecretStr(key)}
 
 
 class SearchExecutor(ToolExecutor):

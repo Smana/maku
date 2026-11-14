@@ -143,13 +143,6 @@ class SearchTest(unittest.TestCase):
         self.assertEqual(row["tokens"]["input"], 2000)
         self.assertIn("search:1", self.parent.conversation_stats.usage_to_metrics)
 
-    def test_the_child_runs_at_low_effort_on_the_runs_model_and_base(self):
-        self.ask()
-        path, body = Model.bodies[0]
-        self.assertEqual(path, "/v1/chat/completions")
-        self.assertEqual(body["model"], "agent-default")
-        self.assertEqual(body.get("reasoning_effort"), "low")
-        self.assertIn("Question: Where is target defined", json.dumps(body["messages"]))
 
     def test_a_write_tool_the_child_asks_for_is_unknown_and_changes_nothing(self):
         Model.script = [reply("terminal", {"command": "rm a.py"}), reply("file_editor", {"command": "create", "path": "b", "file_text": "x"}),
@@ -368,3 +361,35 @@ class ReaderGuardTest(SearchTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def parent_llm():
+    return LLM(model="openai/agent-default", base_url="http://127.0.0.1:4000/v1", api_key="parent-key",
+               usage_id="agent", num_retries=0)
+
+
+LIGHT_ENV = {"LIGHT_BASE_URL": "http://127.0.0.1:4000/m/tier-light/v1", "LIGHT_MODEL": "tier-light"}
+
+
+def token_file(value):
+    path = os.path.join(tempfile.mkdtemp(), "token")
+    with open(path, "w") as f:
+        f.write(value + "\n")
+    return path
+
+
+class ChildAgentLightAliasTest(unittest.TestCase):
+    def test_the_child_runs_at_low_effort_on_the_light_alias(self):
+        llm = s.child_agent(parent_llm(), env=LIGHT_ENV).llm
+        self.assertEqual((llm.model, llm.base_url), ("openai/tier-light", LIGHT_ENV["LIGHT_BASE_URL"]))
+        self.assertEqual(llm.litellm_extra_body["reasoning_effort"], "low")
+        self.assertEqual(llm.usage_id, "search")
+
+    def test_without_a_light_alias_the_child_keeps_the_parents_model(self):
+        llm = s.child_agent(parent_llm(), env={}).llm
+        self.assertEqual((llm.model, llm.base_url), ("openai/agent-default", "http://127.0.0.1:4000/v1"))
+        self.assertEqual(llm.litellm_extra_body["reasoning_effort"], "low")
+
+    def test_the_child_reads_the_light_token_not_the_parents(self):
+        llm = s.child_agent(parent_llm(), env={**LIGHT_ENV, "LIGHT_API_KEY_FILE": token_file("light")}).llm
+        self.assertEqual(llm.api_key.get_secret_value(), "light")
