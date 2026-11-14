@@ -63,9 +63,9 @@ The run controller's preflight then refuses runs until it proves the CNI enforce
 proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a k3s started with
 `--disable-network-policy` (it refuses runs).
 
-`values-demo.yaml` (`profile: demo`) makes it the laptop demo: no Cilium (`maku.networkPolicies.enabled: false`), the broker
+`values-demo.yaml` (`profile: demo`) makes it the laptop demo: no Cilium (`maku.networkPolicies.mode: none`), the broker
 in local human mode with the apiserver vouching for runs and for the factory (`system:factory`), runc
-(`allowUnsandboxed`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
+(`maku.sandbox.unsafeAllowRunc`), the portable `maku.ogenki.io` runs group, and a one-replica factory in `demo`
 mode on one GitHub App (`maku-factory.apps.merger.mode: factory` folds the merger into it; a
 production install runs two Apps, see [GitHub Apps](../../docs/github-apps.md)). The two Secrets come
 from `demo.model` (`agent-model`, in the runs namespace) and `demo.githubApp` (`agent-factory-github`,

@@ -156,7 +156,7 @@ func TestPrincipalAndBranchComeFromTheFactory(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 	s := st.created[0]
-	if s.Principal != "human:291" || s.Branch != "agent/7f3cq2xz" || s.Queue != runs.QueueInteractive ||
+	if s.Principal != "human:291" || s.Branch != "agent/7f3cq2xz" ||
 		s.MaxTokens != 2_000_000 || s.Model != "agent-default" || s.BaseRef != "main" {
 		t.Fatalf("%+v", s)
 	}

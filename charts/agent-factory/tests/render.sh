@@ -182,17 +182,18 @@ pbad 'maku-factory.demo, maku-factory.config.demo' "${prod[@]}" --set maku-facto
 # model.mode secret puts the provider key in the sandbox (D7): demo-only, so production refuses it
 pbad '  - maku.runController.model.mode: secret is demo-only (D7)' "${prod[@]}" --set maku.runController.model.mode=secret --set maku-factory.config.runs.gatewayIdentity=false
 pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18)' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
-pbad 'maku.runController.allowUnsandboxed: runs without a sandbox are for the demo and kind only (D18' "${prod[@]}" --set maku.runController.allowUnsandboxed=true
+pbad "removed in v4 step 8: set sandbox.unsafeAllowRunc" "${prod[@]}" --set maku.runController.allowUnsandboxed=true
 # an empty production file with maku on: one message, every maku seam on its own line, the gate first
 msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true 2>&1 >/dev/null || true)"
 for line in 'maku.broker.image.tag: <version>@sha256:<digest>' 'maku.runController.image.tag: <version>@sha256:<digest>' \
   'maku.runController.images.harness.tag:' 'maku.runController.images.bridge.tag:' 'maku.broker.human.issuer: the OIDC issuer' \
-  'maku.broker.runIssuer.issuer:' 'maku.broker.database.brokerSecret: the broker'"'"'s DSN Secret' 'maku.broker.publicURL: the https URL' \
-  'maku.sandbox.runtimeClassName: the RuntimeClass'; do
+  'maku.broker.runIssuer.issuer:' 'maku.broker.database.brokerSecret: the broker'"'"'s DSN Secret' 'maku.broker.publicURL: the https URL'; do
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: an empty production file does not list '$line' (got: $msg)" >&2; fail=1; }
 done
-grep -qF 'profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):' <<<"$msg" ||
-  { echo "FAIL: an empty production file's one message does not count its 9 seams (got: $msg)" >&2; fail=1; }
+# maku.sandbox.runtimeClassName defaults to gvisor (v4 step 8): no seam unless a values file empties it
+grep -qF 'profile production: 8 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):' <<<"$msg" ||
+  { echo "FAIL: an empty production file's one message does not count its 8 seams (got: $msg)" >&2; fail=1; }
+pbad 'maku.sandbox.runtimeClassName: the RuntimeClass' "${prod[@]}" --set maku.sandbox.runtimeClassName=
 grep -qF 'templates/gate/renders/before/subcharts.yaml' <<<"$msg" || { echo "FAIL: a subchart refused before the gate (got: $msg)" >&2; fail=1; }
 pbad 'maku.broker.human.mode: oidc (got local' --set profile=production --set maku.enabled=true --set maku.broker.human.mode=local
 # every enabled component's seams in the one message: the factory's beside maku's
@@ -228,7 +229,7 @@ out="$(helm template af . -n maku --set profile=production --set maku-factory.en
 ykind Deployment 'select(.metadata.name == "agent-factory") | true' 'the factory alone renders its Deployment'
 ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)")) | .metadata.name' 'the factory alone renders a maku object'
 # networkPolicies.mode none stays allowed, on the install banner (PR9)
-out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.enabled=false)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
+out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.mode=none)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "network_policy_none"' 'production in mode none lists network_policy_none on the banner (PR9)'
 # v4 step 6, Task 20: values-production.example.yaml renders as shipped, and its configs load; the
 # cloud-native-ref-shaped values (ANR at 1529b3b) render exactly tests/golden/production-cnref-like.yaml,
@@ -606,10 +607,10 @@ out="$(helm template af . -n maku "${args[@]}" "${mon[@]}" --set maku.networkPol
 ykind PodMonitor 'select(.metadata.name == "maku-egress-proxy") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "egress-proxy" and .spec.podMetricsEndpoints[0].port == "metrics")' 'kubernetes mode: the egress proxy PodMonitor'
 bad 'monitoring.serviceMonitor.enabled in maku.networkPolicies.mode kubernetes needs maku.networkPolicies.kubernetes.metricsFrom: the scraper could not reach :9090' \
   "${args[@]}" "${mon[@]}" --set maku.networkPolicies.mode=kubernetes
-# cilium mode (maku's default): the broker's and the run-controller's CNPs admit :9090 only from the
+# cilium mode: the broker's and the run-controller's CNPs admit :9090 only from the
 # scraper monitoring.serviceMonitor.cilium.fromEndpoints names, in one extra CNP rendered only with
 # monitoring on; empty, the render fails
-cil=(--set maku.networkPolicies.enabled=true)
+cil=(--set maku.networkPolicies.mode=cilium)
 ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'monitoring off renders the scrape CNP'
 out="$(helm template af . -n maku "${args[@]}" "${cil[@]}")"
 ynone 'select(.kind == "CiliumNetworkPolicy" and .metadata.name == "maku-metrics") | .kind' 'cilium mode without monitoring renders the scrape CNP'
@@ -768,7 +769,7 @@ bad 'expose.web: the broker serves humans on a port-forward in local mode (maku.
 bad "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" "${exw[@]}" --set webProxy.enabled=false
 bad 'expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller' "${exw[@]}" --set-json 'expose.networkPolicy.from=[]'
 bad "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" "${exw[@]}" --set maku.networkPolicies.mode=none
-bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
+bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
 bad 'expose.web needs maku.enabled: the web surface is the broker' "${exw[@]}" --set maku.enabled=false
 helm template af . -n maku "${exw[@]}" --set expose.web.enabled=false >/dev/null || { echo 'FAIL: expose.web.enabled false does not render' >&2; fail=1; }
 bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.networkPolicy.mode=kubernetes --set-json "slack.networkPolicy.from=$exnp" --set-json 'expose.slack.hostnames=[]'
@@ -828,7 +829,7 @@ bad 'slack.brokerURL "http://room-broker.other.svc.cluster.local:8080" must be t
 bad 'maku.broker.webhooks[slack-app] targets factory-slack-app, but slack.enabled is false: every event would go to a subscriber that does not exist' "${slk[@]}" --set slack.enabled=false
 # the example with monitoring and the Slack surface: its route, its ServiceMonitor, its rule group
 out="$(helm template af . -n maku "${slk[@]}" --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
-  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"app":"prom"}}]' --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set slack.networkPolicy.mode=cilium \
+  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"app":"prom"}}]' --set maku.networkPolicies.mode=cilium --set slack.networkPolicy.mode=cilium \
   --set expose.mode=httproute --set expose.web.enabled=false --set-json 'expose.httproute.parentRefs=[{"name":"public"}]')" ||
   { echo 'FAIL: the example with monitoring and the Slack surface does not render' >&2; fail=1; out=''; }
 jkind HTTPRoute 'select(.metadata.name == "factory-slack-events") | .spec.hostnames == ["factory-slack.example.com"]' 'the Slack surface routes to the App'
@@ -868,13 +869,13 @@ jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[
 # step 7 PR F's finding: the install's preflight collects the factory's /preflight on :9090 (v4 D24)
 out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)"
 jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | select(.from[0].podSelector.matchLabels."app.kubernetes.io/name" == "preflight") | .ports[0].port] == [9090]' 'kubernetes: the factory admits the preflight on :9090'
-out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)"
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | select(.fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "preflight") | .toPorts[0].ports[0].port] == ["9090"]' 'cilium: the factory admits the preflight on :9090'
-out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium \
   --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')" ||
   { echo 'FAIL: networkPolicies.factory in mode cilium does not render' >&2; fail=1; out=''; }
 # the review of #556: every URL the factory's config names gets its egress, or the render fails
-out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium \
   --set maku-factory.config.api.humanIssuer=https://idp.example.test --set maku-factory.config.meter.url=https://vm.example.test:8428 \
   --set maku-factory.config.triage.classifierURL=http://classifier.ml.svc.cluster.local:8080/v1 \
   --set-json 'networkPolicies.factory.classifier.to=[{"matchLabels":{"io.kubernetes.pod.namespace":"ml","app":"classifier"}}]')" ||
@@ -884,7 +885,7 @@ jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.eg
 bad 'maku-factory.config.triage.classifierURL "http://classifier.ml.svc.cluster.local:8080/v1" is in-cluster: name its pods in networkPolicies.factory.classifier.to' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku-factory.config.triage.classifierURL=http://classifier.ml.svc.cluster.local:8080/v1
 out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku-factory.config.meter.logsURL=https://logs.example.test:9428)"
 jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | select(.ports == [{"port": 9428, "protocol": "TCP"}]) | .to[0].ipBlock.cidr] == ["0.0.0.0/0"]' 'kubernetes: an external logs URL opens public addresses on its port'
-out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium \
   --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | (.spec.ingress | length) == 2 and .spec.ingress[1].fromEntities == ["host"] and .spec.egress[3] == {"toFQDNs": [{"matchName": "ghes.example.test"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]} and (.spec.egress | length) == 4' 'cilium: the broker and the kubelet in; DNS, the apiserver, the broker and the GHES out'
 

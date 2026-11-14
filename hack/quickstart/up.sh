@@ -34,8 +34,8 @@ read -ra extra <<<"${UP_HELM_ARGS:-}"
 
 chart_args=(-f charts/maku/values-quickstart.yaml --set createRunsNamespace=false --set "broker.publicURL=http://localhost:$LOCAL_PORT")
 if [[ $unsandboxed == 1 ]]; then
-  # runctl uses runtimeClassName whenever it is non-empty; allowUnsandboxed only counts when it is empty.
-  chart_args+=(--set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)
+  # unsafeAllowRunc needs sandbox.runtimeClassName empty: its default is gvisor, and the render refuses both.
+  chart_args+=(--set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false)
 else
   # The gVisor probe below runs PROBE_IMAGE in the runs namespace, which the run-pod policy holds.
   chart_args+=(--set "runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")

@@ -38,20 +38,27 @@ readOnlyRootFilesystem: true
 capabilities: {drop: [ALL]}
 {{- end -}}
 
-{{/* The run pod's sandbox, resolved from sandbox.* and the run-controller's older keys (plan PR8), as
-JSON: {"class": <RuntimeClass name, "" for none>, "allowUnsandboxed": <bool>}. Read it with
-`include "ap.sandbox" . | fromJson`. */}}
+{{/* The run pod's sandbox, resolved from sandbox.*, as JSON: {"class": <RuntimeClass name, "" for
+none>, "allowUnsandboxed": <bool>} (the run-controller's config keys). Read it with
+`include "ap.sandbox" . | fromJson`. The run-controller's older keys are removed (v4 step 8): the
+schema refuses them, and so does this helper under --skip-schema-validation. */}}
 {{- define "ap.sandbox" -}}
 {{- $s := .Values.sandbox | default dict -}}
 {{- $c := .Values.runController -}}
+{{- if hasKey $c "runtimeClassName" -}}
+{{- fail "runController.runtimeClassName was removed in v4 step 8: set sandbox.runtimeClassName (docs/upgrading.md#the-run-paths-old-keys)" -}}
+{{- end -}}
+{{- if hasKey $c "allowUnsandboxed" -}}
+{{- fail "runController.allowUnsandboxed was removed in v4 step 8: set sandbox.unsafeAllowRunc (docs/upgrading.md#the-run-paths-old-keys)" -}}
+{{- end -}}
 {{- if and $s.unsafeAllowRunc $s.runtimeClassName -}}
-{{- fail "sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one" -}}
+{{- fail "sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one (unsafeAllowRunc needs sandbox.runtimeClassName \"\", whose default is gvisor)" -}}
 {{- end -}}
 {{- $class := "" -}}
 {{- if not $s.unsafeAllowRunc -}}
-{{- $class = $s.runtimeClassName | default $c.runtimeClassName | default "" -}}
+{{- $class = $s.runtimeClassName | default "" -}}
 {{- end -}}
-{{- dict "class" $class "allowUnsandboxed" (or ($s.unsafeAllowRunc | default false) ($c.allowUnsandboxed | default false)) | toJson -}}
+{{- dict "class" $class "allowUnsandboxed" ($s.unsafeAllowRunc | default false) | toJson -}}
 {{- end -}}
 
 {{/* The install's unsafe settings (v4 D18, plan PR9), as a JSON list of the broker's bounded codes
@@ -69,19 +76,17 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- $codes | toJson -}}
 {{- end -}}
 
-{{/* The network mode (v4 D6): networkPolicies.mode when set, else the old key's meaning
-(networkPolicies.enabled: cilium when true, none when false). Mode cilium with enabled false names both
-keys and fails; kubernetes needs the run-controller, whose proxy and per-run policies it is. */}}
+{{/* The network mode (v4 D6): networkPolicies.mode, kubernetes by default. The old
+networkPolicies.enabled is removed (v4 step 8) and refused; kubernetes needs the run-controller,
+whose proxy and per-run policies it is. */}}
 {{- define "ap.netMode" -}}
 {{- $np := .Values.networkPolicies | default dict -}}
-{{- $enabled := ne (toString $np.enabled) "false" -}}
-{{- $mode := $np.mode | default "" -}}
-{{- if not $mode -}}
-{{- $mode = ternary "cilium" "none" $enabled -}}
-{{- else if not (has $mode (list "cilium" "kubernetes" "none")) -}}
+{{- if hasKey $np "enabled" -}}
+{{- fail "networkPolicies.enabled was removed in v4 step 8: set networkPolicies.mode (cilium, kubernetes or none; docs/upgrading.md#the-run-paths-old-keys)" -}}
+{{- end -}}
+{{- $mode := $np.mode | default "kubernetes" -}}
+{{- if not (has $mode (list "cilium" "kubernetes" "none")) -}}
 {{- fail (printf "networkPolicies.mode %q is not cilium, kubernetes or none" $mode) -}}
-{{- else if and (eq $mode "cilium") (not $enabled) -}}
-{{- fail "networkPolicies.mode cilium and networkPolicies.enabled false: choose one (unset networkPolicies.enabled, the old key)" -}}
 {{- else if and (eq $mode "kubernetes") (not .Values.runController.enabled) -}}
 {{- fail "networkPolicies.mode kubernetes needs runController.enabled: the egress proxy and the per-run NetworkPolicies are the run-controller's" -}}
 {{- else if and (eq $mode "kubernetes") (not .Values.runPodPolicy.enabled) -}}

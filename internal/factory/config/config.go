@@ -821,7 +821,7 @@ type Caps struct {
 	MaxTextBytes   int `json:"maxTextBytes"`
 	// How long a run that never started may sit Pending before the task escalates as
 	// run_unschedulable (P): no other layer bounds it — activeDeadlineSeconds counts from the
-	// pod's start, and Kueue queues unadmitted work forever. Defaulted when omitted, never left
+	// pod's start, and the runs quota holds a run back forever. Defaulted when omitted, never left
 	// open.
 	MaxPendingMinutes int `json:"maxPendingMinutes"`
 	// EscalatedHours is how long a task may wait Escalated for a maintainer before it is

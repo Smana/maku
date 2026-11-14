@@ -188,7 +188,7 @@ func (r *Reconciler) integrationSpec(t *v1alpha1.Task, m coordination.Integratio
 	b, _ := coordination.CanonicalManifest(m) // strings and integers: never fails
 	return runs.Spec{TaskID: t.Name, Role: "triager", Repository: t.Spec.Repository, BaseRef: "main",
 		TaskText: IntegrationBrief(t, m), Principal: runs.PrincipalFactory, DataClass: t.Spec.DataClass,
-		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, Queue: runs.QueueFactory,
+		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef,
 		MaxTokens: t.Spec.Budget.RunTokens, MaxMinutes: t.Spec.Budget.RunMinutes, Traceparent: traceparent(t), Tier: t.Spec.Budget.Tier,
 		CoordinationManifest: string(b), CoordinationManifestHash: coordination.ManifestHash(m)}
 }

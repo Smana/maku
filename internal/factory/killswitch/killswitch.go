@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package killswitch is the factory's own stop layer (§6.1): a ConfigMap deliberately not in
-// Git, which Flux never reverts. The other layers (Kueue, the App) do not depend on the factory.
+// Git, which Flux never reverts. The other layers (the runs quota, the App) do not depend on the factory.
 package killswitch
 
 import (

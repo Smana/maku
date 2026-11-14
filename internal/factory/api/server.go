@@ -444,7 +444,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	spec := runs.Spec{RunID: id, Role: in.Role, Repository: in.Repository, BaseRef: in.BaseRef, Branch: branch,
 		TaskText: in.Task.Text, TaskURL: in.Task.URL, Principal: p.ID, ChargedTo: person, DataClass: in.DataClass, Model: in.Model,
-		RoomRef: in.RoomRef, Queue: runs.QueueInteractive, MaxTokens: in.MaxTokens, MaxMinutes: 120,
+		RoomRef: in.RoomRef, MaxTokens: in.MaxTokens, MaxMinutes: 120,
 		EgressProfiles: in.EgressProfiles, RequestHash: hash, Suspendable: suspendable}
 	if err := s.Runs.Create(r.Context(), spec); err != nil {
 		// Without this the reservation would eat the principal's day (and room) forever:
