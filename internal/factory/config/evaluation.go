@@ -157,7 +157,7 @@ func (l Loop) over(def Loop) Loop {
 		out.Split = def.Split
 	}
 	if len(def.Models) > 0 {
-		out.Models = make(map[string]ModelAliases, len(def.Models)+len(l.Models))
+		out.Models = map[string]ModelAliases{}
 		for _, m := range []map[string]ModelAliases{def.Models, l.Models} {
 			for role, byTier := range m {
 				merged := maps.Clone(out.Models[role])
