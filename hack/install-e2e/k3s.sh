@@ -71,11 +71,12 @@ leg_checks() {
   echo "ok: Traefik -> rooms-web-proxy -> broker; the broker's :8080 refuses any other pod"
 }
 
-# curl_in URL HOST: "<status> <body>" of a GET from a pod in namespace e2e (000 when nothing answers).
+# curl_in URL HOST: "<status> <body>" of a GET from a pod in namespace e2e (000 when nothing answers:
+# curl, and so the pod, then exit non-zero, which is the answer and not the step's failure).
 curl_in() {
   k -n e2e run "curl-$RANDOM" --rm -i --restart=Never --quiet --image "$CURL_IMAGE" \
     --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$CURL_IMAGE"'","args":'"$(jq -cn --arg u "$1" --arg h "$2" '["-sk","-m","10","-o","/dev/stdout","-w"," %{http_code}"] + (if $h == "" then [] else ["-H", "Host: " + $h] end) + [$u]')"',"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
-    2>/dev/null | awk '{out = out (NR > 1 ? "\n" : "") $0; last = $0} END {n = split(last, f, " "); sub(/ ?[0-9]+$/, "", out); print f[n] " " out}'
+    2>/dev/null | awk '{out = out (NR > 1 ? "\n" : "") $0; last = $0} END {n = split(last, f, " "); sub(/ ?[0-9]+$/, "", out); print f[n] " " out}' || true
 }
 
 install_e2e_main
