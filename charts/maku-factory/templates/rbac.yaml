@@ -38,6 +38,16 @@ rules:
   - apiGroups: [""]
     resources: [events]
     verbs: [create, patch]
+  {{- if .Values.preflight.enabled }}
+  # The install's preflight (v4 D24): the factory's exposure check reads the namespace's routes, to
+  # refuse one that reaches the broker around oauth2-proxy (F5). Read only.
+  - apiGroups: [gateway.networking.k8s.io]
+    resources: [httproutes, grpcroutes, tlsroutes]
+    verbs: [get, list]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: [get, list]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

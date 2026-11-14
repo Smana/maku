@@ -239,6 +239,28 @@ name, and its ClusterRole gets the named CRDs, the RuntimeClass and `/version`. 
 `cilium` modes, a policy limits its egress to the API server and the components' `:9090`, and the
 broker and the run-controller admit it there.
 
+Each component then answers for itself, on its ops port (`:9090`, beside `/metrics`, never exposed
+publicly): `GET /preflight` runs its own checks through its own network path and credentials, each
+bounded to 10 s and all within 30 s, and caches the answer for 30 s. The answer holds codes and fixed
+messages only: no DSN, key, token or upstream error body. A refusal's detail stays in the
+component's own log. The components serve `/preflight` only when the preflight is enabled
+(`MAKU_PREFLIGHT=true`, which the charts set), so on a default install no pod can make them spend
+their credentials.
+
+| Component | Its checks |
+|---|---|
+| broker | `database` (its own role, RLS, the schema), `oidc`, `github-link`, `knowledge` (`tools/list` names `kb_search` and `kb_get`), `models` (one-token completion per planner and classifier alias) |
+| run-controller | `run-path`: its own preflight's last result, one code per refusal (`tracing` and `models` report `skip`) |
+| factory | `apps` (each installation's grants), `merge-gate`, `private-code`, `exposure`, `oidc` |
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku-factory.preflight.enabled` | `false` | Serves the factory's `/preflight`, and grants the factory `get` and `list` on HTTPRoutes, GRPCRoutes, TLSRoutes and Ingresses in its namespace, for `exposure`: a route to the broker's Service, on any port, fails. The umbrella refuses `maku.preflight.enabled` without it |
+| broker config `preflight.timeout` | `10s` | One broker check's bound, between 1 s and 30 s |
+
+With `maku.preflight.enabled`, the chart adds a `run-controller` Service on `:9090` for the
+collection. An image older than the chart answers 404 there, reported as `component_too_old`.
+
 ## Private code (v0.4x, v4 rollout step 7)
 
 One new optional field on the `Repository`, `spec.privateCode.acknowledged`. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.

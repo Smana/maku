@@ -17,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -69,6 +70,7 @@ import (
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/policy"
+	"github.com/Smana/maku/internal/preflight"
 	"github.com/Smana/maku/internal/redact"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/version"
@@ -379,7 +381,17 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// started, and not ready until the manager's caches synced. It stops last, after the manager.
 	gate := &startupGate{}
 	down := newDrainFlag(ctx)
-	ops, err := startOps(ctx, log, gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())))
+	// GET /preflight (v4 D24) answers from the start, undecided until the checks are built below.
+	var pfSource atomic.Pointer[preflight.Source]
+	pfOn := preflightOn(getenv)
+	ops, err := startOps(ctx, log, withPreflight(gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())), pfOn, func() http.Handler {
+		return preflight.Handler("factory", version.Version, func(ctx context.Context) []preflight.Result {
+			if src := pfSource.Load(); src != nil {
+				return (*src)(ctx)
+			}
+			return []preflight.Result{{Check: "apps", Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the factory is still starting"}}
+		}, nil)
+	}))
 	if err != nil {
 		return err
 	}
@@ -525,12 +537,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// D11: on each fence pass over a repository with merge.gateStatus (read live, so a publish that
 	// turns it on is heard), whether its default branch requires maku/merge-gate from the App that
 	// posts it. Read with the factory App's token; it warns and never refuses.
+	gateRead := &gateState{} // the preflight's merge-gate check serves the observer's last read
 	fenced.OnFile = chainOnFile(fenced.OnFile, gateGuardObserver(live.Current, func(repo string) rulesReader {
 		if c, ok := conns.get(repo); ok && c.gh != nil {
 			return c.gh
 		}
 		return nil // a nil interface, never a typed-nil *forge.GitHub
-	}, m.MergeGateRequired, m.MergeGateRulesUnread, log))
+	}, gateRead.record(m.MergeGateRequired), gateRead.unread(m.MergeGateRulesUnread), log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
 	// publisher's GitHub permissions, read from the token source they get: the octo-sts policies, or
 	// the minter's role table (R2 as evidence, plan PR8).
@@ -806,6 +819,18 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	runnables = append(runnables, pollers)
 	if perRun != nil { // D12: both Apps' installations against their required sets, once
 		runnables = append(runnables, appGrantChecks(cfg, mergerFolded, agentsMinter(cfg, m, log), conns.names, m.GitHubAppPermissionMissing, log))
+	}
+	// v4 D24: the factory's own checks, now that every part they read exists.
+	if pfOn {
+		apps := []appGrants{{Name: "factory", Checker: factoryMinter(cfg, preflightAppNeed(cfg, mergerFolded), log)}}
+		if perRun != nil && !cfg.Demo {
+			if am := agentsMinter(cfg, m, log); am != nil {
+				apps = append(apps, appGrants{Name: "agents", Checker: am})
+			}
+		}
+		pfChecks := factoryChecks{Live: live.Current, Repos: conns.names, Apps: apps, Gate: gateRead, Private: privateCode,
+			Kube: mgr.GetAPIReader(), Namespace: ns, HC: httpx.New(preflight.CheckTimeout, nil)}.source()
+		pfSource.Store(&pfChecks)
 	}
 	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
 		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {

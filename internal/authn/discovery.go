@@ -17,6 +17,9 @@ import (
 // maxDiscoveryBytes bounds an issuer's discovery document; real ones are a few KiB.
 const maxDiscoveryBytes = 256 << 10
 
+// ErrIssuerMismatch is a discovery document whose issuer is not the configured one, byte for byte.
+var ErrIssuerMismatch = errors.New("discovery: the document's issuer is not the configured one (OIDC Discovery §4.3)")
+
 // Discovery is what Maku reads from an issuer's OpenID Provider Configuration.
 type Discovery struct {
 	Issuer                      string `json:"issuer"`
@@ -61,7 +64,7 @@ func Discover(ctx context.Context, hc *http.Client, issuer string) (Discovery, e
 		return Discovery{}, errors.New("discovery decode: not a JSON document")
 	}
 	if d.Issuer != issuer {
-		return Discovery{}, errors.New("discovery: the document's issuer is not the configured one (OIDC Discovery §4.3)")
+		return Discovery{}, ErrIssuerMismatch
 	}
 	if !httpsURL(d.JWKSURI) {
 		return Discovery{}, errors.New("discovery: jwks_uri is not an absolute https:// URL")

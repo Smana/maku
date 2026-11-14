@@ -52,6 +52,7 @@ Helm renders before any subchart's template (it is deeper). The skeleton values 
 {{- include "afumbrella.identity" . -}}
 {{- include "afumbrella.expose" . -}}
 {{- include "afumbrella.webProxy" . -}}
+{{- include "afumbrella.preflight" . -}}
 {{- include "afumbrella.slack" . -}}
 {{- include "afumbrella.factoryPolicy" . -}}
 {{- end }}
@@ -150,6 +151,15 @@ three Secret names are its schema's (minLength 1). */}}
 {{- end -}}
 {{- if $errs -}}
 {{- fail (printf "profile production: %d missing or refused seams (docs/upgrading.md#from-the-demo-to-production):\n  - %s" (len $errs) (join "\n  - " $errs)) -}}
+{{- end -}}
+{{- end }}
+
+{{/* The preflight (v4 D24) collects the factory's /preflight, whose exposure check reads the
+namespace's routes: the factory's Role grants that read only with its own preflight.enabled. */}}
+{{- define "afumbrella.preflight" -}}
+{{- $mf := index .Values "maku-factory" | default dict -}}
+{{- if and .Values.maku.enabled (dig "preflight" "enabled" false .Values.maku) $mf.enabled (not (dig "preflight" "enabled" false $mf)) -}}
+{{- fail "maku.preflight.enabled needs maku-factory.preflight.enabled: the factory's exposure check reads the namespace's HTTPRoutes and Ingresses, which only that grants" -}}
 {{- end -}}
 {{- end }}
 

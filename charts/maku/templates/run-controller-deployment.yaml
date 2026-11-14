@@ -32,6 +32,10 @@ spec:
           env:
             - name: RUN_CONTROLLER_CONFIG
               value: /etc/run-controller/config.yaml
+            {{- if .Values.preflight.enabled }}
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
+            {{- end }}
             {{- if include "ap.runModelGateway" . | fromJson }}
             # The gateway-token-ttl preflight binds its TokenRequest to this pod (model.mode gateway).
             - name: POD_NAME

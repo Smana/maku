@@ -123,9 +123,7 @@ func checkAppGrants(ctx context.Context, app string, need minter.Permissions, ch
 // once, when this replica becomes leader, over the repositories served then.
 func appGrantChecks(cfg *config.Config, folded bool, agents *minter.Minter, served func() []string, gauge permissionGauge, log *slog.Logger) manager.Runnable {
 	need := factoryAppNeed(cfg, folded)
-	factory := &minter.Minter{Client: &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil),
-		IDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile, Installations: &forge.Installations{}},
-		Table: minter.Table{"factory": {Base: need}}, Log: log}
+	factory := factoryMinter(cfg, need, log)
 	return manager.RunnableFunc(func(ctx context.Context) error {
 		repos := served()
 		if agents != nil {
@@ -134,4 +132,11 @@ func appGrantChecks(cfg *config.Config, folded bool, agents *minter.Minter, serv
 		checkAppGrants(ctx, "factory", need, factory, repos, gauge, log)
 		return nil
 	})
+}
+
+// factoryMinter reads the factory App's installations against need: its grants, never a token.
+func factoryMinter(cfg *config.Config, need minter.Permissions, log *slog.Logger) *minter.Minter {
+	return &minter.Minter{Client: &forge.AppClient{API: githubAPIURL(), HTTP: httpx.New(githubTimeout, nil),
+		IDFile: cfg.GitHub.AppIDFile, KeyFile: cfg.GitHub.PrivateKeyFile, Installations: &forge.Installations{}},
+		Table: minter.Table{"factory": {Base: need}}, Log: log}
 }

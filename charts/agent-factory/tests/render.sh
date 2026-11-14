@@ -490,6 +490,10 @@ bad 'maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local" and maku-
 bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api.groups.member "devs" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.groups.member=devs
 bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
 bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
+# v4 D24 (step 7 PR B): the maku preflight collects the factory's checks, which need its route grant.
+bad 'maku.preflight.enabled needs maku-factory.preflight.enabled' "${args[@]}" --set maku.preflight.enabled=true
+helm template af . -n maku "${args[@]}" --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true >/dev/null ||
+  { echo 'FAIL: both preflight switches on must render' >&2; fail=1; }
 # v4 D14, PR10: ExternalSecrets for the seams the values list, against the store they name; off, nothing.
 esv=("${args[@]}" -f tests/externalsecrets-values.yaml)
 out="$(helm template af . -n maku "${args[@]}")"

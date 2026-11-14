@@ -38,6 +38,9 @@
 # span to the stub under that trace id. The task runs it with NETPOL=none, as CI runs the gateway leg: its
 # gw-caller probe pod cannot run under the runs namespace's default-deny. With NETPOL=kubernetes the step
 # also asserts the run's own NetworkPolicy opens exactly the collector's port.
+# PREFLIGHT=1 (CI's kubernetes and unenforced legs) renders the install's preflight (v4 D24) and runs it
+# once from its CronJob: the cluster checks pass, the broker's database check passes through the broker's
+# own policy and DSN, and the run-controller's run-path passes, or, unenforced, fails on the netprobe.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -59,6 +62,7 @@ EXTERNAL_DB="${EXTERNAL_DB:-}"
 # The external database's image: postgres:16, the support floor (D26), by digest.
 EXTERNAL_PG_IMAGE=docker.io/library/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
 TRACING="${TRACING:-}"
+PREFLIGHT="${PREFLIGHT:-}"
 [[ -z $TRACING || -n $GATEWAY ]] || { echo "FAIL: TRACING=1 needs GATEWAY=1" >&2; exit 2; }
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
@@ -219,6 +223,7 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 [[ -z $EXTERNAL_DB ]] || values+=(--set postgres.enabled=false)
+[[ -z $PREFLIGHT ]] || values+=(--set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)
 issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
 # The demo's gateway with the probe's echo as its provider: the umbrella
 # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
@@ -635,6 +640,34 @@ if [[ $NETPOL != none ]]; then
     kubectl -n agents get pods -l agents.ogenki.io/run-id=preflight -o name | grep -q . && die "a probe pod was left behind"
   }
   true
+fi
+
+if [[ -n $PREFLIGHT ]]; then
+  # After the run-controller's own preflight has decided (the step above), so run-path reads it.
+  step "the install's preflight (v4 D24): each component's /preflight, collected through the policies"
+  kubectl -n "$NS" create job --from=cronjob/af-preflight preflight-now >/dev/null || die "no CronJob af-preflight"
+  done_=""
+  for _ in $(seq 60); do
+    done_=$(kubectl -n "$NS" get job preflight-now -o jsonpath='{.status.succeeded}{.status.failed}') || done_=""
+    [[ -n $done_ ]] && break
+    sleep 3
+  done
+  [[ -n $done_ ]] || die "the preflight Job did not finish in 180 s"
+  kubectl -n "$NS" logs job/preflight-now >"$work/preflight.jsonl" || die "no preflight log"
+  cat "$work/preflight.jsonl"
+  # outcome[/code] of one check, as the runner printed it
+  pf() { jq -r --arg c "$1" --arg k "$2" 'select(.component == $c and .check == $k) | .outcome + (if .code != "" then "/" + .code else "" end)' "$work/preflight.jsonl"; }
+  for k in kubernetes crds; do
+    [[ $(pf "" "$k") == pass ]] || die "the cluster check $k is '$(pf "" "$k")', want pass"
+  done
+  [[ $(pf broker database) == pass ]] || die "the broker's database check is '$(pf broker database)', want pass"
+  want=pass
+  [[ $NETPOL != unenforced ]] || want=fail/run_path_network
+  [[ $(pf run-controller run-path) == "$want" ]] || die "the run-controller's run-path is '$(pf run-controller run-path)', want $want"
+  ! grep -q component_too_old "$work/preflight.jsonl" || die "a component does not serve /preflight"
+  ! grep -qE 'postgres(ql)?://|password=|Bearer ' "$work/preflight.jsonl" || die "the preflight output holds a credential"
+  echo "ok: the preflight collects the cluster, the broker (database: pass) and the run-controller (run-path: $want)"
+  kubectl -n "$NS" delete job preflight-now --wait=false >/dev/null
 fi
 
 step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"

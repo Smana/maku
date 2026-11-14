@@ -51,7 +51,7 @@ func TestCheckServerVersions(t *testing.T) {
 			}
 			if c.refuse {
 				for name, err := range map[string]error{"migrate": migErr, "serve": openErr} {
-					if err == nil || !strings.Contains(err.Error(), "Maku needs 16 or later (D26)") || !strings.Contains(err.Error(), "PostgreSQL 15.") {
+					if err == nil || !errors.Is(err, ErrServerTooOld) || !strings.Contains(err.Error(), "Maku needs 16 or later (D26)") || !strings.Contains(err.Error(), "PostgreSQL 15.") {
 						t.Errorf("%s on %s: err = %v, want the version refusal", name, c.image, err)
 					}
 				}
@@ -160,7 +160,7 @@ func TestCheckRefusesRLSBypass(t *testing.T) {
 				st.Close()
 			}
 			want := string(c.role) + " bypasses row-level security"
-			if err == nil || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "the room log would be writable") {
+			if err == nil || !errors.Is(err, ErrBypassesRLS) || !strings.Contains(err.Error(), want) || !strings.Contains(err.Error(), "the room log would be writable") {
 				t.Fatalf("Open = %v, want %q", err, want)
 			}
 		})
@@ -292,8 +292,12 @@ func TestSchemaCurrent(t *testing.T) {
 					t.Fatalf("SchemaCurrent = %v, want nil", err)
 				}
 			default:
-				if err == nil || !strings.Contains(err.Error(), c.want) {
-					t.Fatalf("SchemaCurrent = %v, want %q", err, c.want)
+				kind := ErrSchemaBehind
+				if c.name == "ahead" {
+					kind = ErrSchemaAhead
+				}
+				if err == nil || !errors.Is(err, kind) || !strings.Contains(err.Error(), c.want) {
+					t.Fatalf("SchemaCurrent = %v, want %q (%v)", err, c.want, kind)
 				}
 			}
 		})

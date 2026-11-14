@@ -4,11 +4,13 @@ package preflight
 
 import (
 	"bytes"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,5 +121,38 @@ func TestLoadRunConfig(t *testing.T) {
 				t.Fatalf("got %v, want an error naming %s", err, c.want)
 			}
 		})
+	}
+}
+
+// flaky refuses its first n connections, as kube-router does before it has programmed a new pod's
+// address into the policies that admit it.
+type flaky struct {
+	n    int
+	next http.RoundTripper
+}
+
+func (f *flaky) RoundTrip(r *http.Request) (*http.Response, error) {
+	if f.n > 0 {
+		f.n--
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}
+	}
+	return f.next.RoundTrip(r)
+}
+
+// A component refused for its first connections is retried, so a fresh preflight pod waits for the
+// network policies to admit it; one that stays refused is still undecided.
+func TestCollectRetriesARefusedConnection(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"component":"broker","version":"v1","checks":[{"check":"database","outcome":"pass"}]}`))
+	}))
+	defer srv.Close()
+	comp := ComponentRef{Name: "broker", URL: srv.URL}
+	got := collect(t.Context(), &http.Client{Transport: &flaky{n: collectAttempts - 1, next: http.DefaultTransport}}, comp)
+	if len(got) != 1 || got[0].Outcome != Pass {
+		t.Fatalf("a component refused %d times, then up: %+v", collectAttempts-1, got)
+	}
+	got = collect(t.Context(), &http.Client{Transport: &flaky{n: collectAttempts, next: http.DefaultTransport}}, comp)
+	if len(got) != 1 || got[0].Code != Undecided {
+		t.Fatalf("a component refused every time: %+v", got)
 	}
 }

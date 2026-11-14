@@ -26,6 +26,23 @@ flowchart LR
 
 Each hop inside the cluster is plain HTTP, inside the default-deny policies.
 
+No route ever targets `room-broker` itself, on any port: `:8080` would skip the front door, and
+`:8443` and the ops port `:9090` (`/metrics`, `/preflight`) are in-cluster only. With
+`maku.preflight.enabled` and `maku-factory.preflight.enabled`, the preflight's `exposure` check reads
+the HTTPRoutes, GRPCRoutes, TLSRoutes (at each version the cluster serves) and Ingresses, and fails,
+`broker_exposed_around_proxy`, on any that does. It also catches a request mirror or a backendRef
+naming the broker's namespace.
+
+Its scope is the factory's own namespace: the factory's Role is namespaced, so it reads no other.
+It finds the broker from `broker.url`. When the broker runs in another namespace, or outside the
+cluster, the check reports `undecided`, never a pass, and the routes that could reach the broker
+are yours to check:
+
+```bash
+kubectl get httproutes,grpcroutes,tlsroutes,ingresses -A -o json |
+  jq -r '.items[] | select(tostring | test("\"room-broker\"")) | .kind + " " + .metadata.namespace + "/" + .metadata.name'
+```
+
 ## The values
 
 ```yaml
