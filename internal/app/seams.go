@@ -30,7 +30,7 @@ func checkBrokerSecrets(cfg config.Config, read func(string) ([]byte, error)) er
 func checkFactorySecrets(cfg *fconfig.Config, read func(string) ([]byte, error)) error {
 	g := cfg.GitHub
 	files := []string{g.AppIDFile, g.PrivateKeyFile, g.MergerAppIDFile, g.MergerKeyFile, g.AgentsAppIDFile, g.AgentsKeyFile,
-		cfg.RunTokens.AppIDFile, cfg.RunTokens.PrivateKeyFile, cfg.Broker.CAFile, cfg.RunLore.TokenFile,
+		cfg.Broker.CAFile, cfg.RunLore.TokenFile,
 		cfg.API.ProjectIDFile, cfg.API.AudienceFile}
 	files = append(files, cfg.API.ClientIDFiles...)
 	if a := cfg.API.Access; a != nil {

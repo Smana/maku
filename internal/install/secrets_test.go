@@ -101,7 +101,7 @@ func TestSeamsAreWellFormed(t *testing.T) {
 			t.Errorf("%s: readAs %q", s.ID, s.ReadAs)
 		case s.ReadAs == File && s.MountPath == "":
 			t.Errorf("%s: a file seam needs its mount path", s.ID)
-		case !slices.Contains([]Generated{"", GeneratedPostgres, GeneratedUmbrella, GeneratedDemoModel, GeneratedDemoApp, GeneratedFactory, GeneratedCertManager}, s.Generated):
+		case !slices.Contains([]Generated{"", GeneratedPostgres, GeneratedUmbrella, GeneratedDemoModel, GeneratedDemoApp, GeneratedCertManager}, s.Generated):
 			t.Errorf("%s: generated %q", s.ID, s.Generated)
 		}
 		ids[s.ID] = true

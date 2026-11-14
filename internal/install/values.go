@@ -151,8 +151,6 @@ func Values(in Inputs) (map[string]any, error) {
 	put("maku.broker.extraVolumes", []any{map[string]any{"name": "github-app", "secret": map[string]any{"secretName": in.factorySecret(), "defaultMode": 288}}})
 	put("maku.broker.extraVolumeMounts", []any{map[string]any{"name": "github-app", "mountPath": "/etc/maku/github-app", "readOnly": true}})
 	// Per-run tokens from the agents App (D10, D12): the factory mints them, the run-controller mounts them.
-	put("maku.runController.gitTokens", "perRun")
-	put("maku.runController.gitReadSecret", "")
 	put("maku.agentRunPolicies", map[string]any{"creators": []any{factorySA}, "factoryServiceAccount": "agent-factory"})
 	put("maku.runController.model.mode", "gateway")
 	put("maku.runController.model.gateway.aliases", map[string]any{"public": []any{"agent-default", "tier-light"}, "internal": []any{}})

@@ -139,7 +139,7 @@ flowchart LR
 | Harness profile | A centrally named way to run a class (`checks`, `testFirst`, `template`, `tier`, `loop`). A policy names one; it cannot invent one | `HarnessProfile` |
 | Guardrails | Central bounds: protected paths and mandatory checks every binding gains, caps no binding may exceed | `MergeGuardrails` |
 | Snapshot | One read of the file: its sha256, the resolved classes, the error. Each decision binds to it (`policy=<12 hex>`) | `mergepolicy.Snapshot` |
-| policy-bot | The independent second evaluator. The gate's fixed base needs `policy-bot: main` green, posted by `merge.policyBotLogin`, so every class that should arm needs a policy-bot rule that approves its pull requests | `baseChecks` in `internal/factory/reconciler/arm.go` |
+| policy-bot | The optional second evaluator (`merge.policyBot: true`; off by default since v4 step 8). With it, the gate's fixed base needs `policy-bot: main` green, posted by `merge.policyBotLogin`, so every class that should arm needs a policy-bot rule that approves its pull requests. Without it, `maku/merge-gate` is the required status and every live class needs `allowedFiles` | `baseChecks` in `internal/factory/reconciler/arm.go` |
 
 ### How a binding resolves
 

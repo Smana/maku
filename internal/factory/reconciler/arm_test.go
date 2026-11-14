@@ -34,7 +34,7 @@ func armCfg() *config.Config {
 		Templates: map[string]config.Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}},
 		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
 			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}},
-			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", AutoMergesPerDay: 10}}}}
+			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), AutoMergesPerDay: 10}}}}
 }
 
 func green(policy string) forge.Checks {
@@ -115,7 +115,7 @@ func TestDecideArmWithoutPolicyBot(t *testing.T) {
 		"off, no status":     {&off, noStatus, ""},
 		"off, status red":    {&off, green("ERROR"), ""},
 		"on, no status":      {&on, noStatus, "policy_absent"},
-		"default, no status": {nil, noStatus, "policy_absent"},
+		"default, no status": {nil, noStatus, ""}, // v4 step 8: unset is off (D11)
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := armCfg()

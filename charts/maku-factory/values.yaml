@@ -7,31 +7,25 @@ resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {cpu: 500m, memory: 512Mi}
 # Secrets, their keys and mount paths, and the merger-key prerequisite: README.md#prerequisites.
-# The GitHub Apps (v4 D12, plan PR9; docs/github-apps.md). Each key maps onto an older one, which
-# keeps working:
-#
-#   | New key                     | Old key, still honoured | Rule                                         |
-#   |-----------------------------|-------------------------|----------------------------------------------|
-#   | apps.factory.existingSecret | githubSecret            | the new key wins when set                    |
-#   | apps.agents.existingSecret  | runTokens.appSecret     | the new key wins; both set and different fail |
-#   | apps.merger.mode            | mergerSecret            | factory: no merger Secret; with mergerSecret set, the render fails |
-#
-# apps.agents mounts the agents App (keys app_id, private_key) at /etc/agent-factory-agents and
-# writes config.github.agentsAppIDFile and agentsKeyFile. apps.merger.mode factory folds the merger
-# into the factory App: no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name
-# the factory App's files (every repository's merge.mergerLogin is then factoryLogin). Each key that
-# writes config fails the render when config already sets that key.
+# The GitHub Apps (v4 D12; docs/github-apps.md). apps.factory mounts the factory App (keys app_id,
+# private_key) at /etc/agent-factory-github. apps.agents mounts the agents App at
+# /etc/agent-factory-agents and writes config.github.agentsAppIDFile and agentsKeyFile.
+# apps.merger.mode factory (the default since v4 step 8, D12) folds the merger into the factory App:
+# no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name the factory App's files
+# (every repository's merge.mergerLogin is then factoryLogin). separate mounts a merger App of its
+# own from apps.merger.existingSecret (empty means agent-factory-merger) at /etc/agent-factory-merger. Each key that writes config fails the
+# render when config already sets that key. The older githubSecret, mergerSecret and
+# runTokens.appSecret are removed (v4 step 8): the render fails naming their apps.* replacement.
 apps:
   factory:
-    existingSecret: ""
+    existingSecret: agent-factory-github
   agents:
     existingSecret: ""
   merger:
-    mode: separate
-githubSecret: agent-factory-github
-# HARD PREREQUISITE when any merge class is live or in shadow: README.md#prerequisites.
-# Empty means agent-factory-merger; set it only with apps.merger.mode separate.
-mergerSecret: ""
+    mode: factory
+    # HARD PREREQUISITE with mode separate when any merge class is live or in shadow:
+    # README.md#prerequisites. Empty means agent-factory-merger; set it only with mode separate.
+    existingSecret: ""
 brokerCASecret: openbao-ca
 # Audience of the projected token for the broker's system API.
 roomsAudience: rooms-system
@@ -47,22 +41,19 @@ api:
   tls:
     secretName: ""
     issuerRef: {kind: ClusterIssuer, name: ""}
-# The laptop demo: no OIDC volume (the factory takes no human tokens) and, in the runs namespace,
-# the Secret access the run token writer needs for agent-git and agent-git-read, minted from the
-# factory's App.
+# The laptop demo: no OIDC volume (the factory takes no human tokens); with runTokens.perRun the
+# factory mints each run's token from its own App.
 demo: false
-# The run token writer outside the demo (v4 step 2): the factory keeps the run-controller's
-# agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the App in
-# appSecret (keys app_id, private_key), mounted at /etc/agent-factory-run-tokens. The factory's
-# Interim: replaced by the per-run minter (v4 D10, step 3).
+# The run tokens outside the demo: the factory mints each run's token from the agents App
+# (apps.agents.existingSecret). Needs perRun: the shared agent-git writer was removed in v4 step 8.
+# The factory's config must name runs.group maku.ogenki.io.
 runTokens:
   enabled: false
-  appSecret: ""
-  # perRun (v4 D10): one token per run instead of the two shared Secrets, minted from the same App
+  # perRun (v4 D10): one token per run, minted from the agents App
   # for the run's repository and role, written as the run's own Secret <run name>-git. The
   # factory's Role in the runs namespace then holds create, patch and delete on Secrets, never get,
   # and an admission policy (always rendered with it) bounds those verbs to run token Secrets it
-  # labels and the run owns. Needs enabled (or demo), and maku's runController.gitTokens: perRun.
+  # labels and the run owns. Needs enabled (or demo), and maku's runController.gitSecret left empty.
   perRun: false
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake

@@ -33,9 +33,12 @@ Helm renders before any subchart's template (it is deeper). The defaults are pro
 {{- end -}}
 {{- /* v4 D10: per-run tokens are two halves. The factory mints and writes <run>-git, the run-controller mounts it: one without the other leaves every run Pending. */ -}}
 {{- $perRun := dig "runTokens" "perRun" false (index .Values "maku-factory") -}}
-{{- $gitTokens := dig "runController" "gitTokens" "shared" .Values.maku -}}
-{{- if ne (toString $perRun) (toString (eq $gitTokens "perRun")) -}}
-{{- fail (printf "maku-factory.runTokens.perRun (%v) and maku.runController.gitTokens (%q) go together: the factory writes each run's token Secret, the run-controller mounts it; set both (perRun) or neither" $perRun $gitTokens) -}}
+{{- $pat := dig "runController" "gitSecret" "" .Values.maku -}}
+{{- if and $perRun $pat -}}
+{{- fail (printf "maku-factory.runTokens.perRun and maku.runController.gitSecret (%q): choose one: the factory writes each run's token Secret, which the run-controller mounts unless a laptop's PAT replaces it" $pat) -}}
+{{- end -}}
+{{- if and (index .Values "maku-factory").enabled .Values.maku.enabled (dig "runController" "enabled" true .Values.maku) (not $perRun) (not $pat) -}}
+{{- fail "maku-factory.runTokens.perRun: the factory mints each run's git token, which the run-controller mounts (v4 step 8 removed the shared agent-git writer); a demo may name a laptop's PAT in maku.runController.gitSecret instead" -}}
 {{- end -}}
 {{- if $perRun -}}
 {{- $creators := dig "agentRunPolicies" "creators" list .Values.maku -}}
@@ -113,9 +116,6 @@ three Secret names are its schema's (minLength 1). */}}
 {{- else if not $sb.runtimeClassName -}}
 {{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/security.md#the-run-pods-admission)" -}}
 {{- end -}}
-{{- if and (eq ($rc.gitTokens | default "shared") "perRun") (not (dig "runTokens" "perRun" false (index .Values "maku-factory" | default dict))) -}}
-{{- $errs = append $errs "maku-factory.runTokens.perRun: maku.runController.gitTokens perRun mounts each run's token Secret, which the factory writes (docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)" -}}
-{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- $f := index .Values "maku-factory" | default dict -}}
@@ -129,7 +129,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- if or $f.demo (dig "config" "demo" false $f) -}}
 {{- $errs = append $errs (printf "maku-factory.demo, maku-factory.config.demo: the factory's laptop demo mode, admitted by values-demo.yaml alone (%s)" $up) -}}
 {{- end -}}
-{{- if not (dig "apps" "factory" "existingSecret" "" $f | default $f.githubSecret) -}}
+{{- if not (dig "apps" "factory" "existingSecret" "" $f) -}}
 {{- $errs = append $errs "maku-factory.apps.factory.existingSecret: the factory App's Secret, keys app_id and private_key (docs/github-apps.md#the-factory-app)" -}}
 {{- end -}}
 {{- if and $maku.enabled (not (dig "config" "api" "humanIssuer" "" $f)) -}}

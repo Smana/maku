@@ -37,7 +37,7 @@ func mergeRig(t *testing.T, phase string, objs ...client.Object) *rig {
 	g.r.Cfg.Current().AgentsLogin, g.r.Cfg.Current().FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
 	// The live path, proven offline now and live after the wave (Task 10.7); the shadow test flips it.
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}}
-	g.r.Cfg.Current().Repositories[0].Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
+	g.r.Cfg.Current().Repositories[0].Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), // the pre-v4 defaults, explicit
 		MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 10, FixRuns: 2,
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
@@ -1294,7 +1294,7 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 // own merge satisfies a ruleset that requires maku/merge-gate.
 func TestTheGateStatusIsPostedBeforeTheMerge(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
 	if got, want := g.f.GateSequence(), []string{"status abc success", "merge PR_12 abc"}; !slices.Equal(got, want) {
@@ -1306,7 +1306,7 @@ func TestTheGateStatusIsPostedBeforeTheMerge(t *testing.T) {
 // (head, state, description); without it SetStatus is never called.
 func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	g.f.SetChecks(12, forge.Checks{Runs: green("SUCCESS").Runs[:1]}) // a required check unreported: it waits at the gate
 	g.reconcile(t, "3buqdlot", 1)
 	g.reconcile(t, "3buqdlot", 1)
@@ -1318,7 +1318,7 @@ func TestTheGatePostsItsVerdictOncePerHead(t *testing.T) {
 
 func TestTheGatePostsAChangedVerdictOnTheSameHead(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	_ = g.f.SetStatus(t.Context(), "abc", "success", GateStatusContext, "docs-links: merging") // an earlier pass
 	g.f.SetChecks(12, forge.Checks{Runs: green("SUCCESS").Runs[:1]})                           // a required check unreported
 	g.reconcile(t, "3buqdlot", 1)
@@ -1342,7 +1342,7 @@ func TestTheGatePostsEachDecisionPath(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+			g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 			g.f.SetChecks(12, c.checks)
 			g.reconcile(t, "3buqdlot", 1)
 			got := g.f.Statuses("abc")
@@ -1366,7 +1366,7 @@ func TestTheGatePostsNothingWithoutGateStatus(t *testing.T) {
 // decided. An arm's failed post is TestAFailedArmStatusAbortsTheMerge's.
 func TestAFailedStatusPostDoesNotChangeTheDecision(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	g.f.SetChecks(12, green("PENDING"))
 	g.f.SetStatusError(errors.New("403: statuses: write"))
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "policy_pending" {

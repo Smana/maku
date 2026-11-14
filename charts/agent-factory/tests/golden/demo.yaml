@@ -562,8 +562,6 @@ data:
         aliases:
           public: ["agent-default","tier-light"]
           internal: []
-    # Each run mounts its own Secret, <run name>-git, minted by the factory (D10).
-    gitTokens: perRun
     broker:
       url: "https://room-broker.maku.svc.cluster.local:8443"
       namespace: "maku"
@@ -960,10 +958,8 @@ rules:
 ---
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
 # AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
-# phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
-# demo or runTokens.enabled lets the factory keep the run-controller's agent-git and agent-git-read
-# Secrets filled with tokens minted from a GitHub App. create cannot be scoped by name in
-# Kubernetes; get and update can.
+# phase 5), and deletes them. Never another namespace's objects, and no Secret but the per-run
+# token Secrets of runTokens.perRun (v4 step 8 removed the shared agent-git writer).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -1088,8 +1084,8 @@ rules:
   - apiGroups: [""]
     resources: [serviceaccounts, configmaps]
     verbs: [get, create]
-  # gitTokens perRun: each run's own <run name>-git, a name not known in advance. get alone, never
-  # list or watch; the controller already creates pods that mount any Secret here (plan PR3).
+  # Each run's own <run name>-git, a name not known in advance. get alone, never list or watch; the
+  # controller already creates pods that mount any Secret here (plan PR3).
   - apiGroups: [""]
     resources: [secrets]
     verbs: [get]
@@ -1714,7 +1710,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: 4c6e66ede7345e5ea58c5e7364abbb6f02a0b921159cb342a858426d0104888a
+        checksum/config: b09a3a096489552f0c1b4a1abfac3645bb2bf4404c68bd47c18cf8506f92c3c7
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer

@@ -52,7 +52,7 @@ func gateGuardObserver(live func() *config.Config, readers func(repo string) rul
 	return func(ctx context.Context, repo string, _ []byte) {
 		cfg := live()
 		r := cfg.RepositoryFor(repo)
-		if r == nil || !r.Merge.GateStatus {
+		if r == nil || !r.Merge.PostsGateStatus() {
 			return
 		}
 		rr := readers(repo)

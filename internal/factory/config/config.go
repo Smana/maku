@@ -311,7 +311,7 @@ type GitHub struct {
 	MergerAppIDFile string `json:"mergerAppIDFile,omitempty"`
 	MergerKeyFile   string `json:"mergerKeyFile,omitempty"`
 	// The agents App's pair (v4 D12): both files or neither. It mints the runs' tokens and, with
-	// hardening's minter, the publisher's. runTokens.appIDFile and privateKeyFile are its aliases.
+	// hardening's minter, the publisher's.
 	AgentsAppIDFile string `json:"agentsAppIDFile,omitempty"`
 	AgentsKeyFile   string `json:"agentsKeyFile,omitempty"`
 }
@@ -322,25 +322,15 @@ func (c *Config) MergerFolded() bool {
 	return c.GitHub.MergerAppIDFile != "" && c.GitHub.MergerAppIDFile == c.GitHub.AppIDFile
 }
 
-// RunTokens names the App whose installation tokens fill the run-controller's agent-git (write) and
-// agent-git-read (read) Secrets, for every served repository of one owner. Interim: replaced by the
-// per-run minter, v4 D10 (rollout step 3).
+// RunTokens has the factory mint each run's git token from the agents App (v4 D10). Enabled names
+// the agents App outside the demo; PerRun is required with it, since v4 step 8 removed the shared
+// agent-git writer.
 type RunTokens struct {
-	Enabled        bool   `json:"enabled,omitempty"`
-	AppIDFile      string `json:"appIDFile,omitempty"`
-	PrivateKeyFile string `json:"privateKeyFile,omitempty"`
-	// PerRun mints one token per run instead of the two shared Secrets (v4 D10): each run's own
-	// <run name>-git, for its repository and role from the minter's role table. The run-controller
-	// must mount it (runController.gitTokens perRun).
+	Enabled bool `json:"enabled,omitempty"`
+	// PerRun mints one token per run (v4 D10): each run's own <run name>-git, for its repository and
+	// role from the minter's role table, which the run-controller mounts unless a demo names a
+	// laptop's PAT (runController.gitSecret).
 	PerRun bool `json:"perRun,omitempty"`
-}
-
-// agentsApp resolves the agents App's pair: github.agents* over the runTokens aliases (D12).
-func (c *Config) agentsApp() (appIDFile, keyFile string) {
-	if c.GitHub.AgentsAppIDFile != "" {
-		return c.GitHub.AgentsAppIDFile, c.GitHub.AgentsKeyFile
-	}
-	return c.RunTokens.AppIDFile, c.RunTokens.PrivateKeyFile
 }
 
 // RunTokenApp is the App the run token writer mints from: the agents App when runTokens is
@@ -348,8 +338,7 @@ func (c *Config) agentsApp() (appIDFile, keyFile string) {
 func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 	switch {
 	case c.RunTokens.Enabled:
-		id, key := c.agentsApp()
-		return id, key, true
+		return c.GitHub.AgentsAppIDFile, c.GitHub.AgentsKeyFile, true
 	case c.Demo:
 		return c.GitHub.AppIDFile, c.GitHub.PrivateKeyFile, true
 	}
@@ -360,15 +349,9 @@ func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 // it apart from the factory's (D12).
 func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	t, g := c.RunTokens, c.GitHub
-	// D12: the agents App's pair, and its runTokens alias, each name one App or none.
+	// D12: the agents App's pair names one App or none.
 	if (g.AgentsAppIDFile == "") != (g.AgentsKeyFile == "") {
 		bad("github.agentsAppIDFile and github.agentsKeyFile are both set or both empty")
-	}
-	if g.AgentsAppIDFile != "" && t.AppIDFile != "" && g.AgentsAppIDFile != t.AppIDFile {
-		bad("github.agentsAppIDFile and runTokens.appIDFile name different Apps")
-	}
-	if g.AgentsKeyFile != "" && t.PrivateKeyFile != "" && g.AgentsKeyFile != t.PrivateKeyFile {
-		bad("github.agentsKeyFile and runTokens.privateKeyFile name different keys")
 	}
 	if c.Demo && !t.Enabled && g.AgentsAppIDFile != "" { // RunTokenApp would mint from the factory's
 		bad("demo: github.agentsAppIDFile names an agents App the demo would not mint from: set runTokens.enabled, or leave it unset")
@@ -383,15 +366,18 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 		if !c.Demo && c.AgentsLogin != "" && strings.EqualFold(c.AgentsLogin, c.FactoryLogin) {
 			bad("runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two")
 		}
-		if id, _ := c.agentsApp(); !c.Demo && id != "" && id == g.AppIDFile {
+		if id := g.AgentsAppIDFile; !c.Demo && id != "" && id == g.AppIDFile {
 			bad("runTokens.perRun: the agents App is the factory App; D12 needs two")
 		}
 	}
 	if !t.Enabled {
 		return
 	}
-	if id, key := c.agentsApp(); id == "" || key == "" {
-		bad("runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile (or runTokens.appIDFile and runTokens.privateKeyFile)")
+	if !t.PerRun {
+		bad("runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8 (docs/upgrading.md#the-shared-git-token)")
+	}
+	if g.AgentsAppIDFile == "" || g.AgentsKeyFile == "" {
+		bad("runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile")
 	}
 }
 
@@ -634,7 +620,7 @@ func (c *Config) AnyCheckReruns() bool {
 // AnyGateStatus reports whether any repository posts the gate's commit status, which needs the
 // merger App's statuses: write.
 func (c *Config) AnyGateStatus() bool {
-	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.GateStatus })
+	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.PostsGateStatus() })
 }
 
 // Poll is how often each loop runs.
@@ -691,11 +677,13 @@ type Merge struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
-	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
+	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request,
+	// maku/merge-gate; nil means true (v4 step 8). Read it through PostsGateStatus.
 	// +optional
-	GateStatus bool `json:"gateStatus,omitempty"`
-	// PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
-	// the status branch protection requires (D11); nil means true.
+	GateStatus *bool `json:"gateStatus,omitempty"`
+	// PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step
+	// 8). Without it maku/merge-gate is the status branch protection requires, which needs
+	// gateStatus. Read it through UsesPolicyBot.
 	// +optional
 	PolicyBot *bool `json:"policyBot,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
@@ -745,8 +733,11 @@ type Breaker struct {
 	RecoverAfter int `json:"recoverAfter,omitempty"`
 }
 
-// UsesPolicyBot reports whether the gate goes through policy-bot: true unless policyBot is false.
-func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot }
+// UsesPolicyBot reports whether the gate goes through policy-bot: only when policyBot is true (D11).
+func (m Merge) UsesPolicyBot() bool { return m.PolicyBot != nil && *m.PolicyBot }
+
+// PostsGateStatus reports whether the factory posts maku/merge-gate: unless gateStatus is false.
+func (m Merge) PostsGateStatus() bool { return m.GateStatus == nil || *m.GateStatus }
 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
@@ -1797,8 +1788,13 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 // legacyKeys are the single-repository shape's top-level keys (v2 D1), removed in v4 step 8 (R7).
 var legacyKeys = []string{"repository", "maintainers", "triggerLabel", "controlIssue", "classes", "merge", "schedules"}
 
+// removedRunTokenKeys are runTokens' aliases of the agents App's pair, removed in v4 step 8 (D12),
+// with the key that replaced each.
+var removedRunTokenKeys = [][2]string{{"appIDFile", "github.agentsAppIDFile"}, {"privateKeyFile", "github.agentsKeyFile"}}
+
 // refuseLegacy names each single-repository key j holds at its top level, with the Repository
-// object that replaced it, so the file fails on what it means rather than on an unknown field.
+// object that replaced it, and each removed runTokens alias, with its github.agents* key, so the
+// file fails on what it means rather than on an unknown field.
 func refuseLegacy(j []byte) error {
 	var top map[string]json.RawMessage
 	if json.Unmarshal(j, &top) != nil {
@@ -1809,6 +1805,14 @@ func refuseLegacy(j []byte) error {
 		if _, ok := top[k]; ok {
 			errs = append(errs, fmt.Errorf("%s is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, "+
 				"which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)", k))
+		}
+	}
+	var rt map[string]json.RawMessage
+	if raw, ok := top["runTokens"]; ok && json.Unmarshal(raw, &rt) == nil {
+		for _, k := range removedRunTokenKeys {
+			if _, ok := rt[k[0]]; ok {
+				errs = append(errs, fmt.Errorf("runTokens.%s was removed in v4 step 8: set %s (docs/upgrading.md#the-old-app-keys)", k[0], k[1]))
+			}
 		}
 	}
 	return errors.Join(errs...)
@@ -2266,10 +2270,10 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if m := r.Merge; !slices.Contains(m.RequiredChecks, m.LeakScanCheck) || !slices.Contains(m.VerifyChecks, m.LeakScanCheck) {
 		bad("merge.leakScanCheck %q must be in merge.requiredChecks and merge.verifyChecks (R42)", r.Merge.LeakScanCheck)
 	}
-	if c.Demo && !r.Merge.GateStatus {
+	if c.Demo && !r.Merge.PostsGateStatus() {
 		bad("demo: merge.gateStatus must be true, or no gate verdict reaches the pull request")
 	}
-	if !r.Merge.UsesPolicyBot() && !r.Merge.GateStatus && !c.Demo { // the demo's own rule above names it
+	if !r.Merge.UsesPolicyBot() && !r.Merge.PostsGateStatus() && !c.Demo { // the demo's own rule above names it
 		bad("merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires")
 	}
 	if !r.Merge.UsesPolicyBot() {

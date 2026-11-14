@@ -35,7 +35,7 @@ func runTokenSecret(run *v1alpha1.AgentRun, exp time.Time, mut ...func(*corev1.S
 func TestEnvtestPerRunToken(t *testing.T) {
 	e := startEnv(t)
 	e.modelSecret(t)
-	e.r.Cfg.GitTokens, e.r.Cfg.GitReadSecret = GitTokensPerRun, ""
+	e.r.Cfg.GitSecret = "" // no laptop PAT: each run mounts its own
 
 	ready := func(t *testing.T, name string) *metav1.Condition {
 		t.Helper()

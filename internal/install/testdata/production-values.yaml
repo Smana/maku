@@ -34,7 +34,7 @@ maku-factory:
       existingSecret: agents-app
     merger:
       mode: separate
-  mergerSecret: merger-app
+      existingSecret: merger-app
   api:
     tls:
       secretName: factory-api-tls

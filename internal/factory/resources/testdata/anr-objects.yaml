@@ -164,6 +164,8 @@ spec:
       - "Check the documentation links 🔗"
     contractCheck: "Test contract 🧪"  # required on a task with a contract (TF8, row 2b); report-only otherwise
     policyBotLogin: ogenki-merge-gate[bot]
+    policyBot: true  # the pre-v4 defaults, written out as ANR does
+    gateStatus: false
     mergerLogin: ogenki-agent-merger[bot]
     autoMergesPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
     fixRuns: 2
@@ -222,6 +224,8 @@ spec:
     requiredChecks: [validate, lint]
     verifyChecks: [validate, lint]
     policyBotLogin: ogenki-merge-gate[bot]
+    policyBot: true  # the pre-v4 defaults, written out as ANR does
+    gateStatus: false
     mergerLogin: ogenki-agent-merger[bot]
     autoMergesPerDay: 2
     fixRuns: 1
@@ -267,6 +271,8 @@ spec:
     requiredChecks: [validate, leak-scan]
     verifyChecks: [validate, leak-scan]
     policyBotLogin: ogenki-merge-gate[bot]
+    policyBot: true  # the pre-v4 defaults, written out as ANR does
+    gateStatus: false
     mergerLogin: ogenki-agent-merger[bot]
     autoMergesPerDay: 5
     fixRuns: 1
@@ -303,6 +309,8 @@ spec:
     requiredChecks: [build]
     verifyChecks: [build]
     policyBotLogin: ogenki-merge-gate[bot]
+    policyBot: true  # the pre-v4 defaults, written out as ANR does
+    gateStatus: false
     mergerLogin: ogenki-agent-merger[bot]
     autoMergesPerDay: 5
     fixRuns: 1

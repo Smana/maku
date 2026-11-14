@@ -5,7 +5,7 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
-    "demoValues": {"description": "The demo marker (v4 step 8, R4): admits runController.model.mode secret.", "type": "boolean"},
+    "demoValues": {"description": "The demo marker (v4 step 8, R4, Q14): admits runController.model.mode secret and runController.gitSecret, a laptop's one PAT.", "type": "boolean"},
     "broker": {
       "type": "object",
       "additionalProperties": true,
@@ -146,11 +146,10 @@
       "properties": {
         "runtimeClassName": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set sandbox.runtimeClassName (docs/upgrading.md#the-run-paths-old-keys)"]},
         "allowUnsandboxed": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set sandbox.unsafeAllowRunc (docs/upgrading.md#the-run-paths-old-keys)"]},
-        "gitTokens": {
-          "description": "Where a run's git token comes from (D10): shared (gitSecret and gitReadSecret) or perRun (each run's own Secret, minted by the factory).",
-          "type": "string",
-          "enum": ["shared", "perRun"]
-        },
+        "gitSecret": {"description": "Demo-only (demoValues): a laptop's one PAT, which every role mounts. Empty: each run mounts its own token, minted by the factory (D10).", "type": "string"},
+        "gitTokens": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: each run mounts its own token; a laptop's PAT is runController.gitSecret with demoValues (docs/upgrading.md#the-shared-git-token)"]},
+        "gitReadSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: each run mounts its own token, minted for its role (docs/upgrading.md#the-shared-git-token)"]},
+        "unsafeSharedGitToken": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: a laptop's PAT is runController.gitSecret with demoValues (docs/upgrading.md#the-shared-git-token)"]},
         "tracing": {
           "description": "Run traces (v4 D21): the OTLP/HTTP endpoint each run's harness exports its span to, and the collector's pods its policy opens the endpoint's port to.",
           "type": "object",

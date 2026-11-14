@@ -29,7 +29,8 @@ func (f *fakeTokens) For(repo string) (forge.TokenSource, error) {
 func enforcingConfig(repos map[string]config.HardeningRepository) *config.Config {
 	cfg := &config.Config{AgentsLogin: "ogenki-agents[bot]", FactoryLogin: "ogenki-agent-factory[bot]",
 		Hardening: config.Hardening{Mode: hardening.ModeAudit, Repositories: repos, Publisher: config.Publisher{Minter: true}},
-		RunTokens: config.RunTokens{Enabled: true, PerRun: true, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}}
+		RunTokens: config.RunTokens{Enabled: true, PerRun: true},
+		GitHub:    config.GitHub{AgentsAppIDFile: "/a/app_id", AgentsKeyFile: "/a/private_key"}}
 	cfg.Hardening.ApplyDefaults()
 	return cfg
 }

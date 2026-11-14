@@ -52,8 +52,8 @@ func appIdentities(cfg *config.Config, read func(string) (int64, error)) (folded
 		}
 	}
 	agentsFile, _, agentsOK := cfg.RunTokenApp()
-	// Under perRun only, as the config's login and path rules (D25: step 2's shared writer keeps
-	// starting); the same path is already the config's refusal.
+	// Under perRun only, as the config's login and path rules; the same path is already the
+	// config's refusal.
 	agentsOK = agentsOK && cfg.RunTokens.PerRun && !cfg.Demo && agentsFile != cfg.GitHub.AppIDFile
 	if mergerID > 0 || agentsOK {
 		if factoryID, err = read(cfg.GitHub.AppIDFile); err != nil {

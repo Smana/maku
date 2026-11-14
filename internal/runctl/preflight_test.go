@@ -31,10 +31,10 @@ func fakeReader(t *testing.T, objs ...client.Object) client.WithWatch {
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(append(gitSecrets(), objs...)...).Build()
 }
 
-// gitSecrets are testConfig's two git Secrets, filled: the preflight's gitSecrets check passes.
+// gitSecrets are testConfig's git Secret (the laptop PAT), filled: the gitSecrets check passes.
 func gitSecrets() []client.Object {
 	var out []client.Object
-	for _, n := range []string{"agent-git", "agent-git-read"} {
+	for _, n := range []string{"agent-git"} {
 		out = append(out, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: n, Namespace: "agents"}, Data: map[string][]byte{"token": []byte("t")}})
 	}
 	return out
@@ -207,7 +207,7 @@ func TestPreflightNeedsLeaderElection(t *testing.T) {
 // ExternalSecret, may fill it right after install), and checks again soon. The gauge reads 0.
 func TestPreflightGitSecrets(t *testing.T) {
 	noRead := fakeReader(t, gvisor())
-	if err := noRead.Delete(t.Context(), gitSecrets()[1]); err != nil {
+	if err := noRead.Delete(t.Context(), gitSecrets()[0]); err != nil {
 		t.Fatal(err)
 	}
 	empty := fakeReader(t, gvisor())
@@ -218,8 +218,8 @@ func TestPreflightGitSecrets(t *testing.T) {
 		c    client.Reader
 		want string
 	}{
-		"no read Secret": {noRead, `Secret agents/agent-git-read not found: reviewer and triager runs mount it (runController.gitReadSecret); create it with a token key`},
-		"no token key":   {empty, `Secret agents/agent-git has no token key: implementer and tester runs mount it (runController.gitSecret)`},
+		"no Secret":    {noRead, `Secret agents/agent-git not found: every role's runs mount it (runController.gitSecret); create it with a token key`},
+		"no token key": {empty, `Secret agents/agent-git has no token key: every role's runs mount it (runController.gitSecret)`},
 	} {
 		p := newPreflight(t, tc.c, testConfig(t))
 		gauge := map[string]bool{}
@@ -241,15 +241,5 @@ func TestPreflightGitSecrets(t *testing.T) {
 	}
 	if p.Tick(t.Context()); p.Result().State != PreflightFailed || p.Result().Check != "runtimeClass" {
 		t.Fatalf("missing class and Secret: %+v", p.Result())
-	}
-	// unsafeSharedGitToken: one Secret, and no read Secret is looked for.
-	cfg := testConfig(t)
-	cfg.GitReadSecret, cfg.UnsafeSharedGitToken = "", true
-	if err := noRead.Create(t.Context(), gvisor()); err != nil {
-		t.Fatal(err)
-	}
-	p = newPreflight(t, noRead, cfg)
-	if p.Tick(t.Context()); p.Result().State != PreflightPassed {
-		t.Fatalf("shared token: %+v", p.Result())
 	}
 }

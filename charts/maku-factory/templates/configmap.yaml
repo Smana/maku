@@ -37,6 +37,9 @@
 {{- end -}}
 {{- $_ := set $cfg "github" $gh -}}
 {{- end -}}
+{{- if and .Values.runTokens.enabled (not .Values.runTokens.perRun) -}}
+{{- fail "runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8, and each run's token is minted for it (docs/upgrading.md#the-shared-git-token)" -}}
+{{- end -}}
 {{- if and .Values.runTokens.perRun (not .Values.runTokens.enabled) (not .Values.demo) -}}
 {{- fail "runTokens.perRun needs runTokens.enabled: the agents App in apps.agents.existingSecret mints each run's token (the demo mints from the factory's)" -}}
 {{- end -}}
@@ -45,10 +48,8 @@
 {{- fail "config.runTokens and runTokens.enabled: set runTokens.enabled alone; the chart writes config.runTokens to read the mounted App" -}}
 {{- end -}}
 {{- $rt := dict -}}
-{{- if and .Values.runTokens.enabled $apps.agents -}}
+{{- if .Values.runTokens.enabled -}}
 {{- $rt = dict "enabled" true -}}
-{{- else if .Values.runTokens.enabled -}}
-{{- $rt = dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key" -}}
 {{- end -}}
 {{- if .Values.runTokens.perRun -}}
 {{- $_ := set $rt "perRun" true -}}

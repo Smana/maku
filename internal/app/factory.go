@@ -61,7 +61,6 @@ import (
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
-	"github.com/Smana/maku/internal/factory/runtoken"
 	"github.com/Smana/maku/internal/factory/statuswriter"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
@@ -269,33 +268,6 @@ func apiAudience(a config.API) func() string {
 	return func() string { return aud }
 }
 
-// runTokens keeps the run-controller's two git Secrets filled with tokens from the App
-// cfg.RunTokenApp names (the factory's own in the demo), on the served repositories: nil when the
-// factory writes no run token. served is read at each mint: the set is live (factory resources D12).
-// Interim: replaced by the per-run minter, v4 D10 (rollout step 3).
-func runTokens(cfg *config.Config, served func() []string, c client.Client, log *slog.Logger) ([]*runtoken.Writer, error) {
-	appIDFile, keyFile, ok := cfg.RunTokenApp()
-	if !ok {
-		return nil, nil
-	}
-	if _, _, err := oneOwner(served()); err != nil {
-		return nil, err
-	}
-	hc := httpx.New(githubTimeout, nil)
-	ws := runtoken.Writers(c, cfg.Runs.Namespace, func(ctx context.Context, perms map[string]string) (forge.Token, error) {
-		owner, names, err := oneOwner(served())
-		if err != nil {
-			return forge.Token{}, err
-		}
-		return forge.Mint(ctx, hc, githubAPIURL(), forge.MintOptions{AppIDFile: appIDFile, KeyFile: keyFile,
-			Owner: owner, Repositories: names, Permissions: perms})
-	}, log)
-	for _, w := range ws {
-		w.Every = 30 * time.Minute
-	}
-	return ws, nil
-}
-
 // agentsMinter mints from the App cfg.RunTokenApp names, the agents App (the factory's own in the
 // demo), with its own installation cache: nil when the config names none.
 func agentsMinter(cfg *config.Config, met *fmetrics.Set, log *slog.Logger) *minter.Minter {
@@ -314,8 +286,8 @@ func agentsMinter(cfg *config.Config, met *fmetrics.Set, log *slog.Logger) *mint
 
 // perRunTokens is the per-run minter (v4 D10, runTokens.perRun): one token per run, for its
 // repository and role, from the App cfg.RunTokenApp names, written as the run's own Secret. nil
-// when runTokens.perRun is off: the shared writer, if any, stays (D25). Installations are looked up
-// per repository, so the shared writer's one-owner limit does not apply.
+// when runTokens.perRun is off (a demo's laptop PAT, or no run token). Installations are looked up
+// per repository, so one App installation may serve several owners.
 func perRunTokens(cfg *config.Config, current func() *config.Config, c client.Client, runsCache, ledgers client.Reader, ns string, met *fmetrics.Set, log *slog.Logger) *minter.RunTokens {
 	if !cfg.RunTokens.PerRun {
 		return nil
@@ -788,14 +760,6 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	if perRun != nil {
 		runnables = append(runnables, perRun)
-	} else {
-		tokens, err := runTokens(cfg, conns.names, ledgers, log)
-		if err != nil {
-			return err
-		}
-		for _, w := range tokens {
-			runnables = append(runnables, w)
-		}
 	}
 	// One issue poller per served repository, following the set as publishes change it (D12).
 	pollers := &intake.Pollers{Log: log, New: func(name string) (*intake.IssuePoller, bool) {

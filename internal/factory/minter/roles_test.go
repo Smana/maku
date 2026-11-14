@@ -183,15 +183,14 @@ func TestDocsTable(t *testing.T) {
 }
 
 // No code outside this package builds a run's permission map: the pull_requests: write and
-// contents: write literals left are the factory's and the merger's own sets, step 2's shared
-// writer, the demo App's manifest and the verdict poster's scope, each pinned to its count so a
+// contents: write literals left are the factory's and the merger's own sets, the demo App's
+// manifest and the verdict poster's scope, each pinned to its count so a
 // new literal in an exempt file fails too.
 func TestOneRoleTable(t *testing.T) {
 	exempt := map[string]int{
-		"factory/forge/app.go":         4, // the factory App's pull_requests; the merger's contents and pull_requests; MintOptions' doc example
-		"factory/runtoken/runtoken.go": 2, // step 2's shared writer, deleted at step 8
-		"app/maku_demo_app.go":         2, // the demo App's manifest
-		"github/app.go":                1, // the verdict poster's scope
+		"factory/forge/app.go": 4, // the factory App's pull_requests; the merger's contents and pull_requests; MintOptions' doc example
+		"app/maku_demo_app.go": 2, // the demo App's manifest
+		"github/app.go":        1, // the verdict poster's scope
 	}
 	re := regexp.MustCompile(`"(pull_requests|contents)":\s*"write"`)
 	root := "../.."

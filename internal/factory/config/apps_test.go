@@ -18,12 +18,10 @@ func withAgentsApp(body, id, key string) string {
 
 const agentsID, agentsKey = "/etc/agent-factory-agents/app_id", "/etc/agent-factory-agents/private_key"
 
-// D12: github.agentsAppIDFile and agentsKeyFile name the agents App. runTokens' own pair stays an
-// alias; RunTokenApp resolves the new pair over the old, and two different Apps are refused.
+// D12: github.agentsAppIDFile and agentsKeyFile name the agents App, which RunTokenApp mints from.
 func TestAgentsAppNamesTheRunTokenApp(t *testing.T) {
 	for name, body := range map[string]string{
-		"the agents pair alone":     withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true}\n",
-		"the same App under both":   withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, appIDFile: " + agentsID + ", privateKeyFile: " + agentsKey + "}\n",
+		"the agents pair alone":     withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, perRun: true}\n",
 		"per run, the agents alone": withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, perRun: true}\n",
 	} {
 		c, err := Parse([]byte(body))
@@ -46,14 +44,15 @@ func TestAgentsAppNamesTheRunTokenApp(t *testing.T) {
 
 func TestAgentsAppRefusals(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
-		"different Apps": {withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, appIDFile: /x/app_id, privateKeyFile: /x/private_key}\n",
-			"github.agentsAppIDFile and runTokens.appIDFile name different Apps"},
-		"a different key": {withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, appIDFile: " + agentsID + ", privateKeyFile: /x/private_key}\n",
-			"github.agentsKeyFile and runTokens.privateKeyFile name different keys"},
+		// v4 step 8: runTokens' aliases of the pair are removed, each refused naming its replacement.
+		"the removed appIDFile alias": {withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, appIDFile: " + agentsID + "}\n",
+			"runTokens.appIDFile was removed in v4 step 8: set github.agentsAppIDFile (docs/upgrading.md#the-old-app-keys)"},
+		"the removed privateKeyFile alias": {withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, privateKeyFile: " + agentsKey + "}\n",
+			"runTokens.privateKeyFile was removed in v4 step 8: set github.agentsKeyFile (docs/upgrading.md#the-old-app-keys)"},
 		"half a pair": {withAgentsApp(good, agentsID, "''"),
 			"github.agentsAppIDFile and github.agentsKeyFile are both set or both empty"},
 		"no App at all": {good + portable + "runTokens: {enabled: true}\n",
-			"runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile (or runTokens.appIDFile and runTokens.privateKeyFile)"},
+			"runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile"},
 		"per run, the agents App is the factory's": {withAgentsApp(good, "/etc/agent-factory-github/app_id", "/etc/agent-factory-github/private_key") + portable + "runTokens: {enabled: true, perRun: true}\n",
 			"runTokens.perRun: the agents App is the factory App; D12 needs two"},
 		// Review of #510: the demo mints from its factory App unless runTokens.enabled, so a named

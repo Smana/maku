@@ -5,6 +5,10 @@
 # chart, and the factory's GitHub is the stub. Every id, key and endpoint belongs to the throwaway cluster.
 maku:
   enabled: true
+  # Only the factory creates AgentRuns: it mints a token for every run it can account for (plan PR4).
+  agentRunPolicies:
+    creators: ["system:serviceaccount:maku:agent-factory"]
+    factoryServiceAccount: agent-factory
   sandbox: {runtimeClassName: gvisor}
   # The runs namespace exists before the factory is installed alone (its Role lives there), as on a
   # platform that owns it: the script creates it.
@@ -38,7 +42,10 @@ maku-factory:
   replicas: 1
   apps:
     factory: {existingSecret: agent-factory-github}
+    # The agents App mints each run's token (D10, D12): v4 step 8 removed the shared agent-git writer.
+    agents: {existingSecret: agent-factory-agents}
     merger: {mode: factory}
+  runTokens: {enabled: true, perRun: true}
   extraEnv:
     - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
     - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
@@ -50,7 +57,7 @@ maku-factory:
   config:
     factory: production-e2e
     factoryLogin: maku-demo[bot]
-    agentsLogin: maku-demo[bot]
+    agentsLogin: maku-demo-agents[bot]
     roomsURL: https://rooms.e2e.test
     broker:
       url: https://room-broker.maku.svc.cluster.local:8443

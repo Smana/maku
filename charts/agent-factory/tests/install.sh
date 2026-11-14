@@ -423,14 +423,6 @@ EOF
   install_umbrella
 fi
 
-if [[ $NETPOL != none ]]; then
-  # The preflight checks the git Secrets before the network: the dummy App never fills them, so the
-  # network legs fill both with a dummy token right away, before the run-controller's first tick.
-  for s in agent-git agent-git-read; do
-    kubectl -n agents create secret generic "$s" --from-literal=token=dummy-not-a-token >/dev/null
-  done
-fi
-
 step "readiness"
 if [[ -z $EXTERNAL_DB ]]; then
   kubectl -n "$NS" rollout status sts/rooms-db --timeout=180s

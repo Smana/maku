@@ -124,16 +124,14 @@ func TestHardeningSettings(t *testing.T) {
 // runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
 func TestHardeningSettingsTokenSource(t *testing.T) {
 	runs := "runs: {group: maku.ogenki.io}\n"
-	shared := "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
 	for name, tc := range map[string]struct {
 		file      string
 		src       hardening.TokenSource
 		pubMinter bool
 	}{
 		"nothing configured":   {good, hardening.TokenSourceShared, false},
-		"per-run tokens":       {good + perRunTokens, hardening.TokenSourceMinter, false},
-		"the minter publishes": {good + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
-		"the shared writer":    {good + runs + shared, hardening.TokenSourceShared, false},
+		"per-run tokens":       {agentsGood + perRunTokens, hardening.TokenSourceMinter, false},
+		"the minter publishes": {agentsGood + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
 		"no run token":         {good + runs, hardening.TokenSourceShared, false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -283,7 +281,10 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 const enforcePublisher = "  publisher: {minter: true}\n"
 
 // perRunTokens gives each run its own token from the agents App (v4 D10).
-const perRunTokens = "runTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+const perRunTokens = "runTokens: {enabled: true, perRun: true}\n"
+
+// agentsGood is good with the agents App that runTokens mints from (D12).
+var agentsGood = withAgentsApp(good, "/a/app_id", "/a/private_key")
 
 // H2 enforces the non-code outputs per repository (HR10): a repository's list is a superset of the
 // central one, push is enforceable from H3, and a list needs audit at least and a publisher.
@@ -314,7 +315,7 @@ func TestEnforceOutputs(t *testing.T) {
 		"a zero answer wait":            {"hardening:\n  mode: audit\n  applier: {answerWait: 0s}\n", "hardening.applier.answerWait"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_, err := Parse([]byte(good + tc.block))
+			_, err := Parse([]byte(agentsGood + tc.block))
 			switch {
 			case tc.want == "" && err != nil:
 				t.Fatal(err)
@@ -338,7 +339,7 @@ func TestEnforcedFor(t *testing.T) {
 	if a := c.Hardening.Applier; a.Interval.Duration != 2*time.Second || a.AnswerWait.Duration != 5*time.Minute {
 		t.Fatalf("applier defaults %+v", a)
 	}
-	c, err = Parse([]byte(good + perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+	c, err = Parse([]byte(agentsGood + perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [labels, pr, issue, comment, pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +364,7 @@ func TestEnforcedFor(t *testing.T) {
 func TestHashCoversEnforce(t *testing.T) {
 	parse := func(block string) Hardening {
 		t.Helper()
-		c, err := Parse([]byte(good + perRunTokens + block))
+		c, err := Parse([]byte(agentsGood + perRunTokens + block))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -396,22 +397,21 @@ func TestHashCoversEnforce(t *testing.T) {
 // could still write directly. The factory refuses to start unless the runs get per-run tokens.
 func TestUnscopedTokenRefused(t *testing.T) {
 	block := "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher
-	app := "appIDFile: /a/app_id, privateKeyFile: /a/private_key"
 	for name, tc := range map[string]struct {
 		file    string
 		refused bool
 	}{
-		"no run tokens":          {good + "runTokens: {enabled: true, " + app + "}\n" + block, true},
+		"no per-run tokens":      {agentsGood + "runTokens: {enabled: true}\n" + block, true},
 		"nothing enforced there": {good + "hardening: {mode: audit}\n", false},
-		"per-run tokens":         {good + "runTokens: {enabled: true, perRun: true, " + app + "}\n" + block, false},
+		"per-run tokens":         {agentsGood + "runTokens: {enabled: true, perRun: true}\n" + block, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.file))
 			if (err != nil) != tc.refused {
 				t.Fatalf("err %v, want refused %v", err, tc.refused)
 			}
-			if tc.refused && (!strings.Contains(err.Error(), "HR13") || strings.Contains(err.Error(), "XR")) {
-				t.Fatalf("err %v does not name HR13 alone", err)
+			if tc.refused && (!strings.Contains(err.Error(), "runTokens.perRun") || strings.Contains(err.Error(), "XR")) {
+				t.Fatalf("err %v does not ask for runTokens.perRun", err)
 			}
 		})
 	}
@@ -427,7 +427,7 @@ func TestEnforcePush(t *testing.T) {
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [push]}}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(good + perRunTokens + block))
+			c, err := Parse([]byte(agentsGood + perRunTokens + block))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -436,7 +436,7 @@ func TestEnforcePush(t *testing.T) {
 			}
 		})
 	}
-	c, err := Parse([]byte(good + perRunTokens + "hardening:\n" + enforcePublisher +
+	c, err := Parse([]byte(agentsGood + perRunTokens + "hardening:\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -448,11 +448,11 @@ func TestEnforcePush(t *testing.T) {
 
 func TestHashCoversPush(t *testing.T) {
 	base := "hardening:\n" + enforcePublisher + "  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr%s]}}\n"
-	a, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, "")))
+	a, err := Parse([]byte(agentsGood + perRunTokens + fmt.Sprintf(base, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, ", push")))
+	b, err := Parse([]byte(agentsGood + perRunTokens + fmt.Sprintf(base, ", push")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -501,16 +501,16 @@ const enforceAll = "hardening:\n  mode: audit\n  repositories: {Smana/cloud-nati
 // with fewer types, or with no broker principal.
 func TestModeEnforce(t *testing.T) {
 	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
-	if _, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker))); err != nil {
+	if _, err := Parse([]byte(withAPI(agentsGood+perRunTokens+enforceAll, broker))); err != nil {
 		t.Fatalf("enforce on the run-controller: %v", err)
 	}
 	for name, tc := range map[string]struct{ cfg, want string }{
-		"four types":      {withAPI(good+perRunTokens+strings.Replace(enforceAll, "pr, push", "pr", 1), broker), "all five output types"},
-		"no broker":       {good + perRunTokens + enforceAll, "system:broker"},
-		"central enforce": {withAPI(good+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
+		"four types":      {withAPI(agentsGood+perRunTokens+strings.Replace(enforceAll, "pr, push", "pr", 1), broker), "all five output types"},
+		"no broker":       {agentsGood + perRunTokens + enforceAll, "system:broker"},
+		"central enforce": {withAPI(agentsGood+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
 		// The factory's run-token ticker revokes each per-run token at the run's end, from outside
 		// the sandbox: under forge-api: deny the harness cannot. A shared token is refused (HR13).
-		"a shared token": {withAPI(good+"runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"+enforceAll, broker), "runTokens.perRun"},
+		"a shared token": {withAPI(agentsGood+"runTokens: {enabled: true}\n"+enforceAll, broker), "runTokens.perRun"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -524,7 +524,7 @@ func TestModeEnforce(t *testing.T) {
 func TestReadFilterFact(t *testing.T) {
 	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
 	parse := func() *Config {
-		c, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker)))
+		c, err := Parse([]byte(withAPI(agentsGood+perRunTokens+enforceAll, broker)))
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -45,7 +45,6 @@ const (
 	GeneratedUmbrella  Generated = "umbrella"
 	GeneratedDemoModel Generated = "demo-model"
 	GeneratedDemoApp   Generated = "demo-app"
-	GeneratedFactory   Generated = "factory"
 	// GeneratedCertManager: cert-manager's Certificate writes it when the chart's issuerRef is set.
 	GeneratedCertManager Generated = "cert-manager"
 )
@@ -68,9 +67,8 @@ type Seam struct {
 	// ValuesKey is the chart's key in the umbrella's values when its alias differs (maku-slack is
 	// slack); "" is Chart.
 	ValuesKey string    `json:"valuesKey,omitempty"`
-	Value     string    `json:"value"`           // its values path in that chart; "" is a fixed name
-	Alias     string    `json:"alias,omitempty"` // an older values path, read when Value is empty
-	Default   string    `json:"default"`         // the name when the values set none; "" is none
+	Value     string    `json:"value"`   // its values path in that chart; "" is a fixed name
+	Default   string    `json:"default"` // the name when the values set none; "" is none
 	Namespace Namespace `json:"namespace"`
 	Keys      []Key     `json:"keys"`
 	ReadAs    ReadAs    `json:"readAs"`
@@ -139,19 +137,16 @@ var Seams = []Seam{
 	{ID: "runModel", Component: "run pods", Chart: "maku", Value: "runController.modelSecret", Default: "agent-model", Namespace: Runs,
 		Keys:   []Key{{Name: "base_url", Required: true}, {Name: "model", Required: true}, {Name: "api_key", Required: true}, {Name: "judge_model"}},
 		ReadAs: Env, Generated: GeneratedDemoModel, Doc: "The runs' model, in `runController.model.mode` secret"},
-	{ID: "runGit", Component: "run pods", Chart: "maku", Value: "runController.gitSecret", Default: "agent-git", Namespace: Runs,
-		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Generated: GeneratedFactory, Doc: "The runs' write token, which the factory writes"},
-	{ID: "runGitRead", Component: "run pods", Chart: "maku", Value: "runController.gitReadSecret", Default: "agent-git-read", Namespace: Runs,
-		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Generated: GeneratedFactory, Doc: "The reviewer's and the triager's read token, which the factory writes"},
-	{ID: "factoryApp", Component: "agent-factory", Chart: "maku-factory", Value: "apps.factory.existingSecret", Alias: "githubSecret",
+	{ID: "runGit", Component: "run pods", Chart: "maku", Value: "runController.gitSecret", Namespace: Runs,
+		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Optional: true,
+		Doc: "A laptop's one PAT, which every role mounts (demo-only: `demoValues`). Unset, each run mounts its own token, which the factory mints"},
+	{ID: "factoryApp", Component: "agent-factory", Chart: "maku-factory", Value: "apps.factory.existingSecret",
 		Default: "agent-factory-github", Namespace: Release, Keys: githubApp, ReadAs: File, MountPath: "/etc/agent-factory-github",
 		Generated: GeneratedDemoApp, Doc: "The factory App"},
-	{ID: "mergerApp", Component: "agent-factory", Chart: "maku-factory", Value: "mergerSecret", Default: "agent-factory-merger", Namespace: Release,
+	{ID: "mergerApp", Component: "agent-factory", Chart: "maku-factory", Value: "apps.merger.existingSecret", Default: "agent-factory-merger", Namespace: Release,
 		Keys: githubApp, ReadAs: File, MountPath: "/etc/agent-factory-merger", Optional: true, MountOptional: true, Doc: "The merger App (`apps.merger.mode` separate)"},
 	{ID: "agentsApp", Component: "agent-factory", Chart: "maku-factory", Value: "apps.agents.existingSecret", Namespace: Release,
 		Keys: githubApp, ReadAs: File, MountPath: "/etc/agent-factory-agents", Optional: true, Doc: "The agents App: each run's token and the publisher's"},
-	{ID: "runTokenApp", Component: "agent-factory", Chart: "maku-factory", Value: "runTokens.appSecret", Namespace: Release,
-		Keys: githubApp, ReadAs: File, MountPath: "/etc/agent-factory-run-tokens", Optional: true, Doc: "The agents App by its older key (`runTokens.enabled`)"},
 	{ID: "factoryOIDC", Component: "agent-factory", Chart: "maku-factory", Value: "oidcSecret", Default: "agent-factory-oidc", Namespace: Release,
 		Keys: []Key{{Name: "<client>", Doc: "one key per file `config.api.clientIDFiles` names"}}, DynamicKeys: true, ReadAs: File,
 		MountPath: "/etc/agent-factory-oidc", Doc: "The client ids the run API accepts human tokens from (ids, not secrets)"},
@@ -203,9 +198,6 @@ func Table() string {
 		value := "(fixed)"
 		if s.Value != "" {
 			value = "`" + s.Value + "`"
-			if s.Alias != "" {
-				value += ", else `" + s.Alias + "`"
-			}
 		}
 		value += " (" + s.Chart + ")"
 		def := "none"
@@ -285,9 +277,6 @@ func Names(umbrella map[string]any) map[string]string {
 			continue
 		}
 		name, _ := dig(vals, s.Value).(string)
-		if name == "" && s.Alias != "" {
-			name, _ = dig(vals, s.Alias).(string)
-		}
 		if name == "" {
 			name = s.Default
 		}

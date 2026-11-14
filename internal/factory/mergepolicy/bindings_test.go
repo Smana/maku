@@ -33,7 +33,7 @@ func boundCentral() (*config.Config, *config.Repository) {
 		"revert":      {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 1},
 		"alert-rules": {Spec: config.PolicySpec{Class: config.Class{Description: "Tunes an alert rule.", MaxModifiedLines: 40}, Requires: []string{"allowedFiles"}}, Generation: 2},
 	}
-	rc := config.Repository{Name: "o/r", Merge: config.Merge{PolicyBotLogin: "gate[bot]"}}
+	rc := config.Repository{Name: "o/r", Merge: config.Merge{PolicyBotLogin: "gate[bot]", PolicyBot: new(true)}}
 	c.Repositories = []config.Repository{rc}
 	return c, &c.Repositories[0]
 }

@@ -72,7 +72,7 @@ mode on one GitHub App (`maku-factory.apps.merger.mode: factory` folds the merge
 production install runs two Apps, see [GitHub Apps](../../docs/github-apps.md)). The two Secrets come
 from `demo.model` (`agent-model`, in the runs namespace) and `demo.githubApp` (`agent-factory-github`,
 or the name in `maku-factory.apps.factory.existingSecret`), or exist already (`existingSecret`, which
-must carry the name the subchart reads). `agent-git` and `agent-git-read` (the run tokens) are the factory's to write. To point it at your repository, copy
+must carry the name the subchart reads). Each run's git token, `<run>-git`, is the factory's to write. To point it at your repository, copy
 [`values-mine.example.yaml`](values-mine.example.yaml): Helm replaces a list whole, so a values file
 must restate the whole `maku-factory.config.repositories[0]` entry, not one field of it. The
 placeholders to change are `name` (`owner/repo`), `maintainers`, `merge.mergerLogin`,

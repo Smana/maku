@@ -48,7 +48,7 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 		snap, _ := approvalSnapshot()
 		g := cutOverRig(t, snap, nil)
 		g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
-		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 		f := &laterFailingGrants{fakeGrants{list: []grant.Grant{rigGrant()}}}
 		g.r.Grants = f
 		files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
@@ -67,7 +67,7 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 
 	t.Run("an integration hold", func(t *testing.T) {
 		g, parent := holdRig(t, false)
-		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 		g.pass(t, parent.Name, headH1)
 		g.r.Client = &racingClient{Client: g.c, parent: parent.Name, race: func() {
 			p, _ := g.coordTask(t, parent.Name)
@@ -93,7 +93,7 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+			g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 			g.f.SetChecks(12, green("SUCCESS"))
 			g.f.RefuseMerge("PR_12", refusal)
 			g.reconcile(t, "3buqdlot", 1)
@@ -103,7 +103,7 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 
 	t.Run("a merge call that fails", func(t *testing.T) {
 		g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 		g.f.SetChecks(12, green("SUCCESS"))
 		g.f.RefuseMerge("PR_12", errors.New("502"))
 		if _, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}}); err == nil {
@@ -117,7 +117,7 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 // fails and the next one tries again.
 func TestAFailedArmStatusAbortsTheMerge(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetStatusError(errors.New("403: statuses: write"))
 	if _, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}}); err == nil {

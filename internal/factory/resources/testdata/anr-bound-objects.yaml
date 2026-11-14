@@ -197,8 +197,10 @@ spec:
     contractCheck: "Test contract \U0001F9EA"
     fixRuns: 2
     fluxSource: flux-system/flux-system
+    gateStatus: false
     leakScanCheck: "Security scanning \U0001F512"
     mergerLogin: ogenki-agent-merger[bot]
+    policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
     requiredChecks:
     - "Pre-commit checks \U0001F6C3"
@@ -296,8 +298,10 @@ spec:
       window: 10
     checkReruns: 0
     fixRuns: 1
+    gateStatus: false
     leakScanCheck: lint
     mergerLogin: ogenki-agent-merger[bot]
+    policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
     requiredChecks:
     - validate
@@ -358,8 +362,10 @@ spec:
       window: 10
     checkReruns: 0
     fixRuns: 1
+    gateStatus: false
     leakScanCheck: leak-scan
     mergerLogin: ogenki-agent-merger[bot]
+    policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
     requiredChecks:
     - validate
@@ -409,8 +415,10 @@ spec:
       window: 10
     checkReruns: 0
     fixRuns: 1
+    gateStatus: false
     leakScanCheck: build
     mergerLogin: ogenki-agent-merger[bot]
+    policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
     requiredChecks:
     - build

@@ -8,7 +8,7 @@
 const SAYS: Record<string, string> = {
   unsafe_allow_runc: "Runs are not sandboxed: sandbox.unsafeAllowRunc is set.",
   network_policy_none: "Nothing confines a run's network: network policies are off.",
-  shared_git_token: "Every role shares one write token: runController.unsafeSharedGitToken is set.",
+  shared_git_token: "Every role shares one write token: runController.gitSecret names a laptop PAT.",
   model_key_in_sandbox: "The model provider's key sits in every run's sandbox: runController.model.mode is secret.",
   private_code_unacknowledged: "A private repository is served without spec.privateCode.acknowledged: true. " +
     "That field states the code is sent to the configured models, which are usually SaaS. " +

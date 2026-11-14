@@ -1349,8 +1349,9 @@ What the observer does not see:
   `evaluate` ruleset ever count, 1 would mean "would be required" while nothing blocks. Set the
   gate's ruleset to `active`, and check it there.
 
-**Retiring policy-bot, in order:**
-1. Set `merge.gateStatus: true`, with the merger App granted `statuses: write`.
+**Retiring policy-bot, in order** (for a repository that set `merge.policyBot: true` and
+`merge.gateStatus: false`, as installs before v4 step 8 did by default):
+1. Set `merge.gateStatus: true` (or remove it), with the merger App granted `statuses: write`.
 2. Watch `maku/merge-gate` beside `policy-bot: main` for a week
    (`maku_factory_merge_decisions_total` per verdict).
 3. Move the `.policy.yml` gate list into each class's `deny.protectedFiles`
@@ -1358,12 +1359,12 @@ What the observer does not see:
    from merging.
 4. Create the gate's ruleset above.
 5. Remove `policy-bot: main` from the normal ruleset.
-6. Set `merge.policyBot: false`. `merge.policyBotLogin` may then be removed.
+6. Set `merge.policyBot: false` (or remove it). `merge.policyBotLogin` may then be removed.
 
 **policy-bot remains an optional integration.** Keep it when a repository wants rules for pull
 requests the factory does not decide, such as its approval rules for human-authored pull requests:
-the factory posts `maku/merge-gate` only on agent pull requests. With `merge.policyBot` unset or true,
-the gate reads `policy-bot: main` as before.
+the factory posts `maku/merge-gate` only on agent pull requests. With `merge.policyBot: true` the
+gate reads `policy-bot: main` as before.
 
 ### Adopted classes
 
@@ -2461,7 +2462,7 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` takes `checks`, `testFirst`, `harness`, `harnessAllowed` and `escalation` only here, and is bound only `"off"` in a [repository's file](merge-policies.md#a-binding); its `harness` is always the floor. `harness` (the floor profile), `harnessAllowed` (the variants the scoper may recommend) and `escalation: {outOfBudget, notConverged}` (a group's step, a profile of `harnessAllowed`) are refused when a name is not in `harnessProfiles`, when a variant has fewer roles, sets a template the floor leaves to triage, has a lower tier (compared when both set one) or drops the `scope` or `judge` of the row the floor runs (a profile without `loop` runs the class's row; an active row's judge defaults to `tier-light`), when a floor or variant has `testFirst` and the repository no `merge.contractCheck`, and on a `live` or `shadow` class with `harnessAllowed` or `escalation`; without `harness` the class runs as before | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required unless `policyBot: false`), `policyBot` (false drops policy-bot from the gate and needs `gateStatus: true`, so `maku/merge-gate` is the status branch protection requires; nil is true), `gateStatus` (true posts the gate's verdict as a commit status on the pull request; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required with `policyBot: true`), `policyBot` (true routes the gate through policy-bot, an opt-in, D11; unset is false, so `maku/merge-gate` is the status branch protection requires, which needs `gateStatus`), `gateStatus` (posts the gate's verdict as the commit status `maku/merge-gate` on the pull request; unset is true; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
 `api.repositories`, the run-request API's allowlist, is the entries' names.
@@ -2481,11 +2482,12 @@ changes exactly this:
 
 `demo: true` also requires `merge.gateStatus: true` on every repository.
 
-`merge.policyBot: false` is not the demo's alone (D11). In any profile it needs
-`merge.gateStatus: true`, since without policy-bot `maku/merge-gate` is the status branch
+Without policy-bot (`merge.policyBot` unset or false, the default since v4 step 8, D11) a
+repository needs `merge.gateStatus` left on, since `maku/merge-gate` is then the status branch
 protection requires (see [Branch protection for the merge gate](#branch-protection-for-the-merge-gate)),
-and `merge.policyBotLogin` may then be empty (a value that is set must still be a bot login).
-With `merge.policyBot: false`, every live class of the repository needs `allowedFiles`: policy-bot's gate-path human row goes with it, and nothing else keeps a gate path from merging.
+and `merge.policyBotLogin` may be empty (a value that is set must still be a bot login). Every live
+class of the repository then needs `allowedFiles`: policy-bot's gate-path human row is not there,
+and nothing else keeps a gate path from merging. `merge.policyBot: true` opts back into policy-bot.
 
 **A gate path is never the gate's to merge, approval or not** (policy-bot's S9, kept without it).
 With `merge.policyBot: false`, the gate paths are the `protectedFiles` of every class of the
@@ -2512,18 +2514,13 @@ actions and metadata read). `statuses: write` is the merger's alone: the run tok
 it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
 A token minted for a narrower profile asks for a subset, which an App holding the union grants.
 
-**The shared run tokens (`runController.gitTokens: shared`, the default).** The demo before v4 step
-3, or `runTokens.enabled` without `perRun`, has the factory keep the run-controller's two git Secrets in the
-runs namespace filled with installation tokens, renewed every 30 minutes and ten minutes before
-expiry (a failed mint keeps the old Secret): `agent-git`, the write token implementer and tester
-runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
-served repository of one owner. The demo mints from the factory's App; `runTokens: {enabled,
-appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
-`/etc/agent-factory-run-tokens`), and is refused without both files.
-
-**Per-run tokens (v4 D10; the demo's since step 3).** `runTokens.perRun` (with `runTokens.enabled`,
-or the demo's factory App) and `runController.gitTokens: perRun` give every run its own token
-instead:
+**Per-run tokens (v4 D10; the only factory-written tokens since v4 step 8).** `runTokens.perRun`
+(with `runTokens.enabled`, or the demo's factory App) gives every run its own token, which the
+run-controller mounts whenever `runController.gitSecret` is empty. `runTokens.enabled` mints from the
+agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
+`apps.agents.existingSecret` writes), and is refused without `perRun` or without both files. The
+shared `agent-git` and `agent-git-read` writer is removed; a laptop's one PAT
+(`runController.gitSecret`, demo-only) is the only shared token left:
 
 ```mermaid
 sequenceDiagram
@@ -2689,13 +2686,11 @@ budget to resume it (`resume_budget`) or a deleted claim escalate as any run's. 
 default answers bounces the task to the issue's author (`needs_author`); a task without an issue
 takes the scoper's first assumption instead.
 
-- **Read-only at the token level.** Under `runTokens.perRun` the triager's token is minted from
-  the role table's triager row, which grants reads only: the run cannot push or open anything,
-  whatever its brief says. With the shared tokens the run-controller mounts
-  `runController.gitReadSecret` for reviewer and triager runs, and refuses them without it unless
-  `unsafeSharedGitToken` (a laptop's one PAT) is set. It also refuses a scoper run without the
-  room tools (`broker.roomTools.auth: tokenreview`), since the scoper hands off with
-  `room_handoff`.
+- **Read-only at the token level.** The triager's token is minted from the role table's triager
+  row, which grants reads only: the run cannot push or open anything, whatever its brief says. The
+  one exception is a demo's laptop PAT, `runController.gitSecret`, which every role shares. It also
+  refuses a scoper run without the room tools (`broker.roomTools.auth: tokenreview`), since the
+  scoper hands off with `room_handoff`.
 - **The scope has one source.** The factory takes it only from the triager's handoff to the
   implementer, on the current scoper run, and validates it again (the broker stored it redacted).
   A scope on any other handoff is ignored, and the task proceeds unscoped (`missing`). It reaches

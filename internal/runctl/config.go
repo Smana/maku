@@ -37,15 +37,6 @@ const (
 	NetworkPolicyKubernetes = "kubernetes"
 )
 
-// The values of Config.GitTokens (v4 step 3, D10).
-const (
-	// GitTokensShared mounts gitSecret, or gitReadSecret for a read-only role: one token for every run.
-	GitTokensShared = "shared"
-	// GitTokensPerRun mounts each run's own Secret, <run name>-git, which the factory's minter writes
-	// for that run's repository and role.
-	GitTokensPerRun = "perRun"
-)
-
 // Config is the run-controller's file, from the chart.
 type Config struct {
 	Namespace        string `json:"namespace"`
@@ -66,16 +57,11 @@ type Config struct {
 	// default). It is refused in gateway mode, where the gateway holds the keys.
 	ModelSecret string `json:"modelSecret,omitempty"`
 	// Model is how runs reach a model: secret (ModelSecret) or gateway (v4 step 4, D7).
-	Model     ModelConfig `json:"model,omitzero"`
-	GitSecret string      `json:"gitSecret"`
-	// GitReadSecret is the read-only token reviewer and triager runs mount (PR2); gitSecret is the
-	// write token implementer and tester runs mount. Unset, those roles are refused unless
-	// UnsafeSharedGitToken lets them share gitSecret, as a laptop's one PAT does.
-	GitReadSecret        string `json:"gitReadSecret,omitempty"`
-	UnsafeSharedGitToken bool   `json:"unsafeSharedGitToken,omitempty"`
-	// GitTokens is "shared" (default: gitSecret and gitReadSecret) or "perRun" (each run mounts
-	// <run name>-git, minted by the factory for its repository and role, plan PR3).
-	GitTokens      string              `json:"gitTokens,omitempty"`
+	Model ModelConfig `json:"model,omitzero"`
+	// GitSecret is a laptop's one PAT, which every role mounts (the chart admits it only with
+	// demoValues, v4 step 8 Q14). Empty, the product path: each run mounts its own Secret,
+	// <run name>-git, which the factory mints for its repository and role (D10).
+	GitSecret      string              `json:"gitSecret,omitempty"`
 	Broker         Broker              `json:"broker"`
 	Images         Images              `json:"images"`
 	EgressProfiles map[string][]string `json:"egressProfiles,omitempty"`
@@ -330,6 +316,9 @@ func LoadConfig(path string) (Config, error) {
 	if err != nil {
 		return c, fmt.Errorf("config: %w", err)
 	}
+	if err := refuseRemoved(raw); err != nil {
+		return c, fmt.Errorf("config %s: %w", path, err)
+	}
 	if err := yaml.UnmarshalStrict(raw, &c); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -338,9 +327,6 @@ func LoadConfig(path string) (Config, error) {
 	}
 	if c.NetworkPolicy == "" {
 		c.NetworkPolicy = NetworkPolicyCilium
-	}
-	if c.GitTokens == "" {
-		c.GitTokens = GitTokensShared
 	}
 	if c.DNS.Namespace == "" && len(c.DNS.Labels) == 0 {
 		c.DNS = DNS{Namespace: "kube-system", Labels: map[string]string{"k8s-app": "kube-dns"}}
@@ -373,24 +359,6 @@ func (c Config) validate() error {
 	}
 	req("namespace", c.Namespace)
 	errs = append(errs, c.model()...)
-	switch c.GitTokens {
-	case GitTokensShared:
-		req("gitSecret", c.GitSecret)
-		if c.GitReadSecret != "" && c.UnsafeSharedGitToken {
-			errs = append(errs, errors.New("gitReadSecret and unsafeSharedGitToken: choose one"))
-		}
-	case GitTokensPerRun:
-		// Each run mounts its own Secret: a shared read token or the unsafe shared one would be a
-		// second, unscoped source.
-		if c.GitReadSecret != "" {
-			errs = append(errs, errors.New("gitTokens perRun and gitReadSecret: choose one"))
-		}
-		if c.UnsafeSharedGitToken {
-			errs = append(errs, errors.New("gitTokens perRun and unsafeSharedGitToken: choose one"))
-		}
-	default:
-		errs = append(errs, fmt.Errorf("gitTokens %q must be %q or %q", c.GitTokens, GitTokensShared, GitTokensPerRun))
-	}
 	req("broker.namespace", c.Broker.Namespace)
 	req("broker.caSecret", c.Broker.CASecret)
 	req("images.harness", c.Images.Harness)
@@ -507,9 +475,6 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 			return why
 		}
 	}
-	if !c.PerRun() && readOnly(r.Spec.Role) && c.GitReadSecret == "" && !c.UnsafeSharedGitToken {
-		return fmt.Sprintf("role %s needs a read-only token: set runController.gitReadSecret (or unsafeSharedGitToken on a laptop)", r.Spec.Role)
-	}
 	if scoperRun(r) && c.RoomToolsURL == "" {
 		return "a scoper hands off with room_handoff: set broker.roomTools.auth tokenreview"
 	}
@@ -527,34 +492,44 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 	return ""
 }
 
-// readOnlyRoles mount gitReadSecret: they read the repository and never push, as the role table's
-// rows for them grant contents: read.
-var readOnlyRoles = []string{"reviewer", "triager"}
-
-func readOnly(role string) bool { return slices.Contains(readOnlyRoles, role) }
-
 // scoperRun is a triager whose brief opens with the factory's scoper marker (harness roles HR2).
 func scoperRun(r *v1alpha1.AgentRun) bool {
 	return r.Spec.Role == "triager" && strings.HasPrefix(r.Spec.Task.Text, runs.ScoperMarkerPrefix)
 }
 
-// PerRun is that each run mounts its own token Secret (gitTokens perRun).
-func (c Config) PerRun() bool { return c.GitTokens == GitTokensPerRun }
+// PerRun is that each run mounts its own token Secret: no laptop PAT is configured.
+func (c Config) PerRun() bool { return c.GitSecret == "" }
 
-// GitSecretFor is the git Secret run mounts. In perRun mode it is the run's own, <run name>-git,
-// whatever the role: the factory minted it for that role. Otherwise it is gitReadSecret for a
-// read-only role, or gitSecret under unsafeSharedGitToken; gitSecret for the others. A read-only
-// role with neither gets "": Invalid refuses it first, and a path that skipped Invalid builds a
-// pod that cannot mount, never one holding the write token.
+// GitSecretFor is the git Secret run mounts: the run's own, <run name>-git, whatever the role (the
+// factory minted it for that role), or the laptop's one PAT, gitSecret, which every role shares.
 func (c Config) GitSecretFor(r *v1alpha1.AgentRun) string {
-	switch {
-	case c.PerRun():
+	if c.PerRun() {
 		return runwatch.RunTokenSecret(r.Name)
-	case !readOnly(r.Spec.Role) || c.UnsafeSharedGitToken:
-		return c.GitSecret
-	default:
-		return c.GitReadSecret
 	}
+	return c.GitSecret
+}
+
+// removedKeys are the shared-token keys removed in v4 step 8, each with what replaced it.
+var removedKeys = [][2]string{
+	{"gitTokens", "each run mounts its own token; drop the key"},
+	{"gitReadSecret", "each run mounts its own token, minted for its role; drop the key"},
+	{"unsafeSharedGitToken", "a laptop's one PAT is gitSecret alone"},
+}
+
+// refuseRemoved names each removed key raw sets, so a stale file fails on what it meant rather
+// than on an unknown field.
+func refuseRemoved(raw []byte) error {
+	var top map[string]any
+	if yaml.Unmarshal(raw, &top) != nil {
+		return nil // the strict decode reports it
+	}
+	var errs []error
+	for _, k := range removedKeys {
+		if _, ok := top[k[0]]; ok {
+			errs = append(errs, fmt.Errorf("%s was removed in v4 step 8: %s (docs/upgrading.md#the-shared-git-token)", k[0], k[1]))
+		}
+	}
+	return errors.Join(errs...)
 }
 
 // ForgeAPIHost is GitHub's API, which a run annotated forge-api: deny never reaches (HR36): it reads

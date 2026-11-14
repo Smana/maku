@@ -12,6 +12,10 @@
 
 maku:
   enabled: true
+  # Only the factory creates AgentRuns: it mints each run's git token (D10, plan PR4).
+  agentRunPolicies:
+    creators: ["system:serviceaccount:maku:agent-factory"]       # CHANGE: the release namespace
+    factoryServiceAccount: agent-factory
   broker:
     image: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: the release's maku-broker
     publicURL: https://rooms.example.com                         # CHANGE: the web's host
@@ -63,6 +67,9 @@ maku-factory:
   # The factory App's Secret (keys app_id, private_key; docs/github-apps.md#the-factory-app).
   apps:
     factory: {existingSecret: agent-factory-github}
+    # The agents App (keys app_id, private_key; docs/github-apps.md#the-agents-app): each run's token.
+    agents: {existingSecret: agent-factory-agents}
+  runTokens: {enabled: true, perRun: true}
   config:
     factory: production
     factoryLogin: my-factory[bot]                                # CHANGE: the factory App's slug

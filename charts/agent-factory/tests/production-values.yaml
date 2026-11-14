@@ -2,6 +2,9 @@
 # seam of maku and maku-factory named and nothing exposed. The images' digests come from the script.
 maku:
   enabled: true
+  agentRunPolicies:
+    creators: ["system:serviceaccount:maku:agent-factory"]
+    factoryServiceAccount: agent-factory
   broker:
     publicURL: https://rooms.example.test
     human:
@@ -30,6 +33,9 @@ maku:
         aliases: {public: [agent-default]}
 maku-factory:
   enabled: true
+  apps:
+    agents: {existingSecret: agent-factory-agents}
+  runTokens: {enabled: true, perRun: true}
   config:
     api:
       humanIssuer: https://idp.example.test

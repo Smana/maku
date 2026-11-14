@@ -54,6 +54,8 @@ repositories:
       verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Kubernetes validation ☸", "Check the shell scripts 💻", "Check the documentation links 🔗"]
       leakScanCheck: "Security scanning 🔒"
       policyBotLogin: ogenki-merge-gate[bot]
+      policyBot: true  # the pre-v4 defaults, written out as ANR does
+      gateStatus: false
       mergerLogin: ogenki-agent-merger[bot]
       autoMergesPerDay: 10
       fixRuns: 2

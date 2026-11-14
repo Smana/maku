@@ -92,7 +92,7 @@ func TestScopesAreRefused(t *testing.T) {
 }
 
 // D5: the run-controller enforces the scoper's read-only token and its room_handoff path itself
-// (runctl's Invalid: gitReadSecret, roomToolsURL), where the token is chosen; the factory no longer
+// (the per-run token minted for its role; runctl's Invalid: roomToolsURL), where the token is chosen; the factory no longer
 // refuses the scoper on the portable runtime, demo or not (its split is refused there: TestSplitIsRefusedOnThePortableRuntime).
 func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	for _, loops := range []string{

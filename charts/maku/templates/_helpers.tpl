@@ -61,6 +61,26 @@ schema refuses them, and so does this helper under --skip-schema-validation. */}
 {{- dict "class" $class "allowUnsandboxed" ($s.unsafeAllowRunc | default false) | toJson -}}
 {{- end -}}
 
+{{/* The laptop's one PAT (v4 step 8, Q14), as JSON {"name": runController.gitSecret, "" for none}:
+demo-only. The removed shared-token keys fail here, as the schema refuses them, so a render under
+--skip-schema-validation names their replacement too. */}}
+{{- define "ap.gitSecret" -}}
+{{- $c := .Values.runController -}}
+{{- if hasKey $c "gitTokens" -}}
+{{- fail "runController.gitTokens was removed in v4 step 8: each run mounts its own token; a laptop's PAT is runController.gitSecret with demoValues (docs/upgrading.md#the-shared-git-token)" -}}
+{{- end -}}
+{{- if hasKey $c "gitReadSecret" -}}
+{{- fail "runController.gitReadSecret was removed in v4 step 8: each run mounts its own token, minted for its role (docs/upgrading.md#the-shared-git-token)" -}}
+{{- end -}}
+{{- if hasKey $c "unsafeSharedGitToken" -}}
+{{- fail "runController.unsafeSharedGitToken was removed in v4 step 8: a laptop's PAT is runController.gitSecret with demoValues (docs/upgrading.md#the-shared-git-token)" -}}
+{{- end -}}
+{{- if and $c.gitSecret (not .Values.demoValues) -}}
+{{- fail "runController.gitSecret is demo-only (v4 step 8): every role would share one PAT, so a reviewer could push. Leave it empty, and each run mounts its own token from maku-factory's runTokens.perRun; or set demoValues: true for a demo (values-quickstart.yaml); docs/upgrading.md#the-shared-git-token" -}}
+{{- end -}}
+{{- dict "name" ($c.gitSecret | default "") | toJson -}}
+{{- end -}}
+
 {{/* The install's unsafe settings (v4 D18, plan PR9), as a JSON list of the broker's bounded codes
 (config.Unsafe*): read it with `include "ap.unsafe" . | fromJsonArray`. Only the run-controller's
 settings count, so an install without it (the XR) lists none and renders as before. */}}
@@ -70,7 +90,7 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- $sb := include "ap.sandbox" . | fromJson -}}
 {{- if and (not $sb.class) $sb.allowUnsandboxed -}}{{- $codes = append $codes "unsafe_allow_runc" -}}{{- end -}}
 {{- if eq (include "ap.netMode" .) "none" -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
-{{- if .Values.runController.unsafeSharedGitToken -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
+{{- if (include "ap.gitSecret" . | fromJson).name -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
 {{- if not (include "ap.runModelGateway" . | fromJson) -}}{{- $codes = append $codes "model_key_in_sandbox" -}}{{- end -}}
 {{- end -}}
 {{- $codes | toJson -}}

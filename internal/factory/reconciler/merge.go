@@ -211,7 +211,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	// immediately before the merge call; every other decision is posted now, on agent pull requests
 	// only (owner ruling). An adopted pull request gets the merger's success alone, just before its
 	// merge, so the status is accurate whether or not the gate's ruleset lets the merger bypass it.
-	armStatus := r.repo(cfg, t).Merge.GateStatus
+	armStatus := r.repo(cfg, t).Merge.PostsGateStatus()
 	gateStatus := armStatus && !adopted
 	if gateStatus && d.Verdict != "arm" {
 		_ = r.postGateStatus(ctx, t, pr.HeadSHA, checks, d)
@@ -1306,7 +1306,7 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 	// whether or not the gate's ruleset lets the merger bypass it. A rollback is never held on it:
 	// a failed post is logged, and the merger's bypass carries the merge.
 	revert := ArmDecision{Verdict: "arm", Matched: "revert"}
-	if rc.Merge.GateStatus {
+	if rc.Merge.PostsGateStatus() {
 		_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", revert)
 	}
 	switch err := r.merger(ctx).Merge(ctx, pr.NodeID, pr.HeadSHA); {
@@ -1314,12 +1314,12 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 		t.Status.Narrated = append(t.Status.Narrated, "revert-end-merged")
 		return true, nil
 	case errors.Is(err, forge.ErrHeadMoved), errors.Is(err, forge.ErrNotMergeable):
-		if rc.Merge.GateStatus {
+		if rc.Merge.PostsGateStatus() {
 			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
 		}
 		return false, nil // the stall clock still runs: a revert GitHub refuses goes to a maintainer
 	default:
-		if rc.Merge.GateStatus {
+		if rc.Merge.PostsGateStatus() {
 			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
 		}
 		return false, err

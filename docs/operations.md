@@ -241,7 +241,7 @@ result; one that may cure itself right after install is retried from 10 s, doubl
 | Check | Passes when | When it does not |
 |---|---|---|
 | `runtimeClass` | The sandbox RuntimeClass exists (skipped under `sandbox.unsafeAllowRunc`) | Failed: new runs are refused, `RuntimeClass "<name>" not found` |
-| `gitSecrets` | `gitSecret`, and `gitReadSecret` when set, exist with a `token` key | Waiting: new runs stay Pending with the message |
+| `gitSecrets` | a laptop's PAT, `gitSecret`, when set (demo only), exists with a `token` key | Waiting: new runs stay Pending with the message |
 | `network` (`networkPolicies.mode kubernetes`) | A probe pod, `<namePrefix>preflight-<8 characters>` in the runs namespace, held by a run's own NetworkPolicy under the sandbox class, reaches the broker's 8443 and CONNECTs `github.com:443` through the egress proxy, and three denied targets each time out or are refused twice, 3 s apart: the broker's 9090, the apiserver (`kubernetes.default.svc:443`) and `github.com:443` dialled directly. The last two only the run's egress rules deny, so a CNI that enforces ingress alone fails | A denied target answered: Failed, `deny <host:port> connected: the CNI does not enforce NetworkPolicy`, checked again in 10 minutes. A positive control failed (the proxy or the broker still starting): Waiting, retried soon. The probe pod did not start in 2 minutes: Failed, `the probe pod did not start under RuntimeClass "<name>": <its last event>` |
 
 - **Before the first result** new runs wait Pending, `PreflightPending`, retried every 10 s.
@@ -478,8 +478,8 @@ carries the `safe-outputs` annotation, and only step 4 writes it. Listing the re
 leaves the first enforced tasks waiting unanswered (no publisher token).
 
 1. **The Maku release** runs on the cluster. With `enforceOutputs` empty it changes nothing.
-2. **The tokens.** The runs get per-run tokens (`runTokens: {enabled: true, perRun: true}` and
-   `runController.gitTokens: perRun`), and the factory's config sets `hardening.publisher.minter:
+2. **The tokens.** The runs get per-run tokens (`runTokens: {enabled: true, perRun: true}`, with
+   `runController.gitSecret` left empty), and the factory's config sets `hardening.publisher.minter:
    true`: the factory mints the publisher's token from the agents App with the role table's
    publisher row. The agents App is installed on the repository and grants every permission of the
    [role table](factory.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and

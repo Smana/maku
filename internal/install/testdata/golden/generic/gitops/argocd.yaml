@@ -160,8 +160,6 @@ spec:
           preflight:
             enabled: true
           runController:
-            gitReadSecret: ""
-            gitTokens: perRun
             image:
               tag: v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
             images:

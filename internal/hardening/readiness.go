@@ -140,7 +140,7 @@ func (e Evaluator) policies(s Settings, repository string) (writes, publisher bo
 			writes = writes || GrantsWrite(roles[role])
 		}
 	} else {
-		writes = true // the shared writer's token grants contents and pull_requests write
+		writes = true // a shared token (a laptop PAT) grants contents and pull_requests write
 	}
 	return writes, s.PublisherMinter && GrantsWrite(pub)
 }

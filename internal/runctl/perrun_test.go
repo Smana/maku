@@ -13,7 +13,7 @@ import (
 func perRunConfig(t *testing.T) Config {
 	t.Helper()
 	c := testConfig(t)
-	c.GitTokens, c.GitReadSecret = GitTokensPerRun, ""
+	c.GitSecret = "" // no laptop PAT: each run mounts its own
 	return c
 }
 
@@ -51,32 +51,14 @@ func TestPodPerRunGolden(t *testing.T) {
 	golden(t, "pod-perrun.golden.yaml", Pod(goRun(), perRunConfig(t), testModel, "abcdefgh"))
 }
 
-func TestLoadConfigGitTokens(t *testing.T) {
-	noRead := strings.Replace(goodConfig, "gitReadSecret: agent-git-read\n", "", 1)
-	for name, tc := range map[string]struct {
-		file, want, err string
-	}{
-		"default":           {goodConfig, GitTokensShared, ""},
-		"shared":            {goodConfig + "gitTokens: shared\n", GitTokensShared, ""},
-		"perRun":            {noRead + "gitTokens: perRun\n", GitTokensPerRun, ""},
-		"perRun, no shared": {strings.Replace(noRead, "gitSecret: agent-git\n", "", 1) + "gitTokens: perRun\n", GitTokensPerRun, ""},
-		"perRun with read":  {goodConfig + "gitTokens: perRun\n", "", "gitTokens perRun and gitReadSecret: choose one"},
-		"perRun with unsafe": {noRead + "gitTokens: perRun\nunsafeSharedGitToken: true\n", "",
-			"gitTokens perRun and unsafeSharedGitToken: choose one"},
-		"unknown": {goodConfig + "gitTokens: mine\n", "", `gitTokens "mine" must be "shared" or "perRun"`},
-	} {
-		t.Run(name, func(t *testing.T) {
-			c, err := cfgFrom(t, tc.file)
-			if tc.err != "" {
-				if err == nil || !strings.Contains(err.Error(), tc.err) {
-					t.Fatalf("err %v, want %q", err, tc.err)
-				}
-				return
-			}
-			if err != nil || c.GitTokens != tc.want {
-				t.Fatalf("gitTokens %q err %v, want %q", c.GitTokens, err, tc.want)
-			}
-		})
+// Without gitSecret, the product path: every run mounts its own Secret.
+func TestLoadConfigPerRunIsTheDefault(t *testing.T) {
+	c, err := cfgFrom(t, strings.Replace(goodConfig, "gitSecret: agent-git\n", "", 1))
+	if err != nil || !c.PerRun() {
+		t.Fatalf("perRun %v err %v", c.PerRun(), err)
+	}
+	if c, err := cfgFrom(t, goodConfig); err != nil || c.PerRun() {
+		t.Fatalf("gitSecret set: perRun %v err %v", c.PerRun(), err)
 	}
 }
 

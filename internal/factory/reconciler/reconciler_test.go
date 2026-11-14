@@ -420,7 +420,7 @@ func cfg() *config.Config {
 			// The merge gate reads these; a config without them would make CIState vacuously green.
 			Merge: config.Merge{RequiredChecks: []string{"Pre-commit checks", "Kubernetes validation"},
 				VerifyChecks:   []string{"Pre-commit checks", "Kubernetes validation"},
-				PolicyBotLogin: "ogenki-merge-gate[bot]", MergerLogin: "ogenki-agent-merger[bot]",
+				PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), // the pre-v4 defaults, explicit MergerLogin: "ogenki-agent-merger[bot]",
 				AutoMergesPerDay: 10, FixRuns: 2,
 				VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 				// R41: a validated config always carries a breaker; the zero value would demote every class.

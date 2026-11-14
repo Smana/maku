@@ -286,6 +286,8 @@ YAML
   k -n "$NS" create secret tls room-broker-tls --cert="$work/broker.crt" --key="$work/broker.key" >/dev/null
   for s in room-broker-ca openbao-ca; do k -n "$NS" create secret generic "$s" --from-file=ca.crt="$work/ca.crt" >/dev/null; done
   k -n "$NS" create secret generic agent-factory-github --from-literal=app_id=1 --from-file=private_key="$work/app.pem" >/dev/null
+  # The agents App (D12): a second id, as the factory refuses an agents App that is its own.
+  k -n "$NS" create secret generic agent-factory-agents --from-literal=app_id=2 --from-file=private_key="$work/app.pem" >/dev/null
   k -n "$NS" create secret generic agent-factory-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli >/dev/null
 
   step "production: a plain postgres:16 outside the chart, bootstrapped with docs/database.md"

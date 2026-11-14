@@ -467,6 +467,11 @@ func (in *Merge) DeepCopyInto(out *Merge) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.GateStatus != nil {
+		in, out := &in.GateStatus, &out.GateStatus
+		*out = new(bool)
+		**out = **in
+	}
 	if in.PolicyBot != nil {
 		in, out := &in.PolicyBot, &out.PolicyBot
 		*out = new(bool)
