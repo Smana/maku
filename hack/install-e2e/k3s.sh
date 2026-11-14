@@ -22,7 +22,10 @@ h() { "$HELM" --kube-context "$CTX" "$@"; }
 
 cluster_create() {
   ! k3d cluster get "$NAME" >/dev/null 2>&1 || die "cluster $NAME already exists; refusing to adopt or delete it"
+  # anonymous-auth=true: the discovery binding (overlay.yaml) admits an unauthenticated JWKS read only
+  # once the apiserver lets the request reach authorization (docs/gateway.md, as install.sh's k3d legs).
   k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait --k3s-arg '--disable=servicelb@server:0' \
+    --k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0' \
     --kubeconfig-update-default=false --kubeconfig-switch-context=false >/dev/null
   k3d kubeconfig get "$NAME" >"$KUBECONFIG"
 }

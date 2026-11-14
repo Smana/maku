@@ -35,6 +35,12 @@ maku-factory:
   extraVolumeMounts:
     - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
 maku-gateway:
+  identity:
+    jwks:
+      # kind's and k3s's issuer is the in-cluster API server, whose JWKS the broker and agentgateway
+      # read with no credential: Kubernetes' documented discovery binding (docs/gateway.md). The
+      # wizard does not ask for it (this PR's finding); a cloud issuer does not need it.
+      allowAnonymousDiscovery: true
   providers:
     # The stub's plain-http port, as install.sh's echo provider.
     custom:
