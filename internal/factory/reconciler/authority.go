@@ -62,8 +62,7 @@ func (p gatePolicy) loadError() string {
 }
 
 // decideUnder is the gate's decision: DecideArm on the central config, or, for a cut-over
-// repository, DecideArmUnder on the class its policy declares, every branch of any and its
-// requiresApproval subset (one evaluator, MP16). The record binds the decision to the policy's
+// repository, DecideArmUnder on the class its policy binds and its requiresApproval subset (one evaluator, MP16). The record binds the decision to the policy's
 // hash. A policy that gives no authority pauses: the fixed base is still decided first.
 func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 	if !p.on {
@@ -74,7 +73,7 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 	}
 	var d ArmDecision
 	if r, ok := p.snap.Classes[in.Task.Spec.PredictedClass]; ok {
-		d = DecideArmUnder(in, r.Variants(), r.Approval)
+		d = DecideArmUnder(in, &r.Class, r.Approval)
 	} else {
 		d = DecideArmUnder(in, nil, nil)
 	}
@@ -85,14 +84,12 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 	return d
 }
 
-// policyGatePaths is every protectedFiles pattern of a policy's classes, each variant included:
-// without policy-bot, the gate paths of a repository whose policy is authoritative.
+// policyGatePaths is every protectedFiles pattern of a policy's classes: without policy-bot, the
+// gate paths of a repository whose policy is authoritative.
 func policyGatePaths(classes map[string]mergepolicy.Resolved) []string {
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(classes)) {
-		for _, v := range classes[name].Variants() {
-			out = append(out, v.ProtectedFiles...)
-		}
+		out = append(out, classes[name].Class.ProtectedFiles...)
 	}
 	return out
 }

@@ -4325,9 +4325,9 @@ spec:
         - alert: AgentFactoryPrivateCodeUnacknowledged
           annotations:
             dashboard: /d/agent-factory
-            description: 'A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. This release warns; the next refuses it. Set the field on the Repository, or stop serving it.'
+            description: 'A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. Until it is set, the factory starts no new task there; tasks already started finish. Set the field on the Repository, or stop serving it.'
             runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/factory.md#private-code
-            summary: '{{ $labels.repository }} is private code served without spec.privateCode.acknowledged'
+            summary: '{{ $labels.repository }} is private code without spec.privateCode.acknowledged: it is refused new tasks'
           expr: max by (repository) (maku_factory_private_code_unacknowledged) == 1
           for: 15m
           labels:

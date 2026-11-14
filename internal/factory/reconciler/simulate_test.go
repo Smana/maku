@@ -41,35 +41,15 @@ func conformanceCases(t *testing.T) []Case {
 	return out
 }
 
-// exported is the central config's classes through the migration's round trip: Export, Marshal,
-// Parse, Validate and Resolve, as a repository file the factory reads.
+// exported is the central config's classes as a binding file resolves them (boundAsFile): the
+// repository file the factory reads.
 func exported(t *testing.T, c *config.Config) map[string]mergepolicy.Resolved {
 	t.Helper()
-	f, err := mergepolicy.ExportClasses(c.RepositoryFor(""), c)
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := mergepolicy.Marshal(f)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if f, err = mergepolicy.Parse(raw); err != nil {
-		t.Fatal(err)
-	}
-	if err := mergepolicy.Validate(f, c); err != nil {
-		t.Fatal(err)
-	}
-	out := map[string]mergepolicy.Resolved{}
-	for name, p := range f.Classes {
-		if out[name], err = mergepolicy.Resolve(name, p, c); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return out
+	return boundAsFile(t, c).Classes
 }
 
 // Stage 2's exit, offline: every fixture still decides as recorded (the runtime has not moved),
-// and the central classes exported as a repository policy decide every fixture the same way, the
+// and the central classes written as a repository's bindings decide every fixture the same way, the
 // final push provenance included (the simulator is the gate).
 func TestConformance(t *testing.T) {
 	c := conformanceCfg()

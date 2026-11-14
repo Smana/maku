@@ -266,6 +266,7 @@ func reasons() map[string]string {
 		"superseded":                  "a new factory/ready replaced it",
 		"family_dropped":              "the family was dropped because another part was dropped or reverted",
 		"private_repository":          "This factory runs as a demo, which serves public repositories only: in the demo, an agent can read the model key and the GitHub token",
+		"private_code_unacknowledged": "this repository is private code. " + config.PrivateCodeSentence + " A maintainer of the factory sets it on the Repository, then labels the issue again",
 		"unauthorised_labeller":       "only a maintainer's factory/ready starts a task",
 		"edited_after_label":          "the issue was edited after it was labelled",
 		"task_active":                 "a task for this issue is still running",

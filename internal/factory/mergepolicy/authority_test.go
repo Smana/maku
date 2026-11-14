@@ -30,9 +30,9 @@ func authorityRig() (*Watch, *rec, *time.Time) {
 }
 
 const (
-	liveDocs    = "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain, conditions: {all: [{maxModifiedLines: 10}]}}\n  revert: {mode: shadow, author: agents, harness: plain}\n"
-	tighterDocs = "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain, conditions: {all: [{maxModifiedLines: 5}]}}\n  revert: {mode: shadow, author: agents, harness: plain}\n"
-	looserDocs  = "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain, conditions: {all: [{maxModifiedLines: 50}]}}\n  revert: {mode: shadow, author: agents, harness: plain}\n"
+	liveDocs    = "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, maxModifiedLines: 10}\n  - {name: revert, mode: shadow}\n"
+	tighterDocs = "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, maxModifiedLines: 5}\n  - {name: revert, mode: shadow}\n"
+	looserDocs  = "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, maxModifiedLines: 50}\n  - {name: revert, mode: shadow}\n"
 )
 
 // Stage 4's fail-closed rule: no read yet, a stale read, an invalid file or one with no classes
@@ -48,7 +48,7 @@ func TestAuthority(t *testing.T) {
 		"a stale read":     {liveDocs, 15 * time.Minute, ErrStale},
 		"an invalid file":  {"factory: aws-0\nclasses: [no]\n", 0, ErrInvalid},
 		"a fence-only one": {"factory: aws-0\n", 0, ErrInvalid},
-		"a guardrail":      {"factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: nope}\n  revert: {mode: live, author: agents, harness: plain}\n", 0, ErrInvalid},
+		"without revert":   {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", 0, ErrInvalid},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, _, now := authorityRig()
@@ -108,7 +108,7 @@ func TestARelaxationReturnsTheClassToShadow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d := s.Classes["docs-links"]; d.Class.Live || !d.Class.Shadow || slices.ContainsFunc(d.Variants(), func(v config.Class) bool { return v.Live }) {
+	if d := s.Classes["docs-links"]; d.Class.Live || !d.Class.Shadow {
 		t.Fatalf("relaxed: %+v", d)
 	}
 	if cl, _ := w.Classes("o/r"); cl["docs-links"].Live {

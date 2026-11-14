@@ -49,20 +49,6 @@ type resolution struct {
 	resolved map[BindingKey]ResolvedClass
 }
 
-// legacyPolicy reports whether a MergePolicy is in the per-repository shape (B8).
-func legacyPolicy(o Object) bool {
-	_, ok := o.Spec["repositoryRef"]
-	return ok
-}
-
-// boundRepository reports whether a Repository holds its own merge settings or bindings (B2, B3):
-// it is then served alone, never paired with a MergePolicy.
-func boundRepository(o Object) bool {
-	_, merge := o.Spec["merge"]
-	_, bindings := o.Spec["mergePolicies"]
-	return merge || bindings
-}
-
 // policyContext reads what resolving reads from the merged catalogue, strictly: a key that does not
 // decode leaves every binding unresolved, and Parse's culprit search refuses its Factory (plan PR7).
 func policyContext(m map[string]any) (config.PolicyContext, error) {

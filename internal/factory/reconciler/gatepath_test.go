@@ -27,15 +27,14 @@ func approvedGateInputs() ArmInputs {
 }
 
 // Re-review of #500: under a repository-authoritative policy, the gate paths are its classes'
-// protectedFiles too, every variant included, and the check runs once over the ranked decision,
-// so no any-branch variant arms an approval over a gate path.
+// protectedFiles too, and the check runs once over the decision, so no class arms an approval over
+// a gate path.
 func TestAGatePathUnderARepositoryPolicy(t *testing.T) {
 	gate := config.Class{Shadow: true, ProtectedFiles: []string{`^\.github/`}}
 	open := config.Class{Shadow: true}
 	for name, c := range map[string]map[string]mergepolicy.Resolved{
-		"another class of the policy":      {"docs-links": {Class: open}, "workflows": {Class: config.Class{ProtectedFiles: []string{`^\.github/`}}}},
-		"one variant of the decided class": {"docs-links": {Class: open, Branches: []config.Class{open, gate}}},
-		"the decided class itself":         {"docs-links": {Class: gate}},
+		"another class of the policy": {"docs-links": {Class: open}, "workflows": {Class: config.Class{ProtectedFiles: []string{`^\.github/`}}}},
+		"the decided class itself":    {"docs-links": {Class: gate}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := approvedGateInputs()
@@ -45,9 +44,9 @@ func TestAGatePathUnderARepositoryPolicy(t *testing.T) {
 			}
 		})
 	}
-	// The variants alone, as a simulation decides them (DecideArmUnder).
-	if d := DecideArmUnder(approvedGateInputs(), []config.Class{open, gate}, nil); d.Reason != "gate_path" {
-		t.Fatalf("variants: %s %s, want gate_path", d.Verdict, d.Reason)
+	// The class alone, as a simulation decides it (DecideArmUnder).
+	if d := DecideArmUnder(approvedGateInputs(), &gate, nil); d.Reason != "gate_path" {
+		t.Fatalf("the class: %s %s, want gate_path", d.Verdict, d.Reason)
 	}
 	// No gate path anywhere: the approval arms.
 	if d := decideUnder(approvedGateInputs(), gatePolicy{on: true, snap: snapshotOf(map[string]mergepolicy.Resolved{"docs-links": {Class: open}})}); d.Verdict != "arm" {

@@ -22,15 +22,14 @@ type Generations struct {
 	Repos   map[string]RepoGenerations // keyed by lowercased owner/name
 }
 
-// RepoGenerations are the generations of one repository's two objects: its Repository object
-// and its MergePolicy object. Zero means the file served that part.
+// RepoGenerations are the generations of one repository's objects: its Repository object, and
+// each bound class's MergePolicy. Zero means the file served it.
 type RepoGenerations struct {
-	Repository, MergePolicy int64
-	// RepositoryName and PolicyName are the objects' names: a manifest for the repository must
-	// carry them, or applying it creates a second MergePolicy.
-	RepositoryName, PolicyName string
-	// Classes are a bound repository's per-class generations (B12): each class's own MergePolicy.
-	// Nil for a repository served from the per-repository shape.
+	Repository int64
+	// RepositoryName is the object's name: a manifest for the repository must carry it, or
+	// applying it creates a second Repository.
+	RepositoryName string
+	// Classes are the per-class generations (B12): each bound class's own MergePolicy.
 	Classes map[string]ClassGeneration
 }
 
@@ -41,21 +40,20 @@ type ClassGeneration struct {
 }
 
 // ClassGenerations returns the generations class of repository was decided under (B12): its own
-// policy's and the Repository's, bound true, for a bound class; the repository's MergePolicy's and
-// the Repository's, bound false, for one served from the per-repository shape; zeros for the file.
+// policy's and the Repository's, bound true, for a bound class; the Repository's alone, bound
+// false, for a class no binding serves (review, or the repository's file); zeros for the file.
 func (c *Config) ClassGenerations(repository, class string) (policy, repo int64, bound bool) {
 	g := c.Generations.Repos[strings.ToLower(repository)]
 	if cg, ok := g.Classes[class]; ok {
 		return cg.Policy, g.Repository, true
 	}
-	return g.MergePolicy, g.Repository, false
+	return 0, g.Repository, false
 }
 
 // GenerationsFor returns the generations repository was served under; zeros for a file entry.
 // The repository name is matched case-insensitively, as Repos is keyed lowercased.
-func (c *Config) GenerationsFor(repository string) (factory, repo, policy int64) {
-	g := c.Generations.Repos[strings.ToLower(repository)]
-	return c.Generations.Factory, g.Repository, g.MergePolicy
+func (c *Config) GenerationsFor(repository string) (factory, repo int64) {
+	return c.Generations.Factory, c.Generations.Repos[strings.ToLower(repository)].Repository
 }
 
 // Live is the factory's published config. Reads are load-free: Current never takes a lock, so a

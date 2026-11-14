@@ -37,7 +37,7 @@ func deadLinks(gen int64, flux bool) *v1alpha1.MergePolicy {
 // boundRepoObj binds docs-links, revert and dead-links, with the file's merge settings.
 func boundRepoObj(t *testing.T, name, repository, fluxSource string) *v1alpha1.Repository {
 	t.Helper()
-	merge := *policyObj(t, "x", "x", 0, nil).Spec.Merge
+	merge := fileMerge(t)
 	merge.FluxSource = fluxSource
 	r := repoObj(name, repository, 1)
 	r.Spec.Merge = &merge

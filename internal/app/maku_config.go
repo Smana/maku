@@ -36,19 +36,21 @@ func (r Maku) config(args []string) error {
 	switch verb {
 	case "migrate":
 		from := fs.String("from", "", "the factory config file")
-		cfgPath := fs.String("config", "", "with --manifests: the config file the manifests are served over")
 		var manifests manifestList
-		fs.Var(&manifests, "manifests", "per-repository MergePolicy manifests (and their Factory and Repositories) to convert; repeatable")
+		fs.Var(&manifests, "manifests", "removed: the per-repository MergePolicy is gone (B8)")
 		ns := fs.String("namespace", "agent-system", "the namespace of the manifests")
 		residual := fs.String("residual", "", "write the config file without the migrated keys here, once the conversion is proved")
 		force := fs.Bool("force", false, "replace an existing --residual file")
 		if _, err := flags(fs, args); err != nil {
 			return err
 		}
-		if (*from == "") == (len(manifests) == 0) {
-			return errors.New("config migrate: --from, or --config with --manifests, is required")
+		if len(manifests) > 0 {
+			return errors.New("config migrate: --manifests: " + resources.ErrPerRepositoryRemoved)
 		}
-		if *residual != "" && *from != "" && samePath(*residual, *from) {
+		if *from == "" {
+			return errors.New("config migrate: --from is required")
+		}
+		if *residual != "" && samePath(*residual, *from) {
 			return errors.New("config migrate: --residual is the --from file: write the residual beside it")
 		}
 		if *residual != "" && !*force {
@@ -56,7 +58,19 @@ func (r Maku) config(args []string) error {
 				return fmt.Errorf("config migrate: %s exists: --force replaces it", *residual)
 			}
 		}
-		out, before, file, err := r.migrateFrom(*from, *cfgPath, manifests, *ns)
+		raw, err := os.ReadFile(filepath.Clean(*from))
+		if err != nil {
+			return fmt.Errorf("config migrate: %w", err)
+		}
+		// The factory refuses the single-repository shape (R7); migrate still converts it.
+		if raw, err = resources.LiftLegacy(raw); err != nil {
+			return fmt.Errorf("config migrate: %w", err)
+		}
+		before, err := config.Parse(raw)
+		if err != nil {
+			return fmt.Errorf("config migrate: %w", err)
+		}
+		out, file, err := resources.Migrate(raw, *ns)
 		if err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
@@ -83,7 +97,7 @@ func (r Maku) config(args []string) error {
 			}
 			return fmt.Errorf("config migrate: the conversion would change %d resolved settings: nothing written", len(d))
 		}
-		if *residual != "" && *from != "" {
+		if *residual != "" {
 			if err := writeAtomic(filepath.Clean(*residual), file); err != nil {
 				return fmt.Errorf("config migrate: %w", err)
 			}
@@ -176,57 +190,6 @@ func (r Maku) config(args []string) error {
 		return err
 	}
 	return fmt.Errorf("config: unknown verb %q\n%s", verb, makuUsage)
-}
-
-// migrateFrom converts a config file (--from) or per-repository manifests over a config file
-// (--config with --manifests) into the binding shape: the manifests, the config served before,
-// and the file the manifests are served over: for --from, the residual. It writes nothing.
-func (r Maku) migrateFrom(from, cfgPath string, manifests []string, ns string) (out []byte, before *config.Config, file []byte, err error) {
-	if from != "" {
-		raw, err := os.ReadFile(filepath.Clean(from))
-		if err != nil {
-			return nil, nil, nil, err
-		}
-		// The factory refuses the single-repository shape (R7); migrate still converts it.
-		if raw, err = resources.LiftLegacy(raw); err != nil {
-			return nil, nil, nil, err
-		}
-		if before, err = config.Parse(raw); err != nil {
-			return nil, nil, nil, err
-		}
-		if out, file, err = resources.Migrate(raw, ns); err != nil {
-			return nil, nil, nil, err
-		}
-		return out, before, file, nil
-	}
-	if cfgPath == "" {
-		return nil, nil, nil, errors.New("--manifests needs --config, the file they are served over")
-	}
-	if file, err = os.ReadFile(filepath.Clean(cfgPath)); err != nil {
-		return nil, nil, nil, err
-	}
-	objs, err := readManifests(manifests)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	res, err := resources.Assemble(file, objs)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if err := printRefusals(r.Out, res); err != nil {
-		return nil, nil, nil, err
-	}
-	if len(res.Refused) > 0 {
-		return nil, nil, nil, fmt.Errorf("the factory refuses %d of the objects as they are: fix them first", len(res.Refused))
-	}
-	split, err := resources.Split(objs, ns)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	if out, err = resources.Encode(split); err != nil {
-		return nil, nil, nil, err
-	}
-	return out, res.Config, file, nil
 }
 
 // readManifests decodes manifest files, strictly, into one object list.

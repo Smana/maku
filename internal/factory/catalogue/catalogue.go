@@ -46,21 +46,13 @@ type Catalogue struct {
 	Profiles       map[string]Profile `json:"profiles"`
 }
 
-// Generations are the object generations the catalogue was built from. The merge policy's
-// generation is its own type, MergePolicyGeneration, so a change of its shape (one generation per
-// class, were merge policies to become reusable classes) touches that type and Build, and no reader.
+// Generations are the object generations the catalogue was built from: the Factory's, the
+// Repository's, and each bound class's own MergePolicy's (B19). Zero means the file served it.
 type Generations struct {
-	Factory     int64                 `json:"factory"`
-	Repository  int64                 `json:"repository"`
-	MergePolicy MergePolicyGeneration `json:"mergePolicy"`
-	// MergePolicies are a bound repository's per-class policy generations (B19); MergePolicy is
-	// then 0. Absent for a repository served from the per-repository shape.
+	Factory       int64            `json:"factory"`
+	Repository    int64            `json:"repository"`
 	MergePolicies map[string]int64 `json:"mergePolicies,omitempty"`
 }
-
-// MergePolicyGeneration is the generation of the repository's MergePolicy object; zero means the
-// repository file served it.
-type MergePolicyGeneration int64
 
 // Evaluation is the factory's team evaluation: whether the scoper's recommendation is used, and the
 // control cohort's share.
@@ -89,8 +81,8 @@ type Escalation struct {
 }
 
 // generations are the repository's, with each bound class's own policy generation (B19).
-func generations(cfg *config.Config, repository string, factory, repo, policy int64) Generations {
-	g := Generations{Factory: factory, Repository: repo, MergePolicy: MergePolicyGeneration(policy)}
+func generations(cfg *config.Config, repository string, factory, repo int64) Generations {
+	g := Generations{Factory: factory, Repository: repo}
 	for class, cg := range cfg.Generations.Repos[strings.ToLower(repository)].Classes {
 		if g.MergePolicies == nil {
 			g.MergePolicies = map[string]int64{}
@@ -123,14 +115,14 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 		return Catalogue{}, false
 	}
 	gateOn := cfg.NeedsMerger()
-	factory, repo, policy := cfg.GenerationsFor(rc.Name)
+	factory, repo := cfg.GenerationsFor(rc.Name)
 	mode := cfg.Evaluation.Mode
 	if mode == "" {
 		mode = config.EvaluationObserve
 	}
 	c := Catalogue{
 		Repository:     rc.Name,
-		Generations:    generations(cfg, rc.Name, factory, repo, policy),
+		Generations:    generations(cfg, rc.Name, factory, repo),
 		Evaluation:     Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent},
 		ApproveToMerge: gateOn && rc.Merge.ApproveToMerge,
 		Maintainer:     maintainer,

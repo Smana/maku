@@ -86,7 +86,7 @@ func Simulate(cfg *config.Config, policy map[string]mergepolicy.Resolved, cases 
 		central := provenance(DecideArm(in), cl.Adopted(), pushed)
 		var repo ArmDecision
 		if r, ok := policy[class]; ok {
-			repo = provenance(DecideArmUnder(in, r.Variants(), r.Approval), r.Class.Adopted(), pushed)
+			repo = provenance(DecideArmUnder(in, &r.Class, r.Approval), r.Class.Adopted(), pushed)
 		} else {
 			repo = DecideArmUnder(in, nil, nil)
 		}

@@ -62,18 +62,15 @@ func TestSyncedCarriesAListError(t *testing.T) {
 	}
 }
 
-// Each outcome names its repository: a Repository's spec.repository, a MergePolicy's through its
-// repositoryRef when that Repository is listed, and none otherwise.
+// Each Repository's outcome names its repository, its spec.repository; a MergePolicy's names none:
+// its consumers are its bindings.
 func TestOutcomesNameTheirRepository(t *testing.T) {
-	s, _ := source(t, repoObj("other", "Smana/Other", 1), policyObj(t, "other", "other", 1, nil),
-		policyObj(t, "orphan", "missing", 1, nil))
+	s, _ := source(t, servedObjs(t, "other", "Smana/Other", 1, 1)...)
 	if err := s.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	for name, want := range map[string]string{"other": "Smana/Other", "orphan": ""} {
-		if o := outcome(t, s, resources.KindMergePolicy, name); o.Repository != want {
-			t.Errorf("MergePolicy %s: repository %q, want %q", name, o.Repository, want)
-		}
+	if o := outcome(t, s, resources.KindMergePolicy, "docs"); o.Repository != "" || len(o.Consumers) != 1 || o.Consumers[0].Repository != "other" {
+		t.Errorf("MergePolicy docs: %+v", o)
 	}
 	if o := outcome(t, s, resources.KindRepository, "other"); o.Repository != "Smana/Other" {
 		t.Errorf("Repository other: %q", o.Repository)

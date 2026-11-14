@@ -26,7 +26,7 @@ describe("the aurora gradient", () => {
 });
 
 describe("cards", () => {
-  const cards = [".class-card", ".settings-card", ".cli-card", ".example-card", ".policy-header", ".settings .proposal",
+  const cards = [".class-card", ".settings-card", ".cli-card", ".policy-header", ".settings .proposal",
     ".approval", ".needs-other li.need", ".tool", ".not-migrated", ".grant", ".sk-msg"];
   it.each(cards)("%s takes the card shape", (sel) => {
     const b = rule(sel);
@@ -48,7 +48,6 @@ describe("focus", () => {
   // A ring that must sit inside a clipped container keeps an inset offset.
   const insetAllowed: Record<string, string> = {
     ".settings-nav a:focus-visible": "inset only inside the max-width 640px media block, where the nav is an overflow-x:auto row that clips an outset ring; above 640px it takes the standard outer ring",
-    ".settings .expert-yaml:focus-visible": "the textarea fills an overflow:hidden editor frame",
   };
   const focusRules = rules.filter((r) => /:focus-visible/.test(r.sel) && /outline:/.test(r.body));
   it("has focus rules to check", () => expect(focusRules.length).toBeGreaterThan(5));
@@ -56,7 +55,7 @@ describe("focus", () => {
     expect(body).toMatch(/outline:\s*2px solid var\(--ring\)/);
     const off = body.match(/outline-offset:\s*([^;]+)/)?.[1].trim();
     // the nav's base rule is the outer ring; its inset sits in the 640px media block (checked below)
-    expect(off, sel).toBe(sel === ".settings .expert-yaml:focus-visible" ? "-2px" : "2px");
+    expect(off, sel).toBe("2px");
   });
   it("rings every allowlisted rule, so each inset is checked as a ring too", () => {
     for (const sel of Object.keys(insetAllowed)) expect(focusRules.map((r) => r.sel), sel).toContain(sel);

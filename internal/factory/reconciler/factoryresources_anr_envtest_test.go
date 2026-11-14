@@ -81,8 +81,8 @@ func admit(t *testing.T, c client.Client, file, ns string, want int) {
 	}
 }
 
-// ai-native-ref's live objects (testdata/anr-objects.yaml) pass admission, and a Source serves
-// its four repositories from them, every object accepted.
+// ai-native-ref's objects in the binding shape (testdata/anr-bound-objects.yaml) pass admission, and
+// a Source serves its four repositories from them, every object accepted.
 func TestANRObjectsServeFourRepositories(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
@@ -105,7 +105,7 @@ func TestANRObjectsServeFourRepositories(t *testing.T) {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: ns}}); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(filepath.Join("..", "resources", "testdata", "anr-objects.yaml"))
+	raw, err := os.ReadFile(filepath.Join("..", "resources", "testdata", "anr-bound-objects.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -137,8 +137,8 @@ func TestANRObjectsServeFourRepositories(t *testing.T) {
 		t.Fatalf("%d repositories served, want 4", n)
 	}
 	out, _ := src.Outcomes()
-	if len(out) != 9 {
-		t.Fatalf("%d outcomes, want 9 (one Factory, four Repositories, four MergePolicies)", len(out))
+	if len(out) != 17 {
+		t.Fatalf("%d outcomes, want 17 (one Factory, four Repositories, twelve MergePolicies)", len(out))
 	}
 	for _, o := range out {
 		if !o.Accepted {

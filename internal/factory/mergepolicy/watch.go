@@ -19,7 +19,6 @@ import (
 // repository (stage 4), the one reader that depends on a fresh policy.
 const (
 	ReasonInvalid    = "invalid"
-	ReasonGuardrail  = "guardrail_mismatch"
 	ReasonUnreadable = "unreadable"
 	ReasonStale      = "stale"
 )
@@ -51,9 +50,7 @@ type Snapshot struct {
 	// Refused are a binding file's bindings that do not resolve (B9, B15): each is absent from
 	// Classes, or serves its last resolved class while the process runs.
 	Refused map[string]config.BindingRefusal
-	// Deprecations are what the next minor refuses in this file (PR4).
-	Deprecations []string
-	Read         time.Time
+	Read    time.Time
 	// File is the parsed file of a valid snapshot, for the next one's structural comparison.
 	File *File
 	// cfgHash is the hash of the config the file was evaluated under: the cache key's second half.
@@ -112,8 +109,6 @@ func (w *Watch) observe(ctx context.Context, repository string, body []byte, rea
 	}
 	s.Read, s.body = read, body
 	switch {
-	case s.Err != nil && OnlyGuardrail(s.Err):
-		w.Metrics.PolicyLoadError(ctx, repository, ReasonGuardrail)
 	case s.Err != nil:
 		w.Metrics.PolicyLoadError(ctx, repository, ReasonInvalid)
 	case s.HasClasses && !cfg.RepositoryAuthoritative(rc):
@@ -148,9 +143,6 @@ func (w *Watch) observe(ctx context.Context, repository string, body []byte, rea
 	if !seen || prev.Hash != s.Hash || prev.cfgHash != s.cfgHash {
 		w.log().Info("repository merge policy read", "repository", repository, "hash", s.Hash,
 			"classes", s.HasClasses, "err", s.Err, "divergences", s.Divergences, "refused", refusedNames(s))
-		for _, d := range s.Deprecations {
-			w.log().Warn("repository merge policy deprecated", "repository", repository, "hash", s.Hash, "deprecation", d)
-		}
 	}
 }
 
@@ -196,7 +188,7 @@ func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string,
 		s.HasClasses = f.Declares()
 		rep, err = ValidateFile(f, rc, cfg)
 	}
-	s.Err, s.Deprecations = err, rep.Deprecations
+	s.Err = err
 	if err != nil || !s.HasClasses {
 		return s
 	}

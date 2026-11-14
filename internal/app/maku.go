@@ -91,8 +91,8 @@ const makuUsage = `usage: maku <command>
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
-  config migrate --from FILE [--residual FILE [--force]] | --config FILE --manifests FILE... [--namespace NS]
-                                  convert a config file, or per-repository MergePolicy manifests, into a
+  config migrate --from FILE [--residual FILE [--force]] [--namespace NS]
+                                  convert a config file into a
                                   Factory, bound Repositories and one MergePolicy per class on stdout,
                                   offline; refused unless every resolved class is unchanged
   config validate --config FILE [--base-ref REF | --base-config FILE --base FILE...] [--expect-unchanged]
