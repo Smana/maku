@@ -8,9 +8,9 @@ permissions below.
 
 | App | Writes | Its key goes in | Required |
 |---|---|---|---|
-| **The agents App** | code and pull requests, through each run's token | `apps.agents.existingSecret` (old key: `runTokens.appSecret`) | Yes, with `runTokens.enabled` |
-| **The factory App** | issues, labels, statuses, merges | `apps.factory.existingSecret` (old key: `githubSecret`) | Yes |
-| The merger App | arming, merges, reverts, the gate's status | `mergerSecret`, with `apps.merger.mode: separate` | No: `apps.merger.mode: factory` folds it into the factory App |
+| **The agents App** | code and pull requests, through each run's token | `apps.agents.existingSecret` | Yes, with `runTokens.enabled` |
+| **The factory App** | issues, labels, statuses, merges | `apps.factory.existingSecret` | Yes |
+| The merger App | arming, merges, reverts, the gate's status | `apps.merger.existingSecret`, with `apps.merger.mode: separate` | No: `apps.merger.mode: factory` folds it into the factory App |
 | policy-bot | its own `policy-bot: main` status | policy-bot's own install | No: `maku/merge-gate` replaces it |
 
 Each key is a Secret with the keys `app_id` and `private_key`. The chart
@@ -24,7 +24,7 @@ flowchart LR
   end
   AS[apps.agents.existingSecret] -- /etc/agent-factory-agents --> F
   FS[apps.factory.existingSecret] -- /etc/agent-factory-github --> F
-  MS[mergerSecret] -. "separate mode only<br/>/etc/agent-factory-merger" .-> F
+  MS[apps.merger.existingSecret] -. "separate mode only<br/>/etc/agent-factory-merger" .-> F
   F -- "per-run token<br/>(agents App)" --> R[run pods]
   R -- "push, open the pull request" --> GH[GitHub]
   F -- "issues, labels, statuses, merges<br/>(factory App)" --> GH
@@ -168,8 +168,8 @@ start in two cases:
 - **The merger App's id is the factory App's, and a repository's `merge.mergerLogin` is not
   `factoryLogin`.** Such a merger is folded into the factory App, whatever the paths say.
 
-The chart also refuses a Secret named twice: `apps.agents.existingSecret` (or `runTokens.appSecret`)
-naming the factory's or the merger's Secret, or a separate `mergerSecret` naming the factory's.
+The chart also refuses a Secret named twice: `apps.agents.existingSecret` naming the factory's or
+the merger's Secret, or a separate `apps.merger.existingSecret` naming the factory's.
 
 **The permission check:** under `runTokens.perRun`, when a replica becomes leader, it reads each
 served repository's installation of both Apps (`GET /app/installations/{id}`). It compares the

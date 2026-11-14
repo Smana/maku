@@ -73,8 +73,6 @@ spec:
             {{- end }}
             {{- if $apps.agents }}
             - {name: agents, mountPath: /etc/agent-factory-agents, readOnly: true}
-            {{- else if $apps.runTokens }}
-            - {name: run-tokens, mountPath: /etc/agent-factory-run-tokens, readOnly: true}
             {{- end }}
             - {name: rooms-token, mountPath: /var/run/secrets/agents/rooms, readOnly: true}
             {{- if not .Values.demo }}
@@ -113,10 +111,6 @@ spec:
         - name: agents
           # The agents App (v4 D12): it mints the runs' tokens; 0440 with fsGroup, as the App keys.
           secret: {secretName: {{ $apps.agents }}, defaultMode: 0440}
-        {{- else if $apps.runTokens }}
-        - name: run-tokens
-          # The App whose tokens fill agent-git and agent-git-read; 0440 with fsGroup, as the App keys.
-          secret: {secretName: {{ $apps.runTokens }}, defaultMode: 0440}
         {{- end }}
         - name: rooms-token
           projected:

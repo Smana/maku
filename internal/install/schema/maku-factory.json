@@ -10,12 +10,12 @@
       "type": "boolean"
     },
     "apps": {
-      "description": "The GitHub Apps (v4 D12): each key maps onto an older one, which keeps working. docs/github-apps.md.",
+      "description": "The GitHub Apps (v4 D12). docs/github-apps.md.",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "factory": {
-          "description": "The factory App: issues, labels, statuses and merges. Wins over githubSecret when set.",
+          "description": "The factory App: issues, labels, statuses and merges.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -23,7 +23,7 @@
           }
         },
         "agents": {
-          "description": "The agents App: each run's token and the publisher's. Wins over runTokens.appSecret; both set and different fail the render.",
+          "description": "The agents App: each run's token and the publisher's.",
           "type": "object",
           "additionalProperties": false,
           "properties": {
@@ -35,20 +35,23 @@
           "additionalProperties": false,
           "properties": {
             "mode": {
-              "description": "separate: the merger App in mergerSecret. factory: the merger signs with the factory App, and mergerSecret must stay unset.",
+              "description": "separate: the merger App in existingSecret. factory: the merger signs with the factory App, and existingSecret must stay unset.",
               "type": "string",
               "enum": ["separate", "factory"]
-            }
+            },
+            "existingSecret": {"description": "The merger App's Secret (keys app_id and private_key) with mode separate; empty means agent-factory-merger.", "type": "string"}
           }
         }
       }
     },
+    "githubSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set apps.factory.existingSecret (docs/upgrading.md#the-old-app-keys)"]},
+    "mergerSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set apps.merger.existingSecret (docs/upgrading.md#the-old-app-keys)"]},
     "runTokens": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean"},
-        "appSecret": {"description": "Alias of apps.agents.existingSecret.", "type": "string"},
+        "appSecret": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set apps.agents.existingSecret (docs/upgrading.md#the-old-app-keys)"]},
         "perRun": {"type": "boolean"}
       }
     },

@@ -112,7 +112,8 @@ func TestFactoryStartsApplierWithTheMinter(t *testing.T) {
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
 	cfg.Hardening.Publisher = config.Publisher{Minter: true, OctoSTS: config.PublisherOctoSTS{TokenFile: filepath.Join(t.TempDir(), "absent")}}
-	cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
+	cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
+	cfg.GitHub.AgentsAppIDFile, cfg.GitHub.AgentsKeyFile = "/a/app_id", "/a/private_key"
 	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Log: slog.New(slog.DiscardHandler)})
 	if a == nil || err != nil {
@@ -178,7 +179,8 @@ func TestTokenSourceReadiness(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit, EnforceOutputs: all}})
 			cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
-			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: tc.perRun, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
+			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: tc.perRun}
+			cfg.GitHub.AgentsAppIDFile, cfg.GitHub.AgentsKeyFile = "/a/app_id", "/a/private_key"
 			cfg.Hardening.Publisher = config.Publisher{Minter: true}
 			live := func() *config.Config { return cfg }
 			files := &countingPolicies{fakePolicies: fakePolicies{hardening.PublisherPolicyPath: readOnly}}

@@ -34,10 +34,8 @@
 {{- fail "config.runTokens and runTokens.enabled: set runTokens.enabled alone; the chart writes config.runTokens to read the mounted App" -}}
 {{- end -}}
 {{- $rt := dict -}}
-{{- if and .Values.runTokens.enabled $apps.agents -}}
+{{- if .Values.runTokens.enabled -}}
 {{- $rt = dict "enabled" true -}}
-{{- else if .Values.runTokens.enabled -}}
-{{- $rt = dict "enabled" true "appIDFile" "/etc/agent-factory-run-tokens/app_id" "privateKeyFile" "/etc/agent-factory-run-tokens/private_key" -}}
 {{- end -}}
 {{- if .Values.runTokens.perRun -}}
 {{- $_ := set $rt "perRun" true -}}

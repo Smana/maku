@@ -168,6 +168,22 @@ or the render fails with `choose one`. `values-quickstart.yaml` sets `mode: cili
 The factory no longer writes `spec.queueName` on the AgentRuns it creates (D16: Kueue is dropped).
 The runs quota (`runsQuota`) and the factory's slots and budgets bound the runs.
 
+### The old App keys
+
+The `maku-factory` keys that step 3 kept beside `apps.*` are removed (D12). The schema refuses each
+with a message naming its replacement; under `--skip-schema-validation` the template does. The
+factory's config refuses the `runTokens` file aliases the same way when it starts.
+
+| Removed | Set instead |
+|---|---|
+| `githubSecret` | `apps.factory.existingSecret`, whose default is now `agent-factory-github` |
+| `mergerSecret` | `apps.merger.existingSecret` (new; empty means `agent-factory-merger`), with `apps.merger.mode: separate` |
+| `runTokens.appSecret` | `apps.agents.existingSecret`, mounted at `/etc/agent-factory-agents` |
+| `runTokens.appIDFile`, `runTokens.privateKeyFile` (factory config) | `github.agentsAppIDFile`, `github.agentsKeyFile`, which `apps.agents` writes |
+
+`runTokens.enabled` now needs `apps.agents.existingSecret`; the `/etc/agent-factory-run-tokens` mount
+is gone. Upgrade the chart and the image together: the config is decoded strictly.
+
 ### Private code is refused without its acknowledgement
 
 A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory

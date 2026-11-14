@@ -545,7 +545,7 @@ per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` s
    - the factory's config sets `runs.group: maku.ogenki.io`, `runTokens: {enabled: true, perRun:
      true, …}` and `hardening.publisher.minter: true`, with `hardening.publisher.octoSTS.url`
      removed;
-   - the values set the agents App's Secret (`runTokens.appSecret`) and
+   - the values set the agents App's Secret (`apps.agents.existingSecret`) and
      `runController.gitTokens: perRun`. The publisher's token then comes from the agents App, so
      `hardening.publisher.audience` may go.
 

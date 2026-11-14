@@ -7,31 +7,25 @@ resources:
   requests: {cpu: 100m, memory: 256Mi}
   limits: {cpu: 500m, memory: 512Mi}
 # Secrets, their keys and mount paths, and the merger-key prerequisite: README.md#prerequisites.
-# The GitHub Apps (v4 D12, plan PR9; docs/github-apps.md). Each key maps onto an older one, which
-# keeps working:
-#
-#   | New key                     | Old key, still honoured | Rule                                         |
-#   |-----------------------------|-------------------------|----------------------------------------------|
-#   | apps.factory.existingSecret | githubSecret            | the new key wins when set                    |
-#   | apps.agents.existingSecret  | runTokens.appSecret     | the new key wins; both set and different fail |
-#   | apps.merger.mode            | mergerSecret            | factory: no merger Secret; with mergerSecret set, the render fails |
-#
-# apps.agents mounts the agents App (keys app_id, private_key) at /etc/agent-factory-agents and
-# writes config.github.agentsAppIDFile and agentsKeyFile. apps.merger.mode factory folds the merger
-# into the factory App: no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name
-# the factory App's files (every repository's merge.mergerLogin is then factoryLogin). Each key that
-# writes config fails the render when config already sets that key.
+# The GitHub Apps (v4 D12; docs/github-apps.md). apps.factory mounts the factory App (keys app_id,
+# private_key) at /etc/agent-factory-github. apps.agents mounts the agents App at
+# /etc/agent-factory-agents and writes config.github.agentsAppIDFile and agentsKeyFile.
+# apps.merger.mode separate mounts the merger App from apps.merger.existingSecret (empty means
+# agent-factory-merger) at /etc/agent-factory-merger; factory folds the merger into the factory App:
+# no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name the factory App's files
+# (every repository's merge.mergerLogin is then factoryLogin). Each key that writes config fails the
+# render when config already sets that key. The older githubSecret, mergerSecret and
+# runTokens.appSecret are removed (v4 step 8): the render fails naming their apps.* replacement.
 apps:
   factory:
-    existingSecret: ""
+    existingSecret: agent-factory-github
   agents:
     existingSecret: ""
   merger:
     mode: separate
-githubSecret: agent-factory-github
-# HARD PREREQUISITE when any merge class is live or in shadow: README.md#prerequisites.
-# Empty means agent-factory-merger; set it only with apps.merger.mode separate.
-mergerSecret: ""
+    # HARD PREREQUISITE with mode separate when any merge class is live or in shadow:
+    # README.md#prerequisites. Empty means agent-factory-merger; set it only with mode separate.
+    existingSecret: ""
 brokerCASecret: openbao-ca
 # Audience of the projected token for the broker's system API.
 roomsAudience: rooms-system
@@ -52,12 +46,10 @@ api:
 # factory's App.
 demo: false
 # The run token writer outside the demo (v4 step 2): the factory keeps the run-controller's
-# agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the App in
-# appSecret (keys app_id, private_key), mounted at /etc/agent-factory-run-tokens. The factory's
-# config must name runs.group maku.ogenki.io. Interim: replaced by the per-run minter (v4 D10, step 3).
+# agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the agents
+# App (apps.agents.existingSecret). The factory's config must name runs.group maku.ogenki.io.
 runTokens:
   enabled: false
-  appSecret: ""
   # perRun (v4 D10): one token per run instead of the two shared Secrets, minted from the same App
   # for the run's repository and role, written as the run's own Secret <run name>-git. The
   # factory's Role in the runs namespace then holds create, patch and delete on Secrets, never get,
@@ -100,7 +92,7 @@ monitor:
 # publisher's token under each enforced repository's .github/chainguard/publisher.sts.yaml. Empty:
 # no token, and config.hardening.enforceOutputs must stay empty unless the minter publishes.
 # Unused with config.hardening.publisher.minter: true (v4 D10), where the factory mints the
-# publisher's token from the agents App (apps.agents.existingSecret, or its alias runTokens.appSecret) and reads no projected token.
+# publisher's token from the agents App (apps.agents.existingSecret) and reads no projected token.
 hardening:
   publisher:
     audience: ""

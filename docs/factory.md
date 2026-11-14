@@ -2531,9 +2531,9 @@ A token minted for a narrower profile asks for a subset, which an App holding th
 runs namespace filled with installation tokens, renewed every 30 minutes and ten minutes before
 expiry (a failed mint keeps the old Secret): `agent-git`, the write token implementer and tester
 runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
-served repository of one owner. The demo mints from the factory's App; `runTokens: {enabled,
-appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
-`/etc/agent-factory-run-tokens`), and is refused without both files and unless `runs.group` is
+served repository of one owner. The demo mints from the factory's App; `runTokens.enabled` mints
+from the agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
+`apps.agents.existingSecret` writes), and is refused without both files and unless `runs.group` is
 `maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
 
 **Per-run tokens (v4 D10; the demo's since step 3).** `runTokens.perRun` (with `runTokens.enabled`,

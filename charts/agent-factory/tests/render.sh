@@ -201,7 +201,7 @@ msg="$(helm template af . -n maku --set profile=production --set maku.enabled=tr
 for line in 'maku-factory.image.tag: <version>@sha256:<digest>' 'maku-factory.config.api.humanIssuer:' 'maku.broker.publicURL:'; do
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: maku and the factory: the message does not list '$line' (got: $msg)" >&2; fail=1; }
 done
-pbad 'maku-factory.apps.factory.existingSecret: the factory App'"'"'s Secret' "${prod[@]}" --set maku-factory.githubSecret=
+pbad 'maku-factory.apps.factory.existingSecret: the factory App'"'"'s Secret' "${prod[@]}" --set maku-factory.apps.factory.existingSecret=
 # the agreements are listed too: a disagreeing identity, a web front door without its Secret
 pbad '  - maku.broker.human.issuer "https://idp.example.test" and maku-factory.config.api.humanIssuer "https://other.example.test" must be equal' "${prod[@]}" --set maku-factory.config.api.humanIssuer=https://other.example.test
 pbad '  - webProxy.existingSecret is empty' "${prod[@]}" --set webProxy.enabled=true --set maku.broker.webProxy=true
@@ -518,7 +518,7 @@ bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enab
 # Review of #544: a runtime writer refuses its Secret only while it runs; one writer per Secret name.
 xf='{"dataFrom":[{"extract":{"key":"x"}}]}'
 bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json "externalSecrets.secrets.runGit=$xf"
-bad 'externalSecrets.secrets.runGitRead: the factory writes agent-git-read' "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.enabled=true --set maku-factory.runTokens.appSecret=run-token-app \
+bad 'externalSecrets.secrets.runGitRead: the factory writes agent-git-read' "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.enabled=true --set maku-factory.apps.agents.existingSecret=run-token-app \
   --set-json "externalSecrets.secrets.runGitRead=$xf"
 out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.perRun=false \
   --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read --set-json "externalSecrets.secrets.runGit=$xf")"

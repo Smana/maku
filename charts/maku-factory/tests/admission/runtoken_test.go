@@ -47,7 +47,7 @@ func render(t *testing.T) []client.Object {
 	args := []string{"template", "agent-factory", filepath.Join("..", ".."), "-n", release,
 		"--set", "image.tag=v0.0.0@sha256:0000", "--set", "config.repository=Smana/demo",
 		"--set", "config.runs.group=maku.ogenki.io", "--set", "config.runs.namePrefix=maku-run-",
-		"--set", "runTokens.enabled=true", "--set", "runTokens.appSecret=agents-app", "--set", "runTokens.perRun=true",
+		"--set", "runTokens.enabled=true", "--set", "apps.agents.existingSecret=agents-app", "--set", "runTokens.perRun=true",
 		"--show-only", "templates/rbac.yaml", "--show-only", "templates/run-token-policy.yaml"}
 	out, err := exec.CommandContext(t.Context(), helm, args...).Output()
 	if err != nil {

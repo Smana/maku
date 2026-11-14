@@ -136,7 +136,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- if or $f.demo (dig "config" "demo" false $f) -}}
 {{- $errs = append $errs (printf "maku-factory.demo, maku-factory.config.demo: the factory's laptop demo mode (%s)" $up) -}}
 {{- end -}}
-{{- if not (dig "apps" "factory" "existingSecret" "" $f | default $f.githubSecret) -}}
+{{- if not (dig "apps" "factory" "existingSecret" "" $f) -}}
 {{- $errs = append $errs "maku-factory.apps.factory.existingSecret: the factory App's Secret, keys app_id and private_key (docs/github-apps.md#the-factory-app)" -}}
 {{- end -}}
 {{- if and $maku.enabled (not (dig "config" "api" "humanIssuer" "" $f)) -}}

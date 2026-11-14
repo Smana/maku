@@ -318,7 +318,8 @@ func TestRunTokensServeTheListedRepositories(t *testing.T) {
 	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || ws != nil {
 		t.Fatalf("off: %+v %v", ws, err)
 	}
-	cfg.RunTokens = config.RunTokens{Enabled: true, AppIDFile: "/x/app_id", PrivateKeyFile: "/x/private_key"}
+	cfg.RunTokens = config.RunTokens{Enabled: true}
+	cfg.GitHub.AgentsAppIDFile, cfg.GitHub.AgentsKeyFile = "/x/app_id", "/x/private_key"
 	cfg.Repositories = cfg.Repositories[:2]
 	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || len(ws) != 2 {
 		t.Fatalf("runTokens.enabled: %+v %v", ws, err)
@@ -330,7 +331,8 @@ func TestRunTokensServeTheListedRepositories(t *testing.T) {
 func TestPerRunTokens(t *testing.T) {
 	cfg := &config.Config{Runs: config.Runs{Kind: runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "maku-run-"}},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Other/c"}},
-		RunTokens:    config.RunTokens{Enabled: true, AppIDFile: "/x/app_id", PrivateKeyFile: "/x/private_key"}}
+		RunTokens:    config.RunTokens{Enabled: true},
+		GitHub:       config.GitHub{AgentsAppIDFile: "/x/app_id", AgentsKeyFile: "/x/private_key"}}
 	if rt := perRunTokens(cfg, func() *config.Config { return cfg }, nil, nil, nil, "agent-factory", nil, slog.New(slog.DiscardHandler)); rt != nil {
 		t.Fatal("perRun off: no minter")
 	}
