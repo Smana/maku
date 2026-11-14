@@ -50,6 +50,25 @@ func gitHubInstallationToken(w http.ResponseWriter, r *http.Request) {
 // gitHubRevokeToken is DELETE /installation/token: the minter revokes a run's token when it ends.
 func gitHubRevokeToken(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
 
+// gitHubInstallationGrants is the installation's permissions: every App table the factory's preflight
+// checks (apps), granted.
+func gitHubInstallationGrants(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{"id": 1, "app_id": 1, "permissions": map[string]string{
+		"actions": "write", "checks": "write", "contents": "write", "issues": "write", "pull_requests": "write",
+		"statuses": "write", "workflows": "write", "metadata": "read",
+	}})
+}
+
+// gitHubBranchRules is the default branch's ruleset: maku/merge-gate required from App 1 (D11), as
+// the wizard's github/ruleset-merge-gate.json creates it.
+func gitHubBranchRules(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, []map[string]any{{
+		"type": "required_status_checks", "ruleset_id": 1, "ruleset_source_type": "Repository", "ruleset_source": "owner/repo",
+		"parameters": map[string]any{"strict_required_status_checks_policy": false,
+			"required_status_checks": []map[string]any{{"context": "maku/merge-gate", "integration_id": 1}}},
+	}})
+}
+
 func gitHubRepository(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id": 1, "name": "repo", "full_name": "owner/repo", "private": false, "visibility": "public",
