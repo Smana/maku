@@ -168,7 +168,7 @@ def mcp_bearer(env) -> str | None:
 
 def redact(text: str) -> str:
     for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("JUDGE_API_KEY_FILE", REDACTED_KEY),
-                        ("MCP_TOKEN_FILE", REDACTED)):
+                        ("LIGHT_API_KEY_FILE", REDACTED_KEY), ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)
         if value:
             text = text.replace(value, marker)
@@ -332,6 +332,37 @@ def search_summary(path: str = SEARCH_LEDGER) -> str:
         " ".join("%s=%d" % kv for kv in sorted(outcomes.items())) or "none")
 
 
+def light_llm(env: dict, usage_id: str, effort: str):
+    """The LLM for the light alias, or None when the run has none (CP12): the condenser's summary
+    and the search child spend the light tier's tokens, never the run's."""
+    if not env.get("LIGHT_BASE_URL"):
+        return None
+    from openhands.sdk import LLM
+    return LLM(model="openai/" + env["LIGHT_MODEL"], base_url=env["LIGHT_BASE_URL"],
+               api_key=_api_key(env, "LIGHT_API_KEY_FILE"), usage_id=usage_id,
+               # A budget 429 is terminal for the run's own calls; a summary the gateway refuses
+               # must not retry either. The run's prices are not applied: the meter prices by the
+               # model the gateway served.
+               num_retries=0, litellm_extra_body={"reasoning_effort": effort})
+
+
+# CP6: an internal run condenses later (240 kept where 80, the first 8 where 4), and its summary
+# runs at low effort on the light alias when the run holds one.
+CONDENSER_MAX_SIZE = 240
+CONDENSER_KEEP_FIRST = 8
+CONDENSER_EFFORT = "low"
+
+
+def internal_condenser(condenser, env: dict):
+    """The default agent's condenser tuned for an internal run (CP6): a larger window, and the
+    summary on the light alias at low effort, or on the run's own model when it has no light alias."""
+    if not condenser:
+        return condenser
+    llm = light_llm(env, "condenser", CONDENSER_EFFORT) or condenser.llm
+    return condenser.model_copy(update={"max_size": CONDENSER_MAX_SIZE, "keep_first": CONDENSER_KEEP_FIRST,
+                                        "llm": llm})
+
+
 def build_request(env: dict, task: str, rules: str, span=None, search: bool = False) -> dict:
     """The StartConversationRequest body, as plain JSON.
 
@@ -373,6 +404,8 @@ def build_request(env: dict, task: str, rules: str, span=None, search: bool = Fa
     if search:
         from openhands.sdk.tool import Tool
         agent = agent.model_copy(update={"tools": [*agent.tools, Tool(name=SEARCH_TOOL)]})
+    if env.get("DATA_CLASS") == "internal":
+        agent = agent.model_copy(update={"condenser": internal_condenser(agent.condenser, env)})
     agent = agent.model_dump(mode="json", context=plain)
     print(tool_names(agent), flush=True)
     mcp_url = env.get("MCP_URL")

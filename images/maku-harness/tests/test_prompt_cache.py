@@ -13,6 +13,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -283,3 +284,52 @@ class StepLogCacheLinesTest(unittest.TestCase):
     def test_a_stats_update_for_another_key_is_ignored(self):
         log = self.log()
         self.assertIsNone(log.describe({"kind": "ConversationStateUpdateEvent", "key": "other", "value": {}}))
+
+
+GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
+PUBLIC_ENV = {"MODEL": "agent-default", "LLM_BASE_URL": "http://127.0.0.1:4000/v1",
+              "MCP_URL": "http://127.0.0.1:4000/mcp", "CONVERSATION_ID": "0b3c6f0e-5d1a-4b8e-9f41-2a7c3e9d8b10"}
+INTERNAL_ENV = {**PUBLIC_ENV, "DATA_CLASS": "internal"}
+LIGHT_ENV = {"LIGHT_BASE_URL": "http://127.0.0.1:4000/m/tier-light/v1", "LIGHT_MODEL": "tier-light"}
+
+
+def build(env):
+    return agent_run.build_request(env, "fix the link", "rules text")
+
+
+def rendered(env):
+    return json.dumps(build(env), indent=1, sort_keys=True) + "\n"
+
+
+def golden(name):
+    with open(os.path.join(GOLDEN_DIR, name)) as f:
+        return f.read()
+
+
+class InternalCondenserTest(unittest.TestCase):
+    def test_a_public_request_is_todays(self):
+        self.assertEqual(rendered(PUBLIC_ENV), golden("start-request.json"))
+
+    def test_an_internal_run_condenses_later_and_on_the_light_alias(self):
+        c = build(INTERNAL_ENV | LIGHT_ENV)["agent"]["condenser"]
+        self.assertEqual((c["max_size"], c["keep_first"]), (240, 8))
+        self.assertEqual(c["llm"]["model"], "openai/tier-light")
+        self.assertEqual(c["llm"]["base_url"], LIGHT_ENV["LIGHT_BASE_URL"])
+        self.assertEqual(c["llm"]["litellm_extra_body"], {"reasoning_effort": "low"})
+
+    def test_an_internal_run_without_a_light_alias_keeps_the_summary_on_its_own_model(self):
+        c = build(INTERNAL_ENV)["agent"]["condenser"]
+        self.assertEqual((c["max_size"], c["keep_first"]), (240, 8))
+        self.assertEqual(c["llm"]["model"], "openai/" + INTERNAL_ENV["MODEL"])
+
+    def test_the_internal_request_is_its_golden(self):
+        self.assertEqual(rendered(INTERNAL_ENV | LIGHT_ENV), golden("start-request-internal.json"))
+
+
+class LightKeyRedactionTest(unittest.TestCase):
+    def test_the_light_key_is_redacted(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write("sk-light\n")
+        self.addCleanup(os.unlink, f.name)
+        with mock.patch.dict(os.environ, {"LIGHT_API_KEY_FILE": f.name}):
+            self.assertNotIn("sk-light", agent_run.redact("x sk-light"))
