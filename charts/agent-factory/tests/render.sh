@@ -758,6 +758,25 @@ grep -qF 'system:serviceaccount:xr-runs:agt-' <<<"$dsub" && ! grep -qF 'system:s
 out="$(helm template af . -n maku "${gwd[@]}" "${dash[@]}")" || { echo "FAIL: dashboards with maku-gateway do not render" >&2; fail=1; out=''; }
 dashcheck "agent-factory,agent-fleet,agent-gateway,agent-identity,agent-room,agent-run,agents-overview"
 grep -qF 'job=\"model-gateway\", namespace=\"maku\"' <<<"$out" || { echo "FAIL: the gateway panels read maku-gateway's job and namespace" >&2; fail=1; }
+# cache-costs review CP1/CP3: the panels the new series answer. The PromQL reads the served
+# maku_factory_* names; the dashboard JSON keeps the portable chart free of trace panels (the host
+# dashboard owns the agent-run.boot and agent-run.clone span durations).
+has_panel() { # has_panel DASHBOARD TITLE [EXPR]: a panel or row carries the title; EXPR, given, is one of its or its children's targets exactly
+  local dash="$1" title="$2" expr="${3:-}"
+  jq -e --arg t "$title" '[.. | objects | select(.title? == $t)] | length >= 1' "files/dashboards/$dash.json" >/dev/null ||
+    { echo "FAIL: no panel \"$title\" in $dash" >&2; fail=1; return; }
+  if [[ -n $expr ]]; then
+    jq -e --arg t "$title" --arg e "$expr" '[.. | objects | select(.title? == $t) | .. | objects | select(has("targets")) | .targets[].expr] | any(. == $e)' \
+      "files/dashboards/$dash.json" >/dev/null || { echo "FAIL: no panel \"$title\" in $dash targets exactly: $expr" >&2; fail=1; }
+  fi
+}
+has_panel agent-factory "Cost per merged pull request, by workflow" \
+  'sum by (profile) (increase(maku_factory_task_usd_total[$__range])) / sum by (profile) (increase(maku_factory_task_outcomes_total{outcome=~"accepted|merged_human"}[$__range]))'
+has_panel agent-factory "Cost per merged pull request, by role" \
+  'sum by (role) (increase(maku_factory_run_cost_usd_sum[$__range])) / scalar(sum(increase(maku_factory_task_outcomes_total{outcome=~"accepted|merged_human"}[$__range])))'
+has_panel agent-factory "Wait between runs over 5 minutes" \
+  '1 - sum by (role) (increase(maku_factory_run_wait_seconds_bucket{le="300"}[$__range])) / sum by (role) (increase(maku_factory_run_wait_seconds_count[$__range]))'
+has_panel agent-run "Start: pod, boot, clone" ''
 out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.labels={"team":"agents"}')"
 ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and (.metadata.labels | has("grafana_dashboard") | not))' 'monitoring.dashboards.labels replace the sidecar label (grafana_dashboard: "1"), never merge with it'
 out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }

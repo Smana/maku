@@ -640,6 +640,96 @@
           "legendFormat": "{{role}}"
         }
       ]
+    },
+    {
+      "id": 20,
+      "type": "timeseries",
+      "title": "Cost per merged pull request, by workflow",
+      "description": "USD each workflow (profile) spent over the range, divided by the pull requests merged over it (maku_factory_task_outcomes_total with outcome accepted or merged_human). The denominator is merged pull requests: a failed task's spend is in the numerator, not the denominator, so a red class reads higher, not lower. Failed tasks' spend included above the line.",
+      "gridPos": {
+        "x": 0,
+        "y": 65,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (profile) (increase(maku_factory_task_usd_total[$__range])) / sum by (profile) (increase(maku_factory_task_outcomes_total{outcome=~\"accepted|merged_human\"}[$__range]))",
+          "legendFormat": "{{profile}}"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "timeseries",
+      "title": "Cost per merged pull request, by role",
+      "description": "USD each role (harness roles HR6) spent over the range, divided by the same single denominator: the pull requests merged over the range, every workflow counted once (maku_factory_task_outcomes_total with outcome accepted or merged_human). The roles of one merged pull request sum to its cost per merged pull request. Failed tasks' spend included above the line.",
+      "gridPos": {
+        "x": 8,
+        "y": 65,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (role) (increase(maku_factory_run_cost_usd_sum[$__range])) / scalar(sum(increase(maku_factory_task_outcomes_total{outcome=~\"accepted|merged_human\"}[$__range])))",
+          "legendFormat": "{{role}}"
+        }
+      ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Wait between runs over 5 minutes",
+      "description": "The share of inter-run waits over 5 minutes, by the waiting run's role, from maku_factory_run_wait_seconds (CP1): one minus the 300-second bucket's increase over the range. The number that sizes a longer prompt-cache TTL: the runs paying a full cold-start cache miss.",
+      "gridPos": {
+        "x": 16,
+        "y": 65,
+        "w": 8,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "1 - sum by (role) (increase(maku_factory_run_wait_seconds_bucket{le=\"300\"}[$__range])) / sum by (role) (increase(maku_factory_run_wait_seconds_count[$__range]))",
+          "legendFormat": "{{role}}"
+        }
+      ]
     }
   ]
 }

@@ -843,6 +843,49 @@
       ]
     },
     {
+      "id": 299,
+      "type": "row",
+      "title": "Start: pod, boot, clone",
+      "collapsed": true,
+      "gridPos": {
+        "x": 0,
+        "y": 38,
+        "w": 24,
+        "h": 1
+      },
+      "panels": [
+        {
+          "id": 300,
+          "type": "stat",
+          "title": "Pod created → agent running",
+          "description": "Seconds from the run pod's first Pending reading (its creation, from the run meter's Kubernetes phase) to the harness starting: the platform half of the start row. Beside it, the agent-run.boot and agent-run.clone span durations answer the rest of the first minute; they are trace-backed and render in the host's run dashboard, keeping this portable chart PromQL-only.",
+          "gridPos": {
+            "x": 0,
+            "y": 39,
+            "w": 6,
+            "h": 4
+          },
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "noValue": "—"
+            },
+            "overrides": []
+          },
+          "targets": [
+            {
+              "refId": "A",
+              "expr": "(max(agentrun_started_timestamp_seconds{namespace=\"__RUNS_NAMESPACE__\", run_id=\"${run}\"}) > 0) - min_over_time(timestamp((max(agentrun_status_phase{namespace=\"__RUNS_NAMESPACE__\", run_id=\"${run}\", phase=\"Pending\"}) == 1))[$__range:5m])"
+            }
+          ]
+        }
+      ]
+    },
+    {
       "id": 101,
       "type": "row",
       "title": "Gateway metrics",
