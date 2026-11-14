@@ -100,6 +100,17 @@ spec:
             matchLabels: {app.kubernetes.io/name: rooms-web-proxy}
         - podSelector:
             matchLabels: {app.kubernetes.io/name: e2e-client}
+        # The Slack App signs in here (identity.sh SLACK, plan v4 step 6 Task 16).
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: factory-slack-app}
+        # The policy checks' control pod, under no policy of its own: it reaching the stub is what
+        # makes the factory stand-in's refusal mean something (identity.sh SLACK).
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels: {app.kubernetes.io/name: e2e-control}
       ports:
         - {protocol: TCP, port: https}
     # The model gateway's proxy reaches the stub as its provider, over plain http (plan v4 step 4).

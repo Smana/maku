@@ -34,6 +34,8 @@ type Stub struct {
 	traces []string
 	// codes are the authorization codes issued and not yet redeemed (plan v4 step 6, Task 9).
 	codes codeStore
+	// slack is the chat.postMessage calls received as Slack's Web API (plan v4 step 6, Task 16).
+	slack slackPosts
 	// oauth is GitHub's OAuth web flow, for the broker's GitHub account link (v4 D8).
 	oauth *oauthFlow
 }
@@ -66,6 +68,9 @@ func New() *Stub {
 	mux.HandleFunc("GET /test/id-token", s.testIDToken)
 	mux.HandleFunc("POST /token", s.token)
 	mux.HandleFunc("GET /oauth/v2/authorize", s.authorize)
+	mux.HandleFunc("POST /api/chat.postMessage", s.slackPostMessage)
+	mux.HandleFunc("GET /__slack", s.slackReceived)
+	mux.HandleFunc("GET /__grants", s.clientGrants)
 	mux.HandleFunc("GET /v2/users/dev", s.activeUser)
 	mux.HandleFunc("POST /v2/users/dev/links/_search", s.gitHubLink)
 	mux.HandleFunc("GET /app", gitHubApp)

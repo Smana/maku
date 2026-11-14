@@ -48,6 +48,8 @@ type Config struct {
 	Proposals Proposals `json:"proposals,omitempty"`
 	// The three listeners (M11): Slack's events (public), the broker's webhooks (cluster only),
 	// and metrics with the probes. Defaults :8080, :8081 and :9090; a test passes 127.0.0.1:0.
+	// APIBaseURL is Slack's Web API base, a test seam (the e2e stub): empty is https://slack.com/api/.
+	APIBaseURL   string `json:"apiBaseURL,omitempty"`
 	EventsAddr   string `json:"eventsAddr,omitempty"`
 	WebhooksAddr string `json:"webhooksAddr,omitempty"`
 	OpsAddr      string `json:"opsAddr,omitempty"`
@@ -149,7 +151,7 @@ func (c Config) validate() error {
 			errs = append(errs, fmt.Errorf("%s is required", name))
 		}
 	}
-	for name, v := range map[string]string{"brokerURL": c.BrokerURL, "roomsURL": c.RoomsURL} {
+	for name, v := range map[string]string{"brokerURL": c.BrokerURL, "roomsURL": c.RoomsURL, "apiBaseURL": c.APIBaseURL} {
 		if u, err := url.Parse(v); v != "" && (err != nil || u.Scheme != "https" && u.Scheme != "http" || u.Hostname() == "") {
 			errs = append(errs, fmt.Errorf("%s %q must be an http(s) URL", name, v))
 		}

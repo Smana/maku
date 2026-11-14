@@ -232,6 +232,25 @@ broker:
     namespace: ""
     port: 8082
     audiencePrefix: maku-gateway
+  # The broker's own config blocks, rendered verbatim (v4 step 6, EX9): the broker decodes them
+  # strictly, so a misspelt key fails the rollout (internal/config). Unset, nothing renders.
+  #   suspend: {enabled: true, after: 5m}     the warm-sandbox suspend of an idle attended run
+  #   policyManagement: {...}                 the factory's merge-policy switches (merge-policies.md)
+  #   coordination: {mode: plan}              the factory's multi-repository switch
+  suspend: {}
+  policyManagement: {}
+  coordination: {}
+  # The room-event subscribers (docs/operations.md, "Webhooks"): each entry is the broker's own
+  # (name, network, url, events, secretFile, repositories, generation), plus three chart keys:
+  #   existingSecret  the signing key's Secret, mounted at /etc/room-broker/webhooks/<name>/; it fills
+  #                   secretFile with <that dir>/<key> unless secretFile is set (a set one wins);
+  #   key             the key in that Secret (default signing-key);
+  #   networkPolicy   {to, port}: a cluster subscriber's peers, for the broker's egress on the URL's
+  #                   port (cilium: endpoint selectors or whole peers; kubernetes: NetworkPolicy
+  #                   peers). Required in a policy mode, except for the Slack App's own URL
+  #                   (factory-slack-app.<ns>), whose pods are the default. An internet subscriber
+  #                   opens its host (cilium) or public addresses minus privateCIDRs (kubernetes).
+  webhooks: []
   # Escape hatches for oidc mode's files, ROOMS_MCP_KEY and the IdP's network flows.
   # Secrets only through valueFrom.secretKeyRef, never a plaintext value.
   extraEnv: []

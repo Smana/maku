@@ -122,7 +122,26 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "plain": {"type": "boolean"}
+        "plain": {"type": "boolean"},
+        "factory": {
+          "description": "The factory's default-deny (D6), in maku's networkPolicies mode.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "intakeFrom": {"type": "array", "items": {"type": "object"}},
+            "github": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}}},
+            "idp": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "classifier": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "meter": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "logs": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "otlp": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "agentGuard": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "gatewayLog": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "octoSTS": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "extraEgress": {"type": "array", "items": {"type": "object"}}
+          }
+        }
       }
     },
     "monitoring": {
@@ -173,9 +192,8 @@
       }
     },
     "slack": {
-      "description": "The Slack App (D20). Until its subchart lands (v4 step 6 PR E), enabled only adds the maku-slack alert group.",
+      "description": "The Slack App (D20): the maku-slack subchart, aliased slack (its own strict schema).",
       "type": "object",
-      "additionalProperties": false,
       "properties": {
         "enabled": {"type": "boolean"}
       }
