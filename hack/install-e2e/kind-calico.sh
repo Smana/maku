@@ -98,7 +98,7 @@ spec:
   containers:
     - name: c
       image: $PROBE_IMAGE
-      command: [sh, -c, '$*']
+      command: $(jq -cn --arg s "$*" '["sh", "-c", $s]')
       resources: {requests: {cpu: 10m, memory: 16Mi}, limits: {cpu: 200m, memory: 64Mi}}
       securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
 YAML

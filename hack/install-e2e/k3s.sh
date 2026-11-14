@@ -73,10 +73,8 @@ leg_checks() {
 
 # curl_in URL HOST: "<status> <body>" of a GET from a pod in namespace e2e (000 when nothing answers).
 curl_in() {
-  local host=()
-  [[ -z $2 ]] || host=(-H "Host: $2")
   k -n e2e run "curl-$RANDOM" --rm -i --restart=Never --quiet --image "$CURL_IMAGE" \
-    --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$CURL_IMAGE"'","args":'"$(jq -cn --arg u "$1" --args '["-sk","-m","10","-o","/dev/stdout","-w"," %{http_code}"] + $ARGS.positional + [$u]' "${host[@]}")"',"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
+    --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$CURL_IMAGE"'","args":'"$(jq -cn --arg u "$1" --arg h "$2" '["-sk","-m","10","-o","/dev/stdout","-w"," %{http_code}"] + (if $h == "" then [] else ["-H", "Host: " + $h] end) + [$u]')"',"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
     2>/dev/null | awk '{code=$NF; $NF=""; sub(/ $/, ""); body=$0} END {print code " " body}'
 }
 
