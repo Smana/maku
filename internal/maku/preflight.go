@@ -52,7 +52,7 @@ type PreflightOptions struct {
 // RunPreflight is `maku preflight` (v4 D24, IN5): it creates a Job from the release's preflight
 // CronJob, waits for it, reads its pod's JSON lines, adds the outside checks run from this machine,
 // prints the report and deletes the Job unless Keep. A fail (or, with Strict, a warn) exits 1; a
-// release without the preflight, or a Job that leaves no report, exits 2.
+// release without the preflight, or a Job that leaves no whole report, exits 2.
 func RunPreflight(ctx context.Context, c PreflightCluster, o PreflightOptions, out io.Writer) error {
 	cj, err := preflightCronJob(ctx, c.Client, o.Namespace, o.Release)
 	if err != nil {
@@ -84,12 +84,12 @@ func RunPreflight(ctx context.Context, c PreflightCluster, o PreflightOptions, o
 	if err != nil {
 		return &ExitError{Code: 2, Err: err}
 	}
-	raw, err := c.Logs(ctx, job.Namespace, pod)
+	raw, err := c.Logs(ctx, job.Namespace, pod.Name)
 	if err != nil {
-		return &ExitError{Code: 2, Err: fmt.Errorf("read %s's log: %w", pod, err)}
+		return &ExitError{Code: 2, Err: fmt.Errorf("read %s's log: %w", pod.Name, err)}
 	}
 	var rep preflight.Report
-	lines := 0
+	counts := map[preflight.Outcome]int{}
 	sc := bufio.NewScanner(bytes.NewReader(raw))
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -97,13 +97,17 @@ func RunPreflight(ctx context.Context, c PreflightCluster, o PreflightOptions, o
 		if json.Unmarshal(sc.Bytes(), &res) != nil || res.Check == "" {
 			continue // a line that is not a result (a Go panic, a log line) is not the report's
 		}
-		if rep.Add(res) == nil {
-			lines++
+		counts[res.Outcome]++
+		if rep.Add(res) != nil { // a line holding a credential: withheld, never a pass
+			_ = rep.Add(preflight.Result{Check: res.Check, Component: res.Component, Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the result was withheld: its message carried a credential"})
 		}
 	}
-	if lines == 0 {
-		return &ExitError{Code: 2, Err: fmt.Errorf("the preflight Job %s left no report: kubectl -n %s logs %s", job.Name, job.Namespace, pod)}
+	// The pod writes its summary last, after every line: a pod that crashed, was OOM-killed or ran
+	// past its deadline after some lines left none, or another. A partial report never passes.
+	if !complete(terminationMessage(pod), counts) {
+		return &ExitError{Code: 2, Err: fmt.Errorf("the preflight did not finish: its pod %s ended without the summary of its lines (crashed, OOM-killed or past its deadline): kubectl -n %s describe pod %s", pod.Name, job.Namespace, pod.Name)}
 	}
+	podResults := rep.Results()
 	var outside []preflight.Result
 	if o.NoOutside {
 		outside = []preflight.Result{{Check: "exposure", Component: string(preflight.InCLI), Outcome: preflight.Skip, Message: "--no-outside"}}
@@ -114,11 +118,9 @@ func RunPreflight(ctx context.Context, c PreflightCluster, o PreflightOptions, o
 		_ = rep.Add(r)
 	}
 	if o.JSON {
-		if _, err := out.Write(raw); err != nil {
-			return err
-		}
+		// The results the report accepted, never the log's other lines.
 		enc := json.NewEncoder(out)
-		for _, r := range outside {
+		for _, r := range append(podResults, outside...) {
 			if err := enc.Encode(r); err != nil {
 				return err
 			}
@@ -220,16 +222,38 @@ func waitJob(ctx context.Context, c client.Client, job *batchv1.Job, timeout, po
 }
 
 // jobPod is the Job's pod (the newest, should there be more).
-func jobPod(ctx context.Context, c client.Client, job *batchv1.Job) (string, error) {
+func jobPod(ctx context.Context, c client.Client, job *batchv1.Job) (*corev1.Pod, error) {
 	var pods corev1.PodList
 	if err := c.List(ctx, &pods, client.InNamespace(job.Namespace), client.MatchingLabels{"batch.kubernetes.io/job-name": job.Name}); err != nil {
-		return "", err
+		return nil, err
 	}
 	if len(pods.Items) == 0 {
-		return "", fmt.Errorf("the preflight Job %s has no pod: kubectl -n %s describe job %s", job.Name, job.Namespace, job.Name)
+		return nil, fmt.Errorf("the preflight Job %s has no pod: kubectl -n %s describe job %s", job.Name, job.Namespace, job.Name)
 	}
 	slices.SortFunc(pods.Items, func(a, b corev1.Pod) int { return b.CreationTimestamp.Compare(a.CreationTimestamp.Time) })
-	return pods.Items[0].Name, nil
+	return &pods.Items[0], nil
+}
+
+// terminationMessage is the pod's container's termination message: the runner's summary.
+func terminationMessage(pod *corev1.Pod) string {
+	for _, cs := range pod.Status.ContainerStatuses {
+		if t := cs.State.Terminated; t != nil {
+			return strings.TrimSpace(t.Message)
+		}
+	}
+	return ""
+}
+
+// complete reports whether the summary counts exactly the lines read: the runner writes it once,
+// after its last line. The counts alone are compared, so a CLI from another release, whose catalog
+// may normalize a code differently, still reads a whole report as whole.
+func complete(summary string, counts map[preflight.Outcome]int) bool {
+	var fail, warn, pass, skip int
+	if _, err := fmt.Sscanf(summary, "preflight: %d fail, %d warn, %d pass, %d skip", &fail, &warn, &pass, &skip); err != nil {
+		return false
+	}
+	return fail == counts[preflight.Fail] && warn == counts[preflight.Warn] && pass == counts[preflight.Pass] && skip == counts[preflight.Skip] &&
+		fail+warn+pass+skip > 0
 }
 
 // statusOf is a response's status code, or 0 on no answer.

@@ -52,13 +52,17 @@ func outsideClient(t *testing.T, objs ...client.Object) client.Reader {
 // webProxy answers as oauth2-proxy in front of the broker: /ping is OK, /.well-known/roomctl is
 // skip-auth, everything else redirects to sign in.
 func webProxy(ping string) http.Handler {
+	return webProxyDoc(ping, `{"issuer":"https://idp.example.com","preset":"generic","tokenUse":"id","humanMode":"oidc"}`)
+}
+
+func webProxyDoc(ping, roomctl string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ping":
 			_, _ = io.WriteString(w, ping)
 		case "/.well-known/roomctl":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, `{"issuer":"https://idp.example.com","preset":"generic","tokenUse":"id"}`)
+			_, _ = io.WriteString(w, roomctl)
 		default:
 			http.Redirect(w, r, "/oauth2/sign_in", http.StatusFound)
 		}
@@ -127,6 +131,9 @@ func TestOutsideChecks(t *testing.T) {
 		"a Slack route too wide":                {map[string]http.Handler{"rooms.example.com": webProxy("OK"), "slack.example.com": slackRoute(true)}, []client.Object{web, slack}, "pass/ fail/slack_route_too_wide"},
 		"a web host that is not oauth2-proxy's": {map[string]http.Handler{"rooms.example.com": http.NotFoundHandler()}, []client.Object{web}, "fail/route_unanswered"},
 		"a /ping that is not oauth2-proxy's":    {map[string]http.Handler{"rooms.example.com": webProxy("pong")}, []client.Object{web}, "fail/route_unanswered"},
+		"a broker in local mode":                {map[string]http.Handler{"rooms.example.com": webProxyDoc("OK", `{"url":"https://rooms.example.com","humanMode":"local"}`)}, []client.Object{web}, "pass/"},
+		"an oidc broker without an issuer":      {map[string]http.Handler{"rooms.example.com": webProxyDoc("OK", `{"humanMode":"oidc"}`)}, []client.Object{web}, "fail/route_unanswered"},
+		"a route without a hostname":            {nil, []client.Object{exposeRoute("rooms-web")}, "fail/undecided"},
 		"an Ingress's host": {map[string]http.Handler{"rooms.example.com": webProxy("OK")}, []client.Object{&networkingv1.Ingress{
 			ObjectMeta: metav1.ObjectMeta{Name: "rooms-web", Namespace: "maku"},
 			Spec:       networkingv1.IngressSpec{Rules: []networkingv1.IngressRule{{Host: "rooms.example.com"}}}}}, "pass/"},
@@ -136,5 +143,25 @@ func TestOutsideChecks(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// failing answers every read with an error that carries text the API server returned: it never
+// reaches a result.
+type failing struct{ client.Reader }
+
+func (failing) Get(context.Context, client.ObjectKey, client.Object, ...client.GetOption) error {
+	return errors.New(`Unauthorized: token "sk-live-abcdef" expired at https://10.0.0.1:6443`)
+}
+
+func TestOutsideChecksFixedMessages(t *testing.T) {
+	rs := OutsideChecks(t.Context(), failing{}, "maku", OutsideDeps{})
+	for _, r := range rs {
+		if r.Code != preflight.Undecided || strings.Contains(r.Message, "sk-live") || strings.Contains(r.Message, "10.0.0.1") {
+			t.Fatalf("%+v", r)
+		}
+	}
+	if len(rs) != 2 {
+		t.Fatalf("one undecided per route: %+v", rs)
 	}
 }

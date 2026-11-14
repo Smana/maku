@@ -69,9 +69,14 @@ func OutsideChecks(ctx context.Context, c client.Reader, ns string, d OutsideDep
 		route string
 		check func(context.Context, OutsideDeps, string) preflight.Result
 	}{{exposeWeb, checkWebHost}, {exposeSlack, checkSlackHost}} {
-		hosts, err := routeHosts(ctx, c, ns, s.route)
+		hosts, found, err := routeHosts(ctx, c, ns, s.route)
 		if err != nil {
-			out = append(out, outsideResult(preflight.Fail, preflight.Undecided, fmt.Sprintf("%s's hostnames are unreadable: %s", s.route, client.IgnoreNotFound(err))))
+			// A fixed message: the API server's error text stays out of the report.
+			out = append(out, outsideResult(preflight.Fail, preflight.Undecided, fmt.Sprintf("the %s route is unreadable: your kubeconfig needs get on HTTPRoutes and Ingresses in %s", s.route, ns)))
+			continue
+		}
+		if found && len(hosts) == 0 {
+			out = append(out, outsideResult(preflight.Fail, preflight.Undecided, fmt.Sprintf("the %s route names no hostname: nothing to check from here", s.route)))
 			continue
 		}
 		for _, h := range hosts {
@@ -101,9 +106,11 @@ func checkWebHost(ctx context.Context, d OutsideDeps, host string) preflight.Res
 	}
 	code, body := statusOf(ctx, d.HC, http.MethodGet, base+"/.well-known/roomctl")
 	var doc struct {
-		Issuer string `json:"issuer"`
+		Issuer    string `json:"issuer"`
+		HumanMode string `json:"humanMode"`
 	}
-	if code != http.StatusOK || json.Unmarshal(body, &doc) != nil || doc.Issuer == "" {
+	// An oidc broker names its issuer; a local one names none (it needs no IdP).
+	if code != http.StatusOK || json.Unmarshal(body, &doc) != nil || (doc.Issuer == "" && doc.HumanMode != "local") {
 		return outsideResult(preflight.Fail, "route_unanswered", fmt.Sprintf("%s/.well-known/roomctl does not reach the broker (HTTP %d): maku configure reads it there", host, code))
 	}
 	return outsideResult(preflight.Pass, "", host+": oauth2-proxy, and /.well-known/roomctl through it")
@@ -125,30 +132,30 @@ func checkSlackHost(ctx context.Context, d OutsideDeps, host string) preflight.R
 }
 
 // routeHosts are a route's hostnames: the HTTPRoute's (v1, else v1beta1), else the Ingress's rules'.
-// A route that does not exist has none.
-func routeHosts(ctx context.Context, c client.Reader, ns, name string) ([]string, error) {
+// found is false when neither exists.
+func routeHosts(ctx context.Context, c client.Reader, ns, name string) (hosts []string, found bool, err error) {
 	for _, v := range []string{"v1", "v1beta1"} {
 		u := &unstructured.Unstructured{}
 		u.SetGroupVersionKind(schema.GroupVersionKind{Group: "gateway.networking.k8s.io", Version: v, Kind: "HTTPRoute"})
 		err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, u)
 		if err == nil {
 			hs, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "hostnames")
-			return hs, nil
+			return hs, true, nil
 		}
 		if meta.IsNoMatchError(err) || isNotRegistered(err) {
 			continue
 		}
 		if client.IgnoreNotFound(err) != nil {
-			return nil, err
+			return nil, false, err
 		}
 		break
 	}
 	var ing networkingv1.Ingress
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &ing); err != nil {
 		if client.IgnoreNotFound(err) == nil || meta.IsNoMatchError(err) {
-			return nil, nil
+			return nil, false, nil
 		}
-		return nil, err
+		return nil, false, err
 	}
 	var hs []string
 	for _, r := range ing.Spec.Rules {
@@ -156,7 +163,7 @@ func routeHosts(ctx context.Context, c client.Reader, ns, name string) ([]string
 			hs = append(hs, r.Host)
 		}
 	}
-	return hs, nil
+	return hs, true, nil
 }
 
 // isNotRegistered is a kind the client's scheme does not know: the version is not this client's.

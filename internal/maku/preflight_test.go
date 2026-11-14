@@ -5,6 +5,7 @@ package maku
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -19,6 +20,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
+
+	"github.com/Smana/maku/internal/preflight"
 )
 
 const (
@@ -49,7 +52,20 @@ type fakeCluster struct {
 	deleted []string
 }
 
-func newFakeCluster(t *testing.T, succeed bool, objs ...client.Object) *fakeCluster {
+// summaryOf is the pod's own termination summary of lines, as the runner writes it.
+func summaryOf(lines string) string {
+	var rep preflight.Report
+	for _, l := range strings.Split(strings.TrimSpace(lines), "\n") {
+		var r preflight.Result
+		if json.Unmarshal([]byte(l), &r) == nil && r.Check != "" {
+			_ = rep.Add(r)
+		}
+	}
+	return rep.Summary()
+}
+
+// newFakeCluster's pod terminates with term as its termination message (empty: a crash, none).
+func newFakeCluster(t *testing.T, succeed bool, term string, objs ...client.Object) *fakeCluster {
 	t.Helper()
 	s := runtime.NewScheme()
 	if err := clientgoscheme.AddToScheme(s); err != nil {
@@ -68,7 +84,9 @@ func newFakeCluster(t *testing.T, succeed bool, objs ...client.Object) *fakeClus
 				}
 				f.created = job.DeepCopy()
 				pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: job.Name + "-x", Namespace: job.Namespace,
-					Labels: map[string]string{"batch.kubernetes.io/job-name": job.Name}}}
+					Labels: map[string]string{"batch.kubernetes.io/job-name": job.Name}},
+					Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{Name: "preflight",
+						State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{Message: term}}}}}}
 				if err := c.Create(ctx, pod); err != nil {
 					return err
 				}
@@ -98,7 +116,12 @@ func (f *fakeCluster) cluster(lines string) PreflightCluster {
 
 func runPreflight(t *testing.T, lines string, succeed bool, o PreflightOptions, objs ...client.Object) (*fakeCluster, string, error) {
 	t.Helper()
-	f := newFakeCluster(t, succeed, objs...)
+	return runPreflightTerm(t, lines, summaryOf(lines), succeed, o, objs...)
+}
+
+func runPreflightTerm(t *testing.T, lines, term string, succeed bool, o PreflightOptions, objs ...client.Object) (*fakeCluster, string, error) {
+	t.Helper()
+	f := newFakeCluster(t, succeed, term, objs...)
 	o.Poll = time.Millisecond
 	o.NoOutside = true
 	var out bytes.Buffer
@@ -203,4 +226,40 @@ func TestPreflightRelease(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 	_ = apierrors.IsNotFound
+}
+
+// A pod that crashes (OOM-killed, past its deadline) after printing some passes left a partial
+// report: no termination summary, or one that is not its lines'. It never passes: exit 2.
+func TestPreflightPartialReport(t *testing.T) {
+	for name, term := range map[string]string{
+		"no summary":            "",
+		"a Go panic's log tail": "panic: runtime error: invalid memory address",
+		"another run's summary": "preflight: 0 fail, 0 warn, 9 pass, 0 skip",
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, _, err := runPreflightTerm(t, passLines, term, false, PreflightOptions{Namespace: "maku"}, testCronJob("af", "maku"))
+			if exitCode(err) != 2 || !strings.Contains(err.Error(), "the preflight did not finish") {
+				t.Fatalf("exit %d: %v", exitCode(err), err)
+			}
+		})
+	}
+}
+
+// --json writes the results the report accepted, never the log's other lines: a line holding a
+// credential, or one that is not a result, does not reach stdout.
+func TestPreflightJSONOnlyAccepted(t *testing.T) {
+	lines := passLines + "panic: something\n" + `{"check":"secrets","component":"","outcome":"fail","code":"secret_missing","message":"postgres://u:p@h/db","seconds":0}` + "\n"
+	_, out, err := runPreflightTerm(t, lines, "preflight: 1 fail, 0 warn, 2 pass, 0 skip", false, PreflightOptions{Namespace: "maku", JSON: true}, testCronJob("af", "maku"))
+	if exitCode(err) != 1 || !strings.Contains(out, `"check":"secrets","component":"","outcome":"fail","code":"undecided"`) {
+		t.Fatalf("a withheld result is a fail undecided: exit %d\n%s", exitCode(err), out)
+	}
+	if strings.Contains(out, "panic") || strings.Contains(out, "postgres://") {
+		t.Fatalf("--json wrote a line the report did not accept:\n%s", out)
+	}
+	for _, l := range strings.Split(strings.TrimSpace(out), "\n") {
+		var r preflight.Result
+		if err := json.Unmarshal([]byte(l), &r); err != nil || r.Check == "" {
+			t.Fatalf("not a result: %q", l)
+		}
+	}
 }
