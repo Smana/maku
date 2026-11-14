@@ -240,6 +240,12 @@ func (c Class) ReadsDiff(name string) bool {
 		c.MaxPatchFiles > 0 || c.MaxModifiedLines > 0 || c.DiffShape != "" || c.Oracle != nil
 }
 
+// Bounded reports whether the class says which diffs it may merge (MR6): allowedFiles, a declared
+// diff shape, or the shape built in under its name.
+func (c Class) Bounded(name string) bool {
+	return len(c.AllowedFiles) > 0 || c.DiffShape != "" || BuiltInShape(name) != ""
+}
+
 // ValidateClass reports one class's problems, for a class read from outside this config.
 func ValidateClass(name string, cl Class, bad func(string, ...any)) { validateClass(name, cl, bad) }
 

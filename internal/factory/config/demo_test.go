@@ -162,13 +162,13 @@ func TestDemoOneAppIsTheMerger(t *testing.T) {
 	}
 }
 
-// Without policy-bot, allowedFiles is what keeps a gate path from merging on a live class.
+// MR6: allowedFiles or a shape is what keeps a gate path from merging on an evaluated class.
 func TestDemoPolicyBotFalseNeedsAllowedFilesOnLiveClasses(t *testing.T) {
-	const want = "merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging"
+	const want = "class docs: an evaluated policy needs allowedFiles or a diffShape"
 	for name, c := range map[string]struct{ class, err string }{
 		"live without allowedFiles": {"docs: {live: true}", want},
 		"live with allowedFiles":    {"docs: {live: true, allowedFiles: ['^docs/.*\\.md$']}", ""},
-		"shadow without":            {"docs: {shadow: true}", ""},
+		"shadow without":            {"docs: {shadow: true}", want},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(demoGood, "classes: {docs-links: {shadow: true}, revert: {shadow: true}, docs: {}", "classes: {docs-links: {shadow: true}, revert: {shadow: true}, "+c.class, 1)

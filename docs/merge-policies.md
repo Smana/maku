@@ -1103,6 +1103,7 @@ it serves none, and a `class:` label naming it falls back to `review`. A reposit
 | `ParameterTwice` | a binding | A fill-once parameter set on the policy and the binding | Remove one |
 | `OverPolicy` | a binding | A cap above the policy's | Lower it |
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
+| `Unbounded` | a binding | Bound `live` or `shadow`, the class resolved with it has neither `allowedFiles` nor a `diffShape` (`docs-links` and `revert` have theirs built in), with or without policy-bot | Set `allowedFiles` on the policy or the binding, or a `diffShape` |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
 | `DefinedTwice` | a `Repository` | The config file also defines the repository | Remove it from one of the two |

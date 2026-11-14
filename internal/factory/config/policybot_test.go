@@ -21,8 +21,9 @@ func TestPolicyBotOffInProduction(t *testing.T) {
 		"the defaults": {liveDeadLinks, "", ""},
 		"no gate status": {liveDeadLinks, "      policyBot: false\n      gateStatus: false\n",
 			"merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires"},
-		"a live class without allowedFiles": {"docs-links: {live: true, holdoutChecks: [x]}\n  revert: {shadow: true}", "      policyBot: false\n      gateStatus: true\n",
-			"class docs-links: merge.policyBot: false needs allowedFiles on every live class"},
+		// MR6: docs-links's built-in shape bounds it; docs has neither paths nor a shape.
+		"a live class without allowedFiles": {"docs-links: {live: true, holdoutChecks: [x]}\n  revert: {shadow: true}\n  docs: {live: true}", "      policyBot: false\n      gateStatus: true\n",
+			"class docs: an evaluated policy needs allowedFiles or a diffShape"},
 		"a malformed login": {liveDeadLinks, "      policyBotLogin: notabot\n      policyBot: false\n      gateStatus: true\n", "merge.policyBotLogin"},
 	} {
 		t.Run(name, func(t *testing.T) {

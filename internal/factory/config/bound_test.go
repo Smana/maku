@@ -153,3 +153,35 @@ func toAnySlice(s []string) []any {
 	}
 	return out
 }
+
+// MR6: every evaluated policy is bounded by paths or a shape once resolved with its binding, in
+// live and in shadow, with or without policy-bot; a binding that evaluates nothing is not.
+func TestUnboundedIsRefusedInShadowAndLive(t *testing.T) {
+	yes := true
+	for _, tc := range []struct {
+		desc, name string
+		policy     PolicySpec
+		binding    Binding
+		merge      Merge
+		wantReason string
+	}{
+		{"shadow, empty", "docs", PolicySpec{}, Binding{Mode: ModeShadow}, Merge{}, ReasonUnbounded},
+		{"live, empty, policy-bot", "docs", PolicySpec{}, Binding{Mode: ModeLive}, Merge{PolicyBot: &yes}, ReasonUnbounded},
+		{"live, the binding's paths", "docs", PolicySpec{}, Binding{Mode: ModeLive, AllowedFiles: []string{`^docs/.+\.md$`}}, Merge{}, ""},
+		{"shadow, the policy's paths", "docs", PolicySpec{Class: Class{AllowedFiles: []string{`^docs/.+\.md$`}}}, Binding{Mode: ModeShadow}, Merge{}, ""},
+		{"shadow, a shape", "deps", PolicySpec{Class: Class{DiffShape: "links-only"}}, Binding{Mode: ModeShadow}, Merge{}, ""},
+		{"shadow, a built-in shape", "docs-links", PolicySpec{}, Binding{Mode: ModeShadow}, Merge{}, ""},
+		{"off, empty", "docs", PolicySpec{}, Binding{Mode: ModeOff}, Merge{}, ""},
+	} {
+		tc.binding.Name = tc.name
+		_, refused := Resolve(tc.name, tc.policy, tc.binding, PolicyContext{}, tc.merge)
+		switch {
+		case tc.wantReason == "" && refused != nil:
+			t.Errorf("%s: refused %+v", tc.desc, *refused)
+		case tc.wantReason != "" && (refused == nil || refused.Reason != tc.wantReason):
+			t.Errorf("%s: %+v, want %s", tc.desc, refused, tc.wantReason)
+		case tc.wantReason != "" && !strings.Contains(refused.Message, "class "+tc.name+": an evaluated policy needs allowedFiles or a diffShape"):
+			t.Errorf("%s: message %q", tc.desc, refused.Message)
+		}
+	}
+}

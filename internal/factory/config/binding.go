@@ -25,6 +25,8 @@ const (
 	ReasonOverPolicy        = "OverPolicy"
 	ReasonGuardrailMismatch = "GuardrailMismatch"
 	ReasonAmbiguousAdoption = "AmbiguousAdoption"
+	// ReasonUnbounded is an evaluated class with neither allowedFiles nor a diff shape (MR6).
+	ReasonUnbounded = "Unbounded"
 	ReasonInvalid           = "Invalid"
 )
 
@@ -305,16 +307,18 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 		}
 	}
 
+	// MR6: a class the gate evaluates, live or shadow, is bounded by paths or a shape, with or
+	// without policy-bot: nothing else keeps a gate path from merging.
+	if (cl.Live || cl.Shadow) && !cl.Bounded(name) {
+		return refuse(ReasonUnbounded, "class %s: an evaluated policy needs allowedFiles or a diffShape", name)
+	}
+
 	var problems []string
 	bad := func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) }
 	validateClass(name, cl, bad)
 	floor := &Config{HarnessProfiles: ctx.HarnessProfiles, Templates: ctx.Templates, Loops: ctx.Loops}
 	for _, v := range floor.VariantProblems(name, cl) {
 		bad("class %s: %s", name, v)
-	}
-	// validateRepository's rule on a live class, here so it drops the binding, not the repository.
-	if !m.UsesPolicyBot() && cl.Live && len(cl.AllowedFiles) == 0 {
-		bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
 	}
 	if m.ContractCheck == "" {
 		if cl.TestFirst {
