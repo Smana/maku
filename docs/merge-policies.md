@@ -96,7 +96,7 @@ land them in the cutover's own pull request.
 | Author | `agents`; adopting a bot is a policy of its own |
 | Paths | An allow list per binding, plus the guardrails' deny list |
 | Size | 5 files, 100 lines for the docs binding; 20 and 400 the central ceiling |
-| Rate | 2 a day per class; no class above 5 (the repository's total stays `merge.autoMergesPerDay`) |
+| Rate | 2 a day per class; no class above 5 (the repository's total stays `merge.maxPerDay`) |
 | Everything else | `review`: a human merges |
 
 ## Concepts

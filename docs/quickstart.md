@@ -131,7 +131,7 @@ maku-factory:
           policyBot: false
           approveToMerge: true
           mergerLogin: your-app[bot]
-          autoMergesPerDay: 5
+          maxPerDay: 5
           fixRuns: 2
           checkReruns: 1
           verifyFor: 30m

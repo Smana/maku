@@ -416,7 +416,7 @@ data:
       - owner
       merge:
         approveToMerge: true
-        autoMergesPerDay: 5
+        maxPerDay: 5
         breaker:
           maxReverts: 1
           window: 10

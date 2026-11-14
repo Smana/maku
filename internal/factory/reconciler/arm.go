@@ -224,7 +224,7 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 	} else if reason != "" {
 		return human(reason, class)
 	}
-	paused, capped := in.Paused, in.ArmedToday >= rc.Merge.AutoMergesPerDay || (cl.MaxPerDay > 0 && in.ClassArmedToday >= cl.MaxPerDay)
+	paused, capped := in.Paused, in.ArmedToday >= rc.Merge.PerDay() || (cl.MaxPerDay > 0 && in.ClassArmedToday >= cl.MaxPerDay)
 	rows.Paused, rows.Capped, rows.Gated = paused, capped, true
 	if !cl.Live { // R32, AM4: every condition holds; the gate is in shadow, which nothing blocks
 		return ArmDecision{Verdict: "shadow", Reason: "shadow_would_arm", Matched: class, Paused: paused, Capped: capped}

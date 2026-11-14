@@ -689,8 +689,14 @@ type Merge struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	MergerLogin string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
+	// AutoMergesPerDay is MaxPerDay's former name, read while MaxPerDay is unset. Deprecated.
 	// +optional
 	AutoMergesPerDay int `json:"autoMergesPerDay"`
+	// MaxPerDay caps the repository's auto-merges a day, every live policy together (MR9): the
+	// name a policy's own cap has. Read it through PerDay.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxPerDay int `json:"maxPerDay,omitempty"`
 	// +optional
 	FixRuns int32 `json:"fixRuns"`
 	// CheckReruns caps the re-runs of a cancelled required check per task; 0 hands it to a human
@@ -2302,9 +2308,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if s := r.Merge.FluxSource; s != "" && !sourceRE.MatchString(s) {
 		bad("merge.fluxSource %q is not namespace/name", s)
 	}
-	if r.Merge.AutoMergesPerDay < 0 {
-		bad("merge.autoMergesPerDay must be 0 or more")
-	}
+	r.Merge.validatePerDay(bad)
 	if r.Merge.FixRuns < 0 {
 		bad("merge.fixRuns must be 0 or more")
 	}

@@ -168,7 +168,7 @@ maku-factory:
           # automatic revert); off, the room shows the approval and a maintainer merges on GitHub.
           approveToMerge: true
           mergerLogin: maku-demo[bot]
-          autoMergesPerDay: 5
+          maxPerDay: 5
           fixRuns: 2
           checkReruns: 1
           verifyFor: 30m
