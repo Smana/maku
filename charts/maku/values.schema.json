@@ -210,6 +210,7 @@
       "additionalProperties": true,
       "properties": {
         "mode": {"type": "string", "enum": ["", "cilium", "kubernetes", "none"]},
+        "runsNamespaceDefaultDeny": {"description": "false: the platform owns the runs namespace's default-deny; the chart renders none.", "type": "boolean"},
         "kubernetes": {
           "type": "object",
           "additionalProperties": false,

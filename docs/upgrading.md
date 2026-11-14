@@ -19,6 +19,14 @@ the `maku-slack` alert group, for an App installed outside the chart. It now ren
 its agreements, so an install that kept its own App either moves it to the subchart, or turns
 `slack.enabled` off, and loses that alert group and the `expose.slack` route with it.
 
+## The runs namespace's default-deny, optional (v0.4x)
+
+`networkPolicies.runsNamespaceDefaultDeny` (default `true`: the render is unchanged) controls the
+runs namespace's `default-deny` policy, in mode `cilium` or `kubernetes`. An install whose platform
+owns the runs namespace's default-deny sets it to `false`, and the chart renders none, so the two no
+longer conflict. The platform's policy must then deny both directions, as the chart's does: each run's
+own policy adds only its allowances on top of it.
+
 ## The clean-up (v0.4x, v4 rollout step 8)
 
 Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at

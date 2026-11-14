@@ -29,6 +29,10 @@ demoValues: false
 networkPolicies:
   enabled: true
   mode: ""
+  # The runs namespace's default-deny (agents/default-deny), in mode cilium or kubernetes. false: an
+  # install whose platform already owns that policy renders none; the platform's must deny both
+  # directions as this one does.
+  runsNamespaceDefaultDeny: true
   kubernetes:
     # The cluster DNS pods, opened on 53 to every component.
     dns:

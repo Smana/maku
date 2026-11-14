@@ -1,3 +1,5 @@
+{{- /* netMode, or none when the platform owns the runs namespace's default-deny */ -}}
+{{- $denyMode := ternary (include "ap.netMode" .) "none" (ne .Values.networkPolicies.runsNamespaceDefaultDeny false) }}
 {{- if .Values.createRunsNamespace }}
 apiVersion: v1
 kind: Namespace
@@ -12,11 +14,11 @@ metadata:
   annotations:
     # Uninstall must not delete the runs and the Secrets in them.
     helm.sh/resource-policy: keep
-{{- if ne (include "ap.netMode" .) "none" }}
+{{- if ne $denyMode "none" }}
 ---
 {{ end }}
 {{- end }}
-{{- if eq (include "ap.netMode" .) "kubernetes" }}
+{{- if eq $denyMode "kubernetes" }}
 # No rule in either direction: everything denied. Each run's own NetworkPolicy, created by the
 # run-controller, adds its allowances (v4 D6).
 apiVersion: networking.k8s.io/v1
@@ -29,7 +31,7 @@ spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
 {{- end }}
-{{- if eq (include "ap.netMode" .) "cilium" }}
+{{- if eq $denyMode "cilium" }}
 # An empty rule selects no peer: enforcement on in both directions, nothing allowed. Each run's own
 # CiliumNetworkPolicy adds its allowances.
 apiVersion: cilium.io/v2
