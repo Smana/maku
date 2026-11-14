@@ -56,8 +56,8 @@ func (s signer) azpOnlyToken(t *testing.T, sub string, aud []string, azp string)
 }
 
 func (s signer) humans(projectID, maku string) *Humans {
-	return NewHumans(s.verifier(), func() string { return projectID },
-		func() string { return webClient }, func() string { return maku }, uiOrigin)
+	return NewHumansWith(s.verifier(), HumanOptions{TokenUse: TokenUseAccess, ZITADEL: true, Audience: func() string { return projectID },
+		Web: func() string { return webClient }, CLI: func() string { return maku }, Origin: uiOrigin})
 }
 
 func TestVerifyHuman(t *testing.T) {

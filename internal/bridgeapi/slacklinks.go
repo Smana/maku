@@ -20,7 +20,7 @@ var (
 	slackUserRE = regexp.MustCompile(`^[UW][A-Z0-9]{2,20}$`)
 )
 
-// slackLink: GET /v1/links/slack?team=&user=, the link reader's only (SlackLinkReader, the
+// slackLink: GET /v1/links/slack?team=&user=, the link reader's only (LinkReader, the
 // factory). The answer is the ZITADEL sub the Slack user linked, never a login: the factory resolves
 // that itself. A Slack user with no link is a 404 not_linked.
 func (s *Server) slackLink(w http.ResponseWriter, r *http.Request) {
@@ -28,7 +28,7 @@ func (s *Server) slackLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if s.SlackLinks == nil || s.SlackLinkReader == "" || p.ID != s.SlackLinkReader {
+	if s.SlackLinks == nil || s.LinkReader == "" || p.ID != s.LinkReader {
 		fail(w, http.StatusForbidden, wire.ReasonNotPermitted)
 		return
 	}
