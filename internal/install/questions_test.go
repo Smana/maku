@@ -169,6 +169,12 @@ func TestResolve(t *testing.T) {
 	if _, _, err := Resolve(a); err == nil || !strings.Contains(err.Error(), "repositories: required") {
 		t.Errorf("no repository: %v", err)
 	}
+	// D12: the factory refuses an agents App that is its own, so the wizard does first.
+	a = readAnswers(t, "generic")
+	a["apps.agentsSlug"] = "example-factory"
+	if _, _, err := Resolve(a); err == nil || !strings.Contains(err.Error(), `apps.agentsSlug: "example-factory" is the factory App's slug`) {
+		t.Errorf("one App for both: %v, want apps.agentsSlug refused (D12)", err)
+	}
 }
 
 // F4: Slack with Dex is refused; Keycloak with tokenUse id gives a suggestion.
