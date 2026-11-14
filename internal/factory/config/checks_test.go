@@ -3,34 +3,17 @@
 package config
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 )
 
-// withChecks is the list-shaped good with v3 feature 3's keys: the repository's checks.egress and
-// the docs class switched on.
+// withChecks is the list-shaped good with v3 feature 3's keys: the repository's checks.egress, and
+// the docs class's checks, which nothing reads since the workflow left the class (WF7).
 func withChecks(t *testing.T, egress string) string {
 	t.Helper()
 	raw := good
 	raw = strings.Replace(raw, "  - name: Smana/cloud-native-ref\n", "  - name: Smana/cloud-native-ref\n    checks: {egress: "+egress+"}\n", 1)
 	return strings.Replace(raw, "docs: {}", "docs: {checks: true}", 1)
-}
-
-func TestChecksAreSwitchedOnPerClassWithTheRepositorysEgress(t *testing.T) {
-	c, err := Parse([]byte(withChecks(t, "[golang, pypi]")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	r := c.RepositoryFor("Smana/cloud-native-ref")
-	if on, egress := r.ChecksFor("docs"); !on || !reflect.DeepEqual(egress, []string{"golang", "pypi"}) {
-		t.Fatalf("docs: %v %v, want on with [golang pypi]", on, egress)
-	}
-	for _, class := range []string{"tests", "review", "docs-links"} {
-		if on, egress := r.ChecksFor(class); on || egress != nil {
-			t.Fatalf("%s: %v %v, want off", class, on, egress)
-		}
-	}
 }
 
 func TestChecksEgressIsTheProfileEnumAtMostFourOnce(t *testing.T) {

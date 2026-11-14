@@ -25,7 +25,7 @@ func checkRig() (GitHubChecks, map[string]*forgetest.Fake) {
 	checkCfg = cfg
 	cfg.Factory = "ogenki"
 	cfg.FactoryLogin = "ogenki-agent-factory[bot]"
-	cfg.Defaults.Template = "pair"
+	cfg.HarnessProfiles = map[string]config.HarnessProfile{"standard": {Template: "pair"}} // the default workflow names the roles (WF3)
 	cfg.Templates = map[string]config.Template{"pair": {Roles: []string{"implementer", "reviewer"}}}
 	cfg.Tiers = map[string]config.Tier{"standard": {Model: "agent-default", RunUSD: 0.51, TaskUSD: 5.10}}
 	for i := range cfg.Repositories {

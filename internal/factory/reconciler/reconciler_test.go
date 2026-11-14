@@ -427,7 +427,7 @@ func cfg() *config.Config {
 				Breaker: config.Breaker{Window: 10, MaxReverts: 1}}}},
 		FactoryLogin: "ogenki-agent-factory[bot]",
 		Poll:         config.Poll{Tasks: config.Duration{Duration: 30 * time.Second}, Meter: config.Duration{Duration: 30 * time.Second}},
-		Defaults:     config.Defaults{Template: "solo", Tier: "standard", DataClass: "public", PredictedClass: "review"},
+		Defaults:     config.Defaults{DataClass: "public", PredictedClass: "review"},
 		// The reviewer runs on the other tier (4.2): frontier's model is observable as tier-frontier.
 		Tiers: map[string]config.Tier{"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45},
 			"frontier": {Model: "tier-frontier", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}},

@@ -62,7 +62,8 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	g.r.Cfg.Current().AgentsLogin = agentsApp
 	g.r.Cfg.Current().Defaults.PredictedClass = "scripts"
 	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = contractCheck
-	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Live: true}
+	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Live: true}
+	testFirstCareful(g.r.Cfg.Current())
 	if cfgEdit != nil {
 		cfgEdit(g.r.Cfg.Current())
 	}
@@ -99,12 +100,13 @@ func (g *rig) implementerOpensThePR(t *testing.T, n int) *v1alpha1.Task {
 	return g.reconcile(t, "3buqdlot", 3)
 }
 
-// 1. testFirst off: a pair task's journey is the same with or without the keys, role for role.
+// 1. testFirst off: a standard task's journey is the same with or without the opt-in, role for role.
 func TestEnvtestTestFirstOffLeavesThePairJourneyUnchanged(t *testing.T) {
 	journey := func(cfgEdit func(*config.Config)) string {
 		g, _ := envTesterRig(t, nil, func(c *config.Config) {
 			c.Defaults.PredictedClass = "review"
-			c.Defaults.Template = "pair"
+			c.Repositories[0].Workflow.Default = "standard" // the opt-in runs the tester in careful only (WF7)
+			setDefaultTemplate(c, "pair")
 			if cfgEdit != nil {
 				cfgEdit(c)
 			}
@@ -124,10 +126,10 @@ func TestEnvtestTestFirstOffLeavesThePairJourneyUnchanged(t *testing.T) {
 			tk.Status.ReviewRounds, tk.Status.Contract, seq)
 	}
 	without := journey(func(c *config.Config) {
-		delete(c.Repositories[0].Classes, "scripts")
+		c.Repositories[0].Workflow.TestFirst = false
 		c.Repositories[0].Merge.ContractCheck = ""
 	})
-	with := journey(nil) // scripts declares testFirst, and this task is of the review class
+	with := journey(nil) // the repository opts in, and this task runs standard
 	if without != with || !strings.Contains(with, "AwaitingCI") || strings.Contains(with, "tester") {
 		t.Fatalf("with the keys:    %s\nwithout the keys: %s", with, without)
 	}
@@ -135,7 +137,7 @@ func TestEnvtestTestFirstOffLeavesThePairJourneyUnchanged(t *testing.T) {
 
 // 2. On: the tester's contract, the implementer held to it, and rows 2b and 2c at the gate.
 func TestEnvtestATestFirstTaskJourneyThroughRows2bAnd2c(t *testing.T) {
-	soloScripts := func(c *config.Config) { c.Defaults.Template = "solo" }
+	soloScripts := func(c *config.Config) { setDefaultTemplate(c, "solo") }
 	type outcome struct {
 		name    string
 		checks  forge.Checks
@@ -190,7 +192,7 @@ func TestEnvtestATestFirstTaskJourneyThroughRows2bAnd2c(t *testing.T) {
 // 3. On, and the tester leaves nothing: the implementer runs without a contract and the contract check
 // is not required, a red one arms nothing differently.
 func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
-	g, _ := envTesterRig(t, nil, func(c *config.Config) { c.Defaults.Template = "solo" })
+	g, _ := envTesterRig(t, nil, func(c *config.Config) { setDefaultTemplate(c, "solo") })
 	g.harnessNote(rid(0), "Harness (tester): not_testable: a doc-only change")
 	g.finish(rid(0), "Succeeded", "agent_finished")
 	tk := g.reconcile(t, "3buqdlot", 2)
@@ -212,8 +214,8 @@ func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
 // 4. A shadow class with holdoutChecks and a contract: rows 2b and 2c decide before holdout_pending.
 func TestEnvtestRows2bAnd2cDecideBeforeTheHoldouts(t *testing.T) {
 	g, _ := envTesterRig(t, nil, func(c *config.Config) {
-		c.Defaults.Template = "solo"
-		c.Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Shadow: true, HoldoutChecks: []string{"Holdout 🧪"}}
+		setDefaultTemplate(c, "solo")
+		c.Repositories[0].Classes["scripts"] = config.Class{Shadow: true, HoldoutChecks: []string{"Holdout 🧪"}}
 	})
 	g.contractAndImplementer(t)
 	if tk := g.implementerOpensThePR(t, 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI {

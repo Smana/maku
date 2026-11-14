@@ -86,11 +86,8 @@ func TestOneEntryGovernsOnlyTheUnnamed(t *testing.T) {
 	}
 	// nil answers no maintainer and no merger: a caller that only asks those stands down.
 	var none *Repository
-	if none.IsMaintainer("Smana") || none.NeedsMerger() || none.AnyLive() || none.AnyMonitored() || none.TestFirstFor("x") {
+	if none.IsMaintainer("Smana") || none.NeedsMerger() || none.AnyLive() || none.AnyMonitored() {
 		t.Fatal("a repository not served has no maintainer and no class")
-	}
-	if on, _ := none.ChecksFor("x"); on {
-		t.Fatal("a repository not served runs no checks")
 	}
 }
 

@@ -23,7 +23,7 @@ type Decision struct {
 	Cohort           string
 	// Pin is the profile a person pinned and whether triage refused it (P6); zero without one.
 	Pin Pin
-	// Notes are sentences triage says once on the task, such as ProfileLabelNote.
+	// Notes are sentences triage says once on the task, such as LegacyLabelNote.
 	Notes []string
 }
 
@@ -58,7 +58,8 @@ func BudgetFor(cfg *config.Config, tier string) v1alpha1.Budget {
 		RunMicroUSD: config.MicroUSD(c.RunUSD), TaskMicroUSD: config.MicroUSD(c.TaskUSD)}
 }
 
-// Static is phase 1's triage: the config's defaults for every task.
+// Static is phase 1's triage: the config's defaults for every task, at the standard tier, with the
+// template of the repository's default workflow (pair when it names none).
 type Static struct{}
 
 // Triage returns the defaults; a task's own data class wins over the default one.
@@ -68,9 +69,10 @@ func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) 
 	if dataClass == "" {
 		dataClass = d.DataClass
 	}
-	return Decision{Template: d.Template, PredictedClass: d.PredictedClass, DataClass: dataClass,
-		Budget:         BudgetFor(cfg, d.Tier),
-		Classification: v1alpha1.Classification{Tier: d.Tier, Classifier: "static", Fallback: "static"},
+	const tier = "standard"
+	return Decision{Template: cfg.DefaultTemplate(cfg.RepositoryFor(t.Spec.Repository)), PredictedClass: d.PredictedClass, DataClass: dataClass,
+		Budget:         BudgetFor(cfg, tier),
+		Classification: v1alpha1.Classification{Tier: tier, Classifier: "static", Fallback: "static"},
 		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)}, nil
 }
 

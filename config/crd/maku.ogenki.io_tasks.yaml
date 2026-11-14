@@ -320,9 +320,9 @@ spec:
                 type: string
               loop:
                 description: |-
-                  The loop policy its implementer runs get as spec.loop, resolved from loops.<class> at
-                  triage so a config change never moves a task already triaged (loops design L2, L3). Unset:
-                  the loop is off for the task's class.
+                  The loop policy its implementer runs get as spec.loop, resolved from its workflow's loops row
+                  at triage so a config change never moves a task already triaged (loops design L2, L3). Unset:
+                  the loop is off for the task's workflow.
                 properties:
                   continuations:
                     format: int32
@@ -616,7 +616,6 @@ spec:
                 enum:
                 - solo
                 - pair
-                - trio
                 - investigate
                 type: string
               text:
@@ -2194,8 +2193,17 @@ spec:
                   resolved:
                     type: boolean
                   source:
+                    description: |-
+                      Source is where the workflow came from (WF3, WF4): a maintainer's label, the task's source
+                      (schedule, revert, oracle), the repository's default, an arm of the measurement (control,
+                      treatment), the scoper or an escalation. floor is a task triaged before the workflow left
+                      the class.
                     enum:
                     - label
+                    - schedule
+                    - revert
+                    - oracle
+                    - repository
                     - floor
                     - control
                     - treatment

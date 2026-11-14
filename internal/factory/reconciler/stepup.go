@@ -26,7 +26,8 @@ func group(reason string) string {
 	return ""
 }
 
-// stepUp runs t once more under a richer profile instead of escalating it for reason.
+// stepUp runs t once more under the workflow its own workflow's escalation names for reason's
+// signal group, instead of escalating it.
 func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) (bool, error) {
 	p := t.Status.Profile
 	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 {
@@ -45,20 +46,20 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if g == "" {
 		return false, nil
 	}
-	cl := r.class(cfg, t, t.Spec.PredictedClass)
-	if cl.Escalation == nil {
+	cur, _ := cfg.Workflow(p.Name) // the workflow it runs names where it steps to (WF7)
+	if cur.Escalation == nil {
 		return false, nil
 	}
-	target := map[string]string{"out_of_budget": cl.Escalation.OutOfBudget, "not_converged": cl.Escalation.NotConverged}[g]
+	target := map[string]string{"out_of_budget": cur.Escalation.OutOfBudget, "not_converged": cur.Escalation.NotConverged}[g]
 	if target == "" || target == p.Name || p.Source == "escalation" || p.Source == "treatment" || p.Cohort == "control" {
-		return false, nil // the same profile again rarely converges: a maintainer decides (P10)
+		return false, nil // the same workflow again rarely converges: a maintainer decides (P10)
 	}
-	v, ok := cfg.ProfileFor(cl, target)
+	v, ok := cfg.Workflow(target)
 	if !ok {
 		return false, nil
 	}
 	trial := t.DeepCopy()
-	r.profileSpec(cfg, trial, trial.Spec.PredictedClass, v)
+	r.profileSpec(cfg, trial, target, v)
 	if !runFits(trial) {
 		return false, nil
 	}

@@ -15,19 +15,19 @@ import (
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
-// profileCfg is the rig's config with a review loop row and a review-floor profile; harness says
-// whether the review class names it.
+// profileCfg is the rig's config with a review-floor workflow and its loops row; harness says
+// whether the repository runs it by default (WF3). Without, the repository's default (standard) is
+// no workflow the config defines, so a task carries no status.profile.
 func profileCfg(harness bool) *config.Config {
 	c := cfg()
 	steps := int32(40)
-	c.Loops = map[string]config.Loop{"review": {StallSteps: &steps, Search: true, Scope: config.ScopeScoper}}
+	c.Loops = map[string]config.Loop{"review-floor": {StallSteps: &steps, Search: true, Scope: config.ScopeScoper}}
 	c.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {Template: "pair", Checks: true}}
-	review := config.Class{}
 	if harness {
-		review.Harness = "review-floor"
+		c.Repositories[0].Workflow.Default = "review-floor"
 	}
 	c.Templates["investigate"] = config.Template{Roles: []string{"triager"}}
-	c.Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "review": review, "tests": {}}
+	c.Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "review": {}, "tests": {}}
 	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
 		tr := c.Tiers[name]
 		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
@@ -130,7 +130,7 @@ func TestClassLabelledTaskIsOfferedProfileChoices(t *testing.T) {
 	}
 }
 
-// mainSpec is what received wrote before profiles: the triage decision and the class's own row.
+// mainSpec is what received writes for a task with no workflow: the triage decision and default's row.
 func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	t.Helper()
 	tk = tk.DeepCopy()
@@ -141,21 +141,22 @@ func mainSpec(t *testing.T, g *rig, tk *v1alpha1.Task) v1alpha1.TaskSpec {
 	s := tk.Spec
 	s.Template, s.PredictedClass, s.DataClass = d.Template, d.PredictedClass, d.DataClass
 	s.Budget = triage.Ceiling(d.Budget, s.MaxMicroUSD)
-	if p := g.r.Cfg.Current().LoopFor(d.PredictedClass); p != nil {
+	const row = "" // no workflow: default's row (WF10)
+	if p := g.r.Cfg.Current().LoopFor(row); p != nil {
 		judge := p.JudgeModel
 		if d.DataClass != "public" && config.PublicOnly(judge) {
 			judge = config.DefaultJudge
 		}
 		s.Loop = &v1alpha1.Loop{StallSteps: p.StallSteps, Continuations: p.Continuations, JudgeModel: judge}
 	}
-	s.Search = g.r.Cfg.Current().SearchFor(d.PredictedClass)
-	mode := g.r.Cfg.Current().ScopeFor(d.PredictedClass)
+	s.Search = g.r.Cfg.Current().SearchFor(row)
+	mode := g.r.Cfg.Current().ScopeFor(row)
 	if g.r.Cfg.Current().Investigates(s.Template) {
 		mode = config.ScopeOff
 	}
 	s.ScopeMode, s.Steering = string(mode), nil
 	tk.Spec = s
-	g.r.splitAtTriage(g.r.Cfg.Current(), tk, d.Classification)
+	g.r.splitAtTriage(g.r.Cfg.Current(), tk, row, d.Classification)
 	return tk.Spec
 }
 

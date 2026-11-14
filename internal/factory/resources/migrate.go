@@ -15,7 +15,8 @@ import (
 )
 
 // Migrate moves a config file's catalogue and repositories into manifests (D8): it returns the
-// manifests, as multi-document YAML in namespace ns, and the file with those keys removed.
+// manifests, as multi-document YAML in namespace ns, and the file with those keys removed. The
+// workflow settings release N+1 refuses are rewritten first (upgradeWorkflows).
 // Keys move verbatim, so a defaulted field stays omitted. Each repository's classes and merge are
 // split into class-shape MergePolicies and the Repository's bindings (split, B17). A file still in
 // the single-repository shape, which the factory refuses, is read as its one-entry list first (R7).
@@ -29,6 +30,13 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	}
 	if base == nil {
 		base = map[string]any{}
+	}
+	// WF9, WF13: the settings release N warned about are rewritten as release N+1 reads them; a
+	// loops row named after a class has no mechanical home, so Parse refuses it with the upgrade note.
+	if upgradeWorkflows(base) {
+		if file, err = yaml.Marshal(base); err != nil {
+			return nil, nil, err
+		}
 	}
 	// Parse's refusals (an empty factory name, an entry without a name) are Migrate's: what it
 	// would split must already be a valid file.
@@ -222,10 +230,10 @@ func dnsLabel(s string) string {
 	return strings.Trim(strings.NewReplacer("/", "-", "_", "-", ".", "-").Replace(strings.ToLower(s)), "-")
 }
 
-// offFields visits loops.*.scope and harnessProfiles.*.loop where set, in name order: the two
+// offFields visits loops.*.scope and workflows.*.loop where set, in name order: the two
 // fields where YAML 1.1 reads a bare off as the boolean false.
 func offFields(spec map[string]any, visit func(path string, row map[string]any, key string)) {
-	for _, f := range []struct{ table, key string }{{"loops", "scope"}, {"harnessProfiles", "loop"}} {
+	for _, f := range []struct{ table, key string }{{"loops", "scope"}, {"workflows", "loop"}} {
 		rows, _ := spec[f.table].(map[string]any)
 		for _, name := range slices.Sorted(maps.Keys(rows)) {
 			if row, ok := rows[name].(map[string]any); ok {
@@ -235,4 +243,41 @@ func offFields(spec map[string]any, visit func(path string, row map[string]any, 
 			}
 		}
 	}
+}
+
+// upgradeWorkflows rewrites in base the settings of the workflows design that release N warned
+// about and release N+1 refuses (WF9, WF13), and reports whether it changed any: harnessProfiles is
+// renamed workflows, a workflow's template trio becomes pair, and templates.trio,
+// triage.classifierURL, defaults.template, defaults.tier and a workflow's testFirst (the
+// Repository's workflow.testFirst now) are dropped.
+func upgradeWorkflows(base map[string]any) bool {
+	changed := false
+	if hp, ok := base["harnessProfiles"]; ok {
+		if _, both := base["workflows"]; !both {
+			base["workflows"] = hp
+			delete(base, "harnessProfiles")
+			changed = true
+		}
+	}
+	if wf, ok := base["workflows"].(map[string]any); ok {
+		for _, v := range wf {
+			w, _ := v.(map[string]any)
+			if w["template"] == "trio" {
+				w["template"], changed = "pair", true
+			}
+			if _, ok := w["testFirst"]; ok {
+				delete(w, "testFirst")
+				changed = true
+			}
+		}
+	}
+	for _, k := range [][2]string{{"templates", "trio"}, {"triage", "classifierURL"}, {"defaults", "template"}, {"defaults", "tier"}} {
+		if block, ok := base[k[0]].(map[string]any); ok {
+			if _, ok := block[k[1]]; ok {
+				delete(block, k[1])
+				changed = true
+			}
+		}
+	}
+	return changed
 }

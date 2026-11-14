@@ -14,15 +14,14 @@ import (
 	"github.com/Smana/maku/internal/intake"
 )
 
-// docsCatalogue is a catalogue shaped like a docs repository's: docs-links live under a templated
-// floor, review off with a no-template floor and one offered variant, and tests offered nowhere
-// else. approve is the repository's approveToMerge.
+// docsCatalogue is a catalogue shaped like a docs repository's: docs-links live, review off, and
+// the workflows every class offers (WF4): the templated default, one with no template (not
+// offered) and one more. approve is the repository's approveToMerge.
 func docsCatalogue(repository string, approve bool) catalogue.Catalogue {
-	return catalogue.Catalogue{Repository: repository, ApproveToMerge: approve,
+	return catalogue.Catalogue{Repository: repository, ApproveToMerge: approve, DefaultWorkflow: "links-solo",
 		Classes: []catalogue.Class{
-			{Name: "docs-links", Description: "Dead links in docs", Mode: catalogue.ModeLive, CeilingUSD: 2, Floor: "links-solo"},
-			{Name: "review", Description: "Anything else", Mode: catalogue.ModeOff, CeilingUSD: 8, Floor: "review-floor",
-				Allowed: []string{"review-frontier"}},
+			{Name: "docs-links", Description: "Dead links in docs", Mode: catalogue.ModeLive, CeilingUSD: 2},
+			{Name: "review", Description: "Anything else", Mode: catalogue.ModeOff, CeilingUSD: 8},
 		},
 		Profiles: map[string]catalogue.Profile{
 			"links-solo":      {Template: "solo", Roles: []string{"implementer"}, Tier: "light", Offered: true},
@@ -46,13 +45,13 @@ func draftOf(class string, s *intake.DraftSuggestion) intake.Draft {
 		Issues: []intake.DraftIssue{{Title: "docs: x is wrong", Body: validBody, Class: class, Suggestion: s}}}
 }
 
-// O1, P15: a profile the class does not offer is the factory's choice, never the model's guess, and
-// the operator's log names the field.
+// O1, P15: a workflow the catalogue does not offer is the factory's choice, never the model's guess,
+// and the operator's log names the field.
 func TestSuggestionOutsideClassIsFactorysChoice(t *testing.T) {
 	var logs bytes.Buffer
 	in := offersIn(false)
 	in.Logger = slog.New(slog.NewJSONHandler(&logs, nil))
-	for _, name := range []string{"review-floor", "links-solo", "zzz"} {
+	for _, name := range []string{"review-floor", "zzz"} {
 		logs.Reset()
 		p, err := intake.Compose(draftOf("review", &intake.DraftSuggestion{Profile: name, Why: "because"}), in)
 		if err != nil {
@@ -119,10 +118,10 @@ func jsonString(s string) string {
 	return string(b)
 }
 
-// G3: the material roles are the floor's template (or none when the floor has no template: chosen
-// at triage), whatever the suggestion says; the suggested profile's roles are display.
+// G3: the material roles are the repository's default workflow's template, whatever the suggestion
+// says; the suggested workflow's roles are display.
 func TestRolesFollowTheFloorNotTheSuggestion(t *testing.T) {
-	for class, want := range map[string][]string{"docs-links": {"implementer"}, "review": {}} {
+	for class, want := range map[string][]string{"docs-links": {"implementer"}, "review": {"implementer"}} {
 		p, err := intake.Compose(draftOf(class, &intake.DraftSuggestion{Profile: "review-frontier", Why: "w"}), offersIn(false))
 		if err != nil {
 			t.Fatal(err)
@@ -136,7 +135,7 @@ func TestRolesFollowTheFloorNotTheSuggestion(t *testing.T) {
 // G4: classes are the plan repository's: a class another repository offers is refused here.
 func TestPerRepositoryClasses(t *testing.T) {
 	other := docsCatalogue("Smana/other", false)
-	other.Classes = append(other.Classes, catalogue.Class{Name: "tests", Mode: catalogue.ModeOff, CeilingUSD: 4, Floor: "links-solo"})
+	other.Classes = append(other.Classes, catalogue.Class{Name: "tests", Mode: catalogue.ModeOff, CeilingUSD: 4})
 	in := offersIn(false)
 	in.Offers["smana/other"] = intake.ClassesFromCatalogue(other)
 	if _, err := intake.Compose(draftOf("tests", nil), in); err == nil || !strings.Contains(err.Error(), intake.ReasonInvalidClass) {

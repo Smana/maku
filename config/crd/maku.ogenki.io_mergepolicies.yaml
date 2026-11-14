@@ -94,8 +94,8 @@ spec:
                 type: object
               checks:
                 description: |-
-                  Checks switches the repository's checks on for the class's public implementer and reviewer
-                  runs (v3 feature 3, RC8): the claim's spec.loop.checks and the repository's checks.egress.
+                  Checks and TestFirst are read by nothing since the workflow left the class (WF7): a
+                  workflow's checks and the Repository's workflow.testFirst replace them.
                 type: boolean
               companionFiles:
                 description: |-
@@ -118,8 +118,8 @@ spec:
                 maxLength: 512
                 type: string
               escalation:
-                description: Escalation maps a signal group to a profile of harnessAllowed;
-                  an absent group goes to the human.
+                description: Escalation maps a signal group to a workflow; an absent
+                  group goes to the human.
                 properties:
                   notConverged:
                     maxLength: 253
@@ -138,9 +138,9 @@ spec:
                 type: string
               harness:
                 description: |-
-                  Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
-                  and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
-                  Absent, the class runs as before.
+                  Harness, HarnessAllowed and Escalation are read by nothing since the workflow left the class
+                  (WF7): the Repository's workflow.default, every workflow, and a workflow's escalation replace
+                  them. A MergePolicy setting them is Deprecated until they are removed.
                 maxLength: 253
                 type: string
               harnessAllowed:
@@ -297,9 +297,6 @@ spec:
               shadow:
                 type: boolean
               testFirst:
-                description: |-
-                  TestFirst starts every public task of the class with a tester run that writes the failing
-                  tests first (v3 feature 4, TF1); needs Checks and the repository's merge.contractCheck.
                 type: boolean
             type: object
             x-kubernetes-validations:

@@ -169,9 +169,6 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 		r.Config.Evaluation.ControlPercent != 30 || !r.Config.Applies() {
 		t.Fatalf("the Factory's catalogue did not apply: %+v", r.Config.Tiers)
 	}
-	if r.Config.Triage.ClassifierURL == "" {
-		t.Fatal("triage.classifierURL is the file's (D12) and must survive")
-	}
 	// The file sets budgets.enforceTask: false; the Factory omits budgets, so Parse's defaults
 	// apply (enforceTask true, OD-10's 42.50): the raw spec is merged, never a re-marshalled struct.
 	if !r.Config.Budgets.EnforceTask || r.Config.Budgets.FactoryDailyUSD != 42.50 {

@@ -25,15 +25,15 @@ import (
 
 const testsDecl = "tests:\n  paths: [tests/]\n"
 
-// resolveCfg is profileCfg with two variants the review class allows, one it does not, and mode.
+// resolveCfg is profileCfg with two other workflows, search first and careful (its tester the
+// repository's opt-in), and mode.
 func resolveCfg(mode string, percent int) *config.Config {
 	c := profileCfg(true)
 	steps := int32(7)
 	c.Loops["review-search"] = config.Loop{StallSteps: &steps, Search: true}
 	c.HarnessProfiles["review-search"] = config.HarnessProfile{Loop: "review-search", Description: "search first"}
-	c.HarnessProfiles["review-tested"] = config.HarnessProfile{TestFirst: true, Description: "tests first"}
-	c.HarnessProfiles["review-other"] = config.HarnessProfile{Description: "not allowed"}
-	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested"}}
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Description: "tests first"} // the repository's tester runs in careful (WF7)
+	c.Repositories[0].Workflow.TestFirst = true
 	c.Evaluation = config.Evaluation{Mode: mode, ControlPercent: percent}
 	return c
 }

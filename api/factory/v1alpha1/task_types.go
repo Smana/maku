@@ -111,14 +111,14 @@ type TaskSpec struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	PredictedClass string `json:"predictedClass,omitempty"`
-	// +kubebuilder:validation:Enum=solo;pair;trio;investigate
+	// +kubebuilder:validation:Enum=solo;pair;investigate
 	// +optional
 	Template string `json:"template,omitempty"`
 	// +optional
 	Budget Budget `json:"budget,omitempty"`
-	// The loop policy its implementer runs get as spec.loop, resolved from loops.<class> at
-	// triage so a config change never moves a task already triaged (loops design L2, L3). Unset:
-	// the loop is off for the task's class.
+	// The loop policy its implementer runs get as spec.loop, resolved from its workflow's loops row
+	// at triage so a config change never moves a task already triaged (loops design L2, L3). Unset:
+	// the loop is off for the task's workflow.
 	// +optional
 	Loop *Loop `json:"loop,omitempty"`
 	// The findings an oracle class's probe made this task of (merge gate classes MC6): what the
@@ -402,12 +402,16 @@ type Budget struct {
 	TaskMicroUSD int64 `json:"taskMicroUSD,omitempty"`
 }
 
-// ProfileStatus is the harness profile a task runs under and how it was chosen. Checks and
-// TestFirst are frozen here: a profile removed from config later changes nothing.
+// ProfileStatus is the workflow a task runs under and how it was chosen. Checks and TestFirst are
+// frozen here: a workflow removed from config later changes nothing.
 type ProfileStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=label;floor;control;treatment;scoper;escalation
+	// Source is where the workflow came from (WF3, WF4): a maintainer's label, the task's source
+	// (schedule, revert, oracle), the repository's default, an arm of the measurement (control,
+	// treatment), the scoper or an escalation. floor is a task triaged before the workflow left
+	// the class.
+	// +kubebuilder:validation:Enum=label;schedule;revert;oracle;repository;floor;control;treatment;scoper;escalation
 	Source string `json:"source"`
 	// +kubebuilder:validation:Enum=labeled;control;treatment
 	Cohort string `json:"cohort"`

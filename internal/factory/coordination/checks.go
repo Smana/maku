@@ -136,11 +136,11 @@ func (g GitHubChecks) Check(ctx context.Context, cfg *config.Config, actor Actor
 
 // class resolves class at repo as the gate reads it: under repository authority (stage 4) the
 // file's bound policy's (mergepolicy.ResolveBindings, B15); under central authority the class the factory serves, whatever
-// the file says. An adopted class authors nothing, so no child runs under one. Roles are the class
-// harness's template, the tier's ceilings its run and task caps.
+// the file says. An adopted class authors nothing, so no child runs under one. Roles are the
+// repository's default workflow's template (WF7), the tier's ceilings its run and task caps.
 func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier string) (RepositoryPolicy, error) {
-	template := cfg.Defaults.Template
 	rc := cfg.RepositoryFor(repo)
+	template := cfg.DefaultTemplate(rc)
 	if !cfg.RepositoryAuthoritative(rc) {
 		if cl, ok := rc.Class(class); !ok || cl.Author != nil {
 			return RepositoryPolicy{}, fmt.Errorf("%w: %s", ErrClassNotAllowed, class)
@@ -155,9 +155,6 @@ func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier str
 	r, ok := classes[class]
 	if !ok || r.Class.Author != nil {
 		return RepositoryPolicy{}, fmt.Errorf("%w: %s is not bound, or its binding does not resolve", ErrClassNotAllowed, class)
-	}
-	if p, ok := cfg.HarnessProfiles[r.Class.Harness]; ok && p.Template != "" {
-		template = p.Template
 	}
 	return policyOf(cfg, repo, class, tier, template)
 }

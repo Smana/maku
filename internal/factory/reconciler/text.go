@@ -7,6 +7,8 @@ package reconciler
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/sanitize"
+	"github.com/Smana/maku/internal/factory/triage"
 )
 
 const (
@@ -219,28 +222,26 @@ func ScoperBrief(t *v1alpha1.Task, nonce string, b config.Scoper, choices []Prof
 	return fit(head, steeringBlock(t, nonce), snapshotBlock(t, fence), t)
 }
 
-// ProfileChoice is one harness profile the scoper may recommend: the class's floor, or one of
-// its allowed variants.
+// ProfileChoice is one workflow the scoper may recommend: the one the task runs, marked Floor, or
+// another.
 type ProfileChoice struct {
 	Name, Description string
 	Floor             bool
 }
 
-// profileChoices are t's profiles to choose from: nil for a labelled task, a task without a
-// profile, or a class with no variant (nothing to choose); else the floor, then each variant
-// in config order.
+// profileChoices are t's workflows to choose from: nil for a task without a workflow, or one a
+// maintainer's label or the task's source chose (WF3, WF4); else the one it runs, then every other
+// workflow in name order. Since the workflow left the class, every workflow is a choice.
 func (r *Reconciler) profileChoices(cfg *config.Config, t *v1alpha1.Task) []ProfileChoice {
 	p := t.Status.Profile
-	if p == nil || p.Source == "label" {
+	if p == nil || !slices.Contains([]string{triage.SourceRepository, "floor", "control", "treatment", "scoper", "escalation"}, p.Source) {
 		return nil
 	}
-	cl := r.class(cfg, t, t.Spec.PredictedClass)
-	if len(cl.HarnessAllowed) == 0 {
-		return nil
-	}
-	out := []ProfileChoice{{Name: cl.Harness, Description: cfg.HarnessProfiles[cl.Harness].Description, Floor: true}}
-	for _, name := range cl.HarnessAllowed {
-		out = append(out, ProfileChoice{Name: name, Description: cfg.HarnessProfiles[name].Description})
+	out := []ProfileChoice{{Name: p.Name, Description: cfg.HarnessProfiles[p.Name].Description, Floor: true}}
+	for _, name := range slices.Sorted(maps.Keys(cfg.HarnessProfiles)) {
+		if name != p.Name && cfg.IsWorkflow(name) {
+			out = append(out, ProfileChoice{Name: name, Description: cfg.HarnessProfiles[name].Description})
+		}
 	}
 	return out
 }

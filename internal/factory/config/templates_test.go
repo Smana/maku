@@ -38,7 +38,6 @@ func TestTriageTemplatesAreDefined(t *testing.T) {
 	for name, c := range map[string]struct{ raw, template string }{
 		"no solo":                       {strings.Replace(good, "  solo: {roles: [implementer]}\n", "", 1), "solo"},
 		"no pair":                       {strings.Replace(good, "  pair: {roles: [implementer, reviewer], maxReviewRounds: 2}\n", "", 1), "pair"},
-		"no trio":                       {strings.Replace(good, "  trio: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}\n", "", 1), "trio"},
 		"no investigate beside runlore": {strings.Replace(good, investigate, "", 1), "investigate"},
 	} {
 		t.Run(name, func(t *testing.T) {

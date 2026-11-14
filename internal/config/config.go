@@ -210,17 +210,8 @@ type PlanConfig struct {
 	// for a repository this list does not carry. It is deliberately not human.mcp.sessionStart,
 	// which means "the form may offer to start the factory here".
 	Repositories []string `json:"repositories,omitempty"`
-	// Classes is the class table: the roles a plan's issues carry and the money they are charged
-	// against both come from here, never from the model (CD17).
-	Classes map[string]PlanClass `json:"classes,omitempty"`
-}
-
-// PlanClass is one class's template: the roles the factory runs for it, the ceiling the class's
-// `taskUSD` sets, and the source string the plan displays as where that ceiling came from.
-type PlanClass struct {
-	Roles      []string `json:"roles"`
-	CeilingUSD float64  `json:"ceilingUSD"`
-	Source     string   `json:"source"`
+	// The class table (classes) was removed (WF13): a plan's roles and ceiling come from the
+	// factory's catalog at factoryURL.
 }
 
 // IntakePlan is the planner's config with its defaults applied: `tier-frontier`, 20 s, 50 plans a day,
@@ -305,40 +296,6 @@ func (i IntakeConfig) validate() []error {
 			errs = append(errs, fmt.Errorf("human.intake.plan.repositories: %q is declared twice", r))
 		}
 		seen[key] = true
-	}
-	// In name order, so two runs of the same file report the same lines in the same order.
-	for _, name := range slices.Sorted(maps.Keys(p.Classes)) {
-		errs = append(errs, p.Classes[name].validate(name)...)
-	}
-	return errs
-}
-
-// validate is one class's row: a template the factory can run, and money that says where it came
-// from. Roles and budget are the config's alone (CD17) — a reply naming either changes neither.
-func (c PlanClass) validate(name string) []error {
-	at := fmt.Sprintf("human.intake.plan.classes[%q]", name)
-	var errs []error
-	if name == "" {
-		errs = append(errs, errors.New("human.intake.plan.classes: a class needs a name: a reply names it and the plan hashes it"))
-	}
-	if len(c.Roles) == 0 {
-		errs = append(errs, fmt.Errorf("%s: roles is empty: a plan's roles are its class's template (CD17)", at))
-	}
-	seen := map[string]bool{}
-	for _, r := range c.Roles {
-		switch {
-		case !slices.Contains(planRoles, r):
-			errs = append(errs, fmt.Errorf("%s: role %q is not one of %s: the factory runs no such role", at, r, strings.Join(planRoles, ", ")))
-		case seen[r]:
-			errs = append(errs, fmt.Errorf("%s: role %q is declared twice", at, r))
-		}
-		seen[r] = true
-	}
-	if c.CeilingUSD <= 0 {
-		errs = append(errs, fmt.Errorf("%s: ceilingUSD %g must be above 0: a plan with no ceiling has no budget", at, c.CeilingUSD))
-	}
-	if c.Source == "" {
-		errs = append(errs, fmt.Errorf("%s: source is required: the plan displays where its ceiling came from", at))
 	}
 	return errs
 }
@@ -1043,6 +1000,9 @@ func Load(path string) (Config, error) {
 	if err != nil {
 		return c, fmt.Errorf("config: %w", err)
 	}
+	if err := refuseRemoved(raw); err != nil {
+		return c, fmt.Errorf("config %s: %w", path, err)
+	}
 	if err := yaml.UnmarshalStrict(raw, &c); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
@@ -1050,10 +1010,26 @@ func Load(path string) (Config, error) {
 	if err := c.Validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
-	if len(c.Human.Intake.Plan.Classes) > 0 {
-		c.Warnings = append(c.Warnings, "human.intake.plan.classes: the factory's catalog names the workflows (factoryURL): remove the table; refused from the next minor (WF13)")
-	}
 	return c, nil
+}
+
+// refuseRemoved names a key a later release removed, with what replaced it, so the file fails on
+// what it means rather than on an unknown field: human.intake.plan.classes (WF13).
+func refuseRemoved(raw []byte) error {
+	var top struct {
+		Human struct {
+			Intake struct {
+				Plan map[string]any `json:"plan"`
+			} `json:"intake"`
+		} `json:"human"`
+	}
+	if yaml.Unmarshal(raw, &top) != nil {
+		return nil // the strict decode reports it
+	}
+	if _, ok := top.Human.Intake.Plan["classes"]; ok {
+		return errors.New("human.intake.plan.classes: removed, the factory's catalog names the workflows: set factoryURL and remove the table (docs/upgrading.md#workflows-name-what-runs)")
+	}
+	return nil
 }
 
 // localGroups are the fixed group names of local mode.
@@ -1161,10 +1137,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Human.validate(slices.Collect(maps.Values(c.SystemPrincipals)))...)
-	// A plan's roles and ceiling come from its class (CD17): the factory's catalog at factoryURL,
-	// else the class table, which the next minor removes (WF13).
-	if p := c.Human.Intake.Plan; p.Enabled && len(p.Classes) == 0 && c.FactoryURL == "" {
-		errs = append(errs, errors.New("human.intake.plan.classes: is required when the planner is enabled without a factoryURL: a plan's roles and ceiling come from its class, the factory's catalog or this table (CD17)"))
+	// A plan's roles and ceiling come from the factory's catalog at factoryURL (CD17, WF13).
+	if p := c.Human.Intake.Plan; p.Enabled && c.FactoryURL == "" {
+		errs = append(errs, errors.New("human.intake.plan: the planner needs factoryURL: a plan's roles and ceiling come from the factory's catalog (CD17)"))
 	}
 	if t := c.Preflight.Timeout.Duration; t != 0 && (t < time.Second || t > MaxPreflightTimeout) {
 		errs = append(errs, fmt.Errorf("preflight.timeout %s is not between 1s and %s", t, MaxPreflightTimeout))

@@ -580,18 +580,11 @@ func (in *FactorySpec) DeepCopyInto(out *FactorySpec) {
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
-	if in.HarnessProfiles != nil {
-		in, out := &in.HarnessProfiles, &out.HarnessProfiles
-		*out = make(map[string]config.HarnessProfile, len(*in))
-		for key, val := range *in {
-			(*out)[key] = val
-		}
-	}
 	if in.Workflows != nil {
 		in, out := &in.Workflows, &out.Workflows
 		*out = make(map[string]config.HarnessProfile, len(*in))
 		for key, val := range *in {
-			(*out)[key] = val
+			(*out)[key] = *val.DeepCopy()
 		}
 	}
 	in.MergeGuardrails.DeepCopyInto(&out.MergeGuardrails)
@@ -1262,6 +1255,7 @@ func (in *RepositorySpec) DeepCopyInto(out *RepositorySpec) {
 		*out = make([]config.Schedule, len(*in))
 		copy(*out, *in)
 	}
+	out.Workflow = in.Workflow
 	if in.Merge != nil {
 		in, out := &in.Merge, &out.Merge
 		*out = new(config.Merge)

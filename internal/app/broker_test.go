@@ -770,8 +770,6 @@ func plannerConfig() config.Config {
 			APIKeyFile: "/etc/room-broker/planner/api-key", DailyPlans: 7, MaxRounds: 4, Fallback: "composer",
 			ReasoningEffort: "low",
 			Repositories:    []string{"Smana/AI-Native-Ref"},
-			Classes: map[string]config.PlanClass{"docs-links": {
-				Roles: []string{"scoper", "implementer", "reviewer"}, CeilingUSD: 2, Source: "class:docs-links.taskUSD"}},
 		}},
 	}}
 }

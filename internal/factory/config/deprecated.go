@@ -3,9 +3,7 @@
 package config
 
 import (
-	"errors"
 	"fmt"
-	"maps"
 	"slices"
 )
 
@@ -82,55 +80,11 @@ func FactoryDeprecations(c *Config) []string {
 			out = append(out, f.path)
 		}
 	}
-	for _, d := range c.workflowDeprecations() {
-		out = append(out, d.path)
-	}
 	slices.Sort(out)
 	return out
 }
 
-// readWorkflows moves workflows into HarnessProfiles, its old name, which every reader keeps
-// reading (WF9). A file that sets both is refused: neither may silently win.
-func (c *Config) readWorkflows() error {
-	c.harnessProfilesKey = len(c.HarnessProfiles) > 0
-	if len(c.Workflows) == 0 {
-		return nil
-	}
-	if c.harnessProfilesKey {
-		return errors.New("workflows and harnessProfiles: set one; harnessProfiles is workflows' old name (WF9)")
-	}
+// readWorkflows moves workflows into HarnessProfiles, the name every reader reads (WF9).
+func (c *Config) readWorkflows() {
 	c.HarnessProfiles, c.Workflows = c.Workflows, nil
-	return nil
-}
-
-// deprecation is one setting release N+1 refuses (WF9, WF13): its path and what to do instead.
-type deprecation struct{ path, instead string }
-
-// workflowDeprecations are the settings of the workflows design that the next minor refuses, in
-// the paths its refusals name: templates.trio, triage.classifierURL, defaults.template,
-// defaults.tier, harnessProfiles, and each loops row named neither default nor a workflow. Read
-// after the shipped workflows are filled, so a row named by one is no row to rename.
-func (c *Config) workflowDeprecations() []deprecation {
-	var out []deprecation
-	if _, ok := c.Templates["trio"]; ok {
-		out = append(out, deprecation{"templates.trio", "trio has pair's roles since the tester left it: name pair"})
-	}
-	if c.Triage.ClassifierURL != "" {
-		out = append(out, deprecation{"triage.classifierURL", "the task classifier was never deployed and the scoper replaced it: remove the key"})
-	}
-	if c.Defaults.Template != "" {
-		out = append(out, deprecation{"defaults.template", "a workflow names its template: remove the key"})
-	}
-	if c.Defaults.Tier != "" {
-		out = append(out, deprecation{"defaults.tier", "a workflow names its tier: remove the key"})
-	}
-	if c.harnessProfilesKey {
-		out = append(out, deprecation{"harnessProfiles", "renamed workflows: move the map under workflows"})
-	}
-	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
-		if _, ok := c.HarnessProfiles[name]; !ok && name != "default" {
-			out = append(out, deprecation{"loops." + name, "a row is named default or a workflow: rename it after a workflow and set that workflow's loop"})
-		}
-	}
-	return out
 }

@@ -11,9 +11,10 @@ import (
 )
 
 // ClassesFromCatalogue is a repository's offered classes as the planner reads them (P2, G4): each
-// class's ceiling, its offered profiles and their roles, its mode and the repository's
-// approveToMerge, all from the factory. The material roles are the floor's template, or none when
-// the floor sets no template: triage chooses them (G3, P15).
+// class's ceiling and mode, the repository's approveToMerge, and the offered workflows with their
+// roles, the same for every class since the workflow left the class (WF4). The material roles are
+// the repository's default workflow's template, or none when it sets no template: triage chooses
+// them (G3, P15). Floor is that default.
 func ClassesFromCatalogue(c catalogue.Catalogue) map[string]Class {
 	out := make(map[string]Class, len(c.Classes))
 	for _, cl := range c.Classes {
@@ -23,12 +24,12 @@ func ClassesFromCatalogue(c catalogue.Catalogue) map[string]Class {
 			roles[name] = slices.Clone(c.Profiles[name].Roles)
 		}
 		out[cl.Name] = Class{
-			Roles:          slices.Clone(roles[cl.Floor]),
+			Roles:          slices.Clone(roles[c.DefaultWorkflow]),
 			CeilingUSD:     cl.CeilingUSD,
 			Source:         "catalogue:" + cl.Name + ".ceilingUSD",
 			Description:    cl.Description,
 			Mode:           cl.Mode,
-			Floor:          cl.Floor,
+			Floor:          c.DefaultWorkflow,
 			Offered:        offered,
 			ProfileRoles:   roles,
 			ApproveToMerge: c.ApproveToMerge,

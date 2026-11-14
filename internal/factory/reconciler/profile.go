@@ -14,6 +14,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/narrate"
+	"github.com/Smana/maku/internal/factory/triage"
 )
 
 // resolveProfile settles t's profile from scope s (nil: the scoper left none); the count is deferred so a replay counts once.
@@ -29,12 +30,13 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 	case persisted && d.Source == "scoper": // the spec write landed and the status write did not: the decision binds, not today's config
 		d.restore(&q)
 		offered = offered || d.Offered
-	case q.Source == "label":
+	case q.Source != triage.SourceRepository && q.Source != "floor" && q.Source != "control" && q.Source != "treatment":
+		// a maintainer's label, or the task's source (WF3): the scoper's pick is only recorded
 	case s == nil:
 		q.Reason = "scoper_failed"
 	case q.Source == "control", q.Source == "treatment": // either arm of the measurement keeps what triage drew (WF8)
 	default:
-		name, reason, err := r.variantFor(ctx, cfg, t, s.Profile)
+		name, reason, err := r.variantFor(ctx, cfg, t, q.Name, s.Profile)
 		if err != nil {
 			return err
 		}
@@ -42,8 +44,8 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 			q.Reason = reason
 			break
 		}
-		v, _ := cfg.ProfileFor(r.class(cfg, t, t.Spec.PredictedClass), name)
-		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || v.TestFirst,
+		v, _ := cfg.Workflow(name)
+		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || r.repo(cfg, t).TestFirstIn(name),
 			Recommended: q.Recommended, Why: q.Why, Offered: offered}
 		if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 			return err
@@ -144,25 +146,21 @@ func assumed(sc envelope.Scope) *envelope.Scope {
 	return &sc
 }
 
-func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, name string) (string, string, error) {
-	cl := r.class(cfg, t, t.Spec.PredictedClass)
-	if name == "" || name == cl.Harness {
+// variantFor is the workflow the scoper's recommendation name moves t to from current, or why it
+// does not: none (no recommendation, or the one it runs), unknown, observe (recorded only), or
+// no_tests_paths for a public task the move would start with a tester the repository cannot run.
+// Any workflow may be recommended since the workflow left the class (WF4).
+func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, current, name string) (string, string, error) {
+	if name == "" || name == current {
 		return "", "none", nil
 	}
-	if _, ok := cfg.HarnessProfiles[name]; !ok {
+	if !cfg.IsWorkflow(name) {
 		return "", "unknown", nil
-	}
-	v, ok := cfg.ProfileFor(cl, name)
-	if !ok {
-		return "", "not_allowed", nil
 	}
 	if !cfg.Applies() {
 		return "", "observe", nil
 	}
-	if v.TestFirst {
-		if t.Spec.DataClass != "public" {
-			return "", "internal", nil
-		}
+	if r.repo(cfg, t).TestFirstIn(name) && t.Spec.DataClass == "public" {
 		paths, err := r.testPaths(ctx, t)
 		if err != nil {
 			return "", "", err
@@ -177,13 +175,12 @@ func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1al
 // applyProfile persists decision d's spec and d itself in one update; a replay restores the status
 // from the persisted decision, never by deciding again.
 func (r *Reconciler) applyProfile(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d profileDecision) error {
-	class := t.Spec.PredictedClass
-	p, ok := cfg.ProfileFor(r.class(cfg, t, class), d.Name)
+	p, ok := cfg.Workflow(d.Name)
 	if !ok {
-		return fmt.Errorf("profile %q is not one of class %q's", d.Name, class)
+		return fmt.Errorf("workflow %q is not one of the factory's", d.Name)
 	}
 	before := t.Spec.DeepCopy()
-	r.profileSpec(cfg, t, class, p)
+	r.profileSpec(cfg, t, d.Name, p)
 	// A changed mode would read the finished scoper's run as a triager proposal on replay.
 	t.Spec.ScopeMode = before.ScopeMode
 	raw, err := json.Marshal(d)
