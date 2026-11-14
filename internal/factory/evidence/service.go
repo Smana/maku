@@ -450,6 +450,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	if err != nil {
 		return head{}, nil, fmt.Errorf("evidence: %w", err)
 	}
+	drilled := RepoDrilled(reverts, rc.Name)
 	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
 	cs := s.classes(cfg, rc, file)
@@ -459,7 +460,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	g.SetLimit(cmp.Or(s.Parallel, DefaultParallel))
 	for i, c := range cs {
 		g.Go(func() error {
-			e, err := collect(gctx, src, c, reverts, rc.Name, l, now, since)
+			e, err := collect(gctx, src, c, reverts, rc.Name, drilled, l, now, since)
 			out[i] = e
 			return err
 		})
@@ -757,8 +758,8 @@ func searchLogin(l string) string {
 	return l
 }
 
-// collect reads one class: the script's two modes, then MP7.
-func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, l Logins, now time.Time, since string) (Evidence, error) {
+// collect reads one class: the script's two modes, then MP7, with the repository's drill.
+func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string) (Evidence, error) {
 	var judged []PR
 	for _, a := range c.authors {
 		prs, err := src.MergedRecords(ctx, fmt.Sprintf("author:%s merged:>=%s", a, since))
@@ -788,5 +789,5 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 	}
 	sh := Shadow(judged, reverts, c.name, repo, l)
 	out := Outcomes(merges, reverts, followed, repo, l, now, c.window)
-	return Evaluate(sh, out, reverts, repo, c.minimum), nil
+	return Evaluate(sh, out, reverts, repo, c.minimum, drilled), nil
 }

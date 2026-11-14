@@ -26,11 +26,35 @@ The merge gate itself (the fixed base, the decision record, adopted classes, the
 
 ## Start here
 
-**With zero config, nothing auto-merges and no evidence is collected.** A repository whose
+**A `Repository` with no `mergePolicies` evaluates the catalog in shadow.** The `agent-factory` chart
+ships four policies ([the catalog](#the-catalog)), and every `Repository` the factory serves
+evaluates each one it does not bind, in `shadow`: it records what it would have merged, merges
+nothing, and gathers the evidence a [promotion](#promotion-shadow-to-live) needs from its first pull
+request. A binding wins: `mode: live` promotes one, `mode: disabled` switches one off.
+
+**Without the catalog, nothing auto-merges and no evidence is collected.** A repository whose
 `.github/agent-factory.yaml` holds only `factory:` has no repository policy: every task outside the
 served classes is `review`, so a human merges it, and no shadow decision is recorded. A repository
 that wants auto-merge later then starts from zero evidence. A cut-over repository whose file binds
 no policy pauses (`policy_invalid`).
+
+### The catalog
+
+Rendered by the `agent-factory` chart with the factory (`mergePolicies.catalog.enabled`, on by
+default), in the factory's namespace, labelled `maku.ogenki.io/catalog: "true"`. Each carries its own
+bound, since no binding supplies one:
+
+| Policy | What it merges | Bound | `evidence` |
+|---|---|---|---|
+| `docs-links` | Link targets in Markdown, nothing else, 20 lines | `diffShape: links-only` | `low` (5) |
+| `revert` | A revert whose diff changes link targets only, 20 lines | `diffShape: links-only` | `low` (5) |
+| `deps-patch` | Renovate patch updates after their release age (`renovate/stability-days`): adopted from `renovate[bot]` on `renovate/` branches, 3 files, 10 lines, 2 a day | `diffShape: semver-patch` | `low` (5) |
+| `docs` | Prose in Markdown files (`^.+\.mdx?$`), 5 files, 100 lines, 2 a day | `allowedFiles` | `standard` (20) |
+
+A binding narrows a catalog policy like any other: `allowedFiles` on a `docs` binding must match as
+well as the policy's. A platform that keeps its own object of a catalog name lists it in
+`mergePolicies.catalog.exclude`; an unlabelled `MergePolicy` of a catalog name fails the install,
+naming it, until it is listed there or deleted.
 
 Start instead with this file. Every binding is in `shadow`: its class decides every pull request it
 matches, records what it would have done, and merges nothing. That record is the evidence a later
@@ -784,7 +808,7 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 |---|---|
 | `below_minimum` | At least the policy's minimum shadow decisions a maintainer merged unchanged at the head the decision judged: 5 at `evidence: low`, 20 at `standard` (the default) |
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
-| `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
+| `no_drill` | A `factory/drill` revert of one of the repository's pull requests merged: the drill is per repository, so one clears it for every class |
 
 Only a bound class is promotable (`not_in_repository_policy` otherwise), and only from `shadow`
 (`not_shadow`). The proposal changes the one `mode:` line, `shadow` to `live`, and is parsed again:

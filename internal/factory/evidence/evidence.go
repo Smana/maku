@@ -448,9 +448,18 @@ type Evidence struct {
 	Blockers []string `json:"blockers,omitempty"`
 }
 
+// RepoDrilled reports whether a factory/drill revert of one of repo's pull requests merged: the
+// drill is per repository (merge policies review MR4), so one passed drill counts for every class.
+func RepoDrilled(reverts []Revert, repo string) bool {
+	return slices.ContainsFunc(reverts, func(r Revert) bool {
+		return r.drill() && r.State == stateMerged && len(r.targets(repo)) > 0
+	})
+}
+
 // Evaluate is MP7 on one class: eligible with at least minimum clean decisions, no bad mature
-// outcome, and a passed drill on one of its pull requests.
-func Evaluate(sh ShadowTally, out OutcomeTally, reverts []Revert, repo string, minimum int) Evidence {
+// outcome, and a passed drill: on one of its pull requests, or, repoDrilled, on any of the
+// repository's (RepoDrilled).
+func Evaluate(sh ShadowTally, out OutcomeTally, reverts []Revert, repo string, minimum int, repoDrilled bool) Evidence {
 	e := Evidence{Shadow: sh, Outcomes: out, Clean: sh.MergedUnchanged, Bad: out.Bad,
 		Immature: out.Merges - out.Mature, Pending: out.Inconclusive,
 		Bound: UpperBound(out.Bad, out.Conclusive), Budget: Budget, Minimum: minimum, Drill: DrillNone}
@@ -471,6 +480,9 @@ func Evaluate(sh ShadowTally, out OutcomeTally, reverts []Revert, repo string, m
 		} else if e.Drill != DrillPassed {
 			e.Drill = DrillOpen
 		}
+	}
+	if repoDrilled {
+		e.Drill = DrillPassed
 	}
 	if e.Clean < minimum {
 		e.Blockers = append(e.Blockers, BlockBelowMinimum)

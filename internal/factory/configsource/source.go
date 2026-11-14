@@ -493,7 +493,8 @@ func (s *Source) list(ctx context.Context) ([]resources.Object, error) {
 			if spec == nil {
 				spec = map[string]any{}
 			}
-			objs = append(objs, resources.Object{Kind: kind, Name: u.GetName(), Namespace: s.Namespace, Generation: u.GetGeneration(), Spec: spec})
+			objs = append(objs, resources.Object{Kind: kind, Name: u.GetName(), Namespace: s.Namespace, Generation: u.GetGeneration(), Spec: spec,
+				Catalog: kind == resources.KindMergePolicy && u.GetLabels()[v1alpha1.LabelCatalog] == "true"})
 		}
 	}
 	s.crdsAbsent = absent

@@ -286,6 +286,10 @@ type ConsumerStatus struct {
 	Reason string `json:"reason,omitempty"`
 }
 
+// LabelCatalog marks a MergePolicy of the agent-factory chart's catalog (merge policies review MR2):
+// every Repository the factory serves evaluates it in shadow unless it binds it itself.
+const LabelCatalog = "maku.ogenki.io/catalog"
+
 // MergePolicy is one reusable class definition, its name the class name (reusable merge policies
 // B1).
 //

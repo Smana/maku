@@ -20,6 +20,22 @@ A binding's mode may now be `disabled`; `"off"` still reads as `disabled`. `maku
 compares the classes under the default guardrails, so a config-file class within them migrates
 unchanged, and one above them is a `changed:` line.
 
+## The merge policy catalog (v0.5x, merge policies release N)
+
+The `agent-factory` chart now renders four `MergePolicy` objects with the factory, labelled
+`maku.ogenki.io/catalog: "true"`: `docs-links`, `revert`, `deps-patch` and `docs`
+([the catalog](merge-policies.md#the-catalog)). Every `Repository` evaluates each one it does not bind,
+in `shadow`: it records would-merge decisions and merges nothing. A repository the config file serves
+is unchanged.
+
+| Change | Before | Now | What to do |
+|---|---|---|---|
+| `mergePolicies.catalog.enabled` | no catalog | `true`: four `MergePolicy` objects in the release's namespace | `false` to render none |
+| An existing `MergePolicy` of a catalog name, without the label | yours | the install fails before any apply: `MergePolicy docs exists and is not the catalog's: add it to mergePolicies.catalog.exclude` | List the ones you keep in `mergePolicies.catalog.exclude`, or delete yours in the change that upgrades. Under Argo CD, which renders without `lookup`, the check never runs: exclude them first |
+| A `Repository` that binds no catalog policy | not evaluated | `shadow` | Bind it `mode: disabled` to switch it off for that repository |
+| `deps-patch` in `shadow` | — | adopts Renovate's patch pull requests (`renovate[bot]`, `renovate/` branches) as tasks, to decide them in shadow | Bind it `disabled` where Renovate's pull requests must stay untouched |
+| The promotion drill | a `factory/drill` revert of one of the class's own pull requests | one merged `factory/drill` revert in the repository clears `no_drill` for every class | none |
+
 ## The shared ClusterRoles in the CRD chart (v0.4x, v4 rollout step 7)
 
 Several installs can share a cluster (D2, R10). The roles every install shares move from the factory
