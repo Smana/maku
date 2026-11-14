@@ -410,6 +410,22 @@ func TestAPolicyBelowItsFloorIsRefusedAlone(t *testing.T) {
 	}
 }
 
+// WF2: a policy may name a shipped workflow its Factory does not define, as a class of the file may:
+// the policy check reads the profiles Parse fills.
+func TestAPolicyMayNameAShippedWorkflow(t *testing.T) {
+	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], classPolicy(t, "docs", 1, "harness: standard\nharnessAllowed: [careful]\n"),
+		boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if x := refusal(r, KindMergePolicy, "docs"); x != nil {
+		t.Fatalf("docs refused: %+v", x)
+	}
+	if b := binding(r, "maku", "docs"); !b.Accepted {
+		t.Fatalf("docs binding: %+v", b)
+	}
+}
+
 // The floor check reads the templates as Parse validates them: Parse drops the deprecated tester
 // role only after Validate, so a floor whose template still lists tester is judged with it in both
 // places. Stripping it before the policy check would accept a policy that Parse then refuses in

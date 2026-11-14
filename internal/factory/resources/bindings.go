@@ -66,6 +66,8 @@ func policyContext(m map[string]any) (config.PolicyContext, error) {
 		}
 	}
 	ctx.Guardrails = ctx.Guardrails.WithDefaults() // MR7
+	// WF2: the shipped workflows, as Parse fills them. A split is no part of a floor (TE6).
+	ctx.HarnessProfiles, ctx.Templates, ctx.Loops = config.FillShippedWorkflows(ctx.HarnessProfiles, ctx.Templates, ctx.Loops, false)
 	return ctx, nil
 }
 

@@ -153,8 +153,8 @@ type Config struct {
 	// unless set, and implied by demo.
 	RunTokens RunTokens `json:"runTokens,omitzero"`
 	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
-	// or default. Each row is whole: a class with no row reads default's, and a row is read
-	// alone, never merged with default's (LoopFor).
+	// or default. A class with no row reads default's, and a row inherits default's key by key:
+	// each key the row sets is its own (WF10, rowOf).
 	Loops map[string]Loop `json:"loops,omitempty"`
 	// HarnessProfiles, MergeGuardrails and PolicyManagement are the central half of the repository
 	// merge policy (mergepolicy): what a repository's class may reference and how far it may go.
@@ -177,8 +177,8 @@ type Config struct {
 	// Ignored are the keys the file sets that this release accepts and ignores, for the binary
 	// to warn about: Parse has no logger.
 	Ignored []Ignored `json:"-"`
-	// Warnings are sentences about a file that loads and that a later release refuses, for the
-	// binary to log: Parse has no logger.
+	// Warnings are sentences about a file that loads and that a later release refuses, or that
+	// runs otherwise than under the release before (WF10), for the binary to log: Parse has no logger.
 	Warnings []string `json:"-"`
 	// classSource is a cut-over repository's classes (SetClassSource).
 	classSource func(repository string) (map[string]Class, bool)
@@ -1744,6 +1744,8 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 			}
 		}
 	}
+	inherits := c.inheritanceWarnings() // the file's rows, before the shipped ones join them
+	c.applyShippedWorkflows()           // WF2: before Validate, so a profile may name a shipped template or row
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -1761,6 +1763,7 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 			c.Warnings = append(c.Warnings, fmt.Sprintf("template %s: tester is the test writer since v3 feature 4; dropped from the template, refused from the next minor (TO1)", name))
 		}
 	}
+	c.Warnings = append(c.Warnings, inherits...)
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
@@ -2339,7 +2342,8 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 // Loop is one row of loops. A row switches its class's loop on when it sets any of the three
 // keys (D4: no row, or a row without them, is today's run); an unset key then takes the
 // design's default. Rows are keyed by class so the scoper's switch (scoper design SC2,
-// loops.<class>.scope) joins them as one more key.
+// loops.<class>.scope) joins them as one more key. A row inherits each key it leaves unset from
+// default's row (WF10, rowOf).
 // +kubebuilder:object:generate=true
 type Loop struct {
 	// StallSteps ends a run with no commit by this many steps (L3): 1 to 500, default 80.
@@ -2356,6 +2360,9 @@ type Loop struct {
 	// Search offers the class's implementer runs the search tool (v3 feature 5, ST9); absent is off.
 	// It never switches the loop on: On reads the loop's three keys only.
 	Search bool `json:"search,omitempty"`
+	// searchSet is whether the row writes search, false included: an absent key inherits
+	// default's (WF10), and search: false does not. UnmarshalJSON sets it.
+	searchSet bool `json:"-"`
 	// Split offers the scoper a split of the class's hard tasks (splitter design SL3): absent, off.
 	// It needs scope: scoper on the same row, and never switches the loop on.
 	Split *SplitPolicy `json:"split,omitempty"`
@@ -2376,8 +2383,7 @@ type ModelAliases map[string]ModelAlias
 type ModelAlias string
 
 // ModelFor is the provider alias class's row names for role on tier, "" for today's model: always
-// "" unless dataClass is public (F4). A row is whole: a class row without models is none, whatever
-// default's says.
+// "" unless dataClass is public (F4). A role or tier the row leaves unset is default's (WF10).
 func (c *Config) ModelFor(class, dataClass, role, tier string) string {
 	if dataClass != "public" {
 		return ""
@@ -2411,8 +2417,7 @@ func (m *ScopeMode) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// ScopeFor is class's scope mode: its row's, else default's, off when that row sets none. A row
-// is whole, as for the loop (part 2 R1): a class row without scope is off, whatever default's says.
+// ScopeFor is class's scope mode: its row's, else default's (WF10), off when neither sets one.
 func (c *Config) ScopeFor(class string) ScopeMode {
 	row := c.rowOf(class)
 	if row.Scope == "" {
@@ -2422,7 +2427,7 @@ func (c *Config) ScopeFor(class string) ScopeMode {
 }
 
 // SearchFor reports whether class's implementer runs get the search tool (v3 feature 5, ST9): its
-// row's search, else default's. A row is whole: a class row without search is off.
+// row's search, else default's (WF10): a row's search: false is its own.
 func (c *Config) SearchFor(class string) bool {
 	row := c.rowOf(class)
 	return row.Search
@@ -2474,7 +2479,7 @@ func (c *Config) neverSplit(class string) bool {
 }
 
 // SplitFor is class's split on repository, every value resolved, nil when none is offered: its row,
-// else default's, read whole as for the loop, and only beside scope: scoper.
+// else default's (WF10), each split taken whole, and only beside scope: scoper.
 func (c *Config) SplitFor(repository, class string) *SplitPolicy {
 	if cl, _ := c.RepositoryFor(repository).Class(class); c.neverSplit(class) || cl.Oracle != nil {
 		return nil
@@ -2513,7 +2518,7 @@ type LoopPolicy struct {
 	JudgeModel                string
 }
 
-// LoopFor is class's loop policy, nil when its loop is off: its row, else default's.
+// LoopFor is class's loop policy, nil when its loop is off: its row over default's (WF10).
 func (c *Config) LoopFor(class string) *LoopPolicy {
 	row := c.rowOf(class)
 	if !row.On() {
@@ -2629,14 +2634,14 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 	}
 }
 
-// validateTriageTemplates (S-7): every template triage can choose is defined. solo, pair and trio
-// are chosen by a task's class and tier (triage.Matrix, an oracle class's solo); a missing one is
+// validateTriageTemplates (S-7): every template triage can choose is defined. solo and pair are
+// chosen by a task's class and tier (triage.Matrix, an oracle class's solo); a missing one is
 // a team with no roles, which no reviewer ever joins. investigate is chosen for a RunLore finding
 // and an internal principal's api task: wherever one can arrive it must be the lone triager,
 // since the reconciler starts the triager only for a [triager] template and an implementer
 // otherwise, on internal data (R38).
 func (c *Config) validateTriageTemplates(bad func(string, ...any)) {
-	for _, name := range []string{"solo", "pair", "trio"} {
+	for _, name := range []string{"solo", "pair"} {
 		if _, ok := c.Templates[name]; !ok {
 			bad("templates.%s is missing: triage chooses it by class and tier", name)
 		}

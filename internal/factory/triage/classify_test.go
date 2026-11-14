@@ -21,11 +21,23 @@ import (
 func TestMatrix(t *testing.T) { // §2
 	for _, c := range []struct{ class, source, tier, want string }{
 		{"docs-links", "issue", "light", "solo"}, {"docs-links", "issue", "standard", "solo"}, {"docs-links", "issue", "frontier", "pair"},
-		{"docs", "issue", "light", "pair"}, {"review", "issue", "standard", "pair"}, {"tests", "schedule", "frontier", "trio"},
+		{"docs", "issue", "light", "pair"}, {"review", "issue", "standard", "pair"}, {"tests", "schedule", "frontier", "pair"},
 		{"review", "runlore", "light", "investigate"}, {"review", "runlore", "frontier", "investigate"},
 	} {
 		if got := Matrix(c.class, c.source, c.tier); got != c.want {
 			t.Errorf("%s/%s/%s = %s, want %s", c.class, c.source, c.tier, got, c.want)
+		}
+	}
+}
+
+// trio left the shipped templates (workflows WF2): a frontier task runs pair, whatever its class or
+// source, so it never names a template a factory may no longer define.
+func TestMatrixNeverReturnsTrio(t *testing.T) {
+	for _, class := range []string{"docs-links", "docs", "review", "tests", "revert"} {
+		for _, source := range []string{"issue", "schedule", "api", "runlore"} {
+			if got := Matrix(class, source, "frontier"); got == "trio" {
+				t.Errorf("%s/%s/frontier = trio", class, source)
+			}
 		}
 	}
 }

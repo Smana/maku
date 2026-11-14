@@ -7,7 +7,8 @@ import (
 	"testing"
 )
 
-// Scoper design SC2, offline proof 1: the switch parses, defaults to off, a row is whole, and
+// Scoper design SC2, offline proof 1: the switch parses, defaults to off, a row inherits default's
+// scope (WF10) and its own off is kept, and
 // scope never switches the loop on (loop part 2 R2). The test writes the bare form {scope: off},
 // which YAML 1.1 reads as false: it must still mean off.
 func TestScopeFor(t *testing.T) {
@@ -20,7 +21,7 @@ func TestScopeFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for class, want := range map[string]ScopeMode{"docs": ScopeScoper, "tests": ScopeOff, "dashboards": ScopeOff,
+	for class, want := range map[string]ScopeMode{"docs": ScopeScoper, "tests": ScopeSteering, "dashboards": ScopeOff,
 		"review": ScopeSteering, "docs-links": ScopeSteering} {
 		if got := cfg.ScopeFor(class); got != want {
 			t.Errorf("ScopeFor(%s) = %s, want %s", class, got, want)
@@ -38,9 +39,9 @@ func TestScopeFor(t *testing.T) {
 	}
 }
 
-// A class row is read whole: a row with only scope has no loop, even when default has one (the
-// scope row does not inherit default's loop, nor does default's scope reach a row that sets none).
-func TestAScopeOnlyRowDropsDefaultsLoop(t *testing.T) {
+// WF10: a row with only scope inherits default's loop, and the loop switches on; default's scope
+// off leaves a row's own scope alone.
+func TestAScopeOnlyRowInheritsDefaultsLoop(t *testing.T) {
 	cfg, err := Parse([]byte(good + `loops:
   default: {stallSteps: 40}
   docs: {scope: steering}
@@ -48,8 +49,8 @@ func TestAScopeOnlyRowDropsDefaultsLoop(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.LoopFor("docs") != nil {
-		t.Error("docs inherited default's loop")
+	if p := cfg.LoopFor("docs"); p == nil || p.StallSteps != 40 {
+		t.Errorf("docs did not inherit default's loop: %+v", p)
 	}
 	if cfg.LoopFor("tests") == nil {
 		t.Error("a class without a row gets default's loop")

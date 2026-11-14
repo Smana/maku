@@ -3,6 +3,7 @@
 package config
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -90,5 +91,67 @@ func TestLoopModelsAreRefusedOnThePortableRuntime(t *testing.T) {
 	}
 	if _, err := Parse([]byte(byModel + row + "runs: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {
 		t.Fatalf("portable with a gateway identity: %v", err)
+	}
+}
+
+// WF10: a row inherits default's row key by key; the keys it sets are its own.
+func TestLoopRowInheritsDefaultKeyByKey(t *testing.T) {
+	c := mustParse(t, good+gatewayIdentity+`loops:
+  default: {scope: scoper, search: true, judge: tier-standard, models: {reviewer: {frontier: kimi-frontier}, implementer: {light: mistral-light}}}
+  docs: {stallSteps: 60, models: {implementer: {standard: mistral-standard}}}
+`)
+	if c.ScopeFor("docs") != ScopeScoper || !c.SearchFor("docs") {
+		t.Fatal("docs did not inherit default's scope and search")
+	}
+	if p := c.LoopFor("docs"); p == nil || p.StallSteps != 60 || p.JudgeModel != "tier-standard" {
+		t.Fatalf("docs's loop: %+v, want its own stallSteps and default's judge", p)
+	}
+	for _, m := range []struct{ role, tier, want string }{
+		{"reviewer", "frontier", "kimi-frontier"},       // default's role
+		{"implementer", "light", "mistral-light"},       // default's tier of a role the row also sets
+		{"implementer", "standard", "mistral-standard"}, // the row's own
+	} {
+		if got := c.ModelFor("docs", "public", m.role, m.tier); got != m.want {
+			t.Fatalf("ModelFor(docs, %s, %s) = %q, want %q", m.role, m.tier, got, m.want)
+		}
+	}
+	if c.Loops["docs"].Search || c.Loops["docs"].Scope != "" {
+		t.Fatal("inheritance rewrote the row as written")
+	}
+}
+
+// An explicit value on the row, off or false included, beats default's.
+func TestLoopRowOverridesDefault(t *testing.T) {
+	c := mustParse(t, good+`loops:
+  default: {scope: scoper, search: true, judge: tier-standard}
+  docs: {scope: "off", search: false, judge: none}
+  tests: {scope: steering}
+`)
+	if c.ScopeFor("docs") != ScopeOff || c.SearchFor("docs") {
+		t.Fatal("an explicit off or false was overridden")
+	}
+	if p := c.LoopFor("docs"); p == nil || p.JudgeModel != "" {
+		t.Fatalf("judge: none was overridden: %+v", p)
+	}
+	if c.ScopeFor("tests") != ScopeSteering || !c.SearchFor("tests") {
+		t.Fatal("tests: its own scope, default's search")
+	}
+}
+
+func TestLoopInheritanceWarnsWhenItSwitchesALoopOn(t *testing.T) {
+	c := mustParse(t, good+gatewayIdentity+`loops: {default: {judge: tier-light}, revert: {models: {reviewer: {frontier: kimi-frontier}}}, docs: {stallSteps: 40}}
+`)
+	want := "loops.revert now inherits default's judge: its loop switches on"
+	if !slices.ContainsFunc(c.Warnings, func(w string) bool { return strings.Contains(w, want) }) {
+		t.Fatalf("no warning; got %v", c.Warnings)
+	}
+	// docs inherits the judge too, but its own stallSteps switched its loop on already.
+	if !slices.ContainsFunc(c.Warnings, func(w string) bool {
+		return strings.Contains(w, "loops.docs now inherits default's judge") && !strings.Contains(w, "switches on")
+	}) {
+		t.Fatalf("docs: %v", c.Warnings)
+	}
+	if c.LoopFor("revert") == nil {
+		t.Fatal("revert's loop is off")
 	}
 }

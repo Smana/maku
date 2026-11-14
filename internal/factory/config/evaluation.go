@@ -3,9 +3,13 @@
 package config
 
 import (
+	"bytes"
+	"cmp"
+	"encoding/json"
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 )
 
 // Evaluation is the team evaluation's switch: the control cohort's share of unlabelled
@@ -118,16 +122,118 @@ func (c *Config) belowFloor(class string, floor HarnessProfile, name string, v H
 	}
 }
 
-// rowOf is name's row, else default's; off is no row at all.
+// rowOf is name's row laid over default's, key by key (WF10), else default's; off is no row at all.
 func (c *Config) rowOf(name string) Loop {
 	if name == string(LoopOff) {
 		return Loop{}
 	}
+	def := c.Loops["default"]
 	row, ok := c.Loops[name]
-	if !ok {
-		row = c.Loops["default"]
+	if !ok || name == "default" {
+		return def
 	}
-	return row
+	return row.over(def)
+}
+
+// over is l with each key it leaves unset taken from def: models role by role and tier by tier,
+// split whole. Neither row is changed.
+func (l Loop) over(def Loop) Loop {
+	out := l
+	if out.StallSteps == nil {
+		out.StallSteps = def.StallSteps
+	}
+	if out.Continuations == nil {
+		out.Continuations = def.Continuations
+	}
+	out.Judge = cmp.Or(out.Judge, def.Judge)
+	out.Scope = cmp.Or(out.Scope, def.Scope)
+	if !out.searchSet && !out.Search { // a row built in Go with search true set it too
+		out.Search = def.Search
+	}
+	if out.Split == nil {
+		out.Split = def.Split
+	}
+	if len(def.Models) > 0 {
+		out.Models = make(map[string]ModelAliases, len(def.Models)+len(l.Models))
+		for _, m := range []map[string]ModelAliases{def.Models, l.Models} {
+			for role, byTier := range m {
+				merged := maps.Clone(out.Models[role])
+				if merged == nil {
+					merged = ModelAliases{}
+				}
+				maps.Copy(merged, byTier)
+				out.Models[role] = merged
+			}
+		}
+	}
+	return out
+}
+
+// UnmarshalJSON decodes a row strictly, recording whether it writes search (searchSet).
+func (l *Loop) UnmarshalJSON(b []byte) error {
+	type plain Loop
+	var row plain
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&row); err != nil {
+		return err
+	}
+	var probe struct {
+		Search *bool `json:"search"`
+	}
+	if err := json.Unmarshal(b, &probe); err != nil {
+		return err
+	}
+	*l = Loop(row)
+	l.searchSet = probe.Search != nil
+	return nil
+}
+
+// inheritedKeys are the keys default's row gives name's row, which the row leaves unset (WF10).
+func (c *Config) inheritedKeys(name string) []string {
+	def, row := c.Loops["default"], c.Loops[name]
+	var keys []string
+	for _, k := range []struct {
+		key        string
+		row, given bool
+	}{
+		{"stallSteps", row.StallSteps != nil, def.StallSteps != nil},
+		{"continuations", row.Continuations != nil, def.Continuations != nil},
+		{"judge", row.Judge != "", def.Judge != ""},
+		{"scope", row.Scope != "", def.Scope != "" && def.Scope != ScopeOff},
+		{"search", row.searchSet || row.Search, def.Search},
+		{"split", row.Split != nil, def.Split != nil},
+	} {
+		if !k.row && k.given {
+			keys = append(keys, k.key)
+		}
+	}
+	for _, role := range slices.Sorted(maps.Keys(def.Models)) {
+		for _, tier := range slices.Sorted(maps.Keys(def.Models[role])) {
+			if _, own := row.Models[role][tier]; !own {
+				keys = append(keys, "models."+role+"."+tier)
+			}
+		}
+	}
+	return keys
+}
+
+// inheritanceWarnings name, for each row but default's, the keys it now inherits from default's
+// (WF10), and whether that switches its loop on: before WF10 the row was read whole.
+func (c *Config) inheritanceWarnings() []string {
+	var out []string
+	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
+		keys := c.inheritedKeys(name)
+		if name == "default" || len(keys) == 0 {
+			continue
+		}
+		w := fmt.Sprintf("loops.%s now inherits default's %s", name, strings.Join(keys, ", "))
+		if !c.Loops[name].On() && c.rowOf(name).On() {
+			w += ": its loop switches on"
+		}
+		out = append(out, w+"; set the key on the row to keep its own value (WF10)")
+	}
+	return out
 }
 
 func (c *Config) validateEvaluation(bad func(string, ...any)) {

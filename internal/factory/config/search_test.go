@@ -7,18 +7,20 @@ import (
 	"testing"
 )
 
-// v3 feature 5 (ST9, offline proof 5): loops.<class>.search parses, absent is off, a row is whole,
-// and it never switches the loop on, as scope does not.
+// v3 feature 5 (ST9, offline proof 5): loops.<class>.search parses, absent is off, a row without
+// search inherits default's (WF10) and its own search: false is kept, and it never switches the
+// loop on, as scope does not.
 func TestSearchFor(t *testing.T) {
 	cfg, err := Parse([]byte(good + `loops:
   default: {search: true}
   docs: {search: true}
   tests: {stallSteps: 40}
+  dashboards: {search: false}
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for class, want := range map[string]bool{"docs": true, "tests": false, "review": true, "dashboards": true} {
+	for class, want := range map[string]bool{"docs": true, "tests": true, "review": true, "dashboards": false, "docs-links": true} {
 		if got := cfg.SearchFor(class); got != want {
 			t.Errorf("SearchFor(%s) = %v, want %v", class, got, want)
 		}
