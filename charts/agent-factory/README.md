@@ -6,7 +6,8 @@ The umbrella chart: `maku` and `maku-factory` (`file://`), plus what a plain kin
 
 | Part | What it means |
 |---|---|
-| Production-safe defaults | `values.yaml` is a skeleton that renders nothing on its own. `profile` is required: `demo`, or `production`, which fails closed until its seams arrive in v4 rollout steps 2 to 6 |
+| Production-safe defaults | `values.yaml` is a skeleton that renders nothing on its own. `profile` is required: `demo` or `production` |
+| Production | `profile: production` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo's own values: `demoValues`, `postgres.enabled`, `networkPolicies.plain`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. Start from [`values-production.example.yaml`](values-production.example.yaml); [docs/upgrading.md](../../docs/upgrading.md#from-the-demo-to-production) lists the seams |
 | The demo | `-f values-demo.yaml` carries every demo default and `profile: demo`. `--set profile=demo` alone fails with `profile demo needs -f values-demo.yaml` |
 | Secrets by name | Every Secret the charts read is listed, with its keys, in [install Secrets](../../docs/install-secrets.md). `externalSecrets.enabled` (off) renders an `ExternalSecret` for each one listed under `externalSecrets.secrets`, against the `storeRef` you name, and never a store |
 | The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: an unknown profile, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
@@ -19,7 +20,16 @@ helm install af-crds charts/agent-factory-crds -n maku --create-namespace
 helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml -f values-mine.yaml
 ```
 
-From the OCI registry, the chart carries `values-demo.yaml`:
+A production install brings its own Postgres, issuer, sandbox and Secrets, and installs only the
+components it turns on. `maku.enabled: false` with `maku-factory.enabled: true` is a valid production
+render: an existing `maku-factory` release adopts the umbrella that way, keeping its name
+([docs/upgrading.md](../../docs/upgrading.md#adopting-the-umbrella-from-maku-factory)).
+
+```bash
+helm install af charts/agent-factory -n maku -f values-production.yaml   # from values-production.example.yaml
+```
+
+From the OCI registry, the chart carries `values-demo.yaml` and `values-production.example.yaml`:
 `helm pull oci://ghcr.io/smana/charts/agent-factory --version <version> --untar`.
 
 ## What it adds
@@ -96,11 +106,12 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
   --set agentgateway.enabled=true -f my-gateway-values.yaml
 ```
 
-Runs call the gateway with `maku.runController.model.mode: gateway`, which then needs
-`maku-gateway.enabled` or an external `model.gateway.service`. The run controller's aliases, ports and
-audience prefix must match `maku-gateway`'s, or the render fails. `values-demo-gateway.yaml`, layered on
-`values-demo.yaml`, is the demo in that mode: the demo key becomes the provider's Secret `demo-model` in
-the release namespace, and no `agent-model` exists. The planner keeps its URL until the broker's
+Runs call the gateway with `maku.runController.model.mode: gateway`, the maku chart's default.
+`values-demo.yaml` keeps it (step 7 R4): the demo runs through `maku-gateway`, the demo key becomes the
+provider's Secret `demo-model` in the release namespace, and no `agent-model` exists. The demo-only
+`secret`, which `maku.demoValues` admits, remains a switch. Gateway mode needs `maku-gateway.enabled` or
+an external `model.gateway.service`. The run controller's aliases, ports and audience prefix must match
+`maku-gateway`'s, or the render fails. The planner keeps its URL until the broker's
 gateway mode arrives. `task chart:gateway:k3d` proves the gateway on
 k3d. agentgateway is vendored (the controller chart under `vendor/`, its CRDs in `config/agentgateway`) and
 pinned in `hack/agentgateway.sha256`, which `task chart:deps` checks: no install needs the network for it.

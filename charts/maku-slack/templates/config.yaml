@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: factory-slack-app-config
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+data:
+  # Strictly decoded by the App (internal/slackapp): an unknown key fails its start. Read once at
+  # start: the Deployment's checksum rolls the pod on a change.
+  config.yaml: |
+    {{- include "mslack.config" . | nindent 4 }}

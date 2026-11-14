@@ -1,0 +1,34 @@
+# Test-only values for render.sh (plan v4 step 6, Task 13; EX9): cloud-native-ref gcp-0's suspend,
+# policyManagement and webhooks blocks, as broker values. slack-app's key is a Secret by name, which the
+# chart mounts and names in secretFile; runlore keeps its own secretFile and mount.
+broker:
+  factoryURL: http://agent-factory.agent-system.svc.cluster.local:8082
+  factoryInsecure: true
+  suspend:
+    enabled: true
+    after: 5m
+  policyManagement: {promotion: true, operators: [Smana]}
+  coordination: {mode: "off", maxChildren: 2}
+  webhooks:
+    - name: slack-app
+      network: cluster
+      url: http://factory-slack-app.agent-system.svc.cluster.local:8081/webhooks
+      events: [room.task_triaged, room.waiting_for_human, room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed]
+      existingSecret: room-broker-webhook-slack-app
+      repositories: [Smana/ai-native-ref, Smana/cloud-native-ref]
+      generation: 1
+    - name: runlore
+      network: cluster
+      url: http://runlore.runlore.svc.cluster.local:8080/factory/webhook
+      events: [room.task_received, room.ended]
+      secretFile: /etc/runlore-key/signing-key
+      repositories: [Smana/cloud-native-ref]
+      networkPolicy:
+        to: [{matchLabels: {io.kubernetes.pod.namespace: runlore, app.kubernetes.io/name: runlore}}]
+    - name: pager
+      network: internet
+      url: https://hooks.example.com/maku
+      events: [room.merged]
+      existingSecret: pager-key
+      key: hmac
+      repositories: [Smana/cloud-native-ref]

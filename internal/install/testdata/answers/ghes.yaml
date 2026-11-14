@@ -1,0 +1,30 @@
+# GHES, the Apps created through the manifest flow (a fake flow in the tests), an Ingress.
+namespace: factory
+version: v0.48.0
+images.pins:
+  - maku-broker=v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  - maku-run-controller=v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  - maku-harness=v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+  - maku-bridge=v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+  - maku-factory=v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+  - maku-slack=v0.48.0@sha256:6666666666666666666666666666666666666666666666666666666666666666
+github.url: https://ghe.example.com
+github.owner: platform
+repositories: [platform/service]
+maintainers: [carol]
+web.url: https://rooms.example.com
+identity.issuer: https://login.example.com/realms/eng
+identity.webClientID: rooms-web
+identity.cliClientID: maku-cli
+cluster.issuer: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC
+cluster.jwksURL: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC/keys
+sandbox.runtimeClassName: kata
+models.provider: openai
+models.default: gpt-5.1
+meter.url: https://prometheus.example.com
+expose.mode: ingress
+expose.ingressClass: nginx
+expose.tlsSecret: rooms-tls
+network.gatewayNamespace: ingress-nginx
+monitoring.enabled: false
+tls.issuer: internal-ca

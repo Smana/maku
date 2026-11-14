@@ -1,0 +1,5 @@
+{{- /* The profile gate, first. Helm renders the deepest templates first, and this one is deeper than
+any subchart's (agent-factory/charts/<chart>/templates/<file>): so profile production's one message,
+which names every missing seam, comes before a subchart's own refusal of the first one it meets.
+tests/render.sh proves the order. Every other umbrella template includes the gate too. */ -}}
+{{- include "afumbrella.profile" . -}}

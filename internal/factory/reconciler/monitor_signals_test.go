@@ -43,9 +43,9 @@ func (f *fakeFlux) NotReadySince(_ context.Context, _, _ string, since, until ti
 // hours old, so a source that applied it 50 minutes ago has settled.
 func fluxRig(t *testing.T, f *fakeFlux) *rig {
 	g := monitorRig(t)
-	cl := g.r.Cfg.Current().Classes["dead-links"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 	cl.Monitor.Flux = &config.FluxWatch{Source: "flux-system/flux-system", Within: config.Duration{Duration: 40 * time.Minute}}
-	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	if f != nil {
 		g.r.Flux = f
 	}
@@ -154,10 +154,10 @@ func TestOracleSignal(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := monitorRig(t)
-			cl := g.r.Cfg.Current().Classes["dead-links"]
+			cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 			cl.Monitor.OracleRuns = 2
 			cl.Oracle = &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}
-			g.r.Cfg.Current().Classes["dead-links"] = cl
+			g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 			g.patch(t, func(tk *v1alpha1.Task) {
 				tk.Spec.Findings = []v1alpha1.Finding{{File: testFile, URL: "https://a", Archive: "https://web.archive.org/web/2020/https://a"}}
 			})
@@ -173,10 +173,10 @@ func TestOracleSignal(t *testing.T) {
 // An oracle read that fails leaves the signal open, and the watch ends inconclusive, never healthy.
 func TestOracleReadErrorEndsInconclusive(t *testing.T) {
 	g := monitorRig(t)
-	cl := g.r.Cfg.Current().Classes["dead-links"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 	cl.Monitor.OracleRuns = 1
 	cl.Oracle = &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}
-	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	g.f.SetRuns([]forge.WorkflowRun{{ID: 2, RunAttempt: 1, Event: "schedule", Branch: "main", Conclusion: "success", Created: now.Add(-time.Hour)}}, nil)
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Monitor.Oracle != "" {
 		t.Fatalf("open while the read fails: %+v", tk.Status.Monitor)

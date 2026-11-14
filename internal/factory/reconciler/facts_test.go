@@ -570,7 +570,7 @@ func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := mergeRig(t, c.phase)
-			g.r.Cfg.Current().Merge.ApproveToMerge = c.on
+			g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = c.on
 			task := awaiting()
 			task.Status.Phase, task.Status.Reason = c.phase, c.reason
 			if got := g.r.factsFor(g.r.Cfg.Current(), task).MergeByApproval; got != c.want {
@@ -664,7 +664,7 @@ func TestPlanOf(t *testing.T) {
 			if tc.scope {
 				task.Spec.ScopeMode = string(config.ScopeScoper)
 			}
-			g.r.Cfg.Current().Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{TestFirst: tc.testRst}
 			if tc.task != nil {
 				tc.task(task)
 			}

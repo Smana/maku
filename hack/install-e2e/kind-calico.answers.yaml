@@ -1,0 +1,27 @@
+# maku install --print's answers for the kind install job (v4 step 7, PR F; D23): Calico enforces the NetworkPolicies:
+# NetworkPolicies on Calico, the web through agentgateway, the e2e stub as the issuer, GitHub
+# and the meter, the Apps reused (the job creates their Secrets). The job pins the images it built.
+namespace: maku
+github.owner: maku-e2e
+repositories: [maku-e2e/target]
+maintainers: [dev]
+apps.create: false
+apps.factorySlug: maku-e2e-factory
+apps.factoryID: "1"
+apps.agentsSlug: maku-e2e-agents
+web.url: https://rooms.e2e.test
+identity.issuer: https://e2e-stub.e2e.svc.cluster.local
+identity.webClientID: rooms-web
+identity.cliClientID: maku-cli
+cluster.issuer: https://kubernetes.default.svc.cluster.local
+database.sslmode: disable
+database.cidrs: [192.168.0.0/16]
+sandbox.runtimeClassName: gvisor
+models.provider: custom
+models.host: e2e-stub.e2e.svc.cluster.local
+models.default: tier-light
+meter.url: http://vmsingle.metrics.svc.cluster.local:8428
+meter.namespace: metrics
+expose.gateway: edge/edge/http
+network.gatewayNamespace: edge
+factory.insecure: true

@@ -24,7 +24,7 @@ tests:
   # flapping card never pages, and an hour of them does.
   - interval: 1m
     input_series:
-      - {series: 'factory_slack_requests_total{namespace="maku", pod="factory-slack-app-0", route="interactions", outcome="error"}', values: '0x20 1+1x100'}
+      - {series: 'maku_slack_app_requests_total{namespace="maku", pod="factory-slack-app-0", route="interactions", outcome="error"}', values: '0x20 1+1x100'}
     alert_rule_test:
       - {eval_time: 19m, alertname: SlackCardUpdatesFailing, exp_alerts: []}
       - {eval_time: 75m, alertname: SlackCardUpdatesFailing, exp_alerts: []}
@@ -32,13 +32,13 @@ tests:
   # The same hour on the webhook route, which the expression's route regex must also cover.
   - interval: 1m
     input_series:
-      - {series: 'factory_slack_requests_total{namespace="maku", pod="factory-slack-app-0", route="webhooks", outcome="error"}', values: '0x20 1+1x100'}
+      - {series: 'maku_slack_app_requests_total{namespace="maku", pod="factory-slack-app-0", route="webhooks", outcome="error"}', values: '0x20 1+1x100'}
     alert_rule_test:
       - {eval_time: 75m, alertname: SlackCardUpdatesFailing, exp_alerts: []}
       - {eval_time: 90m, alertname: SlackCardUpdatesFailing, exp_alerts: [{exp_labels: {severity: warning}}]}
   # A route outside the regex (events) never fires.
   - interval: 1m
     input_series:
-      - {series: 'factory_slack_requests_total{namespace="maku", pod="factory-slack-app-0", route="events", outcome="error"}', values: '0x20 1+1x100'}
+      - {series: 'maku_slack_app_requests_total{namespace="maku", pod="factory-slack-app-0", route="events", outcome="error"}', values: '0x20 1+1x100'}
     alert_rule_test:
       - {eval_time: 90m, alertname: SlackCardUpdatesFailing, exp_alerts: []}

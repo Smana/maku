@@ -141,9 +141,9 @@ func TestTheAdoptedLifecycle(t *testing.T) {
 	})
 	t.Run("a merge by Renovate ends it, under watch", func(t *testing.T) {
 		g := adoptRig(t)
-		cl := g.r.Cfg.Current().Classes["deps-patch"]
+		cl := g.r.Cfg.Current().Repositories[0].Classes["deps-patch"]
 		cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-		g.r.Cfg.Current().Classes["deps-patch"] = cl
+		g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = cl
 		g.reconcile(t, adoptTask, 1)
 		g.editPR(func(p *forge.PR) {
 			p.State, p.MergedBy, p.MergedAt, p.MergeCommitSHA = "MERGED", bot, now, "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"

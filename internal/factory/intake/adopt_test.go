@@ -43,7 +43,7 @@ func adoptCfg(minorOn bool) *config.Config {
 	if minorOn {
 		cls["deps-minor"] = adoptClass("semver-minor", false)
 	}
-	return &config.Config{Repository: adoptRepo, Defaults: config.Defaults{DataClass: "internal"}, Classes: cls}
+	return &config.Config{Repositories: []config.Repository{{Name: adoptRepo, Classes: cls}}, Defaults: config.Defaults{DataClass: "internal"}}
 }
 
 func adoptScheme() *runtime.Scheme {
@@ -162,9 +162,9 @@ func (interceptList) List(context.Context, client.ObjectList, ...client.ListOpti
 func TestAdopterOffAndStopped(t *testing.T) {
 	for name, mod := range map[string]func(*config.Config, *Adopter){
 		"neither live nor shadow": func(cfg *config.Config, _ *Adopter) {
-			cl := cfg.Classes["deps-patch"]
+			cl := cfg.Repositories[0].Classes["deps-patch"]
 			cl.Shadow, cl.Live = false, false
-			cfg.Classes["deps-patch"] = cl
+			cfg.Repositories[0].Classes["deps-patch"] = cl
 		},
 		"the kill switch":  func(_ *config.Config, a *Adopter) { a.Stopped = func(context.Context) bool { return true } },
 		"a repo not owned": func(_ *config.Config, a *Adopter) { a.Owned = func(string) bool { return false } },
@@ -424,7 +424,7 @@ func kbAdopter(t *testing.T) (*forgetest.Fake, *Adopter, client.Client) {
 		CompanionFiles: []string{`^index\.md$`, `^log\.md$`}, HoldoutChecks: []string{"validate"}, RequiredLabel: "ready-to-merge",
 		MaxPatchFiles: 3, MaxModifiedLines: 60,
 		Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"runlore[bot]"}, Branches: []string{"^runlore/kb-"}}}}
-	cfg := &config.Config{Repository: kbRepo, Defaults: config.Defaults{DataClass: "internal"}, Classes: map[string]config.Class{"kb-entries": cl}}
+	cfg := &config.Config{Repositories: []config.Repository{{Name: kbRepo, Classes: map[string]config.Class{"kb-entries": cl}}}, Defaults: config.Defaults{DataClass: "internal"}}
 	f := forgetest.NewFake()
 	const entry = "incidents/kube-pod-crashlooping-3f9a1c2e.md"
 	f.SetFiles(map[string]string{entry: "", "index.md": "# Index\n- a\n", "log.md": "l1\n"},

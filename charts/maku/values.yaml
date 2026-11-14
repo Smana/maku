@@ -9,6 +9,10 @@ runs:
 # turn this off when the namespace exists already (Helm cannot adopt an unowned one).
 createRunsNamespace: true
 
+# The demo marker (v4 step 8, R4): true admits the demo-only settings, today runController.model.mode
+# secret. values-quickstart.yaml sets it; the umbrella's values-demo.yaml sets maku.demoValues.
+demoValues: false
+
 # Render the CiliumNetworkPolicies (default-deny in the runs namespace, the broker's, the run
 # controller's) and let the run controller create one per run. Turn it off on a cluster without
 # Cilium (plain kind or k3d, no CiliumNetworkPolicy CRD): nothing then confines the network.
@@ -25,6 +29,10 @@ createRunsNamespace: true
 networkPolicies:
   enabled: true
   mode: ""
+  # The runs namespace's default-deny (agents/default-deny), in mode cilium or kubernetes. false: an
+  # install whose platform already owns that policy renders none; the platform's must deny both
+  # directions as this one does.
+  runsNamespaceDefaultDeny: true
   kubernetes:
     # The cluster DNS pods, opened on 53 to every component.
     dns:
@@ -224,6 +232,25 @@ broker:
     namespace: ""
     port: 8082
     audiencePrefix: maku-gateway
+  # The broker's own config blocks, rendered verbatim (v4 step 6, EX9): the broker decodes them
+  # strictly, so a misspelt key fails the rollout (internal/config). Unset, nothing renders.
+  #   suspend: {enabled: true, after: 5m}     the warm-sandbox suspend of an idle attended run
+  #   policyManagement: {...}                 the factory's merge-policy switches (merge-policies.md)
+  #   coordination: {mode: plan}              the factory's multi-repository switch
+  suspend: {}
+  policyManagement: {}
+  coordination: {}
+  # The room-event subscribers (docs/operations.md, "Webhooks"): each entry is the broker's own
+  # (name, network, url, events, secretFile, repositories, generation), plus three chart keys:
+  #   existingSecret  the signing key's Secret, mounted at /etc/room-broker/webhooks/<name>/; it fills
+  #                   secretFile with <that dir>/<key> unless secretFile is set (a set one wins);
+  #   key             the key in that Secret (default signing-key);
+  #   networkPolicy   {to, port}: a cluster subscriber's peers, for the broker's egress on the URL's
+  #                   port (cilium: endpoint selectors or whole peers; kubernetes: NetworkPolicy
+  #                   peers). Required in a policy mode, except for the Slack App's own URL
+  #                   (factory-slack-app.<ns>), whose pods are the default. An internet subscriber
+  #                   opens its host (cilium) or public addresses minus privateCIDRs (kubernetes).
+  webhooks: []
   # Escape hatches for oidc mode's files, ROOMS_MCP_KEY and the IdP's network flows.
   # Secrets only through valueFrom.secretKeyRef, never a plaintext value.
   extraEnv: []
@@ -252,13 +279,15 @@ runController:
   # modelSecret is model.mode secret's, and not read in model.mode gateway.
   modelSecret: agent-model
   # How runs reach a model (v4 step 4, docs/gateway.md):
-  #   secret   (default) the harness calls modelSecret's base_url with its api_key, which sits in the sandbox;
-  #   gateway  the harness calls the model gateway (maku-gateway) with the run's own projected token,
-  #            audience <audiencePrefix>.<dataClass>.<spec.model>, at
+  #   gateway  (default, v4 step 8) the harness calls the model gateway (maku-gateway) with the run's own
+  #            projected token, audience <audiencePrefix>.<dataClass>.<spec.model>, at
   #            http://<service>.<namespace>.svc.<clusterDomain>:<ports.<dataClass>>/m/<spec.model>/v1.
   #            No provider key enters the runs namespace. The token lives the run's deadline plus 10 min.
+  #            gateway.aliases.public is required.
+  #   secret   demo-only (demoValues): the harness calls modelSecret's base_url with its api_key, which
+  #            sits in the sandbox. The banner shows model_key_in_sandbox.
   model:
-    mode: secret
+    mode: gateway
     gateway:
       # Empty: model-gateway (maku-gateway's default name), in the release namespace.
       service: ""

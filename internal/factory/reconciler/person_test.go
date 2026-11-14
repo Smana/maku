@@ -104,7 +104,7 @@ func TestQueuedRefusesAPersonPastTheirDay(t *testing.T) {
 func TestARetryIsChargedToTheRetrier(t *testing.T) {
 	g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
 	g.r.Cfg.Current().Budgets = personBudgets(true, true)
-	g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "Alice")
+	g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "Alice")
 	g.f.SetComments(7, retryBy(77, "Alice", time.Minute))
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.RetriedBy != "github:alice" {

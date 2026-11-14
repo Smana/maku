@@ -49,13 +49,18 @@ the runs' (`maku.runs.namespace`).
 | `factorySponsored` | agent-factory | `sponsoredSecret` (maku-factory) | `agent-factory-sponsored` | release | `<name>-client-id`, `project-id` | file `/etc/agent-factory-sponsored` | yes. The sponsored principals' client ids |
 | `factoryBrokerCA` | agent-factory | `brokerCASecret` (maku-factory) | `openbao-ca` | release | `ca.crt` (required) | file `/etc/agent-factory/openbao-ca` | no. The CA of the broker's pair (`config.broker.caFile`) |
 | `factoryAPITLS` | agent-factory | `api.tls.secretName` (maku-factory) | none | release | `tls.crt` (required), `tls.key` (required) | file `/etc/agent-factory-api-tls` | yes. The run API's serving pair (`api.tls`), cert-manager's when `issuerRef` is set |
+| `webProxy` | rooms-web-proxy | `webProxy.existingSecret` (agent-factory) | none | release | `client-id` (required), renamed by `webProxy.keys.clientID`, `client-secret` (required), renamed by `webProxy.keys.clientSecret`, `cookie-secret` (required), renamed by `webProxy.keys.cookieSecret` | env | yes. The web front door's client and cookie secret (`webProxy.enabled`) |
+| `slackApp` | factory-slack-app | `slackSecret` (maku-slack) | `factory-slack-app` | release | `signing-secret` (required), `bot-token` (required), `bot-user-id` (required) | file `/etc/factory-slack-app/slack` | yes. The Slack App's signing secret and bot (`slack.enabled`) |
+| `slackPrincipal` | factory-slack-app | `principalSecret` (maku-slack) | `factory-slack-principal` | release | `client-id` (required), `client-secret` (required), `project-id` | file `/etc/factory-slack-app/principal` | yes. The Slack App's client credentials at the IdP: its sponsored principal |
+| `slackWebhook` | factory-slack-app, room-broker | `webhookSecret` (maku-slack) | `room-broker-webhook-slack-app` | release | `signing-key` (required) | file `/etc/factory-slack-app/webhook` | yes. The key the broker signs the App's webhooks with; the broker mounts it too (`maku.broker.webhooks[slack-app].existingSecret`) |
 | `gatewayProvider` | maku-gateway | `providers` (maku-gateway) | none | release | `apiKey` (required) | api | yes. Each model provider's key: `providers.<name>.existingSecret`; its ExternalSecret id is `gatewayProvider.<name>` |
 <!-- seams:end -->
 
 Some installs write a Secret for you:
 
 - the bundled Postgres (`postgres.enabled`, the demo) writes the three DSNs and its passwords;
-- the umbrella writes the broker's TLS pair and both CAs;
+- the demo's umbrella writes the broker's TLS pair and both CAs (`profile: demo` only: a production
+  install brings them, by hand, through cert-manager's `issuerRef`, or as ExternalSecrets);
 - the demo's `demo.model` and `demo.githubApp` values write the runs' model and the factory App;
 - the factory writes the runs' git tokens.
 

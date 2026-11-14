@@ -661,7 +661,7 @@ func approvedPairAtTheGate(t *testing.T) *rig {
 	g := pairRig(t)
 	g.r.Merger = g.f
 	g.r.Cfg.Current().AgentsLogin = "ogenki-agents[bot]"
-	g.r.Cfg.Current().Classes = map[string]config.Class{"review": {Shadow: true}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"review": {Shadow: true}}
 	g.f.SetPR(agentPR12(head1, rid(0)))
 	g.log.handoff(rid(0), head1)
 	g.log.verdict(rid(1), "approve", head1, "LGTM")
@@ -965,7 +965,7 @@ func TestEveryPushToAPRAtTheGateIsTheFactorys(t *testing.T) {
 		g := pairRig(t)
 		g.r.Merger = g.f
 		g.r.Cfg.Current().AgentsLogin = "ogenki-agents[bot]"
-		g.r.Cfg.Current().Classes = map[string]config.Class{"review": {Shadow: true}}
+		g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"review": {Shadow: true}}
 		g.f.SetPR(agentPR12(head1, rid(0)))
 		g.log.handoff(rid(0), head1)
 		g.log.verdict(rid(1), "changes", head1, "Add a test.")

@@ -1,5 +1,5 @@
-# The gateway demo's meter (plan v4 step 4, Task 17; GW10, GW12), layered on values-demo.yaml and
-# values-demo-gateway.yaml by install.sh's METERING leg and checked offline by render.sh. The meter
+# The gateway demo's meter (plan v4 step 4, Task 17; GW10, GW12), layered on values-demo.yaml (its gateway,
+# step 7 R4) by install.sh's METERING leg and checked offline by render.sh. The meter
 # reads agentgateway's own series from the test-only VictoriaMetrics (metrics-stub.yaml), with no
 # relabel, and the gateway's 429s from the same place; the gateway's catalog takes these prices
 # (GW12). The echo provider serves echo-default, echo-light and echo-frontier.

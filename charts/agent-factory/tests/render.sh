@@ -15,7 +15,16 @@ img=(--set maku.broker.image.tag=$digest --set maku.runController.image.tag=$dig
      --set maku-factory.image.tag=$digest)
 secrets=(--set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m1 --set demo.model.apiKey=k1
          --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1)
-args=("${img[@]}" -f values-demo.yaml "${secrets[@]}")
+# The demo in model.mode secret (tests/values-demo-secret.yaml): the assertions below that predate step 7's
+# R4 hold for it. The shipped demo, in model.mode gateway, is gwd (the golden).
+args=("${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}")
+# The shipped demo (step 7 R4): runs call the model gateway with their own token, and no provider key
+# reaches the runs namespace.
+gwd=("${img[@]}" -f values-demo.yaml --set demo.model.apiKey=k1
+     --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1
+     --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local
+     --set maku-gateway.providers.demo.host=api.example.test
+     --set maku-gateway.aliases.public.agent-default.model=m1 --set maku-gateway.aliases.public.tier-light.model=m2)
 fail=0
 out=''
 check() { grep -qF -- "$1" <<<"$out" || { echo "FAIL: $2" >&2; fail=1; }; }
@@ -36,13 +45,18 @@ secret_field() { yq ea "select(.kind == \"Secret\" and .metadata.name == \"$1\")
 
 out="$(helm template af . -n maku "${args[@]}")"
 
-# The golden: -f values-demo.yaml renders exactly what `--set profile=demo` rendered before the demo's
-# defaults moved there (v0.4x), generated secrets masked. A deliberate change to the demo's render
-# updates it: UPDATE_GOLDEN=1 bash charts/agent-factory/tests/render.sh, then review the diff.
+# The golden: the shipped demo (-f values-demo.yaml, model.mode gateway since step 7's R4), generated
+# secrets masked. A deliberate change to the demo's render updates it: UPDATE_GOLDEN=1 bash
+# charts/agent-factory/tests/render.sh, then review the diff.
+demo_shipped="$(helm template af . -n maku "${gwd[@]}")"
 if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then
-  bash tests/normalize.sh <<<"$out" >tests/golden/demo.yaml
+  bash tests/normalize.sh <<<"$demo_shipped" >tests/golden/demo.yaml
 fi
-bash tests/normalize.sh <<<"$out" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
+bash tests/normalize.sh <<<"$demo_shipped" | diff -u tests/golden/demo.yaml - >&2 || { echo "FAIL: the demo render differs from tests/golden/demo.yaml" >&2; fail=1; }
+yq -e 'select(.metadata.name == "run-controller-config") | .data."config.yaml" | from_yaml | .model.gateway.url' - <<<"$demo_shipped" >/dev/null 2>&1 ||
+  { echo "FAIL: the shipped demo's runs do not call the model gateway (step 7 R4)" >&2; fail=1; }
+! yq -e 'select(.kind == "Secret" and .metadata.name == "agent-model")' - <<<"$demo_shipped" >/dev/null 2>&1 ||
+  { echo "FAIL: the shipped demo writes agent-model, a provider key in the runs namespace" >&2; fail=1; }
 # Rollout step 2, PR A (D16, D17, D18): the demo gains exactly the runs quota, the run-pod policy and
 # its binding, the runs namespace's Pod Security restricted label, and its two unsafe settings on the
 # install banner; no RuntimeClass ClusterRole (no class).
@@ -56,18 +70,22 @@ ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == 
 # Step 3 PR B (D10) adds the AgentRun creator and patch-limit policies and the run token policy.
 want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-agentrun-creators ValidatingAdmissionPolicy/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/maku-maku-run-token-secrets ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-agentrun-creators ValidatingAdmissionPolicyBinding/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/maku-maku-run-token-secrets ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
 [[ $got == "$want" ]] || { echo "FAIL: the demo's step-2 objects are '$got', want '$want'" >&2; fail=1; }
-ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "unsafe_allow_runc,network_policy_none"' 'the demo shows its two unsafe settings: runc and no network policy'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "unsafe_allow_runc,network_policy_none,model_key_in_sandbox"' 'the demo shows its three unsafe settings: runc, no network policy and the model key in the sandbox (v4 step 8, R4)'
+ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."config.yaml" | from_yaml | .modelSecret == "agent-model")' 'the demo keeps model.mode secret, which maku.demoValues admits (v4 step 8, R4)'
 # PR6: the skeleton disables both subcharts, so nothing but the umbrella's own templates renders
 # and the gate's message is the error whatever order Helm renders in; values-demo.yaml enables them.
 yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku and maku-factory" >&2; fail=1; }
 yq -e '.maku.enabled == true and .maku-factory.enabled == true' values-demo.yaml >/dev/null 2>&1 || { echo "FAIL: values-demo.yaml does not enable maku and maku-factory" >&2; fail=1; }
+# One template relies on Helm's render order, deepest first: the gate's own, deeper than any subchart's
+# template, so profile production's one message comes first (proved below, Task 19). No other may.
 deep="$(find templates -mindepth 2 -type f)"
-[[ -z $deep ]] || { echo "FAIL: a template below templates/ ($deep): the gate must not rely on Helm's render order" >&2; fail=1; }
+[[ $deep == templates/gate/renders/before/subcharts.yaml ]] || { echo "FAIL: templates below templates/ ($deep): only the gate's may rely on Helm's render order" >&2; fail=1; }
 # the packaged chart ships values-demo.yaml and the example, never tests/ (.helmignore)
 pkg="$(mktemp -d)"; helm package . -d "$pkg" >/dev/null
 shipped="$(tar -tzf "$pkg"/agent-factory-*.tgz)"; rm -rf "$pkg"
 grep -qx 'agent-factory/values-demo.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-demo.yaml" >&2; fail=1; }
 grep -qx 'agent-factory/values-mine.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-mine.example.yaml" >&2; fail=1; }
+grep -qx 'agent-factory/values-production.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-production.example.yaml" >&2; fail=1; }
 ! grep -q '^agent-factory/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
 # --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
 msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
@@ -142,9 +160,113 @@ np="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=false 
 # profile: demo
 # an unset profile fails, naming what production must supply
 msg="$(helm template af . -n maku "${img[@]}" 2>&1 >/dev/null || true)"
-grep -qF 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
-msg="$(helm template af . -n maku "${img[@]}" --set profile=production 2>&1 >/dev/null || true)"
-grep -qF 'profile production: its seams arrive in rollout steps 2 to 6' <<<"$msg" || { echo "FAIL: profile=production does not fail closed until rollout steps 2 to 6" >&2; fail=1; }
+grep -qF 'profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
+
+# v4 step 6, Task 19 (EX16, R6): profile production renders, a gate per enabled component. It refuses
+# the demo's values, and names every missing seam of every enabled component in one message, before
+# any subchart refuses the first one it meets.
+demo_out="$out"
+prod=("${img[@]}" -f tests/production-values.yaml)
+# pbad WANT ARGS...: the production render fails, its message holding WANT.
+pbad() {
+  local want="$1" msg; shift
+  msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
+  grep -qF -- "$want" <<<"$msg" || { echo "FAIL: production: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
+}
+pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${prod[@]}" --set demoValues=true
+pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}" --set profile=production
+pbad 'postgres.enabled: the bundled Postgres is demo-only (D9)' "${prod[@]}" --set postgres.enabled=true
+pbad 'networkPolicies.plain: the demo'"'"'s ingress-only policy' "${prod[@]}" --set networkPolicies.plain=true
+pbad 'maku.demoValues: the maku chart'"'"'s demo marker' "${prod[@]}" --set maku.demoValues=true
+pbad 'maku-factory.demo, maku-factory.config.demo' "${prod[@]}" --set maku-factory.demo=true
+# model.mode secret puts the provider key in the sandbox (D7): demo-only, so production refuses it
+pbad '  - maku.runController.model.mode: secret is demo-only (D7)' "${prod[@]}" --set maku.runController.model.mode=secret --set maku-factory.config.runs.gatewayIdentity=false
+pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18)' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
+pbad 'maku.runController.allowUnsandboxed: runs without a sandbox are for the demo and kind only (D18' "${prod[@]}" --set maku.runController.allowUnsandboxed=true
+# an empty production file with maku on: one message, every maku seam on its own line, the gate first
+msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true 2>&1 >/dev/null || true)"
+for line in 'maku.broker.image.tag: <version>@sha256:<digest>' 'maku.runController.image.tag: <version>@sha256:<digest>' \
+  'maku.runController.images.harness.tag:' 'maku.runController.images.bridge.tag:' 'maku.broker.human.issuer: the OIDC issuer' \
+  'maku.broker.runIssuer.issuer:' 'maku.broker.database.brokerSecret: the broker'"'"'s DSN Secret' 'maku.broker.publicURL: the https URL' \
+  'maku.sandbox.runtimeClassName: the RuntimeClass'; do
+  grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: an empty production file does not list '$line' (got: $msg)" >&2; fail=1; }
+done
+grep -qF 'profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):' <<<"$msg" ||
+  { echo "FAIL: an empty production file's one message does not count its 9 seams (got: $msg)" >&2; fail=1; }
+grep -qF 'templates/gate/renders/before/subcharts.yaml' <<<"$msg" || { echo "FAIL: a subchart refused before the gate (got: $msg)" >&2; fail=1; }
+pbad 'maku.broker.human.mode: oidc (got local' --set profile=production --set maku.enabled=true --set maku.broker.human.mode=local
+# every enabled component's seams in the one message: the factory's beside maku's
+msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true --set maku-factory.enabled=true 2>&1 >/dev/null || true)"
+for line in 'maku-factory.image.tag: <version>@sha256:<digest>' 'maku-factory.config.api.humanIssuer:' 'maku.broker.publicURL:'; do
+  grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: maku and the factory: the message does not list '$line' (got: $msg)" >&2; fail=1; }
+done
+pbad 'maku-factory.apps.factory.existingSecret: the factory App'"'"'s Secret' "${prod[@]}" --set maku-factory.githubSecret=
+# the agreements are listed too: a disagreeing identity, a web front door without its Secret
+pbad '  - maku.broker.human.issuer "https://idp.example.test" and maku-factory.config.api.humanIssuer "https://other.example.test" must be equal' "${prod[@]}" --set maku-factory.config.api.humanIssuer=https://other.example.test
+pbad '  - webProxy.existingSecret is empty' "${prod[@]}" --set webProxy.enabled=true --set maku.broker.webProxy=true
+pbad '  - expose.web.hostnames is empty' "${prod[@]}" --set expose.mode=httproute --set webProxy.enabled=true --set maku.broker.webProxy=true --set webProxy.existingSecret=rooms-proxy
+# the Slack App's three Secrets by name: its own schema refuses an empty one
+pbad "at '/slackSecret': minLength: got 0, want 1" "${prod[@]}" --set slack.enabled=true --set slack.slackSecret=
+# with every seam named it renders: the broker, the run-controller and the factory, none of the demo's own
+out="$(helm template af . -n maku "${prod[@]}")" || { echo "FAIL: tests/production-values.yaml does not render" >&2; fail=1; out=''; }
+for d in room-broker run-controller agent-factory; do
+  ykind Deployment "select(.metadata.name == \"$d\") | true" "production renders the Deployment $d"
+done
+ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and (.metadata.name == "rooms-db" or .metadata.name == "agent-factory-api"))' 'production renders a demo object: the bundled Postgres, a generated Secret or the plain policy'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'production with every seam named shows no unsafe setting'
+# Review of #565: production renders no broker TLS of its own (tls.yaml is the demo's), so ExternalSecrets
+# may deliver room-broker-tls, room-broker-ca and openbao-ca there; the demo still refuses them.
+eso_tls=(--set externalSecrets.enabled=true --set externalSecrets.storeRef.name=store
+  --set-json 'externalSecrets.secrets={"brokerTLS":{"dataFrom":[{"extract":{"key":"maku/room-broker-tls"}}]},"brokerCA":{"dataFrom":[{"extract":{"key":"maku/ca"}}]},"factoryBrokerCA":{"dataFrom":[{"extract":{"key":"maku/ca"}}]}}')
+out="$(helm template af . -n maku "${prod[@]}" "${eso_tls[@]}")" || { echo "FAIL: production refuses ExternalSecrets for the broker's TLS" >&2; fail=1; out=''; }
+got="$(yq ea '[select(.kind == "ExternalSecret") | .spec.target.name] | sort | join(",")' - <<<"$out")"
+[[ $got == "openbao-ca,room-broker-ca,room-broker-tls" ]] || { echo "FAIL: production's TLS ExternalSecrets are '$got'" >&2; fail=1; }
+pbad 'the umbrella (its broker TLS)' "${args[@]}" "${eso_tls[@]}"
+# staged adoption (D25): the factory alone, with its seams, renders the factory and nothing of maku's
+out="$(helm template af . -n maku --set profile=production --set maku-factory.enabled=true --set maku-factory.image.tag=$digest)" ||
+  { echo "FAIL: maku.enabled=false with maku-factory alone does not render" >&2; fail=1; out=''; }
+ykind Deployment 'select(.metadata.name == "agent-factory") | true' 'the factory alone renders its Deployment'
+ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)")) | .metadata.name' 'the factory alone renders a maku object'
+# networkPolicies.mode none stays allowed, on the install banner (PR9)
+out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.enabled=false)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "network_policy_none"' 'production in mode none lists network_policy_none on the banner (PR9)'
+# v4 step 6, Task 20: values-production.example.yaml renders as shipped, and its configs load; the
+# cloud-native-ref-shaped values (ANR at 1529b3b) render exactly tests/golden/production-cnref-like.yaml,
+# in cnref's namespace, and the broker's, the run-controller's and the Slack App's configs load strictly.
+# A deliberate change updates the golden: UPDATE_GOLDEN=1 bash charts/agent-factory/tests/render.sh.
+out="$(helm template af . -n maku -f values-production.example.yaml)" || { echo "FAIL: values-production.example.yaml does not render" >&2; fail=1; out=''; }
+for k in HTTPRoute PrometheusRule ServiceMonitor; do ykind "$k" 'true' "values-production.example.yaml renders a $k"; done
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'the production example shows no unsafe setting'
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-broker.yaml"
+yq 'select(.metadata.name == "run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-rc.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/ex-broker.yaml" && go run ./charts/maku/tests/loadconfig run-controller-gateway "$tmp/ex-rc.yaml") ||
+  { echo "FAIL: the production example's broker or run-controller config does not load" >&2; fail=1; }
+cnref=("${img[@]}" --set slack.image.tag=v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 -f tests/values-cnref-like.yaml)
+out="$(helm template agent-factory . -n agent-system "${cnref[@]}")" || { echo "FAIL: tests/values-cnref-like.yaml does not render" >&2; fail=1; out=''; }
+# The dashboards' JSON is masked (tests/monitoring.sh and Task 8's promtool checks hold it), so the
+# golden is the install's shape.
+cnref_golden() { bash tests/normalize.sh <<<"$out" | yq '(select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .data[]) |= "<dashboard JSON>"' -; }
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then cnref_golden >tests/golden/production-cnref-like.yaml; fi
+cnref_golden | diff -u tests/golden/production-cnref-like.yaml - >&2 || { echo "FAIL: the cnref-like render differs from tests/golden/production-cnref-like.yaml" >&2; fail=1; }
+for c in room-broker-config:broker run-controller-config:run-controller-gateway factory-slack-app-config:slack-app; do
+  yq "select(.metadata.name == \"${c%%:*}\") | .data.\"config.yaml\"" - <<<"$out" >"$tmp/cnref-${c#*:}.yaml"
+  (cd ../.. && go run ./charts/maku/tests/loadconfig "${c#*:}" "$tmp/cnref-${c#*:}.yaml") || { echo "FAIL: the cnref-like ${c%%:*} does not load" >&2; fail=1; }
+done
+# Task 21: the k3d production leg's values (identity.sh PROFILE=production) render offline, and the
+# broker's and the factory's configs load, so a live failure is the cluster's, not the values'.
+k3d=(-f tests/identity-values.yaml -f tests/identity-link-values.yaml -f tests/expose-values.yaml -f tests/production-k3d-values.yaml
+  --set expose.mode=httproute --set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
+  --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
+  --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true --set maku.broker.image.tag=e2e --set maku.runController.image.tag=e2e
+  --set maku.runController.images.harness.tag=e2e --set maku.runController.images.bridge.tag=e2e --set maku-factory.image.tag=e2e)
+out="$(helm template identity . -n maku "${k3d[@]}")" || { echo "FAIL: the k3d production values do not render" >&2; fail=1; out=''; }
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-broker.yaml"
+yq 'select(.metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-factory.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/k3d-broker.yaml" &&
+  CHART_FACTORY_CONFIG="$tmp/k3d-factory.yaml" go test -count=1 -run TestRenderedChartConfigParses ./internal/factory/config >"$tmp/parse.log" 2>&1) ||
+  { echo "FAIL: the k3d production leg's broker or factory config does not load" >&2; cat "$tmp/parse.log" >&2; fail=1; }
+out="$demo_out"
+
 # maku: no Cilium, local human, the portable runs group, runc
 ynone 'select(.kind == "CiliumNetworkPolicy") | .metadata.name' 'the demo renders a CiliumNetworkPolicy'
 ynone 'select(.kind == "ClusterRole" or .kind == "Role") | .rules[] | select(.apiGroups[] == "cilium.io")' 'the demo grants cilium.io'
@@ -179,7 +301,7 @@ fq() { yq -e "$1" - <<<"$fcfg" >/dev/null 2>&1 || { echo "FAIL: factory config: 
 fq '.demo == true' 'demo: true'
 fq '.broker.url == "https://room-broker.maku.svc.cluster.local:8443" and .broker.caFile == "/etc/agent-factory/openbao-ca/ca.crt" and .broker.tokenFile == "/var/run/secrets/agents/rooms/token"' 'the broker over https with the mounted CA and the projected token'
 fq '.runs.group == "maku.ogenki.io" and .runs.namespace == "agents" and .runs.namePrefix == "run-"' 'the portable runs kind'
-[[ "$(yq '.runs' - <<<"$fcfg" | yq -o=json -I0 'sort_keys(.)' -)" == "$(yq '.runs' - <<<"$bcfg" | yq -o=json -I0 'sort_keys(.)' -)" ]] || { echo "FAIL: the factory and the broker disagree on runs" >&2; fail=1; }
+[[ "$(yq '.runs | del(.gatewayIdentity)' - <<<"$fcfg" | yq -o=json -I0 'sort_keys(.)' -)" == "$(yq '.runs' - <<<"$bcfg" | yq -o=json -I0 'sort_keys(.)' -)" ]] || { echo "FAIL: the factory and the broker disagree on runs" >&2; fail=1; }
 fq '.loops.review.scope == "scoper" and (.loops.review.judge | length > 0)' 'the review class has a scoper and a judge'
 fq '.loops."docs-links".scope == "scoper" and (.loops."docs-links".judge | length > 0)' 'the docs-links class has a scoper and a judge'
 fq '.templates.solo.roles | contains(["reviewer"])' 'solo carries the reviewer'
@@ -227,26 +349,27 @@ ynone 'select(.kind == "Secret" and .metadata.name == "agent-git-read") | .metad
 ynone 'select(.kind == "Secret" and .metadata.name == "agent-model") | select(.stringData | has("judge_model")) | .metadata.name' 'no judge_model without demo.model.judgeName: the judge runs on the run model'
 judge="$(helm template af . -n maku "${args[@]}" --set demo.model.judgeName=small)"
 [[ "$(yq ea 'select(.kind == "Secret" and .metadata.name == "agent-model") | .stringData.judge_model' - <<<"$judge")" == small ]] || { echo "FAIL: demo.model.judgeName does not write judge_model" >&2; fail=1; }
-exist="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.model.existingSecret=agent-model --set demo.githubApp.existingSecret=agent-factory-github)"
+exist="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml --set demo.model.existingSecret=agent-model --set demo.githubApp.existingSecret=agent-factory-github)"
 for n in agent-model agent-factory-github; do
   [[ -z "$(yq ea "select(.kind == \"Secret\" and .metadata.name == \"$n\") | .metadata.name" - <<<"$exist")" ]] || { echo "FAIL: $n is rendered although its existingSecret is set" >&2; fail=1; }
 done
-msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml 2>&1 >/dev/null || true)"
 grep -qF 'demo.model.baseURL' <<<"$msg" || { echo "FAIL: no model values and no existingSecret does not fail" >&2; fail=1; }
-msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.model.existingSecret=other --set demo.githubApp.existingSecret=agent-factory-github 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml --set demo.model.existingSecret=other --set demo.githubApp.existingSecret=agent-factory-github 2>&1 >/dev/null || true)"
 grep -qF 'must have that name' <<<"$msg" || { echo "FAIL: an existingSecret the controller does not read does not fail" >&2; fail=1; }
 
 # The model gateway (plan v4 step 4, Task 5; D25): off by default, so the demo golden above is the
 # byte-identical proof. On, with cnref-like values, its objects render in the release namespace.
 yq -e '.maku-gateway.enabled == false and .agentgateway.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku-gateway and agentgateway" >&2; fail=1; }
 # cnref-like values serve the planner, so the broker is pointed at the gateway (Task 12, GW8)
-yq '{"maku-gateway": ., "maku": {"broker": {"modelGateway": {"service": "model-gateway"}}}}' ../maku-gateway/tests/values-cnref-like.yaml >"$tmp/gateway.yaml"
+# values-demo.yaml's own provider stays beside cnref's (Helm cannot drop a map key): it is given a host.
+yq '{"maku-gateway": (. * {"providers": {"demo": {"host": "unused.example.test"}}}), "maku": {"broker": {"modelGateway": {"service": "model-gateway"}}}}' ../maku-gateway/tests/values-cnref-like.yaml >"$tmp/gateway.yaml"
 gw="$(helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml")" || { echo "FAIL: the demo with the gateway does not render" >&2; fail=1; gw=''; }
 # objects < RENDER: every object of a render as kind/namespace/name, the release namespace when unset.
 objects() { yq e 'select(.kind != null) | .kind + "/" + (.metadata.namespace // "maku") + "/" + .metadata.name' - | grep -vx -- '---' | sort; }
-gwobjs='^(Gateway|HTTPRoute|AgentgatewayParameters|AgentgatewayBackend|AgentgatewayPolicy)/|^(NetworkPolicy|ConfigMap)/maku/model-gateway'
+gwobjs='^(Gateway|HTTPRoute|AgentgatewayParameters|AgentgatewayBackend|AgentgatewayPolicy)/|^(NetworkPolicy|ConfigMap|ClusterRoleBinding)/maku/model-gateway'
 got="$(objects <<<"$gw" | grep -E "$gwobjs" | cut -d/ -f1,2 | sort -u | paste -sd, -)"
-[[ $got == "AgentgatewayBackend/maku,AgentgatewayParameters/maku,AgentgatewayPolicy/maku,ConfigMap/maku,Gateway/maku,HTTPRoute/maku,NetworkPolicy/maku" ]] ||
+[[ $got == "AgentgatewayBackend/maku,AgentgatewayParameters/maku,AgentgatewayPolicy/maku,ClusterRoleBinding/maku,ConfigMap/maku,Gateway/maku,HTTPRoute/maku,NetworkPolicy/maku" ]] ||
   { echo "FAIL: the gateway's objects are not all in the release namespace (got '$got')" >&2; fail=1; }
 demo="$(helm template af . -n maku "${args[@]}")"
 diff <(objects <<<"$demo") <(objects <<<"$gw" | grep -vE "$gwobjs") >&2 || { echo "FAIL: turning the gateway on adds or drops another object" >&2; fail=1; }
@@ -278,15 +401,11 @@ helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" --set maku-gatewa
   --set maku.broker.human.intake.plan.apiKeyFile=/etc/planner/key >/dev/null 2>&1 ||
   { echo "FAIL: a planner with its own url and apiKeyFile does not render beside the gateway" >&2; fail=1; }
 
-# The gateway demo (plan v4 step 4, Task 10): runs call the gateway with their own token, and no provider
-# key reaches the runs namespace. values-demo.yaml alone stays the golden above, byte for byte.
-gwd=("${img[@]}" -f values-demo.yaml -f values-demo-gateway.yaml --set demo.model.apiKey=k1
-     --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1
-     --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local
-     --set maku-gateway.providers.demo.host=api.example.test
-     --set maku-gateway.aliases.public.agent-default.model=m1 --set maku-gateway.aliases.public.tier-light.model=m2)
+# The gateway demo (plan v4 step 4, Task 10; the shipped demo since step 7 R4): runs call the gateway with
+# their own token, and no provider key reaches the runs namespace.
 out="$(helm template af . -n maku "${gwd[@]}")" || { echo "FAIL: the gateway demo does not render" >&2; fail=1; out=''; }
 ynone 'select(.kind == "Secret" and .metadata.name == "agent-model")' 'the gateway demo renders no agent-model'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "unsafe_allow_runc,network_policy_none"' 'the gateway demo: no model key in the sandbox on the banner'
 ynone 'select(.kind == "Secret" and .metadata.namespace == "agents")' 'the gateway demo renders no Secret in the runs namespace'
 ykind Secret 'select(.metadata.name == "demo-model") | (.metadata.namespace == "maku" and .stringData.apiKey == "k1")' 'the demo key is its provider'"'"'s Secret, in the release namespace'
 ykind AgentgatewayBackend '(.metadata.name == "demo-agent-default" or .metadata.name == "demo-tier-light" or .metadata.name == "model-gateway-jwks")' 'the demo provider serves agent-default'
@@ -424,9 +543,11 @@ bad 'maku.runController.model.gateway.ports (8090, 8081) must equal maku-gateway
 bad 'maku.runController.model.gateway.service "elsewhere" must be empty or maku-gateway.name "model-gateway"' "${gwd[@]}" --set maku.runController.model.gateway.service=elsewhere
 bad 'demo.model.baseURL: with maku.runController.model.mode gateway' "${gwd[@]}" --set demo.model.baseURL=http://model.example.test/v1
 bad 'maku-factory.config.runs.gatewayIdentity is true but maku.runController.model.mode is "secret"' "${args[@]}" --set maku-factory.config.runs.gatewayIdentity=true
+# v4 step 8 (D7, R4): model.mode secret is demo-only; the maku subchart reads its own marker.
+bad 'runController.model.mode secret is demo-only (v4 D7)' "${args[@]}" --set maku.demoValues=false
 bad 'maku.runController.model.mode gateway needs maku-factory.config.runs.gatewayIdentity: true' "${gwd[@]}" --set maku-factory.config.runs.gatewayIdentity=false
 # ANR's form: an external gateway, maku-gateway off.
-out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 --set maku.runController.model.mode=gateway \
+out="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 --set maku.runController.model.mode=gateway --set maku-gateway.enabled=false --set agentgateway.enabled=false \
   --set maku-factory.config.runs.gatewayIdentity=true \
   --set maku.runController.model.gateway.service=agentgateway --set maku.runController.model.gateway.namespace=ai \
   --set-json 'maku.runController.model.gateway.aliases={"public":["agent-default"]}')" || { echo "FAIL: an external gateway does not render" >&2; fail=1; out=''; }
@@ -553,7 +674,7 @@ ykind PrometheusRule '.spec.groups[] | select(.name == "maku-rooms") | .rules[] 
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.broker.human.issuer=https://idp.example.test)"
 ynone 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | select(.alert == "RoomAuthnHumanIssuerNeverFetched") | .alert' 'human.mode local renders RoomAuthnHumanIssuerNeverFetched, though an issuer is set'
 # slack.enabled adds maku-slack; maku-gateway adds no group until PR B2; maku-factory off drops its group
-out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set slack.enabled=true)"
+out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" -f values-slack.example.yaml --set expose.mode=none --set slack.networkPolicy.mode=none)"
 [[ "$(groups)" == "maku-rooms maku-factory maku-run-path maku-slack" ]] || { echo "FAIL: slack.enabled: groups '$(groups)'" >&2; fail=1; }
 # PR B2 (Task 22): maku-gateway.enabled adds maku-gateway, on the gateway's job and the runs' subject.
 # The gateway demo prices nothing and has no meter: no lookup to judge, no ledger to cross-check.
@@ -650,8 +771,8 @@ bad "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode no
 bad 'expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller' "${exw[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set-json 'expose.networkPolicy.cilium.fromEntities=[]'
 bad 'expose.web needs maku.enabled: the web surface is the broker' "${exw[@]}" --set maku.enabled=false
 helm template af . -n maku "${exw[@]}" --set expose.web.enabled=false >/dev/null || { echo 'FAIL: expose.web.enabled false does not render' >&2; fail=1; }
-bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" --set slack.enabled=true
-helm template af . -n maku "${exw[@]}" --set slack.enabled=true --set expose.slack.enabled=false >/dev/null ||
+bad 'expose.slack.hostnames is empty: name the host Slack posts its events to' "${exw[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.networkPolicy.mode=kubernetes --set-json "slack.networkPolicy.from=$exnp" --set-json 'expose.slack.hostnames=[]'
+helm template af . -n maku "${exw[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.networkPolicy.mode=kubernetes --set-json "slack.networkPolicy.from=$exnp" --set expose.slack.enabled=false >/dev/null ||
   { echo 'FAIL: slack.enabled with expose.slack.enabled false does not render' >&2; fail=1; }
 
 # v4 step 6 Task 11 (D19, EX2, EX5): the routes. The goldens hold each mode's routes, byte for byte:
@@ -661,7 +782,7 @@ golden() { # golden NAME: the render's routes equal tests/golden/NAME.yaml
   [[ ${UPDATE_GOLDEN:-} == 1 ]] && routes >"tests/golden/$1.yaml"
   routes | diff -u "tests/golden/$1.yaml" - >&2 || { echo "FAIL: the routes differ from tests/golden/$1.yaml" >&2; fail=1; }
 }
-exs=("${exw[@]}" --set slack.enabled=true --set-json 'expose.slack.hostnames=["factory-slack.example.test"]'
+exs=("${exw[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.networkPolicy.mode=kubernetes --set-json "slack.networkPolicy.from=$exnp" --set-json 'expose.slack.hostnames=["factory-slack.example.test"]'
      --set-json 'expose.slack.parentRefs=[{"name":"public","namespace":"infra","sectionName":"factory-slack"}]')
 out="$(helm template af . -n maku "${exs[@]}")" || { echo 'FAIL: expose httproute with both surfaces does not render' >&2; fail=1; out=''; }
 golden expose-httproute
@@ -688,6 +809,78 @@ jkind Ingress 'select(.metadata.name == "factory-slack-events") | (.spec.ingress
 for k in Certificate Issuer ClusterIssuer; do
   ynone "select(.kind == \"$k\") | .kind" "an exposed render has a $k: TLS is the user's (EX5)"
 done
+
+# v4 step 6 Task 15 (D20, EX7, EX8): the Slack App as the opt-in subchart `slack`, wired by agreement.
+# Off (the default), nothing of it renders: the demo golden above holds that byte for byte.
+out="$(helm template af . -n maku "${args[@]}")"
+ynone 'select(.metadata.name == "factory-slack-app") | .kind' 'slack off renders the App'
+slk=("${idv[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set expose.mode=none --set slack.networkPolicy.mode=none)
+out="$(helm template af . -n maku "${slk[@]}")" || { echo 'FAIL: values-slack.example.yaml does not render' >&2; fail=1; out=''; }
+jkind Deployment 'select(.metadata.name == "factory-slack-app") | .spec.replicas == 1' 'slack.enabled renders the App'
+jkind ConfigMap 'select(.metadata.name == "factory-slack-threads") | has("data") | not' 'and its thread map'
+jkind Deployment 'select(.metadata.name == "room-broker") | [.spec.template.spec.volumes[] | select(.name == "webhook-slack-app") | .secret.secretName] == ["room-broker-webhook-slack-app"]' "the broker mounts the App's webhook key"
+bad "slack.enabled needs the App's subscriber in maku.broker.webhooks: name slack-app, network cluster, url http://factory-slack-app.maku.svc.cluster.local:8081/webhooks, existingSecret room-broker-webhook-slack-app" "${slk[@]}" --set-json 'maku.broker.webhooks=[]'
+bad 'maku.broker.webhooks[slack-app].url "http://factory-slack-app.maku.svc.cluster.local:8080/webhooks" must be http://factory-slack-app.maku.svc.cluster.local:8081/webhooks' "${slk[@]}" --set 'maku.broker.webhooks[0].url=http://factory-slack-app.maku.svc.cluster.local:8080/webhooks'
+bad 'maku.broker.webhooks[slack-app].existingSecret "other" must equal slack.webhookSecret "room-broker-webhook-slack-app"' "${slk[@]}" --set 'maku.broker.webhooks[0].existingSecret=other'
+bad 'slack.principal "slack-app" must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the broker lacks it' "${slk[@]}" --set-json 'maku.broker.human.mcp.sponsored=[]'
+bad 'slack.principal "slack-app" must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the factory lacks it' "${slk[@]}" --set-json 'maku-factory.config.api.sponsored=[]'
+bad 'slack.brokerURL "http://room-broker.other.svc.cluster.local:8080" must be the broker'"'"'s human listener, http://room-broker.maku.svc.cluster.local:8080' "${slk[@]}" --set slack.brokerURL=http://room-broker.other.svc.cluster.local:8080
+bad 'maku.broker.webhooks[slack-app] targets factory-slack-app, but slack.enabled is false: every event would go to a subscriber that does not exist' "${slk[@]}" --set slack.enabled=false
+# the example with monitoring and the Slack surface: its route, its ServiceMonitor, its rule group
+out="$(helm template af . -n maku "${slk[@]}" --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
+  --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"app":"prom"}}]' --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set slack.networkPolicy.mode=cilium \
+  --set expose.mode=httproute --set expose.web.enabled=false --set-json 'expose.httproute.parentRefs=[{"name":"public"}]')" ||
+  { echo 'FAIL: the example with monitoring and the Slack surface does not render' >&2; fail=1; out=''; }
+jkind HTTPRoute 'select(.metadata.name == "factory-slack-events") | .spec.hostnames == ["factory-slack.example.com"]' 'the Slack surface routes to the App'
+jkind ServiceMonitor 'select(.metadata.name == "factory-slack-app") | .spec.selector.matchLabels."app.kubernetes.io/name" == "factory-slack-app" and .spec.endpoints[0].port == "metrics"' "the App's ServiceMonitor"
+jkind PrometheusRule '[.spec.groups[].name] | index("maku-slack") != null' 'the maku-slack rule group'
+
+# the security review of #556: the App reads signing-key, so another key or secretFile breaks every delivery
+bad 'maku.broker.webhooks[slack-app].key "other" must be empty or signing-key' "${slk[@]}" --set 'maku.broker.webhooks[0].key=other'
+bad 'maku.broker.webhooks[slack-app].secretFile "/x" must be unset' "${slk[@]}" --set 'maku.broker.webhooks[0].secretFile=/x'
+bad 'slack.issuerURL "https://other.example.test" must equal maku.broker.human.issuer "https://e2e-stub.e2e.svc.cluster.local"' "${slk[@]}" --set slack.issuerURL=https://other.example.test
+helm template af . -n maku "${slk[@]}" --set 'maku.broker.webhooks[0].key=signing-key' --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local/ >/dev/null ||
+  { echo 'FAIL: key signing-key and the issuer with a trailing slash must render' >&2; fail=1; }
+bad 'maku.broker.webhooks[short] targets factory-slack-app, but slack.enabled is false' "${slk[@]}" --set slack.enabled=false --set-json 'maku.broker.webhooks=[{"name":"short","network":"cluster","url":"http://factory-slack-app:8081/webhooks","events":["room.merged"],"secretFile":"/k","repositories":["owner/repo"],"networkPolicy":{"to":[{"matchLabels":{"a":"b"}}]}}]'
+# Slack's events through expose.slack need the App's ingress from the gateway under default-deny
+skx=("${exw[@]}" -f values-slack.example.yaml --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.networkPolicy.mode=kubernetes)
+# the umbrella's check or the subchart's own, whichever renders first: both name the empty from
+bad 'networkPolicy.from is empty' "${skx[@]}"
+helm template af . -n maku "${skx[@]}" --set-json "slack.networkPolicy.from=$exnp" >/dev/null || { echo 'FAIL: the exposed App with its gateway peers does not render' >&2; fail=1; }
+bad 'slack.networkPolicy.mode "none" must equal maku.networkPolicies.mode "kubernetes"' "${slk[@]}" --set maku.networkPolicies.mode=kubernetes --set maku.runController.enabled=true
+
+# v4 step 6 Task 16 (D6): the factory's default-deny, off by default (the golden holds it), per mode.
+ynone 'select((.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") and .metadata.name == "agent-factory") | .kind' 'networkPolicies.factory off renders the factory policy'
+fnp=("${args[@]}" --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+bad 'networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes' "${fnp[@]}"
+bad 'networkPolicies.factory.enabled and networkPolicies.plain both select the factory' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set networkPolicies.plain=true
+bad 'networkPolicies.factory.meter.port is required with its to' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set-json 'networkPolicies.factory.meter.to=[{"podSelector":{}}]'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes \
+  --set-json 'networkPolicies.factory.intakeFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"runlore"}}}]' \
+  --set-json 'networkPolicies.factory.otlp={"to":[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"obs"}}}],"port":4317}' \
+  --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]')" ||
+  { echo 'FAIL: networkPolicies.factory in mode kubernetes does not render' >&2; fail=1; out=''; }
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.ingress[] | (.ports[0].port | tostring) + ":" + (.from | tostring)] == ["8082:[{\"podSelector\":{\"matchLabels\":{\"app.kubernetes.io/name\":\"room-broker\"}}}]", "8080:[{\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"runlore\"}}}]", "9090:[{\"namespaceSelector\":{\"matchLabels\":{\"kubernetes.io/metadata.name\":\"monitoring\"}}}]"]' "kubernetes: the factory admits the broker on :8082, intakeFrom on :8080, the scraper on :9090, nothing else"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | (.ports | map(.port | tostring) | join("+"))] == ["53+53", "443+6443", "8443", "443", "4317"] and .spec.egress[3].to[0].ipBlock.cidr == "0.0.0.0/0" and (.spec.egress[3].to[0].ipBlock.except | index("10.0.0.0/8")) != null' "kubernetes: the factory reaches DNS, the apiserver, the broker's :8443, public 443 (GitHub) and the collector, nothing else"
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes)"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | ([.spec.ingress[].ports[0].port] | index(8080)) == null' 'kubernetes: an empty intakeFrom closes :8080'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+  --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')" ||
+  { echo 'FAIL: networkPolicies.factory in mode cilium does not render' >&2; fail=1; out=''; }
+# the review of #556: every URL the factory's config names gets its egress, or the render fails
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+  --set maku-factory.config.api.humanIssuer=https://idp.example.test --set maku-factory.config.meter.url=https://vm.example.test:8428 \
+  --set maku-factory.config.triage.classifierURL=http://classifier.ml.svc.cluster.local:8080/v1 \
+  --set-json 'networkPolicies.factory.classifier.to=[{"matchLabels":{"io.kubernetes.pod.namespace":"ml","app":"classifier"}}]')" ||
+  { echo 'FAIL: the factory policy with configured URLs does not render' >&2; fail=1; out=''; }
+jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | select(.toFQDNs != null) | (.toFQDNs[0].matchName + ":" + .toPorts[0].ports[0].port)] == ["github.com:443", "idp.example.test:443", "vm.example.test:8428"]' "cilium: the issuer's and the meter's hosts by name, on their ports"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | select(.toEndpoints[0].matchLabels.app == "classifier") | .toPorts[0].ports[0].port] == ["8080"]' 'cilium: an in-cluster classifier through its named pods, on its port'
+bad 'maku-factory.config.triage.classifierURL "http://classifier.ml.svc.cluster.local:8080/v1" is in-cluster: name its pods in networkPolicies.factory.classifier.to' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku-factory.config.triage.classifierURL=http://classifier.ml.svc.cluster.local:8080/v1
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set maku-factory.config.meter.logsURL=https://logs.example.test:9428)"
+jkind NetworkPolicy 'select(.metadata.name == "agent-factory") | [.spec.egress[] | select(.ports == [{"port": 9428, "protocol": "TCP"}]) | .to[0].ipBlock.cidr] == ["0.0.0.0/0"]' 'kubernetes: an external logs URL opens public addresses on its port'
+out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true \
+  --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')"
+jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | (.spec.ingress | length) == 2 and .spec.ingress[1].fromEntities == ["host"] and .spec.egress[3] == {"toFQDNs": [{"matchName": "ghes.example.test"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]} and (.spec.egress | length) == 4' 'cilium: the broker and the kubelet in; DNS, the apiserver, the broker and the GHES out'
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

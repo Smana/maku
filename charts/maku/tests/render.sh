@@ -99,7 +99,8 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com
       --set broker.human.groups.admin=a --set broker.human.groups.member=m
       --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
-      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
+      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
+      --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}')
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
 # D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
@@ -124,7 +125,7 @@ ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
 out="$ctl"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
-ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-model,agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2)'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2); the default gateway mode reads no model Secret'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitReadSecret == "agent-git-read" and (has("unsafeSharedGitToken") | not))' 'the controller config names the read-only Secret by default'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role reads the key pair broker.tls.secretName names'
 ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
@@ -476,17 +477,17 @@ bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness
 # quickstart shares its one PAT across roles (PR B), so it lists shared_git_token; without that flag
 # it lists none, and the render keeps its old config
 unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
-[[ $(unsafe "$q") == "shared_git_token" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token, got '$(unsafe "$q")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "" ]] ||
-  { echo "FAIL: the quickstart with a read Secret lists no unsafe setting" >&2; fail=1; }
+[[ $(unsafe "$q") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token and model_key_in_sandbox, got '$(unsafe "$q")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "model_key_in_sandbox" ]] ||
+  { echo "FAIL: the quickstart with a read Secret lists only its model key in the sandbox" >&2; fail=1; }
 uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
-[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token" ]] ||
+[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token" ]] ||
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: only the quickstart's shared_git_token listed" >&2; fail=1; }
-[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
+[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
   { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
@@ -506,7 +507,7 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 ykind ValidatingAdmissionPolicy 'select(.metadata.name=="maku-maku-run-pods") | .spec.variables[] | select(.name == "images") | .expression | test("'"'"'ghcr.io/smana/maku-run-controller'"'"'")' 'the run-pod policy allows the run-controller image, the probe pod'"'"'s'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="events") | (.verbs | sort | join(",")) == "create,list,patch"' 'mode kubernetes: the controller lists events (a probe pod that did not start)'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode kubernetes: no ciliumnetworkpolicies verb'
-[[ $(unsafe "$kn") == "shared_git_token" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
+[[ $(unsafe "$kn") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
 out="$q"
 ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the default) renders no NetworkPolicy'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="networkpolicies")' 'mode cilium: no networkpolicies verb'
@@ -517,6 +518,17 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 ynone 'select(.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy")' 'mode none: no policy at all'
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=cilium)"
 ykind CiliumNetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'mode cilium: the default-deny CNP'
+# runsNamespaceDefaultDeny: false, for a platform that owns agents/default-deny: no default-deny in
+# either mode, and every other policy and the Namespace as before.
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=$m --set networkPolicies.runsNamespaceDefaultDeny=false)"
+  ynone 'select(.metadata.name == "default-deny")' "mode $m, runsNamespaceDefaultDeny false: no default-deny"
+  ykind Namespace '.metadata.name == "agents"' "mode $m, runsNamespaceDefaultDeny false: the runs namespace still renders"
+  ykind "$([[ $m == cilium ]] && echo CiliumNetworkPolicy || echo NetworkPolicy)" 'select(.metadata.name=="room-broker") | .metadata.namespace == null' "mode $m, runsNamespaceDefaultDeny false: the broker's policy still renders"
+  out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=$m --set networkPolicies.runsNamespaceDefaultDeny=true)"
+  ykind "$([[ $m == cilium ]] && echo CiliumNetworkPolicy || echo NetworkPolicy)" 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' "mode $m, runsNamespaceDefaultDeny true: the default-deny"
+done
+bad "at '/networkPolicies/runsNamespaceDefaultDeny'" --set-string networkPolicies.runsNamespaceDefaultDeny=no
 bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
 bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
 # the proxy trusts the egress annotation because the run-pod policy alone lets the run-controller write it
@@ -569,13 +581,34 @@ gwext="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set
   --set-json 'runController.model.gateway.aliases={"public":["tier-light"]}')"
 out="$gwext"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.gateway.url == "http://agentgateway.ai.svc.cluster.local" and .model.gateway.ports.public == 9080 and .model.gateway.audiencePrefix == "cnref.gw" and (.model.gateway.aliases.internal | length) == 0)' 'gateway mode: an external gateway by service and namespace'
-for r in "$q" "$ctl" "$nonp"; do
+for r in "$q" "$nonp"; do
   out="$r"
   ynone 'select(.metadata.name=="run-controller-token")' 'secret mode: no token Role'
   ynone 'select(.kind=="Deployment" and .metadata.name=="run-controller") | .spec.template.spec.containers[0].env[] | select(.name == "POD_NAME")' 'secret mode: the controller Deployment is unchanged'
   ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never reads the model Secret"))' 'secret mode: the run-pod policy is unchanged'
 done
 bad 'runController.model.gateway.aliases.public is required' --set runController.model.mode=gateway
+
+# v4 step 8 (D7, R4): the gateway is the model path. model.mode defaults to gateway; secret puts the
+# provider key in the sandbox, so it is demo-only (demoValues, which values-quickstart.yaml sets) and
+# on the banner as model_key_in_sandbox.
+[[ "$(yq '.runController.model.mode' values.yaml)" == gateway ]] || { echo "FAIL: runController.model.mode does not default to gateway" >&2; fail=1; }
+[[ "$(yq '.demoValues' values.yaml)" == false ]] || { echo "FAIL: demoValues does not default to false" >&2; fail=1; }
+out="$ctl"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.mode == "gateway" and (has("modelSecret") | not))' 'the default model mode is gateway'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | .data."config.yaml" | from_yaml | (has("install") | not)' 'gateway mode: nothing on the banner'
+out="$q"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .modelSecret == "agent-model"' 'the quickstart keeps model.mode secret (a laptop without a gateway)'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "shared_git_token,model_key_in_sandbox"' 'model.mode secret is on the banner as model_key_in_sandbox'
+bad 'runController.model.mode secret is demo-only (v4 D7): the provider key would sit in the sandbox' --set demoValues=false
+if err="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.model.mode=secret 2>&1 >/dev/null)"; then
+  echo "FAIL: model.mode secret without demoValues must not render" >&2; fail=1
+elif ! grep -qF 'runController.model.mode secret is demo-only' <<<"$err"; then
+  echo "FAIL: model.mode secret without demoValues failed, but not for being demo-only: $err" >&2; fail=1
+fi
+out="$p"
+ynone 'select(.kind == "ConfigMap" and .metadata.name == "room-broker-config") | .data."config.yaml" | from_yaml | select(has("install")) | .install' 'no run-controller: the model mode is not read, and nothing is on the banner'
+bad "at '/demoValues'" --set demoValues=yes
 bad "at '/runController/model/mode'" --set runController.model.mode=direct
 bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
 
@@ -782,6 +815,45 @@ done
 jkind NetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.ports // []) | map(.port) | any(. == 8080))] == [{"from": [{"podSelector": {"matchLabels": {"app.kubernetes.io/name": "rooms-web-proxy"}}}], "ports": [{"port": 8080, "protocol": "TCP"}]}]' 'mode kubernetes: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
 out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set broker.webProxy=true)"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] == [{"fromEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "rooms-web-proxy"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' 'mode cilium: broker.webProxy admits :8080 from the rooms-web-proxy pods alone'
+# v4 step 6 Task 13 (EX9): the broker's parity keys, rendered verbatim. Unset (every render above),
+# none appears; tests/parity-values.yaml is cloud-native-ref gcp-0's three blocks.
+ynone 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.webhooks // .suspend // .policyManagement // .coordination) // ""' 'no parity key set, yet one is in the config'
+pv=("${imgs[@]}" "${prod[@]}" -f tests/parity-values.yaml)
+for m in cilium kubernetes; do
+  out="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=$m)" || { echo "FAIL: the parity values do not render in mode $m" >&2; fail=1; out=''; }
+  [[ $m == cilium ]] && pc="$out" || pk="$out"
+done
+out="$pc"
+cfg="$(yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$out")"
+[[ $(yq -o=json -I0 '[.webhooks[] | .name + "=" + .secretFile]' <<<"$cfg") == '["slack-app=/etc/room-broker/webhooks/slack-app/signing-key","runlore=/etc/runlore-key/signing-key","pager=/etc/room-broker/webhooks/pager/hmac"]' ]] ||
+  { echo "FAIL: each webhook's secretFile: the mount's path, or the set one ($(yq -o=json -I0 '.webhooks' <<<"$cfg"))" >&2; fail=1; }
+[[ $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg") == '["events","generation","name","network","repositories","secretFile","url"]' ]] ||
+  { echo "FAIL: a chart-only webhook key (existingSecret, key, networkPolicy) reached the config: $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg")" >&2; fail=1; }
+yq -o=json -I0 '[.suspend, .policyManagement, .coordination]' <<<"$cfg" | jq -e '. == [{"enabled":true,"after":"5m"},{"promotion":true,"operators":["Smana"]},{"mode":"off","maxChildren":2}]' >/dev/null ||
+  { echo "FAIL: suspend, policyManagement and coordination are not verbatim" >&2; fail=1; }
+# defaultMode 0440: yq's JSON spells the YAML octal as 440.
+jkind Deployment 'select(.metadata.name=="room-broker") | ([.spec.template.spec.volumes[] | select(.name | startswith("webhook-")) | {(.name): .secret}] | add) == {"webhook-slack-app": {"secretName": "room-broker-webhook-slack-app", "defaultMode": 440}, "webhook-pager": {"secretName": "pager-key", "defaultMode": 440}}' 'one whole-Secret volume (0440) per webhook with existingSecret'
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.containers[0].volumeMounts[] | select(.name | startswith("webhook-")) | .name + ":" + .mountPath + ":" + (.readOnly | tostring)] == ["webhook-slack-app:/etc/room-broker/webhooks/slack-app:true", "webhook-pager:/etc/room-broker/webhooks/pager:true"]' 'mounted read-only at /etc/room-broker/webhooks/<name>'
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8081")] == [{"toEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "factory-slack-app"}}], "toPorts": [{"ports": [{"port": "8081", "protocol": "TCP"}]}]}]' 'cilium: the Slack App subscriber opens :8081 on the App pods, by default'
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8080")] == [{"toEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "runlore", "app.kubernetes.io/name": "runlore"}}], "toPorts": [{"ports": [{"port": "8080", "protocol": "TCP"}]}]}]' "cilium: a cluster subscriber opens its URL's port to its networkPolicy.to only"
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toFQDNs == [{"matchName": "hooks.example.com"}])] | length == 1 and .[0].toPorts == [{"ports": [{"port": "443", "protocol": "TCP"}]}]' 'cilium: an internet subscriber opens 443 to its host'
+out="$pk"
+jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.ports == [{"port": 8081, "protocol": "TCP"}])] == [{"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "agent-system"}}, "podSelector": {"matchLabels": {"app.kubernetes.io/name": "factory-slack-app"}}}], "ports": [{"port": 8081, "protocol": "TCP"}]}]' 'kubernetes: the Slack App subscriber opens :8081 on the App pods'
+jkind NetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.ports == [{"port": 443, "protocol": "TCP"}] and (.to[0].ipBlock.cidr // "") == "0.0.0.0/0")] | length == 1 and (.[0].to[0].ipBlock.except | index("10.0.0.0/8") != null)' 'kubernetes: an internet subscriber opens 443 to public addresses, privateCIDRs excepted'
+msg="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=kubernetes --set-json 'broker.webhooks[1].networkPolicy.to=[]' 2>&1 >/dev/null || true)"
+grep -qF 'broker.webhooks[runlore].networkPolicy.to is empty: name the subscriber' <<<"$msg" || { echo "FAIL: a cluster subscriber with no peers does not fail (got: $msg)" >&2; fail=1; }
+# the review of #556: a NetworkPolicy peer in cilium mode is refused; a long name's volume is cut to 63
+msg="$(helm template ap . -n agent-system "${pv[@]}" --set networkPolicies.mode=cilium --set-json 'broker.webhooks[1].networkPolicy.to=[{"podSelector":{"matchLabels":{"app":"runlore"}}}]' 2>&1 >/dev/null || true)"
+grep -qF 'broker.webhooks[runlore].networkPolicy.to holds a NetworkPolicy peer' <<<"$msg" || { echo "FAIL: a podSelector in cilium mode does not fail (got: $msg)" >&2; fail=1; }
+long=a23456789012345678901234567890123456789012345678901234567890b
+out="$(helm template ap . -n agent-system "${pv[@]}" --set "broker.webhooks[2].name=$long")"
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.volumes[] | select(.secret.secretName == "pager-key") | .name] | (length == 1 and (.[0] | length) <= 63 and (.[0] | startswith("webhook-a2345")))' 'a long webhook name'"'"'s volume is cut to 63 characters'
+jkind Deployment 'select(.metadata.name=="room-broker") | [.spec.template.spec.containers[0].volumeMounts[] | select(.mountPath == "/etc/room-broker/webhooks/'"$long"'") | .name | length] == [63]' 'its mount names the same volume, at /etc/room-broker/webhooks/<name>'
+out="$(helm template ap . -n agent-system "${pv[@]}" --set 'broker.webhooks[0].url=http://factory-slack-app:8081/webhooks')"
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "8081") | .toEndpoints[0].matchLabels."io.kubernetes.pod.namespace"] == ["agent-system"]' "a short-name App URL defaults to the App's pods in the release namespace"
+mkdir -p "$tmp/parity"
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$pc" >"$tmp/parity/broker.yaml"
+go run ./tests/loadconfig broker-parity "$tmp/parity/broker.yaml" || fail=1
 helm template ap . -n x -f values-quickstart.yaml --set e2e.unpinnedImages=true --set broker.image.tag=e2e --set runController.image.tag=e2e \
   --set runController.images.harness.tag=e2e --set runController.images.bridge.tag=e2e \
   | grep -q 'imagePullPolicy: Never' || { echo 'FAIL: e2e.unpinnedImages renders Never' >&2; fail=1; }

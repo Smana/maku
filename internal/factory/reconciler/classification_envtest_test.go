@@ -40,7 +40,7 @@ func TestEnvtestAnOracleClassClassificationIsAcceptedByTheCRD(t *testing.T) {
 		t.Fatal(err)
 	}
 	cf := cfg()
-	cf.Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}}
+	cf.Repositories[0].Classes["dead-links"] = config.Class{Shadow: true, Oracle: &config.Oracle{Probe: "dead-links", Workflow: "dead-links.yaml", MaxFindings: 10}}
 	tk := issueTask("orcl2345", 0, "x")
 	tk.CreationTimestamp = metav1.Time{}
 	tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "dead-links", Key: "k", RequestedBy: "schedule:dead-links", Trust: "trusted", ContentSHA256: strings.Repeat("b", 64)}

@@ -6,9 +6,7 @@ profile: demo
 
 demo:
   model:
-    baseURL: https://api.example.com/v1   # CHANGE: an OpenAI-compatible endpoint
-    name: my-model                        # CHANGE
-    apiKey: sk-change-me                  # CHANGE (or existingSecret: agent-model)
+    apiKey: sk-change-me                  # CHANGE: the provider's key, which only the model gateway holds
   githubApp:
     id: "123456"                          # CHANGE: the App's id (or existingSecret: agent-factory-github)
     privateKey: |                         # CHANGE: the App's PEM
@@ -41,3 +39,15 @@ maku-factory:
           verifyFor: 30m
           revertWindow: 168h
           breaker: {window: 10, maxReverts: 1}
+
+# The model gateway (step 7 R4): your OpenAI-compatible provider, and the cluster's issuer.
+maku-gateway:
+  identity:
+    issuer: https://kubernetes.default.svc.cluster.local # CHANGE: kubectl get --raw /.well-known/openid-configuration | jq -r .issuer
+  providers:
+    demo:
+      host: api.example.com               # CHANGE: an OpenAI-compatible endpoint's host (443, /v1/chat/completions)
+  aliases:
+    public:
+      agent-default: {provider: demo, model: my-model}   # CHANGE
+      tier-light: {provider: demo, model: my-model}      # CHANGE: the judges' (lighter) model

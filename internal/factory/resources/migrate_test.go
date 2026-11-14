@@ -47,10 +47,47 @@ func TestMigrateRoundTrips(t *testing.T) {
 	}
 }
 
-func TestMigrateRefusesTheLegacyShape(t *testing.T) {
-	if _, _, err := Migrate([]byte("factory: aws-0\nrepository: Smana/x\n"), "ns"); err == nil ||
-		!strings.Contains(err.Error(), "into repositories[] first") {
-		t.Fatalf("err = %v", err)
+// R7: the factory refuses the single-repository shape, but migrate still reads the last release's
+// file and writes its objects: the repository, its kill switch and its classes survive the trip.
+func TestMigrateReadsTheLegacyShape(t *testing.T) {
+	legacy, err := os.ReadFile("testdata/legacy-single-repository.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(legacy); err == nil || !strings.Contains(err.Error(), "single-repository shape") {
+		t.Fatalf("the factory must refuse the fixture: %v", err)
+	}
+	manifests, residual, err := Migrate(legacy, "agent-system")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]any
+	if err := yaml.Unmarshal(residual, &top); err != nil {
+		t.Fatal(err)
+	}
+	for _, k := range []string{"repository", "maintainers", "triggerLabel", "controlIssue", "classes", "merge", "schedules", "repositories"} {
+		if _, ok := top[k]; ok {
+			t.Errorf("the residual file still has %s:\n%s", k, residual)
+		}
+	}
+	if api, _ := top["api"].(map[string]any); api["repositories"] != nil {
+		t.Errorf("the residual file keeps api.repositories, which the list derives")
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatalf("Decode: %v\n%s", err, manifests)
+	}
+	got, err := Assemble(residual, objs)
+	if err != nil || len(got.Refused) != 0 {
+		t.Fatalf("%v %+v", err, got.Refused)
+	}
+	rs := got.Config.Repos()
+	if len(rs) != 1 || rs[0].Name != "Smana/cloud-native-ref" || !rs[0].IsMaintainer("Smana") || rs[0].TriggerLabel != "factory/ready" ||
+		len(rs[0].Classes) != 5 || rs[0].Merge.MergerLogin != "ogenki-agent-merger[bot]" {
+		t.Fatalf("repositories %+v", rs)
+	}
+	if c := got.Config.ControlFor(); c != (config.Control{Repository: "Smana/cloud-native-ref", Issue: 7}) {
+		t.Fatalf("control %+v", c)
 	}
 }
 

@@ -1,0 +1,299 @@
+# Argo CD 2.12 or later: register ghcr.io as a Helm OCI repository first. Argo CD runs no Helm
+# test hook: run helm test (the preflight) by hand once the umbrella is synced.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  name: agent-factory-crds
+  namespace: argocd
+spec:
+  destination:
+    namespace: maku
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: agent-factory-crds
+    helm:
+      valuesObject:
+        keep: true
+    repoURL: ghcr.io/smana/charts
+    targetRevision: 0.48.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "1"
+  name: agentgateway-crds
+  namespace: argocd
+spec:
+  destination:
+    namespace: maku
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    path: config/agentgateway
+    repoURL: https://github.com/Smana/maku
+    targetRevision: v0.48.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+    - Prune=false
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  name: agent-factory
+  namespace: argocd
+spec:
+  destination:
+    namespace: maku
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: agent-factory
+    helm:
+      releaseName: agent-factory
+      skipCrds: true
+      valuesObject:
+        agentgateway:
+          enabled: true
+        expose:
+          httproute:
+            parentRefs:
+            - name: edge
+              namespace: gateway
+              sectionName: https
+          mode: httproute
+          networkPolicy:
+            from:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: gateway
+          web:
+            hostnames:
+            - rooms.example.com
+        maku:
+          agentRunPolicies:
+            creators:
+            - system:serviceaccount:maku:agent-factory
+            factoryServiceAccount: agent-factory
+          broker:
+            database:
+              brokerSecret: rooms-broker-dsn
+              caSecret: rooms-db-ca
+              ownerSecret: rooms-owner-dsn
+              retentionSecret: rooms-retention-dsn
+              secretKey: uri
+            extraEnv:
+            - name: ROOMS_GITHUB_APP_DIR
+              value: /etc/maku/github-app
+            extraVolumeMounts:
+            - mountPath: /etc/maku/github-app
+              name: github-app
+              readOnly: true
+            extraVolumes:
+            - name: github-app
+              secret:
+                defaultMode: 288
+                secretName: agent-factory-github
+            factoryCA:
+              secretName: agent-factory-ca
+            factoryURL: https://agent-factory.maku.svc:8082
+            githubLink:
+              existingSecret: maku-github-link
+            human:
+              access:
+                ttl: 5m
+              groups:
+                admin: agents-admin
+                member: agents-member
+              issuer: https://idp.example.com
+              mode: oidc
+              origin: https://rooms.example.com
+              preset: generic
+              rolesClaim: groups
+              tokenUse: id
+            image:
+              tag: v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+            oidc:
+              existingSecret: rooms-oidc
+            publicURL: https://rooms.example.com
+            runIssuer:
+              issuer: https://kubernetes.default.svc.cluster.local
+              jwksURL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+            systemIssuer:
+              issuer: https://kubernetes.default.svc.cluster.local
+              jwksURL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+            systemPrincipals:
+              system:serviceaccount:maku:agent-factory: system:factory
+            tls:
+              issuerRef:
+                kind: ClusterIssuer
+                name: internal-ca
+            webProxy: true
+          enabled: true
+          networkPolicies:
+            kubernetes:
+              metricsFrom:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+            mode: kubernetes
+          preflight:
+            enabled: true
+          runController:
+            gitReadSecret: ""
+            gitTokens: perRun
+            image:
+              tag: v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+            images:
+              bridge:
+                tag: v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+              harness:
+                tag: v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+            model:
+              gateway:
+                aliases:
+                  internal: []
+                  public:
+                  - agent-default
+                  - tier-light
+              mode: gateway
+          sandbox:
+            runtimeClassName: gvisor
+        maku-factory:
+          api:
+            tls:
+              issuerRef:
+                kind: ClusterIssuer
+                name: internal-ca
+              secretName: agent-factory-api-tls
+          apps:
+            agents:
+              existingSecret: agent-factory-agents
+            factory:
+              existingSecret: agent-factory-github
+            merger:
+              mode: factory
+          config:
+            agentsLogin: example-agents[bot]
+            api:
+              clientIDFiles:
+              - /etc/agent-factory-oidc/web-client-id
+              - /etc/agent-factory-oidc/cli-client-id
+              groups:
+                admin: agents-admin
+                member: agents-member
+              humanIssuer: https://idp.example.com
+              listen: :8082
+              preset: generic
+              rolesClaim: groups
+              tokenUse: id
+            broker:
+              caFile: /etc/agent-factory/openbao-ca/ca.crt
+              tokenFile: /var/run/secrets/agents/rooms/token
+              url: https://room-broker.maku.svc.cluster.local:8443
+            factory: agent-factory
+            factoryLogin: example-factory[bot]
+            github:
+              appIDFile: /etc/agent-factory-github/app_id
+              privateKeyFile: /etc/agent-factory-github/private_key
+            meter:
+              query: sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod)
+                (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})
+              throttle:
+                promQuery: sum by (ar_agent) (increase(agentgateway_requests_total{status="429",
+                  reason="RateLimit", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m]))
+                  > 0
+              url: http://vmsingle.monitoring.svc.cluster.local:8428
+            poll:
+              issues: 60s
+              meter: 30s
+              tasks: 30s
+            roomsURL: https://rooms.example.com
+            runs:
+              gatewayIdentity: true
+              group: maku.ogenki.io
+              namePrefix: run-
+              namespace: agents
+          enabled: true
+          image:
+            tag: v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+          oidcSecret: agent-factory-oidc
+          runTokens:
+            enabled: true
+            perRun: true
+        maku-gateway:
+          aliases:
+            public:
+              agent-default:
+                model: claude-sonnet-5-5
+                provider: anthropic
+              tier-light:
+                model: claude-haiku-5-5
+                provider: anthropic
+          enabled: true
+          identity:
+            issuer: https://kubernetes.default.svc.cluster.local
+            jwks:
+              url: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+          metrics:
+            allowFrom:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: monitoring
+          providers:
+            anthropic:
+              existingSecret: model-provider
+              key: apiKey
+              preset: anthropic
+          runs:
+            namePrefix: run-
+            namespace: agents
+        monitoring:
+          dashboards:
+            enabled: true
+            labels:
+              grafana_dashboard: "1"
+          prometheusRule:
+            enabled: true
+          serviceMonitor:
+            enabled: true
+        networkPolicies:
+          factory:
+            enabled: true
+            meter:
+              to:
+              - namespaceSelector:
+                  matchLabels:
+                    kubernetes.io/metadata.name: monitoring
+        profile: production
+        slack:
+          enabled: false
+        webProxy:
+          enabled: true
+          existingSecret: rooms-web-proxy
+    repoURL: ghcr.io/smana/charts
+    targetRevision: 0.48.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true

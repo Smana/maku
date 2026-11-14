@@ -51,7 +51,8 @@ spec:
     {{- end }}
     {{- if .Values.broker.webProxy }}
     # The human listener, from the web front door alone (the umbrella's rooms-web-proxy): it sets
-    # the identity headers the broker reads, so nothing may reach :8080 around it.
+    # the identity headers the broker reads, so nothing may reach :8080 around it. The Slack App,
+    # which calls /mcp with its own bearer, is admitted by maku-slack's room-broker-from-factory-slack-app.
     - fromEndpoints:
         - matchLabels:
             io.kubernetes.pod.namespace: {{ .Release.Namespace }}
@@ -136,6 +137,36 @@ spec:
     - {{- toYaml . | nindent 6 }}
       toPorts:
         - ports: [{port: {{ $kport | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- end }}
+    {{- range (include "ap.webhooks" . | fromJson).egress }}
+    {{- $wport := .port }}
+    {{- if .internet }}
+    # broker.webhooks[{{ .name }}] (EX9): an internet subscriber, its host on its port.
+    - toFQDNs: [{matchName: {{ .host }}}]
+      toPorts:
+        - ports: [{port: {{ $wport | quote }}, protocol: TCP}]
+    {{- else }}
+    {{- $selectors := list }}
+    {{- $peers := list }}
+    {{- range .to }}
+    {{- if or (hasKey . "toFQDNs") (hasKey . "toCIDR") (hasKey . "toCIDRSet") (hasKey . "toEntities") (hasKey . "toEndpoints") }}
+    {{- $peers = append $peers . }}
+    {{- else }}
+    {{- $selectors = append $selectors . }}
+    {{- end }}
+    {{- end }}
+    {{- with $selectors }}
+    # broker.webhooks (EX9): a cluster subscriber, its URL's port on its pods only.
+    - toEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ $wport | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- range $peers }}
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $wport | quote }}, protocol: TCP}]
+    {{- end }}
     {{- end }}
     {{- end }}
     {{- with .Values.broker.networkPolicy.extraEgress }}

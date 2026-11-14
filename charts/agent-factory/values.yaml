@@ -1,7 +1,8 @@
 # The production-safe skeleton. These defaults render nothing on their own: `profile` must be set,
 # and values.schema.json rejects unknown or malformed values.
 #   - The demo is `-f values-demo.yaml` (profile: demo, with every demo default).
-#   - `profile: production` fails closed until its seams arrive (v4 rollout steps 2 to 6).
+#   - `profile: production` checks the seams of each enabled component, and fails naming every missing
+#     one (values-production.example.yaml, docs/upgrading.md#from-the-demo-to-production).
 # Install the agent-factory-crds chart first. Values may still change in 0.x minors until v4.0.0.
 profile: ""
 
@@ -113,9 +114,10 @@ monitoring:
     labels: {}
     annotations: {}
 
-# The Slack App (D20). Its subchart arrives in a later v4 step 6 PR; until then, true only adds the
-# maku-slack alert group and the expose.slack route, for a Slack App installed outside this chart
-# (its Service factory-slack-app, port 8080).
+# The Slack App (D20; docs/slack.md#install): the maku-slack subchart, aliased slack, off by default.
+# Its values are charts/maku-slack's, under slack. On, the broker's subscriber and both sponsored
+# entries must name it (values-slack.example.yaml); the render fails naming the key that disagrees.
+# It also adds the maku-slack alert group, the App's ServiceMonitor and the expose.slack route.
 slack:
   enabled: false
 
@@ -203,3 +205,30 @@ webProxy:
   resources:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
+
+# The factory's default-deny (D6; v4 step 6, Task 16), off by default. On, in maku.networkPolicies'
+# mode (kubernetes: a NetworkPolicy, cilium: a CNP), the factory admits its run API (:8082) from the
+# broker, its intake (:8080) from intakeFrom alone, and :9090 from the scraper and the kubelet; it
+# reaches DNS, the apiserver, the broker's :8443, GitHub on 443, and what the keys below name. The
+# demo's networkPolicies.plain is refused beside it.
+networkPolicies:
+  factory:
+    enabled: false
+    # RunLore's pods, for POST /intake/runlore (kubernetes: NetworkPolicy peers; cilium: endpoint
+    # selectors). Empty: the intake port is closed.
+    intakeFrom: []
+    # A GHES (kubernetes: peers; cilium: whole peers such as {toFQDNs: [{matchName: ghes.example.com}]}).
+    # Empty: public addresses minus maku's privateCIDRs (kubernetes), github.com and api.github.com (cilium).
+    github: {to: []}
+    # Every URL maku-factory.config names opens its own egress: an external host by name (cilium
+    # toFQDNs) or as public addresses (kubernetes); an in-cluster one needs its pods here, or the render
+    # fails naming it. port overrides the URL's (a pod port after service translation).
+    idp: {to: [], port: 0}         # config.api.humanIssuer: discovery, JWKS (and the ZITADEL reader)
+    classifier: {to: [], port: 0}  # config.triage.classifierURL
+    meter: {to: [], port: 0}       # config.meter.url
+    logs: {to: [], port: 0}        # config.meter.logsURL
+    otlp: {to: [], port: 0}        # config.tracing.otlpEndpoint
+    agentGuard: {to: [], port: 0}  # config.hardening.agentGuard.url
+    gatewayLog: {to: [], port: 0}  # config.hardening.drills.gatewayLog.url
+    octoSTS: {to: [], port: 0}     # config.hardening.publisher.octoSTS.url
+    extraEgress: []

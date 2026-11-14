@@ -1,0 +1,51 @@
+# The Slack App beside the broker and the factory (v4 step 6, EX7, EX8; docs/slack.md#install), layered
+# over your own values. Helm cannot set one subchart's values from another's, so these four blocks
+# must agree, and the render fails naming both keys where they do not:
+#   - slack (the App): its Secrets by name, its sign-in, its channels;
+#   - maku.broker.webhooks: the App's subscriber, its URL and signing key the App's;
+#   - maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the App's principal.
+# Replace each CHANGE; the namespace in the URL is the release's (maku here).
+slack:
+  enabled: true
+  image:
+    tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 # CHANGE: the release's maku-slack
+  issuerURL: https://idp.example.com          # CHANGE: maku.broker.human.issuer
+  roomsURL: https://rooms.example.com         # CHANGE: maku.broker.publicURL
+  config:
+    teamID: T0123ABCD                         # CHANGE: your Slack workspace
+    channels:
+      C0123ABCD: {repositories: [owner/repo], maxCostUSD: 2, approvals: true} # CHANGE
+    proposals: {enabled: true}
+  # Must equal maku.networkPolicies.mode (cilium, maku's default). In mode cilium the ingress entity
+  # (Cilium's Gateway and Ingress) reaches the App's :8080; in mode kubernetes, set from to your
+  # gateway's or ingress controller's pods, as expose.networkPolicy.from: empty, the render fails.
+  networkPolicy:
+    mode: cilium                              # CHANGE: maku.networkPolicies.mode
+    # from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: gateway}}}]
+expose:
+  slack:
+    hostnames: [factory-slack.example.com]    # CHANGE: the one public path is POST /slack/events
+maku:
+  broker:
+    webhooks:
+      - name: slack-app
+        network: cluster
+        url: http://factory-slack-app.maku.svc.cluster.local:8081/webhooks
+        events: [room.task_triaged, room.waiting_for_human, room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.budget_reached, room.ended, room.approval_closed]
+        existingSecret: room-broker-webhook-slack-app
+        repositories: [owner/repo]            # CHANGE
+    human:
+      mcp:
+        enabled: true
+        sponsored:
+          - {name: slack-app, clientIDFile: /etc/room-broker/sponsored/slack-app-client-id}
+maku-factory:
+  config:
+    api:
+      sponsored:
+        - name: slack-app
+          clientIDFile: /etc/agent-factory-sponsored/slack-app-client-id
+          sponsor: owner                      # CHANGE: the human who answers for the App
+          repositories: [owner/repo]          # CHANGE
+          dailyUSD: 5
+          maxCostUSD: 2

@@ -1,0 +1,37 @@
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata:
+  name: service
+  namespace: factory
+spec:
+  factoryRef: agent-factory
+  maintainers:
+  - carol
+  merge:
+    autoMergesPerDay: 5
+    breaker:
+      maxReverts: 1
+      window: 10
+    checkReruns: 1
+    fixRuns: 2
+    gateStatus: true
+    leakScanCheck: ci
+    mergerLogin: maku-platform-factory[bot]
+    policyBot: false
+    requiredChecks:
+    - ci
+    revertWindow: 168h
+    verifyChecks:
+    - ci
+    verifyFor: 30m
+  mergePolicies:
+  - allowedFiles:
+    - ^.+\.(md|mdx|adoc|rst)$
+    mode: shadow
+    name: docs-links
+  - allowedFiles:
+    - ^.+$
+    mode: shadow
+    name: revert
+  repository: platform/service
+  triggerLabel: factory/ready

@@ -1,0 +1,181 @@
+{{- include "afumbrella.profile" . -}}
+{{- /* v4 step 6 Task 16 (D6; step 2's PR13): default-deny for the factory, in maku.networkPolicies'
+mode. Ingress: its run API (:8082) from the broker, its intake (:8080) from intakeFrom alone (empty:
+closed), its ops port (:9090) from the scraper and the kubelet. Egress: DNS, the apiserver, the broker's
+:8443, GitHub on 443, and the meter, the OTLP collector and extraEgress when named. */ -}}
+{{- $f := .Values.networkPolicies.factory | default dict -}}
+{{- if and $f.enabled (index .Values "maku-factory").enabled }}
+{{- $mode := include "afumbrella.makuNetMode" . -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- $k := dig "networkPolicies" "kubernetes" dict $maku -}}
+{{- $apiPorts := $maku.apiServerPorts | default (list 443 6443) -}}
+{{- $extra := (include "afumbrella.factoryEgress" . | fromJson).rules -}}
+{{- if eq $mode "kubernetes" }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agent-factory
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  policyTypes: [Ingress, Egress]
+  ingress:
+    # The run API: the broker alone.
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8082, protocol: TCP}]
+    {{- with $f.intakeFrom }}
+    # The intake (RunLore's findings): networkPolicies.factory.intakeFrom.
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 8080, protocol: TCP}]
+    {{- end }}
+    {{- with $k.metricsFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ dig "dns" "namespace" "kube-system" $k }}}
+          podSelector:
+            matchLabels: {{- toYaml (dig "dns" "labels" (dict "k8s-app" "kube-dns") $k) | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    # The apiserver: Tasks, AgentRuns, run token Secrets, leases.
+    - {{- with $k.apiServerCIDRs }}
+      to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      {{- end }}
+      ports:
+        {{- range $apiPorts }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    # The broker's system API.
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8443, protocol: TCP}]
+    # GitHub (or networkPolicies.factory.github.to for a GHES).
+    - to:
+        {{- with dig "github" "to" list $f }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml ($k.privateCIDRs | default list) | nindent 14 }}
+        {{- end }}
+      ports: [{port: 443, protocol: TCP}]
+    {{- range $extra }}
+    # maku-factory.config.{{ .key }}{{ if .external }} ({{ .host }}, a public address){{ else }} (networkPolicies.factory.{{ .id }}.to){{ end }}.
+    - to:
+        {{- if .external }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml ($k.privateCIDRs | default list) | nindent 14 }}
+        {{- else }}
+        {{- toYaml .to | nindent 8 }}
+        {{- end }}
+      ports: [{port: {{ .port }}, protocol: TCP}]
+    {{- end }}
+    {{- with $f.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- else if eq $mode "cilium" }}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: agent-factory
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: agent-factory
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8082", protocol: TCP}]
+    {{- with $f.intakeFrom }}
+    - fromEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    {{- end }}
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    {{- with dig "serviceMonitor" "cilium" "fromEndpoints" list (.Values.monitoring | default dict) }}
+    - fromEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            {{- range $apiPorts }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8443", protocol: TCP}]
+    {{- range (dig "github" "to" list $f | default (list (dict "toFQDNs" (list (dict "matchName" "github.com") (dict "matchName" "api.github.com"))))) }}
+    # GitHub (or networkPolicies.factory.github.to: whole Cilium peers).
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    {{- end }}
+    {{- range $extra }}
+    {{- $port := .port }}
+    {{- if .external }}
+    # maku-factory.config.{{ .key }}: its host, by name.
+    - toFQDNs: [{matchName: {{ .host }}}]
+      toPorts:
+        - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- else }}
+    {{- $selectors := list }}
+    {{- $peers := list }}
+    {{- range .to }}
+    {{- if or (hasKey . "toFQDNs") (hasKey . "toCIDR") (hasKey . "toCIDRSet") (hasKey . "toEntities") (hasKey . "toEndpoints") }}
+    {{- $peers = append $peers . }}
+    {{- else }}
+    {{- $selectors = append $selectors . }}
+    {{- end }}
+    {{- end }}
+    {{- with $selectors }}
+    # networkPolicies.factory: endpoint selectors.
+    - toEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- range $peers }}
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $port | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- end }}
+    {{- end }}
+    {{- with $f.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}

@@ -54,10 +54,9 @@ func TestConnectMerger(t *testing.T) {
 		{"pair named, Secret absent, a shadow class needs it", missing, true, true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			cfg := &config.Config{Repository: "Smana/cloud-native-ref",
-				GitHub: config.GitHub{MergerAppIDFile: c.idFile, MergerKeyFile: c.idFile}}
+			cfg := &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref"}}, GitHub: config.GitHub{MergerAppIDFile: c.idFile, MergerKeyFile: c.idFile}}
 			if c.needs {
-				cfg.Classes = map[string]config.Class{"docs-links": {Shadow: true}}
+				cfg.Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}}
 			}
 			m, err := connectMerger(t.Context(), slog.New(slog.DiscardHandler), cfg, "Smana/cloud-native-ref")
 			if c.wantErr {

@@ -70,6 +70,29 @@ func TestMakuConfigMigrateThenValidate(t *testing.T) {
 	}
 }
 
+// R7: the factory refuses the single-repository shape, and maku config migrate still reads it,
+// from the last release's file, into objects the residual serves.
+func TestMakuConfigMigrateReadsTheLegacyShape(t *testing.T) {
+	dir := t.TempDir()
+	residual := filepath.Join(dir, "residual.yaml")
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	legacy := "../factory/resources/testdata/legacy-single-repository.yaml"
+	if err := m.run(t.Context(), []string{"config", "migrate", "--from", legacy, "--residual", residual}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "kind: Repository") || !strings.Contains(out.String(), "repository: Smana/cloud-native-ref") {
+		t.Fatalf("manifests: %s", out.String())
+	}
+	raw, err := os.ReadFile(residual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "\nrepository:") || strings.Contains(string(raw), "controlIssue") {
+		t.Fatalf("the residual keeps the old shape:\n%s", raw)
+	}
+}
+
 func TestMakuConfigValidateReportsRefusals(t *testing.T) {
 	dir, file := writeConfigFixture(t)
 	orphan := filepath.Join(dir, "orphan.yaml")
@@ -266,7 +289,9 @@ func TestMakuConfigValidateBase(t *testing.T) {
 	})
 	var out bytes.Buffer
 	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
-	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, "--base-config", residual, "--base", base, next}); err != nil {
+	// The refused consumer fails a plain validate (TestMakuConfigValidateRefusedBindings): the
+	// blast radius is read here with it allowed.
+	if err := m.run(t.Context(), []string{"config", "validate", "--allow-refused-bindings", "--config", residual, "--base-config", residual, "--base", base, next}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	want := `MergePolicy dead-links (generation 3 -> 4):
@@ -277,6 +302,7 @@ MergePolicy docs-links (generation 1 -> 2):
   ai-native-ref          shadow  relaxation: maxModifiedLines raised or removed  resolves
   runlore                shadow  relaxation: maxModifiedLines raised or removed  resolves
   runlore-kb             shadow  relaxation: maxModifiedLines raised or removed  resolves
+warning: binding: Repository/ai-native-ref dead-links: MissingParameter: monitor.flux needs Repository.spec.merge.fluxSource
 ok: 17 accepted
 `
 	if out.String() != want {
@@ -510,5 +536,47 @@ func TestMakuConfigMigrateIsIdempotent(t *testing.T) {
 	}
 	if out.String() != string(want) {
 		t.Fatalf("a second migration changed the objects:\n%s", out.String())
+	}
+}
+
+// B9: a binding that does not resolve drops its class without refusing an object, so validate
+// names each one with its reason and fails; --allow-refused-bindings keeps them as warnings.
+func TestMakuConfigValidateRefusedBindings(t *testing.T) {
+	residual := anrResidual(t)
+	live := splitANR(t, func(objs []resources.Object) {
+		for i := range objs {
+			if objs[i].Kind != resources.KindRepository || objs[i].Name != "cloud-native-ref" {
+				continue
+			}
+			for _, b := range objs[i].Spec["mergePolicies"].([]any) {
+				if m := b.(map[string]any); m["name"] == "deps-minor" {
+					m["mode"] = "live" // semver-minor is shadow only (M2)
+				}
+			}
+		}
+	})
+	var out bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	err := m.run(t.Context(), []string{"config", "validate", "--config", residual, live})
+	if err == nil || !strings.Contains(err.Error(), "1 binding refused") {
+		t.Fatalf("got %v\n%s", err, out.String())
+	}
+	if want := "binding: Repository/cloud-native-ref deps-minor: Invalid: class deps-minor: semver-minor is shadow only (M2)\n"; !strings.Contains(out.String(), want) {
+		t.Fatalf("missing %q in:\n%s", want, out.String())
+	}
+	if strings.Contains(out.String(), "ok: ") {
+		t.Fatalf("a refused binding is not ok:\n%s", out.String())
+	}
+	out.Reset()
+	if err := m.run(t.Context(), []string{"config", "validate", "--allow-refused-bindings", "--config", residual, live}); err != nil {
+		t.Fatalf("%v\n%s", err, out.String())
+	}
+	if !strings.Contains(out.String(), "warning: binding: Repository/cloud-native-ref deps-minor: Invalid: ") || !strings.Contains(out.String(), "ok: ") {
+		t.Fatalf("%s", out.String())
+	}
+	// Every binding resolving, nothing is said.
+	out.Reset()
+	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, splitANR(t, nil)}); err != nil || strings.Contains(out.String(), "binding:") {
+		t.Fatalf("%v\n%s", err, out.String())
 	}
 }

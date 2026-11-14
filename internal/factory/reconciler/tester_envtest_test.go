@@ -61,8 +61,8 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	g.r.Now = func() time.Time { return clock }
 	g.r.Cfg.Current().AgentsLogin = agentsApp
 	g.r.Cfg.Current().Defaults.PredictedClass = "scripts"
-	g.r.Cfg.Current().Merge.ContractCheck = contractCheck
-	g.r.Cfg.Current().Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Live: true}
+	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = contractCheck
+	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Live: true}
 	if cfgEdit != nil {
 		cfgEdit(g.r.Cfg.Current())
 	}
@@ -123,7 +123,10 @@ func TestEnvtestTestFirstOffLeavesThePairJourneyUnchanged(t *testing.T) {
 		return fmt.Sprintf("%s %q %s rounds=%d contract=%v runs=%v", tk.Status.Phase, tk.Status.Reason, tk.Status.Verdict,
 			tk.Status.ReviewRounds, tk.Status.Contract, seq)
 	}
-	without := journey(func(c *config.Config) { delete(c.Classes, "scripts"); c.Merge.ContractCheck = "" })
+	without := journey(func(c *config.Config) {
+		delete(c.Repositories[0].Classes, "scripts")
+		c.Repositories[0].Merge.ContractCheck = ""
+	})
 	with := journey(nil) // scripts declares testFirst, and this task is of the review class
 	if without != with || !strings.Contains(with, "AwaitingCI") || strings.Contains(with, "tester") {
 		t.Fatalf("with the keys:    %s\nwithout the keys: %s", with, without)
@@ -210,7 +213,7 @@ func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
 func TestEnvtestRows2bAnd2cDecideBeforeTheHoldouts(t *testing.T) {
 	g, _ := envTesterRig(t, nil, func(c *config.Config) {
 		c.Defaults.Template = "solo"
-		c.Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Shadow: true, HoldoutChecks: []string{"Holdout 🧪"}}
+		c.Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true, Shadow: true, HoldoutChecks: []string{"Holdout 🧪"}}
 	})
 	g.contractAndImplementer(t)
 	if tk := g.implementerOpensThePR(t, 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI {

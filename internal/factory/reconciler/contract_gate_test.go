@@ -32,7 +32,7 @@ func withContractCheck(state string) forge.Checks {
 // one without (TF7).
 func TestRow2bTheContractCheckIsRequiredOnATaskWithAContract(t *testing.T) {
 	cfg := armCfg()
-	cfg.Merge.ContractCheck = contractCheck
+	cfg.Repositories[0].Merge.ContractCheck = contractCheck
 	with, without := armTask("docs-links", "solo", ""), armTask("docs-links", "solo", "")
 	with.Status.Contract = contractOf()
 	missing := green("SUCCESS")
@@ -59,7 +59,7 @@ func TestRow2bTheContractCheckIsRequiredOnATaskWithAContract(t *testing.T) {
 func contractMergeRig(t *testing.T) *rig {
 	t.Helper()
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Merge.ContractCheck = contractCheck
+	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = contractCheck
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 	tk.Status.Contract = contractOf()
@@ -83,14 +83,14 @@ func TestAFixRunNamesARedContractCheck(t *testing.T) {
 
 func TestUnreportedListsThePendingContractCheck(t *testing.T) {
 	cfg := armCfg()
-	cfg.Merge.ContractCheck = contractCheck
+	cfg.Repositories[0].Merge.ContractCheck = contractCheck
 	tk := armTask("docs-links", "solo", "")
 	in := ArmInputs{Checks: green("SUCCESS"), Task: tk, Cfg: cfg}
-	if got := unreported(in, cfg.Classes["docs-links"]); len(got) != 0 {
+	if got := unreported(in, cfg.Repositories[0].Classes["docs-links"]); len(got) != 0 {
 		t.Fatalf("no contract: %v", got)
 	}
 	tk.Status.Contract = contractOf()
-	if got := unreported(in, cfg.Classes["docs-links"]); len(got) != 1 || got[0] != contractCheck {
+	if got := unreported(in, cfg.Repositories[0].Classes["docs-links"]); len(got) != 1 || got[0] != contractCheck {
 		t.Fatalf("with a contract: %v", got)
 	}
 }
@@ -99,7 +99,7 @@ func TestUnreportedListsThePendingContractCheck(t *testing.T) {
 // unread list never passes.
 func TestRow2cAChangedContractFileGoesToAHuman(t *testing.T) {
 	cfg := armCfg()
-	cfg.Merge.ContractCheck = contractCheck
+	cfg.Repositories[0].Merge.ContractCheck = contractCheck
 	with := armTask("docs-links", "solo", "")
 	with.Status.Contract = contractOf()
 	without := armTask("docs-links", "solo", "")

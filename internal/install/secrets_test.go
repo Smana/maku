@@ -141,8 +141,10 @@ func TestRenderedRefs(t *testing.T) {
 		"-f", filepath.Join(charts, "agent-factory/values-demo.yaml"),
 		"--set", "maku.broker.image.tag=" + d, "--set", "maku.runController.image.tag=" + d,
 		"--set", "maku.runController.images.harness.tag=" + d, "--set", "maku.runController.images.bridge.tag=" + d,
-		"--set", "maku-factory.image.tag=" + d, "--set", "demo.model.baseURL=http://m/v1", "--set", "demo.model.name=m",
-		"--set", "demo.model.apiKey=k", "--set", "demo.githubApp.id=1", "--set", "demo.githubApp.privateKey=pem"}
+		"--set", "maku-factory.image.tag=" + d, "--set", "demo.model.apiKey=k", "--set", "demo.githubApp.id=1", "--set", "demo.githubApp.privateKey=pem",
+		// the demo's model gateway (step 7 R4)
+		"--set", "maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local", "--set", "maku-gateway.providers.demo.host=m.example.test",
+		"--set", "maku-gateway.aliases.public.agent-default.model=m", "--set", "maku-gateway.aliases.public.tier-light.model=m"}
 	for name, extra := range map[string][]string{
 		"demo":       nil,
 		"production": {"-f", prod},

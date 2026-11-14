@@ -77,7 +77,7 @@ preflight() {
   Darwin) echo "    macOS is best effort: the demo is proven on Linux with Docker." ;;
   *) die "Linux or macOS only" ;;
   esac
-  for t in docker helm kubectl curl; do command -v "$t" >/dev/null || die "$t is not installed"; done
+  for t in docker helm kubectl curl jq; do command -v "$t" >/dev/null || die "$t is not installed"; done
   docker info >/dev/null 2>&1 || die "the Docker daemon is not reachable"
   docker buildx version >/dev/null 2>&1 || die "docker buildx is not installed (it resolves the images' digests)"
   MAKU_VERSION=${MAKU_VERSION:-}
@@ -300,8 +300,11 @@ cluster() {
       rm -f "$KUBECONFIG"
       case $CLUSTER_KIND in
       k3d)
+        # anonymous-auth: the model gateway's controller reads the apiserver's JWKS anonymously, which
+        # k3s alone turns off (kind and kubeadm leave it on)
         k3d cluster create "$NAME" --image "$K3S_IMAGE" --no-lb --wait \
           --k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0' \
+          --k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0' \
           --kubeconfig-update-default=false --kubeconfig-switch-context=false
         k3d kubeconfig get "$NAME" >"$KUBECONFIG" ;;
       kind) kind create cluster --name "$NAME" --image "$KIND_NODE_IMAGE" --wait 120s --kubeconfig "$KUBECONFIG" ;;
@@ -343,7 +346,13 @@ install_chart() {
   save_answer DEMO_LIVE
   DEMO_SHADOW=true
   [[ $DEMO_LIVE != 1 ]] || DEMO_SHADOW=false
-  export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME
+  # The model gateway's prerequisites (step 7 R4): Gateway API's CRDs and agentgateway's, apart from any
+  # Helm release (docs/gateway.md), and the cluster's issuer, whose keys the gateway checks runs against.
+  kc apply --server-side -f "https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml" >/dev/null
+  kc apply --server-side -f config/agentgateway >/dev/null
+  kc wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/agentgatewaybackends.agentgateway.dev --timeout=120s >/dev/null
+  DEMO_ISSUER=$(kc get --raw /.well-known/openid-configuration | jq -r .issuer) || die "the cluster's ServiceAccount issuer could not be read"
+  export DEMO_SHADOW DEMO_REPO DEMO_LOGIN MODEL_BASE_URL MODEL_NAME DEMO_ISSUER
   demo_render_values "$DEMO_DIR/values.yaml"
   hl dependency build charts/agent-factory >/dev/null
   # The CRD chart first. A demo cluster from before it holds the CRDs from the subcharts' crds/:

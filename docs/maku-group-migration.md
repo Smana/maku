@@ -1,5 +1,10 @@
 # Moving to the maku.ogenki.io group (v0.31.0)
 
+> **History.** `maku-broker migrate-group` is removed (v4 step 8, R6). An install still serving
+> `agents.ogenki.io` first upgrades to the last v0.4x release that ships the command, runs the move
+> below with that release's `maku-broker`, then upgrades on
+> ([upgrading](upgrading.md#the-group-migration)).
+
 v0.31.0 serves `Room`, `Task` and the quickstart's `AgentRun` under `maku.ogenki.io` only. Kubernetes
 cannot serve one kind under two groups, so every live `Room` and `Task` is **copied** to the new group
 by `maku-broker migrate-group`, once, in a quiet window. A room's log stays in Postgres under the

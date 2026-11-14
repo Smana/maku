@@ -4,9 +4,11 @@
 #            release's harness and bridge, a dummy App),
 #            in three network legs (install.sh's NETPOL): none, the demo as shipped; kubernetes, the
 #            NetworkPolicy mode on kube-router, whose preflight passes; unenforced, the same mode on a
-#            k3s with no NetworkPolicy controller, whose preflight refuses runs. A fourth leg, gateway
-#            (install.sh's GATEWAY=1), layers values-demo-gateway.yaml: a run in model.mode gateway
-#            reaches its model through agentgateway with its own token, and agents holds no provider key;
+#            k3s with no NetworkPolicy controller, whose preflight refuses runs. Every leg runs the demo
+#            with its model gateway (step 7 R4: values-demo.yaml's model.mode gateway, agentgateway and
+#            its CRDs, the probe's echo as the provider). A fourth leg, gateway (install.sh's GATEWAY=1),
+#            adds its proofs: a run reaches its model through agentgateway with its own token, and agents
+#            holds no provider key;
 #            with METERING=1, its tokens reach a test-only VictoriaMetrics under agentgateway's names and
 #            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
 #            EXTERNAL_DB=1), brings its own postgres:16 outside the chart, bootstrapped with
@@ -14,7 +16,8 @@
 #            The kubernetes and unenforced legs also run the install's preflight (PREFLIGHT=1, v4 D24).
 #   usd:     on the nightly schedule, `task chart:usd:k3d`: the factory-level USD proof, a gateway-mode
 #            run that must settle in the factory's ledger at agentgateway's own cost for it. No secret.
-#   nightly: `task demo` headless on kind with a real, capped model and a test GitHub App, then the
+#   nightly: `task demo` headless on kind with a real, capped model behind the demo's model gateway
+#            (DEMO_MODEL_BASE_URL becomes its provider) and a test GitHub App, then the
 #            seeded docs-links issue is labelled and the job waits up to 30 minutes for a pull request
 #            by <slug>[bot] bearing a `maku/merge-gate` commit status. `task demo:down` always runs.
 #            The nightly installs this checkout's chart with the LATEST RELEASE's images (up.sh has no

@@ -64,6 +64,7 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- if and (not $sb.class) $sb.allowUnsandboxed -}}{{- $codes = append $codes "unsafe_allow_runc" -}}{{- end -}}
 {{- if eq (include "ap.netMode" .) "none" -}}{{- $codes = append $codes "network_policy_none" -}}{{- end -}}
 {{- if .Values.runController.unsafeSharedGitToken -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
+{{- if not (include "ap.runModelGateway" . | fromJson) -}}{{- $codes = append $codes "model_key_in_sandbox" -}}{{- end -}}
 {{- end -}}
 {{- $codes | toJson -}}
 {{- end -}}
@@ -315,13 +316,13 @@ are set, and a render error naming both keys when only one is. Mutates block. */
 {{- end -}}
 {{- end -}}
 
-{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (the default),
+{{/* The run-controller's model gateway (v4 step 4, GW3; ap.modelGateway is the broker's), as JSON: {} in model.mode secret (demo-only since v4 step 8, R4),
 else the resolved gateway: url, ports, audiencePrefix, aliases. Read it with
 `include "ap.runModelGateway" . | fromJson`. An empty service is maku-gateway's default name, model-gateway,
 and an empty namespace the release's, which is where the umbrella runs it. */}}
 {{- define "ap.runModelGateway" -}}
 {{- $m := .Values.runController.model | default dict -}}
-{{- $mode := $m.mode | default "secret" -}}
+{{- $mode := $m.mode | default "gateway" -}}
 {{- if eq $mode "gateway" -}}
 {{- $g := $m.gateway | default dict -}}
 {{- $svc := $g.service | default "model-gateway" -}}
@@ -341,6 +342,9 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
   "audiencePrefix" $prefix
   "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list)) | toJson -}}
 {{- else if eq $mode "secret" -}}
+{{- if not .Values.demoValues -}}
+{{- fail "runController.model.mode secret is demo-only (v4 D7): the provider key would sit in the sandbox. Set model.mode gateway with model.gateway.aliases, or demoValues: true for a demo (values-quickstart.yaml, the umbrella's values-demo.yaml); docs/upgrading.md#the-gateway-is-the-model-path" -}}
+{{- end -}}
 {}
 {{- else -}}
 {{- fail (printf "runController.model.mode %q must be secret or gateway" $mode) -}}
@@ -454,4 +458,64 @@ spec:
   volumes:
     - name: config
       configMap: {name: {{ .Release.Name }}-preflight}
+{{- end -}}
+
+{{/*
+broker.webhooks (plan v4 step 6, EX9), as JSON {"config": [...], "mounts": [...], "egress": [...]}:
+- config: each entry as the broker reads it, without the chart's keys (existingSecret, key,
+  networkPolicy), its secretFile filled from existingSecret's mount when unset (a set one wins);
+- mounts: {name, secret} per entry with existingSecret, at /etc/room-broker/webhooks/<name>;
+- egress: {name, port, to, host, internet} per entry, for the policies. A cluster entry's peers are
+  networkPolicy.to, or the Slack App's pods when its URL is factory-slack-app's; none fails the render
+  in a policy mode. An internet entry opens 443 (or its URL's port) to its host (cilium) or to public
+  addresses (kubernetes).
+*/}}
+{{- define "ap.webhooks" -}}
+{{- $config := list -}}
+{{- $mounts := list -}}
+{{- $egress := list -}}
+{{- $mode := include "ap.netMode" . -}}
+{{- range $w := .Values.broker.webhooks | default list -}}
+{{- $np := $w.networkPolicy | default dict -}}
+{{- $entry := omit $w "existingSecret" "key" "networkPolicy" -}}
+{{- if and $w.existingSecret (not $w.secretFile) -}}
+{{- $_ := set $entry "secretFile" (printf "/etc/room-broker/webhooks/%s/%s" $w.name ($w.key | default "signing-key")) -}}
+{{- end -}}
+{{- $config = append $config $entry -}}
+{{- with $w.existingSecret -}}
+{{- /* A volume name is a DNS label: webhook-<name>, cut with a hash suffix past 63. */ -}}
+{{- $vol := printf "webhook-%s" $w.name -}}
+{{- if gt (len $vol) 63 }}{{ $vol = printf "%s-%s" (trunc 54 $vol | trimSuffix "-") (trunc 8 (sha256sum $w.name)) }}{{ end -}}
+{{- $mounts = append $mounts (dict "name" $w.name "volume" $vol "secret" .) -}}
+{{- end -}}
+{{- $u := urlParse ($w.url | default "") -}}
+{{- $port := ternary "443" "80" (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host }}{{ end -}}
+{{- with $np.port }}{{ $port = toString . }}{{ end -}}
+{{- $to := $np.to | default list -}}
+{{- if eq $w.network "cluster" -}}
+{{- $parts := splitList "." $u.hostname -}}
+{{- if and (not $to) (eq (first $parts) "factory-slack-app") -}}
+{{- $ns := $.Release.Namespace -}}
+{{- if gt (len $parts) 1 }}{{ $ns = index $parts 1 }}{{ end -}}
+{{- if eq $mode "kubernetes" -}}
+{{- $to = list (dict "namespaceSelector" (dict "matchLabels" (dict "kubernetes.io/metadata.name" $ns)) "podSelector" (dict "matchLabels" (dict "app.kubernetes.io/name" "factory-slack-app"))) -}}
+{{- else -}}
+{{- $to = list (dict "matchLabels" (dict "io.kubernetes.pod.namespace" $ns "app.kubernetes.io/name" "factory-slack-app")) -}}
+{{- end -}}
+{{- end -}}
+{{- if eq $mode "cilium" -}}
+{{- range $to -}}
+{{- if or (hasKey . "podSelector") (hasKey . "namespaceSelector") (hasKey . "ipBlock") -}}
+{{- fail (printf "broker.webhooks[%s].networkPolicy.to holds a NetworkPolicy peer (podSelector, namespaceSelector, ipBlock): networkPolicies.mode cilium takes endpoint selectors (matchLabels with io.kubernetes.pod.namespace) or whole Cilium peers" $w.name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if and (ne $mode "none") (not $to) -}}
+{{- fail (printf "broker.webhooks[%s].networkPolicy.to is empty: name the subscriber's pods; networkPolicies.mode %s denies the broker's egress to %s but to these peers" $w.name $mode $w.url) -}}
+{{- end -}}
+{{- end -}}
+{{- $egress = append $egress (dict "name" $w.name "port" $port "to" $to "host" $u.hostname "internet" (eq $w.network "internet")) -}}
+{{- end -}}
+{{- dict "config" $config "mounts" $mounts "egress" $egress | toJson -}}
 {{- end -}}

@@ -293,7 +293,7 @@ func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, l
 	hc := httpx.New(slackTimeout, nil)
 	tokens := &slackapp.Tokens{Fetch: func(ctx context.Context) (*oauth2.Token, error) { return slackToken(ctx, hc, cfg) }}
 	return &slackapp.App{
-		Slack:    &slackapp.SlackClient{Token: func() string { return fileValue(cfg.BotTokenFile) }, HC: hc, Logger: log},
+		Slack:    &slackapp.SlackClient{BaseURL: cfg.APIBaseURL, Token: func() string { return fileValue(cfg.BotTokenFile) }, HC: hc, Logger: log},
 		Broker:   slackapp.Broker{URL: cfg.BrokerURL, Tokens: tokens, HC: hc},
 		Threads:  slackapp.ConfigMapThreads{C: cl, Namespace: cfg.Namespace, Now: time.Now, Logger: log},
 		Verifier: slackapp.Verifier{Secret: func() string { return fileValue(cfg.SigningSecretFile) }, Now: time.Now},
@@ -305,7 +305,7 @@ func newSlackApp(cfg slackapp.Config, cl client.Client, rec slackapp.Recorder, l
 	}
 }
 
-// slackRecorder is factory_slack_requests_total{route, outcome}, plus the App's two proposal families
+// slackRecorder is maku_slack_app_requests_total{route, outcome}, plus the App's two proposal families
 // (CD7's maku_slack_proposal_updates_total{action}, CD25's maku_slack_thread_answers_total{question}),
 // whose names, serving and closed label vocabularies metrics owns. The App holds those two and not a
 // metrics.Set: the set is the broker's, and its room gauges are not the App's to serve.
@@ -315,10 +315,10 @@ type slackRecorder struct {
 }
 
 func newSlackRecorder(exp *metrics.Exporter) (*slackRecorder, error) {
-	c, err := exp.Meter().Int64Counter("factory_slack_requests_total",
+	c, err := exp.Meter().Int64Counter("slack_app_requests_total", // served as maku_slack_app_requests_total
 		metric.WithDescription("Requests the Slack App handled, by route (events, webhooks) and outcome."))
 	if err != nil {
-		return nil, fmt.Errorf("metrics: factory_slack_requests_total: %w", err)
+		return nil, fmt.Errorf("metrics: slack_app_requests_total: %w", err)
 	}
 	proposals, err := metrics.NewSlackProposals(exp.Meter())
 	if err != nil {

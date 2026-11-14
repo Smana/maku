@@ -14,7 +14,7 @@ img=(--set maku.broker.image.tag=$digest --set maku.runController.image.tag=$dig
 secrets=(--set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m1 --set demo.model.apiKey=k1
          --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1)
 # The identity values (the broker in preset generic, its ids by Secret) with the front door on.
-wp=("${img[@]}" -f values-demo.yaml "${secrets[@]}" -f tests/identity-values.yaml
+wp=("${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}" -f tests/identity-values.yaml
     --set webProxy.enabled=true --set webProxy.existingSecret=rooms-proxy --set maku.broker.webProxy=true
     --set maku.networkPolicies.mode=kubernetes)
 fail=0
@@ -41,7 +41,7 @@ no_arg() { ! grep -qE -- "$1" <<<"$(args)" || { echo "FAIL: oauth2-proxy has $1 
 env_of() { yq ea -r "select(.kind == \"Deployment\" and .metadata.name == \"rooms-web-proxy\") | .spec.template.spec.containers[0].env[] | select(.name == \"$1\") | $2" - <<<"$out"; }
 
 # off by default: nothing of the front door renders, and the broker opens :8080 to nobody
-render "${img[@]}" -f values-demo.yaml "${secrets[@]}"
+render "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}"
 ynone 'select(.metadata.name == "rooms-web-proxy") | .kind' 'webProxy off renders a rooms-web-proxy object'
 
 # generic (the identity values): the scopes, the groups, the derived arguments

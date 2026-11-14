@@ -896,9 +896,10 @@ type Config struct {
 
 // The codes of Install.Unsafe: the chart's unsafe settings (v4 D18, plan PR9), a bounded set.
 const (
-	UnsafeAllowRunc         = "unsafe_allow_runc"   // runs have no sandbox RuntimeClass
-	UnsafeNetworkPolicyNone = "network_policy_none" // nothing confines a run's network
-	UnsafeSharedGitToken    = "shared_git_token"    // every role shares one write token
+	UnsafeAllowRunc         = "unsafe_allow_runc"    // runs have no sandbox RuntimeClass
+	UnsafeNetworkPolicyNone = "network_policy_none"  // nothing confines a run's network
+	UnsafeSharedGitToken    = "shared_git_token"     // every role shares one write token
+	UnsafeModelKeyInSandbox = "model_key_in_sandbox" // model.mode secret: the provider key is in every run (v4 step 8, R4)
 
 	// UnsafePrivateCodeUnacknowledged is the factory's code, never the chart's: a served repository
 	// is private code without spec.privateCode.acknowledged (v4 D3). The broker reads it from the
@@ -917,7 +918,7 @@ type Install struct {
 
 func (i Install) validate() []error {
 	var errs []error
-	known := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken}
+	known := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken, UnsafeModelKeyInSandbox}
 	for n, code := range i.Unsafe {
 		switch {
 		case !slices.Contains(known, code):

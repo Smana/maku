@@ -62,9 +62,12 @@ type Key struct {
 // Seam is one Secret an install provides: its id, who reads it and how, the chart value that
 // names it and its default name, and its keys.
 type Seam struct {
-	ID        string    `json:"id"`
-	Component string    `json:"component"`
-	Chart     string    `json:"chart"`           // the chart whose values name it
+	ID        string `json:"id"`
+	Component string `json:"component"`
+	Chart     string `json:"chart"` // the chart whose values name it
+	// ValuesKey is the chart's key in the umbrella's values when its alias differs (maku-slack is
+	// slack); "" is Chart.
+	ValuesKey string    `json:"valuesKey,omitempty"`
 	Value     string    `json:"value"`           // its values path in that chart; "" is a fixed name
 	Alias     string    `json:"alias,omitempty"` // an older values path, read when Value is empty
 	Default   string    `json:"default"`         // the name when the values set none; "" is none
@@ -92,6 +95,14 @@ var (
 	caCrt     = []Key{{Name: "ca.crt", Required: true}}
 	githubApp = []Key{{Name: "app_id", Required: true}, {Name: "private_key", Required: true}}
 )
+
+// UmbrellaKey is the seam's chart's key in the umbrella's values.
+func (s Seam) UmbrellaKey() string {
+	if s.ValuesKey != "" {
+		return s.ValuesKey
+	}
+	return s.Chart
+}
 
 // Seams is every Secret the charts and components read, in docs order.
 var Seams = []Seam{
@@ -157,6 +168,21 @@ var Seams = []Seam{
 		Keys: caCrt, ReadAs: File, MountPath: "/etc/agent-factory/openbao-ca", Generated: GeneratedUmbrella, Doc: "The CA of the broker's pair (`config.broker.caFile`)"},
 	{ID: "factoryAPITLS", Component: "agent-factory", Chart: "maku-factory", Value: "api.tls.secretName", Namespace: Release, Keys: tlsPair,
 		ReadAs: File, MountPath: "/etc/agent-factory-api-tls", Optional: true, Generated: GeneratedCertManager, Doc: "The run API's serving pair (`api.tls`), cert-manager's when `issuerRef` is set"},
+	{ID: "webProxy", Component: "rooms-web-proxy", Chart: "agent-factory", Value: "webProxy.existingSecret", Namespace: Release,
+		Keys: []Key{{Name: "client-id", Required: true, From: "webProxy.keys.clientID", Doc: "the web client"},
+			{Name: "client-secret", Required: true, From: "webProxy.keys.clientSecret"},
+			{Name: "cookie-secret", Required: true, From: "webProxy.keys.cookieSecret", Doc: "32 random bytes, base64url"}},
+		ReadAs: Env, Optional: true, Doc: "The web front door's client and cookie secret (`webProxy.enabled`)"},
+	{ID: "slackApp", Component: "factory-slack-app", Chart: "maku-slack", ValuesKey: "slack", Value: "slackSecret", Default: "factory-slack-app",
+		Namespace: Release, Keys: []Key{{Name: "signing-secret", Required: true}, {Name: "bot-token", Required: true}, {Name: "bot-user-id", Required: true}},
+		ReadAs: File, MountPath: "/etc/factory-slack-app/slack", Optional: true, Doc: "The Slack App's signing secret and bot (`slack.enabled`)"},
+	{ID: "slackPrincipal", Component: "factory-slack-app", Chart: "maku-slack", ValuesKey: "slack", Value: "principalSecret", Default: "factory-slack-principal",
+		Namespace: Release, Keys: []Key{{Name: "client-id", Required: true}, {Name: "client-secret", Required: true}, {Name: "project-id", Doc: "preset zitadel"}},
+		ReadAs: File, MountPath: "/etc/factory-slack-app/principal", Optional: true, Doc: "The Slack App's client credentials at the IdP: its sponsored principal"},
+	{ID: "slackWebhook", Component: "factory-slack-app, room-broker", Chart: "maku-slack", ValuesKey: "slack", Value: "webhookSecret",
+		Default: "room-broker-webhook-slack-app", Namespace: Release, Keys: []Key{{Name: "signing-key", Required: true}},
+		ReadAs: File, MountPath: "/etc/factory-slack-app/webhook", Optional: true,
+		Doc: "The key the broker signs the App's webhooks with; the broker mounts it too (`maku.broker.webhooks[slack-app].existingSecret`)"},
 	{ID: "gatewayProvider", Component: "maku-gateway", Chart: "maku-gateway", Value: "providers", Namespace: Release,
 		Keys: []Key{{Name: "apiKey", Required: true, Doc: "renamed by the provider's `key`"}}, ReadAs: API, Optional: true, Instances: true,
 		Doc: "Each model provider's key: `providers.<name>.existingSecret`; its ExternalSecret id is `gatewayProvider.<name>`"},
@@ -245,7 +271,7 @@ func Names(umbrella map[string]any) map[string]string {
 	for _, s := range Seams {
 		vals := umbrella
 		if s.Chart != "agent-factory" {
-			vals, _ = umbrella[s.Chart].(map[string]any)
+			vals, _ = umbrella[s.UmbrellaKey()].(map[string]any)
 		}
 		if s.Instances {
 			entries, _ := dig(vals, s.Value).(map[string]any)

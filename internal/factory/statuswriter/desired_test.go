@@ -251,7 +251,9 @@ func TestMergePolicyFileConditions(t *testing.T) {
 		{"unreadable", func(string) (mergepolicy.Snapshot, bool) {
 			return mergepolicy.Snapshot{Err: errors.New("404"), HasClasses: true}, true
 		}, metav1.ConditionFalse, metav1.ConditionFalse, "Invalid", "FileInvalid", "", "404"},
-		{"no classes", func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }, metav1.ConditionFalse, metav1.ConditionFalse, "Invalid", "FileInvalid", "", "no classes"},
+		// A fence-only file (factory: alone) under central authority is what a central-bound
+		// repository's file is: the central classes decide, so it is valid and nothing diverges.
+		{"fence only, central", func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }, metav1.ConditionTrue, metav1.ConditionTrue, "FenceOnly", "FenceOnly", "", "the central classes decide"},
 		{"diverges", func(string) (mergepolicy.Snapshot, bool) {
 			return mergepolicy.Snapshot{HasClasses: true, Divergences: []string{"d1", "d2", "d3", "d4", "d5", "d6", "d7"}}, true
 		}, metav1.ConditionTrue, metav1.ConditionFalse, "Valid", "Diverges", "d5", ""},
@@ -281,6 +283,19 @@ func TestMergePolicyFileConditions(t *testing.T) {
 			}
 		})
 	}
+}
+
+// Under repository authority the file is the policy, so a file without classes is still invalid.
+func TestFenceOnlyFileUnderRepositoryAuthority(t *testing.T) {
+	c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
+	c.PolicyManagement.RepositoryAuthority = true
+	in := policyIn(c)
+	in.Snapshot = func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }
+	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
+	if v := want(t, got.Conditions, "RepositoryFileValid", metav1.ConditionFalse, "Invalid"); !strings.Contains(v.Message, "no classes") {
+		t.Errorf("message %q", v.Message)
+	}
+	want(t, got.Conditions, "InSync", metav1.ConditionFalse, "FileInvalid")
 }
 
 func TestMergePolicyRefusedStillComputed(t *testing.T) {

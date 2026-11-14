@@ -102,7 +102,8 @@ func TestStartSlackApp(t *testing.T) {
 	if st, _ := httpDo(t, http.MethodPost, run.Events, "/slack/events"); st != http.StatusUnauthorized {
 		t.Fatalf("unsigned event: %d", st)
 	}
-	if _, body := httpDo(t, http.MethodGet, run.Ops, "/metrics"); !strings.Contains(body, `factory_slack_requests_total{outcome="bad_signature",route="events"} 1`) {
+	if _, body := httpDo(t, http.MethodGet, run.Ops, "/metrics"); !strings.Contains(body, `maku_slack_app_requests_total{outcome="bad_signature",route="events"} 1`) ||
+		strings.Contains(body, "factory_slack_") {
 		t.Fatalf("metrics: %s", body)
 	} else if strings.Contains(body, "maku_rooms_") || strings.Contains(body, "maku_intake_") {
 		// The App's recorder holds its own two proposal families, not a metrics.Set: the broker's room

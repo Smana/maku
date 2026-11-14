@@ -1,6 +1,16 @@
-# The laptop demo: kind or k3d, no Cilium, no cert-manager, no CNPG, no OIDC. Install the CRD chart
-# first, then:
-#   helm install af charts/agent-factory -n maku --create-namespace -f charts/agent-factory/values-demo.yaml ...
+# The laptop demo: kind or k3d, no Cilium, no cert-manager, no CNPG, no OIDC. Runs reach their model
+# through the model gateway (step 7 R4; docs/gateway.md): no provider key enters the runs namespace.
+# Install the CRD chart, Gateway API's and agentgateway's CRDs first, then:
+#   helm install af-crds charts/agent-factory-crds -n maku --create-namespace
+#   kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.2.1/standard-install.yaml
+#   kubectl apply --server-side -f config/agentgateway
+#   helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo.yaml \
+#     --set demo.model.apiKey=... --set demo.githubApp.id=... --set-file demo.githubApp.privateKey=... \
+#     --set maku-gateway.identity.issuer=$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer) \
+#     --set maku-gateway.providers.demo.host=api.example.com \
+#     --set maku-gateway.aliases.public.agent-default.model=<model> --set maku-gateway.aliases.public.tier-light.model=<judge model>
+# The apiserver must admit anonymous requests for the gateway's JWKS fetch: kind and kubeadm do; k3s
+# needs --kube-apiserver-arg=anonymous-auth=true.
 # These were the chart's defaults until v0.4x. They live here because Helm deep-merges maps: a
 # production values file layered on demo defaults would inherit demo: true, factoryInsecure,
 # allowUnsandboxed and the rest. values.yaml is the production-safe skeleton.
@@ -10,11 +20,13 @@ profile: demo
 # maku-factory: values.
 demoValues: true
 
-# The two Secrets the demo needs, rendered by this chart unless an existing Secret is named. Their
-# names are the subcharts' (agent-model, agent-factory-github): existingSecret must equal that name.
+# The two Secrets the demo needs, rendered by this chart unless an existing Secret is named.
 demo:
-  # agent-model in the runs namespace: keys base_url, model, api_key, and judge_model when
-  # judgeName is set (the completion judge's model on the same endpoint; empty: name).
+  # The provider's key. In model.mode gateway (the demo's), only apiKey is read: it becomes the
+  # provider's Secret demo-model in the release namespace, which maku-gateway.providers.demo names, and
+  # the provider's URL and models are maku-gateway's values below. The other keys are model.mode
+  # secret's (agent-model in the runs namespace: base_url, model, api_key, judge_model), refused in
+  # gateway mode.
   model:
     existingSecret: ""
     baseURL: ""
@@ -30,6 +42,8 @@ demo:
 
 maku:
   enabled: true
+  # The maku chart's own demo marker (v4 step 8, R4): it admits model.mode secret below.
+  demoValues: true
   # The cluster has no Cilium: nothing confines the network. On a CNI that enforces NetworkPolicy
   # (k3s, kind from v0.24), --set maku.networkPolicies.mode=kubernetes confines the runs with plain
   # NetworkPolicies and the egress proxy (v4 D6).
@@ -67,6 +81,14 @@ maku:
     tls:
       issuerRef: {name: ""}
   runController:
+    # Runs call this release's model-gateway with their own projected token (D7). model.mode secret,
+    # the provider key in the sandbox, stays a demo-only switch (maku.demoValues admits it).
+    model:
+      mode: gateway
+      gateway:
+        # service and namespace empty: this release's model-gateway. The demo's tiers all name
+        # agent-default; its loops' judge is tier-light.
+        aliases: {public: [agent-default, tier-light], internal: []}
     runtimeClassName: ""
     allowUnsandboxed: true
     createRuntimeClass: false
@@ -106,10 +128,13 @@ maku-factory:
       caFile: /etc/agent-factory/openbao-ca/ca.crt
       tokenFile: /var/run/secrets/agents/rooms/token
     # The same portable kind as maku.runs.
+    # The runs carry a gateway identity, so a meter can price them (GW10). The demo has no meter: set
+    # maku-factory.config.meter (url, query, throttle.promQuery and prices) to price runs.
     runs:
       group: maku.ogenki.io
       namespace: agents
       namePrefix: run-
+      gatewayIdentity: true
     # One App: apps.merger.mode factory adds the merger's files, the factory's own.
     github:
       appIDFile: /etc/agent-factory-github/app_id
@@ -164,6 +189,33 @@ maku-factory:
     caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
     api:
       listen: ":8082"
+
+# The model gateway (D7; docs/gateway.md): agentgateway's controller and maku-gateway, in the release
+# namespace, with the demo's one OpenAI-compatible provider.
+agentgateway:
+  enabled: true
+maku-gateway:
+  enabled: true
+  replicas: 1
+  identity:
+    issuer: "" # this cluster's ServiceAccount issuer: required
+    # kind and k3d's issuer is not reachable from outside: the gateway reads the apiserver's JWKS, which
+    # its controller fetches anonymously (public keys only).
+    jwks: {source: apiserver, allowAnonymousDiscovery: true}
+  providers:
+    # Its key is demo-model, which the umbrella renders from demo.model.apiKey.
+    demo:
+      preset: custom
+      existingSecret: demo-model
+      key: apiKey
+      host: "" # e.g. api.example.com
+      port: 443
+      path: /v1/chat/completions
+      tls: true
+  aliases:
+    public:
+      agent-default: {provider: demo, model: ""}
+      tier-light: {provider: demo, model: ""}
 
 tls:
   # Validity of the generated CA and broker certificate, in days. Both are kept across upgrades.

@@ -1,0 +1,42 @@
+# Test-only values for tests/render.sh (v4 step 6, Task 19): the smallest production render, every
+# seam of maku and maku-factory named and nothing exposed. The images' digests come from the script.
+profile: production
+maku:
+  enabled: true
+  broker:
+    publicURL: https://rooms.example.test
+    human:
+      mode: oidc
+      preset: generic
+      tokenUse: id
+      issuer: https://idp.example.test
+      rolesClaim: groups
+      origin: https://rooms.example.test
+      groups: {admin: agents-admin, member: agents-member}
+    oidc: {existingSecret: rooms-oidc}
+    runIssuer:
+      issuer: https://kubernetes.default.svc.cluster.local
+      jwksURL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
+    database:
+      brokerSecret: rooms-broker-dsn
+      ownerSecret: rooms-owner-dsn
+      retentionSecret: rooms-retention-dsn
+  sandbox:
+    runtimeClassName: gvisor
+  runController:
+    model:
+      gateway:
+        service: model-gateway
+        namespace: ai
+        aliases: {public: [agent-default]}
+maku-factory:
+  enabled: true
+  config:
+    api:
+      humanIssuer: https://idp.example.test
+      preset: generic
+      tokenUse: id
+      rolesClaim: groups
+      groups: {admin: agents-admin, member: agents-member}
+    runs:
+      gatewayIdentity: true

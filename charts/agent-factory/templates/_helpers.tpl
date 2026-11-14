@@ -10,20 +10,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "afumbrella.caSecret" -}}{{ .Values.maku.broker.tls.caSecretName | default "room-broker-ca" }}{{- end }}
 {{- define "afumbrella.factoryCASecret" -}}{{ index .Values "maku-factory" "brokerCASecret" | default "openbao-ca" }}{{- end }}
 
-{{/* The profile gate, included first by every umbrella template (the skeleton values hold no tls: or networkPolicies:, and postgres: only its enabled: false). The demo is the only profile until stage 2 adds production's values, and it needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo` alone would render half a demo. */}}
+{{/* The profile gate, included first by every umbrella template, and alone by templates/gate/renders/before/subcharts.yaml, which
+Helm renders before any subchart's template (it is deeper). The skeleton values hold no tls: or networkPolicies:, and postgres: only its enabled: false.
+  - demo needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo`
+    alone would render half a demo.
+  - production (v4 EX16) checks the seams of each enabled component, and fails once, naming every missing seam (afumbrella.production). */}}
 {{- define "afumbrella.profile" -}}
 {{- $profile := .Values.profile | default "" -}}
-{{- /* v4 D9: the bundled single-replica Postgres has no backup, no HA and no TLS. */ -}}
-{{- if and (dig "enabled" false (.Values.postgres | default dict)) (ne $profile "demo") -}}
+{{- /* v4 D9: the bundled single-replica Postgres has no backup, no HA and no TLS. Production lists it with its other seams. */ -}}
+{{- if and (dig "enabled" false (.Values.postgres | default dict)) (ne $profile "demo") (ne $profile "production") -}}
 {{- fail "the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
 {{- end -}}
 {{- if eq $profile "production" -}}
-{{- fail "profile production: its seams arrive in rollout steps 2 to 6 (docs/superpowers/specs/2026-11-12-v4-production-path-design.md); use -f values-demo.yaml for the demo" -}}
-{{- end -}}
-{{- if ne $profile "demo" -}}
-{{- fail (printf "profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6); got %q" $profile) -}}
-{{- end -}}
-{{- if not .Values.demoValues -}}
+{{- include "afumbrella.production" . -}}
+{{- else if ne $profile "demo" -}}
+{{- fail (printf "profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production); got %q" $profile) -}}
+{{- else if not .Values.demoValues -}}
 {{- fail "profile demo needs -f values-demo.yaml (the demo's defaults moved there in v0.4x)" -}}
 {{- end -}}
 {{- $d := .Values.clusterDomain -}}
@@ -51,6 +53,105 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- include "afumbrella.expose" . -}}
 {{- include "afumbrella.webProxy" . -}}
 {{- include "afumbrella.preflight" . -}}
+{{- include "afumbrella.slack" . -}}
+{{- include "afumbrella.factoryPolicy" . -}}
+{{- end }}
+
+{{/* profile production (v4 EX16, D25): a gate per enabled component. It refuses the demo's own values
+and lists every missing seam of every enabled component in one failure, a line each with its key and
+its doc. The agreements the umbrella checks for both profiles (identity, expose, webProxy, slack) are
+listed with them. maku.enabled false with maku-factory.enabled true is a valid render: an install adopts
+the umbrella one component at a time. networkPolicies.mode none and factoryInsecure stay allowed, on the
+install banner (PR9); sandbox.unsafeAllowRunc does not (D18: the demo and kind only). The Slack App's
+three Secret names are its schema's (minLength 1). */}}
+{{- define "afumbrella.production" -}}
+{{- $errs := list -}}
+{{- $up := "docs/upgrading.md#from-the-demo-to-production" -}}
+{{- if .Values.demoValues -}}
+{{- $errs = append $errs (printf "demoValues: values-demo.yaml is the demo's; a production install starts from the skeleton (%s)" $up) -}}
+{{- end -}}
+{{- if dig "enabled" false (.Values.postgres | default dict) -}}
+{{- $errs = append $errs "postgres.enabled: the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
+{{- end -}}
+{{- if dig "plain" false (.Values.networkPolicies | default dict) -}}
+{{- $errs = append $errs (printf "networkPolicies.plain: the demo's ingress-only policy; production uses networkPolicies.factory, in maku.networkPolicies' mode (%s)" $up) -}}
+{{- end -}}
+{{- $pin := "^[A-Za-z0-9_.-]+@sha256:[0-9a-f]+$" -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- if $maku.enabled -}}
+{{- $b := $maku.broker | default dict -}}
+{{- $h := $b.human | default dict -}}
+{{- $rc := $maku.runController | default dict -}}
+{{- if $maku.demoValues -}}
+{{- $errs = append $errs (printf "maku.demoValues: the maku chart's demo marker, which admits runController.model.mode secret (the provider key in the sandbox, D7) (%s)" $up) -}}
+{{- end -}}
+{{- if not (dig "e2e" "unpinnedImages" false $maku) -}}
+{{- $images := list (list "maku.broker.image.tag" (dig "image" "tag" "" $b)) -}}
+{{- if ne (toString $rc.enabled) "false" -}}
+{{- $images = concat $images (list (list "maku.runController.image.tag" (dig "image" "tag" "" $rc)) (list "maku.runController.images.harness.tag" (dig "images" "harness" "tag" "" $rc)) (list "maku.runController.images.bridge.tag" (dig "images" "bridge" "tag" "" $rc))) -}}
+{{- end -}}
+{{- range $images -}}
+{{- if not (regexMatch $pin (toString (index . 1))) -}}
+{{- $errs = append $errs (printf "%s: <version>@sha256:<digest>, never a bare tag (got %q; docs/security.md#supply-chain)" (index . 0) (index . 1)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if eq ($h.mode | default "oidc") "local" -}}
+{{- $errs = append $errs "maku.broker.human.mode: oidc (got local, one loopback user behind a port-forward; docs/identity.md)" -}}
+{{- else if not $h.issuer -}}
+{{- $errs = append $errs "maku.broker.human.issuer: the OIDC issuer humans sign in at (docs/identity.md#the-keys)" -}}
+{{- end -}}
+{{- if and (eq (dig "runIssuer" "mode" "jwks" $b) "jwks") (not (dig "runIssuer" "issuer" "" $b)) -}}
+{{- $errs = append $errs "maku.broker.runIssuer.issuer: the cluster's ServiceAccount issuer the runs' tokens are verified against, or runIssuer.mode tokenreview (charts/maku/README.md)" -}}
+{{- end -}}
+{{- if not (dig "database" "brokerSecret" "" $b) -}}
+{{- $errs = append $errs "maku.broker.database.brokerSecret: the broker's DSN Secret, rooms_broker (docs/database.md)" -}}
+{{- end -}}
+{{- if not (hasPrefix "https://" ($b.publicURL | default "")) -}}
+{{- $errs = append $errs (printf "maku.broker.publicURL: the https URL humans reach the rooms at (got %q; docs/identity.md#the-keys)" ($b.publicURL | default "")) -}}
+{{- end -}}
+{{- if ne (toString $rc.enabled) "false" -}}
+{{- if eq (dig "model" "mode" "gateway" $rc) "secret" -}}
+{{- $errs = append $errs "maku.runController.model.mode: secret is demo-only (D7): the provider key would sit in the sandbox; set gateway, with maku-gateway or an external gateway (docs/upgrading.md#the-gateway-is-the-model-path)" -}}
+{{- end -}}
+{{- $sb := $maku.sandbox | default dict -}}
+{{- if $sb.unsafeAllowRunc -}}
+{{- $errs = append $errs "maku.sandbox.unsafeAllowRunc: runs on the node's own runtime are for the demo and kind only (D18); name the sandbox in maku.sandbox.runtimeClassName (docs/security.md#the-run-pods-admission)" -}}
+{{- else if not $sb.runtimeClassName -}}
+{{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/security.md#the-run-pods-admission)" -}}
+{{- end -}}
+{{- if $rc.allowUnsandboxed -}}
+{{- $errs = append $errs "maku.runController.allowUnsandboxed: runs without a sandbox are for the demo and kind only (D18; docs/security.md#the-run-pods-admission)" -}}
+{{- end -}}
+{{- if and (eq ($rc.gitTokens | default "shared") "perRun") (not (dig "runTokens" "perRun" false (index .Values "maku-factory" | default dict))) -}}
+{{- $errs = append $errs "maku-factory.runTokens.perRun: maku.runController.gitTokens perRun mounts each run's token Secret, which the factory writes (docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $f := index .Values "maku-factory" | default dict -}}
+{{- if $f.enabled -}}
+{{- if not (dig "e2e" "unpinnedImages" false $f) -}}
+{{- $t := dig "image" "tag" "" $f -}}
+{{- if not (regexMatch $pin (toString $t)) -}}
+{{- $errs = append $errs (printf "maku-factory.image.tag: <version>@sha256:<digest>, never a bare tag (got %q; docs/security.md#supply-chain)" $t) -}}
+{{- end -}}
+{{- end -}}
+{{- if or $f.demo (dig "config" "demo" false $f) -}}
+{{- $errs = append $errs (printf "maku-factory.demo, maku-factory.config.demo: the factory's laptop demo mode (%s)" $up) -}}
+{{- end -}}
+{{- if not (dig "apps" "factory" "existingSecret" "" $f | default $f.githubSecret) -}}
+{{- $errs = append $errs "maku-factory.apps.factory.existingSecret: the factory App's Secret, keys app_id and private_key (docs/github-apps.md#the-factory-app)" -}}
+{{- end -}}
+{{- if and $maku.enabled (not (dig "config" "api" "humanIssuer" "" $f)) -}}
+{{- $errs = append $errs "maku-factory.config.api.humanIssuer: the factory verifies again each human token the broker forwards, against maku.broker.human's issuer (docs/identity.md#the-keys)" -}}
+{{- end -}}
+{{- end -}}
+{{- range $e := concat (include "afumbrella.identityErrors" . | fromJsonArray) (include "afumbrella.exposeErrors" . | fromJsonArray) (include "afumbrella.webProxyErrors" . | fromJsonArray) (include "afumbrella.slackErrors" . | fromJsonArray) -}}
+{{- $errs = append $errs $e -}}
+{{- end -}}
+{{- if $errs -}}
+{{- fail (printf "profile production: %d missing or refused seams (docs/upgrading.md#from-the-demo-to-production):\n  - %s" (len $errs) (join "\n  - " $errs)) -}}
+{{- end -}}
 {{- end }}
 
 {{/* The preflight (v4 D24) collects the factory's /preflight, whose exposure check reads the
@@ -67,8 +168,9 @@ factory, which verifies it again, so both must read the same issuer, preset, tok
 group names, audience and sponsored client claim. The client ids and an audienceFile are files,
 read at use, so a render cannot compare them. Checked once the factory takes human tokens (config.api.humanIssuer set) and the
 broker is in oidc mode; each refusal names both keys. Empty values compare as their defaults. */}}
-{{- define "afumbrella.identity" -}}
-{{- $h := .Values.maku.broker.human | default dict -}}
+{{- define "afumbrella.identityErrors" -}}
+{{- $errs := list -}}
+{{- $h := dig "broker" "human" dict (.Values.maku | default dict) -}}
 {{- $a := dig "config" "api" dict (index .Values "maku-factory") -}}
 {{- if and .Values.maku.enabled (index .Values "maku-factory" "enabled") (ne ($h.mode | default "oidc") "local") $a.humanIssuer -}}
 {{- $hp := $h.preset | default "zitadel" -}}
@@ -86,10 +188,15 @@ broker is in oidc mode; each refusal names both keys. Empty values compare as th
   (list "audience" "audience" ($h.audience | default "") ($a.audience | default ""))
   (list "mcp.sponsoredClientClaim" "sponsoredClientClaim" (dig "mcp" "sponsoredClientClaim" "" $h) ($a.sponsoredClientClaim | default "")) -}}
 {{- if ne (index $pair 2) (index $pair 3) -}}
-{{- fail (printf "maku.broker.human.%s %q and maku-factory.config.api.%s %q must be equal: the factory verifies the token the broker forwards" (index $pair 0) (index $pair 2) (index $pair 1) (index $pair 3)) -}}
+{{- $errs = append $errs (printf "maku.broker.human.%s %q and maku-factory.config.api.%s %q must be equal: the factory verifies the token the broker forwards" (index $pair 0) (index $pair 2) (index $pair 1) (index $pair 3)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
+{{- $errs | toJson -}}
+{{- end }}
+
+{{- define "afumbrella.identity" -}}
+{{- with include "afumbrella.identityErrors" . | fromJsonArray }}{{ fail (first .) }}{{ end -}}
 {{- end }}
 
 {{/* The model gateway's agreement with maku (plan v4 step 4, Task 5): the gateway admits the runs and
@@ -109,7 +216,10 @@ the broker maku runs, so both must name the same ones. */}}
 {{- end -}}
 {{- include "afumbrella.gatewayClients" . -}}
 {{- end -}}
+{{- /* The run-controller is maku's: a release without maku (an install adopting the umbrella factory first) has no runs to route. */ -}}
+{{- if (.Values.maku | default dict).enabled -}}
 {{- include "afumbrella.runsGateway" . -}}
+{{- end -}}
 {{- end }}
 
 {{/* The broker's clients on the gateway (plan v4 step 4, Task 12, GW8). A gateway that serves the
@@ -154,7 +264,7 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- define "afumbrella.runsGateway" -}}
 {{- $gw := index .Values "maku-gateway" -}}
 {{- $m := dig "runController" "model" dict .Values.maku -}}
-{{- $mode := $m.mode | default "secret" -}}
+{{- $mode := $m.mode | default "gateway" -}}
 {{- $g := $m.gateway | default dict -}}
 {{- $identity := dig "config" "runs" "gatewayIdentity" false (index .Values "maku-factory") -}}
 {{- if and $identity (ne $mode "gateway") -}}
@@ -246,7 +356,8 @@ mode, its parentRefs or IngressClass. The web is the broker's :8080 through the 
 never around it: the broker in oidc mode reads oauth2-proxy's identity headers, so it needs the proxy
 and a network policy that admits only the proxy. Default-deny would drop every request a policy does not
 admit, so the gateway's pods must be named. */}}
-{{- define "afumbrella.expose" -}}
+{{- define "afumbrella.exposeErrors" -}}
+{{- $errs := list -}}
 {{- $x := .Values.expose | default dict -}}
 {{- $surfaces := include "afumbrella.exposed" . | fromJson -}}
 {{- $maku := .Values.maku | default dict -}}
@@ -256,39 +367,44 @@ admit, so the gateway's pods must be named. */}}
 {{- $s := index $x $name | default dict -}}
 {{- if eq $name "web" -}}
 {{- if not $maku.enabled -}}
-{{- fail "expose.web needs maku.enabled: the web surface is the broker" -}}
+{{- $errs = append $errs "expose.web needs maku.enabled: the web surface is the broker" -}}
 {{- end -}}
 {{- if not $s.hostnames -}}
-{{- fail "expose.web.hostnames is empty: name the hosts the web is served at" -}}
+{{- $errs = append $errs "expose.web.hostnames is empty: name the hosts the web is served at" -}}
 {{- end -}}
 {{- if eq (dig "broker" "human" "mode" "oidc" $maku) "local" -}}
-{{- fail "expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local); set it to oidc, or expose.web.enabled false" -}}
+{{- $errs = append $errs "expose.web: the broker serves humans on a port-forward in local mode (maku.broker.human.mode local); set it to oidc, or expose.web.enabled false" -}}
 {{- end -}}
 {{- if not (dig "enabled" false ($.Values.webProxy | default dict)) -}}
-{{- fail "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" -}}
+{{- $errs = append $errs "expose.web needs webProxy.enabled: in oidc mode the broker reads oauth2-proxy's identity headers, which only the web front door may set" -}}
 {{- end -}}
 {{- if eq $netMode "none" -}}
-{{- fail "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
+{{- $errs = append $errs "expose.web needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
 {{- end -}}
 {{- else if not $s.hostnames -}}
-{{- fail "expose.slack.hostnames is empty: name the host Slack posts its events to" -}}
+{{- $errs = append $errs "expose.slack.hostnames is empty: name the host Slack posts its events to" -}}
 {{- end -}}
 {{- if and (eq $x.mode "httproute") (not $s.parentRefs) (not (dig "httproute" "parentRefs" list $x)) -}}
-{{- fail (printf "expose.%s.parentRefs and expose.httproute.parentRefs are empty: name the Gateway (and its listener) the %s route attaches to" $name $name) -}}
+{{- $errs = append $errs (printf "expose.%s.parentRefs and expose.httproute.parentRefs are empty: name the Gateway (and its listener) the %s route attaches to" $name $name) -}}
 {{- end -}}
 {{- if and (eq $x.mode "ingress") (not $s.className) (not (dig "ingress" "className" "" $x)) -}}
-{{- fail (printf "expose.%s.className and expose.ingress.className are empty: name the IngressClass the %s Ingress uses" $name $name) -}}
+{{- $errs = append $errs (printf "expose.%s.className and expose.ingress.className are empty: name the IngressClass the %s Ingress uses" $name $name) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if or $surfaces.web $surfaces.slack -}}
 {{- if and (eq $netMode "kubernetes") (not (dig "networkPolicy" "from" list $x)) -}}
-{{- fail "expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller (maku.networkPolicies.mode kubernetes is default-deny)" -}}
+{{- $errs = append $errs "expose.networkPolicy.from is empty: name the pods of your gateway or ingress controller (maku.networkPolicies.mode kubernetes is default-deny)" -}}
 {{- end -}}
 {{- if and (eq $netMode "cilium") (not (dig "networkPolicy" "cilium" "fromEntities" list $x)) -}}
-{{- fail "expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller (maku.networkPolicies.mode cilium is default-deny)" -}}
+{{- $errs = append $errs "expose.networkPolicy.cilium.fromEntities is empty: name the Cilium identity of your gateway or ingress controller (maku.networkPolicies.mode cilium is default-deny)" -}}
 {{- end -}}
 {{- end -}}
+{{- $errs | toJson -}}
+{{- end }}
+
+{{- define "afumbrella.expose" -}}
+{{- with include "afumbrella.exposeErrors" . | fromJsonArray }}{{ fail (first .) }}{{ end -}}
 {{- end }}
 
 {{/* The identity headers oauth2-proxy may set (EX2), which the web route removes from every client
@@ -313,32 +429,35 @@ review of #545: X-Forwarded-Uri once selected a skip-auth route). A YAML list. *
 {{/* The web front door's checks (EX4): it derives its arguments from the broker's oidc identity, so it
 needs that identity, its Secrets by name (D14), and the broker's agreement (maku.broker.webProxy opens
 :8080 to it alone). Without a default-deny policy the broker would be reachable around it. */}}
-{{- define "afumbrella.webProxy" -}}
+{{- define "afumbrella.webProxyErrors" -}}
+{{- $errs := list -}}
 {{- $w := .Values.webProxy | default dict -}}
 {{- $maku := .Values.maku | default dict -}}
 {{- $b := $maku.broker | default dict -}}
 {{- if $w.enabled -}}
 {{- if not $maku.enabled -}}
-{{- fail "webProxy.enabled needs maku.enabled: the web front door is the broker's" -}}
+{{- $errs = append $errs "webProxy.enabled needs maku.enabled: the web front door is the broker's" -}}
 {{- end -}}
 {{- if eq (dig "human" "mode" "oidc" $b) "local" -}}
-{{- fail "webProxy.enabled needs maku.broker.human.mode oidc: in local mode the broker serves one loopback user, no identity provider" -}}
+{{- $errs = append $errs "webProxy.enabled needs maku.broker.human.mode oidc: in local mode the broker serves one loopback user, no identity provider" -}}
 {{- end -}}
 {{- if not (dig "human" "issuer" "" $b) -}}
-{{- fail "webProxy.enabled needs maku.broker.human.issuer: oauth2-proxy signs people in there" -}}
+{{- $errs = append $errs "webProxy.enabled needs maku.broker.human.issuer: oauth2-proxy signs people in there" -}}
 {{- end -}}
 {{- if not (hasPrefix "https://" ($b.publicURL | default "")) -}}
-{{- fail (printf "webProxy.enabled needs maku.broker.publicURL, https (got %q): the sign-in returns to <publicURL>/oauth2/callback" ($b.publicURL | default "")) -}}
+{{- $errs = append $errs (printf "webProxy.enabled needs maku.broker.publicURL, https (got %q): the sign-in returns to <publicURL>/oauth2/callback" ($b.publicURL | default "")) -}}
 {{- end -}}
 {{- if not $w.existingSecret -}}
-{{- fail (printf "webProxy.existingSecret is empty: name the Secret holding the web client and the cookie secret (keys %s, %s, %s; D14)" $w.keys.clientID $w.keys.clientSecret $w.keys.cookieSecret) -}}
+{{- $errs = append $errs (printf "webProxy.existingSecret is empty: name the Secret holding the web client and the cookie secret (keys %s, %s, %s; D14)" $w.keys.clientID $w.keys.clientSecret $w.keys.cookieSecret) -}}
 {{- end -}}
 {{- if not (dig "oidc" "existingSecret" "" $b) -}}
-{{- fail "webProxy.enabled needs maku.broker.oidc.existingSecret: its cli key is the CLI client oauth2-proxy lets maku's bearers through for" -}}
+{{- $errs = append $errs "webProxy.enabled needs maku.broker.oidc.existingSecret: its cli key is the CLI client oauth2-proxy lets maku's bearers through for" -}}
 {{- end -}}
 {{- if eq (include "afumbrella.makuNetMode" .) "none" -}}
-{{- fail "webProxy.enabled needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
+{{- $errs = append $errs "webProxy.enabled needs maku.networkPolicies.mode cilium or kubernetes: in mode none nothing keeps a client from the broker's :8080 around the web front door" -}}
 {{- end -}}
+{{- /* The derived arguments read the identity checked above: only once it holds. */ -}}
+{{- if not $errs -}}
 {{- $derived := include "afumbrella.webProxyArgs" . | fromJson -}}
 {{- range $k := keys ($w.extraArgs | default dict) | sortAlpha -}}
 {{- /* Derived, or a flag that would widen what passes the front door: a trusted forwarder's headers
@@ -348,18 +467,24 @@ flags. */ -}}
   "trusted-ip" "skip-auth-regex" "skip-auth-preflight" "whitelist-domain" "config" "alpha-config" "reverse-proxy"
   "pass-user-headers" "skip-auth-strip-headers" -}}
 {{- if or (hasKey $derived $k) (has $k $forbidden) -}}
-{{- fail (printf "webProxy.extraArgs.%s: the chart derives it or forbids it (docs/exposure.md#the-web-front-door); it may not be set" $k) -}}
+{{- $errs = append $errs (printf "webProxy.extraArgs.%s: the chart derives it or forbids it (docs/exposure.md#the-web-front-door); it may not be set" $k) -}}
+{{- end -}}
 {{- end -}}
 {{- end -}}
 {{- range ($w.extraEnv | default list) -}}
 {{- if hasPrefix "OAUTH2_PROXY_" (.name | default "") -}}
-{{- fail (printf "webProxy.extraEnv %s: oauth2-proxy reads it as a flag, which only the chart sets (use webProxy.extraArgs)" .name) -}}
+{{- $errs = append $errs (printf "webProxy.extraEnv %s: oauth2-proxy reads it as a flag, which only the chart sets (use webProxy.extraArgs)" .name) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
 {{- if ne (toString (dig "webProxy" false $b)) (toString ($w.enabled | default false)) -}}
-{{- fail (printf "maku.broker.webProxy (%v) must equal webProxy.enabled (%v): it opens the broker's :8080 to the web front door, and to it alone" (dig "webProxy" false $b) ($w.enabled | default false)) -}}
+{{- $errs = append $errs (printf "maku.broker.webProxy (%v) must equal webProxy.enabled (%v): it opens the broker's :8080 to the web front door, and to it alone" (dig "webProxy" false $b) ($w.enabled | default false)) -}}
 {{- end -}}
+{{- $errs | toJson -}}
+{{- end }}
+
+{{- define "afumbrella.webProxy" -}}
+{{- with include "afumbrella.webProxyErrors" . | fromJsonArray }}{{ fail (first .) }}{{ end -}}
 {{- end }}
 
 {{/* The GitHub account link is on (step 5 PR C): broker.githubLink's Secret, or human.githubLink set
@@ -433,3 +558,153 @@ Call with (dict "v" <map> "path" "a.b.c"), read with fromJson. */}}
 {{- end -}}
 {{- dict "v" $cur | toJson -}}
 {{- end -}}
+
+{{/* The Slack App's agreements (plan v4 step 6, EX7, EX8). Helm cannot set one subchart's values from
+another's, so the umbrella checks they agree: the broker's subscriber is the App's :8081 with the App's
+signing key, both the broker and the factory sponsor the App's principal, and a set brokerURL is the
+broker's human listener. Each side is checked only when its component is in this release. Off, no
+subscriber may still point at the App: every event would end in RoomWebhookDisabled. */}}
+{{- define "afumbrella.slackErrors" -}}
+{{- $errs := list -}}
+{{- $s := .Values.slack | default dict -}}
+{{- $maku := .Values.maku | default dict -}}
+{{- $b := $maku.broker | default dict -}}
+{{- $hooks := $b.webhooks | default list -}}
+{{- $ns := .Release.Namespace -}}
+{{- $want := printf "http://factory-slack-app.%s.svc.%s:8081/webhooks" $ns .Values.clusterDomain -}}
+{{- if $s.enabled -}}
+{{- $principal := $s.principal | default "slack-app" -}}
+{{- $secret := $s.webhookSecret | default "room-broker-webhook-slack-app" -}}
+{{- if $maku.enabled -}}
+{{- $hook := dict -}}
+{{- range $hooks }}{{ if eq .name $principal }}{{ $hook = . }}{{ end }}{{ end -}}
+{{- if not $hook -}}
+{{- $errs = append $errs (printf "slack.enabled needs the App's subscriber in maku.broker.webhooks: name %s, network cluster, url %s, existingSecret %s" $principal $want $secret) -}}
+{{- else -}}
+{{- if ne ($hook.network | default "") "cluster" -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s].network %q must be cluster: the App's :8081 is in-cluster only" $principal ($hook.network | default "")) -}}
+{{- end -}}
+{{- if ne $hook.url $want -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s].url %q must be %s, the App's webhooks listener" $principal $hook.url $want) -}}
+{{- end -}}
+{{- if ne ($hook.existingSecret | default "") $secret -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s].existingSecret %q must equal slack.webhookSecret %q: the App verifies with the key the broker signs with" $principal ($hook.existingSecret | default "") $secret) -}}
+{{- end -}}
+{{- /* The App reads signing-key from that Secret: another key, or a secretFile elsewhere, signs with
+a key the App never reads, and every delivery is refused. */ -}}
+{{- if not (has ($hook.key | default "signing-key") (list "signing-key")) -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s].key %q must be empty or signing-key: the App reads signing-key from slack.webhookSecret" $principal $hook.key) -}}
+{{- end -}}
+{{- if $hook.secretFile -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s].secretFile %q must be unset: the chart mounts slack.webhookSecret's signing-key, the key the App verifies with" $principal $hook.secretFile) -}}
+{{- end -}}
+{{- end -}}
+{{- $hi := dig "human" "issuer" "" $b -}}
+{{- if and $hi $s.issuerURL (ne (trimSuffix "/" $s.issuerURL) (trimSuffix "/" $hi)) -}}
+{{- $errs = append $errs (printf "slack.issuerURL %q must equal maku.broker.human.issuer %q: the broker verifies the App's token against its issuer" $s.issuerURL $hi) -}}
+{{- end -}}
+{{- $named := false -}}
+{{- range (dig "human" "mcp" "sponsored" list $b) }}{{ if eq .name $principal }}{{ $named = true }}{{ end }}{{ end -}}
+{{- if not $named -}}
+{{- $errs = append $errs (printf "slack.principal %q must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the broker lacks it" $principal) -}}
+{{- end -}}
+{{- $broker := printf "http://room-broker.%s.svc.%s:8080" $ns .Values.clusterDomain -}}
+{{- if and $s.brokerURL (ne $s.brokerURL $broker) -}}
+{{- $errs = append $errs (printf "slack.brokerURL %q must be the broker's human listener, %s" $s.brokerURL $broker) -}}
+{{- end -}}
+{{- end -}}
+{{- if $maku.enabled -}}
+{{- $mode := include "afumbrella.makuNetMode" . -}}
+{{- $smode := dig "networkPolicy" "mode" "none" $s -}}
+{{- if ne $smode $mode -}}
+{{- $errs = append $errs (printf "slack.networkPolicy.mode %q must equal maku.networkPolicies.mode %q: the App joins the release's default-deny" $smode $mode) -}}
+{{- end -}}
+{{- end -}}
+{{- if (include "afumbrella.exposed" . | fromJson).slack -}}
+{{- $snp := $s.networkPolicy | default dict -}}
+{{- if and (eq ($snp.mode | default "none") "kubernetes") (not $snp.from) -}}
+{{- $errs = append $errs "slack.networkPolicy.from is empty: expose.slack routes Slack's events to the App's :8080, which default-deny then drops; name your gateway's or ingress controller's pods (as expose.networkPolicy.from)" -}}
+{{- end -}}
+{{- if and (eq ($snp.mode | default "none") "cilium") (not (dig "cilium" "fromEntities" (list "ingress") $snp)) -}}
+{{- $errs = append $errs "slack.networkPolicy.cilium.fromEntities is empty: expose.slack routes Slack's events to the App's :8080, which default-deny then drops" -}}
+{{- end -}}
+{{- end -}}
+{{- $f := index .Values "maku-factory" | default dict -}}
+{{- if $f.enabled -}}
+{{- $named := false -}}
+{{- range (dig "config" "api" "sponsored" list $f) }}{{ if eq .name $principal }}{{ $named = true }}{{ end }}{{ end -}}
+{{- if not $named -}}
+{{- $errs = append $errs (printf "slack.principal %q must be named by maku.broker.human.mcp.sponsored and maku-factory.config.api.sponsored: the factory lacks it" $principal) -}}
+{{- end -}}
+{{- end -}}
+{{- else if $maku.enabled -}}
+{{- range $hooks -}}
+{{- if eq (first (splitList "." ((urlParse (.url | default "")).hostname))) "factory-slack-app" -}}
+{{- $errs = append $errs (printf "maku.broker.webhooks[%s] targets factory-slack-app, but slack.enabled is false: every event would go to a subscriber that does not exist" .name) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- $errs | toJson -}}
+{{- end }}
+
+{{- define "afumbrella.slack" -}}
+{{- with include "afumbrella.slackErrors" . | fromJsonArray }}{{ fail (first .) }}{{ end -}}
+{{- end }}
+
+{{/* The factory's default-deny (plan v4 step 6, Task 16): it joins maku's mode, so mode none has no
+default-deny to join; the demo's ingress-only plain policy would select the same pods. */}}
+{{- define "afumbrella.factoryPolicy" -}}
+{{- if dig "factory" "enabled" false (.Values.networkPolicies | default dict) -}}
+{{- if eq (include "afumbrella.makuNetMode" .) "none" -}}
+{{- fail "networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes: the factory joins the release's default-deny" -}}
+{{- end -}}
+{{- if .Values.networkPolicies.plain -}}
+{{- fail "networkPolicies.factory.enabled and networkPolicies.plain both select the factory: plain is the demo's ingress-only policy; turn it off" -}}
+{{- end -}}
+{{- end -}}
+{{- end }}
+
+{{/* The factory's URL-derived egress (the review of #556), as JSON {"rules": [{id, key, host, port,
+to, external}]}: one rule per configured URL of maku-factory.config, plus meter and otlp when only
+their peers are named. An external host is opened by name (cilium toFQDNs) or as public addresses
+(kubernetes); an in-cluster one needs networkPolicies.factory.<id>.to, or the render fails naming it. */}}
+{{- define "afumbrella.factoryEgress" -}}
+{{- $f := .Values.networkPolicies.factory | default dict -}}
+{{- $c := dig "config" dict (index .Values "maku-factory") -}}
+{{- $rules := list -}}
+{{- range $pair := list
+  (list "idp" "api.humanIssuer" (dig "api" "humanIssuer" "" $c))
+  (list "classifier" "triage.classifierURL" (dig "triage" "classifierURL" "" $c))
+  (list "meter" "meter.url" (dig "meter" "url" "" $c))
+  (list "logs" "meter.logsURL" (dig "meter" "logsURL" "" $c))
+  (list "otlp" "tracing.otlpEndpoint" (dig "tracing" "otlpEndpoint" "" $c))
+  (list "agentGuard" "hardening.agentGuard.url" (dig "hardening" "agentGuard" "url" "" $c))
+  (list "gatewayLog" "hardening.drills.gatewayLog.url" (dig "hardening" "drills" "gatewayLog" "url" "" $c))
+  (list "octoSTS" "hardening.publisher.octoSTS.url" (dig "hardening" "publisher" "octoSTS" "url" "" $c)) -}}
+{{- $id := index $pair 0 -}}
+{{- $key := index $pair 1 -}}
+{{- $raw := tpl (toString (index $pair 2)) $ -}}
+{{- $e := index $f $id | default dict -}}
+{{- if or $raw $e.to -}}
+{{- $host := "" -}}
+{{- $port := 0 -}}
+{{- if $raw -}}
+{{- $url := ternary $raw (printf "grpc://%s" $raw) (contains "://" $raw) -}}
+{{- $u := urlParse $url -}}
+{{- $host = $u.hostname | default (first (splitList ":" $u.host)) -}}
+{{- $port = ternary 443 80 (eq $u.scheme "https") -}}
+{{- if regexMatch ":[0-9]+$" $u.host }}{{ $port = regexFind "[0-9]+$" $u.host | int }}{{ end -}}
+{{- end -}}
+{{- with $e.port }}{{ $port = int . }}{{ end -}}
+{{- if not $port -}}
+{{- fail (printf "networkPolicies.factory.%s.port is required with its to: the port the factory dials" $id) -}}
+{{- end -}}
+{{- $internal := or (not $host) (not (contains "." $host)) (regexMatch "\\.svc(\\..+)?$" $host) (hasSuffix ".local" $host) -}}
+{{- if and $internal (not $e.to) -}}
+{{- fail (printf "maku-factory.config.%s %q is in-cluster: name its pods in networkPolicies.factory.%s.to, or the factory's default-deny drops every call" $key $raw $id) -}}
+{{- end -}}
+{{- $rules = append $rules (dict "id" $id "key" $key "host" $host "port" $port "to" ($e.to | default list) "external" (not $e.to)) -}}
+{{- end -}}
+{{- end -}}
+{{- dict "rules" $rules | toJson -}}
+{{- end }}
