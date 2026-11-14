@@ -113,7 +113,7 @@ drive_task() {
   issue=$(stub_api POST /repos/owner/repo/issues '{"title":"docs: fix the broken links","author":"dev","body":"The README links to a page that moved.\n\n## Acceptance check\nEvery link in README.md resolves."}' | jq -er .number)
   stub_api POST "/repos/owner/repo/issues/$issue/labels" '{"actor":"dev","labels":["class:docs","factory/ready"]}' >/dev/null
   for _ in $(seq 150); do
-    task=$(k -n "$NS" get tasks -o json | jq -r --argjson n "$issue" '[.items[] | select(.spec.source.issue == $n)][0].metadata.name // empty')
+    task=$(k -n "$NS" get tasks -o json | jq -r --argjson n "$issue" '[.items[] | select(.spec.issue == $n)][0].metadata.name // empty')
     runs=$(k get agentruns -A -o name 2>/dev/null | wc -l)
     rooms=$(psql_rooms -c 'SELECT count(*) FROM public.rooms')
     [[ -z $task || $runs == 0 || $rooms == 0 ]] || break
@@ -130,7 +130,7 @@ drive_task() {
 leg_diagnostics() {
   k -n "$NS" logs -l app.kubernetes.io/name=agent-factory --prefix --all-containers --tail=120 | grep -v readiness || true
   k -n "$NS" get tasks -o wide || true
-  [[ -z ${STUB_PORT:-} ]] || curl -fsS "http://127.0.0.1:$STUB_PORT/repos/owner/repo/issues?state=all" | jq -c '.[] | {number, labels: [.labels[].name], state}' || true
+  [[ -z ${STUB_PORT:-} ]] || curl -fsS "http://127.0.0.1:$STUB_PORT/repos/owner/repo/issues" | jq -c '.[] | {number, labels: [.labels[].name], state}' || true
 }
 
 psql_rooms() { k -n "$PG_NS" exec deploy/pg -- psql -qAt -v ON_ERROR_STOP=1 -U postgres -d rooms "$@"; }
