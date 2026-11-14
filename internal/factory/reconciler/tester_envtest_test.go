@@ -126,7 +126,7 @@ func TestEnvtestTestFirstOffLeavesThePairJourneyUnchanged(t *testing.T) {
 			tk.Status.ReviewRounds, tk.Status.Contract, seq)
 	}
 	without := journey(func(c *config.Config) {
-		delete(c.Repositories[0].Classes, "scripts")
+		c.Repositories[0].Classes["scripts"] = config.Class{Live: true} // the gate stays on, testFirst off
 		c.Repositories[0].Merge.ContractCheck = ""
 	})
 	with := journey(nil) // scripts declares testFirst, and this task is of the review class
