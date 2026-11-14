@@ -84,6 +84,10 @@ onexit() {
     k get pods -A -o wide >&2 || true
     k -n "$NS" logs deploy/room-broker --all-containers --tail=120 >&2 || true
     k -n e2e logs deploy/e2e-stub --tail=60 >&2 || true
+    if [[ -n $SLACK ]]; then
+      k -n "$NS" logs deploy/factory-slack-app --tail=60 >&2 || true
+      k -n "$NS" logs deploy/factory-slack-app --previous --tail=60 >&2 || true
+    fi
   fi
   if $created; then
     step "delete the cluster $NAME"
@@ -135,7 +139,10 @@ k create namespace e2e >/dev/null
 k -n e2e create secret generic e2e-stub-tls --from-file=tls.crt="$work/stub.crt" --from-file=tls.key="$work/stub.key" >/dev/null
 k create namespace "$NS" >/dev/null
 k -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
-k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli >/dev/null
+# slack-app-client-id is the Slack App's sponsored client (SLACK=1): a client of its own, since the
+# broker never admits the web or the CLI client as a sponsored principal.
+k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli \
+  --from-literal=slack-app-client-id=factory-slack >/dev/null
 k -n "$NS" create secret generic e2e-github-link --from-literal=client_id=Iv1.e2e-link --from-literal=client_secret=e2e-throwaway-secret >/dev/null
 # The factory App the broker resolves a GitHub id through (D7): a throwaway key; the stub never checks it.
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
@@ -194,13 +201,15 @@ YAML
       # The App's three Secrets (throwaway), its subchart, the factory, both default-deny policies.
       k -n "$NS" create secret generic factory-slack-app --from-literal=signing-secret=e2e-slack-signing \
         --from-literal=bot-token=xoxb-e2e --from-literal=bot-user-id=U0E2EBOT >/dev/null
-      # The App signs in as the sponsored principal whose client id the broker's sponsored entry reads
-      # (maku-cli, the OIDC Secret's), with that client as its audience: the broker admits it as the App.
-      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=maku-cli --from-literal=client-secret=e2e-throwaway >/dev/null
-      k -n "$NS" create secret generic room-broker-webhook-slack-app --from-literal=signing-key=e2e-webhook-key >/dev/null
+      # The App signs in as the sponsored principal whose client id the broker's and the factory's
+      # sponsored entries read (factory-slack), for the audience human.audience pins (maku-api).
+      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=factory-slack --from-literal=client-secret=e2e-throwaway >/dev/null
+      k -n "$NS" create secret generic agent-factory-sponsored --from-literal=slack-app-client-id=factory-slack >/dev/null
+      # The webhook key is one base64 key of at least 32 bytes: the App refuses to start on anything else.
+      k -n "$NS" create secret generic room-broker-webhook-slack-app --from-literal=signing-key="$(openssl rand -base64 32)" >/dev/null
       expose+=(-f charts/agent-factory/values-slack.example.yaml --set slack.e2e.unpinnedImages=true --set "slack.image.tag=$TAG"
         --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.roomsURL=https://rooms.e2e.test --set slack.preset=generic
-        --set slack.networkPolicy.mode=kubernetes --set slack.audience=maku-cli
+        --set slack.networkPolicy.mode=kubernetes --set slack.audience=maku-api --set maku.broker.human.audience=maku-api
         --set-json 'slack.extraEnv=[{"name":"SSL_CERT_FILE","value":"/etc/e2e/ca/ca.crt"}]'
         --set-json 'slack.extraVolumes=[{"name":"e2e-ca","secret":{"secretName":"e2e-stub-ca","defaultMode":288}}]'
         --set-json 'slack.extraVolumeMounts=[{"name":"e2e-ca","mountPath":"/etc/e2e/ca","readOnly":true}]'
@@ -208,7 +217,7 @@ YAML
         --set slack.networkPolicy.idp.port=8443
         --set-json 'slack.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
         --set-json 'expose.slack.hostnames=["factory-slack.e2e.test"]'
-        --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/cli-client-id'
+        --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/slack-app-client-id'
         --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG"
         --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
     fi
@@ -435,8 +444,8 @@ r = c.getresponse(); print(r.status, r.read().decode()[:200])' "$1" "$2"
   metrics_port=''
   forward "$NS" deploy/room-broker 9090 metrics_port
   for _ in $(seq 40); do
-    grants="$(curl -fsS --cacert "$work/ca.crt" --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" "https://e2e-stub.e2e.svc.cluster.local:$stub/__grants" | jq -r 'map(select(. == "maku-cli")) | length')"
-    calls="$(curl -fsS "http://127.0.0.1:$metrics_port/metrics" | grep -E '^(maku_)?rooms_human_mcp_calls_total\{' || true)"
+    grants="$(curl -fsS --cacert "$work/ca.crt" --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" "https://e2e-stub.e2e.svc.cluster.local:$stub/__grants" | jq -r 'map(select(. == "factory-slack")) | length')"
+    calls="$(curl -fsS "http://127.0.0.1:$metrics_port/metrics" | grep -E '^maku_rooms_human_mcp_calls_total\{' || true)"
     [[ $grants -ge 1 && -n $calls ]] && break
     sleep 3
   done
@@ -447,8 +456,8 @@ r = c.getresponse(); print(r.status, r.read().decode()[:200])' "$1" "$2"
   [[ $(status "$out") == 404 ]] || die "GET /slack/events: $out, want the gateway's 404"
   echo "ok   GET /slack/events is the gateway's 404"
   # stand-ins under each policy: a pod labelled as the broker (the broker's egress, the App's ingress),
-  # an unlabelled one, and one labelled as the factory (the factory's egress).
-  for p in broker-standin:room-broker plain:none factory-standin:agent-factory; do
+  # a control under no policy (the stub admits it), and one labelled as the factory (the factory's egress).
+  for p in broker-standin:room-broker plain:e2e-control factory-standin:agent-factory; do
     k -n "$NS" run "${p%%:*}" --image="$PY_IMAGE" --restart=Never --labels="app.kubernetes.io/name=${p#*:}" \
       --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$PY_IMAGE"'","command":["sleep","infinity"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
   done
