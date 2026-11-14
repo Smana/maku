@@ -126,6 +126,7 @@ func Values(in Inputs) (map[string]any, error) {
 	put("maku.broker.human.mode", "oidc")
 	// The preflight's test hook (D24, R2): helm test runs it once the release is up.
 	put("maku.preflight.enabled", true)
+	put("maku-factory.preflight.enabled", true) // the factory's own checks, which maku.preflight.enabled needs (PR B)
 	put("maku.broker.human.access", map[string]any{"ttl": "5m"})
 	put("maku.broker.oidc.existingSecret", secretBrokerOIDC)
 	put("maku.broker.systemPrincipals", map[string]any{factorySA: "system:factory"})

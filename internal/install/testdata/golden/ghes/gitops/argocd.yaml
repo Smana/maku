@@ -236,6 +236,8 @@ spec:
           image:
             tag: v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
           oidcSecret: agent-factory-oidc
+          preflight:
+            enabled: true
           runTokens:
             enabled: true
             perRun: true
