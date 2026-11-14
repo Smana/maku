@@ -2,13 +2,13 @@
 # NetworkPolicies on Calico, the web through agentgateway, the e2e stub as the issuer, GitHub
 # and the meter, the Apps reused (the job creates their Secrets). The job pins the images it built.
 namespace: maku
-github.owner: maku-e2e
-repositories: [maku-e2e/target]
+github.owner: owner
+repositories: [owner/repo]
 maintainers: [dev]
 apps.create: false
-apps.factorySlug: maku-e2e-factory
+apps.factorySlug: maku-demo
 apps.factoryID: "1"
-apps.agentsSlug: maku-e2e-agents
+apps.agentsSlug: maku-demo
 web.url: https://rooms.e2e.test
 identity.issuer: https://e2e-stub.e2e.svc.cluster.local
 identity.webClientID: rooms-web
