@@ -1052,7 +1052,7 @@ nothing a person or an agent writes can forge one. Every webhook event of the fi
 Once a task is ready, the gate reads the pull request in `AwaitingCI` and checks, in order;
 every "no" goes to a human. Row 12 is read last, only when the others would merge or post a
 shadow decision. With no class `live` or `shadow` it reads nothing and hands off as
-`merge_gate_off`. A repository may declare its classes in its own `.github/agent-factory.yaml`:
+`merge_gate_off`. A repository may bind its classes in its own `.github/agent-factory.yaml`:
 [merge policies](merge-policies.md) covers that file, its switches and its reasons.
 
 | # | Check | If it fails |
@@ -1190,7 +1190,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
 | `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
 | `grant=` | Only on a decision a saved approval grant let arm (`policyManagement.approvalMemory`): `<id>:<version>`, the grant and the version it was read at |
-| `policygen=`, `repogen=` | For a repository served from objects: the generation of the class's own `MergePolicy`, and, for a [bound class](merge-policies.md#factory-resources) only, the generation of the `Repository` holding the binding. `Task.status.configGenerations.mergePolicy` records the same policy generation: the class is fixed at triage |
+| `policygen=`, `repogen=` | For a [bound class](merge-policies.md#factory-resources): the generation of its own `MergePolicy`, and of the `Repository` holding the binding. `Task.status.configGenerations.mergePolicy` records the same policy generation: the class is fixed at triage |
 | `resolved=` | For a declared class: the first 12 hex digits of the resolved class's hash (the definition the gate decided on, mode excluded), which an approval grant binds to. A class that changes suspends its grants; another class's edit does not |
 | `reviewer=` | The reviewer run's served models joined with `+`; `none` when the class has no reviewer run |
 
@@ -1685,30 +1685,23 @@ Each class's evidence:
 A class is eligible with at least `mergeGuardrails.minPromotionEvidence` clean decisions (20), no
 bad mature outcome, and a passed drill. **Promote to live** reads the evidence again server side,
 records the request in `policy_promotions` with that evidence, its threshold and the requester,
-and answers the repository's `.github/agent-factory.yaml` with the class's `mode: shadow` changed
-to `mode: live` and the GitHub edit page to submit it from. Maku never opens the pull request nor
-edits `factory:` (MP1, MP14); the maintainer records its number, then `merged` or `abandoned`.
-Only a class of the repository's own file is promotable: until that repository is cut over to its
-own policy (stage 4), its merged change is comparison-only and the central config decides.
+and answers the binding's `mode: shadow` changed to `mode: live`: in the repository's
+`.github/agent-factory.yaml` under repository authority, with the GitHub edit page to submit it
+from, else in its `Repository` manifest. Maku never opens the pull request nor edits `factory:`
+(MP1, MP14); the maintainer records its number, then `merged` or `abandoned`. Only a bound class is
+promotable.
 
 Below the minimum, a maintainer asks for an exception with a written justification and a lower
 minimum; one of `policyManagement.operators` approves it (for 14 days) or refuses it, once, and an
 approved exception carries a promotion at its own minimum. Bad outcomes and the drill still block.
 Both tables are insert then one constrained move; `maku_rooms_policy_changes_total` counts them.
 
-**The editor.** A maintainer edits one class in a guided form (mode, author, a harness profile from
-the central list, conditions, deny, `requiresApproval`, limits, monitor), or starts one from a
-template (`docs-broad`, `deps-patch`, `generated-files`), or edits the whole file in the expert YAML
-view. The two follow each other: a form edit rewrites the text in one fixed key order (the file's
-comments go: the editor says so before, and offers an undo after), and text that parses refills the
-form; while it does not, the form waits and the line is marked. **Check** is the factory's: the same `Parse`, `Validate` and `Resolve` the gate's policy read
-runs, `factory:` refused if changed, the structural change per class (a relaxation returns the class
-to shadow, MP8), and with `policyManagement.simulation` the conformance fixtures decided under the
-central config and the proposal by the gate's own evaluator (newly auto-merged, newly blocked, newly
-approval-required, unchanged), beside the strictness counterfactual of the class's recent decisions.
-Each error the check returns is marked on the line it names, a class's error on that class, an
-unknown key's on its path, with the keys it may be offered as replacements. The
-answer is the file to submit, to copy or download, and the edit link: Maku writes nothing.
+**The editor.** A bound repository's page edits its bindings: each binding's mode and parameters,
+the policy's meaning shown read-only. **Check** is the factory's: each binding resolved as the gate
+resolves it, or refused with its reason, and the `Repository` manifest to commit. A policy is edited
+on its own page, checked against every consumer the maintainer reads, and answers the
+`mergepolicy-<name>.yaml` to commit. Under repository authority the bindings are the file's, edited
+by pull request. Maku writes nothing ([the settings pages](merge-policies.md#the-settings-pages)).
 
 **The decision timeline.** For a pull request, each decision record the factory wrote renders in
 the gate's order: fixed base, author mode, class, the recorded conditions, deny, approval subset,
@@ -2469,7 +2462,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `policyManagement.promotion` | `true` serves `GET /v1/policy/evidence` and `GET /v1/policy/repositories` on the API: each class's [promotion](#promotion) evidence. The broker reads the same key to serve the settings pages and record promotions. Stage 6 changes no class: a maintainer's own pull request does | `false` |
 | `policyManagement.operators` | GitHub logins who decide promotion exceptions; read by the broker | None: no exception can be approved |
 | `policyManagement.approvalMemory` | `true` consults saved approval grants where a live class's `requiresApproval` subset would ask a human (stage 5): the class's grants are read from the broker immediately before the decision and again before the merge call, never cached, and an active grant bound to the policy in force, covering every file the subset caught, lets the decision arm; the record names it (`grant=`). A failed lookup authorizes nothing, a shadow or off class never consults one, and a revert of a merge a grant authorized disables it. Needs `read`, and the broker's `human.approvalMemory`. Until repository authority (stage 4) decides merges, it changes only the dual evaluation's repository decision | `false` |
-| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its classes (every `any` branch, the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
+| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its bindings (the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
 
 Each `repositories` entry:
 
@@ -2478,7 +2471,7 @@ Each `repositories` entry:
 | `name` | `owner/name` | Required |
 | `maintainers` | GitHub logins that may label, retry and review on this repository; never a bot | Required |
 | `triggerLabel` | The start label, `factory/ready` | Required |
-| `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` takes `checks`, `testFirst`, `harness`, `harnessAllowed` and `escalation` only here, and `harness`, `harnessAllowed` and `escalation` only in a [repository's file](merge-policies.md#a-class), where its `harness` is always the floor. `harness` (the floor profile), `harnessAllowed` (the variants the scoper may recommend) and `escalation: {outOfBudget, notConverged}` (a group's step, a profile of `harnessAllowed`) are refused when a name is not in `harnessProfiles`, when a variant has fewer roles, sets a template the floor leaves to triage, has a lower tier (compared when both set one) or drops the `scope` or `judge` of the row the floor runs (a profile without `loop` runs the class's row; an active row's judge defaults to `tier-light`), when a floor or variant has `testFirst` and the repository no `merge.contractCheck`, and on a `live` or `shadow` class with `harnessAllowed` or `escalation`; without `harness` the class runs as before | Required |
+| `classes` | `<name>: {live, shadow, checks, testFirst, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; `checks: true` runs the repository's checks on the class's public implementer and reviewer runs (`spec.loop.checks`); an absent condition is not checked; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` takes `checks`, `testFirst`, `harness`, `harnessAllowed` and `escalation` only here, and is bound only `"off"` in a [repository's file](merge-policies.md#a-binding); its `harness` is always the floor. `harness` (the floor profile), `harnessAllowed` (the variants the scoper may recommend) and `escalation: {outOfBudget, notConverged}` (a group's step, a profile of `harnessAllowed`) are refused when a name is not in `harnessProfiles`, when a variant has fewer roles, sets a template the floor leaves to triage, has a lower tier (compared when both set one) or drops the `scope` or `judge` of the row the floor runs (a profile without `loop` runs the class's row; an active row's judge defaults to `tier-light`), when a floor or variant has `testFirst` and the repository no `merge.contractCheck`, and on a `live` or `shadow` class with `harnessAllowed` or `escalation`; without `harness` the class runs as before | Required |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
 | `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever a class has `testFirst`), `policyBotLogin` (required unless `policyBot: false`), `policyBot` (false drops policy-bot from the gate and needs `gateStatus: true`, so `maku/merge-gate` is the status branch protection requires; nil is true), `gateStatus` (true posts the gate's verdict as a commit status on the pull request; `demo` requires it), `mergerLogin` (bots), `autoMergesPerDay`, `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `schedules` | `[{name, cron, class, text, dataClass?, probe?, probeAuthor?}]`; `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
@@ -2642,7 +2635,7 @@ factory: aws-0
 
 Every replica reads each listed repository's file at start and every 5 minutes, with the factory
 App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold
-`classes` and a [`hardening`](#the-repositorys-hardening-block) block, neither of which decides
+`mergePolicies` and a [`hardening`](#the-repositorys-hardening-block) block, neither of which decides
 ownership) or naming another factory, the repository
 gets no trigger-label or revert intake, no orphan scan, no schedules, no RunLore issues
 (`409 repository_not_owned`), no API runs (`409 repository_not_owned`) and no merges (gate step

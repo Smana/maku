@@ -1,10 +1,11 @@
 # Merge policies
 
-A repository declares its merge classes in `.github/agent-factory.yaml`; the factory's central
-config bounds what those classes may say. Six switches under `policyManagement` roll this out, all
-off by default. **Until `repositoryAuthority` cuts a repository over, the central config alone
-decides its merges**: the repository's file is read, compared, re-decided and simulated, never
-acted on.
+A merge class is defined once, as a `MergePolicy` the factory serves; a repository binds the
+classes it uses, with their mode and its own parameters, in `.github/agent-factory.yaml` or in its
+`Repository` object. The factory's central config bounds what every binding may say. Six switches
+under `policyManagement` roll the repository file out, all off by default. **Until
+`repositoryAuthority` cuts a repository over, the factory's own config and objects alone decide its
+merges**: the repository's file is read, compared, re-decided and simulated, never acted on.
 
 | You want to | Go to |
 |---|---|
@@ -12,11 +13,12 @@ acted on.
 | Understand the model | [Concepts](#concepts) |
 | Turn a stage on, or back off | [Rollout stages](#rollout-stages) |
 | Look up a field | [Reference](#reference) |
-| Write a class | [Recipes](#recipes) |
+| Bind a class | [Recipes](#recipes) |
 | Check, simulate, promote, save a grant | [Workflows](#workflows) |
 | Read a decision, a metric or a reason | [Operating it](#operating-it) |
 | Fix something | [Troubleshooting](#troubleshooting) |
 | Undo something | [Rollback](#rollback) |
+| Define a policy, bind it from a `Repository` | [Factory resources](#factory-resources) |
 
 The merge gate itself (the fixed base, the decision record, adopted classes, the monitor) is in
 [the factory](factory.md#the-merge-gate). This page covers what a repository's policy changes.
@@ -25,59 +27,41 @@ The merge gate itself (the fixed base, the decision record, adopted classes, the
 
 **With zero config, nothing auto-merges and no evidence is collected.** A repository whose
 `.github/agent-factory.yaml` holds only `factory:` has no repository policy: every task outside the
-central classes is `review`, so a human merges it, and no shadow decision is recorded. A repository
-that wants auto-merge later then starts from zero evidence. A cut-over repository whose file declares
-no class pauses (`policy_invalid`).
+served classes is `review`, so a human merges it, and no shadow decision is recorded. A repository
+that wants auto-merge later then starts from zero evidence. A cut-over repository whose file binds
+no policy pauses (`policy_invalid`).
 
-Start instead with this file. Every class is in `shadow`: it decides every pull request it matches,
-records what it would have done, and merges nothing. That record is the evidence a later
-[promotion](#promotion-shadow-to-live) needs.
+Start instead with this file. Every binding is in `shadow`: its class decides every pull request it
+matches, records what it would have done, and merges nothing. That record is the evidence a later
+[promotion](#promotion-shadow-to-live) needs. Each name is a `MergePolicy` the factory serves
+([policies and bindings](#policies-and-bindings)): the policy says what the class means, and the
+binding supplies this repository's paths and checks and may lower its caps.
 
 <!-- check: repository -->
 ```yaml
 factory: aws-0
-classes:
-  docs-links:
+mergePolicies:
+  - {name: docs-links, mode: shadow, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: shadow, holdoutChecks: ['Check the documentation links 🔗']}
+  - name: docs
     mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - holdoutChecks: ['Check the documentation links 🔗']
-  revert:
-    mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - holdoutChecks: ['Check the documentation links 🔗']
-  docs:
-    mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - allowedFiles: ['^docs/.+\.md$', '^README\.md$']
-        - maxPatchFiles: 5
-        - maxModifiedLines: 100
-      deny:
-        - protectedFiles: ['^docs/(adr|decisions|security)/']
-    limits:
-      maxPerDay: 2
-    monitor:
-      followUpWindow: 168h
+    allowedFiles: ['^docs/.+\.md$', '^README\.md$']
+    protectedFiles: ['^docs/(adr|decisions|security)/']
+    maxPatchFiles: 5
+    maxModifiedLines: 100
+    maxPerDay: 2
 # Anything outside these classes is review: a human merges it.
 ```
 
 Replace the holdout with your repository's documentation link check. Then:
 
-1. Add a `low-risk: docs` rule to `.policy.yml` by hand ([below](#a-class-with-any-and-its-policy-bot-rules)
+1. Add a `low-risk: docs` rule to `.policy.yml` by hand ([below](#two-branches-and-their-policy-bot-rules)
    shows the shape). Maku generates no policy-bot rule, and without one the class's pull requests
    stop at `policy_pending`.
 2. Open one pull request with both files. It touches `.github/`, so a maintainer merges it.
 3. Merge the shadow decisions you agree with, unchanged; after twenty, [promote](#promotion-shadow-to-live).
 
-The operators' half is the central guardrails every class inherits. This is the recommended setup.
+The operators' half is the central guardrails every binding inherits. This is the recommended setup.
 It is **not yet deployed** on aws-0, where `mergeGuardrails` is unset:
 
 <!-- check: central -->
@@ -99,16 +83,18 @@ mergeGuardrails:
   # minPromotionEvidence 20 and maxGrantLifetime 90 days are the code's defaults
 ```
 
-Guardrails apply only to classes read from a repository file (`mergepolicy.Resolve`), never to
-central ones. Set before a cutover, they make the dual evaluation's repository decision stricter
-than the central one and show up as disagreements. Land them in the cutover's own pull request.
+Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), never a class the
+config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`). For
+a repository whose classes are still the config file's, guardrails set before a cutover make the
+dual evaluation's repository decision stricter than the central one and show up as disagreements:
+land them in the cutover's own pull request.
 
 | Default | Value |
 |---|---|
-| Mode | `shadow` for every class |
-| Author | `agents`; adopting a bot is a class of its own |
-| Paths | An allow list per class, plus the guardrails' deny list |
-| Size | 5 files, 100 lines for the docs class; 20 and 400 the central ceiling |
+| Mode | `shadow` for every binding |
+| Author | `agents`; adopting a bot is a policy of its own |
+| Paths | An allow list per binding, plus the guardrails' deny list |
+| Size | 5 files, 100 lines for the docs binding; 20 and 400 the central ceiling |
 | Rate | 2 a day per class; no class above 5 (the repository's total stays `merge.autoMergesPerDay`) |
 | Everything else | `review`: a human merges |
 
@@ -116,17 +102,19 @@ than the central one and show up as disagreements. Land them in the cutover's ow
 
 ```mermaid
 flowchart LR
-  subgraph central["Central config (operators, Flux-managed)"]
+  subgraph central["Central config and objects (operators, Flux-managed)"]
     hp["harnessProfiles"]
     mg["mergeGuardrails"]
     pm["policyManagement switches"]
     ca["repositories[].classAuthority"]
+    mp["MergePolicy objects<br/>one class each"]
   end
   subgraph repo["Repository default branch"]
-    file[".github/agent-factory.yaml<br/>factory + classes"]
+    file[".github/agent-factory.yaml<br/>factory + mergePolicies"]
     pb[".policy.yml<br/>policy-bot rules"]
   end
-  file -->|"fence read, every 5 min"| watch["Watch<br/>Parse → Validate → Resolve"]
+  file -->|"fence read, every 5 min"| watch["Watch<br/>Parse → Validate → resolve each binding"]
+  mp --> watch
   hp --> watch
   mg --> watch
   watch -->|"snapshot + hash"| gate["Merge gate<br/>DecideArm / DecideArmUnder"]
@@ -137,32 +125,36 @@ flowchart LR
 
 | Term | Meaning | Code |
 |---|---|---|
-| Repository policy | The `classes` block of `.github/agent-factory.yaml` on the default branch. A file with `factory:` alone is the ownership fence and declares no policy | `internal/factory/mergepolicy/policy.go` |
+| Repository policy | The `mergePolicies` bindings of `.github/agent-factory.yaml` on the default branch. A file with `factory:` alone is the ownership fence and binds no policy | `internal/factory/mergepolicy/policy.go` |
+| Policy | A `MergePolicy` object: one class's definition, named by the object. What it may say is in [policies and bindings](#policies-and-bindings) | `config.PolicySpec` |
+| Binding | One entry of `mergePolicies`: a policy's name, the mode, and this repository's parameters | `config.Binding` |
 | Central config | The factory's config file: `harnessProfiles`, `mergeGuardrails`, `policyManagement`, and per repository `classAuthority`, maintainers, `merge`, schedules, budgets | `internal/factory/config/mergepolicy.go` |
-| Class | A named kind of change: what it may touch, which evidence it needs, whether it merges. `docs-links` and `revert` are required in every policy; `review` never merges through the gate and may be declared for its evaluation keys only | `mergepolicy.Validate` |
-| Mode | `live` merges, `shadow` records what it would have done, `off` does neither | `Mode` |
-| Author mode | `agents`: the factory's agents App wrote it through a task's runs. `adopt`: another App's pull requests (Renovate), adopted by login and branch prefix | `ClassPolicy.Author` |
-| Conditions | `all`: leaves that must all hold. `any`: two to eight branches, one of which must hold. `deny`: paths that refuse. One closed vocabulary, one leaf one key | `Conditions`, `Leaf` |
+| Class | A named kind of change: what it may touch, which evidence it needs, whether it merges. `docs-links` and `revert` are bound in every policy; `review` never merges through the gate and is bound only as `"off"` | `mergepolicy.Validate` |
+| Mode | `live` merges, `shadow` records what it would have done, `off` does neither. Always the binding's | `config.Binding.Mode` |
+| Author mode | `agents`: the factory's agents App wrote it through a task's runs. `adopt`: another App's pull requests (Renovate), adopted by login and branch prefix | `Class.Author` |
+| Conditions | The [fields](#conditions) that must all hold, and `protectedFiles`, the paths that refuse | `config.Class` |
 | `requiresApproval` | Paths that send an otherwise-arming pull request to a maintainer, even in a live class. A [saved grant](#approval-memory) can let a later one arm | `ApprovalLeaf` |
-| Limits | `maxPerDay`: the class's own daily cap, at most the guardrail's | `Limits` |
-| Monitor | The existing [post-merge monitor](factory.md#the-post-merge-monitor) settings | `config.Monitor` |
-| Harness profile | A centrally named way to run a class (`checks`, `testFirst`, `template`, `tier`, `loop`). A class names one; it cannot invent one | `HarnessProfile` |
-| Guardrails | Central bounds: protected paths and mandatory checks every class gains, caps no class may exceed | `MergeGuardrails` |
+| `maxPerDay` | The class's own daily cap, at most the guardrail's | `Class.MaxPerDay` |
+| Monitor | The existing [post-merge monitor](factory.md#the-post-merge-monitor) settings, on the policy | `config.Monitor` |
+| Harness profile | A centrally named way to run a class (`checks`, `testFirst`, `template`, `tier`, `loop`). A policy names one; it cannot invent one | `HarnessProfile` |
+| Guardrails | Central bounds: protected paths and mandatory checks every binding gains, caps no binding may exceed | `MergeGuardrails` |
 | Snapshot | One read of the file: its sha256, the resolved classes, the error. Each decision binds to it (`policy=<12 hex>`) | `mergepolicy.Snapshot` |
 | policy-bot | The independent second evaluator. The gate's fixed base needs `policy-bot: main` green, posted by `merge.policyBotLogin`, so every class that should arm needs a policy-bot rule that approves its pull requests | `baseChecks` in `internal/factory/reconciler/arm.go` |
 
-### How a class resolves
+### How a binding resolves
 
-`mergepolicy.Resolve` turns a declared class into the `config.Class` the gate already decides on:
+`config.Resolve` turns a policy and one repository's binding of it into the `config.Class` the gate
+already decides on. Each binding resolves on its own: one that does not drops its class, never the
+file.
 
-1. The `harness` must name a central profile. `template: none` is required for `author: adopt` and
-   refused otherwise. The profile's `checks` and `testFirst` become the class's.
-2. Every `all` leaf is applied; every `deny` adds its paths to `protectedFiles`.
-3. Each `any` branch is a copy of that class with the branch's leaves added: one variant per branch.
-4. Each variant gains the guardrails: their `protectedFiles` and `mandatoryChecks` are appended
+1. The binding names a policy the factory serves (`MissingRef` otherwise).
+2. The policy's meaning, the binding's mode, each fill-once parameter from where it is set, the
+   additive lists unioned and the lower cap ([the combination rules](#policies-and-bindings)).
+3. The guardrails are applied: their `protectedFiles` and `mandatoryChecks` are appended
    (`mandatoryChecks` become holdout checks, so GitHub Actions must report them); a cap the class
-   leaves unset inherits the guardrail's; a cap above it is refused (`guardrail_mismatch`).
-5. Every variant then passes the gate's own class check (`config.ValidateClass`).
+   leaves unset inherits the guardrail's; a cap above it refuses the binding (`GuardrailMismatch`).
+4. The resolved class passes the gate's own class check (`Invalid` otherwise), its `harness` naming
+   a central profile.
 
 ### Resolution order
 
@@ -179,7 +171,7 @@ flowchart TD
   armed -->|no| out3["human: class_unarmed"]
   armed -->|yes| evidence{"Evidence<br/>verdict, reported head, trailer;<br/>adopted: commits, pushes, label"}
   evidence -->|fail| out4["human"]
-  evidence -->|pass| conds{"Conditions, in order:<br/>allowedFiles, protectedFiles (deny),<br/>modifyOnly, maxPatchFiles, maxModifiedLines,<br/>diffShape, releaseAgeCheck, holdoutChecks, oracle"}
+  evidence -->|pass| conds{"Conditions, in order:<br/>allowedFiles, protectedFiles,<br/>modifyOnly, maxPatchFiles, maxModifiedLines,<br/>diffShape, releaseAgeCheck, holdoutChecks, oracle"}
   conds -->|refuse| out5["human: its reason"]
   conds -->|pending| out6["wait"]
   conds -->|hold| mode{"Mode"}
@@ -198,7 +190,6 @@ flowchart TD
 
 | Rule | Detail |
 |---|---|
-| `any` | Every variant is decided; an arm outranks a shadow, a shadow a wait, a wait any refusal. With none holding, the first branch's refusal stands |
 | The diff | Conditions on the diff hold until it is read: the first pass decides without it, and only a decision that would arm or shadow reads it and decides again |
 | The approval subset | Applies to a class's own arm or shadow, never to a maintainer's approval, which is already a human's. It is decided after the caps: a capped pull request says `auto_merge_cap`, not `approval_required` |
 | Deny | `protectedFiles` is the second condition checked, after `allowedFiles`: a file both outside the allow list and protected reports `file_not_allowed`. Either way a human merges |
@@ -207,12 +198,10 @@ flowchart TD
 ### description
 
 A class's `description` says, in one plain sentence, what the class is for: "Fixes a broken link in
-the docs, and nothing else." It is optional plain text of at most **280** characters, and it
-travels with the class into `.github/agent-factory.yaml`, the central config and
-`MergePolicy.spec.classes`. **The gate never reads it**: two classes that differ only in their
-description decide every pull request alike. The [settings page](web-ui.md#settings) leads each
-class card with it, and the editor edits it first, in its *What it is for* group; without one, the
-card leads with the class's conditions in one line.
+the docs, and nothing else." It is optional plain text of at most **280** characters, set on the
+`MergePolicy` (`spec.description`) or on a class of the central config; a binding has none. **The
+gate never reads it**: two classes that differ only in their description decide every pull request
+alike. A policy's [settings page](web-ui.md#settings) shows it.
 
 ### Shadow and live
 
@@ -249,9 +238,9 @@ flowchart LR
 | Stage | Switch (factory) | Needs | Does | Merge authority | Exit, as the code measures it | Off |
 |---|---|---|---|---|---|---|
 | 1 | `read` | — | Each fence read parses, validates and resolves the file and compares it with the central classes | Central | `maku_factory_policy_central_divergence == 0` and no `maku_factory_policy_load_errors_total` series | Unset: no observation; the gauge keeps its last value until restart |
-| 2 | `simulation` | — | Unlocks `maku policy diff` and the fixture replay (`maku policy simulate`), and the editor's replay rows. Offline | Central | The simulator agrees with the gate on the conformance fixtures | Unset: both verbs refuse, the editor shows no simulation. The spec's rule: turn it off when the simulator disagrees with the gate |
+| 2 | `simulation` | — | Unlocks `maku policy diff` and the fixture replay (`maku policy simulate`). Offline | Central | The simulator agrees with the gate on the conformance fixtures | Unset: both verbs refuse. The spec's rule: turn it off when the simulator disagrees with the gate |
 | 3 | `dualEvaluation` | `read` | Every merge decision is decided again under the repository's snapshot; agreement counted and written as `dual=` | Central | A week with no `agreement="unexplained"` | Unset: the record loses `policy=`/`dual=` |
-| 4 | `repositoryAuthority` | `read`; the repository entry sets `classAuthority: repository` and declares no `classes` | The gate decides the repository on its own file; triage, intake, schedules and the monitor read its classes | Repository file | An invalid or unreadable file pauses auto-merge | Revert the cutover: restore the entry's central `classes` and drop `classAuthority`, then the switch. The switch off with `classAuthority: repository` still set fails config load |
+| 4 | `repositoryAuthority` | `read`; the repository entry (or `Repository`) sets `classAuthority: repository` and declares no `classes` (binds no `mergePolicies`) | The gate decides the repository on its own file; triage, intake, schedules and the monitor read its classes | Repository file | An invalid or unreadable file pauses auto-merge | Revert the cutover: restore the entry's central `classes` and drop `classAuthority`, then the switch. The switch off with `classAuthority: repository` still set fails config load |
 | 5 | `approvalMemory` | `read`; broker `human.approvalMemory: true` | Grants are looked up, uncached, before each decision of a live class with a `requiresApproval` subset once the diff is read, and again before the merge call | Repository file plus grants | Grant lifecycle and rollback proofs | Unset: no lookup, the subset asks a maintainer again. Broker off: every grant path is a `404` |
 | 6 | `promotion` | Broker `policyManagement.promotion: true` and `factoryURL` | The factory serves `GET /v1/policy/evidence` and `/v1/policy/repositories`; the broker serves `/settings/*` and records promotions | Unchanged | One promotion request yields a correct, human-reviewed pull request | Unset on both: the pages and routes are `404` |
 
@@ -274,45 +263,48 @@ config breaking a rule below fails the rollout, so a bad flip never runs.
 ### `.github/agent-factory.yaml`
 
 Parsed strictly (`mergepolicy.Parse`): unknown keys, duplicate keys, a key in another case
-(`Mode:`), a key at the wrong layer, and a leaf setting zero or two keys are each an error. A bare
-`off` reads as `mode: off` (YAML's `false`). Then `mergepolicy.Validate` checks it against the
-central config.
+(`Mode:`) and a key at the wrong layer are each an error. A bare `off` reads as `mode: off` (YAML's
+`false`). Then `mergepolicy.Validate` checks it against the central config.
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `factory` | string | required | A factory name (DNS label). Must equal the config's `factory`. Maku never edits it |
-| `mergePolicies` | list of [bindings](#a-binding) | absent: no policy | The binding shape: each item binds a `MergePolicy` the factory serves, by name. Never with `classes` |
-| `classes` | map of class name → class | absent: no policy | **Deprecated**: read in this release, refused from the next minor, with `maku policy export` named. Class names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric. `review` takes `harness`, `harnessAllowed` and `escalation` only |
+| `mergePolicies` | list of [bindings](#a-binding) | absent: no policy | Each item binds a `MergePolicy` the factory serves, by name, at most once. Names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric |
 
-Two rules every file with classes must meet:
+A file with a `classes` key is refused whole: `mergepolicy: classes: the classes shape was removed in
+this release: write mergePolicies with maku policy export`.
+
+Two rules every file that binds policies must meet:
 
 | Rule | Error | Fix |
 |---|---|---|
-| It declares `docs-links` and `revert`. `mode: off` is enough | `class revert is required in a file that declares classes (OD-8): add it, "revert: {mode: off, author: agents, harness: <a profile>}" keeps it unarmed` | Add the line the error gives. The editor adds both as `off` when a file's first class is created |
-| Every `live` or `shadow` class with `author: agents` declares `allowedFiles`, in `all` or in every `any` branch. `docs-links` and `revert` are exempt (their `links-only` shape is built in), and so is an adopted class (its diff shape bounds it) | `class docs: a live or shadow class needs allowedFiles, in all or in every branch of any: …` | Name the paths the class may touch. Without them every path of the repository is in the class, and only policy-bot fences it |
+| It binds `docs-links` and `revert`. `mode: "off"` is enough | `class revert is required in a file that declares classes (OD-8): add it, "- {name: revert, mode: 'off'}" keeps it unarmed` | Add the line the error gives |
+| It binds `review` only as `{name: review, mode: "off"}` | `binding review: maxPerDay is refused on review: it is bound with mode off and nothing else, and a human merges it` | Remove every other key |
 
 An unknown key names where it is, the key meant when it is close or another tool's name for it, and
 every key valid there:
 
 ```
-mergepolicy: classes.docs.conditions.all[0]: key "maxFiles" is not a field (did you mean "maxPatchFiles"?); keys are matched exactly, in their documented case: one of allowedFiles, …
+mergepolicy: mergePolicies[2]: key "maxFiles" is not a field (did you mean "maxPatchFiles"?); keys are matched exactly, in their documented case: one of allowedFiles, …
 ```
 
 | Bound | Value |
 |---|---|
 | File size | 256 KiB |
-| Classes | 32 |
+| Bindings | 32 |
 | Patterns per list | 64 |
 | Patterns in the file | 256 |
 | Pattern length | 512 bytes |
-| `any` branches | 2 to 8 |
+| `requiresApproval` entries per binding | 16 |
 
 #### A binding
 
 The file's `mergePolicies` is the same list as a `Repository`'s `spec.mergePolicies` ([factory
 resources](#factory-resources)): it names a `MergePolicy` of the factory's namespace and supplies the
-mode and this repository's parameters. Each binding resolves on its own: one that does not resolve
-drops its class, never the file, and a file that does not parse pauses auto-merge as before. The
+mode and this repository's parameters (`allowedFiles`, `companionFiles`, `requiredLabel`,
+`oracleWorkflow`, `holdoutChecks`, `protectedFiles`, `requiresApproval`, `maxPatchFiles`,
+`maxModifiedLines`, `maxPerDay`). Each binding resolves on its own: one that does not resolve drops
+its class, never the file, and a file that does not parse pauses auto-merge as before. The
 guardrails cap every binding. Quote the mode `"off"`: YAML 1.1 reads a bare `off` as `false`.
 
 <!-- check: repository -->
@@ -328,68 +320,45 @@ mergePolicies:
     requiresApproval: [{changedFiles: ['^observability/base/']}]
 ```
 
-#### A class
+#### Conditions
 
-The classes shape, deprecated: a class with `conditions.any` becomes one policy per branch in the
-binding shape, and the next minor refuses both `classes:` and `any`.
+What a resolved class may require, set on the policy, the binding, or both as [the combination
+rules](#policies-and-bindings) allow. An empty value is refused rather than read as absent.
 
-| Key | Type | Default | Constraint |
-|---|---|---|---|
-| `description` | string | none | Plain text, at most 280 characters. [What the class is for](#description); the gate never reads it |
-| `mode` | `live` \| `shadow` \| `off` | required | Refused on `review`: a human merges it |
-| `author` | `agents` \| `adopt` | required | Refused on `review` |
-| `adopt` | `{logins: [..], branches: [..]}` | — | Required with `author: adopt`, refused otherwise. Logins end in `[bot]`; branches are `^` plus a literal prefix (`^renovate/`) |
-| `harness` | string | required | A key of the central `harnessProfiles`. `template: none` for `adopt`, any other for `agents` |
-| `harnessAllowed`, `escalation` | as the [central keys](#central-config) | none | The same constraints; carried into the gate's class only when set. On `review` they are, with `harness`, the only keys: any other key is refused as written, whatever its value (`mode: ""`, `conditions: {}`, `limits: {maxPerDay: 0}`, `adopt: null` included) |
-| `conditions.all` | list of leaves | none | Each leaf one key; a key at most once |
-| `conditions.any` | list of 2–8 lists of leaves | none | No empty branch; a key in `all` is not repeated in a branch |
-| `conditions.deny` | list of `{protectedFiles: [..]}` | none | Non-empty lists. Unanchored regular expressions |
-| `requiresApproval` | list of `{changedFiles: [..]}` | none | Non-empty lists. Unanchored regular expressions |
-| `limits.maxPerDay` | int | 0: the guardrail's | 0 or more; at most `mergeGuardrails.maxPerDay` when that is set |
-| `monitor` | `followUpWindow`, `oracleRuns`, `flux`, `verification` | none | As [the monitor](factory.md#the-post-merge-monitor): `followUpWindow` 1h–720h, `oracleRuns` 0–5 and needs `oracle`, `flux.within` 5m–6h, `verification.within` 1m–`followUpWindow` |
-
-#### Leaves
-
-Each leaf of `all` or of an `any` branch sets exactly one key. An empty value is refused rather than
-read as absent.
-
-| Leaf | Level | Type | Gate reason when it refuses | Constraint |
+| Field | Level | Type | Gate reason when it refuses | Constraint |
 |---|---|---|---|---|
 | `allowedFiles` | core | list of regexp | `file_not_allowed` | Each starts with `^` and ends with `$`: the match is unanchored, as policy-bot's is |
-| `modifyOnly` | core | `true` | `file_added_or_deleted` | `false` is refused: leave it out. Renames and copies count as added |
+| `protectedFiles` | core | list of regexp | `file_protected` | Unanchored; a rename from a protected path counts |
+| `modifyOnly` | core | `true` | `file_added_or_deleted` | Policy only. Renames and copies count as added |
 | `maxPatchFiles` | core | int ≥ 1 | `patch_too_large` | At most the guardrail's |
 | `maxModifiedLines` | core | int ≥ 1 | `patch_too_large` | Additions plus deletions, GitHub's count. At most the guardrail's |
-| `diffShape` | adopted | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Semver shapes and `added-entry` need `author: adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
 | `holdoutChecks` | core | list of check names | `holdout_red`; waits `holdout_pending` | SUCCESS reported by GitHub Actions on the head; their workflow is a gate path |
-| `releaseAgeCheck` | adopted | commit status name | `release_age_red`; waits `release_age_pending` | Needs `author: adopt`; the status must be posted by an adopted login |
-| `oracle` | **expert** | `{probe: dead-links, workflow, maxFindings: 1..16}` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
+| `requiresApproval[].changedFiles` | core | list of regexp | asks with `approval_required` | Unanchored |
+| `diffShape` | adopted | `links-only` \| `semver-patch` \| `semver-minor` \| `added-entry` | `class_mismatch` | Policy only. Semver shapes and `added-entry` need `author.adopt`; semver needs `modifyOnly: true`; `semver-minor` is shadow only; `added-entry` needs `allowedFiles`, `holdoutChecks`, `requiredLabel` and no `modifyOnly` |
+| `releaseAgeCheck` | adopted | commit status name | `release_age_red`; waits `release_age_pending` | Policy only. Needs `author.adopt`; the status must be posted by an adopted login |
+| `oracle` | **expert** | `{probe: dead-links, maxFindings: 1..16}`, the binding's `oracleWorkflow` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
 | `companionFiles` | **expert** | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
-| `requiredLabel` | **expert** | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author: adopt`; set by an adopted login |
-
-`deny[].protectedFiles` (core) refuses with `file_protected`; a rename from a protected path counts.
-`requiresApproval[].changedFiles` (core) asks with `approval_required`. `any` branches are
-**expert**: no real file uses them yet, and the guided form leaves them to the YAML view.
+| `requiredLabel` | **expert** | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author.adopt`; set by an adopted login |
 
 | Level | Means |
 |---|---|
-| core | Every template uses it; start here |
-| adopted | Only for `author: adopt` (Renovate lanes); refused on an agents class |
-| **expert** | Valid in one narrow combination only. `oracle` needs `links-only`, `modifyOnly`, holdouts and `allowedFiles`; `companionFiles` needs `added-entry`; `requiredLabel` needs `adopt`. The guided form shows `companionFiles` and `requiredLabel` to every class, and they fail validation on an agents class |
+| core | Every class may use it; start here |
+| adopted | Only for `author.adopt` (Renovate lanes); refused on an agents class |
+| **expert** | Valid in one narrow combination only |
 
 #### Names from other tools
 
-The parser refuses another tool's name and suggests the key meant. The ones it recognizes:
+The parser refuses another tool's name for a binding key and suggests the key meant. The ones it
+recognizes:
 
 | You may know | Tool | Here |
 |---|---|---|
 | `only_changed_files`, `files`, `paths` | policy-bot, Mergify | `allowedFiles` |
-| `no_changed_files`, `protectedPaths`, `denyFiles` | policy-bot | `conditions.deny[].protectedFiles` |
+| `no_changed_files`, `protectedPaths`, `denyFiles` | policy-bot | `protectedFiles` |
 | `modified_lines`, `maxLines`, `maxChangedLines` | policy-bot | `maxModifiedLines` |
 | `files_count`, `maxFiles`, `maxChangedFiles` | Mergify | `maxPatchFiles` |
 | `check-success`, `checks`, `requiredChecks` | Mergify, GitHub | `holdoutChecks` |
 | `label`, `labels`, `requiredLabels` | Mergify | `requiredLabel` |
-| `minimumReleaseAge`, `releaseAge` | Renovate | `releaseAgeCheck` |
-| `file_not_added` + `file_not_deleted` | policy-bot | `modifyOnly: true` (no suggestion: write it) |
 | `has_workflow_result` | policy-bot | `holdoutChecks` (no suggestion: write it) |
 
 A suggestion is matched case-insensitively; a key within two edits of a valid one (`allowedFile`) is
@@ -419,11 +388,11 @@ The broker reads `policyManagement` (only `promotion` and `operators` matter the
 A profile's `checks` and `testFirst` are the class's. Its `template`, `tier` and `loop` shape the
 runs of a task whose class declares `harnessAllowed` or `escalation` ([the scoper](factory.md#the-scoper)
 resolves the profile); `template` is also read for [coordination](factory.md#multi-repository-coordination)
-checks. A file declares `review` with `harness`, `harnessAllowed` and `escalation` only, and the
-export writes it that way when the central `classes.review` has a `harness`; on `review` the
-`harness` is always the evaluation's floor, so a cut-over repository's review tasks keep the floor,
-the variants and the steps the central class had. Without a floor `review` stays implicit on both
-sides, and its tasks run as before the evaluation.
+checks. A file binds `review` only as `{name: review, mode: "off"}`: its `harness`, `harnessAllowed`
+and `escalation` are the `review` policy's, and on `review` the `harness` is always the evaluation's
+floor, so a cut-over repository's review tasks keep the floor, the variants and the steps the
+policy gives. A file that does not bind `review` leaves it implicit, and its tasks run as before the
+evaluation.
 
 <!-- check: central -->
 ```yaml
@@ -450,8 +419,9 @@ A fuller example of the three blocks. The repository files on this page are vali
 
 ## Recipes
 
-Start every class in `shadow`. A recipe's file shows only the new class beside the two required
-ones; yours keeps its others.
+Start every binding in `shadow`. Each recipe is a policy, which an operator applies with the
+factory's other objects, and a file that binds it beside the two required bindings; yours keeps its
+others. A policy's `requires` names what each binding must supply.
 
 ### Your first file: export the bindings
 
@@ -465,114 +435,118 @@ maku policy check  --config factory.yaml --manifests resources.yaml --repository
 # equivalent
 ```
 
-A repository still served from a per-repository `MergePolicy`, or from the config file's `classes`,
-is refused: convert it first with [`maku config migrate`](#factory-resources). The settings editor
-still writes the classes shape for such a repository (`classes:`, below), which this release reads
-and the next minor refuses.
+A repository whose classes are still the config file's is refused (`the repository's classes are
+the config file's, and the file binds central policies: migrate the repository first`): convert it
+first with [`maku config migrate --from`](#factory-resources).
 
 ### Documentation only
+
+<!-- check: none -->
+```yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs-broad, namespace: agent-system}
+spec:
+  description: Prose changes to the documentation, within a size bound.
+  requires: [allowedFiles]
+  maxPatchFiles: 10
+  maxModifiedLines: 200
+  maxPerDay: 2
+  monitor: {followUpWindow: 168h}
+```
 
 <!-- check: repository -->
 ```yaml
 factory: aws-0
-classes:
-  docs-links: {mode: live, author: agents, harness: plain}
-  revert: {mode: live, author: agents, harness: plain}
-  docs-broad:
+mergePolicies:
+  - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - name: docs-broad
     mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - allowedFiles: ['^docs/.+\.md$', '^README\.md$']
-        - maxPatchFiles: 10
-        - maxModifiedLines: 200
-        - holdoutChecks: ['Check the documentation links 🔗']
-      deny:
-        - protectedFiles: ['^docs/superpowers/', '^docs/specs/', '^docs/security/']
-    requiresApproval:
-      - changedFiles: ['^docs/architecture/']
-    limits: {maxPerDay: 2}
-    monitor: {followUpWindow: 168h}
+    allowedFiles: ['^docs/.+\.md$', '^README\.md$']
+    holdoutChecks: ['Check the documentation links 🔗']
+    protectedFiles: ['^docs/superpowers/', '^docs/specs/', '^docs/security/']
+    requiresApproval: [{changedFiles: ['^docs/architecture/']}]
 ```
 
 Paths and caps only: a symlink or a file mode change under `docs/` is not told apart.
 
 ### Dependency updates
 
-An adopted class: Renovate's pull requests, no run. It needs a `template: none` profile.
+An adopted class: Renovate's pull requests, no run. Its profile is a `template: none` one.
 
-<!-- check: repository -->
+<!-- check: none -->
 ```yaml
-factory: aws-0
-classes:
-  docs-links: {mode: live, author: agents, harness: plain}
-  revert: {mode: live, author: agents, harness: plain}
-  deps-patch:
-    mode: shadow
-    author: adopt
-    adopt: {logins: ['renovate[bot]'], branches: ['^renovate/']}
-    harness: adopted-none
-    conditions:
-      all:
-        - allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']
-        - modifyOnly: true
-        - maxPatchFiles: 3
-        - maxModifiedLines: 10
-        - diffShape: semver-patch
-        - releaseAgeCheck: renovate/stability-days
-      deny:
-        - protectedFiles: ['^infrastructure/base/crossplane/configuration-core/']
-    limits: {maxPerDay: 2}
-    monitor:
-      followUpWindow: 168h
-      flux: {source: flux-system/flux-system, within: 1h}
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: deps-patch, namespace: agent-system}
+spec:
+  description: Renovate's patch bumps, once the release has aged.
+  author: {adopt: {logins: ['renovate[bot]'], branches: ['^renovate/']}}
+  harness: adopted-none
+  requires: [allowedFiles]
+  modifyOnly: true
+  maxPatchFiles: 3
+  maxModifiedLines: 10
+  diffShape: semver-patch
+  releaseAgeCheck: renovate/stability-days
+  maxPerDay: 2
+  monitor:
+    followUpWindow: 168h
+    flux: {within: 1h}    # the source is the Repository's merge.fluxSource
 ```
 
-Minor updates get a class of their own, `deps-minor`, which is **shadow only**: `semver-minor`
-refuses `mode: live` (`semver-minor is shadow only`), so it collects evidence and never merges. The
-editor's template is this, with no daily cap of its own:
+<!-- check: repository -->
+```yaml
+factory: aws-0
+mergePolicies:
+  - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - name: deps-patch
+    mode: shadow
+    allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']
+    protectedFiles: ['^infrastructure/base/crossplane/configuration-core/']
+```
+
+Minor updates get a policy of their own, `deps-minor`: the same author, `diffShape: semver-minor`,
+`modifyOnly`, the same caps and release age, no daily cap of its own. It is **shadow only**: a
+binding in `mode: live` is refused (`semver-minor is shadow only`), so it collects evidence and never
+merges.
 
 <!-- check: repository -->
 ```yaml
 factory: aws-0
-classes:
-  docs-links: {mode: off, author: agents, harness: plain}
-  revert: {mode: off, author: agents, harness: plain}
-  deps-minor:
-    mode: shadow
-    author: adopt
-    adopt: {logins: ['renovate[bot]'], branches: ['^renovate/']}
-    harness: adopted-none
-    conditions:
-      all:
-        - diffShape: semver-minor
-        - modifyOnly: true
-        - maxPatchFiles: 3
-        - maxModifiedLines: 10
-        - releaseAgeCheck: renovate/stability-days
-    monitor: {followUpWindow: 168h}
+mergePolicies:
+  - {name: docs-links, mode: "off"}
+  - {name: revert,     mode: "off"}
+  - {name: deps-minor, mode: shadow, allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']}
 ```
 
 See [adopted classes](factory.md#adopted-classes) for how adoption reads commits and pushes.
 
 ### Generated files
 
+<!-- check: none -->
+```yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: generated-files, namespace: agent-system}
+spec:
+  description: Regenerated files, compared byte for byte by a holdout.
+  requires: [allowedFiles, holdoutChecks]
+  modifyOnly: true
+```
+
 <!-- check: repository -->
 ```yaml
 factory: aws-0
-classes:
-  docs-links: {mode: live, author: agents, harness: plain}
-  revert: {mode: live, author: agents, harness: plain}
-  generated-files:
+mergePolicies:
+  - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - name: generated-files
     mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - allowedFiles: ['^gen/.+$']
-        - modifyOnly: true
-        - holdoutChecks: ['Regenerate and compare']
+    allowedFiles: ['^gen/.+$']
+    holdoutChecks: ['Regenerate and compare']
 ```
 
 The holdout is a gate-path GitHub Actions workflow that regenerates `gen/` from the head and fails on
@@ -580,64 +554,75 @@ any byte of difference; Maku reads its result and never runs repository code.
 
 ### Tightening and relaxing
 
-`maku policy diff` (and the editor's **Check**) proves a change structural, class by class
-(`mergepolicy.Structural`). A tightening is bounded on every row by the old class: fewer allowed
-paths, more denied ones, a wider approval subset, lower caps, more evidence, a lower mode. Anything
-else, including a rewritten pattern, another harness profile, a `harnessAllowed` variant or an
+`maku policy diff` proves a change structural, class by class (`mergepolicy.Structural`), on the
+resolved classes. A tightening is bounded on every row by the old class: fewer allowed paths, more
+denied ones, a wider approval subset, lower caps, more evidence, a lower mode. Anything else,
+including a rewritten pattern, another harness profile, a `harnessAllowed` variant or an
 `escalation` step added or changed, is a relaxation.
 
-| Change to `docs-broad` above | Verdict | Why, as printed |
+| Change to the `docs-broad` binding above | Verdict | Why, as printed |
 |---|---|---|
-| `maxModifiedLines: 100`, deny adds `'^docs/runbooks/'` | `tightening` | |
-| `maxPatchFiles: 15`, `allowedFiles` gains `svg` | `relaxation` | `allowedFiles broadened or rewritten; maxPatchFiles raised or removed` |
-| A new class | `relaxation` | `the class is new` (a new class in `mode: off` is a tightening) |
-| A removed class | `tightening` | |
+| `maxModifiedLines: 100`, `protectedFiles` adds `'^docs/runbooks/'` | `tightening` | |
+| `allowedFiles` gains `'^docs/.+\.svg$'` | `relaxation` | `allowedFiles broadened or rewritten` |
+| A new binding | `relaxation` | `the class is new` (a new binding in `mode: "off"` is a tightening) |
+| A removed binding | `tightening` | |
 
 On a cut-over repository, a relaxation of a class that is `live` in the new file runs that class in
 shadow and logs `repository merge policy relaxed: the class runs in shadow` with the why. The
 demotion lives in the factory's memory: a restart lifts it.
 
-### A class with `any`, and its policy-bot rules
+### Two branches, and their policy-bot rules
 
-Two shapes of documentation change in one class. Each `any` branch is a variant decided on its own;
-the class holds when one does.
+Two shapes of documentation change are two policies, each bound on its own, with its own evidence,
+promotion and daily cap. A class of the removed shape with `conditions.any` becomes one policy per
+branch.
+
+<!-- check: none -->
+```yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs-small, namespace: agent-system}
+spec:
+  requires: [allowedFiles]
+  modifyOnly: true
+  maxModifiedLines: 40
+  protectedFiles: ['^docs/(superpowers|specs)/']
+  maxPerDay: 2
+---
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: website-small, namespace: agent-system}
+spec:
+  requires: [allowedFiles]
+  modifyOnly: true
+  maxModifiedLines: 20
+  protectedFiles: ['^docs/(superpowers|specs)/']
+  maxPerDay: 2
+```
 
 <!-- check: repository -->
 ```yaml
 factory: aws-0
-classes:
-  docs-links: {mode: live, author: agents, harness: plain}
-  revert: {mode: live, author: agents, harness: plain}
-  docs-small:
-    mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - modifyOnly: true
-      any:
-        - - allowedFiles: ['^docs/.+\.md$']
-          - maxModifiedLines: 40
-        - - allowedFiles: ['^website/content/.+\.md$']
-          - maxModifiedLines: 20
-      deny:
-        - protectedFiles: ['^docs/(superpowers|specs)/']
-    limits: {maxPerDay: 2}
+mergePolicies:
+  - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
+  - {name: docs-small,    mode: shadow, allowedFiles: ['^docs/.+\.md$']}
+  - {name: website-small, mode: shadow, allowedFiles: ['^website/content/.+\.md$']}
 ```
 
-policy-bot has no `any` inside a rule: write one rule per branch and list both in `policy.approval`.
-Each rule repeats the repository's whole gate list plus the class's `deny` (the list here is
-shortened to the guardrails'), and must approve nothing the class refuses:
+Each class needs its own policy-bot rule, listed in `policy.approval`. Each rule repeats the
+repository's whole gate list plus the class's `protectedFiles` (the list here is shortened to the
+guardrails'), and must approve nothing the class refuses:
 
 ```yaml
 policy:
   approval:
     - or:
         - human-authored
-        - "low-risk: docs-small (docs)"
-        - "low-risk: docs-small (website)"
+        - "low-risk: docs-small"
+        - "low-risk: website-small"
 approval_rules:
-  - name: "low-risk: docs-small (docs)"
+  - name: "low-risk: docs-small"
     if:
       has_author_in: {users: ["ogenki-agents[bot]"]}
       only_has_contributors_in: {users: ["ogenki-agents[bot]"]}
@@ -647,7 +632,7 @@ approval_rules:
       file_not_added: {paths: ['.*']}
       file_not_deleted: {paths: ['.*']}
       modified_lines: {total: "< 41"}
-  - name: "low-risk: docs-small (website)"
+  - name: "low-risk: website-small"
     if:
       has_author_in: {users: ["ogenki-agents[bot]"]}
       only_has_contributors_in: {users: ["ogenki-agents[bot]"]}
@@ -659,12 +644,12 @@ approval_rules:
       modified_lines: {total: "< 21"}
 ```
 
-Put both files in **one pull request**, from a branch: the editor's edit link opens one file. The
-pull request touches `.github/` and `.policy.yml`, so no agent rule approves it and a maintainer
-merges it. policy-bot reads the base branch, so the new rules apply from the merge on. Maku reads
-neither the rule names nor the rules; the parity test that holds a class's fence to its
-`low-risk: <class>` rule is the host's (`scripts/ci/tests/test-agent-merge-gate-parity.py` in
-ai-native-ref), and it reads only central classes.
+Put both files in **one pull request**, from a branch. The pull request touches `.github/` and
+`.policy.yml`, so no agent rule approves it and a maintainer merges it. policy-bot reads the base
+branch, so the new rules apply from the merge on. Maku reads neither the rule names nor the rules;
+the parity test that holds a class's fence to its `low-risk: <class>` rule is the host's
+(`scripts/ci/tests/test-agent-merge-gate-parity.py` in ai-native-ref), and it reads only central
+classes.
 
 ### Moving a repository to its own file (stage 4)
 
@@ -682,21 +667,26 @@ repositories:
     # merge, checks and schedules stay as they were; classes is removed
 ```
 
-3. Keep the removed `classes` block: reverting this pull request is the rollback. No tool writes a
-   repository file back into central classes, so a class changed in the file after the cutover
-   must be carried back by hand.
+A repository served from a `Repository` object takes `classAuthority: repository` there instead,
+and drops its `mergePolicies`: the file then holds the bindings (`classAuthority repository: the
+repository's file holds the bindings (MP15)`).
+
+3. Keep the removed `classes` block, or `mergePolicies` list: reverting this pull request is the
+   rollback. No tool writes a repository file back, so a binding changed in the file after the
+   cutover must be carried back by hand.
 
 ## Workflows
 
 ### Validate a class: `maku policy diff`
 
-To validate a new or changed class, use `diff`, never `check`. `diff` parses both files strictly,
-validates each against the guardrails and profiles, and names each class's structural change. Pass
+To validate a new or changed binding, use `diff`, never `check`. `diff` parses both files strictly,
+resolves each binding against the policies `--manifests` serves, the guardrails and the profiles,
+and names each class's structural change. Pass
 the same file twice to validate one file alone. It needs `policyManagement.simulation` in the
 config you pass.
 
 ```bash
-maku policy diff --config factory.yaml --repository owner/name old.yaml new.yaml
+maku policy diff --config factory.yaml --manifests resources.yaml --repository owner/name old.yaml new.yaml
 ```
 
 It prints `CLASS CHANGE WHY` per class: `unchanged`, `tightening`, or `relaxation` with why.
@@ -704,13 +694,13 @@ It prints `CLASS CHANGE WHY` per class: `unchanged`, `tightening`, or `relaxatio
 ### Migration only: `maku policy check`
 
 ```bash
-maku policy check --config factory.yaml --repository owner/name .github/agent-factory.yaml
+maku policy check --config factory.yaml --manifests resources.yaml --repository owner/name .github/agent-factory.yaml
 ```
 
 `check` means **equivalent to the central classes**, not "valid". It parses and validates as `diff`
 does, then prints `equivalent` or each difference (`docs-broad: only in the repository`). Use it for
 the export before a cutover, and in a repository's CI while the central config still decides. A file
-that adds a class, an `any` or a `requiresApproval` subset fails it by design.
+that adds a binding, or changes what one resolves to, fails it by design.
 
 ### Fixture replay: `maku policy simulate`
 
@@ -727,46 +717,31 @@ and the change (`unchanged`, `newly_auto_merged`, `newly_blocked`, `newly_approv
 The fixtures are recorded under the test config in `internal/factory/reconciler/simulate_test.go`,
 for the classes `dead-links` and `docs`. Under any other config a row prints `(the fixture recorded
 another central decision)`: it no longer conforms and proves nothing. Read a replay as proof that the
-evaluator the editor uses is the gate's, not as a preview of your repository's pull requests; the
-editor's strictness counterfactual is the only historical view. Replaying real pull requests is not
-part of this release.
+evaluator is the gate's, not as a preview of your repository's pull requests. Replaying real pull
+requests is not part of this release.
 
-### The settings editor
+### The settings pages
 
 With `policyManagement.promotion` on (factory and broker), `/settings/merge-policies/<owner>/<name>`
-holds the editor; see [the web UI](web-ui.md#settings) for who may do what.
+shows a repository's classes, and `/settings/merge-policies/policies/<name>` one policy; see [the web
+UI](web-ui.md#settings) for who may do what. **Maku writes nothing**: each page answers with what to
+commit.
 
-The page is MergePolicy-first. A header says once what serves the classes: the `MergePolicy`'s
-name and namespace, its authority (`central` or `repository`), its generation (with "status from
-generation N" when the status lags the spec), and each [condition](#factory-resources) as a word on
-its colour ("Accepted", "Not in sync: 2 differences"), its message shown under them (the
-differences under **What differs**), then one legend for the three modes. One line under it says
-what `.github/agent-factory.yaml` is to the classes, and only what the status shows: it matches
-(`InSync=True`), it differs (the `MergePolicy` wins), it is invalid, or it has not been compared
-yet, with the reason. Under `repository` authority an invalid file pauses auto-merge and the line
-is a notice. A repository with no `MergePolicy` says "Not migrated yet: `maku config migrate`
-prints its MergePolicy" and has no editor; its cards keep their promotion and exception requests.
-
-Then the guardrails as sentences, one card per class (its [description](#description), its
-conditions in one line, its evidence, the full sentences folded under **Conditions**), and the
-editor. The editor has two tabs, **Form** and **YAML (expert)**. **Check** sits below both.
-
-| Part | Edits |
-|---|---|
-| Form | One class, picked from a list or started with **New class from an example**. `mode` sits above the groups; the rest is grouped by question: *What it is for* (`description`, with its count to 280), *Who writes it* (`author`, the harness from the central list, `adopt.logins` and `adopt.branches` for an adopted class, and `harnessAllowed` and `escalation` for an off class and the review class only), *What it may touch* (`allowedFiles`, `companionFiles` with an `added-entry` shape, `protectedFiles` from `deny`), *How big it may be* (`maxPatchFiles`, `maxModifiedLines`, `modifyOnly`, `diffShape`), *What must pass* (`holdoutChecks`, and `releaseAgeCheck` and `requiredLabel` for an adopted class), *When to ask a maintainer* (`requiresApproval`'s `changedFiles`), *Limits and follow-up* (`limits.maxPerDay`, `monitor.followUpWindow`). Each field carries a plain label, its YAML key, a help line and a link to this page; empty groups fold behind an "Add ..." button. A live sentence above the groups reads the class back in words. `any` branches and `oracle` are kept as they are. A new class never takes the name of one the file has: the editor suffixes it (`-2`, `-3`...) and says so |
-| Examples | Simple: `docs-broad`, `deps-patch`, `generated-files`. Advanced: `deps-minor`, `docs-or-tests`, `infra-with-approval`. All start in shadow; `deps-minor` is shadow only. The harness starts on the first central profile the template's author may take (`template: none` for the deps templates). A file's first class brings `docs-links` and `revert` as `mode: off`, so the first **Check** does not fail on classes you never wrote. The templates live in `web/src/policy-templates.json`, and `mergepolicy.TestEveryEditorTemplatePassesCheck` runs each through the factory's own `Parse` and `Validate`, started the way the editor starts it, on the deployed profiles: a template that would fail **Check** fails `task test` |
-| YAML (expert) | The whole file, same validation. `factory:` is refused if changed. An error's line opens this tab |
-
-**Check** sends the file to the factory (`POST /api/policy/repositories/<owner>/<name>/preview`): the
-gate's `Parse`, `Validate`, `Resolve`, the structural change against the current policy (the file's
-classes, or the central ones as `export` would write them), the fixture replay when `simulation` is on,
-and the strictness counterfactual of the class's recent decisions. What it answers depends on who
-holds the merge authority. **Maku writes nothing** either way:
-
-| Authority | The answer | You |
+| Repository | Where its bindings are edited | **Check** answers |
 |---|---|---|
-| `central` (a `MergePolicy` serves the classes) | The `MergePolicy` manifest the factory builds from the file, offered as **Copy MergePolicy manifest** and **Download** (`mergepolicy-<name>.yaml`) | Commit the manifest where the platform's GitOps applies it |
-| `repository`, or not migrated | The whole file and the GitHub edit link on the default branch | Paste the file into the edit page and open the pull request; it touches `.github/`, so a human merges it |
+| Bound, `central` authority | The **Bindings editor**: each binding's mode and parameters, the policy's meaning read-only | The `Repository` manifest, `repository-<name>.yaml`, each binding resolved or refused with its reason: commit it where the platform's GitOps applies it |
+| `repository` authority | `.github/agent-factory.yaml`, by pull request: the page shows each class's file binding and no editor | Nothing on the page: [`maku policy diff`](#validate-a-class-maku-policy-diff) checks the file. It touches `.github/`, so a human merges it |
+| Not migrated (its classes are the config file's) | Nowhere: the page says "Not migrated yet: `maku config migrate` prints its Repository." | — |
+
+A policy's page shows its definition, what each binding must supply (`requires`) and its consumers.
+Its editor checks a changed spec (`POST /api/policy/policies/<name>/preview`): the
+`mergepolicy-<name>.yaml` to commit and each consumer's change, live consumers first.
+
+The header says once what serves the classes: the `Repository`, its authority, its generation and
+each of its [conditions](#status) as a word on its colour, then one legend for the three modes. One
+card per class follows, with its evidence: a bound class's card links to its policy's page, which
+holds what the class means; a not-migrated repository's card says its conditions are in the
+factory's config.
 
 ### Promotion: shadow to live
 
@@ -796,11 +771,10 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
 
-Only a class of the repository's own file is promotable here (`not_in_repository_policy` otherwise),
-and only from `shadow` (`not_shadow`). Under `central` authority there is no file proposal: the
-card says to set `live: true` on the class in the `MergePolicy` and merge that change, and
-**Edit this class** opens it in the editor. A not-migrated repository keeps the file proposal and
-the exception requests; it only has no editor. The proposal changes the one `mode:` line and is parsed again.
+Only a bound class is promotable (`not_in_repository_policy` otherwise), and only from `shadow`
+(`not_shadow`). The proposal changes the one `mode:` line, `shadow` to `live`, and is parsed again:
+in `repository-<name>.yaml` under `central` authority, in `.github/agent-factory.yaml` under
+`repository` authority. A not-migrated repository has no proposal but keeps its exception requests.
 Evidence is cached 10 minutes per repository and replica. The 29/46/61 ladder and the
 Clopper-Pearson bound are shown, never acted on. The Evidence page and the class cards put them
 in words: `worst-case bad rate ≤ N %` is the bound at 95 % confidence, `awaiting outcome` the
@@ -896,7 +870,7 @@ record's fields are in [the factory](factory.md#the-merge-gate):
 | `policy=` | The snapshot decided under (cut over), or compared (dual). Match it against `sha256sum .github/agent-factory.yaml` at the commit |
 | `dual=` | `agree`, `explained`, `unread`, `unexplained`, `no_policy`. With anything but `agree` the factory logs `merge decision under the repository policy` with both decisions |
 | `grant=` | The grant and version that let it arm |
-| `policygen=` | The generation of the class's own `MergePolicy` the decision used, [below](#factory-resources): a bound class's policy, else the repository's per-repository `MergePolicy`. Absent when the class comes from the repository's file and is not a binding |
+| `policygen=` | The generation of the bound class's own `MergePolicy` the decision used, [below](#factory-resources). Absent for a class the config file declares |
 | `repogen=` | Only for a bound class: the generation of the `Repository` that holds the binding (its mode and parameters) |
 | `resolved=` | The first 12 hex digits of the resolved class's hash: the policy's definition and this repository's binding together, mode excluded. It is what an approval grant binds to, so the approval-memory form prefills from it; an edit to another class leaves it, and its grants, unchanged |
 
@@ -910,12 +884,12 @@ The gate's policy-related reasons. Every other reason is in [the factory](factor
 | Reason | Verdict | Means | Fix |
 |---|---|---|---|
 | `policy_unavailable` | wait | Cut over, and the file has not been read yet or its last read is older than 15 minutes (the fence's window). Bounded by `merge.awaitingCIFor` | Check the fence read: `maku_factory_repository_owned`, GitHub reachability. It resumes on the next read |
-| `policy_invalid` | human | Cut over, and the default branch's file is invalid, over a guardrail, or declares no class | Fix `.github/agent-factory.yaml` (the factory log `repository merge policy read` has the error), or merge by hand |
+| `policy_invalid` | human | Cut over, and the default branch's file is invalid or binds no policy | Fix `.github/agent-factory.yaml` (the factory log `repository merge policy read` has the error), or merge by hand |
 | `approval_required` | human | A live class would arm, and a file is in its `requiresApproval` subset; no grant covers it. Also when the grant that armed it no longer holds at the merge call | Approve the head or merge it; **Merge and create rule** to let later ones arm |
 | `shadow_would_require_approval` | shadow | The same, in a shadow class | Nothing: it is a grant candidate, not promotion evidence |
 | `shadow_would_arm` | shadow | Every row held; the class is in shadow | Merge it if you agree: that is the evidence |
-| `class_unarmed` | human | The predicted class is `off`, or absent from the file | Merge by hand, or arm a class |
-| `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large` | human | A path or size condition, or a `deny` or guardrail path | Out of the class: a human merges |
+| `class_unarmed` | human | The predicted class is `off`, or not bound | Merge by hand, or arm a class |
+| `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large` | human | A path or size condition, or a protected or guardrail path | Out of the class: a human merges |
 | `class_mismatch` | human | The diff shape does not hold | As above |
 | `holdout_red`, `holdout_pending` | human, wait | A holdout or a `mandatoryChecks` entry is red, skipped, neutral, not from Actions, or not yet reported | Fix the check; a mandatory check must be a GitHub Actions job |
 | `release_age_red`, `release_age_pending`, `label_missing`, `label_not_adopted` | human, wait | Adopted-class evidence | See [adopted classes](factory.md#adopted-classes) |
@@ -929,7 +903,7 @@ Other policy vocabularies:
 
 | Where | Values |
 |---|---|
-| `maku_factory_policy_load_errors_total{reason}` | `invalid`, `guardrail_mismatch` (valid in shape, over a guardrail or naming an unknown profile), counted at every read; `unreadable`, `stale`, counted per gate pass of a cut-over repository |
+| `maku_factory_policy_load_errors_total{reason}` | `invalid`, counted at every read; `unreadable`, `stale`, counted per gate pass of a cut-over repository. A binding over a guardrail is refused alone (`GuardrailMismatch`), never the file |
 | `policy diff` | `unchanged`, `tightening`, `relaxation` |
 | Promotion blockers | `below_minimum`, `bad_outcome`, `no_drill` |
 | Settings API refusals | `not_a_maintainer`, `not_an_operator`, `no_such_class`, `not_promotable`, `evidence_pending`, `not_eligible`, `exception_unusable`, `minimum_not_below`, `justification_length`, `bad_state`, `records_unavailable` |
@@ -937,14 +911,14 @@ Other policy vocabularies:
 
 ## Rollback
 
-Every rollback is a pull request: to the repository's file for a class, to the central config for a
-stage. Nothing here needs a restart beyond the factory's own rollout.
+Every rollback is a pull request: to the repository's file (or its `Repository`) for a class, to the
+central config for a stage. Nothing here needs a restart beyond the factory's own rollout.
 
 ### A class
 
 | To | Do | Takes effect |
 |---|---|---|
-| Stop a live class merging | Set its `mode: shadow` (or `off`) in the file | On the next fence read, within 5 minutes. A lower mode is a tightening |
+| Stop a live class merging | Set its binding's `mode: shadow` (or `"off"`) in the file, or in the `Repository` under `central` authority | On the next fence read, within 5 minutes, or once Flux applies the `Repository`. A lower mode is a tightening |
 | Undo a promotion | Revert the promotion's pull request | As above |
 | Stop one pull request now | Request changes on it (an agents pull request then gets a revision run, an adopted one goes to a human). The [kill switch](factory.md#the-kill-switch) stops everything | At once |
 | Stop one saved grant | **Revoke** it on `/settings/approval-memory` | At once, for good |
@@ -961,9 +935,9 @@ Roll back from the top: a lower stage cannot be off while a higher one needs it.
 |---|---|---|
 | 6 | `promotion: false` on the factory and the broker | Pages and routes `404`. A merged promotion stays in the file: revert it there |
 | 5 | `approvalMemory: false`; broker `human.approvalMemory: false` | No lookup; the subset asks a maintainer. Grants stay in the database, unused |
-| 4 | Revert the cutover pull request (central `classes` back, `classAuthority` gone), then `repositoryAuthority: false` | Central decides again. The switch off first fails config load. No tool writes a repository file back into central classes, so a class changed in the file since the cutover is carried back by hand |
+| 4 | Revert the cutover pull request (the central `classes` or the `Repository`'s `mergePolicies` back, `classAuthority` gone), then `repositoryAuthority: false` | Central decides again. The switch off first fails config load. No tool writes a repository file back, so a binding changed in the file since the cutover is carried back by hand |
 | 3 | `dualEvaluation: false` | No second decision; records lose `policy=` and `dual=` |
-| 2 | `simulation: false` | `diff` and `simulate` refuse, the editor shows no fixture replay |
+| 2 | `simulation: false` | `diff` and `simulate` refuse |
 | 1 | `read: false` (3, 4 and 5 off first) | Nothing read; the divergence gauge keeps its last value until restart |
 
 ## Troubleshooting
@@ -972,31 +946,28 @@ Roll back from the top: a lower stage cannot be off while a higher one needs it.
 central", not "valid": a new class is `only in the repository`. Validate it with `maku policy diff`
 (the same file twice is fine).
 
-**`harness "x" is not in harnessProfiles`.** The class names a profile the central config does not
-have. Ask an operator to add it, or pick one the editor lists.
+**`the classes shape was removed in this release`.** The file is in the removed `classes:` shape:
+write it as bindings, with `maku policy export` once the factory serves the repository from a
+`Repository` ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1)).
 
-**`template none runs nothing, and only an adopted class takes it`.** `author: adopt` needs a
-`template: none` profile, and `agents` must not use one.
+**A class I bound is missing.** Its binding did not resolve and dropped that class alone. `maku policy
+check` prints `<class>: refused, <reason>: …`, and a `Repository`'s `BindingsValid` condition names
+it; the reasons are in [policies and bindings](#policies-and-bindings).
 
-**`maxPatchFiles 30 is over the guardrail's 20`.** A class may only lower a guardrail cap. Leave the
-leaf out to inherit it.
+**`harness "x" is not in harnessProfiles`.** The policy names a profile the central config does not
+have. Ask an operator to add it, or to change the policy.
 
-**`allowedFiles "docs/.+" must start with ^ and end with $`.** Anchor allow lists. Deny and approval
-patterns are unanchored on purpose: `'^docs/specs/'` covers the directory.
+**`maxPatchFiles 30 is over the guardrail's 20`.** A binding may only lower a guardrail cap
+(`GuardrailMismatch`). Leave the key out to inherit it.
+
+**`allowedFiles "docs/.+" must start with ^ and end with $`.** Anchor allow lists. Protected and
+approval patterns are unanchored on purpose: `'^docs/specs/'` covers the directory.
 
 **`key "Mode" is not a field (did you mean "mode"?)`.** Keys are case-exact. The message starts
-with where the key is (`classes.docs.monitor:`) and lists every key valid there.
+with where the key is (`mergePolicies[2]:`) and lists every key valid there.
 
 **`class revert is required in a file that declares classes`.** Add the line the error gives:
-`revert: {mode: off, author: agents, harness: plain}` keeps it unarmed.
-
-**`a live or shadow class needs allowedFiles`.** An agents class in `live` or `shadow` must say which
-paths it may touch, in `all` or in every `any` branch.
-
-**`any holds at least two branches: one is all`.** Move a single branch's leaves into `all`.
-
-**`X is in all and in a branch of any`.** A key appears in one place only, so no branch overrides
-`all`.
+`- {name: revert, mode: 'off'}` keeps it unarmed.
 
 **The divergence gauge stays at 1 after I fixed the file.** It updates on the next valid read, up to
 five minutes later. After a failed read or a removed file it keeps the last compared value until the
@@ -1020,8 +991,8 @@ caught a file the grant's patterns do not cover, or the class is not live.
 **The settings pages are a `404`.** `policyManagement.promotion` is off on the broker, or on the
 factory (`factoryURL` must point at it). Approval memory's page needs `human.approvalMemory`.
 
-**Promote to live answers `not_promotable`.** The class is central (stage 4 not done) or not in
-shadow.
+**Promote to live answers `not_promotable`.** The class is not bound (the repository is not
+migrated) or not in shadow.
 
 ## Factory resources
 
@@ -1041,7 +1012,7 @@ without a restart. How is in [architecture](architecture.md#how-the-factory-read
   waits, not Ready, until a `Repository` is applied again.
 - **A repository defined in both** the file and a resource is refused, never merged.
 - **Tasks record** `status.configGenerations` for the `Factory`, `Repository` and `MergePolicy` they
-  started under (for a bound class, the class's own policy). It is a record, not a pin.
+  started under (for a bound class, its own policy). It is a record, not a pin.
 
 ### Policies and bindings
 
@@ -1120,7 +1091,7 @@ when it is valid alone. A binding that does not resolve drops that class only: t
 its other classes keep serving. While the factory runs, the binding keeps its last resolved class
 when that class still holds under today's catalogue, guardrails and merge settings; after a restart
 it serves none, and a `class:` label naming it falls back to `review`. A repository's own file in
-the binding shape (`mergePolicies:`, [above](#a-binding)) resolves the same way.
+`mergePolicies` ([above](#a-binding)) resolves the same way.
 
 | Reason | On | Means | Fix |
 |---|---|---|---|
@@ -1131,26 +1102,25 @@ the binding shape (`mergePolicies:`, [above](#a-binding)) resolves the same way.
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
-| `DefinedTwice` | the per-repository `MergePolicy` | The `Repository` holds `merge` or `mergePolicies` while a per-repository `MergePolicy` still names it | Delete the per-repository object. The `Repository` is served from its bindings meanwhile |
+| `DefinedTwice` | a `Repository` | The config file also defines the repository | Remove it from one of the two |
 
-**The per-repository shape** (`spec.repositoryRef`, `classes`, `merge` on one `MergePolicy` per
-repository) is still read in this release, with one warning per object at every start, and removed
-in the next minor. CEL keeps the two shapes apart.
+The per-repository shape (`spec.repositoryRef`, `classes` and `merge` on one `MergePolicy` per
+repository) is removed: a forgotten object reads as an empty policy with `CONSUMERS 0`, and `maku
+config validate` refuses one ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1)).
 
-Offline commands prepare the move. `migrate` splits a config file into manifests, or converts
-per-repository objects into policies and bindings; `validate` lays manifests over a config file and
-refuses what the factory would refuse, one line each:
+Offline commands prepare the move. `migrate` splits a config file into the `Factory`, each
+`Repository` with its bindings, and one `MergePolicy` per class; `validate` lays manifests over a
+config file and refuses what the factory would refuse, one line each:
 
 ```bash
 maku config migrate --from config.yaml --residual residual.yaml > manifests.yaml
-maku config migrate --config residual.yaml --manifests manifests.yaml > bound.yaml   # proves no class changes
-maku config validate --config residual.yaml --base-ref origin/main bound.yaml        # each changed policy's consumers
+maku config validate --config residual.yaml --base-ref origin/main manifests.yaml   # each changed policy's consumers
 ```
 
 The residual is the file to deploy. A catalogue key left in the file next to a `Factory` is
 ignored, with a warning at every start. When the file comes from a Helm values file, remove the
 migrated keys from the values rather than overriding them with `key: null`. The flags are in the
-[CLI](cli.md), and the release's steps in [upgrading](upgrading.md#reusable-merge-policies-v04x-release-n).
+[CLI](cli.md).
 
 ### Status
 
@@ -1173,8 +1143,8 @@ factory.maku.ogenki.io/aws-0           True       True    2       false     12d
 NAME                                   REPO                     FACTORY   CLASSES   LIVE   ACCEPTED   CONNECTED   AGE
 repository.maku.ogenki.io/ai-native-ref  Smana/ai-native-ref    aws-0     4         0      True       True        12d
 
-NAME                                   REPO   CONSUMERS   CURRENT   LIVE   ACCEPTED   AGE
-mergepolicy.maku.ogenki.io/dead-links         2           1         0      True       3d
+NAME                                   CONSUMERS   CURRENT   LIVE   ACCEPTED   AGE
+mergepolicy.maku.ogenki.io/dead-links  2           1         0      True       3d
 ```
 
 The status and each of its conditions carry one `observedGeneration`: the generation the factory
@@ -1186,11 +1156,11 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 
 | Condition | On | Status and reason |
 |---|---|---|
-| `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `NoMergePolicy`, `DuplicatePolicy`, `Invalid`. A class `MergePolicy` refused with a generation still serving reads `serving generation 3; generation 4 refused: …` |
+| `Accepted` | all three | `True` `Served`; `Unknown` `Pending` (not looked at yet); `False` with the refusal: `NotThisFactory`, `DefinedTwice`, `MissingRef`, `Invalid`. A `MergePolicy` refused with a generation still serving reads `serving generation 3; generation 4 refused: …` |
 | `BindingsValid` | a `Repository` with bindings | `True` `BindingsValid`; `False` `BindingsRefused`, the message naming each refused binding: `refused: dead-links (MissingParameter)` |
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
-| `RepositoryFileValid` | `Repository`, and a per-repository `MergePolicy` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central classes decide); `False` `Invalid` (the file does not parse, or, under repository authority, declares no classes); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
-| `InSync` | `Repository`, and a per-repository `MergePolicy` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
+| `RepositoryFileValid` | `Repository` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central classes decide); `False` `Invalid` (the file does not parse, is in the removed `classes:` shape, or, under repository authority, binds no policy); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
+| `InSync` | `Repository` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
 | `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](factory.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
@@ -1198,25 +1168,20 @@ With `policyManagement.read` off nothing watches the repository's file, so `Repo
 and `InSync` stay `Unknown` with `PolicyReadOff`.
 
 A `Repository` reports its `authority` (`central` or `repository`), its resolved `merge` and
-`mergeDefaulted`, and one entry per class in `classes[]`: for a bound repository each binding's
-`mode`, the `policyGeneration` it serves, `accepted` with `reason` and `message`, and the last
-decision as `verdict:reason` with its time; for one served from a per-repository `MergePolicy`, each
-served class at that object's generation. A class `MergePolicy` reports its `consumers[]` (each
-binding `Repository`, its mode, the generation it serves, whether it resolved and why not),
-`consumerCount`, `currentCount` (consumers serving its current generation) and `liveCount`. A
-per-repository `MergePolicy` keeps its `authority`, `classes` and `classCount` until the next minor.
-The last decision is kept in memory and is best-effort: it is empty after a restart or a leader
-change, until the next decision. Every decision marker of a repository served from objects carries
-`policygen=<n>`, the generation of the class's policy, and a bound class's also `repogen=`, so a
-decision can be matched to the objects that made it.
+`mergeDefaulted`, and one entry per binding in `classes[]`: its `mode`, the `policyGeneration` it
+serves, `accepted` with `reason` and `message`, and the last decision as `verdict:reason` with its
+time. A `MergePolicy` reports its `consumers[]` (each binding `Repository`, its mode, the generation
+it serves, whether it resolved and why not), `consumerCount`, `currentCount` (consumers serving its
+current generation) and `liveCount`. The last decision is kept in memory and is best-effort: it is
+empty after a restart or a leader change, until the next decision. Every decision marker of a bound
+class carries `policygen=<n>`, the generation of its policy, and `repogen=`, so a decision can be
+matched to the objects that made it.
 
-[The settings pages](web-ui.md#settings) follow the split. A bound repository's page offers its
+[The settings pages](#the-settings-pages) follow the split. A bound repository's page offers its
 `repository-<name>.yaml` from the bindings editor, and each policy has its own page with its
-consumers and the `mergepolicy-<name>.yaml` its editor checks. A repository still served from a
-per-repository object offers **Copy MergePolicy manifest** and **Download**, `mergepolicy-<name>.yaml`
-with the real object's name. Either way a change is a GitOps pull request on the manifest, which
-Flux applies, and the factory builds the manifest from the version it serves: a change it refused is
-not in it.
+consumers and the `mergepolicy-<name>.yaml` its editor checks. A change is a GitOps pull request on
+the manifest, which Flux applies, and the factory builds the manifest from the version it serves: a
+change it refused is not in it.
 
 Counts and spend are not in the status yet.
 
@@ -1226,5 +1191,6 @@ Every YAML block marked for it is parsed and validated by
 `internal/app/maku_policy_docs_test.go`, run by `task test`: each central block is laid over the test
 config `internal/app/testdata/policy-factory.yaml` and loaded with `config.Parse`; each repository
 file is checked with `mergepolicy.Parse` and `mergepolicy.Validate` against that config with this
-page's first central block. The `.policy.yml` block is policy-bot's format, which Maku does not read:
-it is checked by nothing here.
+page's first central block. The test config serves no `MergePolicy`, so this checks a file's shape
+and its required bindings, not what each binding resolves to. The `MergePolicy` manifests and the
+`.policy.yml` block are checked by nothing here.
