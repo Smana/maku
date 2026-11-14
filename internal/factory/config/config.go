@@ -322,7 +322,7 @@ func (c *Config) MergerFolded() bool {
 	return c.GitHub.MergerAppIDFile != "" && c.GitHub.MergerAppIDFile == c.GitHub.AppIDFile
 }
 
-// RunTokens: the factory mints each run's git token from the agents App (v4 D10). Enabled names
+// RunTokens has the factory mint each run's git token from the agents App (v4 D10). Enabled names
 // the agents App outside the demo; PerRun is required with it, since v4 step 8 removed the shared
 // agent-git writer.
 type RunTokens struct {

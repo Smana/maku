@@ -316,16 +316,6 @@ func TestPerRunTokens(t *testing.T) {
 	}
 }
 
-func served(cfg *config.Config) func() []string {
-	return func() []string {
-		var out []string
-		for _, r := range cfg.Repos() {
-			out = append(out, r.Name)
-		}
-		return out
-	}
-}
-
 // Demo mode serves public repositories only: one private repository stops the start, naming it;
 // a failed read stops it too (fail closed).
 func TestDemoRequiresPublicRepositories(t *testing.T) {
