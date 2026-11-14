@@ -302,7 +302,7 @@ func TestRunPodPolicyUnderPodSecurity(t *testing.T) {
 
 // With sandbox.unsafeAllowRunc the policy renders no RuntimeClass rule: the demo's pod passes.
 func TestRunPodPolicyUnsafeAllowRunc(t *testing.T) {
-	pe := startPodEnv(t, "sandbox.unsafeAllowRunc=true", "runController.createRuntimeClass=false")
+	pe := startPodEnv(t, "sandbox.unsafeAllowRunc=true", "sandbox.runtimeClassName=", "runController.createRuntimeClass=false")
 	if err := pe.ctl.Create(t.Context(), runPod(t, true, false), client.DryRunAll); err != nil {
 		t.Fatalf("an unsandboxed run pod under unsafeAllowRunc is refused: %v", err)
 	}
