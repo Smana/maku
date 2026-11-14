@@ -1,0 +1,98 @@
+{{- /* v4 step 6 Task 16 (D6): the App's default-deny in mode kubernetes. */ -}}
+{{- $np := .Values.networkPolicy -}}
+{{- if eq $np.mode "kubernetes" }}
+{{- if not $np.from }}{{ fail "networkPolicy.from is empty: default-deny would drop Slack's events on :8080; name your gateway's or ingress controller's pods" }}{{ end -}}
+{{- $u := urlParse (.Values.issuerURL | default "https://idp.invalid") -}}
+{{- $idpPort := int ($np.idp.port | default 0) -}}
+{{- if not $idpPort }}{{ $idpPort = ternary 443 80 (eq $u.scheme "https") }}{{ if regexMatch ":[0-9]+$" $u.host }}{{ $idpPort = regexFind "[0-9]+$" $u.host | int }}{{ end }}{{ end -}}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  policyTypes: [Ingress, Egress]
+  ingress:
+    {{- with $np.from }}
+    # Slack's events, through the gateway or ingress controller (expose.slack).
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 8080, protocol: TCP}]
+    {{- end }}
+    # The broker's webhooks.
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8081, protocol: TCP}]
+    {{- with $np.metricsFrom }}
+    - from: {{- toYaml . | nindent 8 }}
+      ports: [{port: 9090, protocol: TCP}]
+    {{- end }}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ $np.dns.namespace }}}
+          podSelector:
+            matchLabels: {{- toYaml $np.dns.labels | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    # The apiserver: the thread map.
+    - {{- with $np.apiServer.cidrs }}
+      to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . }}}
+        {{- end }}
+      {{- end }}
+      ports:
+        {{- range $np.apiServer.ports }}
+        - {port: {{ . }}, protocol: TCP}
+        {{- end }}
+    # The broker's human listener: /mcp and the link routes.
+    - to:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: room-broker}
+      ports: [{port: 8080, protocol: TCP}]
+    # Slack (slack.com, a public address: NetworkPolicy has no FQDN rule).
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $np.privateCIDRs | nindent 14 }}
+      ports: [{port: 443, protocol: TCP}]
+    # The IdP (networkPolicy.idp).
+    {{- if or $np.idp.to (ne $idpPort 443) }}
+    - to:
+        {{- with $np.idp.to }}
+        {{- toYaml . | nindent 8 }}
+        {{- else }}
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: {{- toYaml $np.privateCIDRs | nindent 14 }}
+        {{- end }}
+      ports: [{port: {{ $idpPort }}, protocol: TCP}]
+    {{- end }}
+    {{- with $np.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# The broker's half of the App's /mcp and link calls: the broker's own policy admits :8080 from the
+# web front door alone, so the App's path into it is opened here, where the App is. Policies add up:
+# this one admits the App and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: room-broker-from-factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: factory-slack-app}
+      ports: [{port: 8080, protocol: TCP}]
+{{- end }}

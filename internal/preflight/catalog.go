@@ -84,7 +84,7 @@ var Catalog = []Check{
 		Warn: []string{"network_policy_none"}, What: "the run-controller's preflight: RuntimeClass, git Secrets, the CNI probe, the gateway",
 		From: "D6, D18"},
 	{ID: "database", Seams: []Seam{SeamPostgres}, RunsIn: []Where{InBroker},
-		Fail: []string{"db_unreachable", "db_too_old", "db_role_bypasses_rls", "db_schema_behind", "db_schema_ahead"},
+		Fail: []string{"db_unreachable", "db_too_old", "db_role_bypasses_rls", "db_wrong_role", "db_schema_behind", "db_schema_ahead"},
 		Warn: []string{"schema_unverified"}, What: "the three DSNs: reachable, Postgres 16 or later, roles without BYPASSRLS, the schema current",
 		From: "D9"},
 	{ID: "oidc", Seams: []Seam{SeamIdentity}, RunsIn: []Where{InBroker, InFactory},

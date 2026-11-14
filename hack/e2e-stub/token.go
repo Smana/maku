@@ -30,6 +30,9 @@ func (s *Stub) token(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			client = r.PostForm.Get("client_id")
 		}
+		s.slack.mu.Lock()
+		s.slack.grants = append(s.slack.grants, client)
+		s.slack.mu.Unlock()
 		now := time.Now()
 		raw, err := signJWT(s.key, map[string]any{"iss": stubIssuer, "sub": client, "azp": client,
 			"aud": r.PostForm.Get("audience"), "iat": now.Unix(), "nbf": now.Unix(), "exp": now.Add(time.Hour).Unix()})

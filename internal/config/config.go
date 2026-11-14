@@ -880,6 +880,9 @@ type Config struct {
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Webhooks are the subscribers to room events (factory interfaces F6).
 	Webhooks []WebhookConfig `json:"webhooks,omitempty"`
+	// Preflight bounds the broker's own preflight checks, served on the ops port at GET /preflight
+	// (v4 D24): timeout bounds each, 10 s by default, at most 30 s. The route is always on.
+	Preflight PreflightConfig `json:"preflight,omitzero"`
 	// Coordination is the factory's multi-repository switch, read here with the factory's own type
 	// and rules (v4 MR16): coordination_plan is listed only while it is not off.
 	Coordination fconfig.Coordination `json:"coordination,omitzero"`
@@ -1139,6 +1142,9 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Human.validate(slices.Collect(maps.Values(c.SystemPrincipals)))...)
+	if t := c.Preflight.Timeout.Duration; t != 0 && (t < time.Second || t > MaxPreflightTimeout) {
+		errs = append(errs, fmt.Errorf("preflight.timeout %s is not between 1s and %s", t, MaxPreflightTimeout))
+	}
 	if l := c.Human.GitHubLink; l != nil && c.Human.EffectiveMode() != HumanModeLocal {
 		errs = append(errs, l.validate(c.PublicURL)...)
 	}
@@ -1523,3 +1529,11 @@ func (h HumanConfig) validatePreset() []error {
 	}
 	return errs
 }
+
+// PreflightConfig is the broker's preflight block (v4 D24).
+type PreflightConfig struct {
+	Timeout Duration `json:"timeout,omitzero"`
+}
+
+// MaxPreflightTimeout is one check's bound: all of them run within 30 s (IN3).
+const MaxPreflightTimeout = 30 * time.Second

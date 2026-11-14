@@ -63,6 +63,19 @@ data:
       knowledge: {{- toYaml . | nindent 8 }}
       {{- end }}
     {{- end }}
+    {{- /* v4 step 6 (EX9): the broker's parity keys, verbatim; the strict decoder is their validator. */}}
+    {{- with $b.suspend }}
+    suspend: {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $b.policyManagement }}
+    policyManagement: {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with $b.coordination }}
+    coordination: {{- toYaml . | nindent 6 }}
+    {{- end }}
+    {{- with (include "ap.webhooks" . | fromJson).config }}
+    webhooks: {{- toYaml . | nindent 6 }}
+    {{- end }}
     {{- with include "ap.unsafe" . | fromJsonArray }}
     # The chart's unsafe settings: GET /api/install lists them, and every page shows a banner.
     install:

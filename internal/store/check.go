@@ -33,6 +33,29 @@ const (
 // cannot verify), it may pass on a retry.
 var ErrUnavailable = errors.New("database unavailable")
 
+// What a Check or a schema check refused, for a caller that maps it to a code (the preflight's
+// database check): each is matched with errors.Is, and leaves the message as it was.
+var (
+	ErrServerTooOld = errors.New("the server is below Postgres 16")
+	ErrWrongRole    = errors.New("connected as another role")
+	ErrBypassesRLS  = errors.New("the role bypasses row-level security")
+	ErrMissingRoles = errors.New("the login roles are missing")
+	ErrSchemaBehind = errors.New("the schema is behind the binary")
+	ErrSchemaAhead  = errors.New("the schema is ahead of the binary")
+)
+
+// tagged is err, also matching kind under errors.Is: the message stays err's.
+type tagged struct {
+	kind error
+	err  error
+}
+
+func (t tagged) Error() string        { return t.err.Error() }
+func (t tagged) Unwrap() error        { return t.err }
+func (t tagged) Is(target error) bool { return target == t.kind }
+
+func tag(kind, err error) error { return tagged{kind: kind, err: err} }
+
 // minServerVersion is Postgres 16 (D26), as server_version_num.
 const minServerVersion = 160000
 
@@ -89,10 +112,10 @@ func Check(ctx context.Context, q querier, role Role) (Server, error) {
 	}
 	var errs []error
 	if num < minServerVersion {
-		errs = append(errs, fmt.Errorf("PostgreSQL %s: Maku needs 16 or later (D26)", s.Version))
+		errs = append(errs, tag(ErrServerTooOld, fmt.Errorf("PostgreSQL %s: Maku needs 16 or later (D26)", s.Version)))
 	}
 	if s.User != string(role) {
-		errs = append(errs, wrongRole(s.User, role))
+		errs = append(errs, tag(ErrWrongRole, wrongRole(s.User, role)))
 	}
 	var why []string
 	if super {
@@ -111,11 +134,11 @@ func Check(ctx context.Context, q querier, role Role) (Server, error) {
 		why = append(why, "the owner of "+unforced+", without FORCE ROW LEVEL SECURITY")
 	}
 	if len(why) > 0 {
-		errs = append(errs, fmt.Errorf("%s bypasses row-level security (%s): the room log would be writable",
-			s.User, strings.Join(why, "; ")))
+		errs = append(errs, tag(ErrBypassesRLS, fmt.Errorf("%s bypasses row-level security (%s): the room log would be writable",
+			s.User, strings.Join(why, "; "))))
 	}
 	if role == RoleOwner && (!broker || !retainer) {
-		errs = append(errs, errors.New("create the login roles rooms_broker and rooms_retention first (docs/database.md)"))
+		errs = append(errs, tag(ErrMissingRoles, errors.New("create the login roles rooms_broker and rooms_retention first (docs/database.md)")))
 	}
 	return s, errors.Join(errs...)
 }
@@ -191,11 +214,11 @@ func schemaCurrent(ctx context.Context, q querier, files []migrations.File) erro
 	}
 	switch {
 	case have == "":
-		return fmt.Errorf("the schema is at none, this broker needs %s: run migrate (broker.database.ownerSecret)", want)
+		return tag(ErrSchemaBehind, fmt.Errorf("the schema is at none, this broker needs %s: run migrate (broker.database.ownerSecret)", want))
 	case !shipped || have > want:
-		return fmt.Errorf("the database has version %s, which this binary does not ship: it is newer than the code", have)
+		return tag(ErrSchemaAhead, fmt.Errorf("the database has version %s, which this binary does not ship: it is newer than the code", have))
 	case have < want:
-		return fmt.Errorf("the schema is at %s, this broker needs %s: run migrate (broker.database.ownerSecret)", have, want)
+		return tag(ErrSchemaBehind, fmt.Errorf("the schema is at %s, this broker needs %s: run migrate (broker.database.ownerSecret)", have, want))
 	}
 	return nil
 }

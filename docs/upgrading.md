@@ -4,6 +4,108 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The demo's model gateway (v0.4x, v4 rollout step 7)
+
+`values-demo.yaml` now runs the demo through the model gateway (step 7 R4), as production does:
+`maku.runController.model.mode: gateway`, `agentgateway.enabled` and `maku-gateway.enabled`, the
+runs' `gatewayIdentity`. `values-demo-gateway.yaml`, which layered these before, is deleted. A demo
+install now:
+
+- applies Gateway API's CRDs (v1.2 or later) and agentgateway's (`kubectl apply --server-side -f
+  config/agentgateway`) before the umbrella;
+- sets `maku-gateway.identity.issuer` (the cluster's ServiceAccount issuer), the provider's host
+  (`maku-gateway.providers.demo.host`, with `port`, `path` and `tls`) and each alias's `model`, and
+  only `demo.model.apiKey`: `demo.model.baseURL`, `name` and `judgeName` are refused in gateway mode;
+- on k3s (k3d), starts the apiserver with `--kube-apiserver-arg=anonymous-auth=true`: the gateway's
+  controller reads its JWKS anonymously. kind and kubeadm leave it on.
+
+`task demo` does all three, and `values-mine.example.yaml` shows the values. agentgateway's controller
+and the gateway's proxy each request 128 MiB (limits 512 MiB and 1 GiB) on the laptop. To keep the provider key in the sandbox instead, set
+`maku.runController.model.mode: secret` with `maku-gateway.enabled: false`, `agentgateway.enabled: false`
+and `maku-factory.config.runs.gatewayIdentity: false`: still demo-only (`maku.demoValues`).
+
+`maku install --print` writes a production install's files ([maku](cli.md)): values, Secrets, the
+factory objects, the merge gate's ruleset and the GitOps files, and it applies nothing.
+
+## From the demo to production
+
+From v0.4x (v4 rollout step 6), `profile: production` renders. Start from
+[`values-production.example.yaml`](../charts/agent-factory/values-production.example.yaml), never from
+`values-demo.yaml`: the render refuses the demo's own values. It checks the seams of each enabled
+component and fails once, with every missing seam on its own line, its key and its doc:
+
+```text
+Error: execution error at (agent-factory/templates/gate/renders/before/subcharts.yaml:5:4): profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):
+  - maku.broker.image.tag: <version>@sha256:<digest>, never a bare tag (got ""; docs/security.md#supply-chain)
+  - maku.broker.human.issuer: the OIDC issuer humans sign in at (docs/identity.md#the-keys)
+  ...
+```
+
+| Component | Its seams | Refused |
+|---|---|---|
+| The release | none | `demoValues`, `postgres.enabled` (D9), `networkPolicies.plain` |
+| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `runController.gitTokens: perRun`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
+| `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`, or `githubSecret`); with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
+| `slack` | the agreements of [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml) and its three Secrets by name | |
+| `webProxy` | `existingSecret`, and the broker's identity it derives its arguments from ([Exposure](exposure.md)) | |
+| `expose` | each surface's hosts, and its parentRefs or IngressClass; the gateway's pods in the release's policy mode | |
+
+`maku.networkPolicies.mode: none` and `maku.broker.factoryInsecure` stay allowed in production: the
+web UI shows them on its unsafe-settings banner. The chart renders none of the demo's own objects: no
+Postgres, no generated TLS (bring `room-broker-tls` and `room-broker-ca`, or set
+`maku.broker.tls.issuerRef` for cert-manager, and the factory's `openbao-ca`), no `agent-model` or
+`agent-factory-github` Secret ([Install Secrets](install-secrets.md)).
+
+`task chart:production:k3d` installs this path on a throwaway k3d cluster: a test-only RuntimeClass
+`gvisor` on runc, a Postgres outside the chart, the generic OIDC stub as the issuer, the web through
+agentgateway, and the monitoring objects. A cluster that runs no sandbox runtime has no production
+render: `sandbox.unsafeAllowRunc` is for the demo and kind only.
+
+### Adopting the umbrella from `maku-factory`
+
+An install that runs the `maku-factory` chart alone adopts the umbrella one component at a time (D25).
+`maku.enabled: false` with `maku-factory.enabled: true` is a valid production render, so the factory
+moves first, under the same release name:
+
+1. Install [`agent-factory-crds`](../charts/agent-factory-crds/README.md) and adopt the CRDs
+   ([Adopting the CRDs](#adopting-the-crds)).
+2. Nest your `maku-factory` values under `maku-factory:` (Flux's `valuesFrom` cannot prefix a whole
+   file: re-nest the file itself), and upgrade the release to the umbrella:
+
+   ```bash
+   helm upgrade agent-factory oci://ghcr.io/smana/charts/agent-factory --version <version> -n agent-system \
+     --set profile=production --set maku-factory.enabled=true -f factory-values.yaml
+   ```
+
+   The factory's Deployment, Service and ConfigMap keep their names, so Helm upgrades them in place:
+   the Deployment keeps its UID, and the Tasks are untouched. `helm history` shows an upgrade, not an
+   install.
+3. Then turn `maku.enabled` on with the broker's values, and the rest (`expose`, `webProxy`, `slack`,
+   `monitoring`) each in its own upgrade.
+
+## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.4x, v4 rollout step 6)
+
+New keys, all off by default, so a release that sets none of them renders as before:
+
+| New key | Default | What it does |
+|---|---|---|
+| `slack` (the `maku-slack` subchart) | `enabled: false` | the Slack App ([Slack App, Install](slack.md#install)). Its values must agree with `maku.broker.webhooks` and both `sponsored` lists (`values-slack.example.yaml`) |
+| `maku.broker.webhooks`, `suspend`, `policyManagement`, `coordination` | unset | the broker's own blocks, verbatim. A webhook may name its key's Secret (`existingSecret`, `key`) and its peers (`networkPolicy.to`) |
+| `networkPolicies.factory` | `enabled: false` | the factory's default-deny, in maku's mode; refused beside the demo's `networkPolicies.plain` |
+
+**`slack.enabled: true` now installs the App.** Before this release, `slack.enabled: true` only added
+the `maku-slack` alert group, for an App installed outside the chart. It now renders the App and checks
+its agreements, so an install that kept its own App either moves it to the subchart, or turns
+`slack.enabled` off, and loses that alert group and the `expose.slack` route with it.
+
+## The runs namespace's default-deny, optional (v0.4x)
+
+`networkPolicies.runsNamespaceDefaultDeny` (default `true`: the render is unchanged) controls the
+runs namespace's `default-deny` policy, in mode `cilium` or `kubernetes`. An install whose platform
+owns the runs namespace's default-deny sets it to `false`, and the chart renders none, so the two no
+longer conflict. The platform's policy must then deny both directions, as the chart's does: each run's
+own policy adds only its allowances on top of it.
+
 ## The clean-up (v0.4x, v4 rollout step 8)
 
 Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at
@@ -155,6 +257,28 @@ name, and its ClusterRole gets the named CRDs, the RuntimeClass and `/version`. 
 `cilium` modes, a policy limits its egress to the API server and the components' `:9090`, and the
 broker and the run-controller admit it there.
 
+Each component then answers for itself, on its ops port (`:9090`, beside `/metrics`, never exposed
+publicly): `GET /preflight` runs its own checks through its own network path and credentials, each
+bounded to 10 s and all within 30 s, and caches the answer for 30 s. The answer holds codes and fixed
+messages only: no DSN, key, token or upstream error body. A refusal's detail stays in the
+component's own log. The components serve `/preflight` only when the preflight is enabled
+(`MAKU_PREFLIGHT=true`, which the charts set), so on a default install no pod can make them spend
+their credentials.
+
+| Component | Its checks |
+|---|---|
+| broker | `database` (its own role, RLS, the schema), `oidc`, `github-link`, `knowledge` (`tools/list` names `kb_search` and `kb_get`), `models` (one-token completion per planner and classifier alias) |
+| run-controller | `run-path`: its own preflight's last result, one code per refusal (`tracing` and `models` report `skip`) |
+| factory | `apps` (each installation's grants), `merge-gate`, `private-code`, `exposure`, `oidc` |
+
+| New key | Default | What it does |
+|---|---|---|
+| `maku-factory.preflight.enabled` | `false` | Serves the factory's `/preflight`, and grants the factory `get` and `list` on HTTPRoutes, GRPCRoutes, TLSRoutes and Ingresses in its namespace, for `exposure`: a route to the broker's Service, on any port, fails. The umbrella refuses `maku.preflight.enabled` without it |
+| broker config `preflight.timeout` | `10s` | One broker check's bound, between 1 s and 30 s |
+
+With `maku.preflight.enabled`, the chart adds a `run-controller` Service on `:9090` for the
+collection. An image older than the chart answers 404 there, reported as `component_too_old`.
+
 ## Private code (v0.4x, v4 rollout step 7)
 
 One new optional field on the `Repository`, `spec.privateCode.acknowledged`. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
@@ -268,7 +392,7 @@ New keys, all off by default, so a release that sets none of them renders as bef
 |---|---|---|
 | `maku.runController.model.mode` | `secret`: `runController.modelSecret`, as before | `gateway`: runs call the model gateway with their own token, and `modelSecret` is not read ([the model gateway](gateway.md#runs-through-the-gateway)) |
 | `maku.runController.model.gateway` | `model-gateway` in the release namespace, ports 8080 and 8081, prefix `maku-gateway`, no aliases | the gateway and the aliases each listener serves |
-| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered |
+| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered. Folded into `values-demo.yaml` and deleted in step 7 ([the demo's gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7)) |
 | `maku-factory.config.runs.gatewayIdentity` | unset | `true`: portable runs carry a gateway identity, so the meter prices them, and `loops.<class>.models` and `split` are accepted ([metering the runs](gateway.md#metering-the-runs)). The umbrella requires it with `model.mode: gateway` and a portable factory |
 | `maku-factory.config.meter.throttle.promQuery` | unset | the gateway's 429s from PromQL on `meter.url`, in place of `meter.logsURL` with `meter.throttleQuery`; one of the two is required outside the demo, never both |
 | `maku-gateway.modelCatalog.prices` (umbrella) | `maku-factory.config.meter.prices` | the gateway's catalog takes the factory's prices when its own are empty |

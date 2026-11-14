@@ -77,7 +77,8 @@ func opsHandler(ping func(context.Context) error, schemaReady func(context.Conte
 // opsServer bounds :9090. Nothing on it streams, so WriteTimeout is set.
 func opsServer(h http.Handler, log *slog.Logger) *http.Server {
 	return &http.Server{Handler: h, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 5 * time.Second,
-		WriteTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8 << 10,
+		// /preflight runs its checks within preflight.AllTimeout (30 s), on demand.
+		WriteTimeout: 40 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 8 << 10,
 		ErrorLog: slog.NewLogLogger(log.Handler(), slog.LevelWarn)}
 }
 
@@ -91,4 +92,21 @@ func boundedSync(synced func(context.Context) bool) func(context.Context) bool {
 		defer cancel()
 		return synced(ctx)
 	}
+}
+
+// preflightOn reports whether the chart's preflight.enabled turned /preflight on (MAKU_PREFLIGHT=true).
+// Off, the component serves no /preflight: a default install's pods cannot make it spend its
+// credentials (a GitHub App call, a model completion, the OAuth client) on demand.
+func preflightOn(getenv func(string) string) bool { return getenv("MAKU_PREFLIGHT") == "true" }
+
+// withPreflight adds GET /preflight (v4 D24) to an ops handler when on: the component's own checks,
+// served beside /metrics on the same unexposed port, unauthenticated like it. pf is built only when on.
+func withPreflight(ops http.Handler, on bool, pf func() http.Handler) http.Handler {
+	if !on {
+		return ops
+	}
+	mux := http.NewServeMux()
+	mux.Handle("GET /preflight", pf())
+	mux.Handle("/", ops)
+	return mux
 }

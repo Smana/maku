@@ -36,7 +36,7 @@ jobs:
           owner: Smana
           packages: >-
             maku-broker,maku-bridge,maku-factory,maku-harness,maku-run-controller,maku-slack,
-            charts/maku-factory,charts/maku,charts/maku-gateway
+            charts/maku-factory,charts/maku,charts/maku-gateway,charts/maku-slack
           use-regex: true
           delete-tags: '^.*-pr[0-9]+[.-].*$'
           exclude-tags: '^v?[0-9]+\.[0-9]+\.[0-9]+$'

@@ -15,13 +15,14 @@
 #               preflight passes within 3 minutes, its probe went through the egress proxy;
 #   unenforced  mode kubernetes on a k3s started with --disable-network-policy: the preflight refuses
 #               runs (`preflight failed: network:`, gauge network 0).
-# GATEWAY=1 (k3d only; task chart:gateway:k3d) turns the model gateway on (plan v4 step 4, Task 5):
-# Gateway API's standard CRDs, agentgateway's CRDs (config/agentgateway, server-side) and controller (the umbrella),
-# maku-gateway with source apiserver, and the probe's echo provider as a `custom` provider over http.
-# A run-like pod's token for maku-gateway.public.tier-light gets 200 on its alias, 403 on
-# tier-frontier's, and no token gets 401; the proxy's NetworkPolicy is enforced by k3s.
-# The leg layers values-demo-gateway.yaml: the run-controller runs in model.mode gateway, agents holds no
-# provider key, and a run the leg creates reaches its model through the gateway as its own ServiceAccount.
+# Every leg installs the demo as shipped, with its model gateway (step 7 R4): Gateway API's standard CRDs,
+# agentgateway's CRDs (config/agentgateway, server-side) and controller (the umbrella), maku-gateway with
+# source apiserver, and the probe's echo provider as a `custom` provider over http; the run-controller
+# runs in model.mode gateway, and agents holds no provider key.
+# GATEWAY=1 (k3d only; task chart:gateway:k3d) adds the gateway's proofs (plan v4 step 4, Task 5): a
+# run-like pod's token for maku-gateway.public.tier-light gets 200 on its alias, 403 on tier-frontier's,
+# and no token gets 401; the proxy's NetworkPolicy is enforced by k3s; and a run the leg creates reaches
+# its model through the gateway as its own ServiceAccount.
 # METERING=1 (with GATEWAY=1; task chart:metering:k3d) adds the metering proof (plan v4 step 4, Task 17):
 # tests/metering-values.yaml gives the factory a meter on a test-only VictoriaMetrics (tests/metrics-stub.yaml),
 # a PromQL throttle, runs.gatewayIdentity and a split on review, and the config loads. The run's tokens
@@ -37,6 +38,9 @@
 # span to the stub under that trace id. The task runs it with NETPOL=none, as CI runs the gateway leg: its
 # gw-caller probe pod cannot run under the runs namespace's default-deny. With NETPOL=kubernetes the step
 # also asserts the run's own NetworkPolicy opens exactly the collector's port.
+# PREFLIGHT=1 (CI's kubernetes and unenforced legs) renders the install's preflight (v4 D24) and runs it
+# once from its CronJob: the cluster checks pass, the broker's database check passes through the broker's
+# own policy and DSN, and the run-controller's run-path passes, or, unenforced, fails on the netprobe.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 CLUSTER_KIND="${1:?usage: install.sh k3d|kind}"
@@ -58,6 +62,7 @@ EXTERNAL_DB="${EXTERNAL_DB:-}"
 # The external database's image: postgres:16, the support floor (D26), by digest.
 EXTERNAL_PG_IMAGE=docker.io/library/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
 TRACING="${TRACING:-}"
+PREFLIGHT="${PREFLIGHT:-}"
 [[ -z $TRACING || -n $GATEWAY ]] || { echo "FAIL: TRACING=1 needs GATEWAY=1" >&2; exit 2; }
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
@@ -165,9 +170,9 @@ case "$CLUSTER_KIND" in
     k3s_args=(--k3s-arg '--disable=traefik@server:0' --k3s-arg '--disable=servicelb@server:0')
     # the unenforced leg: k3s without its NetworkPolicy controller, a CNI that does not enforce
     [[ $NETPOL != unenforced ]] || k3s_args+=(--k3s-arg '--disable-network-policy@server:0')
-    # the gateway leg: agentgateway's controller fetches the apiserver's JWKS anonymously (probe P1),
+    # the demo's gateway: agentgateway's controller fetches the apiserver's JWKS anonymously (probe P1),
     # and k3s turns anonymous requests off, where kubeadm and kind leave them on
-    [[ -z $GATEWAY ]] || k3s_args+=(--k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0')
+    k3s_args+=(--k3s-arg '--kube-apiserver-arg=anonymous-auth=true@server:0')
     # K3S_EXTRA_ARGS: more k3s flags, space-separated (e.g. a laptop's relaxed kubelet eviction
     # thresholds: --kubelet-arg=eviction-hard=nodefs.available<1%,imagefs.available<1%)
     for a in ${K3S_EXTRA_ARGS:-}; do k3s_args+=(--k3s-arg "$a@server:0"); done
@@ -218,14 +223,12 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 [[ -z $EXTERNAL_DB ]] || values+=(--set postgres.enabled=false)
-if [[ -z $GATEWAY ]]; then
-  values+=(--set demo.model.baseURL=https://model.invalid/v1 --set demo.model.name=stub --set demo.model.apiKey=dummy)
-else
-  issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
-  # The gateway demo (values-demo-gateway.yaml) with the probe's echo as its provider: the umbrella
-  # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
-  # characters on the wire), and the run-controller runs in model.mode gateway.
-  cat >"$work/gateway.yaml" <<EOF
+[[ -z $PREFLIGHT ]] || values+=(--set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)
+issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
+# The demo's gateway with the probe's echo as its provider: the umbrella
+# renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
+# characters on the wire), and the run-controller runs in model.mode gateway.
+cat >"$work/gateway.yaml" <<EOF
 maku:
   runController:
     model:
@@ -251,11 +254,10 @@ maku-gateway:
     prices:
       echo-light: {input: 1.00, cacheRead: 0.10, output: 2.00}
 EOF
-  # the gateway's caller below runs the echo image in agents: the run-pod policy must allow it
-  values+=(-f charts/agent-factory/values-demo-gateway.yaml -f "$work/gateway.yaml" --set demo.model.apiKey=not-a-key
-    --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
-  [[ -z $METERING ]] || values+=(-f charts/agent-factory/tests/metering-values.yaml)
-fi
+# the gateway's caller below runs the echo image in agents: the run-pod policy must allow it
+values+=(-f "$work/gateway.yaml" --set demo.model.apiKey=not-a-key
+  --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*},${ECHO_IMAGE%%[:@]*}}")
+[[ -z $METERING ]] || values+=(-f charts/agent-factory/tests/metering-values.yaml)
 # The OTLP sink is the e2e stub's plain http port; each run's policy opens it to the stub's pods.
 [[ -z $TRACING ]] || values+=(--set maku.runController.tracing.otlpEndpoint=http://e2e-stub.e2e.svc.cluster.local:8080
   --set maku.runController.tracing.collector.namespace=e2e --set-json 'maku.runController.tracing.collector.labels={"app.kubernetes.io/name":"e2e-stub"}')
@@ -266,51 +268,19 @@ install_crds() {
 }
 # No --wait: the factory cannot become Ready with a dummy App; each part is awaited below.
 install_umbrella() { helm install af charts/agent-factory -n "$NS" --create-namespace "${values[@]}" --timeout 5m; }
-crds=(agentruns factories mergepolicies repositories rooms tasks)
-if [[ ${ADOPT:-} == 1 ]]; then
-  # PR2: an install from before the CRD chart. The subcharts' crds/ create the CRDs, a Room is
-  # created, the CRDs are handed to the af-crds release (docs/upgrading.md), and the CRD chart installs.
-  step "ADOPT: the umbrella alone, its subcharts' crds/ create the CRDs"
-  install_umbrella
-  for c in "${crds[@]}"; do kubectl wait --for=condition=Established "crd/$c.maku.ogenki.io" --timeout=60s; done
-  # a Room is named with a C2 id: 8 characters of [a-z2-7]
-  kubectl apply -f - <<EOF
-apiVersion: maku.ogenki.io/v1alpha1
-kind: Room
-metadata: {name: adoptab2, namespace: $NS}
-spec: {owner: "human:local", driver: "human:local", dataClass: public, repository: e2e/unused}
-EOF
-  uid=$(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}')
-  msg=$(install_crds 2>&1) && die "agent-factory-crds installed over unowned CRDs; Helm must refuse them"
-  grep -qF 'cannot be imported into the current release' <<<"$msg" || die "the refusal is not the import error: $msg"
-  echo "ok: Helm refuses the CRDs before adoption"
-  step "ADOPT: hand the CRDs to the af-crds release, then install the CRD chart"
-  mapfile -t owned < <(kubectl get crd -o name | grep '\.maku\.ogenki\.io$')
-  [[ ${#owned[@]} == "${#crds[@]}" ]] || die "expected ${#crds[@]} maku.ogenki.io CRDs, found ${#owned[@]}"
-  kubectl label "${owned[@]}" app.kubernetes.io/managed-by=Helm --overwrite
-  kubectl annotate "${owned[@]}" meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite
-  install_crds
-  [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the Room created before adoption is gone or replaced"
-  for c in "${crds[@]}"; do
-    [[ $(kubectl get "crd/$c.maku.ogenki.io" -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}') == keep ]] || die "$c.maku.ogenki.io lacks the keep annotation after adoption"
-  done
-  helm -n "$NS" get manifest af-crds | grep -c '^kind: CustomResourceDefinition$' | grep -qx 6 || die "the af-crds release does not own six CRDs"
-  echo "ok: the CRDs are adopted by af-crds, kept, and the Room survived (uid $uid)"
-else
-  step "the CRD chart first, then the umbrella"
-  install_crds
-  if [[ -n $GATEWAY ]]; then
-    step "the gateway's prerequisites: Gateway API $GATEWAY_API, agentgateway's CRDs and the echo provider"
-    curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
-      kubectl apply --server-side -f - >/dev/null
-    kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
-    # agentgateway's CRDs, vendored and applied apart from any Helm release (too big for one, docs/gateway.md)
-    kubectl apply --server-side -f config/agentgateway >/dev/null
-    wait_established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
-      crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev
-    kubectl create namespace models >/dev/null
-    kubectl -n models create configmap echo-llm --from-file=charts/maku-gateway/tests/probe/echo-llm.py >/dev/null
-    kubectl -n models apply -f - >/dev/null <<EOF
+# gateway_prereqs: what the demo's gateway needs before the umbrella (step 7 R4).
+gateway_prereqs() {
+  step "the gateway's prerequisites: Gateway API $GATEWAY_API, agentgateway's CRDs and the echo provider"
+  curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
+    kubectl apply --server-side -f - >/dev/null
+  kubectl wait --for=condition=Established crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io --timeout=120s >/dev/null
+  # agentgateway's CRDs, vendored and applied apart from any Helm release (too big for one, docs/gateway.md)
+  kubectl apply --server-side -f config/agentgateway >/dev/null
+  wait_established crd/agentgatewaybackends.agentgateway.dev crd/agentgatewaypolicies.agentgateway.dev \
+    crd/agentgatewayparameters.agentgateway.dev crd/agentgatewaymodels.agentgateway.dev
+  kubectl create namespace models >/dev/null
+  kubectl -n models create configmap echo-llm --from-file=charts/maku-gateway/tests/probe/echo-llm.py >/dev/null
+  kubectl -n models apply -f - >/dev/null <<EOF
 apiVersion: apps/v1
 kind: Deployment
 metadata: {name: echo-llm}
@@ -340,6 +310,43 @@ spec:
   selector: {app.kubernetes.io/name: echo-llm}
   ports: [{name: http, port: 8080, targetPort: http}]
 EOF
+}
+crds=(agentruns factories mergepolicies repositories rooms tasks)
+if [[ ${ADOPT:-} == 1 ]]; then
+  # PR2: an install from before the CRD chart. The subcharts' crds/ create the CRDs, a Room is
+  # created, the CRDs are handed to the af-crds release (docs/upgrading.md), and the CRD chart installs.
+  gateway_prereqs
+  step "ADOPT: the umbrella alone, its subcharts' crds/ create the CRDs"
+  install_umbrella
+  for c in "${crds[@]}"; do kubectl wait --for=condition=Established "crd/$c.maku.ogenki.io" --timeout=60s; done
+  # a Room is named with a C2 id: 8 characters of [a-z2-7]
+  kubectl apply -f - <<EOF
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Room
+metadata: {name: adoptab2, namespace: $NS}
+spec: {owner: "human:local", driver: "human:local", dataClass: public, repository: e2e/unused}
+EOF
+  uid=$(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}')
+  msg=$(install_crds 2>&1) && die "agent-factory-crds installed over unowned CRDs; Helm must refuse them"
+  grep -qF 'cannot be imported into the current release' <<<"$msg" || die "the refusal is not the import error: $msg"
+  echo "ok: Helm refuses the CRDs before adoption"
+  step "ADOPT: hand the CRDs to the af-crds release, then install the CRD chart"
+  mapfile -t owned < <(kubectl get crd -o name | grep '\.maku\.ogenki\.io$')
+  [[ ${#owned[@]} == "${#crds[@]}" ]] || die "expected ${#crds[@]} maku.ogenki.io CRDs, found ${#owned[@]}"
+  kubectl label "${owned[@]}" app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl annotate "${owned[@]}" meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite
+  install_crds
+  [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the Room created before adoption is gone or replaced"
+  for c in "${crds[@]}"; do
+    [[ $(kubectl get "crd/$c.maku.ogenki.io" -o jsonpath='{.metadata.annotations.helm\.sh/resource-policy}') == keep ]] || die "$c.maku.ogenki.io lacks the keep annotation after adoption"
+  done
+  helm -n "$NS" get manifest af-crds | grep -c '^kind: CustomResourceDefinition$' | grep -qx 6 || die "the af-crds release does not own six CRDs"
+  echo "ok: the CRDs are adopted by af-crds, kept, and the Room survived (uid $uid)"
+else
+  step "the CRD chart first, then the umbrella"
+  install_crds
+  gateway_prereqs
+  if [[ -n $GATEWAY ]]; then
     if [[ -n $TRACING ]]; then
       step "the OTLP sink: the e2e stub, its throwaway TLS, and ingress from the runs namespace on http"
       kubectl create namespace e2e >/dev/null
@@ -633,6 +640,34 @@ if [[ $NETPOL != none ]]; then
     kubectl -n agents get pods -l agents.ogenki.io/run-id=preflight -o name | grep -q . && die "a probe pod was left behind"
   }
   true
+fi
+
+if [[ -n $PREFLIGHT ]]; then
+  # After the run-controller's own preflight has decided (the step above), so run-path reads it.
+  step "the install's preflight (v4 D24): each component's /preflight, collected through the policies"
+  kubectl -n "$NS" create job --from=cronjob/af-preflight preflight-now >/dev/null || die "no CronJob af-preflight"
+  done_=""
+  for _ in $(seq 60); do
+    done_=$(kubectl -n "$NS" get job preflight-now -o jsonpath='{.status.succeeded}{.status.failed}') || done_=""
+    [[ -n $done_ ]] && break
+    sleep 3
+  done
+  [[ -n $done_ ]] || die "the preflight Job did not finish in 180 s"
+  kubectl -n "$NS" logs job/preflight-now >"$work/preflight.jsonl" || die "no preflight log"
+  cat "$work/preflight.jsonl"
+  # outcome[/code] of one check, as the runner printed it
+  pf() { jq -r --arg c "$1" --arg k "$2" 'select(.component == $c and .check == $k) | .outcome + (if .code != "" then "/" + .code else "" end)' "$work/preflight.jsonl"; }
+  for k in kubernetes crds; do
+    [[ $(pf "" "$k") == pass ]] || die "the cluster check $k is '$(pf "" "$k")', want pass"
+  done
+  [[ $(pf broker database) == pass ]] || die "the broker's database check is '$(pf broker database)', want pass"
+  want=pass
+  [[ $NETPOL != unenforced ]] || want=fail/run_path_network
+  [[ $(pf run-controller run-path) == "$want" ]] || die "the run-controller's run-path is '$(pf run-controller run-path)', want $want"
+  ! grep -q component_too_old "$work/preflight.jsonl" || die "a component does not serve /preflight"
+  ! grep -qE 'postgres(ql)?://|password=|Bearer ' "$work/preflight.jsonl" || die "the preflight output holds a credential"
+  echo "ok: the preflight collects the cluster, the broker (database: pass) and the run-controller (run-path: $want)"
+  kubectl -n "$NS" delete job preflight-now --wait=false >/dev/null
 fi
 
 step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"

@@ -261,3 +261,30 @@ func TestLoadIntents(t *testing.T) {
 		})
 	}
 }
+
+// apiBaseURL (v4 step 6, Task 16's follow-up) is the test seam for Slack's Web API: absent is
+// slack.com, set it must be an http(s) URL; the e2e stub stands in for Slack behind it.
+func TestConfigAPIBaseURL(t *testing.T) {
+	c, err := loadConfigText(t, goodConfig)
+	if err != nil || c.APIBaseURL != "" {
+		t.Fatalf("absent: %q %v", c.APIBaseURL, err)
+	}
+	for _, tc := range []struct {
+		value string
+		ok    bool
+	}{
+		{"https://e2e-stub.e2e.svc.cluster.local/api/", true},
+		{"http://e2e-stub.e2e.svc.cluster.local:8080/api/", true},
+		{"ftp://x/api/", false},
+		{"not a url", false},
+		{"https:///api/", false},
+	} {
+		c, err := loadConfigText(t, goodConfig+"apiBaseURL: "+tc.value+"\n")
+		if (err == nil) != tc.ok {
+			t.Errorf("%q: err %v, want ok %v", tc.value, err, tc.ok)
+		}
+		if tc.ok && c.APIBaseURL != tc.value {
+			t.Errorf("%q: decoded %q", tc.value, c.APIBaseURL)
+		}
+	}
+}

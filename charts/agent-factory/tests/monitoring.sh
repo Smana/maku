@@ -16,7 +16,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 helm template af . -n maku \
   --set maku.broker.image.tag=$digest --set maku.runController.image.tag=$digest \
   --set maku.runController.images.harness.tag=$digest --set maku.runController.images.bridge.tag=$digest \
-  --set maku-factory.image.tag=$digest -f values-demo.yaml -f values-demo-gateway.yaml --set demo.model.apiKey=k1 \
+  --set maku-factory.image.tag=$digest -f values-demo.yaml --set demo.model.apiKey=k1 \
   --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local --set maku-gateway.providers.demo.host=api.example.test \
   -f tests/metering-values.yaml \
   --set maku-gateway.aliases.public.agent-default.model=echo-default --set maku-gateway.aliases.public.tier-light.model=echo-light \
@@ -29,7 +29,8 @@ helm template af . -n maku \
   --set-json 'maku.networkPolicies.kubernetes.metricsFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"monitoring"}}}]' \
   --set monitoring.serviceMonitor.enabled=true --set monitoring.prometheusRule.enabled=true \
   --set monitoring.prometheusRule.kubeStateMetrics=true --set monitoring.prometheusRule.docsURL=https://docs.example.test \
-  --set slack.enabled=true |
+  -f values-slack.example.yaml --set expose.mode=none --set slack.networkPolicy.mode=kubernetes --set slack.issuerURL=https://idp.example.test \
+  --set-json 'slack.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"gateway"}}}]' |
   yq ea 'select(.kind == "PrometheusRule" and .metadata.name == "maku") | .spec' - >"$tmp/rules-annotated.yaml"
 fail=0
 groups="$(yq '[.groups[].name] | join(" ")' "$tmp/rules-annotated.yaml")"

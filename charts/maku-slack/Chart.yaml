@@ -1,0 +1,9 @@
+apiVersion: v2
+name: maku-slack
+description: "The factory's Slack App: one replica serving Slack's events, the broker's webhooks and its metrics, its Secrets by name, its thread map kept across upgrades."
+type: application
+# Set by `helm package --version` from the tag (release) or the PR pre-release (R20).
+version: 0.0.0
+appVersion: "0.0.0"
+# The support floor (D26).
+kubeVersion: ">=1.30.0-0"

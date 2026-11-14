@@ -13,6 +13,73 @@ metadata:
     helm.sh/resource-policy: keep
 
 ---
+# Source: agent-factory/charts/maku-gateway/templates/networkpolicy.yaml
+# Default deny on the proxy pods (GW13). In: runs on public and internal, the broker on clients, a
+# scraper on 15020. Out: DNS, the controller's xDS, and each provider on its port. The JWKS is not
+# here: the controller fetches it, and the proxies receive the keyset over xDS. Probes are node
+# traffic, which NetworkPolicy always allows.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  podSelector:
+    matchLabels:
+      gateway.networking.k8s.io/gateway-name: model-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: agents}
+          podSelector:
+            matchExpressions:
+              # The run-controller's label on every run pod.
+              - {key: agents.ogenki.io/run-id, operator: Exists}
+      ports:
+        - {port: 8080, protocol: TCP}
+        - {port: 8081, protocol: TCP}
+    - from:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: room-broker
+      ports:
+        - {port: 8082, protocol: TCP}
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: kube-system}
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: maku}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: agentgateway
+      ports: [{port: 9978, protocol: TCP}]
+    # provider demo (api.example.test)
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+              - 100.64.0.0/10
+              - 169.254.0.0/16
+      ports: [{port: 443, protocol: TCP}]
+
+---
 # Source: agent-factory/templates/networkpolicy.yaml
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -104,6 +171,21 @@ spec:
   unhealthyPodEvictionPolicy: AlwaysAllow
   selector:
     matchLabels: {app.kubernetes.io/name: agent-factory}
+
+---
+# Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: af-agentgateway
+  namespace: maku
+  labels:
+    helm.sh/chart: agentgateway-v1.6.0
+    agentgateway: agentgateway
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/version: "v1.6.0"
+    app.kubernetes.io/managed-by: Helm
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/serviceaccount.yaml
@@ -212,16 +294,14 @@ stringData:
 apiVersion: v1
 kind: Secret
 metadata:
-  name: agent-model
-  namespace: agents
+  name: demo-model
+  namespace: maku
   labels:
     app.kubernetes.io/part-of: agent-factory
     app.kubernetes.io/managed-by: Helm
 type: Opaque
 stringData:
-  base_url: "http://model.example.test/v1"
-  model: "m1"
-  api_key: "k1"
+  apiKey: "k1"
 
 ---
 # Source: agent-factory/templates/secrets.yaml
@@ -371,6 +451,7 @@ data:
     runTokens:
       perRun: true
     runs:
+      gatewayIdentity: true
       group: maku.ogenki.io
       namePrefix: run-
       namespace: agents
@@ -445,7 +526,7 @@ data:
       enabled: true
     # The chart's unsafe settings: GET /api/install lists them, and every page shows a banner.
     install:
-      unsafe: ["unsafe_allow_runc","network_policy_none","model_key_in_sandbox"]
+      unsafe: ["unsafe_allow_runc","network_policy_none"]
 
 ---
 # Source: agent-factory/charts/maku/templates/run-controller-config.yaml
@@ -467,7 +548,18 @@ data:
     allowUnsandboxed: true
     # No Cilium: the controller creates no CiliumNetworkPolicy per run.
     networkPolicy: none
-    modelSecret: "agent-model"
+    # Runs call the model gateway with their own projected token (v4 step 4, GW3): no provider key
+    # enters the runs namespace, and modelSecret is not read.
+    model:
+      mode: gateway
+      gateway:
+        url: "http://model-gateway.maku.svc.cluster.local"
+        ports: {public: 8080, internal: 8081}
+        audiencePrefix: "maku-gateway"
+        serviceAccount: {namespace: "maku", name: run-controller}
+        aliases:
+          public: ["agent-default","tier-light"]
+          internal: []
     # Each run mounts its own Secret, <run name>-git, minted by the factory (D10).
     gitTokens: perRun
     broker:
@@ -483,6 +575,26 @@ data:
     images:
       harness: "ghcr.io/smana/maku-harness:v0.0.0@sha256:0000"
       bridge: "ghcr.io/smana/maku-bridge:v0.0.0@sha256:0000"
+
+---
+# Source: agent-factory/templates/gateway-catalog.yaml
+# The prices agentgateway merges over its built-in catalog to price each response (the access log's
+# `cost`), from the factory's meter.prices rows: edit a price there.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: model-gateway-model-catalog
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+data:
+  catalog.json: |
+    {
+      "providers": {}
+    }
 
 ---
 # Source: agent-factory/templates/postgres.yaml
@@ -510,6 +622,167 @@ data:
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname rooms <<SQL
     GRANT CREATE, USAGE ON SCHEMA public TO rooms_owner;
     SQL
+
+---
+# Source: agent-factory/charts/agentgateway/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentgateway-maku
+rules:
+# Service discovery information
+- apiGroups: [""]
+  resources:
+  - namespaces
+  - nodes
+  - pods
+  - services
+  - configmaps # Used for reference configs in policies/TLS/API keys, etc
+  - secrets # Used for reference configs in policies/TLS/API keys, etc
+  verbs:
+  - get
+  - list
+  - watch
+
+- apiGroups:
+  - discovery.k8s.io
+  resources:
+  - endpointslices
+  verbs:
+  - get
+  - list
+  - watch
+
+# Watches agentgateway configuration resources.
+- apiGroups:
+  - agentgateway.dev
+  resources:
+  - agentgatewaybackends
+  - agentgatewaymodels
+  - agentgatewayparameters
+  - agentgatewaypolicies
+  verbs:
+  - get
+  - list
+  - watch
+
+# Reports reconciliation status on agentgateway configuration resources.
+- apiGroups:
+  - agentgateway.dev
+  resources:
+  - agentgatewaybackends/status
+  - agentgatewaymodels/status
+  - agentgatewayparameters/status
+  - agentgatewaypolicies/status
+  verbs:
+  - get
+  - patch
+  - update
+
+# Detects which optional Kubernetes APIs are installed in the cluster.
+- apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - get
+  - list
+  - watch
+
+# Authenticates proxy service-account tokens presented to the xDS server.
+- apiGroups: [authentication.k8s.io]
+  resources: [tokenreviews]
+  verbs: [create]
+
+# Watches Gateway API configuration used to build proxy configuration.
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - backendtlspolicies
+  - gateways
+  - grpcroutes
+  - httproutes
+  - listenersets
+  - referencegrants
+  - tcproutes
+  - tlsroutes
+  verbs:
+  - get
+  - list
+  - watch
+
+# Status reports
+- apiGroups:
+  - gateway.networking.k8s.io
+  resources:
+  - backendtlspolicies/status
+  - gatewayclasses/status
+  - gateways/status
+  - grpcroutes/status
+  - httproutes/status
+  - listenersets/status
+  - tcproutes/status
+  - tlsroutes/status
+  verbs:
+  - patch
+  - update
+
+# Creates and maintains the GatewayClass owned by this controller.
+# Cluster scoped resource so must be in the cluster role.
+- apiGroups: [gateway.networking.k8s.io]
+  resources: [gatewayclasses]
+  verbs: [create, get, list, patch, update, watch]
+
+# Discovers Istio services and workloads when Istio integration is enabled.
+
+# While the deployer uses scoped roles under '-deployer' for writes, we cannot do a scoped watch
+# Without opening N watches. instead, just always watch all which is generally acceptable.
+- apiGroups: [policy]
+  resources: [poddisruptionbudgets]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [serviceaccounts, services]
+  verbs: [get, list, watch]
+- apiGroups: [apps]
+  resources:
+  - daemonsets
+  - deployments
+  verbs: [get, list, watch]
+- apiGroups: [autoscaling]
+  resources: [horizontalpodautoscalers]
+  verbs: [get, list, watch]
+
+---
+# Source: agent-factory/charts/agentgateway/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agentgateway-maku-deployer
+rules:
+# Objects created by the Gateway deployer.
+- apiGroups: [""]
+  resources:
+  - configmaps
+  - secrets
+  - serviceaccounts
+  - services
+  verbs: [create, delete, patch, update]
+- apiGroups: [apps]
+  resources:
+  - daemonsets
+  - deployments
+  verbs: [create, delete, patch, update]
+- apiGroups: [autoscaling]
+  resources: [horizontalpodautoscalers]
+  verbs: [create, delete, patch, update]
+- apiGroups: [policy]
+  resources: [poddisruptionbudgets]
+  verbs: [create, delete, patch, update]
+
+# Publishes warning Events on Gateways when a proxy NACKs xDS configuration.
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
@@ -557,6 +830,60 @@ rules:
     verbs: [get, list, watch]
 
 ---
+# Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentgateway-role-maku
+subjects:
+- kind: ServiceAccount
+  name: af-agentgateway
+  namespace: maku
+roleRef:
+  kind: ClusterRole
+  name: agentgateway-maku
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: agentgateway-write-role-maku
+subjects:
+- kind: ServiceAccount
+  name: af-agentgateway
+  namespace: maku
+roleRef:
+  kind: ClusterRole
+  name: agentgateway-maku-deployer
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/jwks.yaml
+# The controller's JWKS fetch carries no credential (probe P1: 403 without this binding), so OIDC
+# discovery must be open to anonymous requests: Kubernetes' documented setting, which exposes the
+# issuer's public keys only. The apiserver must also admit anonymous requests (k3s: anonymous-auth=true).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: model-gateway-maku-oidc-discovery
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: system:service-account-issuer-discovery
+subjects:
+  - apiGroup: rbac.authorization.k8s.io
+    kind: Group
+    name: system:unauthenticated
+
+---
 # Source: agent-factory/charts/maku/templates/broker-rbac.yaml
 # tokenreview mode asks the apiserver who a run token belongs to.
 apiVersion: rbac.authorization.k8s.io/v1
@@ -570,6 +897,27 @@ metadata:
 roleRef: {apiGroup: rbac.authorization.k8s.io, kind: ClusterRole, name: system:auth-delegator}
 subjects:
   - {kind: ServiceAccount, name: room-broker, namespace: maku}
+
+---
+# Source: agent-factory/charts/agentgateway/templates/role.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: agentgateway-maku-local
+  namespace: maku
+rules:
+# Coordinates controller leader election in the controller namespace.
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create, get, update]
+# Creates the xDS TLS certificate Secret when it does not already exist.
+- apiGroups: [""]
+  resources: [secrets]
+  verbs: [create]
+# Persists fetched JWKS keysets in the controller namespace.
+- apiGroups: [""]
+  resources: [configmaps]
+  verbs: [create, delete, patch, update]
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
@@ -756,6 +1104,40 @@ rules:
     verbs: [get]
 
 ---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+# The gateway-token-ttl preflight (v4 step 4, GW9) requests one token for this ServiceAccount at the
+# longest run's lifetime, to learn whether the apiserver caps token expiry under it. Its own name only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: run-controller-token
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts/token]
+    resourceNames: [run-controller]
+    verbs: [create]
+
+---
+# Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: agentgateway-local-role-maku
+  namespace: maku
+subjects:
+- kind: ServiceAccount
+  name: af-agentgateway
+  namespace: maku
+roleRef:
+  kind: Role
+  name: agentgateway-maku-local
+  apiGroup: rbac.authorization.k8s.io
+
+---
 # Source: agent-factory/charts/maku-factory/templates/rbac.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -841,6 +1223,54 @@ subjects:
   - {kind: ServiceAccount, name: run-controller, namespace: maku}
 
 ---
+# Source: agent-factory/charts/maku/templates/run-controller-rbac.yaml
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: run-controller-token
+  labels:
+    app.kubernetes.io/name: run-controller
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/version: "0.0.0"
+roleRef: {apiGroup: rbac.authorization.k8s.io, kind: Role, name: run-controller-token}
+subjects:
+  - {kind: ServiceAccount, name: run-controller, namespace: maku}
+
+---
+# Source: agent-factory/charts/agentgateway/templates/service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: af-agentgateway
+  namespace: maku
+  labels:
+    helm.sh/chart: agentgateway-v1.6.0
+    agentgateway: agentgateway
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/version: "v1.6.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  type: ClusterIP
+  ports:
+  - name: grpc-xds-agw
+    protocol: TCP
+    port: 9978
+    targetPort: grpc-xds-agw
+  - name: health
+    protocol: TCP
+    port: 9093
+    targetPort: health
+  - name: metrics
+    protocol: TCP
+    port: 9092
+    targetPort: metrics
+  selector:
+    agentgateway: agentgateway
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: af
+
+---
 # Source: agent-factory/charts/maku-factory/templates/service.yaml
 apiVersion: v1
 kind: Service
@@ -893,6 +1323,122 @@ spec:
       targetPort: postgres
 
 ---
+# Source: agent-factory/charts/agentgateway/templates/deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: af-agentgateway
+  namespace: maku
+  labels:
+    helm.sh/chart: agentgateway-v1.6.0
+    agentgateway: agentgateway
+    app.kubernetes.io/name: agentgateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/version: "v1.6.0"
+    app.kubernetes.io/managed-by: Helm
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      agentgateway: agentgateway
+      app.kubernetes.io/name: agentgateway
+      app.kubernetes.io/instance: af
+  template:
+    metadata:
+      annotations:
+        prometheus.io/path: "/metrics"
+        prometheus.io/port: "9092"
+        prometheus.io/scrape: "true"
+      labels:
+        agentgateway: agentgateway
+        app.kubernetes.io/name: agentgateway
+        app.kubernetes.io/instance: af
+    spec:
+      serviceAccountName: af-agentgateway
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: controller
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop:
+              - ALL
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          image: "cr.agentgateway.dev/controller:v1.6.0@sha256:d84259a7e2d87f8f39bae385d4b032d823c0a4450aecb32e0e31e2258449645b"
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 9978
+              name: grpc-xds-agw
+              protocol: TCP
+            - containerPort: 9093
+              name: health
+              protocol: TCP
+            - containerPort: 9092
+              name: metrics
+              protocol: TCP
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 9093
+            initialDelaySeconds: 1
+            periodSeconds: 10
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: 9093
+            initialDelaySeconds: 0
+            periodSeconds: 1
+            
+            failureThreshold: 120
+          env:
+            - name: GOMEMLIMIT
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.memory
+            - name: GOMAXPROCS
+              valueFrom:
+                resourceFieldRef:
+                  divisor: "1"
+                  resource: limits.cpu
+            - name: AGW_PROXY_IMAGE_REGISTRY
+              value: cr.agentgateway.dev
+            - name: AGW_PROXY_IMAGE_REPOSITORY
+              value: agentgateway
+
+            - name: AGW_LOG_LEVEL
+              value: "info"
+            - name: AGW_XDS_SERVICE_NAME
+              value: af-agentgateway
+            - name: AGW_AGENTGATEWAY_XDS_SERVICE_PORT
+              value: "9978"
+            - name: AGW_DISCOVERY_NAMESPACE_SELECTORS
+              value: "[]"
+            - name: AGW_ENABLE_AGENTGATEWAY_MODELS
+              value: "true"
+            - name: AGW_XDS_MODE
+              value: "tls"
+            - name: AGW_GATEWAY_CLASS_PARAMETERS_REFS
+              value: "{}"
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+          resources:
+            limits:
+              cpu: "1"
+              memory: 512Mi
+            requests:
+              cpu: 100m
+              memory: 128Mi
+
+---
 # Source: agent-factory/charts/maku-factory/templates/deployment.yaml
 apiVersion: apps/v1
 kind: Deployment
@@ -911,7 +1457,7 @@ spec:
         app.kubernetes.io/name: agent-factory
         app.kubernetes.io/version: "0.0.0"
       annotations:
-        checksum/config: 542f7a07a259efb78f380887cb9d26f25f7ce80a262dc94f92d607159562a36a
+        checksum/config: 955f32dd327e76650c56bde6e7e41a2b138efc64cff5c1ad5fc93f8bcbea1a7e
     spec:
       serviceAccountName: agent-factory
       automountServiceAccountToken: true  # a controller: it watches Tasks and AgentRuns
@@ -1012,7 +1558,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: 9bf3a75b3adb38cd31192408221d4332a3f3ba36e4f217d307a947c8ef8749e5
+        checksum/config: 5de02d3e04d81b610b7b0efd133bededccd3aae8355556a27b7dc8c0d965fff7
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker
@@ -1118,7 +1664,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: 3ef23a8fabe877872c763f1cdb806a91cae5b603352c51a84f97ef05d1554714
+        checksum/config: 4c6e66ede7345e5ea58c5e7364abbb6f02a0b921159cb342a858426d0104888a
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer
@@ -1135,6 +1681,11 @@ spec:
           env:
             - name: RUN_CONTROLLER_CONFIG
               value: /etc/run-controller/config.yaml
+            # The gateway-token-ttl preflight binds its TokenRequest to this pod (model.mode gateway).
+            - name: POD_NAME
+              valueFrom: {fieldRef: {fieldPath: metadata.name}}
+            - name: POD_UID
+              valueFrom: {fieldRef: {fieldPath: metadata.uid}}
           ports:
             - {name: metrics, containerPort: 9090}
             - {name: probes, containerPort: 9091}
@@ -1315,6 +1866,696 @@ spec:
                 requests:
                   cpu: 10m
                   memory: 32Mi
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# agent-default on demo (custom): the model is forced to the alias whatever the
+# body says, then mapped to m1 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret demo-model by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: demo-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: demo
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: api.example.test
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: demo-model
+        key: apiKey
+    tls:
+      sni: api.example.test
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        agent-default: "m1"
+      transformations:
+        - field: model
+          expression: '"agent-default"'
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/backends.yaml
+# tier-light on demo (custom): the model is forced to the alias whatever the
+# body says, then mapped to m2 (GW5): a caller holds no other alias's audience, so it
+# cannot reach another model. The key is read from Secret demo-model by reference (D14).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: demo-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  ai:
+    provider:
+      custom:
+        # The catalog key (the model catalog) and the series' provider label.
+        providerOverride: demo
+        formats:
+          - type: Completions
+            path: /v1/chat/completions
+      host: api.example.test
+      port: 443
+  policies:
+    auth:
+      secretRef:
+        name: demo-model
+        key: apiKey
+    tls:
+      sni: api.example.test
+    ai:
+      # Typed routes: the harness, the planner and the classifier speak Chat Completions.
+      routes:
+        /v1/chat/completions: Completions
+      modelAliases:
+        tier-light: "m2"
+      transformations:
+        - field: model
+          expression: '"tier-light"'
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/jwks.yaml
+# identity.jwks.source apiserver (GW4): the issuer's keys from the in-cluster apiserver, for clusters
+# whose issuer is not reachable from outside (kind, k3d, kubeadm). The controller fetches them (the
+# proxies receive the keyset over xDS) and verifies the apiserver with kube-root-ca.crt, which every
+# namespace holds.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayBackend
+metadata:
+  name: model-gateway-jwks
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  static:
+    host: kubernetes.default.svc.cluster.local
+    port: 443
+  policies:
+    tls:
+      caCertificateRefs:
+        - name: kube-root-ca.crt
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/parameters.yaml
+# The generated proxy has no pod seccomp profile, no liveness probe, no limits and a LoadBalancer
+# Service by default; these fields are strategic-merge overlays on what the controller renders (its
+# container is already non-root, read-only, capabilities dropped). As cnref's parameters.yaml.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayParameters
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  # A controller pin change does not re-render the proxy until the Gateway is touched: bump this with
+  # the controller, then check the pod's digest.
+  image:
+    registry: cr.agentgateway.dev
+    repository: agentgateway
+    tag: "v1.6.0"
+    digest: sha256:9d3e6044ddcdc0878b1787f77bd401252b95e22684203fb5e874c4c42d2ed90c
+  logging:
+    format: json
+  # The overlay that prices each response (the access log's `cost`), merged over the built-in catalog.
+  modelCatalog:
+    sources:
+      - configMap:
+          name: model-gateway-model-catalog
+  # The default (10s/60s) cut a 200s stream; min 10 / max 660 held it through the deletion of every
+  # proxy pod (cnref PoC N1). 660 = the 600s request timeout + 60s; the controller sets
+  # terminationGracePeriodSeconds from max.
+  shutdown:
+    min: 10
+    max: 660
+  resources:
+    limits:
+      cpu: "1"
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  deployment:
+    spec:
+      replicas: 1
+      template:
+        spec:
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: topology.kubernetes.io/zone
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  gateway.networking.k8s.io/gateway-name: model-gateway
+          containers:
+            - name: agentgateway
+              securityContext:
+                seccompProfile:
+                  type: RuntimeDefault
+              livenessProbe:
+                httpGet:
+                  path: /healthz/ready
+                  port: 15021
+                periodSeconds: 10
+                failureThreshold: 6
+  service:
+    spec:
+      # Runs and the broker reach it in-cluster; a LoadBalancer would give their boundary a cloud address.
+      type: ClusterIP
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# The identity headers are dropped before routing, so no route or backend sees a forged one, even
+# where a listener's `set` does not run.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-strip-identity-headers
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  traffic:
+    phase: PreRouting
+    transformation:
+      request:
+        remove:
+          - x-ar-agent
+          - x-ar-human
+          - x-ai-gateway-client-id
+          - agent-session-id
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener public: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.public."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-public
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              backendRef:
+                group: agentgateway.dev
+                kind: AgentgatewayBackend
+                name: model-gateway-jwks
+              jwksPath: openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.public."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener internal: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.internal."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-internal
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: internal
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              backendRef:
+                group: agentgateway.dev
+                kind: AgentgatewayBackend
+                name: model-gateway-jwks
+              jwksPath: openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.internal."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # A long completion must not time out.
+    timeouts:
+      request: 600s
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# Listener clients: the caller's projected ServiceAccount token, verified offline against this
+# cluster's issuer, must carry `exp` and `sub` (a sub-less token would share one rate-limit bucket),
+# the subject below, and an audience starting "maku-gateway.client."; each route then
+# requires its own audience. Audiences are checked in CEL, not in the provider's audience
+# list, which agentgateway caps at eight. The token is removed before any backend (preserveToken
+# off), and x-ar-agent is REPLACED with the verified sub.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-listener-clients
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: clients
+  traffic:
+    jwtAuthentication:
+      mode: Strict
+      providers:
+        - issuer: https://kubernetes.default.svc.cluster.local
+          jwks:
+            remote:
+              backendRef:
+                group: agentgateway.dev
+                kind: AgentgatewayBackend
+                name: model-gateway-jwks
+              jwksPath: openid/v1/jwks
+          validation:
+            requiredClaims:
+              - exp
+              - sub
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - 'jwt.sub == "system:serviceaccount:maku:room-broker"'
+          - 'jwt.aud.exists(a, a.startsWith("maku-gateway.client."))'
+    transformation:
+      request:
+        set:
+          - name: x-ar-agent
+            value: jwt.sub
+      # The gateway's own 429 (a budget a later step adds) comes with an empty body, which the
+      # harness would log as a bare RateLimitError: name the cause. Only the gateway's own 429 lacks
+      # a content-type; a provider's keeps its body. No response.body read: streams stay unbuffered.
+      response:
+        body: >-
+          response.code == 429 && !("content-type" in response.headers)
+          ? {"error": {"type": "rate_limit_error", "code": "gateway_budget_exhausted",
+          "message": "the model gateway refused this call: a gateway budget is spent (limit "
+          + default(response.headers["x-ratelimit-limit"], "unknown") + ", resets in "
+          + default(response.headers["x-ratelimit-reset"], "unknown") + " s). Not retryable."}}
+          : null
+    # The callers' own deadlines (20 s planner, 5 s classifier) are shorter.
+    timeouts:
+      request: 60s
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/policies-identity.yaml
+# One frontend policy per Gateway: two would leave the merge to the controller.
+# Buffer: 8Mi, as cnref's agent-router (agentgateway's 2 MiB default cuts long agent contexts).
+# Telemetry: every identity label is the verified sub, under the names the factory's meter and the
+# dashboards read (ar_agent on metrics, x_ar_agent on the access log), with the priced cost.
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: model-gateway-frontend
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    -
+      group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+  frontend:
+    http:
+      maxBufferSize: 8Mi
+    accessLog:
+      attributes:
+        add:
+          - name: x_ar_agent
+            expression: jwt.sub
+          # The request's priced cost in USD (empty when the catalog has no exact row).
+          - name: cost
+            expression: flatten(llm.cost)
+    metrics:
+      attributes:
+        add:
+          - name: ar_agent
+            expression: jwt.sub
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-agent-default
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.agent-default" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# The pin (GW5): the listener admits any audience of its class; this route admits only its own.
+# A caller that rewrites its path to another alias holds no token for it: 403. The listener's
+# subject check is repeated here, so it holds whatever agentgateway's policy merge does (probe P2).
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-tier-light
+  traffic:
+    authorization:
+      action: Require
+      policy:
+        matchExpressions:
+          - '"maku-gateway.public.tier-light" in jwt.aud'
+          - 'jwt.sub.matches("^system:serviceaccount:agents:run-[a-z2-7]{8}$")'
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+apiVersion: agentgateway.dev/v1alpha1
+kind: AgentgatewayPolicy
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  targetRefs:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      name: maku-models-public-list
+  traffic:
+    directResponse:
+      status: 404
+      body: '{"error":"model listing is not served on the model gateway"}'
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/gateway.yaml
+# The model gateway (D7). One listener per data class, as on cnref's agent-router: an internal run's
+# token never reaches a public-only provider, because that provider's routes attach to `public` only.
+# `clients` serves the broker's planner and classifier. Routes attach from this namespace only.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: model-gateway
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  gatewayClassName: agentgateway
+  listeners:
+    - name: public
+      protocol: HTTP
+      port: 8080
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: internal
+      protocol: HTTP
+      port: 8081
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: clients
+      protocol: HTTP
+      port: 8082
+      allowedRoutes:
+        namespaces:
+          from: Same
+  infrastructure:
+    parametersRef:
+      group: agentgateway.dev
+      kind: AgentgatewayParameters
+      name: model-gateway
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/agent-default on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/agent-default/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-agent-default
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: demo-agent-default
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# /m/tier-light on public: a caller's base URL is
+# http://model-gateway.<namespace>.svc:<port>/m/tier-light/v1; each path is matched exactly and
+# rewritten to the backend's typed route.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-tier-light
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/chat/completions
+      filters:
+        - type: URLRewrite
+          urlRewrite:
+            path:
+              type: ReplaceFullPath
+              replaceFullPath: /v1/chat/completions
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: demo-tier-light
+
+---
+# Source: agent-factory/charts/maku-gateway/templates/routes.yaml
+# A model listing is answered 404 after the listener's token check, as cnref's agent-router answers
+# it: every harness works with that. The Exact match outranks each alias's prefix.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: maku-models-public-list
+  labels:
+    app.kubernetes.io/name: maku-gateway
+    app.kubernetes.io/instance: af
+    app.kubernetes.io/part-of: maku
+    app.kubernetes.io/managed-by: Helm
+    app.kubernetes.io/version: "0.0.0"
+spec:
+  parentRefs:
+    - group: gateway.networking.k8s.io
+      kind: Gateway
+      name: model-gateway
+      sectionName: public
+  rules:
+    - matches:
+        - path:
+            type: Exact
+            value: /m/agent-default/v1/models
+        - path:
+            type: Exact
+            value: /m/tier-light/v1/models
+      # Never reached: the policy below answers first.
+      backendRefs:
+        - group: agentgateway.dev
+          kind: AgentgatewayBackend
+          name: demo-agent-default
 
 ---
 # Source: agent-factory/charts/maku-factory/templates/run-token-policy.yaml
@@ -1524,6 +2765,21 @@ spec:
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
       message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
+    # model.mode gateway (v4 step 4, GW3): a run holds ServiceAccount tokens for the broker, its room
+    # tools and the model gateway's aliases only, never one the apiserver or another service accepts,
+    # and never the model Secret: no provider key enters the runs namespace.
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || !has(v.projected.sources) ||
+        v.projected.sources.all(s, !has(s.serviceAccountToken) || (has(s.serviceAccountToken.audience) &&
+        (s.serviceAccountToken.audience in ['room-broker', 'room-tools'] || s.serviceAccountToken.audience.startsWith('maku-gateway.public.') ||
+        s.serviceAccountToken.audience.startsWith('maku-gateway.internal.')))))
+      message: "a run pod's projected ServiceAccount tokens are for room-broker, room-tools or maku-gateway.<public|internal>.<alias> only"
+    - expression: >-
+        (!has(object.spec.volumes) || object.spec.volumes.all(v, (!has(v.secret) || v.secret.secretName != 'agent-model') &&
+        (!has(v.projected) || !has(v.projected.sources) || v.projected.sources.all(p, !has(p.secret) || p.secret.name != 'agent-model')))) &&
+        variables.containers.all(c, (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name != 'agent-model')) &&
+        (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) || f.secretRef.name != 'agent-model')))
+      message: "model.mode gateway: a run pod never reads the model Secret agent-model (volume, projected source, env or envFrom); the gateway holds the keys"
     - expression: "!has(object.spec.ephemeralContainers)"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
     - expression: >-

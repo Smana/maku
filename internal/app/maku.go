@@ -26,6 +26,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/githubapps"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/maku/skill"
@@ -76,6 +77,11 @@ const makuUsage = `usage: maku <command>
   watch <room> [--tail N]         follow a room
   post <room> [--queue] <text>    chat, or queue it for the next run's brief
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
+  install --print --out DIR [--answers FILE] [--force] [--no-wait]
+                                  ask the install's questions (or read them from FILE) and write the values,
+                                  the Secrets, the factory objects, the ruleset and the GitOps files to DIR;
+                                  it may create the two GitHub Apps, and applies nothing. --out - prints
+                                  values.yaml alone
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
@@ -138,6 +144,13 @@ type Maku struct {
 	// Ask puts a yes/no question to the developer; nil asks on the terminal when In is one, else
 	// nothing is asked. Tests set it.
 	Ask func(prompt string) (bool, error)
+
+	// install's seams: Digest reads an image's digest (nil: ghcr.io), Rand the generated keys (nil:
+	// crypto/rand). Tests set both.
+	Digest func(ctx context.Context, image, tag string) (string, error)
+	Rand   io.Reader
+	// RunFlow runs GitHub's App manifest flow (nil: f.Run): tests stand in for GitHub and the browser.
+	RunFlow func(ctx context.Context, f githubapps.Flow, ms ...githubapps.AppManifest) ([]githubapps.App, error)
 }
 
 // RunMaku runs one maku command (SP2 §8): its files under maku.Dir; a pre-v0.30.0 CLI's directory
@@ -200,6 +213,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.setup(ctx, args)
 	case "demo":
 		return r.demo(ctx, args)
+	case "install":
+		return r.install(ctx, args)
 	case "drill":
 		return r.drill(ctx, args)
 	case "help", "-h", "--help":

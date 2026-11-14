@@ -398,3 +398,42 @@ func answerOf(m []byte, want json.RawMessage) (json.RawMessage, bool, error) {
 	}
 	return r.Result, true, nil
 }
+
+// KnowledgeToolNames lists the tools the knowledge endpoint at url serves, over the exchange
+// KnowledgeTools uses (initialize, initialized, tools/list): step 7's preflight checks that kb_search
+// and kb_get are there. An error names the HTTP status at most, never the endpoint's body.
+func KnowledgeToolNames(ctx context.Context, url string, hc *http.Client) ([]string, error) {
+	noRedirect := *hc
+	noRedirect.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	c := knowledgeClient{url: url, hc: &noRedirect, limit: minKnowledgeRead}
+	init, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": map[string]any{
+		"protocolVersion": knowledgeProtocol, "capabilities": map[string]any{},
+		"clientInfo": map[string]string{"name": "maku-broker-preflight", "version": "1"}}})
+	_, session, err := c.post(ctx, "", false, init, json.RawMessage("1"))
+	if err != nil {
+		return nil, err
+	}
+	if session != "" {
+		defer c.end(ctx, session)
+	}
+	if _, _, err := c.post(ctx, session, true, []byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}`), nil); err != nil {
+		return nil, err
+	}
+	result, _, err := c.post(ctx, session, true, []byte(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`), json.RawMessage("2"))
+	if err != nil {
+		return nil, err
+	}
+	var r struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if json.Unmarshal(result, &r) != nil {
+		return nil, errBadAnswer
+	}
+	names := make([]string, 0, len(r.Tools))
+	for _, t := range r.Tools {
+		names = append(names, t.Name)
+	}
+	return names, nil
+}

@@ -129,22 +129,30 @@ tasks:
     cmds:
       - go run hack/gen-seams.go
 
+  install:schemas:
+    desc: Copy the charts' values schemas into internal/install/schema, where maku install --print validates its answers (IN7).
+    cmds:
+      - for c in agent-factory maku maku-factory maku-gateway maku-slack; do cp "charts/$c/values.schema.json" "internal/install/schema/$c.json"; done
+
   chart:check:
     desc: Lint and render the CRD, factory, gateway and umbrella charts; the umbrella's alerts under promtool.
     cmds:
       - task: chart:deps
       - task: chart:seams
-      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl charts/maku/templates/_seams.tpl docs/install-secrets.md
+      - task: install:schemas
+      - git diff --exit-code -- charts/agent-factory/templates/_seams.tpl charts/maku/templates/_seams.tpl docs/install-secrets.md internal/install/schema
       - helm lint --strict charts/agent-factory-crds
       - bash charts/agent-factory-crds/tests/render.sh
       - helm lint --strict charts/maku-gateway
       - bash charts/maku-gateway/tests/render.sh
+      - helm lint --strict charts/maku-slack --set image.tag='v0.0.0@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef' --set issuerURL=https://idp.example.test --set roomsURL=https://rooms.example.test
+      - bash charts/maku-slack/tests/render.sh
       - helm lint --strict charts/maku-factory --set image.tag='v0.0.0@sha256:0000'
       - bash charts/maku-factory/tests/render.sh
       - helm lint --strict charts/maku -f charts/maku/values-quickstart.yaml --set broker.image.tag='v0.0.0@sha256:0000' --set runController.image.tag='v0.0.0@sha256:0000' --set runController.images.harness.tag='v0.0.0@sha256:0000' --set runController.images.bridge.tag='v0.0.0@sha256:0000'
       - bash charts/maku/tests/render.sh
       - helm dependency build charts/agent-factory
-      - helm lint --strict charts/agent-factory --set maku.broker.image.tag='v0.0.0@sha256:0000' --set maku.runController.image.tag='v0.0.0@sha256:0000' --set maku.runController.images.harness.tag='v0.0.0@sha256:0000' --set maku.runController.images.bridge.tag='v0.0.0@sha256:0000' --set maku-factory.image.tag='v0.0.0@sha256:0000' -f charts/agent-factory/values-demo.yaml --set demo.model.baseURL=http://model.example.test/v1 --set demo.model.name=m --set demo.model.apiKey=k --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem
+      - helm lint --strict charts/agent-factory --set maku.broker.image.tag='v0.0.0@sha256:0000' --set maku.runController.image.tag='v0.0.0@sha256:0000' --set maku.runController.images.harness.tag='v0.0.0@sha256:0000' --set maku.runController.images.bridge.tag='v0.0.0@sha256:0000' --set maku-factory.image.tag='v0.0.0@sha256:0000' -f charts/agent-factory/values-demo.yaml --set demo.model.apiKey=k --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local --set maku-gateway.providers.demo.host=model.example.test --set maku-gateway.aliases.public.agent-default.model=m --set maku-gateway.aliases.public.tier-light.model=m
       - bash charts/agent-factory/tests/render.sh
       - bash charts/agent-factory/tests/schema.sh
       - bash charts/agent-factory/tests/expose.sh
@@ -170,7 +178,7 @@ tasks:
       - NETPOL=unenforced bash charts/agent-factory/tests/install.sh k3d
 
   chart:gateway:k3d:
-    desc: The gateway demo on k3d (values-demo-gateway.yaml, agentgateway, its CRDs); a run-like token reaches its alias only, and a run in model.mode gateway reaches its model with its own token
+    desc: The demo's model gateway on k3d (agentgateway, its CRDs); a run-like token reaches its alias only, and a run in model.mode gateway reaches its model with its own token
     cmds:
       - GATEWAY=1 bash charts/agent-factory/tests/install.sh k3d
 
@@ -214,6 +222,16 @@ tasks:
     cmds:
       - EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
       - EXPOSE=ingress bash charts/agent-factory/tests/identity.sh
+
+  chart:slack:k3d:
+    desc: The Slack App from its subchart behind the Gateway, the factory and both default-deny policies, enforced on throwaway k3d (docker, k3d; not part of check)
+    cmds:
+      - SLACK=1 EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
+
+  chart:production:k3d:
+    desc: profile production on throwaway k3d, with no demo value; maku-factory alone adopts the umbrella, keeping its Deployment, then the web through the Gateway, the factory's /readyz and the monitoring objects (docker, k3d; not part of check)
+    cmds:
+      - PROFILE=production EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
 
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)

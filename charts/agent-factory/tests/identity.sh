@@ -31,6 +31,25 @@
 #   - the room is now theirs to read, through the link;
 #   - an admin's unlink makes them unlinked again.
 #
+# SLACK=1 (with EXPOSE=httproute; task chart:slack:k3d; plan v4 step 6, Task 16) adds the Slack App from
+# its subchart (values-slack.example.yaml), the factory, and both default-deny policies, all in mode
+# kubernetes:
+#   - a Slack-signed url_verification through the Gateway's POST /slack/events reaches the App, a
+#     badly signed one is 401, and GET /slack/events is the gateway's 404;
+#   - the App's :8081 admits the broker's pods and nobody else;
+#   - a pod under the factory's policy reaches DNS but not a private address outside its peers.
+#
+# PROFILE=production (with EXPOSE=httproute; task chart:production:k3d; plan v4 step 6, Task 21) installs
+# profile production (tests/production-k3d-values.yaml), with no demo value: a test-only RuntimeClass
+# gvisor whose handler is runc (sandbox.runtimeClassName resolves, unsafeAllowRunc stays refused; no run
+# starts), a plain postgres:16 outside the chart bootstrapped with docs/database.md, the broker's TLS
+# Secrets by name, the prometheus-operator CRDs alone (no operator), and the factory with the stub as its
+# GitHub. It adopts the umbrella as docs/upgrading.md says:
+#   - maku-factory alone, then `helm upgrade` to the umbrella with maku.enabled false: the factory's
+#     Deployment keeps its UID;
+#   - then maku and the rest on; the flows above run through the Gateway, the factory's ops /readyz is
+#     200, and the PrometheusRule and the ServiceMonitors exist.
+#
 # The cluster, its kubeconfig and the images' tag are this run's own: the current kubectl context
 # is never read or changed.
 set -euo pipefail
@@ -48,11 +67,27 @@ STUB=charts/agent-factory/tests/e2e-stub.yaml
 # starts, so the harness and the bridge are never pulled.
 images=(maku-broker maku-e2e-stub)
 [[ -z ${EXPOSE:-} ]] || images+=(maku-run-controller)
+SLACK="${SLACK:-}"
+[[ -z $SLACK || ${EXPOSE:-} == httproute ]] || { echo "FAIL: SLACK=1 needs EXPOSE=httproute" >&2; exit 2; }
+[[ -z $SLACK ]] || images+=(maku-slack maku-factory)
 EXPOSE="${EXPOSE:-}"
 case "$EXPOSE" in
   "" | httproute | ingress) ;;
   *) echo "FAIL: EXPOSE=$EXPOSE is not httproute or ingress" >&2; exit 2 ;;
 esac
+PROFILE="${PROFILE:-demo}"
+case "$PROFILE" in
+  demo) ;;
+  production)
+    [[ $EXPOSE == httproute && -z $SLACK ]] || { echo "FAIL: PROFILE=production needs EXPOSE=httproute, without SLACK" >&2; exit 2; }
+    images+=(maku-factory)
+    ;;
+  *) echo "FAIL: PROFILE=$PROFILE is not demo or production" >&2; exit 2 ;;
+esac
+# The external database's image, as install.sh's EXTERNAL_DB leg: postgres:16, the support floor (D26).
+PG_IMAGE=docker.io/library/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
+# The prometheus-operator CRDs (ServiceMonitor, PodMonitor, PrometheusRule), applied alone.
+PROMETHEUS_OPERATOR=v0.81.0
 EXPOSE_WS_SECONDS="${EXPOSE_WS_SECONDS:-360}"
 GATEWAY_API=v1.2.1
 PY_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
@@ -73,6 +108,10 @@ onexit() {
     k get pods -A -o wide >&2 || true
     k -n "$NS" logs deploy/room-broker --all-containers --tail=120 >&2 || true
     k -n e2e logs deploy/e2e-stub --tail=60 >&2 || true
+    if [[ -n $SLACK ]]; then
+      k -n "$NS" logs deploy/factory-slack-app --tail=60 >&2 || true
+      k -n "$NS" logs deploy/factory-slack-app --previous --tail=60 >&2 || true
+    fi
   fi
   if $created; then
     step "delete the cluster $NAME"
@@ -87,6 +126,8 @@ trap onexit EXIT
 step "build the broker and the stub from this checkout, tag $TAG"
 docker build -q -f images/maku-broker/Dockerfile -t "ghcr.io/smana/maku-broker:$TAG" . >/dev/null
 [[ -z $EXPOSE ]] || docker build -q -f images/maku-run-controller/Dockerfile -t "ghcr.io/smana/maku-run-controller:$TAG" . >/dev/null
+[[ -z $SLACK ]] || docker build -q -f images/maku-slack/Dockerfile -t "ghcr.io/smana/maku-slack:$TAG" . >/dev/null
+[[ -z $SLACK && $PROFILE != production ]] || docker build -q -f images/maku-factory/Dockerfile -t "ghcr.io/smana/maku-factory:$TAG" . >/dev/null
 docker build -q -f hack/e2e-stub/Dockerfile -t "ghcr.io/smana/maku-e2e-stub:$TAG" . >/dev/null
 
 step "create the k3d cluster $NAME"
@@ -120,7 +161,10 @@ k create namespace e2e >/dev/null
 k -n e2e create secret generic e2e-stub-tls --from-file=tls.crt="$work/stub.crt" --from-file=tls.key="$work/stub.key" >/dev/null
 k create namespace "$NS" >/dev/null
 k -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
-k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli >/dev/null
+# slack-app-client-id is the Slack App's sponsored client (SLACK=1): a client of its own, since the
+# broker never admits the web or the CLI client as a sponsored principal.
+k -n "$NS" create secret generic e2e-broker-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli \
+  --from-literal=slack-app-client-id=factory-slack >/dev/null
 k -n "$NS" create secret generic e2e-github-link --from-literal=client_id=Iv1.e2e-link --from-literal=client_secret=e2e-throwaway-secret >/dev/null
 # The factory App the broker resolves a GitHub id through (D7): a throwaway key; the stub never checks it.
 openssl genrsa -out "$work/app.pem" 2048 2>/dev/null
@@ -175,6 +219,30 @@ YAML
     expose+=(--set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
       --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]')
     front=http://edge.edge.svc.cluster.local:8080
+    if [[ -n $SLACK ]]; then
+      # The App's three Secrets (throwaway), its subchart, the factory, both default-deny policies.
+      k -n "$NS" create secret generic factory-slack-app --from-literal=signing-secret=e2e-slack-signing \
+        --from-literal=bot-token=xoxb-e2e --from-literal=bot-user-id=U0E2EBOT >/dev/null
+      # The App signs in as the sponsored principal whose client id the broker's and the factory's
+      # sponsored entries read (factory-slack), for the audience human.audience pins (maku-api).
+      k -n "$NS" create secret generic factory-slack-principal --from-literal=client-id=factory-slack --from-literal=client-secret=e2e-throwaway >/dev/null
+      k -n "$NS" create secret generic agent-factory-sponsored --from-literal=slack-app-client-id=factory-slack >/dev/null
+      # The webhook key is one base64 key of at least 32 bytes: the App refuses to start on anything else.
+      k -n "$NS" create secret generic room-broker-webhook-slack-app --from-literal=signing-key="$(openssl rand -base64 32)" >/dev/null
+      expose+=(-f charts/agent-factory/values-slack.example.yaml --set slack.e2e.unpinnedImages=true --set "slack.image.tag=$TAG"
+        --set slack.issuerURL=https://e2e-stub.e2e.svc.cluster.local --set slack.roomsURL=https://rooms.e2e.test --set slack.preset=generic
+        --set slack.networkPolicy.mode=kubernetes --set slack.audience=maku-api --set maku.broker.human.audience=maku-api
+        --set-json 'slack.extraEnv=[{"name":"SSL_CERT_FILE","value":"/etc/e2e/ca/ca.crt"}]'
+        --set-json 'slack.extraVolumes=[{"name":"e2e-ca","secret":{"secretName":"e2e-stub-ca","defaultMode":288}}]'
+        --set-json 'slack.extraVolumeMounts=[{"name":"e2e-ca","mountPath":"/etc/e2e/ca","readOnly":true}]'
+        --set-json 'slack.networkPolicy.idp.to=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"e2e"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"e2e-stub"}}}]'
+        --set slack.networkPolicy.idp.port=8443
+        --set-json 'slack.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
+        --set-json 'expose.slack.hostnames=["factory-slack.e2e.test"]'
+        --set 'maku.broker.human.mcp.sponsored[0].clientIDFile=/etc/room-broker/oidc/slack-app-client-id'
+        --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG"
+        --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+    fi
   else
     expose+=(--set expose.ingress.className=traefik
       --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"kube-system"}},"podSelector":{"matchLabels":{"app.kubernetes.io/name":"traefik"}}}]')
@@ -182,16 +250,118 @@ YAML
   fi
 fi
 
-step "install the umbrella: the broker in preset generic, its ids by Secret"
+h() { helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" "$@"; }
 helm dependency build charts/agent-factory >/dev/null
-helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity-crds charts/agent-factory-crds -n "$NS" --timeout 2m >/dev/null
-helm --kubeconfig "$KUBECONFIG" --kube-context "k3d-$NAME" install identity charts/agent-factory -n "$NS" \
-  -f charts/agent-factory/values-demo.yaml -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" \
-  --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
-  --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled=false \
-  --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
-  --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem" --timeout 5m >/dev/null
-k -n "$NS" rollout status sts/rooms-db --timeout=180s
+h install identity-crds charts/agent-factory-crds -n "$NS" --timeout 2m >/dev/null
+if [[ $PROFILE == production ]]; then
+  PROD_VALUES=charts/agent-factory/tests/production-k3d-values.yaml
+  step "production: the sandbox's RuntimeClass, the prometheus-operator CRDs, the broker's TLS, the factory's Secrets"
+  # Test-only: a RuntimeClass named as production names its sandbox, on runc. No run starts here.
+  k apply -f - >/dev/null <<'YAML'
+apiVersion: node.k8s.io/v1
+kind: RuntimeClass
+metadata: {name: gvisor}
+handler: runc
+YAML
+  curl -fsSL "https://github.com/prometheus-operator/prometheus-operator/releases/download/$PROMETHEUS_OPERATOR/stripped-down-crds.yaml" |
+    k apply --server-side -f - >/dev/null
+  # Just after a server-side apply, `kubectl wait` can fail before the CRDs are served (an accessor
+  # error): retried, as install.sh's wait_established.
+  for _ in 1 2 3 4 5; do
+    k wait --for=condition=Established crd/servicemonitors.monitoring.coreos.com crd/podmonitors.monitoring.coreos.com \
+      crd/prometheusrules.monitoring.coreos.com --timeout=120s >/dev/null 2>&1 && break
+    sleep 3
+  done
+  k wait --for=condition=Established crd/servicemonitors.monitoring.coreos.com crd/podmonitors.monitoring.coreos.com \
+    crd/prometheusrules.monitoring.coreos.com --timeout=120s >/dev/null
+  k create namespace monitoring >/dev/null
+  # The runs namespace, the platform's (maku.createRunsNamespace false): the factory alone writes its Role there.
+  k create namespace agents >/dev/null
+  k label namespace agents pod-security.kubernetes.io/enforce=restricted >/dev/null
+  # The broker's serving certificate, from the run's throwaway CA (production brings its own, or cert-manager's).
+  openssl req -newkey rsa:2048 -nodes -subj '/CN=room-broker' -keyout "$work/broker.key" -out "$work/broker.csr" >/dev/null 2>&1
+  printf 'subjectAltName=DNS:room-broker.%s.svc,DNS:room-broker.%s.svc.cluster.local\nextendedKeyUsage=serverAuth\n' "$NS" "$NS" >"$work/broker.ext"
+  openssl x509 -req -days 1 -in "$work/broker.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" -CAcreateserial \
+    -extfile "$work/broker.ext" -out "$work/broker.crt" >/dev/null 2>&1
+  k -n "$NS" create secret tls room-broker-tls --cert="$work/broker.crt" --key="$work/broker.key" >/dev/null
+  for s in room-broker-ca openbao-ca; do k -n "$NS" create secret generic "$s" --from-file=ca.crt="$work/ca.crt" >/dev/null; done
+  k -n "$NS" create secret generic agent-factory-github --from-literal=app_id=1 --from-file=private_key="$work/app.pem" >/dev/null
+  k -n "$NS" create secret generic agent-factory-oidc --from-literal=web-client-id=rooms-web --from-literal=cli-client-id=maku-cli >/dev/null
+
+  step "production: a plain postgres:16 outside the chart, bootstrapped with docs/database.md"
+  k create namespace external-db >/dev/null
+  k -n external-db apply -f - >/dev/null <<YAML
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pg}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: pg}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: pg}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 70, runAsGroup: 70, fsGroup: 70, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: $PG_IMAGE
+          env:
+            - {name: POSTGRES_PASSWORD, value: e2e-superuser-only}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -h, 127.0.0.1, -U, postgres]}, periodSeconds: 3}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}, {name: run, mountPath: /var/run/postgresql}]
+      volumes: [{name: data, emptyDir: {}}, {name: run, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pg}
+spec:
+  selector: {app.kubernetes.io/name: pg}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+YAML
+  k -n external-db rollout status deploy/pg --timeout=180s >/dev/null
+  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/bootstrap.sql"
+  [[ $(grep -c '^CREATE ROLE' "$work/bootstrap.sql") == 3 ]] || die "docs/database.md's first sql block is not the bootstrap"
+  k -n external-db exec -i deploy/pg -- psql -q -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/bootstrap.sql" >/dev/null
+  for r in owner broker retention; do
+    pw=$(sed -nE "s/^CREATE ROLE rooms_$r LOGIN PASSWORD '([^']+)';$/\1/p" "$work/bootstrap.sql")
+    [[ -n $pw ]] || die "no password for rooms_$r in the bootstrap"
+    k -n "$NS" create secret generic "rooms-$r-dsn" \
+      --from-literal=uri="postgresql://rooms_$r:$pw@pg.external-db.svc:5432/rooms?sslmode=disable" >/dev/null
+  done
+
+  step "production: maku-factory alone, then the umbrella with maku.enabled false (docs/upgrading.md)"
+  factory=(--set e2e.unpinnedImages=true --set "image.tag=$TAG")
+  h install identity charts/maku-factory -n "$NS" --skip-crds -f <(yq '.maku-factory' "$PROD_VALUES") "${factory[@]}" --timeout 5m >/dev/null
+  k -n "$NS" rollout status deploy/agent-factory --timeout=180s
+  uid="$(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}')"
+  h upgrade identity charts/agent-factory -n "$NS" --set profile=production -f <(yq '{"maku-factory": .maku-factory}' "$PROD_VALUES") \
+    --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG" --timeout 5m >/dev/null
+  k -n "$NS" rollout status deploy/agent-factory --timeout=180s
+  [[ $(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the upgrade to the umbrella replaced the factory's Deployment"
+  [[ $(h history identity -n "$NS" -o json | jq -r 'map(.chart) | join(" ")') == "maku-factory-0.0.0 agent-factory-0.0.0" ]] ||
+    die "the release's history is not maku-factory then agent-factory: $(h history identity -n "$NS")"
+  echo "ok   maku-factory alone upgraded to the umbrella (maku.enabled false): the same release, the factory's Deployment UID kept"
+
+  step "production: maku and the rest on, profile production"
+  h upgrade identity charts/agent-factory -n "$NS" -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" -f "$PROD_VALUES" \
+    --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
+    --set maku-factory.e2e.unpinnedImages=true --set "maku-factory.image.tag=$TAG" --timeout 5m >/dev/null
+  [[ $(k -n "$NS" get deploy agent-factory -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "turning maku on replaced the factory's Deployment"
+  ! k -n "$NS" get sts rooms-db >/dev/null 2>&1 || die "profile production installed the bundled rooms-db"
+else
+  step "install the umbrella: the broker in preset generic, its ids by Secret"
+  h install identity charts/agent-factory -n "$NS" \
+    -f charts/agent-factory/values-demo.yaml -f charts/agent-factory/tests/values-demo-secret.yaml -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" \
+    --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
+    --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled="$([[ -n $SLACK ]] && echo true || echo false)" \
+    --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \
+    --set demo.githubApp.id=1 --set-file demo.githubApp.privateKey="$work/app.pem" --timeout 5m >/dev/null
+  k -n "$NS" rollout status sts/rooms-db --timeout=180s
+fi
 k -n "$NS" rollout status deploy/room-broker --timeout=180s
 
 forward() { # forward NS RESOURCE REMOTE VAR: a port-forward, its local port in VAR
@@ -367,4 +537,85 @@ if [[ -n $EXPOSE ]]; then
 fi
 
 
-echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}"
+if [[ -n $SLACK ]]; then
+  step "the Slack App through the Gateway, and both default-deny policies"
+  k -n "$NS" rollout status deploy/factory-slack-app --timeout=180s
+  # slack_post SIGN BODY: POST /slack/events through the Gateway, signed with SIGN (Slack's v0 scheme).
+  slack_post() {
+    k -n e2e exec e2e-client -- python3 -c '
+import hashlib, hmac, http.client, json, sys, time
+secret, body = sys.argv[1].encode(), sys.argv[2].encode()
+ts = str(int(time.time()))
+sig = "v0=" + hmac.new(secret, b"v0:" + ts.encode() + b":" + body, hashlib.sha256).hexdigest()
+c = http.client.HTTPConnection("edge.edge.svc.cluster.local", 8080, timeout=30)
+c.request("POST", "/slack/events", body, {"Host": "factory-slack.e2e.test", "Content-Type": "application/json",
+  "X-Slack-Request-Timestamp": ts, "X-Slack-Signature": sig})
+r = c.getresponse(); print(r.status, r.read().decode()[:200])' "$1" "$2"
+  }
+  out=''
+  for _ in $(seq 40); do out="$(slack_post e2e-slack-signing '{"type":"url_verification","challenge":"e2e-challenge"}')"; [[ $out == 200* ]] && break; sleep 3; done
+  [[ $out == 200* && $out == *e2e-challenge* ]] || die "a signed url_verification through the Gateway: $out"
+  echo "ok   a Slack-signed POST /slack/events reaches the App through the Gateway (its challenge back)"
+  out="$(slack_post wrong-secret '{"type":"url_verification","challenge":"x"}')"
+  [[ $out == 401* ]] || die "a badly signed event: $out, want 401"
+  echo "ok   a badly signed event is 401"
+  # A mention: the App signs in with its client credentials and calls the broker's /mcp (before any
+  # Slack post, which has no Slack to reach here).
+  mention='{"type":"event_callback","team_id":"T0123ABCD","event_id":"Ev0E2E1","event_time":1,"event":{"type":"app_mention","channel":"C0123ABCD","user":"U0E2EUSER","text":"<@U0E2EBOT> fix the docs typo","ts":"1700000000.000100"}}'
+  out="$(slack_post e2e-slack-signing "$mention")"
+  [[ $out == 200* ]] || die "a signed app_mention: $out"
+  grants='' calls=''
+  metrics_port=''
+  forward "$NS" deploy/room-broker 9090 metrics_port
+  for _ in $(seq 40); do
+    grants="$(curl -fsS --cacert "$work/ca.crt" --resolve "e2e-stub.e2e.svc.cluster.local:$stub:127.0.0.1" "https://e2e-stub.e2e.svc.cluster.local:$stub/__grants" | jq -r 'map(select(. == "factory-slack")) | length')"
+    calls="$(curl -fsS "http://127.0.0.1:$metrics_port/metrics" | grep -E '^maku_rooms_human_mcp_calls_total\{' || true)"
+    [[ $grants -ge 1 && -n $calls ]] && break
+    sleep 3
+  done
+  [[ $grants -ge 1 ]] || die "the App never signed in with its client credentials (stub grants: $grants)"
+  [[ -n $calls ]] || { k -n "$NS" logs deploy/factory-slack-app --tail=40 >&2 || true; die "the broker counted no /mcp tool call after the mention"; }
+  echo "ok   a mention makes the App sign in with its client credentials and call the broker's /mcp ($(head -1 <<<"$calls"))"
+  out="$(c http GET http://factory-slack.e2e.test/slack/events)"
+  [[ $(status "$out") == 404 ]] || die "GET /slack/events: $out, want the gateway's 404"
+  echo "ok   GET /slack/events is the gateway's 404"
+  # stand-ins under each policy: a pod labelled as the broker (the broker's egress, the App's ingress),
+  # a control under no policy (the stub admits it), and one labelled as the factory (the factory's egress).
+  for p in broker-standin:room-broker plain:e2e-control factory-standin:agent-factory; do
+    k -n "$NS" run "${p%%:*}" --image="$PY_IMAGE" --restart=Never --labels="app.kubernetes.io/name=${p#*:}" \
+      --overrides='{"spec":{"automountServiceAccountToken":false,"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$PY_IMAGE"'","command":["sleep","infinity"],"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' >/dev/null
+  done
+  for p in broker-standin plain factory-standin; do k -n "$NS" wait --for=condition=Ready "pod/$p" --timeout=180s >/dev/null; done
+  # reach POD HOST PORT: "open" or "closed" (a TCP connect within 5 s)
+  reach() { k -n "$NS" exec "$1" -- python3 -c 'import socket,sys
+try: socket.create_connection((sys.argv[1], int(sys.argv[2])), timeout=5); print("open")
+except OSError: print("closed")' "$2" "$3"; }
+  app=factory-slack-app.$NS.svc.cluster.local
+  [[ $(reach broker-standin "$app" 8081) == open ]] || die "the broker's pods cannot reach the App's :8081"
+  [[ $(reach plain "$app" 8081) == closed ]] || die "a pod that is not the broker reached the App's :8081"
+  echo "ok   the App's :8081 admits the broker's pods, and no other"
+  [[ $(reach factory-standin e2e-stub.e2e.svc.cluster.local 443) == closed ]] || die "a pod under the factory's policy reached a private address outside its peers"
+  [[ $(reach plain e2e-stub.e2e.svc.cluster.local 443) == open ]] || die "the control pod cannot reach the stub: the check above proves nothing"
+  [[ $(k -n "$NS" exec factory-standin -- python3 -c 'import socket; print(socket.gethostbyname("kubernetes.default.svc.cluster.local"))') =~ ^[0-9.]+$ ]] ||
+    die "a pod under the factory's policy cannot resolve names"
+  echo "ok   the factory's policy refuses a private address outside its peers, and allows DNS"
+fi
+
+if [[ $PROFILE == production ]]; then
+  step "production: the factory serves, and the monitoring objects exist"
+  k -n "$NS" rollout status deploy/agent-factory --timeout=180s >/dev/null
+  ops=''
+  forward "$NS" deploy/agent-factory 9090 ops
+  code="$(curl -sS -o "$work/body" -w '%{http_code}' "http://127.0.0.1:$ops/readyz")"
+  [[ $code == 200 ]] || die "the factory's /readyz: $code $(cat "$work/body")"
+  echo "ok   the factory's ops /readyz is 200"
+  k -n "$NS" get prometheusrule maku >/dev/null || die "no PrometheusRule maku"
+  sms="$(k -n "$NS" get servicemonitors -o name | sort | paste -sd' ')"
+  [[ $sms == *room-broker* && $sms == *agent-factory* ]] || die "the ServiceMonitors are '$sms', want the broker's and the factory's"
+  echo "ok   the PrometheusRule maku and the ServiceMonitors ($sms) exist"
+  unsafe="$(k -n "$NS" get configmap room-broker-config -o jsonpath='{.data.config\.yaml}' | yq '.install.unsafe // [] | join(",")')"
+  [[ -z $unsafe ]] || die "profile production shows unsafe settings: $unsafe"
+  echo "ok   profile production shows no unsafe setting"
+fi
+
+echo "identity k3d OK${EXPOSE:+ (expose $EXPOSE)}${SLACK:+ (slack)}$([[ $PROFILE == production ]] && echo " (production)")"

@@ -1,0 +1,97 @@
+{{- /* v4 step 6 Task 16 (D6): the App's default-deny in mode cilium. */ -}}
+{{- $np := .Values.networkPolicy -}}
+{{- if eq $np.mode "cilium" }}
+{{- $u := urlParse (.Values.issuerURL | default "https://idp.invalid") -}}
+{{- $idpPort := int ($np.idp.port | default 0) -}}
+{{- if not $idpPort }}{{ $idpPort = ternary 443 80 (eq $u.scheme "https") }}{{ if regexMatch ":[0-9]+$" $u.host }}{{ $idpPort = regexFind "[0-9]+$" $u.host | int }}{{ end }}{{ end -}}
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: factory-slack-app
+  ingress:
+    {{- with $np.cilium.fromEntities }}
+    # Slack's events, through the gateway or ingress (expose.slack).
+    - fromEntities: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    {{- end }}
+    # The broker's webhooks.
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8081", protocol: TCP}]
+    # Kubelet's probes.
+    - fromEntities: [host]
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    {{- with $np.cilium.metricsFromEndpoints }}
+    - fromEndpoints: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "9090", protocol: TCP}]
+    {{- end }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns: [{matchPattern: "*"}]
+    # The thread map.
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports:
+            {{- range $np.apiServer.ports }}
+            - {port: {{ . | quote }}, protocol: TCP}
+            {{- end }}
+    # The broker's human listener: /mcp and the link routes.
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+    # Slack.
+    - toFQDNs: [{matchName: slack.com}]
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    # The IdP (networkPolicy.idp: whole peers; empty, the issuer's host).
+    {{- range ($np.idp.to | default (list (dict "toFQDNs" (list (dict "matchName" $u.hostname))))) }}
+    - {{- toYaml . | nindent 6 }}
+      toPorts:
+        - ports: [{port: {{ $idpPort | quote }}, protocol: TCP}]
+    {{- end }}
+    {{- with $np.cilium.extraEgress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+---
+# The broker's half of the App's /mcp and link calls: the broker's own policy admits :8080 from the
+# web front door alone, so the App's path into it is opened here, where the App is. Policies add up:
+# this one admits the App and nothing else.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker-from-factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: factory-slack-app
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
+{{- end }}

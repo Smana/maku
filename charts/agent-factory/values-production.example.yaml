@@ -1,0 +1,133 @@
+# A production install (v4 EX16; docs/upgrading.md#from-the-demo-to-production): copy it, change every
+# line marked CHANGE, then
+#   helm install af charts/agent-factory -n maku --create-namespace -f values-production.yaml
+# with the agent-factory-crds chart installed first. Never layer it on values-demo.yaml: the render
+# refuses the demo's values. profile production checks the seams of each enabled component and fails
+# once, naming every missing one with its key and its doc. Every credential is a Secret you create
+# (docs/install-secrets.md lists their names and keys), or an ExternalSecret (externalSecrets).
+# It runs: Postgres you bring, through three DSN Secrets; the humans on any OIDC issuer (preset
+# generic); plain NetworkPolicies (networkPolicies.mode kubernetes); the web behind your Gateway
+# through the web front door; the model gateway; ServiceMonitors, the PrometheusRule and the dashboards.
+profile: production
+
+maku:
+  enabled: true
+  broker:
+    image: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: the release's maku-broker
+    publicURL: https://rooms.example.com                         # CHANGE: the web's host
+    human:
+      mode: oidc
+      preset: generic
+      tokenUse: id
+      issuer: https://idp.example.com                            # CHANGE: your OIDC issuer
+      rolesClaim: groups                                         # CHANGE: the claim holding the groups
+      origin: https://rooms.example.com                          # CHANGE: publicURL
+      groups: {admin: agents-admin, member: agents-member}
+    # The web and the CLI clients' ids (keys web-client-id, cli-client-id; docs/identity.md).
+    oidc: {existingSecret: rooms-oidc}
+    # The runs' tokens, verified against this cluster's ServiceAccount issuer (docs/security.md#identities).
+    runIssuer:
+      issuer: https://kubernetes.default.svc.cluster.local       # CHANGE: kubectl get --raw /.well-known/openid-configuration
+      jwksURL: https://kubernetes.default.svc.cluster.local/openid/v1/jwks # CHANGE
+    # Postgres 16 or later, its three roles bootstrapped by docs/database.md, one DSN Secret each.
+    database:
+      brokerSecret: rooms-broker-dsn
+      ownerSecret: rooms-owner-dsn
+      retentionSecret: rooms-retention-dsn
+      podLabels: {cnpg.io/cluster: rooms-db}                     # CHANGE: your Postgres pods' labels
+    # The broker's serving certificate from cert-manager (or bring room-broker-tls and room-broker-ca).
+    tls:
+      issuerRef: {kind: ClusterIssuer, name: internal-ca}        # CHANGE
+    webProxy: true
+  networkPolicies:
+    mode: kubernetes
+    kubernetes:
+      # Your Prometheus pods, admitted on :9090 (monitoring.serviceMonitor).
+      metricsFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}] # CHANGE
+  # Every run pod runs under this RuntimeClass (D18): install gVisor (or Kata) on the nodes first.
+  sandbox:
+    runtimeClassName: gvisor
+  runController:
+    image: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: the release's maku-run-controller
+    images:
+      harness: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: maku-harness
+      bridge: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: maku-bridge
+    model:
+      mode: gateway
+      gateway:
+        aliases: {public: [agent-default], internal: []}         # maku-gateway.aliases' keys
+
+maku-factory:
+  enabled: true
+  image: {tag: v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000} # CHANGE: the release's maku-factory
+  # The factory App's Secret (keys app_id, private_key; docs/github-apps.md#the-factory-app).
+  apps:
+    factory: {existingSecret: agent-factory-github}
+  config:
+    factory: production
+    factoryLogin: my-factory[bot]                                # CHANGE: the factory App's slug
+    agentsLogin: my-agents[bot]                                  # CHANGE: the agents App's slug
+    roomsURL: https://rooms.example.com                          # CHANGE: maku.broker.publicURL
+    broker:
+      url: https://room-broker.maku.svc.cluster.local:8443       # CHANGE: the release namespace
+      caFile: /etc/agent-factory/openbao-ca/ca.crt
+      tokenFile: /var/run/secrets/agents/rooms/token
+    github:
+      appIDFile: /etc/agent-factory-github/app_id
+      privateKeyFile: /etc/agent-factory-github/private_key
+    runs: {group: maku.ogenki.io, namespace: agents, namePrefix: run-, gatewayIdentity: true}
+    # The repositories are Repository objects in the release namespace (docs/merge-policies.md#factory-resources),
+    # or a repositories list here, restated whole as in values-mine.example.yaml.
+    # The humans the broker forwards, verified again: the broker's issuer, preset and groups.
+    api:
+      listen: ":8082"
+      humanIssuer: https://idp.example.com                       # CHANGE: maku.broker.human.issuer
+      preset: generic
+      tokenUse: id
+      rolesClaim: groups
+      groups: {admin: agents-admin, member: agents-member}
+
+# The model gateway (docs/gateway.md): the runs' one model path. Its CRDs and Gateway API's are applied
+# first; set agentgateway.enabled where the cluster runs no agentgateway controller yet.
+maku-gateway:
+  enabled: true
+  identity:
+    issuer: https://kubernetes.default.svc.cluster.local         # CHANGE: maku.broker.runIssuer.issuer
+    jwks: {url: https://kubernetes.default.svc.cluster.local/openid/v1/jwks} # CHANGE: maku.broker.runIssuer.jwksURL
+  metrics:
+    allowFrom: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}] # CHANGE
+  providers:
+    main: {preset: anthropic, existingSecret: model-provider, key: apiKey} # CHANGE: your provider
+  aliases:
+    public:
+      agent-default: {provider: main, model: claude-sonnet-5-5}  # CHANGE
+
+# The web through your Gateway (docs/exposure.md), always behind the web front door; TLS is the
+# Gateway's.
+expose:
+  mode: httproute
+  httproute:
+    parentRefs: [{name: edge, namespace: gateway, sectionName: https}] # CHANGE
+    timeouts: {request: 0s}
+  web:
+    hostnames: [rooms.example.com]                               # CHANGE: maku.broker.publicURL's host
+  networkPolicy:
+    from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: gateway}}}] # CHANGE: your Gateway's pods
+webProxy:
+  enabled: true
+  # keys client-id, client-secret, cookie-secret (docs/exposure.md#the-web-front-door)
+  existingSecret: rooms-proxy
+
+# The factory's default-deny, in maku.networkPolicies' mode.
+networkPolicies:
+  factory:
+    enabled: true
+
+# The prometheus-operator CRDs must exist (docs/observability.md).
+monitoring:
+  serviceMonitor:
+    enabled: true
+  prometheusRule:
+    enabled: true
+  dashboards:
+    enabled: true

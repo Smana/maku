@@ -124,6 +124,7 @@ no demo_digest_ok 'sha256:abc'; no demo_digest_ok ''; no demo_digest_ok 'error: 
 
 # the values file renders, is 0600, leaks nothing odd, and the chart's config parses (plan B's Parse test)
 openssl genrsa -out "$tmp/app.pem" 2048 2>/dev/null
+export DEMO_ISSUER=https://kubernetes.default.svc.cluster.local
 export DEMO_SLUG=maku-demo-it DEMO_REPO=octocat/it DEMO_LOGIN=octocat MODEL_BASE_URL=http://model.example.test/v1 \
   MODEL_NAME="m'1" MODEL_API_KEY=sk-test GITHUB_APP_ID=123 GITHUB_APP_KEY_FILE="$tmp/app.pem"
 d='v0.0.0@sha256:0000'
@@ -133,7 +134,13 @@ demo_render_values "$tmp/values.yaml"
 eq "$(stat -c %a "$tmp/values.yaml" 2>/dev/null || stat -f %Lp "$tmp/values.yaml")" 600 "values file mode"
 yq -e '.maku-factory.config.factoryLogin == "maku-demo-it[bot]" and .maku-factory.config.repositories[0].merge.mergerLogin == "maku-demo-it[bot]"' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: the bot logins" >&2; fail=1; }
 yq -e '.maku-factory.config.repositories[0].name == "octocat/it" and .maku-factory.config.repositories[0].maintainers[0] == "octocat"' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: repository and maintainer" >&2; fail=1; }
-yq -e '.demo.model.name == "m'"'"'1" and (.demo.githubApp.privateKey | test("BEGIN"))' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: quoting and the key" >&2; fail=1; }
+yq -e '.maku-gateway.aliases.public.agent-default.model == "m'"'"'1" and (.demo.githubApp.privateKey | test("BEGIN"))' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: quoting and the key" >&2; fail=1; }
+# step 7 R4: the runs reach the model through the gateway; MODEL_BASE_URL becomes its provider
+yq -e '.maku-gateway.providers.demo.host == "model.example.test" and .maku-gateway.providers.demo.port == 80 and .maku-gateway.providers.demo.path == "/v1/chat/completions" and .maku-gateway.providers.demo.tls == false and (.demo.model | keys | join(",")) == "apiKey"' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: the gateway's provider from MODEL_BASE_URL" >&2; fail=1; }
+eq "$(demo_provider https://api.example.com:8443/v1/ | paste -sd' ')" "api.example.com 8443 /v1/chat/completions true" "provider from an https base with a port"
+eq "$(demo_provider https://api.example.com | paste -sd' ')" "api.example.com 443 /chat/completions true" "provider from a bare https base"
+no demo_provider ftp://x
+no env DEMO_ISSUER= bash -c '. hack/demo/lib.sh; demo_render_values /dev/null'
 yq -e '.maku-factory.config.repositories[0].classes.docs-links.shadow == true' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: shadow by default" >&2; fail=1; }
 yq -e '.maku-factory.config.repositories[0].merge.approveToMerge == true' "$tmp/values.yaml" >/dev/null 2>&1 || { echo "FAIL: values: approve-to-merge on" >&2; fail=1; }
 DEMO_SHADOW=false demo_render_values "$tmp/live.yaml"

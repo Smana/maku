@@ -32,6 +32,7 @@ type upstream struct {
 	redirect string
 	versions []string // MCP-Protocol-Version, by request after initialize
 	answer   func(id json.RawMessage) string
+	tools    []string // tools/list's names (step 7's preflight)
 }
 
 func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +77,12 @@ func (u *upstream) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "notifications/initialized", "DELETE":
 		w.WriteHeader(http.StatusAccepted)
 		return
+	case "tools/list":
+		var ts []string
+		for _, n := range u.tools {
+			ts = append(ts, `{"name":"`+n+`","inputSchema":{"type":"object"}}`)
+		}
+		out = `{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":{"tools":[` + strings.Join(ts, ",") + `]}}`
 	case "tools/call":
 		if u.delay > 0 {
 			select {
@@ -441,5 +448,22 @@ func TestKnowledgeOversizeIsABadAnswer(t *testing.T) {
 		if got := o.list(); len(got) != 1 || got[0] != "kb_get:bad_answer" {
 			t.Fatalf("sse=%v: outcomes %v", sse, got)
 		}
+	}
+}
+
+// v4 step 7: the preflight's knowledge check lists the endpoint's tools over the same exchange
+// (initialize, initialized, tools/list), and names what it found.
+func TestKnowledgeToolNames(t *testing.T) {
+	u := &upstream{session: "s1", tools: []string{"kb_search"}}
+	ts := httptest.NewServer(u)
+	defer ts.Close()
+	got, err := KnowledgeToolNames(t.Context(), ts.URL, ts.Client())
+	if err != nil || len(got) != 1 || got[0] != "kb_search" {
+		t.Fatalf("%v %v", got, err)
+	}
+	dead := httptest.NewServer(http.NotFoundHandler())
+	defer dead.Close()
+	if _, err := KnowledgeToolNames(t.Context(), dead.URL, dead.Client()); err == nil {
+		t.Fatal("a 404 listed tools")
 	}
 }

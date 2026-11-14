@@ -67,6 +67,10 @@ spec:
           env:
             - name: ROOMS_CONFIG
               value: /etc/room-broker/config/config.yaml
+            {{- if .Values.preflight.enabled }}
+            # GET /preflight on the ops port, for the install's preflight only (v4 D24).
+            - {name: MAKU_PREFLIGHT, value: "true"}
+            {{- end }}
             {{- if $b.database.brokerSecret }}
             - name: ROOMS_DATABASE_URL
               valueFrom:
@@ -117,6 +121,9 @@ spec:
             {{- if dig "hardening" "forgeRead" "audience" "" $b }}
             - {name: factory-token, mountPath: /var/run/secrets/maku/factory, readOnly: true}
             {{- end }}
+            {{- range (include "ap.webhooks" . | fromJson).mounts }}
+            - {name: {{ .volume }}, mountPath: /etc/room-broker/webhooks/{{ .name }}, readOnly: true}
+            {{- end }}
             {{- with $b.extraVolumeMounts }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -163,6 +170,11 @@ spec:
           projected:
             sources:
               - serviceAccountToken: {audience: {{ . }}, expirationSeconds: 3600, path: token}
+        {{- end }}
+        {{- range (include "ap.webhooks" . | fromJson).mounts }}
+        # broker.webhooks[{{ .name }}]'s signing key (EX9), read at each delivery.
+        - name: {{ .volume }}
+          secret: {secretName: {{ .secret }}, defaultMode: 0440}
         {{- end }}
         {{- with $b.extraVolumes }}
         {{- toYaml . | nindent 8 }}

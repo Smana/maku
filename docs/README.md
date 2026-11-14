@@ -13,6 +13,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 
 | Page | Answers |
 |---|---|
+| [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code, sandbox nodes, the support floor |
 | [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), what production adds, and the older one-run path |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
@@ -36,7 +37,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Observability](observability.md) | The scrape objects, the alert rule and the dashboards the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
-| [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |
+| [Upgrading](upgrading.md) | What changes in the install steps, release by release: from the demo to production (`profile: production`'s seams), adopting the umbrella from `maku-factory`, the CRD chart and its adoption, `values-demo.yaml` |
 | [The group move](maku-group-migration.md) | History: v0.31.0's quiet window, `Room` and `Task` to `maku.ogenki.io`; its command is removed |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |

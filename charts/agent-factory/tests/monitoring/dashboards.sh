@@ -21,7 +21,7 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 helm template af . -n maku \
   --set maku.broker.image.tag=$digest --set maku.runController.image.tag=$digest \
   --set maku.runController.images.harness.tag=$digest --set maku.runController.images.bridge.tag=$digest \
-  --set maku-factory.image.tag=$digest -f values-demo.yaml -f values-demo-gateway.yaml \
+  --set maku-factory.image.tag=$digest -f values-demo.yaml \
   --set demo.model.apiKey=k1 --set demo.githubApp.id=123 --set demo.githubApp.privateKey=pem1 \
   --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local --set maku-gateway.providers.demo.host=model.example.test \
   --set maku-gateway.aliases.public.agent-default.model=m1 --set maku-gateway.aliases.public.tier-light.model=m2 \
