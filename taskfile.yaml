@@ -179,6 +179,21 @@ tasks:
     cmds:
       - bash hack/install-e2e/k3s.sh
 
+  install:upgrade:
+    desc: The newest release from its own maku install --print, upgraded in place to this checkout on kind with Calico (docker, kind, cosign; nightly, not part of check). UPGRADE_FROM picks the release (latest, a tag, or head)
+    cmds:
+      - bash hack/install-e2e/upgrade.sh
+
+  install:flux:
+    desc: The kind install from the wizard's gitops/flux.yaml through Flux 2.4 on Kubernetes 1.30 (docker, kind; nightly, not part of check). The commit must be pushed
+    cmds:
+      - bash hack/install-e2e/flux.sh
+
+  install:argocd:
+    desc: The kind install from the wizard's gitops/argocd.yaml through Argo CD 2.12 on Kubernetes 1.30 (docker, kind; nightly, not part of check). The commit must be pushed
+    cmds:
+      - bash hack/install-e2e/argocd.sh
+
   chart:install:k3d:external-db:
     desc: The demo on k3d against a plain postgres:16 outside the chart, bootstrapped with docs/database.md (v4 D9)
     cmds:
