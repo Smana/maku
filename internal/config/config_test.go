@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1308,5 +1309,29 @@ func TestPreflightConfig(t *testing.T) {
 		if _, err := Load(write(t, valid+bad)); err == nil {
 			t.Errorf("%q accepted", bad)
 		}
+	}
+}
+
+// WF9, WF13: human.intake.plan.classes loads with a warning that the next minor refuses it, since
+// the factory's catalog names the workflows; with a factoryURL, the planner needs no class table.
+func TestPlanClassesWarn(t *testing.T) {
+	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    ttl: 5m\n" + githubLink +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/ai-native-ref]\n"
+	const classes = "      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
+	const factory = "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+	warned := func(c Config) bool {
+		return slices.ContainsFunc(c.Warnings, func(w string) bool {
+			return strings.HasPrefix(w, "human.intake.plan.classes:") && strings.Contains(w, "refused from the next minor (WF13)")
+		})
+	}
+	c, err := Load(write(t, base+classes))
+	if err != nil || !warned(c) {
+		t.Fatalf("the class table: %v, warnings %q", err, c.Warnings)
+	}
+	c, err = Load(write(t, base+factory))
+	if err != nil || warned(c) {
+		t.Fatalf("the catalog alone: %v, warnings %q", err, c.Warnings)
 	}
 }

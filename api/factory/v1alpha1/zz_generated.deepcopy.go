@@ -587,6 +587,13 @@ func (in *FactorySpec) DeepCopyInto(out *FactorySpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Workflows != nil {
+		in, out := &in.Workflows, &out.Workflows
+		*out = make(map[string]config.HarnessProfile, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	in.MergeGuardrails.DeepCopyInto(&out.MergeGuardrails)
 	out.Evaluation = in.Evaluation
 	if in.MergeDefaults != nil {

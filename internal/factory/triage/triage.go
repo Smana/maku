@@ -23,6 +23,8 @@ type Decision struct {
 	Cohort           string
 	// Pin is the profile a person pinned and whether triage refused it (P6); zero without one.
 	Pin Pin
+	// Notes are sentences triage says once on the task, such as ProfileLabelNote.
+	Notes []string
 }
 
 // The evaluation cohorts a task is frozen in at triage.

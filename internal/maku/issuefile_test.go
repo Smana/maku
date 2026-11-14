@@ -982,12 +982,12 @@ func pinnedCheck(t *testing.T, maintainer *bool, profile string) string {
 	return planCheckResult(string(b))
 }
 
-// P7, P5: a pinned plan's start applies class:, then profile:, then factory/ready, so triage reads
+// P7, P5, WF9: a pinned plan's start applies class:, then workflow:, then factory/ready, so triage reads
 // both; the form says the profile is pinned. A non-maintainer gets neither label.
 func TestStartLabelsThePinInOrder(t *testing.T) {
 	r, calls := startRelay(t, pinnedCheck(t, boolp(true), "review-frontier"))
 	r.issueFile(t.Context(), planArgs(t))
-	want := []string{"class:Smana/ai-native-ref#7+class:review", "class:Smana/ai-native-ref#7+profile:review-frontier",
+	want := []string{"class:Smana/ai-native-ref#7+class:review", "class:Smana/ai-native-ref#7+workflow:review-frontier",
 		"ready:Smana/ai-native-ref#7+factory/ready"}
 	if fmt.Sprint(*calls) != fmt.Sprint(want) {
 		t.Fatalf("%v, want %v", *calls, want)
@@ -1001,7 +1001,7 @@ func TestStartLabelsThePinInOrder(t *testing.T) {
 	if fmt.Sprint(*calls) != fmt.Sprint([]string{"ready:Smana/ai-native-ref#7+factory/ready"}) {
 		t.Fatalf("non-maintainer: %v", *calls)
 	}
-	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "class:review and profile:review-frontier labels are skipped") {
+	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "class:review and workflow:review-frontier labels are skipped") {
 		t.Fatalf("the form does not say the pin will not count: %s", msg)
 	}
 }
