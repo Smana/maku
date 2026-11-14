@@ -28,10 +28,11 @@ type RepoInputs struct {
 	Acknowledged   bool   // spec.privateCode.acknowledged, required when Private
 	FactoryAppID   string // the ruleset's integration
 	FactoryLogin   string // the factory App's bot login: merge.mergerLogin
-	// MergeDefaults leaves out the merge settings every repository shares (mergerLogin, verifyFor,
-	// revertWindow, breaker): the Factory's spec.mergeDefaults carries them. No default fills them
-	// otherwise, and the factory refuses a Repository without them.
-	MergeDefaults bool
+	// NoMergeDefaults writes the merge settings every repository shares (mergerLogin, verifyFor,
+	// revertWindow, breaker) into the Repository, for a Factory with no spec.mergeDefaults: the
+	// factory refuses a Repository that lacks them and has no default to fill them. By default they
+	// are left to the Factory's spec.mergeDefaults, which maku install --print writes (Q15).
+	NoMergeDefaults bool
 	// The two Apps' installation links, for the README; empty leaves the line out.
 	FactoryInstallURL, AgentsInstallURL string
 }
@@ -103,7 +104,7 @@ func RepoTree(in RepoInputs) (Tree, error) {
 }
 
 // repositoryYAML is the Repository in the spec's compact form: flow-style metadata and lists, keys
-// in the order a reader expects them. The shared merge settings are install's (factoryConfig).
+// in the order a reader expects them. The shared merge settings are install's (mergeDefaults).
 func repositoryYAML(name string, in RepoInputs) ([]byte, error) {
 	var b bytes.Buffer
 	enc := yaml.NewEncoder(&b)
@@ -120,9 +121,10 @@ func repositoryYAML(name string, in RepoInputs) ([]byte, error) {
 func repositoryNode(name string, in RepoInputs) *yaml.Node {
 	merge := mapping(false, "requiredChecks", flowList(in.RequiredChecks), "verifyChecks", flowList(in.RequiredChecks),
 		"leakScanCheck", in.LeakScanCheck)
-	if !in.MergeDefaults {
-		merge.Content = append(merge.Content, mapping(false, "mergerLogin", in.FactoryLogin, "verifyFor", "30m", "revertWindow", "168h",
-			"breaker", mapping(true, "window", intNode(10), "maxReverts", intNode(1))).Content...)
+	if in.NoMergeDefaults {
+		merge.Content = append(merge.Content, mapping(false, "mergerLogin", in.FactoryLogin, "verifyFor", defaultVerifyFor,
+			"revertWindow", defaultRevertWindow, "breaker", mapping(true, "window", intNode(defaultBreakerWindow),
+				"maxReverts", intNode(defaultBreakerMaxReverts))).Content...)
 	}
 	spec := mapping(false, "factoryRef", in.Factory, "repository", in.Repository, "maintainers", flowList(in.Maintainers),
 		"triggerLabel", "factory/ready", "merge", merge)

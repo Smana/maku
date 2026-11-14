@@ -90,7 +90,7 @@ const makuUsage = `usage: maku <command>
                                   2 when the release has no preflight
   repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory NAME] [--namespace NS]
            [--maintainer LOGIN]... [--check NAME]... [--leak-scan-check NAME] [--acknowledge-private-code]
-           [--merge-defaults] [--force]
+           [--merge-defaults=false] [--force]
                                   read the default branch, its required checks and visibility with your gh
                                   login, and write the repository's Repository, fence, ruleset and its gh
                                   script to DIR; it applies nothing and opens no pull request

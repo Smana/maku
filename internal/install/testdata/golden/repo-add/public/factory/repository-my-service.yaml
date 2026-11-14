@@ -10,7 +10,3 @@ spec:
     requiredChecks: [ci]
     verifyChecks: [ci]
     leakScanCheck: ci
-    mergerLogin: acme-factory[bot]
-    verifyFor: 30m
-    revertWindow: 168h
-    breaker: {window: 10, maxReverts: 1}

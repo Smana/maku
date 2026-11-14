@@ -10,21 +10,15 @@ spec:
   - bob
   merge:
     autoMergesPerDay: 5
-    breaker:
-      maxReverts: 1
-      window: 10
     checkReruns: 1
     fixRuns: 2
     gateStatus: true
     leakScanCheck: ci
-    mergerLogin: example-factory[bot]
     policyBot: false
     requiredChecks:
     - ci
-    revertWindow: 168h
     verifyChecks:
     - ci
-    verifyFor: 30m
   mergePolicies:
   - allowedFiles:
     - ^.+\.(md|mdx|adoc|rst)$
