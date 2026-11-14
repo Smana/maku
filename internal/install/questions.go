@@ -411,7 +411,7 @@ func questionTable() []Question {
 			}},
 
 		// Sandbox (IN7: Sandbox, D18).
-		{ID: "sandbox.runtimeClassName", Prompt: "The RuntimeClass every run runs under (gvisor, gke.gvisor, kata, ...)", Kind: KindString,
+		{ID: "sandbox.runtimeClassName", Prompt: "The RuntimeClass every run runs under (gvisor, GKE Sandbox's included; kata; ...)", Kind: KindString,
 			Default: fixed("gvisor"), Keys: []string{"maku.sandbox.runtimeClassName"}, Values: at("maku.sandbox.runtimeClassName"),
 			Check: dnsSubdomain("the RuntimeClass")},
 
