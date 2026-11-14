@@ -314,6 +314,9 @@ func (m *fakeMetrics) PROutcome(ctx context.Context, class, outcome string) {
 	m.add("pr " + class + " " + outcome)
 	m.who(ctx, "pr "+outcome)
 }
+func (m *fakeMetrics) RunWait(_ context.Context, role string, d time.Duration) {
+	m.add(fmt.Sprintf("run_wait %s %.0f", role, d.Seconds()))
+}
 func (m *fakeMetrics) HumanWait(ctx context.Context, phase, reason, class string, d time.Duration) {
 	m.who(ctx, fmt.Sprintf("wait %s %.0f", phase, d.Seconds()))
 	m.add(fmt.Sprintf("wait %s %s %s %.0f", phase, reason, class, d.Seconds()))
