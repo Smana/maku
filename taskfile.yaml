@@ -59,6 +59,8 @@ tasks:
       - bash scripts/stall-steps_test.sh
       - bash hack/ci-changes_test.sh
       - bash hack/prerelease-publish_test.sh
+      - shellcheck -x hack/install-e2e/*.sh
+      - bash hack/install-e2e/lib_test.sh
 
   vuln:
     desc: Known vulnerabilities reachable from our code, the stdlib included.
@@ -166,6 +168,16 @@ tasks:
     desc: Install the demo profile on a throwaway k3d cluster and assert it (docker, k3d; not part of check)
     cmds:
       - bash charts/agent-factory/tests/install.sh k3d
+
+  install:kind-calico:
+    desc: A production install from maku install --print's files on kind with Calico and gVisor, through maku preflight --strict (docker, kind; not part of check). KIND_NODE picks the minor, TWO_INSTALLS=1 adds team-b (D2)
+    cmds:
+      - bash hack/install-e2e/kind-calico.sh
+
+  install:k3s:
+    desc: A production install from maku install --print's files on k3s (k3d) with kube-router and Traefik, through maku preflight --strict (docker, k3d; not part of check)
+    cmds:
+      - bash hack/install-e2e/k3s.sh
 
   chart:install:k3d:external-db:
     desc: The demo on k3d against a plain postgres:16 outside the chart, bootstrapped with docs/database.md (v4 D9)

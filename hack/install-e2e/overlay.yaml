@@ -1,0 +1,66 @@
+# Test-only values layered on the wizard's values.yaml in both install legs (v4 step 7, PR F; IN10).
+# They point every external service at the in-cluster e2e stub (hack/e2e-stub): the humans' issuer,
+# GitHub's API and OAuth web flow, and the model provider, and trust its throwaway CA. Nothing here
+# is a production value: a production install keeps the wizard's values alone.
+maku:
+  broker:
+    githubLink:
+      webURL: https://e2e-stub.e2e.svc.cluster.local
+    # The wizard's own App mount, restated: a values list replaces, never merges.
+    extraEnv:
+      - {name: ROOMS_GITHUB_APP_DIR, value: /etc/maku/github-app}
+      - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
+      - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+    extraVolumes:
+      - name: github-app
+        secret: {secretName: agent-factory-github, defaultMode: 0440}
+      - name: e2e-ca
+        secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+    extraVolumeMounts:
+      - {name: github-app, mountPath: /etc/maku/github-app, readOnly: true}
+      - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+    networkPolicy:
+      extraEgress:
+        - to:
+            - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}
+              podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}
+          ports: [{port: 8443, protocol: TCP}]
+maku-factory:
+  extraEnv:
+    - {name: ROOMS_GITHUB_API_URL, value: https://e2e-stub.e2e.svc.cluster.local/}
+    - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+  extraVolumes:
+    - name: e2e-ca
+      secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+  extraVolumeMounts:
+    - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+maku-gateway:
+  providers:
+    # The stub's plain-http port, as install.sh's echo provider.
+    custom:
+      port: 8080
+      tls: false
+      path: /v1/chat/completions
+      egress:
+        peers: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+networkPolicies:
+  factory:
+    idp:
+      to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+      port: 8443
+    extraEgress:
+      - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+        ports: [{port: 8443, protocol: TCP}]
+webProxy:
+  replicas: 1
+  extraEnv:
+    - {name: SSL_CERT_FILE, value: /etc/e2e/ca/ca.crt}
+  extraVolumes:
+    - name: e2e-ca
+      secret: {secretName: e2e-stub-ca, defaultMode: 0440}
+  extraVolumeMounts:
+    - {name: e2e-ca, mountPath: /etc/e2e/ca, readOnly: true}
+  networkPolicy:
+    idp:
+      to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+      port: 8443

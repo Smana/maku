@@ -50,6 +50,7 @@ type issuerServer struct {
 	body    []byte
 	status  int
 	hold    chan struct{} // when set, a request waits for it to close
+	jwkSet  bool          // as the Kubernetes API server: 406 unless Accept admits application/jwk-set+json
 }
 
 func newIssuerServer(t *testing.T, keys ...map[string]string) *issuerServer {
@@ -73,6 +74,10 @@ func newIssuerServer(t *testing.T, keys ...map[string]string) *issuerServer {
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		if s.jwkSet && !strings.Contains(r.Header.Get("Accept"), "application/jwk-set+json") && !strings.Contains(r.Header.Get("Accept"), "*/*") {
+			w.WriteHeader(http.StatusNotAcceptable)
+			return
+		}
 		w.WriteHeader(s.status)
 		_, _ = w.Write(s.body)
 	}))
@@ -396,5 +401,18 @@ func TestALazyVerifierFetchesOnFirstUse(t *testing.T) {
 				t.Fatal("accepted")
 			}
 		})
+	}
+}
+
+// The Kubernetes API server serves /openid/v1/jwks as application/jwk-set+json and answers 406 to an
+// Accept that does not admit it: an in-cluster issuer (kind, k3s, kubeadm) must still load.
+func TestJWKSFromTheKubernetesAPIServer(t *testing.T) {
+	k := newKeyring(t)
+	s := newIssuerServer(t, rsaJWK("r1", &k.rsa.PublicKey))
+	s.jwkSet = true
+	clock := newClock()
+	v := newJWKSVerifier(t, s, clock)
+	if _, err := v.Verify(t.Context(), mint(t, clock, jwt.SigningMethodRS256, k.rsa, "r1"), AudienceRun); err != nil {
+		t.Fatalf("a token of the API server's issuer: %v", err)
 	}
 }

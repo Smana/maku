@@ -113,7 +113,17 @@ func TestIssueEventsAllowForgePagination(t *testing.T) {
 	}
 }
 
-func TestFenceFileNamesTheDemoFactory(t *testing.T) {
+func TestFenceFileNamesItsFactory(t *testing.T) {
+	for env, want := range map[string]string{"": "demo", "agent-factory": "agent-factory"} {
+		t.Run("factory "+want, func(t *testing.T) {
+			t.Setenv("E2E_STUB_FENCE_FACTORY", env)
+			fenceFileNames(t, want)
+		})
+	}
+}
+
+func fenceFileNames(t *testing.T, factory string) {
+	t.Helper()
 	_, ts := newStubServer(t)
 	status, raw := request(t, ts, http.MethodGet, "/repos/owner/repo/contents/.github/agent-factory.yaml", nil)
 	if status != http.StatusOK {
@@ -131,7 +141,7 @@ func TestFenceFileNamesTheDemoFactory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if file.Type != "file" || file.SHA != fullCommit || string(decoded) != "factory: demo\n" {
+	if file.Type != "file" || file.SHA != fullCommit || string(decoded) != "factory: "+factory+"\n" {
 		t.Fatalf("fence file = %s (%s)", raw, decoded)
 	}
 }

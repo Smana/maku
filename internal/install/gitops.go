@@ -127,6 +127,9 @@ func readme(in Inputs, t Tree) []byte {
 		b.WriteString(", and the prometheus-operator CRDs")
 	}
 	b.WriteString(".\n")
+	if InClusterIssuer(a.String("cluster.issuer")) {
+		b.WriteString("- An API server that admits anonymous requests, for the ServiceAccount issuer's JWKS (the chart binds `system:service-account-issuer-discovery` to `system:unauthenticated`, docs/gateway.md). On k3s, start it with `--kube-apiserver-arg=anonymous-auth=true`.\n")
+	}
 	if !in.Factory.Created() || !in.Agents.Created() {
 		b.WriteString("- The two Apps installed on the repositories, and their Secrets in the namespace.\n")
 	} else {

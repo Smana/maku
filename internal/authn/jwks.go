@@ -206,7 +206,9 @@ func (c *jwksCache) fetch(ctx context.Context) (map[string]publicKey, error) {
 	if err != nil {
 		return nil, fmt.Errorf("jwks request: %w", err)
 	}
-	req.Header.Set("Accept", "application/json")
+	// RFC 7517's media type first: the Kubernetes API server serves its JWKS as it alone, and answers
+	// 406 to an Accept of application/json (an in-cluster issuer: kind, k3s, kubeadm).
+	req.Header.Set("Accept", "application/jwk-set+json, application/json")
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("jwks fetch: %w", err)
