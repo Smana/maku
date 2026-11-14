@@ -1,0 +1,16 @@
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata: {name: my-service, namespace: maku}
+spec:
+  factoryRef: agent-factory
+  repository: acme/my-service
+  maintainers: [alice]
+  triggerLabel: factory/ready
+  merge:
+    requiredChecks: [ci]
+    verifyChecks: [ci]
+    leakScanCheck: ci
+    mergerLogin: acme-factory[bot]
+    verifyFor: 30m
+    revertWindow: 168h
+    breaker: {window: 10, maxReverts: 1}

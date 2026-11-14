@@ -12,6 +12,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -22,7 +23,9 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/minter"
+	"github.com/Smana/maku/internal/install"
 	"github.com/Smana/maku/internal/preflight"
+	"github.com/Smana/maku/internal/version"
 )
 
 // brokerService is the broker's Service when broker.url names none: a route to it reaches the
@@ -355,4 +358,80 @@ func (f factoryChecks) oidc(ctx context.Context) preflight.Result {
 		return skip("the factory takes no human token (demo)")
 	}
 	return oidcCheck(ctx, f.HC, cfg.API.HumanIssuer, cfg.API.HumanJWKS)
+}
+
+// forRepository is maku repo check's source (workflows review WF11): apps, merge-gate and
+// private-code, each judged on repo alone. A repository the factory does not serve fails undecided:
+// nothing about it can pass.
+func (f factoryChecks) forRepository(repo string) preflight.Source {
+	ids := []string{"apps", "merge-gate", "private-code"}
+	return func(ctx context.Context) []preflight.Result {
+		var served string
+		if f.Repos != nil {
+			for _, r := range f.Repos() {
+				if strings.EqualFold(r, repo) {
+					served = r
+				}
+			}
+		}
+		if served == "" {
+			out := make([]preflight.Result, len(ids))
+			for i, id := range ids {
+				out[i] = preflight.Result{Check: id, Outcome: preflight.Fail, Code: preflight.Undecided,
+					Message: repo + " is not served by this factory: no accepted Repository names it"}
+			}
+			return out
+		}
+		one := f
+		one.Repos = func() []string { return []string{served} }
+		if f.Live != nil {
+			one.Live = func() *config.Config {
+				c := *f.Live()
+				c.Repositories = slices.DeleteFunc(slices.Clone(c.Repositories), func(r config.Repository) bool { return !strings.EqualFold(r.Name, served) })
+				return &c
+			}
+		}
+		runs := []func(context.Context) preflight.Result{one.apps, one.mergeGate, one.privateCode}
+		out := make([]preflight.Result, len(ids))
+		var wg sync.WaitGroup
+		for i, id := range ids {
+			wg.Go(func() { out[i] = preflight.Bounded(ctx, preflight.CheckTimeout, id, runs[i]) })
+		}
+		wg.Wait()
+		return out
+	}
+}
+
+// preflightRepoHandlers bounds the per-repository handlers kept for their cache.
+const preflightRepoHandlers = 64
+
+// preflightHandler serves GET /preflight: all's checks, or with ?repository=owner/name one's for
+// that repository, each answer cached as preflight.Handler caches it.
+func preflightHandler(all preflight.Source, one func(repo string) preflight.Source, now func() time.Time) http.Handler {
+	whole := preflight.Handler("factory", version.Version, all, now)
+	var mu sync.Mutex
+	per := map[string]http.Handler{}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		repo := r.URL.Query().Get("repository")
+		if repo == "" {
+			whole.ServeHTTP(w, r)
+			return
+		}
+		if !install.ValidRepository(repo) {
+			http.Error(w, "preflight: repository is owner/name", http.StatusBadRequest)
+			return
+		}
+		key := strings.ToLower(repo)
+		mu.Lock()
+		h, ok := per[key]
+		if !ok {
+			if len(per) >= preflightRepoHandlers {
+				clear(per)
+			}
+			h = preflight.Handler("factory", version.Version, one(repo), now)
+			per[key] = h
+		}
+		mu.Unlock()
+		h.ServeHTTP(w, r)
+	})
 }

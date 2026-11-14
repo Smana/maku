@@ -88,6 +88,16 @@ const makuUsage = `usage: maku <command>
                                   add the outside checks (each exposed host, from this machine), print one
                                   table by seam and its summary; exit 1 on a fail (--strict: on a warn too),
                                   2 when the release has no preflight
+  repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory NAME] [--namespace NS]
+           [--maintainer LOGIN]... [--check NAME]... [--leak-scan-check NAME] [--acknowledge-private-code]
+           [--merge-defaults] [--force]
+                                  read the default branch, its required checks and visibility with your gh
+                                  login, and write the repository's Repository, fence, ruleset and its gh
+                                  script to DIR; it applies nothing and opens no pull request
+  repo check <owner/name> [--namespace NS] [--factory NAME] [--kubeconfig FILE] [--context NAME]
+                                  check one repository's onboarding: its fence, its Repository's conditions,
+                                  and the factory's apps, merge-gate and private-code checks for it; one line
+                                  each, a fix under each failure; exit 1 on a fail or a warning
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
@@ -161,6 +171,14 @@ type Maku struct {
 	// Kube is preflight's cluster from a kubeconfig and context (nil: client-go's loading rules), with
 	// the context's namespace. Tests stand in for the cluster.
 	Kube func(kubeconfig, kubecontext string) (maku.PreflightCluster, string, error)
+
+	// GH is a GET of the GitHub API with the developer's gh (nil: gh api): an HTTP status and body,
+	// or an error when gh could not ask. Tests stand in for GitHub; none reaches the real API.
+	GH func(ctx context.Context, path string) (int, []byte, error)
+
+	// RepoCluster is repo check's cluster from a kubeconfig and context (nil: client-go's loading
+	// rules and a port-forward to the factory), with the context's namespace. Tests stand in for it.
+	RepoCluster func(kubeconfig, kubecontext string) (repoCluster, string, error)
 }
 
 // RunMaku runs one maku command (SP2 §8): its files under maku.Dir; a pre-v0.30.0 CLI's directory
@@ -229,6 +247,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.preflight(ctx, args)
 	case "drill":
 		return r.drill(ctx, args)
+	case "repo":
+		return r.repo(ctx, args)
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
