@@ -33,7 +33,7 @@ func armCfg() *config.Config {
 	return &config.Config{AgentsLogin: "ogenki-agents[bot]",
 		Templates: map[string]config.Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}},
 		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
-			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}},
+			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {}, "docs": {}},
 			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), AutoMergesPerDay: 10}}}}
 }
 
@@ -95,8 +95,12 @@ func TestHeadAndVerdictMustBeFresh(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: c.task, Cfg: cfg,
 				ReportedHead: c.reported, Verifiers: c.verifs})
-			if d.Verdict != c.verdict || d.Reason != c.reason || d.Matched != "docs-links" {
-				t.Fatalf("got %+v, want %s/%s/docs-links", d, c.verdict, c.reason)
+			matched := "" // an evidence row refuses before any policy is read (MR1)
+			if c.verdict == "shadow" {
+				matched = "docs-links"
+			}
+			if d.Verdict != c.verdict || d.Reason != c.reason || d.Matched != matched {
+				t.Fatalf("got %+v, want %s/%s/%s", d, c.verdict, c.reason, matched)
 			}
 		})
 	}
@@ -155,28 +159,29 @@ func TestDecideArm(t *testing.T) {
 		// v2 D7: every other condition holds, but the fence names another factory: a human merges.
 		"not this factory's repository": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
 			ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)"), NotOwned: true}, "human", "not_owned", ""},
-		"CI red":               {ArmInputs{PR: agentPR(), Checks: red, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
-		"CI errored":           {ArmInputs{PR: agentPR(), Checks: errored, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
-		"CI still running":     {ArmInputs{PR: agentPR(), Checks: pending, Task: armTask("docs-links", "solo", "")}, "wait", "ci_pending", ""},
-		"secret scan red":      {ArmInputs{PR: agentPR(), Checks: scanRed, Task: armTask("docs-links", "solo", "")}, "escalate", "secret_scan_red", ""},
-		"gate path":            {ArmInputs{PR: agentPR(), Checks: green("ERROR"), Task: armTask("docs-links", "solo", "")}, "human", "gate_path", "gate"},
-		"diff not the class":   {ArmInputs{PR: agentPR(), Checks: green("PENDING"), Task: armTask("docs-links", "solo", "")}, "human", "policy_pending", "review"},
-		"a forged status":      {ArmInputs{PR: agentPR(), Checks: forged, Task: armTask("docs-links", "solo", "")}, "human", "policy_absent", ""},
-		"an unarmed class":     {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs", "pair", "approve")}, "human", "class_unarmed", ""},
+		"CI red":             {ArmInputs{PR: agentPR(), Checks: red, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
+		"CI errored":         {ArmInputs{PR: agentPR(), Checks: errored, Task: armTask("docs-links", "solo", "")}, "ci_red", "ci_red", ""},
+		"CI still running":   {ArmInputs{PR: agentPR(), Checks: pending, Task: armTask("docs-links", "solo", "")}, "wait", "ci_pending", ""},
+		"secret scan red":    {ArmInputs{PR: agentPR(), Checks: scanRed, Task: armTask("docs-links", "solo", "")}, "escalate", "secret_scan_red", ""},
+		"gate path":          {ArmInputs{PR: agentPR(), Checks: green("ERROR"), Task: armTask("docs-links", "solo", "")}, "human", "gate_path", "gate"},
+		"diff not the class": {ArmInputs{PR: agentPR(), Checks: green("PENDING"), Task: armTask("docs-links", "solo", "")}, "human", "policy_pending", "review"},
+		"a forged status":    {ArmInputs{PR: agentPR(), Checks: forged, Task: armTask("docs-links", "solo", "")}, "human", "policy_absent", ""},
+		"no policy matched": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs", "pair", "approve"),
+			ReportedHead: head, Files: changed("text.", "text, reworded.")}, "human", "no_policy_matched", ""},
 		"maintainer approved":  {ArmInputs{PR: approved, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "maintainer_approved", "review"},
 		"not an agent's PR":    {ArmInputs{PR: byOwner, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "not_agent_authored", ""},
-		"no approving verdict": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "pair", "none")}, "human", "no_approving_verdict", "docs-links"},
+		"no approving verdict": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "pair", "none")}, "human", "no_approving_verdict", ""},
 		// R52, in table form: each gate is the reason, not the trailer's match.
 		"SC-14 foreign trailer": {ArmInputs{PR: foreign, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
-			ReportedHead: head}, "human", "foreign_trailer", "docs-links"},
-		"the head was never reported": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "head_unreported", "docs-links"},
+			ReportedHead: head}, "human", "foreign_trailer", ""},
+		"the head was never reported": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", "")}, "human", "head_unreported", ""},
 		"an approve of a superseded head": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "pair", "approve"),
 			ReportedHead: head, Verifiers: []v1alpha1.RunRecord{{ID: "r3vnwr3v", Role: "reviewer", Trigger: "review", Verdict: "approve", HeadSHA: oldHead}}},
-			"human", "verdict_stale", "docs-links"},
+			"human", "verdict_stale", ""},
 		"docs-links moved beyond links": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
-			ReportedHead: head, Files: changed("text.", "text <script>alert(1)</script>.")}, "human", "class_mismatch", "docs-links"},
+			ReportedHead: head, Files: changed("text.", "text <script>alert(1)</script>.")}, "human", "no_policy_matched", ""},
 		"revert moved beyond links": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("revert", "solo", ""),
-			ReportedHead: head, Files: changed("The link is broken.", "The link has rotted.")}, "human", "class_mismatch", "revert"},
+			ReportedHead: head, Files: changed("The link is broken.", "The link has rotted.")}, "human", "no_policy_matched", ""},
 		"class paused": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
 			ReportedHead: head, Paused: true}, "human", "class_paused", "docs-links"},
 		"daily cap": {ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
@@ -493,14 +498,15 @@ func TestARefusalLeavesItsLaterRowsUnread(t *testing.T) {
 	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, MaxPatchFiles: 3, MaxModifiedLines: 20}
 	tk := armTask("docs-links", "pair", "approve")
 	d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: tk, Cfg: cfg, ReportedHead: oldHead})
-	want := decision.Rows{MaxFiles: 3, MaxLines: 20, Evidence: "head_unreported", Reviewer: "none"}
+	want := decision.Rows{Evidence: "head_unreported", Reviewer: "none"} // no policy read yet: no caps (MR1)
 	if d.Reason != "head_unreported" || d.Rows != want {
 		t.Fatalf("%s %+v\nwant head_unreported %+v", d.Reason, d.Rows, want)
 	}
 	d = DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: tk, Cfg: cfg, ReportedHead: head, DiffRead: true,
 		Stats: []forge.FileStat{{Path: testFile, Additions: 30}}, Files: changed("[a](https://x/old)", "[a](https://x/new)")})
-	want = decision.Rows{Files: 1, MaxFiles: 3, Lines: 30, MaxLines: 20, Counted: true, Holdout: "n/a", Oracle: "n/a", Age: "n/a", Evidence: "ok", Reviewer: "none"}
-	if d.Reason != "patch_too_large" || d.Rows != want {
+	// No policy held: the counts and the evidence are the decision's, the refusal is in considered=.
+	want = decision.Rows{Files: 1, Lines: 30, Counted: true, Evidence: "ok", Reviewer: "none", Considered: "docs-links:patch_too_large"}
+	if d.Reason != reasonNoPolicy || d.Rows != want {
 		t.Fatalf("%s %+v\nwant patch_too_large %+v", d.Reason, d.Rows, want)
 	}
 }
@@ -536,7 +542,8 @@ func TestTheGateReadsTheHeadsPushForAnApproval(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 			g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
-			g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+			g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{}                                           // unarmed: only the approval can merge it
+			g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{Live: true, Oracle: &config.Oracle{Probe: "x"}} // live, never a diff's (MR1)
 			pr, _ := g.f.PullRequest(t.Context(), 12)
 			pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
 			g.f.SetPR(pr)
@@ -553,5 +560,52 @@ func TestTheGateReadsTheHeadsPushForAnApproval(t *testing.T) {
 				t.Fatalf("%s %s armed %v, want AwaitingHuman %s", got.Status.Phase, got.Status.Reason, g.f.Armed(), c.reason)
 			}
 		})
+	}
+}
+
+// MR12 (Review Focus 4): a policy with no diff shape and no oracle merges only on a reviewer's
+// favourable verdict. A workflow without a reviewer (solo, as quick will be) leaves a path-bound
+// policy reviewer_verdict_missing, never arm; a shape or an oracle checks the diff instead. A
+// workflow with a reviewer needs its approve whatever the policy, as before.
+func TestVerdictRequiredWithoutShape(t *testing.T) {
+	policies := map[string]config.Class{
+		"docs":       {Live: true, AllowedFiles: []string{`^.+\.md$`}},
+		"docs-links": {Live: true, AllowedFiles: []string{`^.+\.md$`}},
+		"dead-links": {Live: true, AllowedFiles: []string{`^.+\.md$`}, DiffShape: "links-only", Oracle: &config.Oracle{Probe: "dead-links"}},
+	}
+	for _, c := range []struct {
+		template, verdict, policy, want string
+	}{
+		{"solo", "", "docs", "reviewer_verdict_missing"},
+		{"solo", "", "docs-links", ""},
+		{"solo", "", "dead-links", ""},
+		{"pair", "reject", "docs", "no_approving_verdict"},
+		{"pair", "reject", "docs-links", "no_approving_verdict"},
+		{"pair", "reject", "dead-links", "no_approving_verdict"},
+	} {
+		t.Run(c.template+"/"+c.policy, func(t *testing.T) {
+			in := ArmInputs{PR: agentPR(), Task: armTask(c.policy, c.template, c.verdict), ReportedHead: head}
+			cl := withShape(policies[c.policy], c.policy)
+			if got := agentEvidence(in, armCfg(), cl); got != c.want {
+				t.Fatalf("got %q, want %q", got, c.want)
+			}
+		})
+	}
+}
+
+// Through the gate: a solo task whose diff only a path-bound policy admits waits for a human, with
+// the policy's refusal in considered=; the same diff with a shaped policy beside it merges there.
+func TestAPathBoundPolicyWithoutAReviewerNeverArms(t *testing.T) {
+	in := selectInputs()
+	in.Task = armTask("review", "solo", "")
+	in.Verifiers = nil
+	d := DecideArm(in)
+	if d.Verdict != "arm" || d.Matched != "docs-links" {
+		t.Fatalf("the shaped policy holds: %+v", d)
+	}
+	delete(in.Cfg.Current().Repositories[0].Classes, "docs-links")
+	d = DecideArm(in)
+	if d.Verdict != "human" || d.Reason != reasonNoPolicy || d.Rows.Considered != "docs:reviewer_verdict_missing" {
+		t.Fatalf("%+v, want no_policy_matched with docs:reviewer_verdict_missing", d)
 	}
 }

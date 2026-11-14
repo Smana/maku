@@ -69,7 +69,7 @@ func snapshotHash(res mergepolicy.Resolved) string {
 // class that decides, the repository policy's under its authority, else the central class's.
 // False when no class decides: a policy that gives no authority, or a class not declared.
 func (r *Reconciler) grantHash(cfg *config.Config, t *v1alpha1.Task, p gatePolicy) (string, bool) {
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	if p.on {
 		res, ok := p.snap.Classes[class]
 		if p.err != nil || !ok {

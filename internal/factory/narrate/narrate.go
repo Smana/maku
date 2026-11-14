@@ -307,6 +307,8 @@ func reasons() map[string]string {
 		"steering_path":               "it changes a steering note, which only a maintainer on the default branch may do",
 		"class_mismatch":              "the diff is not the class the triage predicted",
 		"class_unarmed":               "the factory does not merge this class: a maintainer reviews and merges it",
+		"no_policy_matched":           "no merge policy of the repository holds on this diff: a maintainer reviews and merges it",
+		"reviewer_verdict_missing":    "no reviewer read this change, and its policy has no shape to check it",
 		"policy_unavailable":          "the repository's merge policy could not be read recently, so auto-merge waits for the next read",
 		"policy_invalid":              "the repository's merge policy on its default branch is invalid, so auto-merge is paused: a maintainer fixes .github/agent-factory.yaml or merges it",
 		"approval_required":           "it changes a file its class asks a maintainer to approve",

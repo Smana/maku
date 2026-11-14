@@ -51,7 +51,7 @@ func TestPolicySimulate(t *testing.T) {
 	policy := exportedPolicy(t, args)
 	var out bytes.Buffer
 	err := Maku{Dir: t.TempDir(), Out: &out, Err: &out}.run(t.Context(), append(append([]string{"policy", "simulate"}, args...),
-		policy, fixtures+"01-arms.json", fixtures+"16-docs-unarmed.json"))
+		policy, fixtures+"01-arms.json", fixtures+"16-the-diff-picks-the-policy.json"))
 	if err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}

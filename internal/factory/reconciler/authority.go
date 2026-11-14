@@ -71,12 +71,7 @@ func decideUnder(in ArmInputs, p gatePolicy) ArmDecision {
 	if p.err != nil {
 		return noAuthority(in, p)
 	}
-	var d ArmDecision
-	if r, ok := p.snap.Classes[in.Task.Spec.PredictedClass]; ok {
-		d = DecideArmUnder(in, &r.Class, r.Approval)
-	} else {
-		d = DecideArmUnder(in, nil, nil)
-	}
+	d := decidePolicy(in, p.snap.Classes)
 	if rc := in.Cfg.RepositoryFor(in.Task.Spec.Repository); rc != nil {
 		d = withGatePath(d, in, rc, policyGatePaths(p.snap.Classes)) // the policy's gate paths, every class
 	}

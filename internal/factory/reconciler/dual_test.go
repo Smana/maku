@@ -66,7 +66,7 @@ func TestDualDecidesUnderTheSnapshot(t *testing.T) {
 	strict.MaxModifiedLines = 1
 	in := gateInputs()
 	repo, _ := dualOf(DecideArm(in), in, snapshotOf(map[string]mergepolicy.Resolved{"dead-links": {Class: strict}}), true)
-	if repo.Verdict != "human" || repo.Reason != "patch_too_large" {
+	if repo.Verdict != "human" || refused(repo) != "patch_too_large" {
 		t.Fatalf("%+v", repo)
 	}
 }

@@ -2349,6 +2349,13 @@ spec:
                     type: string
                   number:
                     type: integer
+                  policy:
+                    description: |-
+                      Policy is the merge policy the gate last decided the pull request under, chosen from its diff
+                      (merge policies MR1): the merge, the breaker, the day's count and the monitor read it. Empty
+                      before a decision named one, and then the task's predictedClass stands for it.
+                    maxLength: 64
+                    type: string
                   revertNumber:
                     type: integer
                   reviewers:

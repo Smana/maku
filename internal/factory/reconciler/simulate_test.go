@@ -17,6 +17,7 @@ func conformanceCfg() *config.Config {
 	c := gateInputs().Cfg.Current()
 	c.Factory = "aws-0"
 	c.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
+	c.Repositories[0].Classes["docs-links"], c.Repositories[0].Classes["revert"] = config.Class{}, config.Class{} // unarmed (OD-8)
 	return c
 }
 
@@ -77,10 +78,10 @@ func TestSimulateNamesTheChange(t *testing.T) {
 		got[row.Name] = row.Change
 	}
 	for name, want := range map[string]string{
-		"arms":                   ChangeUnchanged,
-		"too-many-lines":         ChangeNewlyMerged,
-		"a-file-outside-allowed": ChangeUnchanged, // refused by allowedFiles before the subset
-		"docs-unarmed":           ChangeUnchanged, // absent from the policy: still no class
+		"arms":                      ChangeUnchanged,
+		"too-many-lines":            ChangeNewlyMerged,
+		"a-file-outside-allowed":    ChangeUnchanged, // refused by allowedFiles before the subset
+		"the-diff-picks-the-policy": ChangeUnchanged, // the label names no policy: the diff picks dead-links in both
 	} {
 		if got[name] != want {
 			t.Errorf("%s: got %q, want %q", name, got[name], want)
@@ -103,9 +104,9 @@ func TestSimulateNamesTheChange(t *testing.T) {
 func TestReadCaseRefuses(t *testing.T) {
 	for name, tc := range map[string]struct{ raw, want string }{
 		"not json":       {"{", "case"},
-		"a later format": {`{"version": 2, "name": "x"}`, "version 2"},
-		"no task":        {`{"version": 1, "name": "x", "pushed": "factory", "inputs": {}}`, "Task"},
-		"bad pushed":     {`{"version": 1, "name": "x", "pushed": "who", "inputs": {"Task": {}}}`, "pushed"},
+		"a later format": {`{"version": 3, "name": "x"}`, "version 3"},
+		"no task":        {`{"version": 2, "name": "x", "pushed": "factory", "inputs": {}}`, "Task"},
+		"bad pushed":     {`{"version": 2, "name": "x", "pushed": "who", "inputs": {"Task": {}}}`, "pushed"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := ReadCase([]byte(tc.raw)); err == nil || !strings.Contains(err.Error(), tc.want) {

@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "the-holdout-red",
   "inputs": {
     "PR": {
@@ -135,6 +135,6 @@
   "pushed": "factory",
   "want": {
     "verdict": "human",
-    "reason": "holdout_red"
+    "reason": "no_policy_matched"
   }
 }

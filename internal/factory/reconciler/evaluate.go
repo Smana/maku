@@ -47,7 +47,7 @@ func withApproval(d ArmDecision, in ArmInputs, approval []string) ArmDecision {
 		d.Reason = reasonShadowApproval
 		return d
 	}
-	if g, ok := grantFor(in, approval); ok {
+	if g, ok := grantFor(in, d.Matched, approval); ok {
 		d.Rows.Grant = g.Ref()
 		return d
 	}
@@ -58,7 +58,7 @@ func withApproval(d ArmDecision, in ArmInputs, approval []string) ArmDecision {
 // repository and class, bound to the policy decided under, unexpired at the lookup, every caught
 // path matching one of its patterns and its diff shape, when it names one, holding. A lookup that
 // failed is no grant: it never authorizes (MP13). Of several, the lowest id, so a decision replays.
-func grantFor(in ArmInputs, approval []string) (grant.Grant, bool) {
+func grantFor(in ArmInputs, class string, approval []string) (grant.Grant, bool) {
 	if !in.Grants.Read {
 		return grant.Grant{}, false
 	}
@@ -72,7 +72,7 @@ func grantFor(in ArmInputs, approval []string) (grant.Grant, bool) {
 	gs := slices.SortedFunc(slices.Values(in.Grants.List), func(a, b grant.Grant) int { return strings.Compare(a.ID, b.ID) })
 	for _, g := range gs {
 		if g.Status != grant.StatusActive || !strings.EqualFold(g.Repository, in.Task.Spec.Repository) ||
-			g.Class != in.Task.Spec.PredictedClass || !in.Grants.At.Before(g.ExpiresAt) ||
+			g.Class != class || !in.Grants.At.Before(g.ExpiresAt) ||
 			!g.BoundTo(in.Grants.PolicyHash) || !g.Covers(caught) {
 			continue
 		}

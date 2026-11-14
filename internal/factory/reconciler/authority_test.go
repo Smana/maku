@@ -51,18 +51,19 @@ func TestACutOverRepositoryMergesOnItsOwnPolicy(t *testing.T) {
 	}
 }
 
-// A shadow class records would-arm and merges nothing; a class the file does not declare is a
-// maintainer's.
+// A shadow class records would-arm and merges nothing; a diff no class of the file admits is a
+// maintainer's (MR1).
 func TestACutOverRepositoryShadowsOrHandsOff(t *testing.T) {
 	for name, tc := range map[string]struct {
 		classes map[string]mergepolicy.Resolved
 		reason  string
 	}{
 		"shadow":     {map[string]mergepolicy.Resolved{"docs-links": {Class: withShape(config.Class{Shadow: true}, "docs-links")}}, "shadow_would_arm"},
-		"undeclared": {map[string]mergepolicy.Resolved{"revert": resolvedLive("revert")}, "class_unarmed"},
+		"none holds": {map[string]mergepolicy.Resolved{"revert": {Class: config.Class{Live: true, AllowedFiles: []string{`^nowhere/`}}}}, "no_policy_matched"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := cutOverRig(t, snapshotOf(tc.classes), nil)
+			g.f.SetFiles(map[string]string{"docs/a.md": "[a](https://x/old)"}, map[string]string{"docs/a.md": "[a](https://x/new)"})
 			tk := g.reconcile(t, "3buqdlot", 1)
 			if len(g.f.Armed()) != 0 || tk.Status.Reason != tc.reason {
 				t.Fatalf("%s %s %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed())

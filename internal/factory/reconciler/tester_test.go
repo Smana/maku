@@ -464,7 +464,7 @@ func TestNoVerifierSetHoldsATester(t *testing.T) {
 	tk.Status.Verdict = "approve"
 	in := ArmInputs{PR: forge.PR{HeadSHA: head2}, ReportedHead: head2, Cfg: g.r.Cfg.Current(), Task: tk,
 		Verifiers: []v1alpha1.RunRecord{{ID: "aaaaaaaa", Role: "tester", Verdict: "approve", HeadSHA: head1}}}
-	if got := agentEvidence(in, in.Cfg.Current()); got != "foreign_trailer" { // past every verdict row: only the trailer is left
+	if got := runEvidence(in, in.Cfg.Current()); got != "foreign_trailer" { // past every verdict row: only the trailer is left
 		t.Fatalf("a tester's approve counted: %q", got)
 	}
 }

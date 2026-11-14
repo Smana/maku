@@ -11,8 +11,9 @@ import (
 )
 
 // CaseVersion is the conformance fixtures' format. A change to ArmInputs that reads an old fixture
-// differently bumps it, and the fixtures are rewritten against the new one.
-const CaseVersion = 1
+// differently bumps it, and the fixtures are rewritten against the new one. Version 2: the gate
+// picks the policy from the diff (merge policies MR1).
+const CaseVersion = 2
 
 // Case is one decision as a fixture (merge policy MP16): its inputs, what GitHub recorded of the
 // head's pushes (the final provenance row), and the decision the central config makes on them.
@@ -84,11 +85,9 @@ func Simulate(cfg *config.Config, policy map[string]mergepolicy.Resolved, cases 
 		cl := gateOf(cfg.RepositoryFor(in.Task.Spec.Repository), class)
 		pushed := pushes[c.Pushed]
 		central := provenance(DecideArm(in), cl.Adopted(), pushed)
-		var repo ArmDecision
-		if r, ok := policy[class]; ok {
-			repo = provenance(DecideArmUnder(in, &r.Class, r.Approval), r.Class.Adopted(), pushed)
-		} else {
-			repo = DecideArmUnder(in, nil, nil)
+		repo := decidePolicy(in, policy)
+		if r, ok := policy[class]; ok || !selectsOne(snapClasses(policy), in.Task) {
+			repo = provenance(repo, r.Class.Adopted(), pushed)
 		}
 		a, b := outcome(central), outcome(repo)
 		out = append(out, Row{Name: c.Name, Class: class, Central: a, Repository: b, Change: change(a, b), Conforms: a == c.Want})

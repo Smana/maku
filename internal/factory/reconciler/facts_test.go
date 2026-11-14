@@ -563,10 +563,10 @@ func TestFactsSayWhetherAnApprovalReturnsTheHandOff(t *testing.T) {
 		reason string
 		want   bool
 	}{
-		{"an agent PR an approval returns", true, v1alpha1.PhaseAwaitingHuman, "class_unarmed", true},
-		{"the switch off", false, v1alpha1.PhaseAwaitingHuman, "class_unarmed", false},
+		{"an agent PR an approval returns", true, v1alpha1.PhaseAwaitingHuman, "no_policy_matched", true},
+		{"the switch off", false, v1alpha1.PhaseAwaitingHuman, "no_policy_matched", false},
 		{"a by-hand reason", true, v1alpha1.PhaseAwaitingHuman, "human_commit_in_pr", false},
-		{"not waiting for a merge", true, v1alpha1.PhaseAwaitingCI, "class_unarmed", false},
+		{"not waiting for a merge", true, v1alpha1.PhaseAwaitingCI, "no_policy_matched", false},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			g := mergeRig(t, c.phase)

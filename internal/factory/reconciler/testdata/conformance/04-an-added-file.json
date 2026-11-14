@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "an-added-file",
   "inputs": {
     "PR": {
@@ -135,6 +135,6 @@
   "pushed": "factory",
   "want": {
     "verdict": "human",
-    "reason": "file_added_or_deleted"
+    "reason": "no_policy_matched"
   }
 }

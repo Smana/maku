@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "name": "docs-unarmed",
+  "version": 2,
+  "name": "the-diff-picks-the-policy",
   "inputs": {
     "PR": {
       "Number": 0,
@@ -134,7 +134,6 @@
   },
   "pushed": "factory",
   "want": {
-    "verdict": "human",
-    "reason": "class_unarmed"
+    "verdict": "arm"
   }
 }

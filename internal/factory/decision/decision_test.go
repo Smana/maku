@@ -99,3 +99,15 @@ func TestMarkerBindingFields(t *testing.T) {
 		t.Fatalf("the new fields change nothing else:\n%s\n%s", got, plain)
 	}
 }
+
+// MR1: the candidates that did not hold print as considered=, before reviewer=, which the tally
+// reads last; with none it does not print.
+func TestMarkerConsidered(t *testing.T) {
+	got := Marker("abc", "", "human", "no_policy_matched", Rows{Reviewer: "none", Considered: "docs:file_not_allowed,alert-rules:patch_too_large"})
+	if !strings.HasSuffix(got, " capped=- considered=docs:file_not_allowed,alert-rules:patch_too_large reviewer=none -->") {
+		t.Fatal(got)
+	}
+	if got := Marker("abc", "c", "arm", "armed", Rows{}); strings.Contains(got, "considered=") {
+		t.Fatal(got)
+	}
+}
