@@ -39,7 +39,7 @@
 # gw-caller probe pod cannot run under the runs namespace's default-deny. With NETPOL=kubernetes the step
 # also asserts the run's own NetworkPolicy opens exactly the collector's port.
 # PREFLIGHT=1 (CI's kubernetes and unenforced legs) renders the install's preflight (v4 D24) and runs it
-# once from its CronJob: the cluster checks pass, the broker's database check passes through the broker's
+# once with `maku preflight` (from its CronJob): the cluster checks pass, the broker's database check passes through the broker's
 # own policy and DSN, and the run-controller's run-path passes, or, unenforced, fails on the netprobe.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
@@ -644,16 +644,14 @@ fi
 
 if [[ -n $PREFLIGHT ]]; then
   # After the run-controller's own preflight has decided (the step above), so run-path reads it.
-  step "the install's preflight (v4 D24): each component's /preflight, collected through the policies"
-  kubectl -n "$NS" create job --from=cronjob/af-preflight preflight-now >/dev/null || die "no CronJob af-preflight"
-  done_=""
-  for _ in $(seq 60); do
-    done_=$(kubectl -n "$NS" get job preflight-now -o jsonpath='{.status.succeeded}{.status.failed}') || done_=""
-    [[ -n $done_ ]] && break
-    sleep 3
-  done
-  [[ -n $done_ ]] || die "the preflight Job did not finish in 180 s"
-  kubectl -n "$NS" logs job/preflight-now >"$work/preflight.jsonl" || die "no preflight log"
+  step "the install's preflight (v4 D24): maku preflight, each component's /preflight collected through the policies"
+  # maku preflight runs the Job from the CronJob, reads its lines and deletes it; the demo's dummy App
+  # and stub model fail by design, so its exit is 1, and 2 (no report) is the failure.
+  rc=0
+  go run ./cmd/maku preflight --namespace "$NS" --release af --json --no-outside >"$work/preflight.jsonl" || rc=$?
+  ((rc <= 1)) || { cat "$work/preflight.jsonl" >&2; die "maku preflight exited $rc: no report"; }
+  for _ in $(seq 10); do kubectl -n "$NS" get jobs -o name | grep -q maku-preflight- || break; sleep 1; done
+  ! kubectl -n "$NS" get jobs -o name | grep -q maku-preflight- || die "maku preflight left its Job behind"
   cat "$work/preflight.jsonl"
   # outcome[/code] of one check, as the runner printed it
   pf() { jq -r --arg c "$1" --arg k "$2" 'select(.component == $c and .check == $k) | .outcome + (if .code != "" then "/" + .code else "" end)' "$work/preflight.jsonl"; }
@@ -666,8 +664,8 @@ if [[ -n $PREFLIGHT ]]; then
   [[ $(pf run-controller run-path) == "$want" ]] || die "the run-controller's run-path is '$(pf run-controller run-path)', want $want"
   ! grep -q component_too_old "$work/preflight.jsonl" || die "a component does not serve /preflight"
   ! grep -qE 'postgres(ql)?://|password=|Bearer ' "$work/preflight.jsonl" || die "the preflight output holds a credential"
-  echo "ok: the preflight collects the cluster, the broker (database: pass) and the run-controller (run-path: $want)"
-  kubectl -n "$NS" delete job preflight-now --wait=false >/dev/null
+  [[ $(pf cli exposure) == skip ]] || die "maku preflight --no-outside did not skip the outside checks"
+  echo "ok: maku preflight collects the cluster, the broker (database: pass) and the run-controller (run-path: $want)"
 fi
 
 step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"
