@@ -19,13 +19,15 @@ LEG=kind-calico
 # shellcheck source=hack/quickstart/versions.env
 . hack/quickstart/versions.env
 
-# KIND_MINOR (1.37, 1.36, 1.35) picks versions.env's node image; KIND_NODE names one outright.
+# KIND_MINOR (1.37, 1.36, 1.35, or the floor 1.30) picks versions.env's node image; KIND_NODE names one outright.
 if [[ -z ${KIND_NODE:-} ]]; then
   v="KIND_NODE_${KIND_MINOR:-1.37}"
   v="${v//./_}"
   KIND_NODE="${!v:-}"
   [[ -n $KIND_NODE ]] || die "KIND_MINOR=$KIND_MINOR: versions.env pins no kind node image for it"
 fi
+# Kubernetes 1.30, the floor, takes the last Calico that installs on it (versions.env).
+[[ $KIND_NODE != kindest/node:v1.30.* ]] || CALICO_VERSION=$CALICO_VERSION_FLOOR
 TWO_INSTALLS="${TWO_INSTALLS:-}"
 NAME="mi-${TAG//[^a-z0-9-]/-}"
 NAME="${NAME:0:30}"
@@ -198,4 +200,5 @@ YAML
   echo "ok: team-b beside the first: maku preflight --strict passes, and its runs reach neither the first broker nor its database"
 }
 
-install_e2e_main
+# Sourced (upgrade.sh, flux.sh, argocd.sh), it defines the cluster and its checks and runs nothing.
+[[ ${BASH_SOURCE[0]} != "$0" ]] || install_e2e_main

@@ -3,7 +3,8 @@
 #
 # lib.sh's own test, with no cluster: kubectl, helm and maku are recorders, so the test reads the
 # wizard's call and the order of the installs (README.md's: the CRD chart, agentgateway's CRDs, the
-# Secrets, the umbrella, factory/), and that every DSN Secret is filled.
+# Secrets, the umbrella, factory/), that every DSN Secret is filled, and gitops.sh's umbrella values.
+# shellcheck disable=SC2030,SC2031 # each case sets its environment in its own subshell, on purpose
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."
 t="$(mktemp -d "${TMPDIR:-/tmp}/install-e2e-test.XXXXXX")"
@@ -65,6 +66,21 @@ for want in '^helm install agent-factory-crds charts/agent-factory-crds -n maku 
   ((n > prev)) || { echo "FAIL: $want ran before the step that must precede it" >&2; fail=1; }
   prev=$n
 done
+# gitops.sh's values (PR G): the -f files merged as Helm merges them (a list replaces), then the --set
+# pairs, booleans as booleans.
+(
+  export KUBECTL="$t/bin/kubectl" HELM="$t/bin/helm" MAKU="$t/bin/maku" PREBUILT="" TMPDIR="$t" CALLS="$t/gitops.log" TAG=t1
+  LEG=kind-calico
+  # shellcheck source=hack/install-e2e/lib.sh
+  . hack/install-e2e/lib.sh
+  # shellcheck source=hack/install-e2e/gitops.sh
+  . hack/install-e2e/gitops.sh
+  wizard
+  gitops_values "$t/values.yaml"
+  yq -e '.maku.broker.image.tag == "t1" and .["maku-factory"].image.tag == "t1" and .maku.e2e.unpinnedImages == true and
+    .profile == "production" and (.maku.broker.extraEnv | length) == 3 and .maku.broker.extraEnv[1].name == "ROOMS_GITHUB_API_URL"' \
+    "$t/values.yaml" >/dev/null
+) >/dev/null 2>"$t/stderr" || { echo "FAIL: gitops_values: $(cat "$t/stderr")" >&2; fail=1; }
 [[ ! -s $log.err ]] || { echo "FAIL: $(cat "$log.err")" >&2; fail=1; }
 [[ $fail == 0 ]] || { cat "$log" >&2; exit 1; }
 echo "install-e2e lib checks passed"

@@ -198,5 +198,17 @@ SQL.
 | `task install:kind-calico` | kind, Calico, gVisor's `runsc` (`KIND_MINOR`: 1.37, 1.36 or 1.35) | a pod under the RuntimeClass `gvisor` runs on gVisor's kernel; the web host through agentgateway's Gateway is oauth2-proxy's. `TWO_INSTALLS=1` adds `team-b` beside the first release (D2), with its own runs namespace and database, and checks that its runs reach neither the first broker nor its database |
 | `task install:k3s` | k3s (k3d), kube-router, Traefik | Traefik serves the web host to oauth2-proxy, and the broker's `:8080` refuses any other pod. Its RuntimeClass `gvisor` runs on `runc`: this leg proves the network, Ingress and database seams, not the sandbox |
 
+The nightly adds three more, on kind with Calico (`demo-e2e.yaml`'s `install-upgrade` and
+`install-gitops` jobs; a manual run picks them alone with the input `only: install`):
+
+| Task | What it proves |
+|---|---|
+| `task install:upgrade` | the newest release, installed from its own `maku install --print` and its cosign-verified charts, upgraded in place to this checkout: every Deployment, Task, AgentRun and room keeps its UID, the broker's migrate applies only the new revisions, and `maku preflight --strict` passes. `UPGRADE_FROM` picks the release (`latest`, a tag, or `head` to test the harness on this checkout alone). It skips while the newest release predates the install jobs |
+| `task install:flux` | Flux 2.4 installs the wizard's `gitops/flux.yaml` on Kubernetes 1.30, the floor: the CRD chart before the umbrella, which owns no CRD; a second reconcile changes nothing; agentgateway's CRDs survive a forced upgrade and the removal of their Kustomization |
+| `task install:argocd` | the same through Argo CD 2.12 and `gitops/argocd.yaml`, wave by wave, with the preflight run by `maku preflight` (Argo CD runs no Helm test hook) |
+
+The GitOps legs serve this checkout's charts from a registry in the cluster under the wizard's version,
+and read agentgateway's CRDs from GitHub at the checked-out commit: push it before a local run.
+
 They are not part of `task check`. `hack/install-e2e/lib_test.sh` (in `task scripts`) checks the
 harness's order of installs without a cluster. `KEEP=1` keeps the cluster after a run.

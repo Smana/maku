@@ -13,7 +13,7 @@
 # and the images' tag are this run's own: the current kubectl context is never read or changed.
 #
 # The caller sets LEG (kind-calico or k3s) and defines cluster_create, cluster_load IMAGE and
-# cluster_delete, then calls install_e2e_main. KUBECTL, HELM and MAKU name the binaries (lib_test.sh
+# cluster_delete, then calls install_e2e_main; it may define leg_diagnostics. KUBECTL, HELM and MAKU name the binaries (lib_test.sh
 # records them); PREBUILT=1 takes the images CI built once (tag e2e) instead of building them.
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../.." || exit
@@ -54,11 +54,15 @@ diagnostics() {
     k -n "$NS" logs "deploy/$d" --all-containers --tail=80 >&2 2>/dev/null || true
   done
   k -n e2e logs deploy/e2e-stub --tail=60 >&2 || true
+  # A leg that installs through another tool (flux.sh, argocd.sh) adds that tool's state.
+  ! declare -F leg_diagnostics >/dev/null || leg_diagnostics >&2 || true
 }
 
 onexit() {
   local rc=$?
   trap - EXIT
+  # A port-forward this run started (port_forward).
+  jobs -p | xargs -r kill 2>/dev/null || true
   if [[ $rc -ne 0 ]] && $created; then diagnostics; fi
   if $created && [[ -z ${KEEP:-} ]]; then
     step "delete the cluster"
@@ -123,6 +127,22 @@ cert() {
   printf 'subjectAltName=%s\nextendedKeyUsage=serverAuth\nauthorityKeyIdentifier=keyid,issuer\n' "$3" >"$work/$1.ext"
   openssl x509 -req -days 1 -in "$work/$1.csr" -CA "$work/ca.crt" -CAkey "$work/ca.key" -CAcreateserial \
     -extfile "$work/$1.ext" -out "$work/$1.crt" >/dev/null 2>&1
+}
+
+# port_forward NS TARGET PORT: a background port-forward to TARGET's PORT, on a free local port it
+# sets in PF_PORT. onexit stops it; so does `kill "$PF_PID"`.
+port_forward() {
+  local pflog="$work/port-forward-$1-${2//\//-}.log"
+  k -n "$1" port-forward "$2" ":$3" >"$pflog" 2>&1 &
+  # shellcheck disable=SC2034 # the callers' own
+  PF_PID=$!
+  PF_PORT=""
+  for _ in $(seq 60); do
+    PF_PORT=$(sed -nE 's/^Forwarding from 127\.0\.0\.1:([0-9]+) .*/\1/p' "$pflog" | head -1)
+    [[ -z $PF_PORT ]] || return 0
+    sleep 1
+  done
+  die "port-forward $1/$2:$3 did not start: $(cat "$pflog")"
 }
 
 # wait_crds CRD...: just after a server-side apply, `kubectl wait` can fail before the CRDs are served.

@@ -35,7 +35,8 @@ func fluxFiles(in Inputs, vals map[string]any) ([]byte, error) {
 	a := in.Answers
 	ns, rel, ver := in.ns(), a.String("release"), a.String("version")
 	oci := func(name string) map[string]any {
-		return map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1", "kind": "OCIRepository",
+		// v1beta2: Flux serves OCIRepository as v1 only from 2.6, and the floor is 2.4 (D26).
+		return map[string]any{"apiVersion": "source.toolkit.fluxcd.io/v1beta2", "kind": "OCIRepository",
 			"metadata": map[string]any{"name": name, "namespace": ns},
 			"spec": map[string]any{"interval": "10m", "url": chartRegistry + "/" + name, "ref": map[string]any{"tag": chartVersion(ver)},
 				"layerSelector": map[string]any{"mediaType": "application/vnd.cncf.helm.chart.content.v1.tar+gzip", "operation": "copy"}}}
@@ -84,7 +85,10 @@ func argoFiles(in Inputs, vals map[string]any) ([]byte, error) {
 	app := func(name, wave string, source map[string]any, opts ...string) map[string]any {
 		syncOpts := append([]any{"CreateNamespace=true", "ServerSideApply=true"}, anys(opts)...)
 		return map[string]any{"apiVersion": "argoproj.io/v1alpha1", "kind": "Application",
-			"metadata": map[string]any{"name": name, "namespace": "argocd", "annotations": map[string]any{"argocd.argoproj.io/sync-wave": wave}},
+			"metadata": map[string]any{"name": name, "namespace": "argocd", "annotations": map[string]any{"argocd.argoproj.io/sync-wave": wave,
+				// The API server's defaults (admission policies, routes) are not drift: without a server-side
+				// diff the umbrella stays OutOfSync and self-heal re-applies it forever.
+				"argocd.argoproj.io/compare-options": "ServerSideDiff=true"}},
 			"spec": map[string]any{"project": "default", "source": source,
 				"destination": map[string]any{"server": "https://kubernetes.default.svc", "namespace": ns},
 				"syncPolicy":  map[string]any{"automated": map[string]any{"prune": true, "selfHeal": true}, "syncOptions": syncOpts}}}
@@ -157,6 +161,6 @@ func readme(in Inputs, t Tree) []byte {
 	fmt.Fprintf(&b, "kubectl apply -n %s -f factory/\n", ns)
 	b.WriteString("bash github/apply-ruleset.sh\n")
 	fmt.Fprintf(&b, "helm test %s -n %s   # the preflight (D24): every seam checked from inside the cluster\n```\n", rel, ns)
-	b.WriteString("\nWith GitOps, `gitops/flux.yaml` or `gitops/argocd.yaml` replaces the two `helm install` lines.\n")
+	b.WriteString("\nWith GitOps, `gitops/flux.yaml` or `gitops/argocd.yaml` replaces the two `helm install` lines. Apply `factory/` as soon as the CRD chart is reconciled, before the umbrella: both tools wait for the umbrella's readiness, and the factory is not ready without its `Factory` and `Repository`.\n")
 	return []byte(b.String())
 }
