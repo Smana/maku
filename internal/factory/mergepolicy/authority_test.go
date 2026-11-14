@@ -21,7 +21,7 @@ func (r *rec) PolicyChange(_ context.Context, _, class, change string) {
 func authorityRig() (*Watch, *rec, *time.Time) {
 	c := central()
 	c.PolicyManagement = config.PolicyManagement{Read: true, RepositoryAuthority: true}
-	c.Repositories = []config.Repository{{Name: "o/r", ClassAuthority: config.ClassAuthorityRepository}}
+	c.Repositories = []config.Repository{{Name: "o/r", Merge: config.Merge{PolicyBot: new(true)}, ClassAuthority: config.ClassAuthorityRepository}}
 	r := &rec{}
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)
 	w := &Watch{Cfg: c, Metrics: r, Stale: 15 * time.Minute, Now: func() time.Time { return now }}

@@ -17,7 +17,9 @@ func TestPolicyBotOffInProduction(t *testing.T) {
 	}{
 		"gate status, allowedFiles, no login": {liveDeadLinks, "      policyBot: false\n      gateStatus: true\n", ""},
 		"gate status and a login":             {liveDeadLinks, login + "      policyBot: false\n      gateStatus: true\n", ""},
-		"no gate status": {liveDeadLinks, "      policyBot: false\n",
+		// v4 step 8: unset, the defaults are maku/merge-gate without policy-bot.
+		"the defaults": {liveDeadLinks, "", ""},
+		"no gate status": {liveDeadLinks, "      policyBot: false\n      gateStatus: false\n",
 			"merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires"},
 		"a live class without allowedFiles": {"docs-links: {live: true, holdoutChecks: [x]}\n  revert: {shadow: true}", "      policyBot: false\n      gateStatus: true\n",
 			"class docs-links: merge.policyBot: false needs allowedFiles on every live class"},
@@ -35,7 +37,7 @@ func TestPolicyBotOffInProduction(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if m := cfg.Repos()[0].Merge; m.UsesPolicyBot() || !m.GateStatus {
+			if m := cfg.Repos()[0].Merge; m.UsesPolicyBot() || !m.PostsGateStatus() {
 				t.Fatalf("merge %+v: want policyBot off and gateStatus on", m)
 			}
 		})

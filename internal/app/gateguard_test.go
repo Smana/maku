@@ -60,7 +60,7 @@ func newGateGuardRig(t *testing.T, gateStatus bool) *gateGuardRig {
 	g := &gateGuardRig{f: forgetest.NewFake(), got: map[string][]bool{}, unread: map[string]int{}}
 	g.cfg = &config.Config{Repositories: []config.Repository{{Name: "Smana/demo"}}}
 	g.cfg.GitHub.MergerAppIDFile = idFile
-	g.cfg.Repositories[0].Merge.GateStatus = gateStatus
+	g.cfg.Repositories[0].Merge.GateStatus = new(gateStatus)
 	g.obs = gateGuardObserver(func() *config.Config { return g.cfg }, func(string) rulesReader { return g.f },
 		func(_ context.Context, repo string, required bool) {
 			g.mu.Lock()

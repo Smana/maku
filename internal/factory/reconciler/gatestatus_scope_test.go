@@ -18,7 +18,7 @@ import (
 // before the merge call, so a ruleset requiring maku/merge-gate reads it as the merger's merge.
 func TestAnAdoptedMergeCarriesOnlyTheMergersSuccess(t *testing.T) {
 	g := adoptRig(t)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	cl := depsPatchClass()
 	cl.Shadow, cl.Live = false, true
 	g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = cl
@@ -34,7 +34,7 @@ func TestAnAdoptedMergeCarriesOnlyTheMergersSuccess(t *testing.T) {
 // normal rules.
 func TestAnAdoptedHandOffPostsNothing(t *testing.T) {
 	g := adoptRig(t)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = depsPatchClass() // in shadow: handed to a human
 	g.reconcile(t, adoptTask, 1)
 	if got := g.f.Statuses(adoptHead); len(got) != 0 {
@@ -46,7 +46,7 @@ func TestAnAdoptedHandOffPostsNothing(t *testing.T) {
 // success posted just before, so a rollback is never stalled by a ruleset requiring it.
 func TestAGreenRevertCarriesTheMergersSuccess(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseVerifying)
-	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true
+	g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 	merged := metav1.NewTime(now)

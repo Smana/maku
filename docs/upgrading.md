@@ -184,6 +184,22 @@ factory's config refuses the `runTokens` file aliases the same way when it start
 `runTokens.enabled` now needs `apps.agents.existingSecret`; the `/etc/agent-factory-run-tokens` mount
 is gone. Upgrade the chart and the image together: the config is decoded strictly.
 
+### The merge defaults
+
+Three defaults that step 3 left at their old values flip to the product path (D11, D12). A
+repository's `merge` block, the Factory's `spec.mergeDefaults` and a Repository's `spec.merge` read
+them the same way.
+
+| Key | Unset before | Unset now | To keep the old behaviour |
+|---|---|---|---|
+| `merge.gateStatus` | `false`: no `maku/merge-gate` status | `true`: the factory posts `maku/merge-gate`, so the App that signs merges needs `statuses: write` | `gateStatus: false` |
+| `merge.policyBot` | `true`: the gate reads `policy-bot: main` | `false`: `maku/merge-gate` is the required status, and every live class needs `allowedFiles` | `policyBot: true`, with `policyBotLogin` |
+| `apps.merger.mode` (`maku-factory`) | `separate`: a merger App of its own | `factory`: the merger signs with the factory App, so every `merge.mergerLogin` must be `factoryLogin` | `apps.merger.mode: separate` |
+
+An install that set all three explicitly, as cloud-native-ref does, renders and decides as before.
+One that relied on the old defaults sets the right-hand column, or follows
+[Retiring policy-bot](factory.md#branch-protection-for-the-merge-gate) to move to the new ones.
+
 ### Private code is refused without its acknowledgement
 
 A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory

@@ -22,7 +22,7 @@ func (r *rec) PolicyDivergence(_ context.Context, _ string, n int) { r.gauge = a
 
 func watchRig() (*Watch, *rec) {
 	c := central()
-	c.Repositories = []config.Repository{{Name: "o/r", Classes: map[string]config.Class{
+	c.Repositories = []config.Repository{{Name: "o/r", Merge: config.Merge{PolicyBot: new(true)}, Classes: map[string]config.Class{
 		"docs-links": {Live: true}, "revert": {Live: true},
 	}}}
 	r := &rec{}

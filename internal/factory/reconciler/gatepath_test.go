@@ -17,7 +17,7 @@ import (
 func approvedGateInputs() ArmInputs {
 	off := false
 	cfg := armCfg()
-	cfg.Repositories[0].Merge.ApproveToMerge, cfg.Repositories[0].Merge.PolicyBot, cfg.Repositories[0].Merge.GateStatus = true, &off, true
+	cfg.Repositories[0].Merge.ApproveToMerge, cfg.Repositories[0].Merge.PolicyBot, cfg.Repositories[0].Merge.GateStatus = true, &off, new(true)
 	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 	pr := agentPR()
 	pr.Reviews = []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now.Add(time.Minute)}}
@@ -58,7 +58,7 @@ func TestAGatePathUnderARepositoryPolicy(t *testing.T) {
 // path (any class's protectedFiles: the .policy.yml gate list moved there) is never armed by the
 // gate, a maintainer's approval included. It stays a human merge on GitHub.
 func TestAnApprovedGatePathIsNeverArmedWithoutPolicyBot(t *testing.T) {
-	off := false
+	off, on := false, true
 	for name, c := range map[string]struct {
 		policyBot       *bool
 		stats           []forge.FileStat
@@ -67,11 +67,12 @@ func TestAnApprovedGatePathIsNeverArmedWithoutPolicyBot(t *testing.T) {
 		"a gate path":                    {&off, []forge.FileStat{{Path: ".github/workflows/ci.yaml", Status: "modified"}}, "human", "gate_path"},
 		"a rename from a gate path":      {&off, []forge.FileStat{{Path: "docs/ci.yaml", Previous: ".github/workflows/ci.yaml", Status: "renamed"}}, "human", "gate_path"},
 		"no gate path":                   {&off, []forge.FileStat{{Path: "docs/guide.md", Status: "modified"}}, "arm", "maintainer_approved"},
-		"policy-bot judges its own list": {nil, []forge.FileStat{{Path: ".github/workflows/ci.yaml", Status: "modified"}}, "arm", "maintainer_approved"},
+		"unset is off (v4 step 8)":       {nil, []forge.FileStat{{Path: ".github/workflows/ci.yaml", Status: "modified"}}, "human", "gate_path"},
+		"policy-bot judges its own list": {&on, []forge.FileStat{{Path: ".github/workflows/ci.yaml", Status: "modified"}}, "arm", "maintainer_approved"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := armCfg()
-			cfg.Repositories[0].Merge.ApproveToMerge, cfg.Repositories[0].Merge.PolicyBot, cfg.Repositories[0].Merge.GateStatus = true, c.policyBot, true
+			cfg.Repositories[0].Merge.ApproveToMerge, cfg.Repositories[0].Merge.PolicyBot, cfg.Repositories[0].Merge.GateStatus = true, c.policyBot, new(true)
 			cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
 			cfg.Repositories[0].Classes["workflows"] = config.Class{ProtectedFiles: []string{`^\.github/`}}
 			pr := agentPR()
@@ -91,7 +92,7 @@ func TestAnApprovedGatePathIsNeverArmedWithoutPolicyBot(t *testing.T) {
 func TestTheGateReadsAnApprovedDiffWithoutPolicyBot(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	off := false
-	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge, g.r.Cfg.Current().Repositories[0].Merge.PolicyBot, g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true, &off, true
+	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge, g.r.Cfg.Current().Repositories[0].Merge.PolicyBot, g.r.Cfg.Current().Repositories[0].Merge.GateStatus = true, &off, new(true)
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "workflows": {ProtectedFiles: []string{`^\.github/`}}}
 	g.f.SetFiles(map[string]string{".github/workflows/ci.yaml": "on: push\n"}, map[string]string{".github/workflows/ci.yaml": "on: [push]\n"})
 	g.f.SetChecks(12, green("SUCCESS"))

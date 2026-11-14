@@ -158,7 +158,7 @@ func (f factoryChecks) mergeGate(context.Context) preflight.Result {
 	}
 	var gated []string
 	for _, r := range f.Live().Repos() {
-		if r.Merge.GateStatus {
+		if r.Merge.PostsGateStatus() {
 			gated = append(gated, r.Name)
 		}
 	}

@@ -10,10 +10,10 @@ resources:
 # The GitHub Apps (v4 D12; docs/github-apps.md). apps.factory mounts the factory App (keys app_id,
 # private_key) at /etc/agent-factory-github. apps.agents mounts the agents App at
 # /etc/agent-factory-agents and writes config.github.agentsAppIDFile and agentsKeyFile.
-# apps.merger.mode separate mounts the merger App from apps.merger.existingSecret (empty means
-# agent-factory-merger) at /etc/agent-factory-merger; factory folds the merger into the factory App:
+# apps.merger.mode factory (the default since v4 step 8, D12) folds the merger into the factory App:
 # no merger volume, and config.github.mergerAppIDFile and mergerKeyFile name the factory App's files
-# (every repository's merge.mergerLogin is then factoryLogin). Each key that writes config fails the
+# (every repository's merge.mergerLogin is then factoryLogin). separate mounts a merger App of its
+# own from apps.merger.existingSecret (empty means agent-factory-merger) at /etc/agent-factory-merger. Each key that writes config fails the
 # render when config already sets that key. The older githubSecret, mergerSecret and
 # runTokens.appSecret are removed (v4 step 8): the render fails naming their apps.* replacement.
 apps:
@@ -22,7 +22,7 @@ apps:
   agents:
     existingSecret: ""
   merger:
-    mode: separate
+    mode: factory
     # HARD PREREQUISITE with mode separate when any merge class is live or in shadow:
     # README.md#prerequisites. Empty means agent-factory-merger; set it only with mode separate.
     existingSecret: ""

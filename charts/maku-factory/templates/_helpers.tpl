@@ -34,7 +34,7 @@ are removed (v4 step 8): the schema refuses them, and so does this helper under
 {{- if and ($v.runTokens).enabled (not $agents) -}}
 {{- fail "runTokens.enabled needs apps.agents.existingSecret: the agents App it mints from" -}}
 {{- end -}}
-{{- $mode := dig "merger" "mode" "separate" $apps -}}
+{{- $mode := dig "merger" "mode" "factory" $apps -}}
 {{- if not (has $mode (list "separate" "factory")) -}}
 {{- fail (printf "apps.merger.mode is separate or factory, not %q" $mode) -}}
 {{- end -}}

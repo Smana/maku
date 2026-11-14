@@ -77,7 +77,7 @@ func TestFactoryPreflightDemoNeed(t *testing.T) {
 // is not required, a read that failed warns.
 func TestFactoryPreflightMergeGate(t *testing.T) {
 	live := func() *config.Config {
-		return &config.Config{Repositories: []config.Repository{{Name: "o/r", Merge: config.Merge{GateStatus: true}}}}
+		return &config.Config{Repositories: []config.Repository{{Name: "o/r", Merge: config.Merge{GateStatus: new(true)}}}}
 	}
 	g := &gateState{}
 	f := factoryChecks{Repos: servedRepos("o/r"), Live: live, Gate: g}

@@ -623,7 +623,7 @@ func (c *Config) AnyCheckReruns() bool {
 // AnyGateStatus reports whether any repository posts the gate's commit status, which needs the
 // merger App's statuses: write.
 func (c *Config) AnyGateStatus() bool {
-	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.GateStatus })
+	return slices.ContainsFunc(c.Repos(), func(r Repository) bool { return r.Merge.PostsGateStatus() })
 }
 
 // Poll is how often each loop runs.
@@ -680,11 +680,13 @@ type Merge struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	PolicyBotLogin string `json:"policyBotLogin"` // the status's expected creator
-	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request.
+	// GateStatus makes the factory post the gate's verdict as a commit status on the pull request,
+	// maku/merge-gate; nil means true (v4 step 8). Read it through PostsGateStatus.
 	// +optional
-	GateStatus bool `json:"gateStatus,omitempty"`
-	// PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
-	// the status branch protection requires (D11); nil means true.
+	GateStatus *bool `json:"gateStatus,omitempty"`
+	// PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step
+	// 8). Without it maku/merge-gate is the status branch protection requires, which needs
+	// gateStatus. Read it through UsesPolicyBot.
 	// +optional
 	PolicyBot *bool `json:"policyBot,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
@@ -734,8 +736,11 @@ type Breaker struct {
 	RecoverAfter int `json:"recoverAfter,omitempty"`
 }
 
-// UsesPolicyBot reports whether the gate goes through policy-bot: true unless policyBot is false.
-func (m Merge) UsesPolicyBot() bool { return m.PolicyBot == nil || *m.PolicyBot }
+// UsesPolicyBot reports whether the gate goes through policy-bot: only when policyBot is true (D11).
+func (m Merge) UsesPolicyBot() bool { return m.PolicyBot != nil && *m.PolicyBot }
+
+// PostsGateStatus reports whether the factory posts maku/merge-gate: unless gateStatus is false.
+func (m Merge) PostsGateStatus() bool { return m.GateStatus == nil || *m.GateStatus }
 
 // Tier is a model and its budgets. RunUSD and TaskUSD cap a run and a task in USD, priced by
 // meter.prices, in place of RunTokens and TaskTokens; 0 keeps the token cap. With meter.prices
@@ -2274,10 +2279,10 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if m := r.Merge; !slices.Contains(m.RequiredChecks, m.LeakScanCheck) || !slices.Contains(m.VerifyChecks, m.LeakScanCheck) {
 		bad("merge.leakScanCheck %q must be in merge.requiredChecks and merge.verifyChecks (R42)", r.Merge.LeakScanCheck)
 	}
-	if c.Demo && !r.Merge.GateStatus {
+	if c.Demo && !r.Merge.PostsGateStatus() {
 		bad("demo: merge.gateStatus must be true, or no gate verdict reaches the pull request")
 	}
-	if !r.Merge.UsesPolicyBot() && !r.Merge.GateStatus && !c.Demo { // the demo's own rule above names it
+	if !r.Merge.UsesPolicyBot() && !r.Merge.PostsGateStatus() && !c.Demo { // the demo's own rule above names it
 		bad("merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires")
 	}
 	if !r.Merge.UsesPolicyBot() {

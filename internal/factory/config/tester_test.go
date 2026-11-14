@@ -66,7 +66,9 @@ func TestATemplateListingTheTesterLoadsWithoutItAndWarns(t *testing.T) {
 }
 
 func TestALiveClassWithoutHoldoutsWarns(t *testing.T) {
-	c, err := Parse([]byte(strings.Replace(good, "docs-links: {shadow: true}", "docs-links: {live: true}", 1)))
+	// policy-bot on: without it a live class needs allowedFiles, which this one lacks.
+	withBot := strings.Replace(good, "      policyBotLogin:", "      policyBot: true\n      policyBotLogin:", 1)
+	c, err := Parse([]byte(strings.Replace(withBot, "docs-links: {shadow: true}", "docs-links: {live: true}", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}

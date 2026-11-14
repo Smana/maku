@@ -117,8 +117,8 @@ merges as human merges. The config refuses it.
 
 ## The optional merger App
 
-`apps.merger.mode: separate`, the default, keeps a third App for the merge-side calls: checks,
-arming, merges and reverts. Its required set, with every option on:
+`apps.merger.mode: separate` keeps a third App for the merge-side calls: checks, arming, merges
+and reverts. The default, `factory` (since v4 step 8), folds those calls into the factory App. Its required set, with every option on:
 
 <!-- apps:merger:begin -->
 | Permission | Access |
@@ -145,10 +145,11 @@ gate](factory.md#branch-protection-for-the-merge-gate)).
 
 ## policy-bot, an optional fourth App
 
-policy-bot is an optional integration. With `merge.policyBot: false` and `merge.gateStatus: true`,
-branch protection requires `maku/merge-gate` instead, and each class's
+policy-bot is an optional integration, off by default since v4 step 8. With `merge.policyBot` and
+`merge.gateStatus` unset (or `false` and `true`), branch protection requires `maku/merge-gate`, and each class's
 `conditions.deny.protectedFiles` holds the gate paths that `.policy.yml` held. A repository that
-keeps policy-bot installs it as its own App, and `merge.policyBotLogin` names it.
+keeps policy-bot sets `merge.policyBot: true`, installs it as its own App, and names it in
+`merge.policyBotLogin`.
 
 ## The demo
 

@@ -81,23 +81,24 @@ func TestDemoPolicyBot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if m := c.Repos()[0].Merge; m.UsesPolicyBot() || !m.GateStatus {
+	if m := c.Repos()[0].Merge; m.UsesPolicyBot() || !m.PostsGateStatus() {
 		t.Errorf("merge %+v: want policyBot off and gateStatus on", m)
 	}
-	if !(Merge{}).UsesPolicyBot() {
-		t.Error("an unset policyBot must mean true")
+	// v4 step 8: unset, the gate posts maku/merge-gate and policy-bot is an opt-in (D11).
+	if m := (Merge{}); m.UsesPolicyBot() || !m.PostsGateStatus() {
+		t.Error("an unset merge must post the gate status without policy-bot")
 	}
 }
 
 func TestNonDemoUnchanged(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
-		"policyBot false":   {"      policyBotLogin: ogenki-merge-gate[bot]\n", "      policyBotLogin: ogenki-merge-gate[bot]\n      policyBot: false\n", "merge.policyBot: false needs merge.gateStatus: true"},
-		"an http broker":    {`url: "https://room-broker`, `url: "http://room-broker`, `broker.url "http://room-broker.agent-system.svc.cluster.local:8443" must be an https:// URL`},
-		"no meter.url":      {"  url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428\n", "", "meter.url is required"},
-		"no broker.caFile":  {"caFile: /etc/agent-factory/openbao-ca/ca.crt, ", "", "broker.caFile is required"},
-		"an http roomsURL":  {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://localhost:8080", "roomsURL must be https://<host>"},
-		"no human issuer":   {"  humanIssuer: https://auth.ogenki.io\n", "", "api.humanIssuer is required"},
-		"no policyBotLogin": {"      policyBotLogin: ogenki-merge-gate[bot]\n", "", "merge.policyBotLogin"},
+		"policyBot and gateStatus false": {"      policyBotLogin: ogenki-merge-gate[bot]\n", "      policyBotLogin: ogenki-merge-gate[bot]\n      policyBot: false\n      gateStatus: false\n", "merge.policyBot: false needs merge.gateStatus: true"},
+		"an http broker":                 {`url: "https://room-broker`, `url: "http://room-broker`, `broker.url "http://room-broker.agent-system.svc.cluster.local:8443" must be an https:// URL`},
+		"no meter.url":                   {"  url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428\n", "", "meter.url is required"},
+		"no broker.caFile":               {"caFile: /etc/agent-factory/openbao-ca/ca.crt, ", "", "broker.caFile is required"},
+		"an http roomsURL":               {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://localhost:8080", "roomsURL must be https://<host>"},
+		"no human issuer":                {"  humanIssuer: https://auth.ogenki.io\n", "", "api.humanIssuer is required"},
+		"policyBot without its login":    {"      policyBotLogin: ogenki-merge-gate[bot]\n", "      policyBot: true\n", "merge.policyBotLogin"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(good, c.from, c.to, 1)

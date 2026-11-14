@@ -51,7 +51,7 @@ func adoptRig(t *testing.T) *rig {
 	g.r.Merger = g.f
 	g.r.Cfg.Current().AgentsLogin, g.r.Cfg.Current().FactoryLogin = "ogenki-agents[bot]", "ogenki-agent-factory[bot]"
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"deps-patch": depsPatchClass()}
-	g.r.Cfg.Current().Repositories[0].Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]",
+	g.r.Cfg.Current().Repositories[0].Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), // the pre-v4 defaults, explicit
 		MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 10, FixRuns: 2, CheckReruns: 1,
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}

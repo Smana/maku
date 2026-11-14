@@ -35,7 +35,7 @@
           "additionalProperties": false,
           "properties": {
             "mode": {
-              "description": "separate: the merger App in existingSecret. factory: the merger signs with the factory App, and existingSecret must stay unset.",
+              "description": "factory (the default): the merger signs with the factory App, and existingSecret must stay unset. separate: the merger App in existingSecret.",
               "type": "string",
               "enum": ["separate", "factory"]
             },

@@ -75,7 +75,6 @@ ykind Deployment "($ctr.resources.limits.cpu != null and $ctr.resources.limits.m
 ykind Deployment "($ctr.resources.requests.cpu != null and $ctr.resources.requests.memory != null)" "resource requests"
 ykind PodDisruptionBudget '.spec.minAvailable == 1' "PDB"
 ykind PodDisruptionBudget '.spec.unhealthyPodEvictionPolicy == "AlwaysAllow"' "a drain evicts unready pods (#58)"
-ykind Deployment "$(vol merger).secret | (.secretName == \"agent-factory-merger\" and .defaultMode == \"0440\" and .optional == true)" "the merger key is optional (#57)"
 ykind Deployment "$(vol intake).secret | (.secretName == \"agent-factory-intake\" and .defaultMode == \"0440\" and .optional == true)" "the intake token is optional (#57)"
 ykind Role '.rules[] | select(.resources[] == "agentruns") | has("verbs")' "AgentRun RBAC"
 # H-5: the AgentRun Role and its binding sit where the binary looks (config.runs, runwatch.Kind);
@@ -85,7 +84,6 @@ ykind RoleBinding 'select(.metadata.namespace == "agents") | (.roleRef.name == "
 # Review C1: a 0400 root-owned key is unreadable to uid 65532; the group bit plus fsGroup is not.
 ykind Deployment "$pod.securityContext.fsGroup == 65532" "the pod's fsGroup owns the mounted Secrets"
 ykind Deployment "$(vol github).secret | (.secretName == \"agent-factory-github\" and .defaultMode == \"0440\")" "the App key readable by the group only"
-ykind Deployment "$(mnt merger).mountPath == \"/etc/agent-factory-merger\"" "the merger key (R16) where config.github.merger*File reads it"
 # Review M4: exactly the verbs the code uses.
 ykind Role '.rules[] | select(.resources[] == "tasks") | ((.verbs | sort | join(",")) == "create,get,list,patch,update,watch")' "tasks without delete"
 ykind Role '.rules[] | select(.resources[] == "leases") | ((.verbs | sort | join(",")) == "create,get,update")' "leases: what leader election calls"
@@ -235,8 +233,14 @@ out="$(render --set apps.merger.mode=factory)"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "merger")' "apps.merger.mode factory: no merger volume"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "merger")' "apps.merger.mode factory: no merger mount"
 ykind ConfigMap '.data."config.yaml" | from_yaml | .github | (.mergerAppIDFile == "/etc/agent-factory-github/app_id" and .mergerKeyFile == "/etc/agent-factory-github/private_key")' "apps.merger.mode factory: the merger signs with the factory App's files"
+# v4 step 8 (D12): folded is the default.
 out="$base"
-ykind Deployment "$(vol merger).secret.secretName == \"agent-factory-merger\"" "default: the merger Secret keeps its name"
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "merger")' "default: the merger is folded: no merger volume"
+ykind ConfigMap '.data."config.yaml" | from_yaml | .github | (.mergerAppIDFile == "/etc/agent-factory-github/app_id" and .mergerKeyFile == "/etc/agent-factory-github/private_key")' "default: the merger signs with the factory App's files"
+# A separate merger App: its own optional key, where config.github.merger*File reads it.
+out="$(render --set apps.merger.mode=separate)"
+ykind Deployment "$(vol merger).secret | (.secretName == \"agent-factory-merger\" and .defaultMode == \"0440\" and .optional == true)" "separate: the merger key is optional (#57) and keeps its name"
+ykind Deployment "$(mnt merger).mountPath == \"/etc/agent-factory-merger\"" "separate: the merger key (R16) where config.github.merger*File reads it"
 out="$(render --set apps.merger.mode=separate --set apps.merger.existingSecret=merger-app)"
 ykind Deployment "$(vol merger).secret.secretName == \"merger-app\"" "apps.merger.existingSecret: names the separate merger's Secret"
 out="$base"

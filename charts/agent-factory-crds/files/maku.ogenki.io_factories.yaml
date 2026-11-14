@@ -380,8 +380,9 @@ spec:
                     maxLength: 1024
                     type: string
                   gateStatus:
-                    description: GateStatus makes the factory post the gate's verdict
-                      as a commit status on the pull request.
+                    description: |-
+                      GateStatus makes the factory post the gate's verdict as a commit status on the pull request,
+                      maku/merge-gate; nil means true (v4 step 8). Read it through PostsGateStatus.
                     type: boolean
                   leakScanCheck:
                     maxLength: 1024
@@ -391,8 +392,9 @@ spec:
                     type: string
                   policyBot:
                     description: |-
-                      PolicyBot false drops policy-bot from the gate and needs gateStatus: maku/merge-gate is then
-                      the status branch protection requires (D11); nil means true.
+                      PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step
+                      8). Without it maku/merge-gate is the status branch protection requires, which needs
+                      gateStatus. Read it through UsesPolicyBot.
                     type: boolean
                   policyBotLogin:
                     maxLength: 253
