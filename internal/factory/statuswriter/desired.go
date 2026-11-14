@@ -9,7 +9,8 @@
 //   - Every status carries one observedGeneration, at its level and on each condition: the
 //     generation the Source observed when it has an outcome for the object, the object's own
 //     otherwise. Conditions: Accepted (all kinds), Connected, RepositoryFileValid and InSync
-//     (Repository), BindingsValid (Repository), PrivateCode (Repository, v4 D3), Ready (Factory).
+//     (Repository), BindingsValid (Repository), PrivateCode (Repository, v4 D3), Ready (Factory),
+//     and Deprecated (all kinds, MR13) only while the object sets a field the next release refuses.
 //   - A refused object's other conditions are still computed when its repository is served, from
 //     the last good version the factory serves.
 //   - A nil Inputs.Snapshot means policyManagement.read is off: RepositoryFileValid and InSync are
@@ -186,7 +187,15 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 	default:
 		ready(metav1.ConditionTrue, "Ready", "")
 	}
+	d.deprecated(&st.Conditions, g, config.FactoryDeprecations(d.in.Config))
 	return st
+}
+
+// deprecated sets the Deprecated condition (MR13) when paths is not empty. It never affects Ready.
+func (d *desirer) deprecated(cs *[]metav1.Condition, gen int64, paths []string) {
+	if len(paths) > 0 {
+		d.set(cs, gen, config.ConditionDeprecated, metav1.ConditionTrue, config.ReasonRemovedNextRelease, strings.Join(paths, ", "))
+	}
 }
 
 func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
@@ -275,6 +284,7 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 	}
 	st.ClassCount = len(st.Classes)
 	d.fileConditions(&st.Conditions, g, rc.Name, true)
+	d.deprecated(&st.Conditions, g, config.RepositoryDeprecations(rc))
 }
 
 // privateCode is a served repository's PrivateCode (v4 D3, step 7 R1): True when its code is public
@@ -314,6 +324,7 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 	} else {
 		d.accepted(&st.Conditions, g, o)
 	}
+	d.deprecated(&st.Conditions, g, config.PolicyDeprecations(p.Spec.PolicySpec))
 	if o == nil {
 		return st
 	}
