@@ -16,14 +16,14 @@ const render = (s: Summary) => { const root = document.createElement("div"); ren
 const frontier = (): Profile => ({ name: "review-frontier", source: "scoper", cohort: "treatment",
   recommended: "review-frontier", reason: "observe", why: "The change spans several files." });
 
-describe("the Harness profile fold", () => {
+describe("the Workflow fold", () => {
   it("is absent without a profile", () => {
     expect(render(summary()).childElementCount).toBe(0);
   });
 
   it("names the active profile and shows every field", () => {
     const root = render(summary(frontier()));
-    expect(root.querySelector("summary")!.textContent).toBe("Harness profile · review-frontier · treatment");
+    expect(root.querySelector("summary")!.textContent).toBe("Workflow · review-frontier · treatment");
     expect(root.querySelector(".profile-source")!.textContent).toBe("Source: scoper");
     expect(root.querySelector(".profile-recommended")!.textContent).toBe("Recommended: review-frontier");
     expect(root.querySelector(".profile-reason")!.textContent).toBe("Reason: observe");
@@ -32,7 +32,7 @@ describe("the Harness profile fold", () => {
 
   it("distinguishes an observe-mode recommendation from the active floor", () => {
     const root = render(summary({ ...frontier(), name: "review-floor", source: "floor" }));
-    expect(root.querySelector("summary")!.textContent).toBe("Harness profile · review-floor · treatment");
+    expect(root.querySelector("summary")!.textContent).toBe("Workflow · review-floor · treatment");
     expect(root.querySelector(".profile-source")!.textContent).toBe("Source: floor");
     expect(root.querySelector(".profile-recommended")!.textContent).toBe("Recommended: review-frontier");
     expect(root.querySelector(".profile-reason")!.textContent).toBe("Reason: observe");

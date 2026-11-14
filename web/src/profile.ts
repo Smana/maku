@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// The room's Harness profile fold: the active profile and cohort from summary/v1, with the
+// The room's Workflow fold (WF1): the active workflow (a harness profile) and cohort from summary/v1, with the
 // scoper's recommendation kept distinct when observe mode leaves the floor active, and a pinned
 // profile's request with the refusal's closed code when triage did not apply it.
 
@@ -16,7 +16,7 @@ export function renderProfile(root: HTMLElement, s: Summary): void {
   }
   const d = el("details", { className: "profile", open: !!root.querySelector<HTMLDetailsElement>("details.profile")?.open });
   d.dataset.block = "profile";
-  d.append(el("summary", { textContent: `Harness profile · ${p.name} · ${p.cohort}` }),
+  d.append(el("summary", { textContent: `Workflow · ${p.name} · ${p.cohort}` }),
     el("p", { className: "profile-source", textContent: `Source: ${p.source}` }));
   if (p.requested) d.append(el("p", { className: "profile-requested", textContent: `Requested: ${p.requested}` }));
   if (p.refused) d.append(el("p", { className: "profile-refused", textContent: `Refused: ${p.refused}` }));

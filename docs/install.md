@@ -62,7 +62,7 @@ The directory it writes:
 |---|---|
 | `values.yaml` | the umbrella's values, every image by digest, no secret value |
 | `crds/values.yaml` | the CRD chart's values |
-| `factory/` | the `Factory`, one `Repository` per repository, and a `MergePolicy` per class, every class in shadow. The `Factory`'s `spec.mergeDefaults` holds the merge settings every repository shares, so each `Repository` names only its own ([below](#onboard-another-repository)) |
+| `factory/` | the `Factory`, one `Repository` per repository, and a `MergePolicy` per class, every class in shadow. The `Factory`'s `spec.mergeDefaults` holds the merge settings every repository shares, so each `Repository` names only its own ([below](#onboard-another-repository)), and it writes out the three workflows, `quick`, `standard` and `careful` ([the shipped workflows](factory.md#the-shipped-workflows)) |
 | `github/` | the merge gate's ruleset and the `gh` commands that create it, which it never runs |
 | `secrets/` | mode 0700, files 0600, git-ignored: the Apps' keys, a generated cookie secret, the client ids, and templates with empty keys for what it never asks (the DSNs, the provider key, the issuer's client secret, Slack's) |
 | `gitops/` | the same install for Flux and for Argo CD |

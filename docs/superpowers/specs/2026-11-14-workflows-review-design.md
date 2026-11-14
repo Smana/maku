@@ -362,6 +362,12 @@ after the builder check; each can be reversed.
 | `triage.controlPercent` set to 0 here | it confounds the measurement and changes nothing a person sees |
 | `escalation` off until measured | it is evaluation surface, frozen by WF8 |
 
+## Owner rulings after the interview
+
+| Ruling | Decision |
+|---|---|
+| Q15 (2026-11-14) | Onboarding writes a 12-line `Repository`: `maku install --print` writes `Factory.spec.mergeDefaults` (`mergerLogin`, `verifyFor`, `revertWindow`, `breaker`), so a `Repository` carries only `triggerLabel`, `verifyChecks` and its own fields; `maku repo add --merge-defaults=false` writes the long form for a `Factory` without them (Maku #590) |
+
 ## Left to the builder
 
 - Whether `checks: true` belongs on `standard` and `careful` by default. It depends on what a run

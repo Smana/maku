@@ -27,10 +27,10 @@ const page = (cat: Catalogue | null | undefined = catalogue()): RepositoryPage =
 const ctx = (p: RepositoryPage) => ({ page: p, get: fetch, say: document.createElement("p"), reload: () => {}, main: document.createElement("main") });
 const card = (p: RepositoryPage, i: number) => classCard(p.report.classes[i], ctx(p));
 
-describe("a class card's Profiles row", () => {
+describe("a class card's Workflows row", () => {
   it("shows the floor, the variants and the escalation targets, with each profile's roles and tier", () => {
     const row = card(page(), 1).querySelector(".class-profiles")!;
-    expect(row.querySelector("h4")?.textContent).toBe("Profiles");
+    expect(row.querySelector("h4")?.textContent).toBe("Workflows");
     expect([...row.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
       "Floor review-floor: roles chosen at triage",
       "Variant review-frontier: roles implementer, tester, reviewer · tier frontier · tests first",
@@ -60,7 +60,7 @@ describe("a class card's Profiles row", () => {
   it("says so when a class names a profile the factory's list lacks", () => {
     const cat = catalogue();
     delete cat.profiles["review-frontier"];
-    expect(card(page(cat), 1).querySelector(".class-profiles")?.textContent).toContain("Variant review-frontier: not in the factory's list of profiles");
+    expect(card(page(cat), 1).querySelector(".class-profiles")?.textContent).toContain("Variant review-frontier: not in the factory's list of workflows");
   });
 });
 

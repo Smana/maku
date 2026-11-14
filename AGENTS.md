@@ -23,7 +23,7 @@ task check      # exit 0, or it is not done
 | `chart:check` | `helm lint --strict` and `tests/render.sh` for `charts/maku-factory` and `charts/maku` | either chart losing a property the platform relies on, or the maku chart rendering a config its component's loader refuses |
 | `quickstart:check` | `hack/quickstart/check.sh`, offline: `bash -n`, shellcheck, `lib_test.sh` | the quickstart scripts, their manifests and the maku chart disagreeing on a name they share |
 | `migrations` | `atlas migrate validate --dir file://internal/store/migrations`, offline | an `atlas.sum` that no longer matches the migrations: re-hash with `atlas migrate hash` |
-| `docs` | `hack/docs_test.sh`, `hack/docs.sh` | a reader page with a per-row status tag, or a dead relative link or anchor |
+| `docs` | `hack/docs_test.sh`, `hack/docs.sh`, `hack/vocabulary_test.sh`, `hack/vocabulary.sh` | a reader page with a per-row status tag, a dead relative link or anchor, or "harness profile", "capability profile", "egress profile" or "trio" in prose |
 | `names` | `hack/names_test.sh`, `hack/names.sh` | an artifact, API group or metric name from before the maku rebrand outside the historical docs |
 | `scripts` | `scripts/*_test.sh` | an operator script, such as `shadow-merge-tally.sh`, no longer reading GitHub's shapes as its test fakes them |
 | `ui:test` | `npm ci`, `tsc --noEmit`, `vitest run` in `web/` | a type error or a failing UI test |

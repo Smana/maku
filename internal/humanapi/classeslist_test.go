@@ -61,8 +61,8 @@ func TestClassesListSummary(t *testing.T) {
 		t.Fatalf("%s", got.text)
 	}
 	for _, want := range []string{
-		"docs-links · live · merges on its own when the gate's conditions hold · profile links-solo\n",
-		"review · off · a maintainer's approval merges it · profile chosen at triage · variants review-frontier\n",
+		"docs-links · live · merges on its own when the gate's conditions hold · workflow links-solo\n",
+		"review · off · a maintainer's approval merges it · workflow chosen at triage · variants review-frontier\n",
 	} {
 		if !strings.Contains(got.text, want) {
 			t.Errorf("text lacks %q:\n%s", want, got.text)
@@ -103,7 +103,7 @@ func TestClassesListDetail(t *testing.T) {
 	e = setup(t, mcpOn, withSponsored(sponsoredP), withCatalogue(&fakeFactoryCatalogue{}))
 	got = call(t, e, bearer("slack-app"), ClassesList, map[string]any{"repository": "Smana/ai-native-ref", "class": "review",
 		"on_behalf_of": "slack:T01ABC/U09XYZ"})
-	if got.isError || strings.Contains(got.text, "You may pin") || !strings.Contains(got.text, "Only a maintainer of this repository can pin a profile") {
+	if got.isError || strings.Contains(got.text, "You may pin") || !strings.Contains(got.text, "Only a maintainer of this repository can pin a workflow") {
 		t.Fatalf("%s", got.text)
 	}
 }

@@ -98,7 +98,7 @@ func TestPlanCheckPinRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	is := out.Plan.Issues[0]
-	if is.Profile != "review-frontier" || !strings.HasSuffix(is.Body, "D1: profile: review-frontier, pinned by the developer") ||
+	if is.Profile != "review-frontier" || !strings.HasSuffix(is.Body, "D1: workflow: review-frontier, pinned by the developer") ||
 		!slices.Equal(is.Roles, []string{"implementer", "tester", "reviewer"}) ||
 		out.Hash == base.Hash || out.Hash != intake.Hash(out.Plan) {
 		t.Fatalf("%+v %s", is, out.Hash)
@@ -136,7 +136,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 	if err := json.Unmarshal(got.structured, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.Plan.Issues[0].Body, "A1: profile: factory's choice; suggested review-frontier") || out.Hash != intake.Hash(out.Plan) {
+	if !strings.HasSuffix(out.Plan.Issues[0].Body, "A1: workflow: factory's choice; suggested review-frontier") || out.Hash != intake.Hash(out.Plan) {
 		t.Fatalf("%q", out.Plan.Issues[0].Body)
 	}
 	// The answer is a plan plan_check holds again, unchanged.
