@@ -1271,6 +1271,32 @@ def model_retries() -> int:
         return 0
 
 
+def cache_line(step: int, usage: dict, miss: str) -> str:
+    """One line per model response: the response's input and cache tokens, and the miss kind."""
+    return "agent-run cache: step=%d input=%d cache_read=%d cache_write=%d miss=%s" % (
+        step, usage.get("prompt_tokens") or 0, usage.get("cache_read_tokens") or 0,
+        usage.get("cache_write_tokens") or 0, miss)
+
+
+def miss_kind(step: int, cache_read: int, after_condensation: bool, resumed: bool) -> str:
+    """Why a response read nothing from the prompt cache. Only 'unexpected' is a defect: the first
+    response, a resumed run's first and the one right after a condensation are misses by design."""
+    if cache_read:
+        return "none"
+    if resumed:
+        return "resume"
+    if after_condensation:
+        return "condensation"
+    if step == 1:
+        return "first"
+    return "unexpected"
+
+
+def condensation_line(step: int, forgotten: int, summary_model: str) -> str:
+    """One line per condensation: how many events were forgotten and which model wrote the summary."""
+    return "agent-run condensation: step=%d forgotten=%d summary_model=%s" % (step, forgotten, summary_model)
+
+
 class StepLog:
     """Prints each new agent step to stdout, one line each, so `kubectl logs -c
     harness` shows what the agent is doing, and VictoriaLogs keeps it after the
@@ -1280,7 +1306,8 @@ class StepLog:
     text is redacted first."""
 
     def __init__(self, cid: str, trace_id: str = "", notes: "ProgressNotes | None" = None, ledger: str | None = None,
-                 nudge_after: int = 0, scoper: tuple[int, int] | None = None, resumed: bool = False):
+                 nudge_after: int = 0, scoper: tuple[int, int] | None = None, resumed: bool = False,
+                 summary_model: str = ""):
         self.notes = notes
         # The scoper's bounds (HR2): one nudge at nudgeAt own tool calls, CallLimit at maxToolCalls. A handoff
         # ends the count once its observation comes back with no error; while one is in flight, no stop.
@@ -1297,6 +1324,13 @@ class StepLog:
         # ST7: a search's tool calls are the run's steps, read from its ledger when search is on.
         self.ledger, self.searched = ledger, 0
         self.last_message = ""
+        # CP2: one cache line per model response, read from the stats update the SDK streams after
+        # each response; one condensation line per Condensation event. The response ordinal is the
+        # line's step: the first response is 1. A resumed run's first response misses by design.
+        self.responses = 0
+        self.after_condensation = False
+        self.start_resumed = resumed
+        self.summary_model = summary_model
 
     @property
     def steps(self) -> int:
@@ -1352,8 +1386,42 @@ class StepLog:
         if self.own >= limit and not self.handoffs:
             raise CallLimit(self.own)
 
+    def cache_stats(self, value) -> "str | None":
+        """The cache line for the newest response, from the per-response stats update the SDK
+        streams (ConversationStateUpdateEvent key=stats). Unreadable shapes are skipped: the line
+        is observability, never a reason to fail the run."""
+        if not isinstance(value, dict):
+            return None
+        metrics = value.get("usage_to_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        agent = metrics.get("agent")
+        if not isinstance(agent, dict):
+            return None
+        usages = agent.get("token_usages")
+        if not isinstance(usages, list) or not usages or not isinstance(usages[-1], dict):
+            return None
+        usage = usages[-1]
+        self.responses += 1
+        cache_read = usage.get("cache_read_tokens") or 0
+        miss = miss_kind(self.responses, cache_read, self.after_condensation,
+                         self.start_resumed and self.responses == 1)
+        self.after_condensation = False
+        return cache_line(self.responses, usage, miss)
+
+    def condensed(self, forgotten) -> "str | None":
+        """The condensation line; the response that follows re-reads nothing from the cache by design."""
+        if not isinstance(forgotten, (list, set, tuple)):
+            return None
+        self.after_condensation = True
+        return condensation_line(self.responses + 1, len(forgotten), self.summary_model)
+
     def describe(self, event: dict) -> str | None:
         kind = event.get("kind")
+        if kind == "ConversationStateUpdateEvent" and event.get("key") == "stats":
+            return self.cache_stats(event.get("value"))
+        if kind == "Condensation":
+            return self.condensed(event.get("forgotten_event_ids"))
         if kind == "ActionEvent":
             self.own += 1
             action = event.get("action") or {}
@@ -2437,7 +2505,8 @@ def main() -> int:
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
         # A scoper's StepLog raises CallLimit, which only scoper_poll catches: a triager has no policy and no hold.
         steps = StepLog(cid, trace_id, notes, SEARCH_LEDGER if search else None,
-                       nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed)
+                        nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed,
+                        summary_model=env.get("LIGHT_MODEL") or env.get("MODEL") or "")
         hold = make_hold(env, base, contract, decl, prefetched) if contract else None
         if policy:
             limit = env.get("AGENT_RUN_SECONDS", "")
