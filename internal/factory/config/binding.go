@@ -53,8 +53,8 @@ type Binding struct {
 	// +kubebuilder:validation:Required
 	// +kubebuilder:validation:Enum=live;shadow;disabled;off
 	Mode string `json:"mode"`
-	// AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
-	// the policy, never both.
+	// CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on the policy,
+	// never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`

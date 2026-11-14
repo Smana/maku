@@ -208,8 +208,8 @@ spec:
                   properties:
                     allowedFiles:
                       description: |-
-                        AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
-                        the policy, never both.
+                        CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on the policy,
+                        never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
                       items:
                         maxLength: 512
                         type: string
