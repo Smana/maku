@@ -414,12 +414,10 @@ func questionTable() []Question {
 			Default: fixed("anthropic"), Keys: []string{"maku-gateway.providers"},
 			Values: func(v any, a Answers) map[string]any {
 				p := map[string]any{"preset": str(v), "existingSecret": defaultStr(a, "models.secret", "model-provider"), "key": defaultStr(a, "models.key", "apiKey")}
-				if str(v) == "custom" {
-					p["host"] = a.String("models.host")
-				}
 				return map[string]any{"maku-gateway.providers." + providerName(str(v)): p}
 			}},
 		{ID: "models.host", Prompt: "The custom provider's host (an OpenAI-compatible API on 443)", Kind: KindString, When: is("models.provider", "custom"),
+			Keys: []string{"maku-gateway.providers.custom.host"}, Values: at("maku-gateway.providers.custom.host"),
 			Check: func(v any, _ Answers) (string, error) {
 				if !dnsSubdomainRE.MatchString(str(v)) {
 					return "", fmt.Errorf("%q is not a host name", str(v))

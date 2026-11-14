@@ -277,3 +277,24 @@ func line(v any) string {
 	}
 	return v.(string)
 }
+
+// The install jobs' answers files (hack/install-e2e) resolve: CI cannot drift from the wizard.
+func TestInstallE2EAnswersResolve(t *testing.T) {
+	files, _ := filepath.Glob(filepath.Join("..", "..", "hack", "install-e2e", "*.answers.yaml"))
+	if len(files) != 2 {
+		t.Fatalf("hack/install-e2e holds %d answers files, want 2", len(files))
+	}
+	for _, f := range files {
+		raw, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		a, err := DecodeAnswers(raw)
+		if err == nil {
+			_, _, err = Resolve(a)
+		}
+		if err != nil {
+			t.Errorf("%s: %v", f, err)
+		}
+	}
+}
