@@ -132,7 +132,8 @@ CRDs are still `v1alpha1`. What is proven live and what comes next is on the
 [status page](https://airef.ogenki.io/docs/status/), and each version's notes are on the
 [latest release](https://github.com/Smana/maku/releases/latest). The v4 rollout's clean-up makes the
 chart a v4.0 candidate: [the migration note](docs/upgrading.md#the-clean-up-v04x-v4-rollout-step-8)
-lists every change from v0.4x, and v4.0.0 waits for the recorded installs and the owner's go
+lists every change from v0.4x. v4.0.0 is not cut yet: five further specs, planned for the week of
+2026-11-16, come first, then the recorded installs and the owner's go
 ([the decision pack](docs/v4-readiness.md)).
 
 Maku is for platform teams who want coding agents under their own rules. It isn't a hosted service.

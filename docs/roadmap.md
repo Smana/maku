@@ -4,7 +4,7 @@ Feature level only. What shipped, release by release, is the
 [releases page](https://github.com/Smana/maku/releases); what is proven live, and on which cluster,
 is the platform's [status page](https://airef.ogenki.io/docs/status/).
 
-As of v0.42.0.
+As of v0.49.0.
 
 ## Landed
 
@@ -32,8 +32,8 @@ As of v0.42.0.
 | The run path, v4 rollout step 2: the scoper and the loop policies on the run controller, read-only tokens for reviewers and triagers, the sandbox value and the preflight, the runs quota, the run-pod admission policy, and the `kubernetes` network mode with its egress proxy | [Upgrading](upgrading.md#the-run-path-v04x-v4-rollout-step-2), [Security](security.md#the-run-paths-network-modes) |
 | Reusable merge policies: a `MergePolicy` is one class definition, a `Repository` binds it with its mode and parameters, each binding resolved and refused on its own; `Factory.spec.mergeDefaults`; status per binding and per policy; grants bound to the resolved class; `maku config migrate` with its equality proof and `validate --base-ref`; the settings pages per binding and per policy | [Merge policies](merge-policies.md#factory-resources), [Upgrading](upgrading.md#reusable-merge-policies-v04x-release-n) |
 | Reusable merge policies, the per-repository shape removed: the CRD's `repositoryRef`, `classes` and `merge` on `MergePolicy`, `maku config migrate --manifests`, and the repository file's `classes:` and `conditions.any`, refused | [Upgrading](upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1) |
-| Install UX, v4 rollout step 7: the preflight's cluster checks as a Helm test hook, private code by explicit opt-in (warned), both GitHub Apps through the manifest flow, `maku install --print`, the demo through the model gateway, and the install page | [Install on your cluster](install.md) |
-| The clean-up, v4 rollout step 8: the paths steps 1 to 7 kept for older installs removed and their defaults flipped to the product path, one migration note, and the values contract reported on each chart pull request | [Upgrading](upgrading.md#the-clean-up-v04x-v4-rollout-step-8) |
+| Install UX, v4 rollout step 7: the preflight's cluster checks as a Helm test hook, private code by explicit opt-in (warned), both GitHub Apps through the manifest flow, `maku install --print`, the demo through the model gateway, and the install page (v0.48.0) | [Install on your cluster](install.md) |
+| The clean-up, v4 rollout step 8: the paths steps 1 to 7 kept for older installs removed and their defaults flipped to the product path, one migration note, and the values contract reported on each chart pull request (v0.48.0 and v0.49.0; PR F, the ZITADEL reader, is open in [#581](https://github.com/Smana/maku/pull/581) and ships in the next minor) | [Upgrading](upgrading.md#the-clean-up-v04x-v4-rollout-step-8) |
 | The merge gate as a required status, v4 rollout step 3 (D11): `merge.policyBot: false` outside the demo, `maku/merge-gate` `success` only when the factory merges, a documented ruleset and its observer, and `agent_merged` | [Branch protection for the merge gate](factory.md#branch-protection-for-the-merge-gate) |
 
 ## In progress
@@ -54,5 +54,5 @@ As of v0.42.0.
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |
 | A two-pane room page: the task panel on the left, the stream and the dock on the right, two tabs on a phone | Usage says people live in the page ([room readability](superpowers/specs/2026-10-15-room-readability-design.md#later-two-panes)) |
-| v4.0.0, the production path: the chart's defaults are the product path, proved on GKE and kubeadm | Step 8 PR F (the ZITADEL reader) once ANR has moved every human to the GitHub link, the step's minor, the recorded installs on it, then the owner's go ([the v4.0 decision pack](v4-readiness.md)) |
+| v4.0.0, the production path: the chart's defaults are the product path, proved on GKE and kubeadm | Not cut now (the owner, 2026-11-14). Five further specs, planned for the week of 2026-11-16; step 8 PR F in the next minor; the recorded GKE and kubeadm installs on it, once gcp-0 is rebuilt; then the owner's go ([the v4.0 decision pack](v4-readiness.md)) |
 | A migration that drops `rooms.bridge_seen_at` | Every broker runs a release that no longer writes it ([room log](room-log.md#schema)) |
