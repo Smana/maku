@@ -118,15 +118,21 @@ func TestFactoryStarts(t *testing.T) {
 }
 
 // Every written values.yaml renders under profile production, and kubeconform accepts the render.
-// Skipped without helm; task chart:check always runs it.
+// Skipped without helm only.
 func TestValuesRender(t *testing.T) {
 	helm, err := exec.LookPath("helm")
 	if err != nil {
 		t.Skip("helm is not installed")
 	}
-	chart, _ := filepath.Abs(filepath.Join("..", "..", "charts", "agent-factory"))
-	if _, err := os.Stat(filepath.Join(chart, "charts")); err != nil {
-		t.Skip("the umbrella's dependencies are not built (task chart:check builds them)")
+	// The umbrella's subcharts are file:// dependencies a fresh checkout has not built (CI's test
+	// shards): build them in a copy of charts/, never in the working tree, so this always runs.
+	charts := t.TempDir()
+	if err := os.CopyFS(charts, os.DirFS(filepath.Join("..", "..", "charts"))); err != nil {
+		t.Fatal(err)
+	}
+	chart := filepath.Join(charts, "agent-factory")
+	if out, err := exec.CommandContext(t.Context(), helm, "dependency", "build", chart).CombinedOutput(); err != nil {
+		t.Fatalf("helm dependency build: %v\n%s", err, out)
 	}
 	kubeconform, kerr := exec.LookPath("kubeconform")
 	for _, name := range goldens {
