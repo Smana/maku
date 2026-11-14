@@ -66,7 +66,7 @@ var (
 		"fixed_base": {"ci_red", "secret_scan_red", "ci_cancelled", "changes_requested", "ci_pending", "ci_wait_expired",
 			"gate_path", "steering_path", "not_owned", "policy_pending", "policy_absent", "no_approving_verdict", "not_mergeable",
 			"head_unreported", "foreign_trailer", "human_commit_in_pr", "push_unrecorded", "closes_parent", "verdict_stale",
-			"merge_gate_off", "head_moved", "approval_stale"},
+			"merge_gate_off", "head_moved", "approval_stale", "held"},
 		"author_mode": {"not_agent_authored", "fork_pull_request", "adoption_unread", "not_adopted_author", "branch_not_allowed",
 			"label_not_adopted", "adopt_ref_invalid"},
 		"class": {"class_mismatch", "class_unarmed", "file_not_allowed", "file_added_or_deleted", "patch_too_large", "holdout_red",

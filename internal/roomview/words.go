@@ -50,6 +50,7 @@ var reasonPhrases = map[string]string{
 	"scoper_failed":             "the scope was not checked",
 	"agent_stuck":               "the agent said it was stuck",
 	"auto_merge_cap":            "today's auto-merge cap is reached",
+	"held":                      "on hold (factory/hold)",
 	"branch_not_allowed":        "the branch is not allowed",
 	"budget_calls":              "the scoper hit its tool-call limit",
 	"budget-family":             "the task family is out of budget",

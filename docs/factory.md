@@ -29,6 +29,7 @@ without case.
 | Label `factory/stop` on the issue or its pull request | The running task stops within a poll: its runs are revoked and deleted, the task ends `Stopped`. The label is removed once it hit a task; with no task running it stays, so a task started later stops at once. Anyone else's is removed and answered | A maintainer |
 | Label `factory/revert` on an auto-merged pull request, within `merge.revertWindow` | The factory opens a revert pull request through the merger App and the task ends `Reverted`; the class counts the revert towards its [breaker](#the-merge-gate). A human merge is never reverted | A maintainer |
 | Label `factory/drill` on an auto-merged pull request, **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate): the merger copies the label to the revert pull request and the breaker does not count it (AM6). Read only when `factory/revert` is, so a label added after it changes nothing while the merge's Task exists (see [drills](#the-merge-gate)) | A maintainer |
+| Label `factory/hold` on a pull request | The [merge gate](#the-merge-gate) hands it to a human with `held` before any class or approval is read: nothing merges it, and no shadow would-merge is counted. Removing the label returns it to the gate on the head it was held at (`reentered_unheld`). A hold placed after the gate armed GitHub's auto-merge does not disarm it | Anyone who can label: it only ever stops a merge |
 | Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert`. `issue_file` applies the plan's class this way before `factory/ready` | A maintainer |
 | Comment `/factory split` alone on a line, on the issue of a task escalated `split_proposed` | Approves the proposed [split](#splits); the commenter pays for every part. Read before `/factory retry` | A maintainer with `write` on the repository |
 | Comment `/factory retry` alone on a line, on an escalated task's issue or pull request | A fresh run; see [Escalation](#escalation-reminders-and-stale-tasks) | A maintainer with `write` on the repository |
@@ -401,6 +402,7 @@ returns it.
 | `ledger_truncated` | A merge-ledger read filled its page of 100 and its oldest pull request is still inside the breaker window or today, so the ledger may under-count; nothing arms. A maintainer decides |
 | `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. A release-age status posted as pending waits longer, up to 7 days or the bound if that is larger. The message names the checks. A maintainer decides |
 | `auto_merge_cap` | `merge.maxPerDay` is reached |
+| `held` | The pull request carries `factory/hold`. Removing the label returns it to the gate |
 | `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](#the-ownership-fence)) |
 | `shadow_would_arm` | Every check holds and the class is in shadow. Next step: merge or close it |
 | `ci_cancelled` | A required check was cancelled and re-running it did not settle it |
@@ -1063,6 +1065,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 2b | A task with a contract: `merge.contractCheck` is green too, as a required check. On a task without one the job only reports | As row 2: red is a fix run, pending waits |
 | 2c | A task with a contract: no contract file changed since the tester's commit (GitHub's compare of that commit and the head; a head that is not its descendant, such as after a rebase, or more than 100 commits from it, counts every contract file as changed). Read once CI is green | Unread: wait, `contract_unread`. Changed: `contract_modified`, never a fix run |
 | 3 | `policy-bot: main` is green, posted by `merge.policyBotLogin` | `policy_absent`, `policy_pending`, `gate_path` |
+| 3a | The pull request does not carry `factory/hold` | `held` |
 | 4 | The author is `agentsLogin`, and no maintainer approved it | `not_agent_authored`, `maintainer_approved` |
 | 5 | The class is `live` or `shadow` | `class_unarmed` |
 | 6 | The template's reviewer approved, the room reported the head, and every approval is of that head | `no_approving_verdict`, `head_unreported`, `verdict_stale` |

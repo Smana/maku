@@ -491,8 +491,12 @@ func requiredFor(rc *config.Repository, t *v1alpha1.Task) []string {
 	return append(slices.Clone(rc.Merge.RequiredChecks), rc.Merge.ContractCheck)
 }
 
-// baseChecks are the base's rows before any class is read: the secret scan, CI, the fence and
-// policy-bot. done is false when all of them hold.
+// LabelHold on a pull request keeps it from auto-merging (MR10): anyone who can label may apply it,
+// as it only ever stops a merge, and removing it lets the next pass decide.
+const LabelHold = "factory/hold"
+
+// baseChecks are the base's rows before any class is read: the secret scan, CI, the fence,
+// policy-bot and, last, factory/hold. done is false when all of them hold.
 func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	// R42 (review G6): TruffleHog runs --only-verified, so a red scan is a live credential in the
 	// diff. A fix run would remove it from the head and leave it in a public history.
@@ -527,7 +531,7 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 		return ArmDecision{Verdict: "human", Reason: "not_owned"}, true
 	}
 	if !rc.Merge.UsesPolicyBot() {
-		return ArmDecision{}, false // demo: no policy-bot, the gate's own rows decide
+		return holdLabelled(in) // no policy-bot: the gate's own rows decide
 	}
 	state, creator := in.Checks.StatusOf("policy-bot: main")
 	if !forge.SameLogin(creator, rc.Merge.PolicyBotLogin) {
@@ -537,10 +541,19 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	case "ERROR":
 		return ArmDecision{Verdict: "human", Reason: "gate_path", Matched: "gate"}, true // unmergeable, even with an approval (S9)
 	case "SUCCESS":
-		return ArmDecision{}, false
+		return holdLabelled(in)
 	default:
 		return ArmDecision{Verdict: "human", Reason: "policy_pending", Matched: "review"}, true
 	}
+}
+
+// holdLabelled is the last base check (MR10): factory/hold hands the pull request to a human before any
+// class or approval is read, so nothing merges and no shadow would-merge is counted under it.
+func holdLabelled(in ArmInputs) (ArmDecision, bool) {
+	if slices.Contains(in.PR.Labels, LabelHold) {
+		return ArmDecision{Verdict: "human", Reason: "held"}, true
+	}
+	return ArmDecision{}, false
 }
 
 // agentEvidence is the agents author mode's evidence (R02, R03, SC-14): "" when the room
