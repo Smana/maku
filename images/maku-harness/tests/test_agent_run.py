@@ -1556,7 +1556,7 @@ class StartSpansTest(unittest.TestCase):
         with fake_git(branch_pushed=True):
             resumed = agent_run.clone(CLONE_ENV, start_span=spans.start)
         self.assertTrue(resumed)
-        self.assertEqual(spans.ended, [("agent-run.clone", {"resumed": True, "filter": "none"}, None)])
+        self.assertEqual(spans.ended, [("agent-run.clone", {"resumed": True, "filter": "blob:none"}, None)])
 
     def test_a_failed_clone_ends_its_span_with_the_error(self):
         spans = FakeSpans()
@@ -1584,3 +1584,33 @@ class StartSpansTest(unittest.TestCase):
         with fake_git():
             self.assertFalse(agent_run.clone(CLONE_ENV))
         agent_run.boot(None, wait=lambda: None)  # no span, no error
+
+
+class BloblessCloneTest(unittest.TestCase):
+    def test_the_clone_is_blobless(self):
+        with fake_git() as git:
+            agent_run.clone(CLONE_ENV)
+        self.assertEqual(git.calls[0][:4], ["git", "clone", "--no-tags", "--filter=blob:none"])
+
+    def test_a_forge_that_refuses_the_filter_gets_a_full_clone(self):
+        spans = FakeSpans()
+        with fake_git(filter_refused=True) as git:
+            agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertEqual(git.calls[1][:3], ["git", "clone", "--no-tags"])
+        self.assertNotIn("--filter=blob:none", git.calls[1])
+        self.assertEqual(spans.ended[0][1]["filter"], "none")
+
+    def test_the_span_records_the_blobless_filter(self):
+        spans = FakeSpans()
+        with fake_git():
+            agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertEqual(spans.ended[0][1]["filter"], "blob:none")
+
+    def test_a_clone_that_fails_twice_fails_the_run(self):
+        with fake_git(clone_fails=True), self.assertRaises(subprocess.CalledProcessError):
+            agent_run.clone(CLONE_ENV)
+
+    def test_no_depth_a_shallow_clone_breaks_merge_base(self):
+        with fake_git() as git:
+            agent_run.clone(CLONE_ENV)
+        self.assertFalse(any("--depth" in " ".join(c) for c in git.calls))

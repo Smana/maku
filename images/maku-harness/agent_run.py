@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -1468,29 +1469,47 @@ def _verified(ref: str) -> bool:
     return subprocess.run(["git", "-C", REPO_DIR, "rev-parse", "--verify", "--quiet", ref], capture_output=True).returncode == 0
 
 
+def _clone(env: dict, filter_blobs: bool) -> bool:
+    # No --depth: a shallow clone breaks merge-base on an old base (CP5).
+    args = ["git", "clone", "--no-tags"]
+    if filter_blobs:
+        args.append("--filter=blob:none")
+    subprocess.run([*args, "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR], check=True)
+    # Resume the run's branch when an earlier run of the same task pushed it (R7).
+    resumed = _verified("origin/" + env["BRANCH"])
+    if resumed:
+        start = "origin/" + env["BRANCH"]
+    elif _verified("origin/" + env["BASE_REF"]):
+        start = "origin/" + env["BASE_REF"]
+    else:
+        start = env["BASE_REF"]  # a commit
+    subprocess.run(["git", "-C", REPO_DIR, "checkout", "-B", env["BRANCH"], start], check=True)
+    return resumed
+
+
 def clone(env: dict, start_span=None) -> bool:
     """Clones the repo and checks the run's branch out; True when it resumed a pushed one.
-    The agent-run.clone span records the resume and the clone filter ("none" until the
-    blobless clone lands); a failure ends it with the error and still fails the run."""
+    The clone is blobless (CP5) — blobs arrive on checkout, so a run that reads little clones
+    little — and a forge that refuses the filter gets a full clone after the partial is removed;
+    the agent-run.clone span says which filter ran. A clone that fails twice fails the run."""
     span = start_span(CLONE_SPAN) if start_span else None
+    used = "none"
     try:
-        subprocess.run(["git", "clone", "--no-tags", "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR],
-                       check=True)
-        # Resume the run's branch when an earlier run of the same task pushed it (R7).
-        resumed = _verified("origin/" + env["BRANCH"])
-        if resumed:
-            start = "origin/" + env["BRANCH"]
-        elif _verified("origin/" + env["BASE_REF"]):
-            start = "origin/" + env["BASE_REF"]
-        else:
-            start = env["BASE_REF"]  # a commit
-        subprocess.run(["git", "-C", REPO_DIR, "checkout", "-B", env["BRANCH"], start], check=True)
+        resumed = _clone(env, True)
+        used = "blob:none"
+    except subprocess.CalledProcessError:
+        shutil.rmtree(REPO_DIR, ignore_errors=True)
+        try:
+            resumed = _clone(env, False)
+        except Exception as exc:  # noqa: BLE001 -- the span records why the clone failed
+            _end(span, type(exc).__name__)
+            raise
     except Exception as exc:  # noqa: BLE001 -- the span records why the clone failed
         _end(span, type(exc).__name__)
         raise
     if span:
         span.set_attribute("resumed", resumed)
-        span.set_attribute("filter", "none")
+        span.set_attribute("filter", used)
     _end(span, None)
     return resumed
 
