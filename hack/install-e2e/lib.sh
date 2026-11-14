@@ -263,7 +263,15 @@ ready() {
 preflight() {
   step "maku preflight --strict ($NS): every check passes, none warns"
   [[ -x $MAKU ]] || go build -o "$MAKU" ./cmd/maku
-  local rc=0
+  # run-path serves the run-controller's own preflight's last result: wait until it has one (its
+  # network probe starts a pod under the RuntimeClass, up to a few minutes on a fresh node).
+  local rc=0 rclog="$work/rc-$NS.log" found=0
+  for _ in $(seq 120); do
+    k -n "$NS" logs deploy/run-controller >"$rclog" 2>&1 || true
+    if grep -qE 'preflight (passed|failed)' "$rclog"; then found=1; break; fi
+    sleep 3
+  done
+  ((found)) || { tail -40 "$rclog" >&2; die "$NS: the run-controller's preflight decided nothing within 6 minutes"; }
   "$MAKU" preflight --namespace "$NS" --release "$RELEASE" --strict --no-outside --kubeconfig "$KUBECONFIG" --context "${CTX:-}" || rc=$?
   ((rc == 0)) || die "$NS: maku preflight --strict exited $rc"
 }
