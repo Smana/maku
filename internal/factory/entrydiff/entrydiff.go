@@ -18,14 +18,15 @@ import (
 // MaxCompanionLines bounds the lines one companion file gains.
 const MaxCompanionLines = 10
 
-// Added reports whether d adds exactly one file matching cl.AllowedFiles, absent on the base
-// (d.Base[p] == "": Diff stores an added file's base as an empty value) and non-empty valid UTF-8
+// Added reports whether d adds exactly one file matching cl.AllowedFiles (and cl.NarrowedFiles when
+// set), absent on the base (d.Base[p] == "": Diff stores an added file's base as an empty value) and non-empty valid UTF-8
 // on the head, and changes every other file only by appending lines: modified,
 // matching cl.CompanionFiles, 0 deleted, 1..MaxCompanionLines added, the base's lines kept in
 // order. No control character but tab and newline, and no Unicode format character (zero-width,
 // bidi), in the entry or an added line. The reason when it does not.
 func Added(cl config.Class, d forge.Diff) (bool, string) {
 	allowed := filefence.Compile(cl.AllowedFiles, true)
+	narrowed := filefence.Compile(cl.NarrowedFiles, true) // MR3: a binding's narrowing, when set
 	companions := filefence.Compile(cl.CompanionFiles, true)
 	entries := 0
 	for _, f := range d.Files {
@@ -33,7 +34,7 @@ func Added(cl config.Class, d forge.Diff) (bool, string) {
 			return false, "renamed: " + f.Path
 		}
 		switch {
-		case f.Status == "added" && filefence.MatchesAny(allowed, f.Path):
+		case f.Status == "added" && filefence.MatchesAny(allowed, f.Path) && (len(cl.NarrowedFiles) == 0 || filefence.MatchesAny(narrowed, f.Path)):
 			entries++
 			if entries > 1 {
 				return false, "more than one added entry"

@@ -226,6 +226,11 @@ func (in *Class) DeepCopyInto(out *Class) {
 		*out = make([]string, len(*in))
 		copy(*out, *in)
 	}
+	if in.NarrowedFiles != nil {
+		in, out := &in.NarrowedFiles, &out.NarrowedFiles
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	if in.ProtectedFiles != nil {
 		in, out := &in.ProtectedFiles, &out.ProtectedFiles
 		*out = make([]string, len(*in))

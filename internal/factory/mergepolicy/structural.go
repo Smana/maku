@@ -153,7 +153,8 @@ func looser(n, o config.Class) []string {
 	}
 	add(modeRank(n) <= modeRank(o), "mode raised")
 	add(jsonOf(n.Author) == jsonOf(o.Author) || adoptNarrower(n.Author, o.Author), "authorship broadened")
-	add(len(o.AllowedFiles) == 0 || (len(n.AllowedFiles) > 0 && superset(o.AllowedFiles, n.AllowedFiles)), "allowedFiles broadened or rewritten")
+	add((len(o.AllowedFiles) == 0 || (len(n.AllowedFiles) > 0 && superset(o.AllowedFiles, n.AllowedFiles))) &&
+		(len(o.NarrowedFiles) == 0 || (len(n.NarrowedFiles) > 0 && superset(o.NarrowedFiles, n.NarrowedFiles))), "allowedFiles broadened or rewritten")
 	add(len(o.CompanionFiles) == 0 && len(n.CompanionFiles) == 0 || superset(o.CompanionFiles, n.CompanionFiles), "companionFiles broadened or rewritten")
 	add(superset(n.ProtectedFiles, o.ProtectedFiles), "protectedFiles narrowed")
 	add(n.ModifyOnly || !o.ModifyOnly, "modifyOnly removed")

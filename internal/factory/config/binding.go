@@ -161,6 +161,9 @@ func policyShapeProblems(name string, p PolicySpec) []string {
 	if p.Live || p.Shadow {
 		bad("mode is the binding's: live and shadow are refused on a MergePolicy (B4)")
 	}
+	if len(p.NarrowedFiles) > 0 {
+		bad("narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy")
+	}
 	if p.Oracle != nil && p.Oracle.Workflow != "" {
 		bad("oracle.workflow is the repository's: set oracleWorkflow on the binding")
 	}
@@ -208,13 +211,19 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	cl := *p.Class.DeepCopy()
 	cl.Live, cl.Shadow = b.Mode == ModeLive, b.Mode == ModeShadow
 
+	// MR3: a binding's allowedFiles over the policy's narrows it; both must admit a path.
+	if len(p.AllowedFiles) > 0 && len(b.AllowedFiles) > 0 {
+		cl.NarrowedFiles = slices.Clone(b.AllowedFiles)
+	}
+
 	// Fill once: in exactly one place, and in the binding when the policy requires it.
+	// allowedFiles is filled from the binding only where the policy has none.
 	for _, f := range []struct {
 		key          string
 		policy, bind bool
 		fill         func()
 	}{
-		{"allowedFiles", len(p.AllowedFiles) > 0, len(b.AllowedFiles) > 0, func() { cl.AllowedFiles = slices.Clone(b.AllowedFiles) }},
+		{"allowedFiles", len(p.AllowedFiles) > 0, len(b.AllowedFiles) > 0 && len(p.AllowedFiles) == 0, func() { cl.AllowedFiles = slices.Clone(b.AllowedFiles) }},
 		{"companionFiles", len(p.CompanionFiles) > 0, len(b.CompanionFiles) > 0, func() { cl.CompanionFiles = slices.Clone(b.CompanionFiles) }},
 		{"requiredLabel", p.RequiredLabel != "", b.RequiredLabel != "", func() { cl.RequiredLabel = b.RequiredLabel }},
 		{"oracleWorkflow", false, b.OracleWorkflow != "", func() {

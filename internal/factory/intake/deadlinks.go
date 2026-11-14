@@ -97,7 +97,8 @@ var archiveRE = regexp.MustCompile(`^https://web\.archive\.org/web/[0-9]{1,14}/h
 // shape is an error: the run is not trusted (ErrFindingsRefused).
 func keepable(f LinkFinding, cl config.Class) (_ LinkFinding, drop string, err error) {
 	if path.Clean(f.File) != f.File || strings.HasPrefix(f.File, "/") || strings.HasPrefix(f.File, "..") ||
-		len(f.File) > 512 || !matches(cl.AllowedFiles, f.File) || matches(cl.ProtectedFiles, f.File) {
+		len(f.File) > 512 || !matches(cl.AllowedFiles, f.File) || len(cl.NarrowedFiles) > 0 && !matches(cl.NarrowedFiles, f.File) ||
+		matches(cl.ProtectedFiles, f.File) {
 		return f, "path_not_allowed", nil
 	}
 	u, perr := url.Parse(f.URL)

@@ -91,3 +91,21 @@ func TestCompanionFilesAreAllowed(t *testing.T) {
 		t.Errorf("no companions: %q", got)
 	}
 }
+
+// MR3: with NarrowedFiles set, a path must match the policy's allowedFiles and the binding's.
+func TestNarrowedFilesBothMustAdmit(t *testing.T) {
+	cl := config.Class{AllowedFiles: []string{`^.+\.mdx?$`}, NarrowedFiles: []string{`^website/content/.+\.md$`}}
+	for path, want := range map[string]string{
+		"docs/x.md":              "file_not_allowed",
+		"website/content/a.md":   "",
+		"website/content/a.yaml": "file_not_allowed",
+	} {
+		stats := []forge.FileStat{{Path: path, Status: "modified"}}
+		if got := AllowedFiles(cl, stats); got != want {
+			t.Errorf("AllowedFiles %s = %q, want %q", path, got, want)
+		}
+		if got := Refusal(cl, stats); got != want {
+			t.Errorf("Refusal %s = %q, want %q", path, got, want)
+		}
+	}
+}

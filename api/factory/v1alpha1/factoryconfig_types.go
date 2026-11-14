@@ -239,6 +239,7 @@ type RepositoryList struct {
 // +kubebuilder:validation:XValidation:rule="!has(self.live) && !has(self.shadow)",message="mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
 // +kubebuilder:validation:XValidation:rule="!has(self.oracle) || !has(self.oracle.workflow)",message="oracle.workflow is the repository's: set oracleWorkflow on the binding"
 // +kubebuilder:validation:XValidation:rule="!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)",message="the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.narrowedFiles)",message="narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy"
 type MergePolicySpec struct {
 	// PolicySpec is the class definition: config.Class less the mode, plus requires.
 	config.PolicySpec `json:",inline"`
@@ -289,7 +290,7 @@ type ConsumerStatus struct {
 // B1).
 //
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$')",message="a MergePolicy's name is its class name (B1)"
-// +kubebuilder:validation:XValidation:rule="self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay) || has(self.spec.evidence) || has(self.spec.oracle) || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))",message="review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles) || has(self.spec.narrowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay) || has(self.spec.evidence) || has(self.spec.oracle) || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))",message="review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced

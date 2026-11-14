@@ -148,8 +148,8 @@ already decides on. Each binding resolves on its own: one that does not drops it
 file.
 
 1. The binding names a policy the factory serves (`MissingRef` otherwise).
-2. The policy's meaning, the binding's mode, each fill-once parameter from where it is set, the
-   additive lists unioned and the lower cap ([the combination rules](#policies-and-bindings)).
+2. The policy's meaning, the binding's mode, each fill-once parameter from where it is set, a
+   binding's `allowedFiles` narrowing the policy's, the additive lists unioned and the lower cap ([the combination rules](#policies-and-bindings)).
 3. The guardrails are applied: their `protectedFiles` and `mandatoryChecks` are appended
    (`mandatoryChecks` become holdout checks, so GitHub Actions must report them); a cap the class
    leaves unset inherits the guardrail's; a cap above it refuses the binding (`GuardrailMismatch`).
@@ -1072,7 +1072,8 @@ server refuses. Every field has one combination rule:
 |---|---|---|---|---|
 | Meaning | `description`, `author.adopt`, `harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`, `diffShape`, `modifyOnly`, `oracle.probe`, `oracle.maxFindings`, `releaseAgeCheck`, `monitor` | yes | refused | the policy's |
 | Mode | `mode`: `live`, `shadow`, `"off"` | refused | required | the binding's |
-| Fill once | `allowedFiles`, `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
+| Narrowing | `allowedFiles` | optional | optional; required when the policy `requires` it | the one that is set; on both, a path must match the policy's list and the binding's (`narrowedFiles` on the resolved class) |
+| Fill once | `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
 | Additive | `holdoutChecks`, `protectedFiles`, `requiresApproval` | optional | optional; `holdoutChecks` required when the policy `requires` it | the union; a required `holdoutChecks` needs a check the policy does not already name |
 | Caps | `maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | optional | optional, at most the policy's | the lower; above the policy is `OverPolicy` |
 | Repository fact | the Flux source a monitor watches | — | — | `Repository.spec.merge.fluxSource` |
@@ -1100,7 +1101,7 @@ it serves none, and a `class:` label naming it falls back to `review`. A reposit
 |---|---|---|---|
 | `MissingRef` | a binding | No served policy has its name, or the policy was refused with none served before | Apply or fix the policy |
 | `MissingParameter` | a binding | A `requires` parameter unset, or `monitor.flux` without `merge.fluxSource` | Set it |
-| `ParameterTwice` | a binding | A fill-once parameter set on the policy and the binding | Remove one |
+| `ParameterTwice` | a binding | A fill-once parameter (`companionFiles`, `requiredLabel`, `oracleWorkflow`) set on the policy and the binding | Remove one |
 | `OverPolicy` | a binding | A cap above the policy's | Lower it |
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
 | `Unbounded` | a binding | Bound `live` or `shadow`, the class resolved with it has neither `allowedFiles` nor a `diffShape` (`docs-links` and `revert` have theirs built in), with or without policy-bot | Set `allowedFiles` on the policy or the binding, or a `diffShape` |

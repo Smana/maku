@@ -622,9 +622,10 @@ kubectl get mergepolicy dead-links -n agent-system   # CONSUMERS CURRENT LIVE AC
 |---|---|---|
 | `MissingRef` | No served `MergePolicy` has the binding's name, or the policy was refused with no generation served before | Apply the policy, or fix the refused one (`kubectl describe mergepolicy`) |
 | `MissingParameter` | The policy `requires` a parameter the binding does not set, or `monitor.flux` without `spec.merge.fluxSource` | Set it on the binding, or `fluxSource` on the `Repository` |
-| `ParameterTwice` | A fill-once parameter is set by the policy and the binding | Remove one |
+| `ParameterTwice` | A fill-once parameter (`companionFiles`, `requiredLabel`, `oracleWorkflow`) is set by the policy and the binding | Remove one |
 | `OverPolicy` | A cap above the policy's | Lower it, or raise the policy's |
 | `GuardrailMismatch` | A cap above `mergeGuardrails` | Lower it |
+| `Unbounded` | Bound `live` or `shadow`, the resolved class has neither `allowedFiles` nor a `diffShape` | Set `allowedFiles` on the policy or the binding, or a `diffShape` on the policy |
 | `AmbiguousAdoption` | Two adopted bindings of one shape share a login and an overlapping branch prefix: the later in the list is refused, and keeps no last class | Narrow one, or unbind it |
 | `Invalid` | The resolved class fails the class rules (`semver-minor` bound `live`, `testFirst` without `merge.contractCheck`, a profile below its floor) | The message names the rule |
 

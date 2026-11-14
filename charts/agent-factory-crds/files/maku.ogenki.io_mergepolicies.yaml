@@ -218,6 +218,15 @@ spec:
                         type: string
                     type: object
                 type: object
+              narrowedFiles:
+                description: |-
+                  NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+                  path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
+                items:
+                  maxLength: 512
+                  type: string
+                maxItems: 64
+                type: array
               oracle:
                 description: |-
                   Oracle makes the class oracle-backed (MC4–MC6): its tasks are a detector's findings, and its
@@ -303,6 +312,9 @@ spec:
             - message: 'the Flux source is the repository''s: Repository.spec.merge.fluxSource
                 (B2)'
               rule: '!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)'
+            - message: 'narrowedFiles is set by a binding''s allowedFiles: set allowedFiles
+                on the policy'
+              rule: '!has(self.narrowedFiles)'
           status:
             description: 'MergePolicyStatus is what the factory made of its MergePolicy
               (B10): Accepted, and its consumers.'
@@ -427,12 +439,13 @@ spec:
         - message: review takes only description, harness, harnessAllowed, escalation,
             checks and testFirst
           rule: self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow)
-            || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval)
-            || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles)
-            || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks)
-            || has(self.spec.maxPerDay) || has(self.spec.evidence) || has(self.spec.oracle)
-            || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck)
-            || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))
+            || has(self.spec.allowedFiles) || has(self.spec.narrowedFiles) || has(self.spec.protectedFiles)
+            || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly)
+            || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) ||
+            has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay)
+            || has(self.spec.evidence) || has(self.spec.oracle) || has(self.spec.monitor)
+            || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles)
+            || has(self.spec.requiredLabel) || has(self.spec.requires))
     served: true
     storage: true
     subresources:

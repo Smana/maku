@@ -35,6 +35,11 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
+	// NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+	// path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	NarrowedFiles []string `json:"narrowedFiles,omitempty"`
 	// ProtectedFiles: no changed path matches one of these.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -298,7 +303,7 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	for _, f := range []struct {
 		key  string
 		pats []string
-	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}} {
+	}{{"allowedFiles", cl.AllowedFiles}, {"narrowedFiles", cl.NarrowedFiles}, {"companionFiles", cl.CompanionFiles}} {
 		for _, p := range f.pats {
 			// The match is unanchored, as policy-bot's is, so an allow list must say where a path
 			// begins and ends: "docs/.+" would allow "evil/docs/x".
@@ -310,7 +315,7 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	for _, f := range []struct {
 		key  string
 		pats []string
-	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}, {"protectedFiles", cl.ProtectedFiles}} {
+	}{{"allowedFiles", cl.AllowedFiles}, {"narrowedFiles", cl.NarrowedFiles}, {"companionFiles", cl.CompanionFiles}, {"protectedFiles", cl.ProtectedFiles}} {
 		for _, p := range f.pats {
 			if _, err := regexp.Compile(p); err != nil || p == "" {
 				bad("class %s: %s %q is not a regular expression", name, f.key, p)

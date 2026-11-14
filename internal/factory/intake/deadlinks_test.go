@@ -243,3 +243,14 @@ func TestTheTaskTextStopsAtTheTextCap(t *testing.T) {
 		t.Fatalf("two fit, one is left out, within the bound: %d findings, %d left, %d bytes of %d", len(spec), left, len(text), len(full)-1)
 	}
 }
+
+// MR3: a finding outside a binding's narrowing is no finding of the class.
+func TestAFindingOutsideTheNarrowingIsDropped(t *testing.T) {
+	cl := config.Class{AllowedFiles: []string{`^.+\.md$`}, NarrowedFiles: []string{`^website/content/.+\.md$`}}
+	for file, want := range map[string]string{"docs/a.md": "path_not_allowed", "website/content/a.md": ""} {
+		_, drop, err := keepable(LinkFinding{File: file, Line: 1, URL: "https://example.com/x", Status: "404"}, cl)
+		if err != nil || drop != want {
+			t.Errorf("%s: drop %q err %v, want %q", file, drop, err, want)
+		}
+	}
+}
