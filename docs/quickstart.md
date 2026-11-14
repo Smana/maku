@@ -190,7 +190,7 @@ the release harness makes it slow. See the [chart test documentation](../charts/
 
 ## What production adds
 
-The demo runs the same chart as production with `-f values-demo.yaml` (`profile: demo`). It keeps the loop (label polling, the
+The demo runs the same chart as production with `-f values-demo.yaml` (`demoValues: true`). It keeps the loop (label polling, the
 roles, rooms, the gate's decision and its switch to live) and leaves out what costs infrastructure. The
 table names what you have not proven by running it.
 
@@ -217,7 +217,7 @@ apiserver admits anonymous requests (`task demo` creates its cluster so).
 
 To install it on your own cluster, read [install on your cluster](install.md): `maku install --print --out DIR`
 writes the values, the Secrets, the factory objects and the GitOps files from your answers, or start from
-the chart's `values-production.example.yaml` with `profile: production`: the
+the chart's `values-production.example.yaml`, whose defaults are production: the
 render names every seam you have not set yet, see [From the demo to production](upgrading.md#from-the-demo-to-production).
 
 ## Clean up
@@ -300,7 +300,7 @@ flowchart TD
   P["preflight<br/>tools, secrets, release images"] --> K["kind<br/>no CNI, no kube-proxy, runsc mounted"]
   K --> C["Cilium<br/>kube-proxy replacement"] --> M["cert-manager<br/>self-signed CA"]
   M --> N["CNPG<br/>one-instance rooms database"] --> S["Secrets<br/>agent-model, agent-git"]
-  S --> H["helm install maku<br/>values-quickstart.yaml"]
+  S --> D["helm install agent-factory-crds<br/>the CRDs"] --> H["helm install maku<br/>values-quickstart.yaml"]
   H --> G["gVisor probe<br/>runsc, DNS, broker :8443"] --> F["print the port-forward and maku commands"] --> R["maku run<br/>room, start_run, your kubectl applies the claim"] --> W["maku follows the room to the run's end"]
 ```
 

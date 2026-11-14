@@ -1,4 +1,4 @@
-{{- include "afumbrella.profile" . -}}
+{{- include "afumbrella.gate" . -}}
 {{- include "afumbrella.monitoring" . -}}
 {{- /* v4 step 6 (D21, EX12): one scrape object per component, on its `metrics` port. ServiceMonitors
 where a Service already carries that port; PodMonitors elsewhere, so a default render gains no

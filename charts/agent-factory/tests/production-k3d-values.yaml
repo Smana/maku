@@ -1,9 +1,8 @@
 # Test-only values for task chart:production:k3d (identity.sh PROFILE=production; v4 step 6, Task 21),
-# layered on identity-values.yaml, identity-link-values.yaml and expose-values.yaml: profile production
-# on k3d, every seam named. The sandbox is a test-only RuntimeClass gvisor whose handler is runc (no run
+# layered on identity-values.yaml, identity-link-values.yaml and expose-values.yaml: the production
+# defaults on k3d, every seam named. The sandbox is a test-only RuntimeClass gvisor whose handler is runc (no run
 # starts), the humans' issuer is the in-cluster e2e stub, Postgres is a plain postgres:16 outside the
 # chart, and the factory's GitHub is the stub. Every id, key and endpoint belongs to the throwaway cluster.
-profile: production
 maku:
   enabled: true
   sandbox: {runtimeClassName: gvisor}

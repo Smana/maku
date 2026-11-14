@@ -59,7 +59,7 @@ the runs' (`maku.runs.namespace`).
 Some installs write a Secret for you:
 
 - the bundled Postgres (`postgres.enabled`, the demo) writes the three DSNs and its passwords;
-- the demo's umbrella writes the broker's TLS pair and both CAs (`profile: demo` only: a production
+- the demo's umbrella writes the broker's TLS pair and both CAs (`demoValues` only: a production
   install brings them, by hand, through cert-manager's `issuerRef`, or as ExternalSecrets);
 - the demo's `demo.model` and `demo.githubApp` values write the runs' model and the factory App;
 - the factory writes the runs' git tokens.

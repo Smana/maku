@@ -77,7 +77,7 @@ ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."con
 yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku and maku-factory" >&2; fail=1; }
 yq -e '.maku.enabled == true and .maku-factory.enabled == true' values-demo.yaml >/dev/null 2>&1 || { echo "FAIL: values-demo.yaml does not enable maku and maku-factory" >&2; fail=1; }
 # One template relies on Helm's render order, deepest first: the gate's own, deeper than any subchart's
-# template, so profile production's one message comes first (proved below, Task 19). No other may.
+# template, so the seam gate's one message comes first (proved below, Task 19). No other may.
 deep="$(find templates -mindepth 2 -type f)"
 [[ $deep == templates/gate/renders/before/subcharts.yaml ]] || { echo "FAIL: templates below templates/ ($deep): only the gate's may rely on Helm's render order" >&2; fail=1; }
 # the packaged chart ships values-demo.yaml and the example, never tests/ (.helmignore)
@@ -87,9 +87,21 @@ grep -qx 'agent-factory/values-demo.yaml' <<<"$shipped" || { echo "FAIL: the pac
 grep -qx 'agent-factory/values-mine.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-mine.example.yaml" >&2; fail=1; }
 grep -qx 'agent-factory/values-production.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-production.example.yaml" >&2; fail=1; }
 ! grep -q '^agent-factory/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
-# --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
-msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
-grep -qF 'profile demo needs -f values-demo.yaml' <<<"$msg" || { echo "FAIL: --set profile=demo alone does not fail naming values-demo.yaml (got: $msg)" >&2; fail=1; }
+# v4 step 8 (CL4): profile is removed. Each value fails, by the schema and, under
+# --skip-schema-validation, by the gate, naming the replacement.
+for p in demo production ""; do
+  msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set profile="$p" "${secrets[@]}" 2>&1 >/dev/null || true)"
+  grep -qF 'removed in v4 step 8: the defaults are production; the demo is -f values-demo.yaml (docs/upgrading.md#the-chart-contract)' <<<"$msg" ||
+    { echo "FAIL: profile '$p' is not refused by the schema with its replacement (got: $msg)" >&2; fail=1; }
+  msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml --set profile="$p" "${secrets[@]}" --skip-schema-validation 2>&1 >/dev/null || true)"
+  grep -qF 'profile was removed in v4 step 8: the defaults are production; the demo is -f values-demo.yaml (docs/upgrading.md#the-chart-contract)' <<<"$msg" ||
+    { echo "FAIL: profile '$p' is not refused by the gate under --skip-schema-validation (got: $msg)" >&2; fail=1; }
+done
+# networkPolicies.plain is removed (v4 step 8): refused the same two ways, naming the components' policies
+msg="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=true 2>&1 >/dev/null || true)"
+grep -qF "removed in v4 step 8: replaced by the default-deny policies of each component" <<<"$msg" || { echo "FAIL: networkPolicies.plain is not refused by the schema (got: $msg)" >&2; fail=1; }
+msg="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=true --skip-schema-validation 2>&1 >/dev/null || true)"
+grep -qF "networkPolicies.plain was removed in v4 step 8: replaced by the default-deny policies of each component" <<<"$msg" || { echo "FAIL: networkPolicies.plain is not refused by the gate (got: $msg)" >&2; fail=1; }
 
 # TLS: three Secrets, the same CA, kept on upgrade
 ykind Secret 'select(.metadata.name == "room-broker-tls") | (.type == "kubernetes.io/tls" and (.data | has("tls.crt")) and (.data | has("tls.key")) and .metadata.annotations."helm.sh/resource-policy" == "keep")' 'room-broker-tls is a kept kubernetes.io/tls Secret with tls.crt and tls.key'
@@ -147,24 +159,24 @@ done
 # the readiness probe waits for the real server (TCP), not the entrypoint's socket-only init server
 ykind StatefulSet 'select(.metadata.name == "rooms-db") | (.spec.template.spec.containers[0].readinessProbe.exec.command | join(" ")) == "pg_isready -h 127.0.0.1 -U postgres -d postgres"' 'readiness probes 127.0.0.1, not the socket'
 
-# plain NetworkPolicies (the demo has no Cilium): the database admits only the broker, the factory's API only the broker
+# The bundled Postgres's own policy (networkPolicies.plain's until v4 step 8): it admits only the broker.
+# The demo's factory has no policy in mode none (networkPolicies.factory joins maku's mode).
 ykind NetworkPolicy 'select(.metadata.name == "rooms-db") | (.spec.podSelector.matchLabels."app.kubernetes.io/name" == "rooms-db" and (.spec.policyTypes | join(",")) == "Ingress" and (.spec.ingress | length) == 1 and .spec.ingress[0].from[0].podSelector.matchLabels."app.kubernetes.io/name" == "room-broker" and .spec.ingress[0].ports[0].port == 5432)' 'rooms-db admits 5432 only from the room-broker pods'
-ykind NetworkPolicy 'select(.metadata.name == "agent-factory-api") | (.spec.podSelector.matchLabels."app.kubernetes.io/name" == "agent-factory" and (.spec.policyTypes | join(",")) == "Ingress" and ([.spec.ingress[] | select(.from != null)] | length) == 1 and .spec.ingress[0].from[0].podSelector.matchLabels."app.kubernetes.io/name" == "room-broker" and .spec.ingress[0].ports[0].port == 8082)' "the factory's API (8082) admits only the room-broker pods"
-ykind NetworkPolicy 'select(.metadata.name == "agent-factory-api") | ((.spec.ingress | length) == 2 and .spec.ingress[1].from == null and (.spec.ingress[1].ports | length) == 1 and .spec.ingress[1].ports[0].port == "ops")' "the factory's ops port (probes, 9090) is admitted from anywhere, by name"
-ykind NetworkPolicy 'select(.metadata.name == "agent-factory-api") | (.spec.ingress[0].from != null and (.spec.ingress[0].ports | length) == 1 and .spec.ingress[0].ports[0].port == 8082)' 'the factory API (8082) is admitted only through the broker rule'
-ykind NetworkPolicy 'select(.metadata.name == "agent-factory-api") | ((.spec.ingress | length) == 2 and .spec.ingress[0].ports[0].port != 8080 and .spec.ingress[0].ports[0].port != "intake" and .spec.ingress[1].ports[0].port != 8080 and .spec.ingress[1].ports[0].port != "intake")' 'no rule admits the intake port (8080)'
-ynone 'select(.kind == "NetworkPolicy") | .spec.egress // ""' 'a plain NetworkPolicy restricts egress (runs need GitHub and the model)'
-np="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=false | yq ea 'select(.kind == "NetworkPolicy") | .metadata.name' -)"
-[[ -z $np ]] || { echo "FAIL: networkPolicies.plain=false still renders NetworkPolicies ($np)" >&2; fail=1; }
+ynone 'select(.kind == "NetworkPolicy") | .spec.egress // ""' "rooms-db's policy restricts egress"
+np="$(yq ea '[select(.kind == "NetworkPolicy") | .metadata.name] | join(",")' - <<<"$out")"
+[[ $np == rooms-db ]] || { echo "FAIL: the demo in mode none renders the NetworkPolicies '$np', want rooms-db alone" >&2; fail=1; }
+np="$(helm template af . -n maku "${args[@]}" --set postgres.enabled=false --set maku.broker.database.brokerSecret=b | yq ea 'select(.kind == "NetworkPolicy") | .metadata.name' -)"
+[[ -z $np ]] || { echo "FAIL: the demo without the bundled Postgres still renders NetworkPolicies ($np)" >&2; fail=1; }
 
-# profile: demo
-# an unset profile fails, naming what production must supply
-msg="$(helm template af . -n maku "${img[@]}" 2>&1 >/dev/null || true)"
-grep -qF 'profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
+# v4 step 8 (CL4): the defaults are production. With no values the gate checks the seams of no
+# enabled component, and renders nothing.
+out_skel="$(helm template af . -n maku "${img[@]}")" || { echo "FAIL: the skeleton alone does not render" >&2; fail=1; }
+[[ -z $(yq ea 'select(.kind != null) | .kind' - <<<"$out_skel") ]] || { echo "FAIL: the skeleton alone renders objects" >&2; fail=1; }
 
-# v4 step 6, Task 19 (EX16, R6): profile production renders, a gate per enabled component. It refuses
-# the demo's values, and names every missing seam of every enabled component in one message, before
-# any subchart refuses the first one it meets.
+# v4 step 6, Task 19 (EX16, R6); step 8 (CL4): every render without demoValues is production, a gate
+# per enabled component. It refuses the demo-only values, naming values-demo.yaml, and names every
+# missing seam of every enabled component in one message, before any subchart refuses the first one it
+# meets.
 demo_out="$out"
 prod=("${img[@]}" -f tests/production-values.yaml)
 # pbad WANT ARGS...: the production render fails, its message holding WANT.
@@ -173,35 +185,39 @@ pbad() {
   msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
   grep -qF -- "$want" <<<"$msg" || { echo "FAIL: production: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
 }
-pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${prod[@]}" --set demoValues=true
-pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}" --set profile=production
-pbad 'postgres.enabled: the bundled Postgres is demo-only (D9)' "${prod[@]}" --set postgres.enabled=true
-pbad 'networkPolicies.plain: the demo'"'"'s ingress-only policy' "${prod[@]}" --set networkPolicies.plain=true
-pbad 'maku.demoValues: the maku chart'"'"'s demo marker' "${prod[@]}" --set maku.demoValues=true
-pbad 'maku-factory.demo, maku-factory.config.demo' "${prod[@]}" --set maku-factory.demo=true
+# each demo-only setting fails without demoValues, naming values-demo.yaml
+pbad 'postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone' "${prod[@]}" --set postgres.enabled=true
+pbad 'postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone' "${img[@]}" --set postgres.enabled=true
+pbad 'maku.demoValues: the maku chart'"'"'s demo marker, which admits runController.model.mode secret (the provider key in the sandbox, D7); values-demo.yaml sets it' "${prod[@]}" --set maku.demoValues=true
+pbad 'maku-factory.demo, maku-factory.config.demo: the factory'"'"'s laptop demo mode, admitted by values-demo.yaml alone' "${prod[@]}" --set maku-factory.demo=true
 # model.mode secret puts the provider key in the sandbox (D7): demo-only, so production refuses it
-pbad '  - maku.runController.model.mode: secret is demo-only (D7)' "${prod[@]}" --set maku.runController.model.mode=secret --set maku-factory.config.runs.gatewayIdentity=false
-pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18)' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
+pbad '  - maku.runController.model.mode: secret is demo-only (D7), admitted by values-demo.yaml alone' "${prod[@]}" --set maku.runController.model.mode=secret --set maku-factory.config.runs.gatewayIdentity=false
+pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18), admitted by values-demo.yaml alone' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
+# values-demo.yaml without its marker is production: every demo-only setting it carries is listed
+msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}" --set demoValues=false 2>&1 >/dev/null || true)"
+for line in 'postgres.enabled: the bundled Postgres is demo-only' 'maku.demoValues: the maku chart'"'"'s demo marker' 'maku.sandbox.unsafeAllowRunc:' 'maku-factory.demo, maku-factory.config.demo:'; do
+  grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: values-demo.yaml without demoValues does not list '$line' (got: $msg)" >&2; fail=1; }
+done
 pbad "removed in v4 step 8: set sandbox.unsafeAllowRunc" "${prod[@]}" --set maku.runController.allowUnsandboxed=true
 # v4 step 8 (D5, D10, R3): the XR run kind and octo-sts are refused through the umbrella too
 pbad "removed in v4 step 8: octo-sts is gone" "${prod[@]}" --set networkPolicies.factory.octoSTS.port=443
 pbad "networkPolicies.factory.octoSTS was removed in v4 step 8" "${prod[@]}" --skip-schema-validation --set networkPolicies.factory.octoSTS.port=443
 pbad "runs.group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5)" "${prod[@]}" --set maku.runs.group=cloud.ogenki.io
 # an empty production file with maku on: one message, every maku seam on its own line, the gate first
-msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku --set maku.enabled=true 2>&1 >/dev/null || true)"
 for line in 'maku.broker.image.tag: <version>@sha256:<digest>' 'maku.runController.image.tag: <version>@sha256:<digest>' \
   'maku.runController.images.harness.tag:' 'maku.runController.images.bridge.tag:' 'maku.broker.human.issuer: the OIDC issuer' \
   'maku.broker.runIssuer.issuer:' 'maku.broker.database.brokerSecret: the broker'"'"'s DSN Secret' 'maku.broker.publicURL: the https URL'; do
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: an empty production file does not list '$line' (got: $msg)" >&2; fail=1; }
 done
 # maku.sandbox.runtimeClassName defaults to gvisor (v4 step 8): no seam unless a values file empties it
-grep -qF 'profile production: 8 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):' <<<"$msg" ||
+grep -qF '8 missing or refused seams (docs/upgrading.md#from-the-demo-to-production; the demo is -f values-demo.yaml):' <<<"$msg" ||
   { echo "FAIL: an empty production file's one message does not count its 8 seams (got: $msg)" >&2; fail=1; }
 pbad 'maku.sandbox.runtimeClassName: the RuntimeClass' "${prod[@]}" --set maku.sandbox.runtimeClassName=
 grep -qF 'templates/gate/renders/before/subcharts.yaml' <<<"$msg" || { echo "FAIL: a subchart refused before the gate (got: $msg)" >&2; fail=1; }
-pbad 'maku.broker.human.mode: oidc (got local' --set profile=production --set maku.enabled=true --set maku.broker.human.mode=local
+pbad 'maku.broker.human.mode: oidc (got local' --set maku.enabled=true --set maku.broker.human.mode=local
 # every enabled component's seams in the one message: the factory's beside maku's
-msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true --set maku-factory.enabled=true 2>&1 >/dev/null || true)"
+msg="$(helm template af . -n maku --set maku.enabled=true --set maku-factory.enabled=true 2>&1 >/dev/null || true)"
 for line in 'maku-factory.image.tag: <version>@sha256:<digest>' 'maku-factory.config.api.humanIssuer:' 'maku.broker.publicURL:'; do
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: maku and the factory: the message does not list '$line' (got: $msg)" >&2; fail=1; }
 done
@@ -217,7 +233,7 @@ out="$(helm template af . -n maku "${prod[@]}")" || { echo "FAIL: tests/producti
 for d in room-broker run-controller agent-factory; do
   ykind Deployment "select(.metadata.name == \"$d\") | true" "production renders the Deployment $d"
 done
-ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and (.metadata.name == "rooms-db" or .metadata.name == "agent-factory-api"))' 'production renders a demo object: the bundled Postgres, a generated Secret or the plain policy'
+ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and .metadata.name == "rooms-db")' 'production renders a demo object: the bundled Postgres, its policy or a generated Secret'
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'production with every seam named shows no unsafe setting'
 # Review of #565: production renders no broker TLS of its own (tls.yaml is the demo's), so ExternalSecrets
 # may deliver room-broker-tls, room-broker-ca and openbao-ca there; the demo still refuses them.
@@ -228,7 +244,7 @@ got="$(yq ea '[select(.kind == "ExternalSecret") | .spec.target.name] | sort | j
 [[ $got == "openbao-ca,room-broker-ca,room-broker-tls" ]] || { echo "FAIL: production's TLS ExternalSecrets are '$got'" >&2; fail=1; }
 pbad 'the umbrella (its broker TLS)' "${args[@]}" "${eso_tls[@]}"
 # staged adoption (D25): the factory alone, with its seams, renders the factory and nothing of maku's
-out="$(helm template af . -n maku --set profile=production --set maku-factory.enabled=true --set maku-factory.image.tag=$digest)" ||
+out="$(helm template af . -n maku --set maku-factory.enabled=true --set maku-factory.image.tag=$digest)" ||
   { echo "FAIL: maku.enabled=false with maku-factory alone does not render" >&2; fail=1; out=''; }
 ykind Deployment 'select(.metadata.name == "agent-factory") | true' 'the factory alone renders its Deployment'
 ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)")) | .metadata.name' 'the factory alone renders a maku object'
@@ -496,9 +512,14 @@ bad 'maku.broker.human.groups.member "agents-member" and maku-factory.config.api
 bad 'maku.broker.human.audience "" and maku-factory.config.api.audience "https://api.rooms" must be equal' "${idv[@]}" "${fapi[@]}" --set maku-factory.config.api.audience=https://api.rooms
 bad 'maku.broker.human.mcp.sponsoredClientClaim "cid" and maku-factory.config.api.sponsoredClientClaim "" must be equal' "${idv[@]}" "${fapi[@]}" --set maku.broker.human.mcp.sponsoredClientClaim=cid
 # v4 D24 (step 7 PR B): the maku preflight collects the factory's checks, which need its route grant.
-bad 'maku.preflight.enabled needs maku-factory.preflight.enabled' "${args[@]}" --set maku.preflight.enabled=true
-helm template af . -n maku "${args[@]}" --set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true >/dev/null ||
-  { echo 'FAIL: both preflight switches on must render' >&2; fail=1; }
+# Both are on by default since step 8 (the demo's golden holds them).
+bad 'maku.preflight.enabled needs maku-factory.preflight.enabled' "${args[@]}" --set maku-factory.preflight.enabled=false
+helm template af . -n maku "${args[@]}" --set maku.preflight.enabled=false --set maku-factory.preflight.enabled=false >/dev/null ||
+  { echo 'FAIL: both preflight switches off must render' >&2; fail=1; }
+out="$demo_out"
+ykind Job 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .metadata.annotations."helm.sh/hook" == "test"' 'the demo renders the preflight test hook (v4 step 8)'
+ykind CronJob 'select(.metadata.labels."app.kubernetes.io/name" == "preflight") | .spec.suspend == true' 'the demo renders the suspended preflight CronJob (v4 step 8)'
+ykind Deployment 'select(.metadata.name == "agent-factory") | (.spec.template.spec.containers[0].env | map(select(.name == "MAKU_PREFLIGHT") | .value) | join(",")) == "true"' 'the demo serves the factory'"'"'s /preflight (v4 step 8)'
 # v4 D14, PR10: ExternalSecrets for the seams the values list, against the store they name; off, nothing.
 esv=("${args[@]}" -f tests/externalsecrets-values.yaml)
 out="$(helm template af . -n maku "${args[@]}")"
@@ -561,8 +582,8 @@ ynone 'select(.kind == "Gateway")' 'an external gateway renders no Gateway'
 
 # v4 D9: the bundled Postgres is the demo's alone. The demo gains exactly the third DSN Secret, the
 # retention CronJob reading it, and the job's ingress to rooms-db. postgres.enabled=false with the demo
-# values renders no database and no DSN Secret, and the broker reads the Secrets it names; any other
-# profile with the bundled Postgres on fails, naming D9.
+# values renders no database and no DSN Secret, and the broker reads the Secrets it names; without
+# demoValues the bundled Postgres on fails, naming D9 (the seam gate, above).
 demo="$(helm template af . -n maku "${args[@]}")"
 out="$demo"
 ykind Secret 'select(.metadata.name == "rooms-retention-dsn") | .stringData.uri | test("^postgresql://rooms_retention:[A-Za-z0-9]{32}@rooms-db[.]maku[.]svc:5432/rooms[?]sslmode=disable$")' 'demo: the retention DSN Secret, as rooms_retention'
@@ -572,10 +593,6 @@ out="$(helm template af . -n maku "${args[@]}" --set postgres.enabled=false)"
 ynone 'select(.kind == "StatefulSet" or .kind == "Service" and .metadata.name == "rooms-db" or .kind == "ConfigMap" and .metadata.name == "rooms-db-init" or .kind == "NetworkPolicy" and .metadata.name == "rooms-db" or .kind == "Secret" and (.metadata.name | test("^rooms-")))' 'postgres.enabled=false still renders the bundled database or its Secrets'
 got=$(yq ea '[select(.kind == "Deployment" and .metadata.name == "room-broker") | .spec.template.spec | (.initContainers[0].env[0].valueFrom.secretKeyRef.name, .containers[0].env[] | select(.name == "ROOMS_DATABASE_URL") | .valueFrom.secretKeyRef.name)] + [select(.kind == "CronJob") | .spec.jobTemplate.spec.template.spec.containers[0].env[0].valueFrom.secretKeyRef.name] | join(",")' - <<<"$out")
 [[ $got == "rooms-owner-dsn,rooms-broker-dsn,rooms-retention-dsn" ]] || { echo "FAIL: postgres.enabled=false: the broker and the job read '$got', want the three named Secrets" >&2; fail=1; }
-for p in production ""; do
-  msg="$(helm template af . -n maku "${img[@]}" --set profile="$p" --set postgres.enabled=true 2>&1 >/dev/null || true)"
-  grep -qF 'the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets' <<<"$msg" || { echo "FAIL: profile '$p' with postgres.enabled does not fail naming D9 (got: $msg)" >&2; fail=1; }
-done
 yq -e '.postgres.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not turn the bundled Postgres off" >&2; fail=1; }
 
 # values-mine.example.yaml renders (dummy values for the CHANGE lines) and its config parses
@@ -856,9 +873,9 @@ bad 'slack.networkPolicy.mode "none" must equal maku.networkPolicies.mode "kuber
 
 # v4 step 6 Task 16 (D6): the factory's default-deny, off by default (the golden holds it), per mode.
 ynone 'select((.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") and .metadata.name == "agent-factory") | .kind' 'networkPolicies.factory off renders the factory policy'
-fnp=("${args[@]}" --set networkPolicies.plain=false --set networkPolicies.factory.enabled=true)
+# The preflight off here: its rule is asserted with it on below.
+fnp=("${args[@]}" --set networkPolicies.factory.enabled=true --set maku.preflight.enabled=false --set maku-factory.preflight.enabled=false)
 bad 'networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes' "${fnp[@]}"
-bad 'networkPolicies.factory.enabled and networkPolicies.plain both select the factory' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set networkPolicies.plain=true
 bad 'networkPolicies.factory.meter.port is required with its to' "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes --set-json 'networkPolicies.factory.meter.to=[{"podSelector":{}}]'
 out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=kubernetes \
   --set-json 'networkPolicies.factory.intakeFrom=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"runlore"}}}]' \

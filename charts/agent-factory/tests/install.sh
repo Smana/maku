@@ -3,8 +3,9 @@
 #
 # Installs charts/agent-factory with values-demo.yaml on a throwaway cluster and asserts it.
 #   usage: install.sh k3d|kind        (task chart:install:k3d | chart:install:kind)
-# The CRD chart (release af-crds) installs first. ADOPT=1 instead installs the umbrella alone, creates
-# a Room, adopts the CRDs into af-crds with docs/upgrading.md's commands, and asserts the Room survives.
+# The CRD chart (release af-crds) installs first. ADOPT=1 instead creates the CRDs as a release before
+# the CRD chart did (its subcharts' crds/: created, unowned), installs the umbrella, creates a Room,
+# adopts the CRDs into af-crds with docs/upgrading.md's commands, and asserts the Room survives.
 # Images: broker, run-controller and factory are built from this checkout (PREBUILT=1: already built) and loaded; harness and
 # bridge are the latest release's, by digest (no run starts here). A dummy GitHub App means the
 # factory cannot pass start-up: the assertion is that it parses its config, mounts everything and
@@ -37,8 +38,8 @@
 # names it, and the gateway leg's run, annotated with a traceparent as the factory stamps it, exports its
 # span to the stub under that trace id. With NETPOL=kubernetes (the gw-caller probe gets its own egress
 # policy, F9) the step also asserts the run's own NetworkPolicy opens exactly the collector's port.
-# PREFLIGHT=1 (CI's kubernetes and unenforced legs) renders the install's preflight (v4 D24) and runs it
-# once with `maku preflight` (from its CronJob): the cluster checks pass, the broker's database check passes through the broker's
+# PREFLIGHT=1 (CI's kubernetes and unenforced legs) runs the install's preflight (v4 D24; rendered in
+# every leg, on by default since step 8) once with `maku preflight` (from its CronJob): the cluster checks pass, the broker's database check passes through the broker's
 # own policy and DSN, and the run-controller's run-path passes, or, unenforced, fails on the netprobe.
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
@@ -222,7 +223,6 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 [[ -z $EXTERNAL_DB ]] || values+=(--set postgres.enabled=false)
-[[ -z $PREFLIGHT ]] || values+=(--set maku.preflight.enabled=true --set maku-factory.preflight.enabled=true)
 issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
 # The demo's gateway with the probe's echo as its provider: the umbrella
 # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
@@ -312,10 +312,13 @@ EOF
 }
 crds=(agentruns factories mergepolicies repositories rooms tasks)
 if [[ ${ADOPT:-} == 1 ]]; then
-  # PR2: an install from before the CRD chart. The subcharts' crds/ create the CRDs, a Room is
-  # created, the CRDs are handed to the af-crds release (docs/upgrading.md), and the CRD chart installs.
+  # PR2: an install from before the CRD chart. Its subcharts' crds/ created the CRDs, with no Helm
+  # ownership (Helm creates crds/ and never labels them); v4 step 8 removed those crds/, so this leg
+  # creates them the same way. A Room is created, the CRDs are handed to the af-crds release
+  # (docs/upgrading.md), and the CRD chart installs.
   gateway_prereqs
-  step "ADOPT: the umbrella alone, its subcharts' crds/ create the CRDs"
+  step "ADOPT: the CRDs as a release's subcharts' crds/ created them, then the umbrella"
+  for c in "${crds[@]}"; do kubectl create -f "config/crd/maku.ogenki.io_$c.yaml" >/dev/null; done
   install_umbrella
   for c in "${crds[@]}"; do kubectl wait --for=condition=Established "crd/$c.maku.ogenki.io" --timeout=60s; done
   # a Room is named with a C2 id: 8 characters of [a-z2-7]
@@ -534,8 +537,8 @@ echo "ok: the cluster has none of those APIs, and the install needed none"
 # The probe helpers below are defined in every leg: later steps create pods in agents with them.
 # The rooms-db assertions skip EXTERNAL_DB, which has no rooms-db.
 if [[ -z $EXTERNAL_DB ]]; then
-step "plain NetworkPolicies: a run-labelled pod cannot reach rooms-db, the broker's pods can"
-kubectl -n "$NS" get networkpolicy rooms-db agent-factory-api
+step "the bundled Postgres's NetworkPolicy: a run-labelled pod cannot reach rooms-db, the broker's pods can"
+kubectl -n "$NS" get networkpolicy rooms-db
 fi
 # probe NAMESPACE LABELS: a short-lived pod connects to rooms-db:5432. Returns 0 when nc connected and
 # 1 when nc itself failed (refused or timed out); a kubectl or image-pull failure, where the pod never

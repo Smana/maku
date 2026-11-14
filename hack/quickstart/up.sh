@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: Apache-2.0
 # task quickstart: kind + Cilium + gVisor + cert-manager + CNPG + maku. Safe to re-run.
-# Env: MODEL_API_KEY GITHUB_TOKEN REPO (required); MODEL MODEL_BASE_URL CHART_REF AP_VERSION;
+# Env: MODEL_API_KEY GITHUB_TOKEN REPO (required); MODEL MODEL_BASE_URL CHART_REF CRDS_CHART_REF AP_VERSION;
 #      LOCAL_PORT (default 8080: the port you forward; the broker's publicURL follows it);
 #      ROOMCTL (a maku binary to use instead of the release's; required when UP_HELM_ARGS sets the image tags);
 #      ALLOW_UNSANDBOXED=1 (exactly 1: run agents under the default runtime, no gVisor; each run's room
@@ -28,6 +28,8 @@ qs_skew_ok "$(kubectl version --client -o json | yq -p=json '.clientVersion.mino
 MODEL="${MODEL:-claude-sonnet-5-5}"
 NS=maku
 CHART="${CHART_REF:-charts/maku}"
+# The CRDs' chart (v4 step 8: the maku chart ships none), installed first.
+CRDS_CHART="${CRDS_CHART_REF:-charts/agent-factory-crds}"
 read -ra extra <<<"${UP_HELM_ARGS:-}"
 
 # --- Preflight: everything that can fail in seconds fails before the cluster exists. ---
@@ -121,6 +123,10 @@ model_keys=(api_key=MODEL_API_KEY model=MODEL)
 [[ -z ${MODEL_BASE_URL:-} ]] || model_keys+=(base_url=MODEL_BASE_URL)
 qs_secret agents agent-model Opaque "${model_keys[@]}" | kubectl apply -f -
 qs_secret agents agent-git Opaque token=GITHUB_TOKEN | kubectl apply -f -
+
+step "the CRDs (agent-factory-crds)"
+helm upgrade --install ap-crds "$CRDS_CHART" -n "$NS" --wait --timeout 2m
+kubectl wait --for=condition=Established crd/rooms.maku.ogenki.io crd/agentruns.maku.ogenki.io --timeout=60s
 
 step "maku"
 helm upgrade --install ap "$CHART" -n "$NS" "${chart_args[@]}" "${extra[@]}" --wait --timeout 10m

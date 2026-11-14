@@ -64,13 +64,15 @@ factory objects, the merge gate's ruleset and the GitOps files, and it applies n
 
 ## From the demo to production
 
-From v0.4x (v4 rollout step 6), `profile: production` renders. Start from
+From v0.4x (v4 rollout step 6) the chart renders production, and since step 8 its defaults are
+production: there is no `profile` to set. Start from
 [`values-production.example.yaml`](../charts/agent-factory/values-production.example.yaml), never from
-`values-demo.yaml`: the render refuses the demo's own values. It checks the seams of each enabled
-component and fails once, with every missing seam on its own line, its key and its doc:
+`values-demo.yaml`: its `demoValues` admits the demo-only values and skips the seams. Without it, the
+render checks the seams of each enabled component and fails once, with every missing seam on its own
+line, its key and its doc:
 
 ```text
-Error: execution error at (agent-factory/templates/gate/renders/before/subcharts.yaml:5:4): profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):
+Error: execution error at (agent-factory/templates/gate/renders/before/subcharts.yaml:5:4): 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production; the demo is -f values-demo.yaml):
   - maku.broker.image.tag: <version>@sha256:<digest>, never a bare tag (got ""; docs/security.md#supply-chain)
   - maku.broker.human.issuer: the OIDC issuer humans sign in at (docs/identity.md#the-keys)
   ...
@@ -78,7 +80,7 @@ Error: execution error at (agent-factory/templates/gate/renders/before/subcharts
 
 | Component | Its seams | Refused |
 |---|---|---|
-| The release | none | `demoValues`, `postgres.enabled` (D9), `networkPolicies.plain` |
+| The release | none | `postgres.enabled` (D9) |
 | `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `runController.gitTokens: perRun`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
 | `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`, or `githubSecret`); with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
 | `slack` | the agreements of [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml) and its three Secrets by name | |
@@ -109,7 +111,7 @@ moves first, under the same release name:
 
    ```bash
    helm upgrade agent-factory oci://ghcr.io/smana/charts/agent-factory --version <version> -n agent-system \
-     --set profile=production --set maku-factory.enabled=true -f factory-values.yaml
+     --set maku-factory.enabled=true -f factory-values.yaml
    ```
 
    The factory's Deployment, Service and ConfigMap keep their names, so Helm upgrades them in place:
@@ -126,7 +128,7 @@ New keys, all off by default, so a release that sets none of them renders as bef
 |---|---|---|
 | `slack` (the `maku-slack` subchart) | `enabled: false` | the Slack App ([Slack App, Install](slack.md#install)). Its values must agree with `maku.broker.webhooks` and both `sponsored` lists (`values-slack.example.yaml`) |
 | `maku.broker.webhooks`, `suspend`, `policyManagement`, `coordination` | unset | the broker's own blocks, verbatim. A webhook may name its key's Secret (`existingSecret`, `key`) and its peers (`networkPolicy.to`) |
-| `networkPolicies.factory` | `enabled: false` | the factory's default-deny, in maku's mode; refused beside the demo's `networkPolicies.plain` |
+| `networkPolicies.factory` | `enabled: false` | the factory's default-deny, in maku's mode |
 
 **`slack.enabled: true` now installs the App.** Before this release, `slack.enabled: true` only added
 the `maku-slack` alert group, for an App installed outside the chart. It now renders the App and checks
@@ -196,6 +198,32 @@ The defaults move with it:
   `.github/chainguard/*.sts.yaml` are no longer read and can be deleted.
 - **`human_edit`** (the tracer's exemption for a maintainer's edit of an applied output) now
   applies under `runTokens.perRun`, where a run's own edit is the agents App's.
+
+### The chart contract
+
+The umbrella's defaults are production, the subcharts carry no CRD, and the preflight is on. Each
+removed key is refused by the schema with a message naming its replacement; under
+`--skip-schema-validation` the template does.
+
+| Change | Before | Now | What you do |
+|---|---|---|---|
+| `profile` (umbrella) | `demo` or `production`, required | removed: every render without `demoValues` checks the seams of each enabled component | Delete `profile` from your values. The demo stays `-f values-demo.yaml`, whose `demoValues: true` is the one switch that admits the demo-only settings |
+| The demo-only settings | refused under `profile: production` | refused without `demoValues`, naming `values-demo.yaml`: `postgres.enabled`, `maku.demoValues`, `maku.sandbox.unsafeAllowRunc`, `maku.runController.model.mode: secret`, `maku-factory.demo` | nothing, unless a production values file set one |
+| `networkPolicies.plain` (umbrella) | `true` in `values-demo.yaml`: `rooms-db` and the factory's API admitted the broker alone | removed. The bundled Postgres renders its own `rooms-db` policy; the factory's is `networkPolicies.factory`, in `maku.networkPolicies.mode` `kubernetes` or `cilium` | Delete the key. On a CNI that enforces NetworkPolicy, set `maku.networkPolicies.mode: kubernetes` and `networkPolicies.factory.enabled: true` |
+| The `crds/` of `maku` and `maku-factory` | the six CRDs, also inside the umbrella | none: [`agent-factory-crds`](../charts/agent-factory-crds/README.md) alone carries them | Install `agent-factory-crds` first, also for `maku` or `maku-factory` used alone, and [adopt the CRDs](#adopting-the-crds) if it does not own them yet. Flux's `crds: Skip` and Argo CD's `skipCrds` on those releases are now no-ops |
+| `maku.preflight.enabled`, `maku-factory.preflight.enabled` | `false` | `true`: the Helm test hook, the suspended CronJob `<release>-preflight`, and each component's `/preflight` | nothing; `false` on both turns it off. Under Flux, `spec.test.enable: true` runs the hook after each upgrade ([the preflight](install.md#check-it-the-preflight)) |
+
+```bash
+kubectl get crd -l app.kubernetes.io/managed-by=Helm -o custom-columns=NAME:.metadata.name,RELEASE:.metadata.annotations.meta\.helm\.sh/release-name | grep maku.ogenki.io
+```
+
+Every `maku.ogenki.io` CRD must name your `agent-factory-crds` release before you upgrade. Removing the
+subcharts' `crds/` deletes no CRD: Helm never deletes what it created from `crds/`, and
+`agent-factory-crds` marks each CRD `helm.sh/resource-policy: keep`.
+
+The preflight's Role gets the Secrets of [install Secrets](install-secrets.md) the values enable, by
+name, the broker's TLS pair and the DSNs among them, to check their keys. Its pod runs only when
+`helm test` or `maku preflight` starts it.
 
 ### Private code is refused without its acknowledgement
 
@@ -610,14 +638,14 @@ This release changes three things in `charts/agent-factory`.
 | The demo's defaults moved from `values.yaml` to `values-demo.yaml`; `values.yaml` is the production-safe skeleton | Add `-f charts/agent-factory/values-demo.yaml` before your own values files. `--set profile=demo` alone now fails with `profile demo needs -f values-demo.yaml` |
 | `values.schema.json` rejects unknown top-level keys and malformed values, and every chart requires Kubernetes 1.30 or later (`kubeVersion: ">=1.30.0-0"`) | Fix the key or value the error names. Use Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version 1.30.0` or later |
 
-`maku` and `maku-factory`, used on their own, change only by their `kubeVersion`. They keep their
-`crds/`, so a Flux HelmRelease with `crds: CreateReplace` keeps working unchanged.
+`maku` and `maku-factory`, used on their own, change only by their `kubeVersion`. They kept their
+`crds/` until rollout step 8, which removes them ([the chart contract](#the-chart-contract)).
 
 ### Two charts, one set of CRDs
 
-The `maku` and `maku-factory` subcharts keep their `crds/` until rollout step 8, so the umbrella still
-carries the same six CRDs. Once `agent-factory-crds` is installed, it alone manages them: tell your
-GitOps tool to skip the umbrella's copies.
+The `maku` and `maku-factory` subcharts kept their `crds/` until rollout step 8, so the umbrella
+carried the same six CRDs. Once `agent-factory-crds` is installed, it alone manages them: on a release
+before step 8, tell your GitOps tool to skip the umbrella's copies. From step 8 there are none to skip.
 
 | Tool | On the umbrella's release |
 |---|---|

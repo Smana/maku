@@ -14,9 +14,9 @@
 # These were the chart's defaults until v0.4x. They live here because Helm deep-merges maps: a
 # production values file layered on demo defaults would inherit demo: true, factoryInsecure,
 # unsafeAllowRunc and the rest. values.yaml is the production-safe skeleton.
-profile: demo
-# The marker the profile gate looks for. `--set profile=demo` without this file fails: a subchart
-# reads only the values Helm hands it, so no parent helper can bring back the demo's maku: and
+# The demo's marker, and the one switch that admits the demo-only settings (v4 D13): without it, every
+# render checks the production seams. `--set demoValues=true` without this file renders half a demo: a
+# subchart reads only the values Helm hands it, so no parent helper can bring back the demo's maku: and
 # maku-factory: values.
 demoValues: true
 
@@ -236,10 +236,3 @@ postgres:
   resources:
     requests: {cpu: 100m, memory: 256Mi}
     limits: {cpu: "1", memory: 512Mi}
-
-networkPolicies:
-  # Plain Kubernetes NetworkPolicies (no Cilium in the demo): ingress to rooms-db only from the
-  # broker, and to the factory's API port only from the broker (its ops/probe port stays open to all, its
-  # intake port is closed). Runs keep their egress. Needs a CNI that
-  # enforces NetworkPolicy (k3s does; kind from v0.24 with kindnet).
-  plain: true

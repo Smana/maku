@@ -28,7 +28,7 @@ func TestAgentRunPolicies(t *testing.T) {
 	policy := render(t, "templates/agentrun-policies.yaml", 4,
 		"agentRunPolicies.creators={"+factoryUser+"}", "agentRunPolicies.factoryServiceAccount=agent-factory")
 	ctrl.SetLogger(logr.Discard())
-	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "crds")}, ErrorIfCRDPathMissing: true}
+	e := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("..", "..", "..", "agent-factory-crds", "files")}, ErrorIfCRDPathMissing: true}
 	cfg, err := e.Start()
 	if err != nil {
 		t.Fatal(err)

@@ -327,7 +327,6 @@ spec:
               to:
               - matchLabels:
                   io.kubernetes.pod.namespace: observability
-        profile: production
         slack:
           config:
             channels:

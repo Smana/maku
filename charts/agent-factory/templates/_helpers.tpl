@@ -10,23 +10,22 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{- define "afumbrella.caSecret" -}}{{ .Values.maku.broker.tls.caSecretName | default "room-broker-ca" }}{{- end }}
 {{- define "afumbrella.factoryCASecret" -}}{{ index .Values "maku-factory" "brokerCASecret" | default "openbao-ca" }}{{- end }}
 
-{{/* The profile gate, included first by every umbrella template, and alone by templates/gate/renders/before/subcharts.yaml, which
-Helm renders before any subchart's template (it is deeper). The skeleton values hold no tls: or networkPolicies:, and postgres: only its enabled: false.
-  - demo needs values-demo.yaml (its `demoValues` marker): a subchart reads only the values Helm hands it, so `--set profile=demo`
-    alone would render half a demo.
-  - production (v4 EX16) checks the seams of each enabled component, and fails once, naming every missing seam (afumbrella.production). */}}
-{{- define "afumbrella.profile" -}}
-{{- $profile := .Values.profile | default "" -}}
-{{- /* v4 D9: the bundled single-replica Postgres has no backup, no HA and no TLS. Production lists it with its other seams. */ -}}
-{{- if and (dig "enabled" false (.Values.postgres | default dict)) (ne $profile "demo") (ne $profile "production") -}}
-{{- fail "the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
+{{/* The gate, included first by every umbrella template, and alone by templates/gate/renders/before/subcharts.yaml, which
+Helm renders before any subchart's template (it is deeper). The defaults are production (v4 D13, step 8 CL4):
+  - `profile` was removed; the schema rejects it, and a values file that still sets it fails here naming the replacement.
+  - `demoValues` (values-demo.yaml's marker) is the only switch that admits the demo-only settings: the bundled Postgres,
+    sandbox.unsafeAllowRunc, model.mode secret and the factory's demo mode. A subchart reads only the values Helm hands
+    it, so the marker is the proof the demo's maku: and maku-factory: values are all there.
+  - Without it, afumbrella.seamGate checks the seams of each enabled component and fails once, naming every missing one. */}}
+{{- define "afumbrella.gate" -}}
+{{- if hasKey .Values "profile" -}}
+{{- fail "profile was removed in v4 step 8: the defaults are production; the demo is -f values-demo.yaml (docs/upgrading.md#the-chart-contract)" -}}
 {{- end -}}
-{{- if eq $profile "production" -}}
-{{- include "afumbrella.production" . -}}
-{{- else if ne $profile "demo" -}}
-{{- fail (printf "profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production); got %q" $profile) -}}
-{{- else if not .Values.demoValues -}}
-{{- fail "profile demo needs -f values-demo.yaml (the demo's defaults moved there in v0.4x)" -}}
+{{- if hasKey (.Values.networkPolicies | default dict) "plain" -}}
+{{- fail "networkPolicies.plain was removed in v4 step 8: replaced by the default-deny policies of each component (networkPolicies.factory, maku.networkPolicies.mode; the bundled Postgres keeps its own); docs/upgrading.md#the-chart-contract" -}}
+{{- end -}}
+{{- if not .Values.demoValues -}}
+{{- include "afumbrella.seamGate" . -}}
 {{- end -}}
 {{- $d := .Values.clusterDomain -}}
 {{- if or (ne $d (.Values.maku.clusterDomain | default "cluster.local")) (ne $d (index .Values "maku-factory" "clusterDomain" | default "cluster.local")) -}}
@@ -57,24 +56,18 @@ Helm renders before any subchart's template (it is deeper). The skeleton values 
 {{- include "afumbrella.factoryPolicy" . -}}
 {{- end }}
 
-{{/* profile production (v4 EX16, D25): a gate per enabled component. It refuses the demo's own values
-and lists every missing seam of every enabled component in one failure, a line each with its key and
-its doc. The agreements the umbrella checks for both profiles (identity, expose, webProxy, slack) are
-listed with them. maku.enabled false with maku-factory.enabled true is a valid render: an install adopts
+{{/* The seam gate (v4 EX16, D25; step 8 CL4), on every render without demoValues: a gate per enabled
+component. It refuses the demo-only values, naming values-demo.yaml, and lists every missing seam of every
+enabled component in one failure, a line each with its key and its doc. The agreements the umbrella
+checks for the demo too (identity, expose, webProxy, slack) are listed with them. maku.enabled false with maku-factory.enabled true is a valid render: an install adopts
 the umbrella one component at a time. networkPolicies.mode none and factoryInsecure stay allowed, on the
 install banner (PR9); sandbox.unsafeAllowRunc does not (D18: the demo and kind only). The Slack App's
 three Secret names are its schema's (minLength 1). */}}
-{{- define "afumbrella.production" -}}
+{{- define "afumbrella.seamGate" -}}
 {{- $errs := list -}}
 {{- $up := "docs/upgrading.md#from-the-demo-to-production" -}}
-{{- if .Values.demoValues -}}
-{{- $errs = append $errs (printf "demoValues: values-demo.yaml is the demo's; a production install starts from the skeleton (%s)" $up) -}}
-{{- end -}}
 {{- if dig "enabled" false (.Values.postgres | default dict) -}}
-{{- $errs = append $errs "postgres.enabled: the bundled Postgres is demo-only (D9): bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
-{{- end -}}
-{{- if dig "plain" false (.Values.networkPolicies | default dict) -}}
-{{- $errs = append $errs (printf "networkPolicies.plain: the demo's ingress-only policy; production uses networkPolicies.factory, in maku.networkPolicies' mode (%s)" $up) -}}
+{{- $errs = append $errs "postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone: bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
 {{- end -}}
 {{- $pin := "^[A-Za-z0-9_.-]+@sha256:[0-9a-f]+$" -}}
 {{- $maku := .Values.maku | default dict -}}
@@ -83,7 +76,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- $h := $b.human | default dict -}}
 {{- $rc := $maku.runController | default dict -}}
 {{- if $maku.demoValues -}}
-{{- $errs = append $errs (printf "maku.demoValues: the maku chart's demo marker, which admits runController.model.mode secret (the provider key in the sandbox, D7) (%s)" $up) -}}
+{{- $errs = append $errs (printf "maku.demoValues: the maku chart's demo marker, which admits runController.model.mode secret (the provider key in the sandbox, D7); values-demo.yaml sets it with demoValues (%s)" $up) -}}
 {{- end -}}
 {{- if not (dig "e2e" "unpinnedImages" false $maku) -}}
 {{- $images := list (list "maku.broker.image.tag" (dig "image" "tag" "" $b)) -}}
@@ -112,11 +105,11 @@ three Secret names are its schema's (minLength 1). */}}
 {{- end -}}
 {{- if ne (toString $rc.enabled) "false" -}}
 {{- if eq (dig "model" "mode" "gateway" $rc) "secret" -}}
-{{- $errs = append $errs "maku.runController.model.mode: secret is demo-only (D7): the provider key would sit in the sandbox; set gateway, with maku-gateway or an external gateway (docs/upgrading.md#the-gateway-is-the-model-path)" -}}
+{{- $errs = append $errs "maku.runController.model.mode: secret is demo-only (D7), admitted by values-demo.yaml alone: the provider key would sit in the sandbox; set gateway, with maku-gateway or an external gateway (docs/upgrading.md#the-gateway-is-the-model-path)" -}}
 {{- end -}}
 {{- $sb := $maku.sandbox | default dict -}}
 {{- if $sb.unsafeAllowRunc -}}
-{{- $errs = append $errs "maku.sandbox.unsafeAllowRunc: runs on the node's own runtime are for the demo and kind only (D18); name the sandbox in maku.sandbox.runtimeClassName (docs/security.md#the-run-pods-admission)" -}}
+{{- $errs = append $errs "maku.sandbox.unsafeAllowRunc: runs on the node's own runtime are for the demo and kind only (D18), admitted by values-demo.yaml alone; name the sandbox in maku.sandbox.runtimeClassName (docs/security.md#the-run-pods-admission)" -}}
 {{- else if not $sb.runtimeClassName -}}
 {{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/security.md#the-run-pods-admission)" -}}
 {{- end -}}
@@ -134,7 +127,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- end -}}
 {{- end -}}
 {{- if or $f.demo (dig "config" "demo" false $f) -}}
-{{- $errs = append $errs (printf "maku-factory.demo, maku-factory.config.demo: the factory's laptop demo mode (%s)" $up) -}}
+{{- $errs = append $errs (printf "maku-factory.demo, maku-factory.config.demo: the factory's laptop demo mode, admitted by values-demo.yaml alone (%s)" $up) -}}
 {{- end -}}
 {{- if not (dig "apps" "factory" "existingSecret" "" $f | default $f.githubSecret) -}}
 {{- $errs = append $errs "maku-factory.apps.factory.existingSecret: the factory App's Secret, keys app_id and private_key (docs/github-apps.md#the-factory-app)" -}}
@@ -147,7 +140,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- $errs = append $errs $e -}}
 {{- end -}}
 {{- if $errs -}}
-{{- fail (printf "profile production: %d missing or refused seams (docs/upgrading.md#from-the-demo-to-production):\n  - %s" (len $errs) (join "\n  - " $errs)) -}}
+{{- fail (printf "%d missing or refused seams (docs/upgrading.md#from-the-demo-to-production; the demo is -f values-demo.yaml):\n  - %s" (len $errs) (join "\n  - " $errs)) -}}
 {{- end -}}
 {{- end }}
 
@@ -348,7 +341,7 @@ maku-metrics admits cilium.fromEndpoints. maku-gateway: its policy admits metric
 {{- dict "web" $web "slack" $slack | toJson -}}
 {{- end }}
 
-{{/* The exposure rules (EX2, EX6), checked by the profile gate. Each surface needs its hosts and, by
+{{/* The exposure rules (EX2, EX6), checked by the gate. Each surface needs its hosts and, by
 mode, its parentRefs or IngressClass. The web is the broker's :8080 through the web front door, and
 never around it: the broker in oidc mode reads oauth2-proxy's identity headers, so it needs the proxy
 and a network policy that admits only the proxy. Default-deny would drop every request a policy does not
@@ -649,7 +642,7 @@ a key the App never reads, and every delivery is refused. */ -}}
 {{- end }}
 
 {{/* The factory's default-deny (plan v4 step 6, Task 16): it joins maku's mode, so mode none has no
-default-deny to join; the demo's ingress-only plain policy would select the same pods. */}}
+default-deny to join. */}}
 {{- define "afumbrella.factoryPolicy" -}}
 {{- if hasKey (dig "factory" dict (.Values.networkPolicies | default dict)) "octoSTS" -}}
 {{- fail "networkPolicies.factory.octoSTS was removed in v4 step 8: octo-sts is gone, the factory mints the publisher's token from the agents App (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
@@ -657,9 +650,6 @@ default-deny to join; the demo's ingress-only plain policy would select the same
 {{- if dig "factory" "enabled" false (.Values.networkPolicies | default dict) -}}
 {{- if eq (include "afumbrella.makuNetMode" .) "none" -}}
 {{- fail "networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes: the factory joins the release's default-deny" -}}
-{{- end -}}
-{{- if .Values.networkPolicies.plain -}}
-{{- fail "networkPolicies.factory.enabled and networkPolicies.plain both select the factory: plain is the demo's ingress-only policy; turn it off" -}}
 {{- end -}}
 {{- end -}}
 {{- end }}

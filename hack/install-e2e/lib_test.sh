@@ -78,7 +78,7 @@ done
   wizard
   gitops_values "$t/values.yaml"
   yq -e '.maku.broker.image.tag == "t1" and .["maku-factory"].image.tag == "t1" and .maku.e2e.unpinnedImages == true and
-    .profile == "production" and (.maku.broker.extraEnv | length) == 3 and .maku.broker.extraEnv[1].name == "ROOMS_GITHUB_API_URL"' \
+    (has("profile") | not) and (.maku.broker.extraEnv | length) == 3 and .maku.broker.extraEnv[1].name == "ROOMS_GITHUB_API_URL"' \
     "$t/values.yaml" >/dev/null
 ) >/dev/null 2>"$t/stderr" || { echo "FAIL: gitops_values: $(cat "$t/stderr")" >&2; fail=1; }
 [[ ! -s $log.err ]] || { echo "FAIL: $(cat "$log.err")" >&2; fail=1; }

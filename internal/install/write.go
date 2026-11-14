@@ -41,7 +41,7 @@ func Render(in Inputs) (Tree, error) {
 		return nil, err
 	}
 	t := Tree{}
-	head := "# Written by maku install --print " + in.Answers.String("version") + ": profile production, every seam answered.\n" +
+	head := "# Written by maku install --print " + in.Answers.String("version") + ": the production defaults, every seam answered.\n" +
 		"# It holds no secret value: the Secrets are under secrets/ (git-ignored), or ExternalSecrets.\n"
 	if t["values.yaml"], err = yamlDoc(head, vals); err != nil {
 		return nil, err

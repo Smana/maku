@@ -1,8 +1,9 @@
 # maku chart
 
-The umbrella chart: the room broker, the run controller (`runController`), the `Room` and `AgentRun`
-CRDs (`crds/`), and the runs namespace with its default-deny policy. It has no factory: install
-[maku-factory](../maku-factory/README.md) on its own.
+The room broker, the run controller (`runController`), and the runs namespace with its default-deny
+policy. It has no factory: install [maku-factory](../maku-factory/README.md) on its own. It ships no
+CRD: install [agent-factory-crds](../agent-factory-crds/README.md) first, which carries the `Room` and
+`AgentRun` CRDs (rollout step 8 removed this chart's `crds/`).
 
 ## Values that matter
 
@@ -24,7 +25,7 @@ CRDs (`crds/`), and the runs namespace with its default-deny policy. It has no f
 | `broker.tls.caSecretName` | `room-broker-ca`: a Secret in the release namespace holding `ca.crt` only, which the run controller copies into each run. Bring it: an ExternalSecret, a trust-manager Bundle targeting a Secret, or the quickstart's `up.sh`. Never `broker.tls.secretName`, which also holds the broker's `tls.key`: the render refuses it |
 | `broker.factoryURL`, `broker.factoryPodLabels` | The factory's run API, `https://agent-factory.<ns>.svc:8082` once the factory chart sets `api.tls.secretName`; an `http://` URL is refused unless `broker.factoryInsecure`. Set `factoryURL`, and the broker CNP lets the factory's pods (`factoryPodLabels`, default `app.kubernetes.io/name: agent-factory`, in the release namespace unless the labels set `io.kubernetes.pod.namespace`) reach `:8443`, and the broker reach them on `factoryURL`'s port. Cilium matches after service translation, so that port must be the factory pod's: 8082 with the factory chart |
 | `broker.factoryInsecure` | `true` admits an `http://` `factoryURL`: human tokens cross to the factory in the clear. Default `false` |
-| `preflight.enabled`, `preflight.strict`, `preflight.timeout`, `preflight.extraCRDs` | The install's preflight (v4 D24), off by default: a Helm test hook and a suspended CronJob `<release>-preflight`, running the run-controller image's `preflight`. It checks the Kubernetes version, the CRDs, the RuntimeClass and the Secrets of [install Secrets](../../docs/install-secrets.md) the values enable. See [upgrading](../../docs/upgrading.md#the-preflight-v04x-v4-rollout-step-7) |
+| `preflight.enabled`, `preflight.strict`, `preflight.timeout`, `preflight.extraCRDs` | The install's preflight (v4 D24), on by default since rollout step 8: a Helm test hook and a suspended CronJob `<release>-preflight`, running the run-controller image's `preflight`. It checks the Kubernetes version, the CRDs, the RuntimeClass and the Secrets of [install Secrets](../../docs/install-secrets.md) the values enable. See [upgrading](../../docs/upgrading.md#the-preflight-v04x-v4-rollout-step-7) |
 | `broker.oidc.existingSecret`, `broker.oidc.keys` | oidc mode: a Secret holding the OIDC client ids (keys `web-client-id`, `cli-client-id` and, under the zitadel preset, `project-id`), mounted at `/etc/room-broker/oidc`. It fills `human.clientIDFile`, `human.roomctlClientIDFile` and `human.projectIDFile` where the human block leaves them unset; a set path wins. See [identity](../../docs/identity.md) |
 | `broker.factoryCA.secretName` | A Secret with `ca.crt`, the CA that signs the factory's certificate; mounted at `/etc/room-broker/factory-ca` and written as `factoryCAFile`. Empty: the system roots |
 | `broker.modelGateway` | `{service, namespace, port, audiencePrefix}`: the model gateway's clients listener ([gateway](../../docs/gateway.md#the-planner-and-the-classifier)). Empty `service` (the default) changes nothing. Set, the broker mounts one projected token per client at `/var/run/secrets/maku/model-gateway/{planner,classifier}` (3600 s, read at use), its policy may reach the gateway's pods on `port` (8082), and `human.intake.plan` (when enabled) and an existing `human.slackIntents` get the gateway's `url` and the token as `apiKeyFile` when they set neither key. A block that sets both keeps them; a block that sets only one fails the render |
@@ -64,7 +65,7 @@ helm template ap charts/maku -n maku -f charts/maku/values-quickstart.yaml \
 
 | Topic | Behaviour |
 |---|---|
-| CRDs | `crds/` are installed once and **not upgraded by Helm**: `kubectl apply -f charts/maku/crds` on every upgrade |
+| CRDs | None here: `agent-factory-crds` installs and upgrades them, and keeps them on uninstall |
 | Upgrading with the run controller | Create the `broker.tls.caSecretName` Secret before upgrading: until it exists the controller starts no run and says `Secret <namespace>/room-broker-ca has no ca.crt` |
 | Runs namespace | Kept on uninstall (`helm.sh/resource-policy: keep`) and keeps its Helm ownership annotations: reinstalling under another release name needs `createRunsNamespace: false` |
 | `:8090` | `broker.roomTools.enabled: false` binds nothing. On in `key` mode, the port is not modelled in the chart: no Service port and no policy for it, so the `agent-router` route and its ingress are yours. In `tokenreview` mode the chart opens it to the runs |
