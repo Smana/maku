@@ -46,7 +46,7 @@ func RepositoryDeprecations(r *Repository) []string {
 		out = append(out, "merge.autoMergesPerDay")
 	}
 	for _, b := range r.Bindings {
-		if b.Mode == "off" {
+		if b.Mode == ModeOff { // disabled is its replacement (MR9)
 			out = append(out, fmt.Sprintf("mergePolicies[%s].mode: off", b.Name))
 		}
 	}
