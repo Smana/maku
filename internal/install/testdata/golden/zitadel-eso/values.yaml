@@ -160,7 +160,7 @@ maku:
         namespace: observability
       otlpEndpoint: http://agent-traces-collector.observability.svc.cluster.local:4318
   sandbox:
-    runtimeClassName: gke.gvisor
+    runtimeClassName: gvisor
 maku-factory:
   apps:
     agents:

@@ -298,7 +298,7 @@ What shipped differs from the earlier plans in ways step 7 must respect. Each li
   | Apps | create both through the manifest flow (E1), or reuse existing ones (ids and key paths) | `apps.agents`, `apps.factory`, `apps.merger.mode: factory` |
   | Identity | the issuer; `preset` (`generic` or `zitadel`); `tokenUse`; the roles claim; the agents and admin group values; the web, CLI and (with Slack) Slack client ids; the IdP family, only to warn (F4) | `maku.broker.human.*`, `maku-factory.config.api.*`, `webProxy` |
   | Database | the three DSN Secret names and their key; the CA Secret; `sslmode` | `maku.broker.database.*` |
-  | Sandbox | the RuntimeClass name (`gvisor`, `gke.gvisor`, `kata`, other) | `maku.sandbox.runtimeClassName` |
+  | Sandbox | the RuntimeClass name (`gvisor`, GKE Sandbox's included; `kata`; other) | `maku.sandbox.runtimeClassName` |
   | Network | `kubernetes` or `cilium`; the gateway's or ingress controller's pod peers | `maku.networkPolicies.mode`, `expose.networkPolicy` |
   | Models | the providers (the presets `maku-gateway` knows), their Secret names and keys, the tier aliases, and prices (optional; F11) | `maku-gateway.*`, `maku.runController.model.mode: gateway` |
   | Exposure | `httproute`, `ingress` or `none`; the web hostnames; the parentRefs or ingress class; TLS Secret names (Ingress) | `expose.*` |
@@ -377,7 +377,7 @@ What shipped differs from the earlier plans in ways step 7 must respect. Each li
   4. Flux, Argo CD and plain Helm. The CRD chart goes first, then agentgateway's CRDs outside Helm (A11), then the umbrella with `crds: Skip`;
   5. `maku preflight` and the check table (IN2);
   6. **private code (D3)**, with the sentence verbatim. The Repository reference in `docs/factory.md` carries the same sentence;
-  7. **sandbox nodes (D18):** GKE Sandbox (`gke.gvisor`), k3s with `runsc`, kubeadm with `runsc` or Kata, and EKS through Bottlerocket or a custom AMI;
+  7. **sandbox nodes (D18):** GKE Sandbox (its class is `gvisor`), k3s with `runsc`, kubeadm with `runsc` or Kata, and EKS through Bottlerocket or a custom AMI;
   8. the support floor (D26);
   9. several installs in one cluster (D2, R10);
   10. upgrading, which links `docs/upgrading.md`.

@@ -13,7 +13,7 @@ Written by `maku install --print`. Nothing here has been applied.
 
 ## Before
 
-- Postgres 16 or later with the three roles of docs/database.md, and the RuntimeClass `gke.gvisor` on the nodes.
+- Postgres 16 or later with the three roles of docs/database.md, and the RuntimeClass `gvisor` on the nodes.
 - Gateway API's standard CRDs (v1.2 or later), and the prometheus-operator CRDs.
 - The two Apps installed on the repositories, and their Secrets in the namespace.
 - The broker's TLS Secrets `room-broker-tls` and `room-broker-ca`, and the factory's `openbao-ca` (docs/install-secrets.md).

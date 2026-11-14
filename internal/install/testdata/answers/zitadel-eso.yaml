@@ -23,7 +23,7 @@ identity.webClientID: "300000000000000001"
 identity.cliClientID: "300000000000000002"
 cluster.issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
 cluster.jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
-sandbox.runtimeClassName: gke.gvisor
+sandbox.runtimeClassName: gvisor
 network.mode: cilium
 models.provider: zai
 models.default: glm-5.3
