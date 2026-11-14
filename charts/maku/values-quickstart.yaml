@@ -23,6 +23,6 @@ runController:
   model:
     mode: secret
   createRuntimeClass: true
-  # A laptop has one PAT (agent-git): every role shares it, so a reviewer could push. Unsafe
-  # anywhere else; set runController.gitReadSecret to a read-only token instead.
-  unsafeSharedGitToken: true
+  # A laptop has one PAT (agent-git), with no factory to mint per-run tokens: every role shares it,
+  # so a reviewer could push. Demo-only (demoValues); the banner shows shared_git_token.
+  gitSecret: agent-git

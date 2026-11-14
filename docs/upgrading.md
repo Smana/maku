@@ -79,8 +79,8 @@ Error: execution error at (agent-factory/templates/gate/renders/before/subcharts
 | Component | Its seams | Refused |
 |---|---|---|
 | The release | none | `demoValues`, `postgres.enabled` (D9), `networkPolicies.plain` |
-| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `runController.gitTokens: perRun`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
-| `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`, or `githubSecret`); with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
+| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `maku-factory`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `runController.gitSecret`, `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
+| `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`); the agents App's (`apps.agents.existingSecret`) with `runTokens: {enabled: true, perRun: true}`; with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
 | `slack` | the agreements of [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml) and its three Secrets by name | |
 | `webProxy` | `existingSecret`, and the broker's identity it derives its arguments from ([Exposure](exposure.md)) | |
 | `expose` | each surface's hosts, and its parentRefs or IngressClass; the gateway's pods in the release's policy mode | |
@@ -183,6 +183,25 @@ factory's config refuses the `runTokens` file aliases the same way when it start
 
 `runTokens.enabled` now needs `apps.agents.existingSecret`; the `/etc/agent-factory-run-tokens` mount
 is gone. Upgrade the chart and the image together: the config is decoded strictly.
+
+### The shared git token
+
+Per-run tokens are the only run token outside a demo (D10, owner ruling Q14). The run-controller
+mounts each run's own Secret, `<run>-git`, which the factory mints for the run's repository and role.
+
+| Removed | Instead |
+|---|---|
+| `runController.gitTokens` (`maku`) | Nothing to set: per-run is the only mode. Drop the key |
+| `runController.gitReadSecret` (`maku`) | Each run's token is minted for its role. Drop the key |
+| `runController.unsafeSharedGitToken` (`maku`) | `runController.gitSecret` alone names a laptop's one PAT, with `demoValues: true` |
+| The factory's shared `agent-git` / `agent-git-read` writer (`runTokens.enabled` without `perRun`) | `runTokens: {enabled: true, perRun: true}` and `apps.agents.existingSecret` |
+
+The schema refuses each removed key with a message naming what replaced it. Under
+`--skip-schema-validation` the template does, and so does the run-controller's config at start.
+`runController.gitSecret` now defaults to `""`, and it is refused without `demoValues`. When it is
+set, every role mounts that PAT, and the banner shows `shared_git_token`. `values-quickstart.yaml`
+sets it to `agent-git`. `maku-factory` refuses `runTokens.enabled` without `runTokens.perRun`. The
+umbrella refuses a factory with neither `runTokens.perRun` nor a laptop PAT, and one with both.
 
 ### The merge defaults
 

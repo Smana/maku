@@ -112,8 +112,8 @@ ruleset requires it ([quickstart](quickstart.md)).
 **The gate holds only while runs carry App tokens.** Its ruleset's bypass is by repository role.
 Give runs a personal access token of a user with the write, maintain or admin role instead of the
 agents App's tokens, and every run inherits that user's bypass: an agent can then merge an agent
-pull request the gate never armed. Runs get App installation tokens (the minter's, octo-sts's or
-step 2's shared writer), never a person's token.
+pull request the gate never armed. Runs get App installation tokens (the minter's or octo-sts's),
+never a person's token; a laptop's one PAT (`runController.gitSecret`) is demo-only.
 
 **D12's invariants, and the tests that hold them.** Every permission a run or the publisher is
 minted with comes from one role table, `minter.Roles` (`internal/factory/minter/roles.go`):
@@ -170,11 +170,6 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
   (`agents.ogenki.io/operating-mode`, `agents.ogenki.io/remaining-seconds`,
   `agents.ogenki.io/resumed-at`): no spec, label, finalizer, owner or other annotation, the meter's
   included. An install without the chart needs the same policy for the same bound.
-- **The factory may create Secrets in the runs namespace under `runTokens.enabled`** without
-  `perRun`: the shared run token writer creates `agent-git` and `agent-git-read` when they are
-  absent, and Kubernetes cannot scope `create` by name, so that one verb is unscoped in `agents`;
-  `get` and `update` stay bound to the two names. Without the demo or `runTokens.enabled`, the
-  factory has no Secret access there.
 
 ### The factory writes run token Secrets it cannot read
 
@@ -198,9 +193,9 @@ Residuals of per-run tokens:
   follower never holds a token the leader's could overwrite unrevoked.
 - **The pairing is enforced by the umbrella chart only.** HR13 lets a repository with
   `enforceOutputs` leave the XR once the factory has `runTokens.perRun`. The factory cannot see the
-  run-controller's `gitTokens`: installed from the standalone `maku` and `maku-factory` charts, a
-  run-controller left on `shared` would mount the shared write token while the factory believes
-  runs are scoped. The umbrella refuses that render; with the standalone charts, set both.
+  run-controller's `gitSecret`: installed from the standalone `maku` and `maku-factory` charts, a
+  run-controller given a laptop's PAT would mount it while the factory believes runs are scoped.
+  The umbrella refuses that render, and the `maku` chart admits `gitSecret` only with `demoValues`.
 - **An agent merge (until H3):** the implementer and tester keep `contents: write`, which can merge
   a pull request whose required checks are green, between the gate's `success` and the factory's
   own merge. Closed at H3 under HR12.
@@ -460,10 +455,9 @@ and needs no controller:
   those repositories can run code in a run pod; the image signature, not the policy, ties a digest
   to a release.
 - **A ResourceQuota `runs`** caps pods, CPU and memory as a safety net (D16). A run over it waits.
-- **Reviewer and triager runs hold a read-only token.** The run controller picks the git Secret a
-  run mounts: `runController.gitReadSecret` (contents, pull requests, issues, checks and actions:
-  read) for those two roles, `gitSecret` for implementer and tester. Without a read Secret it refuses
-  them, unless `runController.unsafeSharedGitToken` (a laptop's one PAT), which the install banner
+- **Reviewer and triager runs hold a read-only token.** Each run mounts its own token, which the
+  factory mints for its role from the role table (D10). The one exception is a demo's laptop PAT,
+  `runController.gitSecret` (`demoValues` only), which every role shares and the install banner
   shows.
 
 ## Internal principals and publishing

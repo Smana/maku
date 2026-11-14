@@ -90,7 +90,6 @@ maku:
         networkPolicy:
           to: [{matchLabels: {io.kubernetes.pod.namespace: runlore, app.kubernetes.io/name: runlore}}]
   runController:
-    gitTokens: shared
     model:
       mode: gateway
       gateway:
@@ -103,7 +102,10 @@ maku-factory:
   # As ANR's: the factory App by name, and the merger its own App (mode separate, explicit).
   apps:
     factory: {existingSecret: agent-factory-github}
+    agents: {existingSecret: agent-factory-agents-app}
     merger: {mode: separate}
+  # Each run's git token, minted from the agents App (D10), as ANR's helm values set it.
+  runTokens: {enabled: true, perRun: true}
   config:
     factory: cloud-native-ref
     factoryLogin: ogenki-agent-factory[bot]

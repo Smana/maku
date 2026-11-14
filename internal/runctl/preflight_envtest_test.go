@@ -93,7 +93,7 @@ func TestEnvtestPreflightWaitingThenFailed(t *testing.T) {
 func TestEnvtestPreflightWaitingHoldsTheRun(t *testing.T) {
 	e := startEnv(t)
 	e.modelSecret(t)
-	const msg = "Secret agents/agent-git-read not found: reviewer and triager runs mount it (runController.gitReadSecret); create it with a token key"
+	const msg = "Secret agents/agent-git not found: every role's runs mount it (runController.gitSecret); create it with a token key"
 	e.r.Preflight = &fixedPreflight{Result{State: PreflightWaiting, Check: "gitSecrets", Message: msg}}
 	create(t, e, run("run-wwwwwwww"))
 	res := e.reconcile(t, "run-wwwwwwww")

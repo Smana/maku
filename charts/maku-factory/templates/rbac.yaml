@@ -59,10 +59,8 @@ subjects:
   - {kind: ServiceAccount, name: agent-factory, namespace: {{ .Release.Namespace }}}
 ---
 # AgentRuns: the factory creates them, meters them (annotations only, Kyverno-limited from
-# phase 5), and deletes them. Never Secrets, never another namespace's objects, with one exception:
-# demo or runTokens.enabled lets the factory keep the run-controller's agent-git and agent-git-read
-# Secrets filled with tokens minted from a GitHub App. create cannot be scoped by name in
-# Kubernetes; get and update can.
+# phase 5), and deletes them. Never another namespace's objects, and no Secret but the per-run
+# token Secrets of runTokens.perRun (v4 step 8 removed the shared agent-git writer).
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -81,14 +79,6 @@ rules:
   - apiGroups: [""]
     resources: [secrets]
     verbs: [create, patch, delete]
-  {{- else if or .Values.demo .Values.runTokens.enabled }}
-  - apiGroups: [""]
-    resources: [secrets]
-    verbs: [create]
-  - apiGroups: [""]
-    resources: [secrets]
-    resourceNames: [agent-git, agent-git-read]
-    verbs: [get, update]
   {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1

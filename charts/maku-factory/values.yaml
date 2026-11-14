@@ -41,13 +41,12 @@ api:
   tls:
     secretName: ""
     issuerRef: {kind: ClusterIssuer, name: ""}
-# The laptop demo: no OIDC volume (the factory takes no human tokens) and, in the runs namespace,
-# the Secret access the run token writer needs for agent-git and agent-git-read, minted from the
-# factory's App.
+# The laptop demo: no OIDC volume (the factory takes no human tokens); with runTokens.perRun the
+# factory mints each run's token from its own App.
 demo: false
-# The run token writer outside the demo (v4 step 2): the factory keeps the run-controller's
-# agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the agents
-# App (apps.agents.existingSecret). The factory's config must name runs.group maku.ogenki.io.
+# The run tokens outside the demo: the factory mints each run's token from the agents App
+# (apps.agents.existingSecret). Needs perRun: the shared agent-git writer was removed in v4 step 8.
+# The factory's config must name runs.group maku.ogenki.io.
 runTokens:
   enabled: false
   # perRun (v4 D10): one token per run instead of the two shared Secrets, minted from the same App

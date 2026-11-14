@@ -19,7 +19,6 @@ namePrefix: run-
 runtimeClassName: gvisor
 modelSecret: agent-model
 gitSecret: agent-git
-gitReadSecret: agent-git-read
 broker:
   url: https://room-broker.agent-platform.svc.cluster.local:8443
   namespace: agent-platform

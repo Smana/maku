@@ -45,7 +45,6 @@ const (
 	GeneratedUmbrella  Generated = "umbrella"
 	GeneratedDemoModel Generated = "demo-model"
 	GeneratedDemoApp   Generated = "demo-app"
-	GeneratedFactory   Generated = "factory"
 	// GeneratedCertManager: cert-manager's Certificate writes it when the chart's issuerRef is set.
 	GeneratedCertManager Generated = "cert-manager"
 )
@@ -138,10 +137,9 @@ var Seams = []Seam{
 	{ID: "runModel", Component: "run pods", Chart: "maku", Value: "runController.modelSecret", Default: "agent-model", Namespace: Runs,
 		Keys:   []Key{{Name: "base_url", Required: true}, {Name: "model", Required: true}, {Name: "api_key", Required: true}, {Name: "judge_model"}},
 		ReadAs: Env, Generated: GeneratedDemoModel, Doc: "The runs' model, in `runController.model.mode` secret"},
-	{ID: "runGit", Component: "run pods", Chart: "maku", Value: "runController.gitSecret", Default: "agent-git", Namespace: Runs,
-		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Generated: GeneratedFactory, Doc: "The runs' write token, which the factory writes"},
-	{ID: "runGitRead", Component: "run pods", Chart: "maku", Value: "runController.gitReadSecret", Default: "agent-git-read", Namespace: Runs,
-		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Generated: GeneratedFactory, Doc: "The reviewer's and the triager's read token, which the factory writes"},
+	{ID: "runGit", Component: "run pods", Chart: "maku", Value: "runController.gitSecret", Namespace: Runs,
+		Keys: []Key{{Name: "token", Required: true}}, ReadAs: Env, Optional: true,
+		Doc: "A laptop's one PAT, which every role mounts (demo-only: `demoValues`). Unset, each run mounts its own token, which the factory mints"},
 	{ID: "factoryApp", Component: "agent-factory", Chart: "maku-factory", Value: "apps.factory.existingSecret",
 		Default: "agent-factory-github", Namespace: Release, Keys: githubApp, ReadAs: File, MountPath: "/etc/agent-factory-github",
 		Generated: GeneratedDemoApp, Doc: "The factory App"},

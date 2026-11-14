@@ -9,8 +9,8 @@ runs:
 # an unowned one).
 createRunsNamespace: true
 
-# The demo marker (v4 step 8, R4): true admits the demo-only settings, today runController.model.mode
-# secret. values-quickstart.yaml sets it; the umbrella's values-demo.yaml sets maku.demoValues.
+# The demo marker (v4 step 8, R4, Q14): true admits the demo-only settings, runController.model.mode
+# secret and runController.gitSecret. values-quickstart.yaml sets it; the umbrella's values-demo.yaml sets maku.demoValues.
 demoValues: false
 
 # The network policies (v4 D6): default-deny in the runs namespace, one per run from the run
@@ -294,21 +294,14 @@ runController:
       # or judge alias its listener does not serve is refused before its pod exists; an internal run
       # needs internal aliases.
       aliases: {public: [], internal: []}
-  gitSecret: agent-git
-  # The read-only token reviewer and triager runs mount (contents, pull_requests, issues, checks,
-  # actions: read); implementer and tester runs mount gitSecret. The controller enforces it: a
-  # read-only role never gets the write token.
-  gitReadSecret: agent-git-read
-  # Unsafe: every role shares gitSecret, so a reviewer or triager could push. For a laptop's one
-  # PAT only; it replaces gitReadSecret, which the controller then does not read.
-  unsafeSharedGitToken: false
-  # Where a run's git token comes from (v4 step 3, D10). shared (default): gitSecret and
-  # gitReadSecret, one token per role for every run. perRun: each run mounts its own Secret,
-  # <run name>-git, which the factory mints for that run's repository and role (needs
-  # maku-factory's runTokens.perRun). gitSecret and gitReadSecret are then not read, and the
-  # controller reads Secrets in the runs namespace without resourceNames: it already creates pods
-  # that mount any of them.
-  gitTokens: shared
+  # A run's git token (v4 D10): each run mounts its own Secret, <run name>-git, which the factory
+  # mints for that run's repository and role (maku-factory's runTokens.perRun). The controller then
+  # reads Secrets in the runs namespace without resourceNames: it already creates pods that mount
+  # any of them.
+  # gitSecret is demo-only (demoValues, v4 step 8): a laptop's one PAT, which every role mounts, so
+  # a reviewer or triager could push. The banner shows shared_git_token. The older gitTokens,
+  # gitReadSecret and unsafeSharedGitToken are removed: the render fails naming this key.
+  gitSecret: ""
   # createRuntimeClass renders the RuntimeClass sandbox.runtimeClassName names, for runtimeHandler.
   # Off by default: it is cluster-scoped, so opt in only where no such RuntimeClass exists. The old
   # runController.runtimeClassName and allowUnsandboxed are removed (v4 step 8): the render fails

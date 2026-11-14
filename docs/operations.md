@@ -241,7 +241,7 @@ result; one that may cure itself right after install is retried from 10 s, doubl
 | Check | Passes when | When it does not |
 |---|---|---|
 | `runtimeClass` | The sandbox RuntimeClass exists (skipped under `sandbox.unsafeAllowRunc`) | Failed: new runs are refused, `RuntimeClass "<name>" not found` |
-| `gitSecrets` | `gitSecret`, and `gitReadSecret` when set, exist with a `token` key | Waiting: new runs stay Pending with the message |
+| `gitSecrets` | a laptop's PAT, `gitSecret`, when set (demo only), exists with a `token` key | Waiting: new runs stay Pending with the message |
 | `network` (`networkPolicies.mode kubernetes`) | A probe pod, `<namePrefix>preflight-<8 characters>` in the runs namespace, held by a run's own NetworkPolicy under the sandbox class, reaches the broker's 8443 and CONNECTs `github.com:443` through the egress proxy, and three denied targets each time out or are refused twice, 3 s apart: the broker's 9090, the apiserver (`kubernetes.default.svc:443`) and `github.com:443` dialled directly. The last two only the run's egress rules deny, so a CNI that enforces ingress alone fails | A denied target answered: Failed, `deny <host:port> connected: the CNI does not enforce NetworkPolicy`, checked again in 10 minutes. A positive control failed (the proxy or the broker still starting): Waiting, retried soon. The probe pod did not start in 2 minutes: Failed, `the probe pod did not start under RuntimeClass "<name>": <its last event>` |
 
 - **Before the first result** new runs wait Pending, `PreflightPending`, retried every 10 s.
@@ -545,8 +545,8 @@ per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` s
    - the factory's config sets `runs.group: maku.ogenki.io`, `runTokens: {enabled: true, perRun:
      true, …}` and `hardening.publisher.minter: true`, with `hardening.publisher.octoSTS.url`
      removed;
-   - the values set the agents App's Secret (`apps.agents.existingSecret`) and
-     `runController.gitTokens: perRun`. The publisher's token then comes from the agents App, so
+   - the values set the agents App's Secret (`apps.agents.existingSecret`), and leave
+     `runController.gitSecret` empty. The publisher's token then comes from the agents App, so
      `hardening.publisher.audience` may go.
 
    The flip is global: every repository moves together.
@@ -559,8 +559,7 @@ per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` s
 
 **Rollback**, inside the same stop and drain: restore `runs.group` to the XR (`cloud.ogenki.io`, or omit it) and
 `hardening.publisher.octoSTS.url` (with `hardening.publisher.audience`), drop
-`hardening.publisher.minter` and the `runTokens` block, and set `runController.gitTokens` back to
-`shared`.
+`hardening.publisher.minter` and the `runTokens` block.
 
 Readiness's R2 under `runTokens.perRun` reads the same table (HR42): it stays missing while the
 implementer and tester hold `contents: write`, which goes with `push` at H3.

@@ -2528,19 +2528,13 @@ actions and metadata read). `statuses: write` is the merger's alone: the run tok
 it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
 A token minted for a narrower profile asks for a subset, which an App holding the union grants.
 
-**The shared run tokens (`runController.gitTokens: shared`, the default).** The demo before v4 step
-3, or `runTokens.enabled` without `perRun`, has the factory keep the run-controller's two git Secrets in the
-runs namespace filled with installation tokens, renewed every 30 minutes and ten minutes before
-expiry (a failed mint keeps the old Secret): `agent-git`, the write token implementer and tester
-runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
-served repository of one owner. The demo mints from the factory's App; `runTokens.enabled` mints
-from the agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
-`apps.agents.existingSecret` writes), and is refused without both files and unless `runs.group` is
-`maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
-
-**Per-run tokens (v4 D10; the demo's since step 3).** `runTokens.perRun` (with `runTokens.enabled`,
-or the demo's factory App) and `runController.gitTokens: perRun` give every run its own token
-instead:
+**Per-run tokens (v4 D10; the only factory-written tokens since v4 step 8).** `runTokens.perRun`
+(with `runTokens.enabled`, or the demo's factory App) gives every run its own token, which the
+run-controller mounts whenever `runController.gitSecret` is empty. `runTokens.enabled` mints from the
+agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
+`apps.agents.existingSecret` writes), and is refused without `perRun`, without both files, and unless
+`runs.group` is `maku.ogenki.io`. The shared `agent-git` and `agent-git-read` writer is removed; a
+laptop's one PAT (`runController.gitSecret`, demo-only) is the only shared token left:
 
 ```mermaid
 sequenceDiagram
@@ -2709,8 +2703,8 @@ takes the scoper's first assumption instead.
 - **Read-only at the token level, on either runtime.** On cloud-native-ref's AgentRun the triager
   role maps to the host's octo-sts trust policy, which grants `contents: read` only: the run cannot
   push or open anything, whatever its brief says. On the portable `maku.ogenki.io` AgentRun the
-  run-controller mounts `runController.gitReadSecret` for reviewer and triager runs, and refuses
-  them without it unless `unsafeSharedGitToken` (a laptop's one PAT) is set. It also refuses a
+  run-controller mounts each run's own token, minted for its role, unless a demo names a laptop's
+  one PAT in `runController.gitSecret`, which every role shares. It also refuses a
   scoper run without the room tools (`broker.roomTools.auth: tokenreview`), since the scoper hands
   off with `room_handoff`.
 - **The scope has one source.** The factory takes it only from the triager's handoff to the

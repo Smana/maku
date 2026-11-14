@@ -86,7 +86,6 @@ func startEnv(t *testing.T) env {
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "agent-platform"}},
 		&nodev1.RuntimeClass{ObjectMeta: metav1.ObjectMeta{Name: "gvisor"}, Handler: "runsc"},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agent-git", Namespace: "agents"}, Data: map[string][]byte{"token": []byte("github_pat_x")}},
-		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agent-git-read", Namespace: "agents"}, Data: map[string][]byte{"token": []byte("github_pat_r")}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "room-broker-tls", Namespace: "agent-platform"}, Data: map[string][]byte{"ca.crt": []byte("CA")}},
 	} {
 		if err := c.Create(ctx, o); err != nil {

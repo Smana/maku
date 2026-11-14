@@ -178,19 +178,12 @@ out="$demo"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "oidc")' "demo: no oidc volume"
 ynone 'select(.kind == "Deployment") | .spec.template.spec.containers[0].volumeMounts[] | select(.name == "oidc")' "demo: no oidc mount"
 ykind Deployment "$(vol broker-ca).secret.secretName == \"openbao-ca\"" "demo: the broker CA stays required"
-runsrole=$(yq eval-all 'select(.kind == "Role" and .metadata.namespace == "agents")' - <<<"$out")
-yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] == "create")] | (length == 1 and ((.[0] | has("resourceNames")) == false) and ((.[0].verbs | join(",")) == "create"))' - <<<"$runsrole" >/dev/null \
-  || { echo "FAIL: demo: create on secrets, unscoped, alone" >&2; fail=1; }
-yq -e '[.rules[] | select(.resources[] == "secrets" and .verbs[] != "create")] | (length == 1 and ((.[0].verbs | sort | join(",")) == "get,update") and ((.[0].resourceNames | join(",")) == "agent-git,agent-git-read"))' - <<<"$runsrole" >/dev/null \
-  || { echo "FAIL: demo: get, update on agent-git and agent-git-read only" >&2; fail=1; }
+# v4 step 8: no shared agent-git writer, so the demo without perRun touches no Secret.
+ynone 'select(.kind == "Role") | .rules[] | select(.resources[] == "secrets")' "demo without perRun: no Secret access"
 ynone 'select(.kind == "ClusterRole") | .rules[] | select(.resources[] == "secrets")' "demo: no cluster-wide Secret access"
 ynone 'select(.kind == "Role" and .metadata.namespace == null) | .rules[] | select(.resources[] == "secrets")' "demo: no Secret access in the factory's own namespace"
 out="$base"
-# runTokens (v4 step 2, PR3): the agents App mounted, the config pointed at it, both Secrets by name
-out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
-  --set runTokens.enabled=true --set apps.agents.existingSecret=agents-app)"
-ykind ConfigMap '.data."config.yaml" | from_yaml | .runTokens | (.enabled == true and (has("appIDFile") | not))' "runTokens: the config reads the agents App under github.agents*"
-ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "secrets" and .verbs[] == "update") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' "runTokens: get, update on both run Secrets"
+# v4 step 8: runTokens.enabled writes per-run tokens only; the shared agent-git writer is removed.
 out="$base"
 ynone 'select(.kind == "ValidatingAdmissionPolicy" or .kind == "ValidatingAdmissionPolicyBinding")' "default: no run token policy"
 # runTokens.perRun (v4 D10, plan PR3): create, patch, delete on Secrets with no get and no
@@ -223,7 +216,7 @@ ykind Deployment "$(vol github).secret.secretName == \"agent-factory-github\"" "
 out="$(render --set apps.factory.existingSecret=factory-app)"
 ykind Deployment "$(vol github).secret.secretName == \"factory-app\"" "apps.factory: names the factory App's Secret"
 # The agents App: mounted at /etc/agent-factory-agents and named under github.agents*.
-out="$(render --set config.runs.group=maku.ogenki.io --set runTokens.enabled=true --set apps.agents.existingSecret=x)"
+out="$(render --set config.runs.group=maku.ogenki.io --set runTokens.enabled=true --set runTokens.perRun=true --set apps.agents.existingSecret=x)"
 ykind Deployment "$(vol agents).secret | (.secretName == \"x\" and .defaultMode == \"0440\")" "apps.agents: the agents App's Secret, 0440"
 ykind Deployment "$(mnt agents) | (.mountPath == \"/etc/agent-factory-agents\" and .readOnly == true)" "apps.agents: mounted at /etc/agent-factory-agents"
 ykind ConfigMap '.data."config.yaml" | from_yaml | .github | (.agentsAppIDFile == "/etc/agent-factory-agents/app_id" and .agentsKeyFile == "/etc/agent-factory-agents/private_key")' "apps.agents: the config reads the mounted App"
@@ -266,7 +259,8 @@ refuse 'apps.agents.existingSecret names the merger App' --set apps.merger.mode=
 refuse 'apps.merger.existingSecret names the factory App' --set apps.merger.mode=separate --set apps.merger.existingSecret=agent-factory-github
 refuse 'demo: apps.agents.existingSecret needs runTokens.enabled' --set demo=true --set apps.agents.existingSecret=x
 refuse 'runTokens.perRun needs runTokens.enabled' --set runTokens.perRun=true
-refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set apps.agents.existingSecret=a --set config.runTokens.enabled=true
+refuse 'config.runTokens and runTokens.enabled' --set runTokens.enabled=true --set runTokens.perRun=true --set apps.agents.existingSecret=a --set config.runTokens.enabled=true
+refuse 'runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8' --set runTokens.enabled=true --set apps.agents.existingSecret=a
 refuse 'api.tls.issuerRef.name needs api.tls.secretName' --set api.tls.issuerRef.name=openbao
 refuse 'config.api.tls and api.tls.secretName' --set api.tls.secretName=agent-factory-api-tls --set config.api.tls.certFile=/c
 # H-5: config.runs moves the Role and its binding; nothing stays behind in agents.

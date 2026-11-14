@@ -295,39 +295,8 @@ func TestAPIAudience(t *testing.T) {
 	}
 }
 
-// Demo mode's run tokens are for the served repositories of one account, written in the runs'
-// namespace as the two Secrets the run-controller mounts; two accounts cannot share one installation.
-func TestRunTokensServeTheListedRepositories(t *testing.T) {
-	cfg := &config.Config{Demo: true, Runs: config.Runs{Kind: runwatch.Kind{Namespace: "runs"}},
-		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Smana/b"}}}
-	ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler))
-	if err != nil || len(ws) != 2 {
-		t.Fatalf("%+v %v", ws, err)
-	}
-	for i, name := range []string{"agent-git", "agent-git-read"} {
-		if w := ws[i]; w.Name != name || w.Namespace != "runs" || !w.NeedLeaderElection() || w.Every != 30*time.Minute {
-			t.Errorf("writer %d: %+v", i, w)
-		}
-	}
-	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Other/c"})
-	if _, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err == nil || !strings.Contains(err.Error(), "different owners") {
-		t.Fatalf("err = %v", err)
-	}
-	// Neither demo nor runTokens: the factory writes no Secret (octo-sts, or the operator, fills them).
-	cfg.Demo = false
-	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || ws != nil {
-		t.Fatalf("off: %+v %v", ws, err)
-	}
-	cfg.RunTokens = config.RunTokens{Enabled: true}
-	cfg.GitHub.AgentsAppIDFile, cfg.GitHub.AgentsKeyFile = "/x/app_id", "/x/private_key"
-	cfg.Repositories = cfg.Repositories[:2]
-	if ws, err := runTokens(cfg, served(cfg), nil, slog.New(slog.DiscardHandler)); err != nil || len(ws) != 2 {
-		t.Fatalf("runTokens.enabled: %+v %v", ws, err)
-	}
-}
-
 // v4 D10: runTokens.perRun builds the per-run minter, on the leader, for repositories of any
-// owner; without it the shared writer stays (D25).
+// owner; without it the factory writes no run token (v4 step 8 removed the shared writer).
 func TestPerRunTokens(t *testing.T) {
 	cfg := &config.Config{Runs: config.Runs{Kind: runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "maku-run-"}},
 		Repositories: []config.Repository{{Name: "Smana/a"}, {Name: "Other/c"}},

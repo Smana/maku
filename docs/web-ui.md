@@ -29,7 +29,7 @@ install for demos only.":
 |---|---|---|
 | `unsafe_allow_runc` | `sandbox.unsafeAllowRunc` | Runs are not sandboxed |
 | `network_policy_none` | `networkPolicies.mode: none` | Nothing confines a run's network |
-| `shared_git_token` | `runController.unsafeSharedGitToken` | Every role shares one write token |
+| `shared_git_token` | `runController.gitSecret` (demo only) | Every role shares one write token |
 | `model_key_in_sandbox` | `runController.model.mode: secret` (demo-only, `demoValues`) | The model provider's key sits in every run's sandbox |
 
 The chart computes the list into the broker's `install.unsafe`; the demo shows `unsafe_allow_runc`,

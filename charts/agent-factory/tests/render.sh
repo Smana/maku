@@ -65,7 +65,7 @@ got=$(yq ea '[select(.kind == "ResourceQuota" or .kind == "ValidatingAdmissionPo
 # Step 3 PR B (D10): the demo runs on per-run tokens. The factory's config says perRun, its runs
 # Role writes Secrets without reading them, the run-controller mounts each run's own Secret
 ykind ConfigMap 'select(.metadata.name == "agent-factory-config") | (.data."config.yaml" | from_yaml | .runTokens | ((.perRun == true) and (has("enabled") | not)))' 'demo: the factory mints per run, from its own App'
-ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."config.yaml" | from_yaml | (.gitTokens == "perRun" and (has("gitSecret") | not)))' 'demo: the run-controller mounts each run its own Secret'
+ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."config.yaml" | from_yaml | ((has("gitTokens") | not) and (has("gitSecret") | not)))' 'demo: the run-controller mounts each run its own Secret'
 ykind Role 'select(.metadata.name == "agent-factory" and .metadata.namespace == "agents") | ((.rules | map(select(.resources | contains(["secrets"])))) | ((length == 1) and ((.[0].verbs | join(",")) == "create,patch,delete")))' 'demo: the factory writes run token Secrets and reads none'
 # Step 3 PR B (D10) adds the AgentRun creator and patch-limit policies and the run token policy.
 want="ResourceQuota/runs ValidatingAdmissionPolicy/maku-maku-agentrun-creators ValidatingAdmissionPolicy/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicy/maku-maku-run-pods ValidatingAdmissionPolicy/maku-maku-run-token-secrets ValidatingAdmissionPolicy/room-broker-maku-agentruns ValidatingAdmissionPolicyBinding/maku-maku-agentrun-creators ValidatingAdmissionPolicyBinding/maku-maku-agentrun-factory-patch-limit ValidatingAdmissionPolicyBinding/maku-maku-run-pods ValidatingAdmissionPolicyBinding/maku-maku-run-token-secrets ValidatingAdmissionPolicyBinding/room-broker-maku-agentruns"
@@ -331,13 +331,12 @@ done
 msg="$(helm template af . -n maku "${args[@]}" --set clusterDomain=a.test --set maku.clusterDomain=a.test 2>&1 >/dev/null || true)"
 grep -qF 'clusterDomain' <<<"$msg" && grep -qF 'must be equal' <<<"$msg" || { echo "FAIL: a clusterDomain that differs from maku-factory's does not fail" >&2; fail=1; }
 # v4 D10: per-run tokens are two halves, and only the factory may create the runs it mints for
-for half in "--set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read" \
-            "--set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=perRun --set maku.runController.gitReadSecret="; do
-  # shellcheck disable=SC2086 # two --set pairs, split on purpose
-  msg="$(helm template af . -n maku "${args[@]}" $half 2>&1 >/dev/null || true)"
-  grep -qF 'go together' <<<"$msg" || { echo "FAIL: $half renders: perRun and gitTokens perRun go together" >&2; fail=1; }
-done
-msg="$(helm template af . -n maku "${args[@]}" --set maku-factory.runTokens.perRun=true --set maku.runController.gitTokens=perRun \
+# v4 step 8 (Q14): the factory mints each run's token, or a demo names a laptop's PAT; never both, never neither.
+msg="$(helm template af . -n maku "${args[@]}" --set maku.runController.gitSecret=agent-git 2>&1 >/dev/null || true)"
+grep -qF 'maku-factory.runTokens.perRun and maku.runController.gitSecret ("agent-git"): choose one' <<<"$msg" || { echo "FAIL: perRun beside a laptop PAT renders" >&2; fail=1; }
+msg="$(helm template af . -n maku "${args[@]}" --set maku-factory.runTokens.perRun=false 2>&1 >/dev/null || true)"
+grep -qF 'maku-factory.runTokens.perRun: the factory mints each run' <<<"$msg" || { echo "FAIL: a factory without perRun and without a PAT renders" >&2; fail=1; }
+msg="$(helm template af . -n maku "${args[@]}" --set maku-factory.runTokens.perRun=true \
   --set maku.agentRunPolicies.creators=null 2>&1 >/dev/null || true)"
 grep -qF 'maku-factory.runTokens.perRun needs maku.agentRunPolicies.creators' <<<"$msg" || { echo "FAIL: perRun without agentRunPolicies.creators renders" >&2; fail=1; }
 msg="$(helm template af . -n other "${args[@]}" 2>&1 >/dev/null || true)"
@@ -345,8 +344,7 @@ grep -qF 'does not name this release' <<<"$msg" || { echo "FAIL: the demo in ano
 # secrets: rendered from values, or not at all when an existing Secret is named
 ykind Secret 'select(.metadata.name == "agent-model") | (.metadata.namespace == "agents" and .stringData.base_url == "http://model.example.test/v1" and .stringData.model == "m1" and .stringData.api_key == "k1")' 'agent-model in the runs namespace from demo.model'
 ykind Secret 'select(.metadata.name == "agent-factory-github") | (.metadata.namespace == "maku" and .stringData.app_id == "123" and .stringData.private_key == "pem1")' 'agent-factory-github from demo.githubApp'
-ynone 'select(.kind == "Secret" and .metadata.name == "agent-git") | .metadata.name' 'agent-git is rendered: the factory writes it'
-ynone 'select(.kind == "Secret" and .metadata.name == "agent-git-read") | .metadata.name' 'agent-git-read is rendered: the factory writes it'
+ynone 'select(.kind == "Secret" and (.metadata.name == "agent-git" or .metadata.name == "agent-git-read")) | .metadata.name' 'no shared git Secret is rendered: each run gets its own'
 ynone 'select(.kind == "Secret" and .metadata.name == "agent-model") | select(.stringData | has("judge_model")) | .metadata.name' 'no judge_model without demo.model.judgeName: the judge runs on the run model'
 judge="$(helm template af . -n maku "${args[@]}" --set demo.model.judgeName=small)"
 [[ "$(yq ea 'select(.kind == "Secret" and .metadata.name == "agent-model") | .stringData.judge_model' - <<<"$judge")" == small ]] || { echo "FAIL: demo.model.judgeName does not write judge_model" >&2; fail=1; }
@@ -517,12 +515,7 @@ bad 'externalSecrets.secrets.databaseBroker: the bundled Postgres (postgres.enab
   --set postgres.enabled=true --set maku.broker.database.brokerSecret=rooms-broker-dsn
 # Review of #544: a runtime writer refuses its Secret only while it runs; one writer per Secret name.
 xf='{"dataFrom":[{"extract":{"key":"x"}}]}'
-bad 'externalSecrets.secrets.runGit: the factory writes agent-git' "${esv[@]}" --set-json "externalSecrets.secrets.runGit=$xf"
-bad 'externalSecrets.secrets.runGitRead: the factory writes agent-git-read' "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.enabled=true --set maku-factory.apps.agents.existingSecret=run-token-app \
-  --set-json "externalSecrets.secrets.runGitRead=$xf"
-out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.demo=false --set maku-factory.runTokens.perRun=false \
-  --set maku.runController.gitTokens=shared --set maku.runController.gitReadSecret=agent-git-read --set-json "externalSecrets.secrets.runGit=$xf")"
-ykind ExternalSecret 'select(.metadata.name=="agent-git") | .metadata.namespace == "agents"' 'agent-git is the operator'"'"'s while the factory writes no run token: its ExternalSecret, in the runs namespace'
+bad 'externalSecrets.secrets.runGit: no Secret name: set maku.runController.gitSecret' "${esv[@]}" --set-json "externalSecrets.secrets.runGit=$xf"
 bad 'externalSecrets.secrets.factoryAPITLS: cert-manager (maku-factory.api.tls.issuerRef) writes factory-api-tls' "${esv[@]}" \
   --set maku-factory.api.tls.secretName=factory-api-tls --set maku-factory.api.tls.issuerRef.name=ca --set-json "externalSecrets.secrets.factoryAPITLS=$xf"
 out="$(helm template af . -n maku "${esv[@]}" --set maku-factory.api.tls.secretName=factory-api-tls --set-json "externalSecrets.secrets.factoryAPITLS=$xf")"
@@ -702,12 +695,12 @@ rec="$(yq ea 'select(.kind == "PrometheusRule") | .spec.groups[].rules[] | selec
 grep -qF 'ar_agent=~"system:serviceaccount:agents:r\\.n-.+"' <<<"$rec" && grep -qF '"system:serviceaccount:agents:r\\.n-(.+)"' <<<"$rec" ||
   { echo "FAIL: the run subject is not regex-escaped (PromQL doubles the backslash): $rec" >&2; fail=1; }
 # without maku-factory, no ledger: the cross-check's record and alert are left out
-out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}" --set maku-factory.enabled=false --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared \
-  --set maku-factory.config.runs.gatewayIdentity=false --set maku.runController.gitReadSecret=git-read)" || { echo "FAIL: the gateway without the factory does not render" >&2; fail=1; out=''; }
+out="$(helm template af . -n maku "${gwd[@]}" "${rule[@]}" --set maku-factory.enabled=false --set maku-factory.runTokens.perRun=false \
+  --set maku-factory.config.runs.gatewayIdentity=false)" || { echo "FAIL: the gateway without the factory does not render" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms maku-run-path maku-gateway" ]] || { echo "FAIL: no factory: groups '$(groups)'" >&2; fail=1; }
 grep -qE 'AgentCostCrossCheckMismatch|agent_cost:gateway_run_usd' <<<"$(alerts)" && { echo "FAIL: the cross-check renders without maku-factory" >&2; fail=1; }
 out="$(helm template af . -n maku "${args[@]}" "${rule[@]}" --set maku.runController.enabled=false --set maku-factory.enabled=false \
-  --set maku-factory.runTokens.perRun=false --set maku.runController.gitTokens=shared)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
+  --set maku-factory.runTokens.perRun=false)" || { echo "FAIL: the broker alone does not render its rule" >&2; fail=1; out=''; }
 [[ "$(groups)" == "maku-rooms" ]] || { echo "FAIL: the broker alone: groups '$(groups)', want maku-rooms" >&2; fail=1; }
 
 # v4 step 6 (D21, EX14): the product dashboards, one ConfigMap each, rendered only when asked.

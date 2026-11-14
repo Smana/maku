@@ -322,9 +322,9 @@ func (c *Config) MergerFolded() bool {
 	return c.GitHub.MergerAppIDFile != "" && c.GitHub.MergerAppIDFile == c.GitHub.AppIDFile
 }
 
-// RunTokens names the App whose installation tokens fill the run-controller's agent-git (write) and
-// agent-git-read (read) Secrets, for every served repository of one owner. Interim: replaced by the
-// per-run minter, v4 D10 (rollout step 3).
+// RunTokens: the factory mints each run's git token from the agents App (v4 D10). Enabled names
+// the agents App outside the demo; PerRun is required with it, since v4 step 8 removed the shared
+// agent-git writer.
 type RunTokens struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// PerRun mints one token per run instead of the two shared Secrets (v4 D10): each run's own
@@ -375,6 +375,9 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	}
 	if !t.Enabled {
 		return
+	}
+	if !t.PerRun {
+		bad("runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8 (docs/upgrading.md#the-shared-git-token)")
 	}
 	if g.AgentsAppIDFile == "" || g.AgentsKeyFile == "" {
 		bad("runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile")

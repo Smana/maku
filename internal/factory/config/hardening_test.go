@@ -125,7 +125,6 @@ func TestHardeningSettings(t *testing.T) {
 // under runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
 func TestHardeningSettingsTokenSource(t *testing.T) {
 	runs := "runs: {group: maku.ogenki.io}\n"
-	shared := "runTokens: {enabled: true}\n"
 	for name, tc := range map[string]struct {
 		file      string
 		src       hardening.TokenSource
@@ -134,7 +133,6 @@ func TestHardeningSettingsTokenSource(t *testing.T) {
 		"the XR":               {good, hardening.TokenSourceXR, false},
 		"per-run tokens":       {agentsGood + perRunTokens, hardening.TokenSourceMinter, false},
 		"the minter publishes": {agentsGood + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
-		"the shared writer":    {agentsGood + runs + shared, hardening.TokenSourceShared, false},
 		"no run token":         {good + runs, hardening.TokenSourceShared, false},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -434,7 +432,6 @@ func TestUnscopedTokenRefused(t *testing.T) {
 		"the run controller":     {good + runs + block, true},
 		"nothing enforced there": {good + runs + "hardening: {mode: audit}\n", false},
 		"per-run tokens":         {agentsGood + runs + "runTokens: {enabled: true, perRun: true}\n" + block, false},
-		"the shared writer":      {agentsGood + runs + "runTokens: {enabled: true}\n" + block, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.file))

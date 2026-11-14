@@ -12,7 +12,7 @@ const portable = "runs: {group: maku.ogenki.io}\n"
 // PR3: runTokens writes the run-controller's git Secrets from the agents App (github.agents*), and
 // only for the run-controller's AgentRun.
 func TestRunTokens(t *testing.T) {
-	const on = "runTokens: {enabled: true}\n"
+	const on = "runTokens: {enabled: true, perRun: true}\n"
 	app := withAgentsApp(good, agentsID, agentsKey)
 	c, err := Parse([]byte(app + portable + on))
 	if err != nil {
@@ -22,7 +22,9 @@ func TestRunTokens(t *testing.T) {
 		t.Fatalf("RunTokenApp = %q %q %v", id, key, ok)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
-		"no files":    {good + portable + on, "runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile"},
+		"no files": {good + portable + on, "runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile"},
+		// v4 step 8: the shared agent-git writer is removed, so enabled alone would write nothing.
+		"no perRun":   {app + portable + "runTokens: {enabled: true}\n", "runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8"},
 		"the XR":      {app + "runs: {group: cloud.ogenki.io}\n" + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
 		"the default": {app + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
 	} {
@@ -77,7 +79,7 @@ func TestRunTokensInTheDemo(t *testing.T) {
 	if id, key, ok := c.RunTokenApp(); !ok || id != c.GitHub.AppIDFile || key != c.GitHub.PrivateKeyFile {
 		t.Fatalf("demo RunTokenApp = %q %q %v", id, key, ok)
 	}
-	c, err = Parse([]byte(withAgentsApp(demoGood, "/x/app_id", "/x/private_key") + "runTokens: {enabled: true}\n"))
+	c, err = Parse([]byte(withAgentsApp(demoGood, "/x/app_id", "/x/private_key") + "runs: {group: maku.ogenki.io}\nrunTokens: {enabled: true, perRun: true}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

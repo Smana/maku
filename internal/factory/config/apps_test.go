@@ -21,7 +21,7 @@ const agentsID, agentsKey = "/etc/agent-factory-agents/app_id", "/etc/agent-fact
 // D12: github.agentsAppIDFile and agentsKeyFile name the agents App, which RunTokenApp mints from.
 func TestAgentsAppNamesTheRunTokenApp(t *testing.T) {
 	for name, body := range map[string]string{
-		"the agents pair alone":     withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true}\n",
+		"the agents pair alone":     withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, perRun: true}\n",
 		"per run, the agents alone": withAgentsApp(good, agentsID, agentsKey) + portable + "runTokens: {enabled: true, perRun: true}\n",
 	} {
 		c, err := Parse([]byte(body))

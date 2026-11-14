@@ -20,7 +20,7 @@ describe("the install banner", () => {
     const b = renderInstallBanner(["unsafe_allow_runc", "network_policy_none", "shared_git_token"])!;
     expect(b.textContent).toContain("sandbox.unsafeAllowRunc");
     expect(b.textContent).toContain("network policies are off");
-    expect(b.textContent).toContain("runController.unsafeSharedGitToken");
+    expect(b.textContent).toContain("runController.gitSecret");
     expect(b.textContent!.endsWith("Use this install for demos only.")).toBe(true);
   });
   it("says the provider key sits in the sandbox under model.mode secret (v4 step 8, R4)", () => {

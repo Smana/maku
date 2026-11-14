@@ -3,9 +3,8 @@ namePrefix: "run-"
 runtimeClassName: "gvisor"
 allowUnsandboxed: false
 modelSecret: "agent-model"
+# A laptop's one PAT (demoValues): every role mounts it, so a reviewer or triager could push.
 gitSecret: "agent-git"
-# Every role mounts gitSecret: a reviewer or triager could push (a laptop's one PAT).
-unsafeSharedGitToken: true
 broker:
   url: "https://room-broker.maku.svc.cluster.local:8443"
   namespace: "maku"

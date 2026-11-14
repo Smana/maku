@@ -140,9 +140,8 @@ func (p *Preflight) checks() []check {
 	return cs
 }
 
-// gitSecrets: each git Secret a run may mount exists with a token key (PR B): gitSecret, and
-// gitReadSecret when configured. Its refusal holds new runs Pending, never fails them, and is
-// retried soon: the factory's run token writer, or an ExternalSecret, may fill it right after install.
+// gitSecrets: the laptop's PAT, gitSecret, exists with a token key (PR B). Its refusal holds new
+// runs Pending, never fails them, and is retried soon: the Secret may be created right after install.
 func (p *Preflight) gitSecrets(ctx context.Context) (verdict, error) {
 	refusal, soon, err := p.gitSecretsRefusal(ctx)
 	return verdict{refusal: refusal, soon: soon, waits: true}, err
@@ -150,10 +149,7 @@ func (p *Preflight) gitSecrets(ctx context.Context) (verdict, error) {
 
 func (p *Preflight) gitSecretsRefusal(ctx context.Context) (string, bool, error) {
 	type secret struct{ name, key, roles string }
-	ss := []secret{{p.Cfg.GitSecret, "runController.gitSecret", "implementer and tester"}}
-	if p.Cfg.GitReadSecret != "" {
-		ss = append(ss, secret{p.Cfg.GitReadSecret, "runController.gitReadSecret", "reviewer and triager"})
-	}
+	ss := []secret{{p.Cfg.GitSecret, "runController.gitSecret", "every role's"}}
 	for _, s := range ss {
 		var sec corev1.Secret
 		err := p.Client.Get(ctx, client.ObjectKey{Namespace: p.Cfg.Namespace, Name: s.name}, &sec)
