@@ -461,6 +461,10 @@ type TaskStatus struct {
 	// The harness profile frozen at triage and the evaluation cohort; absent for a class without a harness.
 	// +optional
 	Profile *ProfileStatus `json:"profile,omitempty"`
+	// The once-mark of a task with no profile, set on the same write that counts its outcome:
+	// the counter counts every ended task, profile or none (cache-costs review CP3).
+	// +optional
+	OutcomeCounted bool `json:"outcomeCounted,omitempty"`
 	// What the task's runs read, by source kind and author trust, never by content (hardening
 	// UH7). Recorded only while the repository's hardening mode is audit or enforce.
 	// +optional

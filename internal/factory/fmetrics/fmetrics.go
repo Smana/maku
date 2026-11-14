@@ -500,10 +500,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Resolved tasks of a class that offers a choice, by whether the planner's suggestion and the scoper's recommendation agree (P13)."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
-		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
+		metric.WithDescription("Ended tasks, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed. A task without a profile reads none on the profile labels; its cohort is none."))
 	check(err)
 	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
-		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome."))
+		metric.WithDescription("USD of ended tasks, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome. A task without a profile reads none on the profile labels; its cohort is none."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -938,11 +938,12 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 		attribute.String("profile", profile), attribute.String("recommended", recommended), s.repoOf(ctx)))
 }
 
-// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.
-// profile and recommended come from config (the caller maps a name no longer offered to other), so
-// the labels stay bounded; no recommendation is none.
+// TaskOutcome counts an ended task once it ends, with or without a profile, and adds the USD its
+// attempts cost. profile and recommended come from config (the caller maps a name no longer
+// offered to other), so the labels stay bounded; a task without a profile reads none, and no
+// recommendation is none.
 func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
-	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
+	cohort = oneOf(cohort, []string{"labeled", "control", "treatment", "none"})
 	outcome = oneOf(outcome, taskOutcomes())
 	source = oneOf(source, []string{"label", "floor", "control", "treatment", "scoper", "escalation"})
 	if recommended == "" {
