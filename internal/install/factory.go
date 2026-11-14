@@ -10,6 +10,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -80,27 +81,34 @@ func factoryConfig(in Inputs) map[string]any {
 				"promQuery": fmt.Sprintf(`sum by (ar_agent) (increase(agentgateway_requests_total{status="429", reason="RateLimit", ar_agent=~%q}[5m])) > 0`, runsSubject),
 			},
 		},
-		"defaults": map[string]any{"template": "solo", "tier": "standard", "dataClass": "public", "predictedClass": "review"},
-		"loops": map[string]any{
-			"review":     map[string]any{"scope": "scoper", "judge": "tier-light"},
-			"docs-links": map[string]any{"scope": "scoper", "judge": "tier-light"},
-		},
+		"defaults": map[string]any{"dataClass": "public", "predictedClass": "review"},
 		"tiers": map[string]any{
 			"light":    map[string]any{"model": "tier-light", "runTokens": 300000, "taskTokens": 600000, "runMinutes": 20},
 			"standard": map[string]any{"model": "agent-default", "runTokens": 1500000, "taskTokens": 3000000, "runMinutes": 45},
 			"frontier": map[string]any{"model": "agent-default", "runTokens": 4000000, "taskTokens": 8000000, "runMinutes": 90},
 		},
-		"templates": map[string]any{
-			"solo":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"pair":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"trio":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"investigate": map[string]any{"roles": []any{"triager"}},
-		},
 		"mergeDefaults": mergeDefaults(factoryLogin),
 		"caps":          map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
 		"repositories":  repos,
 	}
+	// The three workflows, written out (workflows WF2): a platform reads and edits what it runs. The
+	// careful row splits only where the meter prices the runs (validateLoops).
+	profiles, templates, loops := config.FillShippedWorkflows(nil, nil, nil, len(a.List("models.prices")) > 0)
+	cfg["harnessProfiles"], cfg["templates"], cfg["loops"] = plain(profiles), plain(templates), plain(loops)
 	return cfg
+}
+
+// plain is v as the untyped map the config is written from.
+func plain(v any) map[string]any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err) // config types always marshal
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		panic(err)
+	}
+	return m
 }
 
 // The merge settings every repository shares, which the factory requires and fills from nowhere
