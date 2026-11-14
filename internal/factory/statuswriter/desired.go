@@ -322,10 +322,10 @@ func (d *desirer) privateCode(cs *[]metav1.Condition, gen int64, rc *config.Repo
 		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionTrue, "Acknowledged", "")
 	case vis == VisibilityUnknown:
 		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionFalse, v1alpha1.ReasonUnacknowledged,
-			"its visibility could not be read, so it counts as private. "+config.PrivateCodeSentence)
+			"its visibility could not be read, so it counts as private. "+config.PrivateCodeSentence+" No new task starts until it is set")
 	default:
 		d.set(cs, gen, v1alpha1.ConditionPrivateCode, metav1.ConditionFalse, v1alpha1.ReasonUnacknowledged,
-			"the repository is "+vis+". "+config.PrivateCodeSentence)
+			"the repository is "+vis+". "+config.PrivateCodeSentence+" No new task starts until it is set")
 	}
 }
 

@@ -90,6 +90,9 @@ type Server struct {
 	// Owned is v2 D7's fence: whether the repository's default branch names this factory. nil owns
 	// nothing.
 	Owned func(repository string) bool
+	// PrivateRefused is v4 D3: whether the repository is private code without its acknowledgement,
+	// refused new tasks (403 private_code_unacknowledged). nil refuses none.
+	PrivateRefused func(repository string) bool
 	// Access is v2 D4: whether a human may write the repository on GitHub. nil refuses every
 	// human: GitHub is the one answer to who may change a repository, and there is no bypass.
 	Access WriteChecker
@@ -340,6 +343,10 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	ctx := fmetrics.WithPrincipal(fmetrics.WithRepository(r.Context(), in.Repository), p.ID)
 	if s.Owned == nil || !s.Owned(in.Repository) { // v2 D7: another factory's, or nobody's
 		s.refuseRepository(ctx, w, http.StatusConflict, "repository_not_owned")
+		return
+	}
+	if s.privateRefused(in.Repository) { // v4 D3
+		s.refuseRepository(ctx, w, http.StatusForbidden, "private_code_unacknowledged")
 		return
 	}
 	// The defaults come first: the request's fingerprint and the ledger's reservation both
@@ -738,4 +745,9 @@ func canonicalRepository(listed []string, asked string) string {
 		}
 	}
 	return asked
+}
+
+// privateRefused is PrivateRefused, nil refusing none.
+func (s *Server) privateRefused(repository string) bool {
+	return s.PrivateRefused != nil && s.PrivateRefused(repository)
 }

@@ -152,6 +152,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 	case s.Owned == nil || !s.Owned(in.Repository):
 		out(http.StatusConflict, "repository_not_owned")
 		return
+	case s.privateRefused(in.Repository): // v4 D3
+		out(http.StatusForbidden, "private_code_unacknowledged")
+		return
 	}
 	// The float is range-checked before it becomes micro-USD: 1e300 would overflow the conversion.
 	switch {

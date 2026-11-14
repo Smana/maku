@@ -70,6 +70,8 @@ func (s *Server) createInternalTask(cfg *config.Config, w http.ResponseWriter, r
 		out(http.StatusForbidden, "repository_not_allowed")
 	case s.Owned == nil || !s.Owned(in.Repository):
 		out(http.StatusConflict, "repository_not_owned")
+	case s.privateRefused(in.Repository): // v4 D3
+		out(http.StatusForbidden, "private_code_unacknowledged")
 	case len(cfg.Meter.Prices) == 0:
 		out(http.StatusServiceUnavailable, "meter_unpriced")
 	case !(in.MaxCostUSD >= minMaxCostUSD) || config.MicroUSD(in.MaxCostUSD) <= 0:

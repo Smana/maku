@@ -204,3 +204,19 @@ func TestFactoryPreflightExposure(t *testing.T) {
 		})
 	}
 }
+
+// v4 D3, step 8 R9: the preflight's private-code check fails, no longer warns, on private code without
+// its acknowledgement.
+func TestFactoryPreflightPrivateCodeFails(t *testing.T) {
+	g := newPrivateCodeRig(t, false)
+	g.f.SetRepositoryInfo(forge.RepositoryInfo{FullName: "Smana/demo", Private: true, Visibility: "private"})
+	g.pc.Observe(t.Context(), "Smana/demo", true)
+	r := factoryChecks{Live: func() *config.Config { return g.cfg }, Private: g.pc}.privateCode(t.Context())
+	if r.Outcome != preflight.Fail || r.Code != "private_code_unacknowledged" {
+		t.Fatalf("got %s %s, want fail private_code_unacknowledged", r.Outcome, r.Code)
+	}
+	g.cfg.Repositories[0].PrivateCode = &config.PrivateCode{Acknowledged: true}
+	if r := (factoryChecks{Live: func() *config.Config { return g.cfg }, Private: g.pc}).privateCode(t.Context()); r.Outcome != preflight.Pass {
+		t.Fatalf("acknowledged: %s %s", r.Outcome, r.Code)
+	}
+}

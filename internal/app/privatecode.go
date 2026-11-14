@@ -19,12 +19,12 @@ type repoInfoReader interface {
 	RepositoryInfo(ctx context.Context) (forge.RepositoryInfo, error)
 }
 
-// privateCodeTracker is v4 D3 in this release (step 7 R1): on each fence pass it reads every
-// served repository's visibility through the factory App. Private, internal or unread code whose
-// Repository has no spec.privateCode.acknowledged sets the gauge, the Repository's PrivateCode
-// condition (through Visibility) and the install banner's code (through Unacknowledged), and logs
-// one warning per change of visibility. It refuses nothing: the work continues. Safe for
-// concurrent use.
+// privateCodeTracker is v4 D3 (step 8 R9): on each fence pass it reads every served repository's
+// visibility through the factory App. Private, internal or unread code whose Repository has no
+// spec.privateCode.acknowledged sets the gauge, the Repository's PrivateCode condition (through
+// Visibility) and the install banner's code (through Unacknowledged), logs one warning per change of
+// visibility, and is refused new work (Refused): the API, the schedules and adoption read it, and the
+// issue door reads the visibility itself. A task already started finishes. Safe for concurrent use.
 type privateCodeTracker struct {
 	Live func() *config.Config
 	// Readers is repository's factory connection; nil reads nothing, which counts as private.
@@ -65,7 +65,7 @@ func (p *privateCodeTracker) Observe(ctx context.Context, repository string, _ b
 		p.Log.Warn("the repository's visibility is unreadable: it counts as private code", "repository", repository, "err", err)
 	}
 	if unacknowledged && changed {
-		p.Log.Warn("private code is served without an acknowledgement; it is refused from the next release: "+config.PrivateCodeSentence,
+		p.Log.Warn("private code without an acknowledgement is refused new tasks: "+config.PrivateCodeSentence,
 			"repository", repository, "visibility", vis)
 	}
 }
@@ -75,6 +75,16 @@ func (p *privateCodeTracker) Forget(repository string) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	delete(p.vis, strings.ToLower(repository))
+}
+
+// Refused reports whether repository is refused new tasks (v4 D3): its code is private, internal or
+// unread, or not read yet (fail closed until the first fence pass), and its Repository has no
+// spec.privateCode.acknowledged.
+func (p *privateCodeTracker) Refused(repository string) bool {
+	if p.Live().RepositoryFor(repository).PrivateCodeAcknowledged() {
+		return false
+	}
+	return p.Visibility(repository) != "public"
 }
 
 // Visibility is repository's visibility as last read, "" before the first read: the status

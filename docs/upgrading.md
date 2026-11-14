@@ -147,6 +147,24 @@ Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defa
 their old values. Each change below is breaking: a removed or flipped value is refused by the schema
 or by a render `fail` that names its replacement, never silently ignored.
 
+### Private code is refused without its acknowledgement
+
+A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory
+cannot read) without `spec.privateCode.acknowledged: true` is now refused new tasks, where step 7
+warned (D3, owner ruling R9). Its `factory/ready` gets the refusal and loses the label, the API
+answers `403 private_code_unacknowledged`, schedules and adoption start nothing there, and the
+preflight fails `private_code_unacknowledged`. Tasks already started finish.
+
+Before upgrading, check that the gauge reads 0, or acknowledge each repository it names:
+
+```bash
+kubectl -n <namespace> get repository -o custom-columns=NAME:.metadata.name,REPO:.spec.repository,PRIVATE:'.status.conditions[?(@.type=="PrivateCode")].reason'
+kubectl -n <namespace> patch repository <name> --type merge -p '{"spec":{"privateCode":{"acknowledged":true}}}'
+```
+
+That field states the repository's code is sent to the configured models, which are usually SaaS
+([private code](factory.md#private-code)). The demo still serves public repositories only.
+
 ### The gateway is the model path
 
 | Value | Before | Now |
