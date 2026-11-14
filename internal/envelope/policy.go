@@ -72,8 +72,8 @@ func (p ProfileFact) validate() error {
 	switch {
 	case p.Name == "" || utf8.RuneCountInString(p.Name) > 63:
 		return errors.New("name is 1 to 63 characters")
-	case !slices.Contains([]string{"label", "floor", "control", "scoper", "escalation"}, p.Source):
-		return errors.New("source is label, floor, control, scoper or escalation")
+	case !slices.Contains([]string{"label", "floor", "control", "treatment", "scoper", "escalation"}, p.Source):
+		return errors.New("source is label, floor, control, treatment, scoper or escalation")
 	case !slices.Contains([]string{"labeled", "control", "treatment"}, p.Cohort):
 		return errors.New("cohort is labeled, control or treatment")
 	case utf8.RuneCountInString(p.Recommended) > 63:

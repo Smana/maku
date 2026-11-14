@@ -2198,6 +2198,7 @@ spec:
                     - label
                     - floor
                     - control
+                    - treatment
                     - scoper
                     - escalation
                     type: string

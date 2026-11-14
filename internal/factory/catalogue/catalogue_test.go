@@ -26,7 +26,7 @@ func live() *config.Config {
 			"review-floor":    {Checks: true, Description: "The default: triage picks pair or trio"},
 			"review-frontier": {Template: "trio", Tier: "frontier", Checks: true, TestFirst: true, Description: "Changes across several files"},
 		},
-		Evaluation: config.Evaluation{Mode: "observe", ControlPercent: 20},
+		Evaluation: config.Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "review-frontier"},
 		Repositories: []config.Repository{{
 			Name:        "Smana/cloud-native-ref",
 			Maintainers: []string{"Smana"},
@@ -72,7 +72,7 @@ func TestBuildOffersClasses(t *testing.T) {
 		rv.Escalation == nil || rv.Escalation.OutOfBudget != "review-frontier" || rv.CeilingUSD != 4 {
 		t.Fatalf("review = %+v", rv)
 	}
-	if !c.ApproveToMerge || !c.Maintainer || c.Evaluation != (Evaluation{Mode: "observe", ControlPercent: 20}) {
+	if !c.ApproveToMerge || !c.Maintainer || c.Evaluation != (Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "review-frontier"}) {
 		t.Fatalf("catalogue = %+v", c)
 	}
 

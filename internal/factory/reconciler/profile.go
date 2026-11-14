@@ -32,7 +32,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 	case q.Source == "label":
 	case s == nil:
 		q.Reason = "scoper_failed"
-	case q.Source == "control":
+	case q.Source == "control", q.Source == "treatment": // either arm of the measurement keeps what triage drew (WF8)
 	default:
 		name, reason, err := r.variantFor(ctx, cfg, t, s.Profile)
 		if err != nil {

@@ -682,6 +682,8 @@ func TestProfileChosen(t *testing.T) {
 			[]string{"`review-search`", "the change spans three packages"}, []string{"(default)"}},
 		"floor": {"review-floor", "floor", "not_allowed", "",
 			[]string{"`review-floor` (default)", "not_allowed"}, nil},
+		"treatment": {"careful", "treatment", "", "",
+			[]string{"`careful` (the team evaluation's treatment arm)"}, []string{"(default)"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			e := ProfileChosen(c.name, c.source, c.reason, c.why, 1)
