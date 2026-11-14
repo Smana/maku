@@ -22,6 +22,7 @@ jobs:
     outputs:
       harness: ${{ steps.c.outputs.harness }}
       deployable: ${{ steps.c.outputs.deployable }}
+      charts: ${{ steps.c.outputs.charts }}
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -211,6 +212,29 @@ jobs:
         run: install -m 0644 /dev/null "$RUNNER_TEMP/token" && printf '%s' "$GH_TOKEN" > "$RUNNER_TEMP/token"
       - run: images/maku-harness/tests/checks/run.sh maku-harness:checks Smana/ai-native-ref golang,pypi "$RUNNER_TEMP/token"
       - run: images/maku-harness/tests/checks/run.sh maku-harness:checks Smana/cloud-native-ref pypi "$RUNNER_TEMP/token"
+
+  # The values contract (v4 step 8, CL7; V17): each chart's values against the latest release's,
+  # pulled from ghcr.io and cosign-verified, as a table in the job summary. Report-only (step 8 R8): a
+  # breaking row never fails it; only a release it cannot pull or verify does. Arming it (--strict) is
+  # part of cutting v4.0.0. On a pull request that touches charts/ or the script.
+  values-contract:
+    needs: changes
+    if: github.event_name == 'pull_request' && needs.changes.outputs.charts == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }} # the script asks the API for the latest release
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install_args: helm aqua:mikefarah/yq
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+      - run: bash hack/values-contract.sh
 
   # One throwaway image per PR push, tagged v<next-patch>-pr<N>.<sha8>: it sorts after
   # the last release and before the next, and each push is its own immutable tag.
