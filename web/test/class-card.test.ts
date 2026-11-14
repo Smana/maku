@@ -4,8 +4,6 @@ import { describe, expect, it } from "vitest";
 import { classCard, evidenceBar, READING } from "../src/class-card";
 import type { Evidence, RepositoryPage } from "../src/settings";
 
-const PROMOTE = "To promote, set live: true on this class in the MergePolicy and merge the change.";
-
 const ev = (over: Partial<Evidence> = {}): Evidence => ({
   shadow: { mergedUnchanged: 14, changed: 1, reverted: 0, autoMerged: 0, drill: 1, reviewers: [] },
   clean: 14, bad: 0, immature: 0, pending: 0, bound: 0.1, budget: 0.2, widen: false,
@@ -14,14 +12,14 @@ const ev = (over: Partial<Evidence> = {}): Evidence => ({
 });
 const page = (): RepositoryPage => ({
   report: { repository: "o/r", minimum: 20, readAt: "", factory: "aws-0", defaultBranch: "main", harnessProfiles: ["plain"], guardrails: {},
-    policy: { factory: "aws-0", classes: { docs: { mode: "shadow", author: "agents", harness: "plain", conditions: { all: [{ maxPatchFiles: 10 }] } } } },
+    policy: { factory: "aws-0" },
     classes: [{ class: "docs", source: "repository", mode: "shadow", evidence: ev() }] },
   promotions: [], exceptions: [], you: { login: "me", maintainer: true, operator: false },
 });
-const ctx = (p = page()) => ({ page: p, get: fetch, say: document.createElement("p"), reload: () => {}, main: document.createElement("main"), policy: p.report.policy });
+const ctx = (p = page()) => ({ page: p, get: fetch, say: document.createElement("p"), reload: () => {}, main: document.createElement("main") });
 
 describe("a class card", () => {
-  it("leads with the name, the mode word, the summary, the evidence bar, then the folded conditions", () => {
+  it("leads with the name, the mode word, where its conditions are, then the evidence bar", () => {
     const c = classCard(page().report.classes[0], ctx());
     expect(c.id).toBe("class-docs");
     expect(c.querySelector("h3")?.textContent).toBe("docs");
@@ -32,29 +30,14 @@ describe("a class card", () => {
     expect(c.querySelector(".class-intent")).toBeNull();
     const order = [...c.children].map((e) => e.className || e.tagName.toLowerCase());
     expect(order.slice(0, 4)).toEqual(["class-card-head", "class-summary", "evidence-bar", "evidence-ladder"]);
-    expect(c.querySelector(".class-summary")?.textContent).toBe("≤ 10 files");
-    const more = c.querySelector("details.class-conditions")!;
-    expect(more.querySelector("summary")?.textContent).toBe("Conditions");
-    expect(more.textContent).toContain("it changes at most 10 files");
+    expect(c.querySelector("details.class-conditions")).toBeNull();
     expect(c.querySelector(".class-source")).toBeNull();
   });
-  it("wraps the summary phrase by phrase, and says a central class's conditions live in the MergePolicy when it cannot show them", () => {
+  it("sends a bound class's conditions to its policy's page", () => {
     const p = page();
-    p.report.guardrails = { maxPerDay: 5 };
-    const sum = classCard(p.report.classes[0], ctx(p)).querySelector(".class-summary")!;
-    expect([...sum.querySelectorAll(".summary-part")].map((x) => x.textContent)).toEqual(["≤ 10 files ·", "5 a day"]);
-    expect(sum.textContent).toBe("≤ 10 files · 5 a day");
-    p.report.mergePolicy = "mp";
-    p.report.classes[0].source = "central";
-    expect(classCard(p.report.classes[0], { ...ctx(p), policy: undefined }).querySelector(".class-summary")?.textContent)
-      .toBe("This class's conditions are set in the MergePolicy and cannot be shown here.");
-  });
-  it("puts the description between the badge and the summary", () => {
-    const p = page();
-    p.report.policy!.classes!.docs.description = "Docs-only pull requests with links intact.";
-    const c = classCard(p.report.classes[0], ctx(p));
-    expect([...c.children].slice(0, 3).map((e) => e.className)).toEqual(["class-card-head", "class-intent", "class-summary"]);
-    expect(c.querySelector(".class-intent")?.textContent).toBe("Docs-only pull requests with links intact.");
+    p.report.repositoryObject = "r";
+    expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-summary")?.textContent)
+      .toBe("This class's conditions are its MergePolicy's: open the policy's page.");
   });
   it("shows the badge as the bare word for each mode", () => {
     for (const [mode, word] of [["live", "Live"], ["shadow", "Shadow"], ["off", "Off"]]) {
@@ -66,7 +49,7 @@ describe("a class card", () => {
   it("says a class set by the factory has its conditions there, and never a per-card source", () => {
     const p = page();
     p.report.classes[0].source = "central";
-    const c = classCard(p.report.classes[0], { ...ctx(p), policy: undefined });
+    const c = classCard(p.report.classes[0], ctx(p));
     expect(c.querySelector(".class-summary")?.textContent).toBe("This class's conditions are set in the factory's config and are not shown here.");
     expect(c.querySelector(".class-source")).toBeNull();
     expect(c.querySelector("details.class-conditions")).toBeNull();
@@ -190,25 +173,17 @@ describe("a class card", () => {
     expect(classCard(p.report.classes[0], ctx(p)).querySelector(".class-actions")?.textContent)
       .toBe("Not promotable here: the class is not declared in the repository's policy file.");
   });
-  it("tells a shadow class of a central MergePolicy to promote there, and offers to edit it", () => {
+  it("shows a class's last decision from the Repository's status", () => {
     const p = page();
-    p.report.mergePolicy = "cnr";
-    p.report.classes[0] = { class: "docs", source: "central", mode: "shadow", unproposed: "not_in_repository_policy", evidence: ev() };
-    const actions = classCard(p.report.classes[0], ctx(p)).querySelector(".class-actions")!;
-    expect(actions.textContent).toContain(PROMOTE);
-    expect(actions.textContent).not.toContain("Not promotable");
-    expect([...actions.querySelectorAll("button")].map((x) => x.textContent)).toContain("Edit this class"); // settings.test clicks it on a rendered page
-  });
-  it("shows a class's last decision from the MergePolicy's status", () => {
-    const p = page();
-    p.report.mergePolicyStatus = { namespace: "agent-system", generation: 3, status: { classes: [{ name: "docs", mode: "shadow", lastDecision: "would_merge:clean", lastDecisionAt: "2026-11-10T00:00:00Z" }] } };
+    p.report.repositoryObject = "r";
+    p.report.repositoryStatus = { namespace: "agent-system", generation: 3, status: { classes: [{ name: "docs", mode: "shadow", accepted: true, lastDecision: "would_merge:clean", lastDecisionAt: "2026-11-10T00:00:00Z" }] } };
     const now = () => Date.parse("2026-11-10T03:00:00Z");
     const last = classCard(p.report.classes[0], { ...ctx(p), now }).querySelector(".class-last")!;
     expect(last.textContent).toBe("Last decision: would merge (clean), 3 h ago");
     expect(last.querySelector("time")?.getAttribute("datetime")).toBe("2026-11-10T00:00:00Z");
     expect(last.querySelector("time")?.title).toBe(new Date("2026-11-10T00:00:00Z").toLocaleString());
     for (const [at, words] of [["2026-11-10T02:59:30Z", "just now"], ["2026-11-10T02:15:00Z", "45 min ago"], ["2026-11-09T03:00:00Z", "1 d ago"], ["2026-11-01T00:00:00Z", "9 d ago"], ["not a time", "not a time"]]) {
-      p.report.mergePolicyStatus.status.classes![0].lastDecisionAt = at;
+      p.report.repositoryStatus.status.classes![0].lastDecisionAt = at;
       expect(classCard(p.report.classes[0], { ...ctx(p), now }).querySelector(".class-last time")?.textContent).toBe(words);
     }
     expect(classCard(page().report.classes[0], ctx()).querySelector(".class-last")).toBeNull();

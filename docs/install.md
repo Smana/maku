@@ -150,7 +150,7 @@ The checks, generated from the catalog in `internal/preflight`:
 | `github-link` | identity | broker | the GitHub link's OAuth client authorizes, and its callback is the web host's | `link_client`, `link_callback_mismatch` |  | D8 |
 | `apps` | github | factory | each served repository has both App installations, with their grants | `app_not_installed`, `app_permission_missing` |  | D10, D12 |
 | `merge-gate` | github | factory | the default branch's ruleset requires maku/merge-gate from the posting App | `merge_gate_not_required` | `merge_gate_rules_unread` | D11 |
-| `private-code` | github | factory | each private repository has privateCode.acknowledged | `private_code_refused` | `private_code_unacknowledged` | D3 |
+| `private-code` | github | factory | each private repository has privateCode.acknowledged: without it, it is refused new tasks | `private_code_unacknowledged` |  | D3 |
 | `models` | models | broker, run-controller | the planner, the classifier and one run alias per listener answer a one-token completion | `model_unreachable`, `model_refused` |  | D7 |
 | `knowledge` | runlore | broker | tools/list lists kb_search and kb_get within the timeout | `knowledge_unreachable`, `knowledge_tools_missing` |  | D20 |
 | `exposure` | exposure | factory, cli | no route reaches the broker around the proxy; each host resolves and answers | `broker_exposed_around_proxy`, `host_unresolved`, `route_unanswered`, `slack_route_too_wide` |  | D19 |
@@ -172,10 +172,10 @@ spec:
 ```
 
 The factory reads each served repository's visibility through the factory App. `private` and
-`internal` count as private code, and so does a read that fails. In this release a private repository
-without the field is served and warned about: its `PrivateCode` condition is `False`, the gauge
-`maku_factory_private_code_unacknowledged` reads 1, and the install banner says so. Rollout step 8
-refuses it. Self-hosted models remain possible through agentgateway, but nothing in the product
+`internal` count as private code, and so does a read that fails. A private repository without the
+field is refused new tasks, and tasks already started finish: its `PrivateCode` condition is `False`,
+the gauge `maku_factory_private_code_unacknowledged` reads 1, the preflight fails
+`private_code_unacknowledged`, and the install banner says so. Self-hosted models remain possible through agentgateway, but nothing in the product
 depends on them. The [Repository reference](factory.md#private-code) has the details.
 
 ## Sandbox nodes

@@ -70,7 +70,7 @@ func change(served config.Class, ok bool, next config.Class) (string, []string) 
 func CheckBindings(cfg *config.Config, rc *config.Repository, rep evidence.Report, bindings []config.Binding) BindingPreview {
 	bad := func(msgs ...string) BindingPreview { return BindingPreview{Errors: msgs} }
 	if rep.RepositoryObject == "" {
-		return bad("the repository is served from a per-repository MergePolicy: migrate it (maku config migrate) to edit its bindings")
+		return bad("the repository is served from the config file: migrate it (maku config migrate) to edit its bindings")
 	}
 	var errs []string
 	names := map[string]bool{}

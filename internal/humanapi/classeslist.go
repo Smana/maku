@@ -31,7 +31,7 @@ var classesListSchema = json.RawMessage(`{"type":"object","additionalProperties"
 // to that class and the profiles it names.
 var classesListOutput = json.RawMessage(`{"type":"object","required":["repository","maintainer","classes","profiles"],"properties":{` +
 	`"repository":{"type":"string"},"maintainer":{"type":"boolean"},"approveToMerge":{"type":"boolean"},` +
-	`"generations":{"type":"object","properties":{"factory":{"type":"integer"},"repository":{"type":"integer"},"mergePolicy":{"type":"integer"},"mergePolicies":{"type":"object","additionalProperties":{"type":"integer"}}}},` +
+	`"generations":{"type":"object","properties":{"factory":{"type":"integer"},"repository":{"type":"integer"},"mergePolicies":{"type":"object","additionalProperties":{"type":"integer"}}}},` +
 	`"evaluation":{"type":"object","properties":{"mode":{"type":"string"},"controlPercent":{"type":"integer"}}},` +
 	`"classes":{"type":"array","items":{"type":"object","required":["name","mode","floor"],"properties":{"name":{"type":"string"},"description":{"type":"string"},` +
 	`"mode":{"type":"string"},"ceilingUSD":{"type":"number"},"floor":{"type":"string"},"allowed":{"type":"array","items":{"type":"string"}}}}},` +

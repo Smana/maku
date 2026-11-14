@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"reflect"
 	"slices"
 	"strings"
 
@@ -18,7 +17,7 @@ import (
 // Migrate moves a config file's catalogue and repositories into manifests (D8): it returns the
 // manifests, as multi-document YAML in namespace ns, and the file with those keys removed.
 // Keys move verbatim, so a defaulted field stays omitted. Each repository's classes and merge are
-// split into class-shape MergePolicies and the Repository's bindings (Split, B17). A file still in
+// split into class-shape MergePolicies and the Repository's bindings (split, B17). A file still in
 // the single-repository shape, which the factory refuses, is read as its one-entry list first (R7).
 func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 	if file, err = LiftLegacy(file); err != nil {
@@ -103,7 +102,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		objs = append(objs, Object{Kind: KindRepository, Name: name, Namespace: ns, Spec: rs},
 			Object{Kind: KindMergePolicy, Name: name, Namespace: ns, Spec: ps})
 	}
-	if objs, err = Split(objs, ns); err != nil {
+	if objs, err = split(objs, ns); err != nil {
 		return nil, nil, fmt.Errorf("migrate: %w", err)
 	}
 	if manifests, err = Encode(objs); err != nil {
@@ -181,27 +180,6 @@ func ObjectName(repository string, repositories []string) string {
 		}
 	}
 	return n
-}
-
-// MergePolicyManifest is the YAML of a MergePolicy named name in ns, for the Repository object
-// repositoryRef, holding classes and merge as given (empty ones are left out).
-func MergePolicyManifest(name, ns, repositoryRef string, classes, merge any) ([]byte, error) {
-	spec := map[string]any{"repositoryRef": repositoryRef}
-	for k, v := range map[string]any{"classes": classes, "merge": merge} {
-		if v == nil {
-			continue
-		}
-		if rv := reflect.ValueOf(v); rv.IsZero() || ((rv.Kind() == reflect.Map || rv.Kind() == reflect.Slice) && rv.Len() == 0) {
-			continue
-		}
-		spec[k] = v
-	}
-	return yaml.Marshal(map[string]any{
-		"apiVersion": "maku.ogenki.io/v1alpha1",
-		"kind":       string(KindMergePolicy),
-		"metadata":   map[string]any{"name": name, "namespace": ns},
-		"spec":       spec,
-	})
 }
 
 // RepositoryManifest is the YAML of a Repository named name in ns with spec as given (B2, B3).

@@ -3,8 +3,6 @@
 package resources
 
 import (
-	"encoding/json"
-	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -260,33 +258,6 @@ author: {adopt: {logins: ["`+login+`"], branches: ['`+branch+`']}}
 
 func slicesClone(o []Object) []Object { return append([]Object(nil), o...) }
 
-// PR8, B8: a Repository that adds bindings while a per-repository MergePolicy still names it is
-// served from its bindings, and only that MergePolicy is refused. This is Flux's apply-then-prune
-// window: the new Repository lands before the old policy is pruned, and refusing the Repository
-// too would unlist it, so every Factory value naming it (control.repository) would fail as well.
-func TestBindingDefinedTwice(t *testing.T) {
-	bound := boundRepo(t, "maku", "Smana/maku", 2, anrBindings)
-	objs := append(specPolicies(t), bound, policy(t, "maku-legacy", "maku"))
-	r, err := Assemble(file(t), objs)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := refused(r, KindRepository, "maku"); got != "" {
-		t.Fatalf("the bound Repository must be served, refused %q: %+v", got, r.Refused)
-	}
-	if refused(r, KindMergePolicy, "maku-legacy") != v1alpha1.ReasonDefinedTwice {
-		t.Fatalf("the per-repository MergePolicy must be refused DefinedTwice: %+v", r.Refused)
-	}
-	if rc := r.Config.RepositoryFor("Smana/maku"); rc == nil || len(rc.Bound) == 0 {
-		t.Fatalf("Smana/maku must be served from its bindings: %+v", rc)
-	}
-	// Once the policy is pruned, nothing is refused.
-	r, err = Assemble(file(t), objs[:len(objs)-1])
-	if err != nil || len(r.Refused) != 0 {
-		t.Fatalf("after the prune: %v %+v", err, r.Refused)
-	}
-}
-
 // B14: the guardrails cap every binding.
 func TestBindingGuardrails(t *testing.T) {
 	f := strings.Replace(string(file(t)), "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
@@ -302,54 +273,6 @@ func TestBindingGuardrails(t *testing.T) {
 	}
 	if c := r.Config.RepositoryFor("Smana/maku").Classes["revert"]; c.MaxPerDay != 1 {
 		t.Fatalf("an unset cap inherits the guardrail's: %d", c.MaxPerDay)
-	}
-}
-
-// B17, B8: ai-native-ref's live objects, all in the per-repository shape, assemble to the config
-// main served before bindings existed, each legacy MergePolicy with its warning.
-func TestLegacyObjectsUnchanged(t *testing.T) {
-	anr, err := os.ReadFile("testdata/anr.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, residual, err := Migrate(anr, "agent-system")
-	if err != nil {
-		t.Fatal(err)
-	}
-	raw, err := os.ReadFile("testdata/anr-objects.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	objs, err := Decode(raw)
-	if err != nil {
-		t.Fatal(err)
-	}
-	r, err := Assemble(residual, objs)
-	if err != nil || len(r.Refused) != 0 {
-		t.Fatal(err, r.Refused)
-	}
-	got, err := json.MarshalIndent(struct {
-		Hash   string
-		Config any
-	}{r.Config.Hash, r.Config}, "", " ")
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := os.ReadFile("testdata/anr-legacy-config.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(got)+"\n" != string(want) {
-		t.Fatal("the legacy objects no longer assemble to main's config: testdata/anr-legacy-config.json")
-	}
-	var n int
-	for _, w := range r.Warnings {
-		if strings.Contains(w, "is in the per-repository shape, removed in the next minor: maku config migrate") {
-			n++
-		}
-	}
-	if n != 4 || len(r.Bindings) != 0 {
-		t.Fatalf("%d legacy warnings, want 4: %v", n, r.Warnings)
 	}
 }
 

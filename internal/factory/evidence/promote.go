@@ -22,8 +22,8 @@ var (
 )
 
 // Propose is file with class's mode changed from shadow to live and nothing else: the one-line
-// change a maintainer submits as their own pull request (MP1, MP14). In the binding shape the
-// mode is the binding's (B5). line is the 1-based line it changes. The result is parsed again, so
+// change a maintainer submits as their own pull request (MP1, MP14). The mode is the binding's
+// (B5). line is the 1-based line it changes. The result is parsed again, so
 // a proposal is always a valid file whose class is live.
 func Propose(file []byte, class string) (out []byte, line int, err error) {
 	f, err := mergepolicy.Parse(file)
@@ -39,12 +39,7 @@ func Propose(file []byte, class string) (out []byte, line int, err error) {
 	if err := yaml.Unmarshal(file, &doc); err != nil || len(doc.Content) != 1 {
 		return nil, 0, ErrInvalidPolicy
 	}
-	var mode *yaml.Node
-	if f.Bound() {
-		mode = child(binding(child(doc.Content[0], "mergePolicies"), class), "mode")
-	} else {
-		mode = child(child(child(doc.Content[0], "classes"), class), "mode")
-	}
+	mode := child(binding(child(doc.Content[0], "mergePolicies"), class), "mode")
 	out, err = toLive(file, mode)
 	if err != nil {
 		return nil, 0, err
@@ -105,18 +100,14 @@ func toLive(raw []byte, mode *yaml.Node) ([]byte, error) {
 	return bytes.Join(lines, nil), nil
 }
 
-// modeOf is class's mode in f, in either shape, and whether f declares it.
+// modeOf is class's binding mode in f, and whether f binds it.
 func modeOf(f *mergepolicy.File, class string) (string, bool) {
-	if f.Bound() {
-		for _, b := range f.MergePolicies {
-			if b.Name == class {
-				return b.Mode, true
-			}
+	for _, b := range f.MergePolicies {
+		if b.Name == class {
+			return b.Mode, true
 		}
-		return "", false
 	}
-	p, ok := f.Classes[class]
-	return string(p.Mode), ok
+	return "", false
 }
 
 // binding is sequence node n's binding named name, nil when there is none.

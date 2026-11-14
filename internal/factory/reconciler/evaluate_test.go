@@ -32,32 +32,31 @@ func TestDecideArmUnderTheCentralClassIsDecideArm(t *testing.T) {
 			in := gateInputs()
 			mutate(&in)
 			cl := gateOf(in.Cfg.Current().RepositoryFor(""), "dead-links")
-			if got, want := DecideArmUnder(in, []config.Class{cl}, nil), DecideArm(in); !reflect.DeepEqual(got, want) {
+			if got, want := DecideArmUnder(in, &cl, nil), DecideArm(in); !reflect.DeepEqual(got, want) {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}
 		})
 	}
 }
 
-// any: the class holds when one variant does; a wait outranks a refusal; with none holding, the
-// first variant's refusal is the decision's.
-func TestDecideArmUnderAny(t *testing.T) {
+// One class decides as DecideArm's rule decides it, each refusal its own; no class arms nothing.
+func TestDecideArmUnderOneClass(t *testing.T) {
 	strict := declaredClass()
 	strict.MaxModifiedLines = 1 // the rig's retarget is two lines
 	waits := declaredClass()
 	waits.HoldoutChecks = []string{"Never reported"}
+	declared := declaredClass()
 	for name, tc := range map[string]struct {
-		variants        []config.Class
+		cl              *config.Class
 		verdict, reason string
 	}{
-		"the second holds":      {[]config.Class{strict, declaredClass()}, "arm", ""},
-		"none holds":            {[]config.Class{strict, strict}, "human", "patch_too_large"},
-		"a wait over a refusal": {[]config.Class{strict, waits}, "wait", "holdout_pending"},
-		"a hold over a wait":    {[]config.Class{waits, declaredClass()}, "arm", ""},
-		"no variant: no class":  {nil, "human", "class_unarmed"},
+		"holds":     {&declared, "arm", ""},
+		"a refusal": {&strict, "human", "patch_too_large"},
+		"a wait":    {&waits, "wait", "holdout_pending"},
+		"no class":  {nil, "human", "class_unarmed"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := DecideArmUnder(gateInputs(), tc.variants, nil)
+			d := DecideArmUnder(gateInputs(), tc.cl, nil)
 			if d.Verdict != tc.verdict || d.Reason != tc.reason {
 				t.Fatalf("got %s:%s", d.Verdict, d.Reason)
 			}
@@ -86,7 +85,7 @@ func TestDecideArmUnderAnApprovalSubset(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := gateInputs()
 			tc.mutate(&in)
-			d := DecideArmUnder(in, []config.Class{tc.cl}, tc.approval)
+			d := DecideArmUnder(in, &tc.cl, tc.approval)
 			if d.Verdict != tc.verdict || d.Reason != tc.reason {
 				t.Fatalf("got %s:%s", d.Verdict, d.Reason)
 			}
@@ -100,7 +99,7 @@ func TestTheApprovalSubsetReadsTheRenamedFromPath(t *testing.T) {
 	cl := declaredClass()
 	cl.ModifyOnly = false
 	in.Stats = []forge.FileStat{{Path: "docs/a.md", Previous: "docs/security/a.md", Status: "renamed"}}
-	if d := DecideArmUnder(in, []config.Class{cl}, []string{"^docs/security/"}); d.Reason != "approval_required" {
+	if d := DecideArmUnder(in, &cl, []string{"^docs/security/"}); d.Reason != "approval_required" {
 		t.Fatalf("got %s:%s", d.Verdict, d.Reason)
 	}
 }

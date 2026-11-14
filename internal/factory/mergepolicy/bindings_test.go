@@ -43,7 +43,7 @@ func TestParseTheSpecsBindingFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if f.Classes != nil || len(f.MergePolicies) != 3 || f.MergePolicies[2].Name != "alert-rules" || f.MergePolicies[2].Mode != config.ModeShadow ||
+	if len(f.MergePolicies) != 3 || f.MergePolicies[2].Name != "alert-rules" || f.MergePolicies[2].Mode != config.ModeShadow ||
 		len(f.MergePolicies[2].RequiresApproval) != 1 {
 		t.Fatalf("%+v", f)
 	}
@@ -52,7 +52,7 @@ func TestParseTheSpecsBindingFile(t *testing.T) {
 	}
 }
 
-// YAML reads a bare off as false: a binding's mode reads it as off, as a class's does.
+// YAML reads a bare off as false: a binding's mode reads it as off.
 func TestABareOffBindsOff(t *testing.T) {
 	f, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs, mode: off}\n"))
 	if err != nil || f.MergePolicies[0].Mode != config.ModeOff {
@@ -66,7 +66,7 @@ func TestParseRefusesABadBindingFile(t *testing.T) {
 		many += fmt.Sprintf("  - {name: c%d, mode: shadow}\n", i)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
-		"both shapes":             {"factory: aws-0\nclasses: {docs-links: {mode: off, author: agents, harness: plain}}\nmergePolicies: [{name: docs-links, mode: live}]\n", "classes (the old shape) or mergePolicies, never both"},
+		"both shapes":             {"factory: aws-0\nclasses: {docs-links: {mode: off, author: agents, harness: plain}}\nmergePolicies: [{name: docs-links, mode: live}]\n", ErrClassesRemoved},
 		"a name twice":            {"factory: aws-0\nmergePolicies: [{name: docs, mode: live}, {name: docs, mode: off}]\n", "docs is bound twice"},
 		"too many":                {many, fmt.Sprintf("at most %d", MaxClasses)},
 		"a bad mode":              {"factory: aws-0\nmergePolicies: [{name: docs, mode: armed}]\n", `mode "armed"`},
@@ -184,33 +184,6 @@ func TestABindingFileWithoutRevertIsInvalid(t *testing.T) {
 	}
 	if _, err := ValidateFile(f, rc, c); err == nil || !strings.Contains(err.Error(), "revert") {
 		t.Fatalf("got %v", err)
-	}
-}
-
-// PR4: a legacy file branching with any still validates in this release, with a deprecation.
-func TestALegacyAnyIsDeprecated(t *testing.T) {
-	f, err := Parse([]byte(`factory: aws-0
-classes:
-  docs-links: {mode: live, author: agents, harness: plain}
-  revert: {mode: live, author: agents, harness: plain}
-  docs:
-    mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      any:
-        - [{allowedFiles: ['^docs/.+$']}]
-        - [{allowedFiles: ['^README\.md$']}]
-`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	rep, err := ValidateFile(f, nil, central())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(rep.Deprecations) != 1 || !strings.Contains(rep.Deprecations[0], "class docs: conditions.any") {
-		t.Fatalf("%q", rep.Deprecations)
 	}
 }
 

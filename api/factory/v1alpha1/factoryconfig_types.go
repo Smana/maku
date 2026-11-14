@@ -13,12 +13,10 @@ import (
 const (
 	ConditionAccepted = "Accepted"
 
-	ReasonNotThisFactory  = "NotThisFactory"  // another factory's object (D15)
-	ReasonDefinedTwice    = "DefinedTwice"    // the repository is also in the file (D8), or a per-repository MergePolicy names a bound Repository (B8)
-	ReasonMissingRef      = "MissingRef"      // a reference names no object
-	ReasonNoMergePolicy   = "NoMergePolicy"   // a Repository no MergePolicy names
-	ReasonDuplicatePolicy = "DuplicatePolicy" // two MergePolicies name one Repository
-	ReasonInvalid         = "Invalid"         // the factory's own validation refused it
+	ReasonNotThisFactory = "NotThisFactory" // another factory's object (D15)
+	ReasonDefinedTwice   = "DefinedTwice"   // the repository is also in the file (D8)
+	ReasonMissingRef     = "MissingRef"     // a reference names no object
+	ReasonInvalid        = "Invalid"        // the factory's own validation refused it
 
 	// A binding that does not resolve (reusable merge policies B6, B9): config's reasons.
 	ReasonMissingParameter  = config.ReasonMissingParameter
@@ -115,9 +113,8 @@ type FactoryList struct {
 	Items           []Factory `json:"items"`
 }
 
-// RepositorySpec is one repository served (D3): today's repositories[] entry. Its merge settings
-// and the MergePolicies it binds are here (reusable merge policies B2, B3), or, in the
-// per-repository shape, in the MergePolicy that names it.
+// RepositorySpec is one repository served (D3): today's repositories[] entry, with its merge
+// settings and the MergePolicies it binds (reusable merge policies B2, B3).
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name == 'review' && (b.mode != 'off' || has(b.allowedFiles) || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow) || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval) || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))",message="review is bound with mode off and no parameter"
 // +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || size(self.mergePolicies) == 0 || (self.mergePolicies.exists(b, b.name == 'docs-links') && self.mergePolicies.exists(b, b.name == 'revert'))",message="bind docs-links and revert when any policy is bound (OD-8)"
@@ -163,9 +160,6 @@ type RepositoryStatus struct {
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// MergePolicy names the MergePolicy that applies, in the per-repository shape.
-	// +kubebuilder:validation:MaxLength=253
-	MergePolicy string `json:"mergePolicy,omitempty"`
 	// Authority is who declares the classes: central, or the repository's file (MP15).
 	// +kubebuilder:validation:Enum=central;repository
 	Authority string `json:"authority,omitempty"`
@@ -176,7 +170,7 @@ type RepositoryStatus struct {
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	LiveCount int `json:"liveCount"`
-	// Classes is one entry per binding, or per served class of a per-repository MergePolicy (B10).
+	// Classes is one entry per binding (B10).
 	// +listType=map
 	// +listMapKey=name
 	// +kubebuilder:validation:MaxItems=32
@@ -238,79 +232,45 @@ type RepositoryList struct {
 	Items           []Repository `json:"items"`
 }
 
-// MergePolicySpec is a MergePolicy in one of two shapes (reusable merge policies B1, B8). With
-// repositoryRef, the per-repository shape: one repository's classes and merge rules (D3, D4), today's
-// repositories[].classes and merge, removed in the next minor. Without it, the class shape: one
-// reusable class definition, named by the object, that Repositories bind.
+// MergePolicySpec is one reusable class definition, named by the object, that Repositories bind
+// (reusable merge policies B1). The per-repository shape (repositoryRef, classes, merge) was
+// removed in the release after N (B8): the API server prunes those fields on read.
 //
-// +kubebuilder:validation:XValidation:rule="!has(oldSelf.repositoryRef) || self.repositoryRef == oldSelf.repositoryRef",message="spec.repositoryRef is fixed once set"
-// +kubebuilder:validation:XValidation:rule="has(self.repositoryRef) == has(oldSelf.repositoryRef)",message="a MergePolicy keeps its shape: delete it and create a policy"
-// +kubebuilder:validation:XValidation:rule="!has(self.repositoryRef) || !(has(self.description) || has(self.live) || has(self.shadow) || has(self.checks) || has(self.testFirst) || has(self.allowedFiles) || has(self.protectedFiles) || has(self.requiresApproval) || has(self.modifyOnly) || has(self.maxPatchFiles) || has(self.maxModifiedLines) || has(self.diffShape) || has(self.holdoutChecks) || has(self.maxPerDay) || has(self.oracle) || has(self.monitor) || has(self.author) || has(self.releaseAgeCheck) || has(self.companionFiles) || has(self.requiredLabel) || has(self.harness) || has(self.harnessAllowed) || has(self.escalation) || has(self.requires))",message="the per-repository fields (repositoryRef, classes, merge) and the class fields never together (B8)"
-// +kubebuilder:validation:XValidation:rule="has(self.repositoryRef) || (!has(self.classes) && !has(self.merge))",message="classes and merge are the per-repository shape: they need repositoryRef (B8)"
-// +kubebuilder:validation:XValidation:rule="has(self.repositoryRef) || (!has(self.live) && !has(self.shadow))",message="mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
+// +kubebuilder:validation:XValidation:rule="!has(self.live) && !has(self.shadow)",message="mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
 // +kubebuilder:validation:XValidation:rule="!has(self.oracle) || !has(self.oracle.workflow)",message="oracle.workflow is the repository's: set oracleWorkflow on the binding"
 // +kubebuilder:validation:XValidation:rule="!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)",message="the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
 type MergePolicySpec struct {
-	// RepositoryRef names the Repository of a per-repository MergePolicy; absent, the object is
-	// a class definition.
-	// +optional
-	// +kubebuilder:validation:MaxLength=253
-	// +kubebuilder:validation:MinLength=1
-	RepositoryRef string `json:"repositoryRef,omitempty"`
-	// +kubebuilder:validation:MaxProperties=32
-	// +kubebuilder:validation:XValidation:rule="self.all(k, !((has(self[k].live) && self[k].live) && (has(self[k].shadow) && self[k].shadow)))",message="a class is live or shadow, never both"
-	Classes map[string]config.Class `json:"classes,omitempty"`
-	Merge   *config.Merge           `json:"merge,omitempty"`
-	// PolicySpec is the class shape's definition: config.Class less the mode, plus requires.
+	// PolicySpec is the class definition: config.Class less the mode, plus requires.
 	config.PolicySpec `json:",inline"`
 }
 
-// ClassStatus is one class's mode and last decision (D10, narrowed for v1).
-type ClassStatus struct {
-	// +kubebuilder:validation:MaxLength=63
-	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=live;shadow;unarmed
-	Mode string `json:"mode"`
-	// +kubebuilder:validation:MaxLength=63
-	LastDecision   string       `json:"lastDecision,omitempty"`
-	LastDecisionAt *metav1.Time `json:"lastDecisionAt,omitempty"`
-}
-
-// MergePolicyStatus is what the factory made of its MergePolicy and of the repository's file (D10).
+// MergePolicyStatus is what the factory made of its MergePolicy (B10): Accepted, and its consumers.
 type MergePolicyStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +listType=map
 	// +listMapKey=type
 	// +kubebuilder:validation:MaxItems=8
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
-	// +kubebuilder:validation:Enum=central;repository
-	Authority string `json:"authority,omitempty"`
-	// ClassCount and LiveCount are always serialized, zero included: the printer columns read them.
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	ClassCount int `json:"classCount"`
-	// +optional
-	// +kubebuilder:validation:Minimum=0
-	LiveCount int `json:"liveCount"`
-	// Classes is the per-repository shape's, until the next minor.
-	// +kubebuilder:validation:MaxItems=32
-	Classes []ClassStatus `json:"classes,omitempty"`
-	// ConsumerCount and CurrentCount are always serialized, zero included: the printer columns
-	// read them. CurrentCount counts the accepted consumers serving the current generation.
+	// ConsumerCount, CurrentCount and LiveCount are always serialized, zero included: the printer
+	// columns read them. CurrentCount counts the accepted consumers serving the current generation,
+	// LiveCount the served consumers that bind the policy live.
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	ConsumerCount int `json:"consumerCount"`
 	// +optional
 	// +kubebuilder:validation:Minimum=0
 	CurrentCount int `json:"currentCount"`
-	// Consumers are the Repositories that bind a class-shape MergePolicy (B10).
+	// +optional
+	// +kubebuilder:validation:Minimum=0
+	LiveCount int `json:"liveCount"`
+	// Consumers are the Repositories that bind the MergePolicy (B10).
 	// +listType=map
 	// +listMapKey=repository
 	// +kubebuilder:validation:MaxItems=64
 	Consumers []ConsumerStatus `json:"consumers,omitempty"`
 }
 
-// ConsumerStatus is one Repository's binding of a class-shape MergePolicy (B10).
+// ConsumerStatus is one Repository's binding of a MergePolicy (B10).
 type ConsumerStatus struct {
 	// Repository is the Repository object's name.
 	// +kubebuilder:validation:MaxLength=253
@@ -326,14 +286,13 @@ type ConsumerStatus struct {
 }
 
 // MergePolicy is one reusable class definition, its name the class name (reusable merge policies
-// B1), or, in the per-repository shape until the next minor, one repository's merge policy (D3, D4).
+// B1).
 //
-// +kubebuilder:validation:XValidation:rule="has(self.spec.repositoryRef) || self.metadata.name.matches('^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$')",message="a MergePolicy's name is its class name (B1)"
-// +kubebuilder:validation:XValidation:rule="has(self.spec.repositoryRef) || self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay) || has(self.spec.oracle) || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))",message="review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$')",message="a MergePolicy's name is its class name (B1)"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay) || has(self.spec.oracle) || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))",message="review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced
-// +kubebuilder:printcolumn:name=Repo,type=string,JSONPath=`.spec.repositoryRef`
 // +kubebuilder:printcolumn:name=Consumers,type=integer,JSONPath=`.status.consumerCount`
 // +kubebuilder:printcolumn:name=Current,type=integer,JSONPath=`.status.currentCount`
 // +kubebuilder:printcolumn:name=Live,type=integer,JSONPath=`.status.liveCount`

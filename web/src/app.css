@@ -1210,7 +1210,6 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .mode-badge[data-mode="shadow"] { border-color: var(--primary); color: var(--link); }
 .mode-badge[data-mode="off"] { color: var(--muted-foreground); }
 .class-source, .evidence-detail, .class-empty { color: var(--muted-foreground); font-size: var(--text-small); }
-.class-card .class-intent { margin: 8px 0 4px; color: var(--card-foreground); }
 .settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: var(--text-small)/var(--leading-small) var(--font-mono); color: var(--muted-foreground); overflow-wrap: anywhere; }
 .class-card .class-last { margin: 4px 0; font-size: var(--text-small); color: var(--muted-foreground); }
 /* A binding (B16): its policy line, its refusal in the bad tone, what it supplies, small. */
@@ -1221,16 +1220,6 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .binding-editor .binding-meaning, .policy-definition { font-size: var(--text-small); overflow-x: auto; }
 /* A time inside a settings sentence reads as part of it, not as the log's mono timestamp. */
 .settings p time { font: inherit; font-variant-numeric: tabular-nums; }
-/* A summary phrase wraps as a unit; one longer than the line still wraps inside. */
-.class-summary .summary-part { display: inline-block; max-width: 100%; }
-/* The full conditions, folded: the summary darkens on hover, the body settles in when opened. */
-.class-conditions { margin-top: 8px; }
-.class-conditions > summary { width: fit-content; cursor: pointer; font-size: var(--text-small); color: var(--muted-foreground);
-  transition-property: color; transition-duration: 150ms; transition-timing-function: ease-out; }
-.class-conditions > summary:hover, .class-conditions[open] > summary { color: var(--foreground); }
-.class-conditions > summary::marker { color: var(--muted-foreground); }
-.class-conditions > :not(summary) { margin-top: 6px; }
-.class-when { margin: 4px 0 8px; padding-left: 20px; }
 .class-profiles { margin-top: 8px; }
 .class-profiles > h4 { margin: 0 0 4px; font-size: var(--text-small); font-weight: 500; color: var(--muted-foreground); }
 .class-profile-list { margin: 0 0 4px; padding-left: 20px; }
@@ -1247,44 +1236,22 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-actions, .class-promotions, .class-exceptions { margin-top: 8px; }
 .class-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 
-/* The editor: groups by question, each field its label, key, control and help. */
-.editor-tabs { display: flex; gap: 4px; margin: 8px 0; border-bottom: 1px solid var(--border); }
-.editor-tabs [role="tab"] { border: 0; background: none; padding: 8px 12px; color: var(--muted-foreground); min-height: var(--hit); }
-.editor-tabs [role="tab"][aria-selected="true"] { color: var(--foreground); box-shadow: inset 0 -2px 0 var(--primary); }
-.class-story { padding: 12px 16px; margin: 0 0 12px; border-radius: var(--radius-row); background: var(--muted); }
-.editor-group { padding: 12px 0; border-top: 1px solid var(--border); }
+/* A bindings editor field: its label, then its control. */
 .settings .editor-field { display: grid; grid-template-columns: minmax(12em, 18em) minmax(0, 1fr); gap: 4px 16px; align-items: start; margin: 8px 0; }
-.field-top { display: flex; flex-direction: column; gap: 2px; }
-.field-key { font-size: var(--text-small); color: var(--muted-foreground); }
-.field-help { grid-column: 2; margin: 0; font-size: var(--text-small); color: var(--muted-foreground); }
-.field-error { grid-column: 2; margin: 0; font-size: var(--text-small); color: var(--destructive-text); }
-.field-count { grid-column: 2; margin: 0; font-size: var(--text-small); color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
-.group-add { margin-top: 4px; }
-.editor-actions { position: sticky; bottom: 0; z-index: 1; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; padding: 12px 0; background: var(--muted); border-top: 1px solid var(--border); }
 
-/* The gallery: simple, then advanced. */
-.example-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin: 8px 0 16px; }
-.example-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.example-card h4 { margin: 0; font-family: var(--font-mono); font-size: var(--text-small); }
-.example-why { color: var(--muted-foreground); margin: 0; }
-.example-card button { align-self: flex-start; margin-top: auto; }
-.example-yaml { font-size: var(--text-small); overflow-x: auto; }
-
-/* A new group or a revealed gallery fades in; nothing moves under reduced motion. */
-.editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary), .policy-differences[open] > ul { animation: settle-in 180ms ease-out; }
+/* The differences fold settles in when opened; nothing moves under reduced motion. */
+.policy-differences[open] > ul { animation: settle-in 180ms ease-out; }
 @keyframes settle-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) {
-  .editor-group, .example-gallery:not([hidden]), .class-conditions[open] > :not(summary), .policy-differences[open] > ul { animation: none; }
-  .class-conditions > summary { transition: none; }
+  .policy-differences[open] > ul { animation: none; }
   .settings-card, .settings-card::after { transition: none; }
   .settings-card:hover { transform: none; }
 }
 
 @media (max-width: 720px) {
   .settings .editor-field { grid-template-columns: minmax(0, 1fr); }
-  .field-help, .field-error, .field-count { grid-column: 1; }
   .settings .settings-table { display: block; overflow-x: auto; }
-  /* The repository table stacks on a phone: each row a block, name and MergePolicy first, the
+  /* The repository table stacks on a phone: each row a block, name and what serves it first, the
      counts below them; the column heads stay for a screen reader. */
   .settings .repo-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .settings .repo-table tbody, .settings .repo-table tr { display: block; }
@@ -1298,37 +1265,6 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .settings .proposal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: var(--text-small); }
 .settings textarea { display: block; width: 100%; min-height: 4em; margin: 4px 0; }
-.settings .editor-form { border: 1px solid var(--border); border-radius: var(--radius-row); padding: 8px 16px; }
-/* The expert view: a transparent textarea over its highlighted copy, so the text stays a plain,
-   accessible textarea. Both layers share one font, padding and line height, or the caret drifts. */
-.settings .yaml-editor { border: 1px solid var(--border); border-radius: var(--radius-row); background: var(--card); overflow: hidden; }
-.settings .yaml-bar { display: flex; gap: 8px; align-items: center; padding: 4px 8px; border-bottom: 1px solid var(--border); font-size: var(--text-small); }
-.settings .yaml-name { color: var(--muted-foreground); font-family: var(--font-mono); margin-right: auto; }
-.settings .yaml-body { display: flex; height: 24em; }
-.settings .yaml-gutter, .settings .yaml-hl, .settings .expert-yaml {
-  margin: 0; padding: 8px; font: var(--text-small)/var(--leading-small) var(--font-mono); tab-size: 2; white-space: pre; overflow-wrap: normal; max-height: none; }
-/* The page's code rule sets its own font: the copy must keep the textarea's, or the caret drifts. */
-.settings .yaml-hl code { font: inherit; }
-.settings .yaml-gutter { min-width: 3ch; text-align: right; color: var(--muted-foreground); background: var(--muted); overflow: hidden; user-select: none; }
-.settings .yaml-gutter .y-error { color: var(--destructive-text); font-weight: 700; }
-.settings .yaml-stack { position: relative; flex: 1; min-width: 0; }
-.settings .yaml-hl { position: absolute; inset: 0; overflow: hidden; color: var(--card-foreground); pointer-events: none; }
-.settings .expert-yaml { position: absolute; inset: 0; width: 100%; height: 100%; min-height: 0; resize: none; border: 0;
-  background: transparent; color: transparent; caret-color: var(--card-foreground); overflow: auto; }
-.settings .expert-yaml:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; } /* the editor frame clips an outset ring */
-.settings .expert-yaml::selection { color: transparent; background: color-mix(in srgb, var(--primary) 25%, transparent); }
-.y-key { color: var(--link); }
-.y-str { color: var(--success-text); }
-.y-num, .y-bool { color: var(--warning-foreground); }
-.y-comment, .y-punct { color: var(--muted-foreground); }
-.y-line.y-error { background: color-mix(in srgb, var(--destructive) 10%, var(--card)); }
-.settings .yaml-status { margin: 0; padding: 4px 8px; font-size: var(--text-small); color: var(--destructive-text); }
-.settings .yaml-status:empty { display: none; }
-.settings .comments-warning:empty { display: none; }
-.settings .key-fix { font: var(--text-small)/var(--leading-small) var(--font-mono); padding: 0 6px; }
-.settings .editor-form:disabled { opacity: 0.6; }
-.settings .error-line { font: var(--text-small)/var(--leading-small) var(--font-mono); padding: 0 6px; }
-.settings .structural-relaxation { font-weight: 700; }
 
 /* Approval memory (/settings/approval-memory): one card per saved grant, its predicate as code. */
 .grants-filter { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 12px 0; }

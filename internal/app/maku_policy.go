@@ -147,19 +147,14 @@ func readPolicy(path string, cfg *config.Config, rc *config.Repository) (*mergep
 	return f, rep, nil
 }
 
-// printReport prints the bindings that do not resolve, in file order, and the deprecations: the
-// file is valid, and each line is what the factory would log.
+// printReport prints the bindings that do not resolve, in file order: the file is valid, and each
+// line is what the factory would log.
 func (r Maku) printReport(f *mergepolicy.File, rep mergepolicy.Report) error {
 	for _, b := range f.MergePolicies {
 		if e, ok := rep.BindingErrors[b.Name]; ok {
 			if _, err := fmt.Fprintf(r.Out, "binding %s: %s: %s\n", b.Name, e.Reason, e.Message); err != nil {
 				return err
 			}
-		}
-	}
-	for _, d := range rep.Deprecations {
-		if _, err := fmt.Fprintf(r.Out, "deprecated: %s\n", d); err != nil {
-			return err
 		}
 	}
 	return nil

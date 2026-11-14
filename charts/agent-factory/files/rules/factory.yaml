@@ -223,8 +223,8 @@ rules:
     labels:
       severity: warning
     annotations:
-      summary: "{{ $labels.repository }} is private code served without spec.privateCode.acknowledged"
-      description: "A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. This release warns; the next refuses it. Set the field on the Repository, or stop serving it."
+      summary: "{{ $labels.repository }} is private code without spec.privateCode.acknowledged: it is refused new tasks"
+      description: "A Repository serving private code needs spec.privateCode.acknowledged: true, which states the code is sent to the configured models. Until it is set, the factory starts no new task there; tasks already started finish. Set the field on the Repository, or stop serving it."
       runbook_url: "__DOCS__/factory.md#private-code"
       dashboard: "/d/agent-factory"
   - alert: FactoryMergeGateRulesUnread

@@ -13,47 +13,21 @@ import (
 
 // DecideArmUnder is DecideArm with the task's class read from a repository's policy rather than
 // the central config (merge policy MP16): one evaluator, so a simulation or a dual evaluation
-// cannot disagree with the gate on the same inputs. variants are the class's resolved branches of
-// any (one without any; none when the policy lacks the class, which arms nothing), each decided
-// as DecideArm decides a class. The class holds when one variant does: an arm outranks a shadow,
-// a shadow a wait, a wait any refusal, and with none holding the first variant's refusal stands.
-// approval is the class's requiresApproval subset: a class decision touching it asks a human in a
-// live class and is recorded as would-require-approval in a shadow one (the owner's Q3). Through
-// stage 3 nothing merges on this decision.
-func DecideArmUnder(in ArmInputs, variants []config.Class, approval []string) ArmDecision {
+// cannot disagree with the gate on the same inputs. cl is the class as the policy resolves it; nil
+// when the policy lacks the class, which arms nothing. approval is the class's requiresApproval
+// subset: a class decision touching it asks a human in a live class and is recorded as
+// would-require-approval in a shadow one (the owner's Q3), and no approval arms over a gate path.
+func DecideArmUnder(in ArmInputs, cl *config.Class, approval []string) ArmDecision {
 	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
 	if rc == nil {
 		return notServedDecision(in)
 	}
-	class := in.Task.Spec.PredictedClass
-	if len(variants) == 0 {
+	if cl == nil {
 		return withGatePath(decide(in, cfg, rc, config.Class{}), in, rc, nil)
 	}
-	var best ArmDecision
-	var gatePaths []string
-	for i, v := range variants {
-		d := decide(in, cfg, rc, withShape(v, class))
-		if i == 0 || rank(d) > rank(best) {
-			best = d
-		}
-		gatePaths = append(gatePaths, v.ProtectedFiles...)
-	}
-	// Once, over the decision every variant ranked: no branch arms an approval over a gate path.
-	return withGatePath(withApproval(best, in, approval), in, rc, gatePaths)
-}
-
-// rank orders a variant's decisions for any: what holds first, a wait before a refusal.
-func rank(d ArmDecision) int {
-	switch d.Verdict {
-	case "arm":
-		return 3
-	case "shadow":
-		return 2
-	case "wait":
-		return 1
-	}
-	return 0
+	d := decide(in, cfg, rc, withShape(*cl, in.Task.Spec.PredictedClass))
+	return withGatePath(withApproval(d, in, approval), in, rc, cl.ProtectedFiles)
 }
 
 // withApproval applies the approval subset to a class decision: an arm or a shadow of the class,

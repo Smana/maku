@@ -3,16 +3,20 @@
 package resources
 
 import (
+	"encoding/json"
 	"os"
 	"slices"
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// anrLegacy is ai-native-ref's live objects in the per-repository shape and the residual config
-// file they are served over.
+// anrLegacy is ai-native-ref's objects in the per-repository shape, as of release N, and the
+// residual config file they were served over. Decode refuses the shape now (B8), so they are read
+// as raw objects: what split takes from Migrate, in memory.
 func anrLegacy(t *testing.T) (residual []byte, objs []Object) {
 	t.Helper()
 	anr, err := os.ReadFile("testdata/anr.yaml")
@@ -26,10 +30,37 @@ func anrLegacy(t *testing.T) (residual []byte, objs []Object) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if objs, err = Decode(raw); err != nil {
-		t.Fatal(err)
+	for _, doc := range splitDocuments(string(raw)) {
+		var m map[string]any
+		if err := yaml.Unmarshal([]byte(doc), &m); err != nil {
+			t.Fatal(err)
+		}
+		if len(m) == 0 {
+			continue
+		}
+		meta, _ := m["metadata"].(map[string]any)
+		spec, _ := m["spec"].(map[string]any)
+		objs = append(objs, Object{Kind: Kind(str(m, "kind")), Name: str(meta, "name"), Namespace: str(meta, "namespace"), Spec: spec})
 	}
 	return residual, objs
+}
+
+// legacyServed is the config release N served from anrLegacy's objects (testdata/anr-legacy-config.json,
+// captured from Assemble before the shape was removed): what a split must leave unchanged.
+func legacyServed(t *testing.T) *config.Config {
+	t.Helper()
+	raw, err := os.ReadFile("testdata/anr-legacy-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var golden struct{ Config config.Config }
+	if err := json.Unmarshal(raw, &golden); err != nil {
+		t.Fatal(err)
+	}
+	if len(golden.Config.Repos()) != 4 {
+		t.Fatalf("%d repositories in the golden", len(golden.Config.Repos()))
+	}
+	return &golden.Config
 }
 
 func assembled(t *testing.T, residual []byte, objs []Object) *config.Config {
@@ -84,7 +115,7 @@ func policySpec(t *testing.T, objs []Object, name string) config.PolicySpec {
 // Repositories, and every resolved class is what the legacy objects served.
 func TestSplitANR(t *testing.T) {
 	residual, objs := anrLegacy(t)
-	out, err := Split(objs, "agent-system")
+	out, err := split(objs, "agent-system")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +125,7 @@ func TestSplitANR(t *testing.T) {
 		switch {
 		case o.Kind == KindMergePolicy:
 			policies = append(policies, o.Name)
-			if legacyPolicy(o) {
+			if perRepository(o) {
 				t.Fatalf("a legacy policy is left: %s", o.Name)
 			}
 		case o.Kind == KindRepository && o.Spec["merge"] != nil && o.Spec["mergePolicies"] != nil:
@@ -144,7 +175,7 @@ func TestSplitANR(t *testing.T) {
 		t.Fatalf("deps-patch %+v", p.Monitor)
 	}
 
-	if d := Equal(assembled(t, residual, objs), assembled(t, residual, out)); len(d) != 0 {
+	if d := Equal(legacyServed(t), assembled(t, residual, out)); len(d) != 0 {
 		t.Fatalf("not equal:\n%s", strings.Join(d, "\n"))
 	}
 }
@@ -185,7 +216,7 @@ func TestSplitRefuses(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			_, objs := anrLegacy(t)
 			tc.edit(objs)
-			if _, err := Split(objs, "agent-system"); err == nil || !strings.Contains(err.Error(), tc.want) {
+			if _, err := split(objs, "agent-system"); err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})
@@ -197,19 +228,15 @@ func TestSplitRefuses(t *testing.T) {
 func TestEqualNamesWhatTheGuardrailsChange(t *testing.T) {
 	residual, objs := anrLegacy(t)
 	object(objs, KindFactory, "aws-0").Spec["mergeGuardrails"] = map[string]any{"maxPerDay": 2}
-	out, err := Split(objs, "agent-system")
+	out, err := split(objs, "agent-system")
 	if err != nil {
 		t.Fatal(err)
-	}
-	before, err := Assemble(residual, objs)
-	if err != nil || len(before.Refused) != 0 {
-		t.Fatal(err, before.Refused)
 	}
 	after, err := Assemble(residual, out)
 	if err != nil || len(after.Refused) != 0 {
 		t.Fatal(err, after.Refused)
 	}
-	d := strings.Join(Equal(before.Config, after.Config), "\n")
+	d := strings.Join(Equal(legacyServed(t), after.Config), "\n")
 	for _, want := range []string{
 		"Smana/runlore-kb kb-entries: served before only",          // 5 a day, over the guardrail: refused
 		"Smana/cloud-native-ref alert-rules: maxPerDay unset -> 2", // no cap: the guardrail's
@@ -223,11 +250,11 @@ func TestEqualNamesWhatTheGuardrailsChange(t *testing.T) {
 // Split of what is already split is the same objects: a converted repository converts to itself.
 func TestSplitOfTheBindingShapeIsANoOp(t *testing.T) {
 	_, objs := anrLegacy(t)
-	once, err := Split(objs, "agent-system")
+	once, err := split(objs, "agent-system")
 	if err != nil {
 		t.Fatal(err)
 	}
-	twice, err := Split(once, "agent-system")
+	twice, err := split(once, "agent-system")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -243,7 +270,7 @@ func TestSplitOfTheBindingShapeIsANoOp(t *testing.T) {
 func TestSplitRefusesACollidingPolicy(t *testing.T) {
 	_, objs := anrLegacy(t)
 	same := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true}}
-	out, err := Split(append(slices.Clone(objs), same), "agent-system")
+	out, err := split(append(slices.Clone(objs), same), "agent-system")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -257,7 +284,7 @@ func TestSplitRefusesACollidingPolicy(t *testing.T) {
 		t.Fatalf("%d docs policies", n)
 	}
 	other := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true, "testFirst": true}}
-	if _, err := Split(append(slices.Clone(objs), other), "agent-system"); err == nil || !strings.Contains(err.Error(), "MergePolicy docs exists with another definition") {
+	if _, err := split(append(slices.Clone(objs), other), "agent-system"); err == nil || !strings.Contains(err.Error(), "MergePolicy docs exists with another definition") {
 		t.Fatalf("got %v", err)
 	}
 }
