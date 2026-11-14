@@ -8,6 +8,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/factory/resources"
 )
 
 func readAnswers(t *testing.T, name string) Answers {
@@ -278,7 +280,8 @@ func line(v any) string {
 	return v.(string)
 }
 
-// The install jobs' answers files (hack/install-e2e) resolve: CI cannot drift from the wizard.
+// The install jobs' answers files (hack/install-e2e) resolve, and their factory assembles (D12's two
+// Apps among its checks): CI cannot drift from the wizard, nor install a factory that serves nothing.
 func TestInstallE2EAnswersResolve(t *testing.T) {
 	files, _ := filepath.Glob(filepath.Join("..", "..", "hack", "install-e2e", "*.answers.yaml"))
 	if len(files) != 2 {
@@ -291,10 +294,29 @@ func TestInstallE2EAnswersResolve(t *testing.T) {
 		}
 		a, err := DecodeAnswers(raw)
 		if err == nil {
-			_, _, err = Resolve(a)
+			a, _, err = Resolve(a)
 		}
 		if err != nil {
 			t.Errorf("%s: %v", f, err)
+			continue
+		}
+		file, manifests, err := FactoryObjects(Inputs{Answers: a})
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		// What the chart's configmap.yaml writes over the file for the wizard's values: the folded
+		// merger's files, the agents App's mount and the per-run tokens it mints.
+		gh := file["github"].(map[string]any)
+		gh["mergerAppIDFile"], gh["mergerKeyFile"] = gh["appIDFile"], gh["privateKeyFile"]
+		gh["agentsAppIDFile"], gh["agentsKeyFile"] = "/etc/agent-factory-agents/app_id", "/etc/agent-factory-agents/private_key"
+		file["runTokens"] = map[string]any{"enabled": true, "perRun": true}
+		doc, _ := yamlDoc("", file)
+		objs, err := resources.Decode(manifests)
+		if err != nil {
+			t.Fatalf("%s: %v", f, err)
+		}
+		if _, err := resources.Assemble(doc, objs); err != nil {
+			t.Errorf("%s: the factory does not assemble: %v", f, err)
 		}
 	}
 }
