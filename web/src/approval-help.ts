@@ -43,8 +43,8 @@ export const RULES: Record<string, Rule> = {
     deny: `the command does not run; ${DENIED}`,
   },
   "egress.new": {
-    intent: "Reach a network destination outside the run's egress profiles.",
-    why: "The destination is not one of the run's allowed egress profiles.",
+    intent: "Reach a network destination outside the run's egress allow-lists.",
+    why: "The destination is not on the run's egress allow-lists.",
     approve: "the connection is allowed for this call.",
     deny: `no connection is made; ${DENIED}`,
   },

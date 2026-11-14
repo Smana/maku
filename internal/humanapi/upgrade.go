@@ -13,7 +13,7 @@ import (
 
 // replannedLine leads the answer to a plan/v1 confirmed after the upgrade (P14): nothing was filed,
 // and the plan to confirm is the one below, under its new hash.
-const replannedLine = "This plan was made before profiles, so nothing was filed. Here it is again as plan/v2, " +
+const replannedLine = "This plan was made before workflows could be chosen, so nothing was filed. Here it is again as plan/v2, " +
 	"with its new hash: check it and confirm this one."
 
 // planReplanned is a plan/v1 shown again as plan/v2: never filed, and never a dead end.

@@ -93,14 +93,14 @@ func TestProposalSelectBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"static_select"`, actionProposalProfile, actionProposalOptions, "Profile: factory's choice",
+	for _, want := range []string{`"static_select"`, actionProposalProfile, actionProposalOptions, "Workflow: factory's choice",
 		`"value":"` + profileValue(p.Hash, p.Rev, "links-pair") + `"`, `"value":"` + profileValue(p.Hash, p.Rev, "") + `"`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("blocks lack %q: %s", want, raw)
 		}
 	}
-	if strings.Contains(strings.ToLower(string(raw)), "workflow") {
-		t.Error("the word is profile (P1)")
+	if strings.Contains(string(raw), `"Profile`) {
+		t.Error("the word is workflow (WF1)")
 	}
 }
 
@@ -194,7 +194,7 @@ func TestProposalStaleSelect(t *testing.T) {
 func TestProposalPinRefused(t *testing.T) {
 	rig, p, ts := pinRig(t)
 	rig.broker.intakeAnswer = nil
-	rig.broker.intakeErr = Refused("not_maintainer: Only a maintainer of this repository can choose the profile; the factory will choose it.")
+	rig.broker.intakeErr = Refused("not_maintainer: Only a maintainer of this repository can choose the workflow; the factory will choose it.")
 	rig.interact(selectPressOf(t, ts, proposalPresser, profileValue(p.Hash, 1, "links-pair")))
 	if e := rig.slack.whispers(); len(e) != 1 || !strings.Contains(e[0].text, "Only a maintainer") {
 		t.Fatalf("whispers %+v", e)

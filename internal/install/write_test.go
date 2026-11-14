@@ -4,16 +4,20 @@ package install
 
 import (
 	"bytes"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
 	"sigs.k8s.io/yaml"
 
+	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -115,6 +119,10 @@ func TestFactoryStarts(t *testing.T) {
 		}
 		if res.Config.Meter.URL == "" || len(res.Config.Repositories) != len(in.Answers.List("repositories")) {
 			t.Errorf("%s: meter %q, %d repositories", name, res.Config.Meter.URL, len(res.Config.Repositories))
+		}
+		// What install writes loads without a warning: no dead setting, nothing a later release refuses.
+		if w := slices.Concat(res.Warnings, res.Config.Warnings); len(w) != 0 {
+			t.Errorf("%s: the written factory warns: %q", name, w)
 		}
 	}
 }
@@ -330,6 +338,49 @@ func TestInClusterIssuer(t *testing.T) {
 		}
 		if got := strings.Contains(string(tree["README.md"]), "--kube-apiserver-arg=anonymous-auth=true"); got != want {
 			t.Errorf("%s: the README names k3s's anonymous-auth: %v, want %v", name, got, want)
+		}
+	}
+}
+
+// renderedFactory is the Factory install writes for an answers file, decoded.
+func renderedFactory(t *testing.T, name string) v1alpha1.Factory {
+	t.Helper()
+	tree, err := Render(inputs(t, name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f v1alpha1.Factory
+	if err := yaml.UnmarshalStrict(tree["factory/factory.yaml"], &f); err != nil {
+		t.Fatalf("factory/factory.yaml: %v", err)
+	}
+	return f
+}
+
+// Task 6 (workflows): install writes the three workflows and none of the dead settings: no trio, no
+// defaults.template or defaults.tier, no per-class loops rows, and solo is a lone implementer.
+func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
+	for _, name := range goldens {
+		f := renderedFactory(t, name)
+		profiles, templates, loops := config.ShippedWorkflows()
+		for n, want := range profiles {
+			if got, ok := f.Spec.Workflows[n]; !ok || got != want {
+				t.Errorf("%s: workflow %s = %+v, want %+v", name, n, got, want)
+			}
+		}
+		if len(f.Spec.Workflows) != len(profiles) {
+			t.Errorf("%s: workflows %v", name, slices.Collect(maps.Keys(f.Spec.Workflows)))
+		}
+		if _, ok := f.Spec.Templates["trio"]; ok {
+			t.Errorf("%s: trio is written", name)
+		}
+		if got := f.Spec.Templates["solo"].Roles; !slices.Equal(got, []string{"implementer"}) {
+			t.Errorf("%s: solo = %v", name, got)
+		}
+		if len(f.Spec.Templates) != len(templates) {
+			t.Errorf("%s: templates %v", name, slices.Collect(maps.Keys(f.Spec.Templates)))
+		}
+		if got := slices.Sorted(maps.Keys(f.Spec.Loops)); !slices.Equal(got, slices.Sorted(maps.Keys(loops))) {
+			t.Errorf("%s: loops rows %v, want default and careful only", name, got)
 		}
 	}
 }

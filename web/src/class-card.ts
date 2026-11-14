@@ -144,7 +144,7 @@ function lastDecisionWords(code: string): string {
 // The text is set as text, never as markup: a description is a maintainer's.
 function profileLine(cat: Catalogue, name: string): string {
   const p = cat.profiles[name];
-  if (!p) return `${name}: not in the factory's list of profiles`;
+  if (!p) return `${name}: not in the factory's list of workflows`;
   const parts = [p.offered && p.roles?.length ? `roles ${p.roles.join(", ")}` : "roles chosen at triage"];
   if (p.tier) parts.push(`tier ${p.tier}`);
   if (p.testFirst) parts.push("tests first");
@@ -158,7 +158,7 @@ export function profilesRow(cat: Catalogue | null | undefined, cls: string): HTM
   const c: CatalogueClass | undefined = cat?.classes.find((x) => x.name === cls);
   if (!cat || !c) return undefined;
   const row = el("section", undefined, "class-profiles");
-  row.append(el("h4", "Profiles"));
+  row.append(el("h4", "Workflows"));
   const list = el("ul", undefined, "class-profile-list");
   list.append(el("li", c.floor ? `Floor ${profileLine(cat, c.floor)}` : "Floor: none declared, the factory runs the class as configured"));
   for (const v of c.allowed ?? []) list.append(el("li", `Variant ${profileLine(cat, v)}`));

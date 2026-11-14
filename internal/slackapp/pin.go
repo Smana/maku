@@ -13,19 +13,19 @@ import (
 	"github.com/Smana/maku/internal/roomview"
 )
 
-// A maintainer pins a harness profile from the proposal (P5, spec "Slack proposal"): a static select
-// under the suggestion lists the factory's choice and the class's offered profiles, choosing one is a
+// A maintainer pins a workflow (a harness profile) from the proposal (P5, spec "Slack proposal"): a static select
+// under the suggestion lists the factory's choice and the class's offered workflows, choosing one is a
 // profile-only revision the broker answers with no model call, and the message becomes that revision
 // with its new hash. Confirm binds the hash shown, as it always did. The broker checks every pin
 // against the catalogue as the presser reads it, and the factory checks it again at triage (P6).
 
 // The lines a pin's press is answered with, to the presser alone.
 const (
-	pinnedLine         = "Profile %s pinned; the proposal shows the new revision: check it and confirm."
-	unpinnedLine       = "Profile back to the factory's choice; the proposal shows the new revision: check it and confirm."
-	pinUnchangedLine   = "That profile is already the one this proposal shows."
-	pinRefusedPrefix   = "Profile not changed: "
-	pinUnreachableLine = "Profile not changed: the planner could not be reached; try again in a minute."
+	pinnedLine         = "Workflow %s pinned; the proposal shows the new revision: check it and confirm."
+	unpinnedLine       = "Workflow back to the factory's choice; the proposal shows the new revision: check it and confirm."
+	pinUnchangedLine   = "That workflow is already the one this proposal shows."
+	pinRefusedPrefix   = "Workflow not changed: "
+	pinUnreachableLine = "Workflow not changed: the planner could not be reached; try again in a minute."
 	optionsLine        = "Options not shown: "
 )
 
@@ -111,10 +111,10 @@ func pinBlock(hash string, rev int, s pinSelect) slackBlock {
 		return slackOption{Text: &slackBlockText{Type: "plain_text", Text: text}, Value: profileValue(hash, rev, profile)}
 	}
 	sel := slackSelect{Type: "static_select", ActionID: actionProposalProfile,
-		Placeholder: &slackBlockText{Type: "plain_text", Text: "Profile"},
-		Options:     []slackOption{opt("Profile: factory's choice", "")}}
+		Placeholder: &slackBlockText{Type: "plain_text", Text: "Workflow"},
+		Options:     []slackOption{opt("Workflow: factory's choice", "")}}
 	for _, name := range s.Options {
-		sel.Options = append(sel.Options, opt("Profile: "+name, name))
+		sel.Options = append(sel.Options, opt("Workflow: "+name, name))
 	}
 	for i := range sel.Options {
 		if strings.HasSuffix(sel.Options[i].Value, "|"+s.Current) {

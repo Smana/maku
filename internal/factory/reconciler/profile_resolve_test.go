@@ -615,13 +615,13 @@ func TestAProfileAnnouncementWaitsForATarget(t *testing.T) {
 	announced := func() int {
 		n := 0
 		for _, c := range g.f.Comments(12) {
-			if strings.Contains(c, "runs under profile `review-search`") {
+			if strings.Contains(c, "runs the workflow `review-search`") {
 				n++
 			}
 		}
 		return n
 	}
-	if got := g.f.Comments(12); announced() != 1 || !strings.Contains(got[0], "runs under profile") {
+	if got := g.f.Comments(12); announced() != 1 || !strings.Contains(got[0], "runs the workflow") {
 		t.Fatalf("posted first, once: %q", got)
 	}
 	tk = g.reconcile(t, "3buqdlot", 2)

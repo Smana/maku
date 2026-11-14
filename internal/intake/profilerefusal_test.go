@@ -16,10 +16,10 @@ import (
 func TestProfileRefusalSentences(t *testing.T) {
 	base := intake.ProfileRefusal{Class: "review", Profile: "review-frontier"}
 	want := map[string]string{
-		intake.ProfileUnknown:       "`review-frontier` is not a profile of this factory. `classes_list` shows the profiles.",
-		intake.ProfileNotOffered:    "`review-frontier` sets no template, so its roles are chosen at triage; it runs only as the factory's choice.",
-		intake.NotMaintainer:        "Only a maintainer of this repository can choose the profile; the factory will choose it.",
-		intake.ProfileConflict:      "The issue names more than one profile; none was applied.",
+		intake.ProfileUnknown:       "`review-frontier` is not a workflow of this factory. `classes_list` shows the workflows.",
+		intake.ProfileNotOffered:    "`review-frontier` names no roles, so they are chosen at triage; it runs only as the factory's choice.",
+		intake.NotMaintainer:        "Only a maintainer of this repository can choose the workflow; the factory will choose it.",
+		intake.ProfileConflict:      "The issue names more than one workflow; none was applied.",
 		intake.ProfileNoTestsPaths:  "`review-frontier` writes tests first, and this repository declares no tests paths.",
 		intake.CatalogueUnavailable: "The factory's list of classes could not be read; try again in a minute.",
 	}

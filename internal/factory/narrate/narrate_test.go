@@ -672,7 +672,7 @@ func TestAnApprovalShownSaysWhoAndWhatRemains(t *testing.T) {
 	}
 }
 
-// TE: the profile a task runs under, said once, with the floor marked and the scoper's why.
+// TE: the workflow a task runs, said once, with the floor marked and the scoper's why (WF1).
 func TestProfileChosen(t *testing.T) {
 	for name, c := range map[string]struct {
 		name, source, reason, why string
@@ -689,6 +689,9 @@ func TestProfileChosen(t *testing.T) {
 			e := ProfileChosen(c.name, c.source, c.reason, c.why, 1)
 			if e.Key != "profile-chosen-1" {
 				t.Fatalf("key %q", e.Key)
+			}
+			if !strings.Contains(e.Body, "runs the workflow `") || strings.Contains(e.Body, "profile") {
+				t.Errorf("the noun is workflow: %s", e.Body)
 			}
 			for _, w := range c.want {
 				if !strings.Contains(e.Body, w) {
@@ -709,10 +712,18 @@ func TestProfileEscalated(t *testing.T) {
 	if e.Key != "profile-escalated-3" {
 		t.Fatalf("key %q", e.Key)
 	}
-	for _, w := range []string{"`review-floor`", "`review-frontier`", "out_of_budget"} {
+	for _, w := range []string{"under the workflow `review-floor`", "under the workflow `review-frontier`", "out_of_budget"} {
 		if !strings.Contains(e.Body, w) {
 			t.Errorf("body lacks %q: %s", w, e.Body)
 		}
+	}
+}
+
+// WF1: a refused pin names the workflow, whichever label pinned it.
+func TestProfileRefusedNamesTheWorkflow(t *testing.T) {
+	e := ProfileRefused("careful", "Only a maintainer of this repository can choose the workflow.")
+	if e.Key != "profile-refused" || !strings.Contains(e.Body, "the pinned workflow `careful` was not applied") {
+		t.Fatalf("%+v", e)
 	}
 }
 

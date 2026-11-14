@@ -42,9 +42,9 @@ var classesListOutput = json.RawMessage(`{"type":"object","required":["repositor
 func (s *Server) classesListTool() mcpTool {
 	return mcpTool{name: ClassesList, call: s.classesList, schema: classesListSchema, output: classesListOutput,
 		description: "What a repository offers at intake: its classes, each with how it merges, and the workflows any task may run, " +
-			"the repository's default first, as lines to show as they are (text) and the same as structuredContent. Each workflow's roles, tier, " +
+			"the repository's default first, as lines to show as they are (text) and the same as structuredContent (whose profiles are the workflows). Each workflow's roles, tier, " +
 			"tests-first, loop, escalation and description, and whether you may pin one (only a maintainer may). With class, that class's ceiling and description. " +
-			"A workflow is pinned by naming it in a plan revision, never here; this tool changes nothing."}
+			"A workflow is pinned by naming it in a plan revision's profile field, never here; this tool changes nothing."}
 }
 
 func (s *Server) classesList(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {

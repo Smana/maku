@@ -41,10 +41,12 @@ tasks:
       - hack/lint.sh
 
   docs:
-    desc: Reader pages carry no per-row status tags, and every relative link and anchor resolves.
+    desc: Reader pages carry no per-row status tags, say workflow, and every relative link and anchor resolves.
     cmds:
       - bash hack/docs_test.sh
       - bash hack/docs.sh
+      - bash hack/vocabulary_test.sh
+      - bash hack/vocabulary.sh
 
   names:
     desc: No artifact name from before the maku rebrand outside the historical docs (hack/names.sh).

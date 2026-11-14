@@ -93,7 +93,7 @@ merger and every run.
 
 ## Team evaluation
 
-The factory can offer the scoper approved harness profiles and record which one each task used. This
+The factory can offer the scoper approved workflows and record which one each task used. This
 walkthrough adds a floor and a frontier variant to the existing demo. It changes no model or App secret.
 
 Create `.demo/evaluation.yaml`, replacing the repository, maintainer and App login placeholders and
@@ -149,7 +149,7 @@ kubectl --kubeconfig .demo/kubeconfig rollout status -n maku deploy/agent-factor
 ```
 
 Create a bounded issue that touches two documentation files, label it `documentation` and
-`factory/ready`, then inspect its profile and the run's annotations:
+`factory/ready`, then inspect its workflow and the run's annotations:
 
 ```bash
 kubectl --kubeconfig .demo/kubeconfig -n maku get tasks \
@@ -159,7 +159,7 @@ kubectl --kubeconfig .demo/kubeconfig -n agents get agentrun <run-name> \
   -o jsonpath='{.metadata.annotations}{"\n"}'
 ```
 
-Under `mode: apply`, a scoper recommendation of `review-frontier` resolves the task to that profile
+Under `mode: apply`, a scoper recommendation of `review-frontier` resolves the task to that workflow
 with `source: scoper` and `cohort: treatment`. Set `evaluation.mode: observe` in
 `.demo/evaluation.yaml`, upgrade with the same two files, and submit another task. The same
 recommendation now records `recommended: review-frontier` and `reason: observe` while `name` remains
@@ -178,7 +178,7 @@ curl -fsS http://127.0.0.1:19090/metrics | \
 
 A scoper may legitimately keep the floor. That yields `reason: none` with no recommendation and is a
 valid negative result, not proof that apply or observe mode is broken. Recommendations are model
-outputs, so repeat a bounded task whose profile fit is clear rather than changing the expected status.
+outputs, so repeat a bounded task whose workflow fit is clear rather than changing the expected status.
 
 ## Stubbed spec-intake functional test
 
@@ -291,7 +291,7 @@ task quickstart                 # kind + Cilium + gVisor + cert-manager + CNPG +
 | kubectl | Within one minor of the kind node (1.36-1.38 for 1.37): `up.sh` stops otherwise. `mise.toml` pins one: `mise install kubectl` |
 | `LOCAL_PORT` | The port you forward to the broker, default 8080. The broker's `publicURL` follows it and it answers that port only, as `localhost`, `127.0.0.1` or `[::1]` |
 | Tools | `docker`, `kind`, `helm`, `kubectl`, `curl`, `git`, `openssl`, `envsubst`, `yq` (mikefarah v4); `sha256sum` (maku), `sha512sum`, `bzip2` and `tar` (gVisor). `up.sh` stops at the first one missing |
-| `MODEL_API_KEY` | Anthropic by default; `MODEL` and `MODEL_BASE_URL` select any OpenAI-compatible endpoint, whose host joins the egress profile. For an in-cluster model (`http://<svc>.<ns>.svc.<domain>:<port>`), the port must equal the Service's `targetPort`, and the run may then reach **every pod in the model's namespace on that port**: the rule selects the namespace, not the Service. Run the model in a namespace of its own |
+| `MODEL_API_KEY` | Anthropic by default; `MODEL` and `MODEL_BASE_URL` select any OpenAI-compatible endpoint, whose host joins the egress allow-list. For an in-cluster model (`http://<svc>.<ns>.svc.<domain>:<port>`), the port must equal the Service's `targetPort`, and the run may then reach **every pod in the model's namespace on that port**: the rule selects the namespace, not the Service. Run the model in a namespace of its own |
 | `GITHUB_TOKEN`, `REPO` | A fine-grained PAT with Contents read/write on **one throwaway repository**, and that repository as `owner/name`. The repository needs a `main` branch with at least one commit |
 | Images | The latest `Smana/maku` release. From a `main` checkout, set `AP_VERSION` to a release whose images match the chart: the `maku-*` images it pulls exist from v0.30.0 on, so any `AP_VERSION` before it fails at preflight. The GitHub API is rate-limited (60 requests/hour unauthenticated). `maku` comes from the same release (checksum-verified into `.quickstart/bin/`). `ROOMCTL=<path>` uses a `maku` build of this checkout instead |
 
@@ -367,7 +367,7 @@ role holds `SELECT, INSERT` on `events` only, so `serve` cannot alter the schema
 | Symptom | Cause and fix |
 |---|---|
 | A run stays `Pending` | Read its `Ready` condition: `kubectl -n agents get agentrun <run> -o jsonpath='{.status.conditions}'`. `SecretMissing`: `agent-model` or `agent-git` is absent from `agents`. `CreateFailed`: the controller could not create the pod; the run stays `Pending` or ends `Failed` (read the condition message, then the controller's logs). `WaitingForGC`: an object of a previous run with the same name is still being garbage-collected; it clears by itself |
-| A request from the agent times out | Egress is default-deny. `kubectl -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --verdict DROPPED -n agents`, then widen the egress profile |
+| A request from the agent times out | Egress is default-deny. `kubectl -n kube-system exec ds/cilium -c cilium-agent -- hubble observe --verdict DROPPED -n agents`, then widen the egress allow-list |
 | Pods under gVisor have no network | gVisor needs Cilium's `socketLB.hostNamespaceOnly=true`; `up.sh` sets it. A hand-installed Cilium without it breaks run networking |
 | `up.sh` fails at "release images" | No release holds the chart's images yet, or the API limit is hit. Set `AP_VERSION=<release tag>` |
 | This machine cannot run gVisor | `ALLOW_UNSANDBOXED=1 task quickstart` runs agents under the default runtime. The environment is then **not sandboxed**: the agent's code runs as a plain container with your PAT and API key. Use it only on a machine you trust with that code. The controller sets the run's `Unsandboxed` condition and its room shows a `Not sandboxed` banner. Any value other than `1` stops `up.sh`. |

@@ -232,7 +232,7 @@ func Check(p Plan, candidates []string, classes map[string]Class) *Refusal {
 		if is.Profile != "" && !profileNameRE.MatchString(is.Profile) {
 			// Whether a pin holds is the catalogue's to say (CheckPin, at the door that reads one);
 			// here it is only held to the shape a profile's name has, since it lands in a body and a label.
-			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a profile's name", is.Index))
+			return refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a workflow's name", is.Index))
 		}
 		if s := is.Suggestion; s != nil {
 			if n := utf8.RuneCountInString(s.Why); n > MaxWhyRunes {
@@ -329,13 +329,13 @@ type ProfileRefusal struct {
 func (r ProfileRefusal) Sentence() string {
 	switch r.Code {
 	case ProfileUnknown:
-		return fmt.Sprintf("`%s` is not a profile of this factory. `classes_list` shows the profiles.", r.Profile)
+		return fmt.Sprintf("`%s` is not a workflow of this factory. `classes_list` shows the workflows.", r.Profile)
 	case ProfileNotOffered:
-		return fmt.Sprintf("`%s` sets no template, so its roles are chosen at triage; it runs only as the factory's choice.", r.Profile)
+		return fmt.Sprintf("`%s` names no roles, so they are chosen at triage; it runs only as the factory's choice.", r.Profile)
 	case NotMaintainer:
-		return "Only a maintainer of this repository can choose the profile; the factory will choose it."
+		return "Only a maintainer of this repository can choose the workflow; the factory will choose it."
 	case ProfileConflict:
-		return "The issue names more than one profile; none was applied."
+		return "The issue names more than one workflow; none was applied."
 	case ProfileNoTestsPaths:
 		return fmt.Sprintf("`%s` writes tests first, and this repository declares no tests paths.", r.Profile)
 	case CatalogueUnavailable:

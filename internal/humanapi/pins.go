@@ -38,7 +38,7 @@ func (s *Server) checkPins(ctx context.Context, p authn.Principal, onBehalfOf st
 			// not a plan the broker made.
 			return &intake.Refusal{Reason: intake.ReasonPlannerInvalid,
 				Sentence: "the plan is not the shape the contract asks for (issue " + strconv.Itoa(is.Index) +
-					": roles are not the pinned profile's); ask again"}
+					": roles are not the pinned workflow's); ask again"}
 		}
 	}
 	if refused == nil {
