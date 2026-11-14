@@ -125,22 +125,6 @@ func TestTheApprovalSubsetAsksAHuman(t *testing.T) {
 	}
 }
 
-// Every branch of any is a variant of the class: the gate decides on each, not on the leaves all
-// declares (a reader of the config's one class would read the looser class).
-func TestTheGateDecidesEveryBranch(t *testing.T) {
-	in := gateInputs()
-	strict, loose := declaredClass(), declaredClass()
-	strict.MaxModifiedLines, loose.MaxModifiedLines = 1, 0
-	r := mergepolicy.Resolved{Class: loose, Branches: []config.Class{strict}}
-	in.Stats[0].Additions = 10
-	if d := decideUnder(in, gatePolicy{on: true, snap: snapshotOf(map[string]mergepolicy.Resolved{"dead-links": r})}); d.Reason != "patch_too_large" {
-		t.Fatalf("the branch, not the leaves: %+v", d)
-	}
-	if !(gatePolicy{on: true, snap: snapshotOf(map[string]mergepolicy.Resolved{"dead-links": r})}).readsDiff(nil, "dead-links") {
-		t.Fatal("a branch with a cap reads the diff")
-	}
-}
-
 // Off, the gate is today's: nothing is read from a policy source, and the decision and its record
 // are byte for byte the central ones.
 func TestRepositoryAuthorityOffIsToday(t *testing.T) {
@@ -193,7 +177,7 @@ func TestACutOverRecordNamesTheDecidingClassGenerations(t *testing.T) {
 			res.PolicyGeneration = tc.policyGen
 			g := cutOverRig(t, snapshotOf(map[string]mergepolicy.Resolved{"docs-links": res}), nil)
 			g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {
-				Repository: 9, MergePolicy: 5, Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 5, PolicyName: "docs-links"}}}}}
+				Repository: 9, Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 5, PolicyName: "docs-links"}}}}}
 			g.reconcile(t, "3buqdlot", 1)
 			c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
 			if !strings.Contains(c, tc.want) || strings.Contains(c, "policygen=5") {

@@ -7,11 +7,10 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { centralManifest, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
+import { conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
 import { policyPage, policiesTable, type PolicyReport } from "./policy-page";
 import { bindingEditor } from "./binding-editor";
-import { classForm, cleanClass, exampleGallery, fileYAML, type PolicyFile, type Preview, previewView, profilesFor, templates, yamlEditor } from "./policy-editor";
-import { comments, locate, parsePolicy } from "./policy-yaml";
+import type { PolicyFile } from "./policy-editor";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
 import { filterField } from "./filter";
 import { mountBrand } from "./brand";
@@ -32,12 +31,6 @@ export interface Proposal { path: string; line: number; file: string; editURL: s
 // evidence is absent while the factory reads it: never read yet, or the class was added since.
 export interface ClassReport { class: string; source: string; mode: string; evidence?: Evidence; proposal?: Proposal; unproposed?: string }
 export interface Condition { type: string; status: "True" | "False" | "Unknown" | string; reason?: string; message?: string }
-export interface ClassStatus { name: string; mode: string; lastDecision?: string; lastDecisionAt?: string }
-// A repository's MergePolicy object as the factory reads it; absent when it has none.
-export interface MergePolicyStatus {
-  namespace: string; generation: number;
-  status: { observedGeneration?: number; authority?: string; conditions?: Condition[]; classes?: ClassStatus[] };
-}
 // A binding's parameters, as Repository.spec.mergePolicies holds them (B4).
 export interface Binding {
   name: string; mode: string; allowedFiles?: string[]; companionFiles?: string[]; requiredLabel?: string; oracleWorkflow?: string;
@@ -60,9 +53,6 @@ export interface Report {
   hardening?: Readiness;
   file?: string; policy?: PolicyFile; factory: string; defaultBranch: string; harnessProfiles: string[] | null; adoptedProfiles?: string[] | null;
   guardrails: Record<string, unknown>;
-  // Set when the repository is served from a MergePolicy object: its name, its manifest as the
-  // factory renders it, the file name to save that under, and its classes in the file's shape.
-  mergePolicy?: string; mergePolicyStatus?: MergePolicyStatus; manifest?: string; manifestPath?: string; served?: PolicyFile;
   // Set when the repository is served from its Repository's bindings (B3, B16): the object's name,
   // its manifest and the file name to save it under, its status, and each binding.
   repositoryObject?: string; repositoryManifest?: string; repositoryManifestPath?: string; repositoryStatus?: RepositoryStatus;
@@ -187,7 +177,7 @@ function table(head: string[], rows: (string | Node)[][], cls = ""): HTMLTableEl
 }
 
 // Re-exported where the page's tests and neighbours import them from.
-export { blockerActions, centralManifest, explain, LADDER_LEGEND, trackRecord, trackRecordParts } from "./settings-api";
+export { blockerActions, explain, LADDER_LEGEND, trackRecord, trackRecordParts } from "./settings-api";
 export { READING } from "./class-card";
 
 // evidenceAge is when the shown evidence was read, as a sentence, and why it is older when the
@@ -289,8 +279,8 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
       grants === undefined ? unknown : plural(grants, "saved grant")));
 }
 
-// mergePolicyCell is a repository's MergePolicy in the list: its name and whether it was accepted
-// and is in sync, or that the repository is not migrated.
+// mergePolicyCell is what serves a repository in the list: its Repository object and whether it
+// was accepted, its bindings valid and in sync, or that the repository is not migrated.
 function mergePolicyCell(r: Report): string {
   if (r.repositoryObject) {
     const st = r.repositoryStatus;
@@ -298,11 +288,7 @@ function mergePolicyCell(r: Report): string {
     const words = conditionWords(kept).map((c) => c.word);
     return [`Repository ${r.repositoryObject}`, ...(words.length ? words : ["status unknown"])].join(" · ");
   }
-  if (policyState(r) === "not-migrated") return "Not migrated";
-  const st = r.mergePolicyStatus;
-  const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => c.type === "Accepted" || c.type === "InSync") } };
-  const words = conditionWords(kept).map((c) => c.word);
-  return [r.mergePolicy!, ...(words.length ? words : ["status unknown"])].join(" · ");
+  return "Not migrated";
 }
 
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
@@ -318,7 +304,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       return;
     }
     const pages = await readAll(repositories, get);
-    const repoTable = table(["Repository", "MergePolicy", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
+    const repoTable = table(["Repository", "Served by", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
       const p = pages[i];
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
       const r = p.report;
@@ -394,14 +380,13 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const classes = el("section", undefined, "policy-classes");
   main.append(classes);
   // A binding's conditions are its policy's, on the policy's page: the card links there.
-  const policyOf = (p: RepositoryPage) => (p.report.repositoryObject ? undefined : centralManifest(p.report) ? p.report.served : p.report.policy);
   const age = (p: RepositoryPage) => { const e = el("p", undefined, "evidence-age"); e.append(...evidenceAge(p.report)); return e; };
   const draw = (p: RepositoryPage) => classes.replaceChildren(age(p),
-    ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main, policy: policyOf(p) })));
+    ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main })));
   draw(page);
   const filter = filterField({ label: "Filter classes", noun: ["class", "classes"],
     items: () => [...classes.querySelectorAll<HTMLElement>("article.class-card")],
-    text: (c) => ["h3", ".mode-badge", ".class-intent"].map((q) => c.querySelector(q)?.textContent ?? "").join(" ") });
+    text: (c) => ["h3", ".mode-badge"].map((q) => c.querySelector(q)?.textContent ?? "").join(" ") });
   classes.before(filter.box);
   // Pending evidence fills in place: the editor below is never rebuilt, so no edit is lost.
   void (async () => {
@@ -431,28 +416,23 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   main.append(tl);
 
   if (state === "not-migrated") return;
-  if (r.repositoryObject && state === "repository") {
+  if (state === "repository") {
     // Cut over (stage 4): the file holds the bindings, so no Repository manifest edits them.
     main.append(el("h2", "Bindings"), el("p", "The bindings are in .github/agent-factory.yaml, which decides the classes: edit them there, by pull request.", "editor-footer"));
     return;
   }
-  if (r.repositoryObject) {
-    // B16: a bound repository edits its bindings; a policy is edited on its own page.
-    const meaning = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
-      .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
-    main.append(el("h2", "Bindings editor"), bindingEditor(r, meaning, page.you.maintainer, get));
-    return;
-  }
-  main.append(el("h2", "Policy editor"));
-  main.append(editor(r, page.you.maintainer, get));
+  // B16: a bound repository edits its bindings; a policy is edited on its own page.
+  const meaning = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
+    .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
+  main.append(el("h2", "Bindings editor"), bindingEditor(r, meaning, page.you.maintainer, get));
 }
 
-// policyHeader says once what serves the page's classes: the MergePolicy, its authority and
+// policyHeader says once what serves the page's classes: the Repository, its authority and
 // generation, and each of its conditions as words with a tone. Nothing below repeats it.
 function policyHeader(r: Report): HTMLElement {
   if (policyState(r) === "not-migrated") {
     const box = el("p", "Not migrated yet: ", "not-migrated");
-    box.append(el("code", "maku config migrate"), " prints its MergePolicy.");
+    box.append(el("code", "maku config migrate"), " prints its Repository.");
     return box;
   }
   const state = policyState(r);
@@ -460,8 +440,7 @@ function policyHeader(r: Report): HTMLElement {
   const head = el("header", undefined, "policy-header");
   const dl = el("dl");
   const row = (k: string, v: string) => dl.append(el("dt", k), el("dd", v));
-  if (r.repositoryObject) row("Repository", r.repositoryObject);
-  else row("MergePolicy", r.mergePolicy!);
+  row("Repository", r.repositoryObject!);
   if (st) row("Namespace", st.namespace);
   row("Authority", st?.status.authority ?? state);
   // A status that lags the spec describes an older generation: say which, only then.
@@ -488,7 +467,7 @@ function policyHeader(r: Report): HTMLElement {
       head.append(d);
     } else head.append(el("p", `${c.word}: ${c.message}`, "policy-condition-message"));
   }
-  if (state === "repository") head.append(el("p", `The repository's .github/agent-factory.yaml decides the classes; the ${r.repositoryObject ? "Repository" : "MergePolicy"} defers to it.`, "policy-authority"));
+  if (state === "repository") head.append(el("p", `The repository's .github/agent-factory.yaml decides the classes; the Repository defers to it.`, "policy-authority"));
   const merge = mergeView(r);
   if (merge) head.append(merge);
   const read = el("p", "Policy read ", "policy-read");
@@ -529,247 +508,6 @@ function modeLegend(): HTMLElement {
 
 function pending(r: Report): boolean {
   return r.classes.some((c) => !c.evidence);
-}
-
-// editor is the guided form and the expert YAML view over the repository's policy file. The form
-// starts from the file on the default branch (or the central classes as exported when it has
-// none); the expert view is the text checked. Each follows the other: a form edit rewrites the
-// text, and text that parses refills the form. Check is the factory's, for a maintainer.
-export function editor(r: Report, maintainer: boolean, get: typeof fetch): HTMLElement {
-  const box = el("section", undefined, "policy-editor");
-  const manifest = centralManifest(r);
-  // Served from a MergePolicy: the editor holds the served classes in the file's shape, as the
-  // factory exports them; the factory builds spec.classes of them, never the page.
-  const file: PolicyFile = structuredClone((manifest ? r.served : r.policy) ?? { factory: r.factory, classes: {} });
-  file.factory = r.factory; // read-only: Maku never edits factory:
-  file.classes ??= {};
-  const profiles = r.harnessProfiles ?? [];
-  box.append(el("p", `This file belongs to the factory ${r.factory} (read-only). Harness profiles: ${profiles.join(", ") || "none"}.`, "editor-meta"));
-  const pick = el("select");
-  pick.setAttribute("aria-label", "class to edit");
-  // source is what the form edits: a class of the file, or a new class from an example.
-  let source: { kind: "class" | "template"; name: string } | undefined;
-  // While a new class is not in the file yet, the picker shows it as a placeholder, so choosing
-  // any class of the file, the one edited before included, is a change.
-  const fillPick = () => {
-    const was = pick.value;
-    pick.replaceChildren();
-    if (source?.kind === "template") { const o = el("option", `New class from ${source.name}`); o.value = ""; pick.append(o); }
-    for (const n of Object.keys(file.classes!)) { const o = el("option", n); o.value = n; pick.append(o); }
-    pick.value = source?.kind === "template" ? "" : [...pick.options].some((o) => o.value === was) ? was : pick.options[0]?.value ?? "";
-  };
-  fillPick();
-  if (pick.value) source = { kind: "class", name: pick.value };
-  const name = el("input");
-  name.placeholder = "new class name";
-  name.setAttribute("aria-label", "new class name");
-  name.hidden = true;
-  const nameNote = el("p", "", "notice name-notice");
-  // free is base, or base-2, base-3… when the file already has a class of that name, said so.
-  const free = (base: string): string => {
-    let k = base;
-    for (let n = 2; Object.hasOwn(file.classes!, k); n++) k = `${base}-${n}`;
-    nameNote.textContent = k === base ? "" : `A class named ${base} exists: this one is named ${k}.`;
-    return k;
-  };
-  const formAt = el("div");
-  const gallery = exampleGallery((t) => {
-    source = { kind: "template", name: t };
-    name.value = free(t);
-    name.hidden = false;
-    gallery.hidden = true;
-    opener.setAttribute("aria-expanded", "false");
-    fillPick();
-    show();
-    name.focus(); // the gallery that held focus is hidden
-  }, r.guardrails);
-  gallery.id = `example-gallery-${r.repository.replace(/[^A-Za-z0-9_-]/g, "-")}`;
-  const opener = el("button", "New class from an example", "example-open");
-  opener.type = "button";
-  opener.setAttribute("aria-expanded", "false");
-  opener.setAttribute("aria-controls", gallery.id);
-  opener.onclick = () => {
-    gallery.hidden = !gallery.hidden;
-    opener.setAttribute("aria-expanded", String(!gallery.hidden));
-  };
-  const out = el("div");
-  // The form writes the file without comments: say so before an edit there drops them.
-  const warning = el("p", "", "notice comments-warning");
-  const note = (text: string) => {
-    const n = comments(text);
-    warning.textContent = n ? `The file has ${n} comment${n > 1 ? "s" : ""}. A form edit rewrites it without them: edit in the expert view to keep them.` : "";
-  };
-  // The manifest copied is the factory's: the report's while the text is as served, else the
-  // latest valid check's of this very text, checked first when it changed since.
-  const seed = manifest ? fileYAML(file) : r.file ?? fileYAML(file);
-  let last: { text: string; manifest: string } | undefined;
-  const built = async (text: string): Promise<string | undefined> => {
-    if (text === seed) return manifest;
-    if (last?.text === text) return last.manifest;
-    const p = await run(text);
-    return p?.valid ? p.manifest : undefined;
-  };
-  const view = yamlEditor(seed, ".github/agent-factory.yaml", (text) => {
-    const p = parsePolicy(text);
-    const form = formAt.querySelector("fieldset");
-    if (form) form.disabled = !p.ok;
-    if (!p.ok) {
-      view.say(`${p.line ? `Line ${p.line}: ` : ""}${p.message}. The form waits until the text parses.`);
-      if (p.line) view.mark([p.line]);
-      return;
-    }
-    view.say("");
-    note(text);
-    file.classes = p.file.classes ?? {};
-    fillPick();
-    if (source?.kind !== "template") {
-      source = pick.value ? { kind: "class", name: pick.value } : undefined;
-      show();
-    }
-  }, manifest ? { path: r.manifestPath ?? "mergepolicy.yaml", label: "Copy MergePolicy manifest", get: (t) => built(t) } : undefined);
-  const show = () => {
-    const src = source;
-    if (!src) {
-      formAt.replaceChildren(el("p", "The file has no class yet: start one from an example.", "notice"));
-      return;
-    }
-    const tpl = src.kind === "template";
-    let cls = tpl ? templates[src.name]() : file.classes![src.name];
-    if (tpl && !cls.harness) cls = { ...cls, harness: profilesFor(cls.author, profiles, r.adoptedProfiles)[0] ?? "" };
-    // The new class's name is fixed by the first edit that writes it into the file.
-    let written: string | undefined;
-    const key = () => written ?? (tpl ? (name.value.trim() || src.name) : src.name);
-    name.hidden = !tpl;
-    try {
-      formAt.replaceChildren(classForm(cls, profiles, (c) => {
-        // The first write fixes the new class's name, never on a class the file has already.
-        const first = tpl && !written;
-        if (first) name.value = written = free(key());
-        // A file that declares classes declares docs-links and revert (OD-8): a first class brings
-        // them, unarmed, so the first check does not fail on what the maintainer never wrote.
-        for (const req of ["docs-links", "revert"]) {
-          file.classes![req] ??= { mode: "off", author: "agents", harness: profilesFor("agents", profiles, r.adoptedProfiles)[0] ?? "" };
-        }
-        file.classes![key()] = cleanClass(c);
-        if (first) {
-          // From now on it is a class of the file: the picker lists it and the text refills it.
-          source = { kind: "class", name: key() };
-          name.hidden = true;
-          fillPick();
-          pick.value = key();
-        }
-        const before = view.text.value;
-        const dropped = comments(before);
-        view.set(fileYAML(file));
-        note(view.text.value);
-        if (!dropped) return view.say();
-        const undo = el("button", "Undo");
-        undo.type = "button";
-        undo.onclick = () => {
-          view.text.value = before;
-          view.text.dispatchEvent(new Event("input"));
-        };
-        view.say(`The form edit dropped ${dropped} comment${dropped > 1 ? "s" : ""}. `, undo);
-      }, r.adoptedProfiles, r.guardrails, key(), tpl ? src.name : ""));
-    } catch {
-      formAt.replaceChildren(el("p", "The form cannot show this class as the text has it: edit it in the expert view.", "notice"));
-    }
-  };
-  pick.onchange = () => {
-    if (!pick.value) return; // the placeholder of the new class being started
-    source = { kind: "class", name: pick.value };
-    nameNote.textContent = "";
-    fillPick();
-    show();
-  };
-  // The form and the YAML are two tabs over one file; the check, below both, reads the YAML.
-  const tabs = el("div", undefined, "editor-tabs");
-  tabs.setAttribute("role", "tablist");
-  tabs.setAttribute("aria-label", "Edit the file as");
-  const panes: HTMLElement[] = [];
-  // tab adds a tab over pane and returns what selects it.
-  const tab = (label: string, pane: HTMLElement, on: boolean): (() => void) => {
-    const b = el("button", label);
-    b.type = "button";
-    b.id = `${gallery.id}-tab-${panes.length}`;
-    b.setAttribute("role", "tab");
-    b.setAttribute("aria-selected", String(on));
-    b.tabIndex = on ? 0 : -1;
-    pane.setAttribute("role", "tabpanel");
-    pane.setAttribute("aria-labelledby", b.id);
-    pane.hidden = !on;
-    const select = () => {
-      for (const t of tabs.children) {
-        t.setAttribute("aria-selected", String(t === b));
-        (t as HTMLButtonElement).tabIndex = t === b ? 0 : -1;
-      }
-      for (const p of panes) p.hidden = p !== pane;
-    };
-    b.onclick = select;
-    // Arrow keys move between the tabs, as a tablist's do.
-    b.onkeydown = (e) => {
-      if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
-      const all = [...tabs.children] as HTMLButtonElement[];
-      const next = all[(all.indexOf(b) + (e.key === "ArrowRight" ? 1 : all.length - 1)) % all.length];
-      next.focus();
-      next.click();
-    };
-    panes.push(pane);
-    tabs.append(b);
-    return select;
-  };
-  const picker = el("div", undefined, "editor-picker");
-  picker.append(labelled2("Class", pick), opener, name, nameNote);
-  const formPane = el("div", undefined, "editor-pane");
-  formPane.append(picker, gallery, warning, formAt);
-  const yamlPane = el("div", undefined, "editor-pane");
-  yamlPane.append(el("p", "The form rewrites the whole file without comments; edits here are checked exactly as written."), view.root);
-  if (manifest) yamlPane.append(el("p", "Built from the version the factory serves; a change the factory refused is not in it.", "notice"));
-  tab("Form", formPane, true);
-  const toYaml = tab("YAML (expert)", yamlPane, false);
-  box.append(tabs, formPane, yamlPane);
-  const check = el("button", "Check, compare and simulate", "primary");
-  check.type = "button";
-  check.disabled = !maintainer;
-  const actions = el("div", undefined, "editor-actions");
-  actions.append(check);
-  if (!maintainer) actions.append(el("p", "Only a maintainer of the repository may check a proposal.", "notice"));
-  // run is the factory's check of text, shown below; a valid one's manifest is kept with its text.
-  const run = async (text: string): Promise<Preview | undefined> => {
-    try {
-      const p = (await post(`/api/policy/repositories/${r.repository}/preview`, { file: text }, get)) as Preview;
-      const at = (msg: string) => locate(text, msg);
-      view.mark((p.errors ?? []).map(at).filter((n) => n !== undefined));
-      // Served from a MergePolicy, the change is the manifest's: no file to submit on GitHub.
-      // An error's line is in the YAML: its tab is shown first, from the form too.
-      out.replaceChildren(previewView(manifest ? { ...p, proposal: undefined } : p, at,
-        (line) => { toYaml(); view.reveal(line); }, (line, from, to) => { toYaml(); view.replaceKey(line, from, to); }));
-      if (p.valid && p.manifest) last = { text, manifest: p.manifest };
-      return p;
-    } catch (e) {
-      out.replaceChildren(el("p", explain(e instanceof Error ? e.message : String(e)), "notice"));
-      return undefined;
-    }
-  };
-  check.onclick = async () => {
-    check.disabled = true;
-    await run(view.text.value);
-    check.disabled = false;
-  };
-  box.append(out, actions);
-  // Said once, here: the page's header says who holds the classes; this says how a change reaches them.
-  box.append(el("p", manifest
-    ? "Copy or download the manifest and commit it by pull request; Flux applies it. Maku never edits the cluster or the repository."
-    : "A promotion changes the class's mode in the repository's .github/agent-factory.yaml, through a pull request you open and a human merges. Maku records the request and never edits the file.", "editor-footer"));
-  note(view.text.value);
-  show();
-  return box;
-}
-
-function labelled2(label: string, input: HTMLElement): HTMLLabelElement {
-  const l = el("label", undefined, "editor-field");
-  l.append(el("span", label), input);
-  return l;
 }
 
 async function timelinePage(app: HTMLElement, repository: string, pr: number, get: typeof fetch, theme?: ThemeController) {

@@ -21,22 +21,23 @@ and `task crd:check` fails on any drift.
 helm install af-crds oci://ghcr.io/smana/charts/agent-factory-crds --version <version>
 ```
 
-## MergePolicy's two shapes
+## MergePolicy
 
-This release's `MergePolicy` CRD admits two shapes. The per-repository shape has `spec.repositoryRef`,
-`classes` and `merge`. The class shape is one reusable class definition, named by the object, that a
-`Repository` binds under `spec.mergePolicies`. CEL keeps the two shapes apart. The next minor
-removes the per-repository fields from the schema, and the API server then prunes them on read.
-Before you upgrade to it, check that no MergePolicy still has a `repositoryRef`:
+A `MergePolicy` is one reusable class definition, named by the object, that a `Repository` binds
+under `spec.mergePolicies`. The per-repository shape (`spec.repositoryRef`, `classes` and `merge`)
+is removed from the schema: the API server prunes those fields on read, so a forgotten
+per-repository object reads as an empty policy with `CONSUMERS 0`. Before you upgrade from a release
+that still served it, check that no MergePolicy has a `repositoryRef`:
 
 ```bash
-kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'
+kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
 ```
 
 `kubectl get repository` shows `CLASSES` and `LIVE` per Repository, and `kubectl get mergepolicy`
-shows `CONSUMERS` (the Repositories binding a class policy), `CURRENT` (those serving its current
-generation), `LIVE` and `ACCEPTED`; `REPO` is set on a per-repository object only. The
-[upgrade](../../docs/upgrading.md#reusable-merge-policies-v04x-release-n) lists the steps.
+shows `CONSUMERS` (the Repositories binding it), `CURRENT` (those serving its current generation),
+`LIVE` and `ACCEPTED`. The
+[upgrade](../../docs/upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1) lists the
+steps.
 
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
 needs `--kube-version 1.30.0` or later.

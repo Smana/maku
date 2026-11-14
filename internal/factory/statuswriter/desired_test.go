@@ -37,8 +37,8 @@ func repoObj(name, repository string, gen int64) v1alpha1.Repository {
 	return r
 }
 
-func policyObj(name, ref string, gen int64) v1alpha1.MergePolicy {
-	p := v1alpha1.MergePolicy{Spec: v1alpha1.MergePolicySpec{RepositoryRef: ref}}
+func policyObj(name string, gen int64) v1alpha1.MergePolicy {
+	p := v1alpha1.MergePolicy{}
 	p.Name, p.Generation = name, gen
 	return p
 }
@@ -109,7 +109,7 @@ func TestAcceptedEveryKind(t *testing.T) {
 		{Kind: resources.KindFactory, Name: "f", Accepted: true},
 		{Kind: resources.KindMergePolicy, Name: "p", Reason: v1alpha1.ReasonMissingRef, Message: "no repo"},
 	}}
-	got := Desired(in, []v1alpha1.Factory{obj("f", 1)}, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 1)}, now)
+	got := Desired(in, []v1alpha1.Factory{obj("f", 1)}, nil, []v1alpha1.MergePolicy{policyObj("p", 1)}, now)
 	want(t, got.Factories["f"].Conditions, v1alpha1.ConditionAccepted, metav1.ConditionTrue, "Served")
 	want(t, got.MergePolicies["p"].Conditions, v1alpha1.ConditionAccepted, metav1.ConditionFalse, v1alpha1.ReasonMissingRef)
 }
@@ -148,97 +148,67 @@ func TestRepository(t *testing.T) {
 	}
 }
 
-func TestRepositoryNamesItsMergePolicy(t *testing.T) {
-	in := Inputs{Config: cfg()}
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 1), repoObj("other", "acme/other", 1)}, []v1alpha1.MergePolicy{
-		policyObj("r-policy", "r", 1), policyObj("elsewhere", "nope", 1)}, now)
-	if m := got.Repositories["r"].MergePolicy; m != "r-policy" {
-		t.Errorf("mergePolicy %q, want r-policy", m)
-	}
-	if m := got.Repositories["other"].MergePolicy; m != "" {
-		t.Errorf("mergePolicy %q, want none", m)
-	}
-}
-
 func decisionsAt(at time.Time) func(string) map[string]decision.Last {
 	return func(string) map[string]decision.Last {
 		return map[string]decision.Last{"docs": {Verdict: "arm", Reason: "all gates passed", At: at}}
 	}
 }
 
-func policyIn(c *config.Config) Inputs {
-	return Inputs{Config: c, Outcomes: []configsource.Outcome{served(resources.KindMergePolicy, "p")}}
+// repoIn serves the Repository r, bound to docs, with c.
+func repoIn(c *config.Config) Inputs {
+	o := served(resources.KindRepository, "r")
+	o.Bindings = []resources.BindingOutcome{{Repository: "r", Name: "docs", Mode: config.ModeLive, PolicyGeneration: 2, Accepted: true, Served: true}}
+	return Inputs{Config: c, Outcomes: []configsource.Outcome{o}}
 }
 
-func TestMergePolicyAuthorityAndClasses(t *testing.T) {
+func TestRepositoryAuthorityAndClasses(t *testing.T) {
 	classes := map[string]config.Class{"zeta": {}, "docs": {Live: true}, "alpha": {Shadow: true}}
 	at := now.Add(-time.Hour)
 	t.Run("central", func(t *testing.T) {
-		in := policyIn(cfg(config.Repository{Name: repo, Classes: classes}))
+		in := repoIn(cfg(config.Repository{Name: repo, Classes: classes}))
 		in.Decisions = decisionsAt(at)
-		got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
-		if got.Authority != "central" || got.ClassCount != 3 || got.LiveCount != 1 {
+		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+		if got.Authority != "central" || got.ClassCount != 1 || got.LiveCount != 1 {
 			t.Errorf("got %+v", got)
 		}
-		var names, modes []string
-		for _, c := range got.Classes {
-			names, modes = append(names, c.Name), append(modes, c.Mode)
-		}
-		if strings.Join(names, ",") != "alpha,docs,zeta" || strings.Join(modes, ",") != "shadow,live,unarmed" {
-			t.Errorf("classes %v modes %v", names, modes)
-		}
-		d := got.Classes[1]
-		if d.LastDecision != "arm:all gates passed" || d.LastDecisionAt == nil || !d.LastDecisionAt.Time.Equal(at) {
-			t.Errorf("docs decision %+v", d)
-		}
-		if got.Classes[0].LastDecision != "" || got.Classes[0].LastDecisionAt != nil {
-			t.Errorf("alpha has no decision: %+v", got.Classes[0])
+		d := got.Classes[0]
+		if d.Name != "docs" || d.Mode != config.ModeLive || d.PolicyGeneration != 2 || d.LastDecision != "arm:all gates passed" ||
+			d.LastDecisionAt == nil || !d.LastDecisionAt.Time.Equal(at) {
+			t.Errorf("docs %+v", d)
 		}
 	})
-	t.Run("cut over shows the repository file's classes", func(t *testing.T) {
-		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository, Classes: map[string]config.Class{"stale": {}}})
+	t.Run("cut over", func(t *testing.T) {
+		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
 		c.PolicyManagement.RepositoryAuthority = true
-		c.SetClassSource(func(string) (map[string]config.Class, bool) {
-			return map[string]config.Class{"fromfile": {Shadow: true}, "docs": {Live: true}}, true
-		})
-		got := Desired(policyIn(c), nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
-		if got.Authority != "repository" {
+		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "repository" {
 			t.Errorf("authority %q", got.Authority)
-		}
-		var listed []string
-		for _, cl := range got.Classes {
-			listed = append(listed, cl.Name+"="+cl.Mode)
-		}
-		if strings.Join(listed, ",") != "docs=live,fromfile=shadow" || got.ClassCount != 2 || got.LiveCount != 1 {
-			t.Errorf("classes %v, count %d, live %d; want the file's, not the stale central one", listed, got.ClassCount, got.LiveCount)
 		}
 	})
 	t.Run("repository authority needs the central switch", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
-		got := Desired(policyIn(c), nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
-		if got.Authority != "central" {
+		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "central" {
 			t.Errorf("authority %q", got.Authority)
 		}
 	})
 	t.Run("decision text is cut at 63", func(t *testing.T) {
-		in := policyIn(cfg(config.Repository{Name: repo, Classes: classes}))
+		in := repoIn(cfg(config.Repository{Name: repo, Classes: classes}))
 		in.Decisions = func(string) map[string]decision.Last {
 			return map[string]decision.Last{"docs": {Verdict: "hold", Reason: strings.Repeat("é", 100), At: at}}
 		}
-		got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
-		if l := []rune(got.Classes[1].LastDecision); len(l) != 63 || !strings.HasPrefix(string(l), "hold:é") {
+		got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+		if l := []rune(got.Classes[0].LastDecision); len(l) != 63 || !strings.HasPrefix(string(l), "hold:é") {
 			t.Errorf("lastDecision %q (%d)", string(l), len(l))
 		}
 	})
 	t.Run("not served has no authority, no classes", func(t *testing.T) {
-		got := Desired(Inputs{Config: cfg()}, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
+		got := Desired(Inputs{Config: cfg()}, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
 		if got.Authority != "" || got.Classes != nil {
 			t.Errorf("got %+v", got)
 		}
 	})
 }
 
-func TestMergePolicyFileConditions(t *testing.T) {
+func TestRepositoryFileConditions(t *testing.T) {
 	good := mergepolicy.Snapshot{HasClasses: true}
 	tests := []struct {
 		name                 string
@@ -262,17 +232,14 @@ func TestMergePolicyFileConditions(t *testing.T) {
 			return mergepolicy.Snapshot{HasClasses: true, File: f,
 				Refused: map[string]config.BindingRefusal{"foo": {Reason: "MissingRef", Message: "the factory serves no MergePolicy foo"}}}, true
 		}, metav1.ConditionTrue, metav1.ConditionTrue, "Valid", "InSync", "", "binding foo: MissingRef: the factory serves no MergePolicy foo"},
-		{"a deprecation", func(string) (mergepolicy.Snapshot, bool) {
-			return mergepolicy.Snapshot{HasClasses: true, Deprecations: []string{"class docs: conditions.any is deprecated"}}, true
-		}, metav1.ConditionTrue, metav1.ConditionTrue, "Valid", "InSync", "", "deprecated: class docs: conditions.any is deprecated"},
 		{"not read yet", func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, false }, metav1.ConditionUnknown, metav1.ConditionUnknown, "NotRead", "NotRead", "", ""},
 		{"read is off", nil, metav1.ConditionUnknown, metav1.ConditionUnknown, "PolicyReadOff", "PolicyReadOff", "", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			in := policyIn(cfg(config.Repository{Name: repo}))
+			in := repoIn(cfg(config.Repository{Name: repo}))
 			in.Snapshot = tt.snap
-			got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
+			got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
 			v := want(t, got.Conditions, "RepositoryFileValid", tt.validS, tt.validR)
 			s := want(t, got.Conditions, "InSync", tt.syncS, tt.syncR)
 			if !strings.Contains(v.Message, tt.validMsg) || !strings.Contains(s.Message, tt.syncMsgHas) {
@@ -289,21 +256,22 @@ func TestMergePolicyFileConditions(t *testing.T) {
 func TestFenceOnlyFileUnderRepositoryAuthority(t *testing.T) {
 	c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
 	c.PolicyManagement.RepositoryAuthority = true
-	in := policyIn(c)
+	in := repoIn(c)
 	in.Snapshot = func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }
-	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
 	if v := want(t, got.Conditions, "RepositoryFileValid", metav1.ConditionFalse, "Invalid"); !strings.Contains(v.Message, "no classes") {
 		t.Errorf("message %q", v.Message)
 	}
 	want(t, got.Conditions, "InSync", metav1.ConditionFalse, "FileInvalid")
 }
 
-func TestMergePolicyRefusedStillComputed(t *testing.T) {
-	in := Inputs{Config: cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}),
-		Outcomes: []configsource.Outcome{{Kind: resources.KindMergePolicy, Name: "p", Repository: repo, Reason: v1alpha1.ReasonInvalid, Message: "x", ServedGeneration: 2}}}
-	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{policyObj("p", "r", 4)}, now).MergePolicies["p"]
+// A refused Repository whose last good still serves keeps the status of what is served.
+func TestRepositoryRefusedStillComputed(t *testing.T) {
+	in := repoIn(cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}))
+	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message, in.Outcomes[0].ServedGeneration = false, v1alpha1.ReasonInvalid, "x", 2
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
 	want(t, got.Conditions, v1alpha1.ConditionAccepted, metav1.ConditionFalse, v1alpha1.ReasonInvalid)
-	if got.ClassCount != 1 || got.Authority != "central" {
+	if got.ClassCount != 1 || got.LiveCount != 1 || got.Authority != "central" {
 		t.Errorf("last good version not shown: %+v", got)
 	}
 }
@@ -356,7 +324,7 @@ func TestOneObservedGenerationPerObject(t *testing.T) {
 		Snapshot:  func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{HasClasses: true}, true },
 		Connected: func(string) (metav1.ConditionStatus, string) { return metav1.ConditionTrue, "" },
 		Outcomes:  []configsource.Outcome{served(resources.KindFactory, "f"), served(resources.KindRepository, "r"), served(resources.KindMergePolicy, "p")}}
-	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", "r", 5)}, now)
+	got := Desired(in, []v1alpha1.Factory{obj("f", 5)}, []v1alpha1.Repository{repoObj("r", repo, 5)}, []v1alpha1.MergePolicy{policyObj("p", 5)}, now)
 	check := func(kind string, gen int64, cs []metav1.Condition, types ...string) {
 		t.Helper()
 		if gen != 3 {
@@ -370,45 +338,8 @@ func TestOneObservedGenerationPerObject(t *testing.T) {
 	}
 	f, r, p := got.Factories["f"], got.Repositories["r"], got.MergePolicies["p"]
 	check("Factory", f.ObservedGeneration, f.Conditions, v1alpha1.ConditionAccepted, ConditionReady)
-	check("Repository", r.ObservedGeneration, r.Conditions, v1alpha1.ConditionAccepted, ConditionConnected)
-	check("MergePolicy", p.ObservedGeneration, p.Conditions, v1alpha1.ConditionAccepted, ConditionRepositoryFileValid, ConditionInSync)
-}
-
-// Two MergePolicies name the Repository: both are refused DuplicatePolicy, and the Repository
-// names neither.
-func TestRepositoryNamesNoDuplicatePolicy(t *testing.T) {
-	dup := func(name string) configsource.Outcome {
-		return configsource.Outcome{Kind: resources.KindMergePolicy, Name: name, Reason: v1alpha1.ReasonDuplicatePolicy, Message: "several"}
-	}
-	in := Inputs{Config: cfg(), Outcomes: []configsource.Outcome{dup("a"), dup("b")}}
-	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 1)}, []v1alpha1.MergePolicy{policyObj("a", "r", 1), policyObj("b", "r", 1)}, now)
-	if m := got.Repositories["r"].MergePolicy; m != "" {
-		t.Errorf("mergePolicy %q, want none", m)
-	}
-}
-
-// A MergePolicy refused DuplicatePolicy reports its own spec's classes, never the served one's: no
-// authority, no last decision.
-func TestDuplicatePolicyReportsItsOwnClasses(t *testing.T) {
-	rc := config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}, "deps": {Shadow: true}}}
-	dup := configsource.Outcome{Kind: resources.KindMergePolicy, Name: "b", Repository: repo, Reason: v1alpha1.ReasonDuplicatePolicy, Message: "several"}
-	p := policyObj("b", "r", 1)
-	p.Spec.Classes = map[string]config.Class{"mine": {Shadow: true}, "other": {}}
-	in := Inputs{
-		Config:   cfg(rc),
-		Outcomes: []configsource.Outcome{dup},
-		Decisions: func(string) map[string]decision.Last {
-			return map[string]decision.Last{"mine": {Verdict: "merge", Reason: "ok", At: now.Time}}
-		},
-	}
-	got := Desired(in, nil, nil, []v1alpha1.MergePolicy{p}, now).MergePolicies["b"]
-	if got.Authority != "" || got.LiveCount != 0 || got.ClassCount != 2 {
-		t.Fatalf("authority %q live %d count %d, want none, 0, 2", got.Authority, got.LiveCount, got.ClassCount)
-	}
-	if len(got.Classes) != 2 || got.Classes[0].Name != "mine" || got.Classes[0].Mode != "shadow" || got.Classes[0].LastDecision != "" ||
-		got.Classes[1].Name != "other" || got.Classes[1].Mode != "unarmed" {
-		t.Fatalf("classes %+v, want the policy's own mine/shadow and other/unarmed, no decision", got.Classes)
-	}
+	check("Repository", r.ObservedGeneration, r.Conditions, v1alpha1.ConditionAccepted, ConditionConnected, ConditionRepositoryFileValid, ConditionInSync)
+	check("MergePolicy", p.ObservedGeneration, p.Conditions, v1alpha1.ConditionAccepted)
 }
 
 // v4 D3, step 7 R1: PrivateCode on a served Repository. Private, internal or unread code without

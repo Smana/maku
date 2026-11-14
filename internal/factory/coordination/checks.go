@@ -135,8 +135,7 @@ func (g GitHubChecks) Check(ctx context.Context, cfg *config.Config, actor Actor
 }
 
 // class resolves class at repo as the gate reads it: under repository authority (stage 4) the
-// file's own class, under the central guardrails (mergepolicy.Resolve), or its bound policy's
-// (mergepolicy.ResolveBindings, B15); under central authority the class the factory serves, whatever
+// file's bound policy's (mergepolicy.ResolveBindings, B15); under central authority the class the factory serves, whatever
 // the file says. An adopted class authors nothing, so no child runs under one. Roles are the class
 // harness's template, the tier's ceilings its run and task caps.
 func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier string) (RepositoryPolicy, error) {
@@ -149,30 +148,16 @@ func (g GitHubChecks) class(cfg *config.Config, fenceText, repo, class, tier str
 		return policyOf(cfg, repo, class, tier, template)
 	}
 	f, err := mergepolicy.Parse([]byte(fenceText))
-	switch {
-	case err != nil:
+	if err != nil {
 		return RepositoryPolicy{}, fmt.Errorf("%w: %s: the repository's policy does not read", ErrClassNotAllowed, class)
-	case f.Bound():
-		classes, _ := mergepolicy.ResolveBindings(f, rc, cfg)
-		r, ok := classes[class]
-		if !ok || r.Class.Author != nil {
-			return RepositoryPolicy{}, fmt.Errorf("%w: %s is not bound, or its binding does not resolve", ErrClassNotAllowed, class)
-		}
-		if p, ok := cfg.HarnessProfiles[r.Class.Harness]; ok && p.Template != "" {
-			template = p.Template
-		}
-	default:
-		cp, ok := f.Classes[class]
-		if !ok {
-			return RepositoryPolicy{}, fmt.Errorf("%w: %s is not declared", ErrClassNotAllowed, class)
-		}
-		r, err := mergepolicy.Resolve(class, cp, cfg)
-		if err != nil || r.Class.Author != nil {
-			return RepositoryPolicy{}, fmt.Errorf("%w: %s", ErrClassNotAllowed, class)
-		}
-		if r.Profile.Template != "" {
-			template = r.Profile.Template
-		}
+	}
+	classes, _ := mergepolicy.ResolveBindings(f, rc, cfg)
+	r, ok := classes[class]
+	if !ok || r.Class.Author != nil {
+		return RepositoryPolicy{}, fmt.Errorf("%w: %s is not bound, or its binding does not resolve", ErrClassNotAllowed, class)
+	}
+	if p, ok := cfg.HarnessProfiles[r.Class.Harness]; ok && p.Template != "" {
+		template = p.Template
 	}
 	return policyOf(cfg, repo, class, tier, template)
 }

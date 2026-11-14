@@ -20,12 +20,11 @@ import (
 	"sigs.k8s.io/yaml"
 
 	"github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
-// A real API server and a manager cache: creating, updating and deleting a Repository and its
-// MergePolicy reach the published config through Watch's kicks.
+// A real API server and a manager cache: creating, updating and deleting a Repository and the
+// MergePolicies it binds reach the published config through Watch's kicks.
 func TestEnvtestSourceFollowsTheObjects(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
@@ -74,34 +73,30 @@ func TestEnvtestSourceFollowsTheObjects(t *testing.T) {
 	// With one entry RepositoryFor answers it for any name, so count the entries.
 	served := func() bool { return len(src.Live.Current().Repos()) == 2 }
 
-	repo := &v1alpha1.Repository{ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: ns},
-		Spec: v1alpha1.RepositorySpec{FactoryRef: "aws-0", Repository: "Smana/Other", Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"}}
-	policy := policyObj(t, "other", "other", 0, nil)
-	if err := c.Create(ctx, repo); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Create(ctx, policy); err != nil {
-		t.Fatal(err)
+	objs := servedObjs(t, "other", "Smana/Other", 0, 0)
+	for _, o := range objs {
+		if err := c.Create(ctx, o); err != nil {
+			t.Fatal(err)
+		}
 	}
 	eventually("the repository is served", func() bool { return served() })
-	if _, r, p := src.Live.Current().GenerationsFor("Smana/Other"); r != 1 || p != 1 {
+	if p, r, _ := src.Live.Current().ClassGenerations("Smana/Other", "docs"); r != 1 || p != 1 {
 		t.Fatalf("generations %d %d, want the API server's 1 1", r, p)
 	}
 
-	policy.Spec.Classes["extra"] = config.Class{Shadow: true}
-	if err := c.Update(ctx, policy); err != nil {
+	docs := objs[3].(*v1alpha1.MergePolicy)
+	docs.Spec.Checks = true
+	if err := c.Update(ctx, docs); err != nil {
 		t.Fatal(err)
 	}
-	eventually("the new class appears", func() bool {
-		_, ok := src.Live.Current().RepositoryFor("Smana/Other").Classes["extra"]
-		return ok
+	eventually("the policy's change is served", func() bool {
+		return src.Live.Current().RepositoryFor("Smana/Other").Classes["docs"].Checks
 	})
 
-	if err := c.Delete(ctx, policy); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Delete(ctx, repo); err != nil {
-		t.Fatal(err)
+	for _, o := range objs {
+		if err := c.Delete(ctx, o); err != nil {
+			t.Fatal(err)
+		}
 	}
 	eventually("the repository is gone", func() bool { return len(src.Live.Current().Repos()) == 1 })
 	var left v1alpha1.RepositoryList
@@ -147,22 +142,9 @@ spec:
 `, `
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
-metadata: {name: legacy, namespace: agent-system}
+metadata: {name: docs, namespace: agent-system}
 spec:
-  repositoryRef: legacy
-  classes:
-    docs-links: {shadow: true}
-    revert: {shadow: true}
-  merge:
-    requiredChecks: [lint]
-    verifyChecks: [lint]
-    leakScanCheck: lint
-    policyBotLogin: policy-bot[bot]
-    mergerLogin: merger[bot]
-    autoMergesPerDay: 1
-    verifyFor: 30m
-    revertWindow: 168h
-    breaker: {window: 10, maxReverts: 1}
+  description: d
 `} {
 		var u unstructured.Unstructured
 		if err := yaml.Unmarshal([]byte(doc), &u.Object); err != nil {
@@ -191,9 +173,9 @@ spec:
 				}
 			}
 		case resources.KindMergePolicy:
-			for _, k := range []string{"fixRuns", "checkReruns"} {
-				if _, ok := merge[k]; ok {
-					t.Errorf("MergePolicy merge.%s is present, the author omitted it", k)
+			for _, k := range []string{"checks", "testFirst", "modifyOnly", "harness"} {
+				if _, ok := o.Spec[k]; ok {
+					t.Errorf("MergePolicy spec.%s is present, the author omitted it", k)
 				}
 			}
 		}

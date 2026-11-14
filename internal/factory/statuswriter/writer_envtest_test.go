@@ -61,26 +61,25 @@ func TestEnvtestWriteOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const repository = "Smana/cloud-native-ref"
-	classes := cfg.RepositoryFor(repository).Classes
+	const repository, className = "Smana/cloud-native-ref", "docs-links"
 	repo := &v1alpha1.Repository{ObjectMeta: metav1.ObjectMeta{Name: "cnref", Namespace: envNS},
-		Spec: v1alpha1.RepositorySpec{FactoryRef: "aws-0", Repository: repository, Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready"}}
-	policy := &v1alpha1.MergePolicy{ObjectMeta: metav1.ObjectMeta{Name: "cnref", Namespace: envNS},
-		Spec: v1alpha1.MergePolicySpec{RepositoryRef: "cnref", Classes: classes}}
+		Spec: v1alpha1.RepositorySpec{FactoryRef: "aws-0", Repository: repository, Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready",
+			MergePolicies: []config.Binding{{Name: "docs-links", Mode: config.ModeShadow}, {Name: "revert", Mode: config.ModeShadow}}}}
+	policy := &v1alpha1.MergePolicy{ObjectMeta: metav1.ObjectMeta{Name: className, Namespace: envNS},
+		Spec: v1alpha1.MergePolicySpec{PolicySpec: config.PolicySpec{Class: config.Class{Description: "a class definition"}}}}
 	for _, o := range []client.Object{repo, policy} {
 		if err := c.Create(ctx, o); err != nil {
 			t.Fatal(err)
 		}
 	}
 
-	outcomes := []configsource.Outcome{
-		{Kind: resources.KindRepository, Name: "cnref", Repository: repository, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true},
-		{Kind: resources.KindMergePolicy, Name: "cnref", Repository: repository, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true},
+	bindings := []resources.BindingOutcome{
+		{Repository: "cnref", Name: "docs-links", Mode: config.ModeShadow, PolicyGeneration: 1, Accepted: true, Served: true},
+		{Repository: "cnref", Name: "revert", Mode: config.ModeShadow, PolicyGeneration: 1, Accepted: true, Served: true},
 	}
-	var className string
-	for name := range classes {
-		className = name
-		break
+	outcomes := []configsource.Outcome{
+		{Kind: resources.KindRepository, Name: "cnref", Repository: repository, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true, Bindings: bindings},
+		{Kind: resources.KindMergePolicy, Name: className, ObservedGeneration: 1, ServedGeneration: 1, Accepted: true, Consumers: bindings[:1]},
 	}
 	// A nanosecond-precision time: the API server keeps seconds, and a second pass must still be quiet.
 	decidedAt := time.Date(2026, 11, 10, 10, 0, 0, 123456789, time.UTC)
@@ -110,17 +109,17 @@ func TestEnvtestWriteOnce(t *testing.T) {
 	if cnd := apimeta.FindStatusCondition(r.Status.Conditions, v1alpha1.ConditionAccepted); cnd == nil || cnd.Status != metav1.ConditionTrue || cnd.ObservedGeneration != r.Generation {
 		t.Fatalf("repository Accepted %+v", cnd)
 	}
-	if r.Status.ObservedGeneration != r.Generation || r.Status.MergePolicy != "cnref" {
+	if r.Status.ObservedGeneration != r.Generation || len(r.Status.Classes) != 2 || r.Status.ClassCount != 2 {
 		t.Fatalf("repository status %+v", r.Status)
 	}
-	if len(p.Status.Classes) != len(classes) || p.Status.ClassCount != len(classes) || len(classes) == 0 {
-		t.Fatalf("policy classes %+v, want %d", p.Status.Classes, len(classes))
+	if p.Status.ConsumerCount != 1 || p.Status.CurrentCount != 1 {
+		t.Fatalf("policy status %+v", p.Status)
 	}
 
 	if err := w.WriteOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if at := p.Status.Classes; len(at) == 0 || !hasDecision(at, decidedAt.Truncate(time.Second)) {
+	if at := r.Status.Classes; len(at) == 0 || !hasDecision(at, decidedAt.Truncate(time.Second)) {
 		t.Fatalf("no decision time in %+v", at)
 	}
 	r2, p2 := get()
@@ -158,7 +157,7 @@ func TestEnvtestWriteOnce(t *testing.T) {
 	}
 }
 
-func hasDecision(cs []v1alpha1.ClassStatus, at time.Time) bool {
+func hasDecision(cs []v1alpha1.BindingStatus, at time.Time) bool {
 	for _, c := range cs {
 		if c.LastDecisionAt != nil && c.LastDecisionAt.Time.Equal(at) {
 			return true
@@ -239,9 +238,7 @@ func TestWriterBindings(t *testing.T) {
 	for i := range policies {
 		p := policies[i].DeepCopy()
 		p.Namespace, p.Generation = envNS, 0
-		if p.Spec.RepositoryRef == "" {
-			p.Spec.Description = "a class definition"
-		}
+		p.Spec.Description = "a class definition"
 		if err := c.Create(ctx, p); err != nil {
 			t.Fatalf("create MergePolicy %s: %v", p.Name, err)
 		}

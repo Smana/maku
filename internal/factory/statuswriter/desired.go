@@ -9,8 +9,7 @@
 //   - Every status carries one observedGeneration, at its level and on each condition: the
 //     generation the Source observed when it has an outcome for the object, the object's own
 //     otherwise. Conditions: Accepted (all kinds), Connected, RepositoryFileValid and InSync
-//     (Repository; the per-repository MergePolicy keeps the last two until the next minor),
-//     BindingsValid (a Repository with bindings), PrivateCode (Repository, v4 D3), Ready (Factory).
+//     (Repository), BindingsValid (Repository), PrivateCode (Repository, v4 D3), Ready (Factory).
 //   - A refused object's other conditions are still computed when its repository is served, from
 //     the last good version the factory serves.
 //   - A nil Inputs.Snapshot means policyManagement.read is off: RepositoryFileValid and InSync are
@@ -107,7 +106,7 @@ func Desired(in Inputs, factories []v1alpha1.Factory, repos []v1alpha1.Repositor
 		out.Factories[factories[i].Name] = d.factory(&factories[i])
 	}
 	for i := range repos {
-		out.Repositories[repos[i].Name] = d.repository(&repos[i], policies)
+		out.Repositories[repos[i].Name] = d.repository(&repos[i])
 	}
 	for i := range policies {
 		out.MergePolicies[policies[i].Name] = d.mergePolicy(&policies[i])
@@ -190,7 +189,7 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 	return st
 }
 
-func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePolicy) v1alpha1.RepositoryStatus {
+func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
 	o := d.outcome(resources.KindRepository, r.Name)
 	g := observed(o, r.Generation)
 	st := v1alpha1.RepositoryStatus{ObservedGeneration: g}
@@ -221,29 +220,18 @@ func (d *desirer) repository(r *v1alpha1.Repository, policies []v1alpha1.MergePo
 		}
 	}
 	if rc, ok := d.served[strings.ToLower(name)]; ok {
-		d.servedRepository(&st, r, &rc, o, g)
+		d.servedRepository(&st, &rc, o, g)
 		d.privateCode(&st.Conditions, g, &rc)
 	} else {
 		d.fileConditions(&st.Conditions, g, "", false)
 		d.set(&st.Conditions, g, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotServed", "")
 	}
-	for _, p := range sortedByName(policies) {
-		// Several MergePolicies naming the Repository are all refused: it names none of them.
-		if o := d.outcome(resources.KindMergePolicy, p.Name); o != nil && !o.Accepted && o.Reason == v1alpha1.ReasonDuplicatePolicy {
-			continue
-		}
-		if p.Spec.RepositoryRef == r.Name {
-			st.MergePolicy = p.Name
-			break
-		}
-	}
 	return st
 }
 
-// servedRepository fills what a served repository's status says in both shapes (B10, plan PR14): its
-// classes, counts, authority, file conditions and resolved merge; and, for a bound one, each
-// binding's outcome and BindingsValid.
-func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Repository, rc *config.Repository, o *configsource.Outcome, g int64) {
+// servedRepository fills what a served repository's status says (B10, plan PR14): its classes,
+// each binding's outcome, BindingsValid, the counts, authority, file conditions and resolved merge.
+func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Repository, o *configsource.Outcome, g int64) {
 	st.Authority = config.ClassAuthorityCentral
 	if d.in.Config.RepositoryAuthoritative(rc) {
 		st.Authority = config.ClassAuthorityRepository
@@ -261,40 +249,24 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, r *v1alpha1.Re
 			b.LastDecisionAt = &at
 		}
 	}
-	if r.Spec.Merge != nil || r.Spec.MergePolicies != nil {
-		var refused []string
-		if o != nil {
-			for _, b := range o.Bindings {
-				bs := v1alpha1.BindingStatus{Name: b.Name, Mode: b.Mode, Accepted: b.Accepted, Reason: b.Reason, Message: truncate(b.Message, maxBindingMessage)}
-				if b.Served {
-					bs.PolicyGeneration = b.PolicyGeneration
-				}
-				if !b.Accepted {
-					refused = append(refused, fmt.Sprintf("%s (%s)", b.Name, b.Reason))
-				}
-				stamp(&bs)
-				st.Classes = append(st.Classes, bs)
+	var refused []string
+	if o != nil {
+		for _, b := range o.Bindings {
+			bs := v1alpha1.BindingStatus{Name: b.Name, Mode: b.Mode, Accepted: b.Accepted, Reason: b.Reason, Message: truncate(b.Message, maxBindingMessage)}
+			if b.Served {
+				bs.PolicyGeneration = b.PolicyGeneration
 			}
-		}
-		if len(refused) > 0 {
-			d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionFalse, "BindingsRefused", truncate("refused: "+strings.Join(refused, ", "), maxBindingMessage))
-		} else {
-			d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionTrue, "BindingsValid", "")
-		}
-	} else {
-		gen := d.in.Config.Generations.Repos[strings.ToLower(rc.Name)].MergePolicy
-		for name, c := range rc.Classes {
-			bs := v1alpha1.BindingStatus{Name: name, Mode: config.ModeOff, PolicyGeneration: gen, Accepted: true}
-			switch {
-			case c.Live:
-				bs.Mode = config.ModeLive
-			case c.Shadow:
-				bs.Mode = config.ModeShadow
+			if !b.Accepted {
+				refused = append(refused, fmt.Sprintf("%s (%s)", b.Name, b.Reason))
 			}
 			stamp(&bs)
 			st.Classes = append(st.Classes, bs)
 		}
-		slices.SortFunc(st.Classes, func(a, b v1alpha1.BindingStatus) int { return cmp.Compare(a.Name, b.Name) })
+	}
+	if len(refused) > 0 {
+		d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionFalse, "BindingsRefused", truncate("refused: "+strings.Join(refused, ", "), maxBindingMessage))
+	} else {
+		d.set(&st.Conditions, g, v1alpha1.ConditionBindingsValid, metav1.ConditionTrue, "BindingsValid", "")
 	}
 	for _, c := range rc.Classes { // what is served, whatever the bindings say
 		if c.Live {
@@ -329,72 +301,13 @@ func (d *desirer) privateCode(cs *[]metav1.Condition, gen int64, rc *config.Repo
 	}
 }
 
-func sortedByName(ps []v1alpha1.MergePolicy) []v1alpha1.MergePolicy {
-	out := slices.Clone(ps)
-	slices.SortFunc(out, func(a, b v1alpha1.MergePolicy) int { return cmp.Compare(a.Name, b.Name) })
-	return out
-}
-
-// mergePolicy computes a MergePolicy's status. A policy refused DuplicatePolicy is not the one the
-// factory serves for its repository: it reports its own spec's classes, each mode computed from
-// that spec, and no authority and no last decision, which are the served policy's. Its file
-// conditions are still those of the repository's file.
+// mergePolicy computes a MergePolicy's status (B10): Accepted, and its consumers. A refused
+// generation whose last good still serves says so; the consumers show which generation each one
+// serves. It has no repository, so no authority, classes or file conditions.
 func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatus {
 	o := d.outcome(resources.KindMergePolicy, p.Name)
 	g := observed(o, p.Generation)
 	st := v1alpha1.MergePolicyStatus{ObservedGeneration: g}
-	if p.Spec.RepositoryRef == "" {
-		return d.classPolicy(o, g, st)
-	}
-	d.accepted(&st.Conditions, g, o)
-	repository := ""
-	if o != nil {
-		repository = o.Repository
-	}
-	rc, served := d.served[strings.ToLower(repository)]
-	if repository == "" || !served {
-		d.fileConditions(&st.Conditions, g, "", false)
-		return st
-	}
-	classes := rc.Classes
-	var last map[string]decision.Last
-	if o.Reason == v1alpha1.ReasonDuplicatePolicy && !o.Accepted {
-		classes = p.Spec.Classes
-	} else {
-		st.Authority = config.ClassAuthorityCentral
-		if d.in.Config.RepositoryAuthoritative(&rc) {
-			st.Authority = config.ClassAuthorityRepository
-		}
-		if d.in.Decisions != nil {
-			last = d.in.Decisions(repository)
-		}
-	}
-	for name, c := range classes {
-		cs := v1alpha1.ClassStatus{Name: name, Mode: "unarmed"}
-		switch {
-		case c.Live:
-			cs.Mode = "live"
-			st.LiveCount++
-		case c.Shadow:
-			cs.Mode = "shadow"
-		}
-		if l, ok := last[name]; ok {
-			cs.LastDecision = truncate(l.Verdict+":"+l.Reason, maxLastDecisionLen)
-			at := metav1.NewTime(l.At.Truncate(time.Second)) // the API server stores seconds
-			cs.LastDecisionAt = &at
-		}
-		st.Classes = append(st.Classes, cs)
-	}
-	slices.SortFunc(st.Classes, func(a, b v1alpha1.ClassStatus) int { return cmp.Compare(a.Name, b.Name) })
-	st.ClassCount = len(st.Classes)
-	d.fileConditions(&st.Conditions, g, repository, true)
-	return st
-}
-
-// classPolicy computes a class-shape MergePolicy's status (B10): Accepted, and its consumers. A
-// refused generation whose last good still serves says so; the consumers show which generation
-// each one serves. It has no repository, so no authority, classes or file conditions.
-func (d *desirer) classPolicy(o *configsource.Outcome, g int64, st v1alpha1.MergePolicyStatus) v1alpha1.MergePolicyStatus {
 	if o != nil && !o.Accepted && o.ServedGeneration > 0 {
 		d.set(&st.Conditions, g, v1alpha1.ConditionAccepted, metav1.ConditionFalse, o.Reason,
 			fmt.Sprintf("serving generation %d; generation %d refused: %s", o.ServedGeneration, o.ObservedGeneration, o.Message))
@@ -480,8 +393,8 @@ func (d *desirer) authoritative(repository string) bool {
 	return ok && d.in.Config != nil && d.in.Config.RepositoryAuthoritative(&rc)
 }
 
-// fileNotes is a valid file's message (B15, plan PR4): the bindings that do not resolve, in file
-// order, and the deprecations, each list cut at maxDivergences. The file stays valid with either.
+// fileNotes is a valid file's message (B15): the bindings that do not resolve, in file order, cut
+// at maxDivergences. The file stays valid with them.
 func fileNotes(snap mergepolicy.Snapshot) string {
 	var refused []string
 	if snap.File != nil {
@@ -491,19 +404,11 @@ func fileNotes(snap mergepolicy.Snapshot) string {
 			}
 		}
 	}
-	var deprecated []string
-	for _, d := range snap.Deprecations {
-		deprecated = append(deprecated, "deprecated: "+d)
+	shown := refused[:min(len(refused), maxDivergences)]
+	if more := len(refused) - len(shown); more > 0 {
+		shown = append(shown, fmt.Sprintf("and %d more", more))
 	}
-	var parts []string
-	for _, list := range [][]string{refused, deprecated} {
-		shown := list[:min(len(list), maxDivergences)]
-		if more := len(list) - len(shown); more > 0 {
-			shown = append(shown, fmt.Sprintf("and %d more", more))
-		}
-		parts = append(parts, shown...)
-	}
-	return strings.Join(parts, "; ")
+	return strings.Join(shown, "; ")
 }
 
 func truncate(s string, n int) string {

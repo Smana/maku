@@ -29,7 +29,7 @@ func watchRig() (*Watch, *rec) {
 	return &Watch{Cfg: c, Metrics: r}, r
 }
 
-const same = "factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain}\n  revert: {mode: live, author: agents, harness: plain}\n"
+const same = "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live}\n  - {name: revert, mode: live}\n"
 
 func TestObserve(t *testing.T) {
 	for name, tc := range map[string]struct {
@@ -38,13 +38,12 @@ func TestObserve(t *testing.T) {
 		gauge   []int
 		classes bool
 	}{
-		"no policy":     {"factory: aws-0\n", nil, nil, false},
-		"empty classes": {"factory: aws-0\nclasses:\n", nil, nil, false},
-		"equivalent":    {same, nil, []int{0}, true},
-		"divergent":     {"factory: aws-0\nclasses:\n  docs-links: {mode: shadow, author: agents, harness: plain}\n  revert: {mode: live, author: agents, harness: plain}\n", nil, []int{1}, true},
-		"invalid":       {"factory: aws-0\nclasses: [no]\n", []string{ReasonInvalid}, nil, false},
-		"a class rule":  {"factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: plain}\n", []string{ReasonInvalid}, nil, true},
-		"a guardrail":   {"factory: aws-0\nclasses:\n  docs-links: {mode: live, author: agents, harness: nope}\n  revert: {mode: live, author: agents, harness: plain}\n", []string{ReasonGuardrail}, nil, true},
+		"no policy":         {"factory: aws-0\n", nil, nil, false},
+		"the classes shape": {"factory: aws-0\nclasses:\n  docs-links: {mode: live}\n", []string{ReasonInvalid}, nil, false},
+		"equivalent":        {same, nil, []int{0}, true},
+		"divergent":         {"factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: shadow}\n  - {name: revert, mode: live}\n", nil, []int{1}, true},
+		"invalid":           {"factory: aws-0\nclasses: [no]\n", []string{ReasonInvalid}, nil, false},
+		"a class rule":      {"factory: aws-0\nmergePolicies: [{name: docs-links, mode: live}]\n", []string{ReasonInvalid}, nil, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w, r := watchRig()

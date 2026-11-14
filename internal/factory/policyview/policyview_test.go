@@ -14,33 +14,24 @@ import (
 )
 
 const base = `factory: aws-0
-classes:
-  docs-links:
+mergePolicies:
+  - name: docs-links
     mode: shadow
-    author: agents
-    harness: plain
-    conditions:
-      all:
-        - allowedFiles: ['^docs/.+\.md$', '^README\.md$']
-        - maxPatchFiles: 10
-        - holdoutChecks: [links]
-      deny:
-        - protectedFiles: ['^docs/specs/.+$']
+    allowedFiles: ['^docs/.+\.md$', '^README\.md$']
+    maxPatchFiles: 10
+    holdoutChecks: [links]
+    protectedFiles: ['^docs/specs/.+$']
     requiresApproval:
       - changedFiles: ['^docs/security/.+$']
-    limits:
-      maxPerDay: 2
-    monitor:
-      followUpWindow: 168h
-  revert:
+    maxPerDay: 2
+  - name: revert
     mode: shadow
-    author: agents
-    harness: plain
 `
 
 func rig(sim bool) (*config.Config, *config.Repository, evidence.Report) {
 	cfg := &config.Config{Factory: "aws-0", HarnessProfiles: map[string]config.HarnessProfile{"plain": {}},
 		PolicyManagement: config.PolicyManagement{Simulation: sim},
+		Policies:         map[string]config.ServedPolicy{"docs-links": {Generation: 1}, "revert": {Generation: 1}},
 		Repositories:     []config.Repository{{Name: "Smana/cloud-native-ref"}}}
 	f, _ := mergepolicy.Parse([]byte(base))
 	rep := evidence.Report{Repository: "Smana/cloud-native-ref", File: base, Policy: f, DefaultBranch: "main",
@@ -56,13 +47,14 @@ func TestCheck(t *testing.T) {
 		file, err, kind, why string
 	}{
 		"unchanged":            {base, "the proposal is the file as it is", "", ""},
-		"not YAML":             {"factory: aws-0\nclasses: [\n", "not YAML", "", ""},
+		"not YAML":             {"factory: aws-0\nmergePolicies: [\n", "not YAML", "", ""},
 		"an unknown condition": {r(base, "maxPatchFiles: 10", "maxFiles: 10", 1), "not a field", "", ""},
 		"factory: edited":      {r(base, "factory: aws-0", "factory: gcp-0", 1), "factory: is read-only", "", ""},
-		"an unlisted profile":  {r(base, "harness: plain", "harness: frontier", 1), "frontier", "", ""},
+		"no revert":            {r(base, "  - name: revert\n    mode: shadow\n", "", 1), "revert", "", ""},
+		"the classes shape":    {"factory: aws-0\nclasses: {}\n", "write mergePolicies with maku policy export", "", ""},
 		"a lower cap":          {r(base, "maxPatchFiles: 10", "maxPatchFiles: 5", 1), "", mergepolicy.KindTightening, ""},
 		"promoted":             {r(base, "mode: shadow", "mode: live", 1), "", mergepolicy.KindRelaxation, "mode"},
-		"a deny removed":       {r(base, "      deny:\n        - protectedFiles: ['^docs/specs/.+$']\n", "", 1), "", mergepolicy.KindRelaxation, "protectedFiles"},
+		"a deny removed":       {r(base, "    protectedFiles: ['^docs/specs/.+$']\n", "", 1), "", mergepolicy.KindRelaxation, "protectedFiles"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg, rc, rep := rig(false)
@@ -182,12 +174,12 @@ func TestTheTimelineShowsTheGrantAndTheDecidingPolicy(t *testing.T) {
 	}
 }
 
-// Each error is one entry naming its class, so the editor can point at the class's line.
-func TestCheckSplitsParseErrorsByClass(t *testing.T) {
+// Each error is one entry naming its binding, so a reader can point at the binding's line.
+func TestCheckSplitsParseErrorsByBinding(t *testing.T) {
 	cfg, rc, rep := rig(false)
-	file := strings.Replace(strings.Replace(base, "mode: shadow", "mode: armed", 1), "author: agents", "author: people", 1)
+	file := strings.ReplaceAll(base, "mode: shadow", "mode: armed")
 	pv := Check(cfg, rc, rep, file)
-	if pv.Valid || len(pv.Errors) != 2 || !strings.Contains(pv.Errors[0], "class docs-links: mode") || !strings.HasPrefix(pv.Errors[1], "class docs-links: author") {
+	if pv.Valid || len(pv.Errors) != 2 || !strings.Contains(pv.Errors[0], "binding docs-links: mode") || !strings.HasPrefix(pv.Errors[1], "binding revert: mode") {
 		t.Fatalf("%q", pv.Errors)
 	}
 }

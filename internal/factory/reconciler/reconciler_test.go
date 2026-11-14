@@ -1077,7 +1077,8 @@ func (m *fakeMetrics) ProfileRecommendation(_ context.Context, class, cohort, re
 func TestTriageRecordsConfigGenerations(t *testing.T) {
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
 	g.r.Cfg.Current().Generations = config.Generations{Factory: 3,
-		Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 5}}}
+		Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, Classes: map[string]config.ClassGeneration{
+			"docs-links": {Policy: 5, PolicyName: "docs-links"}, "review": {Policy: 5, PolicyName: "review"}}}}}
 	tk := g.reconcile(t, "3buqdlot", 1)
 	want := &v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}
 	if tk.Status.Phase != v1alpha1.PhaseTriaged || tk.Status.ConfigHash != strings.Repeat("a", 64) ||
@@ -1086,18 +1087,18 @@ func TestTriageRecordsConfigGenerations(t *testing.T) {
 	}
 }
 
-// B12: a bound class records its own policy's generation as mergePolicy; a class served from the
-// per-repository shape, the MergePolicy object's.
+// B12: a bound class records its own policy's generation as mergePolicy; a class no binding serves,
+// none.
 func TestRecordConfigReadsTheClassGenerations(t *testing.T) {
 	cfg := &config.Config{Generations: config.Generations{Factory: 3, Repos: map[string]config.RepoGenerations{
-		"smana/bound":  {Repository: 7, Classes: map[string]config.ClassGeneration{"dead-links": {Policy: 4, PolicyName: "dead-links"}}},
-		"smana/legacy": {Repository: 2, MergePolicy: 5}}}}
+		"smana/bound":   {Repository: 7, Classes: map[string]config.ClassGeneration{"dead-links": {Policy: 4, PolicyName: "dead-links"}}},
+		"smana/unbound": {Repository: 2}}}}
 	for _, tc := range []struct {
 		repository string
 		want       v1alpha1.ConfigGenerations
 	}{
 		{"Smana/bound", v1alpha1.ConfigGenerations{Factory: 3, Repository: 7, MergePolicy: 4}},
-		{"Smana/legacy", v1alpha1.ConfigGenerations{Factory: 3, Repository: 2, MergePolicy: 5}},
+		{"Smana/unbound", v1alpha1.ConfigGenerations{Factory: 3, Repository: 2}},
 	} {
 		tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Repository: tc.repository, PredictedClass: "dead-links"}}
 		recordConfig(cfg, tk)
