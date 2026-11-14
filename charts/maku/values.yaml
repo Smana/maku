@@ -231,7 +231,7 @@ broker:
   # The broker's own config blocks, rendered verbatim (v4 step 6, EX9): the broker decodes them
   # strictly, so a misspelt key fails the rollout (internal/config). Unset, nothing renders.
   #   suspend: {enabled: true, after: 5m}     the warm-sandbox suspend of an idle attended run
-  #   policyManagement: {...}                 the factory's merge-policy switches (merge-policies.md)
+  #   policyManagement: {stage: ...}          the factory's merge-policy stage (merge-policies.md)
   #   coordination: {mode: plan}              the factory's multi-repository switch
   suspend: {}
   policyManagement: {}
