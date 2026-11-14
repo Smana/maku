@@ -80,7 +80,7 @@ mergeGuardrails:
   maxPatchFiles: 20
   maxModifiedLines: 400
   maxPerDay: 5
-  # minPromotionEvidence 20 and maxGrantLifetime 90 days are the code's defaults
+  # maxGrantLifetime 90 days is the code's default; a policy's evidence sets its promotion minimum
 ```
 
 Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), never a class the
@@ -342,6 +342,7 @@ rules](#policies-and-bindings) allow. An empty value is refused rather than read
 | `oracle` | **expert** | `{probe: dead-links, maxFindings: 1..16}`, the binding's `oracleWorkflow` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
 | `companionFiles` | **expert** | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
 | `requiredLabel` | **expert** | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author.adopt`; set by an adopted login |
+| `evidence` | core | `low` \| `standard` (default) | none: it sets the clean decisions a promotion needs, 5 or 20 | Policy only. `low` needs a `diffShape` (or the built-in shape of `docs-links` and `revert`) or an `oracle` |
 
 | Level | Means |
 |---|---|
@@ -377,7 +378,7 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | `mergeGuardrails.protectedFiles` | list of regexp | none | Appended to every class's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every class's `holdoutChecks` |
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0: no guardrail | A class above it is refused; a class without one inherits it |
-| `mergeGuardrails.minPromotionEvidence` | int | 0, read as 20 | 0 or ≥ 20; fewer needs an operator's exception per request |
+| `mergeGuardrails.minPromotionEvidence` | int | 0 | Ignored: a policy's `evidence` sets its minimum. 0 or ≥ 20 is still accepted |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | 0 to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
 | `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | See [the stages](#rollout-stages) |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
@@ -410,7 +411,6 @@ mergeGuardrails:
   maxPatchFiles: 20
   maxModifiedLines: 400
   maxPerDay: 5
-  minPromotionEvidence: 20
   maxGrantLifetime: 720h
 policyManagement:
   read: true
@@ -770,7 +770,7 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 
 | Blocker | Clears when |
 |---|---|
-| `below_minimum` | At least `mergeGuardrails.minPromotionEvidence` (20) shadow decisions a maintainer merged unchanged at the head the decision judged |
+| `below_minimum` | At least the policy's minimum shadow decisions a maintainer merged unchanged at the head the decision judged: 5 at `evidence: low`, 20 at `standard` (the default) |
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
 

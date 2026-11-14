@@ -3,6 +3,7 @@
 package humanapi
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -31,6 +32,8 @@ type fakePolicyFactory struct {
 	bad    int
 	drill  string
 	tokens []string
+	// minimum is the class's own (MR4); 0 is standard's 20.
+	minimum int
 }
 
 func (f *fakePolicyFactory) PolicyEvidence(_ context.Context, token, repository string) (evidence.Report, error) {
@@ -42,8 +45,9 @@ func (f *fakePolicyFactory) PolicyEvidence(_ context.Context, token, repository 
 	var ev *evidence.Evidence
 	var at *time.Time
 	if f.drill != "" {
-		ev = &evidence.Evidence{Clean: f.clean, Bad: f.bad, Drill: f.drill, Minimum: 20}
-		ev.Eligible = f.clean >= 20 && f.bad == 0 && f.drill == evidence.DrillPassed
+		minimum := cmp.Or(f.minimum, 20)
+		ev = &evidence.Evidence{Clean: f.clean, Bad: f.bad, Drill: f.drill, Minimum: minimum}
+		ev.Eligible = f.clean >= minimum && f.bad == 0 && f.drill == evidence.DrillPassed
 		read := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 		at = &read
 	}
@@ -309,20 +313,26 @@ func TestPromotionRequest(t *testing.T) {
 		reason string
 	}{
 		"a maintainer, eligible": {"maint", 20, 0, evidence.DrillPassed, req, http.StatusCreated, ""},
-		"a reader":               {"anyone", 20, 0, evidence.DrillPassed, req, http.StatusForbidden, "not_a_maintainer"},
-		"nineteen":               {"maint", 19, 0, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
-		"a bad outcome":          {"maint", 30, 1, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
-		"no drill":               {"maint", 30, 0, evidence.DrillOpen, req, http.StatusConflict, "not_eligible"},
-		"evidence being read":    {"maint", 30, 0, "", req, http.StatusConflict, "evidence_pending"},
-		"a live class":           {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "revert"}, http.StatusConflict, "not_promotable"},
-		"no such class":          {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "nope"}, http.StatusNotFound, "no_such_class"},
-		"another repository":     {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": "Smana/other", "class": "docs-links"}, http.StatusNotFound, "not_found"},
-		"an unknown field":       {"maint", 30, 0, evidence.DrillPassed, `{"repository":"Smana/maku","class":"docs-links","mode":"live"}`, http.StatusBadRequest, "bad_json"},
-		"an unbounded body":      {"maint", 30, 0, evidence.DrillPassed, `{"repository":"` + strings.Repeat("a", 9<<10) + `"}`, http.StatusBadRequest, "bad_json"},
+		// MR4: a class at evidence low needs its own 5, not the report's 20.
+		"low evidence, five":  {"maint", 5, 0, evidence.DrillPassed, req, http.StatusCreated, ""},
+		"low evidence, four":  {"maint", 4, 0, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
+		"a reader":            {"anyone", 20, 0, evidence.DrillPassed, req, http.StatusForbidden, "not_a_maintainer"},
+		"nineteen":            {"maint", 19, 0, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
+		"a bad outcome":       {"maint", 30, 1, evidence.DrillPassed, req, http.StatusConflict, "not_eligible"},
+		"no drill":            {"maint", 30, 0, evidence.DrillOpen, req, http.StatusConflict, "not_eligible"},
+		"evidence being read": {"maint", 30, 0, "", req, http.StatusConflict, "evidence_pending"},
+		"a live class":        {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "revert"}, http.StatusConflict, "not_promotable"},
+		"no such class":       {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": policyRepo, "class": "nope"}, http.StatusNotFound, "no_such_class"},
+		"another repository":  {"maint", 30, 0, evidence.DrillPassed, map[string]string{"repository": "Smana/other", "class": "docs-links"}, http.StatusNotFound, "not_found"},
+		"an unknown field":    {"maint", 30, 0, evidence.DrillPassed, `{"repository":"Smana/maku","class":"docs-links","mode":"live"}`, http.StatusBadRequest, "bad_json"},
+		"an unbounded body":   {"maint", 30, 0, evidence.DrillPassed, `{"repository":"` + strings.Repeat("a", 9<<10) + `"}`, http.StatusBadRequest, "bad_json"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, m := newPolicy(tc.clean)
 			f.bad, f.drill = tc.bad, tc.drill
+			if strings.HasPrefix(name, "low evidence") {
+				f.minimum = 5
+			}
 			e := setup(t, policyOn(f, m))
 			code, body := promote(t, e, tc.user, tc.body)
 			if code != tc.code || (tc.reason != "" && !strings.Contains(body, `"`+tc.reason+`"`)) {

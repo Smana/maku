@@ -378,6 +378,8 @@ type class struct {
 	manifest bool
 	authors  []string
 	window   time.Duration
+	// minimum is the clean decisions its promotion needs: its policy's evidence level (MR4).
+	minimum int
 }
 
 func readHead(ctx context.Context, src Source, now time.Time) (head, error) {
@@ -450,7 +452,6 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	}
 	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
-	minimum := cfg.MergeGuardrails.MinPromotion()
 	cs := s.classes(cfg, rc, file)
 	out := make([]Evidence, len(cs))
 	// Each class reads serially, so Parallel classes at once is Parallel searches at once.
@@ -458,7 +459,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	g.SetLimit(cmp.Or(s.Parallel, DefaultParallel))
 	for i, c := range cs {
 		g.Go(func() error {
-			e, err := collect(gctx, src, c, reverts, rc.Name, l, now, since, minimum)
+			e, err := collect(gctx, src, c, reverts, rc.Name, l, now, since)
 			out[i] = e
 			return err
 		})
@@ -476,7 +477,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 // build is the report of h, each class with its evidence in classes when read.
 func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repository, h head, classes map[string]Evidence, at time.Time, reason string) (Report, error) {
 	file, perr := h.parse()
-	r := Report{Repository: rc.Name, Minimum: cfg.MergeGuardrails.MinPromotion(), ReadAt: h.readAt, PolicyError: perr,
+	r := Report{Repository: rc.Name, Minimum: config.DefaultMinPromotionEvidence, ReadAt: h.readAt, PolicyError: perr,
 		EvidenceError: reason}
 	if !at.IsZero() {
 		r.EvidenceAt = &at
@@ -686,6 +687,7 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 			if m := p.Spec.Monitor; m != nil && m.FollowUpWindow.Duration > 0 {
 				c.window = m.FollowUpWindow.Duration
 			}
+			c.minimum = p.Spec.MinClean(c.name)
 		}
 	}
 	if !cfg.RepositoryAuthoritative(rc) && rc.Bindings != nil {
@@ -700,7 +702,8 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 					mode = string(mergepolicy.ModeShadow)
 				}
 			}
-			c := class{name: b.Name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, manifest: true}
+			c := class{name: b.Name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, manifest: true,
+				minimum: config.DefaultMinPromotionEvidence}
 			policy(&c)
 			out = append(out, c)
 		}
@@ -710,7 +713,8 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 		// B5, B15: a binding's mode is promoted in the file; what it adopts and how long its merges
 		// are watched are the policy's, as the factory serves it.
 		for _, b := range slices.SortedFunc(slices.Values(f.MergePolicies), func(a, b config.Binding) int { return cmp.Compare(a.Name, b.Name) }) {
-			c := class{name: b.Name, source: sourceRepository, mode: b.Mode, authors: agents, window: defaultWindow}
+			c := class{name: b.Name, source: sourceRepository, mode: b.Mode, authors: agents, window: defaultWindow,
+				minimum: config.DefaultMinPromotionEvidence}
 			policy(&c)
 			out = append(out, c)
 		}
@@ -725,7 +729,7 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 		case cl.Shadow:
 			mode = string(mergepolicy.ModeShadow)
 		}
-		c := class{name: name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow}
+		c := class{name: name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, minimum: cl.MinClean(name)}
 		if cl.Adopted() {
 			c.authors = adopters(cl.Author.Adopt.Logins)
 		}
@@ -754,7 +758,7 @@ func searchLogin(l string) string {
 }
 
 // collect reads one class: the script's two modes, then MP7.
-func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, l Logins, now time.Time, since string, minimum int) (Evidence, error) {
+func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, l Logins, now time.Time, since string) (Evidence, error) {
 	var judged []PR
 	for _, a := range c.authors {
 		prs, err := src.MergedRecords(ctx, fmt.Sprintf("author:%s merged:>=%s", a, since))
@@ -784,5 +788,5 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 	}
 	sh := Shadow(judged, reverts, c.name, repo, l)
 	out := Outcomes(merges, reverts, followed, repo, l, now, c.window)
-	return Evaluate(sh, out, reverts, repo, minimum), nil
+	return Evaluate(sh, out, reverts, repo, c.minimum), nil
 }

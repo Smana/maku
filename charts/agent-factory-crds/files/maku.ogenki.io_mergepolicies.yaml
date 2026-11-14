@@ -128,6 +128,14 @@ spec:
                     maxLength: 253
                     type: string
                 type: object
+              evidence:
+                description: |-
+                  Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
+                  whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
+                enum:
+                - low
+                - standard
+                type: string
               harness:
                 description: |-
                   Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
@@ -422,9 +430,9 @@ spec:
             || has(self.spec.allowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval)
             || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles)
             || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks)
-            || has(self.spec.maxPerDay) || has(self.spec.oracle) || has(self.spec.monitor)
-            || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles)
-            || has(self.spec.requiredLabel) || has(self.spec.requires))
+            || has(self.spec.maxPerDay) || has(self.spec.evidence) || has(self.spec.oracle)
+            || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck)
+            || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))
     served: true
     storage: true
     subresources:

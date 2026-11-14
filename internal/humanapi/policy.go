@@ -275,7 +275,8 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 		refuseJSON(w, http.StatusConflict, "evidence_pending")
 		return
 	}
-	threshold := rep.Minimum
+	// The class's own minimum, its policy's evidence level (MR4); the report's for older evidence.
+	threshold := classMinimum(rep, c)
 	if in.ExceptionID != "" {
 		e, err := s.Policy.Records.Exception(r.Context(), in.ExceptionID)
 		if err != nil || e.State != store.ExceptionApproved || e.Repository != rep.Repository || e.Class != c.Class ||
@@ -373,7 +374,7 @@ func (s *Server) requestException(w http.ResponseWriter, r *http.Request) {
 	case !found:
 		refuseJSON(w, http.StatusNotFound, "no_such_class")
 		return
-	case in.Minimum < 1 || in.Minimum >= rep.Minimum:
+	case in.Minimum < 1 || in.Minimum >= classMinimum(rep, c):
 		refuseJSON(w, http.StatusBadRequest, "minimum_not_below")
 		return
 	case len(in.Justification) < 20 || len(in.Justification) > 2000:
@@ -586,4 +587,13 @@ func (s *Server) policyChange(ctx context.Context, repository, class, change str
 	if s.Metrics != nil {
 		s.Metrics.PolicyChange(ctx, repository, class, change)
 	}
+}
+
+// classMinimum is the clean decisions c's promotion needs without an exception: its evidence's
+// minimum (MR4), else the report's while its evidence is being read.
+func classMinimum(rep evidence.Report, c evidence.ClassReport) int {
+	if c.Evidence != nil && c.Evidence.Minimum > 0 {
+		return c.Evidence.Minimum
+	}
+	return rep.Minimum
 }

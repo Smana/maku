@@ -590,3 +590,36 @@ func TestReportOfARepositoryAuthorityObject(t *testing.T) {
 		t.Fatalf("a file-served repository names no object: %+v %v", r, err)
 	}
 }
+
+// MR4: the clean decisions a class needs are its policy's evidence level, and
+// mergeGuardrails.minPromotionEvidence no longer raises them.
+func TestReportMinimumIsThePolicys(t *testing.T) {
+	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
+	src := &fakeSource{merged: map[string][]PR{"author:app/ogenki-agents": cleanPRs(5)}}
+	cfg := serviceCfg()
+	cfg.MergeGuardrails.MinPromotionEvidence = 40
+	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, Evidence: config.EvidenceLow}
+	cfg.Repositories[0].Classes["docs"] = config.Class{Shadow: true, AllowedFiles: []string{`^.+\.md$`}}
+	s := service(src, func() time.Time { return now })
+	s.Cfg = cfg
+	if err := s.Refresh(t.Context(), "Smana/cloud-native-ref"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Minimum != config.DefaultMinPromotionEvidence {
+		t.Fatalf("report minimum %d", r.Minimum)
+	}
+	got := map[string]int{}
+	for _, c := range r.Classes {
+		if c.Evidence == nil {
+			t.Fatalf("%s: no evidence", c.Class)
+		}
+		got[c.Class] = c.Evidence.Minimum
+	}
+	if got["docs-links"] != 5 || got["docs"] != 20 {
+		t.Fatalf("minimums %v", got)
+	}
+}
