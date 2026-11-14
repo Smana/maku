@@ -1113,7 +1113,9 @@ func TestSponsoredConfigRepositoriesValidateAndKeyByPrincipal(t *testing.T) {
 // factory, whose evidence it serves, and operators are GitHub logins.
 func TestPolicyManagementConfig(t *testing.T) {
 	cfg, err := Load(write(t, valid))
-	if err != nil || cfg.PolicyManagement.Promotion || len(cfg.PolicyManagement.Operators) != 0 {
+	// Omitted is stage manage (MR9), and a broker without factoryURL still starts: it serves no
+	// promotion page.
+	if err != nil || !cfg.PolicyManagement.Manages() || len(cfg.PolicyManagement.Operators) != 0 || cfg.FactoryURL != "" {
 		t.Fatalf("omitted: %+v %v", cfg.PolicyManagement, err)
 	}
 	factory := "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
@@ -1123,6 +1125,7 @@ func TestPolicyManagementConfig(t *testing.T) {
 	}
 	for name, body := range map[string]string{
 		"promotion without the factory": valid + "policyManagement:\n  promotion: true\n",
+		"manage without the factory":    valid + "policyManagement:\n  stage: manage\n",
 		"an operator that is no login":  valid + factory + "policyManagement:\n  operators: [\"not a login\"]\n",
 		"an unknown key":                valid + factory + "policyManagement:\n  promote: true\n",
 	} {

@@ -1013,6 +1013,7 @@ func TestCoordinationWritesOnlyWithAFactory(t *testing.T) {
 func TestPolicyWorkflowOnlyWhenOn(t *testing.T) {
 	cfg := plannerConfig()
 	cfg.FactoryURL = "https://agent-factory.agents.svc:8082"
+	cfg.PolicyManagement.Stage = fconfig.StageRead
 	if policyWorkflow(cfg, nil) != nil {
 		t.Fatal("a workflow while off")
 	}

@@ -123,7 +123,6 @@ func TestPreviewKinds(t *testing.T) {
 func TestAFileBoundPolicyIsShownToItsReaders(t *testing.T) {
 	s, _ := evidenceServer(true)
 	cfg := s.Cfg.Current()
-	cfg.PolicyManagement.RepositoryAuthority = true
 	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
 	s.Policies = fakePolicies{}
 	s.PolicySnapshot = func(repo string) (mergepolicy.Snapshot, bool) {

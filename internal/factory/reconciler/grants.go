@@ -27,7 +27,7 @@ type GrantClient interface {
 
 // grantsOn is whether approval memory may read or move a grant: the switch on and the broker wired.
 func (r *Reconciler) grantsOn(cfg *config.Config) bool {
-	return cfg.PolicyManagement.ApprovalMemory && r.Grants != nil
+	return cfg.PolicyManagement.Manages() && r.Grants != nil
 }
 
 // needsGrants is whether deciding in under the snapshot could consult a grant: a valid policy whose

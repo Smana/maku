@@ -42,7 +42,7 @@ func catalogueServer(promotion bool) *Server {
 	}
 	s.Logins = coordLogins{"291": "Smana", "5": "someone"}
 	s.Cfg = &config.Config{
-		PolicyManagement: config.PolicyManagement{Promotion: promotion},
+		PolicyManagement: managed(promotion),
 		Defaults:         config.Defaults{Tier: "standard"},
 		Tiers:            map[string]config.Tier{"standard": {TaskUSD: 4}},
 		Templates:        map[string]config.Template{"pair": {Roles: []string{"implementer", "reviewer"}}},

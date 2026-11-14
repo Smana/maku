@@ -500,6 +500,14 @@ func (r *Reconciler) approvalReturn(cfg *config.Config, t *v1alpha1.Task, pr for
 // re-reviews it itself.
 func (r *Reconciler) reenter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	why := t.Status.Reason
+	if why == "held" { // MR10: the label's removal lets the next pass decide, on the head it held
+		if slices.Contains(pr.Labels, LabelHold) || t.Status.GateReentries >= maxGateReentries ||
+			pr.HeadSHA == "" || pr.HeadSHA != t.Status.PullRequest.HeadSHA {
+			return false, nil
+		}
+		r.backToGate(cfg, t, why, "reentered_unheld", pr.HeadSHA)
+		return true, nil
+	}
 	if gateOf(r.repo(cfg, t), t.Spec.PredictedClass).Adopted() {
 		// An adopted hand-off the author's next push can clear returns on that new head (the whole
 		// gate decides it again, a veto and the push chain included); a diff, a fork or a veto
