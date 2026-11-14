@@ -314,6 +314,9 @@ func (m *fakeMetrics) PROutcome(ctx context.Context, class, outcome string) {
 	m.add("pr " + class + " " + outcome)
 	m.who(ctx, "pr "+outcome)
 }
+func (m *fakeMetrics) RunWait(_ context.Context, role string, d time.Duration) {
+	m.add(fmt.Sprintf("run_wait %s %.0f", role, d.Seconds()))
+}
 func (m *fakeMetrics) HumanWait(ctx context.Context, phase, reason, class string, d time.Duration) {
 	m.who(ctx, fmt.Sprintf("wait %s %.0f", phase, d.Seconds()))
 	m.add(fmt.Sprintf("wait %s %s %s %.0f", phase, reason, class, d.Seconds()))
@@ -555,7 +558,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 		t.Fatalf("settled: %+v %q", tk.Status, eventCommentBodies(g.f, 7))
 	}
 	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
-		"task_tokens 0 standard solo review"} // no profile: the merge's provenance is not read (R39)
+		"task_tokens 0 standard solo review", "task_outcome review none none floor none accepted 0"} // no profile: counted on the none labels (CP3); the merge's provenance is not read (R39)
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
@@ -859,10 +862,11 @@ func TestStopAnnotation(t *testing.T) {
 				t.Fatalf("%s %s %v", tk.Status.Phase, tk.Status.Reason, g.runs.patches)
 			}
 			// The stop deleted the task's run, so nothing is left to settle from: the settle
-			// still records the total, once, past its window (R49).
+			// still records the total, once, past its window (R49). No profile: the count reads
+			// none on the profile labels (CP3).
 			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
-			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
+			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review|task_outcome review none none floor none stopped 0" {
 				t.Fatalf("%q", g.metrics.recorded)
 			}
 		})
@@ -994,8 +998,9 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 		t.Fatalf("settled on the replay: %+v", tk.Status)
 	}
 	// The revoke is counted with the claim's annotation, not the status write: the replay finds the
-	// run already gone, so a deferred count would be lost (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
+	// run already gone, so a deferred count would be lost (F30). The task has no profile, and
+	// counts once on the none labels when it settles (CP3).
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review|task_outcome review none none floor none stopped 0" {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 }

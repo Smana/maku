@@ -114,6 +114,7 @@ type metrics interface {
 	MonitorVerdict(ctx context.Context, class, verdict string)
 	MonitorVerification(ctx context.Context, class, verdict string)
 	HumanWait(ctx context.Context, phase, reason, class string, d time.Duration)
+	RunWait(ctx context.Context, role string, d time.Duration)
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
@@ -1438,7 +1439,7 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 		return err
 	}
 	if found {
-		return r.recordExisting(cfg, t, x)
+		return r.recordExisting(ctx, cfg, t, x)
 	}
 	// The records are refreshed here too (R49): a task waiting in Queued still holds ended runs
 	// whose late readings must land.

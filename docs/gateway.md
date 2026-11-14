@@ -217,6 +217,12 @@ In `gateway` mode, for each run:
   `ports.internal` (8081). The token's audience carries the same class, so neither can call the other's listener.
 - **The claim picks the alias.** `spec.model` (default `agent-default`) is the path and the audience:
   `MODEL=<alias>`, `LLM_BASE_URL=…/m/<alias>/v1`, `LLM_API_KEY_FILE=/run/agent/model/token`.
+- **The light alias.** `model.gateway.lightAlias` (default `tier-light`) names the alias the light
+  jobs run on: the condenser's summary on an internal run, and a search implementer's child. Every
+  non-empty listener must serve it — the run-controller refuses its config at load otherwise — so a
+  run that can use the alias always holds a live `LIGHT_BASE_URL`, `LIGHT_MODEL` and
+  `LIGHT_API_KEY_FILE` (the judge's token, when the judge already runs on the light alias). A run
+  that cannot (a public run without search) gets none of it.
 - **The judge has its own token.** With `spec.loop.judgeModel`, the pod gets a second token for that
   alias, and `JUDGE_BASE_URL`, `JUDGE_MODEL` and `JUDGE_API_KEY_FILE=/run/agent/model/judge-token`.
 - **The token lives the pod's deadline plus 10 minutes.** The harness reads it once, and gVisor raises no

@@ -13,6 +13,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import threading
 import unittest
 from unittest import mock
@@ -179,3 +180,156 @@ class NotAppliedTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CacheLineTest(unittest.TestCase):
+    def test_the_cache_line(self):
+        usage = {"prompt_tokens": 182340, "cache_read_tokens": 176902, "cache_write_tokens": 5438}
+        self.assertEqual(agent_run.cache_line(41, usage, "none"),
+                         "agent-run cache: step=41 input=182340 cache_read=176902 cache_write=5438 miss=none")
+
+    def test_a_provider_without_cache_fields_prints_zeros(self):
+        self.assertEqual(agent_run.cache_line(3, {"prompt_tokens": 900}, "first"),
+                         "agent-run cache: step=3 input=900 cache_read=0 cache_write=0 miss=first")
+
+
+class MissKindTest(unittest.TestCase):
+    def test_miss_kinds(self):
+        k = agent_run.miss_kind
+        self.assertEqual(k(1, 0, False, False), "first")
+        self.assertEqual(k(1, 0, False, True), "resume")
+        self.assertEqual(k(81, 0, True, False), "condensation")
+        self.assertEqual(k(12, 0, False, False), "unexpected")
+        self.assertEqual(k(12, 5000, False, False), "none")
+
+
+class CondensationLineTest(unittest.TestCase):
+    def test_the_condensation_line(self):
+        self.assertEqual(agent_run.condensation_line(80, 76, "tier-light"),
+                         "agent-run condensation: step=80 forgotten=76 summary_model=tier-light")
+
+
+class StepLogCacheLinesTest(unittest.TestCase):
+    """The StepLog wiring: one cache line per model response, one line per condensation."""
+
+    def log(self, **kwargs):
+        return agent_run.StepLog("cid", **kwargs)
+
+    @staticmethod
+    def stats(usages, usage_id="agent"):
+        return {"usage_to_metrics": {usage_id: {"token_usages": usages}}}
+
+    def test_a_stats_update_prints_one_cache_line_per_response(self):
+        log = self.log()
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 900, "cache_read_tokens": 0,
+                                                   "cache_write_tokens": 0}])})
+        self.assertEqual(line, "agent-run cache: step=1 input=900 cache_read=0 cache_write=0 miss=first")
+
+    def test_a_hit_prints_miss_none(self):
+        log = self.log()
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 182340, "cache_read_tokens": 176902,
+                                                   "cache_write_tokens": 5438}])})
+        self.assertIn("miss=none", line)
+
+    def test_a_response_after_a_condensation_is_a_condensation_miss(self):
+        log = self.log(summary_model="agent-default")
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 100, "cache_read_tokens": 90,
+                                                   "cache_write_tokens": 1}])})
+        self.assertIn("miss=none", line)
+        cline = log.describe({"kind": "Condensation", "forgotten_event_ids": ["e1", "e2"]})
+        self.assertEqual(cline, "agent-run condensation: step=2 forgotten=2 summary_model=agent-default")
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 100, "cache_read_tokens": 90,
+                                                   "cache_write_tokens": 1},
+                                                  {"prompt_tokens": 40, "cache_read_tokens": 0,
+                                                   "cache_write_tokens": 2}])})
+        self.assertEqual(line, "agent-run cache: step=2 input=40 cache_read=0 cache_write=2 miss=condensation")
+
+    def test_a_later_miss_is_unexpected(self):
+        log = self.log()
+        for _ in range(2):
+            log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                          "value": self.stats([{"prompt_tokens": 10, "cache_read_tokens": 5,
+                                                "cache_write_tokens": 1}])})
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 10, "cache_read_tokens": 5,
+                                                   "cache_write_tokens": 1},
+                                                  {"prompt_tokens": 10, "cache_read_tokens": 0,
+                                                   "cache_write_tokens": 1}])})
+        self.assertIn("miss=unexpected", line)
+
+    def test_a_resumed_runs_first_response_is_a_resume_miss(self):
+        log = self.log(resumed=True)
+        line = log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                             "value": self.stats([{"prompt_tokens": 900, "cache_read_tokens": 0,
+                                                   "cache_write_tokens": 0}])})
+        self.assertIn("miss=resume", line)
+
+    def test_only_the_agents_own_usage_is_read(self):
+        log = self.log()
+        self.assertIsNone(log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                                        "value": self.stats([{"prompt_tokens": 1}], "condenser")}))
+
+    def test_an_unreadable_stats_value_never_fails_the_run(self):
+        log = self.log()
+        for value in ("garbage", {}, {"usage_to_metrics": "no"}, {"usage_to_metrics": {"agent": {}}},
+                      {"usage_to_metrics": {"agent": {"token_usages": []}}}):
+            with self.subTest(value=value):
+                self.assertIsNone(log.describe({"kind": "ConversationStateUpdateEvent", "key": "stats",
+                                                "value": value}))
+
+    def test_a_stats_update_for_another_key_is_ignored(self):
+        log = self.log()
+        self.assertIsNone(log.describe({"kind": "ConversationStateUpdateEvent", "key": "other", "value": {}}))
+
+
+GOLDEN_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "golden")
+PUBLIC_ENV = {"MODEL": "agent-default", "LLM_BASE_URL": "http://127.0.0.1:4000/v1",
+              "MCP_URL": "http://127.0.0.1:4000/mcp", "CONVERSATION_ID": "0b3c6f0e-5d1a-4b8e-9f41-2a7c3e9d8b10"}
+INTERNAL_ENV = {**PUBLIC_ENV, "DATA_CLASS": "internal"}
+LIGHT_ENV = {"LIGHT_BASE_URL": "http://127.0.0.1:4000/m/tier-light/v1", "LIGHT_MODEL": "tier-light"}
+
+
+def build(env):
+    return agent_run.build_request(env, "fix the link", "rules text")
+
+
+def rendered(env):
+    return json.dumps(build(env), indent=1, sort_keys=True) + "\n"
+
+
+def golden(name):
+    with open(os.path.join(GOLDEN_DIR, name)) as f:
+        return f.read()
+
+
+class InternalCondenserTest(unittest.TestCase):
+    def test_a_public_request_is_todays(self):
+        self.assertEqual(rendered(PUBLIC_ENV), golden("start-request.json"))
+
+    def test_an_internal_run_condenses_later_and_on_the_light_alias(self):
+        c = build(INTERNAL_ENV | LIGHT_ENV)["agent"]["condenser"]
+        self.assertEqual((c["max_size"], c["keep_first"]), (240, 8))
+        self.assertEqual(c["llm"]["model"], "openai/tier-light")
+        self.assertEqual(c["llm"]["base_url"], LIGHT_ENV["LIGHT_BASE_URL"])
+        self.assertEqual(c["llm"]["litellm_extra_body"], {"reasoning_effort": "low"})
+
+    def test_an_internal_run_without_a_light_alias_keeps_the_summary_on_its_own_model(self):
+        c = build(INTERNAL_ENV)["agent"]["condenser"]
+        self.assertEqual((c["max_size"], c["keep_first"]), (240, 8))
+        self.assertEqual(c["llm"]["model"], "openai/" + INTERNAL_ENV["MODEL"])
+
+    def test_the_internal_request_is_its_golden(self):
+        self.assertEqual(rendered(INTERNAL_ENV | LIGHT_ENV), golden("start-request-internal.json"))
+
+
+class LightKeyRedactionTest(unittest.TestCase):
+    def test_the_light_key_is_redacted(self):
+        with tempfile.NamedTemporaryFile("w", delete=False) as f:
+            f.write("sk-light\n")
+        self.addCleanup(os.unlink, f.name)
+        with mock.patch.dict(os.environ, {"LIGHT_API_KEY_FILE": f.name}):
+            self.assertNotIn("sk-light", agent_run.redact("x sk-light"))

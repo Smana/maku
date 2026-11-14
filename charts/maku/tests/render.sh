@@ -100,7 +100,7 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set broker.human.groups.admin=a --set broker.human.groups.member=m
       --set runs.namePrefix=agent-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
-      --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}'
+      --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light"]}'
       --set networkPolicies.mode=cilium)
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false --set preflight.enabled=false)"
 out="$p"
@@ -572,9 +572,10 @@ done
 
 # runController.model.mode gateway (v4 step 4, GW3): runs call the model gateway with their own token.
 gw="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.model.mode=gateway \
-  --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light"],"internal":["tier-standard"]}')"
+  --set runController.model.gateway.lightAlias=tier-light \
+  --set-json 'runController.model.gateway.aliases={"public":["agent-default","tier-light"],"internal":["tier-light","tier-standard"]}')"
 out="$gw"
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | ((has("modelSecret") | not) and .model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and .model.gateway.ports.public == 8080 and .model.gateway.ports.internal == 8081 and .model.gateway.audiencePrefix == "maku-gateway" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (.model.gateway.aliases.internal | join(",")) == "tier-standard" and .model.gateway.serviceAccount.namespace == "maku" and .model.gateway.serviceAccount.name == "run-controller")' 'gateway mode: no modelSecret, the gateway in the release namespace by default, its ports, prefix, aliases and the controller'"'"'s own ServiceAccount'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | ((has("modelSecret") | not) and .model.mode == "gateway" and .model.gateway.url == "http://model-gateway.maku.svc.cluster.local" and .model.gateway.ports.public == 8080 and .model.gateway.ports.internal == 8081 and .model.gateway.audiencePrefix == "maku-gateway" and (.model.gateway.aliases.public | join(",")) == "agent-default,tier-light" and (.model.gateway.aliases.internal | join(",")) == "tier-light,tier-standard" and .model.gateway.lightAlias == "tier-light" and .model.gateway.serviceAccount.namespace == "maku" and .model.gateway.serviceAccount.name == "run-controller")' 'gateway mode: no modelSecret, the gateway in the release namespace by default, its ports, prefix, aliases, the light alias and the controller'"'"'s own ServiceAccount'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git"' 'gateway mode: the controller may not read the model Secret'
 ykind Role 'select(.metadata.name=="run-controller-token") | (.metadata.namespace == null and (.rules | length) == 1 and (.rules[0].resources | join(",")) == "serviceaccounts/token" and (.rules[0].resourceNames | join(",")) == "run-controller" and (.rules[0].verbs | join(",")) == "create")' 'gateway mode: the preflight requests its own ServiceAccount token, by name, nothing else'
 ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("projected ServiceAccount tokens")) | .expression | (test("startsWith\\('"'"'maku-gateway[.]public[.]'"'"'\\)") and test("startsWith\\('"'"'maku-gateway[.]internal[.]'"'"'\\)") and (test("startsWith\\('"'"'maku-gateway[.]'"'"'\\)") | not))' 'gateway mode: the run-pod policy holds token audiences to the broker, the room tools and the gateway'"'"'s two run listeners'

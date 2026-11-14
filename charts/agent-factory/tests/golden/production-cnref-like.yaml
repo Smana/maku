@@ -563,6 +563,7 @@ data:
         aliases:
           public: ["agent-default","kimi-frontier","mistral-light","mistral-standard","tier-frontier","tier-light","tier-standard"]
           internal: ["agent-default","tier-frontier","tier-light","tier-standard"]
+        lightAlias: ""
     broker:
       url: "https://room-broker.agent-system.svc.cluster.local:8443"
       namespace: "agent-system"
@@ -1494,7 +1495,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: aadc1191698f2c8cd9b50b2b8e0f25b9ec7e7bafab1b2871d7a114fae2d36b70
+        checksum/config: 33848be7b18d113063d155a1c45c0146a632cb795c75b247cc7cb42417d6982c
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer

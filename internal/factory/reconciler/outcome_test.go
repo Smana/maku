@@ -168,7 +168,7 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 	}{
 		"stopped with a profile": {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stop,
 			v1alpha1.PhaseStopped, []string{"task_outcome review treatment review-search scoper none stopped 1.5"}},
-		"stopped without a profile": {nil, stop, v1alpha1.PhaseStopped, nil},
+		"stopped without a profile": {nil, stop, v1alpha1.PhaseStopped, []string{"task_outcome review none none floor none stopped 1.5"}},
 		"escalated":                 {&v1alpha1.ProfileStatus{Name: "review-search", Source: "scoper", Cohort: "treatment"}, stuck, v1alpha1.PhaseEscalated, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -203,20 +203,20 @@ func TestTaskOutcomeCountedOnce(t *testing.T) {
 			if res, err := g.r.Reconcile(t.Context(), reqFor("3buqdlot")); err != nil || res.RequeueAfter == 0 {
 				t.Fatal("the refused write is returned")
 			}
-			if p := g.get(t).Status.Profile; len(outcomes()) != 0 || (p != nil && p.Counted) {
+			if p := g.get(t).Status; len(outcomes()) != 0 || outcomeCounted(&p) {
 				t.Fatalf("a refused write neither counts nor marks: %v %+v", outcomes(), p)
 			}
 			tk = g.reconcile(t, "3buqdlot", 1)
 			if tk.Status.Phase != c.phase {
 				t.Fatalf("phase %s", tk.Status.Phase)
 			}
-			if got := outcomes(); len(got) != 0 || (tk.Status.Profile != nil && tk.Status.Profile.Counted) {
+			if got := outcomes(); len(got) != 0 || outcomeCounted(&tk.Status) {
 				t.Fatalf("counted before the usage settled (R34): %v %+v", got, tk.Status.Profile)
 			}
 			tk = g.settled(t, "3buqdlot")
 			g.reconcile(t, "3buqdlot", 1)
-			if got := outcomes(); !slices.Equal(got, c.want) || (c.want != nil) != (tk.Status.Profile != nil && tk.Status.Profile.Counted) {
-				t.Fatalf("%v, counted %+v", got, tk.Status.Profile)
+			if got := outcomes(); !slices.Equal(got, c.want) || (c.want != nil) != outcomeCounted(&tk.Status) {
+				t.Fatalf("%v, counted %+v", got, tk.Status)
 			}
 		})
 	}
@@ -608,5 +608,47 @@ func TestTaskOutcomeCarriesTheRecommendation(t *testing.T) {
 				t.Fatalf("%v, want %q", got, want)
 			}
 		})
+	}
+}
+
+// outcomeCounted is the once-mark either profile carries: the profile's own, or the status's for
+// a task without one.
+func outcomeCounted(s *v1alpha1.TaskStatus) bool {
+	return (s.Profile != nil && s.Profile.Counted) || s.OutcomeCounted
+}
+
+// CP3, Review Focus 5: a task without a profile is counted exactly once, with its USD, on the
+// none labels.
+func TestATaskWithoutAProfileIsCountedOnce(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "x"))
+	tk := g.reconcile(t, "3buqdlot", 3) // → Implementing
+	tk.Status.Usage.CostMicroUSD = 1_650_000
+	if err := g.c.Status().Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk = g.get(t)
+	tk.Annotations = map[string]string{v1alpha1.AnnotationStop: "true"}
+	if err := g.c.Update(t.Context(), tk); err != nil {
+		t.Fatal(err)
+	}
+	tk = g.reconcile(t, "3buqdlot", 1) // → Stopped
+	if tk.Status.Phase != v1alpha1.PhaseStopped {
+		t.Fatalf("phase %s", tk.Status.Phase)
+	}
+	if got := taskOutcomes(g.metrics.recorded); len(got) != 0 {
+		t.Fatalf("counted before the usage settled (R34): %v", got)
+	}
+	g.settled(t, "3buqdlot")
+	g.reconcile(t, "3buqdlot", 1)
+	want := []string{"task_outcome review none none floor none stopped 1.65"}
+	if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) {
+		t.Fatalf("%v, want %v", got, want)
+	}
+	if tk := g.get(t); !tk.Status.OutcomeCounted || tk.Status.Profile != nil {
+		t.Fatalf("the mark is the status's own: %+v", tk.Status)
+	}
+	g.reconcile(t, "3buqdlot", 2) // replays change nothing
+	if got := taskOutcomes(g.metrics.recorded); !slices.Equal(got, want) {
+		t.Fatalf("counted twice: %v", got)
 	}
 }

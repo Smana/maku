@@ -176,7 +176,7 @@ func TestAnAdoptedRunKeepsItsModelSource(t *testing.T) {
 			g.r.Cfg.Current().Templates["pair"] = pair
 			tk := issueTask("3buqdlot", 7, "x")
 			tk.Spec.Template = "pair"
-			if err := g.r.recordExisting(g.r.Cfg.Current(), tk, c.x); err != nil {
+			if err := g.r.recordExisting(t.Context(), g.r.Cfg.Current(), tk, c.x); err != nil {
 				t.Fatal(err)
 			}
 			if got := tk.Status.Runs[0].Provenance.ModelSource; got != c.want {

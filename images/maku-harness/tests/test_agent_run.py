@@ -1187,7 +1187,7 @@ DRIVER = (
     "import sys, agent_run\n"
     "agent_run.AGENT_SERVER = 'http://127.0.0.1:' + sys.argv[1]\n"
     "agent_run.SERVER_CMD = [sys.executable, '-c', sys.argv[2], sys.argv[1], sys.argv[3], sys.argv[4]]\n"
-    "agent_run.clone = lambda env: None\n"
+    "agent_run.clone = lambda env, start_span=None: None\n"
     "agent_run.build_request = lambda env, task, rules, span=None, search=False: {}\n"
     "agent_run.POLL_INTERVAL_S = 0.2\n"
     "agent_run.FLUSH_WAIT_S = 0\n"
@@ -1199,7 +1199,7 @@ DISRUPTION_DRIVER = (
     "import os, sys, time, agent_run\n"
     "agent_run.AGENT_SERVER = 'http://127.0.0.1:' + sys.argv[1]\n"
     "agent_run.SERVER_CMD = [sys.executable, '-c', sys.argv[2], sys.argv[1], sys.argv[3], sys.argv[4]]\n"
-    "agent_run.clone = lambda env: None\n"
+    "agent_run.clone = lambda env, start_span=None: None\n"
     "agent_run.build_request = lambda env, task, rules, span=None, search=False: {}\n"
     "agent_run.POLL_INTERVAL_S = 0.2\n"
     "agent_run.CHECKPOINT_S = float(sys.argv[6])\n"
@@ -1324,7 +1324,10 @@ class TracedRunTest(unittest.TestCase):
         self.assertEqual(driver.returncode, 0)
         self.assertEqual(json.loads(self.read("env")), {"LMNR_SPAN_CONTEXT": None, "OTEL_BSP_SCHEDULE_DELAY": None,
                                                         "OTEL_EXPORTER_OTLP_ENDPOINT": None})
-        [span] = Collector.spans
+        # The harness exports its run span and the boot child that ended when /ready answered;
+        # agent-server exports nothing without AGENT_TRACE_CONTENT.
+        [boot, span] = Collector.spans
+        self.assertEqual(boot.name, "agent-run.boot")
         self.assertEqual(span.name, "agent-run")
 
     def assert_stopped_then_revoked(self):
@@ -1361,8 +1364,9 @@ class TracedRunTest(unittest.TestCase):
         self.assert_stopped_then_revoked()
         # Closed before agent-server stops, so the SDK's root span can end and export.
         self.assertLess(float(self.read("closed")), float(self.read("stopped")))
-        [span] = Collector.spans
-        self.assertEqual(span.name, "agent-run")
+        spans = {s.name: s for s in Collector.spans}
+        span = spans["agent-run"]
+        self.assertEqual(spans["agent-run.boot"].parent_span_id, span.span_id)
         self.assertEqual(span.trace_id.hex(), trace_id)
         self.assertEqual(span.parent_span_id.hex(), parent_id)
         self.assertEqual(list(span.attributes), [])
@@ -1491,3 +1495,122 @@ class PlatformBearerTest(unittest.TestCase):
     def test_without_the_file_no_authorization(self):
         platform = agent_run.build_request(ENV, "t", "r")["agent"]["mcp_config"]["platform"]
         self.assertNotIn("authorization", {k.lower() for k in platform.get("headers", {})})
+
+
+import contextlib
+import types
+
+CLONE_ENV = {"REPOSITORY": "Smana/maku", "BRANCH": "run-cache-costs", "BASE_REF": "main"}
+
+
+class _FakeSpan:
+    """The recorder FakeSpans.start hands out: set_attribute as called, end() records the tuple."""
+
+    def __init__(self, spans, name):
+        self.spans, self.name, self.attributes = spans, name, {}
+
+    def set_attribute(self, key, value):
+        self.attributes[key] = value
+
+    def set_status(self, status):
+        self.status = status
+
+    def end(self):
+        self.spans.ended.append((self.name, self.attributes, self.attributes.get("error.type")))
+
+
+class FakeSpans:
+    """Records (name, attributes, error) per ended span, as the collector sees them."""
+
+    def __init__(self):
+        self.ended = []
+
+    def start(self, name):
+        return _FakeSpan(self, name)
+
+
+@contextlib.contextmanager
+def fake_git(branch_pushed=False, clone_fails=False, filter_refused=False):
+    """Patches subprocess.run, recording every git call. clone_fails: every clone raises;
+    filter_refused: only the first clone (the filtered one) raises, the fallback succeeds."""
+    git = types.SimpleNamespace(calls=[])
+
+    def run(cmd, *args, **kwargs):
+        git.calls.append(list(cmd))
+        if "clone" in cmd:
+            refused = clone_fails or (filter_refused and len([c for c in git.calls if "clone" in c]) == 1)
+            if refused:
+                raise subprocess.CalledProcessError(128, cmd, output="fatal: the forge refused the filter")
+            return types.SimpleNamespace(returncode=0)
+        if "rev-parse" in cmd:
+            return types.SimpleNamespace(returncode=0 if branch_pushed else 1)
+        return types.SimpleNamespace(returncode=0)
+
+    with mock.patch.object(subprocess, "run", run):
+        yield git
+
+
+class StartSpansTest(unittest.TestCase):
+    def test_the_clone_span_carries_resumed_and_filter(self):
+        spans = FakeSpans()
+        with fake_git(branch_pushed=True):
+            resumed = agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertTrue(resumed)
+        self.assertEqual(spans.ended, [("agent-run.clone", {"resumed": True, "filter": "blob:none"}, None)])
+
+    def test_a_failed_clone_ends_its_span_with_the_error(self):
+        spans = FakeSpans()
+        with fake_git(clone_fails=True), self.assertRaises(subprocess.CalledProcessError):
+            agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertEqual(spans.ended[0][0], "agent-run.clone")
+        self.assertIsNotNone(spans.ended[0][2])
+
+    def test_the_boot_span_ends_when_ready_answers(self):
+        spans = FakeSpans()
+        agent_run.boot(spans.start, wait=lambda: None)
+        self.assertEqual([s[0] for s in spans.ended], ["agent-run.boot"])
+
+    def test_a_boot_that_never_becomes_ready_ends_its_span_with_the_error(self):
+        def never_ready():
+            raise TimeoutError("agent-server never became ready")
+
+        spans = FakeSpans()
+        with self.assertRaises(TimeoutError):
+            agent_run.boot(spans.start, wait=never_ready)
+        self.assertEqual(spans.ended[0][0], "agent-run.boot")
+        self.assertIsNotNone(spans.ended[0][2])
+
+    def test_tracing_off_is_a_no_op(self):
+        with fake_git():
+            self.assertFalse(agent_run.clone(CLONE_ENV))
+        agent_run.boot(None, wait=lambda: None)  # no span, no error
+
+
+class BloblessCloneTest(unittest.TestCase):
+    def test_the_clone_is_blobless(self):
+        with fake_git() as git:
+            agent_run.clone(CLONE_ENV)
+        self.assertEqual(git.calls[0][:4], ["git", "clone", "--no-tags", "--filter=blob:none"])
+
+    def test_a_forge_that_refuses_the_filter_gets_a_full_clone(self):
+        spans = FakeSpans()
+        with fake_git(filter_refused=True) as git:
+            agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertEqual(git.calls[1][:3], ["git", "clone", "--no-tags"])
+        self.assertNotIn("--filter=blob:none", git.calls[1])
+        self.assertEqual(spans.ended[0][1]["filter"], "none")
+
+    def test_the_span_records_the_blobless_filter(self):
+        spans = FakeSpans()
+        with fake_git():
+            agent_run.clone(CLONE_ENV, start_span=spans.start)
+        self.assertEqual(spans.ended[0][1]["filter"], "blob:none")
+
+    def test_a_clone_that_fails_twice_fails_the_run(self):
+        with fake_git(clone_fails=True), self.assertRaises(subprocess.CalledProcessError):
+            agent_run.clone(CLONE_ENV)
+
+    def test_no_depth_a_shallow_clone_breaks_merge_base(self):
+        with fake_git() as git:
+            agent_run.clone(CLONE_ENV)
+        self.assertFalse(any("--depth" in " ".join(c) for c in git.calls))

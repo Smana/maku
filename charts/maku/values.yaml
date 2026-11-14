@@ -294,6 +294,10 @@ runController:
       # or judge alias its listener does not serve is refused before its pod exists; an internal run
       # needs internal aliases.
       aliases: {public: [], internal: []}
+      # The alias the light jobs run on (CP12): an internal run's condenser summary and a search
+      # implementer's child. Every non-empty listener must serve it; the run-controller refuses its
+      # config at load otherwise. Empty: the controller's tier-light default.
+      lightAlias: ""
   # A run's git token (v4 D10): each run mounts its own Secret, <run name>-git, which the factory
   # mints for that run's repository and role (maku-factory's runTokens.perRun). The controller then
   # reads Secrets in the runs namespace without resourceNames: it already creates pods that mount

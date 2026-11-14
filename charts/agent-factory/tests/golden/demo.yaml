@@ -552,6 +552,7 @@ data:
         aliases:
           public: ["agent-default","tier-light"]
           internal: []
+        lightAlias: ""
     broker:
       url: "https://room-broker.maku.svc.cluster.local:8443"
       namespace: "maku"
@@ -1695,7 +1696,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: b09a3a096489552f0c1b4a1abfac3645bb2bf4404c68bd47c18cf8506f92c3c7
+        checksum/config: fd8c3ea4c191bef97d18fce4f4807b93bf0c0b624493613932802e6ba21270f4
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer
