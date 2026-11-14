@@ -27,7 +27,7 @@ const (
 	ReasonAmbiguousAdoption = "AmbiguousAdoption"
 	// ReasonUnbounded is an evaluated class with neither allowedFiles nor a diff shape (MR6).
 	ReasonUnbounded = "Unbounded"
-	ReasonInvalid           = "Invalid"
+	ReasonInvalid   = "Invalid"
 )
 
 // Requirable are the fields a policy's requires may name (B4, plan PR3): the four fill-once
