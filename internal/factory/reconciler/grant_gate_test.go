@@ -96,7 +96,7 @@ func TestAGrantArmsInsideTheApprovalSubset(t *testing.T) {
 		}, "arm", "", "aaaaaaaaaaaaaaaaaaaaaaaaaa:2"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			d := DecideArmUnder(tc.in(), []config.Class{tc.cl}, subset)
+			d := DecideArmUnder(tc.in(), &tc.cl, subset)
 			if d.Verdict != tc.verdict || d.Reason != tc.reason || d.Rows.Grant != tc.grant {
 				t.Fatalf("got %s:%s grant=%q", d.Verdict, d.Reason, d.Rows.Grant)
 			}
@@ -121,7 +121,8 @@ func TestAGrantNeverBypassesTheClass(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := grantInputs(activeGrant())
 			tc.mutate(&in)
-			d := DecideArmUnder(in, []config.Class{declaredClass()}, tc.approval)
+			cl := declaredClass()
+			d := DecideArmUnder(in, &cl, tc.approval)
 			if d.Verdict != tc.verdict || d.Reason != tc.reason || d.Rows.Grant != "" {
 				t.Fatalf("got %s:%s grant=%q", d.Verdict, d.Reason, d.Rows.Grant)
 			}

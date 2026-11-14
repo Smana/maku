@@ -757,7 +757,7 @@ func (s *Set) RepositoryOwned(_ context.Context, repository string, owned bool) 
 }
 
 func policyLoadReasons() []string {
-	return []string{"invalid", "guardrail_mismatch", "unreadable", "stale"}
+	return []string{"invalid", "unreadable", "stale"}
 }
 
 // PolicyChange counts one structural change of a cut-over repository's class (stage 4, MP8);

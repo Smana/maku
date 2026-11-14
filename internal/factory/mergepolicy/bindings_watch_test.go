@@ -71,7 +71,7 @@ func TestAnExportedBindingFileIsInSync(t *testing.T) {
 	if err != nil {
 		t.Fatalf("%v\n%s", err, raw)
 	}
-	if g.Classes != nil || len(g.MergePolicies) != 4 || g.Factory != "aws-0" {
+	if len(g.MergePolicies) != 4 || g.Factory != "aws-0" {
 		t.Fatalf("%s", raw)
 	}
 	if d := Compare(rc, g, c); len(d) != 0 {
@@ -104,16 +104,12 @@ func TestCompareABindingFile(t *testing.T) {
 	}
 }
 
-// B16: export writes the binding shape, so a repository still served from the old shape is
-// migrated first.
+// B16: export writes the binding shape, so a repository the config file serves is migrated first.
 func TestExportRefusesALegacyServedRepository(t *testing.T) {
 	c := central()
 	rc := &config.Repository{Name: "o/r", Classes: map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}}
 	if _, err := Export(rc, c); err == nil || !strings.Contains(err.Error(), "migrate the repository first: maku config migrate") {
 		t.Fatalf("got %v", err)
-	}
-	if f, err := ExportClasses(rc, c); err != nil || len(f.Classes) != 2 {
-		t.Fatalf("the class shape is still written for the settings pages: %+v %v", f, err)
 	}
 }
 
