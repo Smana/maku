@@ -33,4 +33,4 @@ bash github/apply-ruleset.sh
 helm test agent-factory -n agent-system   # the preflight (D24): every seam checked from inside the cluster
 ```
 
-With GitOps, `gitops/flux.yaml` or `gitops/argocd.yaml` replaces the two `helm install` lines.
+With GitOps, `gitops/flux.yaml` or `gitops/argocd.yaml` replaces the two `helm install` lines. Apply `factory/` as soon as the CRD chart is reconciled, before the umbrella: both tools wait for the umbrella's readiness, and the factory is not ready without its `Factory` and `Repository`.
