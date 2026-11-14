@@ -88,6 +88,17 @@ var (
 	priceRE        = regexp.MustCompile(`^([A-Za-z0-9._-]+)=([0-9]+(\.[0-9]+)?)/([0-9]+(\.[0-9]+)?)/([0-9]+(\.[0-9]+)?)$`)
 )
 
+// InClusterIssuer reports whether a ServiceAccount issuer is the in-cluster API server
+// (kind, k3s, kubeadm): its JWKS is reachable only from inside, and only with the discovery binding.
+func InClusterIssuer(issuer string) bool {
+	u, err := url.Parse(issuer)
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	return h == "kubernetes.default.svc" || strings.HasPrefix(h, "kubernetes.default.svc.") || h == "kubernetes.default"
+}
+
 // Images are the maku images an install pins, by the name an images.pins entry gives.
 var Images = []string{"maku-broker", "maku-run-controller", "maku-harness", "maku-bridge", "maku-factory", "maku-slack"}
 
@@ -354,9 +365,17 @@ func questionTable() []Question {
 			}, Check: httpsURL("the cluster's issuer")},
 		{ID: "cluster.jwksURL", Prompt: "Its JWKS URL", Kind: KindString,
 			Default: func(a Answers) any { return strings.TrimSuffix(a.String("cluster.issuer"), "/") + "/openid/v1/jwks" },
-			Keys:    []string{"maku.broker.runIssuer.jwksURL", "maku.broker.systemIssuer.jwksURL", "maku-gateway.identity.jwks.url"},
-			Values: func(v any, _ Answers) map[string]any {
-				return map[string]any{"maku.broker.runIssuer.jwksURL": str(v), "maku.broker.systemIssuer.jwksURL": str(v), "maku-gateway.identity.jwks.url": str(v)}
+			Keys: []string{"maku.broker.runIssuer.jwksURL", "maku.broker.systemIssuer.jwksURL", "maku-gateway.identity.jwks.url",
+				"maku-gateway.identity.jwks.source", "maku-gateway.identity.jwks.allowAnonymousDiscovery"},
+			Values: func(v any, a Answers) map[string]any {
+				out := map[string]any{"maku.broker.runIssuer.jwksURL": str(v), "maku.broker.systemIssuer.jwksURL": str(v), "maku-gateway.identity.jwks.url": str(v)}
+				if InClusterIssuer(a.String("cluster.issuer")) {
+					// The API server's JWKS, read with no credential (docs/gateway.md): agentgateway's
+					// controller verifies it with kube-root-ca.crt, and the discovery binding admits it.
+					out["maku-gateway.identity.jwks.source"] = "apiserver"
+					out["maku-gateway.identity.jwks.allowAnonymousDiscovery"] = true
+				}
+				return out
 			}, Check: httpsURL("the JWKS URL")},
 
 		{ID: "tls.issuer", Prompt: "The cert-manager ClusterIssuer for the broker's certificate (empty: bring room-broker-tls and room-broker-ca)", Kind: KindString,
