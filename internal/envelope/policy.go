@@ -42,6 +42,9 @@ type PolicyFact struct {
 	Classes        []PolicyClass     `json:"classes,omitempty"`
 	// MergedHow is how the merger merged the pull request: class or approved, "" otherwise.
 	MergedHow string `json:"mergedHow,omitempty"`
+	// Name is the merge policy the gate last decided the pull request under, chosen from its diff
+	// (merge policies MR1); "" before a decision named one.
+	Name      string `json:"name,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
@@ -139,6 +142,8 @@ func (p PolicyFact) validate() error {
 		return errors.New("class is a class name")
 	case len(p.Classes) > MaxPolicyClasses:
 		return fmt.Errorf("classes are at most %d, got %d", MaxPolicyClasses, len(p.Classes))
+	case p.Name != "" && !ValidClassName(p.Name):
+		return errors.New("name is a policy name")
 	case p.MergedHow != "" && p.MergedHow != "class" && p.MergedHow != "approved":
 		return errors.New("mergedHow is class or approved")
 	}

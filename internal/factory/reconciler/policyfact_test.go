@@ -27,6 +27,8 @@ func TestPolicyOf(t *testing.T) {
 	}
 	merged := task("docs-links")
 	merged.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 3, MergedHow: "approved"}
+	matched := task("review")
+	matched.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 3, MergedHow: "class", Policy: "docs-links"}
 
 	for _, tc := range []struct {
 		name  string
@@ -83,6 +85,12 @@ func TestPolicyOf(t *testing.T) {
 			func(t *testing.T, p *envelope.PolicyFact) {
 				if p.MergedHow != "approved" {
 					t.Fatalf("mergedHow = %q", p.MergedHow)
+				}
+			}},
+		{"the policy the diff matched is named (MR1)", repo(false, map[string]config.Class{"docs-links": {Live: true}}), matched,
+			func(t *testing.T, p *envelope.PolicyFact) {
+				if p.Name != "docs-links" || p.Class != "review" {
+					t.Fatalf("policy = %+v, want docs-links named for a review task", *p)
 				}
 			}},
 		{"a repository without classes and a task without a class has no policy", &config.Config{Repositories: []config.Repository{{Name: "o/r"}}}, task(""),

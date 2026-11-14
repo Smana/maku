@@ -3,6 +3,7 @@
 package summary
 
 import (
+	"cmp"
 	"fmt"
 
 	"github.com/Smana/maku/internal/envelope"
@@ -44,18 +45,20 @@ func PolicyHow(p envelope.PolicyFact) string {
 	return s + " " + GatePathRule
 }
 
-// PolicyDecision is the gate's word on the task (D6): how the merger merged it, else the reason of
-// an AwaitingHuman hand-off (shadow_would_arm is the shadow decision), else "".
+// PolicyDecision is the gate's word on the task (D6, merge policies review): "Merged automatically
+// by policy <name>" when the merger merged it under a policy, the approval sentence when it merged
+// on a maintainer's approval, "Waits for a human: <reason>" for an AwaitingHuman hand-off
+// (shadow_would_arm is the shadow decision), else "". Nothing names a policy before a pull request.
 func PolicyDecision(f *envelope.TaskFacts) string {
-	if f == nil || f.Policy == nil {
+	if f == nil || f.Policy == nil || f.PR == nil {
 		return ""
 	}
 	switch f.Policy.MergedHow {
 	case "class":
-		return "merged by the merger App: the class's conditions held"
+		return "Merged automatically by policy " + cmp.Or(f.Policy.Name, f.Policy.Class)
 	case "approved":
 		who := "a maintainer's"
-		if f.PR != nil && envelope.ValidLogin(f.PR.ApprovedBy) {
+		if envelope.ValidLogin(f.PR.ApprovedBy) {
 			who = fmt.Sprintf("@%s's", f.PR.ApprovedBy)
 		}
 		return "merged by the merger App on " + who + " approval"
@@ -63,5 +66,8 @@ func PolicyDecision(f *envelope.TaskFacts) string {
 	if f.Phase != "AwaitingHuman" {
 		return ""
 	}
-	return reasons()[f.Reason]
+	if r := reasons()[f.Reason]; r != "" {
+		return "Waits for a human: " + r
+	}
+	return ""
 }
