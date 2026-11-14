@@ -110,7 +110,10 @@ stub_up() {
   cert stub "$STUB_HOST" "DNS:$STUB_HOST"
   k create namespace e2e >/dev/null
   k -n e2e create secret generic e2e-stub-tls --from-file=tls.crt="$work/stub.crt" --from-file=tls.key="$work/stub.key" >/dev/null
-  sed "s|ghcr.io/smana/maku-e2e-stub:e2e|ghcr.io/smana/maku-e2e-stub:$TAG|" charts/agent-factory/tests/e2e-stub.yaml | k apply -f - >/dev/null
+  # The stub's fence file names this release's factory, which then owns owner/repo (the merge gate's read).
+  sed "s|ghcr.io/smana/maku-e2e-stub:e2e|ghcr.io/smana/maku-e2e-stub:$TAG|" charts/agent-factory/tests/e2e-stub.yaml |
+    F="$RELEASE" yq 'select(.kind == "Deployment").spec.template.spec.containers[0].env += [{"name": "E2E_STUB_FENCE_FACTORY", "value": strenv(F)}]' |
+    k apply -f - >/dev/null
   k -n e2e rollout status deploy/e2e-stub --timeout=180s >/dev/null
 }
 
