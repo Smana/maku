@@ -1,0 +1,79 @@
+{{- /* The cluster's shared roles (D2, step 7 R10): one set for every install, so they live here, beside
+the CRDs whose types they describe. The three aggregate into the built-in admin, edit and view roles;
+agent-factory-flux-reader is what each install's factory binds (its ClusterRoleBinding is the install's,
+<namespace>-prefixed) for a class's monitor.flux. Kept on uninstall with keep, as the CRDs: a binding
+to them would otherwise dangle. The names are the ones maku-factory rendered, so bindings keep working. */}}
+{{- if .Values.clusterRoles }}
+{{- $annotations := dict -}}
+{{- if .Values.keep }}{{ $_ := set $annotations "helm.sh/resource-policy" "keep" }}{{ end }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-factory-admin
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    rbac.authorization.k8s.io/aggregate-to-admin: "true"
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-mergepolicy-editor
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    rbac.authorization.k8s.io/aggregate-to-edit: "true"
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [mergepolicies]
+    verbs: [get, list, watch, create, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: maku-viewer
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    rbac.authorization.k8s.io/aggregate-to-view: "true"
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: [maku.ogenki.io]
+    resources: [factories, repositories, mergepolicies]
+    verbs: [get, list, watch]
+---
+# The post-merge monitor's Flux signal (merge gate classes MC7, R34): read-only, uncached, three
+# kinds, no watch. The GitRepository is read by name; the other two are only listed.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: agent-factory-flux-reader
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+  {{- with $annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+rules:
+  - apiGroups: [kustomize.toolkit.fluxcd.io]
+    resources: [kustomizations]
+    verbs: [list]
+  - apiGroups: [helm.toolkit.fluxcd.io]
+    resources: [helmreleases]
+    verbs: [list]
+  - apiGroups: [source.toolkit.fluxcd.io]
+    resources: [gitrepositories]
+    verbs: [get]
+{{- end }}

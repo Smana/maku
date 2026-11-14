@@ -155,6 +155,7 @@ tasks:
       - helm lint --strict charts/agent-factory --set maku.broker.image.tag='v0.0.0@sha256:0000' --set maku.runController.image.tag='v0.0.0@sha256:0000' --set maku.runController.images.harness.tag='v0.0.0@sha256:0000' --set maku.runController.images.bridge.tag='v0.0.0@sha256:0000' --set maku-factory.image.tag='v0.0.0@sha256:0000' -f charts/agent-factory/values-demo.yaml --set demo.model.apiKey=k --set demo.githubApp.id=1 --set demo.githubApp.privateKey=pem --set maku-gateway.identity.issuer=https://kubernetes.default.svc.cluster.local --set maku-gateway.providers.demo.host=model.example.test --set maku-gateway.aliases.public.agent-default.model=m --set maku-gateway.aliases.public.tier-light.model=m
       - bash charts/agent-factory/tests/render.sh
       - bash charts/agent-factory/tests/schema.sh
+      - bash charts/agent-factory/tests/two-installs.sh
       - bash charts/agent-factory/tests/expose.sh
       - bash charts/agent-factory/tests/monitoring.sh
       - bash charts/agent-factory/tests/promql-only.sh
@@ -232,6 +233,11 @@ tasks:
     desc: profile production on throwaway k3d, with no demo value; maku-factory alone adopts the umbrella, keeping its Deployment, then the web through the Gateway, the factory's /readyz and the monitoring objects (docker, k3d; not part of check)
     cmds:
       - PROFILE=production EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
+
+  chart:adopt-roles:k3d:
+    desc: The shared ClusterRoles' move to agent-factory-crds on throwaway k3d (step 7 R10); an install from origin/main adopts them with docs/upgrading.md's commands (docker, k3d; not part of check)
+    cmds:
+      - bash charts/agent-factory/tests/adopt-roles.sh
 
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)

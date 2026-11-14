@@ -204,12 +204,19 @@ does ([operations](operations.md#the-run-controllers-preflight)).
 ## Several installs in one cluster
 
 Several teams means several installs (D2), each in its own namespace with its own Apps, database,
-runs namespace (`maku.runs.namespace`) and fence. The namespaced objects never collide, and the
-admission policies and the cluster roles bound per install carry the namespace or the release's name. The factory chart's
-three aggregated ClusterRoles (`maku-factory-admin`, `maku-mergepolicy-editor` and `maku-viewer`) have
-fixed names in this release, as has `agent-factory-flux-reader` with `maku-factory.monitor.flux.enabled`, so a second release in the same cluster fails on Helm's ownership of
-them. One install per cluster is what this release supports; step 7's R10 moves those roles into
-`agent-factory-crds`, which is installed once per cluster.
+runs namespace (`maku.runs.namespace`) and fence. Every cluster-scoped object an install renders
+carries its namespace: the admission policies, the run-controller's and the preflight's cluster
+roles, the broker's token review binding, and the factory's Flux binding. The roles every install
+shares, the three aggregated into `admin`, `edit` and `view` and `agent-factory-flux-reader`, are
+`agent-factory-crds`', installed once per cluster with the CRDs. `tests/two-installs.sh` renders two
+installs of the same release name in two namespaces and finds no cluster-scoped name they share.
+
+Two things stay the cluster's, so one install at most renders them:
+
+- the RuntimeClass, when `maku.runController.createRuntimeClass` is set; leave it off elsewhere, or
+  create the class yourself;
+- agentgateway's controller (`agentgateway.enabled`): it serves every Gateway of its class, so the
+  other installs set it false and use the same controller.
 
 ## Upgrading
 

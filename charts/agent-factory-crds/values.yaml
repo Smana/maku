@@ -2,3 +2,8 @@
 # and with them every Room and Task, in place.
 # false drops the keep annotation, so uninstalling deletes every Room and Task.
 keep: true
+# The cluster's shared ClusterRoles (D2, step 7 R10): maku-factory-admin, maku-mergepolicy-editor and
+# maku-viewer (aggregated into admin, edit and view) and agent-factory-flux-reader, one set for every
+# install. Kept on uninstall with keep. false: bring them yourself (maku-factory's clusterRoles renders
+# them for an install without this chart).
+clusterRoles: true

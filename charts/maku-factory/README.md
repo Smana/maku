@@ -46,7 +46,7 @@ uid and nobody else.
 | `apps.merger.mode` | `separate` | `factory` folds the merger into the factory App: no merger volume, and the chart writes `config.github.mergerAppIDFile` and `mergerKeyFile` as the factory App's files; every repository's `merge.mergerLogin` must then be `factoryLogin`. With `mergerSecret` or `config.github.merger*` set, the render fails |
 | `runTokens.enabled`, `runTokens.appSecret` | `false`, `""` | The agents App (keys `app_id`, `private_key`) mounted at `/etc/agent-factory-run-tokens`; alone, the factory keeps the run-controller's shared `agent-git` and `agent-git-read` filled |
 | `runTokens.perRun` | `false` | v4 D10: one token per run, `<run>-git`, for its repository and role. The runs-namespace Role becomes Secrets `create`, `patch`, `delete` with no `get`, always beside the admission policy `maku-<namespace>-run-token-secrets` that bounds them ([docs/security.md](../../docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)). Needs `runTokens.enabled` (or `demo`) and the maku chart's `runController.gitTokens: perRun` |
-| `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole and ClusterRoleBinding `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch) for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](../../docs/factory.md#the-post-merge-monitor)) |
+| `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch; with `clusterRoles`, else `agent-factory-crds`') and this install's ClusterRoleBinding `agent-factory-<namespace>-flux-reader` for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](../../docs/factory.md#the-post-merge-monitor)) |
 | `roomsAudience` | `rooms-system` | Audience of the projected token for the broker's system API |
 | `hardening.publisher.audience` | `""` | Hardening H2: set, the pod mounts a projected token of this audience at `/var/run/secrets/octo-sts/token`, which the factory exchanges at octo-sts for the publisher's token (`config.hardening.publisher.octoSTS`). Empty: no token, and `config.hardening.enforceOutputs` stays empty unless `config.hardening.publisher.minter: true` mints the publisher's token from the agents App (`runTokens.appSecret`), which reads no projected token ([docs/factory.md](../../docs/factory.md#hardening-non-code-outputs-enforced)) |
 | `hardening.gitCache.sizeLimit` | `""` | Hardening H3: set (e.g. `2Gi`), the pod mounts an `emptyDir` of that limit at `/var/cache/maku/git` and sets `MAKU_GIT_CACHE` to it, where the push applier keeps one bare, blobless mirror per repository. Empty: no cache, and a repository whose `config.hardening.enforceOutputs` names `push` refuses the factory's start |
@@ -83,8 +83,10 @@ Three ClusterRoles cover the `Factory`, `Repository` and `MergePolicy` kinds for
 the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `edit` or `admin`
 grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three kinds) into `view`,
 `maku-mergepolicy-editor` (every verb on `mergepolicies` only) into `edit`, and `maku-factory-admin`
-(every verb on the three kinds) into `admin`. Their names are fixed: one factory per cluster.
-`tests/render.sh` asserts each role's rules.
+(every verb on the three kinds) into `admin`. Their names are fixed, and one set serves every
+install in a cluster (D2, step 7 R10): `clusterRoles: true`, the default, renders them here for an
+install of this chart alone; the umbrella sets it false, and `agent-factory-crds` renders them once
+per cluster. `tests/render.sh` asserts each role's rules.
 
 ## Config
 

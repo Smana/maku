@@ -365,6 +365,17 @@ install_chart() {
     # shellcheck disable=SC2086
     kc annotate $crds meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" --overwrite >/dev/null
   fi
+  # The cluster's shared ClusterRoles moved from the umbrella to the CRD chart (step 7 R10): a demo
+  # from before hands them over (docs/upgrading.md); keep stops the umbrella's upgrade deleting them.
+  local roles
+  roles=$(kc get clusterrole maku-factory-admin maku-mergepolicy-editor maku-viewer agent-factory-flux-reader \
+    --ignore-not-found -o name 2>/dev/null || true)
+  if [[ -n $roles ]]; then
+    # shellcheck disable=SC2086 # one role per word
+    kc label $roles app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+    # shellcheck disable=SC2086
+    kc annotate $roles meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace="$NS" helm.sh/resource-policy=keep --overwrite >/dev/null
+  fi
   hl upgrade --install af-crds charts/agent-factory-crds -n "$NS" --create-namespace --timeout 2m >/dev/null
   kc wait --for=condition=Established crd -l app.kubernetes.io/part-of=agent-factory --timeout=120s >/dev/null
   hl upgrade --install af charts/agent-factory -n "$NS" --create-namespace -f charts/agent-factory/values-demo.yaml -f "$DEMO_DIR/values.yaml" --timeout 5m >/dev/null

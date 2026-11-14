@@ -4,6 +4,41 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The shared ClusterRoles in the CRD chart (v0.4x, v4 rollout step 7)
+
+Several installs can share a cluster (D2, R10). The roles every install shares move from the factory
+chart to `agent-factory-crds`, under the same names, so whatever binds them keeps working:
+`maku-factory-admin`, `maku-mergepolicy-editor` and `maku-viewer` (aggregated into `admin`, `edit` and
+`view`) and `agent-factory-flux-reader`. Each is kept on uninstall, as the CRDs are. The umbrella
+renders none of them (`maku-factory.clusterRoles: false`), and the factory's Flux binding is now the
+install's, `agent-factory-<namespace>-flux-reader`.
+
+| New key | Default | What it does |
+|---|---|---|
+| `agent-factory-crds`: `clusterRoles` | `true` | renders the four shared ClusterRoles |
+| `maku-factory.clusterRoles` | `true` in the factory chart, `false` under the umbrella | renders them from the factory chart, for an install of that chart alone |
+
+**An umbrella install hands the roles to `agent-factory-crds` before upgrading,** as it did the CRDs
+([adopting the CRDs](#adopting-the-crds)). Without it, Helm refuses the CRD chart's upgrade, since the
+roles belong to the umbrella's release. `helm.sh/resource-policy: keep` then stops the umbrella's
+upgrade from deleting what it no longer renders:
+
+```bash
+roles="maku-factory-admin maku-mergepolicy-editor maku-viewer agent-factory-flux-reader"
+kubectl get clusterrole $roles --ignore-not-found -o name | xargs -r -I{} sh -c '
+  kubectl label {} app.kubernetes.io/managed-by=Helm --overwrite
+  kubectl annotate {} meta.helm.sh/release-name=af-crds meta.helm.sh/release-namespace=maku helm.sh/resource-policy=keep --overwrite'
+helm upgrade af-crds oci://ghcr.io/smana/charts/agent-factory-crds --version <version> -n maku
+helm upgrade af oci://ghcr.io/smana/charts/agent-factory --version <version> -n maku -f values.yaml
+```
+
+Use your CRD release's name and namespace. Each role keeps its UID, and `task chart:adopt-roles:k3d`
+proves the sequence from the previous chart. `task demo` runs it for you.
+
+**An install of the `maku-factory` chart alone changes nothing:** `clusterRoles` stays `true` there.
+When it moves under the umbrella ([adopting the umbrella](#adopting-the-umbrella-from-maku-factory)),
+run the same commands first: they hand the roles from the factory's release to the CRD chart's.
+
 ## The demo's model gateway (v0.4x, v4 rollout step 7)
 
 `values-demo.yaml` now runs the demo through the model gateway (step 7 R4), as production does:

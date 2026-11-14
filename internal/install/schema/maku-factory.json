@@ -5,6 +5,10 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "clusterRoles": {
+      "description": "Render the cluster's shared ClusterRoles (the three aggregated roles, and agent-factory-flux-reader with monitor.flux). The umbrella sets false: agent-factory-crds renders them once per cluster (step 7 R10).",
+      "type": "boolean"
+    },
     "apps": {
       "description": "The GitHub Apps (v4 D12): each key maps onto an older one, which keeps working. docs/github-apps.md.",
       "type": "object",

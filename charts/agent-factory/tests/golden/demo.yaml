@@ -785,51 +785,6 @@ rules:
   verbs: [create, patch]
 
 ---
-# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: maku-factory-admin
-  labels:
-    app.kubernetes.io/name: agent-factory
-    app.kubernetes.io/version: "0.0.0"
-    rbac.authorization.k8s.io/aggregate-to-admin: "true"
-rules:
-  - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
-    verbs: [get, list, watch, create, update, patch, delete]
-
----
-# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: maku-mergepolicy-editor
-  labels:
-    app.kubernetes.io/name: agent-factory
-    app.kubernetes.io/version: "0.0.0"
-    rbac.authorization.k8s.io/aggregate-to-edit: "true"
-rules:
-  - apiGroups: [maku.ogenki.io]
-    resources: [mergepolicies]
-    verbs: [get, list, watch, create, update, patch, delete]
-
----
-# Source: agent-factory/charts/maku-factory/templates/clusterroles.yaml
-apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
-metadata:
-  name: maku-viewer
-  labels:
-    app.kubernetes.io/name: agent-factory
-    app.kubernetes.io/version: "0.0.0"
-    rbac.authorization.k8s.io/aggregate-to-view: "true"
-rules:
-  - apiGroups: [maku.ogenki.io]
-    resources: [factories, repositories, mergepolicies]
-    verbs: [get, list, watch]
-
----
 # Source: agent-factory/charts/agentgateway/templates/serviceaccount.yaml
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding
