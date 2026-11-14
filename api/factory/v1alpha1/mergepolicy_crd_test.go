@@ -145,18 +145,9 @@ func edit(t *testing.T, manifest, name string, set map[string]string) string {
 	return string(b)
 }
 
-// B1, B4, B7, B8: both shapes admitted in release N, each class-shape rule refusing.
+// B1, B4, B7: the class shape admitted, each of its rules refusing.
 func TestMergePolicyAdmission(t *testing.T) {
 	a := startAdmission(t)
-	raw, err := os.ReadFile("testdata/anr-mergepolicies.yaml")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, doc := range strings.Split(string(raw), "\n---\n") {
-		if err := a.create(t, doc); err != nil {
-			t.Errorf("ai-native-ref's legacy MergePolicy refused: %v", err)
-		}
-	}
 	reviewOK := "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {description: d, harness: solo, checks: true, testFirst: true}\n"
 	for name, m := range map[string]string{"dead-links": deadLinksPolicy, "docs-links": docsLinksPolicy, "review": reviewOK} {
 		if err := a.create(t, m); err != nil {
@@ -167,8 +158,6 @@ func TestMergePolicyAdmission(t *testing.T) {
 	for name, tc := range map[string]struct{ manifest, want string }{
 		"a name that is no class": {edit(t, docsLinksPolicy, "docs.links", nil), msgPolicyName},
 		"a name too long":         {edit(t, docsLinksPolicy, strings.Repeat("d", 41), nil), msgPolicyName},
-		"legacy and class fields": {edit(t, docsLinksPolicy, "mixed", map[string]string{"spec.repositoryRef": "cloud-native-ref", "spec.maxPerDay": "1"}), msgNeverTogether},
-		"classes without a ref":   {edit(t, docsLinksPolicy, "classes", map[string]string{"spec.classes": "{docs: {}}"}), msgLegacyNeedsRef},
 		"live on a policy":        {edit(t, docsLinksPolicy, "live", map[string]string{"spec.live": "true"}), msgModeOnBinding},
 		"a workflow on a policy":  {edit(t, deadLinksPolicy, "workflow", map[string]string{"spec.oracle.workflow": "dead-links.yaml"}), msgWorkflow},
 		"a source on a policy":    {edit(t, deadLinksPolicy, "source", map[string]string{"spec.monitor.flux": "{source: flux-system/flux-system, within: 30m}"}), msgFluxSource},
@@ -187,18 +176,56 @@ func TestMergePolicyAdmission(t *testing.T) {
 		})
 	}
 
-	t.Run("a class policy keeps its shape", func(t *testing.T) {
-		u := a.object(t, edit(t, docsLinksPolicy, "shape", nil))
-		if err := a.c.Create(t.Context(), u); err != nil {
+}
+
+// B8, plan PR20: the per-repository fields are gone from the schema. A legacy object created under
+// release N's CRD reads back, after the upgrade, as an empty class policy: the API server prunes
+// what the schema no longer declares, on read as on write.
+func TestLegacyMergePolicyReadsBackEmptyAfterTheUpgrade(t *testing.T) {
+	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
+		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
+	}
+	env := &envtest.Environment{CRDDirectoryPaths: []string{filepath.Join("testdata", "mergepolicies-release-n.yaml")}, ErrorIfCRDPathMissing: true}
+	restCfg, err := env.Start()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = env.Stop() })
+	c, err := client.New(restCfg, client.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	a := &admission{c: c, ns: "default"}
+	raw, err := os.ReadFile("testdata/anr-mergepolicies.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, doc := range strings.Split(string(raw), "\n---\n") {
+		u := a.object(t, doc)
+		if err := c.Create(t.Context(), u); err != nil {
+			t.Fatalf("release N refused ai-native-ref's legacy MergePolicy: %v", err)
+		}
+		names = append(names, u.GetName())
+	}
+
+	if _, err := envtest.InstallCRDs(restCfg, envtest.CRDInstallOptions{
+		Paths: []string{filepath.Join("..", "..", "..", "config", "crd", "maku.ogenki.io_mergepolicies.yaml")}, ErrorIfPathMissing: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range names {
+		u := &unstructured.Unstructured{}
+		u.SetAPIVersion(GroupVersion.String())
+		u.SetKind("MergePolicy")
+		if err := c.Get(t.Context(), client.ObjectKey{Namespace: a.ns, Name: name}, u); err != nil {
 			t.Fatal(err)
 		}
-		_ = unstructured.SetNestedField(u.Object, "cloud-native-ref", "spec", "repositoryRef")
-		unstructured.RemoveNestedField(u.Object, "spec", "description")
-		unstructured.RemoveNestedField(u.Object, "spec", "requires")
-		if err := a.c.Update(t.Context(), u); err == nil || !strings.Contains(err.Error(), msgKeepsShape) {
-			t.Fatalf("got %v, want %q", err, msgKeepsShape)
+		spec, _, _ := unstructured.NestedMap(u.Object, "spec")
+		if len(spec) != 0 {
+			t.Errorf("MergePolicy %s reads back with spec %v, want it empty", name, spec)
 		}
-	})
+	}
 }
 
 // B2, B3, OD-8, MP15, Q8: bindings keyed by name, a closed mode, review off, the entry classes,

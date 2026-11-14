@@ -48,15 +48,27 @@ func repo(name, repository string) Object {
 		"factoryRef": "aws-0", "repository": repository, "maintainers": []any{"Smana"}, "triggerLabel": "factory/ready"}}
 }
 
-func policy(t *testing.T, name, ref string) Object {
-	return Object{Kind: KindMergePolicy, Name: name, Generation: 1, Spec: map[string]any{
-		"repositoryRef": ref, "classes": classes(map[string]any{}), "merge": mergeBlock(t)}}
+// served is a Repository with its merge and the smallest bindings Parse admits: docs-links and
+// revert are required (OD-8). It binds specPolicies.
+func served(t *testing.T, name, repository string) Object {
+	t.Helper()
+	return boundRepo(t, name, repository, 1, `
+- {name: docs-links, mode: shadow, holdoutChecks: [validate]}
+- {name: revert, mode: shadow, holdoutChecks: [validate]}
+- {name: docs, mode: "off"}
+`)
 }
 
-// classes is the smallest set Parse admits: docs-links and revert are required (OD-8).
-func classes(docs map[string]any) map[string]any {
-	return map[string]any{"docs-links": map[string]any{"shadow": true}, "revert": map[string]any{"shadow": true}, "docs": docs}
+// bad is a served Repository Parse refuses: a schedule of a class it does not bind.
+func bad(t *testing.T, name, repository string) Object {
+	t.Helper()
+	o := served(t, name, repository)
+	o.Spec["schedules"] = []any{map[string]any{"name": "s", "cron": "0 6 * * 1", "class": "nothing-binds-this", "text": "a schedule"}}
+	return o
 }
+
+// with is specPolicies, then objs.
+func with(t *testing.T, objs ...Object) []Object { return append(specPolicies(t), objs...) }
 
 func refused(r Result, kind Kind, name string) string {
 	for _, x := range r.Refused {
@@ -75,13 +87,13 @@ func TestAssembleFileAloneIsParse(t *testing.T) {
 	}
 }
 
-func TestAssembleAddsARepositoryAndItsPolicy(t *testing.T) {
-	r, err := Assemble(file(t), []Object{repo("maku", "Smana/maku"), policy(t, "maku", "maku")})
+func TestAssembleAddsARepository(t *testing.T) {
+	r, err := Assemble(file(t), with(t, served(t, "maku", "Smana/maku")))
 	if err != nil {
 		t.Fatal(err)
 	}
 	rc := r.Config.RepositoryFor("Smana/maku")
-	if rc == nil || len(rc.Classes) != 3 || rc.Merge.MergerLogin == "" || len(r.Accepted) != 2 {
+	if rc == nil || len(rc.Classes) != 3 || rc.Merge.MergerLogin == "" || len(r.Accepted) != 5 {
 		t.Fatalf("Smana/maku not served: %+v %+v", rc, r.Refused)
 	}
 }
@@ -98,26 +110,20 @@ func TestAssembleRefusals(t *testing.T) {
 			return []Object{{Kind: KindFactory, Name: "gcp-0", Spec: map[string]any{}}}
 		}, KindFactory, "gcp-0", v1alpha1.ReasonNotThisFactory},
 		{"another factory's Repository", func(t *testing.T) []Object {
-			o := repo("maku", "Smana/maku")
+			o := served(t, "maku", "Smana/maku")
 			o.Spec["factoryRef"] = "gcp-0"
-			return []Object{o, policy(t, "maku", "maku")}
+			return with(t, o)
 		}, KindRepository, "maku", v1alpha1.ReasonNotThisFactory},
 		{"a repository also in the file", func(t *testing.T) []Object {
-			return []Object{repo("cnr", "smana/Cloud-Native-Ref"), policy(t, "cnr", "cnr")}
+			return with(t, served(t, "cnr", "smana/Cloud-Native-Ref"))
 		}, KindRepository, "cnr", v1alpha1.ReasonDefinedTwice},
-		{"a Repository without a policy", func(*testing.T) []Object {
-			return []Object{repo("maku", "Smana/maku")}
-		}, KindRepository, "maku", v1alpha1.ReasonNoMergePolicy},
-		{"a policy naming no Repository", func(t *testing.T) []Object {
-			return []Object{policy(t, "orphan", "nothing")}
-		}, KindMergePolicy, "orphan", v1alpha1.ReasonMissingRef},
-		{"two policies for one Repository", func(t *testing.T) []Object {
-			return []Object{repo("maku", "Smana/maku"), policy(t, "a", "maku"), policy(t, "b", "maku")}
-		}, KindMergePolicy, "b", v1alpha1.ReasonDuplicatePolicy},
-		{"a policy Parse refuses", func(t *testing.T) []Object {
-			p := policy(t, "maku", "maku")
-			p.Spec["classes"] = classes(map[string]any{"live": true, "shadow": true})
-			return []Object{repo("maku", "Smana/maku"), p}
+		{"a Repository Parse refuses", func(t *testing.T) []Object {
+			return with(t, bad(t, "maku", "Smana/maku"))
+		}, KindRepository, "maku", v1alpha1.ReasonInvalid},
+		// B8, plan PR20: the per-repository shape is no MergePolicy any more; it never serves.
+		{"a per-repository MergePolicy", func(t *testing.T) []Object {
+			return with(t, served(t, "maku", "Smana/maku"), Object{Kind: KindMergePolicy, Name: "maku", Generation: 1,
+				Spec: map[string]any{"repositoryRef": "maku", "classes": map[string]any{"docs": map[string]any{}}}})
 		}, KindMergePolicy, "maku", v1alpha1.ReasonInvalid},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,12 +182,6 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 	}
 }
 
-func badPolicy(t *testing.T, name string) Object {
-	p := policy(t, name, name)
-	p.Spec["classes"] = classes(map[string]any{"live": true, "shadow": true})
-	return p
-}
-
 func refusal(r Result, kind Kind, name string) *Refusal {
 	for i, x := range r.Refused {
 		if x.Kind == kind && x.Name == name {
@@ -192,11 +192,11 @@ func refusal(r Result, kind Kind, name string) *Refusal {
 }
 
 // F4: a Factory Parse refuses is the culprit; the file's catalogue stays, with no warning that a
-// Factory replaces it, and the pair beside it is served.
+// Factory replaces it, and the Repository beside it is served.
 func TestAssembleFactoryCulpritKeepsTheFilesCatalogue(t *testing.T) {
 	want, _ := config.Parse(file(t))
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: map[string]any{"caps": map[string]any{"activeTasks": -1}}}
-	r, err := Assemble(file(t), []Object{f, repo("maku", "Smana/maku"), policy(t, "maku", "maku")})
+	r, err := Assemble(file(t), with(t, f, served(t, "maku", "Smana/maku")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,45 +204,40 @@ func TestAssembleFactoryCulpritKeepsTheFilesCatalogue(t *testing.T) {
 		t.Fatalf("the Factory must be refused Invalid: %+v", r.Refused)
 	}
 	if len(r.Refused) != 1 || r.Config.RepositoryFor("Smana/maku") == nil {
-		t.Fatalf("the pair must be served: %+v", r.Refused)
+		t.Fatalf("the Repository must be served: %+v", r.Refused)
 	}
 	if !equalJSON(t, want.Tiers, r.Config.Tiers) || !equalJSON(t, want.Caps, r.Config.Caps) || strings.Contains(strings.Join(r.Warnings, "\n"), "is ignored") {
 		t.Fatalf("the file's catalogue must stay, without a replaced-catalogue warning: %v", r.Warnings)
 	}
 }
 
-// F3: a pair culprit refuses the MergePolicy with Parse's error and the Repository as not served.
-func TestAssemblePairCulpritRefusesBoth(t *testing.T) {
-	r, err := Assemble(file(t), []Object{repo("maku", "Smana/maku"), badPolicy(t, "maku")})
+// F3: a culprit Repository is refused with Parse's error, and its policies still serve.
+func TestAssembleRepositoryCulprit(t *testing.T) {
+	r, err := Assemble(file(t), with(t, bad(t, "maku", "Smana/maku")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, rp := refusal(r, KindMergePolicy, "maku"), refusal(r, KindRepository, "maku")
-	if p == nil || p.Reason != v1alpha1.ReasonInvalid || !strings.Contains(p.Message, "live and shadow") {
-		t.Fatalf("MergePolicy: %+v", p)
-	}
-	if rp == nil || rp.Reason != v1alpha1.ReasonInvalid || rp.Message != "not served: MergePolicy maku was refused" {
+	if rp := refusal(r, KindRepository, "maku"); rp == nil || rp.Reason != v1alpha1.ReasonInvalid || !strings.Contains(rp.Message, "nothing-binds-this") {
 		t.Fatalf("Repository: %+v", rp)
+	}
+	if len(r.Refused) != 1 {
+		t.Fatalf("only the Repository is at fault: %+v", r.Refused)
 	}
 }
 
-// F2: two bad pairs are both refused, and the good one between them is served.
+// F2: two bad Repositories are both refused, and the good one between them is served.
 func TestAssembleTwoCulprits(t *testing.T) {
-	r, err := Assemble(file(t), []Object{
-		repo("a", "Smana/a"), badPolicy(t, "a"),
-		repo("b", "Smana/b"), policy(t, "b", "b"),
-		repo("c", "Smana/c"), badPolicy(t, "c"),
-	})
+	r, err := Assemble(file(t), with(t, bad(t, "a", "Smana/a"), served(t, "b", "Smana/b"), bad(t, "c", "Smana/c")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if refused(r, KindMergePolicy, "a") != v1alpha1.ReasonInvalid || refused(r, KindMergePolicy, "c") != v1alpha1.ReasonInvalid {
-		t.Fatalf("both bad policies must be refused: %+v", r.Refused)
+	if refused(r, KindRepository, "a") != v1alpha1.ReasonInvalid || refused(r, KindRepository, "c") != v1alpha1.ReasonInvalid {
+		t.Fatalf("both bad Repositories must be refused: %+v", r.Refused)
 	}
-	if refused(r, KindRepository, "b") != "" || r.Config.RepositoryFor("Smana/b") == nil || len(r.Accepted) != 2 {
-		t.Fatalf("the good pair must be served: %+v", r.Refused)
+	if refused(r, KindRepository, "b") != "" || r.Config.RepositoryFor("Smana/b") == nil || len(r.Accepted) != 5 {
+		t.Fatalf("the good Repository must be served: %+v", r.Refused)
 	}
-	if x := refusal(r, KindMergePolicy, "c"); strings.Contains(x.Message, "Smana/a") {
+	if x := refusal(r, KindRepository, "c"); strings.Contains(x.Message, "Smana/a") {
 		t.Fatalf("c's refusal must carry the error left once a was removed: %q", x.Message)
 	}
 }
@@ -274,12 +269,12 @@ func TestAssembleMigratedBadFactoryReportsRefusals(t *testing.T) {
 
 // Refused is sorted by Kind, then Name, whatever order the refusals were found in.
 func TestAssembleRefusedOrder(t *testing.T) {
-	r, err := Assemble(file(t), []Object{
-		repo("z", "Smana/z"), badPolicy(t, "z"),
-		{Kind: KindFactory, Name: "gcp-0", Spec: map[string]any{}},
-		policy(t, "orphan", "nothing"),
-		repo("b", "Smana/b"),
-	})
+	r, err := Assemble(file(t), with(t,
+		bad(t, "z", "Smana/z"),
+		Object{Kind: KindFactory, Name: "gcp-0", Spec: map[string]any{}},
+		classPolicy(t, "orphan", 1, "live: true\n"),
+		bad(t, "b", "Smana/b"),
+	))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,20 +282,20 @@ func TestAssembleRefusedOrder(t *testing.T) {
 	for _, x := range r.Refused {
 		got = append(got, string(x.Kind)+"/"+x.Name)
 	}
-	want := "Factory/gcp-0 MergePolicy/orphan MergePolicy/z Repository/b Repository/z"
+	want := "Factory/gcp-0 MergePolicy/orphan Repository/b Repository/z"
 	if strings.Join(got, " ") != want {
 		t.Fatalf("order: %v, want %s", got, want)
 	}
 }
 
-// A bad Factory changes the joined error of every pair that has a schedule (the text cap is a
-// catalogue value), so removing a pair changes the error. The culprit is the element whose
+// A bad Factory changes the joined error of every Repository that has a schedule (the text cap is
+// a catalogue value), so removing a Repository changes the error. The culprit is the element whose
 // removal makes the config parse: the Factory.
 func TestAssembleBadFactoryIsTheCulpritNotThePairs(t *testing.T) {
 	sched := func(n string) []any {
 		return []any{map[string]any{"name": n, "cron": "0 6 * * 1", "class": "review", "text": "a schedule text well over ten bytes"}}
 	}
-	ra, rb := repo("a", "Smana/a"), repo("b", "Smana/b")
+	ra, rb := served(t, "a", "Smana/a"), served(t, "b", "Smana/b")
 	ra.Spec["schedules"], rb.Spec["schedules"] = sched("sa"), sched("sb")
 	var base map[string]any
 	if err := yaml.Unmarshal(file(t), &base); err != nil {
@@ -319,21 +314,22 @@ func TestAssembleBadFactoryIsTheCulpritNotThePairs(t *testing.T) {
 	caps["maxTextBytes"] = 10
 	spec["caps"] = caps
 	f := Object{Kind: KindFactory, Name: "aws-0", Spec: spec}
-	r, err := Assemble(file(t), []Object{ra, policy(t, "a", "a"), rb, policy(t, "b", "b"), f})
+	r, err := Assemble(file(t), with(t, ra, rb, f))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(r.Refused) != 1 || r.Refused[0].Kind != KindFactory || r.Refused[0].Reason != v1alpha1.ReasonInvalid {
 		t.Fatalf("refused = %+v, want only the Factory, Invalid", r.Refused)
 	}
-	if len(r.Accepted) != 4 {
-		t.Fatalf("accepted = %d objects, want both pairs", len(r.Accepted))
+	if len(r.Accepted) != 6 {
+		t.Fatalf("accepted = %d objects, want both Repositories and the four policies", len(r.Accepted))
 	}
 }
 
 // #448: after migration the file holds no repository, and control.repository is a Factory value
 // naming a repository only a Repository object lists. A bad Factory is the culprit with its own
-// error: it is never blamed through "not a listed repository" errors that come from removing a pair.
+// error: it is never blamed through "not a listed repository" errors that come from removing a
+// Repository.
 func TestAssembleBadFactoryMessageHasNoFalseRepositoryErrors(t *testing.T) {
 	manifests, residual, err := Migrate(file(t), "agent-system")
 	if err != nil {
@@ -387,7 +383,7 @@ func TestAssembleNeverBlamesTheFactoryForARefusedRepository(t *testing.T) {
 		}
 	}
 	// A second repository keeps the set servable but for the control line.
-	objs = append(objs, repo("maku", "Smana/maku"), policy(t, "maku", "maku"))
+	objs = append(objs, served(t, "maku", "Smana/maku"))
 	r, err := Assemble(residual, objs)
 	if x := refusal(r, KindFactory, "aws-0"); x != nil {
 		t.Fatalf("the Factory is blamed for a refused Repository: %+v", x)
@@ -400,9 +396,9 @@ func TestAssembleNeverBlamesTheFactoryForARefusedRepository(t *testing.T) {
 
 // v4 D3: a Repository's privateCode reaches the served config.
 func TestAssembleCarriesPrivateCode(t *testing.T) {
-	r0 := repo("maku", "Smana/maku")
+	r0 := served(t, "maku", "Smana/maku")
 	r0.Spec["privateCode"] = map[string]any{"acknowledged": true}
-	r, err := Assemble(file(t), []Object{r0, policy(t, "maku", "maku")})
+	r, err := Assemble(file(t), with(t, r0))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -135,35 +135,20 @@ type Report struct {
 	DefaultBranch   string            `json:"defaultBranch"`
 	HarnessProfiles []string          `json:"harnessProfiles"`
 	// AdoptedProfiles are the profiles that run nothing (template none): an adopted class takes
-	// only these, an agents class none of them (mergepolicy.Resolve).
+	// only these, an agents class none of them (config.Resolve).
 	AdoptedProfiles []string               `json:"adoptedProfiles"`
 	Guardrails      config.MergeGuardrails `json:"guardrails"`
-	// For a repository served from a MergePolicy object: its name, the manifest of its central
-	// classes and merge block (what a GitOps pull request changes), the file name to save it
-	// under, and its classes in the policy file's shape (mergepolicy.ExportClasses), which the editor
-	// edits: the editor never edits spec.classes. Empty for a repository the file serves. Served
-	// is nil when a class has no file shape (Export's error).
-	MergePolicy  string            `json:"mergePolicy,omitempty"`
-	Manifest     string            `json:"manifest,omitempty"`
-	ManifestPath string            `json:"manifestPath,omitempty"`
-	Served       *mergepolicy.File `json:"served,omitempty"`
-	// MergePolicyStatus is the object's stored status, nil when there is none to read.
-	MergePolicyStatus *PolicyStatus `json:"mergePolicyStatus,omitempty"`
 	// Hardening is the repository's hardening readiness (H5, HR41), computed afresh by the API for a
 	// repository at mode audit or above; nil otherwise.
 	Hardening *Readiness `json:"hardening,omitempty"`
 	// For a repository served from its Repository's bindings (B3, B16): the object's name, its
 	// manifest (spec.mergePolicies and its own merge keys, the Factory's defaults left out), the file
-	// name to save it under, its stored status, and each binding with its policy's generation. The
-	// per-repository fields above are then empty.
+	// name to save it under, its stored status, and each binding with its policy's generation.
 	RepositoryObject       string                `json:"repositoryObject,omitempty"`
 	RepositoryManifest     string                `json:"repositoryManifest,omitempty"`
 	RepositoryManifestPath string                `json:"repositoryManifestPath,omitempty"`
 	RepositoryStatus       *RepositoryStatusView `json:"repositoryStatus,omitempty"`
 	Bindings               []BindingView         `json:"bindings,omitempty"`
-	// Namespace and RepositoryRef are the manifest's, for the preview to build an edited one.
-	Namespace     string `json:"-"`
-	RepositoryRef string `json:"-"`
 }
 
 // Readiness is one repository's hardening readiness. The operators' route shows it whole: hardened,
@@ -509,32 +494,6 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 		if err := s.bound(ctx, cfg, rc, &r); err != nil {
 			return Report{}, err
 		}
-	} else if _, _, gen := cfg.GenerationsFor(rc.Name); gen > 0 {
-		// The objects' own names, as served; Migrate's naming only when the config lacks them.
-		g := cfg.Generations.Repos[strings.ToLower(rc.Name)]
-		name, ref := g.PolicyName, g.RepositoryName
-		if name == "" || ref == "" {
-			names := make([]string, len(cfg.Repositories))
-			for i, x := range cfg.Repositories {
-				names[i] = x.Name
-			}
-			def := resources.ObjectName(rc.Name, names)
-			name, ref = cmp.Or(name, def), cmp.Or(ref, def)
-		}
-		m, err := resources.MergePolicyManifest(name, s.Namespace, ref, rc.Classes, rc.Merge)
-		if err != nil {
-			return Report{}, fmt.Errorf("evidence: manifest: %w", err)
-		}
-		r.MergePolicy, r.Manifest, r.ManifestPath = name, string(m), "mergepolicy-"+name+".yaml"
-		r.Namespace, r.RepositoryRef = s.Namespace, ref
-		if s.PolicyStatus != nil {
-			if st, ok := s.PolicyStatus(ctx, name); ok {
-				r.MergePolicyStatus = &st
-			}
-		}
-		if f, err := mergepolicy.ExportClasses(rc, cfg); err == nil {
-			r.Served = f
-		}
 	}
 	for _, c := range s.classes(cfg, rc, file) {
 		cr := ClassReport{Class: c.name, Source: c.source, Mode: c.mode}
@@ -751,20 +710,6 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 		for _, b := range slices.SortedFunc(slices.Values(f.MergePolicies), func(a, b config.Binding) int { return cmp.Compare(a.Name, b.Name) }) {
 			c := class{name: b.Name, source: sourceRepository, mode: b.Mode, authors: agents, window: defaultWindow}
 			policy(&c)
-			out = append(out, c)
-		}
-		return out
-	}
-	if f != nil && len(f.Classes) > 0 {
-		for _, name := range slices.Sorted(maps.Keys(f.Classes)) {
-			p := f.Classes[name]
-			c := class{name: name, source: sourceRepository, mode: string(p.Mode), authors: agents, window: defaultWindow}
-			if p.Adopt != nil {
-				c.authors = adopters(p.Adopt.Logins)
-			}
-			if p.Monitor != nil && p.Monitor.FollowUpWindow.Duration > 0 {
-				c.window = p.Monitor.FollowUpWindow.Duration
-			}
 			out = append(out, c)
 		}
 		return out

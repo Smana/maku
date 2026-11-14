@@ -14,7 +14,6 @@ import (
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
-	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -104,6 +103,17 @@ func service(src Source, now func() time.Time) *Service {
 	return &Service{Cfg: serviceCfg(), Sources: func(string) (Source, bool) { return src, true }, Now: now}
 }
 
+// cutOver is a service whose repository is cut over to its own file (stage 4): the file's bindings
+// are its classes.
+func cutOver(src Source, now func() time.Time) *Service {
+	cfg := serviceCfg()
+	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
+	s := service(src, now)
+	s.Cfg = cfg
+	return s
+}
+
 // wait blocks until no refresh of repository runs.
 func (s *Service) wait(t *testing.T, repository string) {
 	t.Helper()
@@ -124,7 +134,7 @@ func TestServiceReportsAndProposes(t *testing.T) {
 	src := &fakeSource{file: policyFile, found: true,
 		merged:  map[string][]PR{"author:app/ogenki-agents": cleanPRs(20)},
 		reverts: []Revert{{Body: "Reverts Smana/cloud-native-ref#100", Labels: []Label{{Name: "factory/drill"}}, State: "MERGED"}}}
-	s := service(src, func() time.Time { return now })
+	s := cutOver(src, func() time.Time { return now })
 	if err := s.Refresh(t.Context(), "smana/cloud-native-ref"); err != nil {
 		t.Fatal(err)
 	}
@@ -227,7 +237,7 @@ func TestServiceNamesTheProfilesAnAdoptedClassTakes(t *testing.T) {
 func TestReportAnswersWhileTheSearchesHang(t *testing.T) {
 	src := &fakeSource{file: policyFile, found: true, gate: make(chan struct{})}
 	defer close(src.gate)
-	s := service(src, time.Now)
+	s := cutOver(src, time.Now)
 	done := make(chan Report, 1)
 	go func() {
 		r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
@@ -280,7 +290,7 @@ func TestACancelledRequestDoesNotCancelTheRead(t *testing.T) {
 // One read per repository at a time: reports and refreshes that arrive while it runs start none.
 func TestOneReadPerRepositoryAtATime(t *testing.T) {
 	src := &fakeSource{file: policyFile, found: true, gate: make(chan struct{})}
-	s := service(src, time.Now)
+	s := cutOver(src, time.Now)
 	for range 5 {
 		if _, err := s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil {
 			t.Fatal(err)
@@ -300,12 +310,12 @@ func TestOneReadPerRepositoryAtATime(t *testing.T) {
 // The classes are read concurrently, never more than Parallel searches at once.
 func TestTheClassReadsAreBounded(t *testing.T) {
 	var b strings.Builder
-	b.WriteString("factory: aws-0\nclasses:\n")
+	b.WriteString("factory: aws-0\nmergePolicies:\n")
 	for i := range 12 {
-		fmt.Fprintf(&b, "  c%02d:\n    mode: shadow\n    author: agents\n    harness: docs-standard\n", i)
+		fmt.Fprintf(&b, "  - {name: c%02d, mode: shadow}\n", i)
 	}
 	src := &fakeSource{file: b.String(), found: true, gate: make(chan struct{})}
-	s := service(src, time.Now)
+	s := cutOver(src, time.Now)
 	s.Parallel = 3
 	go func() { _ = s.Refresh(t.Context(), "Smana/cloud-native-ref") }()
 	deadline := time.After(2 * time.Second)
@@ -410,82 +420,6 @@ func TestRefresherReadsOwnedRepositories(t *testing.T) {
 	}
 }
 
-func TestReportCarriesThePolicyStatus(t *testing.T) {
-	cfg := serviceCfg()
-	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
-	src := func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }
-	calls := 0
-	found := true
-	s := &Service{Cfg: cfg, Namespace: "factory", Sources: src, Now: time.Now,
-		PolicyStatus: func(_ context.Context, name string) (PolicyStatus, bool) {
-			calls++
-			if name != "cloud-native-ref" || !found {
-				return PolicyStatus{}, false
-			}
-			return PolicyStatus{Namespace: "factory", Generation: 3, Status: factoryv1.MergePolicyStatus{Authority: "central"}}, true
-		}}
-	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
-	if err != nil || r.MergePolicyStatus == nil || r.MergePolicyStatus.Namespace != "factory" ||
-		r.MergePolicyStatus.Generation != 3 || r.MergePolicyStatus.Status.Authority != "central" {
-		t.Fatalf("%+v %v", r.MergePolicyStatus, err)
-	}
-	found = false
-	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil {
-		t.Fatalf("a miss is no status: %+v %v", r.MergePolicyStatus, err)
-	}
-	// A repository the file serves never asks.
-	calls = 0
-	cfg.Generations = config.Generations{}
-	if r, err = s.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.MergePolicyStatus != nil || calls != 0 {
-		t.Fatalf("%+v %v calls=%d", r.MergePolicyStatus, err, calls)
-	}
-}
-
-// A repository served from a MergePolicy carries the manifest of its central classes and merge
-// block, which the factory's own decoder accepts; one served from the file carries none.
-func TestReportCarriesTheMergePolicyManifest(t *testing.T) {
-	cfg := serviceCfg()
-	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 2, MergePolicy: 3}}}
-	cfg.HarnessProfiles = map[string]config.HarnessProfile{"plain": {}}
-	s := &Service{Cfg: cfg, Namespace: "factory", Sources: func(string) (Source, bool) { return &fakeSource{file: "factory: aws-0\n", found: true}, true }, Now: time.Now}
-	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.MergePolicy != "cloud-native-ref" || r.ManifestPath != "mergepolicy-cloud-native-ref.yaml" {
-		t.Fatalf("%+v", r)
-	}
-	objs, err := resources.Decode([]byte(r.Manifest))
-	if err != nil || len(objs) != 1 || objs[0].Kind != resources.KindMergePolicy || objs[0].Name != "cloud-native-ref" || objs[0].Namespace != "factory" {
-		t.Fatalf("%v %+v\n%s", err, objs, r.Manifest)
-	}
-	if !strings.Contains(r.Manifest, "docs-links") || !strings.Contains(r.Manifest, "repositoryRef: cloud-native-ref") {
-		t.Fatal(r.Manifest)
-	}
-	// The editor edits the served classes in the file's shape, never spec.classes; the preview
-	// builds the edited manifest in the same namespace, for the same Repository.
-	if r.Served == nil || r.Served.Classes["docs-links"].Mode != mergepolicy.ModeShadow || r.Served.Classes["docs-links"].Harness != "plain" ||
-		r.Namespace != "factory" || r.RepositoryRef != "cloud-native-ref" {
-		t.Fatalf("%+v %+v", r.Served, r)
-	}
-
-	// Hand-named objects: the manifest carries their names, never a derived one.
-	cfg.Generations.Repos["smana/cloud-native-ref"] = config.RepoGenerations{Repository: 2, MergePolicy: 3, RepositoryName: "custom-repo", PolicyName: "custom-policy"}
-	r, err = s.Report(t.Context(), "Smana/cloud-native-ref")
-	if err != nil || r.MergePolicy != "custom-policy" || r.ManifestPath != "mergepolicy-custom-policy.yaml" {
-		t.Fatalf("%+v %v", r, err)
-	}
-	if objs, err := resources.Decode([]byte(r.Manifest)); err != nil || objs[0].Name != "custom-policy" || !strings.Contains(r.Manifest, "repositoryRef: custom-repo") {
-		t.Fatalf("%v\n%s", err, r.Manifest)
-	}
-
-	file := service(&fakeSource{file: "factory: aws-0\n", found: true}, time.Now)
-	r, err = file.Report(t.Context(), "Smana/cloud-native-ref")
-	if err != nil || r.Manifest != "" || r.MergePolicy != "" || r.ManifestPath != "" || r.Served != nil {
-		t.Fatalf("%+v %v", r, err)
-	}
-}
-
 // boundCfg serves Smana/cloud-native-ref from its Repository's bindings (B3): dead-links is
 // bound but dropped (B9), the other two served at their policies' generations.
 func boundCfg() *config.Config {
@@ -530,7 +464,7 @@ func TestReportOfABoundRepository(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if r.Manifest != "" || r.MergePolicy != "" || r.RepositoryObject != "cloud-native-ref" || r.RepositoryManifestPath != "repository-cloud-native-ref.yaml" ||
+	if r.RepositoryObject != "cloud-native-ref" || r.RepositoryManifestPath != "repository-cloud-native-ref.yaml" ||
 		r.RepositoryStatus == nil || r.RepositoryStatus.Generation != 7 {
 		t.Fatalf("%+v", r)
 	}

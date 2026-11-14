@@ -1565,22 +1565,21 @@ func TestAMergeBetweenReconcilesReadsHumanCommits(t *testing.T) {
 }
 
 // The last decision per class is remembered as the marker is posted, with the MergePolicy
-// generation it was made under (D5); the marker carries policygen only above 0.
+// generation it was made under (D5); the marker carries policygen only above 0, so a class the
+// config file serves prints none.
 func TestADecisionIsRecordedWithItsPolicyGeneration(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
-	g.r.Cfg.Current().Generations = config.Generations{Repos: map[string]config.RepoGenerations{
-		strings.ToLower(awaiting().Spec.Repository): {MergePolicy: 6}}}
 	g.r.Decisions = &decision.Recorder{}
 	g.f.SetChecks(12, green("SUCCESS"))
 	tk := g.reconcile(t, "3buqdlot", 1)
 	got := g.r.Decisions.Latest(tk.Spec.Repository)["docs-links"]
-	if got.Verdict != "shadow" || got.Reason != "shadow_would_arm" || got.Generation != 6 || !got.At.Equal(g.r.Now()) {
+	if got.Verdict != "shadow" || got.Reason != "shadow_would_arm" || got.Generation != 0 || !got.At.Equal(g.r.Now()) {
 		t.Fatalf("%+v", got)
 	}
-	// A legacy-served class: no repogen=, and resolved= names the class decided on (B13).
+	// No repogen= and no policygen=, and resolved= names the class decided on (B13).
 	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=6 resolved="+resolved+" reviewer=") || strings.Contains(c, "repogen=") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " resolved="+resolved+" reviewer=") || strings.Contains(c, "repogen=") || strings.Contains(c, "policygen=") {
 		t.Fatalf("%q", c)
 	}
 }

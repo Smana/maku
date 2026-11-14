@@ -48,8 +48,8 @@ import (
 type Outcome struct {
 	Kind resources.Kind
 	Name string
-	// Repository is the owner/name the object configures: a Repository's spec.repository, a
-	// MergePolicy's through its spec.repositoryRef when that Repository is listed; empty otherwise.
+	// Repository is the owner/name a Repository configures, its spec.repository; empty for the
+	// other kinds (a MergePolicy's consumers are in Consumers).
 	Repository         string
 	ObservedGeneration int64  // the object's current generation
 	ServedGeneration   int64  // the generation in the published config; 0 when not served
@@ -57,7 +57,7 @@ type Outcome struct {
 	Reason, Message    string // why not, when !Accepted (a v1alpha1.Reason*)
 	// Bindings are a bound Repository's bindings, in list order (B9, B10).
 	Bindings []resources.BindingOutcome
-	// Consumers are the bindings of a class-shape MergePolicy, by Repository (B10).
+	// Consumers are the bindings of a MergePolicy, by Repository (B10).
 	Consumers []resources.BindingOutcome
 }
 
@@ -387,26 +387,21 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 	for _, o := range listed {
 		k := key{o.Kind, o.Name}
 		oc := Outcome{Kind: o.Kind, Name: o.Name, ObservedGeneration: o.Generation}
-		switch o.Kind {
-		case resources.KindRepository:
+		if o.Kind == resources.KindRepository {
 			oc.Repository = repoOf[o.Name]
-		case resources.KindMergePolicy:
-			ref, _ := o.Spec["repositoryRef"].(string)
-			oc.Repository = repoOf[ref]
 		}
 		oc.ServedGeneration = served[k]
 		for _, b := range r.Bindings {
 			switch {
 			case o.Kind == resources.KindRepository && b.Repository == o.Name:
 				oc.Bindings = append(oc.Bindings, b)
-			case o.Kind == resources.KindMergePolicy && b.Name == o.Name && !hasKey(o.Spec, "repositoryRef"):
+			case o.Kind == resources.KindMergePolicy && b.Name == o.Name:
 				oc.Consumers = append(oc.Consumers, b)
 			}
 		}
 		switch f, ok := first[k]; {
 		case ok && hasAccepted(r, k) && oc.ServedGeneration == o.Generation:
-			// Refused only because its pair was (a Repository whose MergePolicy changed): the
-			// object itself is served as it is.
+			// Refused only because of another object, whose last good then let it serve as it is.
 			oc.Accepted = true
 		case ok:
 			oc.Reason, oc.Message = f.Reason, f.Message
@@ -428,11 +423,6 @@ func outcomes(listed []resources.Object, r resources.Result, first map[key]resou
 		return cmp.Or(cmp.Compare(a.Kind, b.Kind), cmp.Compare(a.Name, b.Name))
 	})
 	return out
-}
-
-func hasKey(m map[string]any, k string) bool {
-	_, ok := m[k]
-	return ok
 }
 
 // hasAccepted is true when k is among r's accepted objects, whatever its generation.
@@ -457,29 +447,15 @@ func generations(accepted []resources.Object, bindings []resources.BindingOutcom
 		}
 	}
 	for _, o := range accepted {
-		switch o.Kind {
-		case resources.KindRepository:
-			if repoOf[o.Name] == "" {
-				continue
-			}
-			if g.Repos == nil {
-				g.Repos = map[string]config.RepoGenerations{}
-			}
-			e := g.Repos[repoOf[o.Name]]
-			e.Repository, e.RepositoryName = o.Generation, o.Name
-			g.Repos[repoOf[o.Name]] = e
-		case resources.KindMergePolicy:
-			ref, _ := o.Spec["repositoryRef"].(string)
-			if repoOf[ref] == "" {
-				continue // its repository is not served: nothing to record it under
-			}
-			if g.Repos == nil {
-				g.Repos = map[string]config.RepoGenerations{}
-			}
-			e := g.Repos[repoOf[ref]]
-			e.MergePolicy, e.PolicyName = o.Generation, o.Name
-			g.Repos[repoOf[ref]] = e
+		if o.Kind != resources.KindRepository || repoOf[o.Name] == "" {
+			continue
 		}
+		if g.Repos == nil {
+			g.Repos = map[string]config.RepoGenerations{}
+		}
+		e := g.Repos[repoOf[o.Name]]
+		e.Repository, e.RepositoryName = o.Generation, o.Name
+		g.Repos[repoOf[o.Name]] = e
 	}
 	for _, b := range bindings {
 		if !b.Served || repoOf[b.Repository] == "" {

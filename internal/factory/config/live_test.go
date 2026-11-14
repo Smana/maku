@@ -60,11 +60,11 @@ func TestConfigIsItsOwnSource(t *testing.T) {
 }
 
 func TestGenerationsFor(t *testing.T) {
-	c := &Config{Generations: Generations{Factory: 3, Repos: map[string]RepoGenerations{"smana/maku": {Repository: 2, MergePolicy: 5}}}}
-	if f, r, p := c.GenerationsFor("Smana/maku"); f != 3 || r != 2 || p != 5 {
-		t.Fatalf("got %d %d %d", f, r, p)
+	c := &Config{Generations: Generations{Factory: 3, Repos: map[string]RepoGenerations{"smana/maku": {Repository: 2}}}}
+	if f, r := c.GenerationsFor("Smana/maku"); f != 3 || r != 2 {
+		t.Fatalf("got %d %d", f, r)
 	}
-	if f, r, p := c.GenerationsFor("Smana/other"); f != 3 || r != 0 || p != 0 {
-		t.Fatalf("a file repository has zero object generations: %d %d %d", f, r, p)
+	if f, r := c.GenerationsFor("Smana/other"); f != 3 || r != 0 {
+		t.Fatalf("a file repository has zero object generations: %d %d", f, r)
 	}
 }

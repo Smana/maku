@@ -60,9 +60,8 @@ spec:
             type: object
           spec:
             description: |-
-              RepositorySpec is one repository served (D3): today's repositories[] entry. Its merge settings
-              and the MergePolicies it binds are here (reusable merge policies B2, B3), or, in the
-              per-repository shape, in the MergePolicy that names it.
+              RepositorySpec is one repository served (D3): today's repositories[] entry, with its merge
+              settings and the MergePolicies it binds (reusable merge policies B2, B3).
             properties:
               checks:
                 description: |-
@@ -384,8 +383,7 @@ spec:
                 minimum: 0
                 type: integer
               classes:
-                description: Classes is one entry per binding, or per served class
-                  of a per-repository MergePolicy (B10).
+                description: Classes is one entry per binding (B10).
                 items:
                   description: |-
                     BindingStatus is one class of a Repository (B10): the binding's mode, the policy generation it
@@ -603,11 +601,6 @@ spec:
                   type: string
                 maxItems: 32
                 type: array
-              mergePolicy:
-                description: MergePolicy names the MergePolicy that applies, in the
-                  per-repository shape.
-                maxLength: 253
-                type: string
               observedGeneration:
                 format: int64
                 type: integer

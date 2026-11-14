@@ -11,9 +11,14 @@ import (
 	"github.com/Smana/maku/api/factory/v1alpha1"
 )
 
+// ErrPerRepositoryRemoved is why a MergePolicy with spec.repositoryRef is refused (B8, plan PR20):
+// the shape is gone, and only the previous release converts it.
+const ErrPerRepositoryRemoved = "the per-repository MergePolicy was removed in this release: maku config migrate --manifests (from the previous release)"
+
 // Decode reads multi-document YAML manifests of the three kinds. Each document is first decoded
 // strictly into its typed kind, so an unknown field is refused here, before the API server would
-// prune it (spec, "Validation"). Documents of other kinds are an error.
+// prune it (spec, "Validation"); a per-repository MergePolicy is refused with
+// ErrPerRepositoryRemoved. Documents of other kinds are an error.
 func Decode(raw []byte) ([]Object, error) {
 	var objs []Object
 	for i, doc := range splitDocuments(string(raw)) {
@@ -41,10 +46,13 @@ func Decode(raw []byte) ([]Object, error) {
 		if v, _ := m["apiVersion"].(string); v != v1alpha1.GroupVersion.String() {
 			return nil, fmt.Errorf("%s %q: apiVersion %q is not %s", kind, name, v, v1alpha1.GroupVersion)
 		}
+		spec, _ := m["spec"].(map[string]any)
+		if _, legacy := spec["repositoryRef"]; legacy && Kind(kind) == KindMergePolicy {
+			return nil, fmt.Errorf("%s %q: %s", kind, name, ErrPerRepositoryRemoved)
+		}
 		if err := yaml.UnmarshalStrict([]byte(doc), typed); err != nil {
 			return nil, fmt.Errorf("%s %q: %w", kind, name, err)
 		}
-		spec, _ := m["spec"].(map[string]any)
 		var offErr error
 		offFields(spec, func(path string, row map[string]any, key string) {
 			if _, ok := row[key].(bool); ok && offErr == nil {

@@ -19,7 +19,7 @@ import (
 )
 
 // The three factory-resource CRDs install: their CEL compiles within the API server's cost budget,
-// and a class both live and shadow is refused.
+// and a MergePolicy that sets a mode is refused (B4).
 func TestFactoryResourceCRDsInstall(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
@@ -46,11 +46,10 @@ func TestFactoryResourceCRDsInstall(t *testing.T) {
 		}
 	}
 	mp := &v1alpha1.MergePolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "both", Namespace: "default"},
-		Spec: v1alpha1.MergePolicySpec{RepositoryRef: "repo",
-			Classes: map[string]config.Class{"deps": {Live: true, Shadow: true}}},
+		ObjectMeta: metav1.ObjectMeta{Name: "deps", Namespace: "default"},
+		Spec:       v1alpha1.MergePolicySpec{PolicySpec: config.PolicySpec{Class: config.Class{Live: true}}},
 	}
-	if err := c.Create(ctx, mp); err == nil || !strings.Contains(err.Error(), "a class is live or shadow, never both") {
-		t.Fatalf("got %v, want the live-or-shadow rule", err)
+	if err := c.Create(ctx, mp); err == nil || !strings.Contains(err.Error(), "mode is the binding's") {
+		t.Fatalf("got %v, want the mode-is-the-binding's rule", err)
 	}
 }
