@@ -112,6 +112,7 @@ Details, ports and trust boundaries are in [Architecture](docs/architecture.md).
 | You want | Start at | What you get |
 |---|---|---|
 | To try it | [Quickstart](docs/quickstart.md): `task demo`, a laptop and Docker, no cloud | The whole factory loop in about 15 minutes: label an issue, get a reviewed pull request and the merge gate's verdict. A demo, not production: [what production adds](docs/quickstart.md#what-production-adds) |
+| To install it on your cluster | [Install on your cluster](docs/install.md): `maku install --print`, then Helm, Flux or Argo CD | A production install: your issuer, Postgres, Secrets tooling and sandbox nodes, checked by the preflight |
 | The whole platform | [ai-native-ref](https://github.com/Smana/ai-native-ref) | The factory with its gateway, identities, policies and dashboards, deployed with GitOps |
 | To fit it into your own cluster | [Integration](docs/integration.md) | What each piece needs and what to pin |
 

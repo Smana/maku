@@ -13,6 +13,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 
 | Page | Answers |
 |---|---|
+| [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code, sandbox nodes, the support floor |
 | [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), what production adds, and the older one-run path |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |

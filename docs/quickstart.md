@@ -215,8 +215,9 @@ The demo's runs reach their model through the model gateway, as production's do:
 controller and the gateway's proxy each request 128 MiB more (limits 512 MiB and 1 GiB), and on k3d the
 apiserver admits anonymous requests (`task demo` creates its cluster so).
 
-To install it, `maku install --print --out DIR` writes the values, the Secrets, the factory objects and
-the GitOps files from your answers ([maku](cli.md)), or start from the chart's `values-production.example.yaml` with `profile: production`: the
+To install it on your own cluster, read [install on your cluster](install.md): `maku install --print --out DIR`
+writes the values, the Secrets, the factory objects and the GitOps files from your answers, or start from
+the chart's `values-production.example.yaml` with `profile: production`: the
 render names every seam you have not set yet, see [From the demo to production](upgrading.md#from-the-demo-to-production).
 
 ## Clean up
