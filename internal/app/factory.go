@@ -354,14 +354,23 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	gate := &startupGate{}
 	down := newDrainFlag(ctx)
 	// GET /preflight (v4 D24) answers from the start, undecided until the checks are built below.
-	var pfSource atomic.Pointer[preflight.Source]
+	// ?repository=owner/name answers that repository's checks alone (maku repo check, WF11).
+	var pfChecks atomic.Pointer[factoryChecks]
 	pfOn := preflightOn(getenv)
+	starting := []preflight.Result{{Check: "apps", Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the factory is still starting"}}
 	ops, err := startOps(ctx, log, withPreflight(gate.handler(factoryOps(gate.Synced, down.Draining, exp.Handler())), pfOn, func() http.Handler {
-		return preflight.Handler("factory", version.Version, func(ctx context.Context) []preflight.Result {
-			if src := pfSource.Load(); src != nil {
-				return (*src)(ctx)
+		return preflightHandler(func(ctx context.Context) []preflight.Result {
+			if f := pfChecks.Load(); f != nil {
+				return f.source()(ctx)
 			}
-			return []preflight.Result{{Check: "apps", Outcome: preflight.Fail, Code: preflight.Undecided, Message: "the factory is still starting"}}
+			return starting
+		}, func(repo string) preflight.Source {
+			return func(ctx context.Context) []preflight.Result {
+				if f := pfChecks.Load(); f != nil {
+					return f.forRepository(repo)(ctx)
+				}
+				return starting
+			}
 		}, nil)
 	}))
 	if err != nil {
@@ -785,9 +794,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				apps = append(apps, appGrants{Name: "agents", Checker: am})
 			}
 		}
-		pfChecks := factoryChecks{Live: live.Current, Repos: conns.names, Apps: apps, Gate: gateRead, Private: privateCode,
-			Kube: mgr.GetAPIReader(), Namespace: ns, HC: httpx.New(preflight.CheckTimeout, nil)}.source()
-		pfSource.Store(&pfChecks)
+		pfChecks.Store(&factoryChecks{Live: live.Current, Repos: conns.names, Apps: apps, Gate: gateRead, Private: privateCode,
+			Kube: mgr.GetAPIReader(), Namespace: ns, HC: httpx.New(preflight.CheckTimeout, nil)})
 	}
 	if cfg.RunLore.Listen != "" { // R14: no runlore block, no intake; its port serves nothing
 		if _, ok := conns.get(cfg.RunLoreRepository()); !ok {
