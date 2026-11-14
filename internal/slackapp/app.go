@@ -88,7 +88,7 @@ type BrokerAPI interface {
 	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 }
 
-// Recorder counts requests for factory_slack_requests_total{route, outcome}, the proposal actions
+// Recorder counts requests for maku_slack_app_requests_total{route, outcome}, the proposal actions
 // (proposal_updates_total{action}) and the answers a filed proposal's thread gives
 // (thread_answers_total{question}). The two last are closed vocabularies the App passes: the
 // instruments' names and their serving are metrics' (CD7, CD25).

@@ -97,7 +97,7 @@ func TestPinRefusalsAtTriage(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := resolveCfg("apply", 0)
-			cf.Classes["docs-links"] = config.Class{Shadow: true, Harness: "review-floor"}
+			cf.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, Harness: "review-floor"}
 			actor := c.actor
 			if actor == "" {
 				actor = "Smana"

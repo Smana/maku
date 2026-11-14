@@ -14,7 +14,7 @@ var demoGood = func() string {
 	s := "demo: true\n" + good
 	for _, r := range [][2]string{
 		{`broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, `, `broker: {url: "https://room-broker.maku.svc:8443", caFile: /etc/agent-factory/broker-ca/ca.crt, `},
-		{"  policyBotLogin: ogenki-merge-gate[bot]\n", "  gateStatus: true\n  policyBot: false\n"},
+		{"      policyBotLogin: ogenki-merge-gate[bot]\n", "      gateStatus: true\n      policyBot: false\n"},
 		{"  humanIssuer: https://auth.ogenki.io\n  humanJWKS: https://auth.ogenki.io/oauth/v2/keys\n  clientIDFiles: [/etc/agent-factory-oidc/rooms-proxy-client-id, /etc/agent-factory-oidc/roomctl-client-id]\n", ""},
 	} {
 		if !strings.Contains(s, r[0]) {
@@ -22,8 +22,8 @@ var demoGood = func() string {
 		}
 		s = strings.Replace(s, r[0], r[1], 1)
 	}
-	if i := strings.Index(s, "\nmeter:\n"); i >= 0 {
-		s = s[:i+1]
+	if i, j := strings.Index(s, "\nmeter:\n"), strings.Index(s, "\nrepositories:\n"); i >= 0 && j > i {
+		s = s[:i] + s[j:] // no meter; the repositories list stays last
 	}
 	return s + "runs: {group: maku.ogenki.io}\nloops: {docs: {scope: scoper}}\n"
 }()
@@ -36,8 +36,8 @@ func TestDemoGoodParses(t *testing.T) {
 
 func TestDemoStillRefuses(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
-		"api.access set":         {"  repositories: [Smana/cloud-native-ref]\n", "  repositories: [Smana/cloud-native-ref]\n  access: {readerFile: /r, ttl: 1m}\n", "demo: api.access needs an identity provider"},
-		"a humanIssuer":          {"  repositories: [Smana/cloud-native-ref]\n", "  repositories: [Smana/cloud-native-ref]\n  humanIssuer: https://auth.ogenki.io\n", "demo: the factory API takes no human tokens"},
+		"api.access set":         {"  listen: \":8443\"\n", "  listen: \":8443\"\n  access: {readerFile: /r, ttl: 1m}\n", "demo: api.access needs an identity provider"},
+		"a humanIssuer":          {"  listen: \":8443\"\n", "  listen: \":8443\"\n  humanIssuer: https://auth.ogenki.io\n", "demo: the factory API takes no human tokens"},
 		"prices without a meter": {"runs: {group", "meter: {prices: {agent-default: {input: 1, output: 2}}}\nruns: {group", "demo: meter.prices needs a meter, and the demo has none"},
 		"gateStatus false":       {"gateStatus: true", "gateStatus: false", "demo: merge.gateStatus must be true, or no gate verdict reaches the pull request"},
 		"an http broker":         {`url: "https://room-broker.maku.svc:8443"`, `url: "http://room-broker.maku.svc:8080"`, `broker.url "http://room-broker.maku.svc:8080" must be an https:// URL`},
@@ -91,13 +91,13 @@ func TestDemoPolicyBot(t *testing.T) {
 
 func TestNonDemoUnchanged(t *testing.T) {
 	for name, c := range map[string]struct{ from, to, err string }{
-		"policyBot false":   {"  policyBotLogin: ogenki-merge-gate[bot]\n", "  policyBotLogin: ogenki-merge-gate[bot]\n  policyBot: false\n", "merge.policyBot: false needs merge.gateStatus: true"},
+		"policyBot false":   {"      policyBotLogin: ogenki-merge-gate[bot]\n", "      policyBotLogin: ogenki-merge-gate[bot]\n      policyBot: false\n", "merge.policyBot: false needs merge.gateStatus: true"},
 		"an http broker":    {`url: "https://room-broker`, `url: "http://room-broker`, `broker.url "http://room-broker.agent-system.svc.cluster.local:8443" must be an https:// URL`},
 		"no meter.url":      {"  url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428\n", "", "meter.url is required"},
 		"no broker.caFile":  {"caFile: /etc/agent-factory/openbao-ca/ca.crt, ", "", "broker.caFile is required"},
 		"an http roomsURL":  {"roomsURL: https://rooms.priv.gcp.ogenki.io", "roomsURL: http://localhost:8080", "roomsURL must be https://<host>"},
 		"no human issuer":   {"  humanIssuer: https://auth.ogenki.io\n", "", "api.humanIssuer is required"},
-		"no policyBotLogin": {"  policyBotLogin: ogenki-merge-gate[bot]\n", "", "merge.policyBotLogin"},
+		"no policyBotLogin": {"      policyBotLogin: ogenki-merge-gate[bot]\n", "", "merge.policyBotLogin"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(good, c.from, c.to, 1)
@@ -110,7 +110,7 @@ func TestNonDemoUnchanged(t *testing.T) {
 			}
 		})
 	}
-	if _, err := Parse([]byte(strings.Replace(good, "  policyBotLogin:", "  gateStatus: true\n  policyBotLogin:", 1))); err != nil {
+	if _, err := Parse([]byte(strings.Replace(good, "      policyBotLogin:", "      gateStatus: true\n      policyBotLogin:", 1))); err != nil {
 		t.Errorf("gateStatus without demo: %v", err)
 	}
 }
@@ -134,7 +134,7 @@ func TestDemoMeterAllOrNone(t *testing.T) {
 		})
 	}
 	// a malformed policyBotLogin is still refused under demo with policyBot false
-	if _, err := Parse([]byte(strings.Replace(demoGood, "  policyBot: false\n", "  policyBot: false\n  policyBotLogin: notabot\n", 1))); err == nil || !strings.Contains(err.Error(), "merge.policyBotLogin") {
+	if _, err := Parse([]byte(strings.Replace(demoGood, "      policyBot: false\n", "      policyBot: false\n      policyBotLogin: notabot\n", 1))); err == nil || !strings.Contains(err.Error(), "merge.policyBotLogin") {
 		t.Errorf("malformed policyBotLogin: %v", err)
 	}
 }

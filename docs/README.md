@@ -37,7 +37,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Observability](observability.md) | The scrape objects, the alert rule and the dashboards the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: the CRD chart and its adoption, `values-demo.yaml` |
-| [The group move](maku-group-migration.md) | v0.31.0's quiet window: `Room` and `Task` to `maku.ogenki.io`, and its rollback |
+| [The group move](maku-group-migration.md) | History: v0.31.0's quiet window, `Room` and `Task` to `maku.ogenki.io`; its command is removed |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |
 | [Naming](naming.md) | Maku the product name, the unchanged technical names, the visual identity |

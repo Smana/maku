@@ -22,25 +22,23 @@ const (
 // listRepos lists c's legacy settings once per name, as a config serving each of them would: the
 // rig's repository first. A task is served only on a listed repository (factory resources D12).
 func listRepos(c *config.Config, names ...string) {
-	one := config.Repository{Maintainers: c.Maintainers, TriggerLabel: c.TriggerLabel, Classes: c.Classes, Merge: c.Merge, Schedules: c.Schedules}
+	one := config.Repository{Maintainers: c.Repositories[0].Maintainers, TriggerLabel: c.Repositories[0].TriggerLabel, Classes: c.Repositories[0].Classes, Merge: c.Repositories[0].Merge, Schedules: c.Repositories[0].Schedules}
 	rs := []config.Repository{}
-	for _, n := range append([]string{c.Repository}, names...) {
+	for _, n := range append([]string{c.Repositories[0].Name}, names...) {
 		r := one
 		r.Name = n
 		rs = append(rs, r)
 	}
 	c.Repositories = rs
-	c.Repository, c.Maintainers, c.TriggerLabel, c.Classes, c.Merge, c.Schedules = "", nil, "", nil, config.Merge{}, nil
 }
 
 // twoRepos lists A and B with the rig's settings, and gives each its own GitHub (v2 D8).
 func twoRepos(g *rig) (a, b *forgetest.Fake) {
 	c := g.r.Cfg.Current()
-	one := config.Repository{Maintainers: c.Maintainers, Classes: c.Classes, Merge: c.Merge}
+	one := config.Repository{Maintainers: c.Repositories[0].Maintainers, Classes: c.Repositories[0].Classes, Merge: c.Repositories[0].Merge}
 	ra, rb := one, one
 	ra.Name, rb.Name = repoA, repoB
 	c.Repositories = []config.Repository{ra, rb}
-	c.Repository, c.Maintainers, c.Classes, c.Merge = "", nil, nil, config.Merge{}
 	a, b = forgetest.NewFake(), forgetest.NewFake()
 	a.Now, b.Now = g.f.Now, g.f.Now
 	g.r.Forge, g.r.Merger = nil, nil
@@ -137,12 +135,11 @@ func TestARemovedRepositoryIsNotDecidedUnderTheRemainingOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	two := g.r.Cfg.Current()
-	one := config.Repository{Maintainers: two.Maintainers, Classes: two.Classes, Merge: two.Merge}
+	one := config.Repository{Maintainers: two.Repositories[0].Maintainers, Classes: two.Repositories[0].Classes, Merge: two.Repositories[0].Merge}
 	ra, rb := one, one
 	ra.Name, rb.Name = repoA, repoB
 	rb.Classes = map[string]config.Class{} // B never armed docs-links: only A's settings would
 	two.Repositories = []config.Repository{ra, rb}
-	two.Repository, two.Maintainers, two.Classes, two.Merge = "", nil, nil, config.Merge{}
 	two.Hash = "two"
 	live := config.NewLive(two)
 	g.r.Cfg = live

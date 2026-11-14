@@ -58,10 +58,9 @@ func deepCopyValue(v any) any {
 	return v
 }
 
-// applyMergeDefaults applies the file's mergeDefaults to each repository's merge (plan PR6): every
-// repositories entry, and the legacy single-repository shape's merge. It returns j unchanged when
-// mergeDefaults is unset, else the defaulted JSON and, per repository in order, the keys taken.
-// Numbers are kept as written, so an integer never round-trips through a float.
+// applyMergeDefaults applies the file's mergeDefaults to each repositories entry's merge (plan PR6).
+// It returns j unchanged when mergeDefaults is unset, else the defaulted JSON and, per repository
+// in order, the keys taken. Numbers are kept as written, so an integer never round-trips through a float.
 func applyMergeDefaults(j []byte) ([]byte, [][]string, error) {
 	dec := json.NewDecoder(bytes.NewReader(j))
 	dec.UseNumber()
@@ -83,11 +82,6 @@ func applyMergeDefaults(j []byte) ([]byte, [][]string, error) {
 		entry["merge"] = out
 		taken = append(taken, keys)
 		return nil
-	}
-	if _, legacy := m["repository"]; legacy {
-		if err := fill(m); err != nil {
-			return nil, nil, err
-		}
 	}
 	list, _ := m["repositories"].([]any)
 	for _, e := range list {

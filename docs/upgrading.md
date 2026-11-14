@@ -4,7 +4,6 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
-
 ## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.4x, v4 rollout step 6)
 
 New keys, all off by default, so a release that sets none of them renders as before:
@@ -19,6 +18,66 @@ New keys, all off by default, so a release that sets none of them renders as bef
 the `maku-slack` alert group, for an App installed outside the chart. It now renders the App and checks
 its agreements, so an install that kept its own App either moves it to the subchart, or turns
 `slack.enabled` off, and loses that alert group and the `expose.slack` route with it.
+
+## The clean-up (v0.4x, v4 rollout step 8)
+
+Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at
+their old values. Each change below is breaking: a removed or flipped value is refused by the schema
+or by a render `fail` that names its replacement, never silently ignored.
+
+### The gateway is the model path
+
+| Value | Before | Now |
+|---|---|---|
+| `maku.runController.model.mode` | `secret` by default | `gateway` by default: set `model.gateway.aliases.public` (and `maku-factory.config.runs.gatewayIdentity: true` under the umbrella), or the render fails ([runs through the gateway](gateway.md#runs-through-the-gateway)) |
+| `maku.runController.model.mode: secret` | any install | demo-only: refused without `demoValues: true` (`runController.model.mode secret is demo-only (v4 D7)`), and on the install banner as `model_key_in_sandbox` |
+| `demoValues` (maku chart) | absent | `false`. `values-quickstart.yaml` and the umbrella's `values-demo.yaml` (as `maku.demoValues`) set it |
+
+An install whose run controller still uses `agent-model`:
+
+1. Move it to the gateway, with the [step 4 steps](#runs-through-the-model-gateway-v04x-v4-rollout-step-4).
+2. Or, for a demo only, set `model.mode: secret` and `demoValues: true` explicitly.
+
+An install with `runController.enabled: false` (runs reconciled elsewhere) reads neither value and
+renders as before.
+
+### The single-repository config
+
+The factory config's top-level `repository`, `maintainers`, `triggerLabel`, `controlIssue`,
+`classes`, `merge` and `schedules` (v2 D1) are refused at start, each by name:
+
+```text
+config: repository is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)
+```
+
+Convert the file before you upgrade. `maku config migrate` still reads the old shape: it writes the
+`Factory`, `Repository` and `MergePolicy` objects and the residual file, with `controlIssue` moved to
+`control` on that repository and `api.repositories` dropped (the list derives it):
+
+```bash
+maku config migrate --from factory.yaml --residual factory.new.yaml > resources.yaml
+```
+
+### The group migration
+
+`maku-broker migrate-group` and its v0.30.0 upgrade e2e are removed. An install still serving `Room`
+and `Task` under the pre-rebrand API group (older than v0.31.0) first upgrades to the last v0.4x release
+before this one, runs [the group move](maku-group-migration.md) with that release's `maku-broker`,
+then upgrades here.
+
+### The Slack App's metric names
+
+The Slack App's metrics are served as `maku_slack_app_*`, with no dual export:
+
+| Before | Now |
+|---|---|
+| `factory_slack_requests_total{route, outcome}` | `maku_slack_app_requests_total{route, outcome}` |
+| `factory_slack_build_info{version}` | `maku_slack_app_build_info{version}` |
+
+The chart's `SlackCardUpdatesFailing` rule moves with it. Rewrite any query, rule or dashboard you
+keep outside the chart before the upgrade, or read both names across it
+(`maku_slack_app_requests_total or factory_slack_requests_total`).
+
 ## Reusable merge policies (v0.4x, release N)
 
 A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`
@@ -41,8 +100,8 @@ config migrate`).
    `changed:` line for each difference.
 3. Commit the converted manifests in one pull request per repository: the policies it is the first
    to need, its `Repository` with `merge` and `mergePolicies`, and its per-repository `MergePolicy`
-   deleted. Flux applies the new objects, then prunes the old one; between the two the `Repository`
-   is refused `DefinedTwice` and the previous version keeps serving.
+   deleted. Flux applies the new objects, then prunes the old one; between the two the per-repository
+   `MergePolicy` is refused `DefinedTwice` and the `Repository` is already served from its bindings.
 4. Check what the factory serves:
 
    ```bash

@@ -20,7 +20,7 @@ const guide = "../../docs/merge-policies.md"
 var guideBlock = regexp.MustCompile("(?s)<!-- check: (central|repository) -->\n```yaml\n(.*?)```")
 
 // centralOver is policyConfig with fragment's top-level keys in place of its own. A repositories
-// list replaces the legacy single-repository keys, and an entry without merge takes the base's.
+// list replaces the base's, and an entry without merge takes the base entry's.
 func centralOver(t *testing.T, fragment string) *config.Config {
 	t.Helper()
 	raw, err := os.ReadFile(policyConfig)
@@ -35,16 +35,12 @@ func centralOver(t *testing.T, fragment string) *config.Config {
 		t.Fatal(err)
 	}
 	if rs, ok := over["repositories"].([]any); ok {
+		baseRepos, _ := base["repositories"].([]any)
+		baseEntry, _ := baseRepos[0].(map[string]any)
 		for _, r := range rs {
 			if e, ok := r.(map[string]any); ok && e["merge"] == nil {
-				e["merge"] = base["merge"]
+				e["merge"] = baseEntry["merge"]
 			}
-		}
-		for _, k := range []string{"repository", "maintainers", "triggerLabel", "classes", "merge"} {
-			delete(base, k)
-		}
-		if api, ok := base["api"].(map[string]any); ok {
-			delete(api, "repositories") // derived from repositories
 		}
 	}
 	maps.Copy(base, over)

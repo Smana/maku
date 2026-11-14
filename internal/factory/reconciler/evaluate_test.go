@@ -25,7 +25,7 @@ func TestDecideArmUnderTheCentralClassIsDecideArm(t *testing.T) {
 		"shadow": func(in *ArmInputs) {
 			cl := declaredClass()
 			cl.Live, cl.Shadow = false, true
-			in.Cfg.Current().Classes["dead-links"] = cl
+			in.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

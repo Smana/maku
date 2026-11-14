@@ -78,7 +78,7 @@ const (
 )
 
 // RunBroker runs room-broker's subcommand args[0]: serve (the default),
-// retention, migrate or migrate-group. getenv reads ROOMS_CONFIG, ROOMS_DATABASE_URL, POD_NAMESPACE,
+// retention or migrate. getenv reads ROOMS_CONFIG, ROOMS_DATABASE_URL, POD_NAMESPACE,
 // ROOMS_MCP_KEY, ROOMS_GITHUB_APP_DIR and, for migrate alone, ROOMS_MIGRATION_DATABASE_URL.
 func RunBroker(ctx context.Context, log *slog.Logger, args []string, getenv func(string) string) error {
 	cmd := "serve"
@@ -105,12 +105,10 @@ func RunBroker(ctx context.Context, log *slog.Logger, args []string, getenv func
 		return nil
 	case "intent-samples":
 		return runIntentSamples(ctx, os.Stdout, args[1:], getenv)
-	case "migrate-group":
-		return runMigrateGroup(ctx, log, args[1:], getenv, kubeClient(log))
 	case "github-unlink":
 		return runGitHubUnlink(ctx, log, args[1:], getenv)
 	}
-	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, migrate-group, intent-samples, github-unlink)", cmd)
+	return fmt.Errorf("room-broker: unknown subcommand %q (serve, retention, migrate, intent-samples, github-unlink)", cmd)
 }
 
 // runRetention is the daily DELETE-only job (§4, OD-17), connected as

@@ -28,7 +28,7 @@ func declaredRig(t *testing.T) *rig {
 	if err := g.c.Update(t.Context(), &tk); err != nil {
 		t.Fatal(err)
 	}
-	g.r.Cfg.Current().Classes["dead-links"] = declaredClass()
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = declaredClass()
 	checks := green("SUCCESS")
 	checks.Runs = append(checks.Runs, forge.Check{Name: "External links 🔗", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"})
 	g.f.SetChecks(12, checks)

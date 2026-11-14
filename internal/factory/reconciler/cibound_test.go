@@ -24,7 +24,7 @@ func TestAwaitingCIIsBounded(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := declaredRig(t)
-			g.r.Cfg.Current().Merge.AwaitingCIFor = &config.Duration{Duration: c.bound}
+			g.r.Cfg.Current().Repositories[0].Merge.AwaitingCIFor = &config.Duration{Duration: c.bound}
 			g.f.SetChecks(12, green("SUCCESS")) // the holdout never reports
 			g.setPhaseSince(t, "3buqdlot", now.Add(-c.since))
 			tk := g.reconcile(t, "3buqdlot", 1)
@@ -41,7 +41,7 @@ func TestAwaitingCIIsBounded(t *testing.T) {
 // ci_pending is a wait like any other: a required check that never reports is bounded too.
 func TestAPendingRequiredCheckIsBounded(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
+	g.r.Cfg.Current().Repositories[0].Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
 	checks := green("SUCCESS")
 	checks.Runs = checks.Runs[1:] // one required check missing
 	g.f.SetChecks(12, checks)
@@ -55,7 +55,7 @@ func TestAPendingRequiredCheckIsBounded(t *testing.T) {
 // the comment says how long the wait was, on the reconciler's clock.
 func TestTheExpiredWaitIsHandedOffOnce(t *testing.T) {
 	g := declaredRig(t)
-	g.r.Cfg.Current().Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
+	g.r.Cfg.Current().Repositories[0].Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.setPhaseSince(t, "3buqdlot", now.Add(-90*time.Minute))
 	g.reconcile(t, "3buqdlot", 1)
@@ -72,7 +72,7 @@ func TestTheExpiredWaitIsHandedOffOnce(t *testing.T) {
 // A task with no PhaseSince (a legacy object) has no clock to bound: it keeps waiting.
 func TestNoPhaseSinceIsNotBounded(t *testing.T) {
 	g := declaredRig(t)
-	g.r.Cfg.Current().Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
+	g.r.Cfg.Current().Repositories[0].Merge.AwaitingCIFor = &config.Duration{Duration: time.Hour}
 	g.f.SetChecks(12, green("SUCCESS"))
 	var tk v1alpha1.Task
 	if err := g.c.Get(t.Context(), keyFor("3buqdlot"), &tk); err != nil {
@@ -109,7 +109,7 @@ func TestAPendingReleaseAgeOutlastsTheCIBound(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := adoptRig(t)
-			g.r.Cfg.Current().Merge.AwaitingCIFor = &config.Duration{Duration: 24 * time.Hour}
+			g.r.Cfg.Current().Repositories[0].Merge.AwaitingCIFor = &config.Duration{Duration: 24 * time.Hour}
 			c.edit(g)
 			g.setPhaseSince(t, adoptTask, now.Add(-c.since))
 			tk := g.reconcile(t, adoptTask, 1)

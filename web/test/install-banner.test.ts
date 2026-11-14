@@ -23,6 +23,11 @@ describe("the install banner", () => {
     expect(b.textContent).toContain("runController.unsafeSharedGitToken");
     expect(b.textContent!.endsWith("Use this install for demos only.")).toBe(true);
   });
+  it("says the provider key sits in the sandbox under model.mode secret (v4 step 8, R4)", () => {
+    const b = renderInstallBanner(["model_key_in_sandbox"])!;
+    expect(b.textContent).toBe("The model provider's key sits in every run's sandbox: runController.model.mode is secret. " +
+      "Use this install for demos only.");
+  });
   it("says private code is served without its acknowledgement (D3), not demos only", () => {
     const b = renderInstallBanner(["private_code_unacknowledged"])!;
     expect(b.getAttribute("role")).toBe("alert");

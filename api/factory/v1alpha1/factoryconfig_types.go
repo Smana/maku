@@ -14,7 +14,7 @@ const (
 	ConditionAccepted = "Accepted"
 
 	ReasonNotThisFactory  = "NotThisFactory"  // another factory's object (D15)
-	ReasonDefinedTwice    = "DefinedTwice"    // the repository is also in the file (D8)
+	ReasonDefinedTwice    = "DefinedTwice"    // the repository is also in the file (D8), or a per-repository MergePolicy names a bound Repository (B8)
 	ReasonMissingRef      = "MissingRef"      // a reference names no object
 	ReasonNoMergePolicy   = "NoMergePolicy"   // a Repository no MergePolicy names
 	ReasonDuplicatePolicy = "DuplicatePolicy" // two MergePolicies name one Repository

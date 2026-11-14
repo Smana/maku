@@ -33,7 +33,7 @@ func resolveCfg(mode string, percent int) *config.Config {
 	c.HarnessProfiles["review-search"] = config.HarnessProfile{Loop: "review-search", Description: "search first"}
 	c.HarnessProfiles["review-tested"] = config.HarnessProfile{TestFirst: true, Description: "tests first"}
 	c.HarnessProfiles["review-other"] = config.HarnessProfile{Description: "not allowed"}
-	c.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested"}}
+	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested"}}
 	c.Evaluation = config.Evaluation{Mode: mode, ControlPercent: percent}
 	return c
 }
@@ -241,7 +241,7 @@ func TestADeletedProfileKeepsTheFrozenOne(t *testing.T) {
 		t.Fatal(err)
 	}
 	delete(cf.HarnessProfiles, "review-tested")
-	cf.Classes["review"] = config.Class{Harness: "review-floor"}
+	cf.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor"}
 	if !g.r.testFirst(g.r.Cfg.Current(), tk) || !g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks || !g.r.testerDue(g.r.Cfg.Current(), tk) {
 		t.Fatalf("testFirst %v checks %v", g.r.testFirst(g.r.Cfg.Current(), tk), g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks)
 	}
@@ -279,7 +279,7 @@ func TestASplitChildKeepsToday(t *testing.T) {
 // harnessed gives c's review class a floor and one variant, applied.
 func harnessed(c *config.Config) {
 	c.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-wide": {Checks: true, Description: "wide"}}
-	c.Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-wide"}}
+	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-wide"}}
 	c.Evaluation.Mode = config.EvaluationApply
 }
 
@@ -550,7 +550,7 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	// variant any more. The persisted decision binds: status, narration, the recommendation count
 	// and the outcome's label all say what was decided.
 	cf.Evaluation.Mode = config.EvaluationObserve
-	cf.Classes["review"] = config.Class{Harness: "review-floor"}
+	cf.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor"}
 	tk := g.reconcile(t, "3buqdlot", 1)
 	wantResolved(t, tk, "review-search", "scoper", "", 1)
 	if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || tk.Status.Profile.Recommended != "review-search" || tk.Status.Profile.Why != "because" {
@@ -683,7 +683,7 @@ func TestANewGenerationResolvesFromItsOwnScoper(t *testing.T) {
 	g.f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: answered.Add(time.Minute)},
 		forge.LabelEvent{Actor: "Smana", Label: "factory/ready", At: now.Add(-time.Hour)})
 	g.f.SetLabeled("factory/ready", forge.Item{Number: 7})
-	g.r.Cfg.Current().TriggerLabel, g.r.Cfg.Current().Poll.Issues = "factory/ready", config.Duration{Duration: time.Minute}
+	g.r.Cfg.Current().Repositories[0].TriggerLabel, g.r.Cfg.Current().Poll.Issues = "factory/ready", config.Duration{Duration: time.Minute}
 	poller := &intake.IssuePoller{Forge: g.f, Client: g.c, Namespace: "agent-system", Cfg: g.r.Cfg, Errors: intakeErrors{},
 		Stopped: func(context.Context) bool { return false }, CanWrite: func(context.Context, string) (bool, error) { return true, nil },
 		Owned: func(string) bool { return true }, Now: g.r.Now}

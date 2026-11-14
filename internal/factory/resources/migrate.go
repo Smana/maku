@@ -18,17 +18,18 @@ import (
 // Migrate moves a config file's catalogue and repositories into manifests (D8): it returns the
 // manifests, as multi-document YAML in namespace ns, and the file with those keys removed.
 // Keys move verbatim, so a defaulted field stays omitted. Each repository's classes and merge are
-// split into class-shape MergePolicies and the Repository's bindings (Split, B17).
+// split into class-shape MergePolicies and the Repository's bindings (Split, B17). A file still in
+// the single-repository shape, which the factory refuses, is read as its one-entry list first (R7).
 func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
+	if file, err = LiftLegacy(file); err != nil {
+		return nil, nil, err
+	}
 	var base map[string]any
 	if err := yaml.Unmarshal(file, &base); err != nil {
 		return nil, nil, fmt.Errorf("config file: %w", err)
 	}
 	if base == nil {
 		base = map[string]any{}
-	}
-	if _, legacy := base["repository"]; legacy {
-		return nil, nil, errors.New("migrate: move repository, maintainers, triggerLabel, classes, merge and schedules into repositories[] first")
 	}
 	// Parse's refusals (an empty factory name, an entry without a name) are Migrate's: what it
 	// would split must already be a valid file.
@@ -113,6 +114,61 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		return nil, nil, err
 	}
 	return manifests, residual, nil
+}
+
+// LiftLegacy is file in the repositories shape: a file still in the single-repository shape (v2
+// D1), which the factory refuses (R7), as the one-entry list it stood for, and any other file as is.
+// maku config migrate reads the old file through it.
+func LiftLegacy(file []byte) ([]byte, error) {
+	var base map[string]any
+	if err := yaml.Unmarshal(file, &base); err != nil {
+		return nil, fmt.Errorf("config file: %w", err)
+	}
+	if _, legacy := base["repository"]; !legacy {
+		return file, nil
+	}
+	if err := liftLegacy(base); err != nil {
+		return nil, err
+	}
+	return yaml.Marshal(base)
+}
+
+// liftLegacy rewrites, in place, the single-repository shape (v2 D1) that the factory no longer
+// reads (v4 step 8, R7) as the one-entry repositories it stood for: the per-repository keys move
+// into the entry, controlIssue becomes control on that repository, and api.repositories goes, as
+// the list derives it. It refuses an allowlist naming another repository, which the list cannot say.
+func liftLegacy(base map[string]any) error {
+	name, _ := base["repository"].(string)
+	if _, ok := base["repositories"]; ok {
+		return errors.New("migrate: repository is the single-repository shape: write repositories or repository, never both")
+	}
+	entry := map[string]any{"name": name}
+	for _, k := range []string{"maintainers", "triggerLabel", "classes", "merge", "schedules"} {
+		if v, ok := base[k]; ok {
+			entry[k] = v
+			delete(base, k)
+		}
+	}
+	delete(base, "repository")
+	base["repositories"] = []any{entry}
+	if n, ok := base["controlIssue"]; ok {
+		if _, set := base["control"]; set {
+			return errors.New("migrate: controlIssue and control both set: keep one")
+		}
+		base["control"] = map[string]any{"repository": name, "issue": n}
+		delete(base, "controlIssue")
+	}
+	if api, ok := base["api"].(map[string]any); ok {
+		if list, ok := api["repositories"].([]any); ok {
+			for _, r := range list {
+				if s, _ := r.(string); !strings.EqualFold(s, name) {
+					return fmt.Errorf("migrate: api.repositories names %v, which a repositories list cannot admit: serve it from its own Repository", r)
+				}
+			}
+			delete(api, "repositories")
+		}
+	}
+	return nil
 }
 
 // ObjectName is the name Migrate gives repository's Repository and MergePolicy objects: its name

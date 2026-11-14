@@ -84,10 +84,10 @@ const makuUsage = `usage: maku <command>
                                   Factory, bound Repositories and one MergePolicy per class on stdout,
                                   offline; refused unless every resolved class is unchanged
   config validate --config FILE [--base-ref REF | --base-config FILE --base FILE...] [--expect-unchanged]
-                  [--resolved] MANIFEST...
+                  [--resolved] [--allow-refused-bindings] MANIFEST...
                                   check manifests against a config file the way the factory would, offline;
                                   --base prints each changed policy's consumers, a guardrail: line names
-                                  each binding over a guardrail
+                                  each binding over a guardrail, a binding: line each one refused
   policy export|check|simulate|diff --config FILE [--manifests FILE]... --repository owner/name
                                   write, check, simulate or diff a repository's merge policy file, offline;
                                   export writes a bound repository's bindings (mergePolicies), from the

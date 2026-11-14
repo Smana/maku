@@ -345,6 +345,7 @@ func TestMakuName(t *testing.T) {
 		{"rooms_build_info", "maku_rooms_build_info"},
 		{"agent_factory_tasks", "maku_factory_tasks"},
 		{"agent_factory_build_info", "maku_factory_build_info"},
+		{"slack_app_build_info", "maku_slack_app_build_info"},
 		{"factory_slack_build_info", ""},
 		{"roomsx", ""},
 		{"go_goroutines", ""},
@@ -465,7 +466,7 @@ func TestMakuGathererRenames(t *testing.T) {
 		return &dto.MetricFamily{Name: &name, Type: &typ, Metric: []*dto.Metric{{Gauge: &dto.Gauge{Value: &v}}}}
 	}
 	g := makuGatherer{reg: prometheus.GathererFunc(func() ([]*dto.MetricFamily, error) {
-		return []*dto.MetricFamily{fam("rooms_x", 1), fam("maku_rooms_x", 2), fam("rooms_y", 3), fam("factory_slack_z", 4)}, nil
+		return []*dto.MetricFamily{fam("rooms_x", 1), fam("maku_rooms_x", 2), fam("rooms_y", 3), fam("other_z", 4)}, nil
 	})}
 	mfs, err := g.Gather()
 	if err != nil {
@@ -475,7 +476,7 @@ func TestMakuGathererRenames(t *testing.T) {
 	for _, mf := range mfs {
 		got[mf.GetName()] = append(got[mf.GetName()], mf.GetMetric()[0].GetGauge().GetValue())
 	}
-	want := map[string][]float64{"maku_rooms_x": {2}, "maku_rooms_y": {3}, "factory_slack_z": {4}}
+	want := map[string][]float64{"maku_rooms_x": {2}, "maku_rooms_y": {3}, "other_z": {4}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("families %v, want %v", got, want)
 	}
@@ -593,13 +594,14 @@ func TestIntakeProfileMetrics(t *testing.T) {
 // CD7 and CD25's evidence: the App's two families are served under maku_slack_*, so the names the
 // dashboard and the acceptance queries hold are the ones a scrape carries — the plural
 // maku_slack_thread_answers_total, since the label is a set of questions, and the proposal counter's
-// six actions. A factory_slack_* family keeps its own name: MakuName must not catch it.
+// six actions. The App's request counter and build info are slack_app_*, served as maku_slack_app_*
+// (v4 step 8, R5): nothing is served as factory_slack_*.
 func TestProposalCounterName(t *testing.T) {
 	for in, want := range map[string]string{
 		"slack_proposal_updates_total": "maku_slack_proposal_updates_total",
 		"slack_thread_answers_total":   "maku_slack_thread_answers_total",
-		"factory_slack_requests_total": "",
-		"factory_slack_build_info":     "",
+		"slack_app_requests_total":     "maku_slack_app_requests_total",
+		"slack_app_build_info":         "maku_slack_app_build_info",
 	} {
 		if got := MakuName(in); got != want {
 			t.Errorf("MakuName(%q) = %q, want %q", in, got, want)
@@ -626,6 +628,14 @@ func TestProposalCounterName(t *testing.T) {
 		p.ThreadAnswer(ctx, q)
 	}
 	got := series(scrape(t, exp.Handler()))
+	if got[`maku_slack_app_build_info{version="v0.35.0"}`] != "1" {
+		t.Errorf("the App's build info is not served as maku_slack_app_build_info: %v", got)
+	}
+	for k := range got {
+		if strings.HasPrefix(k, "factory_slack_") || strings.HasPrefix(k, "slack_app_") {
+			t.Errorf("%s is served under an old or instrument name", k)
+		}
+	}
 	for _, action := range actions {
 		served := `maku_slack_proposal_updates_total{action="` + action + `"}`
 		if got[served] != "1" {

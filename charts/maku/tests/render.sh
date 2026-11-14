@@ -99,7 +99,8 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com
       --set broker.human.groups.admin=a --set broker.human.groups.member=m
       --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
-      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local)
+      --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
+      --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}')
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
 # D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
@@ -124,7 +125,7 @@ ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
 out="$ctl"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
-ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-model,agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2)'
+ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2); the default gateway mode reads no model Secret'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitReadSecret == "agent-git-read" and (has("unsafeSharedGitToken") | not))' 'the controller config names the read-only Secret by default'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="secrets") | .resourceNames[] | select(. == "broker-cert")' 'no Role reads the key pair broker.tls.secretName names'
 ykind Role 'select(.metadata.name=="run-controller" and .metadata.namespace=="agents") | .rules[0].apiGroups[0] == "maku.ogenki.io"' 'controller RBAC names the group the controller reconciles'
@@ -476,17 +477,17 @@ bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness
 # quickstart shares its one PAT across roles (PR B), so it lists shared_git_token; without that flag
 # it lists none, and the render keeps its old config
 unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .install.unsafe // [] | join(",")' - <<<"$1"; }
-[[ $(unsafe "$q") == "shared_git_token" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token, got '$(unsafe "$q")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "" ]] ||
-  { echo "FAIL: the quickstart with a read Secret lists no unsafe setting" >&2; fail=1; }
+[[ $(unsafe "$q") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token and model_key_in_sandbox, got '$(unsafe "$q")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "model_key_in_sandbox" ]] ||
+  { echo "FAIL: the quickstart with a read Secret lists only its model key in the sandbox" >&2; fail=1; }
 uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
-[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token" ]] ||
+[[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token" ]] ||
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: only the quickstart's shared_git_token listed" >&2; fail=1; }
-[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token" ]] ||
+[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
   { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
@@ -506,7 +507,7 @@ ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config
 ykind ValidatingAdmissionPolicy 'select(.metadata.name=="maku-maku-run-pods") | .spec.variables[] | select(.name == "images") | .expression | test("'"'"'ghcr.io/smana/maku-run-controller'"'"'")' 'the run-pod policy allows the run-controller image, the probe pod'"'"'s'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="events") | (.verbs | sort | join(",")) == "create,list,patch"' 'mode kubernetes: the controller lists events (a probe pod that did not start)'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode kubernetes: no ciliumnetworkpolicies verb'
-[[ $(unsafe "$kn") == "shared_git_token" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
+[[ $(unsafe "$kn") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
 out="$q"
 ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the default) renders no NetworkPolicy'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="networkpolicies")' 'mode cilium: no networkpolicies verb'
@@ -569,13 +570,34 @@ gwext="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set
   --set-json 'runController.model.gateway.aliases={"public":["tier-light"]}')"
 out="$gwext"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.gateway.url == "http://agentgateway.ai.svc.cluster.local" and .model.gateway.ports.public == 9080 and .model.gateway.audiencePrefix == "cnref.gw" and (.model.gateway.aliases.internal | length) == 0)' 'gateway mode: an external gateway by service and namespace'
-for r in "$q" "$ctl" "$nonp"; do
+for r in "$q" "$nonp"; do
   out="$r"
   ynone 'select(.metadata.name=="run-controller-token")' 'secret mode: no token Role'
   ynone 'select(.kind=="Deployment" and .metadata.name=="run-controller") | .spec.template.spec.containers[0].env[] | select(.name == "POD_NAME")' 'secret mode: the controller Deployment is unchanged'
   ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never reads the model Secret"))' 'secret mode: the run-pod policy is unchanged'
 done
 bad 'runController.model.gateway.aliases.public is required' --set runController.model.mode=gateway
+
+# v4 step 8 (D7, R4): the gateway is the model path. model.mode defaults to gateway; secret puts the
+# provider key in the sandbox, so it is demo-only (demoValues, which values-quickstart.yaml sets) and
+# on the banner as model_key_in_sandbox.
+[[ "$(yq '.runController.model.mode' values.yaml)" == gateway ]] || { echo "FAIL: runController.model.mode does not default to gateway" >&2; fail=1; }
+[[ "$(yq '.demoValues' values.yaml)" == false ]] || { echo "FAIL: demoValues does not default to false" >&2; fail=1; }
+out="$ctl"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.model.mode == "gateway" and (has("modelSecret") | not))' 'the default model mode is gateway'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | .data."config.yaml" | from_yaml | (has("install") | not)' 'gateway mode: nothing on the banner'
+out="$q"
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .modelSecret == "agent-model"' 'the quickstart keeps model.mode secret (a laptop without a gateway)'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "shared_git_token,model_key_in_sandbox"' 'model.mode secret is on the banner as model_key_in_sandbox'
+bad 'runController.model.mode secret is demo-only (v4 D7): the provider key would sit in the sandbox' --set demoValues=false
+if err="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.model.mode=secret 2>&1 >/dev/null)"; then
+  echo "FAIL: model.mode secret without demoValues must not render" >&2; fail=1
+elif ! grep -qF 'runController.model.mode secret is demo-only' <<<"$err"; then
+  echo "FAIL: model.mode secret without demoValues failed, but not for being demo-only: $err" >&2; fail=1
+fi
+out="$p"
+ynone 'select(.kind == "ConfigMap" and .metadata.name == "room-broker-config") | .data."config.yaml" | from_yaml | select(has("install")) | .install' 'no run-controller: the model mode is not read, and nothing is on the banner'
+bad "at '/demoValues'" --set demoValues=yes
 bad "at '/runController/model/mode'" --set runController.model.mode=direct
 bad "at '/runController/model/gateway/aliases/public/0'" --set runController.model.mode=gateway --set-json 'runController.model.gateway.aliases={"public":["gpt-4"]}'
 

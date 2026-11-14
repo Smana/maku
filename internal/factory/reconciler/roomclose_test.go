@@ -92,7 +92,9 @@ func TestTheRoomOutlivesTheRevertWindow(t *testing.T) {
 	if roomGone(t, g) {
 		t.Fatal("the room closed inside the revert window")
 	}
-	g.r.Now = func() time.Time { return merged.Add(g.r.Cfg.Current().Merge.RevertWindow.Duration + time.Minute) }
+	g.r.Now = func() time.Time {
+		return merged.Add(g.r.Cfg.Current().Repositories[0].Merge.RevertWindow.Duration + time.Minute)
+	}
 	g.reconcile(t, "3buqdlot", 1)
 	if !roomGone(t, g) {
 		t.Fatal("the room stays open past the revert window")
@@ -220,7 +222,7 @@ func originVerdictRig(t *testing.T, origin string) (*rig, metav1.Time) {
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", MergedAt: &merged, MergeCommitSHA: "m1"}
 	g := newRig(t, tk)
 	g.r.Merger = g.f
-	g.r.Cfg.Current().Classes = map[string]config.Class{"alert-rules": {Monitor: &config.Monitor{FollowUpWindow: config.Duration{Duration: 2 * time.Hour}}}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"alert-rules": {Monitor: &config.Monitor{FollowUpWindow: config.Duration{Duration: 2 * time.Hour}}}}
 	g.f.SetPR(forge.PR{Number: 12, State: "MERGED", MergedAt: merged.Time, MergeCommitSHA: "m1"})
 	g.f.SetCommitChecks("m1", forge.Check{Name: "Pre-commit checks", State: "PENDING"})
 	withRoom(t, g)

@@ -55,10 +55,10 @@ func (g *rig) ended(t *testing.T) *v1alpha1.Task {
 // mSHA, which changed website/content/docs/a.md line 7.
 func monitorRig(t *testing.T) *rig {
 	g := declaredRig(t)
-	cl := g.r.Cfg.Current().Classes["dead-links"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 	cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-	g.r.Cfg.Current().Classes["dead-links"] = cl
-	g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
+	g.r.Cfg.Current().Repositories[0].Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 	if g.r.Cfg.Current().ControlFor().Issue == 0 {
 		g.r.Cfg.Current().Control = config.Control{Repository: "Smana/cloud-native-ref", Issue: 3}
 	}
@@ -112,9 +112,9 @@ func TestFollowUps(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := monitorRig(t)
-			cl := g.r.Cfg.Current().Classes["dead-links"]
+			cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 			cl.Author = &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}
-			g.r.Cfg.Current().Classes["dead-links"] = cl
+			g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 			g.f.SetMerged(c.pr)
 			g.f.SetPullFiles(c.pr.Number, c.files...)
 			g.f.SetBlame(c.pr.MergeCommitSHA, testFile, c.blame...)
@@ -422,9 +422,9 @@ func TestRebaseMergesAreReadOnlyWhenSafe(t *testing.T) {
 // until then a class that declares them ends inconclusive.
 func TestAnOpenSignalIsInconclusiveAtTheEnd(t *testing.T) {
 	g := monitorRig(t)
-	cl := g.r.Cfg.Current().Classes["dead-links"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 	cl.Monitor.OracleRuns, cl.Monitor.Flux = 2, &config.FluxWatch{Source: "flux-system/cnref", Within: config.Duration{Duration: time.Hour}}
-	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-167*time.Hour))
 	m := g.ended(t).Status.Monitor
 	if m.Oracle != "inconclusive" || m.Flux != "inconclusive" || m.Verdict != "inconclusive" || m.Main != "healthy" {
@@ -583,9 +583,9 @@ const (
 func verifyRig(t *testing.T, requestedBy, verdict string, within time.Duration, mergedAgo time.Duration) *rig {
 	t.Helper()
 	g := monitorRig(t)
-	cl := g.r.Cfg.Current().Classes["dead-links"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["dead-links"]
 	cl.Monitor.Verification = &config.VerificationWatch{Within: config.Duration{Duration: within}}
-	g.r.Cfg.Current().Classes["dead-links"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	g.r.Cfg.Current().API.InternalPrincipals = []config.InternalPrincipal{{Sponsored: config.Sponsored{Name: "runlore"}, Verification: true}}
 	g.setDone(t, "3buqdlot", 12, "Smana", mSHA, now.Add(-mergedAgo))
 	orig := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: originTask, Namespace: "agent-system"},

@@ -414,9 +414,18 @@ func (m *fakeMetrics) RoomClosedAtCap(_ context.Context, reason string) {
 var now = time.Date(2026, 9, 27, 10, 0, 0, 0, time.UTC)
 
 func cfg() *config.Config {
-	return &config.Config{Repository: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, RoomsURL: "https://rooms.priv.aws.ogenki.io",
+	return &config.Config{RoomsURL: "https://rooms.priv.aws.ogenki.io",
+		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"},
+			Classes: map[string]config.Class{"docs-links": {Shadow: true}}, // a class in shadow: the merge gate reads checks
+			// The merge gate reads these; a config without them would make CIState vacuously green.
+			Merge: config.Merge{RequiredChecks: []string{"Pre-commit checks", "Kubernetes validation"},
+				VerifyChecks:   []string{"Pre-commit checks", "Kubernetes validation"},
+				PolicyBotLogin: "ogenki-merge-gate[bot]", MergerLogin: "ogenki-agent-merger[bot]",
+				AutoMergesPerDay: 10, FixRuns: 2,
+				VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
+				// R41: a validated config always carries a breaker; the zero value would demote every class.
+				Breaker: config.Breaker{Window: 10, MaxReverts: 1}}}},
 		FactoryLogin: "ogenki-agent-factory[bot]",
-		Classes:      map[string]config.Class{"docs-links": {Shadow: true}}, // a class in shadow: the merge gate reads checks
 		Poll:         config.Poll{Tasks: config.Duration{Duration: 30 * time.Second}, Meter: config.Duration{Duration: 30 * time.Second}},
 		Defaults:     config.Defaults{Template: "solo", Tier: "standard", DataClass: "public", PredictedClass: "review"},
 		// The reviewer runs on the other tier (4.2): frontier's model is observable as tier-frontier.
@@ -427,15 +436,7 @@ func cfg() *config.Config {
 			"trio": {Roles: []string{"implementer", "tester", "reviewer"}, MaxReviewRounds: 2}},
 		Caps:   config.Caps{ActiveTasks: 3, ConcurrentRuns: 4, TasksPerDay: 20, MaxTextBytes: 14336, MaxPendingMinutes: 30, AwaitingHumanWIP: 5},
 		Resume: config.Resume{MaxPerTask: 2}, // a parsed config's default (disruption design §4)
-		// The merge gate reads these; a config without them would make CIState vacuously green.
-		Merge: config.Merge{RequiredChecks: []string{"Pre-commit checks", "Kubernetes validation"},
-			VerifyChecks:   []string{"Pre-commit checks", "Kubernetes validation"},
-			PolicyBotLogin: "ogenki-merge-gate[bot]", MergerLogin: "ogenki-agent-merger[bot]",
-			AutoMergesPerDay: 10, FixRuns: 2,
-			VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
-			// R41: a validated config always carries a breaker; the zero value would demote every class.
-			Breaker: config.Breaker{Window: 10, MaxReverts: 1}},
-		Hash: strings.Repeat("a", 64)}
+		Hash:   strings.Repeat("a", 64)}
 }
 
 type rig struct {

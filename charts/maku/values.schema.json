@@ -5,6 +5,7 @@
   "type": "object",
   "additionalProperties": true,
   "properties": {
+    "demoValues": {"description": "The demo marker (v4 step 8, R4): admits runController.model.mode secret.", "type": "boolean"},
     "broker": {
       "type": "object",
       "additionalProperties": true,
@@ -169,7 +170,7 @@
           }
         },
         "model": {
-          "description": "How runs reach a model (v4 step 4): secret (modelSecret, the default) or gateway (the model gateway, with the run's own token).",
+          "description": "How runs reach a model (v4 step 4): gateway (the default since v4 step 8: the model gateway, with the run's own token), or secret (modelSecret, demo-only: needs demoValues).",
           "type": "object",
           "additionalProperties": false,
           "properties": {

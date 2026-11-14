@@ -36,7 +36,7 @@ func runlore(t *testing.T) (*RunLore, client.Client, *forgetest.Fake) {
 	return &RunLore{Forges: func(string) (RunLoreForge, bool) { return f, true }, Client: c, Namespace: "agent-system", Token: func() string { return "s3cret" },
 		Stopped: func(context.Context) bool { return false }, Now: func() time.Time { return time.Date(2026, 10, 1, 9, 0, 0, 0, time.UTC) },
 		Errors: &counter{}, Owned: func(string) bool { return true },
-		Cfg: &config.Config{Repository: "Smana/cloud-native-ref", RoomsURL: "https://rooms.priv.aws.ogenki.io",
+		Cfg: &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref"}}, RoomsURL: "https://rooms.priv.aws.ogenki.io",
 			RunLore: config.RunLore{MinConfidence: 0.75, DailyCap: 5}}}, c, f
 }
 

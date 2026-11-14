@@ -31,8 +31,8 @@ func testerRigCfg(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 		edit(tk)
 	}
 	g := newRig(t, tk)
-	g.r.Cfg.Current().Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
-	g.r.Cfg.Current().Merge.ContractCheck = "Test contract 🧪"
+	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
+	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = "Test contract 🧪"
 	g.r.Cfg.Current().Defaults.PredictedClass = tk.Spec.PredictedClass // the static triage's class
 	g.r.Triage = triage.Static{}
 	if cfgEdit != nil {

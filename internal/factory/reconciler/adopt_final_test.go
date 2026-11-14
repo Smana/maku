@@ -27,9 +27,9 @@ func handedOff(t *testing.T, g *rig, reason string) {
 }
 
 func liveClass(g *rig) {
-	cl := g.r.Cfg.Current().Classes["deps-patch"]
+	cl := g.r.Cfg.Current().Repositories[0].Classes["deps-patch"]
 	cl.Live, cl.Shadow = true, false
-	g.r.Cfg.Current().Classes["deps-patch"] = cl
+	g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = cl
 }
 
 // R45, amended: every transient adopted hand-off returns on a new head, counted; in a live class
@@ -79,7 +79,7 @@ func TestPausedIgnoresAnUndecidedAdoptedMerge(t *testing.T) {
 	for name, decided := range map[string]string{"decided": "9999999999999999999999999999999999999999", "undecided": adoptHead} {
 		t.Run(name, func(t *testing.T) {
 			g := adoptRig(t)
-			g.r.Cfg.Current().Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
+			g.r.Cfg.Current().Repositories[0].Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1, MaxFollowUps: 1}
 			var tk v1alpha1.Task
 			if err := g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: adoptTask}, &tk); err != nil {
 				t.Fatal(err)
@@ -114,9 +114,9 @@ func TestAnAdoptedMergeIsWatchedOnlyAtADecidedHead(t *testing.T) {
 		return g.reconcile(t, adoptTask, 1)
 	}
 	monitored := func(g *rig) *rig {
-		cl := g.r.Cfg.Current().Classes["deps-patch"]
+		cl := g.r.Cfg.Current().Repositories[0].Classes["deps-patch"]
 		cl.Monitor = &config.Monitor{FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}
-		g.r.Cfg.Current().Classes["deps-patch"] = cl
+		g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = cl
 		return g
 	}
 	t.Run("the decided head", func(t *testing.T) {
@@ -193,11 +193,13 @@ func TestTheAdoptedVetoIsARepositoryMembers(t *testing.T) {
 // M1: an adopted Task whose class was removed or no longer adopts never reads room "": it hands off.
 func TestAnAdoptedTaskWhoseClassIsGoneHandsOff(t *testing.T) {
 	for name, edit := range map[string]func(*rig){
-		"removed": func(g *rig) { g.r.Cfg.Current().Classes = map[string]config.Class{"other": {Shadow: true}} },
+		"removed": func(g *rig) {
+			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"other": {Shadow: true}}
+		},
 		"no author": func(g *rig) {
-			cl := g.r.Cfg.Current().Classes["deps-patch"]
+			cl := g.r.Cfg.Current().Repositories[0].Classes["deps-patch"]
 			cl.Author = nil
-			g.r.Cfg.Current().Classes["deps-patch"] = cl
+			g.r.Cfg.Current().Repositories[0].Classes["deps-patch"] = cl
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

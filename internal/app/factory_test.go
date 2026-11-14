@@ -395,8 +395,8 @@ func TestConnectMergerOverTheFactoryAppsFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Demo: true,
-		GitHub:  config.GitHub{AppIDFile: idFile, PrivateKeyFile: keyFile, MergerAppIDFile: idFile, MergerKeyFile: keyFile},
-		Classes: map[string]config.Class{"docs": {Shadow: true}}}
+		GitHub:       config.GitHub{AppIDFile: idFile, PrivateKeyFile: keyFile, MergerAppIDFile: idFile, MergerKeyFile: keyFile},
+		Repositories: []config.Repository{{Classes: map[string]config.Class{"docs": {Shadow: true}}}}}
 	if !cfg.NeedsMerger() {
 		t.Fatal("a shadow class must need the merger")
 	}

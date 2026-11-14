@@ -23,7 +23,7 @@ func TestAWaitCountsForTheTasksPayer(t *testing.T) {
 	for enabled, payer := range map[bool]string{true: "github:smana", false: runs.PrincipalFactory} {
 		g := newRig(t, escalatedTask(false), roomOf("3buqdlot"))
 		g.r.Cfg.Current().Budgets = personBudgets(enabled, true)
-		g.r.Cfg.Current().Maintainers = append(g.r.Cfg.Current().Maintainers, "Alice")
+		g.r.Cfg.Current().Repositories[0].Maintainers = append(g.r.Cfg.Current().Repositories[0].Maintainers, "Alice")
 		g.f.SetComments(7, retryBy(77, "Alice", time.Minute))
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseQueued {
 			t.Fatalf("enabled %v: %s", enabled, tk.Status.Phase)
