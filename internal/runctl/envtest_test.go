@@ -201,8 +201,8 @@ func TestEnvtestRunLifecycle(t *testing.T) {
 	if got.Status.Phase != "Succeeded" || got.Status.FinishedAt == "" {
 		t.Fatalf("succeeded %+v", got.Status)
 	}
-	if run, ok := runwatch.DefaultKind.FromUnstructured(toUnstructured(t, got)); ok {
-		t.Fatalf("runwatch must not read a native run under the default kind: %+v", run)
+	if run, ok := runwatch.DefaultKind.FromUnstructured(toUnstructured(t, got)); !ok || run.ID != "abcdefgh" || run.Phase != "Succeeded" {
+		t.Fatalf("runwatch reads the run-controller's run under the default kind (D5): %+v %v", run, ok)
 	}
 }
 

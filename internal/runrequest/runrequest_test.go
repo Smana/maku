@@ -29,7 +29,7 @@ func TestManifestIsAValidClaim(t *testing.T) {
 		Spec     map[string]any
 	}
 	_ = json.Unmarshal(res.Manifest, &claim)
-	if claim.Metadata.Name != "xplane-run-"+res.RunID || claim.Metadata.Namespace != "agents" ||
+	if claim.Metadata.Name != "run-"+res.RunID || claim.Metadata.Namespace != "agents" ||
 		claim.Spec["roomRef"] != "3kq7x2ma" || claim.Spec["branch"] != "agent/3kq7x2ma" || claim.Spec["principal"] != "human:291" {
 		t.Fatalf("%s", res.Manifest)
 	}

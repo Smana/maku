@@ -399,7 +399,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("T5 classifier calls on text outputs, refused ones included (hardening HR39, AC6), by repository, output type, result (hit, pass, unavailable) and whether the task is a drill: false positives are hits on applied outputs of non-drill tasks."))
 	check(err)
 	s.sandboxPermission, err = meter.Int64Gauge("agent_factory_hardening_sandbox_permission",
-		metric.WithDescription("1 for each GitHub permission and access a sandbox role's or the publisher's octo-sts policy grants on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
+		metric.WithDescription("1 for each GitHub permission and access the role table grants a sandbox role or the publisher on an enforced repository, as the last fence pass read it, else 0 (hardening H2, R2 as evidence)."))
 	check(err)
 	s.mergeGateRequired, err = meter.Int64Gauge("agent_factory_merge_gate_required",
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))

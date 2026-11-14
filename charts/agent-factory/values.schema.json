@@ -138,7 +138,7 @@
             "otlp": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
             "agentGuard": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
             "gatewayLog": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
-            "octoSTS": {"type": "object", "additionalProperties": false, "properties": {"to": {"type": "array", "items": {"type": "object"}}, "port": {"type": "integer", "minimum": 0, "maximum": 65535}}},
+            "octoSTS": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: octo-sts is gone, the factory mints the publisher's token from the agents App (docs/upgrading.md#the-xr-run-kind-and-octo-sts)"]},
             "extraEgress": {"type": "array", "items": {"type": "object"}}
           }
         }

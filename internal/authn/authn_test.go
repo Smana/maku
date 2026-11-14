@@ -20,9 +20,9 @@ import (
 	"github.com/golang-jwt/jwt/v5"
 )
 
-const runSub = "system:serviceaccount:agents:xplane-run-7f3cq2xz"
+const runSub = "system:serviceaccount:agents:run-7f3cq2xz"
 
-var runPattern = regexp.MustCompile(`^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$`)
+var runPattern = regexp.MustCompile(`^system:serviceaccount:agents:run-([a-z2-7]{8})$`)
 
 func mustRuns(t *testing.T, issuers ...RunIssuer) *Runs {
 	t.Helper()
@@ -39,7 +39,7 @@ func TestNewRunsRefuses(t *testing.T) {
 		"no issuer":            nil,
 		"no verifier":          {{SubPattern: runPattern}},
 		"no pattern":           {{Verifier: v}},
-		"no capture group":     {{Verifier: v, SubPattern: regexp.MustCompile(`^xplane-run-[a-z2-7]{8}$`)}},
+		"no capture group":     {{Verifier: v, SubPattern: regexp.MustCompile(`^run-[a-z2-7]{8}$`)}},
 		"two capture groups":   {{Verifier: v, SubPattern: regexp.MustCompile(`^(xplane)-run-([a-z2-7]{8})$`)}},
 		"one good, one broken": {{Verifier: v, SubPattern: runPattern}, {Verifier: v}},
 	}
@@ -84,7 +84,7 @@ func TestRunTokens(t *testing.T) {
 	}{
 		"valid":            {s.token(t, issuer, runSub, AudienceRun, 10*time.Minute), true},
 		"gateway audience": {s.token(t, issuer, runSub, "agent-router.implementer.public", 10*time.Minute), false},
-		"other namespace":  {s.token(t, issuer, "system:serviceaccount:agent-system:xplane-run-7f3cq2xz", AudienceRun, 10*time.Minute), false},
+		"other namespace":  {s.token(t, issuer, "system:serviceaccount:agent-system:run-7f3cq2xz", AudienceRun, 10*time.Minute), false},
 		"expired":          {s.token(t, issuer, runSub, AudienceRun, -2*time.Minute), false},
 		"foreign issuer":   {s.token(t, "https://oidc.eks.eu-west-1.amazonaws.com/id/OTHER", runSub, AudienceRun, 10*time.Minute), false},
 		"system audience":  {s.token(t, issuer, runSub, AudienceSystem, 10*time.Minute), false},
@@ -107,8 +107,8 @@ func TestRunTokens(t *testing.T) {
 // contains a run's name.
 func TestRunSubjectMustMatchWhole(t *testing.T) {
 	s := newSigner(t)
-	runs := mustRuns(t, RunIssuer{Verifier: s.verifier(), SubPattern: regexp.MustCompile(`xplane-run-([a-z2-7]{8})`)})
-	tok := s.token(t, issuer, "system:serviceaccount:evil:xplane-run-7f3cq2xz-x", AudienceRun, time.Minute)
+	runs := mustRuns(t, RunIssuer{Verifier: s.verifier(), SubPattern: regexp.MustCompile(`run-([a-z2-7]{8})`)})
+	tok := s.token(t, issuer, "system:serviceaccount:evil:run-7f3cq2xz-x", AudienceRun, time.Minute)
 	if _, err := runs.Authenticate(request(t, tok)); !errors.Is(err, ErrUnauthenticated) {
 		t.Fatalf("a partial subject match was accepted: %v", err)
 	}

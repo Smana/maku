@@ -64,11 +64,11 @@ func TestRoomMCP(t *testing.T) {
 	}
 	runs := runwatch.New(runwatch.DefaultKind)
 	runs.Upsert(t.Context(), &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "xplane-run-7f3cq2xz", "namespace": "agents"},
+		"metadata": map[string]any{"name": "run-7f3cq2xz", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
 		"status":   map[string]any{"phase": "Running"},
 	}})
-	pattern := regexp.MustCompile(`^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$`)
+	pattern := regexp.MustCompile(`^system:serviceaccount:agents:run-([a-z2-7]{8})$`)
 	toolLog := &fakeToolLog{}
 	pat := "ghp_" + rand.Text()[:26] + "Ab12CdE34f"
 	srv := mcpServer(roomMCP("k", []*regexp.Regexp{pattern}, toolLog, red, runs, m, slog.New(slog.DiscardHandler)), mcpCallTimeout, slog.New(slog.DiscardHandler))
@@ -81,7 +81,7 @@ func TestRoomMCP(t *testing.T) {
 			"params": map[string]any{"name": "room_post", "arguments": map[string]any{"text": "the token is " + pat}}})
 		r := httptest.NewRequestWithContext(t.Context(), method, path, bytes.NewReader(body))
 		r.Header.Set(mcp.KeyHeader, key)
-		r.Header.Set(mcp.IdentityHeader, "system:serviceaccount:agents:xplane-run-7f3cq2xz")
+		r.Header.Set(mcp.IdentityHeader, "system:serviceaccount:agents:run-7f3cq2xz")
 		rec := httptest.NewRecorder()
 		srv.Handler.ServeHTTP(rec, r)
 		return rec
@@ -113,7 +113,7 @@ func TestRoomMCP(t *testing.T) {
 	unset := mcpServer(roomMCP(mcpKey(func(string) string { return " \n" }), []*regexp.Regexp{pattern}, toolLog, red, runs, m, slog.New(slog.DiscardHandler)),
 		mcpCallTimeout, slog.New(slog.DiscardHandler))
 	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
-	r.Header.Set(mcp.IdentityHeader, "system:serviceaccount:agents:xplane-run-7f3cq2xz")
+	r.Header.Set(mcp.IdentityHeader, "system:serviceaccount:agents:run-7f3cq2xz")
 	rec := httptest.NewRecorder()
 	unset.Handler.ServeHTTP(rec, r)
 	if rec.Code != http.StatusUnauthorized {

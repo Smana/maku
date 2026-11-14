@@ -241,7 +241,7 @@ func (m *memLog) stored() []envelope.Event {
 
 func agentRun(id, roomID, phase string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "xplane-run-" + id, "namespace": "agents"},
+		"metadata": map[string]any{"name": "run-" + id, "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": roomID, "role": "implementer"},
 		"status":   map[string]any{"phase": phase},
 	}}

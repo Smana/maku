@@ -1,4 +1,15 @@
 {{- $cfg := deepCopy .Values.config -}}
+{{- /* v4 step 8 (D5, D10, R3): the XR run kind and octo-sts are removed, refused here too under
+--skip-schema-validation, as the binary refuses them at start. */ -}}
+{{- if hasKey (.Values.hardening | default dict) "publisher" -}}
+{{- fail "hardening.publisher.audience was removed in v4 step 8: set config.hardening.publisher.minter (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
+{{- end -}}
+{{- if hasKey (dig "hardening" "publisher" dict $cfg) "octoSTS" -}}
+{{- fail "config.hardening.publisher.octoSTS was removed in v4 step 8: set config.hardening.publisher.minter (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
+{{- end -}}
+{{- if eq (dig "runs" "group" "" $cfg) "cloud.ogenki.io" -}}
+{{- fail "config.runs.group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5): runs are the run-controller's, maku.ogenki.io (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
+{{- end -}}
 {{- if .Values.api.tls.secretName -}}
 {{- $api := deepCopy (get $cfg "api" | default dict) -}}
 {{- if hasKey $api "tls" -}}

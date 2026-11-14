@@ -876,7 +876,7 @@ type Config struct {
 	FactoryInsecure bool          `json:"factoryInsecure,omitempty"`
 	TLS             TLSConfig     `json:"tls"`
 	Suspend         SuspendConfig `json:"suspend,omitzero"`
-	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
+	// Runs is where AgentRuns live (adoption 3a): the run-controller's kind, runwatch.DefaultKind's fields where omitted.
 	Runs runwatch.Kind `json:"runs,omitzero"`
 	// Webhooks are the subscribers to room events (factory interfaces F6).
 	Webhooks []WebhookConfig `json:"webhooks,omitempty"`

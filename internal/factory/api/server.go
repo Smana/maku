@@ -330,7 +330,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, reason)
 		return
 	}
-	// GitHub's names are case-insensitive, but spec.repository becomes the run's octo-sts audience:
+	// GitHub's names are case-insensitive, but spec.repository names the run's minted token:
 	// a request is matched case-insensitively and rewritten to the config's spelling, the only one
 	// ever written there.
 	in.Repository = canonicalRepository(cfg.API.Repositories, in.Repository)

@@ -38,8 +38,7 @@ type applierDeps struct {
 	Live      func() *config.Config           // the published config: enforceOutputs and the allowlist per call
 	Metrics   applier.Metrics
 	Log       *slog.Logger
-	// Tokens is the publisher's token source; nil is the minter's with hardening.publisher.minter,
-	// else octo-sts from hardening.publisher.octoSTS.
+	// Tokens is the publisher's token source; nil is the minter's (hardening.publisher.minter).
 	Tokens applier.PublisherTokens
 	// PushRooms is the broker's bundle and approval routes, and Tasks the writer a push's intent is
 	// recorded with (H3); both are used only while a repository enforces push.
@@ -54,18 +53,15 @@ type applierDeps struct {
 // safeOutputApplier is the applier for cfg (hardening H2, HR15): nil, and no publisher built, while
 // no repository has an enforceOutputs list, in the demo profile (never hardened, R7), or without the
 // hardening ports. Otherwise it answers enforced requests with T1 to T4 at enforce, as the agents
-// App: under HR11 the publisher's octo-sts token is the agents App's, so its login is agentsLogin,
-// the one the applier recognises its own pull requests and comments by. With
-// hardening.publisher.minter the token is minted from the agents App instead (v4 D10, plan PR7):
-// the same App, so the same login. Turning enforcement on from none takes a restart, as audit does.
-// Under octo-sts the start is refused while the publisher's projected token cannot be read: every
-// enforced request would otherwise wait unanswered for its run's whole answerWait.
+// App: under HR11 the publisher's token is minted from the agents App (hardening.publisher.minter,
+// v4 D10, plan PR7), so its login is agentsLogin, the one the applier recognises its own pull
+// requests and comments by. Turning enforcement on from none takes a restart, as audit does.
 func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, error) {
 	if cfg.Demo || !cfg.Hardening.Enforcing() || d.Hardened == nil {
 		return nil, nil
 	}
 	tokens := d.Tokens
-	if tokens == nil && cfg.Hardening.Publisher.Minter {
+	if tokens == nil {
 		mt := d.Minter
 		if mt == nil {
 			mt = agentsMinter(cfg, nil, d.Log)
@@ -75,15 +71,6 @@ func safeOutputApplier(cfg *config.Config, d applierDeps) (*applier.Applier, err
 		}
 		tokens = &minter.PublisherTokens{Minter: mt, Now: time.Now,
 			Enforced: func(repo string) []hardening.OutputType { return d.Live().Hardening.EnforcedFor(repo) }}
-	}
-	if tokens == nil {
-		p := cfg.Hardening.Publisher.OctoSTS
-		if _, err := os.ReadFile(filepath.Clean(p.TokenFile)); err != nil {
-			return nil, fmt.Errorf("hardening.enforceOutputs is set but the publisher token %s cannot be read: "+
-				"set the chart's hardening.publisher.audience, or empty enforceOutputs: %w", p.TokenFile, err)
-		}
-		tokens = &applier.OctoSTSTokens{URL: p.URL, TokenFile: p.TokenFile, Identity: p.Identity,
-			HTTP: httpx.New(githubTimeout, nil), Now: time.Now, Log: d.Log}
 	}
 	base := forge.Options{APIURL: githubAPIURL(), UserAgent: "agent-factory-publisher/" + version.Version,
 		HTTP: httpx.New(githubTimeout, nil), Now: time.Now}
@@ -171,11 +158,6 @@ func wirePush(cfg *config.Config, d applierDeps, tokens applier.PublisherTokens,
 	return nil
 }
 
-// policyReader reads a repository's default-branch file; *forge.GitHub implements it.
-type policyReader interface {
-	DefaultBranchFile(ctx context.Context, path string) (text, sha string, found bool, err error)
-}
-
 // tokenGrants is readiness's and the gauge's Grants under the minter (plan PR8, HR42 option A):
 // for a repository, each sandbox role's and the publisher's permissions from table for the
 // repository's enforced outputs, read live: what the minter mints for its runs now.
@@ -231,80 +213,37 @@ func roleTableWarning(cfg *config.Config, table minter.Table) string {
 	var out []string
 	if len(prs) > 0 {
 		out = append(out, fmt.Sprintf("runTokens.perRun: the role table leaves the implementer pull_requests: write in %s although the factory publishes "+
-			"its pull requests, comments or labels, so that enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
+			"its pull requests, comments or labels, so that enforcement is advisory until the table takes the write away (HR12, HR13)",
 			strings.Join(prs, ", ")))
 	}
 	if len(pushes) > 0 {
 		out = append(out, fmt.Sprintf("runTokens.perRun: the role table leaves contents: write in %s although the factory publishes "+
-			"its pushes, so push enforcement is advisory; keep these repositories on the XR with octo-sts (HR13, D10 as written)",
+			"its pushes, so push enforcement is advisory until the table takes the write away (HR12, HR13)",
 			strings.Join(pushes, ", ")))
 	}
 	return strings.Join(out, "; ")
 }
 
 // sandboxPermissionObserver is a fence observer that, on each pass over a repository with an
-// enforceOutputs list, sets the permission gauge from the token source the runs and the publisher
-// actually get (H2, R2 as evidence; plan PR8): on the XR, each sandbox role's octo-sts policy; under
-// runTokens.perRun, the minter's role table through grants; and the publisher's policy, or the
-// table's publisher row with hardening.publisher.minter. A shared token's roles are not recorded:
-// HR13 refuses enforcement on one. A policy that cannot be read or does not parse is logged and
-// keeps its last values.
-func sandboxPermissionObserver(live func() *config.Config, files func(repo string) policyReader, grants tokenGrants,
-	record func(ctx context.Context, repo string, grants map[string]map[string]string), log *slog.Logger) fenceObserver {
+// enforceOutputs list, sets the permission gauge from the minter's role table through grants (H2,
+// R2 as evidence; plan PR8): each sandbox role's row under runTokens.perRun, and the publisher's.
+// A shared token's roles are not recorded: HR13 refuses enforcement on one.
+func sandboxPermissionObserver(live func() *config.Config, grants tokenGrants,
+	record func(ctx context.Context, repo string, grants map[string]map[string]string)) fenceObserver {
 	return func(ctx context.Context, repo string, _ []byte) {
 		cfg := live()
-		if len(cfg.Hardening.EnforcedFor(repo)) == 0 {
+		if len(cfg.Hardening.EnforcedFor(repo)) == 0 || grants == nil {
 			return
 		}
-		src, pubMinter := cfg.TokenSource(), cfg.Hardening.Publisher.Minter
+		roles, pub := grants(repo)
 		out := map[string]map[string]string{}
-		if grants != nil && (src == hardening.TokenSourceMinter || pubMinter) {
-			roles, pub := grants(repo)
-			if src == hardening.TokenSourceMinter {
-				maps.Copy(out, roles)
-			}
-			if pubMinter {
-				out[applier.PublisherIdentity] = pub
-			}
+		if cfg.TokenSource() == hardening.TokenSourceMinter {
+			maps.Copy(out, roles)
 		}
-		paths := map[string]string{}
-		if !pubMinter {
-			paths[applier.PublisherIdentity] = hardening.PublisherPolicyPath
-		}
-		if src == hardening.TokenSourceXR {
-			for _, role := range hardening.SandboxRoles() {
-				paths[role] = hardening.RolePolicyPath(role)
-			}
-		}
-		if len(paths) > 0 {
-			f := files(repo)
-			if f == nil {
-				return
-			}
-			readPolicies(ctx, f, repo, paths, out, log)
+		if cfg.Hardening.Publisher.Minter {
+			out[applier.PublisherIdentity] = pub
 		}
 		record(ctx, repo, out)
-	}
-}
-
-// readPolicies reads each role's octo-sts policy at paths into grants.
-func readPolicies(ctx context.Context, f policyReader, repo string, paths map[string]string, grants map[string]map[string]string, log *slog.Logger) {
-	for role, path := range paths {
-		text, _, found, err := f.DefaultBranchFile(ctx, path)
-		switch {
-		case err != nil:
-			log.Warn("octo-sts policy unreadable: its permissions keep their last values", "repository", repo, "role", role, "err", err)
-			continue
-		case !found:
-			grants[role] = map[string]string{} // no policy, no token
-			continue
-		}
-		perms, err := hardening.PolicyPermissions([]byte(text))
-		if err != nil {
-			log.Warn("octo-sts policy does not parse: its permissions keep their last values", "repository", repo, "role", role, "err", err)
-			continue
-		}
-		grants[role] = perms
 	}
 }
 

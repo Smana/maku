@@ -1079,7 +1079,7 @@ func reviewerRefusingRig(t *testing.T, urlOnlyRefused bool) (*rig, *int) {
 			}
 			creates++
 			if s.TaskText != "" || urlOnlyRefused {
-				return apierrors.NewInvalid(schema.GroupKind{Group: "cloud.ogenki.io", Kind: "AgentRun"}, "x",
+				return apierrors.NewInvalid(schema.GroupKind{Group: "maku.ogenki.io", Kind: "AgentRun"}, "x",
 					field.ErrorList{field.Invalid(field.NewPath("spec", "task"), "x", "set exactly one of task.text or task.url")})
 			}
 			return nil

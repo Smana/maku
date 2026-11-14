@@ -45,8 +45,8 @@ TAIL_LINES = 60
 KILL_GRACE_S = 5
 STEP_NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 # RC5: what a step never inherits. CI=true turns a missing-Docker skip into a failure.
-SCRUBBED = {"CI", "GITHUB_ACTIONS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_TOKEN_FILE", "GIT_TOKEN_CACHE",
-            "LLM_API_KEY_FILE", "LLM_API_KEY", "OH_SECRET_KEY", "SESSION_API_KEY", "STS_URL"}
+SCRUBBED = {"CI", "GITHUB_ACTIONS", "GH_TOKEN", "GITHUB_TOKEN", "GIT_TOKEN_FILE", "GIT_TOKEN_LOCK",
+            "LLM_API_KEY_FILE", "LLM_API_KEY", "OH_SECRET_KEY", "SESSION_API_KEY"}
 SCRUBBED_PREFIXES = ("OH_SESSION_API_KEYS_", "MISE_")
 # A step's output: the log's byte cap, then one marker line; each kept tail line's length.
 LOG_CAP, LINE_CAP = 50 * 1024 * 1024, 4096

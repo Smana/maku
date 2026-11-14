@@ -541,8 +541,8 @@ func TestRecentlyThrottled(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		_, _ = fmt.Fprintln(w, `{"log.x_ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz","hits":"3"}`)
-		_, _ = fmt.Fprintln(w, `{"log.x_ar_agent":"system:serviceaccount:agents:xplane-run-notarun!","hits":"1"}`)
+		_, _ = fmt.Fprintln(w, `{"log.x_ar_agent":"system:serviceaccount:agents:run-7f3cq2xz","hits":"3"}`)
+		_, _ = fmt.Fprintln(w, `{"log.x_ar_agent":"system:serviceaccount:agents:run-notarun!","hits":"1"}`)
 		_, _ = fmt.Fprintln(w, `{"hits":"9"}`)
 		_, _ = fmt.Fprintln(w, `not json`)
 	}))

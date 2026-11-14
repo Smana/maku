@@ -117,7 +117,7 @@ func TestSplitIsRefusedOnThePortableRuntime(t *testing.T) {
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s portable: %v, want %q", row, err, want)
 		}
-		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err != nil {
+		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), "removed in v4 step 8 (D5)") {
 			t.Errorf("%s on cloud-native-ref's AgentRun: %v", row, err)
 		}
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {

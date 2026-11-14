@@ -245,7 +245,7 @@ describe("mountControls", () => {
     const c = setup(you("human:a", "owner"));
     const box = c.root.querySelector<HTMLElement>(".manifest")!;
     expect(box.hidden).toBe(true); // nothing to show before a claim (review 4.5 I3)
-    const claim = { apiVersion: "cloud.ogenki.io/v1alpha1", kind: "AgentRun", metadata: { name: "a2b3c4d5" },
+    const claim = { apiVersion: "maku.ogenki.io/v1alpha1", kind: "AgentRun", metadata: { name: "a2b3c4d5" },
       spec: { task: { text: "line one\nEOF\n<script>x</script>" } } };
     c.controls.onAck({ type: "ack", clientSeq: 1, seq: 12, result: claim });
     expect(box.hidden).toBe(false);

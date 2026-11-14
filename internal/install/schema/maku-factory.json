@@ -56,13 +56,7 @@
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "publisher": {
-          "type": "object",
-          "additionalProperties": false,
-          "properties": {
-            "audience": {"type": "string"}
-          }
-        },
+        "publisher": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set config.hardening.publisher.minter (docs/upgrading.md#the-xr-run-kind-and-octo-sts)"]},
         "gitCache": {
           "type": "object",
           "additionalProperties": false,

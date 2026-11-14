@@ -8,8 +8,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -28,33 +26,44 @@ var (
 	_ Filer     = (*forgetest.Fake)(nil)
 )
 
-// The publisher's connection: octo-sts mints its token under the publisher identity for the
-// repository (HR11), one connection per repository whatever its spelling, and every API call
-// carries that token.
+// staticTokens is a PublisherTokens whose sources answer one token.
+type staticTokens struct{}
+
+type staticSource string
+
+func (s staticSource) Token(context.Context) (string, error) { return string(s), nil }
+
+func (staticTokens) For(string) (forge.TokenSource, error) { return staticSource("ghs_publisher"), nil }
+
+// recordingTokens is a PublisherTokens that records each repository it is asked for.
+type recordingTokens struct {
+	mu    sync.Mutex
+	asked []string
+}
+
+func (r *recordingTokens) For(repo string) (forge.TokenSource, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.asked = append(r.asked, repo)
+	return staticSource("ghs_publisher"), nil
+}
+
+// The publisher's connection: its token from PublisherTokens for the repository (HR11), one
+// connection per repository whatever its spelling, and every API call carries that token.
 func TestConnectPublishers(t *testing.T) {
 	var mu sync.Mutex
-	var exchanges, authed []string
+	var authed []string
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
 		defer mu.Unlock()
-		switch r.URL.Path {
-		case "/sts/exchange":
-			exchanges = append(exchanges, r.URL.Query().Get("scope")+" "+r.URL.Query().Get("identity"))
-			_, _ = io.WriteString(w, `{"token":"ghs_publisher"}`)
-		default:
-			authed = append(authed, r.Header.Get("Authorization"))
-			_, _ = io.WriteString(w, `{"resources":{}}`)
-		}
+		authed = append(authed, r.Header.Get("Authorization"))
+		_, _ = io.WriteString(w, `{"resources":{}}`)
 	}))
 	t.Cleanup(srv.Close)
 	roots := x509.NewCertPool()
 	roots.AddCert(srv.Certificate())
 	hc := httpx.New(5*time.Second, roots)
-	file := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(file, []byte("sa"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	tokens := &OctoSTSTokens{URL: srv.URL, TokenFile: file, HTTP: hc, Now: time.Now}
+	tokens := &recordingTokens{}
 	connect := ConnectPublishers(tokens, forge.Options{APIURL: srv.URL + "/", UserAgent: "agent-factory/test", HTTP: hc, Now: time.Now})
 	a, err := connect(t.Context(), "Owner/Repo")
 	if err != nil {
@@ -69,27 +78,15 @@ func TestConnectPublishers(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(exchanges) != 1 || exchanges[0] != "Owner/Repo publisher" {
-		t.Errorf("exchanges %q", exchanges)
+	if len(tokens.asked) != 1 || tokens.asked[0] != "Owner/Repo" {
+		t.Errorf("asked %q", tokens.asked)
 	}
 	for _, h := range authed {
 		if h != "Bearer ghs_publisher" {
 			t.Errorf("an API call carried %q", h)
 		}
 	}
-	if _, err := (&OctoSTSTokens{}).For("owner/repo"); err == nil {
-		t.Error("an unconfigured octo-sts gave a token source")
-	}
 }
-
-// staticTokens is a PublisherTokens whose sources answer one token.
-type staticTokens struct{}
-
-type staticSource string
-
-func (s staticSource) Token(context.Context) (string, error) { return string(s), nil }
-
-func (staticTokens) For(string) (forge.TokenSource, error) { return staticSource("ghs_publisher"), nil }
 
 // HR24: the pusher is one mirror per repository under the cache root, its token the publisher's,
 // from the same PublisherTokens; no root is no pusher.

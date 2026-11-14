@@ -1928,11 +1928,7 @@ unless a repository is listed.
 hardening:
   mode: off
   labelAllowlist: [documentation, needs-human]
-  publisher:
-    octoSTS:
-      url: https://octo-sts.example        # https only
-      tokenFile: /var/run/secrets/octo-sts/token   # default; the chart mounts it
-      identity: publisher                  # default: .github/chainguard/publisher.sts.yaml
+  publisher: {minter: true}                # required with any list: the agents App's token
   applier: {interval: 2s, answerWait: 5m}  # defaults
   enforceOutputs: []                       # central list, empty by default
   repositories:
@@ -1944,8 +1940,9 @@ The rules for `enforceOutputs`, each checked at startup:
 - **Types.** The list takes `pr`, `comment`, `labels`, `issue` and, from H3, `push`.
 - **Inheritance.** A repository's list replaces the central one, and must hold every central type.
 - **Mode.** A listed repository needs a mode of at least `audit`.
-- **Publisher.** Any list needs `publisher.octoSTS.url`. Set the chart's
-  `hardening.publisher.audience` so the factory pod has the token to exchange.
+- **Publisher.** Any list needs `publisher.minter: true`, and the runs need `runTokens.perRun`
+  (HR13, below). octo-sts's `publisher.octoSTS` was removed in v4 step 8 and is refused by name
+  ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)).
 - **Hash.** The lists join the configuration hash a drill binds. A file without them keeps its hash.
 
 The factory reads the block at startup: enforcing a first repository takes a restart.
@@ -1955,7 +1952,7 @@ flowchart LR
   A["implementer run"] -->|"output_pr / comment / labels / issue"| B["broker :8090<br/>served per run"]
   B -->|"output_requested"| L[("room log")]
   L --> P["applier (factory leader)<br/>T1–T4 enforce"]
-  P -->|"agents App, octo-sts publisher token"| G[("GitHub")]
+  P -->|"agents App, minted publisher token"| G[("GitHub")]
   P -->|"issue: factory App, factory/proposed"| G
   P -->|"output_applied / output_refused"| L
   G -->|"run end: tracer"| T["untraced_write"]
@@ -1984,8 +1981,8 @@ flowchart LR
 - **The applier** runs on the leader. Every `applier.interval` it reads the rooms of tasks with
   a live implementer or tester run, and answers each request once with `output_applied` or
   `output_refused`. It goes on answering for `answerWait` after the run ends.
-- **The publisher** writes `pr`, `comment` and `labels` as the agents App, with a token octo-sts
-  mints under the repository's `publisher.sts.yaml`. `arm` therefore still sees an agent-authored
+- **The publisher** writes `pr`, `comment` and `labels` as the agents App, with a token the
+  factory's minter mints from the role table's publisher row. `arm` therefore still sees an agent-authored
   pull request. The factory writes the PR footer, with `Agent-Output: <id>`. The applier edits
   only a pull request whose footer names one of the task's applied outputs. It refuses any other
   open one `output_target`.
@@ -2004,33 +2001,28 @@ flowchart LR
 
   A write that does not match is recorded `output_shadowed` with reason `untraced_write` and
   counted, then checked as in H1. This includes a direct open, or a direct edit of an applied
-  object. On cloud-native-ref's XR, an applied pull request or comment whose every body edit since
+  object. Under `runTokens.perRun`, an applied pull request or comment whose every body edit since
   its answer is a person's (a ticked checklist) is logged `human_edit` instead: not counted, still
-  checked as in H1.
+  checked as in H1. A run's own edit is then the agents App's, never a person's.
   Pushes are shadowed as in H1 unless the repository enforces `push`
   ([below](#hardening-push-enforced)). What the tracer does not observe is listed in
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reports
-  each sandbox role's and the publisher's permissions from the token source they get: their
-  octo-sts policies on the XR, or the [role table](#run-tokens-the-role-table) under
-  `runTokens.perRun`.
-- **The publisher's token** comes from octo-sts (`hardening.publisher.octoSTS.url`), or, with
-  `hardening.publisher.minter: true`, from the factory's own minter: the agents App
-  (`runTokens.enabled`), the role table's publisher row, cached until ten minutes before it
-  expires or until the repository's enforced set changes. The agents App's installation on each
-  enforced repository must then grant `pull_requests: write` and `issues: write`. The two sources
-  are refused together. Either way the publisher is the agents App, so its login
-  is `agentsLogin`.
+  each sandbox role's and the publisher's permissions from the
+  [role table](#run-tokens-the-role-table).
+- **The publisher's token** comes from the factory's own minter (`hardening.publisher.minter:
+  true`): the agents App (`runTokens.enabled`), the role table's publisher row, cached until ten
+  minutes before it expires or until the repository's enforced set changes. The agents App's
+  installation on each enforced repository must grant `pull_requests: write` and `issues: write`.
+  The publisher is the agents App, so its login is `agentsLogin`.
 
-With `runs` not cloud-native-ref's XR, the factory refuses to start while `enforceOutputs` is set
-(HR13): that path's sandbox token is not scoped by a role policy, so a run could still write
-directly. `runTokens.perRun` lifts this: each run's token then comes from the
-[role table](#run-tokens-the-role-table), where an enforced output takes its write away. Should the
-table leave the implementer `pull_requests: write` under enforcement (the spec's D10 as written),
-the factory warns at start-up, naming the repositories that must stay on the XR. The way out of
-the XR is a runbook in [Operations](operations.md#leaving-the-xr-with-an-enforced-repository-hr13).
-Readiness reads the same source (HR42): R2 and R3 read the octo-sts policies on the XR, the role
-table under `runTokens.perRun`, and a shared token always misses R2. Readiness stays `false`
+Without `runTokens.perRun` the factory refuses to start while `enforceOutputs` is set (HR13): the
+runs would hold a shared token that can still write directly. With it, each run's token comes from
+the [role table](#run-tokens-the-role-table), where an enforced output takes its write away. Should
+the table leave the implementer `pull_requests: write` under enforcement (the spec's D10 as
+written), the factory warns at start-up, naming the repositories whose enforcement is then advisory.
+Readiness reads the same source (HR42): R2 and R3 read the role table under `runTokens.perRun`, and
+a shared token always misses R2. Readiness stays `false`
 until `mode: enforce`. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 
@@ -2126,13 +2118,9 @@ waits, the task stays `Implementing` with reason `push_awaiting_approval`.
 
 With `push` enforced the role table takes `contents: write` from the implementer and the tester
 (`push`: `contents: read` in [the role table](#run-tokens-the-role-table)), and gives it to the
-publisher. On the run-controller, `runTokens.perRun` mints each run from that table. On
-cloud-native-ref's XR, the repository's policy files follow it: `publisher.sts.yaml` gains
-`contents: write`, then `agent-implementer.sts.yaml` and `agent-tester.sts.yaml` drop to
-`contents: read`. Until they do, the run's token can still push directly, and the tracer reports
-it. GitHub refuses a push that changes `.github/workflows/**` from a token without
-`workflows: write`: unless the publisher's policy adds it, an approved workflow push is refused
-`output_unavailable`. Enabling and rolling back are in
+publisher. `runTokens.perRun` mints each run from that table. GitHub refuses a push that changes
+`.github/workflows/**` from a token without `workflows: write`: unless the publisher's row grants
+it, an approved workflow push is refused `output_unavailable`. Enabling and rolling back are in
 [Operations](operations.md#hardening-push-enforced).
 
 ## Hardening, reads filtered
@@ -2157,8 +2145,6 @@ hardening:
 `mode: enforce` refuses the factory's start unless all of these hold:
 
 - the repository enforces all five output types;
-- runs are on the run-controller (`runs.group` is not cloud-native-ref's XR): on the XR the
-  factory cannot see the sandbox's egress, so the API stays reachable;
 - `api.systemPrincipals` maps a ServiceAccount to `system:broker`, the one caller of the
   forge-read route.
 
@@ -2262,8 +2248,8 @@ coordination's execute admission reads it ([prerequisites](#execution-prerequisi
 | Fact | Holds when | Read from |
 |---|---|---|
 | R1 | The repository's mode is `enforce` | The live config |
-| R2 | No sandbox role's token can write | The XR: each role's octo-sts policy on the default branch, read with the repository's factory App. The run-controller: the minter's role table for the repository's enforced outputs (`runTokens.perRun`). A shared writer token never holds |
-| R3 | The publisher can write | The octo-sts publisher policy, or the minter's publisher grant with `hardening.publisher.minter` |
+| R2 | No sandbox role's token can write | The minter's role table for the repository's enforced outputs (`runTokens.perRun`). A shared writer token never holds |
+| R3 | The publisher can write | The minter's publisher grant (`hardening.publisher.minter`) |
 | R4 | T1 to T4 all enforce | The live config. T5 is not a readiness fact |
 | R5 | Reads are filtered | The live config ([reads filtered](#hardening-reads-filtered)) |
 | R6 | The newest drill for this Maku version and hardening hash passed, within `drills.maxAge`: a newer fail hides an older pass | The broker's drill reports ([drills](#hardening-drills)) |
@@ -2449,7 +2435,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `resume` | `maxPerTask` (1–5) | 2 |
 | `scoper` | `nudgeAt`, `maxToolCalls` (`1 <= nudgeAt < maxToolCalls <= 200`): the [scoper](#the-scoper)'s tool-call bounds, written as its brief's first line, `<!-- agent-factory scoper nudgeAt=N maxToolCalls=M -->`, which stays first when the run is resumed | `nudgeAt` 25, `maxToolCalls` 40, each defaulted alone |
 | `meter` | `url`, `query`, `prices`, and the gateway's 429s from one source: `throttle.promQuery` (PromQL on `url`), or `logsURL` with `throttleQuery` (VictoriaLogs) | Required but `prices`; one 429 source, never both (`meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one`) |
-| `runs` | `group`, `namespace`, `namePrefix`: where AgentRuns live; `gatewayIdentity: true` states that each portable run calls the model gateway with its own projected token (the run-controller's `model.mode: gateway`, [the gateway](gateway.md)), so the meter prices it and `loops.<class>.models` and `split` are accepted. Refused on `cloud.ogenki.io`, whose AgentRun always carries the identity | cloud-native-ref's AgentRun (`cloud.ogenki.io`, `agents`, `xplane-run-`); `gatewayIdentity` false |
+| `runs` | `group`, `namespace`, `namePrefix`: where AgentRuns live; `gatewayIdentity: true` states that each portable run calls the model gateway with its own projected token (the run-controller's `model.mode: gateway`, [the gateway](gateway.md)), so the meter prices it and `loops.<class>.models` and `split` are accepted. `group` is `maku.ogenki.io`, the run-controller's: cloud-native-ref's `cloud.ogenki.io` was removed in v4 step 8 and is refused ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)) | the run-controller's AgentRun (`maku.ogenki.io`, `agents`, `run-`); `gatewayIdentity` false |
 | `tracing` | `otlpEndpoint`, `host:port` | Empty: tracing off |
 | `api` | `listen` (the chart's `api` port is `:8082`), `humanIssuer`, `humanJWKS`, `clientIDFiles`; `groups: {admin, member}`, the two groups the API admits; `systemIssuer`, `systemJWKS` (both or neither), `systemPrincipals`; `systemRepositories: {<principal>: [owner/name]}`, the listed repositories each system principal may start runs on; `access: {readerFile, ttl}`, the ZITADEL reader that resolves a human caller to their GitHub login (`ttl` at most 5m); `tls: {certFile, keyFile}`, both or neither: the API serves TLS 1.3 from that pair, re-read when it is renewed, and the broker's `factoryURL` becomes `https://` (the chart's `api.tls` writes it); absent, plaintext; `projectIDFile` and `sponsored`, see [sponsored principals](#sponsored-principals); `humanJWKS` is optional with an `https://` `humanIssuer`, whose discovery document names it; `preset` is `zitadel` (the default, today's token rules) or `generic`, any OIDC issuer, which needs `rolesClaim` (a claim name, or an RFC 6901 pointer such as `/realm_access/roles`) and takes `tokenUse` (`id`, the default: the broker forwards the human's ID token, whose `aud` holds one of `clientIDFiles`' ids; or `access`, with `audience` or `audienceFile`, which `sponsored` needs too, in place of `projectIDFile`) and `sponsoredClientClaim` (`generic` only: the claim naming a sponsored token's client, one of `cid` (Okta), `appid` (Entra), `azp` or `client_id`; `azp` or `client_id` naming another client still refuses) | Required but `groups`, `access` and the system keys; `groups` defaults to `agents-admin` and `agents-member`, the broker's values. Without `access` every human run is refused |
 | `runlore` | `listen`, `tokenFile`, `minConfidence` (0–1], `dailyCap`; `repository`, the listed repository its issues and tasks go to | Required but `repository`, which defaults to the first entry |
@@ -2533,8 +2519,7 @@ expiry (a failed mint keeps the old Secret): `agent-git`, the write token implem
 runs mount, and `agent-git-read`, the read token reviewer and triager runs mount. Each covers every
 served repository of one owner. The demo mints from the factory's App; `runTokens: {enabled,
 appIDFile, privateKeyFile}` names another App (the chart's `runTokens.appSecret`, mounted at
-`/etc/agent-factory-run-tokens`), and is refused without both files and unless `runs.group` is
-`maku.ogenki.io`: cloud-native-ref's AgentRun gets its tokens from octo-sts, unchanged.
+`/etc/agent-factory-run-tokens`), and is refused without both files.
 
 **Per-run tokens (v4 D10; the demo's since step 3).** `runTokens.perRun` (with `runTokens.enabled`,
 or the demo's factory App) and `runController.gitTokens: perRun` give every run its own token
@@ -2704,13 +2689,13 @@ budget to resume it (`resume_budget`) or a deleted claim escalate as any run's. 
 default answers bounces the task to the issue's author (`needs_author`); a task without an issue
 takes the scoper's first assumption instead.
 
-- **Read-only at the token level, on either runtime.** On cloud-native-ref's AgentRun the triager
-  role maps to the host's octo-sts trust policy, which grants `contents: read` only: the run cannot
-  push or open anything, whatever its brief says. On the portable `maku.ogenki.io` AgentRun the
-  run-controller mounts `runController.gitReadSecret` for reviewer and triager runs, and refuses
-  them without it unless `unsafeSharedGitToken` (a laptop's one PAT) is set. It also refuses a
-  scoper run without the room tools (`broker.roomTools.auth: tokenreview`), since the scoper hands
-  off with `room_handoff`.
+- **Read-only at the token level.** Under `runTokens.perRun` the triager's token is minted from
+  the role table's triager row, which grants reads only: the run cannot push or open anything,
+  whatever its brief says. With the shared tokens the run-controller mounts
+  `runController.gitReadSecret` for reviewer and triager runs, and refuses them without it unless
+  `unsafeSharedGitToken` (a laptop's one PAT) is set. It also refuses a scoper run without the
+  room tools (`broker.roomTools.auth: tokenreview`), since the scoper hands off with
+  `room_handoff`.
 - **The scope has one source.** The factory takes it only from the triager's handoff to the
   implementer, on the current scoper run, and validates it again (the broker stored it redacted).
   A scope on any other handoff is ignored, and the task proceeds unscoped (`missing`). It reaches
@@ -2804,8 +2789,8 @@ child or a timestamp never satisfies a dependency.
 | Landed artifact (`status.coordination.artifacts`) | repository, path, 40-hex merge commit and blob SHAs, 64-hex SHA-256 of the bytes, size: at most the declared `maxBytes` and 64 KiB |
 | Integration manifest (the claim's `MAKU_COORDINATION_MANIFEST`) | parent, plan version and hash, purpose (`beforeDependentMerge` or `final`), each subject's exact head SHA (before a dependent merge) or merge commit SHA (final), the confirmed acceptance, the landed artifacts; its canonical JSON's SHA-256 is the attempt's `manifestHash` |
 
-An integration run is one `triager` claim on the primary, through the existing
-`octo-sts/<primary>/<triager>` path, with no branch, no pull request and no landed references of
+An integration run is one `triager` claim on the primary, through the existing triager token
+path, with no branch, no pull request and no landed references of
 its own. Its only result is a typed `integration_result` naming its `manifestHash`. A dependent's
 release is stale as soon as its head moves: no merger call happens until a new manifest passes for
 the new head. The parent is `Done` only after a `final` pass over exactly every child's current

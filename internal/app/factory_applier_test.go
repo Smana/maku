@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -17,7 +16,6 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/minter"
 	"github.com/Smana/maku/internal/hardening"
-	"github.com/Smana/maku/internal/runwatch"
 )
 
 // fakeTokens records which repositories a publisher token was asked for.
@@ -30,8 +28,8 @@ func (f *fakeTokens) For(repo string) (forge.TokenSource, error) {
 
 func enforcingConfig(repos map[string]config.HardeningRepository) *config.Config {
 	cfg := &config.Config{AgentsLogin: "ogenki-agents[bot]", FactoryLogin: "ogenki-agent-factory[bot]",
-		Hardening: config.Hardening{Mode: hardening.ModeAudit, Repositories: repos,
-			Publisher: config.Publisher{OctoSTS: config.PublisherOctoSTS{URL: "https://octo-sts.dev"}}}}
+		Hardening: config.Hardening{Mode: hardening.ModeAudit, Repositories: repos, Publisher: config.Publisher{Minter: true}},
+		RunTokens: config.RunTokens{Enabled: true, PerRun: true, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}}
 	cfg.Hardening.ApplyDefaults()
 	return cfg
 }
@@ -50,20 +48,9 @@ func TestFactoryStartsApplier(t *testing.T) {
 
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.Issue, hardening.PR}}})
-	// #491's review nit 6: no readable publisher token, no start, and the error says what to set.
-	cfg.Hardening.Publisher.OctoSTS.TokenFile = filepath.Join(t.TempDir(), "absent")
-	if _, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
-		Log: log}); err == nil || !strings.Contains(err.Error(), "hardening.publisher.audience") {
-		t.Fatalf("a missing publisher token started: %v", err)
-	}
-	token := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(token, []byte("jwt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cfg.Hardening.Publisher.OctoSTS.TokenFile = token
 	if a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Log: log}); a == nil || err != nil {
-		t.Fatalf("a readable token: %v", err)
+		t.Fatalf("the minter's publisher: %v", err)
 	}
 	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Tokens: tokens, Log: log})
@@ -106,13 +93,11 @@ func TestFactoryStartsApplier(t *testing.T) {
 	}
 }
 
-// Plan PR7: with hardening.publisher.minter the publisher's token comes from the agents App's
-// minter, so the applier starts with no projected token to read.
+// Plan PR7: the publisher's token comes from the agents App's minter (hardening.publisher.minter),
+// so the applier starts with no projected token to read, and refuses to start with no agents App.
 func TestFactoryStartsApplierWithTheMinter(t *testing.T) {
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
-	cfg.Hardening.Publisher = config.Publisher{Minter: true, OctoSTS: config.PublisherOctoSTS{TokenFile: filepath.Join(t.TempDir(), "absent")}}
-	cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
 	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Log: slog.New(slog.DiscardHandler)})
 	if a == nil || err != nil {
@@ -125,43 +110,36 @@ func TestFactoryStartsApplierWithTheMinter(t *testing.T) {
 	}
 }
 
-// The permission gauge's observer reads each sandbox role's and the publisher's policy on an
-// enforced repository only, and keeps a role whose policy does not read out of the pass.
+// The permission gauge's observer reads the role table on an enforced repository only.
 func TestSandboxPermissionObserver(t *testing.T) {
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
-	files := fakePolicies{
-		hardening.RolePolicyPath("implementer"): "permissions: {contents: write, pull_requests: read}\n",
-		hardening.RolePolicyPath("reviewer"):    "permissions: 3\n",
-		hardening.PublisherPolicyPath:           "permissions: {pull_requests: write, issues: write, contents: read}\n",
-	}
 	var got map[string]map[string]string
 	calls := 0
-	obs := sandboxPermissionObserver(func() *config.Config { return cfg }, func(string) policyReader { return files }, nil,
-		func(_ context.Context, _ string, g map[string]map[string]string) { calls++; got = g }, slog.New(slog.DiscardHandler))
+	obs := sandboxPermissionObserver(func() *config.Config { return cfg }, tableGrants(func() *config.Config { return cfg }, minter.Roles),
+		func(_ context.Context, _ string, g map[string]map[string]string) { calls++; got = g })
 	obs(t.Context(), "Smana/cloud-native-ref", nil)
 	if calls != 0 {
 		t.Fatal("an unenforced repository was read")
 	}
 	obs(t.Context(), "Smana/ai-native-ref", nil)
-	if calls != 1 || got["implementer"]["pull_requests"] != "read" || got["publisher"]["pull_requests"] != "write" {
+	if calls != 1 || got["implementer"] == nil || got["publisher"]["pull_requests"] != "write" {
 		t.Fatalf("grants %v", got)
 	}
-	if _, ok := got["reviewer"]; ok {
-		t.Fatal("a policy that does not parse is in the pass")
-	}
-	if g, ok := got["tester"]; !ok || len(g) != 0 {
-		t.Fatalf("no policy is no grant: %v", got["tester"])
+	none := sandboxPermissionObserver(func() *config.Config { return cfg }, nil,
+		func(context.Context, string, map[string]map[string]string) { calls++ })
+	none(t.Context(), "Smana/ai-native-ref", nil)
+	if calls != 1 {
+		t.Fatal("no role table recorded a pass")
 	}
 }
 
 // Plan PR8 (HR42, option A): under per-run tokens, readiness's R2 and R3 and the permission gauge
-// read the minter's role table for the repository's enforced outputs, and no policy file; under a
-// shared token R2 is missing whatever the policies say.
+// read the minter's role table for the repository's enforced outputs; under a shared token R2 is
+// missing whatever the table says.
 func TestTokenSourceReadiness(t *testing.T) {
 	const repo = "Smana/ai-native-ref"
 	all := []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels}
-	readOnly := "permissions: {contents: read, pull_requests: read}\n"
 	for name, tc := range map[string]struct {
 		perRun       bool
 		table        minter.Table
@@ -169,32 +147,24 @@ func TestTokenSourceReadiness(t *testing.T) {
 		wantNot      hardening.Missing
 		implementer  map[string]string // the gauge's implementer row; nil: not recorded
 		publisherPRs string
-		reads        int
 	}{
-		"HR12":   {true, minter.TableHR12, hardening.MissingWriteToken, hardening.MissingPublisher, map[string]string{"pull_requests": "read", "contents": "write"}, "write", 0},
-		"D10":    {true, minter.TableD10, hardening.MissingWriteToken, hardening.MissingPublisher, map[string]string{"pull_requests": "write", "contents": "write"}, "write", 0},
-		"shared": {false, minter.TableHR12, hardening.MissingWriteToken, hardening.MissingPublisher, nil, "write", 0},
+		"HR12":   {true, minter.TableHR12, hardening.MissingWriteToken, hardening.MissingPublisher, map[string]string{"pull_requests": "read", "contents": "write"}, "write"},
+		"D10":    {true, minter.TableD10, hardening.MissingWriteToken, hardening.MissingPublisher, map[string]string{"pull_requests": "write", "contents": "write"}, "write"},
+		"shared": {false, minter.TableHR12, hardening.MissingWriteToken, hardening.MissingPublisher, nil, "write"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit, EnforceOutputs: all}})
-			cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
-			cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: tc.perRun, AppIDFile: "/a/app_id", PrivateKeyFile: "/a/private_key"}
-			cfg.Hardening.Publisher = config.Publisher{Minter: true}
+			cfg.RunTokens.PerRun = tc.perRun
 			live := func() *config.Config { return cfg }
-			files := &countingPolicies{fakePolicies: fakePolicies{hardening.PublisherPolicyPath: readOnly}}
-			for _, r := range hardening.SandboxRoles() {
-				files.fakePolicies[hardening.RolePolicyPath(r)] = readOnly
-			}
 			grants := tableGrants(live, tc.table)
-			e := hardening.Evaluator{Settings: func(r string) hardening.Settings { return cfg.HardeningSettings(r, "v9.9.9") },
-				Policies: readinessFiles{files}, Grants: grants}
+			e := hardeningEvaluator(live, grants, nil, nil)
 			r, err := e.Hardened(t.Context(), repo)
 			if err != nil || !slices.Contains(r.Missing, tc.wantMissing) || slices.Contains(r.Missing, tc.wantNot) {
 				t.Fatalf("readiness %+v %v: want %s missing, %s held", r, err, tc.wantMissing, tc.wantNot)
 			}
 			var got map[string]map[string]string
-			obs := sandboxPermissionObserver(live, func(string) policyReader { return files }, grants,
-				func(_ context.Context, _ string, g map[string]map[string]string) { got = g }, slog.New(slog.DiscardHandler))
+			obs := sandboxPermissionObserver(live, grants,
+				func(_ context.Context, _ string, g map[string]map[string]string) { got = g })
 			obs(t.Context(), repo, nil)
 			if tc.implementer == nil {
 				if _, ok := got["implementer"]; ok {
@@ -206,15 +176,12 @@ func TestTokenSourceReadiness(t *testing.T) {
 			if got["publisher"]["pull_requests"] != tc.publisherPRs {
 				t.Fatalf("publisher %v", got["publisher"])
 			}
-			if files.reads != tc.reads {
-				t.Fatalf("%d policy files read, want %d", files.reads, tc.reads)
-			}
 		})
 	}
 }
 
-// Plan PR13 (HR13): under per-run tokens an enforced repository leaves the XR without HR13's
-// refusal, but a role table in which the implementer keeps pull_requests: write once pr is enforced
+// Plan PR13 (HR13): under per-run tokens an enforced repository passes HR13's refusal, but a
+// role table in which the implementer keeps pull_requests: write once pr is enforced
 // (D10 as written) leaves that enforcement advisory: the factory warns, naming the repository.
 func TestRoleTableWarning(t *testing.T) {
 	const repo = "Smana/ai-native-ref"
@@ -225,17 +192,14 @@ func TestRoleTableWarning(t *testing.T) {
 	}{
 		"per-run, HR12":       {true, minter.TableHR12, false},
 		"per-run, D10":        {true, minter.TableD10, true},
-		"the XR, D10":         {false, minter.TableD10, false},
+		"shared, D10":         {false, minter.TableD10, false},
 		"the factory's table": {true, minter.Roles, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := enforcingConfig(map[string]config.HardeningRepository{repo: {Mode: hardening.ModeAudit,
 				EnforceOutputs: []hardening.OutputType{hardening.PR}}})
 			cfg.Repositories = []config.Repository{{Name: repo}, {Name: "Smana/cloud-native-ref"}}
-			if tc.perRun {
-				cfg.Runs.Kind = runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents"}
-				cfg.RunTokens = config.RunTokens{Enabled: true, PerRun: true}
-			}
+			cfg.RunTokens.PerRun = tc.perRun
 			w := roleTableWarning(cfg, tc.table)
 			if (w != "") != tc.warn {
 				t.Fatalf("warning %q, want one: %v", w, tc.warn)
@@ -245,30 +209,4 @@ func TestRoleTableWarning(t *testing.T) {
 			}
 		})
 	}
-}
-
-type fakePolicies map[string]string
-
-func (f fakePolicies) DefaultBranchFile(_ context.Context, path string) (string, string, bool, error) {
-	text, ok := f[path]
-	return text, "", ok, nil
-}
-
-// countingPolicies serves both policy ports, the observer's and readiness's, counting every read.
-type countingPolicies struct {
-	fakePolicies
-	reads int
-}
-
-func (c *countingPolicies) DefaultBranchFile(ctx context.Context, path string) (string, string, bool, error) {
-	c.reads++
-	return c.fakePolicies.DefaultBranchFile(ctx, path)
-}
-
-// readinessFiles adapts countingPolicies to readiness's port, which also names the repository.
-type readinessFiles struct{ c *countingPolicies }
-
-func (r readinessFiles) DefaultBranchFile(ctx context.Context, _, path string) ([]byte, bool, error) {
-	text, _, ok, err := r.c.DefaultBranchFile(ctx, path)
-	return []byte(text), ok, err
 }

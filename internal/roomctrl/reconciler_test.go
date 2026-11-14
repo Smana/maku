@@ -358,7 +358,7 @@ func TestReconcileRunsTheSuspendTrigger(t *testing.T) {
 		{"a sealed room", store.RoomState{ID: roomID, LastSeq: 3, LastEventAt: last, Sealed: true}, nil, nil,
 			ctrl.Result{RequeueAfter: resync}},
 		{"a conflict", store.RoomState{ID: roomID, LastSeq: 3, LastEventAt: last},
-			apierrors.NewConflict(schema.GroupResource{Group: "cloud.ogenki.io", Resource: "agentruns"}, "xplane-run-7f3cq2xz", errors.New("moved")),
+			apierrors.NewConflict(schema.GroupResource{Group: "maku.ogenki.io", Resource: "agentruns"}, "run-7f3cq2xz", errors.New("moved")),
 			[]string{roomID + " 2026-09-29T11:00:00Z [7f3cq2xz]"}, ctrl.Result{RequeueAfter: conflictRetry}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

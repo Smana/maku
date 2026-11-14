@@ -15,7 +15,7 @@ var priced = strings.Replace(good, "  logsURL:",
 // Splitter design SL3, offline proof 1: the split parses and resolves its defaults; it is absent by
 // default; default's row reaches review but never docs-links or revert.
 func TestSplitFor(t *testing.T) {
-	cfg, err := Parse([]byte(priced + `loops:
+	cfg, err := Parse([]byte(priced + gatewayIdentity + `loops:
   default: {scope: scoper, split: {maxChildren: 2}}
   docs: {scope: scoper, split: {maxChildren: 4}}
   tests: {scope: scoper, split: {maxChildren: 3, familyUSD: 12, childTier: light, anyTier: true}}

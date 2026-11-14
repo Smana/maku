@@ -122,7 +122,7 @@ func TestStartRunRendersTheClaim(t *testing.T) {
 	if strings.Contains(s.Task.Text, "SECRET") {
 		t.Error("the brief quotes an unredacted secret")
 	}
-	runID := strings.TrimPrefix(claim.Metadata.Name, "xplane-run-")
+	runID := strings.TrimPrefix(claim.Metadata.Name, "run-")
 	rec := log.last()
 	var p struct {
 		Kind, RunID, Via, BaseRef, Role string
@@ -361,7 +361,7 @@ func TestARequestedRunHoldsTheRoom(t *testing.T) {
 	// The watch knows it, ended: the room is free again.
 	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(context.Background(), &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "xplane-run-bbbbbbbb", "namespace": "agents"},
+		"metadata": map[string]any{"name": "run-bbbbbbbb", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
 		"status":   map[string]any{"phase": "Failed"}}})
 	a.Runs = w

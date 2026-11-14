@@ -40,7 +40,7 @@ func alnum(t *testing.T, n int) string {
 func secrets(t *testing.T) map[string]string {
 	key, _ := rsa.GenerateKey(rand.Reader, 2048)
 	signed, err := jwt.NewWithClaims(jwt.SigningMethodRS256, jwt.RegisteredClaims{
-		Subject: "system:serviceaccount:agents:xplane-run-7f3cq2xz", Audience: jwt.ClaimStrings{"room-broker"},
+		Subject: "system:serviceaccount:agents:run-7f3cq2xz", Audience: jwt.ClaimStrings{"room-broker"},
 		ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour)),
 	}).SignedString(key)
 	if err != nil {
