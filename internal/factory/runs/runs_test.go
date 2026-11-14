@@ -44,9 +44,6 @@ func TestBuildIsTheSP1Claim(t *testing.T) {
 			t.Errorf("%s = %v, want %v", path, got, want)
 		}
 	}
-	if _, found, _ := unstructured.NestedFieldNoCopy(u.Object, "spec", "queueName"); found {
-		t.Error("no queue until phase 4 sets one")
-	}
 	r := spec()
 	r.Role, r.TaskText, r.TaskURL = "reviewer", "", "https://github.com/Smana/cloud-native-ref/pull/12"
 	u = Build(runwatch.DefaultKind, r)
@@ -83,12 +80,15 @@ func TestBuildWritesSuspendableOnlyWhenSet(t *testing.T) {
 	}
 }
 
-func TestBuildWritesQueueAndEgressOnlyWhenSet(t *testing.T) {
+// D16 (v4 step 8): Kueue is dropped, so no claim names a queue; egress is written only when set.
+func TestBuildWritesNoQueueAndEgressOnlyWhenSet(t *testing.T) {
 	s := spec()
-	s.Queue, s.EgressProfiles = QueueFactory, []string{"github", "docs"}
+	s.EgressProfiles = []string{"github", "docs"}
 	u := Build(runwatch.DefaultKind, s)
-	if q, _, _ := unstructured.NestedString(u.Object, "spec", "queueName"); q != "factory" {
-		t.Errorf("queueName = %q", q)
+	for _, k := range []runwatch.Kind{runwatch.DefaultKind, {Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "run-"}} {
+		if _, found, _ := unstructured.NestedFieldNoCopy(Build(k, s).Object, "spec", "queueName"); found {
+			t.Errorf("%s: the claim names a Kueue queue", k.Group)
+		}
 	}
 	if p, _, _ := unstructured.NestedStringSlice(u.Object, "spec", "egress", "profiles"); strings.Join(p, ",") != "github,docs" {
 		t.Errorf("egress.profiles = %v", p)

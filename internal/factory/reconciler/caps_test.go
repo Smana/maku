@@ -30,13 +30,10 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 )
 
-func TestQueuesAndReviewerTier(t *testing.T) {
+func TestReviewerTier(t *testing.T) {
 	g := pairRig(t)
 	var tk v1alpha1.Task
 	_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
-	if got := g.runs.specs[rid(0)].Queue; got != runs.QueueFactory {
-		t.Fatalf("factory runs are admitted by Kueue's factory queue: %q", got)
-	}
 	s := g.runs.specs[rid(1)]
 	if s.Model != g.r.Cfg.Current().Tiers["frontier"].Model || s.MaxTokens != tk.Spec.Budget.RunTokens {
 		t.Fatalf("the reviewer uses another tier's model and the task's run budget: %+v", s)

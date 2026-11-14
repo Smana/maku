@@ -40,8 +40,6 @@ const (
 	AnnPullRequest   = "agents.ogenki.io/pull-request"
 	AnnRevoked       = runwatch.RevokedAnnotation
 	PrincipalFactory = config.PrincipalFactory
-	QueueFactory     = "factory"
-	QueueInteractive = "interactive"
 	AnnTraceparent   = "agents.ogenki.io/traceparent" // W3C, set at CREATE; the composition hands it to the harness (R46)
 	LabelTier        = "agents.ogenki.io/tier"        // fixed per run, never re-routed within it (R47)
 	AnnTaskURL       = "agents.ogenki.io/task-url"    // set at CREATE; the harness footer's Agent-Task for a text task (SF)
@@ -120,10 +118,10 @@ func Scheme(s *runtime.Scheme, k runwatch.Kind) {
 // (R28), and is written as AnnTaskURL whatever the task field holds. StartSeq and Head are the
 // CREATE-only annotations' sources (R48).
 type Spec struct {
-	RunID, TaskID, Role, Repository, BaseRef, Branch, TaskText, TaskURL, Principal, DataClass, Model, RoomRef, Queue, Traceparent, Tier string
-	SourceURL, Head, RequestHash, ChargedTo, Cohort, Profile                                                                            string
-	MaxTokens, MaxMinutes, StartSeq, MaxMicroUSD                                                                                        int64
-	EgressProfiles                                                                                                                      []string
+	RunID, TaskID, Role, Repository, BaseRef, Branch, TaskText, TaskURL, Principal, DataClass, Model, RoomRef, Traceparent, Tier string
+	SourceURL, Head, RequestHash, ChargedTo, Cohort, Profile                                                                     string
+	MaxTokens, MaxMinutes, StartSeq, MaxMicroUSD                                                                                 int64
+	EgressProfiles                                                                                                               []string
 	// Suspendable is spec.suspendable (v2 suspend), written only when true: it is immutable.
 	Suspendable bool
 	// MeteredBy is spec.meteredBy, written only when set: MeteredByGateway when the factory prices
@@ -249,9 +247,6 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.RoomRef != "" {
 		spec["roomRef"] = s.RoomRef
-	}
-	if s.Queue != "" {
-		spec["queueName"] = s.Queue
 	}
 	if s.Suspendable {
 		spec["suspendable"] = true

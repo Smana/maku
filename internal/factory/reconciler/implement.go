@@ -168,7 +168,7 @@ func sourceURL(t *v1alpha1.Task) string {
 func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := runs.Spec{TaskID: t.Name, Role: "implementer", Repository: t.Spec.Repository, BaseRef: "main",
 		Branch: "agent/" + t.Name, TaskText: text, Principal: runs.PrincipalFactory, DataClass: t.Spec.DataClass,
-		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, SourceURL: sourceURL(t), Queue: runs.QueueFactory,
+		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, SourceURL: sourceURL(t),
 		MaxTokens: t.Spec.Budget.RunTokens, MaxMinutes: t.Spec.Budget.RunMinutes, Traceparent: traceparent(t), Tier: t.Spec.Budget.Tier,
 		CoordinationArtifacts: t.Spec.CoordinationArtifacts}
 	r.withChecks(cfg, &s, t)
@@ -538,7 +538,7 @@ func absorb(t *v1alpha1.Task, all []runs.Run) (runs.Run, bool) {
 func pending(phase string) bool { return phase == "" || phase == "Pending" }
 
 // boundPending ends a run that never started (P): nothing else bounds Pending —
-// activeDeadlineSeconds counts from the pod's start, and Kueue queues unadmitted work forever.
+// activeDeadlineSeconds counts from the pod's start, and the runs quota holds a run back forever.
 // A run still Pending past caps.maxPendingMinutes whose record never saw it start (observe) and
 // whose claim carries no usage never ran, so deleting it loses no usage; the task escalates as
 // run_unschedulable, and a maintainer's /factory retry starts a fresh run.
