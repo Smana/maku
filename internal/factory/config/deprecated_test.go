@@ -19,7 +19,7 @@ func TestDeprecations(t *testing.T) {
 		t.Errorf("every policy field: %q", got)
 	}
 	r := &Repository{Merge: Merge{AutoMergesPerDay: 2},
-		Bindings: []Binding{{Name: "docs", Mode: "off"}, {Name: "revert", Mode: ModeLive}}}
+		Bindings: []Binding{{Name: "docs", Mode: "off"}, {Name: "revert", Mode: ModeLive}, {Name: "tests", Mode: ModeDisabled}}}
 	if got := RepositoryDeprecations(r); !slices.Equal(got, []string{"merge.autoMergesPerDay", "mergePolicies[docs].mode: off"}) {
 		t.Errorf("repository: %q", got)
 	}

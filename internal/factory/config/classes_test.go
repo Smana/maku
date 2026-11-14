@@ -320,3 +320,39 @@ func TestMergeFluxSource(t *testing.T) {
 		t.Fatalf("got %v, want %q", err, want)
 	}
 }
+
+// MR4: a policy's evidence level sets the clean decisions its promotion needs.
+func TestEvidenceLevels(t *testing.T) {
+	if got := (Class{Evidence: EvidenceLow, DiffShape: "links-only"}).MinClean("x"); got != MinCleanLow {
+		t.Fatalf("low = %d", got)
+	}
+	if got := (Class{}).MinClean("x"); got != DefaultMinPromotionEvidence {
+		t.Fatalf("default = %d", got)
+	}
+	if got := (Class{Evidence: EvidenceStandard}).MinClean("x"); got != 20 {
+		t.Fatalf("standard = %d", got)
+	}
+	if got := (Class{Evidence: EvidenceLow}).MinClean("docs-links"); got != 5 {
+		t.Fatalf("built-in shape = %d", got)
+	}
+}
+
+// MR4: low evidence is for a policy whose diff a shape or an oracle checks mechanically.
+func TestEvidenceLowNeedsShapeOrOracle(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cl   Class
+		want string
+	}{
+		{"docs", Class{Evidence: EvidenceLow, AllowedFiles: []string{`^.+\.md$`}}, "evidence: low needs a diffShape or an oracle"},
+		{"docs", Class{Evidence: "high"}, `evidence "high" is low or standard`},
+		{"docs-links", Class{Evidence: EvidenceLow}, ""},
+		{"docs", Class{Evidence: EvidenceStandard, AllowedFiles: []string{`^.+\.md$`}}, ""},
+	} {
+		var got []string
+		validateClass(tc.name, tc.cl, func(f string, a ...any) { got = append(got, fmt.Sprintf(f, a...)) })
+		if tc.want == "" && len(got) > 0 || tc.want != "" && (len(got) != 1 || !strings.Contains(got[0], tc.want)) {
+			t.Errorf("%s %+v: %v, want %q", tc.name, tc.cl, got, tc.want)
+		}
+	}
+}

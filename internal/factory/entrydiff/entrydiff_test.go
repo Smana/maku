@@ -153,3 +153,16 @@ func TestAdded(t *testing.T) {
 		}
 	}
 }
+
+// MR3: the added entry must match a binding's narrowing too.
+func TestAnEntryOutsideTheNarrowingIsRefused(t *testing.T) {
+	narrowed := kb
+	narrowed.NarrowedFiles = []string{`^incidents/other-.+\.md$`}
+	if ok, why := Added(narrowed, runlore()); ok {
+		t.Fatalf("an entry outside the narrowing was accepted: %q", why)
+	}
+	narrowed.NarrowedFiles = []string{`^incidents/kube-.+\.md$`}
+	if ok, why := Added(narrowed, runlore()); !ok {
+		t.Fatalf("an entry inside the narrowing was refused: %q", why)
+	}
+}

@@ -4,6 +4,7 @@ package resources
 
 import (
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -96,8 +97,9 @@ func TestBindingsResolve(t *testing.T) {
 description: Retargets dead external links a detector found, and nothing else.
 shadow: true
 allowedFiles: ['^(docs|website/content)/.+\.md$']
-protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/']
+protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/', '^\.github/', '^\.policy\.yml$', '^CODEOWNERS$']
 modifyOnly: true
+maxPatchFiles: 10
 maxModifiedLines: 20
 diffShape: links-only
 holdoutChecks: ["External links 🔗"]
@@ -169,7 +171,7 @@ func TestBindingIsolation(t *testing.T) {
 	}
 
 	// The last resolved class is put back while the factory runs (D5).
-	last := config.Class{Shadow: true, Description: "generation 3"}
+	last := config.Class{Shadow: true, Description: "generation 3", AllowedFiles: []string{`^docs/.+\.md$`}}
 	r, err = Assemble(file(t), objs, Options{LastResolved: map[BindingKey]ResolvedClass{
 		{"ai-native-ref", "dead-links"}: {Class: last, PolicyGeneration: 3}}})
 	if err != nil {
@@ -320,11 +322,13 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 		{name: "testFirst once contractCheck is gone", last: config.Class{Checks: true, TestFirst: true}},
 		{name: "live without allowedFiles once policyBot is off", last: config.Class{Live: true, HoldoutChecks: []string{"validate"}},
 			merge: func(m map[string]any) { m["policyBot"] = false; m["gateStatus"] = true }},
-		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2},
+		// MR6: a class put back is bounded like one resolved now.
+		{name: "unbounded in shadow", last: config.Class{Shadow: true}},
+		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2, AllowedFiles: []string{`^docs/.+\.md$`}},
 			file: func(f string) string {
 				return strings.Replace(f, "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
 			}},
-		{name: "an unset cap inherits the guardrail", last: config.Class{Shadow: true}, served: true,
+		{name: "an unset cap inherits the guardrail", last: config.Class{Shadow: true, AllowedFiles: []string{`^docs/.+\.md$`}}, served: true,
 			file: func(f string) string {
 				return strings.Replace(f, "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
 			},
@@ -333,7 +337,7 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 					t.Fatalf("maxPerDay %d, want the guardrail's 1", c.MaxPerDay)
 				}
 			}},
-		{name: "a class that still holds", last: config.Class{Shadow: true}, served: true},
+		{name: "a class that still holds", last: config.Class{Shadow: true, AllowedFiles: []string{`^docs/.+\.md$`}}, served: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			f := string(file(t))
@@ -371,7 +375,7 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 func TestRefusedPolicyMessageWithAPutBack(t *testing.T) {
 	bad := classPolicy(t, "docs", 2, "live: true\n")
 	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], bad, boundRepo(t, "maku", "Smana/maku", 1, anrBindings)),
-		Options{LastResolved: map[BindingKey]ResolvedClass{{"maku", "docs"}: {Class: config.Class{Shadow: true}, PolicyGeneration: 1}}})
+		Options{LastResolved: map[BindingKey]ResolvedClass{{"maku", "docs"}: {Class: config.Class{Shadow: true, AllowedFiles: []string{`^docs/.+\.md$`}}, PolicyGeneration: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -429,5 +433,31 @@ func TestFloorReadsTemplatesAsParseValidates(t *testing.T) {
 	}
 	if refused(r, KindRepository, "maku") != "" {
 		t.Fatalf("the consumer stays served: %+v", r.Refused)
+	}
+}
+
+// Review focus 1, MR7: a policy above a default guardrail, with no guardrail set, does not
+// vanish silently: its binding is GuardrailMismatch and the message names the cap and the default.
+func TestPolicyAboveDefaultGuardrailIsNamed(t *testing.T) {
+	big := classPolicy(t, "docs", 2, "allowedFiles: ['^.+\\.md$']\nmaxModifiedLines: 400\n")
+	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], big, boundRepo(t, "maku", "Smana/maku", 1, `
+- {name: docs-links, mode: shadow, holdoutChecks: [validate]}
+- {name: revert, mode: shadow, holdoutChecks: [validate]}
+- {name: docs, mode: shadow}
+`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused(r, KindMergePolicy, "docs") != "" {
+		t.Fatalf("the policy alone was refused: %+v", r.Refused)
+	}
+	b := binding(r, "maku", "docs")
+	if b == nil || b.Reason != config.ReasonGuardrailMismatch || !strings.Contains(b.Message, "maxModifiedLines 400") || !strings.Contains(b.Message, "300") {
+		t.Fatalf("docs: %+v", b)
+	}
+	// The default caps and paths reach every other bound class.
+	c := r.Config.RepositoryFor("Smana/maku").Classes["revert"]
+	if c.MaxModifiedLines != 300 || c.MaxPatchFiles != 10 || c.MaxPerDay != 5 || !slices.Contains(c.ProtectedFiles, `^CODEOWNERS$`) {
+		t.Fatalf("revert under the defaults: %+v", c)
 	}
 }

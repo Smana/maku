@@ -436,7 +436,8 @@ spec:
               mergeGuardrails:
                 description: |-
                   MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
-                  paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 is no guardrail.
+                  paths and mandatory checks and choose lower caps, never the reverse. A cap of 0 takes its default
+                  (MR7, WithDefaults).
                 properties:
                   mandatoryChecks:
                     items:

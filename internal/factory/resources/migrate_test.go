@@ -133,7 +133,7 @@ func equalRepos(t *testing.T, a, b []config.Repository) bool {
 	}
 	for i := range a {
 		if a[i].Name != b[i].Name || !equalJSON(t, a[i].Maintainers, b[i].Maintainers) ||
-			a[i].TriggerLabel != b[i].TriggerLabel || !equalJSON(t, a[i].Classes, b[i].Classes) ||
+			a[i].TriggerLabel != b[i].TriggerLabel || !equalJSON(t, classesUnderDefaults(a[i].Classes), classesUnderDefaults(b[i].Classes)) ||
 			!equalJSON(t, a[i].Merge, b[i].Merge) || !equalJSON(t, a[i].Schedules, b[i].Schedules) ||
 			!equalJSON(t, a[i].Checks, b[i].Checks) || a[i].ClassAuthority != b[i].ClassAuthority {
 			return false
@@ -211,4 +211,13 @@ func TestNamePartIsADNSLabel(t *testing.T) {
 			t.Errorf("namePart(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// classesUnderDefaults is each class as the default guardrails leave it, as Equal compares them.
+func classesUnderDefaults(cs map[string]config.Class) map[string]config.Class {
+	out := make(map[string]config.Class, len(cs))
+	for n, c := range cs {
+		out[n] = underDefaults(n, c)
+	}
+	return out
 }

@@ -81,11 +81,15 @@ mergeGuardrails:
   maxPatchFiles: 20
   maxModifiedLines: 400
   maxPerDay: 5
-  # minPromotionEvidence 20 and maxGrantLifetime 90 days are the code's defaults
+  # maxGrantLifetime 90 days is the code's default; a policy's evidence sets its promotion minimum
 ```
 
 Guardrails cap every bound class, a file's or a `Repository`'s (`config.Resolve`), never a class the
-config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`). For
+config file declares under `classes`. A binding over one is refused alone (`GuardrailMismatch`).
+Unset, they are not empty (`MergeGuardrails.WithDefaults`): `protectedFiles` starts with
+`^\.github/`, `^\.policy\.yml$` and `^CODEOWNERS$`, then lists the platform's, and an unset
+`maxPatchFiles`, `maxModifiedLines` or `maxPerDay` is 10, 300 or 5. A repository file is held to the
+defaults when its repository's central classes come from `Repository` bindings. For
 a repository whose classes are still the config file's, guardrails set before a cutover make the
 dual evaluation's repository decision stricter than the central one and show up as disagreements:
 land them in the cutover's own pull request.
@@ -149,8 +153,8 @@ already decides on. Each binding resolves on its own: one that does not drops it
 file.
 
 1. The binding names a policy the factory serves (`MissingRef` otherwise).
-2. The policy's meaning, the binding's mode, each fill-once parameter from where it is set, the
-   additive lists unioned and the lower cap ([the combination rules](#policies-and-bindings)).
+2. The policy's meaning, the binding's mode, each fill-once parameter from where it is set, a
+   binding's `allowedFiles` narrowing the policy's, the additive lists unioned and the lower cap ([the combination rules](#policies-and-bindings)).
 3. The guardrails are applied: their `protectedFiles` and `mandatoryChecks` are appended
    (`mandatoryChecks` become holdout checks, so GitHub Actions must report them); a cap the class
    leaves unset inherits the guardrail's; a cap above it refuses the binding (`GuardrailMismatch`).
@@ -349,6 +353,7 @@ rules](#policies-and-bindings) allow. An empty value is refused rather than read
 | `oracle` | **expert** | `{probe: dead-links, maxFindings: 1..16}`, the binding's `oracleWorkflow` | `oracle_finding_open`, `oracle_unrequested` | Needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly`, `allowedFiles`, and `maxModifiedLines` ≥ 2 × `maxFindings` when set. See [oracle classes](factory.md#oracle-classes) |
 | `companionFiles` | **expert** | list of regexp | `class_mismatch` | Anchored like `allowedFiles`; needs `added-entry` |
 | `requiredLabel` | **expert** | string, 1–50 characters | `label_missing`, `label_not_adopted` | Needs `author.adopt`; set by an adopted login |
+| `evidence` | core | `low` \| `standard` (default) | none: it sets the clean decisions a promotion needs, 5 or 20 | Policy only. `low` needs a `diffShape` (or the built-in shape of `docs-links` and `revert`) or an `oracle` |
 
 | Level | Means |
 |---|---|
@@ -381,10 +386,10 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | Key | Type | Default | Constraint |
 |---|---|---|---|
 | `harnessProfiles.<name>` | `{template, tier, checks, testFirst, loop, description}` | none | Name like a class name. `template`: `solo`, `pair`, `trio`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `testFirst` needs `checks`; `none` takes no other key; `description` ≤ 120 bytes |
-| `mergeGuardrails.protectedFiles` | list of regexp | none | Appended to every class's `protectedFiles` |
+| `mergeGuardrails.protectedFiles` | list of regexp | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, always first | Appended to every bound class's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every class's `holdoutChecks` |
-| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0: no guardrail | A class above it is refused; a class without one inherits it |
-| `mergeGuardrails.minPromotionEvidence` | int | 0, read as 20 | 0 or ≥ 20; fewer needs an operator's exception per request |
+| `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as 10, 300 and 5 | A bound class above it is refused (`GuardrailMismatch`); one without it inherits it |
+| `mergeGuardrails.minPromotionEvidence` | int | 0 | Ignored: a policy's `evidence` sets its minimum. 0 or ≥ 20 is still accepted |
 | `mergeGuardrails.maxGrantLifetime` | duration | 0, read as `2160h` (90 days) | 0 to `8760h`. Every lookup expires a grant older than this since its creation or last renewal |
 | `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](#rollout-stages) |
 | `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | Deprecated: read as the highest stage they cover; not set with `stage` |
@@ -418,7 +423,6 @@ mergeGuardrails:
   maxPatchFiles: 20
   maxModifiedLines: 400
   maxPerDay: 5
-  minPromotionEvidence: 20
   maxGrantLifetime: 720h
 policyManagement:
   read: true
@@ -778,7 +782,7 @@ A class is eligible when all three hold (`evidence.Evaluate`):
 
 | Blocker | Clears when |
 |---|---|
-| `below_minimum` | At least `mergeGuardrails.minPromotionEvidence` (20) shadow decisions a maintainer merged unchanged at the head the decision judged |
+| `below_minimum` | At least the policy's minimum shadow decisions a maintainer merged unchanged at the head the decision judged: 5 at `evidence: low`, 20 at `standard` (the default) |
 | `bad_outcome` | No mature, conclusive merge of the class was reverted (other than a drill), followed up or regressed |
 | `no_drill` | A `factory/drill` revert of one of the class's pull requests merged |
 
@@ -1079,8 +1083,9 @@ server refuses. Every field has one combination rule:
 | Kind | Fields | On the policy | On the binding | Resolved as |
 |---|---|---|---|---|
 | Meaning | `description`, `author.adopt`, `harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`, `diffShape`, `modifyOnly`, `oracle.probe`, `oracle.maxFindings`, `releaseAgeCheck`, `monitor` | yes | refused | the policy's |
-| Mode | `mode`: `live`, `shadow`, `"off"` | refused | required | the binding's |
-| Fill once | `allowedFiles`, `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
+| Mode | `mode`: `live`, `shadow`, `disabled` (`"off"`, its old name, reads as `disabled`) | refused | required | the binding's |
+| Narrowing | `allowedFiles` | optional | optional; required when the policy `requires` it | the one that is set; on both, a path must match the policy's list and the binding's (`narrowedFiles` on the resolved class) |
+| Fill once | `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
 | Additive | `holdoutChecks`, `protectedFiles`, `requiresApproval` | optional | optional; `holdoutChecks` required when the policy `requires` it | the union; a required `holdoutChecks` needs a check the policy does not already name |
 | Caps | `maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | optional | optional, at most the policy's | the lower; above the policy is `OverPolicy` |
 | Repository fact | the Flux source a monitor watches | — | — | `Repository.spec.merge.fluxSource` |
@@ -1108,9 +1113,10 @@ it serves none, and a `class:` label naming it falls back to `review`. A reposit
 |---|---|---|---|
 | `MissingRef` | a binding | No served policy has its name, or the policy was refused with none served before | Apply or fix the policy |
 | `MissingParameter` | a binding | A `requires` parameter unset, or `monitor.flux` without `merge.fluxSource` | Set it |
-| `ParameterTwice` | a binding | A fill-once parameter set on the policy and the binding | Remove one |
+| `ParameterTwice` | a binding | A fill-once parameter (`companionFiles`, `requiredLabel`, `oracleWorkflow`) set on the policy and the binding | Remove one |
 | `OverPolicy` | a binding | A cap above the policy's | Lower it |
 | `GuardrailMismatch` | a binding | A cap above `mergeGuardrails` | Lower it |
+| `Unbounded` | a binding | Bound `live` or `shadow`, the class resolved with it has neither `allowedFiles` nor a `diffShape` (`docs-links` and `revert` have theirs built in), with or without policy-bot | Set `allowedFiles` on the policy or the binding, or a `diffShape` |
 | `AmbiguousAdoption` | a binding | Two adopted bindings of one shape share a login and an overlapping branch prefix; the later in the list is refused and keeps no last class | Narrow or unbind one |
 | `Invalid` | a binding, a policy | The resolved class, or the policy alone, fails the class rules | The message names the rule |
 | `DefinedTwice` | a `Repository` | The config file also defines the repository | Remove it from one of the two |

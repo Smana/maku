@@ -35,6 +35,11 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
+	// NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+	// path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	NarrowedFiles []string `json:"narrowedFiles,omitempty"`
 	// ProtectedFiles: no changed path matches one of these.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -59,6 +64,10 @@ type Class struct {
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
 	// MaxPerDay caps this class's merges a day, under merge.autoMergesPerDay; 0 is no cap of its own.
 	MaxPerDay int `json:"maxPerDay,omitempty"`
+	// Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
+	// whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
+	// +kubebuilder:validation:Enum=low;standard
+	Evidence string `json:"evidence,omitempty"`
 	// Oracle makes the class oracle-backed (MC4–MC6): its tasks are a detector's findings, and its
 	// gate holds only when the head no longer holds them and changes nothing else.
 	Oracle *Oracle `json:"oracle,omitempty"`
@@ -188,6 +197,24 @@ type Oracle struct {
 	MaxFindings int    `json:"maxFindings"`
 }
 
+// The evidence levels of a class (MR4) and the clean decisions low needs; standard needs
+// DefaultMinPromotionEvidence.
+const (
+	EvidenceLow      = "low"
+	EvidenceStandard = "standard"
+	MinCleanLow      = 5
+)
+
+// MinClean is the clean shadow decisions the class's promotion needs without an exception: 5 at
+// evidence low, else 20. Low counts only where a shape (declared or built in) or an oracle checks
+// the diff; validateClass refuses it otherwise.
+func (c Class) MinClean(name string) int {
+	if c.Evidence == EvidenceLow && (c.DiffShape != "" || BuiltInShape(name) != "" || c.Oracle != nil) {
+		return MinCleanLow
+	}
+	return DefaultMinPromotionEvidence
+}
+
 // MaxFindings bounds oracle.maxFindings: the Task CRD's spec.findings holds at most 16.
 const MaxFindings = 16
 
@@ -218,6 +245,12 @@ func (c Class) ReadsDiff(name string) bool {
 		c.MaxPatchFiles > 0 || c.MaxModifiedLines > 0 || c.DiffShape != "" || c.Oracle != nil
 }
 
+// Bounded reports whether the class says which diffs it may merge (MR6): allowedFiles, a declared
+// diff shape, or the shape built in under its name.
+func (c Class) Bounded(name string) bool {
+	return len(c.AllowedFiles) > 0 || c.DiffShape != "" || BuiltInShape(name) != ""
+}
+
 // ValidateClass reports one class's problems, for a class read from outside this config.
 func ValidateClass(name string, cl Class, bad func(string, ...any)) { validateClass(name, cl, bad) }
 
@@ -235,7 +268,13 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	if cl.TestFirst && !cl.Checks {
 		bad("class %s: testFirst needs checks: true, the red check runs the toolchain (R17)", name)
 	}
-	if name == "review" && (cl.Live || cl.Shadow || cl.ReadsDiff(name) || len(cl.HoldoutChecks) > 0 || cl.MaxPerDay > 0 ||
+	switch {
+	case cl.Evidence != "" && cl.Evidence != EvidenceLow && cl.Evidence != EvidenceStandard:
+		bad("class %s: evidence %q is low or standard", name, cl.Evidence)
+	case cl.Evidence == EvidenceLow && cl.DiffShape == "" && BuiltInShape(name) == "" && cl.Oracle == nil:
+		bad("class %s: evidence: low needs a diffShape or an oracle: without one, 5 decisions prove too little (MR4)", name)
+	}
+	if name == "review" && (cl.Live || cl.Shadow || cl.ReadsDiff(name) || len(cl.HoldoutChecks) > 0 || cl.MaxPerDay > 0 || cl.Evidence != "" ||
 		cl.Monitor != nil || cl.Author != nil || cl.ReleaseAgeCheck != "" || len(cl.RequiresApproval) > 0) {
 		bad("class review: review takes checks and testFirst only (R17)")
 	}
@@ -264,7 +303,7 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	for _, f := range []struct {
 		key  string
 		pats []string
-	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}} {
+	}{{"allowedFiles", cl.AllowedFiles}, {"narrowedFiles", cl.NarrowedFiles}, {"companionFiles", cl.CompanionFiles}} {
 		for _, p := range f.pats {
 			// The match is unanchored, as policy-bot's is, so an allow list must say where a path
 			// begins and ends: "docs/.+" would allow "evil/docs/x".
@@ -276,7 +315,7 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	for _, f := range []struct {
 		key  string
 		pats []string
-	}{{"allowedFiles", cl.AllowedFiles}, {"companionFiles", cl.CompanionFiles}, {"protectedFiles", cl.ProtectedFiles}} {
+	}{{"allowedFiles", cl.AllowedFiles}, {"narrowedFiles", cl.NarrowedFiles}, {"companionFiles", cl.CompanionFiles}, {"protectedFiles", cl.ProtectedFiles}} {
 		for _, p := range f.pats {
 			if _, err := regexp.Compile(p); err != nil || p == "" {
 				bad("class %s: %s %q is not a regular expression", name, f.key, p)

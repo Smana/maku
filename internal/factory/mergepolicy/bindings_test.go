@@ -111,7 +111,7 @@ func TestValidateResolvesTheBindings(t *testing.T) {
 	case !rep.Classes["docs-links"].Class.Live || rep.Classes["docs-links"].Class.Description != "Fixes a broken link in the docs.":
 		t.Fatalf("%+v", rep.Classes["docs-links"])
 	}
-	if want, _ := config.Resolve("alert-rules", c.Policies["alert-rules"].Spec, f.MergePolicies[2], policyContext(c), rc.Merge); !equalClass(a.Class, want) {
+	if want, _ := config.Resolve("alert-rules", c.Policies["alert-rules"].Spec, f.MergePolicies[2], policyContext(c, rc), rc.Merge); !equalClass(a.Class, want) {
 		t.Fatalf("not config.Resolve's class:\n got %+v\nwant %+v", a.Class, want)
 	}
 }

@@ -47,11 +47,16 @@ func Paths(stats []forge.FileStat) []string {
 }
 
 // AllowedFiles matches whole paths: policy-bot's match is unanchored, so the pattern is anchored
-// here. A class's companionFiles are allowed too (K10). "" when every path is allowed.
+// here. A class's companionFiles are allowed too (K10). With NarrowedFiles, a binding's narrowing
+// (MR3), a path must match those as well. "" when every path is allowed.
 func AllowedFiles(cl config.Class, stats []forge.FileStat) string {
 	res := Compile(append(slices.Clone(cl.AllowedFiles), cl.CompanionFiles...), true)
+	var narrowed []*regexp.Regexp
+	if len(cl.NarrowedFiles) > 0 {
+		narrowed = Compile(append(slices.Clone(cl.NarrowedFiles), cl.CompanionFiles...), true)
+	}
 	for _, p := range Paths(stats) {
-		if !MatchesAny(res, p) {
+		if !MatchesAny(res, p) || len(cl.NarrowedFiles) > 0 && !MatchesAny(narrowed, p) {
 			return "file_not_allowed"
 		}
 	}

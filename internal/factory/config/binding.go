@@ -9,13 +9,17 @@ import (
 	"strings"
 )
 
-// The modes a binding puts its class in (B4): live merges, shadow is decided and never armed, off
-// is neither (Q7).
+// The modes a binding puts its class in (B4): live merges, shadow is decided and never armed,
+// disabled is neither (Q7, MR9). off is read as disabled until the release that removes it.
 const (
-	ModeLive   = "live"
-	ModeShadow = "shadow"
-	ModeOff    = "off"
+	ModeLive     = "live"
+	ModeShadow   = "shadow"
+	ModeDisabled = "disabled"
+	ModeOff      = "off"
 )
+
+// Disabled reports whether mode evaluates nothing: disabled, or off, its old name.
+func Disabled(mode string) bool { return mode == ModeDisabled || mode == ModeOff }
 
 // The reasons a binding does not resolve (B9). MissingRef, the reason for a binding to an absent
 // policy, is the resources layer's: Resolve is handed a policy.
@@ -25,7 +29,9 @@ const (
 	ReasonOverPolicy        = "OverPolicy"
 	ReasonGuardrailMismatch = "GuardrailMismatch"
 	ReasonAmbiguousAdoption = "AmbiguousAdoption"
-	ReasonInvalid           = "Invalid"
+	// ReasonUnbounded is an evaluated class with neither allowedFiles nor a diff shape (MR6).
+	ReasonUnbounded = "Unbounded"
+	ReasonInvalid   = "Invalid"
 )
 
 // Requirable are the fields a policy's requires may name (B4, plan PR3): the four fill-once
@@ -45,10 +51,10 @@ type Binding struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=live;shadow;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled;off
 	Mode string `json:"mode"`
-	// AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
-	// the policy, never both.
+	// CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on the policy,
+	// never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
@@ -159,6 +165,9 @@ func policyShapeProblems(name string, p PolicySpec) []string {
 	if p.Live || p.Shadow {
 		bad("mode is the binding's: live and shadow are refused on a MergePolicy (B4)")
 	}
+	if len(p.NarrowedFiles) > 0 {
+		bad("narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy")
+	}
 	if p.Oracle != nil && p.Oracle.Workflow != "" {
 		bad("oracle.workflow is the repository's: set oracleWorkflow on the binding")
 	}
@@ -193,12 +202,12 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	switch {
 	case b.Name != name:
 		return refuse(ReasonInvalid, "class %s: the binding names MergePolicy %q", name, b.Name)
-	case b.Mode != ModeLive && b.Mode != ModeShadow && b.Mode != ModeOff:
-		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or off", name, b.Mode)
-	case name == "review" && b.Mode != ModeOff:
-		return refuse(ReasonInvalid, "class review: review takes only mode off")
+	case b.Mode != ModeLive && b.Mode != ModeShadow && !Disabled(b.Mode):
+		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or disabled", name, b.Mode)
+	case name == "review" && !Disabled(b.Mode):
+		return refuse(ReasonInvalid, "class review: review takes only mode disabled")
 	case name == "review" && !reflect.DeepEqual(b, Binding{Name: b.Name, Mode: b.Mode}):
-		return refuse(ReasonInvalid, "class review: review is bound with mode off and no parameter")
+		return refuse(ReasonInvalid, "class review: review is bound with mode disabled and no parameter")
 	}
 	if problems := policyShapeProblems(name, p); len(problems) > 0 {
 		return Class{}, ReasonInvalid, problems
@@ -206,13 +215,19 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	cl := *p.Class.DeepCopy()
 	cl.Live, cl.Shadow = b.Mode == ModeLive, b.Mode == ModeShadow
 
+	// MR3: a binding's allowedFiles over the policy's narrows it; both must admit a path.
+	if len(p.AllowedFiles) > 0 && len(b.AllowedFiles) > 0 {
+		cl.NarrowedFiles = slices.Clone(b.AllowedFiles)
+	}
+
 	// Fill once: in exactly one place, and in the binding when the policy requires it.
+	// allowedFiles is filled from the binding only where the policy has none.
 	for _, f := range []struct {
 		key          string
 		policy, bind bool
 		fill         func()
 	}{
-		{"allowedFiles", len(p.AllowedFiles) > 0, len(b.AllowedFiles) > 0, func() { cl.AllowedFiles = slices.Clone(b.AllowedFiles) }},
+		{"allowedFiles", len(p.AllowedFiles) > 0, len(b.AllowedFiles) > 0 && len(p.AllowedFiles) == 0, func() { cl.AllowedFiles = slices.Clone(b.AllowedFiles) }},
 		{"companionFiles", len(p.CompanionFiles) > 0, len(b.CompanionFiles) > 0, func() { cl.CompanionFiles = slices.Clone(b.CompanionFiles) }},
 		{"requiredLabel", p.RequiredLabel != "", b.RequiredLabel != "", func() { cl.RequiredLabel = b.RequiredLabel }},
 		{"oracleWorkflow", false, b.OracleWorkflow != "", func() {
@@ -305,16 +320,18 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 		}
 	}
 
+	// MR6: a class the gate evaluates, live or shadow, is bounded by paths or a shape, with or
+	// without policy-bot: nothing else keeps a gate path from merging.
+	if (cl.Live || cl.Shadow) && !cl.Bounded(name) {
+		return refuse(ReasonUnbounded, "class %s: an evaluated policy needs allowedFiles or a diffShape", name)
+	}
+
 	var problems []string
 	bad := func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) }
 	validateClass(name, cl, bad)
 	floor := &Config{HarnessProfiles: ctx.HarnessProfiles, Templates: ctx.Templates, Loops: ctx.Loops}
 	for _, v := range floor.VariantProblems(name, cl) {
 		bad("class %s: %s", name, v)
-	}
-	// validateRepository's rule on a live class, here so it drops the binding, not the repository.
-	if !m.UsesPolicyBot() && cl.Live && len(cl.AllowedFiles) == 0 {
-		bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
 	}
 	if m.ContractCheck == "" {
 		if cl.TestFirst {

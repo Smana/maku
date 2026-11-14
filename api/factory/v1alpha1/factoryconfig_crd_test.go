@@ -35,6 +35,7 @@ const (
 	msgModeOnBinding = "mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
 	msgWorkflow      = "oracle.workflow is the repository's: set oracleWorkflow on the binding"
 	msgFluxSource    = "the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
+	msgNarrowed      = "narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy"
 	msgReviewBinding = "review is bound with mode off and no parameter"
 	msgEntryClasses  = "bind docs-links and revert when any policy is bound (OD-8)"
 	msgFileBindings  = "classAuthority repository: the repository's file holds the bindings (MP15)"
@@ -52,7 +53,7 @@ func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 			msgReviewBinding, msgEntryClasses, msgFileBindings, msgPrivateCode, "privateCode:"},
 		"mergepolicies": {"kind: MergePolicy", "scope: Namespaced", "subresources:", "name: Consumers", "name: Current", "name: Live", "name: Accepted",
 			"servedGeneration:", "requires:",
-			msgPolicyName, msgReviewPolicy, msgModeOnBinding, msgWorkflow, msgFluxSource},
+			msgPolicyName, msgReviewPolicy, msgModeOnBinding, msgWorkflow, msgFluxSource, msgNarrowed, "evidence:"},
 	} {
 		raw, crd := readCRD(t, plural)
 		msgs := messages(crd.Spec.Versions[0].Schema.OpenAPIV3Schema, map[string]bool{}) // YAML folds a long one

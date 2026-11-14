@@ -54,9 +54,9 @@ func TestResolve(t *testing.T) {
 		"live":            {bind: func(b *Binding) { b.Mode = ModeLive }, check: func(t *testing.T, c Class) { want(t, c.Live && !c.Shadow, "live") }},
 		"shadow":          {check: func(t *testing.T, c Class) { want(t, c.Shadow && !c.Live, "shadow") }},
 		"off":             {bind: func(b *Binding) { b.Mode = ModeOff }, check: func(t *testing.T, c Class) { want(t, !c.Live && !c.Shadow, "off is neither (Q7)") }},
-		"an unknown mode": {bind: func(b *Binding) { b.Mode = "on" }, reason: ReasonInvalid, msg: `mode "on" is live, shadow or off`},
+		"an unknown mode": {bind: func(b *Binding) { b.Mode = "on" }, reason: ReasonInvalid, msg: `mode "on" is live, shadow or disabled`},
 		"review in shadow": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeShadow} },
-			reason: ReasonInvalid, msg: "review takes only mode off"},
+			reason: ReasonInvalid, msg: "review takes only mode disabled"},
 		"review off": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "solo"}} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} },
 			check: func(t *testing.T, c Class) {
 				want(t, c.Harness == "solo" && !c.Live && !c.Shadow, "review off keeps its harness")
@@ -83,11 +83,14 @@ func TestResolve(t *testing.T) {
 			bind: func(b *Binding) { b.AllowedFiles = nil }, check: func(t *testing.T, c Class) {
 				want(t, slices.Equal(c.AllowedFiles, []string{"^docs/.+$"}), "allowedFiles from the policy")
 			}},
-		"allowedFiles twice": {policy: func(p *PolicySpec) {
+		// MR3: set on both, the binding's allowedFiles narrows the policy's instead of refusing.
+		"allowedFiles twice narrows": {policy: func(p *PolicySpec) {
 			p.Requires = []string{"holdoutChecks", "oracleWorkflow"}
 			p.AllowedFiles = []string{"^docs/.+$"}
 		},
-			reason: ReasonParameterTwice, msg: "allowedFiles is set by MergePolicy dead-links and by the binding"},
+			check: func(t *testing.T, c Class) {
+				want(t, slices.Equal(c.AllowedFiles, []string{"^docs/.+$"}) && slices.Equal(c.NarrowedFiles, deadLinksBinding().AllowedFiles), "the binding narrows")
+			}},
 		"requiredLabel twice": {class: "kb", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{RequiredLabel: "a"}} }, bind: func(b *Binding) { *b = Binding{Name: "kb", Mode: ModeOff, RequiredLabel: "b"} },
 			reason: ReasonParameterTwice, msg: "requiredLabel is set by MergePolicy kb and by the binding"},
 		"allowedFiles missing":            {bind: func(b *Binding) { b.AllowedFiles = nil }, reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires allowedFiles"},
@@ -113,7 +116,7 @@ func TestResolve(t *testing.T) {
 			reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks: the binding adds none of its own"},
 		"a binding of another policy": {bind: func(b *Binding) { b.Name = "docs-links" }, reason: ReasonInvalid, msg: `class dead-links: the binding names MergePolicy "docs-links"`},
 		"review bound with a parameter": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff, MaxPerDay: 1} },
-			reason: ReasonInvalid, msg: "review is bound with mode off and no parameter"},
+			reason: ReasonInvalid, msg: "review is bound with mode disabled and no parameter"},
 		// R17: review keeps checks and testFirst.
 		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} },
 			bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} }, merge: Merge{ContractCheck: "contract"},
@@ -150,9 +153,9 @@ func TestResolve(t *testing.T) {
 			reason: ReasonInvalid, msg: `class x: profile "tf": testFirst needs merge.contractCheck`},
 		"testFirst with a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
 			merge: Merge{ContractCheck: "contract"}, check: func(t *testing.T, c Class) { want(t, c.TestFirst, "testFirst") }},
-		// The repository rule a live class without allowedFiles breaks, judged per binding (B9).
+		// MR6, judged per binding (B9): an evaluated class without allowedFiles or a shape.
 		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
-			merge: Merge{PolicyBot: new(false)}, reason: ReasonInvalid, msg: "class x: merge.policyBot: false needs allowedFiles on every live class"},
+			merge: Merge{PolicyBot: new(false)}, reason: ReasonUnbounded, msg: "class x: an evaluated policy needs allowedFiles or a diffShape"},
 		// The variant floor reads the templates (TE2): checked per binding, never left to Parse,
 		// where it would refuse every consumer Repository.
 		"a variant below its floor": {class: "x", ctx: PolicyContext{
@@ -303,7 +306,7 @@ func want(t *testing.T, ok bool, what string) {
 // Recheck reads today's repository facts: the Flux source is the current one, a removed source
 // drops the class, and the class handed in is never changed.
 func TestRecheck(t *testing.T) {
-	cl := Class{Shadow: true, Monitor: &Monitor{FollowUpWindow: Duration{time.Hour}, Flux: &FluxWatch{Source: "flux-system/old", Within: Duration{30 * time.Minute}}}}
+	cl := Class{Shadow: true, AllowedFiles: []string{`^x$`}, Monitor: &Monitor{FollowUpWindow: Duration{time.Hour}, Flux: &FluxWatch{Source: "flux-system/old", Within: Duration{30 * time.Minute}}}}
 	got, refused := Recheck("x", cl, PolicyContext{}, Merge{FluxSource: "flux-system/new"})
 	if refused != nil {
 		t.Fatalf("refused: %+v", refused)
@@ -326,5 +329,49 @@ func TestGuardrailsLeaveReview(t *testing.T) {
 	}
 	if _, refusal := Recheck("review", Class{}, ctx, Merge{}); refusal != nil {
 		t.Fatalf("%+v", refusal)
+	}
+}
+
+// MR3: a binding's allowedFiles narrows a policy's that already has one: the policy's list stays,
+// the binding's is NarrowedFiles, and a path must match both.
+func TestBindingNarrowsAllowedFiles(t *testing.T) {
+	p := PolicySpec{Class: Class{AllowedFiles: []string{`^.+\.mdx?$`}, MaxModifiedLines: 100}}
+	b := Binding{Name: "docs", Mode: ModeShadow, AllowedFiles: []string{`^website/content/.+\.md$`}, MaxModifiedLines: 60}
+	cl, refused := Resolve("docs", p, b, PolicyContext{}, Merge{})
+	if refused != nil {
+		t.Fatalf("refused %+v", *refused)
+	}
+	if !slices.Equal(cl.AllowedFiles, p.AllowedFiles) || !slices.Equal(cl.NarrowedFiles, b.AllowedFiles) || cl.MaxModifiedLines != 60 {
+		t.Fatalf("%+v", cl)
+	}
+	if len(p.NarrowedFiles) > 0 {
+		t.Fatal("Resolve aliased the policy")
+	}
+	// A binding narrowing nothing fills the policy's empty list, as before.
+	cl, refused = Resolve("docs", PolicySpec{}, b, PolicyContext{}, Merge{})
+	if refused != nil || !slices.Equal(cl.AllowedFiles, b.AllowedFiles) || cl.NarrowedFiles != nil {
+		t.Fatalf("%+v %+v", cl, refused)
+	}
+	// NarrowedFiles is the resolution's: a policy may not set it.
+	if problems := ValidatePolicy("docs", PolicySpec{Class: Class{NarrowedFiles: []string{`^x$`}}}, PolicyContext{}); len(problems) != 1 ||
+		!strings.Contains(problems[0], "narrowedFiles is set by a binding's allowedFiles") {
+		t.Fatalf("%v", problems)
+	}
+}
+
+// A binding switches a policy off with disabled; off still reads as disabled (MR9).
+func TestModeDisabled(t *testing.T) {
+	for _, mode := range []string{ModeDisabled, ModeOff} {
+		cl, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: mode}, PolicyContext{}, Merge{})
+		if refused != nil || cl.Live || cl.Shadow {
+			t.Errorf("%s: %+v %+v", mode, cl, refused)
+		}
+		if _, refused := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: mode}, PolicyContext{}, Merge{}); refused != nil {
+			t.Errorf("review %s: %+v", mode, refused)
+		}
+	}
+	_, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: "paused"}, PolicyContext{}, Merge{})
+	if refused == nil || refused.Reason != ReasonInvalid || !strings.Contains(refused.Message, `mode "paused" is live, shadow or disabled`) {
+		t.Fatalf("paused: %+v", refused)
 	}
 }

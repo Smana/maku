@@ -210,7 +210,7 @@ func (w *Watch) evaluate(cfg *config.Config, rc *config.Repository, hash string,
 		if config.AmbiguousWithAny(prior.Class, served) {
 			continue
 		}
-		if cl, again := config.Recheck(b.Name, prior.Class, policyContext(cfg), rc.Merge); again == nil {
+		if cl, again := config.Recheck(b.Name, prior.Class, policyContext(cfg, rc), rc.Merge); again == nil {
 			r := resolvedOf(cl)
 			r.PolicyGeneration = prior.PolicyGeneration
 			s.Classes[b.Name] = r

@@ -2283,11 +2283,11 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	if !r.Merge.UsesPolicyBot() && !r.Merge.PostsGateStatus() && !c.Demo { // the demo's own rule above names it
 		bad("merge.policyBot: false needs merge.gateStatus: true: without policy-bot, maku/merge-gate is the status branch protection requires")
 	}
-	if !r.Merge.UsesPolicyBot() {
-		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
-			if cl := r.Classes[name]; cl.Live && len(cl.AllowedFiles) == 0 {
-				bad("class %s: merge.policyBot: false needs allowedFiles on every live class: without policy-bot, nothing else keeps a gate path from merging", name)
-			}
+	// MR6 on a class the config file declares; a bound class met it in finish, which drops the
+	// binding rather than the repository.
+	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
+		if cl := r.Classes[name]; (cl.Live || cl.Shadow) && !cl.Bounded(name) {
+			bad("class %s: an evaluated policy needs allowedFiles or a diffShape (MR6)", name)
 		}
 	}
 	for _, f := range []struct{ key, value string }{

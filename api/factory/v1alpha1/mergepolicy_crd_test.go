@@ -156,16 +156,19 @@ func TestMergePolicyAdmission(t *testing.T) {
 	}
 
 	for name, tc := range map[string]struct{ manifest, want string }{
-		"a name that is no class": {edit(t, docsLinksPolicy, "docs.links", nil), msgPolicyName},
-		"a name too long":         {edit(t, docsLinksPolicy, strings.Repeat("d", 41), nil), msgPolicyName},
-		"live on a policy":        {edit(t, docsLinksPolicy, "live", map[string]string{"spec.live": "true"}), msgModeOnBinding},
-		"a workflow on a policy":  {edit(t, deadLinksPolicy, "workflow", map[string]string{"spec.oracle.workflow": "dead-links.yaml"}), msgWorkflow},
-		"a source on a policy":    {edit(t, deadLinksPolicy, "source", map[string]string{"spec.monitor.flux": "{source: flux-system/flux-system, within: 30m}"}), msgFluxSource},
-		"requires a cap":          {edit(t, docsLinksPolicy, "requires", map[string]string{"spec.requires": "[maxPerDay]"}), `Unsupported value: "maxPerDay"`},
-		"review with files":       {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.allowedFiles": "['^docs/.+$']"}), msgReviewPolicy},
-		"review with requires":    {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requires": "[holdoutChecks]"}), msgReviewPolicy},
-		"review with a label":     {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requiredLabel": "x"}), msgReviewPolicy},
-		"review with modifyOnly":  {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.modifyOnly": "true"}), msgReviewPolicy},
+		"a name that is no class":   {edit(t, docsLinksPolicy, "docs.links", nil), msgPolicyName},
+		"a name too long":           {edit(t, docsLinksPolicy, strings.Repeat("d", 41), nil), msgPolicyName},
+		"live on a policy":          {edit(t, docsLinksPolicy, "live", map[string]string{"spec.live": "true"}), msgModeOnBinding},
+		"a workflow on a policy":    {edit(t, deadLinksPolicy, "workflow", map[string]string{"spec.oracle.workflow": "dead-links.yaml"}), msgWorkflow},
+		"a source on a policy":      {edit(t, deadLinksPolicy, "source", map[string]string{"spec.monitor.flux": "{source: flux-system/flux-system, within: 30m}"}), msgFluxSource},
+		"narrowedFiles on a policy": {edit(t, docsLinksPolicy, "narrowed", map[string]string{"spec.narrowedFiles": "['^docs/.+$']"}), msgNarrowed},
+		"an evidence level unknown": {edit(t, docsLinksPolicy, "evidence", map[string]string{"spec.evidence": "high"}), `Unsupported value: "high"`},
+		"review with evidence":      {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.evidence": "low"}), msgReviewPolicy},
+		"requires a cap":            {edit(t, docsLinksPolicy, "requires", map[string]string{"spec.requires": "[maxPerDay]"}), `Unsupported value: "maxPerDay"`},
+		"review with files":         {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.allowedFiles": "['^docs/.+$']"}), msgReviewPolicy},
+		"review with requires":      {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requires": "[holdoutChecks]"}), msgReviewPolicy},
+		"review with a label":       {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requiredLabel": "x"}), msgReviewPolicy},
+		"review with modifyOnly":    {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.modifyOnly": "true"}), msgReviewPolicy},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_ = a.c.Delete(t.Context(), a.object(t, tc.manifest)) // review was admitted above
@@ -238,6 +241,12 @@ func TestRepositoryAdmission(t *testing.T) {
 	factory := "apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: aws-0}\nspec: {mergeDefaults: {autoMergesPerDay: 2}}\n"
 	if err := a.create(t, factory); err != nil {
 		t.Fatalf("a Factory with mergeDefaults refused: %v", err)
+	}
+
+	// MR9: disabled is a mode, review's included.
+	disabled := edit(t, anrRepository, "r-disabled", map[string]string{"spec.mergePolicies": `[{name: docs-links, mode: disabled}, {name: revert, mode: "off"}, {name: review, mode: disabled}]`})
+	if err := a.create(t, disabled); err != nil {
+		t.Fatalf("mode disabled refused: %v", err)
 	}
 
 	var many []string

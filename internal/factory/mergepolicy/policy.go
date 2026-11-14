@@ -38,7 +38,7 @@ const (
 const ErrClassesRemoved = "the classes shape was removed in this release: write mergePolicies with maku policy export; " +
 	"under repository authority, where export has no bindings to write, rewrite each class by hand as a mergePolicies binding of a MergePolicy"
 
-// Mode is a class's state: live merges, shadow records, off does neither.
+// Mode is a class's state: live merges, shadow records, disabled (off, its old name) does neither.
 type Mode string
 
 // The modes.
@@ -153,8 +153,8 @@ func bareOff(root map[string]any, j []byte) ([]byte, error) {
 // and a negative cap. Whether it resolves is Validate's (config.Resolve).
 func bindingShape(b config.Binding) error {
 	var errs []error
-	if !slices.Contains([]string{config.ModeLive, config.ModeShadow, config.ModeOff}, b.Mode) {
-		errs = append(errs, fmt.Errorf("mode %q is not live, shadow or off", b.Mode))
+	if b.Mode != config.ModeLive && b.Mode != config.ModeShadow && !config.Disabled(b.Mode) {
+		errs = append(errs, fmt.Errorf("mode %q is not live, shadow or disabled", b.Mode))
 	}
 	for _, c := range []struct {
 		key string
@@ -228,7 +228,7 @@ func reviewKeys(root map[string]any) error {
 					"and a human merges it", k))
 			}
 		}
-		if m := b["mode"]; m != false && m != config.ModeOff {
+		if m := b["mode"]; m != false && m != config.ModeOff && m != config.ModeDisabled {
 			errs = append(errs, errors.New("binding review: review is bound with mode off: a human merges it"))
 		}
 	}

@@ -353,7 +353,7 @@ func asMap(v any) map[string]any {
 // Equal lists every difference between two configs' resolved classes and merge settings,
 // repository by repository and class by class, field by field (B17): empty when no gate decision
 // can change. merge.fluxSource, which only the binding shape holds, is not compared: the classes'
-// own monitor.flux.source is.
+// own monitor.flux.source is. Classes are compared under the default guardrails (underDefaults).
 func Equal(before, after *config.Config) []string {
 	repos := func(c *config.Config) map[string]config.Repository {
 		out := map[string]config.Repository{}
@@ -403,11 +403,26 @@ func Equal(before, after *config.Config) []string {
 			case !inB:
 				out = append(out, fmt.Sprintf("%s %s: served after only", n, c))
 			default:
+				cb, ca = underDefaults(c, cb), underDefaults(c, ca)
 				for _, f := range fieldDiff(cb, ca) {
 					out = append(out, fmt.Sprintf("%s %s: %s %s -> %s", n, c, f, jsonOf(jsonMap(cb)[f]), jsonOf(jsonMap(ca)[f])))
 				}
 			}
 		}
+	}
+	return out
+}
+
+// underDefaults is cl as the default guardrails leave it (MR7): every bound class carries them,
+// so a class the config file declares is compared as its binding will serve it. A cap over a
+// default stays as written, and so differs from the binding, which is refused GuardrailMismatch.
+func underDefaults(name string, cl config.Class) config.Class {
+	if name == "review" {
+		return cl
+	}
+	out := *cl.DeepCopy()
+	if config.ApplyGuardrails(&out, config.MergeGuardrails{}.WithDefaults()) != "" {
+		return cl
 	}
 	return out
 }

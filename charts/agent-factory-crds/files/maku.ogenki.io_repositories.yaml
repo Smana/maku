@@ -216,8 +216,8 @@ spec:
                   properties:
                     allowedFiles:
                       description: |-
-                        AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
-                        the policy, never both.
+                        CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on the policy,
+                        never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
                       items:
                         maxLength: 512
                         type: string
@@ -252,6 +252,7 @@ spec:
                       enum:
                       - live
                       - shadow
+                      - disabled
                       - "off"
                       type: string
                     name:
@@ -360,10 +361,10 @@ spec:
             x-kubernetes-validations:
             - message: review is bound with mode off and no parameter
               rule: '!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name
-                == ''review'' && (b.mode != ''off'' || has(b.allowedFiles) || has(b.companionFiles)
-                || has(b.requiredLabel) || has(b.oracleWorkflow) || has(b.holdoutChecks)
-                || has(b.protectedFiles) || has(b.requiresApproval) || has(b.maxPatchFiles)
-                || has(b.maxModifiedLines) || has(b.maxPerDay)))'
+                == ''review'' && (!(b.mode in [''off'', ''disabled'']) || has(b.allowedFiles)
+                || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow)
+                || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval)
+                || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))'
             - message: bind docs-links and revert when any policy is bound (OD-8)
               rule: '!has(self.mergePolicies) || size(self.mergePolicies) == 0 ||
                 (self.mergePolicies.exists(b, b.name == ''docs-links'') && self.mergePolicies.exists(b,
@@ -415,6 +416,7 @@ spec:
                       enum:
                       - live
                       - shadow
+                      - disabled
                       - "off"
                       type: string
                     name:

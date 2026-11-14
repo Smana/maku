@@ -51,7 +51,7 @@ type PolicyPreview struct {
 }
 
 func policyContext(cfg *config.Config) config.PolicyContext {
-	return config.PolicyContext{HarnessProfiles: cfg.HarnessProfiles, Guardrails: cfg.MergeGuardrails, Templates: cfg.Templates, Loops: cfg.Loops}
+	return config.PolicyContext{HarnessProfiles: cfg.HarnessProfiles, Guardrails: cfg.MergeGuardrails.WithDefaults(), Templates: cfg.Templates, Loops: cfg.Loops}
 }
 
 // change is a binding's class change from served (ok false: none served) to next.

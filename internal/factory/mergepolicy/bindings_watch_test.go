@@ -295,3 +295,16 @@ func TestAuthorityReadsANewConfigBeforeTheNextRead(t *testing.T) {
 		t.Fatalf("got %v, want ErrStale", err)
 	}
 }
+
+// MR3: dropping or widening a binding's narrowing is a relaxation; adding one is a tightening.
+func TestClassChangeReadsTheNarrowing(t *testing.T) {
+	base := config.Class{Shadow: true, AllowedFiles: []string{`^.+\.md$`}}
+	narrowed := base
+	narrowed.NarrowedFiles = []string{`^website/content/.+\.md$`}
+	if c := ClassChange(base, narrowed); c.Kind != KindTightening {
+		t.Fatalf("adding a narrowing: %+v", c)
+	}
+	if c := ClassChange(narrowed, base); c.Kind != KindRelaxation || !slices.Contains(c.Why, "allowedFiles broadened or rewritten") {
+		t.Fatalf("dropping a narrowing: %+v", c)
+	}
+}

@@ -5,6 +5,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -128,5 +129,24 @@ func TestDurationMarshalsAsItsString(t *testing.T) {
 	var m Monitor
 	if err := json.Unmarshal(b, &m); err != nil || m.FollowUpWindow.Duration != 2*time.Hour {
 		t.Fatalf("%v %v", m, err)
+	}
+}
+
+// MR7: guardrails ship with defaults: a zero cap takes its default, a set one stays, and the
+// default protected paths come first, then the platform's, once each.
+func TestGuardrailDefaults(t *testing.T) {
+	got := MergeGuardrails{}.WithDefaults()
+	if !slices.Equal(got.ProtectedFiles, []string{`^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`}) ||
+		got.MaxPatchFiles != 10 || got.MaxModifiedLines != 300 || got.MaxPerDay != 5 {
+		t.Fatalf("defaults %+v", got)
+	}
+	in := MergeGuardrails{MaxPatchFiles: 4, ProtectedFiles: []string{`^\.github/`, `^infra/`}, MandatoryChecks: []string{"scan"}}
+	got = in.WithDefaults()
+	if got.MaxPatchFiles != 4 || got.MaxModifiedLines != 300 || !slices.Equal(got.MandatoryChecks, []string{"scan"}) ||
+		!slices.Equal(got.ProtectedFiles, []string{`^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, `^infra/`}) {
+		t.Fatalf("with a platform's %+v", got)
+	}
+	if !slices.Equal(in.ProtectedFiles, []string{`^\.github/`, `^infra/`}) {
+		t.Fatal("WithDefaults changed its receiver's list")
 	}
 }
