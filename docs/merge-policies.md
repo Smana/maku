@@ -1071,7 +1071,7 @@ server refuses. Every field has one combination rule:
 | Kind | Fields | On the policy | On the binding | Resolved as |
 |---|---|---|---|---|
 | Meaning | `description`, `author.adopt`, `harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`, `diffShape`, `modifyOnly`, `oracle.probe`, `oracle.maxFindings`, `releaseAgeCheck`, `monitor` | yes | refused | the policy's |
-| Mode | `mode`: `live`, `shadow`, `"off"` | refused | required | the binding's |
+| Mode | `mode`: `live`, `shadow`, `disabled` (`"off"`, its old name, reads as `disabled`) | refused | required | the binding's |
 | Narrowing | `allowedFiles` | optional | optional; required when the policy `requires` it | the one that is set; on both, a path must match the policy's list and the binding's (`narrowedFiles` on the resolved class) |
 | Fill once | `companionFiles`, `requiredLabel`, `oracleWorkflow` | optional | optional; required when the policy `requires` it | set in one place; both is `ParameterTwice` |
 | Additive | `holdoutChecks`, `protectedFiles`, `requiresApproval` | optional | optional; `holdoutChecks` required when the policy `requires` it | the union; a required `holdoutChecks` needs a check the policy does not already name |

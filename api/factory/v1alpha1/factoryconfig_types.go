@@ -116,7 +116,7 @@ type FactoryList struct {
 // RepositorySpec is one repository served (D3): today's repositories[] entry, with its merge
 // settings and the MergePolicies it binds (reusable merge policies B2, B3).
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name == 'review' && (b.mode != 'off' || has(b.allowedFiles) || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow) || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval) || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))",message="review is bound with mode off and no parameter"
+// +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name == 'review' && (!(b.mode in ['off', 'disabled']) || has(b.allowedFiles) || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow) || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval) || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))",message="review is bound with mode off and no parameter"
 // +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || size(self.mergePolicies) == 0 || (self.mergePolicies.exists(b, b.name == 'docs-links') && self.mergePolicies.exists(b, b.name == 'revert'))",message="bind docs-links and revert when any policy is bound (OD-8)"
 // +kubebuilder:validation:XValidation:rule="!has(self.classAuthority) || self.classAuthority != 'repository' || !has(self.mergePolicies)",message="classAuthority repository: the repository's file holds the bindings (MP15)"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.factoryRef) || self.factoryRef == oldSelf.factoryRef",message="spec.factoryRef is fixed once set"
@@ -188,7 +188,7 @@ type RepositoryStatus struct {
 type BindingStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=live;shadow;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled;off
 	Mode string `json:"mode,omitempty"`
 	// PolicyGeneration is the generation of the MergePolicy the class serves.
 	PolicyGeneration int64 `json:"policyGeneration,omitempty"`
@@ -276,7 +276,7 @@ type ConsumerStatus struct {
 	// Repository is the Repository object's name.
 	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository"`
-	// +kubebuilder:validation:Enum=live;shadow;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled;off
 	Mode             string `json:"mode,omitempty"`
 	ServedGeneration int64  `json:"servedGeneration,omitempty"`
 	// Accepted is always serialized, false included.

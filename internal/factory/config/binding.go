@@ -9,13 +9,17 @@ import (
 	"strings"
 )
 
-// The modes a binding puts its class in (B4): live merges, shadow is decided and never armed, off
-// is neither (Q7).
+// The modes a binding puts its class in (B4): live merges, shadow is decided and never armed,
+// disabled is neither (Q7, MR9). off is read as disabled until the release that removes it.
 const (
-	ModeLive   = "live"
-	ModeShadow = "shadow"
-	ModeOff    = "off"
+	ModeLive     = "live"
+	ModeShadow   = "shadow"
+	ModeDisabled = "disabled"
+	ModeOff      = "off"
 )
+
+// Disabled reports whether mode evaluates nothing: disabled, or off, its old name.
+func Disabled(mode string) bool { return mode == ModeDisabled || mode == ModeOff }
 
 // The reasons a binding does not resolve (B9). MissingRef, the reason for a binding to an absent
 // policy, is the resources layer's: Resolve is handed a policy.
@@ -47,7 +51,7 @@ type Binding struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=live;shadow;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled;off
 	Mode string `json:"mode"`
 	// AllowedFiles, CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on
 	// the policy, never both.
@@ -198,12 +202,12 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 	switch {
 	case b.Name != name:
 		return refuse(ReasonInvalid, "class %s: the binding names MergePolicy %q", name, b.Name)
-	case b.Mode != ModeLive && b.Mode != ModeShadow && b.Mode != ModeOff:
-		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or off", name, b.Mode)
-	case name == "review" && b.Mode != ModeOff:
-		return refuse(ReasonInvalid, "class review: review takes only mode off")
+	case b.Mode != ModeLive && b.Mode != ModeShadow && !Disabled(b.Mode):
+		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or disabled", name, b.Mode)
+	case name == "review" && !Disabled(b.Mode):
+		return refuse(ReasonInvalid, "class review: review takes only mode disabled")
 	case name == "review" && !reflect.DeepEqual(b, Binding{Name: b.Name, Mode: b.Mode}):
-		return refuse(ReasonInvalid, "class review: review is bound with mode off and no parameter")
+		return refuse(ReasonInvalid, "class review: review is bound with mode disabled and no parameter")
 	}
 	if problems := policyShapeProblems(name, p); len(problems) > 0 {
 		return Class{}, ReasonInvalid, problems

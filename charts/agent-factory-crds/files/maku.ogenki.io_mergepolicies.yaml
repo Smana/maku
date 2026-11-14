@@ -400,6 +400,7 @@ spec:
                       enum:
                       - live
                       - shadow
+                      - disabled
                       - "off"
                       type: string
                     reason:

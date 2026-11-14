@@ -54,9 +54,9 @@ func TestResolve(t *testing.T) {
 		"live":            {bind: func(b *Binding) { b.Mode = ModeLive }, check: func(t *testing.T, c Class) { want(t, c.Live && !c.Shadow, "live") }},
 		"shadow":          {check: func(t *testing.T, c Class) { want(t, c.Shadow && !c.Live, "shadow") }},
 		"off":             {bind: func(b *Binding) { b.Mode = ModeOff }, check: func(t *testing.T, c Class) { want(t, !c.Live && !c.Shadow, "off is neither (Q7)") }},
-		"an unknown mode": {bind: func(b *Binding) { b.Mode = "on" }, reason: ReasonInvalid, msg: `mode "on" is live, shadow or off`},
+		"an unknown mode": {bind: func(b *Binding) { b.Mode = "on" }, reason: ReasonInvalid, msg: `mode "on" is live, shadow or disabled`},
 		"review in shadow": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeShadow} },
-			reason: ReasonInvalid, msg: "review takes only mode off"},
+			reason: ReasonInvalid, msg: "review takes only mode disabled"},
 		"review off": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "solo"}} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} },
 			check: func(t *testing.T, c Class) {
 				want(t, c.Harness == "solo" && !c.Live && !c.Shadow, "review off keeps its harness")
@@ -116,7 +116,7 @@ func TestResolve(t *testing.T) {
 			reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks: the binding adds none of its own"},
 		"a binding of another policy": {bind: func(b *Binding) { b.Name = "docs-links" }, reason: ReasonInvalid, msg: `class dead-links: the binding names MergePolicy "docs-links"`},
 		"review bound with a parameter": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff, MaxPerDay: 1} },
-			reason: ReasonInvalid, msg: "review is bound with mode off and no parameter"},
+			reason: ReasonInvalid, msg: "review is bound with mode disabled and no parameter"},
 		// R17: review keeps checks and testFirst.
 		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} },
 			bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} }, merge: Merge{ContractCheck: "contract"},
@@ -356,5 +356,22 @@ func TestBindingNarrowsAllowedFiles(t *testing.T) {
 	if problems := ValidatePolicy("docs", PolicySpec{Class: Class{NarrowedFiles: []string{`^x$`}}}, PolicyContext{}); len(problems) != 1 ||
 		!strings.Contains(problems[0], "narrowedFiles is set by a binding's allowedFiles") {
 		t.Fatalf("%v", problems)
+	}
+}
+
+// A binding switches a policy off with disabled; off still reads as disabled (MR9).
+func TestModeDisabled(t *testing.T) {
+	for _, mode := range []string{ModeDisabled, ModeOff} {
+		cl, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: mode}, PolicyContext{}, Merge{})
+		if refused != nil || cl.Live || cl.Shadow {
+			t.Errorf("%s: %+v %+v", mode, cl, refused)
+		}
+		if _, refused := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: mode}, PolicyContext{}, Merge{}); refused != nil {
+			t.Errorf("review %s: %+v", mode, refused)
+		}
+	}
+	_, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: "paused"}, PolicyContext{}, Merge{})
+	if refused == nil || refused.Reason != ReasonInvalid || !strings.Contains(refused.Message, `mode "paused" is live, shadow or disabled`) {
+		t.Fatalf("paused: %+v", refused)
 	}
 }

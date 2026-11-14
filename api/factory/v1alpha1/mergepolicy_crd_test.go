@@ -243,6 +243,12 @@ func TestRepositoryAdmission(t *testing.T) {
 		t.Fatalf("a Factory with mergeDefaults refused: %v", err)
 	}
 
+	// MR9: disabled is a mode, review's included.
+	disabled := edit(t, anrRepository, "r-disabled", map[string]string{"spec.mergePolicies": `[{name: docs-links, mode: disabled}, {name: revert, mode: "off"}, {name: review, mode: disabled}]`})
+	if err := a.create(t, disabled); err != nil {
+		t.Fatalf("mode disabled refused: %v", err)
+	}
+
 	var many []string
 	for i := range 31 {
 		many = append(many, fmt.Sprintf("{name: c%d, mode: \"off\"}", i))
