@@ -75,7 +75,7 @@ leg_checks() {
 curl_in() {
   k -n e2e run "curl-$RANDOM" --rm -i --restart=Never --quiet --image "$CURL_IMAGE" \
     --overrides='{"spec":{"securityContext":{"runAsNonRoot":true,"runAsUser":65532,"seccompProfile":{"type":"RuntimeDefault"}},"containers":[{"name":"c","image":"'"$CURL_IMAGE"'","args":'"$(jq -cn --arg u "$1" --arg h "$2" '["-sk","-m","10","-o","/dev/stdout","-w"," %{http_code}"] + (if $h == "" then [] else ["-H", "Host: " + $h] end) + [$u]')"',"securityContext":{"allowPrivilegeEscalation":false,"capabilities":{"drop":["ALL"]}}}]}}' \
-    2>/dev/null | awk '{code=$NF; $NF=""; sub(/ $/, ""); body=$0} END {print code " " body}'
+    2>/dev/null | awk '{out = out (NR > 1 ? "\n" : "") $0; last = $0} END {n = split(last, f, " "); sub(/ ?[0-9]+$/, "", out); print f[n] " " out}'
 }
 
 install_e2e_main
