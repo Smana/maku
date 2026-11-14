@@ -903,5 +903,21 @@ out="$(helm template af . -n maku "${fnp[@]}" --set maku.networkPolicies.mode=ci
   --set-json 'networkPolicies.factory.github.to=[{"toFQDNs":[{"matchName":"ghes.example.test"}]}]')"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "agent-factory") | (.spec.ingress | length) == 2 and .spec.ingress[1].fromEntities == ["host"] and .spec.egress[3] == {"toFQDNs": [{"matchName": "ghes.example.test"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]} and (.spec.egress | length) == 4' 'cilium: the broker and the kubelet in; DNS, the apiserver, the broker and the GHES out'
 
+# The merge policy catalog (merge policies review MR2, MR6): four MergePolicy objects in the factory's
+# namespace, labelled maku.ogenki.io/catalog, each spec exactly tests/golden/catalog.yaml's. exclude
+# leaves out the ones a platform keeps as its own; the skeleton, with no factory, renders none. That an
+# unlabelled object of a catalog name fails the install is install.sh's (lookup is empty here).
+# catalog ARGS...: the rendered catalog's names, sorted.
+catalog() { helm template af . -n maku "$@" | yq ea '[select(.kind == "MergePolicy") | .metadata.name] | sort | join(" ")' -; }
+# specs: name and spec of each MergePolicy on stdin, as sorted JSON.
+specs() { yq ea -o=json -I0 'select(.kind == "MergePolicy") | {"name": .metadata.name, "spec": .spec}' - | jq -S -s 'sort_by(.name)'; }
+out="$(helm template af . -n maku "${args[@]}")"
+[[ $(catalog "${args[@]}") == "deps-patch docs docs-links revert" ]] || { echo "FAIL: the demo does not render the four catalog policies (got '$(catalog "${args[@]}")')" >&2; fail=1; }
+ykind MergePolicy '((.metadata.labels."maku.ogenki.io/catalog" == "true") and (.metadata.namespace == "maku"))' "each catalog policy is labelled maku.ogenki.io/catalog and in the factory's namespace"
+[[ $(specs <<<"$out") == "$(specs <tests/golden/catalog.yaml)" ]] || { echo "FAIL: the catalog's specs differ from tests/golden/catalog.yaml" >&2; diff <(specs <tests/golden/catalog.yaml | jq .) <(specs <<<"$out" | jq .) >&2; fail=1; }
+[[ $(catalog "${args[@]}" --set-json 'mergePolicies.catalog.exclude=["docs"]') == "deps-patch docs-links revert" ]] || { echo "FAIL: exclude [docs] does not leave three" >&2; fail=1; }
+[[ -z $(catalog "${args[@]}" --set mergePolicies.catalog.enabled=false) ]] || { echo "FAIL: mergePolicies.catalog.enabled=false still renders a catalog policy" >&2; fail=1; }
+[[ -z $(catalog "${img[@]}") ]] || { echo "FAIL: the skeleton, with no factory, renders a catalog policy" >&2; fail=1; }
+
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"

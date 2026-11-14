@@ -2661,6 +2661,89 @@ spec:
           name: demo-agent-default
 
 ---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: docs-links
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  description: Link targets in Markdown, nothing else.
+  diffShape: links-only
+  evidence: low
+  maxModifiedLines: 20
+  modifyOnly: true
+
+---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: revert
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  description: A revert whose diff changes link targets only.
+  diffShape: links-only
+  evidence: low
+  maxModifiedLines: 20
+  modifyOnly: true
+
+---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: deps-patch
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  author:
+    adopt:
+      branches:
+      - ^renovate/
+      logins:
+      - renovate[bot]
+  description: Renovate patch updates, after their release age.
+  diffShape: semver-patch
+  evidence: low
+  maxModifiedLines: 10
+  maxPatchFiles: 3
+  maxPerDay: 2
+  modifyOnly: true
+  releaseAgeCheck: renovate/stability-days
+
+---
+# Source: agent-factory/templates/merge-policies-catalog.yaml
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: docs
+  namespace: maku
+  labels:
+    app.kubernetes.io/part-of: agent-factory
+    app.kubernetes.io/managed-by: Helm
+    maku.ogenki.io/catalog: "true"
+spec:
+  allowedFiles:
+  - ^.+\.mdx?$
+  description: Prose in Markdown files, small changes.
+  evidence: standard
+  maxModifiedLines: 100
+  maxPatchFiles: 5
+  maxPerDay: 2
+
+---
 # Source: agent-factory/charts/maku-factory/templates/run-token-policy.yaml
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy

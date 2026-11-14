@@ -102,6 +102,26 @@
         }
       }
     },
+    "mergePolicies": {
+      "description": "The merge policy catalog the chart ships with the factory (docs/merge-policies.md#start-here).",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "catalog": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"description": "Render the catalog's MergePolicy objects, with maku-factory.", "type": "boolean"},
+            "exclude": {
+              "description": "Catalog policies left out: the platform keeps its own objects of these names.",
+              "type": "array",
+              "uniqueItems": true,
+              "items": {"type": "string", "enum": ["docs-links", "revert", "deps-patch", "docs"]}
+            }
+          }
+        }
+      }
+    },
     "postgres": {
       "description": "The single-replica rooms database, demo-only (v4 D9).",
       "type": "object",

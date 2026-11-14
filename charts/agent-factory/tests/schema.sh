@@ -40,6 +40,8 @@ rejects 'an unknown expose.mode' 'value must be one of' "${demo[@]}" --set expos
 rejects 'a hostname that is no RFC 1123 name' 'does not match pattern' "${demo[@]}" --set-json 'expose.web.hostnames=["Rooms_Example.test"]'
 rejects 'a parentRef without a name' "missing property 'name'" "${demo[@]}" --set-json 'expose.httproute.parentRefs=[{"namespace":"infra"}]'
 rejects 'an unknown expose.web key' "additional properties 'hostname' not allowed" "${demo[@]}" --set expose.web.hostname=x
+rejects 'a catalog exclude naming no catalog policy' 'value must be one of' "${demo[@]}" --set-json 'mergePolicies.catalog.exclude=["dependencies"]'
+rejects 'an unknown mergePolicies.catalog key' "additional properties 'enable' not allowed" "${demo[@]}" --set mergePolicies.catalog.enable=true
 rejects 'an unknown webProxy key' "additional properties 'enable' not allowed" "${demo[@]}" --set webProxy.enable=true
 # the defaults are production (v4 step 8): the skeleton alone renders, with no component on to check
 # (tests/render.sh names the seams); the demo's values without their marker are refused

@@ -464,6 +464,27 @@ reasons=$(kubectl -n "$NS" get pods -l app.kubernetes.io/name=agent-factory -o j
 ! grep -qE 'CreateContainerConfigError|ContainerCannotRun|InvalidImageName|ErrImage' <<<"$reasons" ||
   die "the factory failed before it started (a mount or the image)"
 
+step "the merge policy catalog: four labelled MergePolicies admitted; a platform's own of a catalog name fails the render"
+n=$(kubectl -n "$NS" get mergepolicies -l maku.ogenki.io/catalog=true -o name | wc -l)
+[[ $n == 4 ]] || die "the API server holds $n catalog MergePolicies, want 4"
+# A platform's own MergePolicy/docs, unlabelled, in a namespace of its own: the render reads it (lookup)
+# and fails naming it, before any apply; listed in exclude, the render passes.
+kubectl create namespace catalog-guard >/dev/null
+kubectl -n catalog-guard apply -f - >/dev/null <<'EOF'
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata: {name: docs}
+spec: {description: The platform's own., allowedFiles: ['^docs/.+\.md$']}
+EOF
+msg=$(helm template af charts/agent-factory -n catalog-guard "${values[@]}" --dry-run=server 2>&1 >/dev/null) &&
+  die "the render over an unlabelled MergePolicy/docs passed; it must fail"
+grep -qF 'MergePolicy docs exists and is not the catalog'"'"'s: add it to mergePolicies.catalog.exclude' <<<"$msg" ||
+  die "the render over an unlabelled MergePolicy/docs failed otherwise: $msg"
+helm template af charts/agent-factory -n catalog-guard "${values[@]}" --dry-run=server --set-json 'mergePolicies.catalog.exclude=["docs"]' >/dev/null ||
+  die "the render with docs excluded fails"
+kubectl delete namespace catalog-guard --wait=false >/dev/null
+echo "ok: four catalog policies; MergePolicy docs not the catalog's fails the render, and passes once excluded"
+
 step "per-run tokens (v4 D10): the factory writes run token Secrets and reads none; a run waits for its own"
 # The dummy App never mints, and the factory never passes start-up: the Roles, the admission policy
 # and the run-controller's wait are what is proved. The nightly proves a real mint.
