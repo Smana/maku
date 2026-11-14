@@ -55,14 +55,14 @@ func webProxy(ping string) http.Handler {
 	return webProxyDoc(ping, `{"issuer":"https://idp.example.com","preset":"generic","tokenUse":"id","humanMode":"oidc"}`)
 }
 
-func webProxyDoc(ping, roomctl string) http.Handler {
+func webProxyDoc(ping, discovery string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/ping":
 			_, _ = io.WriteString(w, ping)
 		case "/.well-known/roomctl":
 			w.Header().Set("Content-Type", "application/json")
-			_, _ = io.WriteString(w, roomctl)
+			_, _ = io.WriteString(w, discovery)
 		default:
 			http.Redirect(w, r, "/oauth2/sign_in", http.StatusFound)
 		}
