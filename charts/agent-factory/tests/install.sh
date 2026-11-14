@@ -66,12 +66,12 @@ PREFLIGHT="${PREFLIGHT:-}"
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
 ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+# k3d caps a cluster name at 32 characters: each leg's suffix is short.
 NAME="maku-chart-$CLUSTER_KIND"
-[[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
-[[ -z $GATEWAY ]] || NAME="$NAME-gateway"
-[[ -z $METERING ]] || NAME="$NAME-metering"
-[[ -z $EXTERNAL_DB ]] || NAME="$NAME-external-db"
-# k3d caps a cluster name at 32 characters
+[[ $NETPOL == none ]] || NAME="$NAME-${NETPOL:0:4}"
+[[ -z $GATEWAY ]] || NAME="$NAME-gw"
+[[ -z $METERING ]] || NAME="$NAME-mt"
+[[ -z $EXTERNAL_DB ]] || NAME="$NAME-xdb"
 [[ -z $TRACING ]] || NAME="maku-$CLUSTER_KIND-tracing-$NETPOL"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.

@@ -19,6 +19,7 @@ if [[ " $* " == *" -f - "* ]]; then
   grep -E '^\s+uri: ' <<<"$in" | grep -q '""' && echo "kubectl: an empty uri was applied" >>"$CALLS.err"
 fi
 [[ " $* " != *"jsonpath={.data.uri}"* ]] || printf 'dXJp'
+[[ " $* " != *" kube-root-ca.crt "* ]] || printf -- '-----BEGIN CERTIFICATE-----\n'
 exit 0
 SH
 cat >"$t/bin/helm" <<'SH'

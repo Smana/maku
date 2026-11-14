@@ -134,7 +134,9 @@ wait_crds() {
 # prereqs: what README.md's "Before" asks of the cluster.
 prereqs() {
   step "before: Gateway API's and prometheus-operator's CRDs, the namespace, Postgres"
-  curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" | k apply --server-side -f - >/dev/null
+  # k3s's Traefik may own them already (its CRD chart): the floor's fields are taken over, as a platform would.
+  curl -fsSL "https://github.com/kubernetes-sigs/gateway-api/releases/download/$GATEWAY_API/standard-install.yaml" |
+    k apply --server-side --force-conflicts -f - >/dev/null
   curl -fsSL "https://github.com/prometheus-operator/prometheus-operator/releases/download/$PROMETHEUS_OPERATOR/stripped-down-crds.yaml" |
     k apply --server-side -f - >/dev/null
   wait_crds crd/gateways.gateway.networking.k8s.io crd/httproutes.gateway.networking.k8s.io crd/servicemonitors.monitoring.coreos.com \
@@ -199,7 +201,12 @@ dsn() {
 secrets() {
   step "the Secrets: the wizard's, filled, and the ones it names"
   local s="$OUT/secrets"
-  k -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/ca.crt" >/dev/null
+  # SSL_CERT_FILE replaces the system roots: the bundle is the stub's CA and the cluster's own, which
+  # signs the API server's certificate (the runs' and the factory's JWKS).
+  k -n "$NS" get configmap kube-root-ca.crt -o jsonpath='{.data.ca\.crt}' >"$work/kube-ca.crt"
+  [[ -s $work/kube-ca.crt ]] || die "no kube-root-ca.crt in $NS"
+  cat "$work/ca.crt" "$work/kube-ca.crt" >"$work/bundle.crt"
+  k -n "$NS" create secret generic e2e-stub-ca --from-file=ca.crt="$work/bundle.crt" >/dev/null
   cert broker room-broker "DNS:room-broker.$NS.svc,DNS:room-broker.$NS.svc.cluster.local"
   k -n "$NS" create secret tls room-broker-tls --cert="$work/broker.crt" --key="$work/broker.key" >/dev/null
   for c in room-broker-ca openbao-ca; do k -n "$NS" create secret generic "$c" --from-file=ca.crt="$work/ca.crt" >/dev/null; done
