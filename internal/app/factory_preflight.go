@@ -183,8 +183,8 @@ func (f factoryChecks) mergeGate(context.Context) preflight.Result {
 	return pass(fmt.Sprintf("%d repositories require maku/merge-gate", len(gated)))
 }
 
-// privateCode is D3 in this release (step 7 R1): a warning per private repository without
-// spec.privateCode.acknowledged, never a refusal.
+// privateCode is D3 (step 8 R9): a private repository without spec.privateCode.acknowledged fails,
+// since the factory refuses it new tasks.
 func (f factoryChecks) privateCode(context.Context) preflight.Result {
 	if f.Live == nil || f.Private == nil {
 		return skip("no repository is served")
@@ -200,8 +200,7 @@ func (f factoryChecks) privateCode(context.Context) preflight.Result {
 		}
 	}
 	if len(unack) > 0 {
-		return preflight.Result{Outcome: preflight.Warn, Code: "private_code_unacknowledged",
-			Message: strings.Join(unack, ", ") + ": private code without spec.privateCode.acknowledged (D3; refused from step 8)"}
+		return failed("private_code_unacknowledged", strings.Join(unack, ", ")+": private code without spec.privateCode.acknowledged is refused new tasks (D3)")
 	}
 	return pass("every private repository is acknowledged")
 }

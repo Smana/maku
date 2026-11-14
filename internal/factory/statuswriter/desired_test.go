@@ -425,7 +425,7 @@ func TestPrivateCode(t *testing.T) {
 		"not served":               {visibility: "private", status: metav1.ConditionUnknown, reason: "NotServed"},
 		"not read yet":             {served: &config.Repository{Name: repo}, status: metav1.ConditionUnknown, reason: "NotChecked"},
 		"public":                   {served: &config.Repository{Name: repo}, visibility: "public", status: metav1.ConditionTrue, reason: "Public"},
-		"private":                  {served: &config.Repository{Name: repo}, visibility: "private", status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: config.PrivateCodeSentence},
+		"private":                  {served: &config.Repository{Name: repo}, visibility: "private", status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: config.PrivateCodeSentence + " No new task starts until it is set"},
 		"internal":                 {served: &config.Repository{Name: repo}, visibility: "internal", status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: config.PrivateCodeSentence},
 		"unread counts as private": {served: &config.Repository{Name: repo}, visibility: VisibilityUnknown, status: metav1.ConditionFalse, reason: v1alpha1.ReasonUnacknowledged, message: "its visibility could not be read"},
 		"private, acknowledged":    {served: &acked, visibility: "private", status: metav1.ConditionTrue, reason: "Acknowledged"},

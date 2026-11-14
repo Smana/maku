@@ -497,6 +497,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names, Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, Log: log}
 	privateCode.Record = m.PrivateCodeUnacknowledged
+	// The doors that start work without a label (the schedules, adoption) start nothing on private
+	// code without its acknowledgement (v4 D3); a task already started finishes, so the reconciler,
+	// the merge and the reverts keep fenced.Owned.
+	startable := func(repository string) bool { return fenced.Owned(repository) && !privateCode.Refused(repository) }
 	fenced.OnState = func(ctx context.Context, repo string, owned bool) {
 		m.RepositoryOwned(ctx, repo, owned)
 		privateCode.Observe(ctx, repo, owned)
@@ -688,7 +692,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	apiSrv := &api.Server{Auth: auth, Log: log,
 		Cfg: live, Groups: groups, Runs: rc, Rooms: ledgers, Namespace: ns, Stopped: stopped, SlackLinks: broker, Logins: logins,
-		NewRunID: taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned,
+		NewRunID: taskid.Random, Now: time.Now, Metrics: m, Access: access, People: people, Owned: fenced.Owned, PrivateRefused: privateCode.Refused,
 		InstallUnsafe: privateCode.InstallUnsafe,
 		Forges: func(repo string) api.IssueFiler {
 			c, ok := conns.get(repo)
@@ -854,10 +858,10 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	}
 	wired := &wiring{log: log, conns: conns, pollers: pollers, m: m, kick: fenced.Kick}
 	for _, r := range append(runnables,
-		&intake.Scheduler{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
+		&intake.Scheduler{Clients: conns.schedule, Owned: startable, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
 		// MC10: off unless a class adopts; leader-only, through the Scheduler's connections.
-		&intake.Adopter{Clients: conns.schedule, Owned: fenced.Owned, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
+		&intake.Adopter{Clients: conns.schedule, Owned: startable, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Stopped: stopped, Now: time.Now, Errors: m, Log: log},
 		&meter.Meter{Runs: rc, Source: vm, PerReplica: cfg.Meter.ByReplica(), Every: cfg.Poll.Meter.Duration, OnRevoke: m.RunRevoked, Log: log,
 			OnCharge: m.Charged, OnCharges: m.RunCharges,

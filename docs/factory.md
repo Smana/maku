@@ -2344,16 +2344,18 @@ spec:
 On each fence pass, every 5 minutes, the factory reads each served repository's visibility through
 the factory App. `private` and `internal` count as private code. So does a read that fails: the
 factory cannot tell, so it fails closed. A repository without `privateCode` that is private code
-is, in this release, warned about and still served:
+is refused new tasks: a maintainer's `factory/ready` is answered with the sentence above and its label
+removed, the API answers `403 private_code_unacknowledged`, and neither a schedule nor adoption starts
+a task there. A task already started finishes. Before the first read after a start, the factory does
+not know the visibility yet, so it starts nothing there either. It says so:
 
 | Where | What it says |
 |---|---|
-| The `Repository`'s `PrivateCode` condition | `False` `Unacknowledged`, with the sentence above; `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read, `NotServed` when the factory does not serve it |
+| The `Repository`'s `PrivateCode` condition | `False` `Unacknowledged`, with the sentence above and "No new task starts until it is set"; `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read, `NotServed` when the factory does not serve it |
+| The preflight's `private-code` check | `fail` `private_code_unacknowledged`, naming the repositories |
 | `maku_factory_private_code_unacknowledged{repository}` | `1`, else `0`; `AgentFactoryPrivateCodeUnacknowledged` fires after 15 minutes at `1` |
 | The web UI's install banner | `private_code_unacknowledged`, read from the factory's `GET /v1/install` with the viewer's own token; the broker needs `factoryURL` |
 | The factory's log | one `WARN` per change of visibility, naming the repository |
-
-The next release refuses it: no new task for that repository until the field is set.
 
 Two settings stay stricter whatever the acknowledgement says:
 

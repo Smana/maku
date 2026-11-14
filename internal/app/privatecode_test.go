@@ -157,3 +157,40 @@ func TestPrivateCodeUnreadWarnsOnceAndForgets(t *testing.T) {
 		t.Fatal("a forgotten repository keeps its visibility")
 	}
 }
+
+// v4 D3, step 8 R9: Refused is what the factory's other doors read (the API, the schedules, adoption):
+// private, internal or unread code without its acknowledgement, and a repository not read yet (fail
+// closed until the first fence pass).
+func TestPrivateCodeRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		info    *forge.RepositoryInfo
+		err     error
+		acked   bool
+		refused bool
+	}{
+		"public":                {info: &forge.RepositoryInfo{FullName: "Smana/demo", Visibility: "public"}},
+		"private":               {info: &forge.RepositoryInfo{FullName: "Smana/demo", Private: true, Visibility: "private"}, refused: true},
+		"a failed read":         {err: errors.New("forge: repository: 502"), refused: true},
+		"private, acknowledged": {info: &forge.RepositoryInfo{FullName: "Smana/demo", Private: true, Visibility: "private"}, acked: true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := newPrivateCodeRig(t, tc.acked)
+			if tc.info != nil {
+				g.f.SetRepositoryInfo(*tc.info)
+			}
+			g.f.FailRepositoryInfo(tc.err)
+			g.pc.Observe(t.Context(), "Smana/demo", true)
+			if got := g.pc.Refused("Smana/demo"); got != tc.refused {
+				t.Fatalf("Refused %v, want %v", got, tc.refused)
+			}
+		})
+	}
+	g := newPrivateCodeRig(t, false)
+	if !g.pc.Refused("Smana/demo") {
+		t.Fatal("a repository not read yet is served: D3 fails closed")
+	}
+	g = newPrivateCodeRig(t, true)
+	if g.pc.Refused("Smana/demo") {
+		t.Fatal("an acknowledged repository not read yet is refused")
+	}
+}

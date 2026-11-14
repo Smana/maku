@@ -72,7 +72,7 @@ func overlapClassifications() []string {
 func roomCapReasons() []string { return []string{"human_driver", "facts_due", "drill_unscored"} }
 func admissionReasons() []string {
 	return []string{"repository_differs_from_the_room", "repository_differs_from_the_branch", "repository_permission", "repository_not_owned",
-		"person_budget_exhausted"}
+		"private_code_unacknowledged", "person_budget_exhausted"}
 }
 
 // runRE bounds the run label to a C2 run id: the gauge holds only the runs the meter has not
@@ -94,7 +94,7 @@ func humanPhases() []string { return []string{v1alpha1.PhaseAwaitingHuman, v1alp
 // recorded as other, so the label stays bounded.
 func apiOutcomes() []string {
 	return []string{"admitted", "kill_switch", "bad_json", "idempotency_key_required", "bad_data_class", "bad_ref",
-		"repository_not_allowed", "repository_not_owned", "meter_unpriced", "max_cost_required", "max_cost_over_principal",
+		"repository_not_allowed", "repository_not_owned", "private_code_unacknowledged", "meter_unpriced", "max_cost_required", "max_cost_over_principal",
 		"max_cost_over_class", "not_linked", "link_unverified", "not_a_maintainer", "invalid_draft", "bad_text", "tasks_unavailable",
 		"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "duplicate", "idempotency_conflict"}
 }
@@ -405,7 +405,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("1 when the default branch's rulesets require maku/merge-gate from the App that posts it, else 0, by repository with merge.gateStatus on, as the last fence pass read it (D11)."))
 	check(err)
 	err = s.registerRepoGauge(meter, &s.privateCode, "agent_factory_private_code_unacknowledged",
-		metric.WithDescription("1 when a served repository's code is private, internal or of unread visibility and its Repository has no spec.privateCode.acknowledged, else 0, by repository, as the last fence pass read it (v4 D3; a warning in this release, a refusal from the next)."))
+		metric.WithDescription("1 when a served repository's code is private, internal or of unread visibility and its Repository has no spec.privateCode.acknowledged, else 0, by repository, as the last fence pass read it (v4 D3): such a repository is refused new tasks."))
 	check(err)
 	s.appPermissionMissing, err = meter.Int64Gauge("agent_factory_github_app_permission_missing",
 		metric.WithDescription("1 for each permission an App's installation (agents or factory) lacks on a served repository, against the App's required set, under runTokens.perRun, as read when this replica became leader and never refreshed since; 0 when every served installation was read and grants it (D12)."))

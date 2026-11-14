@@ -264,3 +264,13 @@ func TestARepositoryNotOwnedStartsNoRun(t *testing.T) {
 	st.created = nil
 	refusedWith(t, post(s.Handler(), "alice", on(repoA, nil)), http.StatusConflict, "repository_not_owned", st)
 }
+
+// v4 D3, step 8 R9: private code without its acknowledgement starts no API run.
+func TestUnacknowledgedPrivateCodeStartsNoRun(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
+	st := &store{}
+	s := mkServer(t, st, c, false, false, "7f3cq2xz", 5_000_000)
+	s.Owned = func(string) bool { return true }
+	s.PrivateRefused = func(r string) bool { return r == repoA }
+	refusedWith(t, post(s.Handler(), "alice", on(repoA, nil)), http.StatusForbidden, "private_code_unacknowledged", st)
+}
