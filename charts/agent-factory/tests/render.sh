@@ -230,6 +230,19 @@ for c in room-broker-config:broker run-controller-config:run-controller-gateway 
   yq "select(.metadata.name == \"${c%%:*}\") | .data.\"config.yaml\"" - <<<"$out" >"$tmp/cnref-${c#*:}.yaml"
   (cd ../.. && go run ./charts/maku/tests/loadconfig "${c#*:}" "$tmp/cnref-${c#*:}.yaml") || { echo "FAIL: the cnref-like ${c%%:*} does not load" >&2; fail=1; }
 done
+# Task 21: the k3d production leg's values (identity.sh PROFILE=production) render offline, and the
+# broker's and the factory's configs load, so a live failure is the cluster's, not the values'.
+k3d=(-f tests/identity-values.yaml -f tests/identity-link-values.yaml -f tests/expose-values.yaml -f tests/production-k3d-values.yaml
+  --set expose.mode=httproute --set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
+  --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
+  --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true --set maku.broker.image.tag=e2e --set maku.runController.image.tag=e2e
+  --set maku.runController.images.harness.tag=e2e --set maku.runController.images.bridge.tag=e2e --set maku-factory.image.tag=e2e)
+out="$(helm template identity . -n maku "${k3d[@]}")" || { echo "FAIL: the k3d production values do not render" >&2; fail=1; out=''; }
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-broker.yaml"
+yq 'select(.metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-factory.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/k3d-broker.yaml" &&
+  CHART_FACTORY_CONFIG="$tmp/k3d-factory.yaml" go test -count=1 -run TestRenderedChartConfigParses ./internal/factory/config >"$tmp/parse.log" 2>&1) ||
+  { echo "FAIL: the k3d production leg's broker or factory config does not load" >&2; cat "$tmp/parse.log" >&2; fail=1; }
 out="$demo_out"
 
 # maku: no Cilium, local human, the portable runs group, runc

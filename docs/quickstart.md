@@ -211,6 +211,9 @@ table names what you have not proven by running it.
 Every Secret production reads, and how to bring each one by hand or with an ExternalSecret, is in
 [install Secrets](install-secrets.md).
 
+To install it, start from the chart's `values-production.example.yaml` with `profile: production`: the
+render names every seam you have not set yet, see [From the demo to production](upgrading.md#from-the-demo-to-production).
+
 ## Clean up
 
 ```bash

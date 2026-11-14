@@ -4,6 +4,62 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## From the demo to production
+
+From v0.4x (v4 rollout step 6), `profile: production` renders. Start from
+[`values-production.example.yaml`](../charts/agent-factory/values-production.example.yaml), never from
+`values-demo.yaml`: the render refuses the demo's own values. It checks the seams of each enabled
+component and fails once, with every missing seam on its own line, its key and its doc:
+
+```text
+Error: execution error at (agent-factory/templates/gate/renders/before/subcharts.yaml:5:4): profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):
+  - maku.broker.image.tag: <version>@sha256:<digest>, never a bare tag (got ""; docs/security.md#supply-chain)
+  - maku.broker.human.issuer: the OIDC issuer humans sign in at (docs/identity.md#the-keys)
+  ...
+```
+
+| Component | Its seams | Refused |
+|---|---|---|
+| The release | none | `demoValues`, `postgres.enabled` (D9), `networkPolicies.plain` |
+| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `runController.gitTokens: perRun`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
+| `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`, or `githubSecret`); with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
+| `slack` | the agreements of [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml) and its three Secrets by name | |
+| `webProxy` | `existingSecret`, and the broker's identity it derives its arguments from ([Exposure](exposure.md)) | |
+| `expose` | each surface's hosts, and its parentRefs or IngressClass; the gateway's pods in the release's policy mode | |
+
+`maku.networkPolicies.mode: none` and `maku.broker.factoryInsecure` stay allowed in production: the
+web UI shows them on its unsafe-settings banner. The chart renders none of the demo's own objects: no
+Postgres, no generated TLS (bring `room-broker-tls` and `room-broker-ca`, or set
+`maku.broker.tls.issuerRef` for cert-manager, and the factory's `openbao-ca`), no `agent-model` or
+`agent-factory-github` Secret ([Install Secrets](install-secrets.md)).
+
+`task chart:production:k3d` installs this path on a throwaway k3d cluster: a test-only RuntimeClass
+`gvisor` on runc, a Postgres outside the chart, the generic OIDC stub as the issuer, the web through
+agentgateway, and the monitoring objects. A cluster that runs no sandbox runtime has no production
+render: `sandbox.unsafeAllowRunc` is for the demo and kind only.
+
+### Adopting the umbrella from `maku-factory`
+
+An install that runs the `maku-factory` chart alone adopts the umbrella one component at a time (D25).
+`maku.enabled: false` with `maku-factory.enabled: true` is a valid production render, so the factory
+moves first, under the same release name:
+
+1. Install [`agent-factory-crds`](../charts/agent-factory-crds/README.md) and adopt the CRDs
+   ([Adopting the CRDs](#adopting-the-crds)).
+2. Nest your `maku-factory` values under `maku-factory:` (Flux's `valuesFrom` cannot prefix a whole
+   file: re-nest the file itself), and upgrade the release to the umbrella:
+
+   ```bash
+   helm upgrade agent-factory oci://ghcr.io/smana/charts/agent-factory --version <version> -n agent-system \
+     --set profile=production --set maku-factory.enabled=true -f factory-values.yaml
+   ```
+
+   The factory's Deployment, Service and ConfigMap keep their names, so Helm upgrades them in place:
+   the Deployment keeps its UID, and the Tasks are untouched. `helm history` shows an upgrade, not an
+   install.
+3. Then turn `maku.enabled` on with the broker's values, and the rest (`expose`, `webProxy`, `slack`,
+   `monitoring`) each in its own upgrade.
+
 ## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.4x, v4 rollout step 6)
 
 New keys, all off by default, so a release that sets none of them renders as before:
