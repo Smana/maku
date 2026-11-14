@@ -75,4 +75,24 @@ spec:
     {{- with $np.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+---
+# The broker's half of the App's /mcp and link calls: the broker's own policy admits :8080 from the
+# web front door alone, so the App's path into it is opened here, where the App is. Policies add up:
+# this one admits the App and nothing else.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: room-broker-from-factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {app.kubernetes.io/name: factory-slack-app}
+      ports: [{port: 8080, protocol: TCP}]
 {{- end }}

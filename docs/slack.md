@@ -57,7 +57,9 @@ admits:
 - the webhooks from the broker;
 - the metrics from the scraper.
 
-It reaches DNS, the apiserver, the broker's `:8080`, `slack.com` and the IdP.
+It reaches DNS, the apiserver, the broker's `:8080`, `slack.com` and the IdP. The broker's own policy
+admits `:8080` from the web front door alone, so the subchart adds `room-broker-from-factory-slack-app`,
+which admits the App, and nothing else, to the broker's `:8080`.
 
 **Off removes** the App, its route, its ServiceMonitor and the `maku-slack` alert group. Without it the
 factory loses:

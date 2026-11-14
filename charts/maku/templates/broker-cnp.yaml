@@ -51,7 +51,8 @@ spec:
     {{- end }}
     {{- if .Values.broker.webProxy }}
     # The human listener, from the web front door alone (the umbrella's rooms-web-proxy): it sets
-    # the identity headers the broker reads, so nothing may reach :8080 around it.
+    # the identity headers the broker reads, so nothing may reach :8080 around it. The Slack App,
+    # which calls /mcp with its own bearer, is admitted by maku-slack's room-broker-from-factory-slack-app.
     - fromEndpoints:
         - matchLabels:
             io.kubernetes.pod.namespace: {{ .Release.Namespace }}

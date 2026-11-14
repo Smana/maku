@@ -73,4 +73,25 @@ spec:
     {{- with $np.cilium.extraEgress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
+---
+# The broker's half of the App's /mcp and link calls: the broker's own policy admits :8080 from the
+# web front door alone, so the App's path into it is opened here, where the App is. Policies add up:
+# this one admits the App and nothing else.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: room-broker-from-factory-slack-app
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "mslack.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: room-broker
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: factory-slack-app
+      toPorts:
+        - ports: [{port: "8080", protocol: TCP}]
 {{- end }}
