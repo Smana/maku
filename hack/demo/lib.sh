@@ -172,7 +172,7 @@ demo_render_values() {
       echo "          policyBot: false"
       echo "          approveToMerge: true"
       echo "          mergerLogin: $($q "$bot")"
-      echo "          autoMergesPerDay: 5"
+      echo "          maxPerDay: 5"
       echo "          fixRuns: 2"
       echo "          checkReruns: 1"
       echo "          verifyFor: 30m"

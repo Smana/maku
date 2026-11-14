@@ -28,7 +28,9 @@ func TestRepositoryAuthorityValidates(t *testing.T) {
 		"the switch with read":       {PolicyManagement{Read: true, RepositoryAuthority: true}, func(*Repository) {}, ""},
 		"the switch alone":           {PolicyManagement{RepositoryAuthority: true}, func(*Repository) {}, "repositoryAuthority needs read"},
 		"a cut-over without classes": {PolicyManagement{Read: true, RepositoryAuthority: true}, func(*Repository) {}, ""},
-		"a cut-over, the switch off": {PolicyManagement{Read: true}, func(*Repository) {}, "needs policyManagement.repositoryAuthority"},
+		"a cut-over, the switch off": {PolicyManagement{Read: true}, func(*Repository) {}, "needs policyManagement.stage manage"},
+		"a cut-over at stage read":   {PolicyManagement{Stage: StageRead}, func(*Repository) {}, "needs policyManagement.stage manage"},
+		"a cut-over at the default":  {PolicyManagement{}, func(*Repository) {}, ""},
 		"two sources": {PolicyManagement{Read: true, RepositoryAuthority: true},
 			func(r *Repository) { r.Classes = map[string]Class{"docs-links": {}} }, "two authoritative sources"},
 		"an unknown authority": {PolicyManagement{Read: true, RepositoryAuthority: true},
@@ -82,7 +84,7 @@ func TestACutOverRepositoryReadsItsClassesFromTheSource(t *testing.T) {
 // Off, a source is never read: the switch gates it, whatever is wired.
 func TestTheSourceIsReadOnlyWithTheSwitch(t *testing.T) {
 	r := cutOver()
-	c := &Config{Repositories: []Repository{r}}
+	c := &Config{Repositories: []Repository{r}, PolicyManagement: PolicyManagement{Stage: StageRead}}
 	c.SetClassSource(func(string) (map[string]Class, bool) {
 		t.Fatal("read with the switch off")
 		return nil, false

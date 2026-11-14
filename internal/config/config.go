@@ -1197,7 +1197,9 @@ func (c *Config) Validate() error {
 		errs = append(errs, fmt.Errorf("coordination.mode %s needs human.intake.plan.enabled: coordination_plan plans through its route", c.Coordination.Mode))
 	}
 	c.PolicyManagement.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
-	if c.PolicyManagement.Promotion && c.FactoryURL == "" {
+	// Asked for by name, promotion needs factoryURL; the default stage, manage, without one serves
+	// no promotion page (policyWorkflow) rather than refusing to start.
+	if pm := c.PolicyManagement; (pm.Promotion || pm.Stage == fconfig.StageManage) && c.FactoryURL == "" {
 		errs = append(errs, errors.New("policyManagement.promotion needs factoryURL: the evidence is the factory's GET /v1/policy/evidence"))
 	}
 	return errors.Join(errs...)

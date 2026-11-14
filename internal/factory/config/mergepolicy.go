@@ -123,8 +123,12 @@ func (g MergeGuardrails) MinPromotion() int {
 	return max(g.MinPromotionEvidence, DefaultMinPromotionEvidence)
 }
 
-// PolicyManagement holds the rollout's switches, all off by default (merge policy stages).
+// PolicyManagement holds the rollout's stage (MR9) and the six switches it replaces, read through
+// EffectiveStage, Reads, Simulates and Manages.
 type PolicyManagement struct {
+	// Stage is read, simulate or manage; unset, the switches' highest stage, else manage.
+	// +optional
+	Stage string `json:"stage,omitempty"`
 	// Read observes each owned repository's class policy and compares it with this config. It
 	// decides nothing.
 	Read bool `json:"read,omitempty"`
@@ -160,6 +164,12 @@ func (pm PolicyManagement) IsOperator(login string) bool {
 // Validate reports the switches' own rules; the factory and the broker, which reads the same key,
 // both apply it.
 func (pm PolicyManagement) Validate(bad func(string, ...any)) {
+	if pm.Stage != "" && !slices.Contains(stages(), pm.Stage) {
+		bad("policyManagement.stage %q is one of read, simulate, manage", pm.Stage)
+	}
+	if pm.Stage != "" && pm.switched() {
+		bad("policyManagement: stage and the six switches are not set together")
+	}
 	if pm.DualEvaluation && !pm.Read {
 		bad("policyManagement.dualEvaluation needs read: it evaluates the policy read observes")
 	}
@@ -248,8 +258,8 @@ func (c *Config) validateAuthority(r *Repository, bad func(string, ...any)) {
 		bad("classAuthority %q is %s or %s", r.ClassAuthority, ClassAuthorityCentral, ClassAuthorityRepository)
 		return
 	}
-	if !c.PolicyManagement.RepositoryAuthority {
-		bad("classAuthority repository needs policyManagement.repositoryAuthority")
+	if !c.PolicyManagement.Manages() {
+		bad("classAuthority repository needs policyManagement.stage manage (or the repositoryAuthority switch)")
 	}
 	if len(r.Classes) > 0 {
 		bad("classAuthority repository: classes are declared centrally too, two authoritative sources (MP15): remove them")
@@ -259,7 +269,7 @@ func (c *Config) validateAuthority(r *Repository, bad func(string, ...any)) {
 // RepositoryAuthoritative is whether the repository's classes are its own file's (stage 4): cut
 // over, with the switch on.
 func (c *Config) RepositoryAuthoritative(r *Repository) bool {
-	return r != nil && r.ClassAuthority == ClassAuthorityRepository && c.PolicyManagement.RepositoryAuthority
+	return r != nil && r.ClassAuthority == ClassAuthorityRepository && c.PolicyManagement.Manages()
 }
 
 // SetClassSource makes source the classes of every repository cut over to its own file (stage 4):

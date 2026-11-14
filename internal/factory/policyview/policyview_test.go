@@ -30,7 +30,7 @@ mergePolicies:
 
 func rig(sim bool) (*config.Config, *config.Repository, evidence.Report) {
 	cfg := &config.Config{Factory: "aws-0", HarnessProfiles: map[string]config.HarnessProfile{"plain": {}},
-		PolicyManagement: config.PolicyManagement{Simulation: sim},
+		PolicyManagement: config.PolicyManagement{Stage: map[bool]string{true: config.StageSimulate, false: config.StageRead}[sim]},
 		Policies:         map[string]config.ServedPolicy{"docs-links": {Generation: 1}, "revert": {Generation: 1}},
 		Repositories:     []config.Repository{{Name: "Smana/cloud-native-ref"}}}
 	f, _ := mergepolicy.Parse([]byte(base))

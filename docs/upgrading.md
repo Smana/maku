@@ -510,6 +510,34 @@ and no repository's `.github/agent-factory.yaml` has a `classes:` key. Convert w
 previous release's `maku config migrate --manifests` and `maku policy export` first. Then upgrade the
 CRDs (`agent-factory-crds`) and the factory together.
 
+## One policy-management stage, `merge.maxPerDay`, `factory/hold` (v0.5x, merge policies release N)
+
+This release is additive: every manifest and config the previous one accepts still loads. What
+the next release refuses is named, on each object, by a `Deprecated` condition (`True`,
+`RemovedNextRelease`, the fields in its message):
+
+```bash
+kubectl get factory,repository,mergepolicy -n agent-system -o json |
+  jq -r '.items[] | select(.status.conditions[]? | .type == "Deprecated") | "\(.kind)/\(.metadata.name): \(.status.conditions[] | select(.type == "Deprecated") | .message)"'
+```
+
+| Before | Now | Until the next release |
+|---|---|---|
+| `policyManagement.{read, simulation, dualEvaluation, repositoryAuthority, approvalMemory, promotion}` | `policyManagement.stage`: `read`, `simulate` or `manage` ([the stages](merge-policies.md#rollout-stages)) | The switches load as the highest stage they cover; `stage` and a switch set together fail config load |
+| Nothing set under `policyManagement` | Stage `manage` | — |
+| `merge.autoMergesPerDay` | `merge.maxPerDay` | Both load; set to different values they refuse the repository. A repository that sets either takes neither from the Factory's `mergeDefaults` |
+
+**Nothing set is now `manage`, not "all off".** On the factory that observes each repository's file,
+evaluates every decision twice, serves the promotion evidence and consults approval grants; a
+repository is still decided on its own file only where its entry sets `classAuthority: repository`.
+To keep the previous behaviour as closely as possible, set `policyManagement: {stage: read}` on the
+factory and the broker. A broker left at the default with no `factoryURL` starts and serves no
+settings page; one that sets `promotion` or `stage: manage` still needs `factoryURL`.
+
+**`factory/hold`** on a pull request hands it to a human (`held`) before any class is read; removing
+the label returns it to the gate. Create the label in each repository the factory merges in, so that
+maintainers can apply it from the pull request page.
+
 ## Reusable merge policies (v0.4x, release N)
 
 A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`

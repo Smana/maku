@@ -80,8 +80,8 @@ func (r Maku) policy(args []string) error {
 		_, err = fmt.Fprintln(r.Out, "equivalent")
 		return err
 	case "simulate", "diff":
-		if !cfg.PolicyManagement.Simulation {
-			return fmt.Errorf("policy %s: policyManagement.simulation is off in %s", verb, *cfgPath)
+		if !cfg.PolicyManagement.Simulates() {
+			return fmt.Errorf("policy %s: policyManagement.stage is read in %s: it needs simulate or manage", verb, *cfgPath)
 		}
 		if verb == "diff" {
 			return r.policyDiff(pos, cfg, rc)

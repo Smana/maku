@@ -416,7 +416,6 @@ data:
       - owner
       merge:
         approveToMerge: true
-        autoMergesPerDay: 5
         breaker:
           maxReverts: 1
           window: 10
@@ -424,6 +423,7 @@ data:
         fixRuns: 2
         gateStatus: true
         leakScanCheck: ci
+        maxPerDay: 5
         mergerLogin: maku-demo[bot]
         policyBot: false
         requiredChecks:
@@ -1499,7 +1499,7 @@ spec:
         app.kubernetes.io/name: agent-factory
         app.kubernetes.io/version: "0.0.0"
       annotations:
-        checksum/config: 955f32dd327e76650c56bde6e7e41a2b138efc64cff5c1ad5fc93f8bcbea1a7e
+        checksum/config: 3c8713b8d5de8104100fd0c0da5ebb34654a7642134f85718085789ac22fd3c3
     spec:
       serviceAccountName: agent-factory
       automountServiceAccountToken: true  # a controller: it watches Tasks and AgentRuns

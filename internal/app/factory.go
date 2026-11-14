@@ -486,14 +486,14 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	// is decided on it, and every reader reads its classes from it, aged out at the fence's window.
 	var snapshots func(string) (mergepolicy.Snapshot, bool)
 	var authority func(string) (mergepolicy.Snapshot, error)
-	if cfg.PolicyManagement.Read {
+	if cfg.PolicyManagement.Reads() {
 		w := &mergepolicy.Watch{Cfg: live, Metrics: m, Log: log, Now: time.Now, Stale: fenceStale}
 		policyWatch = w
 		fenced.OnFile = w.Observe
-		if cfg.PolicyManagement.DualEvaluation || cfg.PolicyManagement.ApprovalMemory {
+		if cfg.PolicyManagement.Simulates() {
 			snapshots = w.Snapshot
 		}
-		if cfg.PolicyManagement.RepositoryAuthority {
+		if cfg.PolicyManagement.Manages() {
 			live.Prepare(func(c *config.Config) { c.SetClassSource(w.Classes) }) // every published config
 			authority = w.Authority
 		}
@@ -553,7 +553,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			Clients: conns.class},
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened}
-	if cfg.PolicyManagement.ApprovalMemory { // stage 5: grants read from the broker, never cached
+	if cfg.PolicyManagement.Manages() { // stage 5: grants read from the broker, never cached
 		rec.Grants = broker
 	}
 	// Uncached: the reader serves a few reads per monitor pass, and a cache would start an
@@ -707,7 +707,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	apiSrv.Coordination, rec.Coordination = coord, coord // the manager has not started: rec reads it from its first pass
 	// Stage 6 (merge policy): each repository's promotion evidence, through its own App connection.
 	var evidenceRefresh *evidence.Refresher
-	if cfg.PolicyManagement.Promotion {
+	if cfg.PolicyManagement.Manages() {
 		ev := &evidence.Service{Cfg: live, Namespace: ns, Now: time.Now, Log: log,
 			// The cached client, on every replica: a miss is no status, never an error page.
 			PolicyStatus: func(ctx context.Context, name string) (evidence.PolicyStatus, bool) {

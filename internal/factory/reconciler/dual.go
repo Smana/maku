@@ -59,7 +59,7 @@ func readsDiff(r mergepolicy.Resolved, class string) bool {
 // gate acts on: central's verdict is still the decision.
 func (r *Reconciler) dual(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, in ArmInputs, central ArmDecision, d *ArmDecision) {
 	// A cut-over repository's decision is the repository's own: there is no central one to compare.
-	if !cfg.PolicyManagement.DualEvaluation || r.Policy == nil || cfg.RepositoryAuthoritative(r.repo(cfg, t)) {
+	if !cfg.PolicyManagement.Simulates() || r.Policy == nil || cfg.RepositoryAuthoritative(r.repo(cfg, t)) {
 		return
 	}
 	snap, ok := r.Policy(t.Spec.Repository)

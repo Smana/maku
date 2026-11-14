@@ -754,7 +754,7 @@ func coordinationViews(cfg config.Config, r client.Reader, ns string) humanapi.C
 // policyManagement.promotion is off, which serves no settings page and no policy route. The
 // evidence is the factory's, read with the caller's own token at the config's URL, never a request's.
 func policyWorkflow(cfg config.Config, st *store.Store) *humanapi.Policy {
-	if !cfg.PolicyManagement.Promotion || cfg.FactoryURL == "" {
+	if !cfg.PolicyManagement.Manages() || cfg.FactoryURL == "" {
 		return nil
 	}
 	return &humanapi.Policy{Factory: runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile},
