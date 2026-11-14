@@ -149,6 +149,94 @@ Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defa
 their old values. Each change below is breaking: a removed or flipped value is refused by the schema
 or by a render `fail` that names its replacement, never silently ignored.
 
+This section is the migration note from any v0.4x release to the v4.0 candidate. Each path step 8
+removes or flips is one row below: what replaces it, the release that ships the change, and the
+subsection with the details. Rows 1 to 3, 11 to 13, 19 and 21 to 23 shipped in v0.48.0; the others
+ship in the release after it. Row 14 is pending PR F: until that ships, the ZITADEL reader still
+works, and the move to the GitHub link is the same either way.
+
+```mermaid
+flowchart LR
+  v047["v0.47.0 or older"] --> v048["v0.48.0<br/>rows 1–3, 11–13, 19, 21–23"]
+  v048 --> s8["the next v0.4x<br/>rows 4–10, 15–18, 20"]
+  s8 --> f["PR F's release<br/>row 14"]
+  f --> v4["the v4.0 candidate"]
+```
+
+| # | Removed or flipped | Instead | Release | Details |
+|---|---|---|---|---|
+| 1 | `networkPolicies.enabled` (`maku`) | `networkPolicies.mode`, default `kubernetes` | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
+| 2 | `runController.runtimeClassName`, `runController.allowUnsandboxed` (`maku`) | `sandbox.runtimeClassName`, default `gvisor`; `sandbox.unsafeAllowRunc` | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
+| 3 | The factory's `spec.queueName` on AgentRuns (Kueue, D16) | `runsQuota`, the factory's slots and budgets | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
+| 4 | The `cloud.ogenki.io` run kind (`runs.group`) | `maku.ogenki.io`, now also the binaries' default | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
+| 5 | octo-sts: `hardening.publisher.octoSTS`, `hardening.publisher.audience`, `networkPolicies.factory.octoSTS`, the harness's `STS_URL`, readiness's policy files | the per-run minter, `hardening.publisher.minter` | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
+| 6 | Readiness's fix text naming the XR and octo-sts | per-run tokens | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
+| 7 | `loops.<class>.models` and `split` without `runs.gatewayIdentity` | `runs.gatewayIdentity: true` | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
+| 8 | The shared git token: `runController.gitTokens`, `gitReadSecret`, `unsafeSharedGitToken` (`maku`) | per-run tokens, the only mode; a laptop's PAT is `runController.gitSecret` with `demoValues` | after v0.48.0 | [the shared git token](#the-shared-git-token) |
+| 9 | `githubSecret`, `mergerSecret`, `runTokens.appSecret` (`maku-factory`); `runTokens.appIDFile`, `privateKeyFile` (factory config) | `apps.factory`, `apps.merger`, `apps.agents` | after v0.48.0 | [the old App keys](#the-old-app-keys) |
+| 10 | The merge defaults `gateStatus: false`, `policyBot: true`, `apps.merger.mode: separate` | `gateStatus: true`, `policyBot: false`, `apps.merger.mode: factory` | after v0.48.0 | [the merge defaults](#the-merge-defaults) |
+| 11 | `model.mode: secret` as the default (`maku`) | `model.mode: gateway`; `secret` is demo-only | v0.48.0 | [the gateway is the model path](#the-gateway-is-the-model-path) |
+| 12 | The Envoy AI gateway's `meter.logsURL` in the docs | `meter.throttle.promQuery` | v0.48.0 | [runs through the model gateway](#runs-through-the-model-gateway-v04x-v4-rollout-step-4) |
+| 13 | `values-demo-gateway.yaml` | `values-demo.yaml` | v0.48.0 | [the demo's model gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7) |
+| 14 | The ZITADEL reader: `human.access.readerFile`, `api.access.readerFile`, `zitadelReaderSecret` | the GitHub account link | pending PR F | [the GitHub account link](#the-github-account-link-v04x-v4-rollout-step-5) |
+| 15 | `profile` (umbrella) | `demoValues: true`, which `values-demo.yaml` sets | after v0.48.0 | [the chart contract](#the-chart-contract) |
+| 16 | `networkPolicies.plain` (umbrella) | each component's own default-deny policies | after v0.48.0 | [the chart contract](#the-chart-contract) |
+| 17 | The `crds/` of `maku` and `maku-factory` | `agent-factory-crds` alone | after v0.48.0 | [the chart contract](#the-chart-contract) |
+| 18 | `preflight.enabled: false` | default `true` | after v0.48.0 | [the chart contract](#the-chart-contract) |
+| 19 | The private-code warning | a refusal without `spec.privateCode.acknowledged` | v0.48.0 | [private code is refused](#private-code-is-refused-without-its-acknowledgement) |
+| 20 | Serving on a ledger the broker cannot read | a refusal at start | after v0.48.0 | [an unreadable ledger is refused](#an-unreadable-ledger-is-refused) |
+| 21 | The factory config's single-repository shape | `Repository` objects, from `maku config migrate` | v0.48.0 | [the single-repository config](#the-single-repository-config) |
+| 22 | `maku-broker migrate-group` | upgrade through an earlier v0.4x first | v0.48.0 | [the group migration](#the-group-migration) |
+| 23 | The `factory_slack_*` metrics | `maku_slack_app_*` | v0.48.0 | [the Slack App's metric names](#the-slack-apps-metric-names) |
+
+The per-repository `MergePolicy` and the repository file's `classes:` are not in this table: reusable
+merge policies' second release removed them, and v0.48.0 carries it
+([the per-repository merge policy removed](#the-per-repository-merge-policy-removed-v04x-release-n1)).
+
+Before you upgrade, check that nothing still uses a removed path:
+
+1. **The values.** Render the new release with the values you run. Each removed or flipped key fails,
+   naming its replacement and its subsection here:
+
+   ```bash
+   helm get values <release> -n <namespace> -o yaml > current.yaml
+   helm template <release> oci://ghcr.io/smana/charts/agent-factory --version <new> -n <namespace> -f current.yaml >/dev/null
+   ```
+
+2. **The configs.** The broker, the factory and the run-controller decode their configs strictly and
+   refuse a removed key at start (rows 4, 5, 9 and 21). Upgrade each chart with its images.
+3. **The runtime paths,** each to print nothing or 0:
+
+   ```bash
+   kubectl get agentruns.cloud.ogenki.io -A --no-headers 2>/dev/null | wc -l   # row 4: no XR run left
+   kubectl get repository -A -o jsonpath='{range .items[?(@.status.conditions[?(@.type=="PrivateCode")].reason=="Unacknowledged")]}{.metadata.name}{"\n"}{end}'   # row 19
+   ```
+
+   For row 20, `maku_rooms_schema_unverified` reads 0 on every broker pod (v0.48.0 is the last release
+   to export it). For row 23, no rule or dashboard of yours names `factory_slack_`.
+
+### The values contract
+
+`hack/values-contract.sh` compares each chart's `values.schema.json` and `values.yaml` with the same
+chart in a release, pulled from `oci://ghcr.io/smana/charts` and cosign-verified as the release
+workflow's. It prints one row per change:
+
+| Class | What it is |
+|---|---|
+| breaking | a key removed or renamed (gone from the schema, refused by a removal message, or dropped from `values.yaml` with no schema entry left); a narrowed type, enum or pattern; a new required key; an object that stops accepting unknown keys |
+| behaviour | a changed default |
+| compatible | an added key, a widened type or enum, a dropped pattern |
+
+```bash
+task chart:contract                        # against the latest release
+task chart:contract CONTRACT_FROM=v0.48.0  # against a given one
+```
+
+CI runs it on each pull request that changes a chart, and writes the table to the job summary. It is
+report-only: before v4.0.0 a breaking value change may ship in a v0.x minor, with its section on this
+page. From v4.0.0, a breaking row needs a major version and a migration note; arming the report to
+fail (`--strict`) is part of cutting v4.0.0.
+
 ### The run path's old keys
 
 The `maku` chart's keys that step 2 kept beside their replacements are removed, and the defaults are
