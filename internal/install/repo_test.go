@@ -63,15 +63,58 @@ func repoGolden(t *testing.T, tree Tree, dir string) {
 }
 
 // WF11: the Repository binds nothing (the catalog is evaluated in shadow without a binding, merge
-// policies MR2), and the fence is one line. By default the Repository carries every merge setting
-// the factory requires and no default fills (TestRepoTreeIsAccepted): a Factory written by maku
-// install --print has no spec.mergeDefaults.
+// policies MR2), and the fence is one line. By default the Repository leaves the merge settings every
+// repository shares to the Factory's spec.mergeDefaults, which maku install --print writes (Q15), and
+// is the spec's target: under 15 lines, the per-repository ones only (TestRepoTreeIsAccepted).
 func TestRepoTreeForAPublicRepository(t *testing.T) {
 	tree, err := RepoTree(publicInputs())
 	if err != nil {
 		t.Fatal(err)
 	}
 	repoGolden(t, tree, filepath.Join("testdata", "golden", "repo-add", "public"))
+	repo := tree["factory/repository-my-service.yaml"]
+	want := `apiVersion: maku.ogenki.io/v1alpha1
+kind: Repository
+metadata: {name: my-service, namespace: maku}
+spec:
+  factoryRef: agent-factory
+  repository: acme/my-service
+  maintainers: [alice]
+  triggerLabel: factory/ready
+  merge:
+    requiredChecks: [ci]
+    verifyChecks: [ci]
+    leakScanCheck: ci
+`
+	if string(repo) != want {
+		t.Fatalf("the Repository:\n%s", repo)
+	}
+	if n := bytes.Count(repo, []byte("\n")); n >= 15 {
+		t.Fatalf("the Repository is %d lines, the target is under 15", n)
+	}
+	if bytes.Contains(repo, []byte("mergePolicies")) {
+		t.Fatal("a binding was written")
+	}
+	if got := string(tree["repo/.github/agent-factory.yaml"]); got != "factory: agent-factory\n" {
+		t.Fatalf("the fence is %q", got)
+	}
+	if name, err := fence.Parse(tree["repo/"+fence.Path]); err != nil || name != "agent-factory" {
+		t.Fatalf("the factory does not read the fence it is given: %q, %v", name, err)
+	}
+	if !bytes.Contains(tree["github/apply-ruleset.sh"], []byte("'repos/acme/my-service/rulesets'")) {
+		t.Fatalf("the script does not target the repository:\n%s", tree["github/apply-ruleset.sh"])
+	}
+}
+
+// With --merge-defaults=false, for a Factory with no spec.mergeDefaults, the Repository carries
+// every merge setting the factory requires and no default fills.
+func TestRepoTreeWithoutMergeDefaultsCarriesTheSharedSettings(t *testing.T) {
+	in := publicInputs()
+	in.NoMergeDefaults = true
+	tree, err := RepoTree(in)
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := tree["factory/repository-my-service.yaml"]
 	want := `apiVersion: maku.ogenki.io/v1alpha1
 kind: Repository
@@ -92,49 +135,6 @@ spec:
 `
 	if string(repo) != want {
 		t.Fatalf("the Repository:\n%s", repo)
-	}
-	if bytes.Contains(repo, []byte("mergePolicies")) {
-		t.Fatal("a binding was written")
-	}
-	if got := string(tree["repo/.github/agent-factory.yaml"]); got != "factory: agent-factory\n" {
-		t.Fatalf("the fence is %q", got)
-	}
-	if name, err := fence.Parse(tree["repo/"+fence.Path]); err != nil || name != "agent-factory" {
-		t.Fatalf("the factory does not read the fence it is given: %q, %v", name, err)
-	}
-	if !bytes.Contains(tree["github/apply-ruleset.sh"], []byte("'repos/acme/my-service/rulesets'")) {
-		t.Fatalf("the script does not target the repository:\n%s", tree["github/apply-ruleset.sh"])
-	}
-}
-
-// With --merge-defaults the Factory's spec.mergeDefaults carries the settings every repository
-// shares, and the Repository is the spec's target: under 15 lines, the per-repository ones only.
-func TestRepoTreeWithMergeDefaultsIsUnder15Lines(t *testing.T) {
-	in := publicInputs()
-	in.MergeDefaults = true
-	tree, err := RepoTree(in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	repo := tree["factory/repository-my-service.yaml"]
-	want := `apiVersion: maku.ogenki.io/v1alpha1
-kind: Repository
-metadata: {name: my-service, namespace: maku}
-spec:
-  factoryRef: agent-factory
-  repository: acme/my-service
-  maintainers: [alice]
-  triggerLabel: factory/ready
-  merge:
-    requiredChecks: [ci]
-    verifyChecks: [ci]
-    leakScanCheck: ci
-`
-	if string(repo) != want {
-		t.Fatalf("the Repository:\n%s", repo)
-	}
-	if n := bytes.Count(repo, []byte("\n")); n >= 15 {
-		t.Fatalf("the Repository is %d lines, the target is under 15", n)
 	}
 }
 
@@ -234,14 +234,37 @@ func TestRepoTreeAgreesWithInstall(t *testing.T) {
 		}
 	}
 	walk("", a.Spec, installed.Spec)
+	// The long form's shared settings are install's Factory's mergeDefaults, key for key (Q15).
+	factory, err := resources.Decode(full["factory/factory.yaml"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	defaults, _ := factory[0].Spec["mergeDefaults"].(map[string]any)
+	long, err := RepoTree(RepoInputs{Repository: "example/app", Factory: in.Answers.String("release"), Namespace: in.ns(),
+		Maintainers: in.Answers.List("maintainers"), RequiredChecks: []string{"ci"}, LeakScanCheck: "ci", FactoryAppID: in.FactoryAppID(),
+		FactoryLogin: in.factorySlug() + "[bot]", NoMergeDefaults: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	longObjs, err := resources.Decode(long["factory/repository-app.yaml"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	longMerge, _ := longObjs[0].Spec["merge"].(map[string]any)
+	for _, k := range []string{"mergerLogin", "verifyFor", "revertWindow", "breaker"} {
+		if longMerge[k] == nil || !reflect.DeepEqual(longMerge[k], defaults[k]) {
+			t.Errorf("merge.%s: repo add --merge-defaults=false writes %v, install's mergeDefaults %v", k, longMerge[k], defaults[k])
+		}
+	}
 	if !bytes.Equal(tree["github/ruleset-merge-gate.json"], full["github/ruleset-merge-gate.json"]) {
 		t.Error("the ruleset differs from install's")
 	}
 }
 
 // The Repository repo add writes is one the factory serves: assembled with install's file, its
-// Factory and the chart's catalog, it is accepted and evaluates the catalog in shadow. With
-// --merge-defaults, once the Factory's mergeDefaults carries the shared settings.
+// Factory and the chart's catalog, it is accepted and evaluates the catalog in shadow. By default
+// against install's Factory as written, whose mergeDefaults carries the shared settings (Q15); with
+// --merge-defaults=false, against a Factory with none.
 func TestRepoTreeIsAccepted(t *testing.T) {
 	in := inputs(t, "generic")
 	file, manifests, err := FactoryObjects(in)
@@ -266,20 +289,22 @@ func TestRepoTreeIsAccepted(t *testing.T) {
 	for i := range catalog {
 		catalog[i].Generation, catalog[i].Catalog = 1, true
 	}
-	for _, withDefaults := range []bool{false, true} {
+	for _, withDefaults := range []bool{true, false} {
 		var objs []resources.Object
 		for _, o := range all {
 			if o.Kind == resources.KindFactory {
-				if withDefaults {
-					o.Spec["mergeDefaults"] = map[string]any{"mergerLogin": in.factorySlug() + "[bot]", "verifyFor": "30m",
-						"revertWindow": "168h", "breaker": map[string]any{"window": 10, "maxReverts": 1}}
+				if _, ok := o.Spec["mergeDefaults"]; !ok {
+					t.Fatal("install's Factory has no spec.mergeDefaults (Q15)")
+				}
+				if !withDefaults {
+					delete(o.Spec, "mergeDefaults")
 				}
 				objs = append(objs, o)
 			}
 		}
 		tree, err := RepoTree(RepoInputs{Repository: "acme/my-service", Factory: in.Answers.String("release"), Namespace: in.ns(),
 			Maintainers: []string{"alice"}, RequiredChecks: []string{"ci"}, LeakScanCheck: "ci", FactoryAppID: "123",
-			FactoryLogin: in.factorySlug() + "[bot]", MergeDefaults: withDefaults})
+			FactoryLogin: in.factorySlug() + "[bot]", NoMergeDefaults: !withDefaults})
 		if err != nil {
 			t.Fatal(err)
 		}
