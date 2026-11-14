@@ -40,10 +40,10 @@ const (
 	secretBrokerOIDC   = "rooms-oidc"
 	secretFactoryOIDC  = "agent-factory-oidc"
 	secretSponsored    = "agent-factory-sponsored"
-	secretGitHubLink   = "maku-github-link"
+	secretGitHubLink   = "maku-github-link" //nolint:gosec // a Secret's name, not a credential
 	secretSlackApp     = "factory-slack-app"
 	secretSlackPrinc   = "factory-slack-principal"
-	secretSlackWebhook = "room-broker-webhook-slack-app"
+	secretSlackWebhook = "room-broker-webhook-slack-app" //nolint:gosec // a Secret's name, not a credential
 	slackPrincipal     = "slack-app"
 )
 

@@ -61,7 +61,7 @@ func factoryConfig(in Inputs) map[string]any {
 		"factoryLogin": factoryLogin,
 		"agentsLogin":  in.agentsSlug() + "[bot]",
 		"roomsURL":     strings.TrimSuffix(a.String("web.url"), "/"),
-		"broker": map[string]any{
+		"broker": map[string]any{ //nolint:gosec // file paths and a URL, no credential
 			"url":       fmt.Sprintf("https://room-broker.%s.svc.cluster.local:8443", ns),
 			"caFile":    "/etc/agent-factory/openbao-ca/ca.crt",
 			"tokenFile": "/var/run/secrets/agents/rooms/token",

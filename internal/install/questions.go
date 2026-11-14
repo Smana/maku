@@ -509,7 +509,7 @@ func questionTable() []Question {
 				return a.String("expose.mode") != "none" && a.String("network.mode") == "kubernetes"
 			},
 			Keys: []string{"expose.networkPolicy.from"},
-			Values: func(v any, a Answers) map[string]any {
+			Values: func(v any, _ Answers) map[string]any {
 				return map[string]any{"expose.networkPolicy.from": peers("kubernetes", str(v))}
 			}, Check: dnsLabel("the namespace")},
 

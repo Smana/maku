@@ -91,7 +91,7 @@ func Ask(in io.Reader, out io.Writer) (Answers, error) {
 				return nil, fmt.Errorf("%s: no answer (%w)", q.ID, rerr)
 			}
 			line = strings.TrimSpace(line)
-			var v any = def
+			v := def
 			if line != "" {
 				if v, err = q.Kind.coerce(line); err != nil {
 					_, _ = fmt.Fprintf(out, "  %v\n", err)

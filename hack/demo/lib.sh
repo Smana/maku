@@ -90,15 +90,36 @@ demo_public_only() {
 # demo_yq_str VALUE: a single-quoted YAML scalar.
 demo_yq_str() { local v=${1//\'/\'\'}; printf "'%s'" "$v"; }
 
+# demo_provider URL: the model gateway's provider fields for an OpenAI-compatible base URL, one per line:
+# host, port, path (the base's /chat/completions) and tls.
+demo_provider() {
+  local url=$1 scheme rest hostport path port
+  scheme=${url%%://*}
+  [[ $scheme == https || $scheme == http ]] || return 1
+  rest=${url#*://}
+  hostport=${rest%%/*}
+  path=""
+  [[ $rest != */* ]] || path="/${rest#*/}"
+  path="${path%/}/chat/completions"
+  port=443
+  [[ $scheme == https ]] || port=80
+  [[ $hostport != *:* ]] || port=${hostport##*:}
+  printf '%s\n%s\n%s\n%s\n' "${hostport%%:*}" "$port" "$path" "$([[ $scheme == https ]] && echo true || echo false)"
+}
+
 # demo_render_values OUT: the demo's values file, mode 0600. From the environment: DEMO_SLUG, DEMO_REPO,
-# DEMO_LOGIN, MODEL_BASE_URL, MODEL_NAME, MODEL_API_KEY, GITHUB_APP_ID, GITHUB_APP_KEY_FILE, and
+# DEMO_LOGIN, DEMO_ISSUER (the cluster's ServiceAccount issuer, for the model gateway), MODEL_BASE_URL,
+# MODEL_NAME, MODEL_API_KEY, GITHUB_APP_ID, GITHUB_APP_KEY_FILE, and
 # optionally DEMO_SHADOW (true, the default, or false: live merging for docs-links), and the five image
 # tags DEMO_TAG_BROKER, DEMO_TAG_RUN_CONTROLLER, DEMO_TAG_HARNESS, DEMO_TAG_BRIDGE, DEMO_TAG_FACTORY
 # (`<version>@sha256:<digest>`). Helm replaces a list whole, so the whole repositories[0] entry is here.
 demo_render_values() {
-  local out=$1 q bot shadow=${DEMO_SHADOW:-true}
+  local out=$1 q bot shadow=${DEMO_SHADOW:-true} prov
   [[ $shadow == true || $shadow == false ]] || { echo "DEMO_SHADOW is true or false" >&2; return 1; }
   [[ -r ${GITHUB_APP_KEY_FILE:-} ]] || { echo "the App key file is not readable" >&2; return 1; }
+  [[ -n ${DEMO_ISSUER:-} ]] || { echo "DEMO_ISSUER (the cluster's ServiceAccount issuer) is required" >&2; return 1; }
+  mapfile -t prov < <(demo_provider "$MODEL_BASE_URL") && [[ ${#prov[@]} == 4 ]] ||
+    { echo "MODEL_BASE_URL is not an http(s) URL" >&2; return 1; }
   q=demo_yq_str
   bot="${DEMO_SLUG}[bot]"
   (
@@ -108,8 +129,6 @@ demo_render_values() {
       echo "profile: demo"
       echo "demo:"
       echo "  model:"
-      echo "    baseURL: $($q "$MODEL_BASE_URL")"
-      echo "    name: $($q "$MODEL_NAME")"
       echo "    apiKey: $($q "$MODEL_API_KEY")"
       echo "  githubApp:"
       echo "    id: $($q "$GITHUB_APP_ID")"
@@ -125,6 +144,15 @@ demo_render_values() {
         echo "      harness: {tag: $($q "$DEMO_TAG_HARNESS")}"
         echo "      bridge: {tag: $($q "$DEMO_TAG_BRIDGE")}"
       fi
+      # The model gateway (step 7 R4): the runs reach MODEL_BASE_URL through it, and only it holds the key.
+      echo "maku-gateway:"
+      echo "  identity: {issuer: $($q "$DEMO_ISSUER")}"
+      echo "  providers:"
+      echo "    demo: {host: $($q "${prov[0]}"), port: ${prov[1]}, path: $($q "${prov[2]}"), tls: ${prov[3]}}"
+      echo "  aliases:"
+      echo "    public:"
+      echo "      agent-default: {provider: demo, model: $($q "$MODEL_NAME")}"
+      echo "      tier-light: {provider: demo, model: $($q "$MODEL_NAME")}"
       echo "maku-factory:"
       [[ -z ${DEMO_TAG_FACTORY:-} ]] || echo "  image: {tag: $($q "$DEMO_TAG_FACTORY")}"
       echo "  config:"

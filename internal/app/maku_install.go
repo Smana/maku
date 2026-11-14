@@ -165,7 +165,9 @@ func (r Maku) createApps(ctx context.Context, in *install.Inputs, hc *http.Clien
 	}
 	run := r.RunFlow
 	if run == nil {
-		run = func(ctx context.Context, f githubapps.Flow, ms ...githubapps.AppManifest) ([]githubapps.App, error) { return f.Run(ctx, ms...) }
+		run = func(ctx context.Context, f githubapps.Flow, ms ...githubapps.AppManifest) ([]githubapps.App, error) {
+			return f.Run(ctx, ms...)
+		}
 	}
 	apps, err := run(ctx, flow, agents, factory)
 	if err != nil {

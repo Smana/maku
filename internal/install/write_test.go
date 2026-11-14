@@ -139,7 +139,7 @@ func TestValuesRender(t *testing.T) {
 		if err := os.WriteFile(values, tree["values.yaml"], 0o600); err != nil {
 			t.Fatal(err)
 		}
-		out, err := exec.Command(helm, "template", in.Answers.String("release"), chart, "-n", in.ns(), "-f", values).CombinedOutput()
+		out, err := exec.CommandContext(t.Context(), helm, "template", in.Answers.String("release"), chart, "-n", in.ns(), "-f", values).CombinedOutput()
 		if err != nil {
 			t.Errorf("%s: helm template: %v\n%s", name, err, out)
 			continue
@@ -147,7 +147,7 @@ func TestValuesRender(t *testing.T) {
 		if kerr != nil {
 			continue
 		}
-		cmd := exec.Command(kubeconform, "-strict", "-ignore-missing-schemas", "-summary", "-")
+		cmd := exec.CommandContext(t.Context(), kubeconform, "-strict", "-ignore-missing-schemas", "-summary", "-")
 		cmd.Stdin = bytes.NewReader(out)
 		if kout, err := cmd.CombinedOutput(); err != nil {
 			t.Errorf("%s: kubeconform: %v\n%s", name, err, kout)
