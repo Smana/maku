@@ -1,8 +1,8 @@
 {{- /* Maku's own copy of two of cloud-native-ref's Kyverno rules (agentrun-one-creator,
 agentrun-factory-patch-limit), as in-tree ValidatingAdmissionPolicies (v4 D17), so ANR can delete
 its duplicates. Each renders only when its value is set: an install opts in. Not gated on
-runController.enabled: the XR install (cloud.ogenki.io) is the one that opts in first. Like the
-Kyverno originals they hold every namespace, unless agentRunPolicies.namespaces narrows them. */ -}}
+runController.enabled: the AgentRuns are guarded wherever they are created. Like the Kyverno
+originals they hold every namespace, unless agentRunPolicies.namespaces narrows them. */ -}}
 {{- $p := .Values.agentRunPolicies | default dict -}}
 {{- define "ap.agentRunBinding" -}}
 apiVersion: admissionregistration.k8s.io/v1

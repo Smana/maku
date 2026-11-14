@@ -22,7 +22,7 @@ type reported struct {
 	byModel map[string]float64
 }
 
-// xplane-run-nh5tztlh (aws-0, 2026-10-16): the gateway's last scrape of the run landed after the
+// run-nh5tztlh (aws-0, 2026-10-16): the gateway's last scrape of the run landed after the
 // meter's first tick that saw it Succeeded, so its cost was reported at 370,526 of its 507,350
 // tokens ($1.54 of $2.13). An ended run's cost is reported once its late readings had their
 // window, at the reading that window brought.

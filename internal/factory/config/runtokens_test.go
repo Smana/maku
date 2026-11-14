@@ -9,8 +9,8 @@ import (
 
 const portable = "runs: {group: maku.ogenki.io}\n"
 
-// PR3: runTokens writes the run-controller's git Secrets from the agents App (github.agents*), and
-// only for the run-controller's AgentRun.
+// PR3: runTokens mints each run's token from the agents App (github.agents*). The default runs
+// group is the run-controller's (v4 step 8, D5), so it needs none.
 func TestRunTokens(t *testing.T) {
 	const on = "runTokens: {enabled: true, perRun: true}\n"
 	app := withAgentsApp(good, agentsID, agentsKey)
@@ -24,9 +24,8 @@ func TestRunTokens(t *testing.T) {
 	for name, tc := range map[string]struct{ body, want string }{
 		"no files": {good + portable + on, "runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile"},
 		// v4 step 8: the shared agent-git writer is removed, so enabled alone would write nothing.
-		"no perRun":   {app + portable + "runTokens: {enabled: true}\n", "runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8"},
-		"the XR":      {app + "runs: {group: cloud.ogenki.io}\n" + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
-		"the default": {app + on, "runTokens.enabled writes the run-controller's Secrets: runs.group must be maku.ogenki.io"},
+		"no perRun": {app + portable + "runTokens: {enabled: true}\n", "runTokens.enabled needs runTokens.perRun: the shared agent-git writer was removed in v4 step 8"},
+		"the XR":    {app + "runs: {group: cloud.ogenki.io}\n" + on, "removed in v4 step 8 (D5)"},
 	} {
 		if _, err := Parse([]byte(tc.body)); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("%s: %v, want %q", name, err, tc.want)
@@ -37,7 +36,10 @@ func TestRunTokens(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, _, ok := off.RunTokenApp(); ok {
-		t.Fatal("no runTokens, no demo: the factory writes no run token (octo-sts or the operator does)")
+		t.Fatal("no runTokens, no demo: the factory writes no run token (the operator does)")
+	}
+	if _, err := Parse([]byte(good + on)); err != nil {
+		t.Fatalf("the default group: %v", err)
 	}
 }
 
@@ -52,7 +54,7 @@ func TestRunTokensPerRun(t *testing.T) {
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"without enabled": {good + portable + "runTokens: {perRun: true}\n", "runTokens.perRun needs runTokens.enabled"},
-		"on the XR":       {app + "runs: {group: cloud.ogenki.io}\n" + on, "runs.group must be maku.ogenki.io"},
+		"on the XR":       {app + "runs: {group: cloud.ogenki.io}\n" + on, "removed in v4 step 8 (D5)"},
 		"one App": {strings.Replace(app, "agentsLogin: ogenki-agents[bot]", "agentsLogin: ogenki-agent-factory[bot]", 1) + portable + on,
 			"runTokens.perRun: agentsLogin and factoryLogin name one App; D12 needs two"},
 	} {

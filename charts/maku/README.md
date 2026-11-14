@@ -9,7 +9,7 @@ CRDs (`crds/`), and the runs namespace with its default-deny policy. It has no f
 | Value | Meaning |
 |---|---|
 | `runs.{group,namespace,namePrefix}` | The only source of the run kind: the broker's `runs:` and its run-issuer `subPattern` both render from it |
-| `runController.enabled` | On by default. Refused at render with any `runs.group` but `maku.ogenki.io`, the only group the controller reconciles: turn it off where another controller runs the AgentRuns (cloud-native-ref's `cloud.ogenki.io` composition) |
+| `runController.enabled` | On by default: the run controller runs the AgentRuns. `runs.group` must be `maku.ogenki.io`, the only group it reconciles; cloud-native-ref's `cloud.ogenki.io` composition was removed in v4 step 8 ([upgrading](../../docs/upgrading.md#the-xr-run-kind-and-octo-sts)) |
 | `broker.image.tag` | `<version>@sha256:<digest>`; a bare tag is refused unless `e2e.unpinnedImages` |
 | `broker.publicURL` | `oidc`: the https URL humans use. `local`: `http://localhost:<forwarded port>` (default `:8080`); the broker answers that port only, under `localhost`, `127.0.0.1` or `[::1]` |
 | `broker.human.mode` | `oidc` (block passed through verbatim) or `local` (one loopback user; `:8080` is not exposed, use a port-forward) |

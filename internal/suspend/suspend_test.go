@@ -155,7 +155,7 @@ func build(t *testing.T, ann map[string]string) (client.Client, runwatch.Run) {
 		WithObjects(agentRun("7f3cq2xz", ann)).Build()
 	u := &unstructured.Unstructured{}
 	u.SetGroupVersionKind(runwatch.DefaultKind.GVK())
-	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.DefaultKind.Namespace, Name: "xplane-run-7f3cq2xz"}, u); err != nil {
+	if err := c.Get(t.Context(), types.NamespacedName{Namespace: runwatch.DefaultKind.Namespace, Name: "run-7f3cq2xz"}, u); err != nil {
 		t.Fatal(err)
 	}
 	r := running()

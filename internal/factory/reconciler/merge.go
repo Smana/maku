@@ -600,9 +600,8 @@ func (r *Reconciler) backToGate(cfg *config.Config, t *v1alpha1.Task, why, reaso
 // whole list, since an agent's squash or rebase rewrites every SHA — and every push to the branch
 // must be the agents App's (#76, factoryPushed): what binds the commits to the factory, since a
 // human can copy a trailer but cannot push as the App without access to the agents namespace or
-// the App key. The binding is to the App, not the task: octo-sts's implementer trust policy
-// (cloud-native-ref .github/chainguard/agent-implementer.sts.yaml) is repository-wide, so any
-// implementer run of any task can push as the bot, and only the trailer, a claim, narrows that to
+// the App key. The binding is to the App, not the task: the implementer's minted token is
+// repository-wide, so any implementer run of any task can push as the bot, and only the trailer, a claim, narrows that to
 // this task's runs. The author login is never read: it is whatever GitHub matched the commit's
 // email to, which anyone can set. A merge from GitHub's "Update branch" carries no trailer and
 // hands off here as it already did on its head; that stays the fail-safe side. A pull request
@@ -786,7 +785,7 @@ func pushDeadline(t *v1alpha1.Task) time.Time {
 }
 
 // factoryPushed: GitHub records every move of the task's branch, since its latest creation, as
-// the agents App's (cfg.agentsLogin, the identity octo-sts mints implementer tokens as), in one
+// the agents App's (cfg.agentsLogin, the identity the minter mints implementer tokens as), in one
 // unbroken chain from that creation to head (#76). The pusher is GitHub's record of whose
 // credential moved the ref, so a commit with a copied trailer, a force-push or GitHub's "Update
 // branch" by anyone else is a stranger's. The chain is what makes the read whole: a gap, or a

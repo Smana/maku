@@ -46,7 +46,7 @@ the broker assigns. The rest of this page names the parts.
 | Term | Meaning | Where it lives |
 |---|---|---|
 | **Room** | One session: its policy (owner, driver, members, approvals, retention, data class) and its log. Rooms are runtime objects, created by the factory, the broker or the owner, never committed to Git | `Room` CR (`maku.ogenki.io/v1alpha1`) in `agent-system`, named with a C2 id (8 lowercase base32 characters; [reference](#reference-the-room-crd)); its log in Postgres |
-| **Run** | One agent, one role, one task, one branch, with a deadline. It joins a room by naming it in `spec.roomRef`. One run is `Running` per room at a time | `AgentRun` claim (`cloud.ogenki.io`) in `agents` |
+| **Run** | One agent, one role, one task, one branch, with a deadline. It joins a room by naming it in `spec.roomRef`. One run is `Running` per room at a time | `AgentRun` (`maku.ogenki.io`) in `agents` |
 | **Harness** | The agent loop inside the sandbox: the OpenHands agent-server on `127.0.0.1:8000` | The run's pod |
 | **Bridge** | `maku-bridge`, a native sidecar (container `room-bridge`) in every run pod that has a `roomRef`. It polls the harness and pushes its events to the broker; it carries steering, interrupts and decisions back | The run's pod, namespace `agents` |
 | **Broker** | `maku-broker`, the stateless service (Deployment and Service `room-broker`, an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) that owns rooms: it authenticates writers, redacts, sequences and stores events, and serves them | `agent-system` |

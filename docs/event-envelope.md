@@ -50,7 +50,7 @@ A unit test pins exactly these twelve keys on the wire.
 | `system` | `system:<component>` | — | `system:room-broker` for the broker's own events; `system:factory` for the factory; `system:policy` for deterministic approval rules |
 
 The broker derives `agent:<runId>` from the token's `sub`
-(`system:serviceaccount:agents:xplane-run-<runId>`), never from a header or a request body.
+(`system:serviceaccount:agents:run-<runId>`, after `runs.namePrefix`), never from a header or a request body.
 Agent-originated events are **untrusted content attributed to that agent**.
 
 ## Origins

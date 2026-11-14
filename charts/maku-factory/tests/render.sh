@@ -78,8 +78,8 @@ ykind PodDisruptionBudget '.spec.unhealthyPodEvictionPolicy == "AlwaysAllow"' "a
 ykind Deployment "$(vol intake).secret | (.secretName == \"agent-factory-intake\" and .defaultMode == \"0440\" and .optional == true)" "the intake token is optional (#57)"
 ykind Role '.rules[] | select(.resources[] == "agentruns") | has("verbs")' "AgentRun RBAC"
 # H-5: the AgentRun Role and its binding sit where the binary looks (config.runs, runwatch.Kind);
-# unset, runwatch.DefaultKind's: cloud-native-ref's group in agents.
-ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "agentruns") | .apiGroups[0] == "cloud.ogenki.io"' "default AgentRun Role: cloud.ogenki.io in agents"
+# unset, runwatch.DefaultKind's: the run-controller's group in agents (v4 step 8, D5).
+ykind Role 'select(.metadata.namespace == "agents") | .rules[] | select(.resources[] == "agentruns") | .apiGroups[0] == "maku.ogenki.io"' "default AgentRun Role: maku.ogenki.io in agents"
 ykind RoleBinding 'select(.metadata.namespace == "agents") | (.roleRef.name == "agent-factory" and .subjects[0].namespace == "agent-system")' "default AgentRun RoleBinding in agents"
 # Review C1: a 0400 root-owned key is unreadable to uid 65532; the group bit plus fsGroup is not.
 ykind Deployment "$pod.securityContext.fsGroup == 65532" "the pod's fsGroup owns the mounted Secrets"
@@ -152,17 +152,10 @@ ykind ConfigMap '.data."config.yaml" | from_yaml | (.api.tls.certFile == "/etc/a
 ykind ConfigMap '.data."config.yaml" | from_yaml | .repository == "Smana/cloud-native-ref"' "the rest of the config is still rendered verbatim"
 ykind Service '.spec.ports[] | select(.port == 8082) | .name == "https"' "the API's Service port is named https"
 out="$base"
-# demo: no OIDC volume (no human tokens), and in the runs namespace exactly the Secret access the
-# run token writer needs: create (unscopable by name) and get, update on agent-git and agent-git-read only.
+# demo: no OIDC volume (no human tokens), and without perRun no Secret access in the runs namespace.
 ykind Role 'select(.metadata.namespace == "agents") | [.rules[] | select(.resources[] == "secrets")] | length == 0' "default: no Secret rule in the runs namespace"
-# H2 (HR11): no publisher token by default; with hardening.publisher.audience, a projected token of
-# that audience where config.hardening.publisher.octoSTS.tokenFile reads it.
-ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "octo-sts-token")' "no publisher token unless hardening.publisher.audience"
-out="$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
-  --set hardening.publisher.audience=octo-sts.dev)"
-ykind Deployment "$(vol octo-sts-token).projected.sources[0].serviceAccountToken | (.audience == \"octo-sts.dev\" and .path == \"token\")" "the publisher's projected token takes hardening.publisher.audience"
-ykind Deployment "$(mnt octo-sts-token) | (.mountPath == \"/var/run/secrets/octo-sts\" and .readOnly == true)" "the publisher token at /var/run/secrets/octo-sts/token"
-out="$base"
+# H2 (HR11): the publisher's token is minted from the agents App: no projected token is mounted.
+ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "octo-sts-token")' "no octo-sts token (v4 step 8, R3)"
 # H3 (HR24): no git mirror cache by default; with hardening.gitCache.sizeLimit, an emptyDir of that
 # limit at /var/cache/maku/git, named to the factory by MAKU_GIT_CACHE.
 ynone 'select(.kind == "Deployment") | .spec.template.spec.volumes[] | select(.name == "git-cache")' "no git cache unless hardening.gitCache.sizeLimit"
@@ -246,6 +239,12 @@ refuse 'removed in v4 step 8: set apps.agents.existingSecret' --set runTokens.ap
 refuse 'githubSecret was removed in v4 step 8: set apps.factory.existingSecret' --skip-schema-validation --set githubSecret=x
 refuse 'mergerSecret was removed in v4 step 8: set apps.merger.existingSecret' --skip-schema-validation --set mergerSecret=x
 refuse 'runTokens.appSecret was removed in v4 step 8: set apps.agents.existingSecret' --skip-schema-validation --set runTokens.appSecret=x
+# v4 step 8 (D5, D10, R3): the XR run kind and octo-sts are refused by name, by the schema and, with
+# it skipped, by the template.
+refuse "at '/hardening/publisher'" --set hardening.publisher.audience=octo-sts.dev
+refuse 'hardening.publisher.audience was removed in v4 step 8' --skip-schema-validation --set hardening.publisher.audience=octo-sts.dev
+refuse 'config.hardening.publisher.octoSTS was removed in v4 step 8' --set config.hardening.publisher.octoSTS.url=https://octo-sts.dev
+refuse 'config.runs.group cloud.ogenki.io, cloud-native-ref'"'"'s Crossplane AgentRun, was removed in v4 step 8 (D5)' --set config.runs.group=cloud.ogenki.io
 refuse 'config.github.agentsAppIDFile and apps.agents.existingSecret' --set apps.agents.existingSecret=x --set config.github.agentsAppIDFile=/a
 refuse 'config.github.mergerAppIDFile and apps.merger.mode factory' --set apps.merger.mode=factory --set config.github.mergerAppIDFile=/a
 refuse "value must be one of 'separate', 'factory'" --set apps.merger.mode=both

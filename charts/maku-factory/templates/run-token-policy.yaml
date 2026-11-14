@@ -8,8 +8,8 @@ A denied request answers with no object. */ -}}
 {{- if .Values.runTokens.perRun }}
 {{- $runs := .Values.config.runs | default dict }}
 {{- $runsNamespace := $runs.namespace | default "agents" }}
-{{- $runsGroup := $runs.group | default "cloud.ogenki.io" }}
-{{- $prefix := $runs.namePrefix | default "xplane-run-" }}
+{{- $runsGroup := $runs.group | default "maku.ogenki.io" }}
+{{- $prefix := $runs.namePrefix | default "run-" }}
 {{- if not (regexMatch "^[a-z0-9-]*$" $prefix) }}{{ fail (printf "config.runs.namePrefix %q: only [a-z0-9-] may reach the run token policy's pattern" $prefix) }}{{ end }}
 {{- $name := printf "maku-%s-run-token-secrets" .Release.Namespace }}
 apiVersion: admissionregistration.k8s.io/v1

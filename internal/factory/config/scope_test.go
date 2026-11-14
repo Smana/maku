@@ -92,7 +92,7 @@ func TestScopesAreRefused(t *testing.T) {
 }
 
 // D5: the run-controller enforces the scoper's read-only token and its room_handoff path itself
-// (runctl's Invalid: gitReadSecret, roomToolsURL), where the token is chosen; the factory no longer
+// (the per-run token minted for its role; runctl's Invalid: roomToolsURL), where the token is chosen; the factory no longer
 // refuses the scoper on the portable runtime, demo or not (its split is refused there: TestSplitIsRefusedOnThePortableRuntime).
 func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	for _, loops := range []string{
@@ -117,7 +117,7 @@ func TestSplitIsRefusedOnThePortableRuntime(t *testing.T) {
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s portable: %v, want %q", row, err, want)
 		}
-		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err != nil {
+		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: cloud.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), "removed in v4 step 8 (D5)") {
 			t.Errorf("%s on cloud-native-ref's AgentRun: %v", row, err)
 		}
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io, gatewayIdentity: true}\n")); err != nil {

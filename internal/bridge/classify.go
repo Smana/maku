@@ -18,10 +18,10 @@
 // $GH_TOKEN), a runner option missing from its table (it shifts the command
 // position), and which branch a bare `git push` or `git push origin HEAD`
 // resolves to. `git remote set-url` followed by a push is bounded by the
-// repo-scoped octo-sts token. A push of the run's branch name after `git tag
+// run's repo-scoped token. A push of the run's branch name after `git tag
 // <that name>` writes refs/tags/<name> (T1): the tag ruleset bounds it, not
 // this class. Gateway and forge logs are the ground truth;
-// octo-sts, the ruleset, the Gateway and CNP are the limits.
+// the run's token, the ruleset, the Gateway and CNP are the limits.
 
 package bridge
 

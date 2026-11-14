@@ -402,7 +402,7 @@ meter:
   # Grouped by gen_ai_request_model, the model the backend's alias resolved to: the meter
   # prices each run by the model that served it (plan, phase J), since agent-default is
   # GLM-5.3 on public and Claude Opus 5.5 on internal.
-  query: 'sum by (ar_agent, gen_ai_request_model, gen_ai_token_type) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:xplane-run-.+", gen_ai_token_type=~"input|cached_input|cache_creation_input|output"})'
+  query: 'sum by (ar_agent, gen_ai_request_model, gen_ai_token_type) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+", gen_ai_token_type=~"input|cached_input|cache_creation_input|output"})'
   # The price overlay (plan J.1): one row per model a backend in
   # infrastructure/base/agent-gateway pins, so no agentgateway release moves a price
   # without a commit here. AG10 fails a pinned model without its row. A model with no
@@ -432,4 +432,6 @@ meter:
   logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428
   throttleQuery: '_time:2m kubernetes.pod_namespace:"agent-gateway" AND kubernetes.pod_labels.gateway.networking.k8s.io/gateway-name:"agent-router" | unpack_json | filter log.http.status:429 AND log.reason:RateLimit | stats by (log.x_ar_agent) count() hits'
 # Task spans (R46) to the trace collector's platform port (observability plan O20).
+# The run-controller's runs, each calling the model gateway as itself (ANR #376; v4 step 8 D5).
+runs: {group: maku.ogenki.io, namespace: agents, namePrefix: run-, gatewayIdentity: true}
 tracing: {otlpEndpoint: agent-traces-collector.observability.svc.cluster.local:4317}

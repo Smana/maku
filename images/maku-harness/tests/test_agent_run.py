@@ -393,9 +393,9 @@ class StepLogTest(unittest.TestCase):
         # final message, and stdout reaches VictoriaLogs. The cached value is redacted even
         # when it has no gh*_ shape; any gh*_ token is redacted even when it is not cached.
         cached, other = "tok_" + "C" * 36, "ghs_" + "S" * 36
-        cache = os.path.join(tempfile.mkdtemp(), "token.json")
-        with open(cache, "w") as f:
-            json.dump({"token": cached, "expires_at": time.time() + 3600}, f)
+        token_file = os.path.join(tempfile.mkdtemp(), "token")
+        with open(token_file, "w") as f:
+            f.write(cached + "\n")
         events = [
             {"id": "a", "kind": "ActionEvent", "tool_name": "terminal", "summary": "leak " + cached,
              "action": {"command": "curl -H 'Authorization: token %s' https://x" % cached}},
@@ -404,7 +404,7 @@ class StepLogTest(unittest.TestCase):
              "llm_message": {"content": [{"type": "text", "text": "done, token " + cached}]}},
         ]
         log = agent_run.StepLog("cid")
-        with mock.patch.object(agent_run, "TOKEN_CACHE", cache):
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": token_file}):
             out = self.tick(log, [{"items": events, "next_page_id": None}])
             with mock.patch("sys.stdout", new=io.StringIO()) as summary:
                 log.summary()
@@ -872,12 +872,12 @@ class CheckpointTest(unittest.TestCase):
                          "checkpoint refused (a GitHub token is staged), nothing to push")
         self.assertNotEqual(self.remote_head("%H")[0], 0, "nothing reached origin")
 
-    def test_the_cached_token_is_never_committed_whatever_its_shape(self):
-        cache = os.path.join(os.path.dirname(self.repo), "token.json")
-        with open(cache, "w") as f:
-            json.dump({"token": "v1.0123456789abcdef0123"}, f)
+    def test_the_run_token_is_never_committed_whatever_its_shape(self):
+        token_file = os.path.join(os.path.dirname(self.repo), "token")
+        with open(token_file, "w") as f:
+            f.write("v1.0123456789abcdef0123\n")
         self.write("leak.md", "v1.0123456789abcdef0123\n")
-        with mock.patch.object(agent_run, "TOKEN_CACHE", cache):
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": token_file}):
             self.assertEqual(agent_run.checkpoint(self.env, time.monotonic() + 8),
                              "checkpoint refused (a GitHub token is staged), nothing to push")
 
@@ -999,9 +999,9 @@ class SigtermTest(unittest.TestCase):
         self.addCleanup(github.server_close)
         self.addCleanup(github.shutdown)
         tmp = tempfile.mkdtemp()
-        cache, started, stopped = (os.path.join(tmp, n) for n in ("token.json", "started", "stopped"))
-        with open(cache, "w") as f:
-            json.dump({"token": "ghs_run", "expires_at": time.time() + 3600}, f)
+        token_file, started, stopped = (os.path.join(tmp, n) for n in ("token", "started", "stopped"))
+        with open(token_file, "w") as f:
+            f.write("ghs_run\n")
         # A stand-in agent-server that never answers /ready, so the driver is
         # still waiting when the signal lands, and that records WHEN it was
         # actually stopped (not merely signalled), to check cleanup order.
@@ -1019,7 +1019,8 @@ class SigtermTest(unittest.TestCase):
              "sys.exit(agent_run.main())\n",
              stand_in, started, stopped],
             cwd=HERE,
-            env={**os.environ, "GIT_TOKEN_CACHE": cache, "GITHUB_API": "http://127.0.0.1:%d" % github.server_port},
+            env={**os.environ, "GIT_TOKEN_FILE": token_file, "GIT_TOKEN_REVOCABLE": "1", "GIT_TOKEN_LOCK": os.path.join(tmp, "token.lock"),
+                 "GITHUB_API": "http://127.0.0.1:%d" % github.server_port},
         )
         self.addCleanup(lambda: driver.poll() is None and driver.kill())
         deadline = time.monotonic() + 30
@@ -1032,7 +1033,6 @@ class SigtermTest(unittest.TestCase):
 
         self.assertEqual(driver.returncode, 143, "SIGTERM is 128 + 15")
         self.assertEqual([r[:2] for r in GitHub.revoked], [("/installation/token", "Bearer ghs_run")])
-        self.assertFalse(os.path.exists(cache))
         deadline = time.monotonic() + 10
         while not os.path.exists(stopped) and time.monotonic() < deadline:
             time.sleep(0.1)
@@ -1261,9 +1261,9 @@ class TracedRunTest(unittest.TestCase):
         self.addCleanup(GitHub.revoked.clear)
         github = self.serve(GitHub)
         self.tmp = tempfile.mkdtemp()
-        self.cache = os.path.join(self.tmp, "token.json")
-        with open(self.cache, "w") as f:
-            json.dump({"token": "ghs_run", "expires_at": time.time() + 3600}, f)
+        self.token_file = os.path.join(self.tmp, "token")
+        with open(self.token_file, "w") as f:
+            f.write("ghs_run\n")
         for name in ("task", "rules"):
             with open(os.path.join(self.tmp, name), "w") as f:
                 f.write(name)
@@ -1273,7 +1273,8 @@ class TracedRunTest(unittest.TestCase):
         probe.close()
         self.out = os.path.join(self.tmp, "stdout")
         err = os.path.join(self.tmp, "stderr")
-        env = {**os.environ, "GIT_TOKEN_CACHE": self.cache, "GITHUB_API": "http://127.0.0.1:%d" % github,
+        env = {**os.environ, "GIT_TOKEN_FILE": self.token_file, "GIT_TOKEN_REVOCABLE": "1",
+               "GIT_TOKEN_LOCK": os.path.join(self.tmp, "token.lock"), "GITHUB_API": "http://127.0.0.1:%d" % github,
                "TASK_FILE": os.path.join(self.tmp, "task"), "RULES_FILE": os.path.join(self.tmp, "rules"),
                "OTEL_EXPORTER_OTLP_ENDPOINT": endpoint, **(extra_env or {})}
         with open(self.out, "w") as out, open(err, "w") as errf:

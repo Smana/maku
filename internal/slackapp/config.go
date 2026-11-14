@@ -230,7 +230,7 @@ func (c Config) validate() error {
 // canonicalRepo is the channel's own spelling of repo and whether the channel serves it. GitHub's
 // owner and repository names are case-insensitive and the planner lowercases the one it names, so a
 // plan's repository is matched with EqualFold; what is filed, drawn and marked is the spelling the
-// operator wrote (the factory's octo-sts audience takes only that one).
+// operator wrote (the factory's run tokens take only that one).
 func canonicalRepo(listed []string, repo string) (string, bool) {
 	for _, r := range listed {
 		if strings.EqualFold(r, repo) {

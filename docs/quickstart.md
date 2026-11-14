@@ -349,7 +349,7 @@ real thing; the rest is scaled down.
 | Production (cloud-native-ref) | Quickstart |
 |---|---|
 | Model calls through the gateway, with a per-run token budget the agent cannot raise | Your API key is in the sandbox. No budget or meter: only `maxMinutes` |
-| GitHub through octo-sts: a token scoped to the run, valid up to an hour | Your fine-grained PAT, valid until you revoke it. Scope it to one repository |
+| GitHub through the factory's minter: a token scoped to the run, valid up to an hour | Your fine-grained PAT, valid until you revoke it. Scope it to one repository |
 | ZITADEL login, roles, approvals by member | One local user, port-forward only |
 | The Atlas operator migrates; TLS from OpenBao | The `migrate` init container; a self-signed CA |
 | Agent `room_*` tools, warm sandboxes, suspend, Kueue, the factory | Absent |

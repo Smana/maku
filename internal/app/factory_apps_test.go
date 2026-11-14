@@ -146,7 +146,7 @@ func TestAppIdentities(t *testing.T) {
 			return c
 		}, map[string]int64{"/f/app_id": 1, "/m/app_id": 1, "/a/app_id": 1}, true, ""},
 		"the agents id unreadable": {base, map[string]int64{"/f/app_id": 1, "/m/app_id": 2}, false, "the agents App's id"},
-		"step 2's shared writer keeps starting (D25)": {func() *config.Config {
+		"without perRun the agents App is not compared": {func() *config.Config {
 			c := base()
 			c.RunTokens.PerRun = false
 			return c

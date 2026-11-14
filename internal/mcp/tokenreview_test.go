@@ -48,7 +48,7 @@ func TestTokenReviewModeVerifiesTheRunsOwnToken(t *testing.T) {
 	var aud []string
 	v := tokens{aud: &aud, subs: map[string]string{
 		"live":    sub,
-		"done":    "system:serviceaccount:agents:xplane-run-done2345",
+		"done":    "system:serviceaccount:agents:run-done2345",
 		"someone": "system:serviceaccount:agents:someone",
 	}}
 	s, rejected := testServer(w, newClock())

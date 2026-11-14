@@ -353,7 +353,7 @@ func fixture(driver string) (*Actor, *actLog, *v1alpha1.Room) {
 			Members: []v1alpha1.Member{{Principal: "human:col", Role: "collaborator"}, {Principal: "human:two", Role: "collaborator"}}}}
 	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(context.Background(), &unstructured.Unstructured{Object: map[string]any{
-		"metadata": map[string]any{"name": "xplane-run-7f3cq2xz", "namespace": "agents"},
+		"metadata": map[string]any{"name": "run-7f3cq2xz", "namespace": "agents"},
 		"spec":     map[string]any{"roomRef": "3kq7x2ma", "role": "implementer"},
 		"status":   map[string]any{"phase": "Running"}}})
 	log := &actLog{st: store.RoomState{ID: "3kq7x2ma", Driver: driver, DriverEpoch: 7, FallbackDriver: "system:factory"}}

@@ -216,8 +216,10 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 {{- if not .Values.apiServerPorts -}}
 {{- fail "apiServerPorts is empty: every CiliumNetworkPolicy that reaches the apiserver would render no port" -}}
 {{- end -}}
-{{- if and .Values.runController.enabled (ne .Values.runs.group "maku.ogenki.io") -}}
-{{- fail (printf "runs.group %q with runController.enabled: the run controller reconciles maku.ogenki.io AgentRuns only; set runController.enabled=false where another controller runs %s AgentRuns (cloud-native-ref's Crossplane composition)" .Values.runs.group .Values.runs.group) -}}
+{{- if eq .Values.runs.group "cloud.ogenki.io" -}}
+{{- fail "runs.group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5): runs are the run-controller's, runs.group maku.ogenki.io (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
+{{- else if ne .Values.runs.group "maku.ogenki.io" -}}
+{{- fail (printf "runs.group %q: runs are the run-controller's AgentRuns, runs.group maku.ogenki.io (D5)" .Values.runs.group) -}}
 {{- end -}}
 {{- if and .Values.runController.enabled (eq ($b.tls.caSecretName | default "") $b.tls.secretName) -}}
 {{- fail "broker.tls.caSecretName must not be broker.tls.secretName: the run controller needs ca.crt only, never the broker's tls.key" -}}

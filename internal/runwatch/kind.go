@@ -8,23 +8,27 @@ import (
 	"regexp"
 
 	"k8s.io/apimachinery/pkg/runtime/schema"
+
+	"github.com/Smana/maku/api/v1alpha1"
 )
 
-// Kind is where AgentRuns live and how they are named: cloud-native-ref's Crossplane XR by
-// default, agent-platform's own CRD (run-controller, adoption 3a) when configured. It is a value
-// each binary builds from its config and hands to every reader of a claim (D9): there is no
-// process-wide kind, so two kinds can share a process, as the tests do.
+// Kind is where AgentRuns live and how they are named: the run-controller's CRD (maku.ogenki.io,
+// v4 D5), in a namespace and under a name prefix each install chooses. It is a value each binary
+// builds from its config and hands to every reader of a claim (D9): there is no process-wide kind,
+// so two kinds can share a process, as the tests do.
 type Kind struct {
 	Group      string `json:"group,omitempty"`
 	Namespace  string `json:"namespace,omitempty"`
 	NamePrefix string `json:"namePrefix,omitempty"`
 }
 
-// DefaultKind is cloud-native-ref's: SP1's XRD, which names a run xplane-run-<C2 id> (C2).
-var DefaultKind = Kind{Group: "cloud.ogenki.io", Namespace: "agents", NamePrefix: "xplane-run-"}
+// DefaultKind is the run-controller's, as the chart renders it: run-<C2 id> in agents (C2).
+var DefaultKind = Kind{Group: v1alpha1.GroupVersion.Group, Namespace: "agents", NamePrefix: "run-"}
+
+// removedXRGroup is cloud-native-ref's Crossplane AgentRun, removed in v4 step 8 (D5).
+const removedXRGroup = "cloud.ogenki.io"
 
 var (
-	groupRE  = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
 	nsRE     = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 	prefixRE = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,40}-$`) // + 8 id characters stays a DNS label
 )
@@ -46,8 +50,13 @@ func (k Kind) WithDefaults() Kind {
 // Validate reports every malformed field at once.
 func (k Kind) Validate() error {
 	var errs []error
-	if !groupRE.MatchString(k.Group) {
-		errs = append(errs, fmt.Errorf("group %q is not an API group (a DNS subdomain with a dot)", k.Group))
+	switch k.Group {
+	case DefaultKind.Group:
+	case removedXRGroup:
+		errs = append(errs, fmt.Errorf("group %s, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5): "+
+			"runs are the run-controller's, group %s (docs/upgrading.md#the-xr-run-kind-and-octo-sts)", removedXRGroup, DefaultKind.Group))
+	default:
+		errs = append(errs, fmt.Errorf("group %q: runs are the run-controller's AgentRuns, group %s (D5)", k.Group, DefaultKind.Group))
 	}
 	if !nsRE.MatchString(k.Namespace) {
 		errs = append(errs, fmt.Errorf("namespace %q is not a DNS label", k.Namespace))
@@ -65,10 +74,6 @@ func ValidatePrefix(p string) error {
 	}
 	return nil
 }
-
-// XR reports whether k's runs are cloud-native-ref's Crossplane XR, whose sandbox tokens octo-sts
-// scopes by role policy (hardening HR13).
-func (k Kind) XR() bool { return k.Group == DefaultKind.Group }
 
 // GVK is k's AgentRun kind (C3).
 func (k Kind) GVK() schema.GroupVersionKind {

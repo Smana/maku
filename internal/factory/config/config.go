@@ -28,7 +28,6 @@ import (
 	yamlv3 "go.yaml.in/yaml/v3"
 	"sigs.k8s.io/yaml"
 
-	v1alpha1 "github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/runwatch"
 	"github.com/Smana/maku/internal/sponsored"
@@ -147,7 +146,8 @@ type Config struct {
 	Coordination Coordination `json:"coordination,omitzero"`
 	// Hardening is the untrusted-input hardening track (hardening design): off unless set.
 	Hardening Hardening `json:"hardening,omitzero"`
-	// Runs is where AgentRuns live (adoption 3a): cloud-native-ref's XR when omitted.
+	// Runs is where AgentRuns live (adoption 3a): the run-controller's kind, runwatch.DefaultKind's
+	// fields where omitted.
 	Runs Runs `json:"runs,omitzero"`
 	// RunTokens has the factory write the run-controller's two git Secrets (v4 step 2, PR3): off
 	// unless set, and implied by demo.
@@ -327,9 +327,9 @@ func (c *Config) MergerFolded() bool {
 // agent-git writer.
 type RunTokens struct {
 	Enabled bool `json:"enabled,omitempty"`
-	// PerRun mints one token per run instead of the two shared Secrets (v4 D10): each run's own
-	// <run name>-git, for its repository and role from the minter's role table. The run-controller
-	// must mount it (runController.gitTokens perRun).
+	// PerRun mints one token per run (v4 D10): each run's own <run name>-git, for its repository and
+	// role from the minter's role table, which the run-controller mounts unless a demo names a
+	// laptop's PAT (runController.gitSecret).
 	PerRun bool `json:"perRun,omitempty"`
 }
 
@@ -345,8 +345,8 @@ func (c *Config) RunTokenApp() (appIDFile, keyFile string, ok bool) {
 	return "", "", false
 }
 
-// validateRunTokens: the writer fills Secrets only the run-controller reads, so it is refused on
-// cloud-native-ref's AgentRun, whose runs get their tokens from octo-sts.
+// validateRunTokens: the agents App's pair and its aliases name one App, and per-run tokens keep
+// it apart from the factory's (D12).
 func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	t, g := c.RunTokens, c.GitHub
 	// D12: the agents App's pair names one App or none.
@@ -360,9 +360,6 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 		// v4 D10: the demo mints from its factory App, as RunTokenApp says; elsewhere the agents App.
 		if !t.Enabled && !c.Demo {
 			bad("runTokens.perRun needs runTokens.enabled: the agents App it names mints each run's token")
-		}
-		if c.Runs.Group != v1alpha1.GroupVersion.Group {
-			bad("runTokens.perRun writes each run's Secret for the run-controller: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
 		}
 		// D12 (plan PR9): an agent token must never be the factory's. Refused only under the new
 		// key, so no existing config breaks; the demo serves one App for both.
@@ -381,9 +378,6 @@ func (c *Config) validateRunTokens(bad func(string, ...any)) {
 	}
 	if g.AgentsAppIDFile == "" || g.AgentsKeyFile == "" {
 		bad("runTokens.enabled needs github.agentsAppIDFile and github.agentsKeyFile")
-	}
-	if c.Runs.Group != v1alpha1.GroupVersion.Group {
-		bad("runTokens.enabled writes the run-controller's Secrets: runs.group must be %s, not %s (that runtime's runs get their tokens from octo-sts)", v1alpha1.GroupVersion.Group, c.Runs.Group)
 	}
 }
 
@@ -999,11 +993,10 @@ type Meter struct {
 // Runs is the runs kind, plus whether its runs call the model gateway with their own token.
 type Runs struct {
 	runwatch.Kind
-	// GatewayIdentity states that each portable run (maku.ogenki.io) calls the model gateway with
+	// GatewayIdentity states that each run calls the model gateway with
 	// its own projected token, whose subject the gateway records as ar_agent, so the meter prices
 	// it (GW10). It lifts the refusals of loops.<class>.models and loops.<class>.split there. The
 	// run-controller's model.mode gateway is what makes it true; the umbrella checks they agree.
-	// cloud-native-ref's AgentRun always carries the identity, so the key is refused there.
 	GatewayIdentity bool `json:"gatewayIdentity,omitempty"`
 }
 
@@ -1397,7 +1390,7 @@ func (c *Config) validatePrincipal(bad func(string, ...any), list string, s Spon
 			continue
 		}
 		// Exact: admission matches the request's repository against this list as written, and
-		// spec.repository becomes the run's octo-sts audience (C22).
+		// spec.repository becomes the repository the run's token is minted for (C22).
 		r := c.listed(name)
 		if r == nil || r.Name != name {
 			bad("%s.%s: %q is not a listed repository, spelled as listed", list, s.Name, name)
@@ -1691,9 +1684,6 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	if err := c.Runs.Validate(); err != nil {
 		return nil, fmt.Errorf("config: runs: %w", err)
 	}
-	if c.Runs.GatewayIdentity && c.Runs.Group != v1alpha1.GroupVersion.Group {
-		return nil, fmt.Errorf("config: runs.gatewayIdentity is only for runs.group %s: cloud-native-ref's AgentRun always carries a gateway identity", v1alpha1.GroupVersion.Group)
-	}
 	if c.Caps.MaxPendingMinutes == 0 {
 		c.Caps.MaxPendingMinutes = defaultMaxPendingMinutes // the Pending bound never stays open (P)
 	}
@@ -1779,18 +1769,16 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 			"its counter again (an over-count that can revoke a run under budget) and a replica restart loses that tick's growth, until the query keeps the replica label in its grouping, "+
 			"e.g. sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (D10)")
 	}
-	// GW10: a portable run without a gateway identity never reaches the meter's ar_agent.
-	if c.Meter.URL != "" && c.Runs.Group == v1alpha1.GroupVersion.Group && !c.Runs.GatewayIdentity {
+	// GW10: a run without a gateway identity never reaches the meter's ar_agent.
+	if c.Meter.URL != "" && !c.Runs.GatewayIdentity {
 		c.Warnings = append(c.Warnings, "the meter prices no run of this runtime: its runs carry no gateway identity (runs.gatewayIdentity)")
 	}
-	// HR13 (the owner's ruling, 2026-11-12): an enforced repository on a run path whose sandbox token
-	// no role policy scopes could still write directly, so enforcement would be advisory. Refused
-	// unless that path's runs get per-run tokens (runTokens.perRun, v4 D10: each from the minter's
-	// role table) or are the XR with octo-sts.
-	if c.Hardening.Enforcing() && !c.Runs.XR() && !c.RunTokens.PerRun {
-		return nil, fmt.Errorf("hardening.enforceOutputs needs runs whose sandbox token a role policy scopes: " +
-			"these runs are not cloud-native-ref's XR, so they would hold a shared token that can still write directly; " +
-			"set runTokens.perRun (each run's token from the minter's role table), leave enforceOutputs empty, or run the repository on the XR with octo-sts (HR13)")
+	// HR13 (the owner's ruling, 2026-11-12): an enforced repository whose runs hold a shared token
+	// could still write directly, so enforcement would be advisory. Refused unless the runs get
+	// per-run tokens (runTokens.perRun, v4 D10: each from the minter's role table).
+	if c.Hardening.Enforcing() && !c.RunTokens.PerRun {
+		return nil, fmt.Errorf("hardening.enforceOutputs needs per-run tokens: without runTokens.perRun the runs hold a shared token that can still write directly; " +
+			"set runTokens.perRun (each run's token from the minter's role table), or leave enforceOutputs empty (HR13)")
 	}
 	sum := sha256.Sum256(j)
 	c.Hash = hex.EncodeToString(sum[:])
@@ -2570,7 +2558,7 @@ func (c *Config) validateModels(bad func(string, ...any), name string, byRole ma
 
 // validateLoops: a row's key is default, review, a class some repository declares or a harness
 // profile's loop (TE6), never off; its values
-// are within the harness's bounds; and only cloud-native-ref's AgentRun carries spec.loop.
+// are within the harness's bounds.
 func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
 		row := c.Loops[name]
@@ -2624,11 +2612,11 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		// D5: the scoper and the loop policy run on the run-controller too, which enforces the
 		// scoper's read-only token and its room_handoff path where the token is chosen. Without a
 		// gateway identity (GW10) its runs carry no model alias: every role runs on modelSecret's model.
-		noIdentity := c.Runs.Group == v1alpha1.GroupVersion.Group && !c.Runs.GatewayIdentity
+		noIdentity := !c.Runs.GatewayIdentity
 		if len(row.Models) > 0 && noIdentity {
 			bad("loops.%s.models needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime runs every role on modelSecret's model", name)
 		}
-		// Portable runs without a gateway identity reach no meter: a split's familyUSD would never
+		// Runs without a gateway identity reach no meter: a split's familyUSD would never
 		// decrease. Refused there, as models is; with the identity, the split rules above hold.
 		if row.Split != nil && noIdentity {
 			bad("loops.%s.split needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime meters no USD, so familyUSD would never be spent", name)
