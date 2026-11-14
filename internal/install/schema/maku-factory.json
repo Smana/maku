@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "maku-factory values",
+  "description": "Strict for apps, runTokens and hardening; the other keys stay free until their rollout step (v4 D13, step 1 PR4).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "apps": {
+      "description": "The GitHub Apps (v4 D12): each key maps onto an older one, which keeps working. docs/github-apps.md.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "factory": {
+          "description": "The factory App: issues, labels, statuses and merges. Wins over githubSecret when set.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {"description": "A Secret with keys app_id and private_key.", "type": "string"}
+          }
+        },
+        "agents": {
+          "description": "The agents App: each run's token and the publisher's. Wins over runTokens.appSecret; both set and different fail the render.",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "existingSecret": {"description": "A Secret with keys app_id and private_key, mounted at /etc/agent-factory-agents.", "type": "string"}
+          }
+        },
+        "merger": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {
+              "description": "separate: the merger App in mergerSecret. factory: the merger signs with the factory App, and mergerSecret must stay unset.",
+              "type": "string",
+              "enum": ["separate", "factory"]
+            }
+          }
+        }
+      }
+    },
+    "runTokens": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "appSecret": {"description": "Alias of apps.agents.existingSecret.", "type": "string"},
+        "perRun": {"type": "boolean"}
+      }
+    },
+    "hardening": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "publisher": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "audience": {"type": "string"}
+          }
+        },
+        "gitCache": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "sizeLimit": {"type": "string"}
+          }
+        }
+      }
+    }
+  }
+}

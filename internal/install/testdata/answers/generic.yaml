@@ -1,0 +1,29 @@
+# Any OIDC issuer, plain Secrets, NetworkPolicies, the web through a Gateway, the Apps reused.
+namespace: maku
+version: v0.48.0
+images.pins:
+  - maku-broker=v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  - maku-run-controller=v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  - maku-harness=v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+  - maku-bridge=v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+  - maku-factory=v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+  - maku-slack=v0.48.0@sha256:6666666666666666666666666666666666666666666666666666666666666666
+github.owner: example
+repositories: [example/app, example/docs]
+maintainers: [alice, bob]
+apps.create: false
+apps.factorySlug: example-factory
+apps.factoryID: "1001"
+apps.agentsSlug: example-agents
+web.url: https://rooms.example.com
+identity.issuer: https://idp.example.com
+identity.family: keycloak
+identity.webClientID: rooms-web
+identity.cliClientID: maku-cli
+cluster.issuer: https://kubernetes.default.svc.cluster.local
+database.caSecret: rooms-db-ca
+models.default: claude-sonnet-5-5
+models.light: claude-haiku-5-5
+meter.url: http://vmsingle.monitoring.svc.cluster.local:8428
+expose.gateway: gateway/edge/https
+network.gatewayNamespace: gateway

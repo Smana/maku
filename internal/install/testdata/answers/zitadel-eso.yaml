@@ -1,0 +1,46 @@
+# ZITADEL, ExternalSecrets, Cilium, the Slack App, traces and RunLore; the Apps reused.
+namespace: agent-system
+version: v0.48.0
+images.pins:
+  - maku-broker=v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+  - maku-run-controller=v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+  - maku-harness=v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+  - maku-bridge=v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+  - maku-factory=v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+  - maku-slack=v0.48.0@sha256:6666666666666666666666666666666666666666666666666666666666666666
+github.owner: Example
+repositories: [Example/platform]
+maintainers: [alice]
+checks: [lint, test]
+apps.create: false
+apps.factorySlug: example-factory
+apps.factoryID: "2002"
+apps.agentsSlug: example-agents
+web.url: https://rooms.priv.example.com
+identity.issuer: https://auth.example.com
+identity.preset: zitadel
+identity.webClientID: "300000000000000001"
+identity.cliClientID: "300000000000000002"
+cluster.issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+cluster.jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+sandbox.runtimeClassName: gke.gvisor
+network.mode: cilium
+models.provider: zai
+models.default: glm-5.3
+models.light: glm-5.3-flash
+models.controller: false
+meter.url: http://vmsingle.observability.svc.cluster.local:8428
+meter.namespace: observability
+expose.gateway: infrastructure/platform-tailscale-general/https
+slack.enabled: true
+slack.host: factory-slack.example.com
+slack.gateway: infrastructure/platform-public/factory-slack
+slack.clientID: "300000000000000003"
+slack.teamID: T07J97G2K2P
+slack.channel: C0123ABCD
+monitoring.namespace: observability
+tracing.endpoint: http://agent-traces-collector.observability.svc.cluster.local:4318
+tracing.collectorLabels: [app.kubernetes.io/name=agent-traces-collector]
+runlore.url: http://runlore.runlore.svc.cluster.local:8080/mcp
+secrets.mode: eso
+secrets.store: openbao
