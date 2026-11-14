@@ -177,3 +177,26 @@ For the demo, build it with `bash web/scripts/demo-site.sh "${TMPDIR:-/tmp}/ui-d
 with `SERVE_ROOT="${TMPDIR:-/tmp}/ui-demo" PORT=4181 node web/preview/serve.mjs`, and capture
 `http://127.0.0.1:4181/?theme=light` the same way with `--virtual-time-budget=180000`, so the
 replay reaches its last frame.
+
+## The install jobs
+
+`demo-e2e.yaml`'s `install` jobs install a production release as a user would. They run on a pull request
+that touches the charts, the wizard (`internal/install`), the preflight (`internal/preflight`), their
+harness (`hack/install-e2e`) or the e2e stub (`hack/ci-changes.sh`'s `install` key). Each job:
+
+1. writes the files with `maku install --print --answers hack/install-e2e/<leg>.answers.yaml`;
+2. installs the CRD chart, agentgateway's CRDs, the Secrets (filled with throwaway values), the
+   umbrella with the wizard's `values.yaml` and `hack/install-e2e/overlay.yaml`, then `factory/`;
+3. runs `maku preflight --strict`: every check passes and none warns.
+
+The e2e stub (`hack/e2e-stub`) plays the humans' issuer, GitHub's API and the model provider.
+Postgres 16 runs as a plain Deployment outside the chart, bootstrapped with [the database page's](database.md)
+SQL.
+
+| Task | Cluster | What it adds |
+|---|---|---|
+| `task install:kind-calico` | kind, Calico, gVisor's `runsc` (`KIND_MINOR`: 1.37, 1.36 or 1.35) | a pod under the RuntimeClass `gvisor` runs on gVisor's kernel; the web host through agentgateway's Gateway is oauth2-proxy's. `TWO_INSTALLS=1` adds `team-b` beside the first release (D2), with its own runs namespace and database, and checks that its runs reach neither the first broker nor its database |
+| `task install:k3s` | k3s (k3d), kube-router, Traefik | Traefik serves the web host to oauth2-proxy, and the broker's `:8080` refuses any other pod. Its RuntimeClass `gvisor` runs on `runc`: this leg proves the network, Ingress and database seams, not the sandbox |
+
+They are not part of `task check`. `hack/install-e2e/lib_test.sh` (in `task scripts`) checks the
+harness's order of installs without a cluster. `KEEP=1` keeps the cluster after a run.
