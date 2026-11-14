@@ -50,9 +50,9 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 		"has(self.queueName) == has(oldSelf.queueName) && (!has(self.queueName) || self.queueName == oldSelf.queueName)":               "queueName is immutable and cannot be added or removed after creation",
 		"has(self.suspendable) == has(oldSelf.suspendable) && (!has(self.suspendable) || self.suspendable == oldSelf.suspendable)":     "suspendable is immutable and cannot be added or removed after creation",
 		"has(self.meteredBy) == has(oldSelf.meteredBy) && (!has(self.meteredBy) || self.meteredBy == oldSelf.meteredBy)":               "meteredBy is immutable and cannot be added or removed after creation",
-		"self.dataClass != 'internal' || !has(self.loop) || !has(self.loop.checks) || !self.loop.checks":                               "an internal run runs no repository checks",
+		"self.dataClass != 'internal' || !has(self.__loop__) || !has(self.__loop__.checks) || !self.__loop__.checks":                   "an internal run runs no repository checks",
 		"self.dataClass == 'public' || !has(self.model) || !(self.model in ['kimi-frontier', 'mistral-standard', 'mistral-light'])":    "an internal run never names a provider alias",
-		"has(self.loop) == has(oldSelf.loop) && (!has(self.loop) || (has(self.loop.checks) == has(oldSelf.loop.checks) && (!has(self.loop.checks) || self.loop.checks == oldSelf.loop.checks) && has(self.loop.search) == has(oldSelf.loop.search) && (!has(self.loop.search) || self.loop.search == oldSelf.loop.search)))": "loop is immutable and cannot be added or removed after creation",
+		"has(self.__loop__) == has(oldSelf.__loop__) && (!has(self.__loop__) || (has(self.__loop__.checks) == has(oldSelf.__loop__.checks) && (!has(self.__loop__.checks) || self.__loop__.checks == oldSelf.__loop__.checks) && has(self.__loop__.search) == has(oldSelf.__loop__.search) && (!has(self.__loop__.search) || self.__loop__.search == oldSelf.__loop__.search)))": "loop is immutable and cannot be added or removed after creation",
 	} {
 		if m, ok := got[rule]; !ok || m != msg {
 			t.Errorf("spec rule %q: message %q, want %q", rule, m, msg)

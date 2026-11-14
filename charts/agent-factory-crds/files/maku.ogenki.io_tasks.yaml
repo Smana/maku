@@ -650,7 +650,7 @@ spec:
                 && (!has(self.budget.taskMicroUSD) || self.budget.taskMicroUSD <=
                 self.maxMicroUSD))
             - message: a provider judgeModel is a public task's only
-              rule: '!has(self.loop) || !has(self.loop.judgeModel) || self.loop.judgeModel
+              rule: '!has(self.__loop__) || !has(self.__loop__.judgeModel) || self.__loop__.judgeModel
                 != ''mistral-light'' || self.dataClass == ''public'''
             - message: spec.kind is fixed at creation
               rule: has(self.kind) == has(oldSelf.kind) && (!has(self.kind) || self.kind
