@@ -33,3 +33,22 @@ func TestJudgeModelFromTheSecret(t *testing.T) {
 		t.Fatal("no judge on the run: no JUDGE_MODEL")
 	}
 }
+
+// CP12, the portable chart: secret mode gives an internal run the light variables on its own model,
+// with no key file — the harness falls back to LLM_API_KEY_FILE.
+func TestSecretModeLightFallsBackToThePodsModel(t *testing.T) {
+	r := goRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass = "internal" })
+	env := harnessEnv(Pod(r, testConfig(t), testModel, "abcdefgh"))
+	if env["LIGHT_BASE_URL"] != testModel.BaseURL || env["LIGHT_MODEL"] != "claude-sonnet-5-5" {
+		t.Errorf("secret mode light: %+v", env)
+	}
+	if _, ok := env["LIGHT_API_KEY_FILE"]; ok {
+		t.Error("secret mode light: no key file")
+	}
+	judged := goRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass = "internal"; r.Spec.Loop.JudgeModel = "tier-light" })
+	m := testModel
+	m.Judge = "big"
+	if env := harnessEnv(Pod(judged, testConfig(t), m, "abcdefgh")); env["LIGHT_MODEL"] != "big" {
+		t.Errorf("secret mode light: the judge_model first: %q", env["LIGHT_MODEL"])
+	}
+}

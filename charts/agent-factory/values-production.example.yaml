@@ -59,7 +59,7 @@ maku:
     model:
       mode: gateway
       gateway:
-        aliases: {public: [agent-default], internal: []}         # maku-gateway.aliases' keys
+        aliases: {public: [agent-default, tier-light], internal: []} # maku-gateway.aliases' keys; every non-empty listener serves the light alias (CP12)
 
 maku-factory:
   enabled: true
@@ -108,6 +108,7 @@ maku-gateway:
   aliases:
     public:
       agent-default: {provider: main, model: claude-sonnet-5-5}  # CHANGE
+      tier-light: {provider: main, model: claude-haiku-4-5}       # CHANGE: the light alias (CP12)
 
 # The web through your Gateway (docs/exposure.md), always behind the web front door; TLS is the
 # Gateway's.
