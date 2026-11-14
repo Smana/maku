@@ -500,7 +500,7 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
 	check(err)
 	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
-		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, the profile the scoper recommended and outcome."))
+		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -927,14 +927,16 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
 	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
 	outcome = oneOf(outcome, taskOutcomes())
+	source = oneOf(source, []string{"label", "floor", "control", "treatment", "scoper", "escalation"})
 	if recommended == "" {
 		recommended = "none"
 	}
 	s.taskOutcomes.Add(ctx, 1, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
-		attribute.String("profile", profile), attribute.String("source", oneOf(source, []string{"label", "floor", "control", "scoper", "escalation"})),
+		attribute.String("profile", profile), attribute.String("source", source),
 		attribute.String("recommended", recommended), attribute.String("outcome", outcome), s.repoOf(ctx)))
 	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
-		attribute.String("profile", profile), attribute.String("recommended", recommended), attribute.String("outcome", outcome)))
+		attribute.String("profile", profile), attribute.String("source", source), attribute.String("recommended", recommended),
+		attribute.String("outcome", outcome)))
 }
 
 // ClassMismatch counts a task whose predicted class is not the one policy-bot matched.

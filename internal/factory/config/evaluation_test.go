@@ -147,3 +147,19 @@ func TestRowForOff(t *testing.T) {
 		t.Fatal("a class without a row still reads default's")
 	}
 }
+
+// WF8: evaluation.treatment names the workflow the treatment cohort runs; a name absent from
+// harnessProfiles is refused, a known one loads.
+func TestEvaluationTreatmentMustBeAWorkflow(t *testing.T) {
+	_, err := Parse([]byte(evaluated(t, reviewClass, "evaluation: {controlPercent: 50, treatment: nope}\n")))
+	if err == nil || !strings.Contains(err.Error(), `evaluation.treatment "nope" is not a workflow`) {
+		t.Fatalf("got %v", err)
+	}
+	c, err := Parse([]byte(evaluated(t, reviewClass, "evaluation: {controlPercent: 50, treatment: review-search}\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Evaluation.Treatment != "review-search" {
+		t.Fatalf("%+v", c.Evaluation)
+	}
+}

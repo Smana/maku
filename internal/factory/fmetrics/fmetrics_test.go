@@ -592,6 +592,7 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	s.TaskOutcome(ctx, "review", "control", "review-floor", "control", "review-search", "failed", 2)
 	s.TaskOutcome(ctx, "review", "treatment", "review-frontier", "escalation", "review-search", "failed", 4)
 	s.TaskOutcome(ctx, "review", "treatment", "review-floor", "floor", "", "accepted", 1)
+	s.TaskOutcome(ctx, "review", "treatment", "careful", "treatment", "", "accepted", 3)
 	s.Intervention(ctx, "retry", "control", "review-floor", "review-search")
 	s.Intervention(ctx, "retry", "control", "review-floor", "review-tested")
 	s.Intervention(ctx, "retry", "control", "review-floor", "")
@@ -601,12 +602,14 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 	body := scrape()
 	for _, want := range []string{
 		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search",repository="other",source="scoper"} 2`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search"} 1.75`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="review-search",recommended="review-search",source="scoper"} 1.75`,
 		`maku_factory_task_outcomes_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search",repository="other",source="control"} 1`,
-		`maku_factory_task_usd_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search"} 2`,
+		`maku_factory_task_usd_total{class="review",cohort="control",outcome="failed",profile="review-floor",recommended="review-search",source="control"} 2`,
 		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",repository="other",source="escalation"} 1`,
-		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search"} 4`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="failed",profile="review-frontier",recommended="review-search",source="escalation"} 4`,
 		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="review-floor",recommended="none",repository="other",source="floor"} 1`,
+		`maku_factory_task_outcomes_total{class="review",cohort="treatment",outcome="accepted",profile="careful",recommended="none",repository="other",source="treatment"} 1`,
+		`maku_factory_task_usd_total{class="review",cohort="treatment",outcome="accepted",profile="careful",recommended="none",source="treatment"} 3`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-search",repository="other"} 1`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="review-tested",repository="other"} 1`,
 		`maku_factory_human_interventions_total{cohort="control",kind="retry",profile="review-floor",recommended="none",repository="other"} 1`,

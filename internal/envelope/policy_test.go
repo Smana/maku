@@ -82,6 +82,7 @@ func TestProfileFactValidate(t *testing.T) {
 		{"a name is required", func(p *ProfileFact) { p.Name = "" }, false},
 		{"the name is bounded", func(p *ProfileFact) { p.Name = strings.Repeat("n", 64) }, false},
 		{"the source is an enum", func(p *ProfileFact) { p.Source = "model" }, false},
+		{"the treatment arm is a source", func(p *ProfileFact) { p.Source = "treatment" }, true},
 		{"the cohort is an enum", func(p *ProfileFact) { p.Cohort = "experiment" }, false},
 		{"the recommendation is bounded", func(p *ProfileFact) { p.Recommended = strings.Repeat("r", 64) }, false},
 		{"the reason is bounded", func(p *ProfileFact) { p.Reason = strings.Repeat("r", 33) }, false},

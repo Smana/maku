@@ -1204,6 +1204,8 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class str
 // labeled, P9), else its class's floor with the cohort's source; nil for a class without a harness,
 // whose task carries no status.profile. A pin, honoured or refused, is recorded as requested, and a
 // refused one with its code: the task runs as if unpinned (P6). A class label alone is no pin (P8).
+// A treatment-cohort task runs evaluation.treatment instead (source treatment) when treated allows
+// it; one that cannot keeps its floor and source floor, so the measurement leaves it out (WF8).
 func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
 	cl := r.class(cfg, t, d.PredictedClass)
 	name := cl.Harness
@@ -1217,6 +1219,9 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 	source := map[string]string{triage.CohortLabeled: "label", triage.CohortControl: "control"}[d.Cohort]
 	if source == "" {
 		source = "floor"
+		if v, ok := treated(cfg, t, cl); ok {
+			name, p, source = cfg.Evaluation.Treatment, v, "treatment"
+		}
 	}
 	cohort := d.Cohort
 	if cohort == "" {
@@ -1224,6 +1229,17 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
 		Checks: cl.Checks || p.Checks, TestFirst: cl.TestFirst || p.TestFirst, Requested: d.Pin.Name, Refused: d.Pin.Refused}
+}
+
+// treated is the treatment workflow t's class runs it under, when t may take the treatment arm: the
+// key is set, t is an issue's or a planned task (not a schedule's), its class is neither live nor
+// shadow (one workflow each), and the class allows the workflow. An adopted pull request never
+// reaches triage's profile.
+func treated(cfg *config.Config, t *v1alpha1.Task, cl config.Class) (config.HarnessProfile, bool) {
+	if cfg.Evaluation.Treatment == "" || t.Spec.Source.Kind == "schedule" || cl.Live || cl.Shadow {
+		return config.HarnessProfile{}, false
+	}
+	return cfg.ProfileFor(cl, cfg.Evaluation.Treatment)
 }
 
 // pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:
