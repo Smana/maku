@@ -168,6 +168,26 @@ func TestRepoAddPrivateRepository(t *testing.T) {
 	}
 }
 
+// By default the Repository is short: the Factory's spec.mergeDefaults, which maku install --print
+// writes, carries the shared merge settings (Q15). --merge-defaults=false writes them for a Factory
+// that has none, mergerLogin from the factory App's slug.
+func TestRepoAddMergeDefaults(t *testing.T) {
+	for flag, want := range map[string]bool{"": false, "--merge-defaults=false": true} {
+		dir := filepath.Join(t.TempDir(), "out")
+		args := []string{"acme/my-service", "--out", dir}
+		if flag != "" {
+			args = append(args, flag)
+		}
+		if err := runRepoAdd(t, fakeGH{rules: ghReply{200, requiredCI}}, args...); err != nil {
+			t.Fatal(err)
+		}
+		got, _ := os.ReadFile(filepath.Join(dir, "factory", "repository-my-service.yaml"))
+		if has := bytes.Contains(got, []byte("mergerLogin: acme-factory[bot]")); has != want {
+			t.Errorf("%q: mergerLogin written %v:\n%s", flag, has, got)
+		}
+	}
+}
+
 func TestRepoAddRefusesAnExistingDirWithoutForce(t *testing.T) { // as maku install --print does
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "keep"), nil, 0o600); err != nil {

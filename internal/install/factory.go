@@ -37,11 +37,11 @@ func factoryConfig(in Inputs) map[string]any {
 				"docs-links": map[string]any{"shadow": true, "allowedFiles": []any{`^.+\.(md|mdx|adoc|rst)$`}},
 				"revert":     map[string]any{"shadow": true, "allowedFiles": []any{`^.+$`}},
 			},
+			// The settings every repository shares are the Factory's mergeDefaults (Q15).
 			"merge": map[string]any{
 				"requiredChecks": checks, "verifyChecks": checks, "leakScanCheck": checks[0],
-				"gateStatus": true, "policyBot": false, "mergerLogin": factoryLogin,
+				"gateStatus": true, "policyBot": false,
 				"autoMergesPerDay": 5, "fixRuns": 2, "checkReruns": 1,
-				"verifyFor": "30m", "revertWindow": "168h", "breaker": map[string]any{"window": 10, "maxReverts": 1},
 			},
 		})
 	}
@@ -96,10 +96,30 @@ func factoryConfig(in Inputs) map[string]any {
 			"trio":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
 			"investigate": map[string]any{"roles": []any{"triager"}},
 		},
-		"caps":         map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
-		"repositories": repos,
+		"mergeDefaults": mergeDefaults(factoryLogin),
+		"caps":          map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
+		"repositories":  repos,
 	}
 	return cfg
+}
+
+// The merge settings every repository shares, which the factory requires and fills from nowhere
+// else: install writes them once, in the Factory's spec.mergeDefaults (Q15), and maku repo add
+// --merge-defaults=false writes the same into a Repository.
+const (
+	defaultVerifyFor         = "30m"  // a merge is watched this long for a failing verify check
+	defaultRevertWindow      = "168h" // a revert within it counts against the class
+	defaultBreakerWindow     = 10     // R41: 1 revert in the last 10 merges demotes the class
+	defaultBreakerMaxReverts = 1
+)
+
+// mergeDefaults is the Factory's spec.mergeDefaults: the merger is the factory App (the merger folded
+// in), and gateStatus and policyBot are left to the factory's defaults (true and false).
+func mergeDefaults(factoryLogin string) map[string]any {
+	return map[string]any{
+		"mergerLogin": factoryLogin, "verifyFor": defaultVerifyFor, "revertWindow": defaultRevertWindow,
+		"breaker": map[string]any{"window": defaultBreakerWindow, "maxReverts": defaultBreakerMaxReverts},
+	}
 }
 
 // chartWritten are the config keys the maku-factory chart writes itself from apps.*: a values file

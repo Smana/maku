@@ -197,7 +197,7 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 	fs.Var(&checks, "check", "a required check, repeatable (default: the default branch's)")
 	fs.StringVar(&in.LeakScanCheck, "leak-scan-check", "", "the required check that scans for leaks (default: the first)")
 	fs.BoolVar(&in.Acknowledged, "acknowledge-private-code", false, "a private repository's code may go to the model provider (D3)")
-	fs.BoolVar(&in.MergeDefaults, "merge-defaults", false, "the Factory's spec.mergeDefaults carries mergerLogin, verifyFor, revertWindow and breaker")
+	mergeDefaults := fs.Bool("merge-defaults", true, "the Factory's spec.mergeDefaults carries mergerLogin, verifyFor, revertWindow and breaker, as maku install --print writes it; =false writes them into the Repository")
 	factoryApp := fs.String("factory-app", "", "the factory App's slug")
 	agentsApp := fs.String("agents-app", "", "the agents App's slug")
 	force := fs.Bool("force", false, "write into a non-empty --out")
@@ -208,7 +208,7 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 	if len(pos) != 1 || *out == "" {
 		return fmt.Errorf("repo add: one owner/name and --out DIR are required\n%s", makuUsage)
 	}
-	in.Repository = pos[0]
+	in.Repository, in.NoMergeDefaults = pos[0], !*mergeDefaults
 	if *factoryApp == "" || *agentsApp == "" {
 		return errors.New("repo add: --factory-app SLUG and --agents-app SLUG name the two Apps (the ruleset bypasses the factory App, the install links are both)")
 	}
