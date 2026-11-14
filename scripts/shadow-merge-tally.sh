@@ -22,6 +22,9 @@
 # recorded lines (or files) against N, the other count against its recorded cap (0 = none). A
 # record whose count was not read (`-`) is unreplayable and counted apart.
 # --strictness counts the decisions refused by a class row that a human then merged at that head.
+# Since the gate picks the policy from the diff (merge policies MR1), a comment carries one record
+# line per policy: the decision's, then one shadow:shadow_would_arm line for each shadow policy that
+# held. Each class reads its own line, and a shadow line counts as that class's would-arm.
 #
 # --author names who opened the pull requests (default app/ogenki-agents, the factory's agents App).
 # An adopted class's are Renovate's: scripts/shadow-merge-tally.sh --class deps-patch --author app/renovate.
@@ -136,19 +139,27 @@ prs=$("$gh" pr list -R "$repo" --state merged --author "$author" --limit "$limit
 
 jq -r --arg class "$class" --arg repo "$repo" --arg factory "$factory" --arg merger "$merger" \
   --arg replay "$replay" --arg strictness "$strictness" --argjson reverts "$(reverts_of)" "$revert_defs"'
-  # The decision record (AM8), or null. Unread counts are "-".
-  def record: [capture("agent-factory-decision head=(?<head>[^ ]+) class=(?<class>[^ ]+) decision=(?<v>[a-z_]+):(?<r>[a-z_]+) files=(?<f>[0-9]+|-)/(?<fm>[0-9]+) lines=(?<l>[0-9]+|-)/(?<lm>[0-9]+) .*reviewer=(?<m>[^ ]+) -->")] | first;
+  # The decision record (AM8) of --class, or null. Unread counts are "-". A comment holds one
+  # marker line per policy (MR1): the decision'"'"'s, then each shadow policy that held.
+  def records: [capture("agent-factory-decision head=(?<head>[^ ]+) class=(?<class>[^ ]+) decision=(?<v>[a-z_]+):(?<r>[a-z_]+) files=(?<f>[0-9]+|-)/(?<fm>[0-9]+) lines=(?<l>[0-9]+|-)/(?<lm>[0-9]+) [^>]*?reviewer=(?<m>[^ ]+) -->"; "g")];
+  def record: [records[] | select(.class == $class)] | first;
+  # A would-merge of --class: a would-arm comment naming it, or its shadow line beside another
+  # policy'"'"'s decision (MR1).
+  def wouldarm: (test("event=would-arm-[0-9]+ head=[0-9a-f]+") and contains("would auto-merge: `\($class)`"))
+    or ([records[] | select(.class == $class and .v == "shadow")] | length > 0);
+  def judgedhead: ([capture("event=would-arm-[0-9]+ head=(?<h>[0-9a-f]+)")] | first | .h)
+    // ([records[] | select(.class == $class and .v == "shadow")] | first | .head);
   # The class rows whose refusal --strictness counts.
   ["patch_too_large", "file_not_allowed", "file_protected", "file_added_or_deleted", "class_mismatch",
    "holdout_red", "oracle_finding_open", "oracle_unrequested", "release_age_red"] as $rows
   | [ .[]
       | . as $pr
       | [ .comments[] | select((.author.login | login) == $factory) ] as $own
-      | ([ $own[] | select(.body | test("event=would-arm-[0-9]+ head=[0-9a-f]+")) ] | sort_by(.createdAt) | last) as $last
-      | ([ $own[] | select(.body | test("agent-factory-decision ")) ] | sort_by(.createdAt) | last) as $dc
+      | ([ $own[] | select(.body | wouldarm) ] | sort_by(.createdAt) | last) as $last
+      | ([ $own[] | select(.body | record != null) ] | sort_by(.createdAt) | last) as $dc
       | { n: .number,
-          judged: (if $last != null and ($last.body | contains("would auto-merge: `\($class)`")) then
-              ($last.body | capture("event=would-arm-[0-9]+ head=(?<h>[0-9a-f]+)").h) as $head
+          judged: (if $last != null then
+              ($last.body | judgedhead) as $head
               | { verdict: (if ((.mergedBy.login // "") | login) == $merger then "auto_merged"
                             elif ($reverted | index($pr.number)) != null then "reverted"
                             elif .headRefOid == $head then "merged_unchanged"
@@ -159,8 +170,10 @@ jq -r --arg class "$class" --arg repo "$repo" --arg factory "$factory" --arg mer
           decision: (if $dc == null then null else
               ($dc.body | record) as $d
               | if $d == null or $d.class != $class then null else
-                  # A hand-off is never an arm: it takes the reason its event names.
-                  ([$dc.body | capture("event=human-(?<r>[a-z_]+)-[0-9]+")] | first) as $ho
+                  # A hand-off is never an arm: it takes the reason its event names. A shadow line
+                  # beside the decision (MR1) is that policy'"'"'s own would-merge, not the hand-off.
+                  (if ($dc.body | records | first | .class) == $class then
+                     [$dc.body | capture("event=human-(?<r>[a-z_]+)-[0-9]+")] | first else null end) as $ho
                   | $d + (if $ho != null then {v: "human", r: $ho.r} else {} end)
                        + {unchanged: ($pr.headRefOid == $d.head and ((($pr.mergedBy.login // "") | login) != $merger))}
                 end
