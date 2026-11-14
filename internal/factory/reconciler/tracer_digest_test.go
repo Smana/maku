@@ -17,7 +17,6 @@ import (
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/hardening"
-	"github.com/Smana/maku/internal/runwatch"
 )
 
 // The applied outputs the tracer rig's GitHub objects were published from.
@@ -56,7 +55,7 @@ func tracerRig(t *testing.T) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g, tk, _ := shadowRig(t, "documentation")
 	g.r.Cfg.Current().Hardening.EnforceOutputs = []hardening.OutputType{hardening.PR, hardening.Comment, hardening.Labels}
-	g.r.Cfg.Current().Runs.Kind = runwatch.DefaultKind
+	g.r.Cfg.Current().RunTokens.PerRun = true // each run's token is the agents App's, minted per run
 	title, body := publishedAs(t, hardening.PR, prAsked, prOut)
 	g.f.SetPR(forge.PR{Number: 12, NodeID: prNode, URL: prURL, State: "OPEN", Author: agents, Title: title, Body: body})
 	_, comment := publishedAs(t, hardening.Comment, commentAsked, commentOut)
@@ -237,7 +236,7 @@ func traceRun(t *testing.T, g *rig, tk *v1alpha1.Task, wantUntraced, wantChecked
 // #493's review: a human edit is an applied pull request or comment whose every body edit since
 // its answer is a person's (a User, not the agents App): it is not untraced, but its current text
 // is still checked as in H1. One agents-App, bot or deleted editor in the window, an edit list
-// past its page cap, no edit in the window, or a run path off the XR (whose shared token credits
+// past its page cap, no edit in the window, or runs without per-run tokens (whose shared token credits
 // a direct edit to a person) leaves it untraced.
 func TestTracerHumanEdit(t *testing.T) {
 	pr, comment := []string{"pr " + prURL}, []string{"comment " + prURL + "#issuecomment-501"}
@@ -260,8 +259,8 @@ func TestTracerHumanEdit(t *testing.T) {
 			editedPR(t, g, byMaintainer)
 			g.f.SetEditsTruncated(prNode)
 		}, pr, pr},
-		"off the XR, a maintainer's edit": {func(t *testing.T, g *rig) {
-			g.r.Cfg.Current().Runs.Kind = runwatch.Kind{Group: "agents.example.com", Namespace: "agents", NamePrefix: "run-"}
+		"a shared token, a maintainer's edit": {func(t *testing.T, g *rig) {
+			g.r.Cfg.Current().RunTokens.PerRun = false
 			editedPR(t, g, byMaintainer)
 		}, pr, pr},
 		"a pull request opened directly, then edited by a maintainer": {func(_ *testing.T, g *rig) {

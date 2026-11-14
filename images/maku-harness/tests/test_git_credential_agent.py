@@ -1,8 +1,7 @@
-"""git-credential-agent against a stub octo-sts and a stub GitHub. Stdlib only."""
+"""git-credential-agent over the run-controller's token file and a stub GitHub. Stdlib only."""
 import fcntl
 import http.server
 import io
-import json
 import os
 import sys
 import tempfile
@@ -17,18 +16,12 @@ import git_credential_agent as helper  # noqa: E402
 
 class Stub(http.server.BaseHTTPRequestHandler):
     calls = []
-    delay = 0  # artificial latency on the exchange, to expose a missing lock
     revoke_status = 204
 
-    def do_GET(self):  # octo-sts exchange
-        if Stub.delay:
-            time.sleep(Stub.delay)
+    def do_GET(self):  # nothing exchanges any more: a GET is a failure
         Stub.calls.append(("GET", self.path, self.headers.get("Authorization")))
-        body = json.dumps({"token": "ghs_stub%d" % len(Stub.calls)}).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
+        self.send_response(500)
         self.end_headers()
-        self.wfile.write(body)
 
     def do_DELETE(self):  # GitHub revoke
         Stub.calls.append(("DELETE", self.path, self.headers.get("Authorization")))
@@ -53,9 +46,13 @@ class HelperTest(unittest.TestCase):
     def setUp(self):
         Stub.calls.clear()
         self.tmp = tempfile.mkdtemp()
-        helper.CACHE = os.path.join(self.tmp, "token.json")
+        helper.LOCK = os.path.join(self.tmp, "token.lock")
         helper.GITHUB_API = self.base
-        self.env = mock.patch.dict(os.environ, {"STS_URL": self.base + "/sts/exchange", "REPOSITORY": "Smana/cloud-native-ref", "ROLE": "implementer"})
+        self.path = os.path.join(self.tmp, "github-token")
+        with open(self.path, "w") as f:
+            f.write("ghs_minted\n")
+        env = {k: v for k, v in os.environ.items() if k not in ("STS_URL", "GIT_TOKEN_FILE", "GIT_TOKEN_REVOCABLE", "FORGE_READ")}
+        self.env = mock.patch.dict(os.environ, {**env, "GIT_TOKEN_FILE": self.path, "GIT_TOKEN_REVOCABLE": "1"}, clear=True)
         self.env.start()
 
     def tearDown(self):
@@ -67,151 +64,93 @@ class HelperTest(unittest.TestCase):
             helper.main(["git-credential-agent", "get"])
         return out.getvalue()
 
-    def test_exchanges_for_the_run_repository_and_role(self):
-        self.assertEqual(self.get("github.com"), "username=x-access-token\npassword=ghs_stub1\n")
-        self.assertEqual(Stub.calls[0][1], "/sts/exchange?scope=Smana/cloud-native-ref&identity=agent-implementer")
-
-    def test_caches_in_the_memory_volume(self):
-        self.get("github.com")
-        self.get("github.com")
-        self.assertEqual(len(Stub.calls), 1, "the second get is served from the cache")
-        self.assertEqual(os.stat(helper.CACHE).st_mode & 0o777, 0o600)
+    def test_get_prints_the_mounted_token(self):
+        self.assertEqual(self.get("github.com"), "username=x-access-token\npassword=ghs_minted\n")
+        self.assertEqual(Stub.calls, [], "the token is the run-controller's file: nothing is exchanged")
 
     def test_ignores_other_hosts(self):
         self.assertEqual(self.get("gitlab.com"), "")
-        self.assertEqual(Stub.calls, [])
-
-    def test_revoke_deletes_the_token_at_github_and_the_cache(self):
-        self.get("github.com")
-        helper.main(["git-credential-agent", "revoke"])
-        self.assertEqual(Stub.calls[-1], ("DELETE", "/installation/token", "Bearer ghs_stub1"))
-        self.assertFalse(os.path.exists(helper.CACHE))
-
-    def test_revoke_is_skipped_under_forge_read_and_logged_once(self):
-        self.get("github.com")
-        helper._revoke_skipped_logged = False
-        with mock.patch.dict(os.environ, {"FORGE_READ": "1"}), self.assertLogs(helper.log, "INFO") as logs:
-            helper.main(["git-credential-agent", "revoke"])
-            helper._revoke_value("ghs_other")
-        self.assertNotIn("DELETE", [c[0] for c in Stub.calls])
-        self.assertEqual(sum("revoke skipped" in m for m in logs.output), 1)
-
-    def test_revoke_without_a_token_is_a_no_op(self):
-        helper.main(["git-credential-agent", "revoke"])
         self.assertEqual(Stub.calls, [])
 
     def test_token_action_prints_the_token(self):
         out = io.StringIO()
         with mock.patch("sys.stdout", out):
             helper.main(["git-credential-agent", "token"])
-        self.assertEqual(out.getvalue(), "ghs_stub1\n")
+        self.assertEqual(out.getvalue(), "ghs_minted\n")
 
-    def test_refresh_margin_reexchanges_and_revokes_the_old_token(self):
-        with open(helper.CACHE, "w") as f:
-            json.dump({"token": "ghs_old", "expires_at": time.time() + 60}, f)  # < 600s left
-        self.assertEqual(self.get("github.com"), "username=x-access-token\npassword=ghs_stub1\n")
-        self.assertEqual(Stub.calls[0][0], "GET", "the new token is fetched before the old one is revoked")
-        self.assertEqual(Stub.calls[1], ("DELETE", "/installation/token", "Bearer ghs_old"))
-        with open(helper.CACHE) as f:
-            self.assertEqual(json.load(f)["token"], "ghs_stub1", "the cache now points at the new token")
+    def test_an_octo_sts_setting_is_refused_by_name(self):
+        """v4 step 8 (R3): octo-sts is gone; a run that still names it fails, naming it."""
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"STS_URL": self.base + "/sts/exchange"}), mock.patch("sys.stderr", err), \
+                mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(helper.main(["git-credential-agent", "token"]), 1)
+        self.assertIn("STS_URL (octo-sts) was removed in v4 step 8", err.getvalue())
+        self.assertEqual(Stub.calls, [])
 
-    def test_revoke_logs_but_does_not_raise_on_an_already_expired_token(self):
-        self.get("github.com")
-        Stub.revoke_status = 401
-        self.addCleanup(setattr, Stub, "revoke_status", 204)
-        with self.assertLogs(helper.log, level="WARNING"):
-            helper.main(["git-credential-agent", "revoke"])  # must not traceback
-        self.assertFalse(os.path.exists(helper.CACHE))
-
-    def test_concurrent_token_calls_serialize_on_the_cache_lock(self):
-        Stub.delay = 0.2
-        self.addCleanup(setattr, Stub, "delay", 0)
-        results = []
-        threads = [threading.Thread(target=lambda: results.append(helper.token())) for _ in range(2)]
-        for t in threads:
-            t.start()
-        for t in threads:
-            t.join(timeout=5)
-        self.assertEqual(results, ["ghs_stub1", "ghs_stub1"], "the second call must reuse the cached token")
-        gets = [c for c in Stub.calls if c[0] == "GET"]
-        self.assertEqual(len(gets), 1, "the flock should have serialized the two exchanges")
-
-    def test_revoke_waits_for_the_cache_lock(self):
-        """revoke() must hold the same lock that token() takes, so it
-        atomically reads, revokes, and deletes the cache without a concurrent
-        token() exchange leaving a live, unrevoked token behind."""
-        self.get("github.com")  # populate cache with ghs_stub1
-
-        # Acquire the lock as token() does, simulating an in-flight operation
-        lock_fd = os.open(helper.CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
-        fcntl.flock(lock_fd, fcntl.LOCK_EX)
-
-        # Track whether revoke() completed
-        revoke_done = threading.Event()
-
-        def run_revoke():
-            helper.revoke()
-            revoke_done.set()
-
-        revoke_thread = threading.Thread(target=run_revoke)
-        revoke_thread.start()
-
-        # Wait a moment and check that revoke() is still blocked on the lock
-        time.sleep(0.1)
-        self.assertFalse(revoke_done.is_set(), "revoke() should block waiting for the cache lock")
-
-        # Release the lock and wait for revoke() to complete
-        fcntl.flock(lock_fd, fcntl.LOCK_UN)
-        os.close(lock_fd)
-        revoke_thread.join(timeout=5)
-
-        # Verify that revoke() completed and cleaned up
-        self.assertTrue(revoke_done.is_set(), "revoke() should complete after lock is released")
-        self.assertFalse(os.path.exists(helper.CACHE), "cache should be deleted")
-        self.assertEqual(Stub.calls[-1], ("DELETE", "/installation/token", "Bearer ghs_stub1"))
-
-    def _file_token(self):
-        path = os.path.join(self.tmp, "github-token")
-        with open(path, "w") as f:
-            f.write("ghs_minted\n")
-        return path
+    def test_no_token_file_is_refused(self):
+        err = io.StringIO()
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": ""}), mock.patch("sys.stderr", err), \
+                mock.patch("sys.stdout", io.StringIO()):
+            self.assertEqual(helper.main(["git-credential-agent", "token"]), 1)
+        self.assertIn("GIT_TOKEN_FILE is unset", err.getvalue())
 
     def test_revoke_revokes_a_minted_file_token(self):
         """perRun (D10): the factory minted the file's token for this run alone."""
-        path = self._file_token()
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}):
-            helper.main(["git-credential-agent", "revoke"])
+        helper.main(["git-credential-agent", "revoke"])
         self.assertEqual(Stub.calls, [("DELETE", "/installation/token", "Bearer ghs_minted")])
 
+    def test_revoke_is_skipped_under_forge_read_and_logged_once(self):
+        helper._revoke_skipped_logged = False
+        with mock.patch.dict(os.environ, {"FORGE_READ": "1"}), self.assertLogs(helper.log, "INFO") as logs:
+            helper.main(["git-credential-agent", "revoke"])
+            helper._revoke_value("ghs_other")
+        self.assertEqual(Stub.calls, [])
+        self.assertEqual(sum("revoke skipped" in m for m in logs.output), 1)
+
+    def test_revoke_without_a_token_file_is_a_no_op(self):
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": ""}):
+            self.assertEqual(helper.main(["git-credential-agent", "revoke"]), 0)
+        self.assertEqual(Stub.calls, [])
+
     def test_revoke_of_a_minted_file_token_logs_a_401(self):
-        path = self._file_token()
         Stub.revoke_status = 401
         self.addCleanup(setattr, Stub, "revoke_status", 204)
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}), \
-                self.assertLogs("git-credential-agent", level="WARNING") as logs:
+        with self.assertLogs("git-credential-agent", level="WARNING") as logs:
             helper.main(["git-credential-agent", "revoke"])  # must not traceback
         self.assertEqual(len(Stub.calls), 1)
         self.assertNotIn("ghs_minted", "".join(logs.output))
 
     def test_a_minted_file_token_is_read_under_the_lock(self):
         """perRun: token() takes the lock revoke() holds, so no read interleaves with the revoke."""
-        path = self._file_token()
-        lock_fd = os.open(helper.CACHE + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+        lock_fd = os.open(helper.LOCK, os.O_CREAT | os.O_RDWR, 0o600)
         fcntl.flock(lock_fd, fcntl.LOCK_EX)
         got = []
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path, "GIT_TOKEN_REVOCABLE": "1"}):
-            th = threading.Thread(target=lambda: got.append(helper.token()))
-            th.start()
-            time.sleep(0.1)
-            self.assertEqual(got, [], "token() must wait for the lock")
-            fcntl.flock(lock_fd, fcntl.LOCK_UN)
-            os.close(lock_fd)
-            th.join(timeout=5)
+        th = threading.Thread(target=lambda: got.append(helper.token()))
+        th.start()
+        time.sleep(0.1)
+        self.assertEqual(got, [], "token() must wait for the lock")
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+        th.join(timeout=5)
         self.assertEqual(got, ["ghs_minted"])
 
+    def test_revoke_waits_for_the_lock(self):
+        """revoke() holds the lock token() takes, so a read never interleaves with the revoke."""
+        lock_fd = os.open(helper.LOCK, os.O_CREAT | os.O_RDWR, 0o600)
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+        done = threading.Event()
+        th = threading.Thread(target=lambda: (helper.revoke(), done.set()))
+        th.start()
+        time.sleep(0.1)
+        self.assertFalse(done.is_set(), "revoke() should block waiting for the lock")
+        fcntl.flock(lock_fd, fcntl.LOCK_UN)
+        os.close(lock_fd)
+        th.join(timeout=5)
+        self.assertTrue(done.is_set())
+        self.assertEqual(Stub.calls, [("DELETE", "/installation/token", "Bearer ghs_minted")])
+
     def test_revoke_of_a_file_token_without_the_flag_makes_no_call(self):
-        path = self._file_token()
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": path}):
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_REVOCABLE": ""}):
             helper.main(["git-credential-agent", "revoke"])
         self.assertEqual(Stub.calls, [])
 
@@ -223,13 +162,13 @@ class TokenFileMode(unittest.TestCase):
         with open(self.path, "w") as f:
             f.write("github_pat_x\n")
 
-    def test_token_reads_the_file_and_never_exchanges(self):
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": self.path}), \
-                mock.patch.object(helper, "_exchange", side_effect=AssertionError("no exchange in file mode")):
+    def test_token_reads_a_pat_without_the_lock(self):
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": self.path, "GIT_TOKEN_REVOCABLE": ""}), \
+                mock.patch.object(helper, "_locked", side_effect=AssertionError("a PAT takes no lock")):
             self.assertEqual(helper.token(), "github_pat_x")
 
     def test_revoke_never_touches_the_users_pat(self):
-        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": self.path}), \
+        with mock.patch.dict(os.environ, {"GIT_TOKEN_FILE": self.path, "GIT_TOKEN_REVOCABLE": ""}), \
                 mock.patch.object(helper, "_revoke_value", side_effect=AssertionError("never revoke a PAT")):
             helper.revoke()
         self.assertTrue(os.path.exists(self.path))

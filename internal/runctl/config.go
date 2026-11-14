@@ -527,8 +527,8 @@ func (c Config) Invalid(r *v1alpha1.AgentRun) string {
 	return ""
 }
 
-// readOnlyRoles mount gitReadSecret: they read the repository and never push, as cloud-native-ref's
-// octo-sts policies for them grant contents: read.
+// readOnlyRoles mount gitReadSecret: they read the repository and never push, as the role table's
+// rows for them grant contents: read.
 var readOnlyRoles = []string{"reviewer", "triager"}
 
 func readOnly(role string) bool { return slices.Contains(readOnlyRoles, role) }

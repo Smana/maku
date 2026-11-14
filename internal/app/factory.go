@@ -549,15 +549,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		return nil // a nil interface, never a typed-nil *forge.GitHub
 	}, gateRead.record(m.MergeGateRequired), gateRead.unread(m.MergeGateRulesUnread), log))
 	// Hardening H2: on each fence pass over an enforced repository, the sandbox roles' and the
-	// publisher's GitHub permissions, read from the token source they get: the octo-sts policies, or
-	// the minter's role table (R2 as evidence, plan PR8).
+	// publisher's GitHub permissions, read from the minter's role table (R2 as evidence, plan PR8).
 	if cfg.Hardening.Enforcing() {
-		fenced.OnFile = chainOnFile(fenced.OnFile, sandboxPermissionObserver(live.Current, func(repo string) policyReader {
-			if c, ok := conns.get(repo); ok && c.gh != nil {
-				return c.gh
-			}
-			return nil // a nil interface, never a typed-nil *forge.GitHub
-		}, tableGrants(live.Current, minter.Roles), m.SandboxPermissions, log))
+		fenced.OnFile = chainOnFile(fenced.OnFile, sandboxPermissionObserver(live.Current, tableGrants(live.Current, minter.Roles), m.SandboxPermissions))
 	}
 	costs := &meter.Costs{} // the meter writes each run's cost, the reconciler sums a task's
 	for name, usd := range meter.RunUSD(cfg) {
@@ -714,16 +708,11 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		apiSrv.Trust = hardened.Policies
 	}
 	apiSrv.Writers = perms.CanWrite // a factory/vouch from a writer who is not a maintainer (v2 D5)
-	// Hardening H5 (HR41): readiness, computed afresh on every read, from the live settings, each
-	// repository's policy files through its own connection, the minter's role table and the broker's
-	// drills. The API and the Evidence page show it, the leader reports it every five minutes, and
-	// coordination's execute admission asks it with class authority (v4 MR16).
-	readiness := hardeningEvaluator(live.Current, func(repo string) policyReader {
-		if c, ok := conns.get(repo); ok && c.gh != nil {
-			return c.gh
-		}
-		return nil // a nil interface, never a typed-nil *forge.GitHub
-	}, tableGrants(live.Current, minter.Roles), broker, time.Now)
+	// Hardening H5 (HR41): readiness, computed afresh on every read, from the live settings, the
+	// minter's role table and the broker's drills. The API and the Evidence page show it, the leader
+	// reports it every five minutes, and coordination's execute admission asks it with class
+	// authority (v4 MR16).
+	readiness := hardeningEvaluator(live.Current, tableGrants(live.Current, minter.Roles), broker, time.Now)
 	apiSrv.Readiness = readiness
 	if err := mgr.Add(readinessReporter(live.Current, readiness, m, log)); err != nil {
 		return fmt.Errorf("manager: %w", err)

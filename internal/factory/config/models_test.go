@@ -9,6 +9,9 @@ import (
 
 // byModel is good priced by served model, as the host's meter is: every provider alias's pinned
 // model has its row (v3 F15, F5).
+// gatewayIdentity lets loops name models and split (GW10): the runs call the gateway as themselves.
+const gatewayIdentity = "runs: {gatewayIdentity: true}\n"
+
 var byModel = strings.Replace(strings.Replace(good, "sum by (ar_agent)", "sum by (ar_agent, gen_ai_request_model, gen_ai_token_type)", 1),
 	"  logsURL:", "  prices: {glm-5.3: {input: 1.40, cacheRead: 0.26, output: 4.40}, k3.1-pro: {input: 2, cacheRead: 0.20, cacheWrite: 2, output: 10}, "+
 		"mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50}, mistral-small-2603: {input: 0.15, cacheRead: 0.015, output: 0.60}}\n  logsURL:", 1)
@@ -16,7 +19,7 @@ var byModel = strings.Replace(strings.Replace(good, "sum by (ar_agent)", "sum by
 // v3 F15, F3: loops.<class>.models picks a provider alias per role and tier, for public tasks
 // only; a role or tier without an entry, and every internal task, keep today's model.
 func TestModelFor(t *testing.T) {
-	cfg, err := Parse([]byte(byModel + `loops:
+	cfg, err := Parse([]byte(byModel + gatewayIdentity + `loops:
   default: {models: {reviewer: {light: mistral-light}}}
   docs: {models: {implementer: {standard: mistral-standard, frontier: kimi-frontier}, triager: {light: mistral-light}}, judge: mistral-light}
 `))
@@ -114,12 +117,12 @@ func TestProviderAliasesAreRefused(t *testing.T) {
 		})
 	}
 	// Without meter.prices a tier keeps its token caps, and so does an alias: accepted.
-	if _, err := Parse([]byte(good + "loops: {docs: {models: {implementer: {standard: mistral-standard}}, judge: mistral-light}}\n")); err != nil {
+	if _, err := Parse([]byte(good + gatewayIdentity + "loops: {docs: {models: {implementer: {standard: mistral-standard}}, judge: mistral-light}}\n")); err != nil {
 		t.Fatalf("no prices, token caps: %v", err)
 	}
 	// A price row under the alias itself is the logical-model meter's (a query not by model).
 	aliasPriced := strings.Replace(priced, "  prices: {", "  prices: {mistral-standard: {input: 1.50, cacheRead: 0.15, output: 7.50}, ", 1)
-	if _, err := Parse([]byte(aliasPriced + "loops: {docs: {models: {implementer: {standard: mistral-standard}}}}\n")); err != nil {
+	if _, err := Parse([]byte(aliasPriced + gatewayIdentity + "loops: {docs: {models: {implementer: {standard: mistral-standard}}}}\n")); err != nil {
 		t.Fatalf("priced under the alias: %v", err)
 	}
 }

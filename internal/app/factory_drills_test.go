@@ -6,8 +6,6 @@ import (
 	"context"
 	"errors"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -80,13 +78,8 @@ func TestFactoryDrillWiring(t *testing.T) {
 // #520's review: the applier counts a T5 call as a drill's only while the drills run, on the drill
 // repository: a stray drill label never hides a false positive.
 func TestApplierDrillGate(t *testing.T) {
-	token := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(token, []byte("jwt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR}}})
-	cfg.Hardening.Publisher.OctoSTS.TokenFile = token
 	cfg.Repositories = []config.Repository{{Name: "Smana/ai-native-ref"}, {Name: "Smana/maku-drills"}}
 	a, err := safeOutputApplier(cfg, applierDeps{Hardened: hardeningPorts(cfg, nil), Live: func() *config.Config { return cfg },
 		Log: slog.New(slog.DiscardHandler)})

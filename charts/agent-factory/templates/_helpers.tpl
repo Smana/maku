@@ -265,7 +265,7 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- fail "maku.runController.model.mode gateway needs maku-gateway.enabled, or maku.runController.model.gateway.service naming an external gateway" -}}
 {{- end -}}
 {{- $factory := index .Values "maku-factory" | default dict -}}
-{{- if and $factory.enabled (eq (dig "config" "runs" "group" "" $factory) "maku.ogenki.io") (not $identity) -}}
+{{- if and $factory.enabled (not $identity) -}}
 {{- fail "maku.runController.model.mode gateway needs maku-factory.config.runs.gatewayIdentity: true: the factory's runs then carry a gateway identity, which the meter prices (GW10)" -}}
 {{- end -}}
 {{- if $gw.enabled -}}
@@ -644,6 +644,9 @@ a key the App never reads, and every delivery is refused. */ -}}
 {{/* The factory's default-deny (plan v4 step 6, Task 16): it joins maku's mode, so mode none has no
 default-deny to join. */}}
 {{- define "afumbrella.factoryPolicy" -}}
+{{- if hasKey (dig "factory" dict (.Values.networkPolicies | default dict)) "octoSTS" -}}
+{{- fail "networkPolicies.factory.octoSTS was removed in v4 step 8: octo-sts is gone, the factory mints the publisher's token from the agents App (docs/upgrading.md#the-xr-run-kind-and-octo-sts)" -}}
+{{- end -}}
 {{- if dig "factory" "enabled" false (.Values.networkPolicies | default dict) -}}
 {{- if eq (include "afumbrella.makuNetMode" .) "none" -}}
 {{- fail "networkPolicies.factory.enabled needs maku.networkPolicies.mode cilium or kubernetes: the factory joins the release's default-deny" -}}
@@ -666,8 +669,7 @@ their peers are named. An external host is opened by name (cilium toFQDNs) or as
   (list "logs" "meter.logsURL" (dig "meter" "logsURL" "" $c))
   (list "otlp" "tracing.otlpEndpoint" (dig "tracing" "otlpEndpoint" "" $c))
   (list "agentGuard" "hardening.agentGuard.url" (dig "hardening" "agentGuard" "url" "" $c))
-  (list "gatewayLog" "hardening.drills.gatewayLog.url" (dig "hardening" "drills" "gatewayLog" "url" "" $c))
-  (list "octoSTS" "hardening.publisher.octoSTS.url" (dig "hardening" "publisher" "octoSTS" "url" "" $c)) -}}
+  (list "gatewayLog" "hardening.drills.gatewayLog.url" (dig "hardening" "drills" "gatewayLog" "url" "" $c)) -}}
 {{- $id := index $pair 0 -}}
 {{- $key := index $pair 1 -}}
 {{- $raw := tpl (toString (index $pair 2)) $ -}}

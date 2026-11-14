@@ -142,7 +142,7 @@ func TestAuthenticatorsMixedRunIssuers(t *testing.T) {
 		RunIssuers: []config.IssuerConfig{
 			{Issuer: clusterIssuer, JWKSURL: srv.URL + "/keys",
 				SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`},
-			{Mode: config.IssuerModeTokenReview, SubPattern: `^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$`},
+			{Mode: config.IssuerModeTokenReview, SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`},
 		},
 		Human: localHuman(),
 	}
@@ -169,7 +169,7 @@ func TestAuthenticatorsMixedRunIssuers(t *testing.T) {
 		}
 		return raw
 	}
-	const jwksSub, reviewSub = "system:serviceaccount:agents:run-aaaaaaaa", "system:serviceaccount:agents:xplane-run-bbbbbbbb"
+	const jwksSub, reviewSub = "system:serviceaccount:agents:run-aaaaaaaa", "system:serviceaccount:agents:run-bbbbbbbb"
 	if p, err := a.runs.Authenticate(bearer(sign(jwksSub))); err != nil || p.RunID != "aaaaaaaa" {
 		t.Fatalf("the JWKS issuer's run: %+v, %v", p, err)
 	}
@@ -282,7 +282,7 @@ func TestMixedIssuersNameOnlyTheJWKSIssuer(t *testing.T) {
 	cfg := config.Config{
 		RunIssuers: []config.IssuerConfig{
 			{Issuer: clusterIssuer, JWKSURL: srv.URL + "/keys", SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`},
-			{Mode: config.IssuerModeTokenReview, SubPattern: `^system:serviceaccount:agents:xplane-run-([a-z2-7]{8})$`},
+			{Mode: config.IssuerModeTokenReview, SubPattern: `^system:serviceaccount:agents:run-([a-z2-7]{8})$`},
 		},
 		Human: localHuman(),
 	}

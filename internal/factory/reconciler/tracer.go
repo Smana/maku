@@ -234,12 +234,13 @@ func sameTitle(o observed, pr hardening.PRPayload) bool {
 // edited since (a maintainer ticking a checklist). It still names its applied output, a pull
 // request's title is still that output's (GitHub keeps no editor for a title), and every body edit
 // GitHub records after that output's answer is by a User other than the agents App, with at least
-// one. The write is then not counted untraced; its text is still checked as in H1. Only on
-// cloud-native-ref's XR: elsewhere a run writes with a shared token (GIT_TOKEN_FILE), whose
-// direct edits GitHub credits to that token's user (HR13). An agents-App, bot or deleted editor
-// in the window, or edits that cannot all be read, leave it untraced.
+// one. The write is then not counted untraced; its text is still checked as in H1. Only under
+// per-run tokens (runTokens.perRun), each minted from the agents App, so a run's own direct edit is
+// credited to that App: under a shared token (GIT_TOKEN_FILE) GitHub credits it to the token's
+// user, a User like any maintainer (HR13). An agents-App, bot or deleted editor in the window, or
+// edits that cannot all be read, leave it untraced.
 func (r *Reconciler) humanEdit(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, runID string, l outputLedger, o observed) bool {
-	if !cfg.Runs.XR() || !o.edited || o.node == "" {
+	if cfg.TokenSource() != hardening.TokenSourceMinter || !o.edited || o.node == "" {
 		return false
 	}
 	id, p := l.anchor(o)

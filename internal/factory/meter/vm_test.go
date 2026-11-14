@@ -38,16 +38,16 @@ func vmServer(t *testing.T, code int, body string) *VM {
 
 func TestVMParsesTheVector(t *testing.T) {
 	v := vmServer(t, http.StatusOK, `{"status":"success","data":{"resultType":"vector","result":[
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"},"value":[1727430000,"12345"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-aaaaaaaa"},"value":[1727430000,"1.5e3"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-7f3cq2xz"},"value":[1727430000,"12345"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-aaaaaaaa"},"value":[1727430000,"1.5e3"]},
 		{"metric":{"ar_agent":"system:serviceaccount:agents:agent-probe"},"value":[1727430000,"99"]},
-		{"metric":{"ar_agent":"system:serviceaccount:other:xplane-run-bbbbbbbb"},"value":[1727430000,"99"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-cccccccc"},"value":[1727430000,"NaN"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-dddddddd"},"value":[1727430000,"-5"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-eeeeeeee"},"value":[1727430000,"+Inf"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-ffffffff"},"value":[1727430000,"1e30"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-gggggggg"},"value":[1727430000,42]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-hhhhhhhhh"},"value":[1727430000,"7"]}]}}`)
+		{"metric":{"ar_agent":"system:serviceaccount:other:run-bbbbbbbb"},"value":[1727430000,"99"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-cccccccc"},"value":[1727430000,"NaN"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-dddddddd"},"value":[1727430000,"-5"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-eeeeeeee"},"value":[1727430000,"+Inf"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-ffffffff"},"value":[1727430000,"1e30"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-gggggggg"},"value":[1727430000,42]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-hhhhhhhhh"},"value":[1727430000,"7"]}]}}`)
 	got, err := v.RunUsage(t.Context())
 	if err != nil || len(got) != 2 || !reflect.DeepEqual(got["7f3cq2xz"], Usage{Tokens: 12345}) || !reflect.DeepEqual(got["aaaaaaaa"], Usage{Tokens: 1500}) {
 		t.Fatalf("only runs' service accounts, with a finite, non-negative count that fits: %v %v", got, err)
@@ -56,7 +56,7 @@ func TestVMParsesTheVector(t *testing.T) {
 
 // A query grouped by gen_ai_token_type reads each type; the token caps still count input + output.
 func TestVMReadsTokenTypes(t *testing.T) {
-	const run = `"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"`
+	const run = `"ar_agent":"system:serviceaccount:agents:run-7f3cq2xz"`
 	v := vmServer(t, http.StatusOK, `{"status":"success","data":{"resultType":"vector","result":[
 		{"metric":{`+run+`,"gen_ai_token_type":"input"},"value":[1727430000,"1631496"]},
 		{"metric":{`+run+`,"gen_ai_token_type":"cached_input"},"value":[1727430000,"1552384"]},
@@ -73,7 +73,7 @@ func TestVMReadsTokenTypes(t *testing.T) {
 
 // A query grouped by gen_ai_request_model reads each served model's tokens apart, for its price.
 func TestVMReadsTokenTypesByModel(t *testing.T) {
-	const run = `"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"`
+	const run = `"ar_agent":"system:serviceaccount:agents:run-7f3cq2xz"`
 	v := vmServer(t, http.StatusOK, `{"status":"success","data":{"resultType":"vector","result":[
 		{"metric":{`+run+`,"gen_ai_request_model":"glm-5.3","gen_ai_token_type":"input"},"value":[1727430000,"1000"]},
 		{"metric":{`+run+`,"gen_ai_request_model":"glm-5.3","gen_ai_token_type":"cached_input"},"value":[1727430000,"900"]},
@@ -191,9 +191,9 @@ func TestCostFollowsTheAgentgatewaySeries(t *testing.T) {
 	if got := cost(p, u); got != 928_000 {
 		t.Fatalf("cost = %d micro-USD, want 928000, as the relabelled reply", got)
 	}
-	xr, err := parseSeries(raw, runwatch.DefaultKind.RunSubject())
-	if err != nil || len(xr) != 0 {
-		t.Fatalf("the XR kind read a portable run's series: %+v %v", xr, err)
+	other := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "agents", NamePrefix: "agent-run-"}
+	if xs, err := parseSeries(raw, other.RunSubject()); err != nil || len(xs) != 0 {
+		t.Fatalf("another prefix read this kind's series: %+v %v", xs, err)
 	}
 }
 
@@ -201,10 +201,10 @@ func TestCostFollowsTheAgentgatewaySeries(t *testing.T) {
 // a run's series above zero is throttled; zero, another kind's subject and a non-run are not.
 func TestVMRecentlyThrottled(t *testing.T) {
 	v := vmServer(t, http.StatusOK, `{"status":"success","data":{"resultType":"vector","result":[
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"},"value":[1727430000,"3"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-aaaaaaaa"},"value":[1727430000,"0.5"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-bbbbbbbb"},"value":[1727430000,"0"]},
-		{"metric":{"ar_agent":"system:serviceaccount:agents:run-cccccccc"},"value":[1727430000,"4"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-7f3cq2xz"},"value":[1727430000,"3"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-aaaaaaaa"},"value":[1727430000,"0.5"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:run-bbbbbbbb"},"value":[1727430000,"0"]},
+		{"metric":{"ar_agent":"system:serviceaccount:agents:agent-run-cccccccc"},"value":[1727430000,"4"]},
 		{"metric":{"ar_agent":"system:serviceaccount:agents:agent-probe"},"value":[1727430000,"9"]},
 		{"metric":{},"value":[1727430000,"9"]}]}}`)
 	got, err := v.RecentlyThrottled(t.Context())
@@ -234,7 +234,7 @@ func TestTheMeterReadsItsKindsSubjects(t *testing.T) {
 	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
 	raw := []byte(`{"status":"success","data":{"resultType":"vector","result":[` +
 		`{"metric":{"ar_agent":"system:serviceaccount:runs:run-abcdefgh"},"value":[0,"42"]},` +
-		`{"metric":{"ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz"},"value":[0,"9"]}]}}`)
+		`{"metric":{"ar_agent":"system:serviceaccount:agents:run-7f3cq2xz"},"value":[0,"9"]}]}}`)
 	series, err := parseSeries(raw, native.RunSubject())
 	if err != nil {
 		t.Fatal(err)
@@ -252,7 +252,7 @@ func TestVLReadsItsKindsSubjects(t *testing.T) {
 	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, `{"log.x_ar_agent":"system:serviceaccount:runs:run-abcdefgh","hits":"3"}`+"\n"+
-			`{"log.x_ar_agent":"system:serviceaccount:agents:xplane-run-7f3cq2xz","hits":"1"}`+"\n")
+			`{"log.x_ar_agent":"system:serviceaccount:agents:run-7f3cq2xz","hits":"1"}`+"\n")
 	}))
 	t.Cleanup(srv.Close)
 	got, err := VL{Kind: native, URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(t.Context())

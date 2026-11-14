@@ -199,6 +199,10 @@ for line in 'postgres.enabled: the bundled Postgres is demo-only' 'maku.demoValu
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: values-demo.yaml without demoValues does not list '$line' (got: $msg)" >&2; fail=1; }
 done
 pbad "removed in v4 step 8: set sandbox.unsafeAllowRunc" "${prod[@]}" --set maku.runController.allowUnsandboxed=true
+# v4 step 8 (D5, D10, R3): the XR run kind and octo-sts are refused through the umbrella too
+pbad "removed in v4 step 8: octo-sts is gone" "${prod[@]}" --set networkPolicies.factory.octoSTS.port=443
+pbad "networkPolicies.factory.octoSTS was removed in v4 step 8" "${prod[@]}" --skip-schema-validation --set networkPolicies.factory.octoSTS.port=443
+pbad "runs.group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5)" "${prod[@]}" --set maku.runs.group=cloud.ogenki.io
 # an empty production file with maku on: one message, every maku seam on its own line, the gate first
 msg="$(helm template af . -n maku --set maku.enabled=true 2>&1 >/dev/null || true)"
 for line in 'maku.broker.image.tag: <version>@sha256:<digest>' 'maku.runController.image.tag: <version>@sha256:<digest>' \

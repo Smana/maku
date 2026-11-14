@@ -86,9 +86,6 @@ spec:
             {{- if .Values.api.tls.secretName }}
             - {name: api-tls, mountPath: /etc/agent-factory-api-tls, readOnly: true}
             {{- end }}
-            {{- if .Values.hardening.publisher.audience }}
-            - {name: octo-sts-token, mountPath: /var/run/secrets/octo-sts, readOnly: true}
-            {{- end }}
             {{- if .Values.hardening.gitCache.sizeLimit }}
             - {name: git-cache, mountPath: /var/cache/maku/git}
             {{- end }}
@@ -143,13 +140,6 @@ spec:
         - name: api-tls
           # S-1: the run-request API's pair, re-read on renewal; 0440 with fsGroup, as the other secrets.
           secret: {secretName: {{ .Values.api.tls.secretName }}, defaultMode: 0440, items: [{key: tls.crt, path: tls.crt}, {key: tls.key, path: tls.key}]}
-        {{- end }}
-        {{- if .Values.hardening.publisher.audience }}
-        - name: octo-sts-token
-          # H2 (HR11): exchanged at octo-sts for the publisher's token, per enforced repository.
-          projected:
-            sources:
-              - serviceAccountToken: {audience: {{ .Values.hardening.publisher.audience | quote }}, expirationSeconds: 3600, path: token}
         {{- end }}
         {{- if .Values.hardening.gitCache.sizeLimit }}
         - name: git-cache

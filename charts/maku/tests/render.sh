@@ -92,30 +92,23 @@ crds="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --include
 [[ -z $crds && ! -e crds ]] || { echo "FAIL: the chart ships CRDs ($crds): agent-factory-crds alone carries them" >&2; fail=1; }
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'the broker runs on the default runtime: kubectl port-forward cannot reach a runsc pod'
 
-# production-shaped render (cloud-native-ref): no migrate, no tokenreview binding, and no run
-# controller: there Crossplane's composition runs the cloud.ogenki.io AgentRuns (S-5)
+# production-shaped render: no migrate, no tokenreview binding; first without the run controller
 prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
       --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
       --set broker.human.issuer=https://idp.example.com --set broker.human.jwksURL=https://idp.example.com/keys
       --set broker.human.clientIDFile=/c --set broker.human.projectIDFile=/p --set broker.human.origin=https://rooms.example.com
       --set broker.human.groups.admin=a --set broker.human.groups.member=m
-      --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
+      --set runs.namePrefix=agent-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
       --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}'
       --set networkPolicies.mode=cilium)
-p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set preflight.enabled=false)"
+p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false --set preflight.enabled=false)"
 out="$p"
-# D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
-# step 2: no new object, no new key (preflight.enabled false: its default flipped in step 8). Regenerate only for a change meant to reach that install:
-# UPDATE_GOLDEN=1 bash charts/maku/tests/render.sh, then review the diff.
-if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then printf '%s\n' "$p" >tests/golden/xr.yaml; fi
-printf '%s\n' "$p" | diff -u tests/golden/xr.yaml - >&2 || { echo "FAIL: the XR render (runController.enabled=false) differs from tests/golden/xr.yaml" >&2; fail=1; }
 ynone 'select(.kind=="ClusterRoleBinding")' 'jwks mode binds no auth-delegator'
 ynone 'select(.kind=="RuntimeClass")' 'production renders no RuntimeClass: the cluster-scoped gvisor may already exist'
 ynone 'select(.kind=="Deployment") | .spec.template.spec.initContainers | select(. != null)' 'no owner Secret, no migrate'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "run-controller")' 'runController.enabled=false renders no run controller object'
-check 'xplane-run-' 'the production prefix flows through'
-check 'cloud.ogenki.io' 'the production group flows through'
+check 'agent-run-' 'the production prefix flows through'
 ykind Service 'select(.metadata.name=="room-broker") | (.spec.ports | map(.port) | sort | join(",")) == "8080,8443,9090"' 'oidc mode exposes :8080'
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.enabled == true' 'the default keeps the :8090 room tools on, as every existing deployment runs it'
 ynone 'select(.metadata.labels."app.kubernetes.io/name" == "agent-factory")' 'the production render has no factory object'
@@ -125,7 +118,7 @@ ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.ru
 # and apiServerPorts; its group is maku.ogenki.io, the only one it reconciles
 ctl="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}")"
 out="$ctl"
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "xplane-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.namePrefix == "agent-run-" and .broker.caSecret == "broker-ca" and .broker.url == "https://room-broker.agent-system.svc.corp.local:8443")' 'controller follows runs, broker.tls.caSecretName, clusterDomain'
 ykind Role 'select(.metadata.name=="run-controller-ca") | (.rules[0].resourceNames | join(",")) == "broker-ca"' 'the CA Role follows broker.tls.caSecretName'
 ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-controller") | .rules[] | select(.resources[]=="secrets") | (.resourceNames | join(",")) == "agent-git,agent-git-read"' 'reviewer and triager read agent-git-read (PR2); the default gateway mode reads no model Secret'
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.gitReadSecret == "agent-git-read" and (has("unsafeSharedGitToken") | not))' 'the controller config names the read-only Secret by default'
@@ -192,7 +185,7 @@ KEYS="['agents.ogenki.io/operating-mode', 'agents.ogenki.io/remaining-seconds', 
   ykind ValidatingAdmissionPolicy 'select(.metadata.name == "room-broker-maku-agentruns") | .spec.variables[] | select(.name == "suspendKeys") | .expression == strenv(KEYS)' 'exactly the three suspend keys, never the agents.ogenki.io/ prefix the meter shares'
 ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name == "room-broker-maku-agentruns") | (.spec.policyName == "room-broker-maku-agentruns" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the binding denies, in the runs namespace'
 out="$p"
-ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io")' "the policy follows runs.group and the release namespace"
+ykind ValidatingAdmissionPolicy '(.metadata.name == "room-broker-agent-system-agentruns" and .spec.matchConstraints.resourceRules[0].apiGroups[0] == "maku.ogenki.io")' "the policy names the run-controller's group and the release namespace"
 
 # a misconfiguration is a helm error, for the intended reason: each case names its message
 bad() { # bad 'expected message' --set ...
@@ -214,7 +207,9 @@ bad 'factory: this chart has no factory' --set factory.enabled=false
 bad 'broker.runtimeClassName: the broker runs on the default runtime' --set broker.runtimeClassName=gvisor
 bad 'broker.publicURL "https://rooms.example" in local mode' --set broker.publicURL=https://rooms.example
 bad 'broker.publicURL "http://0.0.0.0:8080" in local mode' --set broker.publicURL=http://0.0.0.0:8080
-bad 'runs.group "cloud.ogenki.io" with runController.enabled' --set runs.group=cloud.ogenki.io
+bad 'runs.group cloud.ogenki.io, cloud-native-ref'"'"'s Crossplane AgentRun, was removed in v4 step 8 (D5)' --set runs.group=cloud.ogenki.io
+bad 'runs.group cloud.ogenki.io, cloud-native-ref'"'"'s Crossplane AgentRun, was removed in v4 step 8 (D5)' --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.mode=cilium
+bad 'runs.group "agents.example.com": runs are the run-controller'"'"'s AgentRuns, runs.group maku.ogenki.io (D5)' --set runs.group=agents.example.com
 bad 'broker.tls.caSecretName must not be broker.tls.secretName' --set broker.tls.caSecretName=room-broker-tls
 bad 'runs.namespace "x" is the release namespace' --set runs.namespace=x
 bad 'broker.tls.secretName is required' --set broker.tls.secretName=
@@ -415,8 +410,7 @@ bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set san
 bad "at '/sandbox/unsafeAllowRunc': got string, want boolean" --set-string sandbox.unsafeAllowRunc=yes
 bad 'additional properties' --set sandbox.runtimeClass=kata
 
-# the chart's runs namespace enforces Pod Security restricted under the run-pod policy (the XR
-# install's namespace is unchanged: tests/golden/xr.yaml)
+# the chart's runs namespace enforces Pod Security restricted under the run-pod policy
 out="$q"
 ykind Namespace 'select(.metadata.name == "agents") | .metadata.labels."pod-security.kubernetes.io/enforce" == "restricted"' 'the runs namespace enforces Pod Security restricted'
 
@@ -463,12 +457,12 @@ bad "at '/runPodPolicy/extraImages/0': 'not' failed" --set 'runPodPolicy.extraIm
 # controller; their CEL is proven in charts/maku/tests/admission (envtest)
 out="$q"
 ynone 'select(.kind == "ValidatingAdmissionPolicy" and (.metadata.name | test("agentrun-(creators|factory-patch-limit)$")))' 'no AgentRun creator or patch-limit policy unless set'
-out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
        --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory)"
-ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-creators") | (.spec.matchConstraints.resourceRules[0].apiGroups[0] == "cloud.ogenki.io" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "CREATE" and .spec.validations[0].expression == "request.userInfo.username in ['"'"'system:serviceaccount:agent-system:agent-factory'"'"']")' 'the creator policy names the listed users, on runs.group, for the XR install too'
+ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-creators") | (.spec.matchConstraints.resourceRules[0].apiGroups[0] == "maku.ogenki.io" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "CREATE" and .spec.validations[0].expression == "request.userInfo.username in ['"'"'system:serviceaccount:agent-system:agent-factory'"'"']")' 'the creator policy names the listed users, on runs.group, without the run controller too'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-agent-system-agentrun-factory-patch-limit") | (.spec.matchConditions[0].expression == "request.userInfo.username == '"'"'system:serviceaccount:agent-system:agent-factory'"'"'" and (.spec.matchConstraints.resourceRules[0].operations | join(",")) == "UPDATE")' 'the patch-limit policy holds the factory ServiceAccount of the release namespace'
 ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.policyName == .metadata.name and (.spec.validationActions | join(",")) == "Deny" and has("spec") and (.spec | has("matchResources")) == false)' 'both AgentRun bindings deny in every namespace, as the Kyverno originals'
-out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false \
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
        --set 'agentRunPolicies.creators={system:serviceaccount:agent-system:agent-factory}' --set agentRunPolicies.factoryServiceAccount=agent-factory \
        --set 'agentRunPolicies.namespaces={agents,agents-2}')"
 ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.matchResources.namespaceSelector.matchExpressions[0] | (.key == "kubernetes.io/metadata.name" and .operator == "In" and (.values | join(",")) == "agents,agents-2"))' 'agentRunPolicies.namespaces narrows both bindings'
@@ -488,8 +482,8 @@ uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set s
 [[ $(unsafe "$nonp") == "network_policy_none,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: networkPolicies.mode none lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.mode=none)") == "" ]] ||
-  { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
+[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false --set networkPolicies.mode=none)") == "" ]] ||
+  { echo "FAIL: without the run-controller nothing is listed" >&2; fail=1; }
 
 # networkPolicies.mode kubernetes (v4 D6, plan PR6): plain NetworkPolicies and the egress proxy. No
 # CiliumNetworkPolicy; default-deny in the runs namespace; the controller creates a NetworkPolicy per

@@ -269,10 +269,8 @@ matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The fac
 - accepts `loops.<class>.split` with a meter, since a family's cap is in USD.
 
 The umbrella keeps the two sides together. It fails a render where `model.mode: gateway` and a
-portable factory (`runs.group: maku.ogenki.io`) lack `runs.gatewayIdentity: true`, or where
-`gatewayIdentity` is set without `model.mode: gateway`. The factory refuses `gatewayIdentity` on
-`cloud.ogenki.io`, whose AgentRun always carries the identity. Without the key, a configured meter
-starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
+factory lack `runs.gatewayIdentity: true`, or where `gatewayIdentity` is set without
+`model.mode: gateway`. Without the key, a configured meter starts with the warning `the meter prices no run of this runtime: its runs carry no gateway identity`.
 
 **The handshake, run by run.** The umbrella's render check does not reach an install that runs
 `maku-factory` and `maku` as separate releases, as ANR does. So the factory stamps each AgentRun it

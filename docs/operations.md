@@ -474,96 +474,55 @@ acceptance or artifact bytes. The parent's reason is the span's `agent.task.reas
 
 [Stage H2](factory.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
 and is checked before the next. Steps 1 to 4 are inert, because nothing reads them until a run
-carries the `safe-outputs` annotation, and only step 5 writes it. Listing the repository earlier
-leaves the first enforced tasks either waiting unanswered (no publisher token) or writing
-untraced on the XR (its rules still say `gh pr create`).
+carries the `safe-outputs` annotation, and only step 4 writes it. Listing the repository earlier
+leaves the first enforced tasks waiting unanswered (no publisher token).
 
 1. **The Maku release** runs on the cluster. With `enforceOutputs` empty it changes nothing.
-2. **The publisher.** Set the chart's `hardening.publisher.audience`, an egress policy from the
-   factory to the octo-sts host, and `hardening.publisher.octoSTS`. A maintainer merges
-   `.github/chainguard/publisher.sts.yaml` in the repository: the factory's ServiceAccount
-   subject, `contents: read`, `pull_requests: write`, `issues: write`. With per-run tokens, set
-   `hardening.publisher.minter: true` instead: the factory mints the publisher's token from the
-   agents App with the role table's publisher row, and no policy file or projected token is needed.
+2. **The tokens.** The runs get per-run tokens (`runTokens: {enabled: true, perRun: true}` and
+   `runController.gitTokens: perRun`), and the factory's config sets `hardening.publisher.minter:
+   true`: the factory mints the publisher's token from the agents App with the role table's
+   publisher row. The agents App is installed on the repository and grants every permission of the
+   [role table](factory.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and
+   `issues: write` included; a missing grant fails the publisher's mint with
+   `permission_not_granted` (`maku_factory_run_token_mints_total{role="publisher"}`).
 3. **The gateway profile.** `output_pr`, `output_comment`, `output_labels` and `output_issue` are
    added to the implementer and tester capability profiles.
-4. **The XR rendering.** The composition renders `MCP_READ_ONLY_TOOLS`, `SAFE_OUTPUTS` and the
-   rules from the claim's annotations.
-5. **The list, last.** Add `repositories: {<repo>: {mode: audit, enforceOutputs: [pr, comment, labels, issue]}}`
-   and restart. The factory refuses to start while the publisher token is unreadable, and the
-   error names `hardening.publisher.audience`. The log says `the safe-output applier is on`.
-6. **The role policy.** Only after a canary task's pull request arrived through `output_applied`,
-   a maintainer changes `agent-implementer.sts.yaml` to `pull_requests: read`.
+4. **The list, last.** Add `repositories: {<repo>: {mode: audit, enforceOutputs: [pr, comment, labels, issue]}}`
+   and restart. The factory refuses to start without `hardening.publisher.minter` and
+   `runTokens.perRun` (HR13). The log says `the safe-output applier is on`, and no
+   `runTokens.perRun: the role table leaves the implementer pull_requests: write` warning.
+5. **Check the gauge** after the first fence pass: for that repository,
+   `role="implementer", permission="pull_requests", access="read"` and
+   `role="publisher", permission="pull_requests", access="write"`.
 
-**Rollback**, in this order:
-
-1. Restore `pull_requests: write` in the role policy.
-2. Remove the repository from `enforceOutputs`, and restart.
+**Rollback:** remove the repository from `enforceOutputs`, and restart.
 
 **Stop rules.** Roll back on any untraced write, or on a task stuck on its run's end. A
-maintainer's edit of an applied pull request or comment body is not one, on cloud-native-ref's XR:
-when every edit since the answer is a person's, the tracer logs `human_edit`, uncounted, and
-still checks the text. Off the XR every mismatch is untraced, since a shared token's edits read
-as its user's. A retitle has no editor on record, so it stays
+maintainer's edit of an applied pull request or comment body is not one: when every edit since
+the answer is a person's, the tracer logs `human_edit`, uncounted, and still checks the text. A
+run's own edit reads as the agents App's, never a person's. A retitle has no editor on record, so it stays
 untraced: confirm who retitled the pull request before rolling back on a `pr` untraced write.
 After an upgrade that changes the T2 sanitiser, pull requests and comments applied before it are
 compared with the new T2's text and show as untraced once: confirm those predate the upgrade
-before rolling back. Never move
-an enforced repository to a run path whose sandbox token no role policy scopes (the factory refuses to
-start, naming HR13, unless `runTokens.perRun` scopes each run's token). `push` stays open in this stage
+before rolling back. Never take `runTokens.perRun` off while a repository is enforced (the factory
+refuses to start, naming HR13). `push` stays open in this stage
 until the repository enforces it ([below](#hardening-push-enforced)), and raw reads until H4.
 
 | Metric | Type | Labels | Meaning |
 |---|---|---|---|
 | `maku_factory_hardening_output_seconds` | histogram | `repository`, `type` | From a run's `output_requested` to the factory's answer (AC7: p95 at most 2 s per non-push output) |
 | `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
-| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it: from its octo-sts policy on the XR, or from the [role table](factory.md#run-tokens-the-role-table) under `runTokens.perRun` (the publisher's under `hardening.publisher.minter`). A pair a later pass no longer reads is 0 |
+| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it, from the [role table](factory.md#run-tokens-the-role-table): the sandbox roles' under `runTokens.perRun`, the publisher's under `hardening.publisher.minter`. A pair a later pass no longer reads is 0 |
 | `maku_factory_hardening_approval_wait_seconds` | histogram | `repository`, `decision` | How long a protected-path push waited for its approval, by how it closed: `approved`, `denied`, `expired`, `superseded` |
 | `maku_factory_hardening_drill_last` | gauge | `result` | Unix time of the last injection drill the factory scored, `pass` or `fail` (HR38). A `fail` newer than the last `pass` means readiness R6 is false until a fix and a passing drill |
 | `maku_factory_hardening_t5_total` | counter | `repository`, `type`, `result`, `drill` | T5 classifier calls on outputs, and on a target or T4 refusal whose text T3 cleared (HR39): `hit`, `pass`, `unavailable`. T5's false positives are `hit` on applied outputs with `drill="false"`; its detection on the drills is `hit` with `drill="true"` |
 | `maku_factory_hardening_ready` | gauge | `repository` | 1 when the repository's hardening readiness (R1 to R7) held at the last five-minute report, else 0. Reported only: execute's admission computes its own |
 | `maku_factory_hardening_missing` | gauge | `repository`, `missing` | 1 for each readiness fact that did not hold at the last report (`mode_not_enforce`, `sandbox_write_token`, `publisher_policy`, `layer_not_enforced`, `read_filter_off`, `drill_stale_or_failed`, `demo_profile`, or `error` when a fact could not be read), else 0 |
 
-### Leaving the XR with an enforced repository (HR13)
-
-A repository with `enforceOutputs` runs on cloud-native-ref's XR and octo-sts until its runs get
-per-run tokens. Off the XR, the factory refuses to start with `enforceOutputs` set unless
-`runTokens.perRun` is on, because a shared token could still write what the factory publishes.
-`runTokens.enabled` and `runTokens.perRun` are themselves refused until `runs.group` is
-`maku.ogenki.io`, so the keys and the flip are one config change. The way out, in this order:
-
-1. **The Maku release** carries the per-run minter and its publisher (v4 step 3, PRs A to C), with
-   `minter.Roles = TableHR12`, the owner's ruling.
-2. **The agents App** is installed on each enforced repository and grants every permission of the
-   [role table](factory.md#run-tokens-the-role-table), the publisher's row included:
-   `pull_requests: write` and `issues: write`. A missing grant fails the publisher's mint with
-   `permission_not_granted` (`maku_factory_run_token_mints_total{role="publisher"}`), and every
-   enforced request waits unanswered.
-3. **Stop intake and drain.** Engage the kill switch
-   (`kubectl create configmap agent-factory-stop -n agent-system`) and wait until no run is live.
-4. **One config change, inside the drain:**
-   - the factory's config sets `runs.group: maku.ogenki.io`, `runTokens: {enabled: true, perRun:
-     true, …}` and `hardening.publisher.minter: true`, with `hardening.publisher.octoSTS.url`
-     removed;
-   - the values set the agents App's Secret (`runTokens.appSecret`) and
-     `runController.gitTokens: perRun`. The publisher's token then comes from the agents App, so
-     `hardening.publisher.audience` may go.
-
-   The flip is global: every repository moves together.
-5. **Check the start-up log.** No HR13 refusal, and no `runTokens.perRun: the role table leaves the
-   implementer pull_requests: write` warning. That warning fires only when the role table keeps
-   the implementer's write under enforcement (D10 as written); such repositories stay on the XR.
-6. **Lift the stop** (delete `agent-factory-stop`), and after the first fence pass **check the
-   gauge**: for that repository, `role="implementer", permission="pull_requests", access="read"`
-   and `role="publisher", permission="pull_requests", access="write"`.
-
-**Rollback**, inside the same stop and drain: restore `runs.group` to the XR (`cloud.ogenki.io`, or omit it) and
-`hardening.publisher.octoSTS.url` (with `hardening.publisher.audience`), drop
-`hardening.publisher.minter` and the `runTokens` block, and set `runController.gitTokens` back to
-`shared`.
-
 Readiness's R2 under `runTokens.perRun` reads the same table (HR42): it stays missing while the
-implementer and tester hold `contents: write`, which goes with `push` at H3.
+implementer and tester hold `contents: write`, which goes with `push` at H3. The runbook that moved
+an enforced repository off cloud-native-ref's XR and octo-sts went with both in v4 step 8
+([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)).
 
 ### Hardening, push enforced
 
@@ -572,9 +531,8 @@ non-code outputs. Each step lands and is checked before the next.
 
 1. **The Maku release** runs on the cluster: the factory image with `git`, and the harness image
    with the `git` shim. With no `push` in any `enforceOutputs` it changes nothing.
-2. **The publisher gains `contents: write`.** A maintainer merges `publisher.sts.yaml` with
-   `contents: write`, plus `workflows: write` only if the repository wants approved workflow
-   pushes. Under `hardening.publisher.minter` the role table already grants it.
+2. **The publisher gains `contents: write`.** The role table's publisher row grants it with
+   `push` enforced; `workflows: write` only if the repository wants approved workflow pushes.
 3. **The config.** The `maku-factory` chart's `hardening.gitCache.sizeLimit` (e.g. `2Gi`), and
    `hardening.applier.approvalTTL` if 24 h does not suit. Add `push` to the repository's
    `enforceOutputs`, and the repository to the broker's `roomTools.pushRepositories`. Restart
@@ -582,21 +540,13 @@ non-code outputs. Each step lands and is checked before the next.
    repository its own list names, and the factory applies pushes only for its `enforceOutputs`. The factory refuses to start without `MAKU_GIT_CACHE`. The Slack channel's
    `approvals: true` lets a maintainer decide on the card as well as on the room page.
 4. **The capability profiles.** `output_status` is added to the implementer and tester profiles.
-   `output_push` is harness-only and never in a model's profile. On the XR, the agent-mcp route's
-   request-body limit allows 12 MiB on `/mcp`, and the composition renders `push` in
-   `SAFE_OUTPUTS`.
-5. **The sandbox tokens lose `contents: write`, last.** Only after a canary task's push arrived
-   through `output_applied`:
-   - on the XR, a maintainer changes `agent-implementer.sts.yaml` and `agent-tester.sts.yaml` to
-     `contents: read`;
-   - on the run-controller, `runTokens.perRun` mints from the role table, which already takes it
-     away for a run whose `safe-outputs` names `push`.
+   `output_push` is harness-only and never in a model's profile.
+5. **The sandbox tokens lose `contents: write`.** `runTokens.perRun` mints from the role table,
+   which takes it away for a run whose `safe-outputs` names `push`.
 
-**Rollback**, in this order:
-
-1. Restore `contents: write` in the implementer's and tester's role policies (the XR).
-2. Remove `push` from `enforceOutputs` and the repository from `roomTools.pushRepositories`, and
-   restart both. Runs created before the restart keep their annotation: let them end.
+**Rollback:** remove `push` from `enforceOutputs` and the repository from
+`roomTools.pushRepositories`, and restart both. Runs created before the restart keep their
+annotation: let them end.
 
 **Stop rules.** Roll back on any `untraced_write` of type `push`, on a push stuck unanswered past
 `answerWait`, or on a task held `push_awaiting_approval` with no approval on the room page.
@@ -816,7 +766,7 @@ the key its next run is charged to: `system:factory` with per-person caps off.
 | Series | What it answers |
 |---|---|
 | `maku_factory_charged_usd_total{principal, kind}` | What the ledgers charged for the work a principal caused. Per person key, a day's increase is that day's `spent`; summed over payers, the fleet's `spent` with per-person caps on. R10's lift reaches a run's `settled.<runId>`, never `spent`, and is never counted. A leader that exits loses the charges of its last scrape interval from its counter, never from the ledger, nor does it count a landed write still in doubt when leadership changes: the counter can read low, never high (it never counts twice). Read it with `increase_pure` on VictoriaMetrics: a payer's series is born at its first charge |
-| `maku_factory_run_charge_info{run, principal, task, room}` | Which runs, tasks and rooms a principal paid for: join a run's gateway series (`ar_agent` ends in `xplane-run-<run>`) or kube-state-metrics' `agentrun_*{run_id}` on it |
+| `maku_factory_run_charge_info{run, principal, task, room}` | Which runs, tasks and rooms a principal paid for: join a run's gateway series (`ar_agent` ends in `<runs.namePrefix><run>`, `run-<run>` by default) or kube-state-metrics' `agentrun_*{run_id}` on it |
 | `principal` on outcomes, openings, refusals, revocations, waits and `maku_factory_tasks` | The payer the series is recorded under. An API refusal names the caller as authenticated (`human:<sub>`), and a refusal on a person's day that person. The shadow keeps the key over |
 
 `principal` takes a ledger key's shape (`system:<name>`, `github:<login>`, `human:<sub>`), else

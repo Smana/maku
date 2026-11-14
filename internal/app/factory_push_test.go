@@ -28,13 +28,8 @@ import (
 // Coordination's prerequisites stay nil.
 func TestFactoryPushWiring(t *testing.T) {
 	log := slog.New(slog.DiscardHandler)
-	token := filepath.Join(t.TempDir(), "token")
-	if err := os.WriteFile(token, []byte("jwt"), 0o600); err != nil {
-		t.Fatal(err)
-	}
 	cfg := enforcingConfig(map[string]config.HardeningRepository{
 		"Smana/ai-native-ref": {Mode: hardening.ModeAudit, EnforceOutputs: []hardening.OutputType{hardening.PR, hardening.Push}}})
-	cfg.Hardening.Publisher.OctoSTS.TokenFile = token
 	cfg.Hardening.Applier.ApprovalTTL.Duration = 48 * time.Hour
 	cfg.Repositories = []config.Repository{{Name: "Smana/ai-native-ref",
 		Classes: map[string]config.Class{"docs": {MaxPatchFiles: 7, MaxModifiedLines: 70}}}}

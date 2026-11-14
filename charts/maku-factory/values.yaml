@@ -54,7 +54,7 @@ demo: false
 # The run token writer outside the demo (v4 step 2): the factory keeps the run-controller's
 # agent-git (write) and agent-git-read (read) Secrets filled with installation tokens of the App in
 # appSecret (keys app_id, private_key), mounted at /etc/agent-factory-run-tokens. The factory's
-# config must name runs.group maku.ogenki.io. Interim: replaced by the per-run minter (v4 D10, step 3).
+# Interim: replaced by the per-run minter (v4 D10, step 3).
 runTokens:
   enabled: false
   appSecret: ""
@@ -62,8 +62,7 @@ runTokens:
   # for the run's repository and role, written as the run's own Secret <run name>-git. The
   # factory's Role in the runs namespace then holds create, patch and delete on Secrets, never get,
   # and an admission policy (always rendered with it) bounds those verbs to run token Secrets it
-  # labels and the run owns. Needs enabled (or demo), maku's runController.gitTokens: perRun, and
-  # config.runs.group maku.ogenki.io.
+  # labels and the run owns. Needs enabled (or demo), and maku's runController.gitTokens: perRun.
   perRun: false
 oidcSecret: agent-factory-oidc
 intakeSecret: agent-factory-intake
@@ -94,16 +93,10 @@ clusterRoles: true
 monitor:
   flux:
     enabled: false
-# Untrusted-input hardening H2 (HR11): with publisher.audience set, the factory pod mounts a
-# projected ServiceAccount token of that audience at /var/run/secrets/octo-sts/token, where
-# config.hardening.publisher.octoSTS.tokenFile reads it by default. octo-sts exchanges it for the
-# publisher's token under each enforced repository's .github/chainguard/publisher.sts.yaml. Empty:
-# no token, and config.hardening.enforceOutputs must stay empty unless the minter publishes.
-# Unused with config.hardening.publisher.minter: true (v4 D10), where the factory mints the
-# publisher's token from the agents App (apps.agents.existingSecret, or its alias runTokens.appSecret) and reads no projected token.
+# Untrusted-input hardening. The publisher's token (H2, HR11) is minted from the agents App
+# (config.hardening.publisher.minter: true, v4 D10): hardening.publisher.audience, octo-sts's
+# projected token, was removed in v4 step 8 (docs/upgrading.md#the-xr-run-kind-and-octo-sts).
 hardening:
-  publisher:
-    audience: ""
   # H3 (HR24): with sizeLimit set (e.g. 2Gi), the factory pod mounts an emptyDir of that limit at
   # /var/cache/maku/git and sets MAKU_GIT_CACHE to it: the push applier's bare, blobless mirrors.
   # Empty: no cache, and a repository whose config.hardening.enforceOutputs names push refuses the
@@ -111,7 +104,7 @@ hardening:
   gitCache:
     sizeLimit: ""
 # The factory config, passed through `tpl` (so `{{ .Release.Namespace }}` works): README.md#config, docs/factory.md#the-config-file.
-# With runs.group maku.ogenki.io, set config.runs.gatewayIdentity: true once the run-controller runs
+# Set config.runs.gatewayIdentity: true once the run-controller runs
 # in model.mode gateway (docs/gateway.md, GW10): the meter then prices the runs, and loops.<class>.models
 # and split are accepted. Not defaulted: the runs carry the identity only in gateway mode.
 config: {}

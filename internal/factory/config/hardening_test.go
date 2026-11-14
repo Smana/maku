@@ -48,7 +48,6 @@ func TestHardeningDefaultsOff(t *testing.T) {
 // value the design does not define or a label an agent must never choose.
 func TestHardeningRefusals(t *testing.T) {
 	for name, c := range map[string]struct{ block, want string }{
-		"enforce on the XR":          {"hardening: {mode: enforce}\n", "R5 cannot hold on the XR"},
 		"a repository below central": {"hardening: {mode: audit, repositories: {Smana/cloud-native-ref: {mode: off}}}\n", "only be stricter"},
 		"a bogus mode":               {"hardening: {mode: on}\n", "hardening.mode"},
 		"a bogus classifier":         {"hardening: {layers: {classifier: strict}}\n", "hardening.layers.classifier"},
@@ -121,8 +120,8 @@ func TestHardeningSettings(t *testing.T) {
 	}
 }
 
-// Plan PR8: R2 and R3 read the token source the runs get: the XR's policies, the minter's table
-// under runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
+// Plan PR8: R2 and R3 read the token source the runs get: the minter's table under
+// runTokens.perRun, and a shared token otherwise; the publisher's from the minter when set.
 func TestHardeningSettingsTokenSource(t *testing.T) {
 	runs := "runs: {group: maku.ogenki.io}\n"
 	shared := "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
@@ -131,7 +130,7 @@ func TestHardeningSettingsTokenSource(t *testing.T) {
 		src       hardening.TokenSource
 		pubMinter bool
 	}{
-		"the XR":               {good, hardening.TokenSourceXR, false},
+		"nothing configured":   {good, hardening.TokenSourceShared, false},
 		"per-run tokens":       {good + perRunTokens, hardening.TokenSourceMinter, false},
 		"the minter publishes": {good + perRunTokens + "hardening: {publisher: {minter: true}}\n", hardening.TokenSourceMinter, true},
 		"the shared writer":    {good + runs + shared, hardening.TokenSourceShared, false},
@@ -167,24 +166,6 @@ func TestHardeningAuditAccepted(t *testing.T) {
 			}
 			if c.Hardening.Mode != tc.central || c.Hardening.ModeFor("Smana/cloud-native-ref") != tc.forRepo {
 				t.Fatalf("central %q, repository %q", c.Hardening.Mode, c.Hardening.ModeFor("Smana/cloud-native-ref"))
-			}
-		})
-	}
-}
-
-// Mode enforce is stage H4's (HR34, HR36): on the XR it is refused, centrally and per repository,
-// since R5 cannot hold there. Edited at H4: the refusal was "enforce arrives with stage H4".
-func TestHardeningEnforceStillRefused(t *testing.T) {
-	for name, block := range map[string]string{
-		"central":         "hardening: {mode: enforce}\n",
-		"a repository":    "hardening: {repositories: {Smana/cloud-native-ref: {mode: enforce}}}\n",
-		"over audit":      "hardening: {mode: audit, repositories: {Smana/cloud-native-ref: {mode: enforce}}}\n",
-		"both in enforce": "hardening: {mode: enforce, repositories: {Smana/cloud-native-ref: {mode: enforce}}}\n",
-	} {
-		t.Run(name, func(t *testing.T) {
-			_, err := Parse([]byte(good + block))
-			if err == nil || !strings.Contains(err.Error(), "R5 cannot hold on the XR") {
-				t.Fatalf("got %v", err)
 			}
 		})
 	}
@@ -272,15 +253,6 @@ func TestHashCoversClassifierPresence(t *testing.T) {
 	}
 }
 
-type passingPolicies struct{}
-
-func (passingPolicies) DefaultBranchFile(_ context.Context, _, path string) ([]byte, bool, error) {
-	if path == hardening.PublisherPolicyPath {
-		return []byte("issuer: x\nsubject: y\npermissions:\n  pull_requests: write\n"), true, nil
-	}
-	return []byte("issuer: x\nsubject: y\npermissions:\n  contents: read\n"), true, nil
-}
-
 type passingDrills struct{ at time.Time }
 
 func (d passingDrills) LastPass(context.Context, hardening.DrillKey) (hardening.DrillRecord, bool, error) {
@@ -295,7 +267,9 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 	}
 	at := time.Date(2026, 11, 12, 9, 0, 0, 0, time.UTC)
 	e := hardening.Evaluator{Settings: func(r string) hardening.Settings { return c.HardeningSettings(r, "v9.9.9") },
-		Policies: passingPolicies{}, Drills: passingDrills{at: at.Add(-time.Hour)}, Now: func() time.Time { return at }}
+		Grants: func(string) (map[string]map[string]string, map[string]string) {
+			return map[string]map[string]string{}, map[string]string{"pull_requests": "write"}
+		}, Drills: passingDrills{at: at.Add(-time.Hour)}, Now: func() time.Time { return at }}
 	r, err := e.Hardened(t.Context(), "Smana/cloud-native-ref")
 	if err != nil {
 		t.Fatal(err)
@@ -305,11 +279,11 @@ func TestReadinessStaysFalseUnderAudit(t *testing.T) {
 	}
 }
 
-// enforcePublisher is the octo-sts publisher an enforceOutputs list needs (HR11).
-const enforcePublisher = "  publisher: {octoSTS: {url: \"https://octo-sts.dev\"}}\n"
+// enforcePublisher is the minter's publisher an enforceOutputs list needs (HR11), with perRunTokens.
+const enforcePublisher = "  publisher: {minter: true}\n"
 
-// perRunTokens puts runs on the run-controller, each with its own token from the agents App (v4 D10).
-const perRunTokens = "runs: {group: maku.ogenki.io}\nrunTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
+// perRunTokens gives each run its own token from the agents App (v4 D10).
+const perRunTokens = "runTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"
 
 // H2 enforces the non-code outputs per repository (HR10): a repository's list is a superset of the
 // central one, push is enforceable from H3, and a list needs audit at least and a publisher.
@@ -317,24 +291,24 @@ func TestEnforceOutputs(t *testing.T) {
 	for name, tc := range map[string]struct {
 		block, want string
 	}{
-		"central pr, a repository all four": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+		"central pr, a repository all four": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr, comment, labels, issue]}}\n", ""},
-		"a repository alone, in audit": {"hardening:\n" + enforcePublisher +
+		"a repository alone, in audit": {perRunTokens + "hardening:\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [comment]}}\n", ""},
-		"a repository's list missing pr": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+		"a repository's list missing pr": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [comment]}}\n", "superset"},
-		"push": {"hardening:\n  mode: audit\n  enforceOutputs: [push]\n" + enforcePublisher, ""},
-		"a repository's push": {"hardening:\n" + enforcePublisher +
+		"push": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [push]\n" + enforcePublisher, ""},
+		"a repository's push": {perRunTokens + "hardening:\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr, push]}}\n", ""},
-		"an unknown type":   {"hardening:\n  mode: audit\n  enforceOutputs: [review]\n" + enforcePublisher, "hardening.enforceOutputs"},
-		"central, mode off": {"hardening:\n  enforceOutputs: [pr]\n" + enforcePublisher, "audit"},
-		"a repository, mode off": {"hardening:\n" + enforcePublisher +
+		"an unknown type":   {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [review]\n" + enforcePublisher, "hardening.enforceOutputs"},
+		"central, mode off": {perRunTokens + "hardening:\n  enforceOutputs: [pr]\n" + enforcePublisher, "audit"},
+		"a repository, mode off": {perRunTokens + "hardening:\n" + enforcePublisher +
 			"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [pr]}}\n", "audit"},
-		"no publisher":           {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n", "hardening.publisher.octoSTS"},
-		"a plain-http publisher": {"hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {octoSTS: {url: \"http://octo-sts.dev\"}}\n", "hardening.publisher.octoSTS.url"},
+		"no publisher":           {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n", "hardening.publisher.minter is required"},
+		"octo-sts, removed":      {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {octoSTS: {url: \"https://octo-sts.dev\"}}\n", "publisher.octoSTS was removed in v4 step 8"},
 		"the minter's publisher": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {minter: true}\n", ""},
-		"the minter and octo-sts": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {minter: true, octoSTS: {url: \"https://octo-sts.dev\"}}\n",
-			"hardening.publisher.minter and hardening.publisher.octoSTS.url"},
+		"the minter and octo-sts": {perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n  publisher: {minter: true, octoSTS: {}}\n",
+			"publisher.octoSTS was removed in v4 step 8"},
 		"the minter without run tokens": {"hardening:\n  mode: audit\n  publisher: {minter: true}\n", "hardening.publisher.minter needs runTokens.enabled"},
 		"a zero applier interval":       {"hardening:\n  mode: audit\n  applier: {interval: 0s}\n", "hardening.applier.interval"},
 		"a zero answer wait":            {"hardening:\n  mode: audit\n  applier: {answerWait: 0s}\n", "hardening.applier.answerWait"},
@@ -364,7 +338,7 @@ func TestEnforcedFor(t *testing.T) {
 	if a := c.Hardening.Applier; a.Interval.Duration != 2*time.Second || a.AnswerWait.Duration != 5*time.Minute {
 		t.Fatalf("applier defaults %+v", a)
 	}
-	c, err = Parse([]byte(good + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+	c, err = Parse([]byte(good + perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [labels, pr, issue, comment, pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -376,8 +350,8 @@ func TestEnforcedFor(t *testing.T) {
 	if got := h.EnforcedFor("Smana/other"); !slices.Equal(got, []hardening.OutputType{hardening.PR}) {
 		t.Fatalf("an unlisted repository reads the central list: %v", got)
 	}
-	if p := h.Publisher.OctoSTS; p.URL != "https://octo-sts.dev" || p.TokenFile != "/var/run/secrets/octo-sts/token" || p.Identity != "publisher" {
-		t.Fatalf("publisher defaults %+v", p)
+	if !h.Publisher.Minter {
+		t.Fatalf("publisher %+v", h.Publisher)
 	}
 	if !h.Enforcing() {
 		t.Fatal("Enforcing with a list")
@@ -389,7 +363,7 @@ func TestEnforcedFor(t *testing.T) {
 func TestHashCoversEnforce(t *testing.T) {
 	parse := func(block string) Hardening {
 		t.Helper()
-		c, err := Parse([]byte(good + block))
+		c, err := Parse([]byte(good + perRunTokens + block))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -418,28 +392,26 @@ func TestHashCoversEnforce(t *testing.T) {
 	}
 }
 
-// HR13 (the owner's ruling, 2026-11-12): an enforced repository whose runs are not
-// cloud-native-ref's XR would run on a token no role policy scopes. The factory refuses to start.
+// HR13 (the owner's ruling, 2026-11-12): an enforced repository whose runs hold a shared token
+// could still write directly. The factory refuses to start unless the runs get per-run tokens.
 func TestUnscopedTokenRefused(t *testing.T) {
 	block := "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher
-	runs := "runs: {group: maku.ogenki.io}\n"
+	app := "appIDFile: /a/app_id, privateKeyFile: /a/private_key"
 	for name, tc := range map[string]struct {
 		file    string
 		refused bool
 	}{
-		"the XR":                 {good + block, false},
-		"the run controller":     {good + runs + block, true},
-		"nothing enforced there": {good + runs + "hardening: {mode: audit}\n", false},
-		"per-run tokens":         {good + runs + "runTokens: {enabled: true, perRun: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n" + block, false},
-		"the shared writer":      {good + runs + "runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n" + block, true},
+		"no run tokens":          {good + "runTokens: {enabled: true, " + app + "}\n" + block, true},
+		"nothing enforced there": {good + "hardening: {mode: audit}\n", false},
+		"per-run tokens":         {good + "runTokens: {enabled: true, perRun: true, " + app + "}\n" + block, false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(tc.file))
 			if (err != nil) != tc.refused {
 				t.Fatalf("err %v, want refused %v", err, tc.refused)
 			}
-			if tc.refused && !strings.Contains(err.Error(), "HR13") {
-				t.Fatalf("err %v does not name HR13", err)
+			if tc.refused && (!strings.Contains(err.Error(), "HR13") || strings.Contains(err.Error(), "XR")) {
+				t.Fatalf("err %v does not name HR13 alone", err)
 			}
 		})
 	}
@@ -455,7 +427,7 @@ func TestEnforcePush(t *testing.T) {
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [push]}}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(good + block))
+			c, err := Parse([]byte(good + perRunTokens + block))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -464,7 +436,7 @@ func TestEnforcePush(t *testing.T) {
 			}
 		})
 	}
-	c, err := Parse([]byte(good + "hardening:\n" + enforcePublisher +
+	c, err := Parse([]byte(good + perRunTokens + "hardening:\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -476,11 +448,11 @@ func TestEnforcePush(t *testing.T) {
 
 func TestHashCoversPush(t *testing.T) {
 	base := "hardening:\n" + enforcePublisher + "  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr%s]}}\n"
-	a, err := Parse([]byte(good + fmt.Sprintf(base, "")))
+	a, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Parse([]byte(good + fmt.Sprintf(base, ", push")))
+	b, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, ", push")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -525,21 +497,20 @@ func TestApproverTTL(t *testing.T) {
 // system principal (HR34, HR35).
 const enforceAll = "hardening:\n  mode: audit\n  repositories: {Smana/cloud-native-ref: {mode: enforce, enforceOutputs: [comment, issue, labels, pr, push]}}\n" + enforcePublisher
 
-// HR34, HR36: mode enforce validates on the run-controller with all five types enforced and a
-// system:broker; it fails on the XR, with fewer types, or with no broker principal.
+// HR34, HR36: mode enforce validates with all five types enforced and a system:broker; it fails
+// with fewer types, or with no broker principal.
 func TestModeEnforce(t *testing.T) {
 	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
 	if _, err := Parse([]byte(withAPI(good+perRunTokens+enforceAll, broker))); err != nil {
 		t.Fatalf("enforce on the run-controller: %v", err)
 	}
 	for name, tc := range map[string]struct{ cfg, want string }{
-		"on the XR":       {withAPI(good+enforceAll, broker), "R5 cannot hold on the XR"},
 		"four types":      {withAPI(good+perRunTokens+strings.Replace(enforceAll, "pr, push", "pr", 1), broker), "all five output types"},
 		"no broker":       {good + perRunTokens + enforceAll, "system:broker"},
 		"central enforce": {withAPI(good+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
 		// The factory's run-token ticker revokes each per-run token at the run's end, from outside
 		// the sandbox: under forge-api: deny the harness cannot. A shared token is refused (HR13).
-		"a shared token": {withAPI(good+"runs: {group: maku.ogenki.io}\n"+enforceAll, broker), "runTokens.perRun"},
+		"a shared token": {withAPI(good+"runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"+enforceAll, broker), "runTokens.perRun"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -549,8 +520,7 @@ func TestModeEnforce(t *testing.T) {
 	}
 }
 
-// HR43: R5 holds only at mode enforce, on the run-controller, with system:broker mapped; on the XR
-// never, and a demo never.
+// HR43: R5 holds only at mode enforce with system:broker mapped; a demo never.
 func TestReadFilterFact(t *testing.T) {
 	broker := "  systemIssuer: https://k8s\n  systemJWKS: https://k8s/jwks\n  systemPrincipals: {sa: system:broker}\n"
 	parse := func() *Config {
@@ -568,7 +538,6 @@ func TestReadFilterFact(t *testing.T) {
 			c.Hardening.Repositories["Smana/cloud-native-ref"] = HardeningRepository{Mode: hardening.ModeAudit}
 			return "Smana/cloud-native-ref"
 		},
-		"the XR": func(c *Config) string { c.Runs.Group = "cloud.ogenki.io"; return "Smana/cloud-native-ref" },
 		"no broker": func(c *Config) string {
 			c.API.SystemPrincipals = map[string]string{"sa": "system:runlore"}
 			return "Smana/cloud-native-ref"

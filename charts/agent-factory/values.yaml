@@ -230,5 +230,4 @@ networkPolicies:
     otlp: {to: [], port: 0}        # config.tracing.otlpEndpoint
     agentGuard: {to: [], port: 0}  # config.hardening.agentGuard.url
     gatewayLog: {to: [], port: 0}  # config.hardening.drills.gatewayLog.url
-    octoSTS: {to: [], port: 0}     # config.hardening.publisher.octoSTS.url
     extraEgress: []

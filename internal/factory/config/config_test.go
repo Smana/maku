@@ -50,7 +50,7 @@ runlore:
   dailyCap: 5
 meter:
   url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428
-  query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:xplane-run-.+", gen_ai_token_type=~"input|output"})'
+  query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+", gen_ai_token_type=~"input|output"})'
   logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428
   throttleQuery: '_time:2m kubernetes.pod_namespace:"agent-gateway" AND kubernetes.pod_labels.gateway.networking.k8s.io/gateway-name:"agent-router" | unpack_json | filter log.http.status:429 AND log.reason:RateLimit | stats by (log.x_ar_agent) count() hits'
 repositories:
@@ -465,7 +465,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"half a merger key pair": {"mergerAppIDFile: /etc/agent-factory-merger/app_id, mergerKeyFile: /etc/agent-factory-merger/private_key",
 			"mergerAppIDFile: /etc/agent-factory-merger/app_id", "github.mergerAppIDFile and github.mergerKeyFile are both set or both empty"},
 		"no meter URL": {"url: http://vmsingle-victoria-metrics-k8s-stack.observability.svc:8428", "url: ''", "meter.url is required"},
-		"no meter query": {`query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:xplane-run-.+", gen_ai_token_type=~"input|output"})'`,
+		"no meter query": {`query: 'sum by (ar_agent) (gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+", gen_ai_token_type=~"input|output"})'`,
 			"query: ''", "meter.query is required"},
 		// R13: the 429 lookup needs its endpoint and its query.
 		"no meter logs URL": {"logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428", "logsURL: ''", "meter.logsURL is required"},

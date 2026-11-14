@@ -21,9 +21,9 @@ import (
 )
 
 // v4 "No new authority": a whole family, from its landed children to Done, runs only integration
-// claims, each a triager on the primary with no branch, through the existing primary
-// octo-sts/<primary>/<triager> path; the parent runs nothing, opens no pull request and makes no
-// merger call. The AgentRun role set is still the four roles, no coordination source names a
+// claims, each a triager on the primary with no branch, through the existing per-run token path
+// for the primary's triager; the parent runs nothing, opens no pull request and makes no merger
+// call. The AgentRun role set is still the four roles, no coordination source names a
 // gateway or STS identity, and a cross-repository integration Task or Room fails the existing
 // lineage validation before any run.
 func TestNoCoordinationGatewayOrParentAuthority(t *testing.T) {

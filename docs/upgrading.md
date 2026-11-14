@@ -170,6 +170,35 @@ or the render fails with `choose one`. `values-quickstart.yaml` sets `mode: cili
 The factory no longer writes `spec.queueName` on the AgentRuns it creates (D16: Kueue is dropped).
 The runs quota (`runsQuota`) and the factory's slots and budgets bound the runs.
 
+### The XR run kind and octo-sts
+
+Runs are the run-controller's AgentRuns (`maku.ogenki.io`, D5), and their tokens are minted per run
+by the factory (D10). cloud-native-ref's Crossplane AgentRun (`cloud.ogenki.io`) and octo-sts, its
+token source, are removed (owner ruling R3).
+
+| Removed | Set instead | Refused by |
+|---|---|---|
+| `runs.group: cloud.ogenki.io` (broker, factory, `maku` chart) | `runs.group: maku.ogenki.io`, or leave it unset | the broker and the factory at start; the `maku` and `maku-factory` renders |
+| any other `runs.group` | `maku.ogenki.io` | the same |
+| `hardening.publisher.octoSTS` (factory config) | `hardening.publisher.minter: true` | the factory at start; the `maku-factory` render |
+| `hardening.publisher.audience` (`maku-factory`) | none: the minter reads no projected token | the schema; the template under `--skip-schema-validation` |
+| `networkPolicies.factory.octoSTS` (umbrella) | none | the schema; the template |
+| `STS_URL` (the harness's exchange) | the run-controller's `GIT_TOKEN_FILE` | the credential helper |
+
+The defaults move with it:
+
+- **`runs`** unset is the run-controller's kind (`maku.ogenki.io`, `agents`, `run-`), in the broker,
+  the factory and the `maku-factory` chart's Roles and run-token policy. It was the XR's
+  (`cloud.ogenki.io`, `agents`, `xplane-run-`). A broker whose `runIssuers[].subPattern` names
+  `xplane-run-` and leaves `runs` unset is refused at start: set `runs.namePrefix` or the pattern.
+- **`runs.gatewayIdentity`** unset now refuses `loops.<class>.models` and `split`, as it did on
+  `maku.ogenki.io`: set it once the run-controller runs in `model.mode: gateway` (GW10).
+- **`hardening.enforceOutputs`** needs `runTokens.perRun` and `hardening.publisher.minter` (HR11,
+  HR13). Readiness's R2 and R3 and the permission gauge read the role table only: the policy files
+  `.github/chainguard/*.sts.yaml` are no longer read and can be deleted.
+- **`human_edit`** (the tracer's exemption for a maintainer's edit of an applied output) now
+  applies under `runTokens.perRun`, where a run's own edit is the agents App's.
+
 ### The chart contract
 
 The umbrella's defaults are production, the subcharts carry no CRD, and the preflight is on. Each
@@ -574,9 +603,8 @@ repository in their reservation and get no per-run token: let them end before en
 `runTokens.enabled`) mints the safe-output publisher's token from the agents App instead of
 exchanging it at octo-sts; it is refused together with `hardening.publisher.octoSTS.url`. Without
 it nothing changes. Readiness and the permission gauge now read the token source the runs get: the
-octo-sts policy files on the XR as before, the role table under `runTokens.perRun`. Moving an
-enforced repository off the XR is a runbook in
-[Operations](operations.md#leaving-the-xr-with-an-enforced-repository-hr13).
+octo-sts policy files on the XR as before, the role table under `runTokens.perRun`. Step 8 removed
+the XR and octo-sts ([the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts)).
 
 ## The run path (v0.4x, v4 rollout step 2)
 
