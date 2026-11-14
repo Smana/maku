@@ -45,7 +45,7 @@ const (
 	secretGitHubLink   = "maku-github-link" //nolint:gosec // a Secret's name, not a credential
 	secretSlackApp     = "factory-slack-app"
 	secretSlackPrinc   = "factory-slack-principal"
-	secretSlackWebhook = "room-broker-webhook-slack-app"
+	secretSlackWebhook = "room-broker-webhook-slack-app" //nolint:gosec // a Secret's name, not a credential
 	// secretFactoryCA holds ca.crt, the CA that signs the factory API's certificate: the broker trusts
 	// it (broker.factoryCA). cert-manager writes only the leaf's Secret.
 	secretFactoryCA = "agent-factory-ca" //nolint:gosec // a Secret's name, not a credential
