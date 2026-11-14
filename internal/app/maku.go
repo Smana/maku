@@ -82,6 +82,12 @@ const makuUsage = `usage: maku <command>
                                   the Secrets, the factory objects, the ruleset and the GitOps files to DIR;
                                   it may create the two GitHub Apps, and applies nothing. --out - prints
                                   values.yaml alone
+  preflight [--namespace NS] [--release NAME] [--kubeconfig FILE] [--context NAME] [--strict] [--json]
+            [--keep] [--no-outside] [--timeout D]
+                                  run the release's install preflight (D24) as a Job from its CronJob,
+                                  add the outside checks (each exposed host, from this machine), print one
+                                  table by seam and its summary; exit 1 on a fail (--strict: on a warn too),
+                                  2 when the release has no preflight
   demo app --dir DIR [--owner ORG] [--name NAME]
                                   create the laptop demo's GitHub App through GitHub's manifest flow and write its
                                   app_id, private_key and slug into DIR
@@ -151,6 +157,10 @@ type Maku struct {
 	Rand   io.Reader
 	// RunFlow runs GitHub's App manifest flow (nil: f.Run): tests stand in for GitHub and the browser.
 	RunFlow func(ctx context.Context, f githubapps.Flow, ms ...githubapps.AppManifest) ([]githubapps.App, error)
+
+	// Kube is preflight's cluster from a kubeconfig and context (nil: client-go's loading rules), with
+	// the context's namespace. Tests stand in for the cluster.
+	Kube func(kubeconfig, kubecontext string) (maku.PreflightCluster, string, error)
 }
 
 // RunMaku runs one maku command (SP2 §8): its files under maku.Dir; a pre-v0.30.0 CLI's directory
@@ -215,6 +225,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.demo(ctx, args)
 	case "install":
 		return r.install(ctx, args)
+	case "preflight":
+		return r.preflight(ctx, args)
 	case "drill":
 		return r.drill(ctx, args)
 	case "help", "-h", "--help":
