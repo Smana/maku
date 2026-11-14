@@ -65,7 +65,6 @@ func TestExposedNamesAreTheOnesTheAlertsQuery(t *testing.T) {
 	s.WebhookDelivery(ctx, "slack-app", "delivered")
 	s.WebhookDisabled(ctx, "slack-app", true)
 	s.DBTLS("rooms_broker", false)
-	s.SchemaUnverified(true)
 	s.BridgeStalled(ctx, "cursor_lost")
 	s.BridgeStubbed(ctx, "refused")
 
@@ -96,13 +95,13 @@ func TestExposedNamesAreTheOnesTheAlertsQuery(t *testing.T) {
 		`maku_rooms_webhook_deliveries_total{outcome="delivered",subscriber="slack-app"} 1`,
 		`maku_rooms_webhook_disabled{subscriber="slack-app"} 1`,
 		`maku_rooms_db_tls{role="rooms_broker"} 0`,
-		`maku_rooms_schema_unverified 1`,
 	} {
 		if !strings.Contains(body, want+"\n") {
 			t.Errorf("missing %s", want)
 		}
 	}
-	for _, unwanted := range []string{`room="4kq7x2ma"`, "otel_scope", "target_info", "_total_total", "_seconds_seconds"} {
+	for _, unwanted := range []string{`room="4kq7x2ma"`, "otel_scope", "target_info", "_total_total", "_seconds_seconds",
+		"rooms_schema_unverified"} {
 		if strings.Contains(body, unwanted) {
 			t.Errorf("exposes %s", unwanted)
 		}

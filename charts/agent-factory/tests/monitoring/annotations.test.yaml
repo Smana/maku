@@ -16,17 +16,3 @@ tests:
               description: "The run is Running but silent, and the room shows AwaitingHuman. Find its run: kubectl get agentrun -n agents -o custom-columns=RUN:.metadata.name,ROOM:.spec.roomRef | grep r1, then read its bridge: kubectl logs -n agents <the run's pod> -c room-bridge"
               runbook_url: "https://docs.example.test/operations.md#room-alerts"
               dashboard: "/d/agent-room"
-  # RoomBrokerSchemaUnverified's runbook is the database page's anchor.
-  - interval: 1m
-    input_series:
-      - {series: 'maku_rooms_schema_unverified{namespace="maku"}', values: '1x30'}
-    alert_rule_test:
-      - eval_time: 16m
-        alertname: RoomBrokerSchemaUnverified
-        exp_alerts:
-          - exp_labels: {severity: warning}
-            exp_annotations:
-              summary: "The broker serves a schema whose version it cannot read"
-              description: "The broker's role cannot read the migration ledger, so nothing checks that the schema matches the broker's image. Set broker.database.ownerSecret: the first migrate adopts the Atlas operator's ledger and this clears. A future release refuses to serve without it."
-              runbook_url: "https://docs.example.test/database.md#a-ledger-the-broker-cannot-read"
-              dashboard: "/d/agent-room"
