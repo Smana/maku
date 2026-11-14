@@ -125,6 +125,14 @@ drive_task() {
   echo "ok: issue #$issue is Task $task, with $rooms room(s) and $runs run(s)"
 }
 
+# leg_diagnostics: every factory replica's log (the leader is the one that polls), the Tasks, and the
+# stub's view of the issues.
+leg_diagnostics() {
+  k -n "$NS" logs -l app.kubernetes.io/name=agent-factory --prefix --all-containers --tail=120 | grep -v readiness || true
+  k -n "$NS" get tasks -o wide || true
+  [[ -z ${STUB_PORT:-} ]] || curl -fsS "http://127.0.0.1:$STUB_PORT/repos/owner/repo/issues?state=all" | jq -c '.[] | {number, labels: [.labels[].name], state}' || true
+}
+
 psql_rooms() { k -n "$PG_NS" exec deploy/pg -- psql -qAt -v ON_ERROR_STOP=1 -U postgres -d rooms "$@"; }
 
 # snapshot: what an upgrade in place must keep, one line each.
