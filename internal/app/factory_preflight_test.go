@@ -5,6 +5,8 @@ package app
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -218,5 +220,76 @@ func TestFactoryPreflightPrivateCodeFails(t *testing.T) {
 	g.cfg.Repositories[0].PrivateCode = &config.PrivateCode{Acknowledged: true}
 	if r := (factoryChecks{Live: func() *config.Config { return g.cfg }, Private: g.pc}).privateCode(t.Context()); r.Outcome != preflight.Pass {
 		t.Fatalf("acknowledged: %s %s", r.Outcome, r.Code)
+	}
+}
+
+// WF11: maku repo check asks the factory for one repository's checks: apps, merge-gate and
+// private-code, judged on that repository alone, another's failure never leaking in.
+func TestPreflightFiltersToOneRepository(t *testing.T) {
+	live := func() *config.Config {
+		return &config.Config{Repositories: []config.Repository{
+			{Name: "acme/my-service", Merge: config.Merge{GateStatus: new(true)}},
+			{Name: "acme/other", Merge: config.Merge{GateStatus: new(true)}},
+		}}
+	}
+	g := &gateState{}
+	g.set("acme/my-service", "required")
+	g.set("acme/other", "not")
+	pc := &privateCodeTracker{vis: map[string]string{"acme/my-service": "public", "acme/other": "private"}}
+	apps := []appGrants{{Name: "factory", Checker: repoGrants{errs: map[string]error{"acme/other": forge.ErrNotInstalled}}}}
+	f := factoryChecks{Live: live, Repos: servedRepos("acme/my-service", "acme/other"), Apps: apps, Gate: g, Private: pc}
+
+	res := f.forRepository("ACME/my-service")(t.Context())
+	var ids []string
+	for _, r := range res {
+		ids = append(ids, r.Check)
+		if r.Outcome != preflight.Pass {
+			t.Errorf("%s: %+v", r.Check, r)
+		}
+		if strings.Contains(r.Message, "acme/other") {
+			t.Fatalf("another repository leaked: %s", r.Message)
+		}
+	}
+	if strings.Join(ids, ",") != "apps,merge-gate,private-code" {
+		t.Fatalf("got %v", ids)
+	}
+	for _, r := range f.forRepository("acme/other")(t.Context()) {
+		if r.Outcome != preflight.Fail {
+			t.Errorf("acme/other %s: %+v", r.Check, r)
+		}
+	}
+	// A repository the factory does not serve: nothing to judge, and nothing passes.
+	for _, r := range f.forRepository("acme/unknown")(t.Context()) {
+		if r.Outcome != preflight.Fail || r.Code != preflight.Undecided || !strings.Contains(r.Message, "acme/unknown is not served") {
+			t.Errorf("unknown %s: %+v", r.Check, r)
+		}
+	}
+}
+
+// GET /preflight?repository=owner/name serves forRepository; without the parameter, the whole set.
+func TestPreflightRouteFiltersOnTheQuery(t *testing.T) {
+	all := func(context.Context) []preflight.Result {
+		return []preflight.Result{{Check: "oidc", Outcome: preflight.Pass}}
+	}
+	one := func(repo string) preflight.Source {
+		return func(context.Context) []preflight.Result {
+			return []preflight.Result{{Check: "apps", Outcome: preflight.Pass, Message: repo}}
+		}
+	}
+	h := preflightHandler(all, one, nil)
+	for target, want := range map[string]string{
+		"/preflight":                            `"check":"oidc"`,
+		"/preflight?repository=acme/my-service": `"message":"acme/my-service"`,
+	} {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, target, nil))
+		if rec.Code != 200 || !strings.Contains(rec.Body.String(), want) {
+			t.Errorf("%s: %d %s", target, rec.Code, rec.Body)
+		}
+	}
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/preflight?repository=not-a-repo", nil))
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("a malformed repository: %d", rec.Code)
 	}
 }

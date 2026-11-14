@@ -87,14 +87,20 @@ func yamlDoc(head string, v any) ([]byte, error) {
 // applyRuleset is the gh commands that create the gate's ruleset on each repository: the wizard
 // never runs them.
 func applyRuleset(in Inputs) []byte {
+	return rulesetScript(strings.TrimPrefix(in.ghes(), "https://"), repoNames(in.Answers))
+}
+
+// rulesetScript is applyRuleset for repos on host ("" for github.com): maku install --print's and
+// maku repo add's.
+func rulesetScript(hostname string, repos []string) []byte {
 	var b bytes.Buffer
 	b.WriteString("#!/usr/bin/env bash\n# The merge gate's ruleset on each repository (docs/factory.md#branch-protection-for-the-merge-gate).\n")
 	b.WriteString("# Review it, then run it with a token that administers the repositories. maku never runs it.\nset -euo pipefail\ncd \"$(dirname \"$0\")\"\n")
 	host := ""
-	if g := in.ghes(); g != "" {
-		host = " --hostname " + shellQuote(strings.TrimPrefix(g, "https://"))
+	if hostname != "" {
+		host = " --hostname " + shellQuote(hostname)
 	}
-	for _, r := range repoNames(in.Answers) {
+	for _, r := range repos {
 		fmt.Fprintf(&b, "gh api%s %s --method POST --input ruleset-merge-gate.json\n", host, shellQuote("repos/"+r+"/rulesets"))
 	}
 	return b.Bytes()

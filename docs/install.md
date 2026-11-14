@@ -135,6 +135,11 @@ on a fail, and 2 when the release renders no preflight or the Job leaves no repo
 needs, in the namespace, `get` and `list` on CronJobs, `create`, `get` and `delete` on Jobs, `list` on
 Pods, `get` on `pods/log`, and `get` on HTTPRoutes and Ingresses ([CLI](cli.md)).
 
+For one repository, `maku repo check owner/name` asks the factory for its `apps`, `merge-gate` and
+`private-code` rows alone (`GET /preflight?repository=owner/name`), and adds the repository's fence
+and its `Repository`'s conditions; `maku repo add` writes the files those rows check
+([CLI](cli.md)).
+
 The checks, generated from the catalog in `internal/preflight`:
 
 <!-- preflight:begin -->
