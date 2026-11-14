@@ -1,0 +1,2 @@
+# agent-factory-crds: keep the CRDs, and every Room and Task, on uninstall.
+keep: true

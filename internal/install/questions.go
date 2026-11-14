@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -84,6 +85,7 @@ var (
 	labelRE        = regexp.MustCompile(`^([a-z0-9.-]+/)?[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?=[A-Za-z0-9]([-A-Za-z0-9_.]*[A-Za-z0-9])?$`)
 	pinRE          = regexp.MustCompile(`^(maku-[a-z-]+)=([A-Za-z0-9_.-]+@sha256:[0-9a-f]{64})$`)
 	slackIDRE      = regexp.MustCompile(`^[CT][A-Z0-9]{2,}$`)
+	priceRE        = regexp.MustCompile(`^([A-Za-z0-9._-]+)=([0-9]+(\.[0-9]+)?)/([0-9]+(\.[0-9]+)?)/([0-9]+(\.[0-9]+)?)$`)
 )
 
 // Images are the maku images an install pins, by the name an images.pins entry gives.
@@ -328,6 +330,17 @@ func questionTable() []Question {
 			Values: func(v any, _ Answers) map[string]any {
 				return map[string]any{"maku.broker.human.groups.member": str(v), "maku-factory.config.api.groups.member": str(v)}
 			}, Check: nonEmpty("the member group")},
+		{ID: "identity.projectID", Prompt: "The ZITADEL project id the tokens' audience is pinned to", Kind: KindString,
+			When: is("identity.preset", "zitadel"), Keys: []string{"maku-factory.config.api.projectIDFile"},
+			Values: func(any, Answers) map[string]any {
+				return map[string]any{"maku-factory.config.api.projectIDFile": "/etc/agent-factory-oidc/project-id"}
+			},
+			Check: func(v any, _ Answers) (string, error) {
+				if !regexp.MustCompile(`^[0-9]{6,32}$`).MatchString(str(v)) {
+					return "", fmt.Errorf("%q is not a ZITADEL project id", str(v))
+				}
+				return "", nil
+			}},
 		{ID: "identity.webClientID", Prompt: "The web client's id at the issuer (oauth2-proxy signs people in with it)", Kind: KindString,
 			Check: nonEmpty("the web client id")},
 		{ID: "identity.cliClientID", Prompt: "The CLI client's id at the issuer (maku login, a public client)", Kind: KindString,
@@ -345,6 +358,15 @@ func questionTable() []Question {
 			Values: func(v any, _ Answers) map[string]any {
 				return map[string]any{"maku.broker.runIssuer.jwksURL": str(v), "maku.broker.systemIssuer.jwksURL": str(v), "maku-gateway.identity.jwks.url": str(v)}
 			}, Check: httpsURL("the JWKS URL")},
+
+		{ID: "tls.issuer", Prompt: "The cert-manager ClusterIssuer for the broker's certificate (empty: bring room-broker-tls and room-broker-ca)", Kind: KindString,
+			Default: fixed(""), Keys: []string{"maku.broker.tls.issuerRef"},
+			Values: func(v any, _ Answers) map[string]any {
+				if str(v) == "" {
+					return nil
+				}
+				return map[string]any{"maku.broker.tls.issuerRef": map[string]any{"kind": "ClusterIssuer", "name": str(v)}}
+			}},
 
 		// Database (IN7: Database).
 		{ID: "database.brokerSecret", Prompt: "The broker's DSN Secret (role rooms_broker)", Kind: KindString, Default: fixed("rooms-broker-dsn"),
@@ -420,6 +442,27 @@ func questionTable() []Question {
 		{ID: "models.controller", Prompt: "Install agentgateway's controller with the release (no: the cluster runs one)", Kind: KindBool,
 			Default: fixed(true), Keys: []string{"agentgateway.enabled"}, Values: at("agentgateway.enabled")},
 
+		{ID: "models.prices", Prompt: "Each model's price in USD per million tokens, model=input/cacheRead/output (required with the Slack App's USD ceilings)", Kind: KindList,
+			Default: func(a Answers) any {
+				if a.Bool("slack.enabled") {
+					return nil
+				}
+				return []string{}
+			}, Keys: []string{"maku-factory.config.meter.prices"},
+			Values: func(v any, _ Answers) map[string]any {
+				if len(list(v)) == 0 {
+					return nil
+				}
+				return map[string]any{"maku-factory.config.meter.prices": prices(list(v))}
+			},
+			Check: func(v any, _ Answers) (string, error) {
+				for _, p := range list(v) {
+					if !priceRE.MatchString(p) {
+						return "", fmt.Errorf("%q is not model=input/cacheRead/output, in USD per million tokens", p)
+					}
+				}
+				return "", nil
+			}},
 		// The meter: outside the demo the factory refuses to start without one (step 6 PR G).
 		{ID: "meter.url", Prompt: "A Prometheus-compatible URL holding agentgateway's metrics (the factory's meter)", Kind: KindString,
 			Keys: []string{"maku-factory.config.meter.url"}, Values: at("maku-factory.config.meter.url"),
@@ -563,6 +606,14 @@ func questionTable() []Question {
 					if !labelRE.MatchString(l) || strings.HasSuffix(strings.SplitN(l, "=", 2)[0], "io.kubernetes.pod.namespace") {
 						return "", fmt.Errorf("%q is not a pod label, k=v (the namespace is the endpoint's)", l)
 					}
+				}
+				return "", nil
+			}},
+
+		{ID: "tracing.factoryEndpoint", Prompt: "The factory's OTLP/gRPC collector, host:port (empty: none)", Kind: KindString, Default: fixed(""),
+			Check: func(v any, _ Answers) (string, error) {
+				if str(v) != "" && !regexp.MustCompile(`^[a-z0-9.-]+:[0-9]{1,5}$`).MatchString(str(v)) {
+					return "", fmt.Errorf("%q is not host:port", str(v))
 				}
 				return "", nil
 			}},
@@ -721,4 +772,25 @@ func questionsByID() map[string]Question {
 		m[q.ID] = q
 	}
 	return m
+}
+
+// prices reads model=input/cacheRead/output into the meter's price table.
+func prices(l []string) map[string]any {
+	m := map[string]any{}
+	for _, p := range l {
+		s := priceRE.FindStringSubmatch(p)
+		if s == nil {
+			continue
+		}
+		m[s[1]] = map[string]any{"input": num(s[2]), "cacheRead": num(s[4]), "output": num(s[6])}
+	}
+	return m
+}
+
+func num(s string) any {
+	f, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return s
+	}
+	return f
 }

@@ -1,0 +1,8 @@
+apiVersion: maku.ogenki.io/v1alpha1
+kind: MergePolicy
+metadata:
+  name: docs-links
+  namespace: factory
+spec:
+  requires:
+  - allowedFiles

@@ -1,0 +1,284 @@
+# Flux 2.4 or later: the CRD chart first, agent-factory with crds: Skip. Apply secrets/ first (or let
+# ExternalSecrets fill them), and the Gateway API CRDs (v1.2 or later) are the cluster's.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: factory
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: agent-factory-crds
+  namespace: factory
+spec:
+  interval: 10m
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    tag: 0.48.0
+  url: oci://ghcr.io/smana/charts/agent-factory-crds
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: agent-factory
+  namespace: factory
+spec:
+  interval: 10m
+  layerSelector:
+    mediaType: application/vnd.cncf.helm.chart.content.v1.tar+gzip
+    operation: copy
+  ref:
+    tag: 0.48.0
+  url: oci://ghcr.io/smana/charts/agent-factory
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: agent-factory-crds
+  namespace: factory
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: agent-factory-crds
+  interval: 10m
+  values:
+    keep: true
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: maku
+  namespace: factory
+spec:
+  interval: 1h
+  ref:
+    tag: v0.48.0
+  url: https://github.com/Smana/maku
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: agentgateway-crds
+  namespace: factory
+spec:
+  interval: 1h
+  path: ./config/agentgateway
+  prune: false
+  sourceRef:
+    kind: GitRepository
+    name: maku
+---
+apiVersion: helm.toolkit.fluxcd.io/v2
+kind: HelmRelease
+metadata:
+  name: agent-factory
+  namespace: factory
+spec:
+  chartRef:
+    kind: OCIRepository
+    name: agent-factory
+  dependsOn:
+  - name: agent-factory-crds
+  install:
+    crds: Skip
+  interval: 10m
+  upgrade:
+    crds: Skip
+  values:
+    agentgateway:
+      enabled: true
+    expose:
+      ingress:
+        className: nginx
+      mode: ingress
+      networkPolicy:
+        from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      web:
+        hostnames:
+        - rooms.example.com
+        tls:
+        - hosts:
+          - rooms.example.com
+          secretName: rooms-tls
+    maku:
+      agentRunPolicies:
+        creators:
+        - system:serviceaccount:factory:agent-factory
+        factoryServiceAccount: agent-factory
+      broker:
+        database:
+          brokerSecret: rooms-broker-dsn
+          ownerSecret: rooms-owner-dsn
+          retentionSecret: rooms-retention-dsn
+          secretKey: uri
+        extraEnv:
+        - name: ROOMS_GITHUB_APP_DIR
+          value: /etc/maku/github-app
+        - name: ROOMS_GITHUB_API_URL
+          value: https://ghe.example.com/api/v3/
+        extraVolumeMounts:
+        - mountPath: /etc/maku/github-app
+          name: github-app
+          readOnly: true
+        extraVolumes:
+        - name: github-app
+          secret:
+            defaultMode: 288
+            secretName: agent-factory-github
+        factoryInsecure: true
+        factoryURL: http://agent-factory.factory.svc.cluster.local:8082
+        githubLink:
+          existingSecret: maku-github-link
+          webURL: https://ghe.example.com
+        human:
+          access:
+            ttl: 5m
+          groups:
+            admin: agents-admin
+            member: agents-member
+          issuer: https://login.example.com/realms/eng
+          mode: oidc
+          origin: https://rooms.example.com
+          preset: generic
+          rolesClaim: groups
+          tokenUse: id
+        image:
+          tag: v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+        oidc:
+          existingSecret: rooms-oidc
+        publicURL: https://rooms.example.com
+        runIssuer:
+          issuer: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC
+          jwksURL: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC/keys
+        systemIssuer:
+          issuer: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC
+          jwksURL: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC/keys
+        systemPrincipals:
+          system:serviceaccount:factory:agent-factory: system:factory
+        webProxy: true
+      enabled: true
+      networkPolicies:
+        mode: kubernetes
+      preflight:
+        enabled: true
+      runController:
+        gitReadSecret: ""
+        gitTokens: perRun
+        image:
+          tag: v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+        images:
+          bridge:
+            tag: v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+          harness:
+            tag: v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+        model:
+          gateway:
+            aliases:
+              internal: []
+              public:
+              - agent-default
+              - tier-light
+          mode: gateway
+      sandbox:
+        runtimeClassName: kata
+    maku-factory:
+      apps:
+        agents:
+          existingSecret: agent-factory-agents
+        factory:
+          existingSecret: agent-factory-github
+        merger:
+          mode: factory
+      config:
+        agentsLogin: maku-platform-agents[bot]
+        api:
+          clientIDFiles:
+          - /etc/agent-factory-oidc/web-client-id
+          - /etc/agent-factory-oidc/cli-client-id
+          groups:
+            admin: agents-admin
+            member: agents-member
+          humanIssuer: https://login.example.com/realms/eng
+          listen: :8082
+          preset: generic
+          rolesClaim: groups
+          tokenUse: id
+        broker:
+          caFile: /etc/agent-factory/openbao-ca/ca.crt
+          tokenFile: /var/run/secrets/agents/rooms/token
+          url: https://room-broker.factory.svc.cluster.local:8443
+        factory: agent-factory
+        factoryLogin: maku-platform-factory[bot]
+        github:
+          appIDFile: /etc/agent-factory-github/app_id
+          privateKeyFile: /etc/agent-factory-github/private_key
+        meter:
+          query: sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod) (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})
+          throttle:
+            promQuery: sum by (ar_agent) (increase(agentgateway_requests_total{status="429",
+              reason="RateLimit", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m]))
+              > 0
+          url: https://prometheus.example.com
+        poll:
+          issues: 60s
+          meter: 30s
+          tasks: 30s
+        roomsURL: https://rooms.example.com
+        runs:
+          gatewayIdentity: true
+          group: maku.ogenki.io
+          namePrefix: run-
+          namespace: agents
+      enabled: true
+      extraEnv:
+      - name: ROOMS_GITHUB_API_URL
+        value: https://ghe.example.com/api/v3/
+      image:
+        tag: v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+      oidcSecret: agent-factory-oidc
+      runTokens:
+        enabled: true
+        perRun: true
+    maku-gateway:
+      aliases:
+        public:
+          agent-default:
+            model: gpt-5.1
+            provider: openai
+          tier-light:
+            model: gpt-5.1
+            provider: openai
+      enabled: true
+      identity:
+        issuer: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC
+        jwks:
+          url: https://oidc.eks.eu-west-1.amazonaws.com/id/ABC/keys
+      providers:
+        openai:
+          existingSecret: model-provider
+          key: apiKey
+          preset: openai
+      runs:
+        namePrefix: run-
+        namespace: agents
+    monitoring:
+      dashboards:
+        enabled: false
+      prometheusRule:
+        enabled: false
+      serviceMonitor:
+        enabled: false
+    networkPolicies:
+      factory:
+        enabled: true
+    profile: production
+    slack:
+      enabled: false
+    webProxy:
+      enabled: true
+      existingSecret: rooms-web-proxy

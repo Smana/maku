@@ -1,0 +1,354 @@
+# Argo CD 2.12 or later: register ghcr.io as a Helm OCI repository first. Argo CD runs no Helm
+# test hook: run helm test (the preflight) by hand once the umbrella is synced.
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "0"
+  name: agent-factory-crds
+  namespace: argocd
+spec:
+  destination:
+    namespace: agent-system
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: agent-factory-crds
+    helm:
+      valuesObject:
+        keep: true
+    repoURL: ghcr.io/smana/charts
+    targetRevision: 0.48.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  annotations:
+    argocd.argoproj.io/sync-wave: "2"
+  name: agent-factory
+  namespace: argocd
+spec:
+  destination:
+    namespace: agent-system
+    server: https://kubernetes.default.svc
+  project: default
+  source:
+    chart: agent-factory
+    helm:
+      releaseName: agent-factory
+      skipCrds: true
+      valuesObject:
+        agentgateway:
+          enabled: false
+        expose:
+          httproute:
+            parentRefs:
+            - name: platform-tailscale-general
+              namespace: infrastructure
+              sectionName: https
+          mode: httproute
+          slack:
+            hostnames:
+            - factory-slack.example.com
+            parentRefs:
+            - name: platform-public
+              namespace: infrastructure
+              sectionName: factory-slack
+          web:
+            hostnames:
+            - rooms.priv.example.com
+        externalSecrets:
+          enabled: true
+          secrets:
+            databaseBroker:
+              dataFrom:
+              - extract:
+                  key: maku/rooms-broker-dsn
+            databaseOwner:
+              dataFrom:
+              - extract:
+                  key: maku/rooms-owner-dsn
+            databaseRetention:
+              dataFrom:
+              - extract:
+                  key: maku/rooms-retention-dsn
+            gatewayProvider.zai:
+              dataFrom:
+              - extract:
+                  key: maku/model-provider
+            slackApp:
+              dataFrom:
+              - extract:
+                  key: maku/factory-slack-app
+            slackPrincipal:
+              dataFrom:
+              - extract:
+                  key: maku/factory-slack-principal
+          storeRef:
+            kind: ClusterSecretStore
+            name: openbao
+        maku:
+          agentRunPolicies:
+            creators:
+            - system:serviceaccount:agent-system:agent-factory
+            factoryServiceAccount: agent-factory
+          broker:
+            database:
+              brokerSecret: rooms-broker-dsn
+              ownerSecret: rooms-owner-dsn
+              retentionSecret: rooms-retention-dsn
+              secretKey: uri
+            extraEnv:
+            - name: ROOMS_GITHUB_APP_DIR
+              value: /etc/maku/github-app
+            extraVolumeMounts:
+            - mountPath: /etc/maku/github-app
+              name: github-app
+              readOnly: true
+            extraVolumes:
+            - name: github-app
+              secret:
+                defaultMode: 288
+                secretName: agent-factory-github
+            factoryInsecure: true
+            factoryURL: http://agent-factory.agent-system.svc.cluster.local:8082
+            githubLink:
+              existingSecret: maku-github-link
+            human:
+              access:
+                ttl: 5m
+              groups:
+                admin: agents-admin
+                member: agents-member
+              issuer: https://auth.example.com
+              mcp:
+                enabled: true
+                sponsored:
+                - clientIDFile: /etc/room-broker/oidc/slack-app-client-id
+                  name: slack-app
+              mode: oidc
+              origin: https://rooms.priv.example.com
+              preset: zitadel
+              tokenUse: access
+            image:
+              tag: v0.48.0@sha256:1111111111111111111111111111111111111111111111111111111111111111
+            oidc:
+              existingSecret: rooms-oidc
+            publicURL: https://rooms.priv.example.com
+            roomTools:
+              knowledge:
+                networkPolicy:
+                  to:
+                  - matchLabels:
+                      io.kubernetes.pod.namespace: runlore
+                url: http://runlore.runlore.svc.cluster.local:8080/mcp
+            runIssuer:
+              issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+              jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+            systemIssuer:
+              issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+              jwksURL: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+            systemPrincipals:
+              system:serviceaccount:agent-system:agent-factory: system:factory
+            webProxy: true
+            webhooks:
+            - events:
+              - room.task_triaged
+              - room.waiting_for_human
+              - room.pr_opened
+              - room.verdict_posted
+              - room.merged
+              - room.reverted
+              - room.budget_reached
+              - room.ended
+              - room.approval_closed
+              existingSecret: room-broker-webhook-slack-app
+              name: slack-app
+              network: cluster
+              repositories:
+              - Example/platform
+              url: http://factory-slack-app.agent-system.svc.cluster.local:8081/webhooks
+          enabled: true
+          networkPolicies:
+            mode: cilium
+          preflight:
+            enabled: true
+          runController:
+            gitReadSecret: ""
+            gitTokens: perRun
+            image:
+              tag: v0.48.0@sha256:2222222222222222222222222222222222222222222222222222222222222222
+            images:
+              bridge:
+                tag: v0.48.0@sha256:4444444444444444444444444444444444444444444444444444444444444444
+              harness:
+                tag: v0.48.0@sha256:3333333333333333333333333333333333333333333333333333333333333333
+            model:
+              gateway:
+                aliases:
+                  internal: []
+                  public:
+                  - agent-default
+                  - tier-light
+              mode: gateway
+            tracing:
+              collector:
+                labels:
+                  app.kubernetes.io/name: agent-traces-collector
+                namespace: observability
+              otlpEndpoint: http://agent-traces-collector.observability.svc.cluster.local:4318
+          sandbox:
+            runtimeClassName: gke.gvisor
+        maku-factory:
+          apps:
+            agents:
+              existingSecret: agent-factory-agents
+            factory:
+              existingSecret: agent-factory-github
+            merger:
+              mode: factory
+          config:
+            agentsLogin: example-agents[bot]
+            api:
+              clientIDFiles:
+              - /etc/agent-factory-oidc/web-client-id
+              - /etc/agent-factory-oidc/cli-client-id
+              groups:
+                admin: agents-admin
+                member: agents-member
+              humanIssuer: https://auth.example.com
+              listen: :8082
+              preset: zitadel
+              projectIDFile: /etc/agent-factory-oidc/project-id
+              sponsored:
+              - clientIDFile: /etc/agent-factory-sponsored/slack-app-client-id
+                dailyUSD: 5
+                maxCostUSD: 2
+                name: slack-app
+                repositories:
+                - Example/platform
+                sponsor: alice
+              tokenUse: access
+            broker:
+              caFile: /etc/agent-factory/openbao-ca/ca.crt
+              tokenFile: /var/run/secrets/agents/rooms/token
+              url: https://room-broker.agent-system.svc.cluster.local:8443
+            factory: agent-factory
+            factoryLogin: example-factory[bot]
+            github:
+              appIDFile: /etc/agent-factory-github/app_id
+              privateKeyFile: /etc/agent-factory-github/private_key
+            meter:
+              query: sum by (ar_agent, gen_ai_request_model, gen_ai_token_type, pod)
+                (agentgateway_gen_ai_client_token_usage_sum{ar_agent=~"system:serviceaccount:agents:run-.+"})
+              throttle:
+                promQuery: sum by (ar_agent) (increase(agentgateway_requests_total{status="429",
+                  reason="RateLimit", ar_agent=~"system:serviceaccount:agents:run-.+"}[5m]))
+                  > 0
+              url: http://vmsingle.observability.svc.cluster.local:8428
+            poll:
+              issues: 60s
+              meter: 30s
+              tasks: 30s
+            roomsURL: https://rooms.priv.example.com
+            runs:
+              gatewayIdentity: true
+              group: maku.ogenki.io
+              namePrefix: run-
+              namespace: agents
+          enabled: true
+          image:
+            tag: v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
+          oidcSecret: agent-factory-oidc
+          runTokens:
+            enabled: true
+            perRun: true
+        maku-gateway:
+          aliases:
+            public:
+              agent-default:
+                model: glm-5.3
+                provider: zai
+              tier-light:
+                model: glm-5.3-flash
+                provider: zai
+          enabled: true
+          identity:
+            issuer: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c
+            jwks:
+              url: https://container.googleapis.com/v1/projects/p/locations/l/clusters/c/jwks
+          metrics:
+            allowFrom:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: observability
+          providers:
+            zai:
+              existingSecret: model-provider
+              key: apiKey
+              preset: zai
+          runs:
+            namePrefix: run-
+            namespace: agents
+        monitoring:
+          dashboards:
+            enabled: true
+            labels:
+              grafana_dashboard: "1"
+          prometheusRule:
+            enabled: true
+          serviceMonitor:
+            cilium:
+              fromEndpoints:
+              - matchLabels:
+                  io.kubernetes.pod.namespace: observability
+            enabled: true
+        networkPolicies:
+          factory:
+            enabled: true
+            meter:
+              to:
+              - matchLabels:
+                  io.kubernetes.pod.namespace: observability
+        profile: production
+        slack:
+          config:
+            channels:
+              C0123ABCD:
+                approvals: true
+                maxCostUSD: 2
+                repositories:
+                - Example/platform
+            proposals:
+              enabled: true
+            teamID: T07J97G2K2P
+          enabled: true
+          image:
+            tag: v0.48.0@sha256:6666666666666666666666666666666666666666666666666666666666666666
+          issuerURL: https://auth.example.com
+          networkPolicy:
+            mode: cilium
+          preset: zitadel
+          principalSecret: factory-slack-principal
+          roomsURL: https://rooms.priv.example.com
+          slackSecret: factory-slack-app
+          webhookSecret: room-broker-webhook-slack-app
+        webProxy:
+          enabled: true
+          existingSecret: rooms-web-proxy
+    repoURL: ghcr.io/smana/charts
+    targetRevision: 0.48.0
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+    - CreateNamespace=true
+    - ServerSideApply=true
