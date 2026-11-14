@@ -62,13 +62,16 @@ ykind ConfigMap 'select(.metadata.name == "run-controller-config") | (.data."con
 # and the gate's message is the error whatever order Helm renders in; values-demo.yaml enables them.
 yq -e '.maku.enabled == false and .maku-factory.enabled == false' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not disable maku and maku-factory" >&2; fail=1; }
 yq -e '.maku.enabled == true and .maku-factory.enabled == true' values-demo.yaml >/dev/null 2>&1 || { echo "FAIL: values-demo.yaml does not enable maku and maku-factory" >&2; fail=1; }
+# One template relies on Helm's render order, deepest first: the gate's own, deeper than any subchart's
+# template, so profile production's one message comes first (proved below, Task 19). No other may.
 deep="$(find templates -mindepth 2 -type f)"
-[[ -z $deep ]] || { echo "FAIL: a template below templates/ ($deep): the gate must not rely on Helm's render order" >&2; fail=1; }
+[[ $deep == templates/gate/renders/before/subcharts.yaml ]] || { echo "FAIL: templates below templates/ ($deep): only the gate's may rely on Helm's render order" >&2; fail=1; }
 # the packaged chart ships values-demo.yaml and the example, never tests/ (.helmignore)
 pkg="$(mktemp -d)"; helm package . -d "$pkg" >/dev/null
 shipped="$(tar -tzf "$pkg"/agent-factory-*.tgz)"; rm -rf "$pkg"
 grep -qx 'agent-factory/values-demo.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-demo.yaml" >&2; fail=1; }
 grep -qx 'agent-factory/values-mine.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-mine.example.yaml" >&2; fail=1; }
+grep -qx 'agent-factory/values-production.example.yaml' <<<"$shipped" || { echo "FAIL: the package lacks values-production.example.yaml" >&2; fail=1; }
 ! grep -q '^agent-factory/tests/' <<<"$shipped" || { echo "FAIL: the package ships tests/" >&2; fail=1; }
 # --set profile=demo without values-demo.yaml fails closed, naming the file (PR5)
 msg="$(helm template af . -n maku "${img[@]}" --set profile=demo "${secrets[@]}" 2>&1 >/dev/null || true)"
@@ -143,9 +146,105 @@ np="$(helm template af . -n maku "${args[@]}" --set networkPolicies.plain=false 
 # profile: demo
 # an unset profile fails, naming what production must supply
 msg="$(helm template af . -n maku "${img[@]}" 2>&1 >/dev/null || true)"
-grep -qF 'profile is required: demo (-f values-demo.yaml), or production (rollout steps 2 to 6)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
-msg="$(helm template af . -n maku "${img[@]}" --set profile=production 2>&1 >/dev/null || true)"
-grep -qF 'profile production: its seams arrive in rollout steps 2 to 6' <<<"$msg" || { echo "FAIL: profile=production does not fail closed until rollout steps 2 to 6" >&2; fail=1; }
+grep -qF 'profile is required: demo (-f values-demo.yaml), or production (docs/upgrading.md#from-the-demo-to-production)' <<<"$msg" || { echo "FAIL: an unset profile does not fail with the profile message (got: $msg)" >&2; fail=1; }
+
+# v4 step 6, Task 19 (EX16, R6): profile production renders, a gate per enabled component. It refuses
+# the demo's values, and names every missing seam of every enabled component in one message, before
+# any subchart refuses the first one it meets.
+demo_out="$out"
+prod=("${img[@]}" -f tests/production-values.yaml)
+# pbad WANT ARGS...: the production render fails, its message holding WANT.
+pbad() {
+  local want="$1" msg; shift
+  msg="$(helm template af . -n maku "$@" 2>&1 >/dev/null || true)"
+  grep -qF -- "$want" <<<"$msg" || { echo "FAIL: production: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
+}
+pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${prod[@]}" --set demoValues=true
+pbad 'demoValues: values-demo.yaml is the demo'"'"'s' "${img[@]}" -f values-demo.yaml "${secrets[@]}" --set profile=production
+pbad 'postgres.enabled: the bundled Postgres is demo-only (D9)' "${prod[@]}" --set postgres.enabled=true
+pbad 'networkPolicies.plain: the demo'"'"'s ingress-only policy' "${prod[@]}" --set networkPolicies.plain=true
+pbad 'maku.demoValues: the maku chart'"'"'s demo marker' "${prod[@]}" --set maku.demoValues=true
+pbad 'maku-factory.demo, maku-factory.config.demo' "${prod[@]}" --set maku-factory.demo=true
+# model.mode secret puts the provider key in the sandbox (D7): demo-only, so production refuses it
+pbad '  - maku.runController.model.mode: secret is demo-only (D7)' "${prod[@]}" --set maku.runController.model.mode=secret --set maku-factory.config.runs.gatewayIdentity=false
+pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18)' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
+pbad 'maku.runController.allowUnsandboxed: runs without a sandbox are for the demo and kind only (D18' "${prod[@]}" --set maku.runController.allowUnsandboxed=true
+# an empty production file with maku on: one message, every maku seam on its own line, the gate first
+msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true 2>&1 >/dev/null || true)"
+for line in 'maku.broker.image.tag: <version>@sha256:<digest>' 'maku.runController.image.tag: <version>@sha256:<digest>' \
+  'maku.runController.images.harness.tag:' 'maku.runController.images.bridge.tag:' 'maku.broker.human.issuer: the OIDC issuer' \
+  'maku.broker.runIssuer.issuer:' 'maku.broker.database.brokerSecret: the broker'"'"'s DSN Secret' 'maku.broker.publicURL: the https URL' \
+  'maku.sandbox.runtimeClassName: the RuntimeClass'; do
+  grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: an empty production file does not list '$line' (got: $msg)" >&2; fail=1; }
+done
+grep -qF 'profile production: 9 missing or refused seams (docs/upgrading.md#from-the-demo-to-production):' <<<"$msg" ||
+  { echo "FAIL: an empty production file's one message does not count its 9 seams (got: $msg)" >&2; fail=1; }
+grep -qF 'templates/gate/renders/before/subcharts.yaml' <<<"$msg" || { echo "FAIL: a subchart refused before the gate (got: $msg)" >&2; fail=1; }
+pbad 'maku.broker.human.mode: oidc (got local' --set profile=production --set maku.enabled=true --set maku.broker.human.mode=local
+# every enabled component's seams in the one message: the factory's beside maku's
+msg="$(helm template af . -n maku --set profile=production --set maku.enabled=true --set maku-factory.enabled=true 2>&1 >/dev/null || true)"
+for line in 'maku-factory.image.tag: <version>@sha256:<digest>' 'maku-factory.config.api.humanIssuer:' 'maku.broker.publicURL:'; do
+  grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: maku and the factory: the message does not list '$line' (got: $msg)" >&2; fail=1; }
+done
+pbad 'maku-factory.apps.factory.existingSecret: the factory App'"'"'s Secret' "${prod[@]}" --set maku-factory.githubSecret=
+# the agreements are listed too: a disagreeing identity, a web front door without its Secret
+pbad '  - maku.broker.human.issuer "https://idp.example.test" and maku-factory.config.api.humanIssuer "https://other.example.test" must be equal' "${prod[@]}" --set maku-factory.config.api.humanIssuer=https://other.example.test
+pbad '  - webProxy.existingSecret is empty' "${prod[@]}" --set webProxy.enabled=true --set maku.broker.webProxy=true
+pbad '  - expose.web.hostnames is empty' "${prod[@]}" --set expose.mode=httproute --set webProxy.enabled=true --set maku.broker.webProxy=true --set webProxy.existingSecret=rooms-proxy
+# the Slack App's three Secrets by name: its own schema refuses an empty one
+pbad "at '/slackSecret': minLength: got 0, want 1" "${prod[@]}" --set slack.enabled=true --set slack.slackSecret=
+# with every seam named it renders: the broker, the run-controller and the factory, none of the demo's own
+out="$(helm template af . -n maku "${prod[@]}")" || { echo "FAIL: tests/production-values.yaml does not render" >&2; fail=1; out=''; }
+for d in room-broker run-controller agent-factory; do
+  ykind Deployment "select(.metadata.name == \"$d\") | true" "production renders the Deployment $d"
+done
+ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and (.metadata.name == "rooms-db" or .metadata.name == "agent-factory-api"))' 'production renders a demo object: the bundled Postgres, a generated Secret or the plain policy'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'production with every seam named shows no unsafe setting'
+# staged adoption (D25): the factory alone, with its seams, renders the factory and nothing of maku's
+out="$(helm template af . -n maku --set profile=production --set maku-factory.enabled=true --set maku-factory.image.tag=$digest)" ||
+  { echo "FAIL: maku.enabled=false with maku-factory alone does not render" >&2; fail=1; out=''; }
+ykind Deployment 'select(.metadata.name == "agent-factory") | true' 'the factory alone renders its Deployment'
+ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)")) | .metadata.name' 'the factory alone renders a maku object'
+# networkPolicies.mode none stays allowed, on the install banner (PR9)
+out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.enabled=false)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "network_policy_none"' 'production in mode none lists network_policy_none on the banner (PR9)'
+# v4 step 6, Task 20: values-production.example.yaml renders as shipped, and its configs load; the
+# cloud-native-ref-shaped values (ANR at 1529b3b) render exactly tests/golden/production-cnref-like.yaml,
+# in cnref's namespace, and the broker's, the run-controller's and the Slack App's configs load strictly.
+# A deliberate change updates the golden: UPDATE_GOLDEN=1 bash charts/agent-factory/tests/render.sh.
+out="$(helm template af . -n maku -f values-production.example.yaml)" || { echo "FAIL: values-production.example.yaml does not render" >&2; fail=1; out=''; }
+for k in HTTPRoute PrometheusRule ServiceMonitor; do ykind "$k" 'true' "values-production.example.yaml renders a $k"; done
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'the production example shows no unsafe setting'
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-broker.yaml"
+yq 'select(.metadata.name == "run-controller-config") | .data."config.yaml"' - <<<"$out" >"$tmp/ex-rc.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/ex-broker.yaml" && go run ./charts/maku/tests/loadconfig run-controller-gateway "$tmp/ex-rc.yaml") ||
+  { echo "FAIL: the production example's broker or run-controller config does not load" >&2; fail=1; }
+cnref=("${img[@]}" --set slack.image.tag=v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000 -f tests/values-cnref-like.yaml)
+out="$(helm template agent-factory . -n agent-system "${cnref[@]}")" || { echo "FAIL: tests/values-cnref-like.yaml does not render" >&2; fail=1; out=''; }
+# The dashboards' JSON is masked (tests/monitoring.sh and Task 8's promtool checks hold it), so the
+# golden is the install's shape.
+cnref_golden() { bash tests/normalize.sh <<<"$out" | yq '(select(.kind == "ConfigMap" and (.metadata.name | test("^maku-dashboard-"))) | .data[]) |= "<dashboard JSON>"' -; }
+if [[ ${UPDATE_GOLDEN:-} == 1 ]]; then cnref_golden >tests/golden/production-cnref-like.yaml; fi
+cnref_golden | diff -u tests/golden/production-cnref-like.yaml - >&2 || { echo "FAIL: the cnref-like render differs from tests/golden/production-cnref-like.yaml" >&2; fail=1; }
+for c in room-broker-config:broker run-controller-config:run-controller-gateway factory-slack-app-config:slack-app; do
+  yq "select(.metadata.name == \"${c%%:*}\") | .data.\"config.yaml\"" - <<<"$out" >"$tmp/cnref-${c#*:}.yaml"
+  (cd ../.. && go run ./charts/maku/tests/loadconfig "${c#*:}" "$tmp/cnref-${c#*:}.yaml") || { echo "FAIL: the cnref-like ${c%%:*} does not load" >&2; fail=1; }
+done
+# Task 21: the k3d production leg's values (identity.sh PROFILE=production) render offline, and the
+# broker's and the factory's configs load, so a live failure is the cluster's, not the values'.
+k3d=(-f tests/identity-values.yaml -f tests/identity-link-values.yaml -f tests/expose-values.yaml -f tests/production-k3d-values.yaml
+  --set expose.mode=httproute --set-json 'expose.httproute.parentRefs=[{"name":"edge","namespace":"edge","sectionName":"http"}]'
+  --set-json 'expose.networkPolicy.from=[{"namespaceSelector":{"matchLabels":{"kubernetes.io/metadata.name":"edge"}}}]'
+  --set maku.e2e.unpinnedImages=true --set maku-factory.e2e.unpinnedImages=true --set maku.broker.image.tag=e2e --set maku.runController.image.tag=e2e
+  --set maku.runController.images.harness.tag=e2e --set maku.runController.images.bridge.tag=e2e --set maku-factory.image.tag=e2e)
+out="$(helm template identity . -n maku "${k3d[@]}")" || { echo "FAIL: the k3d production values do not render" >&2; fail=1; out=''; }
+yq 'select(.metadata.name == "room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-broker.yaml"
+yq 'select(.metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$out" >"$tmp/k3d-factory.yaml"
+(cd ../.. && go run ./charts/maku/tests/loadconfig broker "$tmp/k3d-broker.yaml" &&
+  CHART_FACTORY_CONFIG="$tmp/k3d-factory.yaml" go test -count=1 -run TestRenderedChartConfigParses ./internal/factory/config >"$tmp/parse.log" 2>&1) ||
+  { echo "FAIL: the k3d production leg's broker or factory config does not load" >&2; cat "$tmp/parse.log" >&2; fail=1; }
+out="$demo_out"
+
 # maku: no Cilium, local human, the portable runs group, runc
 ynone 'select(.kind == "CiliumNetworkPolicy") | .metadata.name' 'the demo renders a CiliumNetworkPolicy'
 ynone 'select(.kind == "ClusterRole" or .kind == "Role") | .rules[] | select(.apiGroups[] == "cilium.io")' 'the demo grants cilium.io'

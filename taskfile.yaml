@@ -222,6 +222,11 @@ tasks:
     cmds:
       - SLACK=1 EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
 
+  chart:production:k3d:
+    desc: profile production on throwaway k3d, with no demo value; maku-factory alone adopts the umbrella, keeping its Deployment, then the web through the Gateway, the factory's /readyz and the monitoring objects (docker, k3d; not part of check)
+    cmds:
+      - PROFILE=production EXPOSE=httproute bash charts/agent-factory/tests/identity.sh
+
   chart:intake:k3d:
     desc: Prove planner revisions against in-cluster stubs on throwaway k3d (docker, k3d; not part of check)
     cmds:

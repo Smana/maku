@@ -1,4 +1,6 @@
 {{- include "afumbrella.profile" . -}}
+{{- /* The demo's alone: a production install brings these Secrets itself (docs/install-secrets.md). */ -}}
+{{- if eq .Values.profile "demo" -}}
 {{- /*
 The broker's TLS without cert-manager. A re-render reuses what the cluster already holds
 (`lookup`), and every Secret is `keep`, so an upgrade never rotates the CA under running run pods.
@@ -59,3 +61,4 @@ metadata:
 type: Opaque
 data:
   ca.crt: {{ $caCrt }}
+{{- end }}

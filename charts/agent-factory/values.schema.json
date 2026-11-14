@@ -26,7 +26,7 @@
       "type": "object"
     },
     "profile": {
-      "description": "What the chart is for: demo (-f values-demo.yaml) or production (fails closed until rollout steps 2 to 6). Unset renders nothing.",
+      "description": "What the chart is for: demo (-f values-demo.yaml), or production, which checks the seams of each enabled component and fails naming every missing one (docs/upgrading.md#from-the-demo-to-production). Unset renders nothing.",
       "type": "string",
       "enum": ["", "demo", "production"]
     },
