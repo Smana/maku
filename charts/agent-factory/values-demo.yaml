@@ -13,7 +13,7 @@
 # needs --kube-apiserver-arg=anonymous-auth=true.
 # These were the chart's defaults until v0.4x. They live here because Helm deep-merges maps: a
 # production values file layered on demo defaults would inherit demo: true, factoryInsecure,
-# allowUnsandboxed and the rest. values.yaml is the production-safe skeleton.
+# unsafeAllowRunc and the rest. values.yaml is the production-safe skeleton.
 profile: demo
 # The marker the profile gate looks for. `--set profile=demo` without this file fails: a subchart
 # reads only the values Helm hands it, so no parent helper can bring back the demo's maku: and
@@ -48,7 +48,11 @@ maku:
   # (k3s, kind from v0.24), --set maku.networkPolicies.mode=kubernetes confines the runs with plain
   # NetworkPolicies and the egress proxy (v4 D6).
   networkPolicies:
-    enabled: false
+    mode: none
+  # No gVisor on a laptop: runs use the node's own runtime (runc), on the install banner (D18).
+  sandbox:
+    runtimeClassName: ""
+    unsafeAllowRunc: true
   runs:
     group: maku.ogenki.io
     namespace: agents
@@ -89,8 +93,6 @@ maku:
         # service and namespace empty: this release's model-gateway. The demo's tiers all name
         # agent-default; its loops' judge is tier-light.
         aliases: {public: [agent-default, tier-light], internal: []}
-    runtimeClassName: ""
-    allowUnsandboxed: true
     createRuntimeClass: false
     # Each run mounts its own token Secret, <run name>-git, minted by the factory for the run's
     # repository and role (v4 D10), with maku-factory.runTokens.perRun.

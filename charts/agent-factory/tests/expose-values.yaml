@@ -4,7 +4,6 @@
 # Gateway or the IngressClass, and the controller's pods) are set by the script.
 maku:
   networkPolicies:
-    enabled: true
     mode: kubernetes
   broker:
     webProxy: true

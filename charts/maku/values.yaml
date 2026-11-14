@@ -4,31 +4,27 @@ runs:
   group: maku.ogenki.io
   namespace: agents
   namePrefix: run-
-# Create the runs.namespace object. The default-deny CiliumNetworkPolicy is rendered either way
-# (unless networkPolicies.enabled is false):
-# turn this off when the namespace exists already (Helm cannot adopt an unowned one).
+# Create the runs.namespace object. The runs namespace's default-deny is rendered either way (unless
+# networkPolicies.mode is none): turn this off when the namespace exists already (Helm cannot adopt
+# an unowned one).
 createRunsNamespace: true
 
 # The demo marker (v4 step 8, R4): true admits the demo-only settings, today runController.model.mode
 # secret. values-quickstart.yaml sets it; the umbrella's values-demo.yaml sets maku.demoValues.
 demoValues: false
 
-# Render the CiliumNetworkPolicies (default-deny in the runs namespace, the broker's, the run
-# controller's) and let the run controller create one per run. Turn it off on a cluster without
-# Cilium (plain kind or k3d, no CiliumNetworkPolicy CRD): nothing then confines the network.
-#
-# mode (v4 D6) picks the policies, and wins over enabled when set:
-#   cilium      CiliumNetworkPolicies, as enabled: true always did;
-#   kubernetes  plain networking.k8s.io/v1 NetworkPolicies on any CNI that enforces them: default-deny
-#               in the runs namespace, one per run, the broker's and the run-controller's, and the
-#               egress proxy, which holds each run's HTTPS to its own hosts. The run-controller's
-#               preflight refuses runs until a probe pod proves the CNI denies a denied connection.
-#               DNS stays open to the runs: DNS tunnelling is this mode's residual risk.
-#   none        nothing confines the network (shown on the install banner), as enabled: false.
-# Empty: enabled decides (true: cilium, false: none). mode cilium with enabled false fails.
+# The network policies (v4 D6): default-deny in the runs namespace, one per run from the run
+# controller, the broker's and the run-controller's. mode picks them:
+#   kubernetes  (default) plain networking.k8s.io/v1 NetworkPolicies on any CNI that enforces them,
+#               and the egress proxy, which holds each run's HTTPS to its own hosts. The
+#               run-controller's preflight refuses runs until a probe pod proves the CNI denies a
+#               denied connection. DNS stays open to the runs: DNS tunnelling is this mode's residual
+#               risk.
+#   cilium      CiliumNetworkPolicies, on a cluster running Cilium.
+#   none        nothing confines the network (shown on the install banner).
+# The old networkPolicies.enabled is removed (v4 step 8): the render fails naming mode.
 networkPolicies:
-  enabled: true
-  mode: ""
+  mode: kubernetes
   # The runs namespace's default-deny (agents/default-deny), in mode cilium or kubernetes. false: an
   # install whose platform already owns that policy renders none; the platform's must deny both
   # directions as this one does.
@@ -313,13 +309,12 @@ runController:
   # controller reads Secrets in the runs namespace without resourceNames: it already creates pods
   # that mount any of them.
   gitTokens: shared
-  # Empty + allowUnsandboxed=false: the controller refuses every run. createRuntimeClass renders
-  # the RuntimeClass of that name for the handler. Off by default: it is cluster-scoped, so opt in only
-  # where no such RuntimeClass exists.
-  runtimeClassName: gvisor
+  # createRuntimeClass renders the RuntimeClass sandbox.runtimeClassName names, for runtimeHandler.
+  # Off by default: it is cluster-scoped, so opt in only where no such RuntimeClass exists. The old
+  # runController.runtimeClassName and allowUnsandboxed are removed (v4 step 8): the render fails
+  # naming sandbox.runtimeClassName and sandbox.unsafeAllowRunc.
   runtimeHandler: runsc
   createRuntimeClass: false # a cluster-scoped name: opt in where no such RuntimeClass exists (the quickstart does)
-  allowUnsandboxed: false
   # Replaces the built-in profiles (github, pypi, npm, golang, crates) when set.
   egressProfiles: {}
   # Run traces (v4 D21, docs/observability.md). Empty otlpEndpoint: runs export nothing, and their
@@ -356,22 +351,15 @@ preflight:
     requests: {cpu: 20m, memory: 32Mi}
     limits: {cpu: 200m, memory: 128Mi}
 
-# The run pod's sandbox (D18). These keys are the spec's; the run-controller's older keys stay
-# honoured until rollout step 8 deletes them:
-#
-#   | key                       | old key, still honoured           | rule                                   |
-#   |---------------------------|-----------------------------------|----------------------------------------|
-#   | sandbox.runtimeClassName  | runController.runtimeClassName    | the new key wins when set; else the old |
-#   |   (default "")            |   (default gvisor)                |                                        |
-#   | sandbox.unsafeAllowRunc   | runController.allowUnsandboxed    | true: no RuntimeClass, allowUnsandboxed;|
-#   |                           |                                   | with sandbox.runtimeClassName it fails |
-#   | (none)                    | runController.createRuntimeClass, | unchanged; renders the class under the |
-#   |                           |   runtimeHandler                  | resolved name                          |
-#
-# unsafeAllowRunc runs agents on the node's own runtime (runc): for the demo and kind only. Every
-# signed-in human sees it on the install banner (GET /api/install).
+# The run pod's sandbox (D18).
+#   runtimeClassName  the RuntimeClass every run pod runs under (gvisor, GKE Sandbox's included; kata).
+#                     Empty, with unsafeAllowRunc false: the controller refuses every run.
+#   unsafeAllowRunc   true runs agents on the node's own runtime (runc), with runtimeClassName "":
+#                     for the demo and kind only. Every signed-in human sees it on the install banner
+#                     (GET /api/install). With a runtimeClassName the render fails.
+# runController.createRuntimeClass and runtimeHandler render the class under runtimeClassName.
 sandbox:
-  runtimeClassName: ""
+  runtimeClassName: gvisor
   unsafeAllowRunc: false
 
 # A ResourceQuota on runs.namespace (D16): a cluster-level safety net behind the factory's slots and

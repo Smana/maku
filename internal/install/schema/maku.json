@@ -144,6 +144,8 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "runtimeClassName": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set sandbox.runtimeClassName (docs/upgrading.md#the-run-paths-old-keys)"]},
+        "allowUnsandboxed": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set sandbox.unsafeAllowRunc (docs/upgrading.md#the-run-paths-old-keys)"]},
         "gitTokens": {
           "description": "Where a run's git token comes from (D10): shared (gitSecret and gitReadSecret) or perRun (each run's own Secret, minted by the factory).",
           "type": "string",
@@ -205,11 +207,12 @@
       }
     },
     "networkPolicies": {
-      "description": "The network mode (D6). enabled is the old key; mode wins when set.",
+      "description": "The network mode (D6).",
       "type": "object",
       "additionalProperties": true,
       "properties": {
-        "mode": {"type": "string", "enum": ["", "cilium", "kubernetes", "none"]},
+        "enabled": {"description": "Removed in v4 step 8. The one value it allows is the message a render shows.", "enum": ["removed in v4 step 8: set networkPolicies.mode (docs/upgrading.md#the-run-paths-old-keys)"]},
+        "mode": {"type": "string", "enum": ["cilium", "kubernetes", "none"]},
         "runsNamespaceDefaultDeny": {"description": "false: the platform owns the runs namespace's default-deny; the chart renders none.", "type": "boolean"},
         "kubernetes": {
           "type": "object",
@@ -258,12 +261,12 @@
       }
     },
     "sandbox": {
-      "description": "The run pod's sandbox (D18). The old runController.runtimeClassName and allowUnsandboxed keys stay honoured.",
+      "description": "The run pod's sandbox (D18).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
         "runtimeClassName": {
-          "description": "The sandbox RuntimeClass. Empty: runController.runtimeClassName (gvisor).",
+          "description": "The sandbox RuntimeClass (default gvisor). Empty with unsafeAllowRunc: no RuntimeClass.",
           "type": "string",
           "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         },

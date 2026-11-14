@@ -147,6 +147,27 @@ Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defa
 their old values. Each change below is breaking: a removed or flipped value is refused by the schema
 or by a render `fail` that names its replacement, never silently ignored.
 
+### The run path's old keys
+
+The `maku` chart's keys that step 2 kept beside their replacements are removed, and the defaults are
+the product path's: plain NetworkPolicies and gVisor. The schema refuses each old key with a message
+naming its replacement; under `--skip-schema-validation` the template does.
+
+| Removed | Set instead | Default now |
+|---|---|---|
+| `networkPolicies.enabled` | `networkPolicies.mode`: `cilium` for `true`, `none` for `false` | `kubernetes` (was `cilium`, from `enabled: true`) |
+| `runController.runtimeClassName` | `sandbox.runtimeClassName` | `gvisor` (was `""`, falling back to the old key's `gvisor`) |
+| `runController.allowUnsandboxed` | `sandbox.unsafeAllowRunc`, with `sandbox.runtimeClassName: ""` | `false` |
+
+An install that set none of them and ran on Cilium now renders plain NetworkPolicies and the egress
+proxy: set `networkPolicies.mode: cilium` to keep the CiliumNetworkPolicies. Because
+`sandbox.runtimeClassName` now defaults to `gvisor`, `sandbox.unsafeAllowRunc: true` needs it emptied,
+or the render fails with `choose one`. `values-quickstart.yaml` sets `mode: cilium`, and the umbrella's
+`values-demo.yaml` sets `mode: none` and the unsandboxed pair.
+
+The factory no longer writes `spec.queueName` on the AgentRuns it creates (D16: Kueue is dropped).
+The runs quota (`runsQuota`) and the factory's slots and budgets bound the runs.
+
 ### Private code is refused without its acknowledgement
 
 A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory

@@ -100,7 +100,8 @@ prod=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oid
       --set broker.human.groups.admin=a --set broker.human.groups.member=m
       --set runs.namePrefix=xplane-run- --set broker.tls.secretName=broker-cert --set broker.tls.caSecretName=broker-ca
       --set 'apiServerPorts={6443}' --set clusterDomain=corp.local
-      --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}')
+      --set-json 'runController.model.gateway.aliases={"public":["agent-default"]}'
+      --set networkPolicies.mode=cilium)
 p="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false)"
 out="$p"
 # D25: the XR install (runController.enabled=false) renders exactly what it rendered before rollout
@@ -156,8 +157,8 @@ fwd="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set brok
 out="$fwd"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .publicURL == "http://localhost:18080"' 'local publicURL takes broker.publicURL'
 # ALLOW_UNSANDBOXED=1's overrides never reach the broker pod
-out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true \
-  --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
+out="$(helm template ap . -n x -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true \
+  --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false)"
 ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.runtimeClassName == null' 'unsandboxed: the broker still has no runtimeClassName'
 
 # the factory's two flows (S-4) open only with factoryURL: ingress to :8443 from its pods, egress to
@@ -240,17 +241,17 @@ ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.ya
 ynone 'select(.kind=="Deployment" and .metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name=="factory-ca")' 'no factory CA Secret, no mount'
 bad 'broker.factoryURL "http://agent-factory.x.svc:8082" is http' --set broker.factoryURL=http://agent-factory.x.svc:8082
 
-# networkPolicies.enabled=false: a cluster without Cilium. No CiliumNetworkPolicy, no CNP verb for
-# the controller, and its config says none; the default renders as before.
-nonp="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.enabled=false)"
+# networkPolicies.mode none: nothing confines the network. No CiliumNetworkPolicy, no CNP verb for
+# the controller, and its config says none.
+nonp="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=none)"
 out="$nonp"
-ynone 'select(.kind == "CiliumNetworkPolicy")' 'networkPolicies.enabled=false renders no CiliumNetworkPolicy'
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'networkPolicies.enabled=false: the controller config says networkPolicy none'
-ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'networkPolicies.enabled=false: no ciliumnetworkpolicies verb'
-ykind Namespace '.metadata.name == "agents"' 'networkPolicies.enabled=false keeps the runs namespace'
+ynone 'select(.kind == "CiliumNetworkPolicy")' 'mode none renders no CiliumNetworkPolicy'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'mode none: the controller config says networkPolicy none'
+ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode none: no ciliumnetworkpolicies verb'
+ykind Namespace '.metadata.name == "agents"' 'mode none keeps the runs namespace'
 ykind Deployment 'select(.metadata.name=="run-controller") | .spec.template.spec.serviceAccountName == "run-controller"' 'the controller still renders'
 out="$q"
-ynone 'select(.kind == "ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("networkPolicy"))' 'the default config carries no networkPolicy key (cilium is the controller default)'
+ynone 'select(.kind == "ConfigMap" and .metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | select(has("networkPolicy"))' 'the quickstart (mode cilium) config carries no networkPolicy key (cilium is the controller default)'
 
 # roomTools.auth (task 6): key, the default, is today's render, byte for byte: no :8090 Service port,
 # no ingress to it, no roomToolsURL. tokenreview opens :8090 to the runs, on the Service and the
@@ -315,7 +316,7 @@ bad '/broker/roomTools/knowledge/timeout' --set broker.roomTools.knowledge.url=h
 bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=http://kb.example.com/mcp
 bad '/broker/roomTools/knowledge/url' --set broker.roomTools.knowledge.url=https://u:p@kb.example.com/mcp
 bad 'broker.roomTools.knowledge.networkPolicy.to is empty' --set networkPolicies.mode=kubernetes --set broker.roomTools.enabled=true --set broker.roomTools.knowledge.url=https://kb.example.com/mcp
-kn0="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set networkPolicies.enabled=false "${kurl[@]}")"
+kn0="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set broker.roomTools.enabled=true --set networkPolicies.mode=none "${kurl[@]}")"
 out="$kn0"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | .roomTools.knowledge.url == "http://runlore.runlore.svc.cluster.local:8080/mcp"' 'mode none: the endpoint needs no peers'
 
@@ -390,15 +391,15 @@ mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: s
 mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
   --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key
 
-# sandbox (D18, plan PR8): the new keys map onto the run-controller's. No sandbox key: the config
-# is the old one, byte for byte (runtimeClassName: gvisor), plus PR B's unsafeSharedGitToken (the
-# quickstart's one PAT).
+# sandbox (D18): the keys map onto the run-controller's. No sandbox key: the config is the old one,
+# byte for byte (runtimeClassName: gvisor, now sandbox.runtimeClassName's default), plus PR B's
+# unsafeSharedGitToken (the quickstart's one PAT).
 rcconf() { yq 'select(.metadata.name=="run-controller-config") | .data."config.yaml"' - <<<"$1"; }
 rcconf "$q" | diff -u tests/golden/rc-quickstart.yaml - >&2 || { echo 'FAIL: with no sandbox key the controller config must be the one before step 2 (tests/golden/rc-quickstart.yaml)' >&2; fail=1; }
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.runtimeClassName=kata)"
-ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.runtimeClassName == "kata" and .allowUnsandboxed == false)' 'sandbox.runtimeClassName wins over runController.runtimeClassName'
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.runtimeClassName == "kata" and .allowUnsandboxed == false)' 'sandbox.runtimeClassName names the run-controller'\''s class'
 ykind RuntimeClass '(.metadata.name == "kata" and .handler == "runsc")' 'createRuntimeClass renders the class under sandbox.runtimeClassName'
-out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)"
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false)"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (has("runtimeClassName") == false and .allowUnsandboxed == true)' 'sandbox.unsafeAllowRunc: no runtimeClassName, allowUnsandboxed'
 ynone 'select(.kind == "RuntimeClass")' 'sandbox.unsafeAllowRunc renders no RuntimeClass'
 ynone 'select(.kind == "ClusterRole" and .metadata.name == "maku-maku-run-controller-runtimeclass")' 'sandbox.unsafeAllowRunc: no RuntimeClass ClusterRole (the preflight checks nothing)'
@@ -446,7 +447,7 @@ ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") 
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message == "a run pod runs under RuntimeClass \"gvisor\" (sandbox.runtimeClassName)")) | length) == 1' 'the policy holds the resolved RuntimeClass'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.expression | test("system:serviceaccount:maku:run-controller"))) | length) == 1' 'only the run-controller of this release creates run pods'
 ykind ValidatingAdmissionPolicyBinding 'select(.spec.policyName == "maku-maku-run-pods") | (.metadata.name == "maku-maku-run-pods" and (.spec.validationActions | join(",")) == "Deny" and .spec.matchResources.namespaceSelector.matchLabels."kubernetes.io/metadata.name" == "agents")' 'the run-pod binding denies, in the runs namespace'
-out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false --set 'runPodPolicy.extraImages={docker.io/library/busybox}' --set e2e.unpinnedImages=true)"
+out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false --set 'runPodPolicy.extraImages={docker.io/library/busybox}' --set e2e.unpinnedImages=true)"
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.validations | map(select(.message | test("RuntimeClass"))) | length) == 0' 'unsafeAllowRunc: the policy holds no RuntimeClass rule'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "images") | .expression | test("'"'"'docker.io/library/busybox'"'"'\]$"))' 'runPodPolicy.extraImages joins the allow-list'
 ykind ValidatingAdmissionPolicy 'select(.metadata.name == "maku-maku-run-pods") | (.spec.variables[] | select(.name == "pinned") | .expression) == "false"' 'e2e.unpinnedImages lifts the digest rule'
@@ -480,21 +481,17 @@ unsafe() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml
 [[ $(unsafe "$q") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: the default quickstart (gVisor, Cilium) lists only shared_git_token and model_key_in_sandbox, got '$(unsafe "$q")'" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=false)") == "model_key_in_sandbox" ]] ||
   { echo "FAIL: the quickstart with a read Secret lists only its model key in the sandbox" >&2; fail=1; }
-uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false)"
+uns="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false)"
 [[ $(unsafe "$uns") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: ALLOW_UNSANDBOXED's flags list unsafe_allow_runc (and the quickstart's shared_git_token), got '$(unsafe "$uns")'" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set sandbox.unsafeAllowRunc=true --set runController.createRuntimeClass=false)") == "unsafe_allow_runc,shared_git_token,model_key_in_sandbox" ]] ||
-  { echo "FAIL: sandbox.unsafeAllowRunc lists unsafe_allow_runc" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.allowUnsandboxed=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
-  { echo "FAIL: allowUnsandboxed with a RuntimeClass still sandboxes: only the quickstart's shared_git_token listed" >&2; fail=1; }
-[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: networkPolicies.enabled=false lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
+[[ $(unsafe "$nonp") == "network_policy_none,shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: networkPolicies.mode none lists network_policy_none (and the quickstart's shared_git_token), got '$(unsafe "$nonp")'" >&2; fail=1; }
 [[ $(unsafe "$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set runController.unsafeSharedGitToken=true)") == "shared_git_token,model_key_in_sandbox" ]] ||
   { echo "FAIL: runController.unsafeSharedGitToken lists shared_git_token" >&2; fail=1; }
-[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.enabled=false)") == "" ]] ||
+[[ $(unsafe "$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runs.group=cloud.ogenki.io --set runController.enabled=false --set networkPolicies.mode=none)") == "" ]] ||
   { echo "FAIL: without the run-controller nothing is listed (the XR install renders as before)" >&2; fail=1; }
 
 # networkPolicies.mode kubernetes (v4 D6, plan PR6): plain NetworkPolicies and the egress proxy. No
 # CiliumNetworkPolicy; default-deny in the runs namespace; the controller creates a NetworkPolicy per
-# run and points its harnesses at the proxy. The old key keeps its meaning.
+# run and points its harnesses at the proxy.
 kn="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=kubernetes)"
 out="$kn"
 ynone 'select(.kind == "CiliumNetworkPolicy")' 'mode kubernetes renders no CiliumNetworkPolicy'
@@ -509,10 +506,10 @@ ykind Role 'select(.metadata.namespace=="agents" and .metadata.name=="run-contro
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="ciliumnetworkpolicies")' 'mode kubernetes: no ciliumnetworkpolicies verb'
 [[ $(unsafe "$kn") == "shared_git_token,model_key_in_sandbox" ]] || { echo "FAIL: mode kubernetes is not network_policy_none, got '$(unsafe "$kn")'" >&2; fail=1; }
 out="$q"
-ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the default) renders no NetworkPolicy'
+ynone 'select(.kind == "NetworkPolicy")' 'mode cilium (the quickstart) renders no NetworkPolicy'
 ynone 'select(.kind=="Role") | .rules[] | select(.resources[]=="networkpolicies")' 'mode cilium: no networkpolicies verb'
 out="$nonp"
-ynone 'select(.kind == "NetworkPolicy")' 'networkPolicies.enabled=false (none) renders no NetworkPolicy'
+ynone 'select(.kind == "NetworkPolicy")' 'mode none renders no NetworkPolicy'
 out="$(helm template ap . -n maku -f values-quickstart.yaml "${imgs[@]}" --set networkPolicies.mode=none)"
 ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | .networkPolicy == "none"' 'mode none: the controller config says none'
 ynone 'select(.kind == "CiliumNetworkPolicy" or .kind == "NetworkPolicy")' 'mode none: no policy at all'
@@ -529,7 +526,20 @@ for m in cilium kubernetes; do
   ykind "$([[ $m == cilium ]] && echo CiliumNetworkPolicy || echo NetworkPolicy)" 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' "mode $m, runsNamespaceDefaultDeny true: the default-deny"
 done
 bad "at '/networkPolicies/runsNamespaceDefaultDeny'" --set-string networkPolicies.runsNamespaceDefaultDeny=no
-bad 'networkPolicies.mode cilium and networkPolicies.enabled false: choose one' --set networkPolicies.mode=cilium --set networkPolicies.enabled=false
+# v4 step 8: the run path's old keys are refused, each naming its replacement, by the schema and,
+# under --skip-schema-validation, by the template.
+bad "at '/networkPolicies/enabled': value must be 'removed in v4 step 8: set networkPolicies.mode" --set networkPolicies.enabled=false
+bad "at '/runController/runtimeClassName': value must be 'removed in v4 step 8: set sandbox.runtimeClassName" --set runController.runtimeClassName=gvisor
+bad "at '/runController/allowUnsandboxed': value must be 'removed in v4 step 8: set sandbox.unsafeAllowRunc" --set runController.allowUnsandboxed=true
+bad 'networkPolicies.enabled was removed in v4 step 8: set networkPolicies.mode' --skip-schema-validation --set networkPolicies.enabled=true
+bad 'runController.runtimeClassName was removed in v4 step 8: set sandbox.runtimeClassName' --skip-schema-validation --set runController.runtimeClassName=gvisor
+bad 'runController.allowUnsandboxed was removed in v4 step 8: set sandbox.unsafeAllowRunc' --skip-schema-validation --set runController.allowUnsandboxed=false
+bad 'sandbox.unsafeAllowRunc and sandbox.runtimeClassName: choose one' --set sandbox.unsafeAllowRunc=true
+# The chart's own defaults (no values file) are the product path: mode kubernetes and gvisor.
+out="$(helm template ap . -n maku "${imgs[@]}" "${prod[@]:0:${#prod[@]}-2}")" # prod without its mode cilium
+ykind ConfigMap 'select(.metadata.name=="run-controller-config") | .data."config.yaml" | from_yaml | (.networkPolicy == "kubernetes" and .runtimeClassName == "gvisor" and .allowUnsandboxed == false)' 'the default render is mode kubernetes with gvisor'
+ynone 'select(.kind == "CiliumNetworkPolicy")' 'the default render has no CiliumNetworkPolicy'
+ykind NetworkPolicy 'select(.metadata.name=="default-deny") | .metadata.namespace == "agents"' 'the default render: the default-deny NetworkPolicy'
 bad 'networkPolicies.mode kubernetes needs runController.enabled' --set networkPolicies.mode=kubernetes --set runController.enabled=false
 # the proxy trusts the egress annotation because the run-pod policy alone lets the run-controller write it
 bad 'networkPolicies.mode kubernetes needs runPodPolicy.enabled' --set networkPolicies.mode=kubernetes --set runPodPolicy.enabled=false
@@ -617,7 +627,8 @@ bad "at '/runController/model/gateway/aliases/public/0'" --set runController.mod
 oidcv=(--set broker.runIssuer.mode=jwks --set broker.runIssuer.issuer=https://oidc --set broker.runIssuer.jwksURL=https://oidc/keys
        --set broker.database.brokerSecret=dsn --set broker.publicURL=https://rooms.example.com
        --set broker.human.issuer=https://idp.example.com --set broker.human.origin=https://rooms.example.com
-       --set broker.human.groups.admin=a --set broker.human.groups.member=m --set runController.enabled=false)
+       --set broker.human.groups.admin=a --set broker.human.groups.member=m --set runController.enabled=false
+       --set networkPolicies.mode=cilium)
 ozit="$(helm template ap . -n agent-system "${imgs[@]}" "${oidcv[@]}" --set broker.oidc.existingSecret=room-broker-oidc)"
 out="$ozit"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.clientIDFile == "/etc/room-broker/oidc/web-client-id" and .human.roomctlClientIDFile == "/etc/room-broker/oidc/cli-client-id" and .human.projectIDFile == "/etc/room-broker/oidc/project-id")' 'broker.oidc fills the three id files under the zitadel preset'

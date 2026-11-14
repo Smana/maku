@@ -70,10 +70,10 @@ grep -qF "\"metadata\": {\"name\": \"$ca_secret\"}" "$qs/up.sh" || bad "up.sh do
 [[ $(yq ".. | select(has(\"namespace\")) | .namespace" - <<<"$cfg" | head -1) == "$runs_ns" ]] || bad "run-controller namespace is not $runs_ns"
 grep -q "create namespace $runs_ns " "$qs/up.sh" || bad "up.sh does not create namespace $runs_ns"
 [[ $(q Namespace 'length') == 0 ]] || bad "chart renders a Namespace despite createRunsNamespace=false"
-[[ $(q RuntimeClass '.[0].metadata.name') == $(yq '.runController.runtimeClassName' "$vals") ]] || bad "RuntimeClass not rendered"
+[[ $(q RuntimeClass '.[0].metadata.name') == $(yq '.sandbox.runtimeClassName' "$vals") ]] || bad "RuntimeClass not rendered"
 
 # gVisor probe: run-shaped (runs namespace, run-id label, the chart's RuntimeClass), asks the broker's own name and port
-rc=$(yq '.runController.runtimeClassName' "$vals")
+rc=$(yq '.sandbox.runtimeClassName' "$vals")
 [[ $(yq ea 'select(.kind=="Pod") | .spec.runtimeClassName' "$tmp/gvisor-probe.yaml") == "$rc" ]] || bad "probe runtimeClassName is not $rc"
 [[ $(yq ea '[.metadata.namespace] | unique | join(",")' "$tmp/gvisor-probe.yaml") == "$runs_ns" ]] || bad "probe is not in $runs_ns"
 [[ $(yq ea 'select(.kind=="Pod") | .metadata.labels."agents.ogenki.io/run-id"' "$tmp/gvisor-probe.yaml") != null ]] || bad "probe lacks the run-id label the broker CNP admits"
@@ -127,11 +127,11 @@ grep -qF 'qs_skew_ok' "$qs/up.sh" || bad "up.sh has no kubectl skew preflight"
 
 # ALLOW_UNSANDBOXED=1: the three overrides really yield an unsandboxed config
 un=$(helm template ap charts/maku -n "$ns" -f "$qvals" --set createRunsNamespace=false \
-  --set runController.allowUnsandboxed=true --set runController.runtimeClassName= --set runController.createRuntimeClass=false \
+  --set sandbox.unsafeAllowRunc=true --set sandbox.runtimeClassName= --set runController.createRuntimeClass=false \
   --set broker.image.tag="$dg" --set runController.image.tag="$dg" --set runController.images.harness.tag="$dg" --set runController.images.bridge.tag="$dg")
 grep -q 'kind: RuntimeClass' <<<"$un" && bad "unsandboxed render still has a RuntimeClass"
 grep -q 'allowUnsandboxed: true' <<<"$un" || bad "unsandboxed render lacks allowUnsandboxed"
-grep -q 'runController.runtimeClassName=' "$qs/up.sh" || bad "up.sh does not clear runtimeClassName for ALLOW_UNSANDBOXED"
+grep -q 'sandbox.runtimeClassName=' "$qs/up.sh" || bad "up.sh does not clear runtimeClassName for ALLOW_UNSANDBOXED"
 
 bash hack/quickstart/lib_test.sh || fail=1
 

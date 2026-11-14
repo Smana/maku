@@ -27,8 +27,8 @@ install for demos only.":
 
 | Code (`GET /api/install`) | Chart setting | The banner says |
 |---|---|---|
-| `unsafe_allow_runc` | `sandbox.unsafeAllowRunc`, or `runController.allowUnsandboxed` with no RuntimeClass | Runs are not sandboxed |
-| `network_policy_none` | `networkPolicies.enabled: false` | Nothing confines a run's network |
+| `unsafe_allow_runc` | `sandbox.unsafeAllowRunc` | Runs are not sandboxed |
+| `network_policy_none` | `networkPolicies.mode: none` | Nothing confines a run's network |
 | `shared_git_token` | `runController.unsafeSharedGitToken` | Every role shares one write token |
 | `model_key_in_sandbox` | `runController.model.mode: secret` (demo-only, `demoValues`) | The model provider's key sits in every run's sandbox |
 

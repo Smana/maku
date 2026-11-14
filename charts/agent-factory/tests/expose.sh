@@ -138,14 +138,14 @@ render "${wp[@]}" --set-json 'webProxy.networkPolicy.idp.to=[{"namespaceSelector
 jkind NetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | .spec.egress[2] == {"to": [{"namespaceSelector": {"matchLabels": {"kubernetes.io/metadata.name": "e2e"}}}], "ports": [{"port": 8443, "protocol": "TCP"}]}' 'webProxy.networkPolicy.idp names an in-cluster IdP and its pod port'
 
 # mode cilium: the ingress entity, the host's probes, the IdP by name
-render "${wp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true
+render "${wp[@]}" --set maku.networkPolicies.mode=cilium
 jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | (.spec.ingress[0].fromEntities == ["ingress"] and .spec.ingress[1].fromEntities == ["host"] and (.spec.ingress | length) == 2)' 'cilium: the proxy admits the ingress entity and the probes'
 jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | (.spec.egress[1].toEndpoints[0].matchLabels."app.kubernetes.io/name" == "room-broker" and .spec.egress[2] == {"toFQDNs": [{"matchName": "e2e-stub.e2e.svc.cluster.local"}], "toPorts": [{"ports": [{"port": "443", "protocol": "TCP"}]}]})' "cilium: the proxy reaches the broker's :8080 and the issuer's host on 443"
 jkind CiliumNetworkPolicy 'select(.metadata.name == "room-broker") | [.spec.ingress[] | select((.toPorts // []) | map(.ports[].port) | any(. == "8080"))] | length == 1' "cilium: the broker's :8080 admits one rule, the web proxy's"
 ynone 'select(.kind == "NetworkPolicy" and .metadata.name == "rooms-web-proxy") | .kind' 'cilium mode renders a NetworkPolicy'
 
 # monitoring: the proxy's ServiceMonitor, its CNP admitting the scraper
-render "${wp[@]}" --set maku.networkPolicies.mode=cilium --set maku.networkPolicies.enabled=true --set monitoring.serviceMonitor.enabled=true \
+render "${wp[@]}" --set maku.networkPolicies.mode=cilium --set monitoring.serviceMonitor.enabled=true \
   --set-json 'monitoring.serviceMonitor.cilium.fromEndpoints=[{"matchLabels":{"io.kubernetes.pod.namespace":"monitoring"}}]'
 jkind ServiceMonitor 'select(.metadata.name == "rooms-web-proxy") | (.spec.selector.matchLabels."app.kubernetes.io/name" == "rooms-web-proxy" and .spec.endpoints[0].port == "metrics")' 'monitoring: a ServiceMonitor for the web proxy'
 jkind CiliumNetworkPolicy 'select(.metadata.name == "rooms-web-proxy") | .spec.ingress[2] == {"fromEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "monitoring"}}], "toPorts": [{"ports": [{"port": "44180", "protocol": "TCP"}]}]}' 'cilium: the scraper reaches :44180'

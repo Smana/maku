@@ -120,9 +120,6 @@ three Secret names are its schema's (minLength 1). */}}
 {{- else if not $sb.runtimeClassName -}}
 {{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/security.md#the-run-pods-admission)" -}}
 {{- end -}}
-{{- if $rc.allowUnsandboxed -}}
-{{- $errs = append $errs "maku.runController.allowUnsandboxed: runs without a sandbox are for the demo and kind only (D18; docs/security.md#the-run-pods-admission)" -}}
-{{- end -}}
 {{- if and (eq ($rc.gitTokens | default "shared") "perRun") (not (dig "runTokens" "perRun" false (index .Values "maku-factory" | default dict))) -}}
 {{- $errs = append $errs "maku-factory.runTokens.perRun: maku.runController.gitTokens perRun mounts each run's token Secret, which the factory writes (docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)" -}}
 {{- end -}}
@@ -309,11 +306,11 @@ names, or an external gateway named by maku.runController.model.gateway.service 
 {{- end -}}
 {{- end }}
 
-{{/* maku's networkPolicies mode, as its ap.netMode reads it: mode wins; unset, enabled decides
-(true, the default: cilium). maku's own helper validates the value. */}}
+{{/* maku's networkPolicies mode, as its ap.netMode reads it: kubernetes by default. maku's own
+helper validates the value. */}}
 {{- define "afumbrella.makuNetMode" -}}
 {{- $np := (.Values.maku | default dict).networkPolicies | default dict -}}
-{{- $np.mode | default (ternary "cilium" "none" (ne (toString $np.enabled) "false")) -}}
+{{- $np.mode | default "kubernetes" -}}
 {{- end }}
 
 {{/* Monitoring (plan v4 step 6, EX12). A scrape object whose target sits behind a default-deny

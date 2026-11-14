@@ -12,6 +12,10 @@ broker:
     ownerSecret: rooms-owner-dsn
   tls:
     issuerRef: {kind: Issuer, name: quickstart-ca}
+# The quickstart's kind cluster runs Cilium (hack/quickstart/up.sh): CiliumNetworkPolicies, not the
+# default mode kubernetes. E2E_NETPOL=kubernetes overrides it.
+networkPolicies:
+  mode: cilium
 # A laptop without a model gateway: the provider key sits in the sandbox (model.mode secret), which only
 # a demo may do. The banner shows model_key_in_sandbox.
 demoValues: true
