@@ -66,7 +66,10 @@ gitops_apply() {
   for w in $(yq -N "$WAVE" "$f" | sort -nu); do
     step "Argo CD: sync wave $w"
     W="$w" yq "select($WAVE == strenv(W))" "$f" | k apply -f - >/dev/null
-    for a in $(W="$w" yq -N "select($WAVE == strenv(W)) | .metadata.name" "$f"); do app_wait "$a"; done
+    for a in $(W="$w" yq -N "select($WAVE == strenv(W)) | .metadata.name" "$f"); do
+      app_wait "$a"
+      [[ $a != "$RELEASE-crds" ]] || factory_objects
+    done
   done
 }
 

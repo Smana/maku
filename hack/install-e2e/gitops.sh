@@ -18,7 +18,8 @@
 #      source (A11).
 # The caller sets GITOPS (its name) and defines:
 #   gitops_up               the tool, from its release's install manifest;
-#   gitops_apply FILE       apply the rewritten gitops file and wait until every object is reconciled;
+#   gitops_apply FILE       apply the rewritten gitops file and wait until every object is reconciled,
+#                           calling factory_objects once the CRD chart is;
 #   gitops_order            assert the CRD chart was reconciled before the umbrella;
 #   gitops_owner CRD        the release or application that tracks CRD;
 #   gitops_state            one line per tool object that a no-op reconcile must leave unchanged;
@@ -127,6 +128,13 @@ install() {
   leg_before_umbrella
   gitops_values "$work/umbrella-values.yaml"
   gitops_apply "$OUT/gitops/$GITOPS.yaml"
+}
+
+# factory_objects: the wizard's factory/, once the CRD chart is reconciled and before the umbrella
+# must be Ready: the factory serves no readiness until its Factory and Repository exist, and both
+# tools wait for the umbrella's readiness.
+factory_objects() {
+  wait_crds -l app.kubernetes.io/part-of=agent-factory crd
   k apply -n "$NS" -f "$OUT/factory/" >/dev/null
 }
 

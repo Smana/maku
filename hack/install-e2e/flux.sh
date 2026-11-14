@@ -38,6 +38,7 @@ gitops_apply() {
   ' "$1" >"$f"
   k apply -f "$f" >/dev/null
   k -n "$NS" wait "$HR/$RELEASE-crds" --for=condition=Ready --timeout=300s >/dev/null || die "the HelmRelease $RELEASE-crds is not Ready"
+  factory_objects
   k -n "$NS" wait "$KS/agentgateway-crds" --for=condition=Ready --timeout=300s >/dev/null || die "the Kustomization agentgateway-crds is not Ready"
   k -n "$NS" wait "$HR/$RELEASE" --for=condition=Ready --timeout=600s >/dev/null || die "the HelmRelease $RELEASE is not Ready"
 }
