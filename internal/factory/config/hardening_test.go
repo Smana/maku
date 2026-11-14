@@ -339,7 +339,7 @@ func TestEnforcedFor(t *testing.T) {
 	if a := c.Hardening.Applier; a.Interval.Duration != 2*time.Second || a.AnswerWait.Duration != 5*time.Minute {
 		t.Fatalf("applier defaults %+v", a)
 	}
-	c, err = Parse([]byte(good + perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
+	c, err = Parse([]byte(agentsGood + perRunTokens + "hardening:\n  mode: audit\n  enforceOutputs: [pr]\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {enforceOutputs: [labels, pr, issue, comment, pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -364,7 +364,7 @@ func TestEnforcedFor(t *testing.T) {
 func TestHashCoversEnforce(t *testing.T) {
 	parse := func(block string) Hardening {
 		t.Helper()
-		c, err := Parse([]byte(good + perRunTokens + block))
+		c, err := Parse([]byte(agentsGood + perRunTokens + block))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -401,7 +401,7 @@ func TestUnscopedTokenRefused(t *testing.T) {
 		file    string
 		refused bool
 	}{
-		"no run tokens":          {good + block, true},
+		"no per-run tokens":      {agentsGood + "runTokens: {enabled: true}\n" + block, true},
 		"nothing enforced there": {good + "hardening: {mode: audit}\n", false},
 		"per-run tokens":         {agentsGood + "runTokens: {enabled: true, perRun: true}\n" + block, false},
 	} {
@@ -410,8 +410,8 @@ func TestUnscopedTokenRefused(t *testing.T) {
 			if (err != nil) != tc.refused {
 				t.Fatalf("err %v, want refused %v", err, tc.refused)
 			}
-			if tc.refused && (!strings.Contains(err.Error(), "HR13") || strings.Contains(err.Error(), "XR")) {
-				t.Fatalf("err %v does not name HR13 alone", err)
+			if tc.refused && (!strings.Contains(err.Error(), "runTokens.perRun") || strings.Contains(err.Error(), "XR")) {
+				t.Fatalf("err %v does not ask for runTokens.perRun", err)
 			}
 		})
 	}
@@ -427,7 +427,7 @@ func TestEnforcePush(t *testing.T) {
 			"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [push]}}\n",
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(good + perRunTokens + block))
+			c, err := Parse([]byte(agentsGood + perRunTokens + block))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -436,7 +436,7 @@ func TestEnforcePush(t *testing.T) {
 			}
 		})
 	}
-	c, err := Parse([]byte(good + perRunTokens + "hardening:\n" + enforcePublisher +
+	c, err := Parse([]byte(agentsGood + perRunTokens + "hardening:\n" + enforcePublisher +
 		"  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr]}}\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -448,11 +448,11 @@ func TestEnforcePush(t *testing.T) {
 
 func TestHashCoversPush(t *testing.T) {
 	base := "hardening:\n" + enforcePublisher + "  repositories: {Smana/cloud-native-ref: {mode: audit, enforceOutputs: [pr%s]}}\n"
-	a, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, "")))
+	a, err := Parse([]byte(agentsGood + perRunTokens + fmt.Sprintf(base, "")))
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, err := Parse([]byte(good + perRunTokens + fmt.Sprintf(base, ", push")))
+	b, err := Parse([]byte(agentsGood + perRunTokens + fmt.Sprintf(base, ", push")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestModeEnforce(t *testing.T) {
 		"central enforce": {withAPI(agentsGood+perRunTokens+"hardening: {mode: enforce}\n", broker), "all five output types"},
 		// The factory's run-token ticker revokes each per-run token at the run's end, from outside
 		// the sandbox: under forge-api: deny the harness cannot. A shared token is refused (HR13).
-		"a shared token": {withAPI(good+"runTokens: {enabled: true, appIDFile: /a/app_id, privateKeyFile: /a/private_key}\n"+enforceAll, broker), "runTokens.perRun"},
+		"a shared token": {withAPI(agentsGood+"runTokens: {enabled: true}\n"+enforceAll, broker), "runTokens.perRun"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Parse([]byte(tc.cfg)); err == nil || !strings.Contains(err.Error(), tc.want) {

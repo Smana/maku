@@ -38,7 +38,7 @@ func TestRunTokens(t *testing.T) {
 	if _, _, ok := off.RunTokenApp(); ok {
 		t.Fatal("no runTokens, no demo: the factory writes no run token (the operator does)")
 	}
-	if _, err := Parse([]byte(good + on)); err != nil {
+	if _, err := Parse([]byte(app + on)); err != nil {
 		t.Fatalf("the default group: %v", err)
 	}
 }
