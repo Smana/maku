@@ -12,6 +12,8 @@ import (
 	"strings"
 	"testing"
 
+	"sigs.k8s.io/yaml"
+
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -293,6 +295,41 @@ func TestReadmeNamesTheCASecrets(t *testing.T) {
 	for _, s := range []string{"room-broker-ca", "openbao-ca", secretFactoryCA} {
 		if !strings.Contains(string(tree["README.md"]), s) {
 			t.Errorf("the README does not name %s", s)
+		}
+	}
+}
+
+// An in-cluster issuer (kind, k3s, kubeadm): its JWKS is the API server's, read with no credential, so
+// the gateway reads it as source apiserver with the discovery binding, and the README says what the
+// API server must admit (k3s: anonymous-auth). A cloud issuer keeps source url and no such line.
+func TestInClusterIssuer(t *testing.T) {
+	for name, want := range map[string]bool{"generic": true, "ghes": false, "zitadel-eso": false} {
+		tree, err := Render(inputs(t, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var v struct {
+			Gateway struct {
+				Identity struct {
+					JWKS struct {
+						Source    string `json:"source"`
+						Anonymous bool   `json:"allowAnonymousDiscovery"`
+					} `json:"jwks"`
+				} `json:"identity"`
+			} `json:"maku-gateway"`
+		}
+		if err := yaml.Unmarshal(tree["values.yaml"], &v); err != nil {
+			t.Fatal(err)
+		}
+		j := v.Gateway.Identity.JWKS
+		if want && (j.Source != "apiserver" || !j.Anonymous) {
+			t.Errorf("%s: an in-cluster issuer's JWKS is source %q, allowAnonymousDiscovery %v", name, j.Source, j.Anonymous)
+		}
+		if !want && (j.Source == "apiserver" || j.Anonymous) {
+			t.Errorf("%s: a cloud issuer's JWKS is source %q, allowAnonymousDiscovery %v", name, j.Source, j.Anonymous)
+		}
+		if got := strings.Contains(string(tree["README.md"]), "--kube-apiserver-arg=anonymous-auth=true"); got != want {
+			t.Errorf("%s: the README names k3s's anonymous-auth: %v, want %v", name, got, want)
 		}
 	}
 }

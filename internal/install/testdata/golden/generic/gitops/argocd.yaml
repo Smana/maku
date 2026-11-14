@@ -253,6 +253,8 @@ spec:
           identity:
             issuer: https://kubernetes.default.svc.cluster.local
             jwks:
+              allowAnonymousDiscovery: true
+              source: apiserver
               url: https://kubernetes.default.svc.cluster.local/openid/v1/jwks
           metrics:
             allowFrom:

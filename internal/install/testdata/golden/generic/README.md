@@ -15,6 +15,7 @@ Written by `maku install --print`. Nothing here has been applied.
 
 - Postgres 16 or later with the three roles of docs/database.md, and the RuntimeClass `gvisor` on the nodes.
 - Gateway API's standard CRDs (v1.2 or later), and the prometheus-operator CRDs.
+- An API server that admits anonymous requests, for the ServiceAccount issuer's JWKS (the chart binds `system:service-account-issuer-discovery` to `system:unauthenticated`, docs/gateway.md). On k3s, start it with `--kube-apiserver-arg=anonymous-auth=true`.
 - The two Apps installed on the repositories, and their Secrets in the namespace.
 - The CA of the ClusterIssuer `internal-ca`, as key `ca.crt`, in the Secrets `room-broker-ca` (the run-controller's), `openbao-ca` (the factory's, for the broker) and `agent-factory-ca` (the broker's, for the factory): cert-manager writes only the leaf Secrets `room-broker-tls` and `agent-factory-api-tls` (trust-manager or an ExternalSecret can fill them; docs/install-secrets.md).
 

@@ -110,3 +110,41 @@ func TestInstallationTokenGrantsTheScopeAsked(t *testing.T) {
 		t.Errorf("revoke status = %d, want 204", status)
 	}
 }
+
+// The install jobs' preflight (v4 step 7, PR F): the installation's permissions grant every App
+// table the factory checks, and the default branch's ruleset requires maku/merge-gate from App 1.
+func TestGitHubPreflightReads(t *testing.T) {
+	_, ts := newStubServer(t)
+	status, raw := request(t, ts, http.MethodGet, "/app/installations/1", nil)
+	if status != http.StatusOK {
+		t.Fatalf("installation status = %d", status)
+	}
+	inst := decodeResponse[struct {
+		Permissions map[string]string `json:"permissions"`
+	}](t, raw)
+	for _, p := range []string{"actions", "checks", "contents", "issues", "pull_requests", "statuses"} {
+		if inst.Permissions[p] != "write" {
+			t.Errorf("permission %s = %q", p, inst.Permissions[p])
+		}
+	}
+	if inst.Permissions["metadata"] != "read" {
+		t.Errorf("metadata = %q", inst.Permissions["metadata"])
+	}
+	status, raw = request(t, ts, http.MethodGet, "/repos/owner/repo/rules/branches/main", nil)
+	if status != http.StatusOK {
+		t.Fatalf("rules status = %d", status)
+	}
+	rules := decodeResponse[[]struct {
+		Type       string `json:"type"`
+		Parameters struct {
+			RequiredStatusChecks []struct {
+				Context       string `json:"context"`
+				IntegrationID int64  `json:"integration_id"`
+			} `json:"required_status_checks"`
+		} `json:"parameters"`
+	}](t, raw)
+	if len(rules) != 1 || rules[0].Type != "required_status_checks" || len(rules[0].Parameters.RequiredStatusChecks) != 1 ||
+		rules[0].Parameters.RequiredStatusChecks[0].Context != "maku/merge-gate" || rules[0].Parameters.RequiredStatusChecks[0].IntegrationID != 1 {
+		t.Errorf("rules = %+v", rules)
+	}
+}

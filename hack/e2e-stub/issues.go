@@ -3,11 +3,13 @@
 package main
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"regexp"
 	"slices"
 	"strconv"
@@ -307,10 +309,14 @@ func gitHubComment(comment Comment) map[string]any {
 	}
 }
 
+// fenceFile names the factory that owns owner/repo: demo's, or E2E_STUB_FENCE_FACTORY's (the install
+// jobs' factory is named after its release). A factory reads the merge gate's ruleset only on a
+// repository it owns.
 func (s *Stub) fenceFile(w http.ResponseWriter, _ *http.Request) {
+	factory := cmp.Or(os.Getenv("E2E_STUB_FENCE_FACTORY"), "demo")
 	writeJSON(w, http.StatusOK, map[string]any{
 		"type": "file", "name": "agent-factory.yaml", "path": ".github/agent-factory.yaml",
-		"sha": fullCommit, "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("factory: demo\n")),
+		"sha": fullCommit, "encoding": "base64", "content": base64.StdEncoding.EncodeToString([]byte("factory: " + factory + "\n")),
 	})
 }
 

@@ -6,8 +6,8 @@
 #            NetworkPolicy mode on kube-router, whose preflight passes; unenforced, the same mode on a
 #            k3s with no NetworkPolicy controller, whose preflight refuses runs. Every leg runs the demo
 #            with its model gateway (step 7 R4: values-demo.yaml's model.mode gateway, agentgateway and
-#            its CRDs, the probe's echo as the provider). A fourth leg, gateway (install.sh's GATEWAY=1),
-#            adds its proofs: a run reaches its model through agentgateway with its own token, and agents
+#            its CRDs, the probe's echo as the provider). A fourth leg, gateway (install.sh's GATEWAY=1,
+#            in NetworkPolicy mode kubernetes: its gw-caller probe has its own egress policy, F9), adds its proofs: a run reaches its model through agentgateway with its own token, and agents
 #            holds no provider key;
 #            with METERING=1, its tokens reach a test-only VictoriaMetrics under agentgateway's names and
 #            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
@@ -62,6 +62,11 @@ on:
       - docs/database.md
       - images/**
       - hack/quickstart/versions.env
+      - hack/quickstart/fetch-runsc.sh
+      - hack/quickstart/lib.sh
+      - hack/install-e2e/**
+      - hack/e2e-stub/**
+      - hack/ci-changes.sh
       - examples/demo-repo/**
       # install.sh runs through task and mise; the images' build context is cut by .dockerignore.
       - taskfile.yaml
@@ -95,7 +100,10 @@ jobs:
           for i in maku-broker maku-run-controller maku-factory; do
             docker build -q -f "images/$i/Dockerfile" -t "ghcr.io/smana/$i:e2e" . >/dev/null
           done
-          docker save ghcr.io/smana/maku-broker:e2e ghcr.io/smana/maku-run-controller:e2e ghcr.io/smana/maku-factory:e2e -o "$RUNNER_TEMP/images.tar"
+          # The install jobs' e2e stub (hack/install-e2e, PREBUILT=1), built once with the rest.
+          docker build -q -f hack/e2e-stub/Dockerfile -t ghcr.io/smana/maku-e2e-stub:e2e . >/dev/null
+          docker save ghcr.io/smana/maku-broker:e2e ghcr.io/smana/maku-run-controller:e2e ghcr.io/smana/maku-factory:e2e \
+            ghcr.io/smana/maku-e2e-stub:e2e -o "$RUNNER_TEMP/images.tar"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: demo-e2e-images
@@ -117,7 +125,7 @@ jobs:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }} # install.sh asks the API for the latest release
-      NETPOL: ${{ (matrix.netpol == 'gateway' || matrix.netpol == 'external-db') && 'none' || matrix.netpol }}
+      NETPOL: ${{ matrix.netpol == 'external-db' && 'none' || matrix.netpol == 'gateway' && 'kubernetes' || matrix.netpol }}
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       EXTERNAL_DB: ${{ matrix.netpol == 'external-db' && '1' || '' }}
@@ -148,6 +156,68 @@ jobs:
           path: ${{ runner.temp }}
       - run: docker load -i "$RUNNER_TEMP/images.tar" && rm "$RUNNER_TEMP/images.tar"
       - run: task chart:install:k3d
+
+  # What the pull request touches (hack/ci-changes.sh): the install jobs run only on a change to the
+  # charts, the wizard, the preflight or their harness.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      install: ${{ steps.c.outputs.install }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          fetch-depth: 2 # the pull request's merge commit and its base
+          persist-credentials: false
+      - id: c
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: bash hack/ci-changes.sh
+
+  # The install jobs (v4 step 7, PR F; D23, IN10): a production install from `maku install --print`'s
+  # files, through `maku preflight --strict`, on kind with Calico and gVisor (the three latest minors;
+  # the newest also installs a second release beside the first, D2) and on k3s with Traefik. They reuse
+  # the images job's images, and run two at a time.
+  install:
+    needs: [images, changes]
+    if: github.event_name == 'pull_request' && needs.changes.outputs.install == 'true'
+    name: install (${{ matrix.leg }}${{ matrix.minor && format(' {0}', matrix.minor) || '' }})
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        include:
+          - {leg: kind-calico, minor: "1.37", two: "1"}
+          - {leg: kind-calico, minor: "1.36"}
+          - {leg: kind-calico, minor: "1.35"}
+          - {leg: k3s}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    env:
+      PREBUILT: "1"
+      KIND_MINOR: ${{ matrix.minor }}
+      TWO_INSTALLS: ${{ matrix.two }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@5228313ee0372e111a38da051671ca30fc5a96db # v3.6.3
+        with:
+          install_args: aqua:go-task/task go kubectl helm aqua:mikefarah/yq aqua:kubernetes-sigs/kind aqua:k3d-io/k3d@5.9.0
+      - run: mise use -g aqua:k3d-io/k3d@5.9.0
+      # k3s's kube-router, as the k3d legs' step says.
+      - run: sudo modprobe br_netfilter
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: demo-e2e-images
+          path: ${{ runner.temp }}
+      - run: docker load -i "$RUNNER_TEMP/images.tar" && rm "$RUNNER_TEMP/images.tar"
+      - run: task install:${{ matrix.leg }}
 
   # The factory-level USD proof (step 4 PR D's follow-up, GW10): on k3d with the e2e stub as GitHub,
   # the identity provider and the model provider, a gateway-mode scoper run is priced by agentgateway's

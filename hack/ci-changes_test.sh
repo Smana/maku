@@ -31,6 +31,14 @@ want internal/maku/skill/factory-handoff/SKILL.md -- deployable=true harness=fal
 want charts/maku/README.md -- deployable=true
 want internal/x.go -- deployable=true harness=false
 want images/maku-harness/x.py -- deployable=true harness=true
+# The install jobs (demo-e2e.yaml, v4 step 7 PR F): the charts, the wizard, the preflight, their harness.
+want charts/maku/values.yaml -- install=true
+want internal/install/x.go -- install=true
+want internal/preflight/x.go -- install=true
+want hack/install-e2e/lib.sh -- install=true
+want hack/e2e-stub/github.go -- install=true
+want internal/broker/x.go -- install=false
+want docs/install.md -- install=false
 
 # Not a merge commit: an error, never "nothing changed".
 if GITHUB_EVENT_NAME=pull_request GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh" >/dev/null 2>&1; then
@@ -38,5 +46,5 @@ if GITHUB_EVENT_NAME=pull_request GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh
 fi
 # Any other event: everything runs.
 out=$(GITHUB_EVENT_NAME=push GITHUB_OUTPUT='' bash "$tmp/hack/ci-changes.sh")
-grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out"
+grep -qx deployable=true <<<"$out" && grep -qx harness=true <<<"$out" && grep -qx install=true <<<"$out"
 echo "==> ci-changes_test: ok"

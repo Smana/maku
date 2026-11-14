@@ -35,9 +35,8 @@
 # TRACING=1 (with GATEWAY=1; task chart:tracing:k3d) adds the run traces proof (plan v4 step 6, Task 2):
 # the e2e stub (hack/e2e-stub) runs as an OTLP/HTTP sink in namespace e2e, maku.runController.tracing
 # names it, and the gateway leg's run, annotated with a traceparent as the factory stamps it, exports its
-# span to the stub under that trace id. The task runs it with NETPOL=none, as CI runs the gateway leg: its
-# gw-caller probe pod cannot run under the runs namespace's default-deny. With NETPOL=kubernetes the step
-# also asserts the run's own NetworkPolicy opens exactly the collector's port.
+# span to the stub under that trace id. With NETPOL=kubernetes (the gw-caller probe gets its own egress
+# policy, F9) the step also asserts the run's own NetworkPolicy opens exactly the collector's port.
 # PREFLIGHT=1 (CI's kubernetes and unenforced legs) renders the install's preflight (v4 D24) and runs it
 # once with `maku preflight` (from its CronJob): the cluster checks pass, the broker's database check passes through the broker's
 # own policy and DSN, and the run-controller's run-path passes, or, unenforced, fails on the netprobe.
@@ -67,12 +66,12 @@ PREFLIGHT="${PREFLIGHT:-}"
 # The probe's pins (charts/maku-gateway/tests/probe): Gateway API's floor, the echo provider's image.
 GATEWAY_API=v1.2.1
 ECHO_IMAGE=docker.io/library/python:3.15-alpine@sha256:ff4d3c9b1a48f646eedd93182aaea385c7a5452f4c8a8cd7cef686babacf4928
+# k3d caps a cluster name at 32 characters: each leg's suffix is short.
 NAME="maku-chart-$CLUSTER_KIND"
-[[ $NETPOL == none ]] || NAME="$NAME-$NETPOL"
-[[ -z $GATEWAY ]] || NAME="$NAME-gateway"
-[[ -z $METERING ]] || NAME="$NAME-metering"
-[[ -z $EXTERNAL_DB ]] || NAME="$NAME-external-db"
-# k3d caps a cluster name at 32 characters
+[[ $NETPOL == none ]] || NAME="$NAME-${NETPOL:0:4}"
+[[ -z $GATEWAY ]] || NAME="$NAME-gw"
+[[ -z $METERING ]] || NAME="$NAME-mt"
+[[ -z $EXTERNAL_DB ]] || NAME="$NAME-xdb"
 [[ -z $TRACING ]] || NAME="maku-$CLUSTER_KIND-tracing-$NETPOL"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
@@ -685,6 +684,24 @@ if [[ -n $GATEWAY ]]; then
   kubectl -n "$NS" rollout status deploy/model-gateway --timeout=180s
   kubectl -n "$NS" get networkpolicy model-gateway >/dev/null || die "no NetworkPolicy model-gateway"
   kubectl -n agents create serviceaccount run-gwprobe2 >/dev/null
+  if [[ $NETPOL != none ]]; then
+    # The runs namespace is default-deny: the probe gets the egress a run's own policy gives it to the
+    # gateway (F9), DNS and the gateway's proxies, and nothing else.
+    kubectl apply -f - >/dev/null <<EOF
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: gw-caller, namespace: agents}
+spec:
+  podSelector: {matchLabels: {agents.ogenki.io/run-id: gwprobe2}}
+  policyTypes: [Egress]
+  egress:
+    - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: kube-system}}}]
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: $NS}}
+          podSelector: {matchLabels: {gateway.networking.k8s.io/gateway-name: model-gateway}}
+EOF
+  fi
   # A run-like pod (the run-controller's label, created as the run-controller: only it creates pods in
   # agents), holding a projected token for maku-gateway.public.tier-light. It calls three times: its
   # alias with its token, another alias with the same token, its alias with no token. The JWKS is
@@ -753,6 +770,7 @@ EOF
   grep -q '^other 403 ' <<<"$out" || die "the tier-light token was not refused 403 on tier-frontier: $(grep '^other' <<<"$out")"
   grep -q '^none 401 ' <<<"$out" || die "a call without a token was not refused 401: $(grep '^none' <<<"$out")"
   kubectl -n agents delete pod gw-caller --now --wait=false >/dev/null 2>&1 || true
+  kubectl -n agents delete networkpolicy gw-caller --ignore-not-found >/dev/null
   echo "ok: 200 on its alias (model echo-light, sub run-gwprobe2, the provider key from its Secret, never the token), 403 on another alias, 401 without a token"
 
   step "a run in model.mode gateway: its own token, no provider key in the runs namespace"
