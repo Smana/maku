@@ -95,21 +95,11 @@ export function blockerActions(e: Evidence): string[] {
 
 export type PolicyState = "central" | "repository" | "not-migrated";
 
-// policyState says who holds the merge authority: no MergePolicy is not-migrated; the object's
-// authority (else its classes' sources, when it carries no status) says central or repository.
+// policyState says who holds the merge authority: a repository with no Repository object is
+// not-migrated (its config file serves it); a bound one's status says central or repository (B3).
 export function policyState(r: Report): PolicyState {
-  // A bound repository (B3): its Repository's status says who declares the classes.
-  if (r.repositoryObject) return r.repositoryStatus?.status.authority === "repository" ? "repository" : "central";
-  if (!r.mergePolicy) return "not-migrated";
-  const authority = r.mergePolicyStatus?.status.authority;
-  if (authority === "repository" || r.classes.some((c) => c.source === "repository")) return "repository";
-  return "central";
-}
-
-// centralManifest is the report's MergePolicy manifest when the central classes are the merge
-// authority; undefined otherwise.
-export function centralManifest(r: Report): string | undefined {
-  return policyState(r) === "central" ? r.manifest : undefined;
+  if (!r.repositoryObject) return "not-migrated";
+  return r.repositoryStatus?.status.authority === "repository" ? "repository" : "central";
 }
 
 export type Tone = "ok" | "warn" | "bad" | "unknown";
@@ -125,11 +115,11 @@ export function differences(message?: string): number {
 // Why an InSync or RepositoryFileValid condition is Unknown, as statuswriter's reasons say it.
 const unknownWhy: Record<string, string> = {
   PolicyReadOff: "the factory does not read repository files",
-  NotServed: "the MergePolicy is not served yet",
+  NotServed: "the Repository is not served yet",
   NotRead: "the file has not been read yet",
 };
 
-// conditionWords reads each condition of a MergePolicy's status in the page's words; a type it
+// conditionWords reads each condition of a Repository's status in the page's words; a type it
 // does not know shows as sent.
 export function conditionWords(st?: { status: { conditions?: Condition[] } }): { word: string; tone: Tone; message?: string }[] {
   return (st?.status.conditions ?? []).map((c) => {
@@ -162,8 +152,8 @@ export function conditionWords(st?: { status: { conditions?: Condition[] } }): {
   });
 }
 
-// status is what serves the classes: the Repository of a bound repository (B10), else its MergePolicy.
-export const servingStatus = (r: Report) => (r.repositoryObject ? r.repositoryStatus : r.mergePolicyStatus);
+// status is what serves the classes: the Repository (B10).
+export const servingStatus = (r: Report) => r.repositoryStatus;
 const condition = (r: Report, type: string) => servingStatus(r)?.status.conditions?.find((c) => c.type === type);
 
 // fileLine says what the repository's .github/agent-factory.yaml is to its classes now, and only
@@ -176,7 +166,7 @@ export function fileLine(r: Report): { text: string; prominent: boolean } {
     if (r.policyError) return { text: `The repository's policy file is ${r.policyError}: the central classes are shown.`, prominent: true };
     return { text: `Classes come from ${F}.`, prominent: false };
   }
-  const who = r.repositoryObject ? "the Repository" : "the MergePolicy";
+  const who = "the Repository";
   const valid = condition(r, "RepositoryFileValid");
   const sync = condition(r, "InSync");
   const invalid = !!r.policyError || valid?.status === "False" || sync?.reason === "FileInvalid";

@@ -1,21 +1,19 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// One merge class on its repository's page: its name and mode, what it is for, its conditions in
-// one line (in full, folded), its evidence toward promotion, and its own promotion request and
-// exception. What serves the class (the MergePolicy) is the page header's to say, once. The
+// One merge class on its repository's page: its name and mode, where its conditions are, its
+// binding, its evidence toward promotion, and its own promotion request and exception. What serves the class (the Repository) is the page header's to say, once. The
 // broker decides every write: a button here is only a convenience it would also refuse.
 // Runtime values come from settings-api.ts; settings.ts is imported for its types only, as it
 // imports this module.
 
-import { describeClass, modeMeaning, summaryLine } from "./policy-describe";
-import type { PolicyFile } from "./policy-editor";
+import { modeMeaning } from "./policy-describe";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
 import type { Binding, Catalogue, CatalogueClass, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
 
 // now is the clock a card reads relative times against; Date.now when unset.
-export interface CardContext { page: RepositoryPage; get: typeof fetch; say: HTMLElement; reload: () => void; main: HTMLElement; policy?: PolicyFile; now?: () => number }
+export interface CardContext { page: RepositoryPage; get: typeof fetch; say: HTMLElement; reload: () => void; main: HTMLElement; now?: () => number }
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -29,7 +27,6 @@ const unproposedWords: Record<string, string> = {
   not_shadow: "the class is not in shadow",
   not_in_repository_policy: "the class is not declared in the repository's policy file",
 };
-const PROMOTE_IN_POLICY = "To promote, set live: true on this class in the MergePolicy and merge the change.";
 
 // evidenceBar is a class's clean decisions toward the minimum; eligible says whether it may promote
 // (an approved exception can make it so where the evidence alone does not).
@@ -143,16 +140,6 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
-// editClass selects a class in the page's editor, as its picker would.
-function editClass(main: HTMLElement, name: string) {
-  const pick = main.querySelector<HTMLSelectElement>('.policy-editor select[aria-label="class to edit"]');
-  if (!pick || ![...pick.options].some((o) => o.value === name)) return;
-  pick.value = name;
-  pick.dispatchEvent(new Event("change"));
-  pick.scrollIntoView?.({ block: "center" });
-  pick.focus();
-}
-
 // profileLine is one profile in words: its roles (or that they are chosen at triage) and its tier.
 // The text is set as text, never as markup: a description is a maintainer's.
 function profileLine(cat: Catalogue, name: string): string {
@@ -198,24 +185,13 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   card.append(head);
 
   const r = ctx.page.report;
-  const policy = ctx.policy?.classes?.[c.class];
-  if (policy?.description) card.append(el("p", policy.description, "class-intent"));
-  if (policy) {
-    // Each phrase wraps as a unit, so "5 a day" never splits across two lines.
-    const sum = el("p", undefined, "class-summary");
-    // The dot ends the phrase before it, inside its unit, so no line starts with one.
-    const parts = summaryLine(policy, r.guardrails).split(" · ");
-    parts.forEach((part, i) => sum.append(el("span", i < parts.length - 1 ? `${part} ·` : part, "summary-part"), i < parts.length - 1 ? " " : ""));
-    card.append(sum);
-  } else if (r.repositoryObject) {
+  if (r.repositoryObject) {
     card.append(el("p", "This class's conditions are its MergePolicy's: open the policy's page.", "class-summary"));
   } else {
-    card.append(el("p", policyState(r) === "central"
-      ? "This class's conditions are set in the MergePolicy and cannot be shown here."
-      : "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
+    card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
   }
   bindingRows(card, c, ctx);
-  const last = (r.repositoryObject ? r.repositoryStatus : r.mergePolicyStatus)?.status.classes?.find((x) => x.name === c.class);
+  const last = r.repositoryStatus?.status.classes?.find((x) => x.name === c.class);
   if (last?.lastDecision) {
     const p = el("p", `Last decision: ${lastDecisionWords(last.lastDecision)}`, "class-last");
     if (last.lastDecisionAt) p.append(", ", timeText(last.lastDecisionAt, now()));
@@ -229,12 +205,7 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const words = (code: string) => unproposedWords[code] ?? code.replaceAll("_", " ");
   const notPromotable = () => {
     if (c.mode !== "shadow" || !c.unproposed) return;
-    if (c.unproposed === "not_in_repository_policy" && policyState(r) === "central") {
-      const b = el("button", "Edit this class", "link-button");
-      b.type = "button";
-      b.onclick = () => editClass(ctx.main, c.class);
-      act.append(el("span", PROMOTE_IN_POLICY), " ", b);
-    } else act.textContent = `Not promotable here: ${words(c.unproposed)}.`;
+    act.textContent = `Not promotable here: ${words(c.unproposed)}.`;
   };
   if (!e) {
     // The page says once that evidence is being read; a card speaks only for a class added since
@@ -281,15 +252,6 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
       b.onclick = () => exceptionForm(act, r.repository, c.class, r.minimum, ctx);
       act.append(b);
     } else notPromotable();
-  }
-  // The full sentences, folded: the summary line above is what most readers need.
-  if (policy) {
-    const s = describeClass(policy, r.guardrails);
-    const more = el("details", undefined, "class-conditions");
-    const when = el("ul", undefined, "class-when");
-    for (const w of s.when) when.append(el("li", w));
-    more.append(el("summary", "Conditions"), el("p", s.lead, "class-lead"), when, ...s.also.map((a) => el("p", a, "class-also")));
-    card.append(more);
   }
   const profiles = profilesRow(ctx.page.catalogue, c.class);
   if (profiles) card.append(profiles);
