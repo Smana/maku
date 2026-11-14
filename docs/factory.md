@@ -580,11 +580,11 @@ it, with a warning, for one release; `trio` is then the pair, and a later releas
 ### The shipped workflows
 
 A **workflow** is which agents work on a task: the one noun the room page, the plan, the narration
-and these pages use. In config a workflow is a `harnessProfiles` entry; the keys, labels, metrics and
-their `profile` label keep their names.
+and these pages use. In config a workflow is a `workflows` entry (`harnessProfiles`, its old name,
+is read with a warning); the other keys, the metrics and their `profile` label keep their names.
 
 A `Factory` that omits them still offers three workflows, `quick`, `standard` and `careful`, and
-`none` for an adopted pull request. Each is a `harnessProfiles` entry over a template and, for `careful`, a
+`none` for an adopted pull request. Each is a `workflows` entry over a template and, for `careful`, a
 `loops` row; the factory fills each one the file does not name, key by key, and never changes one it
 does:
 
@@ -593,7 +593,7 @@ templates:
   solo: {roles: [implementer]}
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}
-harnessProfiles:
+workflows:
   quick:    {template: solo, description: "One implementer. For changes a check can verify."}
   standard: {template: pair, description: "An implementer and a reviewer. The default."}
   careful:  {template: pair, tier: frontier, loop: careful,
@@ -605,7 +605,7 @@ loops:
             split: {maxChildren: 4, childTier: standard}}
 ```
 
-The `careful` row is added only while `harnessProfiles.careful` names it, and its `split` only where
+The `careful` row is added only while `workflows.careful` names it, and its `split` only where
 a split can run: `meter.url`, `meter.query`, `meter.prices` and `runs.gatewayIdentity` set.
 
 A template whose only role is `triager` proposes and never writes: its proposal stays in the room
@@ -678,26 +678,27 @@ two populations; annotate the release date.
 
 ### Pinning a workflow
 
-A maintainer may pin the workflow a task runs: a `profile:<name>` label on the issue
-(`issue_file` applies it after `class:<c>` and before `factory/ready`), or the plan's `profile`,
+A maintainer may pin the workflow a task runs: a `workflow:<name>` label on the issue
+(`issue_file` applies it after `class:<c>` and before `factory/ready`; a `profile:<name>` label is
+read as the same pin, narrated once as ignored from the next minor), or the plan's `profile`,
 which `run_create` carries as `spec.intake.profile`. A pin is checked twice: by the broker at intake
 (`plan_check`, `run_create`, against the repository's catalogue), and again by triage, because a
 label can be added by hand. Triage checks it in this order:
 
-1. More than one `profile:` label, or a label and the intake's workflow that disagree: `profile_conflict`.
+1. Two pin labels naming different workflows (`workflow:` and `profile:` alike), or a label and the intake's workflow that disagree: `profile_conflict`.
    The pin's applier is the label's last applier, or the sponsor login the factory resolved for the
    intake (`spec.intake.login`); one who does not maintain the repository: `not_maintainer`.
-2. The workflow is not in `harnessProfiles`: `profile_unknown`. The class has no `harness`:
+2. The workflow is not in `workflows` (or `harnessProfiles`): `profile_unknown`. The class has no `harness`:
    `class_no_profiles`. The class is `live` or `shadow` (one workflow, TE2): `class_profile_fixed`.
    The workflow is neither the floor nor in `harnessAllowed`: `profile_not_allowed`.
 3. A `testFirst` workflow on a task whose data is not public: `profile_internal`; on a repository
    whose checks declaration names no tests paths: `profile_no_tests_paths`.
 
-A `profile:` label whose name is not a workflow's name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
+A pin label whose name is not a workflow's name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
 
 Known residuals:
 
-- A second `profile:` label from anyone, a non-maintainer included, makes the pin `profile_conflict`:
+- A second pin label from anyone, a non-maintainer included, makes the pin `profile_conflict`:
   the spec checks the conflict before the applier, so a stranger's label can unpin a maintainer's.
   Triage reads the labels once: remove an extra label before `factory/ready`.
 - Pins are read from the issue's label events, as `class:` labels are: an issue whose event list is

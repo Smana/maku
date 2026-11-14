@@ -363,12 +363,15 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		f := renderedFactory(t, name)
 		profiles, templates, loops := config.ShippedWorkflows()
 		for n, want := range profiles {
-			if got, ok := f.Spec.HarnessProfiles[n]; !ok || got != want {
+			if got, ok := f.Spec.Workflows[n]; !ok || got != want {
 				t.Errorf("%s: workflow %s = %+v, want %+v", name, n, got, want)
 			}
 		}
-		if len(f.Spec.HarnessProfiles) != len(profiles) {
-			t.Errorf("%s: workflows %v", name, slices.Collect(maps.Keys(f.Spec.HarnessProfiles)))
+		if len(f.Spec.Workflows) != len(profiles) {
+			t.Errorf("%s: workflows %v", name, slices.Collect(maps.Keys(f.Spec.Workflows)))
+		}
+		if len(f.Spec.HarnessProfiles) != 0 {
+			t.Errorf("%s: harnessProfiles is written; workflows is the key", name)
 		}
 		if _, ok := f.Spec.Templates["trio"]; ok {
 			t.Errorf("%s: trio is written", name)

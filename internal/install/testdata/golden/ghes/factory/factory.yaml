@@ -13,20 +13,6 @@ spec:
   defaults:
     dataClass: public
     predictedClass: review
-  harnessProfiles:
-    careful:
-      description: Scoped first, judged before review. For wide or unclear tasks.
-      loop: careful
-      template: pair
-      tier: frontier
-    none:
-      template: none
-    quick:
-      description: One implementer. For changes a check can verify.
-      template: solo
-    standard:
-      description: An implementer and a reviewer. The default.
-      template: pair
   loops:
     careful:
       judge: tier-light
@@ -69,3 +55,17 @@ spec:
       runMinutes: 45
       runTokens: 1500000
       taskTokens: 3000000
+  workflows:
+    careful:
+      description: Scoped first, judged before review. For wide or unclear tasks.
+      loop: careful
+      template: pair
+      tier: frontier
+    none:
+      template: none
+    quick:
+      description: One implementer. For changes a check can verify.
+      template: solo
+    standard:
+      description: An implementer and a reviewer. The default.
+      template: pair

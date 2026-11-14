@@ -94,7 +94,7 @@ func factoryConfig(in Inputs) map[string]any {
 	// The three workflows, written out (workflows WF2): a platform reads and edits what it runs. The
 	// careful row splits only where the meter prices the runs (validateLoops).
 	profiles, templates, loops := config.FillShippedWorkflows(nil, nil, nil, len(a.List("models.prices")) > 0)
-	cfg["harnessProfiles"], cfg["templates"], cfg["loops"] = plain(profiles), plain(templates), plain(loops)
+	cfg["workflows"], cfg["templates"], cfg["loops"] = plain(profiles), plain(templates), plain(loops)
 	return cfg
 }
 

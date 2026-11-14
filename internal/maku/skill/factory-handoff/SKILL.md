@@ -83,7 +83,7 @@ workflow, or name another offered workflow (`classes_list` shows them). Otherwis
 A workflow the developer picks is a revision: once every gap is answered, call `plan_check` with only `profile` changed
 in the candidate, and show the plan it returns. A refused pin comes back with one sentence; show it and
 let the developer pick again or keep the factory's choice. Never pin a workflow the developer did not
-choose, and never apply `class:` or `profile:` labels yourself: `issue_file`'s start does, with their `gh`.
+choose, and never apply `class:` or `workflow:` labels yourself: `issue_file`'s start does, with their `gh`.
 
 **A form nobody answers.** Some clients (OpenCode) declare forms and never show them. If the
 confirmation gets no answer within about a minute, or `issue_file` returns `needs_confirmation`, show
