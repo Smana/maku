@@ -105,7 +105,7 @@ func TestPlanShowsThePin(t *testing.T) {
 	if err := Plan(&b, p, "", Options{Format: Text, Now: time.Now()}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(b.String(), "pinned: profile review-frontier, a maintainer's choice") {
+	if !strings.Contains(b.String(), "pinned: workflow review-frontier, a maintainer's choice") {
 		t.Fatalf("the pin is not shown:\n%s", b.String())
 	}
 }

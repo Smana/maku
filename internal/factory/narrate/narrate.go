@@ -963,7 +963,7 @@ func Ended(t *v1alpha1.Task, phase, reason string, maintainers ...string) Event 
 	}
 	b.WriteString(".")
 	if p := t.Status.Profile; p != nil && p.Source == "escalation" && phase == v1alpha1.PhaseEscalated {
-		fmt.Fprintf(&b, " It had already stepped up once, to profile `%s` (%s).", p.Name, p.Reason)
+		fmt.Fprintf(&b, " It had already stepped up once, to the workflow `%s` (%s).", p.Name, p.Reason)
 	}
 	if pr := t.Status.PullRequest; pr != nil && pr.MergedBy != "" && phase == v1alpha1.PhaseDone {
 		fmt.Fprintf(&b, " Merged by @%s.", strings.TrimSuffix(pr.MergedBy, "[bot]"))
@@ -1179,10 +1179,10 @@ func summary(text string, budget int) string {
 	}
 }
 
-// ProfileChosen names the harness profile the task's run-th run starts under, the floor marked
+// ProfileChosen names the workflow (a harness profile) the task's run-th run starts under, the floor marked
 // as the default, with the scoper's why or the reason it was not applied.
 func ProfileChosen(name, source, reason, why string, run int) Event {
-	body := fmt.Sprintf("Agent factory: this task runs under profile `%s`", name)
+	body := fmt.Sprintf("Agent factory: this task runs the workflow `%s`", name)
 	switch source {
 	case "scoper", "escalation":
 	case "label":
@@ -1205,16 +1205,16 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
 }
 
-// ProfileRefused says a pinned profile was not applied, in the closed refusal's one sentence (P12):
+// ProfileRefused says a pinned workflow was not applied, in the closed refusal's one sentence (P12):
 // the task runs as if unpinned. One per task: triage decides a pin once.
 func ProfileRefused(name, sentence string) Event {
-	return Event{Key: "profile-refused", Body: fmt.Sprintf("Agent factory: `profile:%s` was not applied: %s", name, sentence)}
+	return Event{Key: "profile-refused", Body: fmt.Sprintf("Agent factory: the pinned workflow `%s` was not applied: %s", name, sentence)}
 }
 
-// ProfileEscalated says the task runs once more under a richer profile before a maintainer is
+// ProfileEscalated says the task runs once more under a richer workflow before a maintainer is
 // asked; run is the count of runs so far, as ProfileChosen keys it.
 func ProfileEscalated(from, to, group string, run int) Event {
 	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: fmt.Sprintf(
-		"Agent factory: this task stopped (%s) under profile `%s`; it runs once more under profile `%s` before a maintainer is asked.",
+		"Agent factory: this task stopped (%s) under the workflow `%s`; it runs once more under the workflow `%s` before a maintainer is asked.",
 		group, from, to)}
 }

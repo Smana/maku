@@ -178,7 +178,7 @@ func revisions(rows map[string]string) []Step {
 	}
 	return []Step{
 		{Row: "repository policy", Status: "recorded", Detail: policy},
-		{Row: "guardrails and harness profiles", Status: "recorded", Detail: "the factory config the pod ran, bound by its config checksum; not in the record"},
+		{Row: "guardrails and workflows", Status: "recorded", Detail: "the factory config the pod ran, bound by its config checksum; not in the record"},
 		{Row: "reviewer", Status: "recorded", Detail: dash(rows["reviewer"])},
 		{Row: "grant version", Status: "recorded", Detail: grant},
 	}

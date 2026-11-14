@@ -12,7 +12,7 @@ The design's threats, the controls against each, and the package or mechanism th
 
 | # | Threat | Controls | Control | Residual |
 |---|---|---|---|---|
-| T1 | Prompt injection by a human participant | Only members prompt; attribution is immutable; a run cannot exceed its profile; side-effect classes need an approver | Room roles (`internal/policy`), approvals, the broker-stamped `actor` | Wasted budget, bad code; bounded by budgets and the merge gate |
+| T1 | Prompt injection by a human participant | Only members prompt; attribution is immutable; a run cannot exceed its role permissions; side-effect classes need an approver | Room roles (`internal/policy`), approvals, the broker-stamped `actor` | Wasted budget, bad code; bounded by budgets and the merge gate |
 | T2 | Injection from agent to agent (brief, verdict, branch code) | No direct agent-to-agent path; peer text fenced as data; reviewers have read-only forge scope; a verdict has no power beyond the factory's merge gate | The fenced brief (`internal/brief`); room tools are the only agent write path (`internal/mcp`) | An injected reviewer can approve bad code *inside the room*; CI and the merge gate remain |
 | T3 | Injection into humans | Approval cards render the raw, redacted action, not the agent's prose, plus the `causedBy` author | The approval card (`internal/humanapi`, `web/`) | Social engineering of an approver |
 | T4 | Impersonation | The broker stamps `actor` from the credential; offline JWT checks; a live `AgentRun` watch; re-validated human tokens; a human's ZITADEL user must still be active, admins included; a run joins only its own `roomRef` | `internal/authn`, `internal/runwatch`, `internal/ghidentity` (`CheckActive`) | A token from a replaced pod of a still-live run is accepted until it expires (≤ 600 s); a deactivated user's token, which verifies offline for up to 12 h, until the 5-minute access cache expires |
@@ -341,7 +341,7 @@ With the run controller, the `maku` chart's `networkPolicies.mode` decides what 
 
 | Mode | What holds a run | Residual risk |
 |---|---|---|
-| `cilium` | A CiliumNetworkPolicy per run: DNS for its own names only, GitHub and its egress profiles on 443 by name, the model, the broker, and the OTLP collector's pods on their port when run tracing is on | None this table adds |
+| `cilium` | A CiliumNetworkPolicy per run: DNS for its own names only, GitHub and its egress allow-lists on 443 by name, the model, the broker, and the OTLP collector's pods on their port when run tracing is on | None this table adds |
 | `kubernetes` | A plain NetworkPolicy per run: the cluster DNS on 53, the egress proxy on 3128, the broker on 8443 (and the room tools port) when the run has a room, an in-cluster model's namespace on its port, and the OTLP collector's pods on their port when [run tracing](observability.md#what-tracing-opens-on-the-network) is on. The proxy holds the run's HTTPS to its own hosts | DNS to the cluster DNS stays open, so DNS tunnelling is possible. `cilium` mode, which filters DNS names, closes it |
 | `none` | Nothing | Everything: a run reaches any address. The install banner says so (`network_policy_none`) |
 
@@ -358,7 +358,7 @@ namespace). Its guarantees:
   namespace and maps an IP to exactly one unfinished pod. It refuses an unknown IP, a terminating
   pod's, and an IP two pods hold.
 - **The allow-list is the pod's `maku.ogenki.io/egress` annotation**, `host:port` pairs the run
-  controller writes at create: GitHub, the run's egress profiles and the model, the set the CNP
+  controller writes at create: GitHub, the run's egress allow-lists and the model, the set the CNP
   opens in `cilium` mode. The run-pod policy refuses any change to it after create. The proxy allows
   a `host:port` only on an exact match.
 - **No private address.** It refuses an IP literal, and a name that resolves to any loopback,

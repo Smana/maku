@@ -41,7 +41,7 @@ func IsProfileRevision(base, candidate Plan) bool {
 // pin holds is the catalogue's to say (CheckPin), at the door that has one.
 func reviseProfile(base, candidate Plan) (Plan, error) {
 	if len(base.Gaps) > 0 {
-		return Plan{}, refuse(ReasonPlannerInvalid, "a profile is pinned once every gap is answered")
+		return Plan{}, refuse(ReasonPlannerInvalid, "a workflow is pinned once every gap is answered")
 	}
 	out := cloneRevision(base)
 	next := lastRecord(base)
@@ -49,12 +49,12 @@ func reviseProfile(base, candidate Plan) (Plan, error) {
 		if is.Profile == base.Issues[i].Profile {
 			continue
 		}
-		text := "profile: factory's choice, chosen by the developer"
+		text := recordWord + ": factory's choice, chosen by the developer"
 		if is.Profile != "" {
 			if !profileNameRE.MatchString(is.Profile) {
-				return Plan{}, refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a profile's name", i+1))
+				return Plan{}, refuse(ReasonPlannerInvalid, fmt.Sprintf("issue %d: profile is a workflow's name", i+1))
 			}
-			text = "profile: " + is.Profile + ", pinned by the developer"
+			text = recordWord + ": " + is.Profile + ", pinned by the developer"
 		}
 		next++
 		out.Issues[i].Profile = is.Profile
@@ -69,7 +69,7 @@ func reviseProfile(base, candidate Plan) (Plan, error) {
 }
 
 // RecordProfiles writes the factory's choice down on a final plan (P4): an issue left unpinned whose
-// suggestion named a profile gains `A<n>: profile: factory's choice; suggested <s>`, so the issue
+// suggestion named a workflow gains `A<n>: workflow: factory's choice; suggested <s>`, so the issue
 // filed carries what was chosen against what was suggested. An issue whose Decisions already hold a
 // profile record gains nothing, so the call is idempotent; the hash is renewed when a record is added.
 func RecordProfiles(p Plan) Plan {
@@ -82,7 +82,7 @@ func RecordProfiles(p Plan) Plan {
 		}
 		next++
 		out.Issues[i].Body = appendRevisionRecord(is.Body,
-			fmt.Sprintf("A%d: profile: factory's choice; suggested %s", next, is.Suggestion.Profile))
+			fmt.Sprintf("A%d: %s: factory's choice; suggested %s", next, recordWord, is.Suggestion.Profile))
 		added = true
 	}
 	if !added {
@@ -92,8 +92,20 @@ func RecordProfiles(p Plan) Plan {
 	return out
 }
 
-// factorysChoiceRE is the Assumption RecordProfiles writes, one whole line.
-var factorysChoiceRE = regexp.MustCompile(`(?m)^A[0-9]+: profile: factory's choice; suggested [a-z0-9-]+\n?`)
+// recordWord opens the records a pin and the factory's choice write (WF1). A plan recorded before
+// it says profile: instead, and both are read (recordText).
+const recordWord = "workflow"
+
+// recordText is a record's text after its workflow: or profile: word, and whether it has one.
+func recordText(text string) (string, bool) {
+	if rest, ok := strings.CutPrefix(text, recordWord+": "); ok {
+		return rest, true
+	}
+	return strings.CutPrefix(text, "profile: ")
+}
+
+// factorysChoiceRE is the Assumption RecordProfiles writes, one whole line, in either spelling.
+var factorysChoiceRE = regexp.MustCompile(`(?m)^A[0-9]+: (?:workflow|profile): factory's choice; suggested [a-z0-9-]+\n?`)
 
 // dropFactorysChoice removes the factory's-choice Assumption a pin replaces. Records keep their
 // numbers: the grammar asks for ascending numbers, not contiguous ones.
@@ -107,8 +119,8 @@ func PinRecorded(body, profile string) bool {
 	records, _ := sanitize.DecisionRecords(body)
 	for i := len(records) - 1; i >= 0; i-- {
 		r := records[i]
-		if r.Gap == "" && strings.HasPrefix(r.Text, "profile: ") {
-			return r.Kind == "D" && r.Text == "profile: "+profile+", pinned by the developer"
+		if rest, ok := recordText(r.Text); ok && r.Gap == "" {
+			return r.Kind == "D" && rest == profile+", pinned by the developer"
 		}
 	}
 	return false
@@ -160,7 +172,7 @@ func lastRecord(p Plan) int {
 func hasProfileRecord(body string) bool {
 	records, _ := sanitize.DecisionRecords(body)
 	for _, r := range records {
-		if r.Gap == "" && strings.HasPrefix(r.Text, "profile: ") {
+		if _, ok := recordText(r.Text); ok && r.Gap == "" {
 			return true
 		}
 	}

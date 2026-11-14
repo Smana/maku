@@ -68,7 +68,7 @@ maku doctor                                   # check the setup
 | `config validate --config FILE [--base-ref REF \| --base-config FILE --base FILE...] [--expect-unchanged] [--resolved] [--allow-refused-bindings] MANIFEST...` | Checks manifests the way the factory would. A binding that does not resolve drops its class without refusing its `Repository`, so it is one `binding: Repository/<name> <policy>: <reason>: <message>` line and a failure; `--allow-refused-bindings` prints it as a warning instead. A base, either `--base-ref` (the config file and each manifest as committed at that git ref, such as `origin/main`) or `--base-config` with `--base`, prints each policy whose definition or consumers changed, with each consumer's change, live ones first and a live relaxation marked `LIVE`. `--expect-unchanged` fails when a resolved class differs from the base's. `--resolved` prints every repository's resolved classes as JSON, alone on stdout, with every other line on stderr. A binding over a guardrail is one `guardrail:` line and a failure. A `MergePolicy` in the removed per-repository shape is refused: `the per-repository MergePolicy was removed in this release: maku config migrate --manifests (from the previous release)` |
 | `skill install [--dir .agents/skills]` | Writes the factory-handoff skill. Needs no config or login |
 | `mcp` | Serves the factory's MCP tools on stdio, for a local coding agent ([below](#the-mcp-server)) |
-| `fork <room> --at SEQ [--role R] [--pr URL] [--egress pypi,npm] [--note TEXT] [--approvals attended\|unattended]` | A room of your own from events 1 to `SEQ`, with an optional run. `--role`: `implementer`, `reviewer` or `triager`; `--pr`: the reviewer's pull request; `--egress`: extra profiles (`pypi`, `npm`, `golang`, `crates`); `--note`: why you fork, under 1 KiB once labelled as machine-sent (about 900 bytes); `--approvals`: `attended` by default, so the fork asks before risky actions even when the source is an unattended factory room, `unattended` keeps an unattended source's policy (an attended source stays attended). Prints the new room's URL |
+| `fork <room> --at SEQ [--role R] [--pr URL] [--egress pypi,npm] [--note TEXT] [--approvals attended\|unattended]` | A room of your own from events 1 to `SEQ`, with an optional run. `--role`: `implementer`, `reviewer` or `triager`; `--pr`: the reviewer's pull request; `--egress`: extra egress allow-lists (`pypi`, `npm`, `golang`, `crates`); `--note`: why you fork, under 1 KiB once labelled as machine-sent (about 900 bytes); `--approvals`: `attended` by default, so the fork asks before risky actions even when the source is an unattended factory room, `unattended` keeps an unattended source's policy (an attended source stays attended). Prints the new room's URL |
 
 Flags may come before or after the positional arguments. Source: `internal/app/maku.go`.
 
@@ -134,7 +134,7 @@ claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio
 - The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
 - The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
   `room_queue`, `room_fork` and `issue_draft` from the broker; `classes_list` too, when the broker has a
-  factory to ask (it shows the classes and harness profiles a repository offers, and changes nothing);
+  factory to ask (it shows the classes and workflows a repository offers, and changes nothing);
   `intake_plan` and `plan_check` too, when
   the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `need_answer`,
   `room_wait` and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
@@ -223,7 +223,7 @@ over.
 
 | Tool | What it does | What it answers |
 |---|---|---|
-| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v2`, the hash the broker computed over it (each issue with its class, its `profile` (`""`, the factory's choice) and, from the repository's catalogue, a display `suggestion`: the suggested profile with its roles, the merge outcome and the planner's why), ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
+| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v2`, the hash the broker computed over it (each issue with its class, its `profile` (`""`, the factory's choice) and, from the repository's catalogue, a display `suggestion`: the suggested workflow with its roles, the merge outcome and the planner's why), ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
 | `plan_check` | Re-validates a final plan you were shown, against the hash the broker answered with; an optional candidate applies a deterministic final revision | The final plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
 
 The canonical intake loop calls `plan_check` for the final draft (including an accept-the-rest
@@ -236,17 +236,18 @@ and their new Decision/Assumption records may change. The broker verifies the ba
 candidate's new hash. To accept every remaining recommendation, the agent records each as an
 `A<n> [g<n>]` assumption and calls `plan_check` with the same envelope; no model call is needed.
 
-A maintainer may pin a harness profile once every gap is answered: the agent calls `plan_check` (or
+A maintainer may pin a workflow once every gap is answered: the agent calls `plan_check` (or
 `intake_plan`) with a candidate where only an issue's `profile` changed. The broker appends
-`D<n>: profile: <p>, pinned by the developer` to that issue's Decisions (replacing a
-`profile: factory's choice` Assumption), sets the issue's roles to the pinned profile's template,
+`D<n>: workflow: <p>, pinned by the developer` to that issue's Decisions (replacing a
+`workflow: factory's choice` Assumption), sets the issue's roles to the pinned workflow's template,
 checks the pin against the repository's catalogue and answers the new hash, with no model call and
-no daily plan. A final plan whose issue names a profile without that Decision is refused. A pin the
+no daily plan. A final plan whose issue names a workflow without that Decision is refused. A pin the
 catalogue refuses comes back as one closed reason and sentence (`profile_not_allowed`,
-`class_profile_fixed`, `not_maintainer`, …; the list is in [the factory's docs](factory.md#pinning-a-harness-profile));
+`class_profile_fixed`, `not_maintainer`, …; the list is in [the factory's docs](factory.md#pinning-a-workflow));
 the plan is not finalised and you pick again or keep the factory's choice. Keeping the factory's
-choice pins nothing: when the plan suggested a profile, `plan_check` records
-`A<n>: profile: factory's choice; suggested <s>` so the issue says what was chosen. Only a
+choice pins nothing: when the plan suggested a workflow, `plan_check` records
+`A<n>: workflow: factory's choice; suggested <s>` so the issue says what was chosen. A plan recorded
+by an earlier release says `profile:` in these records; both spellings are read. Only a
 maintainer may pin; the skill offers no pin to anyone else.
 
 What a plan shows, as `intake_plan` answers and your agent shows it back:

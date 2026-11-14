@@ -863,7 +863,7 @@ func (r Maku) fork(ctx context.Context, c maku.Client, base string, args []strin
 	at := fs.Int64("at", 0, "the last seq to copy")
 	role := fs.String("role", "", "request a run in the new room: implementer, reviewer or triager")
 	pr := fs.String("pr", "", "the reviewer's pull request")
-	egress := fs.String("egress", "", "extra egress profiles for that run: pypi,npm,golang,crates")
+	egress := fs.String("egress", "", "extra egress allow-lists for that run: pypi,npm,golang,crates")
 	note := fs.String("note", "", "why you fork")
 	approvals := fs.String("approvals", "", "attended (the default): the fork asks before risky actions; unattended keeps an unattended source's policy")
 	pos, err := flags(fs, args)

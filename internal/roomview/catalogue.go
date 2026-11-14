@@ -12,8 +12,8 @@ import (
 )
 
 // CatalogueText is a repository's catalogue as the text a person reads: without class, one line per
-// offered class; with it, that class's floor, variants and escalation, each profile's roles, tier,
-// tests-first, loop and description, and whether the caller may pin. The word is "profile" (P1).
+// offered class; with it, that class's floor, variants and escalation, each workflow's roles, tier,
+// tests-first, loop and description, and whether the caller may pin. The word is "workflow" (WF1).
 //
 // Names and descriptions come from the factory's config, which a repository's maintainers write,
 // so they are untrusted like any other text a view quotes: a name is plain unless it holds markup
@@ -22,12 +22,12 @@ import (
 func CatalogueText(c catalogue.Catalogue, class string) string {
 	var b strings.Builder
 	if class == "" {
-		b.WriteString("Classes of " + inertWord(c.Repository, clean(c.Repository)) + ", with the profile each runs and how it merges.\n")
+		b.WriteString("Classes of " + inertWord(c.Repository, clean(c.Repository)) + ", with the workflow each runs and how it merges.\n")
 		for _, cl := range c.Classes {
 			b.WriteString(classLine(c, cl) + "\n")
 		}
 		b.WriteString("Evaluation " + inertWord(c.Evaluation.Mode, clean(c.Evaluation.Mode)) + ", control share " + strconv.Itoa(c.Evaluation.ControlPercent) + " %.\n")
-		b.WriteString("Ask for one class to see what each of its profiles runs.\n")
+		b.WriteString("Ask for one class to see what each of its workflows runs.\n")
 		b.WriteString(pinLine(c, nil))
 		return b.String()
 	}
@@ -82,9 +82,9 @@ func MergeWords(outcome string) string {
 func classLine(c catalogue.Catalogue, cl catalogue.Class) string {
 	line := name(cl.Name) + " · " + name(cl.Mode) + " · " + MergeWords(catalogue.Outcome(cl.Mode, c.ApproveToMerge))
 	if p, ok := c.Profiles[cl.Floor]; ok && p.Offered {
-		line += " · profile " + name(cl.Floor)
+		line += " · workflow " + name(cl.Floor)
 	} else {
-		line += " · profile chosen at triage"
+		line += " · workflow chosen at triage"
 	}
 	var more []string
 	for _, v := range c.OfferedProfiles(cl.Name) {
@@ -102,7 +102,7 @@ func classLine(c catalogue.Catalogue, cl catalogue.Class) string {
 func profileLine(c catalogue.Catalogue, n string) string {
 	p, ok := c.Profiles[n]
 	if !ok {
-		return name(n) + ": not in the factory's list of profiles"
+		return name(n) + ": not in the factory's list of workflows"
 	}
 	var parts []string
 	if p.Offered {
@@ -133,17 +133,17 @@ func profileLine(c catalogue.Catalogue, n string) string {
 // shadow merge policy (one profile by TE2).
 func pinLine(c catalogue.Catalogue, only *catalogue.Class) string {
 	if !c.Maintainer {
-		return "Only a maintainer of this repository can pin a profile; the factory chooses it.\n"
+		return "Only a maintainer of this repository can pin a workflow; the factory chooses it.\n"
 	}
 	if only == nil {
-		return "You maintain this repository: you may pin a profile where a class lists variants.\n"
+		return "You maintain this repository: you may pin a workflow where a class lists variants.\n"
 	}
 	if only.Mode == catalogue.ModeLive || only.Mode == catalogue.ModeShadow {
-		return "Fixed: this class's merge policy runs it under " + name(only.Floor) + " only, so there is no profile to pin.\n"
+		return "Fixed: this class's merge policy runs it under " + name(only.Floor) + " only, so there is no workflow to pin.\n"
 	}
 	offered := c.OfferedProfiles(only.Name)
 	if len(offered) == 0 {
-		return "You may pin no profile here: none of this class's profiles is offered.\n"
+		return "You may pin no workflow here: none of this class's workflows is offered.\n"
 	}
 	return "You may pin " + strings.Join(mapStrings(offered, name), ", ") + ".\n"
 }

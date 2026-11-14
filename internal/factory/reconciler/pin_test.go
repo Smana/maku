@@ -120,7 +120,7 @@ func TestPinRefusalsAtTriage(t *testing.T) {
 				p.Requested != requested || p.Refused != c.want {
 				t.Fatalf("%+v, want refused %s", p, c.want)
 			}
-			if !contains(g.f.Comments(7), "Agent factory: `profile:"+requested+"` was not applied: ") {
+			if !contains(g.f.Comments(7), "Agent factory: the pinned workflow `"+requested+"` was not applied: ") {
 				t.Fatalf("comments %q", g.f.Comments(7))
 			}
 			if got := pinMetrics(g); !slices.Equal(got, []string{c.metric}) {

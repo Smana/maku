@@ -487,7 +487,7 @@ The factory App comments on the task's issue, or on its pull request when it has
 start (id, branch, budget, the room link, how to stop it), the pull request, CI fix and resume,
 each hand-off with its reason and the merge command, and the end with the tokens used.
 A class with `harness` adds `profile_chosen` (`profile-chosen-<runs>`) once its scoper ends: the
-profile the task runs under, `(default)` for the floor or `(pinned by a maintainer)` for a pin, and the scoper's why or the reason the floor
+workflow the task runs, `(default)` for the floor or `(pinned by a maintainer)` for a pin, and the scoper's why or the reason the floor
 was kept (`none`, `unknown`, `not_allowed`, `observe`, `internal`, `no_tests_paths`, `scoper_failed`).
 On a task with no issue, it and `profile_escalated` wait for the pull request, and are dropped if
 the task ends without one.
@@ -502,10 +502,10 @@ review rounds reset:
 | `not_met`, `review_rounds_exhausted` | `not_converged` | `escalation.notConverged` |
 | any other (`ci_red`, `judge_impossible`, `needs_author`, `budget-task`, …) | — | the maintainer |
 
-`budget-run`, `stalled` and `not_met` step only when the implementer's run ended so (the in-run judge's `not_met` included); a tester's or reviewer's own end goes to the maintainer. `review_rounds_exhausted`, the review loop's verdict on the implementer's work after a verifier's run, steps too. There is no step for a task with an unresolved profile, a control-cohort task, a group the class
+`budget-run`, `stalled` and `not_met` step only when the implementer's run ended so (the in-run judge's `not_met` included); a tester's or reviewer's own end goes to the maintainer. `review_rounds_exhausted`, the review loop's verdict on the implementer's work after a verifier's run, steps too. There is no step for a task with an unresolved workflow, a control-cohort task, a group the class
 does not map, a task that has already stepped (`/factory retry` keeps it stepped), or a target
 whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it), or a target
-that is the profile the task already runs, pinned or scoper-applied alike: the same profile again
+that is the workflow the task already runs, pinned or scoper-applied alike: the same workflow again
 rarely converges, so a maintainer is asked straight away. The step
 reads the class's `escalation` alone, not `evaluation.mode`: a class that declares it steps under
 `observe` too. A step
@@ -513,7 +513,7 @@ raises the tier, never lowers it; it never turns on `testFirst`, since the teste
 main. The stepped run gets the revision brief with the completion judge's last verdict fenced in
 it, on the same branch and pull request. The step renews the task's usual limits once: the review
 rounds and the CI fix runs count from it (`status.fixRunsBeforeStep`), so a stepped task gets
-`merge.fixRuns` repairs of its own. The escalated task's end comment names the profile already tried.
+`merge.fixRuns` repairs of its own. The escalated task's end comment names the workflow already tried.
 
 An issue task also has one live **Factory status** comment, created by the reconciler with the first
 event narration, never by the intake poller; a refused intake label creates no Task and no status
@@ -562,7 +562,7 @@ classifier is called: every task takes the static `standard` tier. `triage.contr
 |---|---|
 | `light`, `standard`, `frontier` | `model` (a gateway logical name: `agent-default`, `tier-light`, `tier-standard`, `tier-frontier`), `runMinutes` (1–480), `runTokens` (1–5,000,000), `taskTokens` (at least `runTokens`), and `runUSD`, `taskUSD` |
 
-A template is a team: its roles (`implementer`, `reviewer`, `triager`) run one after
+A template is the roles a workflow runs (`implementer`, `reviewer`, `triager`), one after
 another on one branch, and only the implementer writes. `templates.<name>.roles` and
 `maxReviewRounds` are config; the four names are fixed by the CRD.
 
@@ -571,7 +571,7 @@ another on one branch, and only the implementer writes. `templates.<name>.roles`
 | `investigate` | The task came from RunLore, by `/intake/runlore` or as an [internal principal](#internal-principals); its data class is forced to `internal`. Its triager searches RunLore's knowledge base with `kb_search` and `kb_get` when the broker's `roomTools.knowledge` is set ([RunLore](integration.md#runlore)); without it, the prompt's "if they are available" leaves them out |
 | `solo` | A class with an `oracle` (such as `dead-links`), always at `light`, without the classifier; otherwise class `docs-links`, tier below `frontier` |
 | `pair` | Class `docs-links` at `frontier`, or any other class at any tier |
-| `trio` | Never by triage: a platform may still define it, and a harness profile may name it |
+| `trio` | Never by triage: a platform may still define it, and a workflow may name it |
 
 The `tester` role is the test writer of a `testFirst` class, started by the factory and never listed in
 a template (see [the tester stage](#the-tester-stage)). A template that still lists it loads without
@@ -579,8 +579,12 @@ it, with a warning, for one release; `trio` is then the pair, and a later releas
 
 ### The shipped workflows
 
+A **workflow** is which agents work on a task: the one noun the room page, the plan, the narration
+and these pages use. In config a workflow is a `harnessProfiles` entry; the keys, labels, metrics and
+their `profile` label keep their names.
+
 A `Factory` that omits them still offers three workflows, `quick`, `standard` and `careful`, and
-`none` for an adopted pull request. Each is a harness profile over a template and, for `careful`, a
+`none` for an adopted pull request. Each is a `harnessProfiles` entry over a template and, for `careful`, a
 `loops` row; the factory fills each one the file does not name, key by key, and never changes one it
 does:
 
@@ -632,10 +636,10 @@ is implicit, and declared only to give every other task `checks` and `testFirst`
 merged), or neither (a label only).
 
 Triage also freezes a task of a class with `harness` in one evaluation cohort, recorded as
-`status.profile.cohort` and `source`. A profile a maintainer pinned is `labeled` (`source: label`);
+`status.profile.cohort` and `source`. A workflow a maintainer pinned is `labeled` (`source: label`);
 every other task, whatever named its class (a maintainer's `class:<name>` label, a schedule, the
 intake), is hashed into `control` (`evaluation.controlPercent` of them) or `treatment`. A class label
-names the class only: the scoper is still offered the class's profiles.
+names the class only: the scoper is still offered the class's workflows.
 
 The two cohorts are the two arms of the team evaluation, measured on live traffic:
 
@@ -646,9 +650,9 @@ The two cohorts are the two arms of the team evaluation, measured on live traffi
 | `treatment`, `evaluation.treatment` unset | The floor, until the scoper's pick applies (`apply`) or an escalation steps | `floor` |
 
 A treatment-cohort task runs its floor with `source: floor`, never the treatment workflow, when the
-task is a schedule's, its class is `live` or `shadow` (one profile each), or the class's floor and
+task is a schedule's, its class is `live` or `shadow` (one workflow each), or the class's floor and
 `harnessAllowed` do not include the workflow. Pinned tasks are `labeled`, and adopted pull requests
-and RunLore or internal investigations carry no profile: none of them is measured.
+and RunLore or internal investigations carry no workflow: none of them is measured.
 
 The measurement reads the two arms by `cohort`, on `source=~"control|treatment"`, so that a
 treatment-cohort task that fell back is left out. Cost per merged pull request:
@@ -667,29 +671,29 @@ also holds the tasks of classes that cannot run the treatment workflow, and sche
 | `source=label` on a task triaged | Means |
 |---|---|
 | Before the release that made a pin the only `labeled` cohort | A maintainer's `class:<name>` label (or a schedule's class) named the class |
-| From that release | A maintainer pinned the profile |
+| From that release | A maintainer pinned the workflow |
 
 A dashboard that reads `maku_factory_task_outcomes_total{source="label"}` across that release reads
 two populations; annotate the release date.
 
-### Pinning a harness profile
+### Pinning a workflow
 
-A maintainer may pin the harness profile a task runs under: a `profile:<name>` label on the issue
+A maintainer may pin the workflow a task runs: a `profile:<name>` label on the issue
 (`issue_file` applies it after `class:<c>` and before `factory/ready`), or the plan's `profile`,
 which `run_create` carries as `spec.intake.profile`. A pin is checked twice: by the broker at intake
 (`plan_check`, `run_create`, against the repository's catalogue), and again by triage, because a
 label can be added by hand. Triage checks it in this order:
 
-1. More than one `profile:` label, or a label and the intake's profile that disagree: `profile_conflict`.
+1. More than one `profile:` label, or a label and the intake's workflow that disagree: `profile_conflict`.
    The pin's applier is the label's last applier, or the sponsor login the factory resolved for the
    intake (`spec.intake.login`); one who does not maintain the repository: `not_maintainer`.
-2. The profile is not in `harnessProfiles`: `profile_unknown`. The class has no `harness`:
-   `class_no_profiles`. The class is `live` or `shadow` (one profile, TE2): `class_profile_fixed`.
-   The profile is neither the floor nor in `harnessAllowed`: `profile_not_allowed`.
-3. A `testFirst` profile on a task whose data is not public: `profile_internal`; on a repository
+2. The workflow is not in `harnessProfiles`: `profile_unknown`. The class has no `harness`:
+   `class_no_profiles`. The class is `live` or `shadow` (one workflow, TE2): `class_profile_fixed`.
+   The workflow is neither the floor nor in `harnessAllowed`: `profile_not_allowed`.
+3. A `testFirst` workflow on a task whose data is not public: `profile_internal`; on a repository
    whose checks declaration names no tests paths: `profile_no_tests_paths`.
 
-A `profile:` label whose name is not a profile name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
+A `profile:` label whose name is not a workflow's name (`^[a-z0-9][a-z0-9-]{0,62}$`) pins nothing.
 
 Known residuals:
 
@@ -699,25 +703,25 @@ Known residuals:
 - Pins are read from the issue's label events, as `class:` labels are: an issue whose event list is
   cut (more than 1000 events) blocks triage the same way.
 
-An honoured pin runs its profile (its template, its loop row, its tier only upward and within the
+An honoured pin runs its workflow (its template, its loop row, its tier only upward and within the
 task's ceiling), in `evaluation.mode` `observe` and `apply` alike: the task is `labeled`,
 `source: label`, and the scoper is offered no choice. A refused pin is never a task failure: the task
 runs as if unpinned (its cohort by hash, the floor, the scoper as the mode allows), and the factory
-narrates one line, `profile_refused`, in the refusal's sentence, for example "Agent factory:
-`profile:review-frontier` was not applied: Class `docs-links` is live: its merge policy runs it under
+narrates one line, `profile_refused`, in the refusal's sentence, for example "Agent factory: the
+pinned workflow `review-frontier` was not applied: Class `docs-links` is live: its merge policy runs it under
 `links-solo` only." `status.profile.requested` holds the pinned name and `status.profile.refused` the
-code; both reach the `profile` task fact and `summary/v1`, and the room's *Harness profile* block shows
+code; both reach the `profile` task fact and `summary/v1`, and the room's *Workflow* block shows
 them.
 
 | Code | Where | Sentence |
 |---|---|---|
-| `profile_unknown` | intake, triage | `<p>` is not a profile of this factory. `classes_list` shows the profiles. |
+| `profile_unknown` | intake, triage | `<p>` is not a workflow of this factory. `classes_list` shows the workflows. |
 | `profile_not_allowed` | intake, triage | Class `<c>` runs under `<floor>` or `<allowed…>`; `<p>` is not one of them. |
-| `profile_not_offered` | intake | `<p>` sets no template, so its roles are chosen at triage; it runs only as the factory's choice. |
+| `profile_not_offered` | intake | `<p>` names no roles, so they are chosen at triage; it runs only as the factory's choice. |
 | `class_profile_fixed` | intake, triage | Class `<c>` is `<live\|shadow>`: its merge policy runs it under `<floor>` only. |
-| `class_no_profiles` | intake, triage | Class `<c>` declares no profiles: the factory runs it as configured. |
-| `not_maintainer` | intake, triage | Only a maintainer of this repository can choose the profile; the factory will choose it. |
-| `profile_conflict` | triage | The issue names more than one profile; none was applied. |
+| `class_no_profiles` | intake, triage | Class `<c>` declares no workflows: the factory runs it as configured. |
+| `not_maintainer` | intake, triage | Only a maintainer of this repository can choose the workflow; the factory will choose it. |
+| `profile_conflict` | triage | The issue names more than one workflow; none was applied. |
 | `profile_internal` | intake, triage | `<p>` writes tests first, which runs on public tasks only. |
 | `profile_no_tests_paths` | triage | `<p>` writes tests first, and this repository declares no tests paths. |
 | `catalogue_unavailable` | intake | The factory's list of classes could not be read; try again in a minute. |
@@ -730,7 +734,7 @@ them.
 | no class, no pin | by hash | as today | as today |
 
 `maku_factory_profile_pins_total{class,profile,outcome,reason}` counts the pins triage saw
-(`honoured` or `refused`, `reason` the code or `none`; a profile no longer in config is `other`).
+(`honoured` or `refused`, `reason` the code or `none`; a workflow no longer in config is `other`).
 `maku_factory_profile_agreement_total{class,outcome}` counts each resolved task of a class that
 offers a choice by how the planner's suggestion (`spec.intake.suggested`) and the scoper's
 recommendation compare: `agree`, `differ`, `no_suggestion` (the issue path carries none) or
@@ -1765,7 +1769,7 @@ the gate's order: fixed base, author mode, class, the recorded conditions, deny,
 grant (the `grant=` a decision armed on, or "no grant used"), breaker and caps, verdict; the stage
 that refused is named, the later ones are not reached. Its revisions are what the record holds:
 the repository policy's hash (compared, with dual evaluation, or the policy that decided, under
-repository authority), the reviewer, the grant and its version; the guardrails and profiles are the pod's
+repository authority), the reviewer, the grant and its version; the guardrails and workflows are the pod's
 config, bound by its checksum, not per record. It links the decision's comment and the policy
 file's commits.
 
@@ -2441,7 +2445,7 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.usage` | `tokens` and `costMicroUSD` summed over the runs; never drops |
 | `status.usageSettled` | The meter's late readings had their window and the total is final |
 | `status.endedAt`, `status.outcome` | The task's first end and what it ended as (`accepted`, `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed`): the settle window counts from the first. A later `Reverted` revises neither. `task_outcomes_total` reports `outcome` for a task of its own; an approved split's parent reports the family's outcome, read from its parts at the settle, and its own `outcome` is a part's fallback (a part never opened, or not ended) |
-| `status.evaluated` | A split's part the evaluation counts under its parent's profile: written at the part's triage when the parent has one. Its merge's provenance is read for the mark, never for the parent |
+| `status.evaluated` | A split's part the evaluation counts under its parent's workflow: written at the part's triage when the parent has one. Its merge's provenance is read for the mark, never for the parent |
 | `status.reviewRounds`, `status.fixRuns`, `status.retries`, `status.resumes` | Counters behind `maxReviewRounds`, `merge.fixRuns`, `/factory retry` and `resume.maxPerTask`. `status.fixRunsBeforeStep` is `fixRuns` at the escalation step: the cap counts from it |
 | `status.checkReruns`, `status.checkRerunsHead` | Re-runs of cancelled checks, per head |
 | `status.gateReentries` | Returns from a transient hand-off to the gate (at most 3) |
@@ -2498,8 +2502,8 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `runlore` | `listen`, `tokenFile`, `minConfidence` (0–1], `dailyCap`; `repository`, the listed repository its issues and tasks go to | Required but `repository`, which defaults to the first entry |
 | `sandbox` | `suspend: {enabled}`: a run `POST /v1/runs` starts in an attended room gets `spec.suspendable: true`, which lets the room broker suspend it while its approval waits on an idle room (the broker's `suspend` config). Fixed on the claim at create | `enabled` false |
 | `loops` | `<class>: {stallSteps (1–500), continuations (0–5), judge (an alias or none)}`, keyed by a declared class, `review` or `default` (every class without a row). A row inherits each key it leaves unset from `default`'s (WF10): `models` role by role and tier by tier, `split` whole, and a key the row sets, `scope: off`, `search: false` and `judge: none` included, is its own; the factory warns at load about each key a row inherits, and when that switches its loop on. A row switches the class's [loop policy](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-21-loops-and-teams-design.md) on when it sets any of the three, and an unset one is 80, 2 or `tier-light`; `scope` (`off`, `steering`, `scoper`; unset is `off`, and a bare `off` in YAML reads as `off`) picks the class's [steering](#steering) or [scoper](#the-scoper): never part of the loop, so `{scope: steering}` alone switches no loop on; `split` (`{maxChildren 2–5, familyUSD, childTier, anyTier}`; `familyUSD` defaults to four of the child tier's `taskUSD`, `childTier` to `standard`) is refused without `scope: scoper` on the same row, on `docs-links`, `revert` or an oracle class, and without `meter.prices`; it lets the scoper of a task C7 itself rated `frontier` propose [a split](#splits); `anyTier: true` (default `false`) offers it on every task of the class, whatever tier C7 rated it (needed where no classifier is deployed, so every task is `standard`). `search: true` offers the class's implementer runs the [search tool](../images/maku-harness/README.md) (`spec.loop.search`, which the harness reads as `AGENT_SEARCH=1`); like `scope`, it never switches the loop on, and a class row without `search` takes `default`'s. The room-bridge classes a bare `search` as the plain built-in only on a run given it, assuming MCP tools reach it prefixed (`server_tool`): an unprefixed MCP tool named `search` would also class plain (and the SDK refuses the duplicate tool name at start). `models` (`{<role>: {<tier>: <alias>}}`) puts a role on a provider alias for a **public** task of that tier, the run's tier (the reviewer's is the other tier, the scoper's `light`): `kimi-frontier` (Moonshot's `k3.1-pro`) on `frontier`, `mistral-standard` (Mistral Medium 3.5) on `standard`, `mistral-light` (Mistral Small 4) on `light`, and no alias on another tier, so a run keeps its tier's caps. A role or tier without an entry keeps its tier's `model`, or the template's `reviewerModel`; an internal task always does, since Moonshot processes in China and Mistral in the EU, and the run's `provenance.modelSource` records `tier`, `reviewerModel` or `classModels`. `judge` may be `mistral-light` too, and an internal task of the class then gets `tier-light`. With `meter.prices` set, each alias needs a row: its served model's for a query by `gen_ai_request_model`, else its own. No tier's `model` and no `reviewerModel` may name a provider alias, `POST /v1/runs` refuses one on an internal run (`provider_alias_is_public_only`), every claim is refused one on an internal run, as its model or its judge's, and the Task and AgentRun CRDs hold the same rule; like `scope`, `models` never switches the loop on. The loop policy and the scoper run on either runtime. On the portable `maku.ogenki.io` AgentRun, `models` and `split` need `runs.gatewayIdentity` (`loops.<class>.models needs runs.gatewayIdentity (a model gateway, rollout step 4)`, and the same for `split`), and `split` with it also needs a meter (`meter.url` and `meter.query`: `loops.<class>.split needs a meter: a family's cap is in USD`). With `runs.gatewayIdentity`, each run calls the model gateway with its own token, on the alias its claim names (`spec.model`), and the meter prices it. Without it, USD budgets are not metered on that runtime: its runs carry no gateway identity, so `familyUSD`, the tiers' `runUSD` and `taskUSD`, and the principal caps spend nothing, and a configured meter says so at startup. That runtime then runs every role on modelSecret's model, and resolves no judge alias: its judge calls the run's model endpoint (`JUDGE_BASE_URL`) with the model Secret's optional `judge_model` key, or the run's own model without it (`JUDGE_MODEL`); the demo's `demo.model.judgeName` writes that key | None: every run as before |
-| `harnessProfiles` | `<name>: {template (solo, pair, trio, investigate or none), tier, checks, testFirst (needs checks), loop (off or a `loops` row), description (≤ 120 bytes, the line the scoper's brief shows)}`: the centrally approved ways to run a class; `none` is an adopted class (another author's pull requests, no run) and takes no other key. A profile's `loop` may name a row that is no class (`loops.review-search`); `off` is no loop, never `default`'s. The profile a task [resolves](#the-scoper) to shapes its runs: `template` when set, `tier` when above triage's, `checks`, `testFirst` and the loop row (`spec.loop`, `spec.scopeMode`, `spec.search`), for a central class and a cut-over repository's file alike | The [shipped workflows](#the-shipped-workflows) where the file omits them |
-| `evaluation` | `{controlPercent (0–100), mode (observe or apply), treatment}`: the team evaluation's control cohort of tasks with no pinned profile (a class label is no pin), whether a recommended profile is only recorded or used, and the profile the treatment cohort runs where its class allows it (a name in `harnessProfiles`, else refused). Hashed apart from `triage.controlPercent`. `mode` governs the scoper's recommendation only: a class's `escalation` steps under `observe` too | `controlPercent` 0: no cohort; `mode` `observe` |
+| `harnessProfiles` | `<name>: {template (solo, pair, trio, investigate or none), tier, checks, testFirst (needs checks), loop (off or a `loops` row), description (≤ 120 bytes, the line the scoper's brief shows)}`: the workflows, the centrally approved ways to run a class; `none` is an adopted class (another author's pull requests, no run) and takes no other key. A workflow's `loop` may name a row that is no class (`loops.review-search`); `off` is no loop, never `default`'s. The workflow a task [resolves](#the-scoper) to shapes its runs: `template` when set, `tier` when above triage's, `checks`, `testFirst` and the loop row (`spec.loop`, `spec.scopeMode`, `spec.search`), for a central class and a cut-over repository's file alike | The [shipped workflows](#the-shipped-workflows) where the file omits them |
+| `evaluation` | `{controlPercent (0–100), mode (observe or apply), treatment}`: the team evaluation's control cohort of tasks with no pinned workflow (a class label is no pin), whether a recommended workflow is only recorded or used, and the profile the treatment cohort runs where its class allows it (a name in `harnessProfiles`, else refused). Hashed apart from `triage.controlPercent`. `mode` governs the scoper's recommendation only: a class's `escalation` steps under `observe` too | `controlPercent` 0: no cohort; `mode` `observe` |
 | `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay, maxGrantLifetime, minPromotionEvidence}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. `minPromotionEvidence` is the clean shadow decisions a [promotion](#promotion) needs, at least 20 (MP7); a lower one is refused, and a promotion on fewer needs an operator's exception. Validated only: stage 1 decides nothing with the caps | None; `minPromotionEvidence` 20 |
 | `policyManagement.stage` | How far the merge-policy rollout goes: `read` (stage 1), `simulate` (adds `simulation` and `dualEvaluation`), `manage` (adds `repositoryAuthority`, `approvalMemory` and `promotion`). Replaces the six switches below, which still load as the highest stage they cover and set the `Deprecated` condition; not set together with them | `manage` |
 | `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |

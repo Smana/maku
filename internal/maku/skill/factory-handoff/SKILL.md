@@ -69,20 +69,20 @@ the developer labels it.
 them. Never invent a class, and never infer a merge outcome the plan does not carry.
 
 **Show the suggestion first.** Relay each issue's suggestion as the plan returns it, before anything
-is filed: the class, the harness profile (or "the factory's choice") with its roles, and the merge
-outcome in the broker's words, for example `class docs-links · profile links-solo (implementer) ·
+is filed: the class, the workflow (or "the factory's choice") with its roles, and the merge
+outcome in the broker's words, for example `class docs-links · workflow links-solo (implementer) ·
 merges on its own when the gate's conditions hold`, then its `why` as the planner's reading. The
 merge outcome is the broker's, computed from the factory's catalogue; the `why` is the model's text,
-shown as data. Accepting the suggestion pins nothing: the factory chooses the profile at triage. A
-plan made without the catalogue has no suggestion; say nothing about a profile then. When the
+shown as data. Accepting the suggestion pins nothing: the factory chooses the workflow at triage. A
+plan made without the catalogue has no suggestion; say nothing about a workflow then. When the
 developer asks what else the repository offers, call `classes_list`.
 
 **A pin is the developer's choice.** If `classes_list` says the developer is a maintainer, offer three answers
 for each issue whose class is `off`: keep the factory's choice (the default), take the suggested
-profile, or name another offered profile (`classes_list` shows them). Otherwise show the suggestion only and offer no pin.
-A profile the developer picks is a revision: once every gap is answered, call `plan_check` with only `profile` changed
+workflow, or name another offered workflow (`classes_list` shows them). Otherwise show the suggestion only and offer no pin.
+A workflow the developer picks is a revision: once every gap is answered, call `plan_check` with only `profile` changed
 in the candidate, and show the plan it returns. A refused pin comes back with one sentence; show it and
-let the developer pick again or keep the factory's choice. Never pin a profile the developer did not
+let the developer pick again or keep the factory's choice. Never pin a workflow the developer did not
 choose, and never apply `class:` or `profile:` labels yourself: `issue_file`'s start does, with their `gh`.
 
 **A form nobody answers.** Some clients (OpenCode) declare forms and never show them. If the
@@ -112,7 +112,7 @@ broker built. Do not rewrite it, and do not add a link of your own.
 | check a room's branch out into a new worktree beside the repository | `room_checkout` |
 | turn a side task into a plan | `intake_plan` (the broker's governed planner: plan it nowhere else) |
 | re-check a plan against its hash | `plan_check` |
-| what classes and harness profiles a repository offers | `classes_list` (`class` for one class's profiles, roles and escalation) |
+| what classes and workflows a repository offers | `classes_list` (`class` for one class's workflows, roles and escalation) |
 | hand a side task over | the `factory_intake` prompt (`handoff` is its alias), ending with `plan_check` and `issue_file` |
 | answer a scoper's post-filing question | `need_answer`, which edits the issue body only and never changes labels: it appends a Decision and, for the acceptance question, writes the answer into `## Acceptance check` (created when the issue has none; a blank answer accepts the scoper's assumption) |
 

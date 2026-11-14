@@ -29,7 +29,7 @@ const (
 	planChangedLine = "Not filed: the plan changed after this was drawn; mention me again to re-plan it."
 	// replannedLine is a confirm of a proposal made before profiles (P14): the message now shows the
 	// same issue as plan/v2, with its suggestion and new hash, and that is the one to confirm.
-	replannedLine = "Not filed yet: this proposal was made before profiles, so it now shows the current plan; check it and confirm again."
+	replannedLine = "Not filed yet: this proposal was made before workflows could be chosen, so it now shows the current plan; check it and confirm again."
 	// proposalOffLine is a press in a channel whose proposals switch is off (the switch flipped under a
 	// live message). The buttons no longer file anything here; the message's ✅ fallback does not
 	// depend on the switch, so the one line teaches it.

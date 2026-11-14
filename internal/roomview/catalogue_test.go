@@ -31,17 +31,17 @@ func ainative(maintainer bool) catalogue.Catalogue {
 func TestCatalogueTextSummary(t *testing.T) {
 	got := CatalogueText(ainative(false), "")
 	for _, want := range []string{
-		"docs-links · live · merges on its own when the gate's conditions hold · profile links-solo\n",
-		"review · off · a maintainer's approval merges it · profile chosen at triage · variants review-frontier\n",
+		"docs-links · live · merges on its own when the gate's conditions hold · workflow links-solo\n",
+		"review · off · a maintainer's approval merges it · workflow chosen at triage · variants review-frontier\n",
 		"Evaluation observe, control share 20 %.",
-		"Only a maintainer of this repository can pin a profile",
+		"Only a maintainer of this repository can pin a workflow",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("summary lacks %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "workflow") {
-		t.Error("the word is profile, never workflow (P1)")
+	if strings.Contains(got, "profile") {
+		t.Error("the word is workflow, never profile (WF1)")
 	}
 }
 

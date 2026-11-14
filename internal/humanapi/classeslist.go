@@ -28,7 +28,7 @@ var classesListSchema = json.RawMessage(`{"type":"object","additionalProperties"
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"}}}`)
 
 // classesListOutput declares the structured answer: the catalogue, or, with class, the catalogue cut
-// to that class and the profiles it names.
+// to that class and the workflows (profiles) it names.
 var classesListOutput = json.RawMessage(`{"type":"object","required":["repository","maintainer","classes","profiles"],"properties":{` +
 	`"repository":{"type":"string"},"maintainer":{"type":"boolean"},"approveToMerge":{"type":"boolean"},` +
 	`"generations":{"type":"object","properties":{"factory":{"type":"integer"},"repository":{"type":"integer"},"mergePolicies":{"type":"object","additionalProperties":{"type":"integer"}}}},` +
@@ -42,10 +42,10 @@ var classesListOutput = json.RawMessage(`{"type":"object","required":["repositor
 // answers "not found" for a repository the caller cannot read, so this tool names nothing either.
 func (s *Server) classesListTool() mcpTool {
 	return mcpTool{name: ClassesList, call: s.classesList, schema: classesListSchema, output: classesListOutput,
-		description: "What a repository offers at intake: its classes, each with how it merges and the harness profile it runs, " +
-			"as lines to show as they are (text) and the same as structuredContent. With class, that class's profiles: the floor, the variants, " +
-			"each profile's roles, tier, tests-first, loop and description, the escalation targets, and whether you may pin one (only a maintainer may). " +
-			"A profile is pinned by naming it in a plan revision, never here; this tool changes nothing."}
+		description: "What a repository offers at intake: its classes, each with how it merges and the workflow it runs, " +
+			"as lines to show as they are (text) and the same as structuredContent (whose profiles are the workflows). With class, that class's workflows: the floor, the variants, " +
+			"each workflow's roles, tier, tests-first, loop and description, the escalation targets, and whether you may pin one (only a maintainer may). " +
+			"A workflow is pinned by naming it in a plan revision's profile field, never here; this tool changes nothing."}
 }
 
 func (s *Server) classesList(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {

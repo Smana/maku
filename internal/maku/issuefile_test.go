@@ -939,8 +939,8 @@ func TestFormShowsSuggestion(t *testing.T) {
 	r.issueFile(t.Context(), planArgs(t))
 	msg := fmt.Sprint(r.lastForm())
 	for _, want := range []string{
-		"Class docs-links · profile: the factory's choice · merges on its own when the gate's conditions hold",
-		"Suggested profile links-solo (implementer); the planner's reading: one file # not a heading",
+		"Class docs-links · workflow: the factory's choice · merges on its own when the gate's conditions hold",
+		"Suggested workflow links-solo (implementer); the planner's reading: one file # not a heading",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("the form lacks %q: %s", want, msg)
@@ -992,7 +992,7 @@ func TestStartLabelsThePinInOrder(t *testing.T) {
 	if fmt.Sprint(*calls) != fmt.Sprint(want) {
 		t.Fatalf("%v, want %v", *calls, want)
 	}
-	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "profile review-frontier, pinned") {
+	if msg := fmt.Sprint(r.lastForm()); !strings.Contains(msg, "workflow review-frontier, pinned") {
 		t.Fatalf("the form does not show the pin: %s", msg)
 	}
 
