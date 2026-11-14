@@ -41,6 +41,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [The group move](maku-group-migration.md) | History: v0.31.0's quiet window, `Room` and `Task` to `maku.ogenki.io`; its command is removed |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |
+| [The v4.0 decision pack](v4-readiness.md) | Each v4 design decision (D1 to D26) with what implements and proves it, every item still owed before v4.0.0 with its owner, the manual GKE and kubeadm install runbooks and their ledger entry |
 | [Naming](naming.md) | Maku the product name, the unchanged technical names, the visual identity |
 
 ## Reading paths
