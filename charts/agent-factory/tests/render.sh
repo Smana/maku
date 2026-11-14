@@ -214,6 +214,14 @@ for d in room-broker run-controller agent-factory; do
 done
 ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and (.metadata.name == "rooms-db" or .metadata.name == "agent-factory-api"))' 'production renders a demo object: the bundled Postgres, a generated Secret or the plain policy'
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'production with every seam named shows no unsafe setting'
+# Review of #565: production renders no broker TLS of its own (tls.yaml is the demo's), so ExternalSecrets
+# may deliver room-broker-tls, room-broker-ca and openbao-ca there; the demo still refuses them.
+eso_tls=(--set externalSecrets.enabled=true --set externalSecrets.storeRef.name=store
+  --set-json 'externalSecrets.secrets={"brokerTLS":{"dataFrom":[{"extract":{"key":"maku/room-broker-tls"}}]},"brokerCA":{"dataFrom":[{"extract":{"key":"maku/ca"}}]},"factoryBrokerCA":{"dataFrom":[{"extract":{"key":"maku/ca"}}]}}')
+out="$(helm template af . -n maku "${prod[@]}" "${eso_tls[@]}")" || { echo "FAIL: production refuses ExternalSecrets for the broker's TLS" >&2; fail=1; out=''; }
+got="$(yq ea '[select(.kind == "ExternalSecret") | .spec.target.name] | sort | join(",")' - <<<"$out")"
+[[ $got == "openbao-ca,room-broker-ca,room-broker-tls" ]] || { echo "FAIL: production's TLS ExternalSecrets are '$got'" >&2; fail=1; }
+pbad 'the umbrella (its broker TLS)' "${args[@]}" "${eso_tls[@]}"
 # staged adoption (D25): the factory alone, with its seams, renders the factory and nothing of maku's
 out="$(helm template af . -n maku --set profile=production --set maku-factory.enabled=true --set maku-factory.image.tag=$digest)" ||
   { echo "FAIL: maku.enabled=false with maku-factory alone does not render" >&2; fail=1; out=''; }

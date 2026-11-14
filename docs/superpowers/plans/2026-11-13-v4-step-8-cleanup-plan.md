@@ -164,7 +164,7 @@ The owner answered yes to each, as the plan recommended (2026-11-13). The spec r
   | 10 | The merge defaults `gateStatus: false`, `policyBot` unset meaning true, `apps.merger.mode` unset meaning separate | step 3 PR10 | **`gateStatus: true`, `policyBot: false`, `apps.merger.mode: factory`**. policy-bot stays an opt-in integration (D11), and a separate merger App stays possible | D |
   | 11 | `model.mode: secret` (`charts/maku/values.yaml:185`, **today's default**) and `agent-model` in the runs namespace | step 4 | `model.mode: gateway`; `secret` demo-only under R4 | E |
   | 12 | `meter.logsURL`'s Envoy defaults in the docs | step 4 | the PromQL throttle (step 4 PR D) | E |
-  | 13 | `values-demo-gateway.yaml` (an empty pointer since step 7 R4) | step 7 | `values-demo.yaml` | E |
+  | 13 | `values-demo-gateway.yaml`: **done**, folded into `values-demo.yaml` and deleted by step 7 PR E2 (#565, R4) | step 7 | `values-demo.yaml` | E |
   | 14 | `human.access.readerFile`, `api.access.readerFile`, `internal/ghidentity/zitadel.go`, `zitadelReaderSecret` (`charts/maku-factory/values.yaml:72`), the old `NewHumans` signature, the `SlackLinkReader` alias (`internal/bridgeapi`) | step 5 PR5 | the GitHub account link (D8) | F |
   | 15 | The `profile` switch (`charts/agent-factory/templates/_helpers.tpl`, `afumbrella.profile`) | step 1, step 6 R6 | the defaults are production; `demoValues` marks the demo (CL4) | G |
   | 16 | `networkPolicies.plain` (`charts/agent-factory/values-demo.yaml:186`) | step 6 | the components' own default-deny policies (step 2 PR13, step 6 Task 16) | G |
@@ -450,14 +450,14 @@ The owner answered yes to each, as the plan recommended (2026-11-13). The spec r
   - the broker's `install.unsafe` (`model_key_in_sandbox` when `secret`) and `web/src`;
   - `charts/maku/templates/_helpers.tpl`;
   - `docs/gateway.md` (`meter.logsURL`'s Envoy defaults go, row 12).
-- Delete: `charts/agent-factory/values-demo-gateway.yaml` (row 13).
+- Nothing to delete for row 13: step 7 PR E2 (#565) already deleted `values-demo-gateway.yaml`.
 - Also: the deprecation registry.
 
 - [ ] **Step 1: failing cases:**
   - the default render is gateway mode;
   - `secret` without `demoValues` fails, naming R4's rule;
   - `secret` with `demoValues` renders and sets `model_key_in_sandbox`;
-  - `-f values-demo-gateway.yaml` fails as a missing file, which `docs/upgrading.md` names.
+  - (row 13 needs no case: `values-demo-gateway.yaml` is gone since step 7 PR E2, and `docs/upgrading.md` names it.)
 
   Expected: FAIL.
 - [ ] **Step 2: implement.** Rerun, then `task chart:check` and `task check`. Expected: PASS.
@@ -718,7 +718,7 @@ R5, R6 and R7 are settled yes, so all three tasks land.
   - step 4: `meter.logsURL`'s docs, `model.mode`, the portable refusals (Tasks 8, 11);
   - step 5: the readers, `zitadel.go`, the old signatures (Tasks 12–13);
   - step 6: `networkPolicies.plain`, `profile`, the federation docs, the metric rename (Tasks 8, 14, 15, 21);
-  - step 7: `preflight.enabled`, private code, `values-demo-gateway.yaml` (Tasks 11, 16, 17);
+  - step 7: `preflight.enabled`, private code (Tasks 11, 16, 17; `values-demo-gateway.yaml` went with step 7 PR E2);
   - #521: the ledger bridge (Task 18).
 - **The reusable merge policies plan's PR K** is not duplicated: its shapes are named only to be excluded (CL6), and PR D waits for it.
 - **What stays, and why,** is listed (CL2), so a later reader does not "finish" this step by deleting an optional seam.
