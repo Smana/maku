@@ -107,11 +107,11 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
 ```
 
 Runs call the gateway with `maku.runController.model.mode: gateway`, the maku chart's default.
-`values-demo.yaml` overrides it with the demo-only `secret`, which `maku.demoValues` admits. Gateway
-mode needs `maku-gateway.enabled` or an external `model.gateway.service`. The run controller's aliases, ports and
-audience prefix must match `maku-gateway`'s, or the render fails. `values-demo-gateway.yaml`, layered on
-`values-demo.yaml`, is the demo in that mode: the demo key becomes the provider's Secret `demo-model` in
-the release namespace, and no `agent-model` exists. The planner keeps its URL until the broker's
+`values-demo.yaml` keeps it (step 7 R4): the demo runs through `maku-gateway`, the demo key becomes the
+provider's Secret `demo-model` in the release namespace, and no `agent-model` exists. The demo-only
+`secret`, which `maku.demoValues` admits, remains a switch. Gateway mode needs `maku-gateway.enabled` or
+an external `model.gateway.service`. The run controller's aliases, ports and audience prefix must match
+`maku-gateway`'s, or the render fails. The planner keeps its URL until the broker's
 gateway mode arrives. `task chart:gateway:k3d` proves the gateway on
 k3d. agentgateway is vendored (the controller chart under `vendor/`, its CRDs in `config/agentgateway`) and
 pinned in `hack/agentgateway.sha256`, which `task chart:deps` checks: no install needs the network for it.

@@ -355,7 +355,7 @@ YAML
 else
   step "install the umbrella: the broker in preset generic, its ids by Secret"
   h install identity charts/agent-factory -n "$NS" \
-    -f charts/agent-factory/values-demo.yaml -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" \
+    -f charts/agent-factory/values-demo.yaml -f charts/agent-factory/tests/values-demo-secret.yaml -f "$VALUES" -f "$LINK_VALUES" "${expose[@]}" \
     --set maku.e2e.unpinnedImages=true --set "maku.broker.image.tag=$TAG" \
     --set maku.runController.enabled="$([[ -n $EXPOSE ]] && echo true || echo false)" --set maku-factory.enabled="$([[ -n $SLACK ]] && echo true || echo false)" \
     --set demo.model.baseURL=http://model.e2e.test/v1 --set demo.model.name=m --set demo.model.apiKey=e2e-throwaway \

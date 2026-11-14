@@ -1,0 +1,59 @@
+apiVersion: maku.ogenki.io/v1alpha1
+kind: Factory
+metadata:
+  name: agent-factory
+  namespace: maku
+spec:
+  caps:
+    activeTasks: 3
+    awaitingHumanWIP: 5
+    concurrentRuns: 2
+    maxTextBytes: 14336
+    tasksPerDay: 20
+  defaults:
+    dataClass: public
+    predictedClass: review
+    template: solo
+    tier: standard
+  loops:
+    docs-links:
+      judge: tier-light
+      scope: scoper
+    review:
+      judge: tier-light
+      scope: scoper
+  templates:
+    investigate:
+      roles:
+      - triager
+    pair:
+      maxReviewRounds: 2
+      roles:
+      - implementer
+      - reviewer
+    solo:
+      maxReviewRounds: 2
+      roles:
+      - implementer
+      - reviewer
+    trio:
+      maxReviewRounds: 2
+      roles:
+      - implementer
+      - reviewer
+  tiers:
+    frontier:
+      model: agent-default
+      runMinutes: 90
+      runTokens: 4000000
+      taskTokens: 8000000
+    light:
+      model: tier-light
+      runMinutes: 20
+      runTokens: 300000
+      taskTokens: 600000
+    standard:
+      model: agent-default
+      runMinutes: 45
+      runTokens: 1500000
+      taskTokens: 3000000

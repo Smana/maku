@@ -4,6 +4,29 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The demo's model gateway (v0.4x, v4 rollout step 7)
+
+`values-demo.yaml` now runs the demo through the model gateway (step 7 R4), as production does:
+`maku.runController.model.mode: gateway`, `agentgateway.enabled` and `maku-gateway.enabled`, the
+runs' `gatewayIdentity`. `values-demo-gateway.yaml`, which layered these before, is deleted. A demo
+install now:
+
+- applies Gateway API's CRDs (v1.2 or later) and agentgateway's (`kubectl apply --server-side -f
+  config/agentgateway`) before the umbrella;
+- sets `maku-gateway.identity.issuer` (the cluster's ServiceAccount issuer), the provider's host
+  (`maku-gateway.providers.demo.host`, with `port`, `path` and `tls`) and each alias's `model`, and
+  only `demo.model.apiKey`: `demo.model.baseURL`, `name` and `judgeName` are refused in gateway mode;
+- on k3s (k3d), starts the apiserver with `--kube-apiserver-arg=anonymous-auth=true`: the gateway's
+  controller reads its JWKS anonymously. kind and kubeadm leave it on.
+
+`task demo` does all three, and `values-mine.example.yaml` shows the values. agentgateway's controller
+and the gateway's proxy each request 128 MiB (limits 512 MiB and 1 GiB) on the laptop. To keep the provider key in the sandbox instead, set
+`maku.runController.model.mode: secret` with `maku-gateway.enabled: false`, `agentgateway.enabled: false`
+and `maku-factory.config.runs.gatewayIdentity: false`: still demo-only (`maku.demoValues`).
+
+`maku install --print` writes a production install's files ([maku](cli.md)): values, Secrets, the
+factory objects, the merge gate's ruleset and the GitOps files, and it applies nothing.
+
 ## From the demo to production
 
 From v0.4x (v4 rollout step 6), `profile: production` renders. Start from
@@ -329,7 +352,7 @@ New keys, all off by default, so a release that sets none of them renders as bef
 |---|---|---|
 | `maku.runController.model.mode` | `secret`: `runController.modelSecret`, as before | `gateway`: runs call the model gateway with their own token, and `modelSecret` is not read ([the model gateway](gateway.md#runs-through-the-gateway)) |
 | `maku.runController.model.gateway` | `model-gateway` in the release namespace, ports 8080 and 8081, prefix `maku-gateway`, no aliases | the gateway and the aliases each listener serves |
-| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered |
+| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered. Folded into `values-demo.yaml` and deleted in step 7 ([the demo's gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7)) |
 | `maku-factory.config.runs.gatewayIdentity` | unset | `true`: portable runs carry a gateway identity, so the meter prices them, and `loops.<class>.models` and `split` are accepted ([metering the runs](gateway.md#metering-the-runs)). The umbrella requires it with `model.mode: gateway` and a portable factory |
 | `maku-factory.config.meter.throttle.promQuery` | unset | the gateway's 429s from PromQL on `meter.url`, in place of `meter.logsURL` with `meter.throttleQuery`; one of the two is required outside the demo, never both |
 | `maku-gateway.modelCatalog.prices` (umbrella) | `maku-factory.config.meter.prices` | the gateway's catalog takes the factory's prices when its own are empty |

@@ -246,8 +246,9 @@ The preflight's token is bound to the controller's own pod. The umbrella fails t
 `model.gateway.service` (an external gateway, as on cloud-native-ref), or when the ports, the prefix or
 the aliases disagree with `maku-gateway`'s.
 
-**The gateway demo.** `values-demo-gateway.yaml`, layered on `values-demo.yaml`, turns on the controller,
-`maku-gateway` (`source: apiserver`) and `model.mode: gateway`. Its one `custom` provider, `demo`,
+**The demo runs through the gateway.** Since step 7 (R4), `values-demo.yaml` turns on the controller,
+`maku-gateway` (`source: apiserver`) and `model.mode: gateway`; `values-demo-gateway.yaml`, which
+layered them before, is gone. Its one `custom` provider, `demo`,
 reads its key from the Secret `demo-model`, which the umbrella renders in the release namespace
 from `demo.model.apiKey`. Set the provider's `host` and each alias's `model` in the gateway values.
 `demo.model.baseURL`, `name` and `judgeName` are refused there, since nothing would read them. No
@@ -407,7 +408,7 @@ fetches it, so the controller's own network policy must allow the JWKS source.
   - the presets on the wire;
   - the metrics labels;
   - the Gateway API floor (v1.2.1, one HTTPRoute per alias).
-- `task chart:gateway:k3d` installs the gateway demo (`values-demo-gateway.yaml`) with the probe's echo
+- `task chart:gateway:k3d` installs the demo, with its gateway, and the probe's echo
   provider. It checks three calls from a run-like pod: 200 on its alias, 403 on another alias, 401 with
   no token. Then it starts a run in `model.mode: gateway` and checks three things:
   - the pod holds only its own token, for `maku-gateway.public.agent-default`;
