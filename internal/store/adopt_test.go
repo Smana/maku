@@ -164,7 +164,7 @@ func TestAdoptIgnoresAtlasBesideOurLedger(t *testing.T) {
 }
 
 // serve on a database only the operator migrated reads its ledger: current passes, behind names
-// migrate; a ledger rooms_broker cannot read (cnref's, unless granted) is served unverified.
+// migrate; a ledger rooms_broker cannot read (cnref's, unless granted) is refused.
 func TestSchemaCurrentReadsTheAtlasLedger(t *testing.T) {
 	files, err := migrations.Files()
 	if err != nil {
@@ -178,7 +178,7 @@ func TestSchemaCurrentReadsTheAtlasLedger(t *testing.T) {
 	}{
 		{"current", true, atlasFiles, nil},
 		{"behind", true, atlasFiles + 1, errors.New("the schema is at " + files[atlasFiles-1].Version + ", this broker needs " + files[atlasFiles].Version)},
-		{"unreadable", false, atlasFiles, ErrSchemaUnverified},
+		{"unreadable", false, atlasFiles, ErrLedgerUnreadable},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			owner, super := atlasMigrated(t)
@@ -195,9 +195,9 @@ func TestSchemaCurrentReadsTheAtlasLedger(t *testing.T) {
 			switch {
 			case c.want == nil && err != nil, c.want != nil && err == nil:
 				t.Fatalf("schemaCurrent = %v, want %v", err, c.want)
-			case errors.Is(c.want, ErrSchemaUnverified) && !errors.Is(err, ErrSchemaUnverified):
-				t.Fatalf("schemaCurrent = %v, want ErrSchemaUnverified", err)
-			case c.want != nil && !errors.Is(c.want, ErrSchemaUnverified) && !strings.Contains(err.Error(), c.want.Error()):
+			case errors.Is(c.want, ErrLedgerUnreadable) && !errors.Is(err, ErrLedgerUnreadable):
+				t.Fatalf("schemaCurrent = %v, want ErrLedgerUnreadable", err)
+			case c.want != nil && !errors.Is(c.want, ErrLedgerUnreadable) && !strings.Contains(err.Error(), c.want.Error()):
 				t.Fatalf("schemaCurrent = %v, want %q", err, c.want)
 			}
 		})

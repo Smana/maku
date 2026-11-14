@@ -243,6 +243,18 @@ kubectl -n <namespace> patch repository <name> --type merge -p '{"spec":{"privat
 That field states the repository's code is sent to the configured models, which are usually SaaS
 ([private code](factory.md#private-code)). The demo still serves public repositories only.
 
+### An unreadable ledger is refused
+
+The broker refuses to start when `rooms_broker` cannot read the migration ledger, where it used to
+serve with a warning (D9, owner ruling R10). The gauge `maku_rooms_schema_unverified` and the alert
+`RoomBrokerSchemaUnverified` are removed, and the preflight's `database` check fails with
+`db_ledger_unreadable` instead of warning `schema_unverified`.
+
+Before upgrading, check that the gauge reads 0 on every broker pod. If it reads 1, set
+`broker.database.ownerSecret` and let one `migrate` run: it adopts the Atlas operator's ledger and
+grants the read ([a ledger the broker cannot read](database.md#a-ledger-the-broker-cannot-read)).
+Remove any query or alert of your own on the gauge.
+
 ### The gateway is the model path
 
 | Value | Before | Now |

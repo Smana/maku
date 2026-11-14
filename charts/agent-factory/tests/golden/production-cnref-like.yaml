@@ -4352,16 +4352,6 @@ spec:
           for: 1m
           labels:
             severity: warning
-        - alert: RoomBrokerSchemaUnverified
-          annotations:
-            dashboard: /d/agent-room
-            description: 'The broker''s role cannot read the migration ledger, so nothing checks that the schema matches the broker''s image. Set broker.database.ownerSecret: the first migrate adopts the Atlas operator''s ledger and this clears. A future release refuses to serve without it.'
-            runbook_url: https://github.com/Smana/maku/blob/v0.0.0/docs/database.md#a-ledger-the-broker-cannot-read
-            summary: The broker serves a schema whose version it cannot read
-          expr: max(maku_rooms_schema_unverified{namespace="agent-system"}) == 1
-          for: 15m
-          labels:
-            severity: warning
     - name: maku-factory
       rules:
         - alert: AgentFactoryIntakeErrors

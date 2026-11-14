@@ -108,9 +108,8 @@ func (b brokerChecks) database(ctx context.Context) preflight.Result {
 		return failed("db_unreachable", "the database refused the broker's connection check (docs/database.md)")
 	}
 	switch err := b.DB.SchemaCurrent(ctx); {
-	case errors.Is(err, store.ErrSchemaUnverified):
-		return preflight.Result{Outcome: preflight.Warn, Code: "schema_unverified",
-			Message: "rooms_broker cannot read the migration ledger: set broker.database.ownerSecret (docs/database.md)"}
+	case errors.Is(err, store.ErrLedgerUnreadable):
+		return failed("db_ledger_unreadable", "rooms_broker cannot read the migration ledger: set broker.database.ownerSecret (docs/database.md)")
 	case errors.Is(err, store.ErrSchemaBehind):
 		return failed("db_schema_behind", "the schema is behind this broker: run migrate (broker.database.ownerSecret)")
 	case errors.Is(err, store.ErrSchemaAhead):

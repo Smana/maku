@@ -156,15 +156,3 @@ rules:
       description: "Triager runs get knowledge_unavailable or knowledge_timeout from kb_search and kb_get, and investigate without RunLore's knowledge base. Check the endpoint broker.roomTools.knowledge.url names, and the broker's log: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=room-broker | grep 'knowledge call failed'"
       runbook_url: "__DOCS__/operations.md#room-alerts"
       dashboard: "/d/agent-room"
-  # A bridge (v4 D9): the broker serves a schema whose migration ledger its role cannot read, the
-  # Atlas operator's before broker.database.ownerSecret is set. A future minor refuses it.
-  - alert: RoomBrokerSchemaUnverified
-    expr: max(maku_rooms_schema_unverified{namespace="__NAMESPACE__"}) == 1
-    for: 15m
-    labels:
-      severity: warning
-    annotations:
-      summary: "The broker serves a schema whose version it cannot read"
-      description: "The broker's role cannot read the migration ledger, so nothing checks that the schema matches the broker's image. Set broker.database.ownerSecret: the first migrate adopts the Atlas operator's ledger and this clears. A future release refuses to serve without it."
-      runbook_url: "__DOCS__/database.md#a-ledger-the-broker-cannot-read"
-      dashboard: "/d/agent-room"
