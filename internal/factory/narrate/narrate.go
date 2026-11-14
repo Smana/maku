@@ -1211,6 +1211,11 @@ func ProfileRefused(name, sentence string) Event {
 	return Event{Key: "profile-refused", Body: fmt.Sprintf("Agent factory: `profile:%s` was not applied: %s", name, sentence)}
 }
 
+// TriageNote is triage's note i on the task (triage.Decision.Notes), said once.
+func TriageNote(i int, note string) Event {
+	return Event{Key: fmt.Sprintf("triage-note-%d", i), Body: "Agent factory: " + note}
+}
+
 // ProfileEscalated says the task runs once more under a richer profile before a maintainer is
 // asked; run is the count of runs so far, as ProfileChosen keys it.
 func ProfileEscalated(from, to, group string, run int) Event {

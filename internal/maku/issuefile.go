@@ -104,7 +104,7 @@ func (g *governed) draft() draftShape {
 }
 
 // planLabels are the labels start applies before factory/ready, in order: class:<c>, then
-// profile:<p> when the plan pins one (P5, P7), unless the catalogue says this developer does not
+// workflow:<p> when the plan pins one (P5, P7, WF9), unless the catalogue says this developer does not
 // maintain the repository (the factory would count neither). None without a class.
 func (g *governed) planLabels() []string {
 	is := g.view.Issues[0]
@@ -113,7 +113,7 @@ func (g *governed) planLabels() []string {
 	}
 	labels := []string{"class:" + is.Class}
 	if is.Profile != "" {
-		labels = append(labels, "profile:"+is.Profile)
+		labels = append(labels, "workflow:"+is.Profile)
 	}
 	return labels
 }
@@ -145,7 +145,7 @@ func (g *governed) suggestion() string {
 	}
 	if g.Maintainer != nil && !*g.Maintainer {
 		if is.Profile != "" {
-			line += "\nThe class:" + OneLine(is.Class) + " and profile:" + OneLine(is.Profile) +
+			line += "\nThe class:" + OneLine(is.Class) + " and workflow:" + OneLine(is.Profile) +
 				" labels are skipped: you do not maintain this repository, so the factory would count neither."
 		} else {
 			line += "\nThe class:" + OneLine(is.Class) + " label is skipped: you do not maintain this repository, so the factory would not count it."

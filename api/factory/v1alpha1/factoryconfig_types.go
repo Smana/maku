@@ -62,6 +62,10 @@ type FactorySpec struct {
 	Loops map[string]config.Loop `json:"loops,omitempty"`
 	// +kubebuilder:validation:MaxProperties=16
 	HarnessProfiles map[string]config.HarnessProfile `json:"harnessProfiles,omitempty"`
+	// Workflows is harnessProfiles under its new name (WF9): set one of the two. harnessProfiles
+	// loads with a warning and is refused from the next minor (WF13).
+	// +kubebuilder:validation:MaxProperties=16
+	Workflows       map[string]config.HarnessProfile `json:"workflows,omitempty"`
 	MergeGuardrails config.MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	// Evaluation is the team evaluation's cohort share and mode, read per decision.
 	Evaluation config.Evaluation `json:"evaluation,omitzero"`

@@ -245,6 +245,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
+	for _, w := range cfg.Warnings {
+		log.Warn("config warning", "warning", w)
+	}
 	if err := checkBrokerSecrets(cfg, readMounted); err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}

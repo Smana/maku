@@ -158,7 +158,10 @@ type Config struct {
 	Loops map[string]Loop `json:"loops,omitempty"`
 	// HarnessProfiles, MergeGuardrails and PolicyManagement are the central half of the repository
 	// merge policy (mergepolicy): what a repository's class may reference and how far it may go.
-	HarnessProfiles  map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
+	HarnessProfiles map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
+	// Workflows is harnessProfiles under its new name (WF9): Parse moves it into HarnessProfiles,
+	// which every reader keeps reading, and refuses a file that sets both.
+	Workflows        map[string]HarnessProfile `json:"workflows,omitempty"`
 	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
 	// Evaluation is the team evaluation's cohort and mode: observe unless set.
@@ -182,6 +185,8 @@ type Config struct {
 	Warnings []string `json:"-"`
 	// classSource is a cut-over repository's classes (SetClassSource).
 	classSource func(repository string) (map[string]Class, bool)
+	// harnessProfilesKey is whether the file spelled its workflows harnessProfiles (WF9, WF13).
+	harnessProfilesKey bool
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
@@ -1675,6 +1680,9 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	if err := c.normalize(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	if err := c.readWorkflows(); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 	for i := range c.Repositories {
 		r := &c.Repositories[i]
 		if !assembled && (r.Bound != nil || r.Bindings != nil) {
@@ -1764,6 +1772,9 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 		}
 	}
 	c.Warnings = append(c.Warnings, inherits...)
+	for _, d := range c.workflowDeprecations() {
+		c.Warnings = append(c.Warnings, fmt.Sprintf("%s: %s; refused from the next minor (WF13)", d.path, d.instead))
+	}
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {

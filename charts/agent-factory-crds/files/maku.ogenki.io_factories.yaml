@@ -584,6 +584,38 @@ spec:
                     minimum: 0
                     type: integer
                 type: object
+              workflows:
+                additionalProperties:
+                  description: |-
+                    HarnessProfile is a named, centrally approved way of running a class (merge policy MP2). Stage 1
+                    reads Checks and TestFirst; Template, Tier and Loop are validated here and read from repository
+                    cutover on. Empty keeps what the factory selects today.
+                  properties:
+                    checks:
+                      type: boolean
+                    description:
+                      description: 'Description is the line the scoper''s brief shows:
+                        when to choose the profile.'
+                      maxLength: 120
+                      type: string
+                    loop:
+                      description: LoopRef names a row of loops, or off.
+                      maxLength: 253
+                      type: string
+                    template:
+                      maxLength: 253
+                      type: string
+                    testFirst:
+                      type: boolean
+                    tier:
+                      maxLength: 253
+                      type: string
+                  type: object
+                description: |-
+                  Workflows is harnessProfiles under its new name (WF9): set one of the two. harnessProfiles
+                  loads with a warning and is refused from the next minor (WF13).
+                maxProperties: 16
+                type: object
             type: object
           status:
             description: FactoryStatus is what the factory made of its Factory (D11,

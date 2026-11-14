@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -431,6 +432,16 @@ func TestTriageResolvesThePin(t *testing.T) {
 			want:   Pin{Name: "docs-floor", Refused: "profile_conflict"}, cohort: CohortControl},
 		"a live class": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "class:docs-links"}},
 			want: Pin{Name: "docs-pair", Refused: "class_profile_fixed"}, cohort: CohortControl},
+		// WF9: workflow: is profile:'s new name, read as the same pin.
+		"a maintainer's workflow label": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:docs-pair"}},
+			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
+		"a stranger's workflow label": {labels: []forge.LabelEvent{{Actor: "someone", Label: "workflow:docs-pair"}},
+			want: Pin{Name: "docs-pair", Refused: "not_maintainer"}, cohort: CohortControl},
+		"both spellings of one": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "workflow:docs-pair"}},
+			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
+		// Review focus 4: a profile: and a workflow: label that disagree conflict.
+		"profile and workflow labels conflict": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-floor"}, {Actor: "Smana", Label: "workflow:docs-pair"}},
+			want: Pin{Name: "docs-floor", Refused: "profile_conflict"}, cohort: CohortControl},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
@@ -458,6 +469,11 @@ func TestTriageResolvesThePin(t *testing.T) {
 			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
 			if err != nil || d.Pin != c.want || d.Pinned != c.want.Honoured() || d.Cohort != c.cohort {
 				t.Fatalf("%+v (%v), want pin %+v cohort %s", d, err, c.want, c.cohort)
+			}
+			// WF13: a pin read from a profile: label says once that the label is going.
+			profileLabel := slices.ContainsFunc(c.labels, func(e forge.LabelEvent) bool { return strings.HasPrefix(e.Label, "profile:") })
+			if got := slices.Contains(d.Notes, ProfileLabelNote); got != profileLabel {
+				t.Fatalf("notes %q, want the profile: note %v", d.Notes, profileLabel)
 			}
 		})
 	}
