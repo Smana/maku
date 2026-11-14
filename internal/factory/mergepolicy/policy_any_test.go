@@ -3,6 +3,7 @@
 package mergepolicy
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -23,5 +24,15 @@ func TestTheClassesShapeIsRefused(t *testing.T) {
 				t.Fatalf("got %v, want %q", err, want)
 			}
 		})
+	}
+}
+
+// The refusal names both ways out: export for a repository whose bindings are central, and a
+// rewrite by hand under repository authority, where export has no classes to write.
+func TestTheClassesRefusalNamesBothWaysOut(t *testing.T) {
+	for _, w := range []string{"maku policy export", "repository authority", "by hand"} {
+		if !strings.Contains(ErrClassesRemoved, w) {
+			t.Errorf("%q lacks %q", ErrClassesRemoved, w)
+		}
 	}
 }

@@ -74,7 +74,7 @@ removes the per-repository shape:
 | `MergePolicy.status.authority`, `classCount`, `classes`; the `REPO` column; `Repository.status.mergePolicy` | Gone. A repository's authority, classes and counts are on its `Repository` |
 | The `NoMergePolicy` and `DuplicatePolicy` reasons | Gone. A `Repository` without bindings is served with no class but `review`, or refused `Invalid` by the config's own rules |
 | `maku config migrate --manifests` | Gone: it converted per-repository manifests. `--from` still converts a config file's `repositories[]` |
-| A `.github/agent-factory.yaml` with `classes:` (and `conditions.any`) | Refused, `RepositoryFileValid` `False`: `the classes shape was removed in this release: write mergePolicies with maku policy export`. Under repository authority auto-merge pauses, as for any invalid file |
+| A `.github/agent-factory.yaml` with `classes:` (and `conditions.any`) | Refused, `RepositoryFileValid` `False`: `the classes shape was removed in this release: write mergePolicies with maku policy export; under repository authority, …rewrite each class by hand as a mergePolicies binding of a MergePolicy`. Under central authority `maku policy export` writes the file; under repository authority, rewrite it by hand, and until then auto-merge pauses, as for any invalid file |
 | The catalogue's `generations.mergePolicy` (MCP `classes_list`) | Gone; `generations.mergePolicies` has each bound class's policy generation |
 | The settings page's per-repository rows and its class-file editor | Gone. A bound repository edits its bindings; a policy is edited on its own page |
 

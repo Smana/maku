@@ -35,7 +35,8 @@ const (
 )
 
 // ErrClassesRemoved is why a file in the classes shape is refused (B8, B15, Q13).
-const ErrClassesRemoved = "the classes shape was removed in this release: write mergePolicies with maku policy export"
+const ErrClassesRemoved = "the classes shape was removed in this release: write mergePolicies with maku policy export; " +
+	"under repository authority, where export has no bindings to write, rewrite each class by hand as a mergePolicies binding of a MergePolicy"
 
 // Mode is a class's state: live merges, shadow records, off does neither.
 type Mode string

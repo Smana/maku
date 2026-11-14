@@ -272,7 +272,10 @@ Parsed strictly (`mergepolicy.Parse`): unknown keys, duplicate keys, a key in an
 | `mergePolicies` | list of [bindings](#a-binding) | absent: no policy | Each item binds a `MergePolicy` the factory serves, by name, at most once. Names: lowercase letters, digits, `-`, at most 40, starting and ending alphanumeric |
 
 A file with a `classes` key is refused whole: `mergepolicy: classes: the classes shape was removed in
-this release: write mergePolicies with maku policy export`.
+this release: write mergePolicies with maku policy export; under repository authority, where export
+has no bindings to write, rewrite each class by hand as a mergePolicies binding of a MergePolicy`.
+Under central authority, `maku policy export` writes the Repository's bindings. Under repository
+authority the Repository binds nothing, so define a `MergePolicy` per class and bind each in the file.
 
 Two rules every file that binds policies must meet:
 
