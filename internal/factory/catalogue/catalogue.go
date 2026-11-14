@@ -54,11 +54,12 @@ type Generations struct {
 	MergePolicies map[string]int64 `json:"mergePolicies,omitempty"`
 }
 
-// Evaluation is the factory's team evaluation: whether the scoper's recommendation is used, and the
-// control cohort's share.
+// Evaluation is the factory's team evaluation: whether the scoper's recommendation is used, the
+// control cohort's share, and the workflow the treatment cohort runs ("" for the floor, WF8).
 type Evaluation struct {
 	Mode           string `json:"mode"`
 	ControlPercent int    `json:"controlPercent"`
+	Treatment      string `json:"treatment,omitempty"`
 }
 
 // Class is one class a repository offers at intake.
@@ -123,7 +124,7 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 	c := Catalogue{
 		Repository:     rc.Name,
 		Generations:    generations(cfg, rc.Name, factory, repo),
-		Evaluation:     Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent},
+		Evaluation:     Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent, Treatment: cfg.Evaluation.Treatment},
 		ApproveToMerge: gateOn && rc.Merge.ApproveToMerge,
 		Maintainer:     maintainer,
 		Classes:        []Class{},

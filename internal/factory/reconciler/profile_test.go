@@ -325,3 +325,79 @@ func TestRunsReadTheFrozenProfile(t *testing.T) {
 		})
 	}
 }
+
+// treatmentCfg is profileCfg with a careful workflow review allows, named as evaluation.treatment
+// (WF8): a frontier tier and its own judged loop row, so its spec is told apart from the floor's.
+func treatmentCfg(percent int) *config.Config {
+	c := profileCfg(true)
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "pair", Tier: "frontier", Loop: "careful"}
+	c.Loops["careful"] = config.Loop{Scope: config.ScopeScoper, Judge: "tier-light", Search: true}
+	classes := c.Repositories[0].Classes
+	review := classes["review"]
+	review.HarnessAllowed = []string{"careful"}
+	classes["review"] = review
+	// a shadow class that names careful anyway: the arm still never runs it (Review Focus 3)
+	classes["docs-links"] = config.Class{Shadow: true, Harness: "review-floor", HarnessAllowed: []string{"careful"}}
+	classes["tests"] = config.Class{Harness: "review-floor"}
+	c.Evaluation.ControlPercent, c.Evaluation.Treatment = percent, "careful"
+	return c
+}
+
+func TestTreatmentArmRunsTheNamedWorkflow(t *testing.T) {
+	g := profileRig(t, treatmentCfg(0), issueTask("3buqdlot", 7, "fix it"), "")
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if p := tk.Status.Profile; p == nil || p.Name != "careful" || p.Source != "treatment" || p.Cohort != triage.CohortTreatment {
+		t.Fatalf("%+v", tk.Status.Profile)
+	}
+	if tk.Spec.Budget.Tier != "frontier" || tk.Spec.Loop == nil || tk.Spec.Loop.JudgeModel != "tier-light" ||
+		tk.Spec.ScopeMode != string(config.ScopeScoper) {
+		t.Fatalf("the careful workflow's spec was not applied: %+v", tk.Spec)
+	}
+}
+
+func TestControlArmRunsTheFloor(t *testing.T) {
+	g := profileRig(t, treatmentCfg(100), issueTask("3buqdlot", 7, "fix it"), "")
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if p := tk.Status.Profile; p == nil || p.Name != "review-floor" || p.Source != "control" || p.Cohort != triage.CohortControl {
+		t.Fatalf("%+v", tk.Status.Profile)
+	}
+	if tk.Spec.Budget.Tier != "standard" || tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 40 {
+		t.Fatalf("the control task runs the floor: %+v", tk.Spec)
+	}
+}
+
+// Review Focus 3: a treatment-cohort task that cannot run the treatment workflow runs its floor with
+// source floor, so the measurement's source=~"control|treatment" leaves it out.
+func TestTreatmentArmFallsBackAndIsLabelled(t *testing.T) {
+	schedule := issueTask("3buqdlot", 0, "fix it")
+	schedule.Spec.Source.Kind = "schedule"
+	for name, c := range map[string]struct {
+		task  *v1alpha1.Task
+		class string
+	}{
+		"a shadow class":          {issueTask("3buqdlot", 7, "fix it"), "docs-links"},
+		"a schedule":              {schedule, "review"},
+		"a class not allowing it": {issueTask("3buqdlot", 7, "fix it"), "tests"},
+		"an unset treatment":      {issueTask("3buqdlot", 7, "fix it"), "review"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			cf := treatmentCfg(0)
+			if name == "an unset treatment" {
+				cf.Evaluation.Treatment = ""
+			}
+			p := (&Reconciler{}).floorProfile(cf, c.task, triage.Decision{PredictedClass: c.class, Cohort: triage.CohortTreatment})
+			if p == nil || p.Name != "review-floor" || p.Source != "floor" || p.Cohort != triage.CohortTreatment {
+				t.Fatalf("got %+v, want its floor with source floor", p)
+			}
+		})
+	}
+}
+
+// A pinned task is labeled: the treatment never replaces the pin.
+func TestPinnedTaskIgnoresTreatment(t *testing.T) {
+	d := triage.Decision{PredictedClass: "review", Cohort: triage.CohortLabeled, Pinned: true, Pin: triage.Pin{Name: "review-floor"}}
+	p := (&Reconciler{}).floorProfile(treatmentCfg(0), issueTask("3buqdlot", 7, "fix it"), d)
+	if p == nil || p.Name != "review-floor" || p.Source != "label" || p.Cohort != triage.CohortLabeled {
+		t.Fatalf("got %+v", p)
+	}
+}

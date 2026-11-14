@@ -1187,6 +1187,8 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 	case "scoper", "escalation":
 	case "label":
 		body += " (pinned by a maintainer)"
+	case "treatment":
+		body += " (the team evaluation's treatment arm)"
 	default:
 		body += " (default)"
 	}

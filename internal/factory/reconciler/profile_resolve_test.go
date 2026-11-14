@@ -766,3 +766,23 @@ func TestASteppedSuccessReachesTheMergeGate(t *testing.T) {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 }
+
+// WF8: the treatment arm keeps its workflow when the scoper resolves, in apply mode too, so the arm
+// the measurement reads is the one triage drew.
+func TestTreatmentArmKeepsItsWorkflowAtResolution(t *testing.T) {
+	cf := treatmentCfg(0)
+	cf.Evaluation.Mode = config.EvaluationApply
+	cf.HarnessProfiles["review-search"] = config.HarnessProfile{Template: "pair", Description: "search first"}
+	review := cf.Repositories[0].Classes["review"]
+	review.HarnessAllowed = append(review.HarnessAllowed, "review-search")
+	cf.Repositories[0].Classes["review"] = review
+	g, tk := triagedRig(t, cf, "", "")
+	s := readyScope()
+	s.Profile, s.ProfileWhy = "review-search", "because"
+	if err := g.r.resolveProfile(t.Context(), cf, tk, &s); err != nil {
+		t.Fatal(err)
+	}
+	if p := tk.Status.Profile; !p.Resolved || p.Name != "careful" || p.Source != "treatment" || p.Recommended != "review-search" {
+		t.Fatalf("%+v", p)
+	}
+}
