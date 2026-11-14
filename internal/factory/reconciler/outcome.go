@@ -153,9 +153,17 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 		"phase", t.Status.Phase, "reason", t.Status.Reason, "tokens", t.Status.Usage.Tokens)
 }
 
-// counting: t has a profile its outcome and USD are owed to, and has not been counted yet.
+// counting: t's outcome and USD are not yet counted. A part of an approved split never counts:
+// its parent counts the family once (R32). A task without a profile counts on the status's own
+// mark, so the counters count every ended task (CP3).
 func counting(t *v1alpha1.Task) bool {
-	return t.Status.Profile != nil && !t.Status.Profile.Counted
+	if t.Spec.Parent != nil {
+		return false
+	}
+	if p := t.Status.Profile; p != nil {
+		return !p.Counted
+	}
+	return !t.Status.OutcomeCounted
 }
 
 // tally is what a terminal task's count says (R34): the outcome it first ended with and its USD;
@@ -193,17 +201,22 @@ func settledTask(t *v1alpha1.Task) bool {
 	return v1alpha1.TerminalPhase(t.Status.Phase) && (len(t.Status.Runs) == 0 || t.Status.UsageSettled)
 }
 
-// count records a tally once, by the task's profile. The mark rides the status write the metric
-// waits for: once, or neither.
+// count records a tally once, by the task's profile when it has one, else on the none labels
+// (CP3). The mark rides the status write the metric waits for: once, or neither.
 func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string, micro int64) {
 	if !counting(t) {
 		return
 	}
-	p := t.Status.Profile
-	p.Counted = true
-	class, rec, usd := t.Spec.PredictedClass, r.recommendedLabel(cfg, t), float64(micro)/1e6
+	cohort, profile, source, rec := "none", "none", "floor", "none"
+	if p := t.Status.Profile; p != nil {
+		p.Counted = true
+		cohort, profile, source, rec = p.Cohort, p.Name, p.Source, r.recommendedLabel(cfg, t)
+	} else {
+		t.Status.OutcomeCounted = true
+	}
+	class, usd := t.Spec.PredictedClass, float64(micro)/1e6
 	record(ctx, func(ctx context.Context) {
-		r.Metrics.TaskOutcome(ctx, class, p.Cohort, p.Name, p.Source, rec, outcome, usd)
+		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, outcome, usd)
 	})
 }
 

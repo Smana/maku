@@ -31,6 +31,22 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 | `JUDGE_API_KEY_FILE` | with `JUDGE_BASE_URL`, the judge's bearer is this file, read at each judge call: the run-controller's gateway token for the judge's alias (`model.mode: gateway`) | the judge uses `LLM_API_KEY_FILE`'s key |
 | `COORDINATION_MANIFEST`, `COORDINATION_MANIFEST_SHA256` | a triager runs the [coordination integration](#coordination-integration) on these exact bytes, and no conversation | today's run |
 | `AGENT_SEARCH` | `1`: an implementer gets the `search` tool and its rule, once `agent_search` imports (else `agent-run: search off: …` and a run as today); the ledger's tool calls join the step count the loop policy's stall rule reads, and `agent-run search: N calls, S steps, T tokens, outcomes …` closes the log | no search tool |
+| `LIGHT_BASE_URL`, `LIGHT_MODEL`, `LIGHT_API_KEY_FILE` | the light alias (maku-run-controller sets the three on an internal run, or an implementer with search): the condenser's summary and the `search` child call `$LIGHT_BASE_URL` as `openai/$LIGHT_MODEL` at effort `low`, on the key `LIGHT_API_KEY_FILE` names | the summary and the child stay on the run's own model |
+| `DATA_CLASS` | `internal`: the SDK's prompt-cache markers are rewritten for the gateway, and the condenser keeps 240 events (8 first) instead of 80 (4) | a public run, unchanged |
+
+## The clone, the cache and the condenser
+
+The clone is blobless — `git clone --no-tags --filter=blob:none` — so a run that reads little of
+the repository clones little of it; blobs arrive on checkout. A forge that refuses the filter gets
+a full clone after the partial directory is removed: the run still starts, and the
+`agent-run.clone` span's `filter` attribute says which (`blob:none` or `none`). The clone is never
+shallow (`--depth`): a shallow clone breaks `merge-base` on an old base.
+
+One `agent-run cache:` line prints per model response (`step`, `input`, `cache_read`,
+`cache_write`, `miss`) and one `agent-run condensation:` line per condensation (`step`, `forgotten`,
+`summary_model`). `miss` is `none`, `first`, `condensation`, `resume` or `unexpected`; only
+`unexpected` is a defect. A provider that reports no cache fields prints zeros — the line never
+fails the run.
 
 ## Loop policy
 

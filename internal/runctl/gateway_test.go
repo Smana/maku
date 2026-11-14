@@ -119,7 +119,8 @@ func TestInvalidGateway(t *testing.T) {
 		"internal kimi": {gatewayRun(func(r *v1alpha1.AgentRun) {
 			r.Spec.DataClass, r.Spec.Model, r.Spec.Loop.JudgeModel = "internal", "kimi-frontier", ""
 		}), "spec.model kimi-frontier is not served on the internal listener (maku-gateway aliases.internal)"},
-		"internal judge": {gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass = "internal" }), "spec.loop.judgeModel tier-light is not served on the internal listener"},
+		"internal judge": {gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass, r.Spec.Loop.JudgeModel = "internal", "kimi-frontier" }),
+			"spec.loop.judgeModel kimi-frontier is not served on the internal listener"},
 	} {
 		if got := c.Invalid(tc.r); (tc.want == "") != (got == "") || !strings.Contains(got, tc.want) {
 			t.Errorf("%s: Invalid = %q, want it to mention %q", name, got, tc.want)
@@ -196,5 +197,80 @@ func TestGatewayNetworkPolicies(t *testing.T) {
 		if got := Egress(r, kc, m); strings.Contains(strings.Join(got, ","), "model-gateway") {
 			t.Errorf("%s: the egress proxy's allow-list names the gateway: %v", class, got)
 		}
+	}
+}
+
+// CP12: an internal run gets the light alias; a public run without search, and any non-implementer
+// with search, get none.
+func TestAnInternalRunGetsTheLightAlias(t *testing.T) {
+	p := gatewayPod(t, gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass = "internal"; r.Spec.Loop.JudgeModel = "" }))
+	env := harnessEnv(p)
+	for k, v := range map[string]string{
+		"LIGHT_BASE_URL":     "http://model-gateway.maku.svc.cluster.local:8081/m/tier-light/v1",
+		"LIGHT_MODEL":        "tier-light",
+		"LIGHT_API_KEY_FILE": "/run/agent/model/light-token",
+	} {
+		if env[k] != v {
+			t.Errorf("%s = %q, want %q", k, env[k], v)
+		}
+	}
+	if s := tokenSources(p, "model-token")["light-token"]; s.Audience != "maku-gateway.internal.tier-light" {
+		t.Errorf("light-token audience %+v, want maku-gateway.internal.tier-light", s)
+	}
+}
+
+func TestAPublicRunWithoutSearchGetsNoLightAlias(t *testing.T) {
+	p := gatewayPod(t, gatewayRun())
+	env := harnessEnv(p)
+	for _, k := range []string{"LIGHT_BASE_URL", "LIGHT_MODEL", "LIGHT_API_KEY_FILE"} {
+		if _, ok := env[k]; ok {
+			t.Errorf("public run without search: %s is set", k)
+		}
+	}
+	if _, ok := tokenSources(p, "model-token")["light-token"]; ok {
+		t.Error("public run without search: a light-token source exists")
+	}
+}
+
+func TestASearchImplementerGetsTheLightAlias(t *testing.T) {
+	p := gatewayPod(t, gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.Loop.Search = true; r.Spec.Loop.JudgeModel = "" }))
+	if env := harnessEnv(p); env["LIGHT_MODEL"] != "tier-light" || env["LIGHT_API_KEY_FILE"] != "/run/agent/model/light-token" {
+		t.Errorf("search implementer: %+v", env)
+	}
+	if s := tokenSources(p, "model-token")["light-token"]; s.Audience != "maku-gateway.public.tier-light" {
+		t.Errorf("light-token audience %+v, want maku-gateway.public.tier-light", s)
+	}
+	// A reviewer with search still gets none: the tool is the implementer's only.
+	reviewer := gatewayPod(t, gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.Loop.Search = true; r.Spec.Role = "reviewer" }))
+	if _, ok := harnessEnv(reviewer)["LIGHT_MODEL"]; ok {
+		t.Error("a reviewer gets no light alias")
+	}
+}
+
+func TestAJudgeOnTheLightAliasSharesItsToken(t *testing.T) {
+	p := gatewayPod(t, gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass, r.Spec.Loop.JudgeModel = "internal", "tier-light" }))
+	if env := harnessEnv(p); env["LIGHT_API_KEY_FILE"] != "/run/agent/model/judge-token" {
+		t.Errorf("LIGHT_API_KEY_FILE = %q, want the judge's", env["LIGHT_API_KEY_FILE"])
+	}
+	srcs := tokenSources(p, "model-token")
+	if _, ok := srcs["light-token"]; ok {
+		t.Error("a judge on the light alias shares its token: no light-token source")
+	}
+	if s, ok := srcs["judge-token"]; !ok || s.Audience != "maku-gateway.internal.tier-light" {
+		t.Errorf("judge-token %+v", s)
+	}
+}
+
+func TestAJudgeElsewhereKeepsBothTokens(t *testing.T) {
+	p := gatewayPod(t, gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass, r.Spec.Loop.JudgeModel = "internal", "tier-standard" }))
+	if env := harnessEnv(p); env["LIGHT_API_KEY_FILE"] != "/run/agent/model/light-token" {
+		t.Errorf("LIGHT_API_KEY_FILE = %q, want the light token's", env["LIGHT_API_KEY_FILE"])
+	}
+	srcs := tokenSources(p, "model-token")
+	if s := srcs["judge-token"]; s.Audience != "maku-gateway.internal.tier-standard" {
+		t.Errorf("judge-token %+v", s)
+	}
+	if s := srcs["light-token"]; s.Audience != "maku-gateway.internal.tier-light" {
+		t.Errorf("light-token %+v", s)
 	}
 }

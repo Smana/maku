@@ -130,6 +130,7 @@ Two components export spans over OTLP. Each is off until you give it an endpoint
 |---|---|---|---|
 | The factory | One root span per task, from its acceptance to its end, exported when the task ends. It carries ids, the tier, the phase and a reason code, never issue text | `maku-factory.config.tracing.otlpEndpoint`, as `host:port` | OTLP/gRPC |
 | Each run's harness | The run's root span, `agent-run`, a child of its task's span. It carries no attributes, events or links: its ids and its timing only | `maku.runController.tracing.otlpEndpoint`, as an `http(s)://` base URL | OTLP/HTTP, to `<endpoint>/v1/traces` |
+| Each run's harness | Two children of the run span: `agent-run.boot` (the wait for agent-server's `/ready`, ended when it answers) and `agent-run.clone` (the repository clone, ended after the branch checkout). `agent-run.clone` carries `resumed` and `filter` (`blob:none`, or `none` after a full-clone fallback) | same endpoint | same |
 
 One trace therefore holds a task and every run it started. The factory stamps each AgentRun with
 its task's trace context, in the annotation `agents.ogenki.io/traceparent` (W3C Trace Context). The
@@ -137,6 +138,31 @@ run controller passes that value to the harness as `TRACEPARENT`. A missing or m
 does not stop the run: the harness then starts a trace of its own.
 
 The broker, the run controller and the Slack App emit no spans.
+
+### The first minute: the start row
+
+The run dashboard's "Start: pod, boot, clone" row answers where a run's first minute went. The
+Kubernetes half (the pod's first `Pending` reading to the harness starting) is PromQL over the run
+meter; `agent-run.boot` and `agent-run.clone` hold the rest. Their durations are trace-backed, so
+they render in cloud-native-ref's run dashboard: the portable chart stays PromQL-only.
+
+### The cache and condensation lines
+
+The harness prints one cache line per model response and one line per condensation, read from the
+SDK's per-response stats:
+
+```
+agent-run cache: step=41 input=182340 cache_read=176902 cache_write=5438 miss=none
+agent-run condensation: step=80 forgotten=76 summary_model=tier-light
+```
+
+`miss` is one of `none`, `first` (the first response), `condensation` (the first response after a
+condensation), `resume` (a resumed run's first response, a miss by design) and `unexpected`. Only
+`unexpected` is a defect: the cache should be warm from the second response on. A provider that
+reports no cache fields (Z.ai) prints zeros; the line never fails the run. The factory histogram
+`maku_factory_run_wait_seconds` (label `role`) records the wait from one run of a task ending to
+the next starting; the "Wait between runs over 5 minutes" panel and the two "Cost per merged pull
+request" panels in the factory dashboard read these series.
 
 ### What spans contain
 

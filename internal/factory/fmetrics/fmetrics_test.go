@@ -622,3 +622,40 @@ func TestTaskOutcomeAndInterventionByCohort(t *testing.T) {
 		}
 	}
 }
+
+// CP1: the wait between two runs of a task, by the next run's role.
+func TestRunWaitIsLabelledByTheNextRunsRole(t *testing.T) {
+	s, read := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return true })
+	s.RunWait(t.Context(), "reviewer", 7*time.Minute)
+	s.RunWait(t.Context(), "not-a-role", time.Minute)
+	got := read()
+	for _, want := range []string{
+		`maku_factory_run_wait_seconds_bucket{role="reviewer",le="600"} 1`,
+		`maku_factory_run_wait_seconds_bucket{role="reviewer",le="14400"} 1`,
+		`maku_factory_run_wait_seconds_count{role="reviewer"} 1`,
+		`maku_factory_run_wait_seconds_sum{role="reviewer"} 420`,
+		`maku_factory_run_wait_seconds_count{role="other"} 1`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Fatalf("missing %s\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, `maku_factory_run_wait_seconds_bucket{role="reviewer",le="300"} 1`) {
+		t.Fatalf("7 minutes does not fit the 5-minute bucket\n%s", got)
+	}
+}
+
+// CP3: the counters count a task without a profile, on the none labels; a recommended of "" is none.
+func TestTaskOutcomeCountsTheNoneProfile(t *testing.T) {
+	s, read := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return true })
+	s.TaskOutcome(t.Context(), "docs", "none", "none", "floor", "", "accepted", 1.65)
+	got := read()
+	for _, want := range []string{
+		`maku_factory_task_outcomes_total{class="docs",cohort="none",outcome="accepted",profile="none",recommended="none",repository="other",source="floor"} 1`,
+		`maku_factory_task_usd_total{class="docs",cohort="none",outcome="accepted",profile="none",recommended="none",source="floor"} 1.65`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Fatalf("missing %s\n%s", want, got)
+		}
+	}
+}

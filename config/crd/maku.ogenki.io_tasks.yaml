@@ -2036,6 +2036,11 @@ spec:
                 - reverted
                 - failed
                 type: string
+              outcomeCounted:
+                description: |-
+                  The once-mark of a task with no profile, set on the same write that counts its outcome:
+                  the counter counts every ended task, profile or none (cache-costs review CP3).
+                type: boolean
               overlap:
                 description: The bounded outcome-overlap evaluation, persisted before
                   implementation starts.

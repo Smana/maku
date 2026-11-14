@@ -181,6 +181,24 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		raw, _ := json.Marshal(policy) // a map of numbers and strings
 		env = append(env, corev1.EnvVar{Name: "AGENT_LOOP", Value: string(raw)})
 	}
+	// CP12: the light alias on a run that can use it. Gateway mode points it at the listener and a
+	// projected token (the judge's own when the judge already runs on the light alias); the portable
+	// chart's secret mode falls back to the pod's model, with no key file — the harness reuses
+	// LLM_API_KEY_FILE. Tasks 8 and 9 read the three variables.
+	if lightOn(r) {
+		base, light := m.LightBaseURL, m.Light
+		if !c.Gateway() {
+			base, light = m.BaseURL, cmp.Or(m.Judge, m.Name)
+		}
+		env = append(env, corev1.EnvVar{Name: "LIGHT_BASE_URL", Value: base}, corev1.EnvVar{Name: "LIGHT_MODEL", Value: light})
+		if c.Gateway() {
+			key := modelDir + "/light-token"
+			if r.Spec.Loop.JudgeModel == m.Light {
+				key = modelDir + "/judge-token"
+			}
+			env = append(env, corev1.EnvVar{Name: "LIGHT_API_KEY_FILE", Value: key})
+		}
+	}
 	env = append(env, tracingEnv(r, c)...)
 	harness := corev1.Container{
 		Name: "harness", Image: c.Images.Harness, Env: env,
@@ -319,8 +337,10 @@ func modelVolume(c Config) string {
 }
 
 // modelVolumeSource is the model Secret's api_key, or in gateway mode a projected volume of the run's
-// ServiceAccount tokens (GW3): token, audience <prefix>.<class>.<spec.model>, and with a judge
-// judge-token, audience <prefix>.<class>.<judgeModel>, each living the deadline plus gatewayTokenSlack.
+// ServiceAccount tokens (GW3): token, audience <prefix>.<class>.<spec.model>, with a judge
+// judge-token, audience <prefix>.<class>.<judgeModel>, and with a run that can use it a light-token,
+// audience <prefix>.<class>.<lightAlias> (CP12) — the judge's token doubles for the light alias when
+// the judge runs on it. Each lives the deadline plus gatewayTokenSlack.
 func modelVolumeSource(r *v1alpha1.AgentRun, c Config, deadline int64, mode *int32) corev1.Volume {
 	if !c.Gateway() {
 		return corev1.Volume{Name: "model", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{SecretName: c.ModelSecret, DefaultMode: mode,
@@ -333,6 +353,9 @@ func modelVolumeSource(r *v1alpha1.AgentRun, c Config, deadline int64, mode *int
 	srcs := []corev1.VolumeProjection{token(alias(r), "token")}
 	if j := r.Spec.Loop.JudgeModel; j != "" {
 		srcs = append(srcs, token(j, "judge-token"))
+	}
+	if light := c.Model.Gateway.LightAlias; lightOn(r) && r.Spec.Loop.JudgeModel != light {
+		srcs = append(srcs, token(light, "light-token"))
 	}
 	return corev1.Volume{Name: "model-token", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{DefaultMode: mode, Sources: srcs}}}
 }
