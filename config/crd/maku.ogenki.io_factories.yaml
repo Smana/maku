@@ -193,6 +193,9 @@ spec:
                     - observe
                     - apply
                     type: string
+                  treatment:
+                    maxLength: 253
+                    type: string
                 type: object
               facts:
                 description: |-

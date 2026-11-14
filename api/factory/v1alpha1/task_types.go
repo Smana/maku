@@ -407,7 +407,7 @@ type Budget struct {
 type ProfileStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=label;floor;control;scoper;escalation
+	// +kubebuilder:validation:Enum=label;floor;control;treatment;scoper;escalation
 	Source string `json:"source"`
 	// +kubebuilder:validation:Enum=labeled;control;treatment
 	Cohort string `json:"cohort"`
