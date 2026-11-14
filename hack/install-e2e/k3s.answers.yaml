@@ -8,7 +8,7 @@ maintainers: [dev]
 apps.create: false
 apps.factorySlug: maku-demo
 apps.factoryID: "1"
-apps.agentsSlug: maku-demo-agents
+apps.agentsSlug: maku-e2e-agents
 web.url: https://rooms.e2e.test
 identity.issuer: https://e2e-stub.e2e.svc.cluster.local
 identity.webClientID: rooms-web
