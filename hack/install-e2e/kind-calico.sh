@@ -137,15 +137,31 @@ team_b() {
   mkdir -p "$b"
   yq '.namespace = "team-b" | ."web.url" = "https://team-b.e2e.test"' "hack/install-e2e/$LEG.answers.yaml" >"$b/answers.yaml"
   sed -n '/^images.pins:/,$p' "$work/answers.yaml" >>"$b/answers.yaml"
+  local first_ns=$NS
   OUT="$b/out" NS=team-b PG_NS=external-db-b
   "$MAKU" install --print --out "$OUT" --answers "$b/answers.yaml" >/dev/null
   k create namespace team-b >/dev/null
+  # The stub's own policy admits the first release's namespace alone: team-b's components reach it too.
+  k -n e2e apply -f - >/dev/null <<YAML
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: {name: e2e-stub-team-b}
+spec:
+  podSelector:
+    matchLabels: {app.kubernetes.io/name: e2e-stub}
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: team-b}}}]
+      ports: [{protocol: TCP, port: https}, {protocol: TCP, port: http}]
+YAML
   postgres
   secrets
   mapfile -t args < <(umbrella_args)
+  # The model gateway's proxies dial the first release's agentgateway controller.
   h install "$RELEASE" charts/agent-factory -n team-b "${args[@]}" \
     --set maku.runs.namespace=runs-team-b --set maku-gateway.runs.namespace=runs-team-b \
     --set maku-factory.config.runs.namespace=runs-team-b --set agentgateway.enabled=false \
+    --set "maku-gateway.networkPolicy.controller.namespace=$first_ns" \
     --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}" --timeout 5m >/dev/null
   k apply -n team-b -f "$OUT/factory/" >/dev/null
   ready
