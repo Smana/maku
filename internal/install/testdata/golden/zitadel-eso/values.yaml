@@ -217,6 +217,8 @@ maku-factory:
       group: maku.ogenki.io
       namePrefix: run-
       namespace: agents
+    tracing:
+      otlpEndpoint: agent-traces-collector.observability.svc.cluster.local:4317
   enabled: true
   image:
     tag: v0.48.0@sha256:5555555555555555555555555555555555555555555555555555555555555555
@@ -268,6 +270,10 @@ networkPolicies:
   factory:
     enabled: true
     meter:
+      to:
+      - matchLabels:
+          io.kubernetes.pod.namespace: observability
+    otlp:
       to:
       - matchLabels:
           io.kubernetes.pod.namespace: observability

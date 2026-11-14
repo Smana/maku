@@ -609,6 +609,18 @@ func questionTable() []Question {
 			}},
 
 		{ID: "tracing.factoryEndpoint", Prompt: "The factory's OTLP/gRPC collector, host:port (empty: none)", Kind: KindString, Default: fixed(""),
+			Keys: []string{"maku-factory.config.tracing.otlpEndpoint", "networkPolicies.factory.otlp.to"},
+			Values: func(v any, a Answers) map[string]any {
+				if str(v) == "" {
+					return nil
+				}
+				m := map[string]any{"maku-factory.config.tracing.otlpEndpoint": str(v)}
+				// An in-cluster collector is opened to its namespace's pods in the factory's default-deny.
+				if parts := strings.Split(strings.Split(str(v), ":")[0], "."); len(parts) >= 3 && parts[2] == "svc" {
+					m["networkPolicies.factory.otlp.to"] = peers(defaultStr(a, "network.mode", "kubernetes"), parts[1])
+				}
+				return m
+			},
 			Check: func(v any, _ Answers) (string, error) {
 				if str(v) != "" && !regexp.MustCompile(`^[a-z0-9.-]+:[0-9]{1,5}$`).MatchString(str(v)) {
 					return "", fmt.Errorf("%q is not host:port", str(v))

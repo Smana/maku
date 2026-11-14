@@ -48,3 +48,4 @@ identity.projectID: "300000000000000000"
 models.prices:
   - glm-5.3=1.40/0.26/4.40
   - glm-5.3-flash=0.15/0.03/0.50
+tracing.factoryEndpoint: agent-traces-collector.observability.svc.cluster.local:4317

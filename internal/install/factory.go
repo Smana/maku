@@ -99,9 +99,6 @@ func factoryConfig(in Inputs) map[string]any {
 		"caps":         map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
 		"repositories": repos,
 	}
-	if ep := a.String("tracing.factoryEndpoint"); ep != "" {
-		cfg["tracing"] = map[string]any{"otlpEndpoint": ep}
-	}
 	return cfg
 }
 
