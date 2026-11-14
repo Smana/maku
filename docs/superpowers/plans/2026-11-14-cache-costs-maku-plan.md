@@ -1,6 +1,6 @@
 # Caching, performance and costs: Maku Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Measure where a run's first minute and its dollars go, take the gains that cannot change a pull request (blobless clone, tuned condenser, search and summary on the light alias), then make effort and model per role trialable.
 
@@ -45,7 +45,7 @@
 - Consumes: `child_spans(provider, parent)` and `_end(span, error)`, as `prefetch` uses them.
 - Produces: `BOOT_SPAN = "agent-run.boot"`, `CLONE_SPAN = "agent-run.clone"`; `clone(env: dict, start_span=None) -> bool`. Task 7 sets the span's `filter` attribute.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_the_clone_span_carries_resumed_and_filter(self):
@@ -70,21 +70,21 @@ def test_the_boot_span_ends_when_ready_answers(self):
 
 `FakeSpans` records `(name, attributes, error)` on `end()`; `fake_git` patches `subprocess.run`. Reuse the file's existing fakes where they exist.
 
-- [ ] **Step 2: Run them and see them fail**
+- [x] **Step 2: Run them and see them fail**
 
 Run: `docker build --target test images/maku-harness`
 Expected: FAIL, `clone() got an unexpected keyword argument 'start_span'` and `module has no attribute 'boot'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `clone(env, start_span=None)` opens `CLONE_SPAN` before `git clone` and ends it after the checkout, with `resumed` and `filter` (`"none"` until Task 6). `boot(start_span, wait=wait_ready)` wraps the wait for `/ready`; `main` calls it right after starting `SERVER_CMD`. Both go through `_end`, so tracing off (`start_span is None`) is a no-op.
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Run: `docker build --target test images/maku-harness`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add images/maku-harness/agent_run.py images/maku-harness/tests/test_agent_run.py
@@ -100,7 +100,7 @@ git commit -m "feat(harness): boot and clone spans under agent-run"
 **Interfaces:**
 - Produces: `cache_line(step: int, usage: dict, miss: str) -> str`, `miss_kind(step: int, cache_read: int, after_condensation: bool, resumed: bool) -> str`, `condensation_line(step: int, forgotten: int, summary_model: str) -> str`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_the_cache_line(self):
@@ -129,20 +129,20 @@ def test_a_usage_the_log_cannot_read_never_fails_the_run(self):
     log.describe({"kind": "MessageEvent", "llm_response": {"usage": "garbage"}})  # no raise
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Run: `docker build --target test images/maku-harness`
 Expected: FAIL, `module 'agent_run' has no attribute 'cache_line'`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 The three functions are pure. `describe` calls them when an event carries a model response's usage, and on a condensation event. How usage is read (the event's own usage, or a delta of the conversation's stats) is the implementer's choice; pick the one the SDK at 1.56.0 exposes per response and name it in the PR. `summary_model` is `LIGHT_MODEL` when set, else the run's `MODEL`.
 
-- [ ] **Step 4: Run the suite**
+- [x] **Step 4: Run the suite**
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(harness): a cache line per response and a line per condensation (C1)"
@@ -158,7 +158,7 @@ git commit -am "feat(harness): a cache line per response and a line per condensa
 **Interfaces:**
 - Produces: histogram `agent_factory_run_wait_seconds`, label `role` (bounded by `costRoles()`), buckets `30, 60, 120, 300, 600, 1800, 3600, 14400`; `func (s *Set) RunWait(ctx context.Context, role string, d time.Duration)`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestRunWaitIsLabelledByTheNextRunsRole(t *testing.T) {
@@ -174,21 +174,21 @@ func TestASecondRunRecordsTheWaitSinceTheFirstEnded(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Run: `go test ./internal/factory/fmetrics/ ./internal/factory/reconciler/ -run 'RunWait|SecondRun' -count=1`
 Expected: FAIL, `s.RunWait undefined`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 At each launch site, when the task already has a finished run, call `RunWait` with the new run's role and `now - latest Finished`. A run launched while another is unfinished records nothing.
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 Run: `task test`
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(factory): agent_factory_run_wait_seconds, the wait between two runs of a task"
@@ -203,7 +203,7 @@ git commit -am "feat(factory): agent_factory_run_wait_seconds, the wait between 
 **Interfaces:**
 - Produces: `Task.Status.OutcomeCounted bool` (`json:"outcomeCounted,omitempty"`), the once-mark of a task with no profile. A profile-less task is counted with `profile="none"`, `cohort="none"`, `source="floor"`, `recommended="none"`. `TaskOutcome`'s signature is unchanged.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestATaskWithoutAProfileIsCountedOnce(t *testing.T) {
@@ -223,21 +223,21 @@ func TestTaskOutcomeAcceptsTheNoneCohort(t *testing.T) {
 }
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Run: `go test ./internal/factory/reconciler/ ./internal/factory/fmetrics/ -run 'WithoutAProfile|NoneCohort|ApprovedSplit' -count=1`
 Expected: FAIL (no count; cohort folded to `other`).
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `counting` admits a profile-less ended task that is not yet `OutcomeCounted`; `count` sets the mark on the same status write. `TaskOutcome` admits `none` in its cohort set. Both descriptions drop "with a profile".
 
-- [ ] **Step 4: Regenerate and run**
+- [x] **Step 4: Regenerate and run**
 
 Run: `task crd:gen && task check`
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(factory): the task outcome counters count every ended task"
@@ -252,7 +252,7 @@ git commit -am "feat(factory): the task outcome counters count every ended task"
 **Interfaces:**
 - Consumes: Task 3's and Task 4's series; the spans of Task 1 (through the trace link the run dashboard already has).
 
-- [ ] **Step 1: Write the failing assertions** in `tests/render.sh`, after the existing dashboard checks
+- [x] **Step 1: Write the failing assertions** in `tests/render.sh`, after the existing dashboard checks
 
 ```bash
 has_panel agent-factory "Cost per merged pull request, by workflow" \
@@ -266,21 +266,21 @@ has_panel agent-run "Start: pod, boot, clone" ''
 
 `has_panel <dashboard> <title> <expr>` reads `files/dashboards/<dashboard>.json` with `jq`, fails when no panel has the title, and when `<expr>` is not empty fails unless one of that panel's targets is exactly it. Add the helper beside `dashboards()`.
 
-- [ ] **Step 2: Run and see it fail**
+- [x] **Step 2: Run and see it fail**
 
 Run: `task chart:check`
 Expected: FAIL, `no panel "Cost per merged pull request, by workflow"`.
 
-- [ ] **Step 3: Add the panels**
+- [x] **Step 3: Add the panels**
 
 The three expressions are exactly those above. The start row shows pod created → Ready (the Kubernetes reading the dashboard already queries) beside the durations of `agent-run.boot` and `agent-run.clone`. Each panel's description states its denominator: merged pull requests, failed tasks' spend included.
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 Run: `task chart:check`
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(chart): cost per merged pull request, the wait between runs and the start row"
@@ -306,7 +306,7 @@ git commit -am "feat(chart): cost per merged pull request, the wait between runs
 | gateway, no judge or a judge elsewhere | same | same | `<modelDir>/light-token`, projected with audience `<prefix>.<class>.<light>` |
 | secret (portable) | the pod's `BaseURL` | the Secret's `judge_model`, else the run's model | unset: the harness falls back to `LLM_API_KEY_FILE` |
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestAnInternalRunGetsTheLightAlias(t *testing.T) {
@@ -337,25 +337,25 @@ func TestSecretModeLightFallsBackToThePodsModel(t *testing.T) { /* LIGHT_BASE_UR
 
 Use the real `modelDir` constant and the fixture's gateway host in `want`.
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Run: `go test ./internal/runctl/ -run 'Light' -count=1`
 Expected: FAIL, undefined `lightOn`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `model()` validates the alias with `aliasRE` and requires it in every non-empty alias list. `GatewayModel` fills `Light` and `LightBaseURL` when `lightOn(r)`. `Pod` appends the env by the table. `modelVolumeSource` adds the `light-token` projection only in the second row of the table. The secret-mode branch mirrors the judge's.
 
-- [ ] **Step 4: Update the golden files and the chart**
+- [x] **Step 4: Update the golden files and the chart**
 
 Run: `go test ./internal/runctl/ -run 'Golden' -update` (`render_test.go`'s flag), then add `lightAlias` to the chart's values, schema and config template, an assertion in `charts/maku/tests/render.sh` that the rendered config carries `lightAlias: tier-light`, and run `task install:schemas`.
 
-- [ ] **Step 5: Run**
+- [x] **Step 5: Run**
 
 Run: `task check`
 Expected: exit 0. Review the golden diff: only internal or search-on runs change.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git commit -am "feat(runctl): every run that can use it gets the light alias, on the judge's audience"
@@ -370,7 +370,7 @@ git commit -am "feat(runctl): every run that can use it gets the light alias, on
 **Interfaces:**
 - Consumes: Task 1's `clone(env, start_span=None)` and its `filter` attribute.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_the_clone_is_blobless(self):
@@ -391,20 +391,20 @@ def test_a_clone_that_fails_twice_fails_the_run(self):
         agent_run.clone(ENV)
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Expected: FAIL, the first call has no `--filter`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 Try the filtered clone; on a non-zero exit remove the partial `REPO_DIR` and clone in full. The span's `filter` is `blob:none` or `none`. No `--depth`: a shallow clone breaks `merge-base` on an old base.
 
-- [ ] **Step 4: Run the suite, then the gVisor check**
+- [x] **Step 4: Run the suite, then the gVisor check**
 
 Run: `docker build --target test images/maku-harness`, then let CI's `harness-checks` job run on the pull request.
 Expected: PASS; `harness-checks` proves the declared checks still run on a blobless clone behind the egress proxy.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(harness): blobless clone, with a full clone when the forge refuses the filter"
@@ -420,7 +420,7 @@ git commit -am "feat(harness): blobless clone, with a full clone when the forge 
 - Consumes: `LIGHT_BASE_URL`, `LIGHT_MODEL`, `LIGHT_API_KEY_FILE` (Task 6).
 - Produces: `CONDENSER_MAX_SIZE = 240`, `CONDENSER_KEEP_FIRST = 8`, `CONDENSER_EFFORT = "low"`; `light_llm(env: dict, usage_id: str, effort: str)` returning an SDK `LLM` or `None` when `LIGHT_BASE_URL` is unset. Task 9 does not import it (the search module builds its own).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_a_public_request_is_todays(self):
@@ -442,19 +442,19 @@ def test_the_light_key_is_redacted(self):
     self.assertNotIn(LIGHT_KEY, agent_run.redact("x " + LIGHT_KEY))
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Expected: FAIL, `max_size` is 80.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 For `DATA_CLASS == "internal"` only, replace the default agent's condenser fields. If the SDK's validator at 1.56.0 refuses 240 or 8, lower each to its bound, change the two constants and say so in the pull request; the tests read the constants. The summary LLM keeps `num_retries=0` and the run's prices are not applied to it (the meter prices by served model).
 
-- [ ] **Step 4: Run, write the new golden file, run again**
+- [x] **Step 4: Run, write the new golden file, run again**
 
 Expected: PASS; `start-request.json` has no diff.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(harness): internal runs condense later, and summarise on the light alias (C4)"
@@ -469,7 +469,7 @@ git commit -am "feat(harness): internal runs condense later, and summarise on th
 **Interfaces:**
 - Consumes: the three `LIGHT_*` variables. Signature becomes `child_agent(parent_llm, env=os.environ) -> Agent`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```python
 def test_the_child_runs_at_low_effort_on_the_light_alias(self):
@@ -487,19 +487,19 @@ def test_the_child_reads_the_light_token_not_the_parents(self):
     self.assertEqual(llm.api_key.get_secret_value(), "light")
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Expected: FAIL, the model is the parent's.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 `model_copy` additionally updates `model`, `base_url` and `api_key` when `LIGHT_BASE_URL` is set. The ledger row's `model` field, if it has one, records the model the child used.
 
-- [ ] **Step 4: Run**
+- [x] **Step 4: Run**
 
 Expected: PASS, `test_search_agent_server.py` included.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(harness): the search child runs on the light alias"
@@ -511,7 +511,7 @@ git commit -am "feat(harness): the search child runs on the light alias"
 - Modify: `docs/install.md` (section "Sandbox nodes", :181), `docs/observability.md`, `docs/gateway.md`, `images/maku-harness/README.md`
 - Test: `task docs`
 
-- [ ] **Step 1: Write the four changes**
+- [x] **Step 1: Write the four changes**
 
 | Page | Change |
 |---|---|
@@ -520,12 +520,12 @@ git commit -am "feat(harness): the search child runs on the light alias"
 | `docs/gateway.md` | `lightAlias`: which runs hold a light-alias token and why. |
 | `images/maku-harness/README.md` | `LIGHT_*`, the blobless clone and its fall back, the internal condenser. |
 
-- [ ] **Step 2: Run**
+- [x] **Step 2: Run**
 
 Run: `task docs`
 Expected: exit 0.
 
-- [ ] **Step 3: Commit, then cut release N**
+- [x] **Step 3: Commit, then cut release N**
 
 ```bash
 git commit -am "docs: the start row, the cache lines, the light alias and warm nodes"
