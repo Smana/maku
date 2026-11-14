@@ -297,3 +297,37 @@ func TestRepositoryPrivateCodeAdmission(t *testing.T) {
 		})
 	}
 }
+
+// ai-native-ref's live objects (testdata/anr-live-objects.yaml, copied from its main) pass this
+// CRD's admission strictly: the binding-shape Repositories with partial merge blocks over the
+// Factory's mergeDefaults, durations as written, and the twelve class policies. Strict field
+// validation means nothing the live objects say is pruned.
+func TestTheLiveANRObjectsAreAdmitted(t *testing.T) {
+	a := startAdmission(t)
+	a.ns = "agent-system"
+	ns := &unstructured.Unstructured{}
+	ns.SetAPIVersion("v1")
+	ns.SetKind("Namespace")
+	ns.SetName(a.ns)
+	if err := a.c.Create(t.Context(), ns); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile("testdata/anr-live-objects.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, doc := range strings.Split(string(raw), "\n---\n") {
+		u := a.object(t, doc)
+		if u.GetKind() == "" {
+			continue
+		}
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err != nil {
+			t.Errorf("%s %s refused: %v", u.GetKind(), u.GetName(), err)
+		}
+		kinds[u.GetKind()]++
+	}
+	if kinds["Factory"] != 1 || kinds["Repository"] != 4 || kinds["MergePolicy"] != 12 {
+		t.Fatalf("objects %v, want 1 Factory, 4 Repositories, 12 MergePolicies", kinds)
+	}
+}
