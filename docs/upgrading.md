@@ -4,6 +4,30 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Workflows: old names warn (v0.5x, workflows release N)
+
+This release is additive: every config and manifest the previous one accepts still loads. What the
+next minor refuses loads with a warning in the factory's log (`config warning`, ending
+`refused from the next minor (WF13)`), and the `Factory`'s `Deprecated` condition lists its path.
+
+| Setting or label | Why it goes | What to write instead |
+|---|---|---|
+| `templates.trio` | the same roles as `pair` since the tester left it | name `pair` |
+| `triage.classifierURL` (the values file) | the task classifier was never deployed; the scoper replaced it | remove the key |
+| `defaults.template`, `defaults.tier` | a workflow names its template and its tier | remove the keys |
+| `harnessProfiles` | renamed | `workflows`, the same map |
+| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row is named by the workflow whose loop it is | rename the row after a workflow and set that workflow's `loop` |
+| `human.intake.plan.classes` (the broker) | the factory's catalog names the workflows | set `factoryURL` and remove the table |
+| the `profile:<name>` label | renamed | `workflow:<name>`; a task pinned through `profile:` is told once on its issue |
+
+Two synonyms are read from this release: `workflows` is `harnessProfiles` (a `Factory` or a file
+that sets both is refused: `workflows and harnessProfiles: set one`), and a `workflow:<name>` label
+is the same pin as `profile:<name>` (a `profile:` and a `workflow:` label naming different workflows
+conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned plan `workflow:<name>`.
+
+A broker whose planner is on no longer needs `human.intake.plan.classes` when it sets `factoryURL`:
+the plan's classes come from the factory's catalog.
+
 ## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file

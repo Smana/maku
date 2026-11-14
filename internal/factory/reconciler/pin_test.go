@@ -166,3 +166,18 @@ func TestPinRefusalWaitsForATarget(t *testing.T) {
 		t.Fatalf("%+v %+v", got.Status.Profile, got.Status.Outbox)
 	}
 }
+
+// WF9, WF13: a workflow: label pins as a profile: label does; a pin read from a profile: label
+// says once that the label is going, and a workflow: one says nothing.
+func TestWorkflowLabelPinsAndProfileLabelIsNarrated(t *testing.T) {
+	for label, narrated := range map[string]bool{"workflow:review-search": false, "profile:review-search": true} {
+		g := pinRig(t, resolveCfg("observe", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", label)
+		tk := g.reconcile(t, "3buqdlot", 1)
+		if p := tk.Status.Profile; p == nil || p.Name != "review-search" || p.Source != "label" {
+			t.Fatalf("%s: %+v", label, p)
+		}
+		if got := contains(g.f.Comments(7), "Agent factory: "+triage.ProfileLabelNote); got != narrated {
+			t.Fatalf("%s: narrated %v, comments %q", label, got, g.f.Comments(7))
+		}
+	}
+}

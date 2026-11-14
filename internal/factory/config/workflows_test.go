@@ -109,3 +109,66 @@ func TestTrioIsOptional(t *testing.T) {
 		t.Fatal("trio is shipped")
 	}
 }
+
+// warnsOf reports whether warnings name path as refused from the next minor (WF13).
+func warnsOf(warnings []string, path string) bool {
+	return slices.ContainsFunc(warnings, func(w string) bool {
+		return strings.HasPrefix(w, path+":") && strings.Contains(w, "refused from the next minor (WF13)")
+	})
+}
+
+// clean is noTemplates without the dead settings: defaults without template and tier, triage
+// without classifierURL.
+var clean = strings.NewReplacer(
+	"defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}", "defaults: {dataClass: public, predictedClass: review}",
+	`triage: {classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", controlPercent: 10}`, "triage: {controlPercent: 10}",
+).Replace(noTemplates)
+
+// WF9, WF13: each setting release N+1 refuses loads with a warning naming it, and the Factory's
+// Deprecated condition lists it.
+func TestDeadSettingsWarn(t *testing.T) {
+	c := mustParse(t, good+`harnessProfiles: {mine: {template: pair}}
+loops: {docs: {scope: scoper}}
+`)
+	paths := []string{"templates.trio", "triage.classifierURL", "defaults.template", "defaults.tier", "harnessProfiles", "loops.docs"}
+	for _, want := range paths {
+		if !warnsOf(c.Warnings, want) {
+			t.Errorf("no warning for %s: %q", want, c.Warnings)
+		}
+		if !slices.Contains(FactoryDeprecations(c), want) {
+			t.Errorf("%s not in the Deprecated condition: %q", want, FactoryDeprecations(c))
+		}
+	}
+}
+
+// A file without the dead settings, its profiles under workflows, warns of none of them: the
+// shipped workflows and a row named by a workflow or default are not dead.
+func TestNoDeadSettingNoWarning(t *testing.T) {
+	if clean == noTemplates {
+		t.Fatal("the edit did not apply")
+	}
+	c := mustParse(t, clean+`workflows: {mine: {template: pair, loop: mine}}
+loops: {default: {scope: "off"}, mine: {scope: scoper}, careful: {scope: scoper}}
+`)
+	if _, ok := c.HarnessProfiles["mine"]; !ok {
+		t.Fatal("workflows is not read as harnessProfiles")
+	}
+	for _, w := range c.Warnings {
+		if strings.Contains(w, "(WF13)") {
+			t.Errorf("warned: %s", w)
+		}
+	}
+	if got := FactoryDeprecations(c); len(got) != 0 {
+		t.Errorf("deprecated: %q", got)
+	}
+}
+
+// WF9: workflows and harnessProfiles are one map under two names; both at once is refused.
+func TestWorkflowsAndHarnessProfilesTogetherRefused(t *testing.T) {
+	_, err := Parse([]byte(clean + `workflows: {a: {template: pair}}
+harnessProfiles: {b: {template: pair}}
+`))
+	if err == nil || !strings.Contains(err.Error(), "workflows and harnessProfiles: set one") {
+		t.Fatalf("got %v", err)
+	}
+}

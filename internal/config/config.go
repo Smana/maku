@@ -271,9 +271,6 @@ func (i IntakeConfig) validate() []error {
 		if len(p.Repositories) == 0 {
 			errs = append(errs, errors.New("human.intake.plan.repositories: is required when the planner is enabled: the allowlist is every repository a plan may name (CD5)"))
 		}
-		if len(p.Classes) == 0 {
-			errs = append(errs, errors.New("human.intake.plan.classes: is required when the planner is enabled: a plan's roles and ceiling come from its class (CD17)"))
-		}
 	}
 	if p.URL != "" {
 		if u, err := url.Parse(p.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
@@ -884,6 +881,9 @@ type Config struct {
 	// RoomTools is the agents' :8090 listener (I8). Absent, it starts; explicit false is the opt-out.
 	RoomTools  *RoomToolsConfig `json:"roomTools,omitempty"`
 	FactoryURL string           `json:"factoryURL,omitempty"`
+	// Warnings are sentences about a file that loads and that the next minor refuses (WF13), for
+	// the binary to log: Load has no logger.
+	Warnings []string `json:"-"`
 	// FactoryCAFile is the PEM CA that signs the factory's api certificate, read on every run
 	// request so a rotation needs no restart (S-1). Empty: the system roots.
 	FactoryCAFile string `json:"factoryCAFile,omitempty"`
@@ -1050,6 +1050,9 @@ func Load(path string) (Config, error) {
 	if err := c.Validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
 	}
+	if len(c.Human.Intake.Plan.Classes) > 0 {
+		c.Warnings = append(c.Warnings, "human.intake.plan.classes: the factory's catalog names the workflows (factoryURL): remove the table; refused from the next minor (WF13)")
+	}
 	return c, nil
 }
 
@@ -1158,6 +1161,11 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Human.validate(slices.Collect(maps.Values(c.SystemPrincipals)))...)
+	// A plan's roles and ceiling come from its class (CD17): the factory's catalog at factoryURL,
+	// else the class table, which the next minor removes (WF13).
+	if p := c.Human.Intake.Plan; p.Enabled && len(p.Classes) == 0 && c.FactoryURL == "" {
+		errs = append(errs, errors.New("human.intake.plan.classes: is required when the planner is enabled without a factoryURL: a plan's roles and ceiling come from its class, the factory's catalog or this table (CD17)"))
+	}
 	if t := c.Preflight.Timeout.Duration; t != 0 && (t < time.Second || t > MaxPreflightTimeout) {
 		errs = append(errs, fmt.Errorf("preflight.timeout %s is not between 1s and %s", t, MaxPreflightTimeout))
 	}

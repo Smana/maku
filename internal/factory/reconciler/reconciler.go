@@ -1168,6 +1168,9 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
 	r.notePin(ctx, cfg, t, d)
+	for i, n := range d.Notes {
+		narrateLater(t, narrate.TriageNote(i, n))
+	}
 	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
