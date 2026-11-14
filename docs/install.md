@@ -120,12 +120,20 @@ Each result is one JSON line on the Job's log, and its summary is the terminatio
 that cannot decide fails with the code `undecided`; it never passes. `preflight.strict: true` fails
 on a warning too.
 
-<!-- placeholder: maku preflight -->
-> **`maku preflight`: reserved.** The command that runs every check of the table below from your
-> machine, the components' and the outside ones included, and prints one summary per seam, takes its
-> place here. Until it ships, `helm test` runs the checks whose "Runs in" is `pod`, and each
-> component reports its own on its ops port and in its logs.
-<!-- /placeholder: maku preflight -->
+`maku preflight` runs it from your machine, through any of these tools: it creates a Job from the
+CronJob, waits for it, prints one table by seam and the summary, and deletes the Job.
+
+```bash
+maku preflight --namespace maku --release agent-factory          # --strict: fail on a warning too
+maku preflight --namespace maku --release agent-factory --json   # the JSON lines, for a pipeline
+```
+
+It adds the checks that only your machine can make, the `cli` rows of the table below: each hostname
+of the web and Slack routes resolves, the web host is oauth2-proxy's and serves `/.well-known/roomctl`
+through it, and the Slack host answers `POST /slack/events` only. `--no-outside` skips them. It exits 1
+on a fail, and 2 when the release renders no preflight or the Job leaves no report. Your kubeconfig
+needs, in the namespace, `get` and `list` on CronJobs, `create`, `get` and `delete` on Jobs, `list` on
+Pods, `get` on `pods/log`, and `get` on HTTPRoutes and Ingresses ([CLI](cli.md)).
 
 The checks, generated from the catalog in `internal/preflight`:
 
@@ -137,7 +145,7 @@ The checks, generated from the catalog in `internal/preflight`:
 | `runtimeclass` | sandbox | pod | the RuntimeClass sandbox.runtimeClassName names exists | `runtimeclass_missing` | `unsafe_allow_runc` | D18 |
 | `secrets` | secrets | pod | each Secret of the registry the values enable exists, with its documented keys | `secret_missing`, `secret_key_missing` |  | D14 |
 | `run-path` | network, sandbox | run-controller | the run-controller's preflight: RuntimeClass, git Secrets, the CNI probe, the gateway | `run_path_runtimeclass`, `run_path_git_secrets`, `run_path_network`, `run_path_gateway` | `network_policy_none` | D6, D18 |
-| `database` | postgres | broker | the three DSNs: reachable, Postgres 16 or later, roles without BYPASSRLS, the schema current | `db_unreachable`, `db_too_old`, `db_role_bypasses_rls`, `db_schema_behind`, `db_schema_ahead` | `schema_unverified` | D9 |
+| `database` | postgres | broker | the three DSNs: reachable, Postgres 16 or later, roles without BYPASSRLS, the schema current | `db_unreachable`, `db_too_old`, `db_role_bypasses_rls`, `db_wrong_role`, `db_schema_behind`, `db_schema_ahead` | `schema_unverified` | D9 |
 | `oidc` | identity | broker, factory | discovery answers, its issuer matches, the JWKS fetches | `oidc_discovery`, `oidc_issuer_mismatch`, `oidc_jwks` |  | D8 |
 | `github-link` | identity | broker | the GitHub link's OAuth client authorizes, and its callback is the web host's | `link_client`, `link_callback_mismatch` |  | D8 |
 | `apps` | github | factory | each served repository has both App installations, with their grants | `app_not_installed`, `app_permission_missing` |  | D10, D12 |
