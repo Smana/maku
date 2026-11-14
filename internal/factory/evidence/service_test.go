@@ -569,3 +569,24 @@ func TestACentralBindingIsPromotedInTheRepositoryManifest(t *testing.T) {
 		})
 	}
 }
+
+// MP15: a Repository under repository authority binds nothing itself (the file holds the bindings),
+// yet it is served from its object: the report names the object, so the page shows the repository
+// authority rather than "not migrated". A repository the config file serves names none.
+func TestReportOfARepositoryAuthorityObject(t *testing.T) {
+	cfg := serviceCfg()
+	cfg.Factory = "aws-0"
+	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
+	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 3, RepositoryName: "cloud-native-ref"}}}
+	s := &Service{Cfg: cfg, Namespace: "factory", Now: time.Now,
+		Sources: func(string) (Source, bool) { return &fakeSource{file: policyFile, found: true}, true }}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil || r.RepositoryObject != "cloud-native-ref" || r.RepositoryManifestPath != "repository-cloud-native-ref.yaml" || len(r.Bindings) != 0 {
+		t.Fatalf("%+v %v", r, err)
+	}
+	file := service(&fakeSource{file: "factory: aws-0\n", found: true}, time.Now)
+	if r, err := file.Report(t.Context(), "Smana/cloud-native-ref"); err != nil || r.RepositoryObject != "" {
+		t.Fatalf("a file-served repository names no object: %+v %v", r, err)
+	}
+}

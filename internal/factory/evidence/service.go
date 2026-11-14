@@ -490,7 +490,9 @@ func (s *Service) build(ctx context.Context, cfg *config.Config, rc *config.Repo
 		}
 	}
 	r.Guardrails = cfg.MergeGuardrails
-	if rc.Bound != nil || rc.Bindings != nil {
+	// Served from its Repository object, whether it binds policies itself or, under repository
+	// authority (MP15), its file does: only a repository the config file serves is not migrated.
+	if _, repo := cfg.GenerationsFor(rc.Name); repo > 0 || rc.Bound != nil || rc.Bindings != nil {
 		if err := s.bound(ctx, cfg, rc, &r); err != nil {
 			return Report{}, err
 		}
