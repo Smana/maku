@@ -179,7 +179,7 @@ render refuses it under `profile: production`.
 
 | Platform | The runtime | `sandbox.runtimeClassName` |
 |---|---|---|
-| GKE | a node pool with GKE Sandbox enabled, which brings gVisor and its RuntimeClass | the class GKE Sandbox creates (`kubectl get runtimeclass`) |
+| GKE | a node pool with GKE Sandbox enabled, which brings gVisor and its RuntimeClass `gvisor` (handler `gvisor`) | `gvisor` |
 | k3s | gVisor's `runsc` and its containerd shim on each node, added to k3s's containerd through its config template | `gvisor` |
 | kubeadm | gVisor's `runsc`, or Kata Containers, registered as a containerd runtime handler | `gvisor`, or your Kata class |
 | EKS | no managed sandbox: a node group whose image (a custom AMI, or a Bottlerocket variant) carries a `runsc` or Kata handler in containerd | the class you create for it |

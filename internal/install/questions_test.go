@@ -95,7 +95,7 @@ func TestQuestionValidators(t *testing.T) {
 		{"identity.preset", "keycloak", "not one of"},
 		{"models.provider", "bedrock", "value must be one of"}, // maku-gateway's preset enum
 		{"models.provider", "zai", ""},
-		{"sandbox.runtimeClassName", "gke.gvisor", ""},
+		{"sandbox.runtimeClassName", "kata-qemu", ""},
 		{"sandbox.runtimeClassName", "GVisor", "not a DNS name"},
 		{"namespace", "Maku", "not a DNS label"},
 		{"repositories", []string{"example/app"}, ""},
