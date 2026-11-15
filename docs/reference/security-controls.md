@@ -84,7 +84,7 @@ Residuals of per-run tokens:
 
 ### A sponsored principal's bounds
 
-A sponsored principal ([factory](sponsored-principals.md#sponsored-principals)) is a ZITADEL machine user the
+A sponsored principal ([factory](sponsored-principals.md)) is a ZITADEL machine user the
 config binds to a maintainer. Every bound below is enforced server-side, and none comes from a token
 claim except the client that issued it.
 
@@ -472,7 +472,7 @@ cosign verify "$IMAGE" \
 
 ## Untrusted-input hardening stages and residuals
 
-This release runs it in **audit** only ([Hardening, audit](../factory.md#hardening-audit)):
+This release runs it in **audit** only ([Hardening, audit](../hardening.md#hardening-audit)):
 
 - **What runs.** The checks run on the writes a run already made, as `output_shadowed` records.
 - **What is recorded.** Each task records the lowest author trust its runs could read.
@@ -490,7 +490,7 @@ Residuals while in audit:
   the room is not an alert.
 
 A repository listed in `enforceOutputs` goes one stage further
-([Hardening, non-code outputs enforced](../factory.md#hardening-non-code-outputs-enforced)):
+([Hardening, non-code outputs enforced](../hardening.md#hardening-non-code-outputs-enforced)):
 
 - **What is enforced.** Its writer runs request `pr`, `comment`, `labels` and `issue` through
   `output_*` tools. The factory applies each one after T1 to T4 at enforce, or refuses it with a
@@ -541,7 +541,7 @@ Residuals with non-code outputs enforced:
   over-count them as untraced.
 
 A repository whose `enforceOutputs` names `push` goes one stage further
-([Hardening, push enforced](../factory.md#hardening-push-enforced)):
+([Hardening, push enforced](../hardening.md#hardening-push-enforced)):
 
 - **What is enforced.** The harness turns the run's `git push` into a git bundle, requested
   through the harness-only `output_push`. The factory inspects the bundle outside the sandbox, in
@@ -573,7 +573,7 @@ Residuals with push enforced:
   permission gauge shows it.
 
 A repository at `mode: enforce` goes one stage further
-([Hardening, reads filtered](../factory.md#hardening-reads-filtered)):
+([Hardening, reads filtered](../hardening.md#hardening-reads-filtered)):
 
 - **What is withheld.** The run reads its issue, pull request and checks through `forge_read`. The
   factory reads them with its App and withholds text below the repository's `minAuthorTrust`
@@ -592,7 +592,7 @@ Residuals with reads filtered:
 - A run-controller older than the factory ignores `forge-api: deny`. The chart pins both to one
   version.
 
-A repository is **ready** when all seven readiness checks hold ([Hardening, ready](../factory.md#hardening-ready)), and
+A repository is **ready** when all seven readiness checks hold ([Hardening, ready](../hardening.md#hardening-ready)), and
 only then does coordination's execute admit it. Residuals once ready:
 
 - Readiness is read at each admission and every five minutes, not continuously: a Secret swapped

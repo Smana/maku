@@ -33,7 +33,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `tiers` | Exactly `light`, `standard`, `frontier`; see [Triage](../factory.md#triage-tiers-templates-classes) | `runUSD`, `taskUSD` from the token caps when `meter.prices` is set |
 | `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role. `solo` and `pair` are chosen by triage by class and tier, and a workflow's template replaces triage's; `trio` is refused. Once `runlore` or `api.internalPrincipals` is set, `investigate` is required as `{roles: [triager]}` | The [shipped workflows](../factory.md#the-shipped-workflows)' `solo`, `pair` and `investigate` where the file omits them; `reviewerModel` unset: the other tier's model |
 | `caps` | `activeTasks`, `concurrentRuns`, `tasksPerDay`, `maxTextBytes` (≤ 14336), `awaitingHumanWIP`, `maxPendingMinutes` (5–480), `escalatedHours`, `preferRevisions` (a revision runs before new intake, caps still binding) | `maxPendingMinutes` 30, `escalatedHours` 168, `preferRevisions` false |
-| `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](../factory.md#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](../factory.md#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
+| `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](budgets.md#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](budgets.md#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
 | `resume` | `maxPerTask` (1–5) | 2 |
 | `scoper` | `nudgeAt`, `maxToolCalls` (`1 <= nudgeAt < maxToolCalls <= 200`): the [scoper](#the-scoper)'s tool-call bounds, written as its brief's first line, `<!-- agent-factory scoper nudgeAt=N maxToolCalls=M -->`, which stays first when the run is resumed | `nudgeAt` 25, `maxToolCalls` 40, each defaulted alone |
 | `meter` | `url`, `query`, `prices`, and the gateway's 429s from one source: `throttle.promQuery` (PromQL on `url`), or `logsURL` with `throttleQuery` (VictoriaLogs) | Required but `prices`; one 429 source, never both (`meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one`) |
@@ -222,7 +222,7 @@ factory: aws-0
 
 Every replica reads each listed repository's file at start and every 5 minutes, with the factory
 App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold
-`mergePolicies` and a [`hardening`](../factory.md#the-repositorys-hardening-block) block, neither of which decides
+`mergePolicies` and a [`hardening`](../hardening.md#the-repositorys-hardening-block) block, neither of which decides
 ownership) or naming another factory, the repository
 gets no trigger-label or revert intake, no orphan scan, no schedules, no RunLore issues
 (`409 repository_not_owned`), no API runs (`409 repository_not_owned`) and no merges (gate step

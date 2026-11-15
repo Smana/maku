@@ -584,7 +584,7 @@ kubectl -n <namespace> patch repository <name> --type merge -p '{"spec":{"privat
 ```
 
 That field states the repository's code is sent to the configured models, which are usually SaaS
-([private code](factory.md#private-code)). The demo still serves public repositories only.
+([private code](install.md#private-code)). The demo still serves public repositories only.
 
 ### An unreadable ledger is refused
 
@@ -797,7 +797,7 @@ collection. An image older than the chart answers 404 there, reported as `compon
 
 One new optional field on the `Repository`, `spec.privateCode.acknowledged`. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
 This release warns and serves; the next one refuses
-([private code](factory.md#private-code)).
+([private code](install.md#private-code)).
 
 1. Apply the CRD chart first: the new field is in `agent-factory-crds`.
 2. After the upgrade, list the repositories it warns about:
@@ -933,7 +933,7 @@ Opt-in per repository; without `push` in an `enforceOutputs` list nothing change
 
 | Key | Chart | What it does |
 |---|---|---|
-| `config.hardening.repositories.<repo>.enforceOutputs: [..., push]` | `maku-factory` | The factory pushes the run's bundle as the publisher ([Hardening, push enforced](factory.md#hardening-push-enforced)) |
+| `config.hardening.repositories.<repo>.enforceOutputs: [..., push]` | `maku-factory` | The factory pushes the run's bundle as the publisher ([Hardening, push enforced](hardening.md#hardening-push-enforced)) |
 | `hardening.gitCache.sizeLimit` | `maku-factory` | The push applier's mirror cache. Required once a repository enforces `push`: without it the factory refuses to start |
 | `config.hardening.applier.approvalTTL`, `mirrorMaxBytes` | `maku-factory` | How long a protected-path push waits (24 h, at most 168 h), and one mirror's size limit (1 GiB, at least 64 MiB) |
 | `broker.roomTools.pushRepositories` | `maku` | The repositories the broker serves `output_push` to; list the same ones |
