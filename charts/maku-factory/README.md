@@ -102,7 +102,7 @@ failed. The startup keys (`policyManagement`, `coordination`, `hardening`, `inta
 `meter.throttleQuery`, `meter.throttle`, `poll`, `tracing`, `factoryLogin`, `agentsLogin`, `roomsURL`,
 `runlore.listen`, `triage.classifierURL`, `factory`) are read once, at the start the rollout
 gives. With no CRDs installed the factory runs from the file alone ([the full table](../../docs/architecture.md#live-fields-and-fields-that-need-a-rollout)). Its keys, defaults and validation are in
-[docs/factory.md](../../docs/factory.md#the-config-file). Keys added since a file was written
+[docs/factory.md](../../docs/reference/config.md#the-config-file). Keys added since a file was written
 default to the platform's values, so an older file loads unchanged: `api.groups` (`agents-admin`,
 `agents-member`) and a schedule's `probeAuthor` (`renovate[bot]`). The daily budgets are in USD:
 this release still loads the token days `budgets.factoryDaily`, `budgets.humanDaily` and

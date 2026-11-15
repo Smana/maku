@@ -63,8 +63,8 @@ events.
 | `maku_rooms_human_mcp_calls_total` | counter | `tool`, `outcome` | `POST /mcp` tool calls: `ok`, `refused` (the tool's own refusal or a room read's) or `error`. A `room_tail` task counts `ok` when it is created and `error` when a read of it fails |
 | `maku_rooms_slack_links_total` | counter | `outcome` | The [Slack self-serve link](slack.md#self-serve-link): `link_code`, `linked`, `unlinked`, and the refusals `code_invalid`, `not_linked_github`, `wrong_team`, `too_many_links`, `too_many_codes`, `already_linked`, `not_web` (a maku or MCP token on the page), `bad_origin`, `error` |
 | `maku_rooms_github_links_total` | counter | `outcome` | The [GitHub account link](github-link.md)'s steps and refusals: `started`, `linked`, `relinked`, `unlinked`, `admin_unlinked`, `state_invalid`, `cookie_mismatch`, `sub_mismatch`, `github_account_taken`, `github_error`, `not_web`, `too_many_pending`, `bad_origin`, `error` |
-| `maku_rooms_slack_decisions_total` | counter | `result`, `decision` | The Slack App's [deciding route](api.md#post-apislackdecisions), one count per answer: `result` is the closed code it answered with (`approved`, `denied` and every refusal of that table, `bad_request`, `rate_limited`, `unavailable`), and `decision` the decision it answered with, empty when the answer carried none. A replayed click counts as the decision it answered with, while the log keeps its one event. A rise in `result="unavailable"` is a store, room or log read that failed; the App retries those, and no other code |
-| `maku_intent_classify_total` | counter | `outcome` | The broker's [`intent_classify`](api.md#intent_classify-on-mcp) calls: `ok`, `low_confidence` and `invalid_output` (the model's answer, read as unknown), `timeout`, `capped` (the App's daily or the author's hourly cap) and `error` (the gateway). See [intents in shadow](#intents-in-shadow) |
+| `maku_rooms_slack_decisions_total` | counter | `result`, `decision` | The Slack App's [deciding route](reference/api.md#post-apislackdecisions), one count per answer: `result` is the closed code it answered with (`approved`, `denied` and every refusal of that table, `bad_request`, `rate_limited`, `unavailable`), and `decision` the decision it answered with, empty when the answer carried none. A replayed click counts as the decision it answered with, while the log keeps its one event. A rise in `result="unavailable"` is a store, room or log read that failed; the App retries those, and no other code |
+| `maku_intent_classify_total` | counter | `outcome` | The broker's [`intent_classify`](reference/api.md#intent_classify-on-mcp) calls: `ok`, `low_confidence` and `invalid_output` (the model's answer, read as unknown), `timeout`, `capped` (the App's daily or the author's hourly cap) and `error` (the gateway). See [intents in shadow](#intents-in-shadow) |
 | `maku_intent_classify_duration_seconds` | histogram | — | One classification, the model call included |
 | `maku_rooms_verdict_posts_total` | counter | `result` | Verdict comments `posted`, `not_posted` or `error` |
 | `maku_rooms_driver_changes_total` | counter | — | Driver token changes: a human's request, give or take, and the leader's lease expiries |
@@ -152,7 +152,7 @@ ROOM=3kq7x2ma
 
 ## The system API from a terminal
 
-The system API needs a token from an allowlisted ServiceAccount (see [API](api.md#authentication)),
+The system API needs a token from an allowlisted ServiceAccount (see [API](reference/api.md#authentication)),
 over TLS with the platform CA. From a pod in `agent-system` whose ServiceAccount is in
 `systemPrincipals`, and that the broker's CNP admits:
 
@@ -333,7 +333,7 @@ absent rather than 0.
 | `maku_factory_meter_last_success_timestamp_seconds` | gauge | — | When the meter last read usage and settled it in the day's ledger; set by the leader only, so alert on its max across pods. A tick whose ledger write fails sets nothing: it still revokes runs at their own caps, but the daily budgets wait and the increase is retried whole on the next tick |
 | `maku_factory_model_refused_total` | counter | `cause`, `role` | Runs the model provider refused (`billing`, `auth`, `quota`), once per refusal: the task is held and retried, not escalated. Alert on its increase ([model provider refusals](factory.md#model-provider-refusals)) |
 | `maku_factory_resumes_total` | counter | `reason` | Runs resumed after their pod was `Disrupted` or `PodLost` |
-| `maku_factory_run_token_mints_total` | counter | `role`, `result` | Installation tokens the per-run minter asked, by role and result: `ok`, `not_installed`, `permission_not_granted` (a 422: the App's installation lacks a permission the [role table](factory.md#run-tokens-the-role-table) asks, or the repository), `scope_mismatch` (GitHub granted a wider or different scope, or another repository; the minter revokes that token, counted below) or `error`. A mint's 404 from a reinstalled App is retried once with a fresh lookup. Mints run under `runTokens.perRun` |
+| `maku_factory_run_token_mints_total` | counter | `role`, `result` | Installation tokens the per-run minter asked, by role and result: `ok`, `not_installed`, `permission_not_granted` (a 422: the App's installation lacks a permission the [role table](reference/config.md#run-tokens-the-role-table) asks, or the repository), `scope_mismatch` (GitHub granted a wider or different scope, or another repository; the minter revokes that token, counted below) or `error`. A mint's 404 from a reinstalled App is retried once with a fresh lookup. Mints run under `runTokens.perRun` |
 | `maku_factory_run_token_refusals_total` | counter | `reason` | Runs the per-run minter refused a token, once per run: `unbound_task` (no live Task names it), `unbound_api` (an API run with no ledger reservation naming its repository and role, or no request hash), `repository_mismatch` (its Task or reservation names another repository), `role_unknown` or `role_mismatch` (its reservation names another role). The run waits Pending `SecretMissing` |
 | `maku_factory_run_token_revokes_total` | counter | `result` | Installation tokens the per-run minter revoked, `ok` or `error`, the revoke of a `scope_mismatch` token included. An `error` leaves the token live until it expires, within the hour |
 | `maku_factory_loop_runs_total` | counter | `class`, `end`, `repository` | Implementer runs under the loop policy as they end: `judge_impossible`, `stalled`, `not_met`, `finished`, `other`. The wandering share is `stalled` over all |
@@ -482,7 +482,7 @@ leaves the first enforced tasks waiting unanswered (no publisher token).
    `runController.gitSecret` left empty), and the factory's config sets `hardening.publisher.minter:
    true`: the factory mints the publisher's token from the agents App with the role table's
    publisher row. The agents App is installed on the repository and grants every permission of the
-   [role table](factory.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and
+   [role table](reference/config.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and
    `issues: write` included; a missing grant fails the publisher's mint with
    `permission_not_granted` (`maku_factory_run_token_mints_total{role="publisher"}`).
 3. **The gateway profile.** `output_pr`, `output_comment`, `output_labels` and `output_issue` are
@@ -512,7 +512,7 @@ until the repository enforces it ([below](#hardening-push-enforced)), and raw re
 |---|---|---|---|
 | `maku_factory_hardening_output_seconds` | histogram | `repository`, `type` | From a run's `output_requested` to the factory's answer (AC7: p95 at most 2 s per non-push output) |
 | `maku_factory_hardening_untraced_total` | counter | `repository`, `type` | Agents-App writes of an enforced type no `output_applied` explains. The H2 gate holds it at 0 |
-| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it, from the [role table](factory.md#run-tokens-the-role-table): the sandbox roles' under `runTokens.perRun`, the publisher's under `hardening.publisher.minter`. A pair a later pass no longer reads is 0 |
+| `maku_factory_hardening_sandbox_permission` | gauge | `repository`, `role`, `permission`, `access` | 1 for each permission a sandbox role or the publisher (`role="publisher"`) gets, as the last fence pass read it, from the [role table](reference/config.md#run-tokens-the-role-table): the sandbox roles' under `runTokens.perRun`, the publisher's under `hardening.publisher.minter`. A pair a later pass no longer reads is 0 |
 | `maku_factory_hardening_approval_wait_seconds` | histogram | `repository`, `decision` | How long a protected-path push waited for its approval, by how it closed: `approved`, `denied`, `expired`, `superseded` |
 | `maku_factory_hardening_drill_last` | gauge | `result` | Unix time of the last injection drill the factory scored, `pass` or `fail`. A `fail` newer than the last `pass` leaves `drill_stale_or_failed` missing until a fix and a passing drill |
 | `maku_factory_hardening_t5_total` | counter | `repository`, `type`, `result`, `drill` | T5 classifier calls on outputs, and on a target or T4 refusal whose text T3 cleared: `hit`, `pass`, `unavailable`. T5's false positives are `hit` on applied outputs with `drill="false"`; its detection on the drills is `hit` with `drill="true"` |
@@ -779,7 +779,7 @@ Off until `api.sponsored` is written. The series:
 
 | Series | What it answers |
 |---|---|
-| `maku_factory_api_intake_total{principal, outcome}` | `POST /v1/tasks` requests by outcome: `admitted`, `duplicate`, or a refusal's code ([API](api.md#post-v1tasks)); `other` for anything else |
+| `maku_factory_api_intake_total{principal, outcome}` | `POST /v1/tasks` requests by outcome: `admitted`, `duplicate`, or a refusal's code ([API](reference/api.md#post-v1tasks)); `other` for anything else |
 | `maku_factory_max_cost_usd_total{principal}` | The `max_cost` the intake admitted: what principals asked to be allowed, not what they spent (`maku_factory_charged_usd_total{principal="system:<name>"}`) |
 | `maku_factory_principal_sponsor_info{principal, sponsor}` | 1 per declared principal, naming the maintainer accountable for it |
 
@@ -809,7 +809,7 @@ that needs another run escalates `principal_unknown`. A refused later run escala
 possibly with a pull request open. A maintainer's `/factory retry` is paid by the retrier.
 
 A `run.` task that stays `failed` with `no such room` was never triaged (the grace is two minutes:
-see [the API](api.md#sponsored-principals-on-mcp)); check `maku_factory_api_intake_total` and the Task.
+see [the API](reference/api.md#sponsored-principals-on-mcp)); check `maku_factory_api_intake_total` and the Task.
 
 ### Internal principals and `factory/publish`
 
@@ -825,7 +825,7 @@ An issue the factory filed from a proposal carries a marker label and `class:<c>
 `maku_factory_monitor_verifications_total{verdict="none"}`: a verdict that never arrives.
 
 **Starting the fix from the label.** `publishStarts: true` on an internal principal makes `factory/publish` also start the
-fix, charged to the maintainer who labelled (see [`factory/publish`](factory.md#internal-principals)). Only that start is off by default. The
+fix, charged to the maintainer who labelled (see [`factory/publish`](reference/sponsored-principals.md#internal-principals)). Only that start is off by default. The
 factory labels every issue it files `class:<c>`, with or without `publishStarts`: the class inferred from the proposal's `## Files` (`review` when none fits; a live class is never inferred), so each
 `class:<c>` label must exist on the repository, as `factory/ready` does. A `class:` label a maintainer applies takes precedence.
 
@@ -844,7 +844,7 @@ Known limit: a class whose `followUpWindow` is over 24 h can lose its verdict at
 For a repository whose bot adds catalog entries (an [adopted class](factory.md#adopted-classes) with
 `diffShape: added-entry`), the repository carries, and each is a policy-bot gate path:
 
-- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](factory.md#the-ownership-fence));
+- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](reference/config.md#the-ownership-fence));
 - the policy-bot configuration;
 - the validator's workflow, `.github/workflows/validate-kb.yml`, whose job `validate` is the class's
   holdout check. If a pull request could edit it, it could post `SUCCESS` itself.
@@ -856,14 +856,14 @@ labelling it again ([known limit](factory.md#adopted-classes)).
 
 ### Webhooks
 
-The broker's `webhooks` list declares the subscribers of [room events](api.md#webhooks). Each entry:
+The broker's `webhooks` list declares the subscribers of [room events](reference/api.md#webhooks). Each entry:
 
 | Key | Meaning |
 |---|---|
 | `name` | A DNS label: the `subscriber` label of the series below |
 | `network` | `cluster` (`http(s)://<svc>.<ns>.svc.cluster.local:<port>/…`) or `internet` (`https`, a public DNS name, never an address) |
 | `url` | Where the broker posts |
-| `events` | The event types wanted: see [the list](api.md#webhooks) |
+| `events` | The event types wanted: see [the list](reference/api.md#webhooks) |
 | `secretFile` | One or two base64 keys of at least 32 bytes, one per line; re-read at each delivery |
 | `repositories` | The repositories whose rooms are sent |
 | `generation` | Bump it to re-enable a disabled subscriber |

@@ -8,7 +8,7 @@ import (
 )
 
 // The coarse states (factory interfaces F7): one vocabulary for summary/v1, the room list, the MCP
-// server and the later webhooks. Each maps onto one A2A task state (docs/api.md, The coarse state).
+// server and the later webhooks. Each maps onto one A2A task state (docs/reference/api.md, The coarse state).
 const (
 	StateQueued  = "queued"
 	StateRunning = "running"
