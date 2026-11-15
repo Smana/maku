@@ -953,7 +953,7 @@ from a cache; a failed lookup authorizes nothing. The decision record names the 
 
 ### Metrics
 
-Definitions are in [operations](operations.md#factory-metrics); this is what to watch per stage.
+Definitions are in [operations](operations/factory.md#factory-metrics); this is what to watch per stage.
 
 | `stage` | Query | Healthy |
 |---|---|---|

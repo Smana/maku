@@ -104,7 +104,7 @@ Idempotency keys prevent replaying one request; `intake.overlap.mode` (`off` by 
 
 Before triage or room creation, the factory hashes `lowercase(repository) + NUL + canonicalGoal` (NFKC, lowercase, punctuation/whitespace normalized `spec.text`) and ranks up to **20 same-repository candidates** from Tasks, AgentRuns and retained room outcomes by lexical term overlap and recency, reading GitHub issues/PRs only for retained candidates. Results persist once per generation in `status.overlap` (fingerprint, classification, cited IDs/phases, checked sources, optional evaluation-run ID, `checkedAt`, and a ≤ 512-char note, never raw untrusted prose):
 - **`active_duplicate`:** exact active fingerprint, or a read-only evaluation scoper run citing a supplied active candidate. Under `mode: enforce`, exact-active matches end `Rejected` (`overlap_active_duplicate`) before any run or budget reservation; setting `scoperEnforcement: true` also refuses valid scoper-confirmed active matches after the single evaluation run.
-- **`completed_duplicate`, `prior_attempt`, `partial_overlap`, `no_match`, `unverified_overlap`:** proceed through the normal lifecycle (`unverified_overlap` covers source outages, malformed scoper output, or unsupported citations — missing evidence never becomes a refusal). Rollout gates are in [Operations](operations.md#outcome-overlap-rollout-and-shadow-evidence).
+- **`completed_duplicate`, `prior_attempt`, `partial_overlap`, `no_match`, `unverified_overlap`:** proceed through the normal lifecycle (`unverified_overlap` covers source outages, malformed scoper output, or unsupported citations — missing evidence never becomes a refusal). Rollout gates are in [Operations](operations/factory.md#outcome-overlap-rollout-and-shadow-evidence).
 
 ### The tester stage
 
@@ -352,7 +352,7 @@ policy-bot matched another class than the prediction goes through the gate too, 
 record. `ledger_truncated` is decided before the gate and stays the one input that still
 stops a shadow record. Early refusals (the base checks, the author, an unarmed class) carry a record with every count unread.
 
-**The human path's metrics** ([operations](operations.md#factory-metrics)):
+**The human path's metrics** ([operations](operations/factory.md#factory-metrics)):
 - `maku_factory_merge_decisions_total` gains `repository`.
 - `maku_factory_human_wait_seconds_total` gains `reason` (the hand-off's) and `class` (the task's).
 - `maku_factory_handoff_to_merge_seconds{class,reason,how}` is a histogram of the time from a pull
@@ -473,7 +473,7 @@ advisory. A production install, with its two Apps, adds the ruleset above.
 `merge.gateStatus`, it reads `GET repos/{owner}/{repo}/rules/branches/{default branch}` with the
 factory App's token and sets `maku_factory_merge_gate_required{repository}` to 1 when a ruleset
 requires `maku/merge-gate` from the App that posts it, else 0. Each drop to 0 logs a warning
-([operations](operations.md#factory-metrics)). It never refuses: the factory merges by its own
+([operations](operations/factory.md#factory-metrics)). It never refuses: the factory merges by its own
 decision, and the rule guards the branch against everyone else. A pass that cannot read the rules
 keeps the last value and counts `maku_factory_merge_gate_rules_unread_total{repository}`.
 

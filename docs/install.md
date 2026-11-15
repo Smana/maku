@@ -223,7 +223,7 @@ render refuses it without the demo's `demoValues`.
 Where the cluster has the handler but no RuntimeClass, `maku.runController.createRuntimeClass: true`
 with `runtimeHandler` renders one under the class's name. The preflight's `runtimeclass` check fails
 `runtimeclass_missing` when the class does not exist, and the run-controller refuses runs until it
-does ([operations](operations.md#the-run-controllers-preflight)).
+does ([operations](operations/failures.md#the-run-controllers-preflight)).
 
 A cold sandbox node costs a run 1.5 to 3.5 minutes at start: the image pull and the sandbox's own
 boot land on the run's clock, before its clone. A low-priority placeholder pod that keeps the run

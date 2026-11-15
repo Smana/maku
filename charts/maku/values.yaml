@@ -239,7 +239,7 @@ broker:
   suspend: {}
   policyManagement: {}
   coordination: {}
-  # The room-event subscribers (docs/operations.md, "Webhooks"): each entry is the broker's own
+  # The room-event subscribers (docs/operations/factory.md#webhooks): each entry is the broker's own
   # (name, network, url, events, secretFile, repositories, generation), plus three chart keys:
   #   existingSecret  the signing key's Secret, mounted at /etc/room-broker/webhooks/<name>/; it fills
   #                   secretFile with <that dir>/<key> unless secretFile is set (a set one wins);

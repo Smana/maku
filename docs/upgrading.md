@@ -854,13 +854,13 @@ New umbrella keys, all off by default, so a release that sets none of them rende
 | New key | Default | What it does |
 |---|---|---|
 | `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
-| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations.md#gateway-alerts) and the cost cross-check |
+| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations/failures.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations/failures.md#gateway-alerts) and the cost cross-check |
 | `monitoring.dashboards` | `enabled: false` | A ConfigMap per product dashboard, `maku-dashboard-<uid>`, for Grafana's sidecar or a grafana-operator `configMapRef` ([dashboards](observability.md#dashboards)). An install that runs cloud-native-ref's `GrafanaDashboard`s with the same uids removes them first, or Grafana holds two dashboards with one uid |
 | `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
 
 Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the
 `VMRule`s cloud-native-ref carries) removes them when it turns `prometheusRule` on, or both fire. Two
-alerts are renamed from what this page's [factory alerts](operations.md#factory-alerts) documented:
+alerts are renamed from what this page's [factory alerts](operations/failures.md#factory-alerts) documented:
 `FactoryRepositoryNotOwned` is `AgentFactoryRepositoryNotOwned`, as cloud-native-ref named it, and
 `AgentFactoryClassPausedLong` watches every class, not a fixed list.
 
@@ -906,7 +906,7 @@ Opt-in per repository; without `push` in an `enforceOutputs` list nothing change
 
 `mode: enforce` is now refused with "enforce arrives with stage H4". The factory and broker
 configs are decoded strictly: upgrade the charts and the images together. The order of the steps
-is in [Operations](operations.md#hardening-push-enforced).
+is in [Operations](operations/factory.md#hardening-push-enforced).
 
 ## Two GitHub Apps (v0.46.0)
 

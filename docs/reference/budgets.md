@@ -36,7 +36,7 @@ At GLM-5.3's prices ($1.40 / $0.26 / $4.40):
 - **Run cap.** Implementer runs of 1.54–1.69 M tokens cost $0.58–0.70, well under $2.55. The same volume with no cache hit costs $2.30–2.49, so the cap stops an uncached run near 1.8 M tokens.
 - **Task cap.** A `pair` task of 4.7 M tokens at 95 % cache reads costs $1.78 of its $5.10. Uncached, the same task costs $6.77.
 
-A task falls back to `taskTokens` while any of its runs is unpriced (`runs[].unpriced`) or has tokens and no cost: a cost is never counted as $0. The gateway's per-run bucket (B1, 5 M) charges a priced call its price in reference tokens, from the same `meter.prices`, and an unpriced one its raw tokens; the meter names a gateway 429 `budget-run` (`gateway-ceiling`) when the run's spend in that unit reaches 5 M, and `budget-fleet` below it. The metrics for each cap are in [Operations](../operations.md#budget-signals).
+A task falls back to `taskTokens` while any of its runs is unpriced (`runs[].unpriced`) or has tokens and no cost: a cost is never counted as $0. The gateway's per-run bucket (B1, 5 M) charges a priced call its price in reference tokens, from the same `meter.prices`, and an unpriced one its raw tokens; the meter names a gateway 429 `budget-run` (`gateway-ceiling`) when the run's spend in that unit reaches 5 M, and `budget-fleet` below it. The metrics for each cap are in [Operations](../operations/failures.md#budget-signals).
 
 ## Daily budgets
 

@@ -13,7 +13,7 @@ rules:
     annotations:
       summary: "The run-controller's {{ $labels.check }} preflight has refused new runs for 10 minutes"
       description: "New runs end Failed (PreflightFailed) or wait Pending until the check passes; runs that already have a pod are untouched. The run-controller logs the check and its fix: kubectl logs -n __NAMESPACE__ -l app.kubernetes.io/name=run-controller | grep 'preflight failed'"
-      runbook_url: "__DOCS__/operations.md#the-run-controllers-preflight"
+      runbook_url: "__DOCS__/operations/failures.md#the-run-controllers-preflight"
       dashboard: "/d/agent-fleet"
   - alert: RunControllerDown
     expr: absent(up{job="run-controller", namespace="__NAMESPACE__"} == 1)
@@ -23,7 +23,7 @@ rules:
     annotations:
       summary: "The run-controller is not up"
       description: "No run starts, ends or is cleaned up while it is down; running pods keep running. kubectl get pods -n __NAMESPACE__ -l app.kubernetes.io/name=run-controller"
-      runbook_url: "__DOCS__/operations.md#run-path-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#run-path-alerts"
       dashboard: "/d/agent-fleet"
   - alert: EgressProxyDown
     expr: absent(up{job="egress-proxy", namespace="__NAMESPACE__"} == 1)
@@ -33,7 +33,7 @@ rules:
     annotations:
       summary: "No egress proxy replica is up"
       description: "Runs reach GitHub and their model only through the proxy in networkPolicies.mode kubernetes: their HTTPS fails and the preflight holds new runs. kubectl get pods -n __NAMESPACE__ -l app.kubernetes.io/name=egress-proxy"
-      runbook_url: "__DOCS__/operations.md#run-path-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#run-path-alerts"
       dashboard: "/d/agent-fleet"
   - alert: AgentSandboxPodPending
     expr: max by (pod) (kube_pod_status_phase{namespace="__RUNS_NAMESPACE__", phase="Pending"}) > 0
@@ -43,5 +43,5 @@ rules:
     annotations:
       summary: "Run pod {{ $labels.pod }} has been Pending for 15 minutes"
       description: "The cluster cannot place it: node capacity, the sandbox RuntimeClass's nodes, or the runs quota. kubectl describe pod -n __RUNS_NAMESPACE__ {{ $labels.pod }}"
-      runbook_url: "__DOCS__/operations.md#run-path-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#run-path-alerts"
       dashboard: "/d/agent-fleet"

@@ -137,5 +137,5 @@ deterministic run. The ConfigMap checksum rolls the pods for this file change.
 
 See [outcome-overlap detection](../../docs/factory.md#outcome-overlap-detection) for the canonical
 fingerprint, 20-candidate bound, classifications, pending/replay and budget semantics, and
-[Operations](../../docs/operations.md#outcome-overlap-rollout-and-shadow-evidence) for the required
+[Operations](../../docs/operations/factory.md#outcome-overlap-rollout-and-shadow-evidence) for the required
 shadow evidence and staged rollout. Fixtures alone do not establish production precision.
