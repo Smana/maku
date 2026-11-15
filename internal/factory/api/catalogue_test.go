@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,6 +130,61 @@ func TestCatalogueRouteAuthFailures(t *testing.T) {
 	s = catalogueServer(true)
 	s.Logins = nil // no resolver: nobody is a maintainer, the catalogue still reads
 	if w := getAs(s.Handler(), "human", "/v1/catalogue/"+coordPrimary); w.Code != http.StatusOK || strings.Contains(w.Body.String(), `"maintainer":true`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
+
+func TestCatalogueRepositoriesRoute(t *testing.T) {
+	s := catalogueServer(false)
+	s.PrivateRefused = func(repo string) bool { return strings.EqualFold(repo, "Smana/unacked") }
+	cfg := s.Cfg.(*config.Config)
+	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Smana/unacked"})
+
+	wantAll := []string{coordPrimary, coordOther}
+	slices.Sort(wantAll)
+
+	for name, tc := range map[string]struct {
+		token  string
+		code   int
+		reason string
+		want   []string
+	}{
+		"member human":                      {"human", http.StatusOK, "", wantAll},
+		"non-maintainer member human":       {"nonmaint", http.StatusOK, "", wantAll},
+		"declared sponsored principal":      {"slack", http.StatusOK, "", []string{coordPrimary}},
+		"unauthenticated":                   {"", http.StatusUnauthorized, "unauthenticated", nil},
+		"internal principal":                {"internal", http.StatusForbidden, "human_only", nil},
+		"sponsored principal not in config": {"noapp", http.StatusForbidden, "human_only", nil},
+		"machine without a sub":             {"machine", http.StatusForbidden, "human_only", nil},
+	} {
+		t.Run(name, func(t *testing.T) {
+			w := getAs(s.Handler(), tc.token, "/v1/catalogue")
+			if w.Code != tc.code {
+				t.Fatalf("%d %s", w.Code, w.Body)
+			}
+			if tc.code != http.StatusOK {
+				if !strings.Contains(w.Body.String(), `"`+tc.reason+`"`) {
+					t.Fatalf("body %s: want reason %s", w.Body, tc.reason)
+				}
+				return
+			}
+			var out struct {
+				Repositories []string `json:"repositories"`
+			}
+			if err := json.Unmarshal(w.Body.Bytes(), &out); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(out.Repositories, tc.want) {
+				t.Fatalf("repositories = %v, want %v", out.Repositories, tc.want)
+			}
+			if got := w.Header().Get("Cache-Control"); got != "no-store" {
+				t.Fatalf("Cache-Control = %q", got)
+			}
+		})
+	}
+
+	s.Auth = forbiddenAuth{}
+	if w := getAs(s.Handler(), "x", "/v1/catalogue"); w.Code != http.StatusForbidden || !strings.Contains(w.Body.String(), "not_permitted") {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }

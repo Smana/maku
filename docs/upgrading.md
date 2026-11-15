@@ -113,8 +113,13 @@ that sets both is refused: `workflows and harnessProfiles: set one`), and a `wor
 is the same pin as `profile:<name>` (a `profile:` and a `workflow:` label naming different workflows
 conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned plan `workflow:<name>`.
 
-A broker whose planner is on no longer needs `human.intake.plan.classes` when it sets `factoryURL`:
-the plan's classes come from the factory's catalog.
+A broker whose planner is on no longer needs `human.intake.plan.classes` or
+`human.intake.plan.repositories` when it sets `factoryURL`: the plan's classes and candidate
+repositories come from the factory's catalog (`GET /v1/catalogue`, serving public repositories and
+acknowledged private ones). Leaving `human.intake.plan.repositories` set narrows the factory's list,
+and any entry the factory does not serve logs a warning naming it; remove the key when every
+repository the factory serves should be eligible.
+
 ## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file

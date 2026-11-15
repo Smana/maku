@@ -24,3 +24,25 @@ type PrivateCode struct {
 func (r *Repository) PrivateCodeAcknowledged() bool {
 	return r != nil && r.PrivateCode != nil && r.PrivateCode.Acknowledged
 }
+
+// SetPrivateRefused sets the runtime visibility check for unacknowledged private repositories (v4 D3).
+func (c *Config) SetPrivateRefused(refused func(repository string) bool) {
+	if c != nil {
+		c.privateRefused = refused
+	}
+}
+
+// PrivateRefused reports whether repository is private code without its acknowledgement (v4 D3, WF12).
+func (c *Config) PrivateRefused(repository string) bool {
+	if c == nil {
+		return false
+	}
+	r := c.RepositoryFor(repository)
+	if r == nil || r.PrivateCodeAcknowledged() {
+		return false
+	}
+	if r.PrivateCode != nil && !r.PrivateCode.Acknowledged {
+		return true
+	}
+	return c.privateRefused != nil && c.privateRefused(repository)
+}

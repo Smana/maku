@@ -476,6 +476,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	fenced := &fence.Fence{Name: cfg.Factory, Repositories: conns.names, Read: conns.fenceFile,
 		Every: fenceEvery, Stale: fenceStale, Now: time.Now, Log: log}
 	privateCode.Record = m.PrivateCodeUnacknowledged
+	live.Prepare(func(c *config.Config) { c.SetPrivateRefused(privateCode.Refused) })
 	// The doors that start work without a label (the schedules, adoption) start nothing on private
 	// code without its acknowledgement (v4 D3); a task already started finishes, so the reconciler,
 	// the merge and the reverts keep fenced.Owned.

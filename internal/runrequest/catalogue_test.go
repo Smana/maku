@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 )
 
@@ -16,6 +17,8 @@ func TestCatalogueClient(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		seen = append(seen, r.Method+" "+r.URL.EscapedPath()+"?"+r.URL.RawQuery+" "+r.Header.Get("Authorization"))
 		switch r.URL.Path {
+		case "/v1/catalogue":
+			_, _ = w.Write([]byte(`{"repositories":["acme/a","acme/b"]}`))
 		case "/v1/catalogue/Smana/cloud-native-ref":
 			_, _ = w.Write([]byte(`{"repository":"Smana/cloud-native-ref","maintainer":true,` +
 				`"classes":[{"name":"docs-links","mode":"live","floor":"links-solo","allowed":[],"ceilingUSD":2,"description":"","escalation":null}],` +
@@ -55,5 +58,12 @@ func TestCatalogueClient(t *testing.T) {
 	}
 	if got := seen[len(seen)-1]; got != "GET /v1/catalogue/Smana/we%20ird%3F%23? Bearer tok" {
 		t.Fatalf("path = %q", got)
+	}
+	if _, err := f.Repositories(t.Context(), ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("no token: %v", err)
+	}
+	repos, err := f.Repositories(t.Context(), "tok")
+	if err != nil || !slices.Equal(repos, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("repos = %v, %v", repos, err)
 	}
 }

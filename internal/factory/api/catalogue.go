@@ -7,14 +7,64 @@ import (
 	"errors"
 	"net/http"
 	"slices"
+	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
+// catalogueListRoute is the served repository list's path: GET /v1/catalogue.
+const catalogueListRoute = "GET /v1/catalogue"
+
 // catalogueRoute is the catalogue's path: GET /v1/catalogue/{owner}/{name}.
 const catalogueRoute = "GET /v1/catalogue/{owner}/{name}"
+
+// catalogueRepositories is GET /v1/catalogue: the names of the repositories this factory serves
+// (public ones and private ones whose acknowledgement is set, sorted, WF12), for a caller with the
+// member role or a declared sponsored principal narrowed to its own repositories.
+func (s *Server) catalogueRepositories(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
+	p, err := s.Auth.Authenticate(r)
+	switch {
+	case errors.Is(err, authn.ErrForbidden):
+		refuse(w, http.StatusForbidden, "not_permitted")
+		return
+	case err != nil:
+		refuse(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	var sp *config.Sponsored
+	switch {
+	case p.Internal:
+		refuse(w, http.StatusForbidden, "human_only")
+		return
+	case p.Sponsored:
+		sp = cfg.SponsoredBy(p.ID)
+		if sp == nil {
+			refuse(w, http.StatusForbidden, "human_only")
+			return
+		}
+	case p.Sub == "":
+		refuse(w, http.StatusForbidden, "human_only")
+		return
+	}
+	served := catalogue.Repositories(cfg)
+	out := make([]string, 0, len(served))
+	for _, name := range served {
+		if s.PrivateRefused != nil && s.PrivateRefused(name) && !cfg.RepositoryFor(name).PrivateCodeAcknowledged() {
+			continue
+		}
+		if sp != nil && !slices.ContainsFunc(sp.Repositories, func(allowed string) bool {
+			return strings.EqualFold(allowed, name)
+		}) {
+			continue
+		}
+		out = append(out, name)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	reply(w, http.StatusOK, map[string][]string{"repositories": out})
+}
 
 // catalogue is GET /v1/catalogue/{owner}/{name}[?onBehalfOf=slack:<team>/<user>]: what the
 // repository offers at intake, from the accepted config snapshot (P2). It reads nothing on GitHub

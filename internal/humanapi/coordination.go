@@ -213,7 +213,7 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 	if ref != nil {
 		return s.finishCoordination(ctx, run, nil, ref)
 	}
-	candidates, ref := s.coordinationCandidates(ctx, a.Candidates)
+	candidates, ref := s.coordinationCandidates(ctx, p, a.Candidates)
 	if ref != nil {
 		return s.finishCoordination(ctx, run, nil, ref)
 	}
@@ -267,10 +267,14 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 // the allowlist does not serve is repository_not_allowed, and one GitHub cannot answer for is
 // repository_unverified. Write is not asked: only the primary's requester must write, and each other
 // child's own maintainer authorizes it later (MR5).
-func (s *Server) coordinationCandidates(ctx context.Context, asked []string) ([]string, *intake.Refusal) {
+func (s *Server) coordinationCandidates(ctx context.Context, p authn.Principal, asked []string) ([]string, *intake.Refusal) {
 	ctx, cancel := context.WithTimeout(ctx, accessWait)
 	defer cancel()
-	guard := intake.Guard{Allow: s.Intake.Allow, Public: s.Intake.Public,
+	served, err := s.planRepositories(ctx, p)
+	if err != nil {
+		return nil, (&intake.ProfileRefusal{Code: intake.CatalogueUnavailable}).Refusal()
+	}
+	guard := intake.Guard{Allow: allowMap(served), Public: s.Intake.Public,
 		MayWrite: func(context.Context, string) (bool, error) { return true, nil }}
 	out := make([]string, 0, len(asked))
 	for _, repository := range asked {

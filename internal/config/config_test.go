@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -881,7 +882,6 @@ func TestHumanLocalModeRefusesThePlanner(t *testing.T) {
 func TestThePlannerNeedsWhatItServes(t *testing.T) {
 	// The parts an operator must land, one per line, in the shape ai-native-ref's copy will carry.
 	parts := []struct{ name, want string }{
-		{"the allowlist", "human.intake.plan.repositories: is required"},
 		{"the factory's catalog", "human.intake.plan: the planner needs factoryURL"},
 		{"the /mcp listener", "human.intake.plan.enabled needs human.mcp.enabled"},
 		{"the write check", "human.intake.plan.enabled needs human.access"},
@@ -889,18 +889,15 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
 		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
-		"      repositories: [Smana/ai-native-ref]\n" +
 		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
 	if _, err := Load(write(t, base)); err != nil {
-		t.Fatalf("the parts together must load: %v", err)
+		t.Fatalf("the parts together must load without plan.repositories (WF12): %v", err)
 	}
 	for _, c := range parts {
 		t.Run(c.name, func(t *testing.T) {
 			// The part's own line is replaced by the one that removes it, so every other part stays.
 			without := base
 			switch c.name {
-			case "the allowlist":
-				without = strings.Replace(base, "      repositories: [Smana/ai-native-ref]\n", "", 1)
 			case "the factory's catalog":
 				without = strings.Replace(base, "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n", "", 1)
 			case "the /mcp listener":
@@ -915,6 +912,27 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 				t.Fatalf("got %v, want an error naming %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestPlanRepositoriesNarrowsOptionalInConfig(t *testing.T) {
+	base := "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n" + valid +
+		"\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    ttl: 5m\n" + githubLink +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n"
+	cfg, err := Load(write(t, base))
+	if err != nil {
+		t.Fatalf("planner enabled without repositories must load: %v", err)
+	}
+	if len(cfg.IntakePlan().Repositories) != 0 {
+		t.Fatalf("repositories = %v, want empty", cfg.IntakePlan().Repositories)
+	}
+	narrowed, err := Load(write(t, base+"      repositories: [acme/a, acme/b]\n"))
+	if err != nil || !slices.Equal(narrowed.IntakePlan().Repositories, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("narrowed = %v, %v", narrowed.IntakePlan().Repositories, err)
+	}
+	if _, err := Load(write(t, base+"      repositories: [bad]\n")); err == nil || !strings.Contains(err.Error(), "human.intake.plan.repositories[0]") {
+		t.Fatalf("bad entry must fail: %v", err)
 	}
 }
 

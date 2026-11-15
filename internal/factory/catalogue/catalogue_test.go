@@ -237,3 +237,38 @@ func TestCatalogueJSON(t *testing.T) {
 		}
 	}
 }
+
+func cfgWith(repos ...config.Repository) *config.Config {
+	return &config.Config{Repositories: repos}
+}
+
+func publicRepo(name string) config.Repository {
+	return config.Repository{Name: name}
+}
+
+func privateUnacknowledged(name string) config.Repository {
+	return config.Repository{Name: name, PrivateCode: &config.PrivateCode{Acknowledged: false}}
+}
+
+func privateAcknowledged(name string) config.Repository {
+	return config.Repository{Name: name, PrivateCode: &config.PrivateCode{Acknowledged: true}}
+}
+
+func TestRepositoriesServed(t *testing.T) {
+	got := Repositories(cfgWith(publicRepo("acme/b"), publicRepo("acme/a"), privateUnacknowledged("acme/secret")))
+	if !slices.Equal(got, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("got %v", got)
+	}
+	t.Run("acknowledged private included, runtime refused excluded", func(t *testing.T) {
+		cfg := cfgWith(publicRepo("acme/c"), privateAcknowledged("acme/acked"), publicRepo("acme/runtime-private"), publicRepo("acme/a"))
+		cfg.SetPrivateRefused(func(repo string) bool { return strings.EqualFold(repo, "acme/runtime-private") })
+		if got := Repositories(cfg); !slices.Equal(got, []string{"acme/a", "acme/acked", "acme/c"}) {
+			t.Fatalf("got %v", got)
+		}
+	})
+	t.Run("nil config", func(t *testing.T) {
+		if got := Repositories(nil); len(got) != 0 {
+			t.Fatalf("got %v", got)
+		}
+	})
+}
