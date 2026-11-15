@@ -152,6 +152,63 @@ func (b Broker) Decide(ctx context.Context, d Decision) (DecisionResult, error) 
 	}
 }
 
+const (
+	stopPath  = "/api/slack/stops"
+	retryPath = "/api/slack/retries"
+)
+
+// Act is one confirmed stop or retry press, as POST /api/slack/stops and POST /api/slack/retries
+// take it: the ids Slack signed on the click and the room the confirmation's metadata bound.
+type Act struct {
+	Team, User, Channel, MessageTS, Room string
+}
+
+// ActResult is the closed code the broker's stop or retry route answered.
+type ActResult struct{ Result string }
+
+// Stop posts one confirmed stop press to the broker's human listener as the App's principal.
+func (b Broker) Stop(ctx context.Context, a Act) (ActResult, error) {
+	return b.act(ctx, stopPath, a)
+}
+
+// Retry posts one confirmed retry press to the broker's human listener as the App's principal.
+func (b Broker) Retry(ctx context.Context, a Act) (ActResult, error) {
+	return b.act(ctx, retryPath, a)
+}
+
+func (b Broker) act(ctx context.Context, path string, a Act) (ActResult, error) {
+	body, err := json.Marshal(map[string]string{
+		"team": a.Team, "user": a.User, "channel": a.Channel,
+		"messageTS": a.MessageTS, "room": a.Room,
+	})
+	if err != nil {
+		return ActResult{}, err
+	}
+	for attempt := 0; ; attempt++ {
+		raw, status, err := b.send(ctx, path, body, false)
+		if err != nil {
+			return ActResult{}, err
+		}
+		if status == http.StatusUnauthorized && attempt == 0 {
+			b.Tokens.Invalidate()
+			continue
+		}
+		if status != http.StatusOK && status != http.StatusTooManyRequests {
+			return ActResult{}, fmt.Errorf("slackapp: broker answered %d", status)
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return ActResult{}, fmt.Errorf("slackapp: act result: %w", err)
+		}
+		if out.Result == "" {
+			return ActResult{}, errors.New("slackapp: broker reply has no result")
+		}
+		return ActResult{Result: out.Result}, nil
+	}
+}
+
 // IssueDraft asks the broker to judge a draft against the issue template. Only the draft grammar
 // calls it, which release N keeps behind proposals.enabled: false.
 func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
