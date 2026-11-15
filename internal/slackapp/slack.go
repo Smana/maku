@@ -54,6 +54,24 @@ type ApprovalPayload struct {
 // approvalEventType marks a card the App posted for an approval.
 const approvalEventType = "factory_approval"
 
+// actEventType marks a confirmation message the App posted for a stop or retry, and
+// actClosedEventType marks one the App has already resolved or expired so a second press cannot
+// act on it even after a restart.
+const (
+	actEventType       = "factory_act"
+	actClosedEventType = "factory_act_closed"
+)
+
+// ActPayload is a stop or retry confirmation's metadata: the action, the room it targets, the
+// Slack user who asked for it (the only one who may confirm or cancel it), and its RFC 3339
+// ten-minute expiry.
+type ActPayload struct {
+	Action  string `json:"action"`
+	Room    string `json:"room"`
+	Presser string `json:"presser"`
+	Expires string `json:"expires"`
+}
+
 // MarkerPayload is the "Filed" line's tag: the repository that was filed and the room it started,
 // so a thread that lost its map can still tell where the work went. Today's Filed lines carry the
 // repository alone, which is why Room is optional — a decoder that required one would read every
@@ -88,6 +106,19 @@ func (m *Metadata) approvalPayload() (ApprovalPayload, bool) {
 	var p ApprovalPayload
 	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
 		return ApprovalPayload{}, false
+	}
+	return p, true
+}
+
+// actPayload decodes the payload as a live stop or retry confirmation's; false when it is
+// anything else (including an already-closed confirmation).
+func (m *Metadata) actPayload() (ActPayload, bool) {
+	if m == nil || m.EventType != actEventType {
+		return ActPayload{}, false
+	}
+	var p ActPayload
+	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
+		return ActPayload{}, false
 	}
 	return p, true
 }

@@ -94,6 +94,17 @@ func main() {
 			}
 			return nil
 		}
+	case "broker-slackacts":
+		load = func(p string) error {
+			c, err := config.Load(p)
+			if err != nil {
+				return err
+			}
+			if c.Human.SlackStop == nil || c.Human.SlackRetry == nil {
+				return fmt.Errorf("slackStop=%+v slackRetry=%+v, want both on", c.Human.SlackStop, c.Human.SlackRetry)
+			}
+			return nil
+		}
 	case "broker-planner-gateway", "broker-slackintents-gateway":
 		// broker.modelGateway (GW8): the derived route and token file decode to the clients listener's
 		// planner route (and, with slackIntents, the classifier's) and the projected token.
