@@ -383,6 +383,10 @@ func (carefulCatalogue) Catalogue(_ context.Context, _, _, _ string) (catalogue.
 	return cat, nil
 }
 
+func (carefulCatalogue) Repositories(_ context.Context, _ string) ([]string, error) {
+	return []string{"Smana/ai-native-ref"}, nil
+}
+
 func TestHandoffCheckCoversWorkflow(t *testing.T) {
 	st := newMemHandoffStore()
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(carefulCatalogue{}), withHandoffs(st))
