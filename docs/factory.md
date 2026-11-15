@@ -205,7 +205,7 @@ sources, note or `checkedAt` of an earlier generation.
 `scoperEnforcement` has no effect outside `enforce`; exact-active enforcement never depends on it.
 Roll back full to limited enforcement by clearing that selector, or to `shadow`/`off` by changing
 `mode`, without deleting Task history. The evidence gates and procedure are in
-[Operations](operations.md#outcome-overlap-rollout-and-shadow-evidence).
+[Operations](operations/factory.md#outcome-overlap-rollout-and-shadow-evidence).
 
 Every other final result proceeds through the existing lifecycle. In particular, `shadow` records
 the same active classifications without refusing, and limited enforcement treats scoper-active
@@ -436,7 +436,7 @@ every maintainer.
 | `pod_lost`, `Disrupted`, `PodLost`, `PodFailed` | The sandbox failed or was lost and was not resumed. A sandbox lost to its node is resumed by itself, up to `resume.maxPerTask` times |
 | `resumes_exhausted`, `resume_budget` | The sandbox was lost again, and no resume or no budget is left |
 | `run_unschedulable` | The cluster did not admit the run within `caps.maxPendingMinutes` |
-| `loop_unsupported` | The class has a `loops` row, `search: true` or `checks: true`, but the cluster refused the run claim's `spec.loop` (its AgentRun schema predates the loop policy, `loop.checks` or `loop.search`). No run started and none is retried: roll out crossplane-configuration with `spec.loop` (and `loop.checks`, `loop.search`) first ([operations](operations.md)) |
+| `loop_unsupported` | The class has a `loops` row, `search: true` or `checks: true`, but the cluster refused the run claim's `spec.loop` (its AgentRun schema predates the loop policy, `loop.checks` or `loop.search`). No run started and none is retried: roll out crossplane-configuration with `spec.loop` (and `loop.checks`, `loop.search`) first ([operations](operations/rooms.md#upgrades)) |
 | `run_lost`, `deleted` | The run disappeared, or its claim was deleted |
 | `committed_no_pr` | The run finished after committing, but its branch never reached the remote: the commit existed only in the sandbox and is lost. Comment `/factory retry` |
 | `pushed_no_pr` | The run pushed its branch but opened no pull request. Open one from `agent/<task>`, or comment `/factory retry` |
@@ -819,7 +819,7 @@ tokens and no cost: a cost is never counted as $0. The gateway's per-run bucket 
 a priced call its price in reference tokens, from the same `meter.prices`, and an unpriced one its
 raw tokens; the meter names a gateway 429 `budget-run` (`gateway-ceiling`) when the run's spend in
 that unit reaches 5 M, and `budget-fleet` below it. The metrics for each cap are in
-[Operations](operations.md#budget-signals).
+[Operations](operations/failures.md#budget-signals).
 
 ### Daily budgets
 
@@ -1288,7 +1288,7 @@ policy-bot matched another class than the prediction goes through the gate too, 
 record. `ledger_truncated` is decided before the gate and stays the one input that still
 stops a shadow record. Early refusals (the base checks, the author, an unarmed class) carry a record with every count unread.
 
-**The human path's metrics** ([operations](operations.md#factory-metrics)):
+**The human path's metrics** ([operations](operations/factory.md#factory-metrics)):
 - `maku_factory_merge_decisions_total` gains `repository`.
 - `maku_factory_human_wait_seconds_total` gains `reason` (the hand-off's) and `class` (the task's).
 - `maku_factory_handoff_to_merge_seconds{class,reason,how}` is a histogram of the time from a pull
@@ -1409,7 +1409,7 @@ advisory. A production install, with its two Apps, adds the ruleset above.
 `merge.gateStatus`, it reads `GET repos/{owner}/{repo}/rules/branches/{default branch}` with the
 factory App's token and sets `maku_factory_merge_gate_required{repository}` to 1 when a ruleset
 requires `maku/merge-gate` from the App that posts it, else 0. Each drop to 0 logs a warning
-([operations](operations.md#factory-metrics)). It never refuses: the factory merges by its own
+([operations](operations/factory.md#factory-metrics)). It never refuses: the factory merges by its own
 decision, and the rule guards the branch against everyone else. A pass that cannot read the rules
 keeps the last value and counts `maku_factory_merge_gate_rules_unread_total{repository}`.
 
@@ -2100,7 +2100,7 @@ the factory warns at start-up, naming the repositories whose enforcement is then
 Readiness reads the same source: `sandbox_write_token` and `publisher_policy` read the role table under `runTokens.perRun`, and
 a shared token always leaves `sandbox_write_token` missing. Readiness stays `false`
 until `mode: enforce`. Enabling, rolling back and the stop
-rules are in [Operations](operations.md#hardening-non-code-outputs).
+rules are in [Operations](operations/factory.md#hardening-non-code-outputs).
 
 ## Hardening, push enforced
 
@@ -2197,7 +2197,7 @@ With `push` enforced the role table takes `contents: write` from the implementer
 publisher. `runTokens.perRun` mints each run from that table. GitHub refuses a push that changes
 `.github/workflows/**` from a token without `workflows: write`: unless the publisher's row grants
 it, an approved workflow push is refused `output_unavailable`. Enabling and rolling back are in
-[Operations](operations.md#hardening-push-enforced).
+[Operations](operations/factory.md#hardening-push-enforced).
 
 ## Hardening, reads filtered
 
@@ -2275,7 +2275,7 @@ Readiness's `read_filter_off` check holds for the repository: enforce, the run-c
 The `hardening` block lives in the factory's config file, which the factory reads at start, and
 the `maku-factory` chart's `checksum/config` annotation restarts it on any change. So the run
 annotation, the forge-read route and `read_filter_off` always read the same mode. Enabling and rolling back are
-in [Operations](operations.md#hardening-reads-filtered).
+in [Operations](operations/factory.md#hardening-reads-filtered).
 
 ## Hardening, drills
 
@@ -2918,7 +2918,7 @@ switch keep theirs.
   internal `coordination.View` is unfiltered and served on no human route.
 - Execute itself, until both prerequisites ship.
 
-Metrics and the parent span: [operations](operations.md#coordination).
+Metrics and the parent span: [operations](operations/factory.md#coordination).
 
 ## Splits
 

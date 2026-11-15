@@ -12,7 +12,7 @@ rules:
     annotations:
       summary: "More than five forge.push approvals were decided from Slack in ten minutes"
       description: "The metric carries only {result, decision}, so this aggregate stands in for a per-person clause: six approvals in ten minutes from anywhere is already worth reading. Take the broker's 'slack decision' lines for those decisions (team, approval, user, result, decision) and the room log for the approvals they closed. An unexpected burst is the shape of a compromised App pod casting decisions as linked humans. Check the rooms' policies too: no forge.push approval should be decided from Slack in an unattended room."
-      runbook_url: "__DOCS__/operations.md#slack-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#slack-alerts"
       dashboard: "/d/agent-factory"
   - alert: SlackCardUpdatesFailing
     expr: sum(rate(maku_slack_app_requests_total{route=~"interactions|webhooks", outcome="error"}[10m])) > 0
@@ -22,5 +22,5 @@ rules:
     annotations:
       summary: "The Slack App has failed an approval-card update for an hour"
       description: "The cards are then lying about being live. maku_slack_app_requests_total carries {route, outcome} and no approval id, so one flapping card and a hundred failures read the same: take the App's 'card update failed' lines (approval, channel, err) to tell them apart. Causes: a revoked chat:write, a removed message, Slack refusing metadata. The decisions themselves still land: the store, not the card, is the fence."
-      runbook_url: "__DOCS__/operations.md#slack-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#slack-alerts"
       dashboard: "/d/agent-factory"

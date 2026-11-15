@@ -37,7 +37,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Observability](observability.md) | The scrape objects, the alert rule and the dashboards the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |
-| [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
+| [Operations](operations.md) | Index of the three operations guides: [rooms](operations/rooms.md), [the factory](operations/factory.md) and [failures, alerts and the kill switch](operations/failures.md) |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: from the demo to production (the production seams), adopting the umbrella from `maku-factory`, the CRD chart and its adoption, `values-demo.yaml` |
 | [Roadmap](roadmap.md) | What shipped, what is open |
 

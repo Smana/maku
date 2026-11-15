@@ -379,7 +379,7 @@ traffic, so the kubelet's probe of the bridge needs no rule.
 
 **The preflight refuses runs on a CNI that does not enforce NetworkPolicy.** A plain NetworkPolicy
 on such a CNI is silently ignored. In `kubernetes` mode the run controller proves enforcement
-before any run starts ([the preflight](operations.md#the-run-controllers-preflight)). Two of its
+before any run starts ([the preflight](operations/failures.md#the-run-controllers-preflight)). Two of its
 negative controls (the apiserver, and `github.com:443` dialled past the proxy) are denied only by the
 run's own egress rules, so a CNI that enforces ingress alone fails it too.
 
