@@ -480,7 +480,7 @@ All three blocks live at the top level of the factory's config (or `Factory.spec
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
-| `workflows.<name>` | `{template, tier, checks, loop, escalation, description}` | the shipped `quick`, `standard`, `careful`, `none` | Name like a policy name. `template`: `solo`, `pair`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `escalation`: `{outOfBudget, notConverged}`, each a workflow; `none` takes no other key; `description` ≤ 120 bytes |
+| `workflows.<name>` | `{template, tier, checks, loop, escalation, effort, models, description}` | the shipped `quick`, `standard`, `careful`, `none` | Name like a policy name. `template`: `solo`, `pair`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `escalation`: `{outOfBudget, notConverged}`, each a workflow; `effort` and `models` map non-implementer roles to `low`/`medium`/`high` and a model alias (internal runs: tier aliases only); `none` takes no other key; `description` ≤ 120 bytes |
 | `mergeGuardrails.protectedFiles` | list of regexp | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, always first | Appended to every bound policy's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every bound policy's `holdoutChecks` |
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as `10`, `300` and `5` | A bound policy above it is refused (`GuardrailMismatch`); one without it inherits it |

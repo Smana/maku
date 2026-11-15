@@ -544,10 +544,10 @@ git commit -am "docs: the start row, the cache lines, the light alias and warm n
 - Test: `internal/factory/config/config_test.go`, `api/factory/v1alpha1/factoryconfig_crd_test.go`
 
 **Interfaces:**
-- Consumes: the workflows plan's `Workflow` type and its lookup by name.
-- Produces: `Workflow.Effort map[string]string` (role → `low|medium|high`), `Workflow.Models map[string]ModelAlias` (role → alias); `func (c *Config) EffortFor(workflow, role string) string` (`""` means the harness default, `high`); `func (c *Config) ModelFor(workflow, dataClass, role, tier string) string`.
+- Consumes: the workflows plan's `HarnessProfile` type (a workflow definition) and its lookup by name.
+- Produces: `HarnessProfile.Effort map[string]Effort` (role → `low|medium|high`), `HarnessProfile.Models map[string]ModelAlias` (role → alias); `func (c *Config) EffortFor(workflow, role string) string` (`""` means the harness default, `high`); `func (c *Config) ModelFor(workflow, dataClass, role, tier string) string`.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestEffortForDefaultsToEmpty(t *testing.T)            { /* no effort row: "" */ }
@@ -562,21 +562,21 @@ func TestModelForOnAnInternalTaskHonoursTierAliasesOnly(t *testing.T) {
 func TestTheImplementersEffortAndModelAreNotSettable(t *testing.T) { /* effort or models naming implementer: load error */ }
 ```
 
-- [ ] **Step 2: Run and see them fail**
+- [x] **Step 2: Run and see them fail**
 
 Run: `go test ./internal/factory/config/ -run 'EffortFor|ModelFor|Implementers' -count=1`
 Expected: FAIL, undefined `EffortFor`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 A workflow that serves both data classes and names a non-tier alias is valid for public tasks and returns `""` for internal ones only if the config says so explicitly; by default it is the load error above, so a misrouted internal call cannot be configured by accident.
 
-- [ ] **Step 4: Regenerate and run**
+- [x] **Step 4: Regenerate and run**
 
 Run: `task crd:gen && task check`
 Expected: exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat(factory): effort and models per role on a workflow definition"
@@ -592,7 +592,7 @@ git commit -am "feat(factory): effort and models per role on a workflow definiti
 - Consumes: `EffortFor` (Task 11).
 - Produces: `AgentRun.spec.effort` (enum `low|medium|high`, optional); pod env `LLM_REASONING_EFFORT` set only when the field is.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 ```go
 func TestARunWithAnEffortSetsTheHarnessVariable(t *testing.T) { /* spec.effort "medium": LLM_REASONING_EFFORT=medium */ }
@@ -600,9 +600,9 @@ func TestARunWithoutAnEffortSetsNone(t *testing.T)           { /* variable absen
 func TestTheFactoryWritesTheWorkflowsEffortOnTheRun(t *testing.T) { /* workflow standard, effort {reviewer: medium}: the reviewer's AgentRun has spec.effort medium; the implementer's has none */ }
 ```
 
-- [ ] **Step 2: Run and see them fail**, **Step 3: implement**, **Step 4:** `task crd:gen && task check`, exit 0.
+- [x] **Step 2: Run and see them fail**, **Step 3: implement**, **Step 4:** `task crd:gen && task check`, exit 0.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git commit -am "feat: a workflow's effort reaches the run's harness"

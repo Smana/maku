@@ -40,7 +40,7 @@ const (
 // fixed references. Reusable merge policies: the class shape, and the bindings.
 func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 	for plural, wants := range map[string][]string{
-		"factories": {"kind: Factory", "scope: Namespaced", "subresources:", "name: Accepted", "name: Ready", "name: Repos", "name: Stopped", "mergeDefaults:"},
+		"factories": {"kind: Factory", "scope: Namespaced", "subresources:", "name: Accepted", "name: Ready", "name: Repos", "name: Stopped", "mergeDefaults:", "effort:"},
 		"repositories": {"kind: Repository", "scope: Namespaced", "subresources:", "name: Repo", "name: Factory", "name: Accepted", "name: Connected",
 			"spec.factoryRef is fixed once set", "spec.repository is fixed once set", "mergePolicies:", "x-kubernetes-list-type: map",
 			"name: Classes", "name: Live", "policyGeneration:", "mergeDefaulted:",

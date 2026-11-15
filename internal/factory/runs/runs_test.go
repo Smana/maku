@@ -467,18 +467,36 @@ func TestBuildWritesTheLoopOnlyWhenSet(t *testing.T) {
 	}
 }
 
-// Loop policy part 2 (final review I2): only a claim carrying spec.loop is created under Strict
-// field validation, so an XRD that would prune it refuses the claim instead of running loop-off.
-func TestCreateIsStrictOnlyForALoopClaim(t *testing.T) {
+func TestBuildWritesEffortOnlyWhenSet(t *testing.T) {
+	base := Spec{RunID: "7f3cq2xz", Role: "reviewer", Repository: "Smana/cloud-native-ref"}
+	if _, found, _ := unstructured.NestedString(Build(runwatch.DefaultKind, base).Object, "spec", "effort"); found {
+		t.Fatal("no effort: spec.effort is absent")
+	}
+	base.Effort = "medium"
+	got, found, err := unstructured.NestedString(Build(runwatch.DefaultKind, base).Object, "spec", "effort")
+	if err != nil || !found || got != "medium" {
+		t.Fatalf("spec.effort = %q, found %v, err %v", got, found, err)
+	}
+	base.Effort = "max"
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "effort") {
+		t.Fatalf("an unknown effort was accepted: %v", err)
+	}
+}
+
+// Claims carrying a newer spec field are created under Strict field validation: an old schema
+// must refuse them, never prune the field and run with defaults.
+func TestCreateIsStrictOnlyForANewerSpecClaim(t *testing.T) {
 	for _, c := range []struct {
 		name   string
 		loop   *Loop
 		search bool
+		effort string
 		want   string
 	}{
-		{"no loop", nil, false, ""},
-		{"a loop", &Loop{StallSteps: 80, Continuations: 2}, false, "Strict"},
-		{"search", nil, true, "Strict"},
+		{"no newer field", nil, false, "", ""},
+		{"a loop", &Loop{StallSteps: 80, Continuations: 2}, false, "", "Strict"},
+		{"search", nil, true, "", "Strict"},
+		{"effort", nil, false, "medium", "Strict"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			var got string
@@ -492,7 +510,7 @@ func TestCreateIsStrictOnlyForALoopClaim(t *testing.T) {
 					return cl.Create(ctx, obj, opts...)
 				}}).Build()
 			sp := spec()
-			sp.Loop, sp.Search = c.loop, c.search
+			sp.Loop, sp.Search, sp.Effort = c.loop, c.search, c.effort
 			if err := (Client{C: cl, Kind: runwatch.DefaultKind}).Create(t.Context(), sp); err != nil {
 				t.Fatal(err)
 			}

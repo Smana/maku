@@ -66,6 +66,36 @@ func TestClassModelsPickAPublicRunsAlias(t *testing.T) {
 	}
 }
 
+func TestWorkflowModelPinsAnInternalReviewer(t *testing.T) {
+	tk := issueTask("3buqdlot", 7, "x")
+	tk.Spec.DataClass = "internal"
+	g := teamRigFor(t, "pair", tk, func(g *rig) {
+		cfg := g.r.Cfg.Current()
+		cfg.HarnessProfiles = map[string]config.HarnessProfile{"standard": {Template: "pair"}}
+		p := cfg.HarnessProfiles["standard"]
+		p.Loop = "tuned"
+		p.Models = map[string]config.ModelAlias{"reviewer": "tier-standard"}
+		cfg.HarnessProfiles["standard"] = p
+	})
+	if got := g.runs.specs[rid(1)].Model; got != "tier-standard" {
+		t.Fatalf("internal reviewer model = %q, want the workflow's tier-standard", got)
+	}
+}
+
+func TestWorkflowEffortReachesTheReviewerOnly(t *testing.T) {
+	tk := issueTask("3buqdlot", 7, "x")
+	g := teamRigFor(t, "pair", tk, func(g *rig) {
+		cfg := g.r.Cfg.Current()
+		cfg.HarnessProfiles = map[string]config.HarnessProfile{"standard": {Template: "pair", Loop: "tuned", Effort: map[string]config.Effort{"reviewer": "medium"}}}
+	})
+	if got := g.runs.specs[rid(0)].Effort; got != "" {
+		t.Fatalf("implementer effort = %q, want the harness default", got)
+	}
+	if got := g.runs.specs[rid(1)].Effort; got != "medium" {
+		t.Fatalf("reviewer effort = %q, want the workflow's medium", got)
+	}
+}
+
 // F4: the judge's alias is a provider's only on a public task; an internal task of the class gets
 // the default judge, never mistral-light.
 func TestAProviderJudgeIsPublicOnly(t *testing.T) {

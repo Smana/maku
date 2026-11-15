@@ -37,6 +37,11 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// Effort is a role's reasoning effort (CP9).
+// +kubebuilder:validation:Enum=low;medium;high
+// +kubebuilder:validation:MaxLength=6
+type Effort string
+
 // HarnessProfile is one workflow (WF1, WF7): the template it runs, the tier it raises a task to,
 // whether its runs run the repository's checks, its loops row, and where a failed run steps to.
 // Empty keeps what the factory selects today. A Factory spells the map workflows.
@@ -54,6 +59,14 @@ type HarnessProfile struct {
 	// Escalation is the workflow a failed run's signal group steps to (WF7, TE7); absent, or an
 	// absent group, goes to a maintainer.
 	Escalation *Escalation `json:"escalation,omitempty"`
+	// Effort maps a non-implementer role to low, medium or high (CP9). An absent role keeps the
+	// harness's default, high.
+	// +kubebuilder:validation:MaxProperties=4
+	Effort map[string]Effort `json:"effort,omitempty"`
+	// Models maps a non-implementer role to a model alias (CP10). Internal runs accept only the
+	// tier-light, tier-standard and tier-frontier aliases; provider aliases are public only.
+	// +kubebuilder:validation:MaxProperties=4
+	Models map[string]ModelAlias `json:"models,omitempty"`
 }
 
 // Escalation maps a signal group to a workflow; an absent group goes to the human.
@@ -180,9 +193,10 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		if len(p.Description) > MaxDescription {
 			bad("workflows.%s: description is %d bytes at most", name, MaxDescription)
 		}
-		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil) {
+		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil || len(p.Effort) > 0 || len(p.Models) > 0) {
 			bad("workflows.%s: template none runs nothing, so it takes no other key", name)
 		}
+		c.validateWorkflowTuning(bad, name, p)
 		if e := p.Escalation; e != nil {
 			for _, g := range []struct{ key, target string }{{"outOfBudget", e.OutOfBudget}, {"notConverged", e.NotConverged}} {
 				if !c.IsWorkflow(g.target) && g.target != "" {

@@ -1503,8 +1503,8 @@ func models() []string {
 type providerModel struct{ tier, served string }
 
 // providerModels are the provider aliases (v3 F15, D9). Moonshot processes in China and Mistral
-// in the EU: both serve public data only, so only loops.<class>.models and a judge name them,
-// and only a public task is given one.
+// in the EU: both serve public data only, so loops models, workflows models and a judge name
+// them, and only a public task is given one.
 func providerModels() map[string]providerModel {
 	// The served ids are ai-native-ref's infrastructure/base/agent-gateway/{moonshot,mistral}.yaml
 	// modelAliases, copied: when a backend pins another model, change both together.
@@ -2346,9 +2346,9 @@ type Loop struct {
 	// Split offers the scoper a split of the class's hard tasks (splitter design SL3): absent, off.
 	// It needs scope: scoper on the same row, and never switches the loop on.
 	Split *SplitPolicy `json:"split,omitempty"`
-	// Models is role → tier → the provider alias that role runs on for a public task of that tier
-	// (v3 F15, F3); a role or tier without an entry, and every internal task, keep today's model.
-	// It never switches the loop on.
+	// Models is the loops row's public fallback: role → tier → provider alias (F3). A role or tier
+	// without an entry keeps today's model; a workflow's models override takes precedence, including
+	// a tier alias on an internal task (CP10). It never switches the loop on.
 	// +kubebuilder:validation:MaxProperties=32
 	Models map[string]ModelAliases `json:"models,omitempty"`
 }
@@ -2362,14 +2362,33 @@ type ModelAliases map[string]ModelAlias
 // +kubebuilder:validation:MaxLength=253
 type ModelAlias string
 
-// ModelFor is the provider alias loops row row (RowFor) names for role on tier, "" for today's
-// model: always "" unless dataClass is public (F4). A role or tier the row leaves unset is
-// default's (WF10).
-func (c *Config) ModelFor(row, dataClass, role, tier string) string {
+// EffortFor is the effort workflow names for role, "" for the harness's default (CP9). The
+// implementer's effort is deliberately not configurable.
+func (c *Config) EffortFor(workflow, role string) string {
+	if role == "implementer" {
+		return ""
+	}
+	return string(c.HarnessProfiles[workflow].Effort[role])
+}
+
+// ModelFor is the model alias workflow names for a non-implementer role (CP10), else the provider
+// alias its loops row names for that role and tier (F3). Internal runs take only a tier alias; an
+// unset or unusable override keeps the tier's model.
+func (c *Config) ModelFor(workflow, dataClass, role, tier string) string {
+	p := c.HarnessProfiles[workflow]
+	if alias := string(p.Models[role]); alias != "" {
+		if role == "implementer" {
+			return ""
+		}
+		if dataClass == "public" || dataClass == "internal" && slices.Contains([]string{"tier-light", "tier-standard", "tier-frontier"}, alias) {
+			return alias
+		}
+		return ""
+	}
 	if dataClass != "public" {
 		return ""
 	}
-	r := c.rowOf(row)
+	r := c.rowOf(c.RowFor(workflow, p))
 	return string(r.Models[role][tier])
 }
 
