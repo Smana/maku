@@ -66,6 +66,9 @@ type Relay struct {
 	FactoryLogin string
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
+	// Unlabel removes a label before Label re-applies it when answer restarts an escalated task;
+	// nil skips the removal step.
+	Unlabel Labeler
 	// ClassLabel puts a planned issue's class:<c> label, then its workflow:<p> pin, on it before Label
 	// starts the factory (P5, P7); nil starts without them, and the factory then decides both itself.
 	ClassLabel Labeler
@@ -157,7 +160,7 @@ func (r *Relay) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		// is handled inline, and may be the very next line.
 		pre := r.reserve(ctx, m)
 		pool, busy := g, "busy: 8 requests in flight"
-		if pre != nil && pre.call.Name == toolRoomWait {
+		if pre != nil && (pre.call.Name == toolRoomWait || pre.call.Name == mcpwire.Wait) {
 			pool, busy = gw, "busy: 8 room_wait calls in flight"
 		}
 		if !pool.TryGo(func() error { r.handle(ctx, m, raw, pre); return nil }) {

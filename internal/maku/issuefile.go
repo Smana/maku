@@ -451,6 +451,20 @@ func GHLabel(ctx context.Context, repo string, issue int, label string) error {
 	return nil
 }
 
+// GHUnlabel removes a label from the issue with the developer's gh before GHLabel re-applies it:
+// each value joined to its flag, never a shell.
+func GHUnlabel(ctx context.Context, repo string, issue int, label string) error {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "issue", "edit", strconv.Itoa(issue), "--repo="+repo, "--remove-label="+label) //nolint:gosec // gh, with a checked repository, a number and a fixed label, never through a shell
+	var errOut bytes.Buffer
+	cmd.Stderr = &capped{b: &errOut}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh issue edit: %w: %s", err, OneLine(errOut.String()))
+	}
+	return nil
+}
+
 // GHAddLabel adds a label with the developer's gh through the REST route, which creates a label the
 // repository does not have yet (G5; gh issue edit --add-label refuses one): each value its own
 // argument, never a shell.
