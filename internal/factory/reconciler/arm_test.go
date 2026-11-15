@@ -564,40 +564,45 @@ func TestTheGateReadsTheHeadsPushForAnApproval(t *testing.T) {
 }
 
 // MR12 (Review Focus 4): a policy with no diff shape and no oracle merges only on a reviewer's
-// favourable verdict. A workflow without a reviewer (solo, as quick will be) leaves a path-bound
-// policy reviewer_verdict_missing, never arm; a shape or an oracle checks the diff instead. A
-// workflow with a reviewer needs its approve whatever the policy, as before.
+// favourable verdict. A workflow without a reviewer (quick, whose template is solo) leaves a
+// path-bound policy reviewer_verdict_missing, never arm; a shape or an oracle checks the diff
+// instead. A workflow with a reviewer (standard, pair) needs its approve whatever the policy.
 func TestVerdictRequiredWithoutShape(t *testing.T) {
+	workflows, templates, _ := config.ShippedWorkflows()
+	cfg := armCfg()
+	cfg.Templates = templates
 	policies := map[string]config.Class{
 		"docs":       {Live: true, AllowedFiles: []string{`^.+\.md$`}},
 		"docs-links": {Live: true, AllowedFiles: []string{`^.+\.md$`}},
 		"dead-links": {Live: true, AllowedFiles: []string{`^.+\.md$`}, DiffShape: "links-only", Oracle: &config.Oracle{Probe: "dead-links"}},
 	}
 	for _, c := range []struct {
-		template, verdict, policy, want string
+		workflow, verdict, policy, want string
 	}{
-		{"solo", "", "docs", "reviewer_verdict_missing"},
-		{"solo", "", "docs-links", ""},
-		{"solo", "", "dead-links", ""},
-		{"pair", "reject", "docs", "no_approving_verdict"},
-		{"pair", "reject", "docs-links", "no_approving_verdict"},
-		{"pair", "reject", "dead-links", "no_approving_verdict"},
+		{config.WorkflowQuick, "", "docs", "reviewer_verdict_missing"},
+		{config.WorkflowQuick, "", "docs-links", ""},
+		{config.WorkflowQuick, "", "dead-links", ""},
+		{config.WorkflowStandard, "reject", "docs", "no_approving_verdict"},
+		{config.WorkflowStandard, "reject", "docs-links", "no_approving_verdict"},
+		{config.WorkflowStandard, "reject", "dead-links", "no_approving_verdict"},
 	} {
-		t.Run(c.template+"/"+c.policy, func(t *testing.T) {
-			in := ArmInputs{PR: agentPR(), Task: armTask(c.policy, c.template, c.verdict), ReportedHead: head}
+		t.Run(c.workflow+"/"+c.policy, func(t *testing.T) {
+			in := ArmInputs{PR: agentPR(), Task: armTask(c.policy, workflows[c.workflow].Template, c.verdict), ReportedHead: head}
 			cl := withShape(policies[c.policy], c.policy)
-			if got := agentEvidence(in, armCfg(), cl); got != c.want {
+			if got := agentEvidence(in, cfg, cl); got != c.want {
 				t.Fatalf("got %q, want %q", got, c.want)
 			}
 		})
 	}
 }
 
-// Through the gate: a solo task whose diff only a path-bound policy admits waits for a human, with
-// the policy's refusal in considered=; the same diff with a shaped policy beside it merges there.
+// Through the gate: a quick task whose diff only a path-bound policy admits waits for a human,
+// with the policy's refusal in considered=; the same diff with a shaped policy beside it merges there.
 func TestAPathBoundPolicyWithoutAReviewerNeverArms(t *testing.T) {
+	workflows, templates, _ := config.ShippedWorkflows()
 	in := selectInputs()
-	in.Task = armTask("review", "solo", "")
+	in.Cfg.Templates = templates
+	in.Task = armTask("review", workflows[config.WorkflowQuick].Template, "")
 	in.Verifiers = nil
 	d := DecideArm(in)
 	if d.Verdict != "arm" || d.Matched != "docs-links" {

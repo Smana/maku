@@ -16,6 +16,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/triage"
 )
 
 // declaredRig is mergeRig's task in a class that declares conditions (MC1): its gate reads the
@@ -176,5 +177,41 @@ func TestNoPolicyMatched(t *testing.T) {
 		if strings.HasPrefix(m, "class_mismatch") {
 			t.Fatalf("no label is a mismatch: %q", g.metrics.recorded)
 		}
+	}
+}
+
+// Review Focus 4 (MR12 + WF4): a task pinned workflow:quick runs solo (no reviewer); when its diff
+// touches prose that only a live path-bound policy (docs) admits, the gate refuses docs with
+// reviewer_verdict_missing and hands off as no_policy_matched, never arm.
+func TestQuickWorkflowPathBoundPolicyNeverArms(t *testing.T) {
+	workflows, templates, _ := config.ShippedWorkflows()
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().HarnessProfiles, g.r.Cfg.Current().Templates = workflows, templates
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"docs": {Live: true, AllowedFiles: []string{`^.+\.md$`}},
+	}
+	var tk v1alpha1.Task
+	if err := g.c.Get(t.Context(), keyFor("3buqdlot"), &tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.Spec.PredictedClass = "review"
+	tk.Spec.Template = workflows[config.WorkflowQuick].Template
+	if err := g.c.Update(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: config.WorkflowQuick, Source: "label", Cohort: triage.CohortLabeled,
+		Requested: config.WorkflowQuick, Resolved: true}
+	if err := g.c.Status().Update(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetFiles(map[string]string{testFile: "# Heading\n\nOld prose.\n"}, map[string]string{testFile: "# Heading\n\nNew prose.\n"})
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != reasonNoPolicy || len(g.f.Armed()) != 0 {
+		t.Fatalf("%s %s armed=%v, want AwaitingHuman no_policy_matched", got.Status.Phase, got.Status.Reason, g.f.Armed())
+	}
+	c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
+	if !strings.Contains(c, " considered=docs:reviewer_verdict_missing ") {
+		t.Fatalf("missing considered=docs:reviewer_verdict_missing:\n%s", c)
 	}
 }
