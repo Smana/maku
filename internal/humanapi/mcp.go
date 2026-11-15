@@ -109,6 +109,7 @@ func (e toolError) Error() string { return string(e) }
 // mcpTools is the tool list, in tools/list order.
 func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 	all := []mcpTool{
+		s.handoffToolEntry(),
 		{name: "rooms_list", call: s.roomsList,
 			description: "The factory rooms you can read, as a table to show as it is (text), and one row each as structuredContent: its state (queued, running, waiting_for_human, done, failed, stopped), " +
 				"phase, the task's issue, title, phase, reason and PR, what waits for you (needsYou) and its url. access says why the list may be short. " +
@@ -230,7 +231,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 // the draft check, the planner's two doors and coordination_plan, the reads of its own tasks' rooms, and needs_list — the one
 // room-scoped read, which lists what the room has to act on with a link and no decision (CD28). The two
 // legacy room reads stay need-free.
-var sponsoredTools = []string{"issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
+var sponsoredTools = []string{"handoff", "issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
 	mcpwire.CoordinationPlan, ClassesList, mcpwire.IntentClassify}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
@@ -362,11 +363,16 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req mcpwire.Req
 	}
 	tools := s.mcpTools(p)
 	i := slices.IndexFunc(tools, func(t mcpTool) bool { return t.name == c.Name })
-	if i < 0 {
+	var t mcpTool
+	switch {
+	case i >= 0:
+		t = tools[i]
+	case c.Name == "handoff_check":
+		t = mcpTool{name: "handoff_check", call: s.handoffCheckTool}
+	default:
 		mcpwire.Write(w, req.ID, nil, &mcpwire.Error{Code: mcpwire.InvalidParams, Message: "unknown tool: " + c.Name})
 		return
 	}
-	t := tools[i]
 	ctx, cancel := mcpContext(r)
 	defer cancel()
 	if len(c.Task) > 0 && string(c.Task) != "null" {

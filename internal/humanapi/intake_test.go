@@ -249,6 +249,9 @@ func intakeOption(t *testing.T, set func(*fakeIntake, *Intake)) option {
 				Fallback:  "off",
 				Now:       v.intake.clock,
 			}
+			if s.Handoffs == nil {
+				s.Handoffs = newMemHandoffStore()
+			}
 			s.Logger = slog.New(slog.NewJSONHandler(v.intake.logs, nil))
 		}
 		set(v.intake, s.Intake)

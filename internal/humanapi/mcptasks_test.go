@@ -37,7 +37,7 @@ func TestMCPToolList(t *testing.T) {
 			t.Errorf("%s: execution %+v", tool.Name, tool.Execution)
 		}
 	}
-	if want := []string{"rooms_list", "room_summary", "room_tail", "room_changes", "room_queue", "room_fork", "issue_draft", "needs_list", "room_brief"}; !slices.Equal(names, want) {
+	if want := []string{"handoff", "rooms_list", "room_summary", "room_tail", "room_changes", "room_queue", "room_fork", "issue_draft", "needs_list", "room_brief"}; !slices.Equal(names, want) {
 		t.Fatalf("tools %v, want %v", names, want)
 	}
 }

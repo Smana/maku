@@ -183,6 +183,8 @@ type Server struct {
 	// Intake is the governed planner (human.intake.plan). Nil is the switch off: neither intake_plan
 	// nor plan_check exists on any /mcp list, so the list a deployment sees is the list it has.
 	Intake *Intake
+	// Handoffs stores in-progress handoff plans for 24 hours; nil refuses handoff calls as unavailable.
+	Handoffs HandoffStore
 	// Intents is human.slackIntents: intent_classify, the Slack App's read-only classification of a
 	// thread reply (natural-language intents). Nil is the switch off: the tool is on no list.
 	Intents *IntentClassifier
