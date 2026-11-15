@@ -5,9 +5,12 @@ package reconciler
 import (
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -323,6 +326,41 @@ func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha
 	return found, w, nil
 }
 
+// retryCommand reads a sponsored retry annotation (SI23) first, then a /factory retry comment,
+// holding both to the same maintainer and GitHub write checks.
+func (r *Reconciler) retryCommand(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (forge.Comment, bool, error) {
+	if c, ok, err := r.retryAnnotation(ctx, cfg, t); err != nil || ok {
+		return c, ok, err
+	}
+	return r.command(ctx, cfg, t, pr, cmdRetry)
+}
+
+func (r *Reconciler) retryAnnotation(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (forge.Comment, bool, error) {
+	raw := t.Annotations[v1alpha1.AnnotationRetry]
+	if raw == "" {
+		return forge.Comment{}, false, nil
+	}
+	genStr, login, ok := strings.Cut(raw, ":")
+	gen, err := strconv.ParseInt(genStr, 10, 32)
+	if !ok || err != nil || int32(gen) != t.Status.Retries || login == "" {
+		return forge.Comment{}, false, nil
+	}
+	id := retryAnnotationID(raw)
+	if slices.Contains(t.Status.Handled, id) || !r.repo(cfg, t).IsMaintainer(login) || r.CanWrite == nil {
+		return forge.Comment{}, false, nil
+	}
+	w, err := r.CanWrite(ctx, t.Spec.Repository, login)
+	if err != nil {
+		return forge.Comment{}, false, fmt.Errorf("write check of %s: %w", login, err)
+	}
+	return forge.Comment{ID: id, Author: login}, w, nil
+}
+
+func retryAnnotationID(raw string) int64 {
+	sum := sha256.Sum256([]byte(raw))
+	return -int64(binary.BigEndian.Uint64(sum[:8])&0x7fffffffffffffff) - 1
+}
+
 // commandLine: some line of body outside a code fence is exactly verb, from its first character;
 // trailing blanks aside. A quote ("> /factory retry"), a longer word ("/factory retrying") or a
 // fenced example of the command is not the command.
@@ -359,7 +397,7 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	if done, err := r.escalatedSplit(ctx, cfg, t, pr); done || err != nil {
 		return err
 	}
-	c, ok, err := r.command(ctx, cfg, t, pr, cmdRetry)
+	c, ok, err := r.retryCommand(ctx, cfg, t, pr)
 	if err != nil {
 		return err
 	}

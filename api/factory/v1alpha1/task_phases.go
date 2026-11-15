@@ -34,8 +34,13 @@ const (
 )
 
 // AnnotationStop asks the factory to stop one task (§6.1): "true" set by hand, "label" set by
-// the poller from factory/stop, "superseded" when a re-label replaces an escalated task (R4).
+// the poller from factory/stop, "slack" set by the sponsored stop route, "superseded" when a
+// re-label replaces an escalated task (R4).
 const AnnotationStop = "agents.ogenki.io/stop"
+
+// AnnotationRetry asks the reconciler to retry an escalated task as a maintainer resolved on a
+// sponsored route (SI23), formatted "<retries>:<login>".
+const AnnotationRetry = "agents.ogenki.io/retry"
 
 // AnnotationRevert records a maintainer's factory/revert on an auto-merged PR, within the window (§6.4).
 const AnnotationRevert = "agents.ogenki.io/revert"
