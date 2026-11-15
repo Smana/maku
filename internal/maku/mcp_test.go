@@ -466,12 +466,12 @@ func TestRelayPassesANewBrokersView(t *testing.T) {
 }
 
 func TestRelayListsLocalTools(t *testing.T) {
-	s := relayTo(t, newMCPBroker(t), tok)
+	s := relayTo(t, newMCPBroker(t), tok, func(r *Relay) { r.Advanced = true })
 	var names []string
 	for _, tl := range s.request(t, 1, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if got := strings.Join(names, ","); got != "rooms_list,room_summary,start,wait,answer,issue_file,need_answer,room_wait,room_checkout,coordination_checkout,coordination_open" {
+	if got := strings.Join(names, ","); got != "start,wait,answer,room_checkout,coordination_checkout,coordination_open,rooms_list,room_summary,issue_file,need_answer,room_wait" {
 		t.Fatalf("%s", got)
 	}
 }
@@ -736,7 +736,7 @@ func TestRelayProgressOmitsAnUnknownTotal(t *testing.T) {
 }
 
 func TestRelayCheckoutToolIsDescribed(t *testing.T) {
-	s := relayTo(t, newMCPBroker(t), tok)
+	s := relayTo(t, newMCPBroker(t), tok, func(r *Relay) { r.Advanced = true })
 	for _, tl := range s.request(t, 1, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		m := tl.(map[string]any)
 		if m["name"] == toolRoomCheckout && (strings.Contains(m["description"].(string), "Not yet") || !strings.Contains(fmt.Sprint(m["inputSchema"]), "required")) {

@@ -69,6 +69,9 @@ type Relay struct {
 	// Unlabel removes a label before Label re-applies it when answer restarts an escalated task;
 	// nil skips the removal step.
 	Unlabel Labeler
+	// Advanced lists the rare tools after the six, then every other tool the broker lists (maku mcp
+	// --advanced). Without it only the six are listed; an unlisted tool is still relayed when called.
+	Advanced bool
 	// ClassLabel puts a planned issue's class:<c> label, then its workflow:<p> pin, on it before Label
 	// starts the factory (P5, P7); nil starts without them, and the factory then decides both itself.
 	ClassLabel Labeler
@@ -222,7 +225,7 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 	case "tools/list":
 		res, err := r.relay(ctx, raw)
 		if err == nil {
-			res, err = withLocalTools(res)
+			res, err = withLocalTools(res, r.Advanced)
 		}
 		r.reply(m, res, err)
 	case "tools/call":
@@ -230,9 +233,9 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 			r.callLocal(m, pre)
 			return
 		}
-		if roomRefTools[callName(m.Params)] {
+		if key, ok := roomRefTools[callName(m.Params)]; ok {
 			var refusal any
-			if raw, refusal = r.resolveCall(ctx, m); refusal != nil {
+			if raw, refusal = r.resolveCall(ctx, m, key); refusal != nil {
 				r.write(mcpwire.Response(m.ID, refusal, nil))
 				return
 			}
@@ -466,13 +469,14 @@ func (r *Relay) write(v any) {
 	_, _ = r.out.Write(append(b, '\n'))
 }
 
-// resolveCall is the tools/call m with its room reference resolved to an id, or the refusal.
-func (r *Relay) resolveCall(ctx context.Context, m message) ([]byte, any) {
+// resolveCall is the tools/call m with its room reference, the argument key, resolved to an id, or
+// the refusal.
+func (r *Relay) resolveCall(ctx context.Context, m message, key string) ([]byte, any) {
 	var p map[string]json.RawMessage
 	if json.Unmarshal(m.Params, &p) != nil {
 		return nil, nil
 	}
-	args, refusal := r.resolveArgs(ctx, p["arguments"], "room")
+	args, refusal := r.resolveArgs(ctx, p["arguments"], key)
 	if refusal != nil {
 		return nil, refusal
 	}

@@ -118,8 +118,8 @@ const makuUsage = `usage: maku <command>
               --factory-token-file F [--id ID] [--runlore-hook X --tool-result-hook X --room-hook X]
                                   plant an injection drill in the drill repository and hand its manifest to the
                                   factory, which scores it (docs/drills.md); a missing hook exits 2
-  mcp                             the factory's MCP tools on stdio, for a local coding agent:
-                                  claude mcp add factory -- maku mcp
+  mcp [--advanced]                Maku's six tools on stdio, for a local coding agent (maku setup registers it);
+                                  --advanced also lists the rare tools
   setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]
                                   register maku mcp with that agent (through its own CLI, else the
                                   snippet to paste) and install the factory-handoff skill; --print writes nothing
@@ -581,8 +581,12 @@ func originOf(raw string) (string, error) {
 // mcp relays the broker's MCP server on stdio until the client closes it: one token source for
 // every request, so a refresh happens once (factory interfaces F2).
 func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("mcp: no arguments\n%s", makuUsage)
+	advanced := false
+	for _, a := range args {
+		if a != "--advanced" {
+			return fmt.Errorf("mcp: unknown argument %q\n%s", a, makuUsage)
+		}
+		advanced = true
 	}
 	in := r.In
 	if in == nil {
@@ -593,7 +597,7 @@ func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []s
 		hints = os.Stderr
 	}
 	relay := &maku.Relay{URL: cfg.URL, HC: r.HC, Token: maku.SharedToken(r.HC, cfg, tokPath), File: maku.GH, Issues: maku.GHIssues{}, FactoryLogin: cfg.FactoryLogin,
-		Label: maku.GHLabel, Unlabel: maku.GHUnlabel, ClassLabel: maku.GHAddLabel, Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
+		Label: maku.GHLabel, Unlabel: maku.GHUnlabel, ClassLabel: maku.GHAddLabel, Dir: r.Dir, Advanced: advanced, Log: slog.New(slog.NewTextHandler(hints, nil))}
 	return relay.Serve(ctx, in, r.Out)
 }
 
