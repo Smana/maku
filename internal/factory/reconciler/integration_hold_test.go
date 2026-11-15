@@ -127,8 +127,8 @@ func (c *racingClient) Get(ctx context.Context, key client.ObjectKey, obj client
 	return err
 }
 
-// held asserts the task waits at its gate for integration with no merger call.
-func held(t *testing.T, g *rig, merges int, tk *v1alpha1.Task) {
+// heldForIntegration asserts the task waits at its gate for integration with no merger call.
+func heldForIntegration(t *testing.T, g *rig, merges int, tk *v1alpha1.Task) {
 	t.Helper()
 	if tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != reasonIntegrationPending || merges != 0 || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s/%s, %d merge calls %v", tk.Status.Phase, tk.Status.Reason, merges, g.f.Armed())
@@ -149,7 +149,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
 		tk := g.reconcile(t, "3buqdlot", 1)
-		held(t, g, merges, tk)
+		heldForIntegration(t, g, merges, tk)
 		if tk.Status.PullRequest.HeadSHA != headH1 {
 			t.Fatalf("the held head is not recorded for the parent: %q", tk.Status.PullRequest.HeadSHA)
 		}
@@ -166,7 +166,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Live: true, MaxPatchFiles: 5} // a diff condition: DecideArm decides again on the read diff
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
-		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
+		heldForIntegration(t, g, merges, g.reconcile(t, "3buqdlot", 1))
 		g.pass(t, parent.Name, headH1)
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging || merges != 1 {
 			t.Fatalf("%s/%s, %d merges", tk.Status.Phase, tk.Status.Reason, merges)
@@ -182,7 +182,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		g.f.SetPR(gatePR(headH2, rid(0)))
 		g.log.handoff(rid(0), headH2)
 		g.f.SetChecks(12, green("SUCCESS"))
-		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
+		heldForIntegration(t, g, merges, g.reconcile(t, "3buqdlot", 1))
 		// The parent sees the moved head and drops the stale release.
 		g.r.Cfg.Current().Coordination.Mode = config.CoordinationExecute
 		g.r.Coordination = &fakeCoordination{ready: map[string]error{}}
@@ -195,10 +195,11 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 	t.Run("maintainer approved, through the approval's return", func(t *testing.T) {
 		g, parent := holdRig(t, false)
 		g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
-		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+		g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{}                                           // unarmed: only the approval can merge it
+		g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{Live: true, Oracle: &config.Oracle{Probe: "x"}} // live, never a diff's (MR1)
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
-		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "class_unarmed" {
+		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "no_policy_matched" {
 			t.Fatalf("%s/%s", tk.Status.Phase, tk.Status.Reason)
 		}
 		g.r.Now = func() time.Time { return now.Add(10 * time.Minute) }
@@ -208,7 +209,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != "reentered_approved" {
 			t.Fatalf("return: %s/%s", tk.Status.Phase, tk.Status.Reason)
 		}
-		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
+		heldForIntegration(t, g, merges, g.reconcile(t, "3buqdlot", 1))
 		g.pass(t, parent.Name, headH1)
 		tk := g.reconcile(t, "3buqdlot", 1)
 		if tk.Status.Phase != v1alpha1.PhaseAutoMerging || tk.Status.PullRequest.MergedHow != "approved" || merges != 1 {
@@ -223,7 +224,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 		g.f.SetPR(pr)
 		merges := 0
 		g.r.Merger = countingMerger{Merger: g.f, merges: &merges}
-		held(t, g, merges, g.reconcile(t, "3buqdlot", 1)) // no hand-off a human could merge past the hold
+		heldForIntegration(t, g, merges, g.reconcile(t, "3buqdlot", 1)) // no hand-off a human could merge past the hold
 	})
 
 	t.Run("a release gone stale before the pre-merge read", func(t *testing.T) {
@@ -238,7 +239,7 @@ func TestIntegrationHoldCoversEveryArmAndStaleHead(t *testing.T) {
 				t.Fatal(err)
 			}
 		}}
-		held(t, g, merges, g.reconcile(t, "3buqdlot", 1))
+		heldForIntegration(t, g, merges, g.reconcile(t, "3buqdlot", 1))
 	})
 
 	t.Run("shadow would arm and never releases", func(t *testing.T) {

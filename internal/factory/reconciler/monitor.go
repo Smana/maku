@@ -85,7 +85,7 @@ func (r *Reconciler) monitorDue(cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.Phase != v1alpha1.PhaseDone || ref == nil || ref.MergedAt == nil || ref.MergeCommitSHA == "" {
 		return false
 	}
-	cl, ok := r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	cl, ok := r.repo(cfg, t).Classes[classOf(t)]
 	if undecidedAdoptedMerge(t, r.repo(cfg, t)) {
 		return false // Renovate's automerge of a head the gate never decided is not the class's merge
 	}
@@ -123,7 +123,7 @@ func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha
 	if last, ok := r.mon.lastPass(t.Name); ok && r.Now().Sub(last) < monitorEvery {
 		return nil
 	}
-	ref, cl := t.Status.PullRequest, r.repo(cfg, t).Classes[t.Spec.PredictedClass]
+	ref, cl := t.Status.PullRequest, r.repo(cfg, t).Classes[classOf(t)]
 	pr, err := r.gh(ctx).PullRequest(ctx, ref.Number)
 	if err != nil {
 		return err
@@ -144,7 +144,7 @@ func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha
 	if !pr.MergedAt.IsZero() && m.Since.Time.Equal(ref.MergedAt.Time) && !pr.MergedAt.Equal(m.Since.Time) {
 		m.Since = metav1.Time{Time: pr.MergedAt}
 	}
-	r.label(ctx, pr, MergedLabel(t.Spec.PredictedClass))
+	r.label(ctx, pr, MergedLabel(classOf(t)))
 	if m.Main == "" {
 		if m.Main, err = r.mainSignal(ctx, cfg, t); err != nil {
 			return err
@@ -166,7 +166,7 @@ func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha
 			m.Verified = "inconclusive"
 		}
 		if m.Verified != "" {
-			class, verdict := t.Spec.PredictedClass, cmp.Or(map[string]string{"healthy": "resolved", "regression": "persisting"}[m.Verified], "none")
+			class, verdict := classOf(t), cmp.Or(map[string]string{"healthy": "resolved", "regression": "persisting"}[m.Verified], "none")
 			record(ctx, func(ctx context.Context) { r.Metrics.MonitorVerification(ctx, class, verdict) })
 		}
 	}
@@ -207,7 +207,7 @@ func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha
 	}
 	if m.Verdict != "" && !m.Posted {
 		if first {
-			class, verdict := t.Spec.PredictedClass, m.Verdict
+			class, verdict := classOf(t), m.Verdict
 			record(ctx, func(ctx context.Context) { r.Metrics.MonitorVerdict(ctx, class, verdict) })
 		}
 		demotes := r.repo(cfg, t).Merge.Breaker.MaxFollowUps > 0
@@ -227,8 +227,8 @@ func (r *Reconciler) monitor(ctx context.Context, cfg *config.Config, t *v1alpha
 	}
 	// AM9, R-I6: refresh the class's class_paused gauge, so a class with no decision still reports.
 	// paused records it; a failed read leaves the last value and never fails the pass.
-	if _, err := r.paused(ctx, cfg, r.repo(cfg, t), t.Spec.PredictedClass); err != nil {
-		r.log().Warn("class_paused refresh failed", "task.id", t.Name, "class", t.Spec.PredictedClass, "err", err)
+	if _, err := r.paused(ctx, cfg, r.repo(cfg, t), classOf(t)); err != nil {
+		r.log().Warn("class_paused refresh failed", "task.id", t.Name, "class", classOf(t), "err", err)
 	}
 	return nil
 }
@@ -715,7 +715,7 @@ func (r *Reconciler) followUpFound(ctx context.Context, cfg *config.Config, t *v
 	m.FollowUps = append(m.FollowUps, p.Number)
 	slices.Sort(m.FollowUps)
 	r.label(ctx, forge.PR{Number: p.Number, Labels: p.Labels}, FollowUpOfLabel(ref.Number))
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "follow_up") })
 	narrateOn(t, ref.Number, narrate.FollowUpFound(t, ref.Number, p.Number, false))
 	if n := r.controlIssue(cfg, t); n > 0 {

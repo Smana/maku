@@ -49,6 +49,11 @@ type ArmInputs struct {
 	DiffRead bool
 	// ClassArmedToday is today's merges of the task's class, against the class's maxPerDay.
 	ClassArmedToday int
+	// ArmedByClass and PausedByClass are each policy's merges today and breaker (MR1), keyed by
+	// policy name: the gate reads every candidate's. A policy they do not name reads
+	// ClassArmedToday and Paused when it is the task's class, else none and closed.
+	ArmedByClass  map[string]int  `json:",omitempty"`
+	PausedByClass map[string]bool `json:",omitempty"`
 	// Adoption is what an adopted class's author mode reads beyond the pull request (MC10): the
 	// commits' authors and who pushed the branch. Read is false until awaitingCI has read them.
 	Adoption Adoption
@@ -102,6 +107,15 @@ type ArmDecision struct {
 	Paused, Capped bool
 	// Rows are what the decision read, row by row (AM8): its record, on every decision.
 	Rows decision.Rows
+	// Shadows are the shadow policies that held beside the one that decided (MR1): each records
+	// its own would-merge, whatever the decision.
+	Shadows []ShadowHold
+}
+
+// ShadowHold is one shadow policy that held on the pull request, and what it read.
+type ShadowHold struct {
+	Name string
+	Rows decision.Rows
 }
 
 // CIState over the required checks: FAILURE if one failed or reported a state the rollup's
@@ -132,13 +146,22 @@ func CIState(c forge.Checks, required []string) string {
 }
 
 // DecideArm is §5.1's merge-actor rule: a fixed base no class can remove, one author mode, and
-// the conditions the class declares (merge gate classes MC1). Every "no" fails towards a human
+// the conditions the class declares (merge gate classes MC1). The policy is chosen from the diff
+// (MR1): every candidate is judged and the strictest live one that holds decides; a task with
+// findings or an adopted pull request is judged on its one class. Every "no" fails towards a human
 // (property 3), each with its own reason. Every decision carries the rows it read (AM8).
 func DecideArm(in ArmInputs) ArmDecision {
 	cfg := in.Cfg
 	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
 	if rc == nil {
 		return notServedDecision(in)
+	}
+	if !selectsOne(rc.Classes, in.Task) {
+		approvals := map[string][]string{}
+		for name, cl := range rc.Classes {
+			approvals[name] = approvalPaths(cl)
+		}
+		return withGatePath(decideAmong(in, cfg, rc, rc.Classes, approvals), in, rc, nil)
 	}
 	cl := gateOf(rc, in.Task.Spec.PredictedClass)
 	// B13, PR12: a central class's requiresApproval asks as a repository policy's does.
@@ -155,17 +178,48 @@ func approvalPaths(cl config.Class) []string {
 }
 
 // decide is DecideArm's rule on the class cl, wherever it was read: the central config, or a
-// repository's policy (DecideArmUnder). Everything else is read from the central config.
-func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Class) (d ArmDecision) {
+// repository's policy (DecideArmUnder). Everything else is read from the central config. It is
+// the one-policy path (MR1): a task with findings, an adopted pull request, or DecideArmUnder.
+func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Class) ArmDecision {
+	class := in.Task.Spec.PredictedClass
 	rows := recordOf(in, cl)
-	defer func() { d.Rows = rows; d = withIntegrationHold(in.Integration, d) }() // MR9: one hold over every return, central or repository class
-	if d, done := baseChecks(in, rc); done {
-		return d
+	if d, done := front(in, cfg, rc, cl, class); done {
+		d.Rows = rows
+		return withIntegrationHold(in.Integration, d)
 	}
 	human := func(reason, matched string) ArmDecision {
-		return ArmDecision{Verdict: "human", Reason: reason, Matched: matched}
+		return withIntegrationHold(in.Integration, ArmDecision{Verdict: "human", Reason: reason, Matched: matched, Rows: rows})
 	}
-	class := in.Task.Spec.PredictedClass
+	if !cl.Live && !cl.Shadow {
+		// The class is one the factory never merges: a maintainer merges it. Not a mismatch: no
+		// policy was matched, so none is counted.
+		return human(reasonNoPolicy, "")
+	}
+	if cl.Adopted() {
+		rows.Evidence = adoptEvidence(in, cl)
+	} else {
+		rows.Evidence = agentEvidence(in, cfg, cl)
+	}
+	if rows.Evidence != "" {
+		return human(rows.Evidence, class)
+	}
+	rows.Evidence = "ok"
+	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
+		return human("steering_path", class) // no agent pull request changes a note (scoper SC3)
+	}
+	d, _ := judge(in, rc, class, cl, rows)
+	return withIntegrationHold(in.Integration, d)
+}
+
+// front is the rows read before any policy's own: the base, the author mode and a maintainer's
+// approval. done is false when the decision goes on to the policies.
+func front(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Class, class string) (ArmDecision, bool) {
+	if d, done := baseChecks(in, rc); done {
+		return d, true
+	}
+	human := func(reason, matched string) (ArmDecision, bool) {
+		return ArmDecision{Verdict: "human", Reason: reason, Matched: matched}, true
+	}
 	if cl.Adopted() {
 		if reason := adoptAuthor(in, cl); reason != "" {
 			return human(reason, class)
@@ -186,7 +240,7 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 			// with the bypass instructions, rather than asking for an approval that cannot count.
 			return human("human_commit_in_pr", "review")
 		case "approved": // a gate path is held once, over every variant, by withGatePath
-			return ArmDecision{Verdict: "arm", Reason: "maintainer_approved", Matched: "review", Approver: rv.Author}
+			return ArmDecision{Verdict: "arm", Reason: "maintainer_approved", Matched: "review", Approver: rv.Author}, true
 		}
 	} else {
 		for _, rv := range in.PR.Reviews {
@@ -201,41 +255,31 @@ func decide(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.C
 	if cl.Adopted() && (in.PR.ReviewsTruncated || len(openChangeRequests(membersReviews(in.PR.Reviews), true)) > 0) {
 		return human("changes_requested", class)
 	}
-	if !cl.Live && !cl.Shadow {
-		// The predicted class is one the factory never merges (docs, review): a maintainer merges it.
-		// Not a mismatch: no class was matched, so none is counted.
-		return human("class_unarmed", "")
-	}
-	if cl.Adopted() {
-		rows.Evidence = adoptEvidence(in, cl)
-	} else {
-		rows.Evidence = agentEvidence(in, cfg)
-	}
-	if rows.Evidence != "" {
-		return human(rows.Evidence, class)
-	}
-	rows.Evidence = "ok"
-	if in.DiffRead && cfg.SteeringOn() && touchesSteering(in.Stats) {
-		return human("steering_path", class) // no agent pull request changes a note (scoper SC3)
-	}
+	return ArmDecision{}, false
+}
+
+// judge is one policy's own rows, on a pull request whose base, author and evidence hold: its
+// declared conditions, then its breaker and its day. holds is true when every declared condition
+// held, whatever the breaker and the day then say.
+func judge(in ArmInputs, rc *config.Repository, name string, cl config.Class, rows decision.Rows) (ArmDecision, bool) {
 	rows, reason, wait := declared(cl, in, rows)
 	if wait {
-		return ArmDecision{Verdict: "wait", Reason: reason, Matched: class}
+		return ArmDecision{Verdict: "wait", Reason: reason, Matched: name, Rows: rows}, false
 	} else if reason != "" {
-		return human(reason, class)
+		return ArmDecision{Verdict: "human", Reason: reason, Matched: name, Rows: rows}, false
 	}
-	paused, capped := in.Paused, in.ArmedToday >= rc.Merge.PerDay() || (cl.MaxPerDay > 0 && in.ClassArmedToday >= cl.MaxPerDay)
+	paused := in.pausedOf(name)
+	capped := in.ArmedToday >= rc.Merge.PerDay() || (cl.MaxPerDay > 0 && in.armedOf(name) >= cl.MaxPerDay)
 	rows.Paused, rows.Capped, rows.Gated = paused, capped, true
-	if !cl.Live { // R32, AM4: every condition holds; the gate is in shadow, which nothing blocks
-		return ArmDecision{Verdict: "shadow", Reason: "shadow_would_arm", Matched: class, Paused: paused, Capped: capped}
+	switch {
+	case !cl.Live: // R32, AM4: every condition holds; the gate is in shadow, which nothing blocks
+		return ArmDecision{Verdict: "shadow", Reason: "shadow_would_arm", Matched: name, Paused: paused, Capped: capped, Rows: rows}, true
+	case paused:
+		return ArmDecision{Verdict: "human", Reason: "class_paused", Matched: name, Rows: rows}, true
+	case capped:
+		return ArmDecision{Verdict: "human", Reason: "auto_merge_cap", Matched: name, Rows: rows}, true
 	}
-	if paused {
-		return human("class_paused", class)
-	}
-	if capped {
-		return human("auto_merge_cap", class)
-	}
-	return ArmDecision{Verdict: "arm", Matched: class}
+	return ArmDecision{Verdict: "arm", Matched: name, Rows: rows}, true
 }
 
 // withGatePath holds policy-bot's S9 without it: with merge.policyBot false, a maintainer's
@@ -556,9 +600,32 @@ func holdLabelled(in ArmInputs) (ArmDecision, bool) {
 	return ArmDecision{}, false
 }
 
-// agentEvidence is the agents author mode's evidence (R02, R03, SC-14): "" when the room
-// reported this head, the verifiers approved it and its trailer names one of the task's runs.
-func agentEvidence(in ArmInputs, cfg *config.Config) string {
+// agentEvidence is the agents author mode's evidence for the policy cl (R02, R03, SC-14, MR12):
+// "" when the room reported this head, the verifiers approved it, its trailer names one of the
+// task's runs and, for a policy with no diff shape and no oracle, a reviewer read it.
+func agentEvidence(in ArmInputs, cfg *config.Config, cl config.Class) string {
+	if e := runEvidence(in, cfg); e != "" {
+		return e
+	}
+	return verdictEvidence(in, cfg, cl)
+}
+
+// verdictEvidence is MR12: a policy with a diff shape or an oracle has the diff checked
+// mechanically; any other merges only on a reviewer's favourable verdict, so a workflow without a
+// reviewer leaves it reviewer_verdict_missing. A workflow with one has had its approve read.
+func verdictEvidence(in ArmInputs, cfg *config.Config, cl config.Class) string {
+	if cl.DiffShape != "" || cl.Oracle != nil || slices.Contains(cfg.Templates[in.Task.Spec.Template].Roles, "reviewer") {
+		return ""
+	}
+	return reasonVerdictMissing
+}
+
+// reasonVerdictMissing: no reviewer read the change, and its policy has no shape to check it (MR12).
+const reasonVerdictMissing = "reviewer_verdict_missing"
+
+// runEvidence is the evidence every agents policy reads alike: the reported head, a fresh approve
+// and the trailer (R02, R03, SC-14).
+func runEvidence(in ArmInputs, cfg *config.Config) string {
 	if slices.Contains(cfg.Templates[in.Task.Spec.Template].Roles, "reviewer") && in.Task.Status.Verdict != "approve" {
 		return "no_approving_verdict"
 	}

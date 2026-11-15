@@ -187,27 +187,28 @@ file.
 
 ### Resolution order
 
-The order the code decides in (`decide` in `internal/factory/reconciler/arm.go`, then
-`withApproval` in `evaluate.go`). The first row that refuses names the reason.
+The order the code decides in (`DecideArm` in `internal/factory/reconciler/arm.go`, the selection in
+`select.go`, then `withApproval` in `evaluate.go`). The first row that refuses names the reason.
 
 ```mermaid
 flowchart TD
-  pr["Pull request, predicted class, exact head"] --> base{"Fixed base<br/>leak scan, required CI, contract,<br/>ownership fence, policy-bot"}
+  pr["Pull request, exact head"] --> base{"Fixed base<br/>leak scan, required CI, contract,<br/>ownership fence, policy-bot, factory/hold"}
   base -->|refuse or wait| out1["human / escalate / wait"]
-  base -->|pass| author{"Author mode<br/>agents login, or adopted login + branch"}
+  base -->|pass| author{"Author mode<br/>agents login, or adopted login + branch;<br/>a maintainer's approval"}
   author -->|fail| out2["human"]
-  author -->|pass| armed{"Class live or shadow?"}
-  armed -->|no| out3["human: class_unarmed"]
-  armed -->|yes| evidence{"Evidence<br/>verdict, reported head, trailer;<br/>adopted: commits, pushes, label"}
+  author -->|approved, approveToMerge| ap["arm: maintainer_approved"]
+  author -->|pass| one{"Findings, or adopted?"}
+  one -->|yes| cls["Its one class, as below"]
+  one -->|no| evidence{"Evidence<br/>verdict, reported head, trailer"}
   evidence -->|fail| out4["human"]
-  evidence -->|pass| conds{"Conditions, in order:<br/>allowedFiles, protectedFiles,<br/>modifyOnly, maxPatchFiles, maxModifiedLines,<br/>diffShape, releaseAgeCheck, holdoutChecks, oracle"}
-  conds -->|refuse| out5["human: its reason"]
-  conds -->|pending| out6["wait"]
-  conds -->|hold| mode{"Mode"}
-  mode -->|shadow| shadow["shadow: shadow_would_arm"]
-  mode -->|live| caps{"Breaker and caps"}
-  caps -->|paused / capped| out7["human: class_paused / auto_merge_cap"]
-  caps -->|pass| arm["arm"]
+  evidence -->|pass| each["Each candidate policy:<br/>live or shadow, not adopted, no oracle"]
+  each --> conds{"Conditions, in order:<br/>allowedFiles, protectedFiles,<br/>modifyOnly, maxPatchFiles, maxModifiedLines,<br/>diffShape, releaseAgeCheck, holdoutChecks;<br/>then a reviewer's verdict (MR12)"}
+  conds -->|refuse| cons["considered=policy:reason"]
+  conds -->|hold| pick{"Strictest live policy that holds"}
+  pick -->|none, a shadow one holds| shadow["shadow: shadow_would_arm"]
+  pick -->|none at all| none["human: no_policy_matched"]
+  pick -->|paused / capped| out7["human: class_paused / auto_merge_cap"]
+  pick -->|pass| arm["arm"]
   shadow --> subset{"requiresApproval<br/>caught a file?"}
   arm --> subset
   subset -->|no| done["as decided"]
@@ -216,6 +217,18 @@ flowchart TD
   grant -->|yes| armg["arm, grant=id:version"]
   grant -->|no| appr["human: approval_required"]
 ```
+
+### Selection from the diff
+
+| Rule | Detail |
+|---|---|
+| Candidates | Every policy the repository evaluates in `live` or `shadow`, the catalog's included, except adopted ones and those with an `oracle`. A task with findings (a schedule's probe) or an adopted pull request is decided on its one class instead |
+| A policy holds | Every condition it declares holds on the diff. A policy with no `diffShape` and no `oracle` also needs a reviewer's approve: without a reviewer in the workflow it refuses `reviewer_verdict_missing` (MR12) |
+| Strictest | A `diffShape` first; then the lower `maxModifiedLines`; then the lower `maxPatchFiles` (0, no cap, sorts last in both); then the name |
+| No fall-through | When the strictest live policy that holds is paused or at its `maxPerDay`, a human merges: a looser policy never takes over |
+| Shadow | Each shadow policy that holds records its own `shadow_would_arm` line, whether or not a live policy merged |
+| Pending | A pending holdout waits only when its policy would decide: stricter than every policy of its tier that holds |
+| No match | `no_policy_matched`; the record's `considered=` names each policy's refusal |
 
 | Rule | Detail |
 |---|---|
@@ -906,6 +919,7 @@ record's fields are in [the factory](factory.md#the-merge-gate):
 | `grant=` | The grant and version that let it arm |
 | `policygen=` | The generation of the bound class's own `MergePolicy` the decision used, [below](#factory-resources). Absent for a class the config file declares |
 | `repogen=` | Only for a bound class: the generation of the `Repository` that holds the binding (its mode and parameters) |
+| `considered=` | Each candidate policy that did not hold, as `<policy>:<reason>`, comma-separated. Each shadow policy that held has a record line of its own after the decision's |
 | `resolved=` | The first 12 hex digits of the resolved class's hash: the policy's definition and this repository's binding together, mode excluded. It is what an approval grant binds to, so the approval-memory form prefills from it; an edit to another class leaves it, and its grants, unchanged |
 
 The guardrails and workflows in force are the pod's config, bound by its checksum, not per record.
@@ -922,7 +936,8 @@ The gate's policy-related reasons. Every other reason is in [the factory](factor
 | `approval_required` | human | A live class would arm, and a file is in its `requiresApproval` subset; no grant covers it. Also when the grant that armed it no longer holds at the merge call | Approve the head or merge it; **Merge and create rule** to let later ones arm |
 | `shadow_would_require_approval` | shadow | The same, in a shadow class | Nothing: it is a grant candidate, not promotion evidence |
 | `shadow_would_arm` | shadow | Every row held; the class is in shadow | Merge it if you agree: that is the evidence |
-| `class_unarmed` | human | The predicted class is `off`, or not bound | Merge by hand, or arm a class |
+| `no_policy_matched` | human | No candidate policy holds on the diff; `considered=` names each one's refusal | Merge by hand, or write or bind a policy that admits it |
+| `reviewer_verdict_missing` | human | In `considered=`: the policy has no `diffShape` and no `oracle`, and no reviewer read the change (MR12) | Run the class with a reviewer, or give the policy a shape |
 | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large` | human | A path or size condition, or a protected or guardrail path | Out of the class: a human merges |
 | `class_mismatch` | human | The diff shape does not hold | As above |
 | `holdout_red`, `holdout_pending` | human, wait | A holdout or a `mandatoryChecks` entry is red, skipped, neutral, not from Actions, or not yet reported | Fix the check; a mandatory check must be a GitHub Actions job |

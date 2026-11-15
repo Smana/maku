@@ -189,7 +189,7 @@ func TestStatusCommentGoneIssueDoesNotHoldRoomOpen(t *testing.T) {
 func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 	tk := issueTask("3buqdlot", 7, "x")
 	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
-	tk.Status.Reason = "class_unarmed"
+	tk.Status.Reason = "no_policy_matched"
 	tk.Status.PhaseSince = &metav1.Time{Time: now}
 	tk.Status.Narrated = []string{"handoff-class_unarmed"}
 	tk.Status.Runs = []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Phase: "Succeeded", Started: &metav1.Time{Time: now.Add(-time.Minute)}, Finished: &metav1.Time{Time: now}}}
@@ -201,7 +201,7 @@ func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 	g.reconcile(t, "3buqdlot", 1)
 	body := strings.Join(statusCommentBodies(g.f, 7), "")
 	for _, want := range []string{
-		"the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
+		"no merge policy of the repository holds on this diff: it merges once a maintainer approves the current commit",
 		"next: a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit",
 	} {
 		if !strings.Contains(body, want) {

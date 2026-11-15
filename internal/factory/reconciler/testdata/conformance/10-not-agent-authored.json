@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "not-agent-authored",
   "inputs": {
     "PR": {

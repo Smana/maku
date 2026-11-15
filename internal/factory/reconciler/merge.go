@@ -60,7 +60,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			// R41: a human merge records when, so it counts in the class's breaker window.
 			now := r.mergedAt(pr)
 			t.Status.PullRequest.MergedAt = &now
-			class, outcome := t.Spec.PredictedClass, r.mergedOutcome(cfg, t, pr)
+			class, outcome := classOf(t), r.mergedOutcome(cfg, t, pr)
 			record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, outcome) })
 			r.handedOffMerged(ctx, t, "human")
 			return r.end(ctx, cfg, t, v1alpha1.PhaseDone, "merged")
@@ -69,7 +69,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.to(t, v1alpha1.PhaseAutoMerging, "")
 		return r.autoMerging(ctx, cfg, t)
 	case "CLOSED":
-		class := t.Spec.PredictedClass
+		class := classOf(t)
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
 		return r.end(ctx, cfg, t, v1alpha1.PhaseClosed, "pr_closed")
 	}
@@ -117,6 +117,18 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	}
 	in := ArmInputs{PR: pr, Checks: checks, Task: t, Cfg: cfg, ArmedToday: today, ClassArmedToday: classToday, Paused: paused,
 		NotOwned: r.Owned == nil || !r.Owned(t.Spec.Repository)}
+	byDiff := !selectsOne(r.repo(cfg, t).Classes, t)
+	if byDiff { // MR1: every candidate's breaker and day, so the strictest that holds is capped on its own
+		in.PausedByClass, in.ArmedByClass, err = r.candidateCounts(ctx, cfg, r.repo(cfg, t), policy, t)
+		if errors.Is(err, errLedgerTruncated) {
+			r.to(t, v1alpha1.PhaseAwaitingHuman, "ledger_truncated")
+			narrateLater(t, narrate.WaitingForHuman(t, "ledger_truncated"))
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
 	if in.Integration, err = r.integrationGate(ctx, t, pr.HeadSHA); err != nil {
 		return err
 	}
@@ -161,7 +173,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 	// never the gate's to merge, approval or not (S9, D11).
 	approved := d.Verdict == "arm" && d.Reason == "maintainer_approved"
 	gatePathRead := approved && !r.repo(cfg, t).Merge.UsesPolicyBot()
-	if gatePathRead || !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (policy.readsDiff(r.repo(cfg, t), t.Spec.PredictedClass) ||
+	if gatePathRead || !approved && (d.Verdict == "arm" || d.Verdict == "shadow") && (byDiff || policy.readsDiff(r.repo(cfg, t), t.Spec.PredictedClass) ||
 		cfg.SteeringOn()) {
 		// The diff is read late (steering on: always, to refuse a changed note): only a decision that would arm or shadow a class with a condition
 		// on its diff pays its 2N+1 API calls. The first pass held those conditions vacuously;
@@ -170,7 +182,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		switch {
 		case errors.Is(ferr, forge.ErrDiffTooLarge):
 			// A compare at GitHub's 300-file cap may hide files: hand it off, as the gate does.
-			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Rows: d.Rows}
+			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Matched: d.Matched, Rows: d.Rows}
 		case ferr != nil:
 			return ferr
 		default:
@@ -205,7 +217,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		d = provenance(d, adopted, pushed)
 	}
 	if d.Verdict == "arm" && closesParent(t, pr.Body) { // a part closes its own issue only: the parent closes with the last part
-		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Rows: d.Rows}
+		d = ArmDecision{Verdict: "human", Reason: "closes_parent", Matched: d.Matched, Rows: d.Rows}
 	}
 	// D11: an arm's success is posted last, after every check that can still hold it and
 	// immediately before the merge call; every other decision is posted now, on agent pull requests
@@ -220,8 +232,13 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		record(ctx, func(ctx context.Context) { r.Metrics.PolicyLoadError(ctx, t.Spec.Repository, reason) })
 	}
 	if d.Verdict != "wait" {
-		class, verdict, reason := t.Spec.PredictedClass, d.Verdict, cmp.Or(d.Reason, "armed")
+		t.Status.PullRequest.Policy = decidedPolicy(t, d)
+		class, verdict, reason := classOf(t), d.Verdict, cmp.Or(d.Reason, "armed")
 		record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, class, verdict, reason) })
+		for _, sh := range d.Shadows { // MR1: each shadow policy that held is a decision of its own
+			name := sh.Name
+			record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, name, "shadow", "shadow_would_arm") })
+		}
 		r.dual(ctx, cfg, t, in, evaluated, &d)
 		r.log().Info("merge decision", "task.id", t.Name, "head", pr.HeadSHA, "verdict", d.Verdict, "reason", reason, "rows", d.Rows)
 	}
@@ -265,7 +282,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, d.Reason)
 	case "human":
-		if d.Matched != "" && d.Matched != t.Spec.PredictedClass {
+		if !byDiff && d.Matched != "" && d.Matched != t.Spec.PredictedClass {
 			pred, matched := t.Spec.PredictedClass, d.Matched
 			record(ctx, func(ctx context.Context) { r.Metrics.ClassMismatch(ctx, pred, matched) })
 		}
@@ -341,6 +358,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		}
 	}
 	base := t.DeepCopy()
+	base.Status.PullRequest.Policy = "" // the policy merged under rides with the merge's write (MR1)
 	ref := t.Status.PullRequest
 	ref.HeadSHA, ref.DecidedHeadSHA = pr.HeadSHA, pr.HeadSHA
 	if d.Reason == "maintainer_approved" {
@@ -396,12 +414,13 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 // the would-arm or the arm. It is a marker line of its own (R-m11), so the event's marker, and the
 // tally that reads it, are unchanged.
 func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
-	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, t.Spec.PredictedClass)
+	class := recordClass(r.repo(cfg, t), t, d)
+	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, class)
 	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
 		// Repository authority: the class that decided is the file's, so are its generations: the
 		// policy its binding resolved against (a last resolved one's included), none for a class
 		// the file defines itself. Never the central config's for the class.
-		res, ok := p.snap.Classes[t.Spec.PredictedClass]
+		res, ok := p.snap.Classes[class]
 		gen, bound = res.PolicyGeneration, ok && p.err == nil && res.PolicyGeneration > 0
 		if !bound {
 			gen = 0
@@ -413,13 +432,21 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 	}
 	// B13: the hash grants of this class bind to, the deciding class's, so a rule made from the
 	// record holds: the central class's, or a cut-over repository's snapshot class's.
-	if h, ok := r.decidingHash(cfg, t); ok {
+	if h, ok := r.decidingHash(cfg, t); ok && class != "" {
 		d.Rows.Resolved = config.ShortHash(h)
 	}
 	reason := cmp.Or(d.Reason, "armed")
-	ev.Body += "\n\n" + decision.Marker(head, t.Spec.PredictedClass, d.Verdict, reason, d.Rows)
-	if r.Decisions != nil {
-		r.Decisions.Record(t.Spec.Repository, t.Spec.PredictedClass, d.Verdict, reason, r.Now(), gen)
+	ev.Body += "\n\n" + decision.Marker(head, class, d.Verdict, reason, d.Rows)
+	if r.Decisions != nil && class != "" {
+		r.Decisions.Record(t.Spec.Repository, class, d.Verdict, reason, r.Now(), gen)
+	}
+	// MR1: each other shadow policy that held records its own would-merge, a line of its own.
+	for _, sh := range d.Shadows {
+		ev.Body += "\n\n" + decision.Marker(head, sh.Name, "shadow", "shadow_would_arm", sh.Rows)
+		if r.Decisions != nil {
+			g, _, _ := cfg.ClassGenerations(t.Spec.Repository, sh.Name)
+			r.Decisions.Record(t.Spec.Repository, sh.Name, "shadow", "shadow_would_arm", r.Now(), g)
+		}
 	}
 	return ev
 }
@@ -557,7 +584,7 @@ func (r *Reconciler) reenter(ctx context.Context, cfg *config.Config, t *v1alpha
 		r.backToGate(cfg, t, why, "reentered_day_turned", pr.HeadSHA)
 		return true, nil
 	case "class_paused": // AM5: the pause lifted
-		paused, err := r.paused(ctx, cfg, r.repo(cfg, t), t.Spec.PredictedClass)
+		paused, err := r.paused(ctx, cfg, r.repo(cfg, t), classOf(t))
 		if err != nil || paused {
 			return false, err
 		}
@@ -1036,7 +1063,7 @@ func (r *Reconciler) autoMerging(ctx context.Context, cfg *config.Config, t *v1a
 		return err
 	}
 	ref := t.Status.PullRequest
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	switch {
 	case pr.State == "MERGED":
 		now := r.mergedAt(pr)
@@ -1213,7 +1240,7 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 			return err
 		}
 		if ref.AutoMerged { // an approved merge keeps its two labels (AM1)
-			r.label(ctx, pr, AutoMergedLabel(t.Spec.PredictedClass)) // a second chance: its revert is read against it
+			r.label(ctx, pr, AutoMergedLabel(classOf(t))) // a second chance: its revert is read against it
 		}
 		if rv, err = r.merger(ctx).RevertPR(ctx, forge.RevertOf{Number: ref.Number, NodeID: ref.NodeID,
 			Title: fmt.Sprintf("Revert %q", pr.Title), By: r.repo(cfg, t).Merge.MergerLogin,
@@ -1247,7 +1274,7 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 			return err
 		}
 	}
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	// A drill counts as reverted here too: the outcome is what happened to the pull request, the
 	// breaker's exemption is the ledger's (AM6).
 	record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "reverted") })
@@ -1353,7 +1380,7 @@ func (r *Reconciler) paused(ctx context.Context, cfg *config.Config, rc *config.
 	var tasks []Merge
 	for i := range l.Items {
 		o := &l.Items[i]
-		if ref := o.Status.PullRequest; o.Spec.PredictedClass == class && ref != nil && ref.MergedAt != nil && r.onRepo(cfg, o, rc) &&
+		if ref := o.Status.PullRequest; classOf(o) == class && ref != nil && ref.MergedAt != nil && r.onRepo(cfg, o, rc) &&
 			!undecidedAdoptedMerge(o, rc) { // as the label ledger: Renovate's merge of an undecided head is not the class's
 			mg := Merge{Number: ref.Number, At: ref.MergedAt.Time, Reverted: o.Status.Phase == v1alpha1.PhaseReverted && !ref.Drill,
 				Auto: ref.ArmedAt != nil}
@@ -1445,7 +1472,7 @@ func (r *Reconciler) armedTodayOf(ctx context.Context, cfg *config.Config, rc *c
 	n, seen := 0, map[int]bool{}
 	for i := range l.Items {
 		if ref := l.Items[i].Status.PullRequest; ref != nil && ref.ArmedAt != nil && sameUTCDay(ref.ArmedAt.Time, r.Now()) &&
-			r.onRepo(cfg, &l.Items[i], rc) && (class == "" || l.Items[i].Spec.PredictedClass == class) {
+			r.onRepo(cfg, &l.Items[i], rc) && (class == "" || classOf(&l.Items[i]) == class) {
 			n++
 			seen[ref.Number] = true
 		}

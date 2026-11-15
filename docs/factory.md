@@ -382,7 +382,9 @@ returns it.
 | `steering_path` | Steering is on for some class and the pull request changes a [steering note](#steering); a human merges it |
 | `not_mergeable` | GitHub refused the merge as the pull request stands |
 | `not_agent_authored` | The pull request is not from `agentsLogin` |
-| `class_unarmed` | The predicted class is neither live nor shadow (such as `docs` or `review`): the factory does not merge it, a maintainer reviews and merges it. Not counted in `maku_factory_class_mismatch_total` |
+| `no_policy_matched` | No policy of the repository holds on the diff (each one's refusal is in the record's `considered=`): a maintainer reviews and merges it. Not counted in `maku_factory_class_mismatch_total` |
+| `reviewer_verdict_missing` | In `considered=`: a policy with no `diffShape` and no `oracle` holds only on a reviewer's approve, and the workflow has no reviewer |
+| `class_unarmed` | Before the gate picked the policy from the diff: the predicted class was neither live nor shadow. Kept on older tasks only |
 | `class_mismatch` | The predicted class's `diffShape` does not hold (`docs-links` and `revert` diffs change only link targets) |
 | `file_not_allowed` | It changes a file outside its class's allowed files |
 | `file_protected` | It changes a file its class protects |
@@ -1132,7 +1134,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 3 | `policy-bot: main` is green, posted by `merge.policyBotLogin` | `policy_absent`, `policy_pending`, `gate_path` |
 | 3a | The pull request does not carry `factory/hold` | `held` |
 | 4 | The author is `agentsLogin`, and no maintainer approved it | `not_agent_authored`, `maintainer_approved` |
-| 5 | The class is `live` or `shadow` | `class_unarmed` |
+| 5 | A policy holds on the diff: rows 6 to 11 run for every candidate policy and the strictest `live` one that holds decides ([selection](merge-policies.md#selection-from-the-diff)); a task with findings or an adopted pull request has its one class | `no_policy_matched`, each policy's refusal in `considered=` |
 | 6 | The template's reviewer approved, the room reported the head, and every approval is of that head | `no_approving_verdict`, `head_unreported`, `verdict_stale` |
 | 7 | The head's `Agent-Run` trailer names one of the task's runs | `foreign_trailer` |
 | 8 | The class's declared conditions, in this order: `allowedFiles`, `protectedFiles`, `modifyOnly`, `maxPatchFiles`, `maxModifiedLines` (GitHub's counts), `diffShape` (`links-only`: link targets only, each staying relative, on its https host, or moving to web.archive.org; built into `docs-links` and `revert`), or `semver-patch`, `semver-minor` and `added-entry` for an [adopted class](#adopted-classes) (computed from the diff; `companionFiles` extends the files an `added-entry` may touch), `holdoutChecks` (SUCCESS from GitHub Actions), `oracle` (the task's `spec.findings` no longer link targets in the head, and every finding was a link target on the base and none is on the head, and no target moved but to the exact snapshot its finding gave) | `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `class_mismatch`, `holdout_red`, `oracle_finding_open`, `oracle_unrequested`; a pending holdout waits as `holdout_pending` |
@@ -1250,7 +1252,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 
 | Field | Reads |
 |---|---|
-| `class=` | The task's predicted class: the tally filters by it under `--class` |
+| `class=` | The policy the decision was made under: the one the diff matched, `-` when none did, the task's class for a task with findings or an adopted pull request. The tally filters by it under `--class`; each shadow policy that held has a line of its own |
 | `decision=` | `<verdict>:<reason>` as the gate decided it |
 | `files=`, `lines=` | GitHub's counts of the diff over the class's caps (0 is no cap). Lines are additions plus deletions |
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
@@ -1564,7 +1566,7 @@ GitHub refuses it if Renovate pushed since. A read error of the commit authors o
 | `human_commit_in_pr`, `ci_red`, `release_age_red`, `push_unrecorded`, `policy_pending`, `policy_absent`, `ci_cancelled`, `ci_wait_expired` | Hands off to `AwaitingHuman`, and **re-enters on a new head**: Renovate's rebase or a fresh push is decided again whole, up to 3 times (`maxGateReentries`, counted) |
 | `auto_merge_cap`, `class_paused` | Same: re-enters on a new head, counted. A `live` class only: a `shadow` class records `shadow_would_arm` through them (AM4) |
 | `shadow_would_arm` | The shadow decision: returns to `AwaitingCI` on Renovate's next head (`adopted_head_moved`), not counted, since it is no hand-off |
-| Every other reason: `class_unarmed`, `class_mismatch`, `holdout_red`, `label_missing`, `label_not_adopted`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
+| Every other reason: `no_policy_matched`, `class_unarmed`, `class_mismatch`, `holdout_red`, `label_missing`, `label_not_adopted`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
 
 Known limit: `label_missing` is terminal. RunLore's refresh of an entry removes `ready-to-merge` and
 pushes; an adopted entry that was already handed off stays handed off, and labelling it again does

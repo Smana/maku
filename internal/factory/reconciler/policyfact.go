@@ -38,6 +38,11 @@ func policyOf(cfg *config.Config, rc *config.Repository, t *v1alpha1.Task) *enve
 	}
 	if pr := t.Status.PullRequest; pr != nil {
 		p.MergedHow = pr.MergedHow
+		if name := pr.Policy; envelope.ValidClassName(name) { // MR1: the policy the diff matched
+			p.Name = name
+		} else if pr.MergedHow == "class" && envelope.ValidClassName(class) {
+			p.Name = class
+		}
 	}
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
 		if len(p.Classes) == envelope.MaxPolicyClasses || !envelope.ValidClassName(name) {

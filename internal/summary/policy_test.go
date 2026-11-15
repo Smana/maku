@@ -49,18 +49,41 @@ func TestPolicyDecision(t *testing.T) {
 		f    envelope.TaskFacts
 		want string
 	}{
-		{"the shadow decision", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", Policy: &envelope.PolicyFact{Mode: envelope.PolicyShadow}},
-			"it would auto-merge, and the merge gate is in shadow"},
-		{"a gate path", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "gate_path", Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}},
-			"it touches a gate path, so an agent can never merge it"},
-		{"merged by the class", envelope.TaskFacts{Phase: "Merged", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive, MergedHow: "class"}},
-			"merged by the merger App: the class's conditions held"},
+		{"the shadow decision", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyShadow}},
+			"Waits for a human: it would auto-merge, and the merge gate is in shadow"},
+		{"a gate path", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "gate_path", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}},
+			"Waits for a human: it touches a gate path, so an agent can never merge it"},
 		{"merged on a named approval", envelope.TaskFacts{Phase: "Merged", PR: pr("alice"), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive, MergedHow: "approved"}},
 			"merged by the merger App on @alice's approval"},
-		{"merged on an approval with no login", envelope.TaskFacts{Phase: "Merged", Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive, MergedHow: "approved"}},
+		{"merged on an approval with no login", envelope.TaskFacts{Phase: "Merged", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive, MergedHow: "approved"}},
 			"merged by the merger App on a maintainer's approval"},
-		{"a running task has none", envelope.TaskFacts{Phase: "Implementing", Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}}, ""},
-		{"an unknown reason has none", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "no_such_reason", Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}}, ""},
+		{"a running task has none", envelope.TaskFacts{Phase: "Implementing", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}}, ""},
+		{"an unknown reason has none", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "no_such_reason", PR: pr(""), Policy: &envelope.PolicyFact{Mode: envelope.PolicyLive}}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := summary.PolicyDecision(&tc.f); got != tc.want {
+				t.Fatalf("PolicyDecision() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The decision names its policy (merge policies review): the policy the diff matched once the
+// merger merged under it, the reason once a human holds it, and nothing before a pull request.
+func TestPolicyDecisionNamesThePolicy(t *testing.T) {
+	pr := &envelope.PRFact{Number: 3, URL: "https://github.com/o/r/pull/3"}
+	p := func(how string) *envelope.PolicyFact {
+		return &envelope.PolicyFact{Class: "review", Name: "docs-links", Mode: envelope.PolicyLive, MergedHow: how}
+	}
+	for _, tc := range []struct {
+		name string
+		f    envelope.TaskFacts
+		want string
+	}{
+		{"merged", envelope.TaskFacts{Phase: "Merged", PR: pr, Policy: p("class")}, "Merged automatically by policy docs-links"},
+		{"capped", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "auto_merge_cap", PR: pr, Policy: p("")},
+			"Waits for a human: today's auto-merge cap is reached"},
+		{"no pull request", envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "auto_merge_cap", Policy: p("")}, ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := summary.PolicyDecision(&tc.f); got != tc.want {
@@ -74,7 +97,8 @@ func TestViewCarriesThePolicy(t *testing.T) {
 	now := time.Date(2026, 11, 7, 12, 0, 0, 0, time.UTC)
 	p := &envelope.PolicyFact{Class: "docs-links", Mode: envelope.PolicyShadow,
 		Classes: []envelope.PolicyClass{{Name: "docs-links", Mode: envelope.PolicyShadow}}}
-	facts := &envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", Policy: p}
+	facts := &envelope.TaskFacts{Phase: "AwaitingHuman", Reason: "shadow_would_arm", Policy: p,
+		PR: &envelope.PRFact{Number: 3, URL: "https://github.com/o/r/pull/3"}}
 	for _, tc := range []struct {
 		name   string
 		sealed string
@@ -83,7 +107,7 @@ func TestViewCarriesThePolicy(t *testing.T) {
 			s := view(summary.State{Facts: facts, Sealed: tc.sealed}, "3kq7x2ma", "u", owner(), 0, now)
 			got := s.Status.Policy
 			if got == nil || got.Class != "docs-links" || got.How != summary.PolicyHow(*p) ||
-				got.Decision != "it would auto-merge, and the merge gate is in shadow" {
+				got.Decision != "Waits for a human: it would auto-merge, and the merge gate is in shadow" {
 				t.Fatalf("status.policy = %+v", got)
 			}
 		})

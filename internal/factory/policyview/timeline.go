@@ -69,7 +69,7 @@ var (
 			"merge_gate_off", "head_moved", "approval_stale", "held"},
 		"author_mode": {"not_agent_authored", "fork_pull_request", "adoption_unread", "not_adopted_author", "branch_not_allowed",
 			"label_not_adopted", "adopt_ref_invalid"},
-		"class": {"class_mismatch", "class_unarmed", "file_not_allowed", "file_added_or_deleted", "patch_too_large", "holdout_red",
+		"class": {"class_mismatch", "class_unarmed", "no_policy_matched", "reviewer_verdict_missing", "file_not_allowed", "file_added_or_deleted", "patch_too_large", "holdout_red",
 			"holdout_pending", "oracle_finding_open", "oracle_unrequested", "release_age_pending", "release_age_red", "label_missing"},
 		"deny":              {"file_protected"},
 		"requires_approval": {"approval_required", "shadow_would_require_approval"},

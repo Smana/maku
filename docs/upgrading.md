@@ -4,6 +4,25 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The gate picks the policy from the diff (v0.5x, merge policies release N+1)
+
+Breaking: the merge gate no longer decides on the task's class. It judges the pull request's diff
+against every policy the repository evaluates, its catalog policies included, and merges under the
+strictest `live` one that holds ([selection](merge-policies.md#selection-from-the-diff)).
+
+| Change | Before | Now | What to do |
+|---|---|---|---|
+| Which policy decides | the class fixed at intake (a `class:` label, a schedule, the plan; else `review`) | the strictest `live` policy whose every condition holds on the diff; a task with findings (a schedule's probe) or an adopted pull request keeps its one class | none: `workflow:<name>` picks the workflow, never the merge policy |
+| A diff no policy admits | `class_unarmed`, or `class_mismatch` against the label | `no_policy_matched`, with each policy's refusal in the record's `considered=` | Alerts or dashboards on `class_unarmed` read `no_policy_matched` |
+| A policy with no `diffShape` and no `oracle` (MR12) | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer (`quick`) leaves it `reviewer_verdict_missing` | Run with a reviewer (`standard` or `careful`), or give the policy a shape |
+| Shadow evidence | one record, the class's | one record line per shadow policy that holds, beside the decision's | `scripts/shadow-merge-tally.sh` reads each class's own line |
+| A capped or paused strictest policy | — | the pull request goes to a human: a looser policy never takes over | none |
+| The decision's wording | "merged by the merger App: the class's conditions held" | "Merged automatically by policy `<name>`", or "Waits for a human: `<reason>`" | none |
+| Conformance fixtures | version 1 | version 2: a fixture decided under the class it names reads differently | Rewrite fixtures you keep outside Maku |
+
+A saved approval grant still binds to the task's class's resolved hash: a pull request the diff
+assigns to another policy finds no grant and asks for an approval (`approval_required`).
+
 ## Workflows name what runs
 
 Workflows release N+1 (v0.5x, shipped with the merge gate that reads the diff): the class no longer
@@ -69,7 +88,6 @@ conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned pla
 
 A broker whose planner is on no longer needs `human.intake.plan.classes` when it sets `factoryURL`:
 the plan's classes come from the factory's catalog.
-
 ## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file

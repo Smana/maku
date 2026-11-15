@@ -54,7 +54,9 @@ func TestTheOracle(t *testing.T) {
 	}
 	in := oracleInputs(page)
 	in.Task.Spec.Findings = nil
-	if d := DecideArm(in); d.Reason != "oracle_finding_open" {
+	// MR1: an oracle policy is chosen by the task's findings, never by the diff: with none, no
+	// policy of the repository is a candidate.
+	if d := DecideArm(in); d.Reason != reasonNoPolicy || d.Verdict == "arm" {
 		t.Fatalf("an oracle task without findings proves nothing: %+v", d)
 	}
 }

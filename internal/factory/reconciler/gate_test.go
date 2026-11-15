@@ -3,6 +3,7 @@
 package reconciler
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/Smana/maku/internal/factory/config"
@@ -25,8 +26,19 @@ func gateInputs() ArmInputs {
 		Files: changed("[x](https://example.com/old)", "[x](https://example.com/new)"), DiffRead: true,
 		Stats: []forge.FileStat{{Path: testFile, Status: "modified", Additions: 1, Deletions: 1}}}
 	in.Cfg = armCfg()
-	in.Cfg.Current().Repositories[0].Classes["dead-links"] = declaredClass()
+	// The one policy of the repository, so each refusal is its own (MR1: the diff picks the policy).
+	in.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"dead-links": declaredClass()}
 	return in
+}
+
+// refused is the reason the decision's one candidate gave: a refusal is no_policy_matched (MR1),
+// with the policy's own reason in considered=; any other decision's reason as it is.
+func refused(d ArmDecision) string {
+	if d.Reason == reasonNoPolicy && d.Rows.Considered != "" && !strings.Contains(d.Rows.Considered, ",") {
+		_, reason, _ := strings.Cut(d.Rows.Considered, ":")
+		return reason
+	}
+	return d.Reason
 }
 
 // Offline proof 2: each condition, failed alone, yields exactly its reason.
@@ -70,8 +82,13 @@ func TestEachDeclaredConditionRefusesAlone(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := gateInputs()
 			c.mutate(&in)
-			if d := DecideArm(in); d.Verdict != c.verdict || d.Reason != c.reason || d.Matched != "dead-links" {
-				t.Fatalf("got %+v, want %s/%s/dead-links", d, c.verdict, c.reason)
+			d := DecideArm(in)
+			matched := "dead-links"
+			if d.Reason == reasonNoPolicy {
+				matched = "" // no policy held: none is named, and the refusal is in considered=
+			}
+			if d.Verdict != c.verdict || refused(d) != c.reason || d.Matched != matched {
+				t.Fatalf("got %+v, want %s/%s/%s", d, c.verdict, c.reason, matched)
 			}
 		})
 	}
@@ -86,15 +103,16 @@ func TestDiffConditionsWaitForTheDiff(t *testing.T) {
 		t.Fatalf("an unread diff holds every condition on it: %+v", d)
 	}
 	in.DiffRead = true
-	if d := DecideArm(in); d.Reason != "file_not_allowed" {
+	if d := DecideArm(in); refused(d) != "file_not_allowed" {
 		t.Fatalf("read, it decides: %+v", d)
 	}
 }
 
-// The base holds for a class that declares nothing: docs is label-only, so class_mismatch/live
-// as today; a declared class with nothing but a switch is decided by the base alone.
+// The base holds for a class that declares nothing: a class with nothing but a switch is decided by
+// the base alone, and, with no shape, by a reviewer's approve (MR12).
 func TestTheBaseHoldsForAClassThatDeclaresNothing(t *testing.T) {
 	in := gateInputs()
+	in.Task = armTask("dead-links", "pair", "approve")
 	in.Cfg.Current().Repositories[0].Classes["dead-links"] = config.Class{Shadow: true}
 	in.Stats, in.Files = []forge.FileStat{{Path: "README.md", Status: "added", Additions: 99}}, changed("a", "b")
 	if d := DecideArm(in); d.Verdict != "shadow" || d.Reason != "shadow_would_arm" {
@@ -141,7 +159,7 @@ func TestAllowedFilesAnchorsTheWholePattern(t *testing.T) {
 	cl.AllowedFiles = []string{`^docs/.+\.md|website/.+\.md$`}
 	in.Cfg.Current().Repositories[0].Classes["dead-links"] = cl
 	in.Stats[0].Path = "docs/a.md.sh"
-	if d := DecideArm(in); d.Reason != "file_not_allowed" {
+	if d := DecideArm(in); refused(d) != "file_not_allowed" {
 		t.Fatalf("a branch anchored on one side allowed %s: %+v", in.Stats[0].Path, d)
 	}
 	for _, p := range []string{"docs/a.md", "website/b.md"} {
@@ -156,7 +174,7 @@ func TestAllowedFilesAnchorsTheWholePattern(t *testing.T) {
 func TestATruncatedRollupRefusesTheHoldout(t *testing.T) {
 	in := gateInputs()
 	in.Checks.Truncated = true
-	if d := DecideArm(in); d.Verdict != "human" || d.Reason != "holdout_red" {
+	if d := DecideArm(in); d.Verdict != "human" || refused(d) != "holdout_red" {
 		t.Fatalf("%+v", d)
 	}
 }
