@@ -20,9 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/coordination"
-	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -65,25 +63,25 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
-	// IntakePlan is the governed planner (CD18): a mention's words become the plan/v1 the proposal
-	// message carries. It files nothing, and ErrUnknownTool is a broker without the tool.
-	IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error)
-	// ClassesList is classes_list for one class of a repository, read for the Slack user named: its
-	// profiles and whether that user may pin one (P5). It changes nothing.
-	ClassesList(ctx context.Context, repository, class, onBehalfOf string) (catalogue.Catalogue, error)
+	// Handoff and HandoffCheck are the governed planner and its stored-plan check (UX2): a mention or a
+	// reply goes through Handoff, and HandoffCheck reads or pins the stored plan's workflow without a
+	// model call. Neither files anything, and ErrUnknownTool is a broker without the tool.
+	Handoff(ctx context.Context, in HandoffRequest) (HandoffResult, error)
+	HandoffCheck(ctx context.Context, id, onBehalfOf string, workflow *string) (HandoffChecked, error)
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
-	// The three reads a filed thread's questions make (CD25): the room's summary, its changes and its
-	// needs, each one sponsored call for the room the thread's Filed line named.
+	// Task and Inbox are the reads a filed thread makes (UX4): Task for status, changes and PR, Inbox
+	// for what needs a person in that room. RoomSummary is read only by a coordination parent's thread,
+	// since task/v1 carries no coordination view.
+	Task(ctx context.Context, room string) (TaskResult, error)
+	Inbox(ctx context.Context, room string) ([]summary.Need, error)
 	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
-	RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error)
-	NeedsList(ctx context.Context, room string) ([]summary.Need, error)
-	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
-	// draft (v4): neither confirms, files nor runs anything.
 	// IntentClassify is tier 1's one read-only classification of a reply tier 0 does not know
 	// (natural-language intents): a label, never an action. ErrUnknownTool is a broker without it.
 	IntentClassify(ctx context.Context, in IntentRequest) (IntentResult, error)
+	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
+	// draft (v4): neither confirms, files nor runs anything.
 	CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error)
 	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 }
@@ -929,8 +927,15 @@ var githubLoginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 // confirm is the surface's verb, not a second vocabulary: a ✅ is reacted and a Confirm is pressed, so
 // the one line that names who may file names it in the caller's own word (CD8's two callers are one
 // code path).
+var refusalCodeRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 func notFiled(refusal, user, repo string, confirm bool) (code, text string, passing bool) {
 	code, coded := strings.CutPrefix(refusal, "rejected: ")
+	if !coded {
+		if head, _, ok := strings.Cut(refusal, ": "); ok && refusalCodeRE.MatchString(head) {
+			code, coded = head, true
+		}
+	}
 	who := "<@" + user + ">"
 	switch {
 	case !coded:
@@ -948,10 +953,12 @@ func notFiled(refusal, user, repo string, confirm bool) (code, text string, pass
 	case code == "kill_switch":
 		return code, "Not filed: the factory is paused (kill switch); react again once an operator resumes it.", true
 	case code == "plan_changed":
-		// The broker recomposes the plan from the submitted fields and re-hashes it (CD20, CD27): the
-		// message's plan is no longer the one it was asked about, so nothing is filed from it. The
-		// same sentence this family's own hash check says before the broker is called.
+		// The broker checks the stored handoff against the hash shown (UX2, CD27): the message's plan is
+		// no longer the one it was asked about, so nothing is filed from it. The same sentence this
+		// family's own hash check says before the broker is called.
 		return code, planChangedLine, false
+	case code == "handoff_expired":
+		return code, "Not filed: this proposal expired; mention me again to plan it.", false
 	case code == "principal_budget_exhausted":
 		return code, "Not filed: the Slack App's budget for today is spent; react again tomorrow.", false
 	case code == "daily_task_cap":

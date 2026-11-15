@@ -4,10 +4,8 @@ package slackapp
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
-	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -67,14 +65,10 @@ func TestProposalConfirm(t *testing.T) {
 			t.Fatalf("%d run_create calls, want one: %+v", len(calls), rig.broker.all())
 		}
 		c := calls[0]
-		var got intake.Plan
-		want := plan
-		want.Hash = intake.Hash(plan) // a plan sent without one gains the hash it computes
-		if err := json.Unmarshal(c.Plan, &got); err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("the call's plan is %+v (%v), want the message's", got, err)
-		}
-		if c.PlanHash != intake.Hash(plan) || c.OnBehalfOf != "slack:T01ABC/"+proposalPresser ||
-			c.Key != "T01ABC/C03/"+proposalThreadTS || c.Repo != plan.Repository {
+		if c.Handoff != defaultHandoffID || c.PlanHash != intake.Hash(plan) ||
+			c.OnBehalfOf != "slack:T01ABC/"+proposalPresser ||
+			c.Key != "T01ABC/C03/"+proposalThreadTS || c.Repo != plan.Repository ||
+			c.Title != "" || c.Body != "" {
 			t.Fatalf("the call: %+v", c)
 		}
 

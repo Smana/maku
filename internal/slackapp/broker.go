@@ -18,7 +18,7 @@ import (
 	"golang.org/x/oauth2"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/catalogue"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/coordination"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/intake"
@@ -76,15 +76,15 @@ type Broker struct {
 	HC     *http.Client // httpx.New in production
 }
 
-// RunCreate is a draft filed as a run for the person who asked. Plan and PlanHash are set when the
-// run is a proposal: the plan the message showed and the hash it bound, so the broker recomposes the
-// plan from the fields it is sent, recomputes the hash over the plan's material set and refuses
-// `plan_changed` when they disagree (CD20, CD27). A draft sets neither, and its arguments stay
+// RunCreate is a draft filed as a run for the person who asked. Handoff is set when the run is a
+// proposal (UX2): the id of the plan the broker stored, so the broker files that plan after
+// re-validating it, and PlanHash binds the plan the message showed to the one stored — the broker
+// refuses `plan_changed` when they disagree (CD20, CD27). A draft sets neither, and its arguments stay
 // exactly what they were.
 type RunCreate struct {
 	Draft
-	Plan       json.RawMessage // the plan the proposal bound, as its message carried it
-	PlanHash   string          // intake.Hash of that plan
+	Handoff    string // the handoff id the proposal's metadata carries
+	PlanHash   string // the hash the proposal showed, "" to file whatever the id holds
 	MaxCostUSD float64
 	OnBehalfOf string // slack:<team>/<user>
 	Ref        string // slack/<team>/<channel>/<thread_ts>
@@ -92,7 +92,7 @@ type RunCreate struct {
 }
 
 // RunResult is what run_create answered: Sponsor is the GitHub login the factory filed as, "" when
-// it did not say. Replanned is set, and nothing was filed, when the proposal carried a plan/v1: the
+// it did not say. Replanned is set, and nothing was filed, when the stored plan was a plan/v1: the
 // broker answered the plan/v2 to show and confirm instead (P14).
 type RunResult struct {
 	Room      string
@@ -152,7 +152,8 @@ func (b Broker) Decide(ctx context.Context, d Decision) (DecisionResult, error) 
 	}
 }
 
-// IssueDraft asks the broker to judge a draft against the issue template.
+// IssueDraft asks the broker to judge a draft against the issue template. Only the draft grammar
+// calls it, which release N keeps behind proposals.enabled: false.
 func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
 	sc, err := b.call(ctx, "issue_draft", map[string]any{"repo": d.Repo, "title": d.Title, "body": d.Body})
 	if err != nil {
@@ -166,15 +167,22 @@ func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
 }
 
 // RunCreate files the run. Its arguments are run_create's schema exactly: `text` is the draft's
-// body and dataClass is always public. A proposal adds `plan` and `plan_hash` — the pair the tool
-// checks the confirmation against — and nothing else: a draft's arguments are the ones they always
-// were, so an App that has no plan sends the call it always sent.
+// body and dataClass is always public. A proposal sends `handoff` (and `plan_hash`, the hash it
+// showed) in place of the repository's issue: the broker files the plan it stored, so the App carries
+// no plan and no body (UX2). A draft's arguments are the ones they always were.
 func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
-	args := map[string]any{"repo": c.Repo, "title": c.Title, "text": c.Body,
-		"dataClass": "public", "max_cost": c.MaxCostUSD, "on_behalf_of": c.OnBehalfOf, "ref": c.Ref,
-		"idempotency_key": c.Key}
-	if len(c.Plan) > 0 {
-		args["plan"], args["plan_hash"] = c.Plan, c.PlanHash
+	args := map[string]any{"dataClass": "public", "max_cost": c.MaxCostUSD, "on_behalf_of": c.OnBehalfOf,
+		"ref": c.Ref, "idempotency_key": c.Key}
+	if c.Repo != "" {
+		args["repo"] = c.Repo
+	}
+	if c.Handoff != "" {
+		args["handoff"] = c.Handoff
+		if c.PlanHash != "" {
+			args["plan_hash"] = c.PlanHash
+		}
+	} else {
+		args["title"], args["text"] = c.Title, c.Body
 	}
 	sc, err := b.call(ctx, "run_create", args)
 	if err != nil {
@@ -204,90 +212,108 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 	return RunResult{Room: out.Room, Issue: out.Issue, Duplicate: out.Duplicate, Sponsor: out.Sponsor}, nil
 }
 
-// IntakeRequest is intake_plan's arguments, as the App has them: the requester's own words, the
-// channel's repositories as the candidate set, the linked Slack user the plan is made for and the
-// channel's ceiling. It carries no repository the App picked — the candidate set is the whole of
-// what the App chooses, and which of it a plan names is the planner's, checked by the broker (CD5).
-type IntakeRequest struct {
+// HandoffRequest is handoff's arguments, as the App has them (UX2). A mention begins one: the
+// requester's own words, the channel's repositories as the candidate set, the linked Slack user the
+// plan is made for and the channel's ceiling. A reply continues one: the id the proposal's metadata
+// carries, with the person's answer or AcceptRest. The App picks no repository and holds no plan: the
+// broker stores the plan under the id and applies the answer to it.
+type HandoffRequest struct {
 	Text       string
-	Context    string
-	OnBehalfOf string
 	Candidates []string
+	OnBehalfOf string
 	CeilingUSD float64
-	// Plan, Hash and Candidate are a revision: the plan shown, the hash it was shown with and the
-	// candidate the App edited. The App sends one kind alone, a profile pin (P5): the broker answers it
-	// with no model call. All three or none.
-	Plan      *intake.Plan
-	Hash      string
-	Candidate *intake.Plan
+	// ID, Answer and AcceptRest continue a handoff: ID with exactly one of the other two.
+	ID         string
+	Answer     string
+	AcceptRest bool
 }
 
-// IntakeResult is intake_plan's data: the plan the planner drew, the hash the broker computed over it,
-// the at-most-one question to ask first, whether this caller may start the factory on it, and whether
-// a template rather than the planner wrote it (CD18).
-type IntakeResult struct {
-	Plan        intake.Plan
-	Hash        string
-	Question    *intake.Question
-	CanStart    bool
-	CanStartWhy string
-	Degraded    bool
+// HandoffQuestion is the one question a plan asks, and the answer the planner recommends.
+type HandoffQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
 }
 
-// IntakePlan is that tool's one call. The arguments are its schema's, and a key it does not have is
-// never sent: a sponsored principal states whom it plans for and the channel's ceiling, and an
-// argument the tool refuses would turn a plan into a transport failure. ErrUnknownTool comes back
-// untouched, so an older broker answers the mention's own line rather than a draft (CD1).
-func (b Broker) IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error) {
-	args := map[string]any{"text": in.Text, "candidates": in.Candidates, "on_behalf_of": in.OnBehalfOf,
-		"ceiling": in.CeilingUSD}
-	if in.Context != "" { // a mention has none; a reply's context is PR 6's second flow
-		args["context"] = in.Context
+// HandoffResult is handoff/v1: the id the plan is stored under, the plan as text to show as it is,
+// the one question when something is unclear, whether the plan is ready to start, and the workflow
+// and budget it would run with.
+type HandoffResult struct {
+	ID       string           `json:"id"`
+	Text     string           `json:"text"`
+	Question *HandoffQuestion `json:"question"`
+	Ready    bool             `json:"ready"`
+	Workflow string           `json:"workflow"`
+	Budget   float64          `json:"budget"`
+}
+
+// Handoff is that tool's one call. A key the tool does not take is never sent: a sponsored principal
+// states whom it plans for and the channel's ceiling on every call, since the broker checks both
+// again on a continuation. ErrUnknownTool comes back untouched, and so does the planner-off line
+// (a Refused), so the caller answers the mention's own line.
+func (b Broker) Handoff(ctx context.Context, in HandoffRequest) (HandoffResult, error) {
+	args := map[string]any{"on_behalf_of": in.OnBehalfOf, "ceiling": in.CeilingUSD}
+	switch {
+	case in.ID == "":
+		args["text"], args["candidates"] = in.Text, in.Candidates
+	case in.AcceptRest:
+		args["id"], args["acceptRest"] = in.ID, true
+	default:
+		args["id"], args["answer"] = in.ID, in.Answer
 	}
-	if in.Candidate != nil {
-		args["plan"], args["hash"], args["candidate"] = in.Plan, in.Hash, in.Candidate
-	}
-	sc, err := b.call(ctx, "intake_plan", args)
+	sc, err := b.call(ctx, mcpwire.Handoff, args)
 	if err != nil {
-		return IntakeResult{}, err
+		return HandoffResult{}, err
 	}
-	var out struct {
-		Plan        intake.Plan      `json:"plan"`
-		Hash        string           `json:"hash"`
-		Question    *intake.Question `json:"question"`
-		CanStart    bool             `json:"canStart"`
-		CanStartWhy string           `json:"canStartWhy"`
-		Degraded    bool             `json:"degraded"`
-	}
+	var out HandoffResult
 	if err := json.Unmarshal(sc, &out); err != nil {
-		return IntakeResult{}, fmt.Errorf("slackapp: intake_plan result: %w", err)
+		return HandoffResult{}, fmt.Errorf("slackapp: handoff result: %w", err)
 	}
-	if len(out.Plan.Gaps) > 0 {
-		// Ranked gaps are newer display data; Slack's existing protocol still asks one question.
-		// Populate both its top-level field and the plan's compatibility view from the first gap.
-		out.Plan = intake.WithGaps(out.Plan, out.Plan.Gaps)
-		out.Question = out.Plan.Question
-	}
-	return IntakeResult(out), nil
-}
-
-// ClassesList is classes_list for one class, read for onBehalfOf: the catalogue cut to that class
-// and the profiles it names, with the user's maintainer flag.
-func (b Broker) ClassesList(ctx context.Context, repository, class, onBehalfOf string) (catalogue.Catalogue, error) {
-	sc, err := b.call(ctx, "classes_list", map[string]any{"repository": repository, "class": class, "on_behalf_of": onBehalfOf})
-	if err != nil {
-		return catalogue.Catalogue{}, err
-	}
-	var out catalogue.Catalogue
-	if err := json.Unmarshal(sc, &out); err != nil {
-		return catalogue.Catalogue{}, fmt.Errorf("slackapp: classes_list result: %w", err)
+	if !linkCodeRE.MatchString(out.ID) {
+		return HandoffResult{}, errors.New("slackapp: handoff answered no handoff id")
 	}
 	return out, nil
 }
 
-// RoomSummary is room_summary: the room's summary/v1 object, the one object the room page and maku
-// status render, so a thread that asks where its task is reads what those two read (CD25). The room is
-// the id the thread's Filed line named; the App never asks for a room it guessed.
+// HandoffChecked is handoff_check's answer: the stored plan re-validated as start and run_create
+// validate it, the hash it is stored under, the workflows the Slack user may choose (none unless
+// they maintain the repository) and the issue it files.
+type HandoffChecked struct {
+	Plan       intake.Plan `json:"plan"`
+	Hash       string      `json:"hash"`
+	Workflows  []string    `json:"workflows"`
+	Repository string      `json:"repository"`
+	Title      string      `json:"title"`
+}
+
+// handoffCheckTool is the unlisted broker tool the workflow select and the start form share.
+const handoffCheckTool = "handoff_check"
+
+// HandoffCheck is handoff_check for the Slack user named: the stored plan, its hash and the
+// workflows they may choose. workflow nil changes nothing; a value pins that workflow ("" for the
+// factory's choice), which re-validates the stored plan and stores its new hash. It files nothing.
+func (b Broker) HandoffCheck(ctx context.Context, id, onBehalfOf string, workflow *string) (HandoffChecked, error) {
+	args := map[string]any{"id": id, "on_behalf_of": onBehalfOf}
+	if workflow != nil {
+		args["workflow"] = *workflow
+	}
+	sc, err := b.call(ctx, handoffCheckTool, args)
+	if err != nil {
+		return HandoffChecked{}, err
+	}
+	var out HandoffChecked
+	if err := json.Unmarshal(sc, &out); err != nil {
+		return HandoffChecked{}, fmt.Errorf("slackapp: handoff_check result: %w", err)
+	}
+	if out.Hash == "" || intake.Hash(out.Plan) != out.Hash {
+		return HandoffChecked{}, errors.New("slackapp: handoff_check answered a hash that does not bind its plan")
+	}
+	out.Plan.Hash = out.Hash
+	return out, nil
+}
+
+// RoomSummary is room_summary: the room's summary/v1 object with its coordination view attached. Only
+// a coordination parent's thread reads it, since task/v1 carries no coordination view; every other
+// read of a task goes through Task.
 func (b Broker) RoomSummary(ctx context.Context, room string) (summary.Summary, error) {
 	sc, err := b.call(ctx, "room_summary", map[string]any{"room": room})
 	if err != nil {
@@ -300,25 +326,57 @@ func (b Broker) RoomSummary(ctx context.Context, room string) (summary.Summary, 
 	return out, nil
 }
 
-// RoomChanges is room_changes: the room's milestones since a cursor, which for a question is the last
-// twenty-four hours without one — the same view 4 the room page's changes tab renders.
-func (b Broker) RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error) {
-	sc, err := b.call(ctx, "room_changes", map[string]any{"room": room})
-	if err != nil {
-		return roomview.ChangeSet{}, err
+// TaskResult is task/v1 as a thread reads it (UX4): the task's room, its page, its status (the
+// summary's, with the spend and the gate's decision), its runs, what it needs and the milestones since
+// the cursor.
+type TaskResult struct {
+	Room     string               `json:"room"`
+	URL      string               `json:"url"`
+	Text     string               `json:"text"`
+	Cursor   string               `json:"cursor"`
+	Runs     []envelope.RunFact   `json:"runs"`
+	NeedsYou []summary.Need       `json:"needsYou"`
+	Items    []roomview.Milestone `json:"items"`
+	More     int                  `json:"more"`
+	// Status is summary/v1's status object, decoded into a summary so the thread's answers read the
+	// same fields the room page renders.
+	Status json.RawMessage `json:"status"`
+}
+
+// Summary is the task as summary/v1: the room, its page, its status, its runs and its needs — the
+// fields a thread's answers and the end line read. A status that does not decode is left empty.
+func (t TaskResult) Summary() summary.Summary {
+	var s summary.Summary
+	s.Room, s.URL, s.Runs, s.NeedsYou = t.Room, t.URL, t.Runs, t.NeedsYou
+	if len(t.Status) > 0 {
+		_ = json.Unmarshal(t.Status, &s.Status)
 	}
-	var out roomview.ChangeSet
+	return s
+}
+
+// Changes is the task's milestones as the changes view's set.
+func (t TaskResult) Changes() roomview.ChangeSet {
+	return roomview.ChangeSet{Items: t.Items, More: t.More, Cursor: t.Cursor}
+}
+
+// Task is task: one read of where the task stands, what it needs and what changed (UX4). The room is
+// the id the thread's Filed line named; the App never asks for a room it guessed.
+func (b Broker) Task(ctx context.Context, room string) (TaskResult, error) {
+	sc, err := b.call(ctx, mcpwire.Task, map[string]any{"task": room})
+	if err != nil {
+		return TaskResult{}, err
+	}
+	var out TaskResult
 	if err := json.Unmarshal(sc, &out); err != nil {
-		return roomview.ChangeSet{}, fmt.Errorf("slackapp: room_changes result: %w", err)
+		return TaskResult{}, fmt.Errorf("slackapp: task result: %w", err)
 	}
 	return out, nil
 }
 
-// NeedsList is needs_list for one room: the needs/v1 items alone, out of the envelope the route and the
-// tool share. A sponsored caller reads a room's needs, never a login's, and each item's action is a link
-// it cannot follow for anyone (CD26).
-func (b Broker) NeedsList(ctx context.Context, room string) ([]summary.Need, error) {
-	sc, err := b.call(ctx, "needs_list", map[string]any{"room": room})
+// Inbox is inbox for one room: the needs/v1 items alone. A sponsored caller reads a room's needs,
+// never a login's, and each item's action is a link it cannot follow for anyone (CD26).
+func (b Broker) Inbox(ctx context.Context, room string) ([]summary.Need, error) {
+	sc, err := b.call(ctx, mcpwire.Inbox, map[string]any{"room": room})
 	if err != nil {
 		return nil, err
 	}
@@ -326,7 +384,7 @@ func (b Broker) NeedsList(ctx context.Context, room string) ([]summary.Need, err
 		Items []summary.Need `json:"items"`
 	}
 	if err := json.Unmarshal(sc, &out); err != nil {
-		return nil, fmt.Errorf("slackapp: needs_list result: %w", err)
+		return nil, fmt.Errorf("slackapp: inbox result: %w", err)
 	}
 	return out.Items, nil
 }

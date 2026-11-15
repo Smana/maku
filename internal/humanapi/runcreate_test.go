@@ -18,6 +18,7 @@ import (
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/runrequest"
+	"github.com/Smana/maku/internal/store"
 )
 
 // fakeTaskFactory answers CreateTask as the factory would, and keeps every request.
@@ -507,5 +508,72 @@ func TestRunCreateProfileBoundByPlan(t *testing.T) {
 				t.Fatalf("lacks %s", want)
 			}
 		})
+	}
+}
+
+// UX2 (Task 10): run_create takes a handoff id in place of plan and plan_hash. The broker files the
+// plan it stored for that id, after the same handoffCheck the start form runs, so the App never
+// carries a plan; an id that expired (or is unknown) files nothing and answers handoff_expired.
+func TestRunCreateFromHandoff(t *testing.T) {
+	at := time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)
+	f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}
+	st := newMemHandoffStore()
+	e := setup(t, mcpOn, actorOn(&actLog{}), withSponsored(sponsoredP), withHandoffs(st),
+		intakeOption(t, func(fi *fakeIntake, _ *Intake) { fi.surface = string(intake.SurfaceSlack); fi.advanceTo(at) }),
+		withTaskFactory(f))
+	plan := planFixture(t, "slack-one-issue") // one issue, $1.50 from the channel
+	plan.Hash = intake.Hash(plan)
+	raw, err := plan.JSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	args, _ := json.Marshal(map[string]any{"text": "the install link is dead", "on_behalf_of": "slack:T01ABC/U02DEF",
+		"candidates": []string{plan.Repository}, "ceiling": 1.5})
+	put := func(id string, expires time.Time) {
+		if err := st.PutHandoff(context.Background(), store.Handoff{ID: id, Principal: sponsoredP.ID, Args: args, Plan: raw,
+			Hash: plan.Hash, CreatedAt: at, ExpiresAt: expires}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put("abcdefghijklmnopqrstuvwxyz", at.Add(24*time.Hour))
+	put("zyxwvutsrqponmlkjihgfedcba", at.Add(-time.Second))
+
+	ok := map[string]any{"handoff": "abcdefghijklmnopqrstuvwxyz", "dataClass": "public", "max_cost": 1.5,
+		"on_behalf_of": "slack:T01ABC/U02DEF", "idempotency_key": "T01ABC/C03/1729.0001"}
+	if got := call(t, e, bearer("slack-app"), "run_create", ok); got.isError {
+		t.Fatalf("run_create {handoff}: %s", got.text)
+	}
+	if len(f.got) != 1 {
+		t.Fatalf("asked the factory %d times", len(f.got))
+	}
+	if got := f.got[0]; !strings.EqualFold(got.Repository, plan.Repository) || got.Title != plan.Issues[0].Title ||
+		got.Text != plan.Issues[0].Body || got.Class != plan.Issues[0].Class || got.OnBehalfOf != "slack:T01ABC/U02DEF" {
+		t.Fatalf("filed %+v, want the stored plan's issue", got)
+	}
+
+	for _, c := range []struct {
+		name   string
+		mutate func(map[string]any)
+		want   string
+	}{
+		{"an expired id", func(m map[string]any) { m["handoff"] = "zyxwvutsrqponmlkjihgfedcba" }, "handoff_expired"},
+		{"an unknown id", func(m map[string]any) { m["handoff"] = "aaaaaaaaaaaaaaaaaaaaaaaaaa" }, "handoff_expired"},
+		{"a hash the stored plan does not have", func(m map[string]any) { m["plan_hash"] = "sha256:" + strings.Repeat("0", 64) }, "plan_changed"},
+		{"a plan beside the id", func(m map[string]any) { m["plan"] = plan }, "invalid_arguments"},
+		{"a body beside the id", func(m map[string]any) { m["text"] = "another body" }, "invalid_arguments"},
+		{"no Slack user", func(m map[string]any) { delete(m, "on_behalf_of") }, "invalid_arguments"},
+	} {
+		args := maps.Clone(ok)
+		c.mutate(args)
+		got := call(t, e, bearer("slack-app"), "run_create", args)
+		if !got.isError || !strings.Contains(got.text, c.want) {
+			t.Errorf("%s: %+v", c.name, got)
+		}
+		if strings.Contains(got.text, plan.Issues[0].Title) {
+			t.Errorf("%s: the refusal leaks the stored plan: %s", c.name, got.text)
+		}
+	}
+	if len(f.got) != 1 {
+		t.Fatalf("asked the factory %d times, want the one agreeing call", len(f.got))
 	}
 }

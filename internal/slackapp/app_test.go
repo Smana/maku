@@ -20,7 +20,6 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/sponsored"
 	"github.com/Smana/maku/internal/summary"
@@ -603,20 +602,19 @@ type stubBroker struct {
 	decideErr    error
 	fence        bool
 	fenced       bool
-	// intake is every intake_plan the App asked for, oldest first; intakeResult is the planner's
-	// answer and intakeErr the failure it answers instead. intakeAnswer, when set, answers each
-	// request itself, so a test can tell one plan from the next; intakeGate, when set, blocks the
-	// call until the test releases it, which is how two replies are put inside one re-plan.
-	intake []IntakeRequest
-	// classes is classes_list's catalogue (nil: an error), classesErr its failure, classesAsked
-	// every call as repository|class|on_behalf_of.
-	classes      *catalogue.Catalogue
-	classesErr   error
-	classesAsked []string
-	intakeResult IntakeResult
-	intakeErr    error
-	intakeAnswer func(IntakeRequest) IntakeResult
-	intakeGate   func()
+	// handoffs is every handoff call the App asked for, oldest first; storedPlan is what handoff_check
+	// serves; nextPlan (when set) becomes storedPlan on the next Handoff call so pre-reply checks still
+	// read the previous revision.
+	handoffs      []HandoffRequest
+	checks        []handoffCheckCall
+	storedPlan    intake.Plan
+	nextPlan      *intake.Plan
+	degraded      bool
+	workflows     []string
+	handoffErr    error
+	checkErr      error
+	handoffAnswer func(HandoffRequest) intake.Plan
+	handoffGate   func()
 	// coordPlans is every coordination_plan, coordDrafts every coordination_draft (parent id and
 	// on_behalf_of), coordResult the planner's answer, coordErr its failure; summary is room_summary's.
 	coordPlans  []CoordinationPlanRequest
@@ -729,13 +727,33 @@ func (b *stubBroker) Decide(_ context.Context, d Decision) (DecisionResult, erro
 	return DecisionResult{Result: d.Decision}, nil
 }
 
-// IntakePlan records the plan request and answers what the test told it to: withProposals sets the
-// fixture's plan, intakeAnswer answers each request itself, and a refusal or a failure is the one line
-// each. intakeGate blocks the call outside the fake's lock, so the test that set it can seed the
-// thread while the plan is in flight.
-func (b *stubBroker) IntakePlan(_ context.Context, in IntakeRequest) (IntakeResult, error) {
+type handoffCheckCall struct {
+	id         string
+	onBehalfOf string
+	workflow   *string
+}
+
+func (b *stubBroker) setPlan(p intake.Plan, degraded bool, workflows []string) {
 	b.mu.Lock()
-	gate, answer := b.intakeGate, b.intakeAnswer
+	defer b.mu.Unlock()
+	b.storedPlan = p
+	b.nextPlan = nil
+	b.degraded = degraded
+	b.workflows = workflows
+}
+
+func (b *stubBroker) setNextPlan(p intake.Plan, degraded bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	cp := p
+	b.nextPlan = &cp
+	b.degraded = degraded
+}
+
+// Handoff records the request and advances storedPlan when nextPlan or handoffAnswer is set.
+func (b *stubBroker) Handoff(_ context.Context, in HandoffRequest) (HandoffResult, error) {
+	b.mu.Lock()
+	gate, answer := b.handoffGate, b.handoffAnswer
 	b.mu.Unlock()
 	if gate != nil {
 		gate()
@@ -743,21 +761,85 @@ func (b *stubBroker) IntakePlan(_ context.Context, in IntakeRequest) (IntakeResu
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.calls = append(b.calls, in)
-	b.intake = append(b.intake, in)
-	if b.intakeErr != nil {
-		return IntakeResult{}, b.intakeErr
+	b.handoffs = append(b.handoffs, in)
+	if b.handoffErr != nil {
+		return HandoffResult{}, b.handoffErr
 	}
 	if answer != nil {
-		return answer(in), nil
+		b.storedPlan = answer(in)
+	} else if b.nextPlan != nil {
+		b.storedPlan = *b.nextPlan
+		b.nextPlan = nil
 	}
-	return b.intakeResult, nil
+	text := "Repository " + b.storedPlan.Repository
+	if b.degraded {
+		text = intake.TemplateLabel + "\n" + text
+	}
+	wf := "default"
+	if len(b.storedPlan.Issues) > 0 && b.storedPlan.Issues[0].Profile != "" {
+		wf = b.storedPlan.Issues[0].Profile
+	} else if len(b.storedPlan.Issues) > 0 && b.storedPlan.Issues[0].Suggestion != nil && b.storedPlan.Issues[0].Suggestion.Profile != "" {
+		wf = b.storedPlan.Issues[0].Suggestion.Profile
+	}
+	var q *HandoffQuestion
+	if b.storedPlan.Question != nil {
+		q = &HandoffQuestion{Text: b.storedPlan.Question.Text, Recommended: b.storedPlan.Question.Recommended.Answer}
+	}
+	return HandoffResult{
+		ID:       defaultHandoffID,
+		Text:     text,
+		Question: q,
+		Ready:    q == nil && len(b.storedPlan.Gaps) == 0,
+		Workflow: wf,
+		Budget:   b.storedPlan.Budget.CeilingUSD,
+	}, nil
 }
 
-// intakeCalls is every plan the App asked the broker for, oldest first.
-func (b *stubBroker) intakeCalls() []IntakeRequest {
+func (b *stubBroker) HandoffCheck(_ context.Context, id, onBehalfOf string, workflow *string) (HandoffChecked, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	return append([]IntakeRequest(nil), b.intake...)
+	var wfCopy *string
+	if workflow != nil {
+		v := *workflow
+		wfCopy = &v
+	}
+	b.checks = append(b.checks, handoffCheckCall{id: id, onBehalfOf: onBehalfOf, workflow: wfCopy})
+	if b.checkErr != nil {
+		return HandoffChecked{}, b.checkErr
+	}
+	if workflow != nil && len(b.storedPlan.Issues) > 0 && b.storedPlan.Issues[0].Profile != *workflow {
+		next := b.storedPlan
+		next.Issues = append([]intake.Issue(nil), b.storedPlan.Issues...)
+		next.Issues[0].Profile = *workflow
+		next.Issues[0].Body += "\n\n## Decisions\nD1: profile: " + *workflow + ", pinned by the developer"
+		b.storedPlan = next
+	}
+	title := ""
+	if len(b.storedPlan.Issues) > 0 {
+		title = b.storedPlan.Issues[0].Title
+	}
+	hash := intake.Hash(b.storedPlan)
+	plan := b.storedPlan
+	plan.Hash = hash
+	return HandoffChecked{
+		Plan:       plan,
+		Hash:       hash,
+		Workflows:  b.workflows,
+		Repository: plan.Repository,
+		Title:      title,
+	}, nil
+}
+
+func (b *stubBroker) handoffCalls() []HandoffRequest {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]HandoffRequest(nil), b.handoffs...)
+}
+
+func (b *stubBroker) handoffChecks() []handoffCheckCall {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]handoffCheckCall(nil), b.checks...)
 }
 
 // answerWith makes the broker answer every press with code, as the route answers a refusal.
@@ -1513,6 +1595,7 @@ func proposalSeeded(t *testing.T) (rig *appRig, plan intake.Plan, ts string) {
 	rig = newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 	rig.broker.room = "26zfnuxm"
 	plan = planFixture(t, "slack-one-issue")
+	rig.broker.setPlan(plan, false, nil)
 	p, err := newProposal(plan, intake.Hash(plan), "U02DEF", 1)
 	if err != nil {
 		t.Fatalf("newProposal: %v", err)
@@ -1535,18 +1618,10 @@ func TestCheckMarkFilesAProposal(t *testing.T) {
 			t.Fatalf("%d run_create calls, want one: %+v", len(calls), rig.broker.all())
 		}
 		c := calls[0]
-		want := plan
-		want.Hash = intake.Hash(plan) // a plan sent without one gains the hash it computes
-		var got intake.Plan
-		if err := json.Unmarshal(c.Plan, &got); err != nil || !reflect.DeepEqual(got, want) {
-			t.Fatalf("the call's plan is %+v (%v), want the message's", got, err)
+		if c.Handoff != defaultHandoffID || c.PlanHash != intake.Hash(plan) {
+			t.Fatalf("the call's handoff/hash is %q/%q, want %q/%q", c.Handoff, c.PlanHash, defaultHandoffID, intake.Hash(plan))
 		}
-		if c.PlanHash != intake.Hash(plan) {
-			t.Fatalf("the call's hash is %q, want %q", c.PlanHash, intake.Hash(plan))
-		}
-		// The four fields the call always sent now say what the plan says, and the thread is still
-		// the one key: one issue per thread, whatever the revision.
-		if c.Repo != plan.Repository || c.Title != plan.Issues[0].Title || c.Body != plan.Issues[0].Body ||
+		if c.Repo != plan.Repository || c.Title != "" || c.Body != "" ||
 			c.MaxCostUSD != 2 || c.OnBehalfOf != "slack:T01ABC/U02DEF" ||
 			c.Ref != "slack/T01ABC/C03/1729.0001" || c.Key != "T01ABC/C03/1729.0001" {
 			t.Fatalf("the call: %+v", c)
@@ -1604,9 +1679,7 @@ func TestCheckMarkFilesAProposal(t *testing.T) {
 	// whose hash does not bind its plan is refused with its own line and nothing is called.
 	t.Run("a proposal whose hash does not hold is refused, nothing called", func(t *testing.T) {
 		rig, plan, _ := proposalSeeded(t)
-		other := clonePlan(t, plan)
-		other.Issues[0].Title = "docs: another plan entirely"
-		forged := ProposalPayload{Plan: plan, Hash: intake.Hash(other), Author: "U02DEF", Rev: 2}
+		forged := ProposalPayload{ID: defaultHandoffID, Repo: plan.Repository, Hash: "sha256:bad", Author: "U02DEF", Rev: 2}
 		rig.slack.seed(Message{TS: "1729.0003", ThreadTS: "1729.0001", User: "U0BOT", Text: "Proposal v2",
 			Metadata: metaOf(t, proposalEventType, forged)})
 		rig.react("C03", "1729.0003", "U02DEF", "white_check_mark")
@@ -1696,7 +1769,7 @@ func withProposals(t *testing.T) (*appRig, intake.Plan) {
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"}, MaxCostUSD: 2})
 	rig.app.Proposals = Proposals{Enabled: true}
 	plan := planFixture(t, "slack-one-issue")
-	rig.broker.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+	rig.broker.setPlan(plan, false, nil)
 	return rig, plan
 }
 
@@ -1731,17 +1804,17 @@ func TestMentionProposes(t *testing.T) {
 		// The call is intake_plan's contract: the requester's own words, the channel's repositories
 		// as the candidate set, the App's principal and the channel's ceiling. No repository the App
 		// picked, and no context it does not have — a mention is the person's words alone (CD1).
-		calls := rig.broker.intakeCalls()
+		calls := rig.broker.handoffCalls()
 		if len(calls) != 1 {
-			t.Fatalf("%d intake_plan calls, want one", len(calls))
+			t.Fatalf("%d handoff calls, want one", len(calls))
 		}
-		want := IntakeRequest{Text: mentionWords, OnBehalfOf: "slack:T01ABC/U02DEF",
+		want := HandoffRequest{Text: mentionWords, OnBehalfOf: "slack:T01ABC/U02DEF",
 			Candidates: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"}, CeilingUSD: 2}
 		if !reflect.DeepEqual(calls[0], want) {
-			t.Fatalf("the plan request is %+v, want %+v", calls[0], want)
+			t.Fatalf("the handoff request is %+v, want %+v", calls[0], want)
 		}
-		if n := len(rig.broker.all()); n != 1 { // the plan, and nothing else: no draft, no filing
-			t.Fatalf("%d broker calls, want the plan alone: %+v", n, rig.broker.all())
+		if n := len(rig.broker.all()); n != 1 { // the handoff, and nothing else: no draft, no filing
+			t.Fatalf("%d broker calls, want the handoff alone: %+v", n, rig.broker.all())
 		}
 		if got := rig.metrics.count("events", "proposed"); got != 1 {
 			t.Fatalf("the proposal went uncounted: %d", got)
@@ -1753,7 +1826,7 @@ func TestMentionProposes(t *testing.T) {
 	t.Run("the switch off keeps today's draft", func(t *testing.T) {
 		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
 		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("-proposals: the mention planned through the broker")
 		}
 		if p := rig.lastPost(); p.meta == nil || p.meta.EventType != draftEventType || !strings.HasPrefix(p.text, "Draft for ") {
@@ -1773,7 +1846,7 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 	noPlanner := func(t *testing.T) *appRig {
 		t.Helper()
 		rig, _ := withProposals(t)
-		rig.broker.intakeErr = ErrUnknownTool
+		rig.broker.handoffErr = ErrUnknownTool
 		return rig
 	}
 
@@ -1788,8 +1861,8 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		if d.meta == nil || d.meta.EventType != draftEventType || len(d.blocks) != 0 || !strings.HasPrefix(d.text, "Draft for Smana/ai-native-ref") {
 			t.Fatalf("the mention is not a draft: %+v", d)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 1 {
-			t.Fatalf("%d intake_plan calls, want the one that found no planner", n)
+		if n := len(rig.broker.handoffCalls()); n != 1 {
+			t.Fatalf("%d handoff calls, want the one that found no planner", n)
 		}
 		if got := rig.metrics.count("events", "drafted"); got != 1 {
 			t.Fatalf("events/drafted counted %d times, want 1: %v", got, rig.metrics.counted("events"))
@@ -1803,8 +1876,8 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		if p := rig.payload(edit); p.Rev != 2 || !strings.Contains(p.Body, "the link resolves") {
 			t.Fatalf("the reply did not amend the draft: %+v", p)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 1 {
-			t.Fatalf("the reply re-planned: %d intake_plan calls", n)
+		if n := len(rig.broker.handoffCalls()); n != 1 {
+			t.Fatalf("the reply re-planned: %d handoff calls", n)
 		}
 		if got := rig.metrics.count("events", "edited"); got != 1 {
 			t.Fatalf("events/edited counted %d times, want 1", got)
@@ -1841,7 +1914,7 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		if p := rig.lastPost(); !strings.Contains(p.text, "Phase: Running") {
 			t.Fatalf("the filed draft's thread answered %q, want the room's status", p.text)
 		}
-		if !reflect.DeepEqual(ab.rooms, []string{"room_summary/aaaaaaaa"}) {
+		if !reflect.DeepEqual(ab.rooms, []string{"task/aaaaaaaa"}) {
 			t.Fatalf("read %v, want the room run_create answered", ab.rooms)
 		}
 	})
@@ -1851,7 +1924,7 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 	// names the two ways left.
 	t.Run("a proposal thread whose planner went away drafts nothing", func(t *testing.T) {
 		rig, _, _ := proposalAt(t, 1)
-		rig.broker.intakeErr = ErrUnknownTool
+		rig.broker.handoffErr = ErrUnknownTool
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
 		if p := rig.lastPost(); p.text != planUnsupported || p.meta != nil {
 			t.Fatalf("the reply got %+v, want %q", p, planUnsupported)
@@ -1861,8 +1934,8 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		if len(posts) != 2 || posts[1].text != planUnsupported || posts[1].meta != nil {
 			t.Fatalf("the mention got %+v, want the one line %q and no draft", posts, planUnsupported)
 		}
-		if n := len(rig.broker.calls); n != 2 { // the two plans asked for; no issue_draft
-			t.Fatalf("%d broker calls, want the two intake_plan: %+v", n, rig.broker.all())
+		if n := len(rig.broker.calls); n != 2 { // the two handoffs asked for; no issue_draft
+			t.Fatalf("%d broker calls, want the two handoff calls: %+v", n, rig.broker.all())
 		}
 		if got := rig.metrics.count("events", "refused"); got != 2 {
 			t.Fatalf("events/refused counted %d times, want 2", got)
@@ -1897,7 +1970,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "a private repository points at the coding agent",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("private_repository_unsupported: the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route")
+				b.handoffErr = Refused("private_repository_unsupported: the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route")
 			},
 			want:    "Not proposed: the planner reads public repositories only; use your coding agent (`issue_draft` then `issue_file`), or wait for the internal route.",
 			outcome: "refused",
@@ -1905,7 +1978,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "planner_unavailable says when to mention again",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
+				b.handoffErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
 			},
 			want:    "Not proposed: the plan service is unavailable; mention me again in a minute.",
 			outcome: "error", // a passing failure: the person's fix is to mention again
@@ -1913,7 +1986,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "planner_timeout has its own line",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("planner_timeout: the plan service did not answer inside its deadline; try again")
+				b.handoffErr = Refused("planner_timeout: the plan service did not answer inside its deadline; try again")
 			},
 			want:    "Not proposed: the plan service did not answer in time; mention me again in a minute.",
 			outcome: "error",
@@ -1921,7 +1994,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "planner_invalid has its own line",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("planner_invalid: the plan is not the shape the contract asks for (issues: 0, the contract asks for 1 to 3); ask again")
+				b.handoffErr = Refused("planner_invalid: the plan is not the shape the contract asks for (issues: 0, the contract asks for 1 to 3); ask again")
 			},
 			want:    "Not proposed: the plan service answered something that is not a plan; mention me again, or hand it off from your coding agent.",
 			outcome: "refused",
@@ -1929,7 +2002,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "daily_plans_reached has its own line",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused("daily_plans_reached: you have used today's plans; the cap resets at 00:00 UTC")
+				b.handoffErr = Refused("daily_plans_reached: you have used today's plans; the cap resets at 00:00 UTC")
 			},
 			want:    "Not proposed: you have used today's plans; mention me again after 00:00 UTC, or hand it off from your coding agent.",
 			outcome: "refused",
@@ -1937,7 +2010,7 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "an unknown refusal is shown as the broker gave it",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.intakeErr = Refused(`invalid_class: the class is not one this broker's config defines (issue 1: class "nope")`)
+				b.handoffErr = Refused(`invalid_class: the class is not one this broker's config defines (issue 1: class "nope")`)
 			},
 			want:    `Not proposed: invalid_class: the class is not one this broker's config defines (issue 1: class "nope")`,
 			outcome: "refused",
@@ -1945,11 +2018,11 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "a plan with two issues is refused whole",
 			setup: func(t *testing.T, b *stubBroker) {
-				plan := clonePlan(t, b.intakeResult.Plan)
+				plan := clonePlan(t, b.storedPlan)
 				second := plan.Issues[0]
 				second.Index, second.DependsOn = 2, []int{1}
 				plan.Issues = append(plan.Issues, second)
-				b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+				b.setPlan(plan, false, nil)
 			},
 			want:    "Proposal not posted: this plan covers 2 issues and Slack files one: use your coding agent or the web UI.",
 			outcome: "multi_issue",
@@ -1957,9 +2030,9 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "a plan over 7 KiB is refused whole",
 			setup: func(t *testing.T, b *stubBroker) {
-				plan := clonePlan(t, b.intakeResult.Plan)
+				plan := clonePlan(t, b.storedPlan)
 				plan.Issues[0].Body = strings.Repeat("a", maxProposalPlanBytes)
-				b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+				b.setPlan(plan, false, nil)
 			},
 			want:    "Proposal not posted: the plan is too long for Slack; use your coding agent or the web UI.",
 			outcome: "too_large",
@@ -1973,8 +2046,8 @@ func TestProposalRefusals(t *testing.T) {
 			if len(posts) != 1 || posts[0].text != tc.want || posts[0].meta != nil {
 				t.Fatalf("the thread says %+v, want one line %q and no metadata", posts, tc.want)
 			}
-			if n := len(rig.broker.intakeCalls()); n != 1 {
-				t.Fatalf("%d intake_plan calls, want the one the refusal came from", n)
+			if n := len(rig.broker.handoffCalls()); n != 1 {
+				t.Fatalf("%d handoff calls, want the one the refusal came from", n)
 			}
 			if n := len(rig.broker.runCreates()); n != 0 {
 				t.Fatalf("a refused plan filed %d issues", n)
@@ -1994,8 +2067,8 @@ func TestProposalRefusals(t *testing.T) {
 		if len(posts) != 1 || posts[0].text != RequestedTextTooLong.Error() || posts[0].meta != nil {
 			t.Fatalf("the thread says %+v, want %q", posts, RequestedTextTooLong.Error())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
-			t.Fatalf("%d intake_plan calls for an oversized request", n)
+		if n := len(rig.broker.handoffCalls()); n != 0 {
+			t.Fatalf("%d handoff calls for an oversized request", n)
 		}
 		if got := rig.metrics.count("events", "too_large"); got != 1 {
 			t.Fatalf("the refusal was counted %d times as too_large", got)
@@ -2014,7 +2087,7 @@ func TestProposalRefusals(t *testing.T) {
 		if p := rig.lastPost(); p.text != want || p.meta != nil {
 			t.Fatalf("%q, want %q", p.text, want)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("a closed thread planned %d times", n)
 		}
 	})
@@ -2023,7 +2096,7 @@ func TestProposalRefusals(t *testing.T) {
 	// person is never left to believe a planner read the request.
 	t.Run("a degraded plan posts, and its header says it is a template", func(t *testing.T) {
 		rig, plan := withProposals(t)
-		rig.broker.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan), Degraded: true}
+		rig.broker.setPlan(plan, true, nil)
 		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
 		posts := rig.posts()
 		if len(posts) != 1 || len(posts[0].blocks) == 0 {
@@ -2085,7 +2158,7 @@ func TestReplyReplansInPlace(t *testing.T) {
 		rig, plan, ts := proposalAt(t, 1)
 		moved := clonePlan(t, plan)
 		moved.Repository = "Smana/cloud-native-ref" // the channel's other repository: what the reply named
-		rig.broker.intakeResult = IntakeResult{Plan: moved, Hash: intake.Hash(moved)}
+		rig.broker.setNextPlan(moved, false)
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
 
 		if n := len(rig.posts()); n != 0 {
@@ -2110,17 +2183,15 @@ func TestReplyReplansInPlace(t *testing.T) {
 		if !strings.Contains(string(edits[0].blocks), "requires a new confirmation") {
 			t.Fatalf("the header does not ask for a new confirmation: %s", edits[0].blocks)
 		}
-		// The planner is called with the thread's own request and the reply as context: one text, the
-		// channel's candidates, the requester's principal and ceiling, and the reply said back to it.
-		calls := rig.broker.intakeCalls()
+		// Handoff continues by id and answer: the App holds no plan and sends no reconstructed history.
+		calls := rig.broker.handoffCalls()
 		if len(calls) != 1 {
-			t.Fatalf("%d intake_plan calls, want one", len(calls))
+			t.Fatalf("%d handoff calls, want one", len(calls))
 		}
-		want := IntakeRequest{Text: mentionWords, Context: "Reply 1: it belongs in owner/docs",
-			OnBehalfOf: "slack:T01ABC/U02DEF", Candidates: []string{"Smana/ai-native-ref", "Smana/cloud-native-ref"},
-			CeilingUSD: 2}
+		want := HandoffRequest{ID: defaultHandoffID, Answer: "it belongs in owner/docs",
+			OnBehalfOf: "slack:T01ABC/U02DEF", CeilingUSD: 2}
 		if !reflect.DeepEqual(calls[0], want) {
-			t.Fatalf("the plan request is %+v, want %+v", calls[0], want)
+			t.Fatalf("the handoff request is %+v, want %+v", calls[0], want)
 		}
 		if n := len(rig.broker.runCreates()); n != 0 {
 			t.Fatalf("a re-plan filed %d issues", n)
@@ -2165,7 +2236,7 @@ func TestReplyReplansInPlace(t *testing.T) {
 		rig, plan, ts := proposalAt(t, 1)
 		moved := clonePlan(t, plan)
 		moved.Repository = "Smana/cloud-native-ref"
-		rig.broker.intakeResult = IntakeResult{Plan: moved, Hash: intake.Hash(moved)}
+		rig.broker.setNextPlan(moved, false)
 		rig.slack.failProposalUpdates = 1
 		rig.replySaid("U02DEF", "1729.9001", "it belongs in owner/docs")
 
@@ -2199,17 +2270,17 @@ func TestReplyReplansInPlace(t *testing.T) {
 // planner's context — the second reply's re-plan reads the thread again under the lock.
 func TestReplySerialised(t *testing.T) {
 	rig, plan, ts := proposalAt(t, 1)
-	// The planner answers a plan whose title is how many replies its context held, so the message's
-	// final plan is the last call's and not the first's.
-	rig.broker.intakeAnswer = func(in IntakeRequest) IntakeResult {
+	seen := 0
+	rig.broker.handoffAnswer = func(in HandoffRequest) intake.Plan {
+		seen++
 		next := plan
 		next.Issues = append([]intake.Issue(nil), plan.Issues...)
-		next.Issues[0].Title = fmt.Sprintf("docs: planned from %d replies", strings.Count(in.Context, "Reply "))
-		return IntakeResult{Plan: next, Hash: intake.Hash(next)}
+		next.Issues[0].Title = fmt.Sprintf("docs: planned from %d replies (%s)", seen, in.Answer)
+		return next
 	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	rig.broker.intakeGate = func() { once.Do(func() { close(entered); <-release }) } // the first plan blocks
+	rig.broker.handoffGate = func() { once.Do(func() { close(entered); <-release }) } // the first plan blocks
 
 	const first, second = "it belongs in owner/docs", "and the acceptance check is one click"
 	rig.slack.seed(Message{TS: "1729.9001", ThreadTS: proposalThreadTS, User: "U02DEF", Text: first})
@@ -2224,7 +2295,7 @@ func TestReplySerialised(t *testing.T) {
 		t.Fatal("the first re-plan never reached the planner: a reply no longer re-plans")
 	}
 	// The second reply lands while the first plan is in flight: its re-plan's read is after the first
-	// one's write, so its context holds both words and its revision is the one the message shows.
+	// one's write, so its revision is 3 and the message shows the second plan.
 	rig.slack.seed(Message{TS: "1729.9002", ThreadTS: proposalThreadTS, User: "U02DEF", Text: second})
 	go func() { outcomes <- rig.app.reply(bounded, replyEvent("U02DEF", "1729.9002", second)) }()
 	close(release)
@@ -2239,18 +2310,15 @@ func TestReplySerialised(t *testing.T) {
 		}
 	}
 
-	calls := rig.broker.intakeCalls()
+	calls := rig.broker.handoffCalls()
 	if len(calls) != 2 {
-		t.Fatalf("%d intake_plan calls, want two: %+v", len(calls), calls)
+		t.Fatalf("%d handoff calls, want two: %+v", len(calls), calls)
 	}
-	if calls[0].Text != mentionWords || calls[1].Text != mentionWords {
-		t.Fatalf("the requests' text: %q, %q", calls[0].Text, calls[1].Text)
+	if calls[0].ID != defaultHandoffID || calls[0].Answer != first {
+		t.Fatalf("first handoff continuation: %+v", calls[0])
 	}
-	if calls[0].Context != "Reply 1: "+first {
-		t.Fatalf("the first re-plan's context is %q, want its own reply alone", calls[0].Context)
-	}
-	if want := "Reply 1: " + first + "\nReply 2: " + second; calls[1].Context != want {
-		t.Fatalf("the second re-plan's context is %q, want %q", calls[1].Context, want)
+	if calls[1].ID != defaultHandoffID || calls[1].Answer != second {
+		t.Fatalf("second handoff continuation: %+v", calls[1])
 	}
 
 	edits := rig.slack.proposalEdits()
@@ -2262,8 +2330,8 @@ func TestReplySerialised(t *testing.T) {
 		t.Fatalf("the first edit's revision: %+v (%v)", second2, ok)
 	}
 	last, ok := edits[1].meta.proposalPayload()
-	if !ok || last.Rev != 3 || last.Plan.Issues[0].Title != "docs: planned from 2 replies" {
-		t.Fatalf("the last edit holds %+v (%v), want revision 3 of the second plan", last, ok)
+	if !ok || last.Rev != 3 || !strings.Contains(edits[1].text, "docs: planned from 2 replies ("+second+")") {
+		t.Fatalf("the last edit holds %+v (%v), text %q", last, ok, edits[1].text)
 	}
 	if live := liveProposals(t, rig.slack); len(live) != 1 || live[0].TS != ts {
 		t.Fatalf("the thread has %d live proposals: %+v", len(live), live)
@@ -2280,7 +2348,7 @@ func TestReplyBounds(t *testing.T) {
 		if p := rig.lastPost(); p.text != replyPlannedMost || p.meta != nil {
 			t.Fatalf("%q, want %q", p.text, replyPlannedMost)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("a capped thread planned %d times", n)
 		}
 		if n := len(rig.slack.proposalEdits()); n != 0 {
@@ -2300,7 +2368,7 @@ func TestReplyBounds(t *testing.T) {
 		if p := rig.lastPost(); p.text != RequestedTextTooLong.Error() || p.meta != nil {
 			t.Fatalf("the thread says %+v, want %q", p, RequestedTextTooLong.Error())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("an oversized request planned %d times", n)
 		}
 		if n := len(rig.slack.proposalEdits()); n != 0 {
@@ -2321,7 +2389,7 @@ func TestReplyBounds(t *testing.T) {
 		if p := rig.lastPost(); p.text != RequestedTextTooLong.Error() || p.meta != nil {
 			t.Fatalf("the thread says %+v, want %q", p, RequestedTextTooLong.Error())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("an oversized thread root planned %d times", n)
 		}
 		if n := len(rig.slack.proposalEdits()); n != 0 {
@@ -2338,7 +2406,7 @@ func TestReplyBounds(t *testing.T) {
 		if n := len(rig.posts()); n != 0 {
 			t.Fatalf("someone else's reply was answered: %+v", rig.posts())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("someone else's reply planned %d times", n)
 		}
 		if n := len(rig.slack.proposalEdits()); n != 0 {
@@ -2366,7 +2434,7 @@ func TestReplyBounds(t *testing.T) {
 		if posts := rig.posts(); len(posts) != 1 || posts[0].text != want || posts[0].meta != nil {
 			t.Fatalf("a filed thread answered %+v, want the one pointer line", posts)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("a filed thread planned %d times", n)
 		}
 		if got := rig.metrics.count("events", "answered"); got != 1 {
@@ -2381,7 +2449,7 @@ func TestReplyBounds(t *testing.T) {
 		if n := len(rig.posts()); n != 0 || len(rig.slack.proposalEdits()) != 0 {
 			t.Fatalf("with proposals off the thread was edited: %+v", rig.slack.proposalEdits())
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("with proposals off the reply planned %d times", n)
 		}
 		if got := rig.metrics.count("events", "ignored"); got != 1 {
@@ -2449,9 +2517,9 @@ func TestSecondMentionUpdatesTheProposal(t *testing.T) {
 	// revised changes the plan the planner answers with, so the update has something material to mark.
 	revised := func(t *testing.T, b *stubBroker) intake.Plan {
 		t.Helper()
-		plan := clonePlan(t, b.intakeResult.Plan)
+		plan := clonePlan(t, b.storedPlan)
 		plan.Issues[0].Title = "docs: the install link points at the page it moved to"
-		b.intakeResult = IntakeResult{Plan: plan, Hash: intake.Hash(plan)}
+		b.setNextPlan(plan, false)
 		return plan
 	}
 
@@ -2536,7 +2604,7 @@ func TestSecondMentionUpdatesTheProposal(t *testing.T) {
 		if p := rig.lastPost(); p.text != want || p.meta != nil {
 			t.Fatalf("%q, want %q", p.text, want)
 		}
-		if n := len(rig.broker.intakeCalls()); n != 0 {
+		if n := len(rig.broker.handoffCalls()); n != 0 {
 			t.Fatalf("a capped thread planned %d times", n)
 		}
 	})
@@ -2555,7 +2623,7 @@ func TestProposalActionsCounted(t *testing.T) {
 		t.Helper()
 		next := clonePlan(t, plan)
 		next.Repository = "Smana/cloud-native-ref"
-		rig.broker.intakeResult = IntakeResult{Plan: next, Hash: intake.Hash(next)}
+		rig.broker.setNextPlan(next, false)
 		return next
 	}
 	for _, tc := range []struct {
@@ -2578,7 +2646,7 @@ func TestProposalActionsCounted(t *testing.T) {
 			name: "a refused plan counts nothing but mention",
 			run: func(t *testing.T) *appRig {
 				rig, _ := withProposals(t)
-				rig.broker.intakeErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
+				rig.broker.handoffErr = Refused("planner_unavailable: the plan service is unavailable; try again later")
 				rig.mention("C03", proposalThreadTS, "<@U0BOT> "+mentionWords)
 				return rig
 			},

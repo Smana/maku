@@ -115,8 +115,43 @@ func wireBlocks(t *testing.T, raw json.RawMessage) []map[string]any {
 	return blocks
 }
 
-// CD20: the metadata is the whole proposal. It round-trips unchanged, and a payload whose hash does
-// not hold — because a byte of the plan moved — is not a proposal.
+// UX2: the proposal card's metadata holds the handoff id and revision (plus hash, author and repo),
+// never the plan body or issue text.
+func TestProposalMetadataHoldsHandoffID(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	hash := intake.Hash(plan)
+	p, err := newProposal(plan, hash, "U07JY4EQNDN", 3)
+	if err != nil {
+		t.Fatalf("newProposal: %v", err)
+	}
+	p.ID = "bcdefghijklmnopqrstuvwxyza"
+	meta, err := proposalMeta(p)
+	if err != nil {
+		t.Fatalf("proposalMeta: %v", err)
+	}
+	raw, err := json.Marshal(meta)
+	if err != nil {
+		t.Fatalf("marshal metadata: %v", err)
+	}
+	for _, forbidden := range []string{`"plan"`, `"issues"`, `"body"`, plan.Issues[0].Title, "What is wrong"} {
+		if strings.Contains(string(raw), forbidden) {
+			t.Errorf("proposal metadata carries plan content %q: %s", forbidden, raw)
+		}
+	}
+	var wire struct {
+		EventType    string         `json:"event_type"`
+		EventPayload map[string]any `json:"event_payload"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatalf("unmarshal metadata: %v", err)
+	}
+	if wire.EventPayload["id"] != "bcdefghijklmnopqrstuvwxyza" || wire.EventPayload["rev"] != float64(3) {
+		t.Fatalf("metadata payload = %+v, want id and rev", wire.EventPayload)
+	}
+}
+
+// UX2, CD20: the metadata round-trips the handoff id, hash, author, revision and repository, and
+// refuses a payload whose id, hash or revision is off-shape.
 func TestProposalMetadataRoundTrip(t *testing.T) {
 	plan := planFixture(t, "slack-one-issue")
 	hash := intake.Hash(plan)
@@ -135,8 +170,8 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 		t.Fatalf("the metadata is %d bytes, over maxMetadata (%d)", len(raw), maxMetadata)
 	}
 
-	// An App that remembers nothing but the message reads the same proposal back: nothing about a
-	// proposal is stored anywhere else (CD20).
+	// An App that remembers nothing but the message reads the proposal handle back without storing
+	// the plan body in Slack.
 	var wire Metadata
 	if err := json.Unmarshal(raw, &wire); err != nil {
 		t.Fatalf("unmarshal the metadata: %v", err)
@@ -145,20 +180,16 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 	if !ok {
 		t.Fatal("a proposal's own metadata did not decode as a proposal")
 	}
-	if !reflect.DeepEqual(got.Plan, plan) {
-		t.Errorf("the plan came back changed:\n got %+v\nwant %+v", got.Plan, plan)
-	}
-	if got.Hash != hash || got.Author != "U07JY4EQNDN" || got.Rev != 1 {
-		t.Errorf("hash %q, author %q, rev %d", got.Hash, got.Author, got.Rev)
+	if got.ID != defaultHandoffID || got.Hash != hash || got.Author != "U07JY4EQNDN" || got.Rev != 1 || got.Repo != plan.Repository {
+		t.Errorf("got %+v", got)
 	}
 	if !proposalHashHolds(got) {
-		t.Error("a proposal whose plan and hash agree did not hold")
+		t.Error("a valid proposal payload did not hold")
 	}
 
-	// One byte of the plan, and the hash no longer holds: it is not a proposal, it is a message that
-	// happens to be tagged.
-	moved := got
-	moved.Plan = clonePlan(t, got.Plan)
+	// When the in-memory plan is attached, one byte of change breaks the hash check.
+	moved := p
+	moved.Plan = clonePlan(t, p.Plan)
 	moved.Plan.Issues[0].Body += "\n"
 	if proposalHashHolds(moved) {
 		t.Error("a plan that moved by one byte still held its hash")
@@ -176,7 +207,7 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 		t.Error("no metadata decoded as a proposal")
 	}
 
-	// A hash of the wrong shape binds nothing, whatever the plan hashes to.
+	// A hash or handoff id of the wrong shape binds nothing.
 	for _, bad := range []string{
 		"",
 		"sha256:" + strings.Repeat("A", 64), // uppercase
@@ -185,9 +216,12 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 		"sha512:" + strings.Repeat("a", 64), // another digest
 		"sha256:" + strings.Repeat("a", 64) + "\n", // a trailing byte
 	} {
-		if proposalHashHolds(ProposalPayload{Plan: plan, Hash: bad}) {
+		if proposalHashHolds(ProposalPayload{ID: defaultHandoffID, Repo: plan.Repository, Rev: 1, Hash: bad}) {
 			t.Errorf("%q held as a hash", bad)
 		}
+	}
+	if proposalHashHolds(ProposalPayload{ID: "short", Repo: plan.Repository, Rev: 1, Hash: hash}) {
+		t.Error("a malformed handoff id held")
 	}
 }
 
@@ -566,6 +600,7 @@ func TestLegacyPlanCompatibility(t *testing.T) {
 	if !ok {
 		t.Fatal("legacy proposal did not survive its metadata")
 	}
+	recovered.Plan = legacy
 	afterText, afterBlocks, err := proposalSections(recovered, nil, nil, "C03")
 	if err != nil {
 		t.Fatal(err)
@@ -580,34 +615,20 @@ func TestLegacyPlanCompatibility(t *testing.T) {
 		{ID: "g2", Text: "second ranked?", Recommended: intake.Answer{Answer: "second answer"}},
 	}
 	ranked.Question = nil
-	rawPlan, err := ranked.JSON()
+	withFirst := intake.WithGaps(ranked, ranked.Gaps)
+	if withFirst.Question == nil || withFirst.Question.Text != "first ranked?" {
+		t.Fatalf("the first gap did not fill Slack's Question: %+v", withFirst)
+	}
+	rankedProposal, err := newProposal(ranked, intake.Hash(ranked), "U07JY4EQNDN", 1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	f := newFakeBroker(t, "", `{"structuredContent":{"plan":`+string(rawPlan)+`,"hash":"`+intake.Hash(ranked)+`","question":null,"canStart":false}}`)
-	broker := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
-	result, err := broker.IntakePlan(context.Background(), IntakeRequest{Text: "revise", Candidates: []string{ranked.Repository}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if result.Question == nil || result.Question.Text != "first ranked?" || result.Plan.Question == nil ||
-		result.Plan.Question.Text != "first ranked?" {
-		t.Fatalf("the first gap did not fill Slack's Question: %+v", result)
-	}
-	rankedProposal, err := newProposal(result.Plan, result.Hash, "U07JY4EQNDN", 1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	text, _, err := proposalSections(rankedProposal, result.Question, nil, "C03")
+	text, _, err := proposalSections(rankedProposal, withFirst.Question, nil, "C03")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(text, "first ranked?") || strings.Contains(text, "second ranked?") {
 		t.Fatalf("ranked proposal does not show only its first gap: %s", text)
-	}
-	if got := f.calls[0].Params.Arguments; len(got) != 4 || got["text"] != "revise" ||
-		got["plan"] != nil || got["hash"] != nil || got["candidate"] != nil {
-		t.Fatalf("Slack's initial-shape intake_plan protocol changed: %+v", got)
 	}
 }
 
@@ -925,7 +946,7 @@ func TestOneProposalMessageAcrossRevisions(t *testing.T) {
 		t.Fatal("the proposal message is gone")
 	}
 	last, ok := m.Metadata.proposalPayload()
-	if !ok || last.Rev != 5 || last.Hash != prev.Hash || !reflect.DeepEqual(last.Plan, prev.Plan) {
+	if !ok || last.Rev != 5 || last.Hash != prev.Hash || last.ID != prev.ID {
 		t.Fatalf("the message's metadata after five revisions: %+v %v", last, ok)
 	}
 	if latest, closed := app.threadProposal(fake.thread()); latest == nil || latest.TS != ts || closed {
@@ -949,7 +970,7 @@ func TestOneProposalMessageAcrossRevisions(t *testing.T) {
 	if fresh.ts == ts || len(fresh.blocks) == 0 || fresh.thread != ts {
 		t.Fatalf("the reposted proposal: %+v", fresh)
 	}
-	if p, ok := fresh.meta.proposalPayload(); !ok || p.Rev != 6 || !reflect.DeepEqual(p.Plan, sixth.Plan) {
+	if p, ok := fresh.meta.proposalPayload(); !ok || p.Rev != 6 || p.Hash != sixth.Hash || p.ID != sixth.ID {
 		t.Fatalf("the reposted metadata: %+v %v", p, ok)
 	}
 
@@ -1002,17 +1023,12 @@ func TestProposalRecoveredFromMetadataAlone(t *testing.T) {
 	if !ok {
 		t.Fatal("the message's metadata is not a proposal")
 	}
-	if back.Hash != intake.Hash(back.Plan) {
-		t.Fatalf("the recovered hash %q is not the hash of the recovered plan", back.Hash)
-	}
-	if !reflect.DeepEqual(back.Plan, p.Plan) || back.Rev != p.Rev || back.Author != p.Author {
-		t.Fatalf("the recovered plan: %+v", back)
+	if back.ID != p.ID || back.Hash != p.Hash || back.Rev != p.Rev || back.Author != p.Author || back.Repo != p.Repo {
+		t.Fatalf("the recovered proposal: %+v", back)
 	}
 
-	// A hash of a different plan is not a proposal, whatever the tag says.
-	other := clonePlan(t, p.Plan)
-	other.Issues[0].Title = "docs: another plan entirely"
-	forged := ProposalPayload{Plan: p.Plan, Hash: intake.Hash(other), Author: p.Author, Rev: 1}
+	// An off-shape hash is not a proposal, whatever the tag says.
+	forged := ProposalPayload{ID: p.ID, Repo: p.Repo, Hash: "sha256:not-a-digest", Author: p.Author, Rev: 1}
 	if latest, closed := restarted.threadProposal([]Message{{TS: "1729.2000", ThreadTS: "1729.0001",
 		User: "U0BOT", Text: "a proposal", Metadata: metaOf(t, proposalEventType, forged)}}); latest != nil || closed {
 		t.Fatalf("a proposal whose hash does not hold: %+v %v", latest, closed)
@@ -1071,11 +1087,11 @@ func TestProposalCarriesTheDegradedComposerLabel(t *testing.T) {
 		t.Fatalf("the recovered degraded proposal: %+v %v", back, ok)
 	}
 	// It is display, not material: the hash still binds the plan, and the label marks no section.
-	if back.Hash != intake.Hash(back.Plan) {
+	if back.Hash != intake.Hash(p.Plan) {
 		t.Fatalf("the degraded payload's hash does not bind its plan")
 	}
 	// A payload that never says it is not degraded, and the tag's wire bytes keep their shape.
-	if raw, err := json.Marshal(ProposalPayload{Plan: p.Plan, Hash: p.Hash, Author: p.Author, Rev: p.Rev}); err != nil ||
+	if raw, err := json.Marshal(ProposalPayload{ID: p.ID, Repo: p.Repo, Hash: p.Hash, Author: p.Author, Rev: p.Rev}); err != nil ||
 		strings.Contains(string(raw), "degraded") {
 		t.Fatalf("a non-degraded payload carries the key: %s (%v)", raw, err)
 	}

@@ -177,8 +177,6 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 		return a.cancelProposal(ctx, in, thread, p)
 	case actionProposalProfile:
 		return a.pinProposal(ctx, in, thread, p, profile)
-	case actionProposalOptions:
-		return a.proposalOptions(ctx, in, thread, p)
 	}
 	return "ignored"
 }
@@ -195,11 +193,19 @@ func (a *App) pressAnswer(ctx context.Context, in interaction, thread, line, cod
 	return code
 }
 
-// redrawProposal rewrites the message from the metadata it already holds: the sections the payload
-// renders, the buttons binding the hash and the revision it carries, and the same metadata back.
-// Nothing is planned, computed or filed, and its failure is logged and dropped — the presser's line
-// already says nothing was filed, and a repost would give the thread two live proposals.
+// redrawProposal rewrites the message from the stored handoff its metadata names: the sections the
+// plan renders, the buttons binding the hash and the revision it carries, and the same metadata back.
+// Nothing is planned or filed, and its failure is logged and dropped — the presser's line already says
+// nothing was filed, and a repost would give the thread two live proposals.
 func (a *App) redrawProposal(ctx context.Context, channel, ts string, p ProposalPayload) {
+	if p.Plan.APIVersion == "" {
+		checked, err := a.Broker.HandoffCheck(ctx, p.ID, "slack:"+a.TeamID+"/"+p.Author, nil)
+		if err != nil || checked.Hash != p.Hash {
+			a.log().Warn("proposal redraw check failed", "channel", channel, "ts", ts, "err", err)
+			return
+		}
+		p.Plan = checked.Plan
+	}
 	text, blocks, err := proposalSections(p, nil, nil, channel)
 	if err != nil {
 		a.log().Warn("proposal redraw failed", "channel", channel, "ts", ts, "err", err)
@@ -228,9 +234,9 @@ func (a *App) redrawProposal(ctx context.Context, channel, ts string, p Proposal
 // but only the person who pressed needs to be told what the press did.
 func (a *App) confirmProposal(ctx context.Context, in interaction, thread string, p ProposalPayload) string {
 	ch := a.Channels[in.Channel]
-	if !servesRepo(ch.Repositories, p.Plan.Repository) {
+	if !servesRepo(ch.Repositories, p.Repo) {
 		return a.pressAnswer(ctx, in, thread,
-			fmt.Sprintf(proposalRepoGoneLine, slackText(p.Plan.Repository)), "refused")
+			fmt.Sprintf(proposalRepoGoneLine, slackText(p.Repo)), "refused")
 	}
 	code, line := a.fileProposal(ctx, in.Channel, thread, in.MessageTS, in.User, p, true)
 	if line == "" {
@@ -276,7 +282,7 @@ func (a *App) cancelInPlace(ctx context.Context, in interaction, thread string, 
 		return code, line
 	}
 	line = fmt.Sprintf(proposalCancelledLine, in.User)
-	mark, err := metaPayload(MarkerPayload{Repo: p.Plan.Repository, Cancelled: true}) // no room: a cancellation starts none
+	mark, err := metaPayload(MarkerPayload{Repo: p.Repo, Cancelled: true}) // no room: a cancellation starts none
 	if err != nil {
 		a.log().Error("cancel mark payload: the proposal stays editable", "err", err)
 		mark = json.RawMessage(`{}`)

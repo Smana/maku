@@ -117,29 +117,30 @@ func (a *App) answer(ctx context.Context, ev slackEvent, room string) string {
 	case QuestionUnknown:
 		return capLines([]string{fmt.Sprintf(unknownQuestionLine, page)})
 	case QuestionStatus, QuestionPR:
-		sum, err := a.Broker.RoomSummary(ctx, room)
+		tv, err := a.Broker.Task(ctx, room)
 		if err != nil {
 			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
+		sum := tv.Summary()
 		if q == QuestionPR {
 			return prAnswer(sum)
 		}
 		return statusAnswer(sum, page)
 	case QuestionNeeds:
-		needs, err := a.Broker.NeedsList(ctx, room)
+		needs, err := a.Broker.Inbox(ctx, room)
 		if err != nil {
 			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
 		return needsAnswer(needs)
 	case QuestionChanges:
-		set, err := a.Broker.RoomChanges(ctx, room)
+		tv, err := a.Broker.Task(ctx, room)
 		if err != nil {
 			a.answerFailed(ctx, ev, q, err)
 			return unreadRoomLine
 		}
-		return changesAnswer(set)
+		return changesAnswer(tv.Changes())
 	}
 	// A Question is a closed set: a value outside it never reaches here, and the honest answer if one
 	// ever did is the one an unknown phrase gets.
