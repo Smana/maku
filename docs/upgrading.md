@@ -8,7 +8,8 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 Merge policies release N+1 removes every field and mode release N deprecated (MR9, MR13). Unknown
 fields on a `MergePolicy`, `Repository` or `Factory` are rejected by the CRD schema, and the config
-file refuses removed keys with a message pointing here:
+file refuses removed keys with a message pointing here. See [merge policies](merge-policies.md#start-here)
+for the zero-binding catalog setup and [worked examples](merge-policies.md#worked-examples):
 
 | Removed field or value | Replacement |
 |---|---|
@@ -19,7 +20,7 @@ file refuses removed keys with a message pointing here:
 | `MergePolicy.spec.checks`, `classes.<name>.checks` | `Factory.spec.workflows.<workflow>.checks` |
 | `MergePolicy.spec.requires` | nothing: incomplete bindings are refused by the bound and parameter rules |
 | `MergePolicy.spec.live`, `MergePolicy.spec.shadow` | `mode: live` or `mode: shadow` on each `Repository.spec.mergePolicies` binding |
-| `MergePolicy` named `review`, or a binding named `review` | nothing: `review` is the default human path when no policy matches |
+| `MergePolicy` named `review`, or a binding named `review` | nothing: `no_policy_matched` sends unmatched pull requests to a human |
 | `mode: "off"` on a `mergePolicies` binding | delete the binding, or set `mode: disabled` for a catalog policy (`docs-links`, `revert`, `deps-patch`, `docs`) |
 | `Schedule.class` without an `oracle.probe` policy | `Schedule.workflow` (`workflow` on the schedule) |
 | `merge.autoMergesPerDay`, `mergeDefaults.autoMergesPerDay` | `merge.maxPerDay`, `mergeDefaults.maxPerDay` |
@@ -30,6 +31,25 @@ file refuses removed keys with a message pointing here:
 config file into `Factory`, `Repository` and `MergePolicy` manifests. Shadow evidence recorded under
 earlier label-chosen decisions (`class=<name>` in the merge gate's marker) carries over unchanged to
 diff-chosen decisions for the same policy name.
+
+## The gate picks the policy from the diff (v0.5x, merge policies release N+1)
+
+Breaking: the merge gate no longer decides on the task's class. It judges the pull request's diff
+against every policy the repository evaluates, its catalog policies included, and merges under the
+strictest `live` one that holds ([selection](merge-policies.md#selection-from-the-diff)).
+
+| Change | Before | Now | What to do |
+|---|---|---|---|
+| Which policy decides | the class fixed at intake (a `class:` label, a schedule, the plan; else `review`) | the strictest `live` policy whose every condition holds on the diff; a task with findings (a schedule's probe) or an adopted pull request keeps its one class | none: `workflow:<name>` picks the workflow, never the merge policy |
+| A diff no policy admits | `class_unarmed`, or `class_mismatch` against the label | `no_policy_matched`, with each policy's refusal in the record's `considered=` | Alerts or dashboards on `class_unarmed` read `no_policy_matched` |
+| A policy with no `diffShape` and no `oracle` (MR12) | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer (`quick`) leaves it `reviewer_verdict_missing` | Run with a reviewer (`standard` or `careful`), or give the policy a shape |
+| Shadow evidence | one record, the class's | one record line per shadow policy that holds, beside the decision's | `scripts/shadow-merge-tally.sh` reads each class's own line |
+| A capped or paused strictest policy | — | the pull request goes to a human: a looser policy never takes over | none |
+| The decision's wording | "merged by the merger App: the class's conditions held" | "Merged automatically by policy `<name>`", or "Waits for a human: `<reason>`" | none |
+| Conformance fixtures | version 1 | version 2: a fixture decided under the class it names reads differently | Rewrite fixtures you keep outside Maku |
+
+A saved approval grant still binds to the task's class's resolved hash: a pull request the diff
+assigns to another policy finds no grant and asks for an approval (`approval_required`).
 
 ## Workflows name what runs
 
