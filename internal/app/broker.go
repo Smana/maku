@@ -142,6 +142,12 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
+	// Stored handoff plans expire after 24 hours (UX2).
+	handoffs, err := st.PruneHandoffs(ctx, time.Now())
+	log.Info("pruned expired handoffs", "handoffs", handoffs)
+	if err != nil {
+		return fmt.Errorf("room-broker retention: %w", err)
+	}
 	return nil
 }
 
