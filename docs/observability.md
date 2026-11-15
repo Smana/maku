@@ -98,7 +98,7 @@ spec:
 ```
 
 **Links.** The uids are cloud-native-ref's, so the dashboards' links to each other, and the room
-page's [`human.dashboards`](integration.md#the-brokers-configuration) links, resolve by uid, for
+page's [`human.dashboards`](reference/config.md#broker-fields) links, resolve by uid, for
 example `https://grafana.example.com/d/agent-room/rooms?var-room={room}`. A room's links back to the
 room page use `maku.broker.publicURL`.
 

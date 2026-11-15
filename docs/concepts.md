@@ -110,4 +110,4 @@ stateDiagram-v2
 | A human | rooms from the UI, forks | the web UI, `maku` | Messages, driver actions, approval decisions |
 | The broker | human-requested and forked `Room`s; **never** an `AgentRun` | everything | Lifecycle events, seals, limits, verdict outcomes |
 
-The factory re-reads the pull request right before starting the next run: reviews submitted while waiting join its brief, reviews dismissed beforehand are skipped, and a review dismissed after being queued still reaches that run. Full permissions are in [Security](security.md#authorization).
+The factory re-reads the pull request right before starting the next run: reviews submitted while waiting join its brief, reviews dismissed beforehand are skipped, and a review dismissed after being queued still reaches that run. Full permissions are in [Security controls](reference/security-controls.md#authorization-matrix).

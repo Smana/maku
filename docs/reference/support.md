@@ -83,3 +83,14 @@ For one repository, `maku repo check owner/name` asks the factory for its `apps`
 `private-code` rows alone (`GET /preflight?repository=owner/name`), and adds the repository's fence
 and its `Repository`'s conditions; `maku repo add` writes the files those rows check
 ([CLI](../cli.md)).
+
+## Private code surfaces
+
+Without `privateCode.acknowledged: true` on a private or internal repository (or one whose visibility read fails), tasks already started finish while new work is refused (`factory/ready` comments and removes the label, the API answers `403 private_code_unacknowledged`, and neither schedules nor adoption start tasks):
+
+| Surface | Reports |
+|---|---|
+| `Repository` `PrivateCode` condition | `False` `Unacknowledged` ("No new task starts until it is set"); `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read or `NotServed` |
+| Preflight `private-code` check | `fail` `private_code_unacknowledged`, naming the repositories |
+| Metric and alert | `maku_factory_private_code_unacknowledged{repository}` (`1` or `0`); `AgentFactoryPrivateCodeUnacknowledged` fires after 15 minutes at `1` |
+| Web UI install banner and logs | `private_code_unacknowledged` via `GET /v1/install` (requires `factoryURL` on the broker); one `WARN` per visibility change |

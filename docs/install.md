@@ -45,7 +45,7 @@ Slack App's events path must be public, and only when it is installed.
 maku install --print --out ./maku-install
 ```
 
-It asks one question per seam (or reads `--answers FILE` in CI), validates answers against the chart schemas, optionally creates both GitHub Apps (`apps.create`), and writes `values.yaml`, `crds/values.yaml`, `factory/`, `github/`, `secrets/` (mode `0700`, never overwritten), `gitops/` and `README.md` ([generated install directory](reference/support.md#generated-install-directory)). Add repositories later with `maku repo add owner/name` ([onboard another repository](reference/support.md#onboard-another-repository), [CLI](cli.md)).
+It asks one question per seam (or reads `--answers FILE` in CI), validates answers against the chart schemas, optionally creates both GitHub Apps (`apps.create`), and writes `values.yaml`, `crds/values.yaml`, `factory/`, `github/`, `secrets/` (mode `0700`, never overwritten), `gitops/` and `README.md` ([generated install directory](reference/support.md#generated-install-directory)). Add repositories later with `maku repo add owner/name` ([Onboard a repository](onboard-a-repository.md), [CLI](cli.md)).
 
 ## Apply it
 
@@ -116,7 +116,7 @@ The checks, generated from `internal/preflight`:
 
 ## Private code
 
-A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
+A `Repository` serving private code needs `spec.privateCode.acknowledged: true` (acknowledging code is sent to the configured models, usually SaaS; self-hosted models via agentgateway remain optional):
 
 ```yaml
 apiVersion: maku.ogenki.io/v1alpha1
@@ -128,12 +128,7 @@ spec:
   privateCode: {acknowledged: true}   # true or absent: false is refused
 ```
 
-The factory reads each served repository's visibility through the factory App. `private` and
-`internal` count as private code, and so does a read that fails. A private repository without the
-field is refused new tasks, and tasks already started finish: its `PrivateCode` condition is `False`,
-the gauge `maku_factory_private_code_unacknowledged` reads 1, the preflight fails
-`private_code_unacknowledged`, and the install banner says so. Self-hosted models remain possible through agentgateway, but nothing in the product
-depends on them. The [Repository reference](factory.md#private-code) has the details.
+On each 5-minute fence pass, the factory reads visibility through the factory App (`private`, `internal`, and failed reads fail closed as private code; nothing starts before the first read). Without acknowledgement, running tasks finish while new work is refused across the `PrivateCode` condition, the `private-code` preflight check, `maku_factory_private_code_unacknowledged`, and the install banner ([private code surfaces](reference/support.md#private-code-surfaces)). Demo mode and [multi-repository coordination](multi-repository.md) (`publicOnly: true`) remain public-only.
 
 ## Upgrading
 
