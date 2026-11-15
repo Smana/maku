@@ -294,6 +294,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
 	source := r.pinModel(cfg, t, &s)
+	s.Effort = cfg.EffortFor(r.workflow(cfg, t), s.Role)
 	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
 	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
 	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)

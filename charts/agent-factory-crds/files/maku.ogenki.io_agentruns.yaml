@@ -96,6 +96,17 @@ spec:
                 x-kubernetes-validations:
                 - message: dataClass is immutable
                   rule: self == oldSelf
+              effort:
+                description: Effort is the harness's reasoning effort (CP9); empty
+                  keeps its default, high.
+                enum:
+                - low
+                - medium
+                - high
+                type: string
+                x-kubernetes-validations:
+                - message: effort is immutable
+                  rule: self == oldSelf
               egress:
                 default: {}
                 description: AgentRunEgress adds package registries to the always-on

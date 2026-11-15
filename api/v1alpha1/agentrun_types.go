@@ -73,6 +73,11 @@ type AgentRunSpec struct {
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="model is immutable"
 	// +optional
 	Model string `json:"model,omitempty"`
+	// Effort is the harness's reasoning effort (CP9); empty keeps its default, high.
+	// +kubebuilder:validation:Enum=low;medium;high
+	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="effort is immutable"
+	// +optional
+	Effort string `json:"effort,omitempty"`
 	// +kubebuilder:validation:Enum=public;internal
 	// +kubebuilder:validation:XValidation:rule="self == oldSelf",message="dataClass is immutable"
 	DataClass string `json:"dataClass"`
