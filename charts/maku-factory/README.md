@@ -4,7 +4,7 @@ Deploys the agent factory: two replicas of the `maku-factory` controller (Deploy
 PodDisruptionBudget, RBAC in two namespaces (a Role in the release namespace and a Role in
 `config.runs.namespace`, default `agents`, `templates/rbac.yaml`). It ships no CRD: install
 [agent-factory-crds](../agent-factory-crds/README.md) first, which carries the `Task`, `Factory`,
-`Repository` and `MergePolicy` CRDs (rollout step 8 removed this chart's `crds/`). It ships as
+`Repository` and `MergePolicy` CRDs (v0.49.0 removed this chart's `crds/`). It ships as
 `oci://ghcr.io/smana/charts/maku-factory`, at the version of the release tag.
 
 Install it only after the secrets below exist in the release namespace. The factory's behaviour
@@ -43,11 +43,11 @@ uid and nobody else.
 | `replicas` | `2` | Controller replicas |
 | `resources` | requests 100m / 256Mi, limits 500m / 512Mi | The container's resources |
 | `brokerCASecret`, `oidcSecret`, `intakeSecret` | see the table above | Secret names |
-| `apps.factory.existingSecret`, `apps.agents.existingSecret` | `agent-factory-github`, `""` | v4 D12: the factory and agents Apps' Secrets. `config.github.agentsAppIDFile` beside `apps.agents` fails the render ([docs/github-apps.md](../../docs/github-apps.md)). The older `githubSecret` and `runTokens.appSecret` are removed (v4 step 8): the render fails naming these keys |
-| `apps.merger.mode` | `factory` | `factory` (the default since v4 step 8) folds the merger into the factory App: no merger volume, and the chart writes `config.github.mergerAppIDFile` and `mergerKeyFile` as the factory App's files; every repository's `merge.mergerLogin` must then be `factoryLogin`. With `apps.merger.existingSecret` or `config.github.merger*` set, the render fails |
-| `apps.merger.existingSecret` | `""` | The separate merger App's Secret; empty means `agent-factory-merger`. Replaces `mergerSecret`, removed in v4 step 8 |
-| `runTokens.enabled` | `false` | Mints each run's token from the agents App (`apps.agents.existingSecret`, required with it); needs `runTokens.perRun`, since v4 step 8 removed the shared `agent-git` writer |
-| `runTokens.perRun` | `false` | v4 D10: one token per run, `<run>-git`, for its repository and role. The runs-namespace Role becomes Secrets `create`, `patch`, `delete` with no `get`, always beside the admission policy `maku-<namespace>-run-token-secrets` that bounds them ([docs/security.md](../../docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)). Needs `runTokens.enabled` (or `demo`), and the maku chart's `runController.gitSecret` left empty |
+| `apps.factory.existingSecret`, `apps.agents.existingSecret` | `agent-factory-github`, `""` | The factory and agents Apps' Secrets. `config.github.agentsAppIDFile` beside `apps.agents` fails the render ([docs/github-apps.md](../../docs/github-apps.md)). The older `githubSecret` and `runTokens.appSecret` are removed: the render fails naming these keys |
+| `apps.merger.mode` | `factory` | `factory` (the default since v0.49.0) folds the merger into the factory App: no merger volume, and the chart writes `config.github.mergerAppIDFile` and `mergerKeyFile` as the factory App's files; every repository's `merge.mergerLogin` must then be `factoryLogin`. With `apps.merger.existingSecret` or `config.github.merger*` set, the render fails |
+| `apps.merger.existingSecret` | `""` | The separate merger App's Secret; empty means `agent-factory-merger`. Replaces `mergerSecret`, removed in v0.49.0 |
+| `runTokens.enabled` | `false` | Mints each run's token from the agents App (`apps.agents.existingSecret`, required with it); needs `runTokens.perRun`, since v0.49.0 removed the shared `agent-git` writer |
+| `runTokens.perRun` | `false` | One token per run, `<run>-git`, for its repository and role. The runs-namespace Role becomes Secrets `create`, `patch`, `delete` with no `get`, always beside the admission policy `maku-<namespace>-run-token-secrets` that bounds them ([docs/security.md](../../docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read)). Needs `runTokens.enabled` (or `demo`), and the maku chart's `runController.gitSecret` left empty |
 | `monitor.flux.enabled` | `false` | Renders the read-only ClusterRole `agent-factory-flux-reader` (`get` on gitrepositories, `list` on kustomizations and helmreleases, no watch; with `clusterRoles`, else `agent-factory-crds`') and this install's ClusterRoleBinding `agent-factory-<namespace>-flux-reader` for a class's `monitor.flux`; without it the Flux signal ends `inconclusive` ([docs/factory.md](../../docs/factory.md#the-post-merge-monitor)) |
 | `roomsAudience` | `rooms-system` | Audience of the projected token for the broker's system API |
 | `hardening.publisher.audience` | removed | Removed in v4 step 8, with octo-sts: `config.hardening.publisher.minter: true` mints the publisher's token from the agents App (`apps.agents.existingSecret`), the one source `config.hardening.enforceOutputs` needs ([upgrading](../../docs/upgrading.md#the-xr-run-kind-and-octo-sts), [docs/factory.md](../../docs/factory.md#hardening-non-code-outputs-enforced)) |
@@ -86,7 +86,7 @@ the factory. Each aggregates into a built-in role, so a RoleBinding to `view`, `
 grants it in that namespace: `maku-viewer` (`get`, `list`, `watch` on the three kinds) into `view`,
 `maku-mergepolicy-editor` (every verb on `mergepolicies` only) into `edit`, and `maku-factory-admin`
 (every verb on the three kinds) into `admin`. Their names are fixed, and one set serves every
-install in a cluster (D2, step 7 R10): `clusterRoles: true`, the default, renders them here for an
+install in a cluster: `clusterRoles: true`, the default, renders them here for an
 install of this chart alone; the umbrella sets it false, and `agent-factory-crds` renders them once
 per cluster. `tests/render.sh` asserts each role's rules.
 

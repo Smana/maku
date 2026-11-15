@@ -27,7 +27,7 @@ without case.
 | Label `factory/ready` (`triggerLabel` in the config) on an issue | A Task is created from a sanitised snapshot of the issue's title and body, with the sha256 of the text as labelled; the label is then removed. A pull request carrying it is ignored. Re-labelling the issue later starts a new task, and supersedes (stops) an escalated one | A maintainer |
 | Label `factory/stop` on the issue or its pull request | The running task stops within a poll: its runs are revoked and deleted, the task ends `Stopped`. The label is removed once it hit a task; with no task running it stays, so a task started later stops at once. Anyone else's is removed and answered | A maintainer |
 | Label `factory/revert` on an auto-merged pull request, within `merge.revertWindow` | The factory opens a revert pull request through the merger App and the task ends `Reverted`; the class counts the revert towards its [breaker](#the-merge-gate). A human merge is never reverted | A maintainer |
-| Label `factory/drill` on an auto-merged pull request, **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate): the merger copies the label to the revert pull request and the breaker does not count it (AM6). Read only when `factory/revert` is, so a label added after it changes nothing while the merge's Task exists (see [drills](#the-merge-gate)) | A maintainer |
+| Label `factory/drill` on an auto-merged pull request, **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate): the merger copies the label to the revert pull request and the breaker does not count it. Read only when `factory/revert` is, so a label added after it changes nothing while the merge's Task exists (see [drills](#the-merge-gate)) | A maintainer |
 | Label `factory/hold` on a pull request | The [merge gate](#the-merge-gate) hands it to a human with `held` before any class or approval is read: nothing merges it, and no shadow would-merge is counted. Removing the label returns it to the gate on the head it was held at (`reentered_unheld`). A hold placed after the gate armed GitHub's auto-merge does not disarm it | Anyone who can label: it only ever stops a merge |
 | Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert`. `issue_file` applies the plan's class this way before `factory/ready` | A maintainer |
 | Comment `/factory split` alone on a line, on the issue of a task escalated `split_proposed` | Approves the proposed [split](#splits); the commenter pays for every part. Read before `/factory retry` | A maintainer with `write` on the repository |
@@ -616,7 +616,7 @@ implementer: `standard` after `frontier`, `frontier` otherwise. It takes that ti
 the template sets `reviewerModel`, its model: `pair: {roles: [implementer, reviewer], reviewerModel:
 tier-frontier}` reviews every `pair` task on `tier-frontier` whatever the implementer's tier.
 
-The reviewer's brief (HR4) names the acceptance checks before the issue snapshot, carries the pull
+The reviewer's brief names the acceptance checks before the issue snapshot, carries the pull
 request, and asks for correctness-only findings with the command and output behind each; an
 approval with no gaps found is a complete review. It never quotes the implementer's handoff. The
 checks are the scope's, with the files it touches, as fenced data; without a scope, the issue's own
@@ -824,7 +824,7 @@ that unit reaches 5 M, and `budget-fleet` below it. The metrics for each cap are
 ### Daily budgets
 
 The fleet's day (`budgets.factoryDailyUSD`, $42.50) and each human's (`budgets.humanDailyUSD`,
-$8.50) are in USD: OD-10's 25 M and 5 M tokens at $1.70 per million, with a cache read counted at
+$8.50) are in USD: 25 M and 5 M tokens at $1.70 per million, with a cache read counted at
 its own rate. A file that still writes the token days (`budgets.factoryDaily`,
 `budgets.humanDaily`, `budgets.perPerson.dailyTokens`) loads in this release: each is ignored and
 named in a startup warning with the key to use, and the next release refuses it.
@@ -1148,8 +1148,8 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | 11 | The class is `live` | `shadow_would_arm`: the decision is posted, nothing is merged |
 | 12 | Every push to the branch was the agents App's | `human_commit_in_pr` |
 
-A `shadow` class skips rows 9 and 10: "A shadow class records `shadow_would_arm` whatever the
-breaker and the day's count say; the marker says `paused=` and `capped=`" (AM4). A shadow decision
+A `shadow` class skips rows 9 and 10: a shadow class records `shadow_would_arm` whatever the
+breaker and the day's count say; the marker says `paused=` and `capped=`. A shadow decision
 arms nothing, so a blocker that only decides whether to arm has nothing to block. `ledger_truncated`
 is the one breaker input that still stops a shadow record: an unread ledger decides nothing.
 
@@ -1175,7 +1175,7 @@ the window, so clean ones lift it. Each revert is announced on the control issue
 `maku_factory_class_paused{repository,class}` reads 1 while the class is paused, refreshed at each
 decision and at each monitor pass of one of the class's merges.
 
-**Recovery (AM7).** With `merge.breaker.recoverAfter` set (0, the default, keeps the window rule
+**Recovery.** With `merge.breaker.recoverAfter` set (0, the default, keeps the window rule
 alone), "the class resumes if the `recoverAfter` newest merges are all newer than the newest bad
 merge, carry no revert, follow-up or regression, and are mature". A merge is mature once it is
 older than the class's `monitor.followUpWindow`, or `merge.revertWindow` for a class without a
@@ -1186,7 +1186,7 @@ merge leaves the window first. A monitored class whose `followUpWindow` is short
 Such a revert trips the class again once the breaker sees it: at once for a merge whose Task exists,
 after a restart for one known only from GitHub's labels, which are read once per process.
 
-**Drills (AM6).** A maintainer who reverts on purpose (a runbook drill) labels the pull request
+**Drills.** A maintainer who reverts on purpose (a runbook drill) labels the pull request
 `factory/drill` before `factory/revert`. The merger copies the label to the revert pull request and
 records `status.pullRequest.drill`: "the ledger does not count that revert". The ledger reads a
 revert pull request's `factory/drill` only when the label is still on it and its newest label event
@@ -1230,13 +1230,13 @@ flowchart LR
 ```
 
 **Approve-to-merge.** With `merge.approveToMerge`, row 3 arms on a maintainer's `APPROVED` review of
-the current head, for the agents' pull requests only (AM1): the merger merges that head outside the
+the current head, for the agents' pull requests only: the merger merges that head outside the
 caps, labels it `factory/approved-merge`, and records it as a human merge: Done without Verifying,
 never reverted on `main_red`, watched by the monitor. A hand-off a human's judgement covers returns
-to the gate when a maintainer approves the head it was handed off at (AM2). The switch is off by
+to the gate when a maintainer approves the head it was handed off at. The switch is off by
 default and acts only when the factory gates at all: when a class of any configured repository is
 live, shadow or monitored (the factory-wide condition for the merger key). With none, a task hands
-off `merge_gate_off` before the approval is read. The switch also gates AM5: an `auto_merge_cap`
+off `merge_gate_off` before the approval is read. The switch also gates re-entry from caps and pauses: an `auto_merge_cap`
 hand-off returns on the next UTC day, and a `class_paused` one once the pause lifts, only while it
 is on.
 
@@ -1246,7 +1246,7 @@ A shadow decision's comment carries the head it judged and what a live class wou
 merged at that head: the gate's evidence that the class would have merged nothing a human would
 not. Comments from before the head was recorded never count.
 
-**The decision record (AM8).** Every non-wait decision the gate's rows reach (arm, shadow, human,
+**The decision record.** Every non-wait decision the gate's rows reach (arm, shadow, human,
 escalate, and an adopted task's `ci_red` or `ci_cancelled`) also appends one hidden line to its
 comment, with the values each row read, so a tally can replay a cap later. An agent task's `ci_red`
 or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
@@ -1262,7 +1262,7 @@ or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 | `files=`, `lines=` | GitHub's counts of the diff over the class's caps (0 is no cap). Lines are additions plus deletions |
 | `shape=`, `holdout=`, `oracle=`, `age=` | `ok` when held, `n/a` when the class declares none, the refusal's reason when refused, `pending` for a release age still waiting |
 | `evidence=` | `ok`, or the refusal's reason |
-| `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision (AM4). `-` when the decision stopped at a row before the gate read them |
+| `paused=`, `capped=` | What the breaker and the day's count said, whether or not they stopped the decision. `-` when the decision stopped at a row before the gate read them |
 | `policy=`, `dual=` | Only with `policyManagement.dualEvaluation`: the first 12 hex digits of the repository policy's hash (`-` when none was read) and how its decision compared, as `maku_factory_policy_dual_decisions_total` counts it. For a cut-over repository, `policy=` alone: the hash of the policy that decided |
 | `grant=` | Only on a decision a saved approval grant let arm (`policyManagement.approvalMemory`): `<id>:<version>`, the grant and the version it was read at |
 | `policygen=`, `repogen=` | For a [bound class](merge-policies.md#factory-resources): the generation of its own `MergePolicy`, and of the `Repository` holding the binding. `Task.status.configGenerations.mergePolicy` records the same policy generation: the class is fixed at triage |
@@ -1273,8 +1273,8 @@ A value the decision never read prints `-`: a refusal leaves the rows after it u
 decision that did not read the diff prints `files=-/3 lines=-/20` (the caps always print). `-` is
 not `0`: a replay must not count a diff nobody read as an empty one, so it counts such a record as
 unreplayable. A `patch_too_large` from a compare at GitHub's 300-file cap prints `-` too. The
-record is **its own `agent-factory-decision` line, beside the event marker, not fields in it**: a
-recorded deviation from AM8's single marker (R-m11), which leaves the would-arm marker and the
+record is **its own `agent-factory-decision` line, beside the event marker, not fields in it**,
+which leaves the would-arm marker and the
 tally's regex for it unchanged. The same facts go to the log as `merge decision` with `rows=`.
 
 Some hand-offs carry no record:
@@ -1285,10 +1285,10 @@ Some hand-offs carry no record:
 A `class_mismatch` raised by the class's declared conditions (row 8) is a decision of the gate and
 carries a record, which is why `--strictness` counts it as a refusing row. A decision where
 policy-bot matched another class than the prediction goes through the gate too, and carries a
-record. `ledger_truncated` is decided before the gate (R-m13) and stays the one input that still
+record. `ledger_truncated` is decided before the gate and stays the one input that still
 stops a shadow record. Early refusals (the base checks, the author, an unarmed class) carry a record with every count unread.
 
-**The human path's metrics (AM9)** ([operations](operations.md#factory-metrics)):
+**The human path's metrics** ([operations](operations.md#factory-metrics)):
 - `maku_factory_merge_decisions_total` gains `repository`.
 - `maku_factory_human_wait_seconds_total` gains `reason` (the hand-off's) and `class` (the task's).
 - `maku_factory_handoff_to_merge_seconds{class,reason,how}` is a histogram of the time from a pull
@@ -1333,7 +1333,7 @@ error (`merge_failed`), so no `success` is left on a head the factory did not me
 
 ### Branch protection for the merge gate
 
-`maku/merge-gate` is the gate a production repository's branch protection can require (D11). It is
+`maku/merge-gate` is the gate a production repository's branch protection can require. It is
 posted by the merger App's connection, which asks for `statuses: write` while `merge.gateStatus` is
 on. Once the merger is folded into the factory App, that App is the factory App. The factory posts
 the gate's decisions **on agent pull requests only**: never on a human's pull request. On a pull
@@ -1403,7 +1403,7 @@ normal ruleset's `pull_request` rule to send people through pull requests.
 **The demo requires no gate.** The demo and the [quickstart](quickstart.md) run on one GitHub App,
 which is the factory, the merger and every run at once. No ruleset can tell the merger's status from
 an agent's, so a required `maku/merge-gate` would protect nothing there, and they keep the gate
-advisory. A production install, with its two Apps (D12), adds the ruleset above.
+advisory. A production install, with its two Apps, adds the ruleset above.
 
 **The factory reports whether the rule is in place.** On each fence pass over a repository with
 `merge.gateStatus`, it reads `GET repos/{owner}/{repo}/rules/branches/{default branch}` with the
@@ -1569,7 +1569,7 @@ GitHub refuses it if Renovate pushed since. A read error of the commit authors o
 | Reason | What happens |
 |---|---|
 | `human_commit_in_pr`, `ci_red`, `release_age_red`, `push_unrecorded`, `policy_pending`, `policy_absent`, `ci_cancelled`, `ci_wait_expired` | Hands off to `AwaitingHuman`, and **re-enters on a new head**: Renovate's rebase or a fresh push is decided again whole, up to 3 times (`maxGateReentries`, counted) |
-| `auto_merge_cap`, `class_paused` | Same: re-enters on a new head, counted. A `live` class only: a `shadow` class records `shadow_would_arm` through them (AM4) |
+| `auto_merge_cap`, `class_paused` | Same: re-enters on a new head, counted. A `live` class only: a `shadow` class records `shadow_would_arm` through them |
 | `shadow_would_arm` | The shadow decision: returns to `AwaitingCI` on Renovate's next head (`adopted_head_moved`), not counted, since it is no hand-off |
 | Every other reason: `no_policy_matched`, `class_unarmed`, `class_mismatch`, `holdout_red`, `label_missing`, `label_not_adopted`, `fork_pull_request`, `changes_requested`, `not_adopted_author`, `branch_not_allowed`, `file_not_allowed`, `file_protected`, `file_added_or_deleted`, `patch_too_large`, `not_mergeable`, a class that no longer adopts, and the like | Terminal: the Task stays handed off. A new head does not revive them. A closed or merged pull request ends the Task |
 
@@ -1755,7 +1755,7 @@ Each class's evidence:
 | bad | Mature, conclusive merges of the class reverted (not a drill), followed up or regressed |
 | immature, pending | Merges younger than the class's `followUpWindow`; mature ones with no verdict yet |
 | bound, ladder | Clopper-Pearson 95% upper bound on bad; the 29/46/61 widening steps, reported only |
-| reviewers | Per reviewer model, merged unchanged against changed (AM10) |
+| reviewers | Per reviewer model, merged unchanged against changed |
 | drill | `passed` when a `factory/drill` revert of one of the class's pull requests merged; `open`; `none` |
 
 A class is eligible with at least `mergeGuardrails.minPromotionEvidence` clean decisions (20), no
@@ -1763,8 +1763,8 @@ bad mature outcome, and a passed drill. **Promote to live** reads the evidence a
 records the request in `policy_promotions` with that evidence, its threshold and the requester,
 and answers the binding's `mode: shadow` changed to `mode: live`: in the repository's
 `.github/agent-factory.yaml` under repository authority, with the GitHub edit page to submit it
-from, else in its `Repository` manifest. Maku never opens the pull request nor edits `factory:`
-(MP1, MP14); the maintainer records its number, then `merged` or `abandoned`. Only a bound class is
+from, else in its `Repository` manifest. Maku never opens the pull request nor edits `factory:`;
+the maintainer records its number, then `merged` or `abandoned`. Only a bound class is
 promotable.
 
 Below the minimum, a maintainer asks for an exception with a written justification and a lower
@@ -1799,13 +1799,13 @@ the window ago) and the inconclusive, and prints the Clopper-Pearson 95% upper b
 merges=31 mature=30 conclusive=29 inconclusive=1 bad=0 reverted=0 follow_up=0 regression=0 bound=0.098… budget=0.10 widen=yes
 ```
 
-A pause no longer stops a shadow class's would-arm record (AM4): the tally counts through it.
-A drill revert does not count for the breaker (AM6), and the tally sets drills apart: a drilled
+A pause no longer stops a shadow class's would-arm record: the tally counts through it.
+A drill revert does not count for the breaker, and the tally sets drills apart: a drilled
 merge keeps its verdict and its line ends in ` drill`, the totals gain `drill=<n>`, and under
 `--outcomes` it is neither `reverted` nor bad (`drill=<n>` counts every listed drill, apart from
 `bad`).
 
-The [decision record](#the-merge-gate) (AM8) makes two more counts possible:
+The [decision record](#the-merge-gate) makes two more counts possible:
 
 ```
 scripts/shadow-merge-tally.sh --class docs-links --replay lines=40 --strictness
@@ -1830,7 +1830,7 @@ strictness: refused=3 refused_merged_unchanged=2
 - Per reviewer model, `reviewer <model>: merged_unchanged=<n> changed=<n>`, read from the record
   in the comment of the last would-arm. A record with `reviewer=-` and a comment from before the
   record get no line; `none` (a class with no reviewer) does. A change of a live class's reviewer
-  model is a config change, reviewed as a class switch is (AM10), and starts a new count: tally
+  model is a config change, reviewed as a class switch is, and starts a new count: tally
   from the date of the change.
 
 The tally reads merged pull requests only, and keeps a record whose `class=` is the `--class`.
@@ -2017,7 +2017,7 @@ The rules for `enforceOutputs`, each checked at startup:
 - **Inheritance.** A repository's list replaces the central one, and must hold every central type.
 - **Mode.** A listed repository needs a mode of at least `audit`.
 - **Publisher.** Any list needs `publisher.minter: true`, and the runs need `runTokens.perRun`
-  (HR13, below). octo-sts's `publisher.octoSTS` was removed in v4 step 8 and is refused by name
+  (below). octo-sts's `publisher.octoSTS` was removed in v0.49.0 and is refused by name
   ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)).
 - **Hash.** The lists join the configuration hash a drill binds. A file without them keeps its hash.
 
@@ -2092,13 +2092,13 @@ flowchart LR
   installation on each enforced repository must grant `pull_requests: write` and `issues: write`.
   The publisher is the agents App, so its login is `agentsLogin`.
 
-Without `runTokens.perRun` the factory refuses to start while `enforceOutputs` is set (HR13): the
+Without `runTokens.perRun` the factory refuses to start while `enforceOutputs` is set: the
 runs would hold a shared token that can still write directly. With it, each run's token comes from
 the [role table](#run-tokens-the-role-table), where an enforced output takes its write away. Should
-the table leave the implementer `pull_requests: write` under enforcement (the spec's D10 as
-written), the factory warns at start-up, naming the repositories whose enforcement is then advisory.
-Readiness reads the same source (HR42): R2 and R3 read the role table under `runTokens.perRun`, and
-a shared token always misses R2. Readiness stays `false`
+the table leave the implementer `pull_requests: write` under enforcement,
+the factory warns at start-up, naming the repositories whose enforcement is then advisory.
+Readiness reads the same source: `sandbox_write_token` and `publisher_policy` read the role table under `runTokens.perRun`, and
+a shared token always leaves `sandbox_write_token` missing. Readiness stays `false`
 until `mode: enforce`. Enabling, rolling back and the stop
 rules are in [Operations](operations.md#hardening-non-code-outputs).
 
@@ -2260,7 +2260,7 @@ flowchart LR
   request's diff with `git diff origin/<base>...HEAD`, and a CI repair names `forge_read`
   (target checks). The judge's triage reads checks through `forge_read`. The credential agent
   skips its token revoke, which needs the API. The factory revokes the run's token when the run
-  ends instead: mode enforce needs `runTokens.perRun` there (HR13), whose ticker revokes each
+  ends instead: mode enforce needs `runTokens.perRun` there, whose ticker revokes each
   run's token at its terminal phase, from outside the sandbox.
 
 ### What the factory records
@@ -2271,15 +2271,15 @@ enforce, `status.inputTrust.mode` is `enforce`, `withheld` sums the run's `input
 and `min` counts only what was delivered. A withheld comment does not lower it. The factory logs
 each read's counts, never a body.
 
-Readiness R5 holds for the repository: enforce, the run-controller, and `system:broker` mapped.
+Readiness's `read_filter_off` check holds for the repository: enforce, the run-controller, and `system:broker` mapped.
 The `hardening` block lives in the factory's config file, which the factory reads at start, and
 the `maku-factory` chart's `checksum/config` annotation restarts it on any change. So the run
-annotation, the forge-read route and R5 always read the same mode. Enabling and rolling back are
+annotation, the forge-read route and `read_filter_off` always read the same mode. Enabling and rolling back are
 in [Operations](operations.md#hardening-reads-filtered).
 
 ## Hardening, drills
 
-Stage H4's gate, and readiness fact R6: an injection drill plants prompt injections in a dedicated
+Stage H4's gate, and the `drill_stale_or_failed` readiness check: an injection drill plants prompt injections in a dedicated
 drill repository, the factory works the planted tasks, and the factory scores what came out. The
 drill passes when no out-of-policy output was applied. [Injection drills](drills.md) covers the
 repository, the accounts, the cadence, the report and the stop rule.
@@ -2321,15 +2321,15 @@ Stage H5. Readiness answers, per repository, whether every run reads through aut
 writes only through enforced safe outputs, right now. It changes no behaviour: it is reported, and
 coordination's execute admission reads it ([prerequisites](#execution-prerequisites)).
 
-| Fact | Holds when | Read from |
+| Missing code | Holds when | Read from |
 |---|---|---|
-| R1 | The repository's mode is `enforce` | The live config |
-| R2 | No sandbox role's token can write | The minter's role table for the repository's enforced outputs (`runTokens.perRun`). A shared writer token never holds |
-| R3 | The publisher can write | The minter's publisher grant (`hardening.publisher.minter`) |
-| R4 | T1 to T4 all enforce | The live config. T5 is not a readiness fact |
-| R5 | Reads are filtered | The live config ([reads filtered](#hardening-reads-filtered)) |
-| R6 | The newest drill for this Maku version and hardening hash passed, within `drills.maxAge`: a newer fail hides an older pass | The broker's drill reports ([drills](#hardening-drills)) |
-| R7 | Not the laptop demo | The live config |
+| `mode_not_enforce` | The repository's mode is `enforce` | The live config |
+| `sandbox_write_token` | No sandbox role's token can write | The minter's role table for the repository's enforced outputs (`runTokens.perRun`). A shared writer token never holds |
+| `publisher_policy` | The publisher can write | The minter's publisher grant (`hardening.publisher.minter`) |
+| `layer_not_enforced` | T1 to T4 all enforce | The live config. T5 is not a readiness fact |
+| `read_filter_off` | Reads are filtered | The live config ([reads filtered](#hardening-reads-filtered)) |
+| `drill_stale_or_failed` | The newest drill for this Maku version and hardening hash passed, within `drills.maxAge`: a newer fail hides an older pass | The broker's drill reports ([drills](#hardening-drills)) |
+| `demo_profile` | Not the laptop demo | The live config |
 
 Every fact is read afresh on every call; a fact that cannot be read is a refusal (`error`).
 
@@ -2344,8 +2344,8 @@ Every fact is read afresh on every call; a fact that cannot be read is a refusal
 - **One read a minute.** A readiness read costs up to five GitHub reads with the factory App, and
   the Evidence page polls: the page and the route share one read per repository for 60 seconds,
   concurrent views included. Coordination's admission never uses it: it reads afresh.
-- **On the run-controller** R2 reads the minter's role table, which v4 step 3 ships (owner ruling
-  HR42, option A). Without `runTokens.perRun`, R2 answers `sandbox_write_token`.
+- **On the run-controller** the `sandbox_write_token` check reads the minter's role table.
+  Without `runTokens.perRun`, it answers `sandbox_write_token`.
 
 ### Promoting T5, one output type at a time
 
@@ -2362,7 +2362,7 @@ hardening:
 `enforce` only. A hit on a promoted type refuses `injection_suspected`, and an unreachable
 classifier refuses `classifier_unavailable`. Every other type keeps T5 in audit. The list needs
 `agentGuard.url`, `layers.classifier` not off, and a repository at mode `enforce`. It enters the
-hardening hash, so a promotion needs a new passing drill before R6 holds again; so does pointing
+hardening hash, so a promotion needs a new passing drill before `drill_stale_or_failed` clears again; so does pointing
 `agentGuard.url` at another classifier. `layers.classifier: enforce` stays refused.
 
 The list is global: promoting a type promotes it on every repository at mode `enforce`. A type
@@ -2379,7 +2379,7 @@ Promote a type only on its numbers, read from the drill reports and
   and a refusal must not send what it protects. So T5's drill detection cannot be compared with
   T3's on the same outputs. Compare what T5 catches among the outputs T1 to T3 let through, and on
   target and T4 refusals, with T2 and T3's detections on their own outputs. Readiness never
-  assumes T5 saw an output: R4 covers T1 to T4 only.
+  assumes T5 saw an output: `layer_not_enforced` covers T1 to T4 only.
 
 ## Private code
 
@@ -2472,7 +2472,7 @@ creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
 | `status.configHash` | The config that triaged the task |
 | `status.contract` | `runId`, `commit` (40 hex), `files`, `ids` (1 to 50 each): the tester's commit as GitHub recorded it. Set once, when its push is read; every implementer run is held to it |
 | `status.scope` | `state` (`ready`, `question`, `assumed`, `missing`, `failed`) and `seq` (the scope's handoff): the scoper's outcome, kept when the task stops |
-| `status.overlap` | The bounded [outcome-overlap evaluation](#outcome-overlap-detection): repository-scoped `fingerprint` (64 lowercase hex), `classification`, at most 20 `matches` (Task/run C2 ids, positive issue/PR numbers, `exact`/`lexical`, phase), at most four checked `sources` (`tasks`, `runs`, `rooms`, `github`), optional deterministic evaluation-run `scoperRun`, `checkedAt` and a note of at most 512 characters. Pending has neither classification nor `checkedAt`; a final classification and its evidence are immutable |
+| `status.overlap` | The bounded [outcome-overlap evaluation](#outcome-overlap-detection): repository-scoped `fingerprint` (64 lowercase hex), `classification`, at most 20 `matches` (Task/run 8-character ids, positive issue/PR numbers, `exact`/`lexical`, phase), at most four checked `sources` (`tasks`, `runs`, `rooms`, `github`), optional deterministic evaluation-run `scoperRun`, `checkedAt` and a note of at most 512 characters. Pending has neither classification nor `checkedAt`; a final classification and its evidence are immutable |
 | `status.split` | `state` (`proposed`, `approved`, `declined`, `superseded`, `expired`, `ignored`), `seq` (the split's handoff), `of`, `approvedBy` (`github:<login>`, every part's payer) and `children[]` (`index`, `issue`, `task`, `outcome`: `landed`, `dropped`, `reverted`) |
 | `status.lastActivity` | The running run's last room event, for stuck detection |
 | `status.trace` | The task's root span ids |
@@ -2511,7 +2511,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `resume` | `maxPerTask` (1–5) | 2 |
 | `scoper` | `nudgeAt`, `maxToolCalls` (`1 <= nudgeAt < maxToolCalls <= 200`): the [scoper](#the-scoper)'s tool-call bounds, written as its brief's first line, `<!-- agent-factory scoper nudgeAt=N maxToolCalls=M -->`, which stays first when the run is resumed | `nudgeAt` 25, `maxToolCalls` 40, each defaulted alone |
 | `meter` | `url`, `query`, `prices`, and the gateway's 429s from one source: `throttle.promQuery` (PromQL on `url`), or `logsURL` with `throttleQuery` (VictoriaLogs) | Required but `prices`; one 429 source, never both (`meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one`) |
-| `runs` | `group`, `namespace`, `namePrefix`: where AgentRuns live; `gatewayIdentity: true` states that each portable run calls the model gateway with its own projected token (the run-controller's `model.mode: gateway`, [the gateway](gateway.md)), so the meter prices it and `loops` or `workflows` model overrides and `split` are accepted. `group` is `maku.ogenki.io`, the run-controller's: cloud-native-ref's `cloud.ogenki.io` was removed in v4 step 8 and is refused ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)) | the run-controller's AgentRun (`maku.ogenki.io`, `agents`, `run-`); `gatewayIdentity` false |
+| `runs` | `group`, `namespace`, `namePrefix`: where AgentRuns live; `gatewayIdentity: true` states that each portable run calls the model gateway with its own projected token (the run-controller's `model.mode: gateway`, [the gateway](gateway.md)), so the meter prices it and `loops` or `workflows` model overrides and `split` are accepted. `group` is `maku.ogenki.io`, the run-controller's: cloud-native-ref's `cloud.ogenki.io` was removed in v0.49.0 and is refused ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)) | the run-controller's AgentRun (`maku.ogenki.io`, `agents`, `run-`); `gatewayIdentity` false |
 | `tracing` | `otlpEndpoint`, `host:port` | Empty: tracing off |
 | `api` | `listen` (the chart's `api` port is `:8082`), `humanIssuer`, `humanJWKS`, `clientIDFiles`; `groups: {admin, member}`, the two groups the API admits; `systemIssuer`, `systemJWKS` (both or neither), `systemPrincipals`; `systemRepositories: {<principal>: [owner/name]}`, the listed repositories each system principal may start runs on; `access: {links: broker, ttl}`, the broker's GitHub account links that resolve a human caller to their GitHub login (`links` must be `broker`, `ttl` at most 5m); `tls: {certFile, keyFile}`, both or neither: the API serves TLS 1.3 from that pair, re-read when it is renewed, and the broker's `factoryURL` becomes `https://` (the chart's `api.tls` writes it); absent, plaintext; `projectIDFile` and `sponsored`, see [sponsored principals](#sponsored-principals); `humanJWKS` is optional with an `https://` `humanIssuer`, whose discovery document names it; `preset` is `zitadel` (the default, today's token rules) or `generic`, any OIDC issuer, which needs `rolesClaim` (a claim name, or an RFC 6901 pointer such as `/realm_access/roles`) and takes `tokenUse` (`id`, the default: the broker forwards the human's ID token, whose `aud` holds one of `clientIDFiles`' ids; or `access`, with `audience` or `audienceFile`, which `sponsored` needs too, in place of `projectIDFile`) and `sponsoredClientClaim` (`generic` only: the claim naming a sponsored token's client, one of `cid` (Okta), `appid` (Entra), `azp` or `client_id`; `azp` or `client_id` naming another client still refuses) | Required but `groups`, `access` and the system keys; `groups` defaults to `agents-admin` and `agents-member`, the broker's values. Without `access` every human run is refused |
 | `runlore` | `listen`, `tokenFile`, `minConfidence` (0–1], `dailyCap`; `repository`, the listed repository its issues and tasks go to | Required but `repository`, which defaults to the first entry |
@@ -2519,7 +2519,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `loops` | `<workflow>: {stallSteps (1–500), continuations (0–5), judge (an alias or none)}`, keyed by a workflow or `default` (every workflow without a row); a row named after a class is refused. A task reads its workflow's `loop`, else the row named after its workflow, else `default`'s. A row inherits each key it leaves unset from `default`'s (WF10): `models` role by role and tier by tier, `split` whole, and a key the row sets, `scope: off`, `search: false` and `judge: none` included, is its own; the factory warns at load about each key a row inherits, and when that switches its loop on. A row switches the class's [loop policy](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-21-loops-and-teams-design.md) on when it sets any of the three, and an unset one is 80, 2 or `tier-light`; `scope` (`off`, `steering`, `scoper`; unset is `off`, and a bare `off` in YAML reads as `off`) picks the class's [steering](#steering) or [scoper](#the-scoper): never part of the loop, so `{scope: steering}` alone switches no loop on; `split` (`{maxChildren 2–5, familyUSD, childTier, anyTier}`; `familyUSD` defaults to four of the child tier's `taskUSD`, `childTier` to `standard`) is refused without `scope: scoper` on the same row, on `docs-links`, `revert` or an oracle class, and without `meter.prices`; it lets the scoper of a task C7 itself rated `frontier` propose [a split](#splits); `anyTier: true` (default `false`) offers it on every task of the class, whatever tier C7 rated it (needed where no classifier is deployed, so every task is `standard`). `search: true` offers the class's implementer runs the [search tool](../images/maku-harness/README.md) (`spec.loop.search`, which the harness reads as `AGENT_SEARCH=1`); like `scope`, it never switches the loop on, and a class row without `search` takes `default`'s. The room-bridge classes a bare `search` as the plain built-in only on a run given it, assuming MCP tools reach it prefixed (`server_tool`): an unprefixed MCP tool named `search` would also class plain (and the SDK refuses the duplicate tool name at start). `models` (`{<role>: {<tier>: <alias>}}`) puts a role on a provider alias for a **public** task of that tier, the run's tier (the reviewer's is the other tier, the scoper's `light`): `kimi-frontier` (Moonshot's `k3.1-pro`) on `frontier`, `mistral-standard` (Mistral Medium 3.5) on `standard`, `mistral-light` (Mistral Small 4) on `light`, and no alias on another tier, so a run keeps its tier's caps. A role or tier without an entry keeps its tier's `model`, or the template's `reviewerModel`, unless the workflow's own `models` field overrides it; this loops row never gives an internal task a provider alias, since Moonshot processes in China and Mistral in the EU, and the run's `provenance.modelSource` records `tier`, `reviewerModel` or `classModels`. `judge` may be `mistral-light` too, and an internal task of the class then gets `tier-light`. With `meter.prices` set, each alias needs a row: its served model's for a query by `gen_ai_request_model`, else its own. No tier's `model` and no `reviewerModel` may name a provider alias, `POST /v1/runs` refuses one on an internal run (`provider_alias_is_public_only`), every claim is refused one on an internal run, as its model or its judge's, and the Task and AgentRun CRDs hold the same rule; like `scope`, `models` never switches the loop on. The loop policy and the scoper run on either runtime. On the portable `maku.ogenki.io` AgentRun, `models` and `split` need `runs.gatewayIdentity` (`loops.<class>.models needs runs.gatewayIdentity (a model gateway, rollout step 4)`, and the same for `split`), and `split` with it also needs a meter (`meter.url` and `meter.query`: `loops.<class>.split needs a meter: a family's cap is in USD`). With `runs.gatewayIdentity`, each run calls the model gateway with its own token, on the alias its claim names (`spec.model`), and the meter prices it. Without it, USD budgets are not metered on that runtime: its runs carry no gateway identity, so `familyUSD`, the tiers' `runUSD` and `taskUSD`, and the principal caps spend nothing, and a configured meter says so at startup. That runtime then runs every role on modelSecret's model, and resolves no judge alias: its judge calls the run's model endpoint (`JUDGE_BASE_URL`) with the model Secret's optional `judge_model` key, or the run's own model without it (`JUDGE_MODEL`); the demo's `demo.model.judgeName` writes that key | None: every run as before |
 | `workflows` | `<name>: {template (solo, pair, investigate or none), tier, checks, loop (off or a `loops` row), escalation: {outOfBudget, notConverged}, effort: {<role>: low, medium or high}, models: {<role>: <alias>}, description (≤ 120 bytes, the line the scoper's brief shows)}`: the workflows a task may run; `none` is an adopted pull request's (no run) and takes no other key. `escalation` names the workflow a failed run of this one steps to, by signal group, each a defined workflow. `off` is no loop, never `default`'s. The workflow a task [runs](#the-shipped-workflows) shapes its runs: `template` when set, `tier` when above triage's, `checks` and the loop row (`spec.loop`, `spec.scopeMode`, `spec.search`). `effort` and `models` are per-role overrides for a reviewer, tester or triager, never the implementer: absent effort is the harness's `high`, while a set value reaches the claim as `spec.effort` and the harness as `LLM_REASONING_EFFORT`; an absent model keeps the tier's model, then the loops row's public provider override. An internal run's model override is `tier-light`, `tier-standard` or `tier-frontier`, never a provider alias; a public-default workflow's provider override reads as no override on an internal run. Model overrides need `runs.gatewayIdentity`. The map's old name and a workflow's `testFirst` are refused ([upgrading](upgrading.md#workflows-name-what-runs)) | The [shipped workflows](#the-shipped-workflows) where the file omits them |
 | `evaluation` | `{controlPercent (0–100), mode (observe or apply), treatment}`: the team evaluation's control cohort of tasks with no pinned workflow (a class label is no pin), whether a recommended workflow is only recorded or used, and the workflow the treatment cohort runs on a task on the repository's default (a defined workflow other than `none`, else refused). Hashed apart from `triage.controlPercent`. `mode` governs the scoper's recommendation only: a workflow's `escalation` steps under `observe` too | `controlPercent` 0: no cohort; `mode` `observe` |
-| `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay, maxGrantLifetime, minPromotionEvidence}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. `minPromotionEvidence` is the clean shadow decisions a [promotion](#promotion) needs, at least 20 (MP7); a lower one is refused, and a promotion on fewer needs an operator's exception. Validated only: stage 1 decides nothing with the caps | None; `minPromotionEvidence` 20 |
+| `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay, maxGrantLifetime, minPromotionEvidence}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. `minPromotionEvidence` is the clean shadow decisions a [promotion](#promotion) needs, at least 20; a lower one is refused, and a promotion on fewer needs an operator's exception. Validated only: stage 1 decides nothing with the caps | None; `minPromotionEvidence` 20 |
 | `policyManagement.stage` | How far the merge-policy rollout goes: `read` (stage 1), `simulate` (adds `simulation` and `dualEvaluation`), `manage` (adds `repositoryAuthority`, `approvalMemory` and `promotion`). Replaces the six switches below, which still load as the highest stage they cover and set the `Deprecated` condition; not set together with them | `manage` |
 | `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |
 | `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
@@ -2527,7 +2527,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 | `policyManagement.promotion` | `true` serves `GET /v1/policy/evidence` and `GET /v1/policy/repositories` on the API: each class's [promotion](#promotion) evidence. The broker reads the same key to serve the settings pages and record promotions. Stage 6 changes no class: a maintainer's own pull request does | `false` |
 | `policyManagement.operators` | GitHub logins who decide promotion exceptions; read by the broker | None: no exception can be approved |
 | `policyManagement.approvalMemory` | `true` consults saved approval grants where a live class's `requiresApproval` subset would ask a human (stage 5): the class's grants are read from the broker immediately before the decision and again before the merge call, never cached, and an active grant bound to the policy in force, covering every file the subset caught, lets the decision arm; the record names it (`grant=`). A failed lookup authorizes nothing, a shadow or off class never consults one, and a revert of a merge a grant authorized disables it. Needs `read`, and the broker's `human.approvalMemory`. Until repository authority (stage 4) decides merges, it changes only the dual evaluation's repository decision | `false` |
-| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its bindings (the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source, MP15). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
+| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its bindings (the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
 
 Each `repositories` entry:
 
@@ -2538,7 +2538,7 @@ Each `repositories` entry:
 | `triggerLabel` | The start label, `factory/ready` | Required |
 | `classes` | `<name>: {live, shadow, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; every `live` or `shadow` class needs `allowedFiles` or `diffShape`; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` and workflow fields (`checks`, `testFirst`, `harness`, `harnessAllowed`, `escalation`) are refused ([upgrading](upgrading.md#merge-policies-removals)); see [merge policies](merge-policies.md#a-binding) | Required when not served from a `Repository` |
 | `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever the repository sets `workflow.testFirst`), `policyBotLogin` (required with `policyBot: true`), `policyBot` (true routes the gate through policy-bot, an opt-in, D11; unset is false, so `maku/merge-gate` is the status branch protection requires, which needs `gateStatus`), `gateStatus` (posts the gate's verdict as the commit status `maku/merge-gate` on the pull request; unset is true; `demo` requires it), `mergerLogin` (bots), `maxPerDay` (the repository's auto-merges a day; `autoMergesPerDay` is refused), `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`, AM7; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger, AM1. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
+| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever the repository sets `workflow.testFirst`), `policyBotLogin` (required with `policyBot: true`), `policyBot` (true routes the gate through policy-bot, an opt-in; unset is false, so `maku/merge-gate` is the status branch protection requires, which needs `gateStatus`), `gateStatus` (posts the gate's verdict as the commit status `maku/merge-gate` on the pull request; unset is true; `demo` requires it), `mergerLogin` (bots), `maxPerDay` (the repository's auto-merges a day; `autoMergesPerDay` is refused), `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
 | `workflow` | `{default, testFirst}`: `default` is the workflow a task runs when no label and no source names one (`standard` when unset; `none` is refused); `testFirst: true` starts every public `careful` task with the tester and needs `merge.contractCheck` | `standard`; no tester |
 | `schedules` | `[{name, cron, class?, text, workflow?, dataClass?, probe?, probeAuthor?}]`; `workflow` is the workflow its tasks run, `quick` when unset; `class` is set only when its policy declares `oracle.probe` (refused otherwise); `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
 
@@ -2559,7 +2559,7 @@ changes exactly this:
 
 `demo: true` also requires `merge.gateStatus: true` on every repository.
 
-Without policy-bot (`merge.policyBot` unset or false, the default since v4 step 8, D11) a
+Without policy-bot (`merge.policyBot` unset or false, the default since v0.49.0) a
 repository needs `merge.gateStatus` left on, since `maku/merge-gate` is then the status branch
 protection requires (see [Branch protection for the merge gate](#branch-protection-for-the-merge-gate)),
 and `merge.policyBotLogin` may be empty (a value that is set must still be a bot login). Every live
@@ -2591,7 +2591,7 @@ actions and metadata read). `statuses: write` is the merger's alone: the run tok
 it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
 A token minted for a narrower profile asks for a subset, which an App holding the union grants.
 
-**Per-run tokens (v4 D10; the only factory-written tokens since v4 step 8).** `runTokens.perRun`
+**Per-run tokens (the only factory-written tokens since v0.49.0).** `runTokens.perRun`
 (with `runTokens.enabled`, or the demo's factory App) gives every run its own token, which the
 run-controller mounts whenever `runController.gitSecret` is empty. `runTokens.enabled` mints from the
 agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
@@ -2649,7 +2649,7 @@ sequenceDiagram
 
 #### Run tokens: the role table
 
-The per-run minter of v4 D10 gives each run a token scoped to the run's one repository, with the
+The per-run minter gives each run a token scoped to the run's one repository, with the
 permissions its role gets from one table, `minter.Roles` (`internal/factory/minter/roles.go`). The
 scoper and integration runs mint as the triager. "Once enforced" reads the run's own
 `agents.ogenki.io/safe-outputs` annotation, written when the run is created: a type the factory

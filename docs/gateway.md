@@ -26,15 +26,15 @@ flowchart LR
 | agentgateway's CRDs, v1.6.0 | `config/agentgateway` (vendored), or yours | applied server-side before the umbrella, apart from any Helm release ([below](#agentgateways-crds)) |
 | agentgateway's controller, v1.6.0 | the umbrella with `agentgateway.enabled: true`, or yours | its GatewayClass `agentgateway` |
 | The Gateway, its policies, backends, routes, catalog and NetworkPolicy | `maku-gateway` (standalone, or the umbrella with `maku-gateway.enabled: true`) | these values |
-| One Secret per provider | you | `kubectl create secret`, ESO, Sealed Secrets: the chart only names it (D14) |
+| One Secret per provider | you | `kubectl create secret`, ESO, Sealed Secrets: the chart only names it |
 
 ### agentgateway's CRDs
 
 agentgateway's four CRDs hold 2.3 MB of schema. Helm stores a release's chart and rendered manifest
 in one Secret, which the API caps at 1 MiB, and these CRDs alone take it to about 1 MB. So no Maku
 chart carries them: `config/agentgateway` holds them, vendored from the upstream chart and pinned
-(`hack/agentgateway.sha256`), to apply server-side before the umbrella. This is an exception to D13,
-which has every CRD upgraded through a chart.
+(`hack/agentgateway.sha256`), to apply server-side before the umbrella. Unlike Maku's own CRDs in
+`agent-factory-crds`, these are applied outside Helm.
 
 With kubectl, from a checkout of the release tag:
 
@@ -252,7 +252,7 @@ The preflight's token is bound to the controller's own pod. The umbrella fails t
 `model.gateway.service` (an external gateway, as on cloud-native-ref), or when the ports, the prefix or
 the aliases disagree with `maku-gateway`'s.
 
-**The demo runs through the gateway.** Since step 7 (R4), `values-demo.yaml` turns on the controller,
+**The demo runs through the gateway.** Since v0.48.0, `values-demo.yaml` turns on the controller,
 `maku-gateway` (`source: apiserver`) and `model.mode: gateway`; `values-demo-gateway.yaml`, which
 layered them before, is gone. Its one `custom` provider, `demo`,
 reads its key from the Secret `demo-model`, which the umbrella renders in the release namespace

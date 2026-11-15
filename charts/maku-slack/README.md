@@ -7,9 +7,9 @@ or alone beside a broker and a factory that name it:
 - the broker's `broker.webhooks` entry for its `:8081` (`existingSecret` = this chart's `webhookSecret`);
 - `human.mcp.sponsored` on the broker and `config.api.sponsored` on the factory, both naming `principal`.
 
-It renders one replica (R26), its Service (`events` 8080, `webhooks` 8081, `metrics` 9090), a
+It renders one replica, its Service (`events` 8080, `webhooks` 8081, `metrics` 9090), a
 ServiceAccount, a Role with `get` and `update` on `factory-slack-threads` alone, the thread map
-ConfigMap, and the config ConfigMap. The Secrets are named, never rendered (D14):
+ConfigMap, and the config ConfigMap. The Secrets are named, never rendered:
 
 | Value | Keys |
 |---|---|

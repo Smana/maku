@@ -42,6 +42,23 @@ grep -q 'h.md:3: status vocabulary: AP-12' <<<"$out"
 grep -q 'h.md:3: status vocabulary: (phase 3' <<<"$out"
 grep -q 'h.md:3: status vocabulary: in review' <<<"$out"
 
+# Design ids and cluster names: whole words, case-sensitive, outside code; docs/contributing skipped.
+printf '# I\n\nThe gate (D11) posts a status. See AM6, HR13, MP15, OD-8 and rollout step 7.\nRuns on aws-0. Release N+1 refuses it. The B1 budget and a `D4` flag stay.\n\n```\nD12 on gcp-0\n```\n' > "$tmp/docs/i.md"
+mkdir -p "$tmp/docs/contributing"; cp "$tmp/docs/i.md" "$tmp/docs/contributing/i.md"
+out=$(hack/docs.sh "$tmp/docs/i.md" "$tmp/docs/contributing/i.md" 2>&1 || true)
+for id in D11 AM6 HR13 MP15 OD-8 'rollout step 7'; do
+  grep -q "^$tmp/docs/i.md:3: design id: $id\$" <<<"$out" || { echo "missing: design id $id"; exit 1; }
+done
+grep -q "^$tmp/docs/i.md:4: design id: Release N+1\$" <<<"$out" || { echo "missing: design id Release N+1"; exit 1; }
+grep -q "^$tmp/docs/i.md:4: cluster name: aws-0\$" <<<"$out" || { echo "missing: cluster name aws-0"; exit 1; }
+if grep -q 'B1\|D4\|D12\|gcp-0\|contributing' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+printf '# J\n\nThen step 8 PR F, step 7 PR E1 and step 7 R9 shipped; Live proof 5 and release N, V12, C4, R10, FA3, SI2, GW1.\nNot ids: AM, D-day, MD5, D100, R2D2, aws-01, v4.\n' > "$tmp/docs/j.md"
+out=$(hack/docs.sh "$tmp/docs/j.md" 2>&1 || true)
+for id in 'step 8 PR F' 'step 7 PR E1' 'step 7 R9' 'Live proof 5' 'release N' V12 C4 R10 FA3 SI2 GW1; do
+  grep -q "j.md:3: design id: $id\$" <<<"$out" || { echo "missing: design id $id"; exit 1; }
+done
+if grep -q 'j.md:4' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+
 # Exit codes: 1 on a hit, 0 clean.
 rc=0; hack/docs.sh "$tmp/docs/h.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ]
 rc=0; hack/docs.sh "$tmp/docs/g.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 0 ]

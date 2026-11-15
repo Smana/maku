@@ -6,12 +6,12 @@ The umbrella chart: `maku` and `maku-factory` (`file://`), plus what a plain kin
 
 | Part | What it means |
 |---|---|
-| Production defaults | `values.yaml` is a skeleton that renders nothing on its own. The defaults are production (v4 D13): `profile` was removed in rollout step 8, and the schema refuses it |
+| Production defaults | `values.yaml` is a skeleton that renders nothing on its own. The defaults are production: `profile` was removed in v0.49.0, and the schema refuses it |
 | Production | Every render without `demoValues` checks the seams of each enabled component and fails once, naming every missing one with its key and its doc. It refuses the demo-only values, naming `values-demo.yaml`: `postgres.enabled`, `maku.demoValues`, `maku-factory.demo`, `maku.sandbox.unsafeAllowRunc` and `runController.model.mode: secret`. [Install on your cluster](../../docs/install.md) walks it, from `maku install --print` to the preflight; or start from [`values-production.example.yaml`](values-production.example.yaml). [docs/upgrading.md](../../docs/upgrading.md#from-the-demo-to-production) lists the seams |
 | The demo | `-f values-demo.yaml` carries every demo default and `demoValues: true`, the one switch that admits the demo-only values |
 | Secrets by name | Every Secret the charts read is listed, with its keys, in [install Secrets](../../docs/install-secrets.md). `externalSecrets.enabled` (off) renders an `ExternalSecret` for each one listed under `externalSecrets.secrets`, against the `storeRef` you name, and never a store |
 | The schema | `values.schema.json` rejects unknown top-level keys (a typo like `postgress:`) and malformed values: a removed key (`profile`, `networkPolicies.plain`) with a message naming its replacement, `tls.days` below 1, a Postgres image without a digest, a storage size that is not `<n>Mi`, `Gi` or `Ti` |
-| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first, and alone carries them: it upgrades the CRDs with every tool and keeps them on uninstall. The subcharts have no `crds/` since rollout step 8. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
+| The CRDs | [`agent-factory-crds`](../agent-factory-crds/README.md) is installed first, and alone carries them: it upgrades the CRDs with every tool and keeps them on uninstall. The subcharts have no `crds/` since v0.49.0. An existing cluster adopts its CRDs first: [docs/upgrading.md](../../docs/upgrading.md#adopting-the-crds) |
 | The merge policy catalog | With the factory, four `MergePolicy` objects labelled `maku.ogenki.io/catalog`: `docs-links`, `revert`, `deps-patch` and `docs` (`mergePolicies.catalog.enabled`, on). Every Repository evaluates each one it does not bind, in shadow; a binding with `mode: disabled` switches one off. `mergePolicies.catalog.exclude` lists the ones the platform keeps as its own objects: an unlabelled `MergePolicy` of a catalog name fails the install, naming it, until it is listed there or deleted ([merge policies](../../docs/merge-policies.md#start-here)) |
 | The support floor | `kubeVersion: ">=1.30.0-0"` in this chart and both subcharts. Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version` |
 | Stability | Values may still change in a 0.x minor until v4.0.0, each change with a section in [docs/upgrading.md](../../docs/upgrading.md). From v4.0.0, a breaking value change happens only in a major version |
@@ -44,7 +44,7 @@ The demo adds what a plain kind or k3d cluster lacks:
   and `rooms-retention-dsn` (`sslmode=disable`: the hop stays inside the cluster). The last feeds the
   daily retention CronJob, `room-broker-retention`.
 
-The bundled Postgres is demo-only (v4 D9), behind `postgres.enabled`: `values.yaml` turns it off,
+The bundled Postgres is demo-only, behind `postgres.enabled`: `values.yaml` turns it off,
 `values-demo.yaml` on, and without its `demoValues` on fails the render. To bring your own
 Postgres 16 or later, even under the demo, set `postgres.enabled: false`, create the three roles and
 their DSN Secrets as [the database](../../docs/database.md) says, and keep the Secret names under
@@ -55,7 +55,7 @@ The bundled Postgres carries its own NetworkPolicy, `rooms-db`: it admits 5432 o
 and the retention job's pods, and leaves egress untouched. The install test asserts a run-labelled pod
 in `agents` cannot reach `rooms-db` on both k3d (kube-router) and kind v0.33 (kindnet enforces
 NetworkPolicy; the test only notes it, not fails, if a kind node does not). The demo's other ingress
-policy, `networkPolicies.plain`, was removed in rollout step 8: the factory's own default-deny,
+policy, `networkPolicies.plain`, was removed in v0.49.0: the factory's own default-deny,
 `networkPolicies.factory`, replaces it in `maku.networkPolicies.mode` `kubernetes` or `cilium`.
 
 `--set maku.networkPolicies.mode=kubernetes` confines the runs too, on a CNI that enforces
@@ -110,7 +110,7 @@ helm install af charts/agent-factory -n maku -f charts/agent-factory/values-demo
 ```
 
 Runs call the gateway with `maku.runController.model.mode: gateway`, the maku chart's default.
-`values-demo.yaml` keeps it (step 7 R4): the demo runs through `maku-gateway`, the demo key becomes the
+`values-demo.yaml` keeps it: the demo runs through `maku-gateway`, the demo key becomes the
 provider's Secret `demo-model` in the release namespace, and no `agent-model` exists. The demo-only
 `secret`, which `maku.demoValues` admits, remains a switch. Gateway mode needs `maku-gateway.enabled` or
 an external `model.gateway.service`. The run controller's aliases, ports and audience prefix must match

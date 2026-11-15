@@ -90,7 +90,7 @@ factory, whose run API checks that its `aud` holds a rooms client.
 
 ## The merge gate's Apps
 
-Two GitHub Apps back the factory (D12). The **factory App** reads and narrates, and the merger is
+Two GitHub Apps back the factory. The **factory App** reads and narrates, and the merger is
 beside it or folded into it. The **agents App** is the identity runs push and open pull requests as
 (`agentsLogin`). `maku/merge-gate` is posted by the merger's connection, and the documented
 ruleset requires it from that App's `integration_id`
@@ -110,7 +110,7 @@ agents App's tokens, and every run inherits that user's bypass: an agent can the
 pull request the gate never armed. Runs get App installation tokens (the minter's), never a
 person's token; a laptop's one PAT (`runController.gitSecret`) is demo-only.
 
-**D12's invariants, and the tests that hold them.** Every permission a run or the publisher is
+**Role-table invariants, and the tests that hold them.** Every permission a run or the publisher is
 minted with comes from one role table, `minter.Roles` (`internal/factory/minter/roles.go`):
 
 | Invariant | Test |
@@ -118,7 +118,7 @@ minted with comes from one role table, `minter.Roles` (`internal/factory/minter/
 | Keys only from `contents`, `pull_requests`, `issues`, `checks`, `actions`, `metadata`: no role holds `statuses`, `workflows` or `administration` | `TestInvariants`, on both variants and every enforced combination |
 | Access only `read` or `write`; `metadata: read` always; no `checks: write` or `actions: write` | `TestInvariants` |
 | Only the publisher holds `issues: write` | `TestInvariants` |
-| The reviewer's token is read-only (variant HR12) | `TestTableHR12` |
+| The reviewer's token is read-only (with push enforced) | `TestTableHR12` |
 | No other code builds a run's permission map | `TestOneRoleTable` |
 | A role absent from the table is an error, never read | `TestUnknownRole` |
 
@@ -127,8 +127,8 @@ minted with comes from one role table, `minter.Roles` (`internal/factory/minter/
 gate's `success` and the factory's own merge, in the same pass, that window lasts seconds. A
 pull request found merged by `agentsLogin`, at the gate, in `AutoMerging` or handed to a human, is
 counted as `agent_merged` (`maku_factory_pr_outcomes_total`, alert `FactoryAgentMerged`), logged at
-error level, and otherwise ends as a human merge does: it is not reverted. H3 closes it under
-HR12, where those tokens lose `contents: write`.
+error level, and otherwise ends as a human merge does: it is not reverted. H3 closes it, where
+those tokens lose `contents: write`.
 
 ## Authorization
 
@@ -168,7 +168,7 @@ The permission matrix, enforced by the broker (`internal/policy`, tested row by 
 
 ### The factory writes run token Secrets it cannot read
 
-Under `runTokens.perRun` (v4 D10) the factory writes each run's `<run>-git` by server-side apply and
+Under `runTokens.perRun` the factory writes each run's `<run>-git` by server-side apply and
 deletes it at the run's end. Its Role in the runs namespace holds `create`, `patch` and `delete` on
 Secrets, with no `get`, `list` or `watch`, so the minter never reads a Secret back. A `patch` or a
 `delete` answers with the object, so those verbs alone would let the factory read `agent-model`.
@@ -186,14 +186,14 @@ Residuals of per-run tokens:
 - **A run that ends while the factory restarts:** its token is not revoked (the new leader holds
   none in memory) and expires within the hour. Its Secret is deleted. Only the leader mints, so a
   follower never holds a token the leader's could overwrite unrevoked.
-- **The pairing is enforced by the umbrella chart only.** HR13 admits a repository with
+- **The pairing is enforced by the umbrella chart only.** The factory admits a repository with
   `enforceOutputs` once the factory has `runTokens.perRun`. The factory cannot see the
   run-controller's `gitSecret`: installed from the standalone `maku` and `maku-factory` charts, a
   run-controller given a laptop's PAT would mount it while the factory believes runs are scoped.
   The umbrella refuses that render, and the `maku` chart admits `gitSecret` only with `demoValues`.
 - **An agent merge (until H3):** the implementer and tester keep `contents: write`, which can merge
   a pull request whose required checks are green, between the gate's `success` and the factory's
-  own merge. Closed at H3 under HR12.
+  own merge. Closed at H3.
 - **The factory pod holds the agents App key** (T15's row extends to it): whoever controls the
   factory can mint any role's token on any repository the App is installed on.
 
@@ -337,7 +337,7 @@ platform's GCP cluster), its rule is `toEntities: [all]` without ports: a port-s
 
 ### The run path's network modes
 
-With the run controller, the `maku` chart's `networkPolicies.mode` decides what confines a run (v4 D6):
+With the run controller, the `maku` chart's `networkPolicies.mode` decides what confines a run:
 
 | Mode | What holds a run | Residual risk |
 |---|---|---|
@@ -347,7 +347,7 @@ With the run controller, the `maku` chart's `networkPolicies.mode` decides what 
 
 In `kubernetes` mode the runs namespace is default-deny in both directions, and the broker, the run
 controller and the egress proxy each have their own default-deny NetworkPolicy with one allow per
-flow. The factory's and the Slack App's egress policies come with rollout step 6.
+flow. The factory's and the Slack App's egress policies ship in `networkPolicies.factory` and `maku-slack` (v0.48.0+).
 
 **The egress proxy** is a CONNECT-only forward proxy: `runController.image` run with
 `egress-proxy`, in the release namespace (only the run controller may create pods in the runs
@@ -429,7 +429,7 @@ The run controller's Role no longer reads that Secret.
 
 ## The run pod's admission
 
-With the run-controller, the `maku` chart holds the runs namespace with in-tree admission (v4 D17),
+With the run-controller, the `maku` chart holds the runs namespace with in-tree admission,
 and needs no controller:
 
 - **The run-pod policy** (`maku-<namespace>-run-pods`, a ValidatingAdmissionPolicy) admits a pod there only when:
@@ -448,9 +448,9 @@ and needs no controller:
   `e2e.unpinnedImages`), but any digest of an allow-listed repository passes. Whoever can push to
   those repositories can run code in a run pod; the image signature, not the policy, ties a digest
   to a release.
-- **A ResourceQuota `runs`** caps pods, CPU and memory as a safety net (D16). A run over it waits.
+- **A ResourceQuota `runs`** caps pods, CPU and memory as a safety net. A run over it waits.
 - **Reviewer and triager runs hold a read-only token.** Each run mounts its own token, which the
-  factory mints for its role from the role table (D10). The one exception is a demo's laptop PAT,
+  factory mints for its role from the role table. The one exception is a demo's laptop PAT,
   `runController.gitSecret` (`demoValues` only), which every role shares and the install banner
   shows.
 
@@ -475,7 +475,7 @@ commit link, refuses it as `live_reference`. Each publishes nothing, and so does
 fails: the label then waits for the next poll, with no refusal. The scan does not use the parser the rewrite uses, and the render is
 GitHub's own reading, so a misparse must pass both to reach a reader. The
 factory files it once, with no trigger label, and records it on the task. An origin is that record, never
-issue text. The fix reads the public issue only (R38 holds): the investigate task's internal text never reaches it.
+issue text. The fix reads the public issue only: the investigate task's internal text never reaches it.
 
 With `publishStarts` the label is also the money-spending decision: the fix starts at once, and `requestedBy` and the charge are the
 publisher's. The start skips intake's advisory day check, so the reservation at queueing binds: a person whose day is spent ends the
@@ -549,7 +549,7 @@ text and a branch can try to steer ([maku](cli.md#the-mcp-server)).
   **Accepted risk:** a client that auto-accepts forms (some headless modes) lets the agent start
   work. That is not new: the agent can already label with the developer's `gh`, which local-first
   calls "advice, not a control".
-- **Checking out an agent's branch (R15).** A sandboxed agent can commit agent or editor config,
+- **Checking out an agent's branch.** A sandboxed agent can commit agent or editor config,
   hooks or mise files that run when a tool opens the folder or when the developer commits.
   `room_checkout` and `maku checkout` therefore fetch only `agent/<room>` from an `origin`
   verified to be the room's repository, run git with an argument list and `core.hooksPath=/dev/null`
@@ -708,13 +708,13 @@ Residuals with push enforced:
 - The `git` shim is advisory. Until the role policy drops `contents: write`, the run can still
   push directly, and the tracer reports it without stopping it.
 - An approved push that changes `.github/workflows/**` is refused `output_unavailable` unless the
-  publisher's policy holds `workflows: write` (HR31).
+  publisher's policy holds `workflows: write`.
 - Blobs the remote already holds (a change's old side, or content reverted to it) are not sized
   before the diff reads them. `core.bigFileThreshold` (1 MiB) turns a large one into a binary
   change, which is refused.
 - A push whose reply is lost is answered by its recorded intent on the task
   (`agents.ogenki.io/push-intent`). The record holds the task's latest push only.
-- Enforcement needs `runTokens.perRun` (HR13), so the role table is what removes the write; the
+- Enforcement needs `runTokens.perRun`, so the role table is what removes the write; the
   permission gauge shows it.
 
 A repository at `mode: enforce` goes one stage further
@@ -737,12 +737,12 @@ Residuals with reads filtered:
 - A run-controller older than the factory ignores `forge-api: deny`. The chart pins both to one
   version.
 
-A repository is **ready** when R1 to R7 hold ([Hardening, ready](factory.md#hardening-ready)), and
+A repository is **ready** when all seven readiness checks hold ([Hardening, ready](factory.md#hardening-ready)), and
 only then does coordination's execute admit it. Residuals once ready:
 
 - Readiness is read at each admission and every five minutes, not continuously: a Secret swapped
   to a write token on the run-controller is seen at the next read, not at the swap.
-- R6 proves the configuration a drill ran under. A drill scenario a role never ran fails the drill,
+- The `drill_stale_or_failed` check proves the configuration a drill ran under. A drill scenario a role never ran fails the drill,
   so a suite narrowed by configuration cannot pass.
 - T5 is not a readiness fact, and a promoted type's T5 is single-turn: split or encoded injections
   pass it, as the drills measure. T5 never reads a T3 refusal, so it adds nothing where a secret

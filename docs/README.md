@@ -24,7 +24,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
-| [Event envelope](event-envelope.md) | The C4 envelope, its payloads and limits |
+| [Event envelope](event-envelope.md) | The event envelope, its payloads and limits |
 | [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
 | [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
 | [API](api.md) | The broker's four listeners, their errors and limits |
@@ -41,7 +41,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [The group move](maku-group-migration.md) | History: v0.31.0's quiet window, `Room` and `Task` to `maku.ogenki.io`; its command is removed |
 | [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |
-| [The v4.0 decision pack](v4-readiness.md) | Each v4 design decision (D1 to D26) with what implements and proves it, every item still owed before v4.0.0 with its owner, the manual GKE and kubeadm install runbooks and their ledger entry |
+| [The v4.0 decision pack](superpowers/v4-readiness.md) | Each v4 design decision with what implements and proves it, every item still owed before v4.0.0 with its owner, the manual GKE and kubeadm install runbooks and their ledger entry |
 | [Naming](naming.md) | Maku the product name, the unchanged technical names, the visual identity |
 
 ## Reading paths

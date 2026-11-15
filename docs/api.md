@@ -207,12 +207,12 @@ For system callers. Query: `afterSeq` (default `0`), `limit` (1 to 500, default 
 {"events": [ {"v": 1, "seq": 1, "type": "state_changed", "…": "…"} ], "lastSeq": 1842}
 ```
 
-`events` are full [C4 envelopes](event-envelope.md) with `seq > afterSeq`, in order; `lastSeq` is
+`events` are full [event envelopes](event-envelope.md) with `seq > afterSeq`, in order; `lastSeq` is
 the room's current high-water mark. Page by passing the last `seq` you received as `afterSeq`.
 
 | Status | `error` | When |
 |---|---|---|
-| `400` | `bad_room` | `{id}` is not a C2 id |
+| `400` | `bad_room` | `{id}` is not an 8-character base32 room id (`[a-z2-7]{8}`) |
 | `401` | `unauthenticated` | Bad, expired or wrong-audience token |
 | `403` | `not_permitted` | A valid token whose `sub` is not in `systemPrincipals` |
 | `404` | `no_room` | No such room in the log |
@@ -283,7 +283,7 @@ carries no `payload`. `output_waiting` is not an answer: a `push` held for a mai
 of its digest, with `reason: protected_path_needs_approval` and the approval's `approvalId`. Its
 answer follows once the approval closes.
 
-`runId` is a C2 id, and must be a run of the room:
+`runId` is an 8-character base32 id (`[a-z2-7]{8}`), and must be a run of the room:
 - while the broker watches the run, its `roomRef` must name the room;
 - once the watch has let it go, the room's log must hold that run's harness events (its bridge
   appends only to its own run's room).
@@ -325,7 +325,7 @@ bytes hash to the digest before it inspects them.
 ### Digest-bound approvals
 
 For the factory (`system:factory`) alone: a `push` that touches a protected path waits for a
-maintainer's approval of its bundle's digest (hardening HR27, HR28).
+maintainer's approval of its bundle's digest.
 
 `POST /v1/rooms/{id}/approvals`, at most 64 KiB:
 
@@ -364,7 +364,7 @@ decidedBy, expiresAt}` for a digest-bound approval. Any other approval is `404 n
 
 ### Drill reports
 
-For the factory (`system:factory`) alone: the injection drills it scored (hardening HR38). The
+For the factory (`system:factory`) alone: the injection drills it scored. The
 factory is the only writer, so the drill's planter, which only posts a manifest to the factory,
 cannot forge a report.
 
@@ -379,7 +379,7 @@ cannot forge a report.
 256 KiB: counts, scenario ids, roles and reasons, never planted text. Response `201`: `{"id": …}`.
 
 `GET /v1/drills/last-pass?version=<version>&configHash=<64-hex>` answers the newest report of that
-Maku version and hardening configuration hash when it passed (readiness R6): `{"id": …, "at": …}`,
+Maku version and hardening configuration hash when it passed (readiness check `drill_stale_or_failed`): `{"id": …, "at": …}`,
 or `404 no_drill` when there is none or the newest failed, even with an older pass.
 
 `GET /v1/drills/{id}/result` answers whether drill `id`'s stored report passed, `{"id": …, "pass": …}`,
@@ -428,7 +428,7 @@ already consumed, promoted, removed or never queued is skipped, so a retry is sa
 |---|---|---|
 | `400` | `bad_message` | No text, text over 16 KiB, `clientSeq` ≤ 0, or a malformed body |
 | `400` | `bad_stream` | A `stream` that is not `[a-z]{1,16}` |
-| `400` | `bad_consume` | A `runId` that is not a C2 id, more than 100 refs, or a malformed body |
+| `400` | `bad_consume` | A `runId` that is not `[a-z2-7]{8}`, more than 100 refs, or a malformed body |
 | `501` | `no_queue` | No queue store wired |
 
 ## `:9090` — probes and metrics
@@ -696,7 +696,7 @@ One JSON object per text frame.
 | client → broker | `ping` | Every 30 s |
 | broker → client | `state` | `throughSeq`, `snapshot: {roomId, phase, driver, driverEpoch, dataClass, you, runs, queue, sealed}`. `runs` is `[{id, role, phase, unsandboxed}]`; `unsandboxed` is true for a run whose pod has no RuntimeClass. `queue` is the messages still queued for the next run, `[{ref, author, text}]` (redacted), read just after the mark: apply events past `throughSeq` over it. `sealed` is the log's seal at the mark (`phase` follows the Room and lags it). `approvals` is the pending approvals, `[{approvalId, runId, callId, class, action, expiresAt, seq}]`, read like `queue`: a card per approval, however far behind the tail its request is |
 | broker → client | `sync` | `fromSeq`, `throughSeq`: the range that follows from the log |
-| broker → client | `event` | One C4 envelope |
+| broker → client | `event` | One event envelope |
 | broker → client | `ack` | `clientSeq`, then `seq` or `rejected`, and `result` for actions that return data |
 
 Replay is lossless: the broker subscribes to the room's fan-out (the hub), reads the high-water

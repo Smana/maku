@@ -4,7 +4,7 @@ The AgentRun sandbox's harness (SP1 design §5): `ghcr.io/openhands/agent-server
 
 | File | Role |
 |---|---|
-| `agent_run.py` → `agent-run` | Entrypoint: start agent-server, clone and resume `$BRANCH`, POST the conversation (its `tags` carry `effort`, `$LLM_REASONING_EFFORT` or `high`, which the bridge mirrors into the room's `harness_status`; never the model, which the room takes from the claim's `spec.model`), wait (under the [loop policy](#loop-policy) when it is on), revoke, exit 0/1. On SIGTERM, within 15 s: pause, checkpoint an implementer's work (`Agent-Checkpoint: disruption`; never a GitHub token, never over 200 files or 5 MiB), the room-bridge's final read, stop, revoke. A SIGTERM after the run ended keeps its exit code. An implementer run that finished with no `room_handoff` the broker took gets one from the harness, naming the head it pushed (GitHub's branch at the clone's `HEAD`, moved during the run), so the merge gate's R02 never waits on a head nobody reported |
+| `agent_run.py` → `agent-run` | Entrypoint: start agent-server, clone and resume `$BRANCH`, POST the conversation (its `tags` carry `effort`, `$LLM_REASONING_EFFORT` or `high`, which the bridge mirrors into the room's `harness_status`; never the model, which the room takes from the claim's `spec.model`), wait (under the [loop policy](#loop-policy) when it is on), revoke, exit 0/1. On SIGTERM, within 15 s: pause, checkpoint an implementer's work (`Agent-Checkpoint: disruption`; never a GitHub token, never over 200 files or 5 MiB), the room-bridge's final read, stop, revoke. A SIGTERM after the run ended keeps its exit code. An implementer run that finished with no `room_handoff` the broker took gets one from the harness, naming the head it pushed (GitHub's branch at the clone's `HEAD`, moved during the run), so the merge gate's `head_unreported` check never waits on a head nobody reported |
 | `loop_policy.py` | The loop policy's rules: the switch, the judge's input and verdict, the continuation, the state |
 | `agent_checks.py` → `agent-checks` | v3 feature 3: the CI's fast subset the repository declares in `.github/agent-checks.yaml` (read from the default branch), with its tools installed by mise (`/opt/agent/bin/mise`, off `PATH`) at the work tree's `mise.toml` pins into `/workspace/.toolchain`. Each step runs in its own process group without `CI` or any credential path; the result is `/workspace/.agent-checks/<sha>.json` and `.txt`. Evidence, never a gate. The run is pinned to the base and declaration blob `agent-run` read at startup (`AGENT_CHECKS_BASE`, no `refs/replace`), and a result file the agent left is moved aside, never posted as the harness's own. The harness's run prints its result on a pipe only `agent-run` holds (`agent-checks --json`), its git calls run with fsmonitor, hooks, external diff, textconv and clean/smudge filters disabled, and a non-0/1 exit, a timeout, a held lock or no result reads "unreadable result". Both `agent-run` and `agent-checks --json` mark themselves undumpable (`prctl(PR_SET_DUMPABLE, 0)`), so a leftover same-uid agent process cannot open their `/proc/<pid>/fd` or ptrace them. Residual, all under one uid: the window between the tool's exec (which resets the flag) and its first prctl call, a few Python start-up milliseconds; a live agent process that was already holding an fd or running as root-equivalent; rewriting the pinned blob's objects in `.git/objects`; swapping binaries in `/workspace/.toolchain`; and declared steps that run the branch's own scripts. The result is evidence; the CI stays the judge, and the reviewer's own run backs it |
 | `test_contract.py` → `test-contract` | v3 feature 4: whether a change's tests are a contract. Reads the `tests` section of `.github/agent-checks.yaml` from the base, runs the selected test files at the base, at the base plus the changed tests (the overlay) and at the head, each in a clean worktree, and compares JUnit ids. `red [--base SHA]` is the tester's red check, `hold [--base SHA --contract SHA]` the implementer's contract run (also fails when a contract or runner file changed since the contract commit), `ci --base --head` the "Test contract 🧪" job through `.github/actions/test-contract`. The harness must pass the base and contract shas it recorded at startup; without them `hold` falls back to the local `origin/HEAD` and a trailer search, and says so (`source`). Exit codes: 0 ok, 1 not ok, 2 no declaration, 3 outside the test paths, 4 could not run (or a bad ref), 5 no contract, 6 contract without ids, 7 contract without files, 8 base not under the contract commit, 9 declaration lost after a contract was found; `hold` never exits 2 once a contract exists. CI is the judge; `hold` is a sandbox signal that fails closed |
@@ -69,8 +69,8 @@ says why on stderr.
   with the loop's reason, not the wall clock's; a `not_met` note says whether its commits are pushed.
   The box is timed after the contract hold, and a finish read on the poll that crosses it is a finish.
   Under 5 minutes left, no continuation is sent. The stall rule is spent at the first commit, so before the box a continuation
-  was bounded only by the run's deadline (gcp-0, task `xlcx2775`: 36 minutes retrying a CI log the
-  sandbox could not reach, escalated as `deadline`).
+  was bounded only by the run's deadline (for example, task `xlcx2775` spent 36 minutes retrying a CI log the
+  sandbox could not reach and escalated as `deadline`).
 
 - **The judge** is called when the conversation ends `finished`: one call to the identity proxy's
   `/judge/v1`, beside `LLM_BASE_URL`'s `/v1`, on the run's token, so the gateway meters it against the
@@ -83,7 +83,7 @@ says why on stderr.
   JSON object; a verdict with no parse or that cites none of the evidence ids it was given is
   discarded: the first counts `not_yet`, the second `judge_impossible`.
 - **`not_yet`** sends one message into the same conversation, with the judge's reason quoted as data,
-  and the conversation runs again with its history. When a check failed (HR5), the harness reads the
+  and the conversation runs again with its history. When a check failed, the harness reads the
   failing jobs' logs with its own `gh run view --log-failed` (at most 3 jobs, 30 s each) and quotes the
   last 60 lines of each, redacted and cut at 8,000 characters, between the same fence lines; when it
   cannot (a check outside GitHub Actions, `gh` failing, a log host the sandbox cannot reach), the message
@@ -91,7 +91,7 @@ says why on stderr.
   failing check until the harness egress (crossplane-configuration `apis/agentrun/kcl/main.k`) allows the
   Actions log host, `productionresultssa*.blob.core.windows.net`: `gh run view --log-failed` downloads
   through a redirect to it. The log is read only when a continuation's box would still be left after it.
-- **A pending check is waited for, not sent** (HR5): when the judge answered `met` and the guard's only
+- **A pending check is waited for, not sent**: when the judge answered `met` and the guard's only
   objection is a check that has not completed, no message goes and no continuation is spent. The
   harness reads the head's check runs every 30 s within the box a continuation would have had, then
   rebuilds the evidence and asks the judge once more; that answer is guarded and decided as any other.
@@ -99,7 +99,7 @@ says why on stderr.
   no-activity window (`StuckAfter`): it posts a room note when it starts and every 5 minutes, and it
   ends with the judge's call and a minute still left after the last room event, the finish or a note.
   With no note posted, a window already spent by the first evidence's wait leaves no room to wait, and the
-  continuation goes as before HR5. There is at most one wait per round: a check that appears after the
+  continuation is sent immediately. There is at most one wait per round: a check that appears after the
   wait still spends a continuation.
 - **A commit** is a non-merge commit on `HEAD` or the run's branch that neither the run's start nor
   the base branch holds: a fetch or a rebase onto the base counts nothing. The stall rule holds until
@@ -121,7 +121,7 @@ the runs merged pull requests name and prints N, the smallest multiple of 10 abo
 
 A scoping run (role `triager`) whose brief starts with the factory's marker line,
 `<!-- agent-factory scoper nudgeAt=25 maxToolCalls=40 -->` (the factory config's `scoper` key), is
-bounded in tool calls (harness roles HR2). The line is read only at the very start of the task text,
+bounded in tool calls. The line is read only at the very start of the task text,
 which also carries the untrusted issue, and only within `1 <= nudgeAt < maxToolCalls <= 200`; any
 other run, or other bounds, runs unbounded as before.
 
@@ -158,7 +158,7 @@ clone's `origin/HEAD` (read once, before the conversation) into one commit on th
 
 Vacuous or non-failing tests and a path outside the test paths get **one** continuation in the same
 conversation, quoting the check's result between `CONTRACT-<hex>` fence lines as data. A runner that could
-not run, a missing declaration and a refused push never do (R6: infrastructure is not the tester's to fix).
+not run, a missing declaration and a refused push never do (infrastructure is not the tester's to fix).
 Every end exits 0, posts `Harness (tester): <end>: <files or why>` (at most 280 characters) and emits the
 span `agent-run.contract`, with `error.type` set to the end unless it is `contract_ready`. A conversation
 that ends `error` or `stuck` exits as before, with no check.
@@ -213,7 +213,7 @@ execute gate refuses every integration admission, so this runtime is not reached
 ## Model errors
 
 A model call that fails ends the run (`execution_status=error`, the run's end reason `agent_error`), except
-for a transient error, which agent-server retries first (#99, owner decision OD-7):
+for a transient error, which agent-server retries first (#99):
 
 | Error | Retried | Why |
 |---|---|---|
@@ -223,7 +223,7 @@ for a transient error, which agent-server retries first (#99, owner decision OD-
 | the SDK's hard timeout (`LLMTimeoutError`, 300 s) | **once**, as a fresh request with a fresh window | a rare call hangs (glm-5.3 via Z.ai: p99 82 s) and one hang failed whole runs; logged `agent-run model retry timeout 1/1`, counted with the others; never a call that already emitted a token, and only when the run's deadline leaves a whole second window plus the final checks' reserve (`AGENT_RUN_DEADLINE`) |
 | any other `4xx` or `5xx` | no | not transient |
 
-Three attempts at most, 10 s then 20 s apart (30 s of backoff, inside OD-7's 60 s). After the third the run
+Three attempts at most, 10 s then 20 s apart (30 s of backoff, under the 60 s cap). After the third the run
 escalates exactly as before, with the same `agent-run error: LLMServiceUnavailableError …` line. The SDK's own
 retry stays off (`num_retries=0`: it would retry a `429`), and so does the one inside litellm's OpenAI client,
 which had retried twice in about 1.5 s, a `429` included.

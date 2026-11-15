@@ -144,7 +144,7 @@ broker's `:8080` to these pods, and to nothing else.
 | Value | Default | What it does |
 |---|---|---|
 | `image` | oauth2-proxy v7.15.5, by digest | the version the probe asserted |
-| `existingSecret` | required | the web client and the cookie secret (D14): keys `client-id`, `client-secret`, `cookie-secret` (`keys` renames them). The cookie secret is 32 random bytes: `openssl rand -base64 32 \| tr -- '+/' '-_'` |
+| `existingSecret` | required | the web client and the cookie secret: keys `client-id`, `client-secret`, `cookie-secret` (`keys` renames them). The cookie secret is 32 random bytes: `openssl rand -base64 32 \| tr -- '+/' '-_'` |
 | `cookieRefresh` | `1h` | under the ID token's lifetime |
 | `cookieSameSite` | `strict` | `lax` when the IdP is on another site than the web host: a strict CSRF cookie does not come back from a cross-site sign-in |
 | `extraArgs` | `{}` | appended as `--key=value`. A key the chart derives fails the render, naming it, and so does one that would widen what passes: `trusted-ip`, `reverse-proxy`, `skip-auth-regex`, `skip-auth-preflight`, `whitelist-domain`, `config`, `alpha-config`, `pass-user-headers`, `skip-auth-strip-headers` |

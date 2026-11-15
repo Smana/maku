@@ -6,7 +6,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Merge policies removals
 
-Merge policies release N+1 removes every field and mode release N deprecated (MR9, MR13). Unknown
+This release removes every field and mode v0.50.0 deprecated. Unknown
 fields on a `MergePolicy`, `Repository` or `Factory` are rejected by the CRD schema, and the config
 file refuses removed keys with a message pointing here. See [merge policies](merge-policies.md#start-here)
 for the zero-binding catalog setup and [worked examples](merge-policies.md#worked-examples):
@@ -32,7 +32,7 @@ config file into `Factory`, `Repository` and `MergePolicy` manifests. Shadow evi
 earlier label-chosen decisions (`class=<name>` in the merge gate's marker) carries over unchanged to
 diff-chosen decisions for the same policy name.
 
-## The gate picks the policy from the diff (v0.5x, merge policies release N+1)
+## The gate picks the policy from the diff (v0.52.0)
 
 Breaking: the merge gate no longer decides on the task's class. It judges the pull request's diff
 against every policy the repository evaluates, its catalog policies included, and merges under the
@@ -42,7 +42,7 @@ strictest `live` one that holds ([selection](merge-policies.md#selection-from-th
 |---|---|---|---|
 | Which policy decides | the class fixed at intake (a `class:` label, a schedule, the plan; else `review`) | the strictest `live` policy whose every condition holds on the diff; a task with findings (a schedule's probe) or an adopted pull request keeps its one class | none: `workflow:<name>` picks the workflow, never the merge policy |
 | A diff no policy admits | `class_unarmed`, or `class_mismatch` against the label | `no_policy_matched`, with each policy's refusal in the record's `considered=` | Alerts or dashboards on `class_unarmed` read `no_policy_matched` |
-| A policy with no `diffShape` and no `oracle` (MR12) | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer (`quick`) leaves it `reviewer_verdict_missing` | Run with a reviewer (`standard` or `careful`), or give the policy a shape |
+| A policy with no `diffShape` and no `oracle` | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer (`quick`) leaves it `reviewer_verdict_missing` | Run with a reviewer (`standard` or `careful`), or give the policy a shape |
 | Shadow evidence | one record, the class's | one record line per shadow policy that holds, beside the decision's | `scripts/shadow-merge-tally.sh` reads each class's own line |
 | A capped or paused strictest policy | — | the pull request goes to a human: a looser policy never takes over | none |
 | The decision's wording | "merged by the merger App: the class's conditions held" | "Merged automatically by policy `<name>`", or "Waits for a human: `<reason>`" | none |
@@ -53,7 +53,7 @@ assigns to another policy finds no grant and asks for an approval (`approval_req
 
 ## Workflows name what runs
 
-Workflows release N+1 (v0.5x, shipped with the merge gate that reads the diff): the class no longer
+Shipped in v0.52.0 with the merge gate that reads the diff: the class no longer
 chooses what runs on a task. A task's workflow is the first of a maintainer's `workflow:<name>`
 label (or the choice at confirmation), the task's source (a `Schedule`'s `workflow`, `quick` when
 it names none; `quick` for a revert and an oracle finding; `none` for an adopted pull request), and
@@ -61,19 +61,19 @@ the `Repository`'s `workflow.default`, `standard` when unset. A maintainer may p
 class, `quick` included: a pull request no reviewer read waits for a human unless a shape or an
 oracle checks its diff.
 
-Everything release N warned about is refused, each error naming this section:
+Everything v0.51.0 warned about is refused, each error naming this section:
 
 | Old key or label | Write instead | Refused from |
 |---|---|---|
-| `harnessProfiles` (a `Factory`, the file) | `workflows`, the same map | N+1 |
-| `templates.trio` | `pair` | N+1 |
-| `triage.classifierURL` (the values file) | nothing: remove the key | N+1 |
-| `defaults.template`, `defaults.tier` | nothing: a workflow names its template and its tier | N+1 |
-| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row named after a workflow; set that workflow's `loop` to share one | N+1 |
-| `workflows.<name>.testFirst` | the `Repository`'s `workflow.testFirst`: the tester runs in `careful` | N+1 |
-| `human.intake.plan.classes` (the broker) | `factoryURL`: the factory's catalog names the classes and workflows | N+1 |
-| the `profile:<name>` label | `workflow:<name>`; a `profile:` or `class:` label is read by nothing and told once on its issue | N+1 |
-| the `class:<name>` label | nothing: the gate reads the diff | N+1 |
+| `harnessProfiles` (a `Factory`, the file) | `workflows`, the same map | v0.52.0 |
+| `templates.trio` | `pair` | v0.52.0 |
+| `triage.classifierURL` (the values file) | nothing: remove the key | v0.52.0 |
+| `defaults.template`, `defaults.tier` | nothing: a workflow names its template and its tier | v0.52.0 |
+| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row named after a workflow; set that workflow's `loop` to share one | v0.52.0 |
+| `workflows.<name>.testFirst` | the `Repository`'s `workflow.testFirst`: the tester runs in `careful` | v0.52.0 |
+| `human.intake.plan.classes` (the broker) | `factoryURL`: the factory's catalog names the classes and workflows | v0.52.0 |
+| the `profile:<name>` label | `workflow:<name>`; a `profile:` or `class:` label is read by nothing and told once on its issue | v0.52.0 |
+| the `class:<name>` label | nothing: the gate reads the diff | v0.52.0 |
 
 Where a `MergePolicy`'s workflow fields moved (now refused; see [merge policies removals](#merge-policies-removals)):
 
@@ -92,11 +92,11 @@ refusals `class_no_profiles`, `class_profile_fixed`, `profile_not_allowed` and `
 are gone; a task triaged before this release keeps the code it recorded. The status source `floor`
 is now `repository`.
 
-## Workflows: old names warn (v0.5x, workflows release N)
+## Workflows: old names warn (v0.51.0)
 
 This release is additive: every config and manifest the previous one accepts still loads. What the
 next minor refuses loads with a warning in the factory's log (`config warning`, ending
-`refused from the next minor (WF13)`), and the `Factory`'s `Deprecated` condition lists its path.
+`refused from the next minor`), and the `Factory`'s `Deprecated` condition lists its path.
 
 | Setting or label | Why it goes | What to write instead |
 |---|---|---|
@@ -120,23 +120,23 @@ acknowledged private ones). Leaving `human.intake.plan.repositories` set narrows
 and any entry the factory does not serve logs a warning naming it; remove the key when every
 repository the factory serves should be eligible.
 
-## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
+## Merge policies: bounds, guardrail defaults and evidence levels (v0.50.0)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file
 declares under `classes` is held to the bound rule only.
 
 | Change | Before | Now | What to do |
 |---|---|---|---|
-| The bound rule (MR6) | only a `live` class without policy-bot needed `allowedFiles` | every `live` or `shadow` class, resolved with its binding, needs `allowedFiles` or a `diffShape` (`docs-links` and `revert` have theirs built in); otherwise its binding is `Unbounded` and its class is not served | Give the policy or the binding `allowedFiles`, or bind it `disabled` |
-| Guardrail defaults (MR7) | an unset `mergeGuardrails` capped nothing | `protectedFiles` always starts with `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; an unset `maxPatchFiles`, `maxModifiedLines` or `maxPerDay` is 10, 300 or 5 | A policy or binding above one of these is `GuardrailMismatch` and names the cap (`maxModifiedLines 400 is over the guardrail's 300`): lower it, or set that guardrail on the `Factory` |
-| `evidence` on a policy (MR4) | 20 clean decisions, or `mergeGuardrails.minPromotionEvidence` when higher | `evidence: low` is 5 (a policy with a `diffShape` or an `oracle`), `standard`, the default, 20; `minPromotionEvidence` is ignored | Set `evidence: low` where a shape or an oracle checks the diff |
+| The bound rule | only a `live` class without policy-bot needed `allowedFiles` | every `live` or `shadow` class, resolved with its binding, needs `allowedFiles` or a `diffShape` (`docs-links` and `revert` have theirs built in); otherwise its binding is `Unbounded` and its class is not served | Give the policy or the binding `allowedFiles`, or bind it `disabled` |
+| Guardrail defaults | an unset `mergeGuardrails` capped nothing | `protectedFiles` always starts with `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`; an unset `maxPatchFiles`, `maxModifiedLines` or `maxPerDay` is 10, 300 or 5 | A policy or binding above one of these is `GuardrailMismatch` and names the cap (`maxModifiedLines 400 is over the guardrail's 300`): lower it, or set that guardrail on the `Factory` |
+| `evidence` on a policy | 20 clean decisions, or `mergeGuardrails.minPromotionEvidence` when higher | `evidence: low` is 5 (a policy with a `diffShape` or an `oracle`), `standard`, the default, 20; `minPromotionEvidence` is ignored | Set `evidence: low` where a shape or an oracle checks the diff |
 | A binding's `allowedFiles` over a policy's | `ParameterTwice` | it narrows the policy's: a path must match both | none |
 
 A binding's mode may now be `disabled`; `"off"` still reads as `disabled`. `maku config migrate`
 compares the classes under the default guardrails, so a config-file class within them migrates
 unchanged, and one above them is a `changed:` line.
 
-## The merge policy catalog (v0.5x, merge policies release N)
+## The merge policy catalog (v0.50.0)
 
 The `agent-factory` chart now renders four `MergePolicy` objects with the factory, labelled
 `maku.ogenki.io/catalog: "true"`: `docs-links`, `revert`, `deps-patch` and `docs`
@@ -152,9 +152,9 @@ is unchanged.
 | `deps-patch` in `shadow` | — | adopts Renovate's patch pull requests (`renovate[bot]`, `renovate/` branches) as tasks, to decide them in shadow | Bind it `disabled` where Renovate's pull requests must stay untouched |
 | The promotion drill | a `factory/drill` revert of one of the class's own pull requests | one merged `factory/drill` revert in the repository clears `no_drill` for every class | none |
 
-## The shared ClusterRoles in the CRD chart (v0.4x, v4 rollout step 7)
+## The shared ClusterRoles in the CRD chart (v0.48.0)
 
-Several installs can share a cluster (D2, R10). The roles every install shares move from the factory
+Several installs can share a cluster. The roles every install shares move from the factory
 chart to `agent-factory-crds`, under the same names, so whatever binds them keeps working:
 `maku-factory-admin`, `maku-mergepolicy-editor` and `maku-viewer` (aggregated into `admin`, `edit` and
 `view`) and `agent-factory-flux-reader`. Each is kept on uninstall, as the CRDs are. The umbrella
@@ -187,9 +187,9 @@ proves the sequence from the previous chart. `task demo` runs it for you.
 When it moves under the umbrella ([adopting the umbrella](#adopting-the-umbrella-from-maku-factory)),
 run the same commands first: they hand the roles from the factory's release to the CRD chart's.
 
-## The demo's model gateway (v0.4x, v4 rollout step 7)
+## The demo's model gateway (v0.48.0)
 
-`values-demo.yaml` now runs the demo through the model gateway (step 7 R4), as production does:
+`values-demo.yaml` now runs the demo through the model gateway, as production does:
 `maku.runController.model.mode: gateway`, `agentgateway.enabled` and `maku-gateway.enabled`, the
 runs' `gatewayIdentity`. `values-demo-gateway.yaml`, which layered these before, is deleted. A demo
 install now:
@@ -212,7 +212,7 @@ factory objects, the merge gate's ruleset and the GitOps files, and it applies n
 
 ## From the demo to production
 
-From v0.4x (v4 rollout step 6) the chart renders production, and since step 8 its defaults are
+From v0.47.0 the chart renders production, and since v0.49.0 its defaults are
 production: there is no `profile` to set. Start from
 [`values-production.example.yaml`](../charts/agent-factory/values-production.example.yaml), never from
 `values-demo.yaml`: its `demoValues` admits the demo-only values and skips the seams. Without it, the
@@ -228,8 +228,8 @@ Error: execution error at (agent-factory/templates/gate/renders/before/subcharts
 
 | Component | Its seams | Refused |
 |---|---|---|
-| The release | none | `postgres.enabled` (D9) |
-| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `maku-factory`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret` (D7), `runController.gitSecret`, `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (D18: the demo and kind only) |
+| The release | none | `postgres.enabled` |
+| `maku` | the four images by digest; `broker.human.mode: oidc` with an `issuer`; `broker.runIssuer.issuer`, or `runIssuer.mode: tokenreview`; `broker.database.brokerSecret` ([The database](database.md)); an https `broker.publicURL`; `sandbox.runtimeClassName`; with `maku-factory`, `maku-factory.runTokens.perRun` | `maku.demoValues`, `runController.model.mode: secret`, `runController.gitSecret`, `sandbox.unsafeAllowRunc` and `runController.allowUnsandboxed` (the demo and kind only) |
 | `maku-factory` | its image by digest; the factory App's Secret (`apps.factory.existingSecret`); the agents App's (`apps.agents.existingSecret`) with `runTokens: {enabled: true, perRun: true}`; with `maku`, `config.api.humanIssuer`, which must agree with the broker's identity ([Identity](identity.md)) | `demo`, `config.demo` |
 | `slack` | the agreements of [`values-slack.example.yaml`](../charts/agent-factory/values-slack.example.yaml) and its three Secrets by name | |
 | `webProxy` | `existingSecret`, and the broker's identity it derives its arguments from ([Exposure](exposure.md)) | |
@@ -248,7 +248,7 @@ render: `sandbox.unsafeAllowRunc` is for the demo and kind only.
 
 ### Adopting the umbrella from `maku-factory`
 
-An install that runs the `maku-factory` chart alone adopts the umbrella one component at a time (D25).
+An install that runs the `maku-factory` chart alone adopts the umbrella one component at a time.
 `maku.enabled: false` with `maku-factory.enabled: true` is a valid production render, so the factory
 moves first, under the same release name:
 
@@ -268,7 +268,7 @@ moves first, under the same release name:
 3. Then turn `maku.enabled` on with the broker's values, and the rest (`expose`, `webProxy`, `slack`,
    `monitoring`) each in its own upgrade.
 
-## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.4x, v4 rollout step 6)
+## The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.48.0)
 
 New keys, all off by default, so a release that sets none of them renders as before:
 
@@ -283,7 +283,7 @@ the `maku-slack` alert group, for an App installed outside the chart. It now ren
 its agreements, so an install that kept its own App either moves it to the subchart, or turns
 `slack.enabled` off, and loses that alert group and the `expose.slack` route with it.
 
-## The runs namespace's default-deny, optional (v0.4x)
+## The runs namespace's default-deny, optional (v0.48.0)
 
 `networkPolicies.runsNamespaceDefaultDeny` (default `true`: the render is unchanged) controls the
 runs namespace's `default-deny` policy, in mode `cilium` or `kubernetes`. An install whose platform
@@ -291,13 +291,13 @@ owns the runs namespace's default-deny sets it to `false`, and the chart renders
 longer conflict. The platform's policy must then deny both directions, as the chart's does: each run's
 own policy adds only its allowances on top of it.
 
-## The clean-up (v0.4x, v4 rollout step 8)
+## The clean-up (v0.48.0)
 
-Step 8 deletes the paths steps 1 to 7 kept for older installs and flips the defaults they left at
+v0.48.0 through v0.50.0 delete the paths v0.46.0 and v0.47.0 kept for older installs and flip the defaults they left at
 their old values. Each change below is breaking: a removed or flipped value is refused by the schema
 or by a render `fail` that names its replacement, never silently ignored.
 
-This section is the migration note from any v0.4x release to the v4.0 candidate. Each path step 8
+This section is the migration note from any v0.4x release to the v4.0 candidate. Each path this clean-up
 removes or flips is one row below: what replaces it, the release that ships the change, and the
 subsection with the details. Rows 1 to 3, 11 to 13, 19 and 21 to 23 shipped in v0.48.0; the others
 ship in the release after it, except row 14, which ships in the release after v0.49.0.
@@ -314,7 +314,7 @@ flowchart LR
 |---|---|---|---|---|
 | 1 | `networkPolicies.enabled` (`maku`) | `networkPolicies.mode`, default `kubernetes` | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
 | 2 | `runController.runtimeClassName`, `runController.allowUnsandboxed` (`maku`) | `sandbox.runtimeClassName`, default `gvisor`; `sandbox.unsafeAllowRunc` | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
-| 3 | The factory's `spec.queueName` on AgentRuns (Kueue, D16) | `runsQuota`, the factory's slots and budgets | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
+| 3 | The factory's `spec.queueName` on AgentRuns (Kueue) | `runsQuota`, the factory's slots and budgets | v0.48.0 | [the run path's old keys](#the-run-paths-old-keys) |
 | 4 | The `cloud.ogenki.io` run kind (`runs.group`) | `maku.ogenki.io`, now also the binaries' default | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
 | 5 | octo-sts: `hardening.publisher.octoSTS`, `hardening.publisher.audience`, `networkPolicies.factory.octoSTS`, the harness's `STS_URL`, readiness's policy files | the per-run minter, `hardening.publisher.minter` | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
 | 6 | Readiness's fix text naming the XR and octo-sts | per-run tokens | after v0.48.0 | [the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts) |
@@ -323,8 +323,8 @@ flowchart LR
 | 9 | `githubSecret`, `mergerSecret`, `runTokens.appSecret` (`maku-factory`); `runTokens.appIDFile`, `privateKeyFile` (factory config) | `apps.factory`, `apps.merger`, `apps.agents` | after v0.48.0 | [the old App keys](#the-old-app-keys) |
 | 10 | The merge defaults `gateStatus: false`, `policyBot: true`, `apps.merger.mode: separate` | `gateStatus: true`, `policyBot: false`, `apps.merger.mode: factory` | after v0.48.0 | [the merge defaults](#the-merge-defaults) |
 | 11 | `model.mode: secret` as the default (`maku`) | `model.mode: gateway`; `secret` is demo-only | v0.48.0 | [the gateway is the model path](#the-gateway-is-the-model-path) |
-| 12 | The Envoy AI gateway's `meter.logsURL` in the docs | `meter.throttle.promQuery` | v0.48.0 | [runs through the model gateway](#runs-through-the-model-gateway-v04x-v4-rollout-step-4) |
-| 13 | `values-demo-gateway.yaml` | `values-demo.yaml` | v0.48.0 | [the demo's model gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7) |
+| 12 | The Envoy AI gateway's `meter.logsURL` in the docs | `meter.throttle.promQuery` | v0.48.0 | [runs through the model gateway](#runs-through-the-model-gateway-v0460) |
+| 13 | `values-demo-gateway.yaml` | `values-demo.yaml` | v0.48.0 | [the demo's model gateway](#the-demos-model-gateway-v0480) |
 | 14 | The ZITADEL reader: `human.access.readerFile`, `api.access.readerFile`, `zitadelReaderSecret` (`maku-factory`) | the GitHub account link: `human.githubLink`, `api.access.links: broker` | after v0.49.0 | [the ZITADEL reader](#the-zitadel-reader) |
 | 15 | `profile` (umbrella) | `demoValues: true`, which `values-demo.yaml` sets | after v0.48.0 | [the chart contract](#the-chart-contract) |
 | 16 | `networkPolicies.plain` (umbrella) | each component's own default-deny policies | after v0.48.0 | [the chart contract](#the-chart-contract) |
@@ -338,7 +338,7 @@ flowchart LR
 
 The per-repository `MergePolicy` and the repository file's `classes:` are not in this table: reusable
 merge policies' second release removed them, and v0.48.0 carries it
-([the per-repository merge policy removed](#the-per-repository-merge-policy-removed-v04x-release-n1)).
+([the per-repository merge policy removed](#the-per-repository-merge-policy-removed-v0480)).
 
 Before you upgrade, check that nothing still uses a removed path:
 
@@ -402,12 +402,12 @@ proxy: set `networkPolicies.mode: cilium` to keep the CiliumNetworkPolicies. Bec
 or the render fails with `choose one`. `values-quickstart.yaml` sets `mode: cilium`, and the umbrella's
 `values-demo.yaml` sets `mode: none` and the unsandboxed pair.
 
-The factory no longer writes `spec.queueName` on the AgentRuns it creates (D16: Kueue is dropped).
+The factory no longer writes `spec.queueName` on the AgentRuns it creates (Kueue is dropped).
 The runs quota (`runsQuota`) and the factory's slots and budgets bound the runs.
 
 ### The old App keys
 
-The `maku-factory` keys that step 3 kept beside `apps.*` are removed (D12). The schema refuses each
+The `maku-factory` keys that v0.46.0 kept beside `apps.*` are removed. The schema refuses each
 with a message naming its replacement; under `--skip-schema-validation` the template does. The
 factory's config refuses the `runTokens` file aliases the same way when it starts.
 
@@ -423,7 +423,7 @@ is gone. Upgrade the chart and the image together: the config is decoded strictl
 
 ### The shared git token
 
-Per-run tokens are the only run token outside a demo (D10, owner ruling Q14). The run-controller
+Per-run tokens are the only run token outside a demo. The run-controller
 mounts each run's own Secret, `<run>-git`, which the factory mints for the run's repository and role.
 
 | Removed | Instead |
@@ -442,7 +442,7 @@ umbrella refuses a factory with neither `runTokens.perRun` nor a laptop PAT, and
 
 ### The merge defaults
 
-Three defaults that step 3 left at their old values flip to the product path (D11, D12). A
+Three defaults that v0.46.0 left at their old values flip to the product path. A
 repository's `merge` block, the Factory's `spec.mergeDefaults` and a Repository's `spec.merge` read
 them the same way.
 
@@ -458,9 +458,9 @@ One that relied on the old defaults sets the right-hand column, or follows
 
 ### The XR run kind and octo-sts
 
-Runs are the run-controller's AgentRuns (`maku.ogenki.io`, D5), and their tokens are minted per run
-by the factory (D10). cloud-native-ref's Crossplane AgentRun (`cloud.ogenki.io`) and octo-sts, its
-token source, are removed (owner ruling R3).
+Runs are the run-controller's AgentRuns (`maku.ogenki.io`), and their tokens are minted per run
+by the factory. cloud-native-ref's Crossplane AgentRun (`cloud.ogenki.io`) and octo-sts, its
+token source, are removed.
 
 | Removed | Set instead | Refused by |
 |---|---|---|
@@ -478,17 +478,17 @@ The defaults move with it:
   (`cloud.ogenki.io`, `agents`, `xplane-run-`). A broker whose `runIssuers[].subPattern` names
   `xplane-run-` and leaves `runs` unset is refused at start: set `runs.namePrefix` or the pattern.
 - **`runs.gatewayIdentity`** unset now refuses `loops.<class>.models` and `split`, as it did on
-  `maku.ogenki.io`: set it once the run-controller runs in `model.mode: gateway` (GW10).
-- **`hardening.enforceOutputs`** needs `runTokens.perRun` and `hardening.publisher.minter` (HR11,
-  HR13). Readiness's R2 and R3 and the permission gauge read the role table only: the policy files
+  `maku.ogenki.io`: set it once the run-controller runs in `model.mode: gateway`.
+- **`hardening.enforceOutputs`** needs `runTokens.perRun` and `hardening.publisher.minter`.
+  Readiness's `sandbox_write_token` and `publisher_policy` checks and the permission gauge read the role table only: the policy files
   `.github/chainguard/*.sts.yaml` are no longer read and can be deleted.
 - **`human_edit`** (the tracer's exemption for a maintainer's edit of an applied output) now
   applies under `runTokens.perRun`, where a run's own edit is the agents App's.
 
 ### The ZITADEL reader
 
-The GitHub account link is the only identity source (D8). The reader that read ZITADEL's GitHub IdP
-links with a PAT, kept beside the link since step 5, is removed:
+The GitHub account link is the only identity source. The reader that read ZITADEL's GitHub IdP
+links with a PAT, kept beside the link since v0.47.0, is removed:
 
 | Removed | Set instead |
 |---|---|
@@ -504,7 +504,7 @@ The reader's other job, refusing at once a user deactivated in ZITADEL, is gone 
 while its human signed in within `human.githubLink.activeWindow` (default `168h`).
 
 Before you upgrade, move every active human onto the link
-([the GitHub account link](#the-github-account-link-v04x-v4-rollout-step-5) and
+([the GitHub account link](#the-github-account-link-v0470) and
 [its page](github-link.md)), then remove both `readerFile`s, `zitadelReaderSecret` and the reader's
 Secret. Delete the reader's machine user in ZITADEL afterwards: nothing reads its PAT.
 
@@ -537,8 +537,8 @@ name, the broker's TLS pair and the DSNs among them, to check their keys. Its po
 ### Private code is refused without its acknowledgement
 
 A Repository serving private code (`private` or `internal` on GitHub, or a visibility the factory
-cannot read) without `spec.privateCode.acknowledged: true` is now refused new tasks, where step 7
-warned (D3, owner ruling R9). Its `factory/ready` gets the refusal and loses the label, the API
+cannot read) without `spec.privateCode.acknowledged: true` is now refused new tasks, where v0.47.0
+warned. Its `factory/ready` gets the refusal and loses the label, the API
 answers `403 private_code_unacknowledged`, schedules and adoption start nothing there, and the
 preflight fails `private_code_unacknowledged`. Tasks already started finish.
 
@@ -555,7 +555,7 @@ That field states the repository's code is sent to the configured models, which 
 ### An unreadable ledger is refused
 
 The broker refuses to start when `rooms_broker` cannot read the migration ledger, where it used to
-serve with a warning (D9, owner ruling R10). The gauge `maku_rooms_schema_unverified` and the alert
+serve with a warning. The gauge `maku_rooms_schema_unverified` and the alert
 `RoomBrokerSchemaUnverified` are removed, and the preflight's `database` check fails with
 `db_ledger_unreadable` instead of warning `schema_unverified`.
 
@@ -574,7 +574,7 @@ Remove any query or alert of your own on the gauge.
 
 An install whose run controller still uses `agent-model`:
 
-1. Move it to the gateway, with the [step 4 steps](#runs-through-the-model-gateway-v04x-v4-rollout-step-4).
+1. Move it to the gateway, with the [v0.46.0 steps](#runs-through-the-model-gateway-v0460).
 2. Or, for a demo only, set `model.mode: secret` and `demoValues: true` explicitly.
 
 An install with `runController.enabled: false` (runs reconciled elsewhere) reads neither value and
@@ -583,7 +583,7 @@ renders as before.
 ### The single-repository config
 
 The factory config's top-level `repository`, `maintainers`, `triggerLabel`, `controlIssue`,
-`classes`, `merge` and `schedules` (v2 D1) are refused at start, each by name:
+`classes`, `merge` and `schedules` are refused at start, each by name:
 
 ```text
 config: repository is the single-repository shape, removed (v2 D1): serve the repository from a Repository object, which maku config migrate writes from this file (docs/upgrading.md#the-single-repository-config)
@@ -617,9 +617,9 @@ The chart's `SlackCardUpdatesFailing` rule moves with it. Rewrite any query, rul
 keep outside the chart before the upgrade, or read both names across it
 (`maku_slack_app_requests_total or factory_slack_requests_total`).
 
-## The per-repository merge policy removed (v0.4x, release N+1)
+## The per-repository merge policy removed (v0.48.0)
 
-Breaking. The release after [reusable merge policies](#reusable-merge-policies-v04x-release-n)
+Breaking. The release after [reusable merge policies](#reusable-merge-policies-v0480)
 removes the per-repository shape:
 
 | Removed | What happens to it now |
@@ -642,7 +642,7 @@ and no repository's `.github/agent-factory.yaml` has a `classes:` key. Convert w
 previous release's `maku config migrate --manifests` and `maku policy export` first. Then upgrade the
 CRDs (`agent-factory-crds`) and the factory together.
 
-## One policy-management stage, `merge.maxPerDay`, `factory/hold` (v0.5x, merge policies release N)
+## One policy-management stage, `merge.maxPerDay`, `factory/hold` (v0.50.0)
 
 This release is additive: every manifest and config the previous one accepts still loads. What
 the next release refuses is named, on each object, by a `Deprecated` condition (`True`,
@@ -670,12 +670,12 @@ settings page; one that sets `promotion` or `stage: manage` still needs `factory
 the label returns it to the gate. Create the label in each repository the factory merges in, so that
 maintainers can apply it from the pull request page.
 
-## Reusable merge policies (v0.4x, release N)
+## Reusable merge policies (v0.48.0)
 
 A `MergePolicy` becomes one reusable class definition, named by its object, and a `Repository`
 binds the ones it uses under `spec.mergePolicies`, with its own `spec.merge`
 ([factory resources](merge-policies.md#factory-resources)). This release reads both shapes; the next
-minor, now shipped, [removes the per-repository one](#the-per-repository-merge-policy-removed-v04x-release-n1).
+minor, now shipped, [removes the per-repository one](#the-per-repository-merge-policy-removed-v0480).
 Nothing changes until a manifest does: a repository served from
 a per-repository `MergePolicy` is decided exactly as before, with one warning per such object at
 every start (`MergePolicy <name> is in the per-repository shape, removed in the next minor: maku
@@ -707,9 +707,9 @@ config migrate`).
    with `maku policy export`.
 
 Before the next minor, check that no per-repository object and no `classes:` file is left: its
-[section](#the-per-repository-merge-policy-removed-v04x-release-n1) has the checks.
+[section](#the-per-repository-merge-policy-removed-v0480) has the checks.
 
-## Exposure and the web front door (v0.4x, v4 rollout step 6)
+## Exposure and the web front door (v0.47.0)
 
 New keys, all off by default, so a release that sets none of them renders as before:
 
@@ -724,7 +724,7 @@ keeps them until it turns these on, then deletes them: both would serve the same
 proxy keeps the cookie name `_rooms`, so sessions survive the switch when the cookie secret is the
 same Secret.
 
-## The preflight (v0.4x, v4 rollout step 7)
+## The preflight (v0.47.0)
 
 One new key, off by default, so a release that does not set it renders as before:
 
@@ -759,7 +759,7 @@ their credentials.
 With `maku.preflight.enabled`, the chart adds a `run-controller` Service on `:9090` for the
 collection. An image older than the chart answers 404 there, reported as `component_too_old`.
 
-## Private code (v0.4x, v4 rollout step 7)
+## Private code (v0.47.0)
 
 One new optional field on the `Repository`, `spec.privateCode.acknowledged`. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
 This release warns and serves; the next one refuses
@@ -777,7 +777,7 @@ A repository defined in the factory's config file takes the same key on its `rep
 The web UI shows the banner only when the broker has `factoryURL`, and the broker and factory images
 move together: an older factory answers 404 on `GET /v1/install`, and the banner shows nothing for it.
 
-## Secrets by name (v0.4x, v4 rollout step 5)
+## Secrets by name (v0.47.0)
 
 Every Secret an install reads is listed in [install Secrets](install-secrets.md), with its keys.
 Two new keys, off by default, so a release that sets neither renders as before:
@@ -792,7 +792,7 @@ empty one stops the start, and the message names the seam, the Secret and its ke
 component started and refused at the first use. An optional mount (the intake's token, the ZITADEL
 reader, the sponsored ids, the merger App) is still refused at use, as before.
 
-## The GitHub account link (v0.4x, v4 rollout step 5)
+## The GitHub account link (v0.47.0)
 
 New keys, all off by default, so a release that sets none of them renders and runs as before:
 
@@ -813,7 +813,7 @@ To move an install off the ZITADEL reader:
 4. Each human opens `/link/github` once. Once every active human has linked, remove
    `human.access.readerFile`, `api.access.readerFile` and `zitadelReaderSecret`.
 
-## RunLore's knowledge base for runs (v0.4x, v4 rollout step 6)
+## RunLore's knowledge base for runs (v0.47.0)
 
 New keys, off by default, so a release that does not set it renders as before:
 
@@ -827,7 +827,7 @@ The run controller now lists `room-broker__kb_search` and `room-broker__kb_get` 
 `MCP_READ_ONLY_TOOLS`, whether or not the broker serves them. The broker decodes its config strictly,
 so a `roomTools.knowledge` block needs this release's broker image: chart and images move together.
 
-## Run traces (v0.4x, v4 rollout step 6)
+## Run traces (v0.47.0)
 
 One new key in the `maku` chart, off by default, so a release that does not set it renders as before:
 
@@ -847,7 +847,7 @@ The run controller decodes its config strictly, so a `tracing:` block needs this
 controller image: chart and images move together. Runs already started keep their pods, without
 traces, until they end.
 
-## Scrape objects, alerts and dashboards (v0.4x, v4 rollout step 6)
+## Scrape objects, alerts and dashboards (v0.47.0)
 
 New umbrella keys, all off by default, so a release that sets none of them renders as before:
 
@@ -864,7 +864,7 @@ alerts are renamed from what this page's [factory alerts](operations.md#factory-
 `FactoryRepositoryNotOwned` is `AgentFactoryRepositoryNotOwned`, as cloud-native-ref named it, and
 `AgentFactoryClassPausedLong` watches every class, not a fixed list.
 
-## Runs through the model gateway (v0.4x, v4 rollout step 4)
+## Runs through the model gateway (v0.46.0)
 
 New keys, all off by default, so a release that sets none of them renders as before:
 
@@ -872,7 +872,7 @@ New keys, all off by default, so a release that sets none of them renders as bef
 |---|---|---|
 | `maku.runController.model.mode` | `secret`: `runController.modelSecret`, as before | `gateway`: runs call the model gateway with their own token, and `modelSecret` is not read ([the model gateway](gateway.md#runs-through-the-gateway)) |
 | `maku.runController.model.gateway` | `model-gateway` in the release namespace, ports 8080 and 8081, prefix `maku-gateway`, no aliases | the gateway and the aliases each listener serves |
-| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered. Folded into `values-demo.yaml` and deleted in step 7 ([the demo's gateway](#the-demos-model-gateway-v04x-v4-rollout-step-7)) |
+| `values-demo-gateway.yaml` | not layered | the demo with the gateway: `demo.model.apiKey` becomes the provider's Secret `demo-model` in the release namespace, and no `agent-model` is rendered. Folded into `values-demo.yaml` and deleted in v0.48.0 ([the demo's gateway](#the-demos-model-gateway-v0480)) |
 | `maku-factory.config.runs.gatewayIdentity` | unset | `true`: portable runs carry a gateway identity, so the meter prices them, and `loops.<class>.models` and `split` are accepted ([metering the runs](gateway.md#metering-the-runs)). The umbrella requires it with `model.mode: gateway` and a portable factory |
 | `maku-factory.config.meter.throttle.promQuery` | unset | the gateway's 429s from PromQL on `meter.url`, in place of `meter.logsURL` with `meter.throttleQuery`; one of the two is required outside the demo, never both |
 | `maku-gateway.modelCatalog.prices` (umbrella) | `maku-factory.config.meter.prices` | the gateway's catalog takes the factory's prices when its own are empty |
@@ -893,7 +893,7 @@ Under `runs.gatewayIdentity` the factory stamps each AgentRun `spec.meteredBy: g
 `agent-factory-crds` first, since an older AgentRun CRD prunes the field, and a secret-mode run
 controller then starts the run unmetered.
 
-## Push enforced (v0.4x, hardening stage H3)
+## Push enforced (v0.46.0)
 
 Opt-in per repository; without `push` in an `enforceOutputs` list nothing changes.
 
@@ -908,7 +908,7 @@ Opt-in per repository; without `push` in an `enforceOutputs` list nothing change
 configs are decoded strictly: upgrade the charts and the images together. The order of the steps
 is in [Operations](operations.md#hardening-push-enforced).
 
-## Two GitHub Apps (v0.4x, v4 rollout step 3)
+## Two GitHub Apps (v0.46.0)
 
 New `maku-factory` keys name the Apps ([GitHub Apps](github-apps.md)). Each maps onto an old
 key, which keeps working, and with none of them set the render is unchanged.
@@ -925,7 +925,7 @@ factory config is unchanged, and its pod no longer mounts the absent `agent-fact
 The config also gains `github.agentsAppIDFile` and `agentsKeyFile`; it is decoded strictly, so
 upgrade the chart and the image together.
 
-## Per-run tokens (v0.4x, v4 rollout step 3)
+## Per-run tokens (v0.46.0)
 
 Two opt-in keys, which go together; without them nothing changes (`gitTokens: shared` stays the
 default, and `runTokens.enabled` alone keeps the two shared Secrets).
@@ -945,21 +945,21 @@ decoded strictly: upgrade the chart and the images together.
 
 With the standalone `maku` and `maku-factory` charts nothing pairs the two keys, and the factory
 cannot read the run-controller's mode: set both, or an `enforceOutputs` repository the factory
-admits (HR13) would run on the shared write token. API runs reserved before the upgrade carry no
+admits would run on the shared write token. API runs reserved before the upgrade carry no
 repository in their reservation and get no per-run token: let them end before enabling `perRun`.
 
 **The publisher from the minter.** `config.hardening.publisher.minter: true` (opt-in, needs
 `runTokens.enabled`) mints the safe-output publisher's token from the agents App instead of
 exchanging it at octo-sts; it is refused together with `hardening.publisher.octoSTS.url`. Without
 it nothing changes. Readiness and the permission gauge now read the token source the runs get: the
-octo-sts policy files on the XR as before, the role table under `runTokens.perRun`. Step 8 removed
+octo-sts policy files on the XR as before, the role table under `runTokens.perRun`. v0.49.0 removed
 the XR and octo-sts ([the XR run kind and octo-sts](#the-xr-run-kind-and-octo-sts)).
 
-## The run path (v0.4x, v4 rollout step 2)
+## The run path (v0.46.0)
 
 New keys in the `maku` chart, each rendered only with `runController.enabled`, so an install without
 the run controller (cloud-native-ref's AgentRun composition) renders as before. Every older key keeps
-its meaning until rollout step 8 deletes it.
+its meaning until v0.48.0 deletes it.
 
 | New key | Default | Old key, still honoured |
 |---|---|---|
@@ -977,7 +977,7 @@ Where an old and a new key conflict (`sandbox.unsafeAllowRunc` with `sandbox.run
 The run controller decodes its config strictly, so its image and the chart move together; the
 egress proxy is the same image.
 
-## The chart contract (v0.4x, v4 rollout step 1)
+## The chart contract (v0.46.0)
 
 This release changes three things in `charts/agent-factory`.
 
@@ -988,13 +988,13 @@ This release changes three things in `charts/agent-factory`.
 | `values.schema.json` rejects unknown top-level keys and malformed values, and every chart requires Kubernetes 1.30 or later (`kubeVersion: ">=1.30.0-0"`) | Fix the key or value the error names. Use Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version 1.30.0` or later |
 
 `maku` and `maku-factory`, used on their own, change only by their `kubeVersion`. They kept their
-`crds/` until rollout step 8, which removes them ([the chart contract](#the-chart-contract)).
+`crds/` until v0.49.0, which removes them ([the chart contract](#the-chart-contract)).
 
 ### Two charts, one set of CRDs
 
-The `maku` and `maku-factory` subcharts kept their `crds/` until rollout step 8, so the umbrella
-carried the same six CRDs. Once `agent-factory-crds` is installed, it alone manages them: on a release
-before step 8, tell your GitOps tool to skip the umbrella's copies. From step 8 there are none to skip.
+The `maku` and `maku-factory` subcharts kept their `crds/` until v0.49.0, so the umbrella
+carried the same six CRDs. Once `agent-factory-crds` is installed, it alone manages them: on an earlier
+release, tell your GitOps tool to skip the umbrella's copies. From v0.49.0 there are none to skip.
 
 | Tool | On the umbrella's release |
 |---|---|

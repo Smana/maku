@@ -75,12 +75,36 @@ links() {
     }' "$1"
 }
 
+# ids FILE: "line<TAB>rule<TAB>match" for each design id or cluster name, outside code. A design
+# id (D11, AM6, OD-8, "rollout step 7", "release N+1") names a ruling in a spec or plan, and a
+# cluster name (aws-0) names one host: neither means anything to a reader, so both stay under
+# docs/superpowers and docs/contributing. Whole words (no letter, digit or hyphen on either side),
+# case-sensitive: B1, MD5, D100 and `D4` stay clean.
+ids() {
+  perl -CSDA -ne '
+    if (/^ {0,3}(```|~~~)/) { $f = !$f; next }
+    next if $f;
+    s/`[^`]*`/ /g;
+    my ($l, $r) = (q{(?<![\p{L}\p{N}-])}, q{(?![\p{L}\p{N}-])});
+    while (/$l(D\d{1,2}|AM\d+|MP\d+|HR\d+|FA\d+|SI\d+|GW\d+|OD-\d+|V1\d|C[24]|R\d{1,2}|rollout step \d|step \d (?:PR [A-Z]\d*|R\d+)|[Rr]elease N(?:\+1)?|Live proof \d)$r/g) {
+      print "$.\tdesign id\t$1\n";
+    }
+    while (/$l((?:aws|gcp)-0)$r/g) { print "$.\tcluster name\t$1\n" }
+  ' "$1"
+}
+
 rc=0
 for f in "${files[@]}"; do
   case "$f" in *docs/superpowers/*) continue;; esac
   while IFS=$'\t' read -r n word; do
     echo "$f:$n: status vocabulary: $word"; rc=1
   done < <(status "$f" | awk '!seen[$0]++')
+  case "$f" in
+    *docs/contributing/*) ;;
+    *) while IFS=$'\t' read -r n rule m; do
+         echo "$f:$n: $rule: $m"; rc=1
+       done < <(ids "$f" | awk '!seen[$0]++');;
+  esac
   dir=$(dirname "$f")
   while IFS=$'\t' read -r n link; do
     target=${link%%#*}; frag=""

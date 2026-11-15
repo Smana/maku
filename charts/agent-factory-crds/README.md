@@ -8,7 +8,7 @@ upgrades what sits in `crds/`. Each CRD carries `helm.sh/resource-policy: keep`,
 chart leaves the CRDs, and every Room and Task, in place. `keep: false` drops the annotation: an
 uninstall then deletes every Room and Task.
 
-It also holds the cluster's shared ClusterRoles (D2, step 7 R10), one set for every install:
+It also holds the cluster's shared ClusterRoles, one set for every install:
 `maku-factory-admin`, `maku-mergepolicy-editor` and `maku-viewer`, aggregated into the built-in
 `admin`, `edit` and `view` roles, and `agent-factory-flux-reader`, which each install's factory binds
 for a class's `monitor.flux`. They are kept on uninstall as the CRDs are. `clusterRoles: false` leaves
@@ -36,7 +36,7 @@ kubectl get mergepolicy -A -o jsonpath='{..repositoryRef}'   # prints nothing
 `kubectl get repository` shows `CLASSES` and `LIVE` per Repository, and `kubectl get mergepolicy`
 shows `CONSUMERS` (the Repositories binding it), `CURRENT` (those serving its current generation),
 `LIVE` and `ACCEPTED`. The
-[upgrade](../../docs/upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1) lists the
+[upgrade](../../docs/upgrading.md#the-per-repository-merge-policy-removed-v0480) lists the
 steps.
 
 Helm 3.15 or later: Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template`
@@ -45,9 +45,9 @@ needs `--kube-version 1.30.0` or later.
 ## With the umbrella
 
 This chart alone carries the CRDs: the `maku` and `maku-factory` charts have had no `crds/` since
-rollout step 8, under the umbrella or on their own. Install it first, also for `maku` or
+v0.49.0, under the umbrella or on their own. Install it first, also for `maku` or
 `maku-factory` used alone. Removing their `crds/` deletes no CRD: Helm never deletes what it installed
-from `crds/`. A release before step 8 still carries copies, which a GitOps tool skips once this chart
+from `crds/`. An earlier release still carries copies, which a GitOps tool skips once this chart
 is installed: Argo CD `skipCrds: true`, or Flux `crds: Skip` on install and upgrade.
 
 ## Adopting CRDs that already exist
