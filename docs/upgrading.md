@@ -4,6 +4,48 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Workflows name what runs
+
+Workflows release N+1 (v0.5x, shipped with the merge gate that reads the diff): the class no longer
+chooses what runs on a task. A task's workflow is the first of a maintainer's `workflow:<name>`
+label (or the choice at confirmation), the task's source (a `Schedule`'s `workflow`, `quick` when
+it names none; `quick` for a revert and an oracle finding; `none` for an adopted pull request), and
+the `Repository`'s `workflow.default`, `standard` when unset. A maintainer may pin any workflow on any
+class, `quick` included: a pull request no reviewer read waits for a human unless a shape or an
+oracle checks its diff.
+
+Everything release N warned about is refused, each error naming this section:
+
+| Old key or label | Write instead | Refused from |
+|---|---|---|
+| `harnessProfiles` (a `Factory`, the file) | `workflows`, the same map | N+1 |
+| `templates.trio` | `pair` | N+1 |
+| `triage.classifierURL` (the values file) | nothing: remove the key | N+1 |
+| `defaults.template`, `defaults.tier` | nothing: a workflow names its template and its tier | N+1 |
+| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row named after a workflow; set that workflow's `loop` to share one | N+1 |
+| `workflows.<name>.testFirst` | the `Repository`'s `workflow.testFirst`: the tester runs in `careful` | N+1 |
+| `human.intake.plan.classes` (the broker) | `factoryURL`: the factory's catalog names the classes and workflows | N+1 |
+| the `profile:<name>` label | `workflow:<name>`; a `profile:` or `class:` label is read by nothing and told once on its issue | N+1 |
+| the `class:<name>` label | nothing: the gate reads the diff | N+1 |
+
+Where a `MergePolicy`'s workflow fields go. They are read by nothing in this release and stay
+accepted, with the `Deprecated` condition, until the merge policies' removal lands:
+
+| Field on `MergePolicy` | Lands on |
+|---|---|
+| `harness` | the `Repository`'s `workflow.default` (one per repository) |
+| `harnessAllowed` | nothing: every workflow the `Factory` defines may be pinned |
+| `escalation` | `Factory.spec.workflows.<name>.escalation`, on the workflow a task steps from |
+| `testFirst` | the `Repository`'s `workflow.testFirst` (needs `merge.contractCheck`) |
+| `checks` | `Factory.spec.workflows.<name>.checks` |
+
+`maku config migrate` rewrites `harnessProfiles` as `workflows`, `trio` as `pair`, and drops
+`templates.trio`, `triage.classifierURL`, `defaults.template`, `defaults.tier` and a workflow's
+`testFirst`; a `loops` row named after a class has no mechanical home and is refused. The pin
+refusals `class_no_profiles`, `class_profile_fixed`, `profile_not_allowed` and `profile_internal`
+are gone; a task triaged before this release keeps the code it recorded. The status source `floor`
+is now `repository`.
+
 ## Workflows: old names warn (v0.5x, workflows release N)
 
 This release is additive: every config and manifest the previous one accepts still loads. What the

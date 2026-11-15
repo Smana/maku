@@ -84,20 +84,20 @@ export interface Exception {
   id: string; repository: string; class: string; minimum: number; justification: string;
   requestedBy: string; requestedAt: string; state: string; decidedBy?: string; note?: string; expiresAt?: string;
 }
-// The factory's catalogue of what a repository offers at intake (profile choice at intake): the
-// classes it offers, each with its floor profile, variants and escalation, and the profiles by name.
+// The factory's catalogue of what a repository offers at intake: the classes it offers and how each
+// merges, and the workflows (profiles) every class may run, the repository's default named (WF4).
 // Null on a page when the factory could not be asked: the rest of the page still reads.
 export interface CatalogueClass {
-  name: string; description: string; mode: string; ceilingUSD: number; floor: string; allowed: string[];
-  escalation: { outOfBudget?: string; notConverged?: string } | null;
+  name: string; description: string; mode: string; ceilingUSD: number;
 }
 export interface CatalogueProfile {
   template: string; roles: string[] | null; tier: string; checks: boolean; testFirst: boolean; loop: string;
   description: string; offered: boolean; notOffered?: string;
+  escalation?: { outOfBudget?: string; notConverged?: string } | null;
 }
 export interface Catalogue {
   repository: string; evaluation: { mode: string; controlPercent: number }; approveToMerge: boolean; maintainer: boolean;
-  classes: CatalogueClass[]; profiles: Record<string, CatalogueProfile>;
+  classes: CatalogueClass[]; defaultWorkflow: string; profiles: Record<string, CatalogueProfile>;
 }
 export interface RepositoryPage {
   report: Report; promotions: Promotion[]; exceptions: Exception[];

@@ -22,7 +22,7 @@ const reviewNote = "# Steering: review\n\n## Verify\n- `task check` (CI: check):
 func scopeRig(t *testing.T, mode config.ScopeMode) *rig {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves"))
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: mode}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: mode}}
 	return g
 }
 

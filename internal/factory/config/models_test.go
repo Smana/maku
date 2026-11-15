@@ -21,22 +21,22 @@ var byModel = strings.Replace(strings.Replace(good, "sum by (ar_agent)", "sum by
 func TestModelFor(t *testing.T) {
 	cfg, err := Parse([]byte(byModel + gatewayIdentity + `loops:
   default: {models: {reviewer: {light: mistral-light}}}
-  docs: {models: {implementer: {standard: mistral-standard, frontier: kimi-frontier}, triager: {light: mistral-light}}, judge: mistral-light}
+  standard: {models: {implementer: {standard: mistral-standard, frontier: kimi-frontier}, triager: {light: mistral-light}}, judge: mistral-light}
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
 	for name, c := range map[string]struct{ class, dataClass, role, tier, want string }{
-		"public docs, standard implementer": {"docs", "public", "implementer", "standard", "mistral-standard"},
-		"public docs, frontier implementer": {"docs", "public", "implementer", "frontier", "kimi-frontier"},
-		"public docs, the scoper's light":   {"docs", "public", "triager", "light", "mistral-light"},
-		"internal docs: never an alias":     {"docs", "internal", "implementer", "standard", ""},
-		"an unknown data class: never":      {"docs", "", "implementer", "standard", ""},
-		"a tier without an entry":           {"docs", "public", "implementer", "light", ""},
-		"a role without an entry":           {"docs", "public", "reviewer", "frontier", ""},
-		"a row inherits default's (WF10)":   {"docs", "public", "reviewer", "light", "mistral-light"},
-		"default's row reaches review":      {"review", "public", "reviewer", "light", "mistral-light"},
-		"default's row, internal":           {"review", "internal", "reviewer", "light", ""},
+		"public standard, standard implementer": {"standard", "public", "implementer", "standard", "mistral-standard"},
+		"public standard, frontier implementer": {"standard", "public", "implementer", "frontier", "kimi-frontier"},
+		"public standard, the scoper's light":   {"standard", "public", "triager", "light", "mistral-light"},
+		"internal standard: never an alias":     {"standard", "internal", "implementer", "standard", ""},
+		"an unknown data class: never":          {"standard", "", "implementer", "standard", ""},
+		"a tier without an entry":               {"standard", "public", "implementer", "light", ""},
+		"a role without an entry":               {"standard", "public", "reviewer", "frontier", ""},
+		"a row inherits default's (WF10)":       {"standard", "public", "reviewer", "light", "mistral-light"},
+		"default's row reaches review":          {"review", "public", "reviewer", "light", "mistral-light"},
+		"default's row, internal":               {"review", "internal", "reviewer", "light", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := cfg.ModelFor(c.class, c.dataClass, c.role, c.tier); got != c.want {
@@ -47,14 +47,14 @@ func TestModelFor(t *testing.T) {
 	if cfg.LoopFor("default") != nil {
 		t.Error("a models row switched the loop on")
 	}
-	if p := cfg.LoopFor("docs"); p == nil || p.JudgeModel != "mistral-light" {
-		t.Errorf("docs' judge %+v, want mistral-light", p)
+	if p := cfg.LoopFor("standard"); p == nil || p.JudgeModel != "mistral-light" {
+		t.Errorf("standard' judge %+v, want mistral-light", p)
 	}
 	none, err := Parse([]byte(good))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := none.ModelFor("docs", "public", "implementer", "standard"); got != "" {
+	if got := none.ModelFor("standard", "public", "implementer", "standard"); got != "" {
 		t.Errorf("no loops: %q, want today's model (D4)", got)
 	}
 }
@@ -76,38 +76,38 @@ func TestPublicOnly(t *testing.T) {
 // also reaches an internal task (a tier's model, a template's reviewerModel) may name a provider alias.
 func TestProviderAliasesAreRefused(t *testing.T) {
 	for name, c := range map[string]struct{ base, edit, want string }{
-		"an unknown role": {byModel, "loops: {docs: {models: {merger: {standard: mistral-standard}}}}",
-			`loops.docs.models: unknown role "merger"`},
-		"an unknown tier": {byModel, "loops: {docs: {models: {implementer: {huge: mistral-standard}}}}",
-			`loops.docs.models.implementer: "huge" is light, standard or frontier`},
-		"another tier's alias": {byModel, "loops: {docs: {models: {implementer: {frontier: mistral-light}}}}",
-			"loops.docs.models.implementer.frontier: mistral-light serves the light tier only"},
-		"standard on frontier": {byModel, "loops: {docs: {models: {implementer: {frontier: mistral-standard}}}}",
-			"loops.docs.models.implementer.frontier: mistral-standard serves the standard tier only"},
-		"an unknown alias": {byModel, "loops: {docs: {models: {implementer: {standard: mistral-large}}}}",
-			`loops.docs.models.implementer.standard: "mistral-large" is not a provider alias`},
-		"a C5 name is not a provider alias": {byModel, "loops: {docs: {models: {implementer: {standard: tier-standard}}}}",
-			`loops.docs.models.implementer.standard: "tier-standard" is not a provider alias`},
+		"an unknown role": {byModel, "loops: {standard: {models: {merger: {standard: mistral-standard}}}}",
+			`loops.standard.models: unknown role "merger"`},
+		"an unknown tier": {byModel, "loops: {standard: {models: {implementer: {huge: mistral-standard}}}}",
+			`loops.standard.models.implementer: "huge" is light, standard or frontier`},
+		"another tier's alias": {byModel, "loops: {standard: {models: {implementer: {frontier: mistral-light}}}}",
+			"loops.standard.models.implementer.frontier: mistral-light serves the light tier only"},
+		"standard on frontier": {byModel, "loops: {standard: {models: {implementer: {frontier: mistral-standard}}}}",
+			"loops.standard.models.implementer.frontier: mistral-standard serves the standard tier only"},
+		"an unknown alias": {byModel, "loops: {standard: {models: {implementer: {standard: mistral-large}}}}",
+			`loops.standard.models.implementer.standard: "mistral-large" is not a provider alias`},
+		"a C5 name is not a provider alias": {byModel, "loops: {standard: {models: {implementer: {standard: tier-standard}}}}",
+			`loops.standard.models.implementer.standard: "tier-standard" is not a provider alias`},
 		"unpriced, prices by served model": {strings.Replace(byModel, "mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50}, ", "", 1),
-			"loops: {docs: {models: {implementer: {standard: mistral-standard}}}}",
-			"loops.docs.models.implementer.standard: mistral-standard needs meter.prices.mistral-medium-2604"},
+			"loops: {standard: {models: {implementer: {standard: mistral-standard}}}}",
+			"loops.standard.models.implementer.standard: mistral-standard needs meter.prices.mistral-medium-2604"},
 		// A by-model meter prices the served model: a row under the alias alone never reaches it.
 		"unpriced by served model, an alias-only row": {strings.Replace(strings.Replace(byModel, "mistral-medium-2604: {input: 1.50, cacheRead: 0.15, output: 7.50}, ", "", 1),
 			"  prices: {", "  prices: {mistral-standard: {input: 1.50, cacheRead: 0.15, output: 7.50}, ", 1),
-			"loops: {docs: {models: {implementer: {standard: mistral-standard}}}}",
-			"loops.docs.models.implementer.standard: mistral-standard needs meter.prices.mistral-medium-2604"},
-		"unpriced, prices by logical model": {priced, "loops: {docs: {models: {implementer: {standard: mistral-standard}}}}",
-			"loops.docs.models.implementer.standard: mistral-standard needs meter.prices.mistral-standard"},
+			"loops: {standard: {models: {implementer: {standard: mistral-standard}}}}",
+			"loops.standard.models.implementer.standard: mistral-standard needs meter.prices.mistral-medium-2604"},
+		"unpriced, prices by logical model": {priced, "loops: {standard: {models: {implementer: {standard: mistral-standard}}}}",
+			"loops.standard.models.implementer.standard: mistral-standard needs meter.prices.mistral-standard"},
 		"an unknown class": {byModel, "loops: {nope: {models: {implementer: {standard: mistral-standard}}}}",
-			`loops.nope: "nope" is not default, review or a class a repository declares`},
+			"loops.nope: a row is named default or a workflow"},
 		"a tier's model": {strings.Replace(byModel, "light:    {model: agent-default", "light:    {model: mistral-light", 1), "",
 			`tier light: model "mistral-light" is not a C5 logical name`},
-		"a template's reviewerModel": {strings.Replace(byModel, "maxReviewRounds: 2}\n  trio", "maxReviewRounds: 2, reviewerModel: kimi-frontier}\n  trio", 1), "",
+		"a template's reviewerModel": {strings.Replace(byModel, "maxReviewRounds: 2}\n  investigate", "maxReviewRounds: 2, reviewerModel: kimi-frontier}\n  investigate", 1), "",
 			`template pair: reviewerModel "kimi-frontier" is not a C5 logical name`},
-		"a judge off the light tier": {byModel, "loops: {docs: {judge: kimi-frontier}}",
-			`loops.docs.judge "kimi-frontier" is none or one of`},
+		"a judge off the light tier": {byModel, "loops: {standard: {judge: kimi-frontier}}",
+			`loops.standard.judge "kimi-frontier" is none or one of`},
 		"an unpriced judge": {strings.Replace(byModel, "mistral-small-2603: {input: 0.15, cacheRead: 0.015, output: 0.60}", "", 1),
-			"loops: {docs: {judge: mistral-light}}", "loops.docs.judge: mistral-light needs meter.prices.mistral-small-2603"},
+			"loops: {standard: {judge: mistral-light}}", "loops.standard.judge: mistral-light needs meter.prices.mistral-small-2603"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(c.base + c.edit + "\n"))
@@ -117,12 +117,12 @@ func TestProviderAliasesAreRefused(t *testing.T) {
 		})
 	}
 	// Without meter.prices a tier keeps its token caps, and so does an alias: accepted.
-	if _, err := Parse([]byte(good + gatewayIdentity + "loops: {docs: {models: {implementer: {standard: mistral-standard}}, judge: mistral-light}}\n")); err != nil {
+	if _, err := Parse([]byte(good + gatewayIdentity + "loops: {standard: {models: {implementer: {standard: mistral-standard}}, judge: mistral-light}}\n")); err != nil {
 		t.Fatalf("no prices, token caps: %v", err)
 	}
 	// A price row under the alias itself is the logical-model meter's (a query not by model).
 	aliasPriced := strings.Replace(priced, "  prices: {", "  prices: {mistral-standard: {input: 1.50, cacheRead: 0.15, output: 7.50}, ", 1)
-	if _, err := Parse([]byte(aliasPriced + gatewayIdentity + "loops: {docs: {models: {implementer: {standard: mistral-standard}}}}\n")); err != nil {
+	if _, err := Parse([]byte(aliasPriced + gatewayIdentity + "loops: {standard: {models: {implementer: {standard: mistral-standard}}}}\n")); err != nil {
 		t.Fatalf("priced under the alias: %v", err)
 	}
 }

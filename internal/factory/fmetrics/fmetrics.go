@@ -945,7 +945,7 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
 	cohort = oneOf(cohort, []string{"labeled", "control", "treatment", "none"})
 	outcome = oneOf(outcome, taskOutcomes())
-	source = oneOf(source, []string{"label", "floor", "control", "treatment", "scoper", "escalation"})
+	source = oneOf(source, []string{"label", "schedule", "revert", "oracle", "repository", "floor", "control", "treatment", "scoper", "escalation"})
 	if recommended == "" {
 		recommended = "none"
 	}

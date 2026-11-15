@@ -19,7 +19,8 @@ import (
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
-// testerRig is a public scripts task whose class switches testFirst on, triaged and queued once.
+// testerRig is a public scripts task on a repository that opts in to the tester and runs careful by
+// default (WF7), triaged and queued once.
 func testerRig(t *testing.T, edit func(*v1alpha1.Task)) *rig { return testerRigCfg(t, edit, nil) }
 
 // testerRigCfg is testerRig with a hook on the config before the task's triage.
@@ -31,7 +32,8 @@ func testerRigCfg(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 		edit(tk)
 	}
 	g := newRig(t, tk)
-	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Checks: true, TestFirst: true}
+	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{}
+	testFirstCareful(g.r.Cfg.Current())
 	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = "Test contract 🧪"
 	g.r.Cfg.Current().Defaults.PredictedClass = tk.Spec.PredictedClass // the static triage's class
 	g.r.Triage = triage.Static{}
@@ -40,6 +42,28 @@ func testerRigCfg(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	}
 	g.reconcile(t, "3buqdlot", 3)
 	return g
+}
+
+// testFirstCareful makes c's first repository opt in to the tester and run careful by default, a
+// workflow with checks on (WF7).
+func testFirstCareful(c *config.Config) {
+	if c.HarnessProfiles == nil {
+		c.HarnessProfiles = map[string]config.HarnessProfile{}
+	}
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "solo", Checks: true}
+	c.Repositories[0].Workflow = config.RepositoryWorkflow{Default: "careful", TestFirst: true}
+}
+
+// setDefaultTemplate sets the template of c's first repository's default workflow: what a task runs
+// when nothing names its roles (WF3).
+func setDefaultTemplate(c *config.Config, template string) {
+	if c.HarnessProfiles == nil {
+		c.HarnessProfiles = map[string]config.HarnessProfile{}
+	}
+	name := c.Repositories[0].DefaultWorkflow()
+	p := c.HarnessProfiles[name]
+	p.Template = template
+	c.HarnessProfiles[name] = p
 }
 
 // task reads the rig's task as it now stands.
@@ -74,12 +98,16 @@ func TestATestFirstClassStartsWithTheTester(t *testing.T) {
 	}
 }
 
+// WF7: the tester runs a public careful task only; standard, though the repository opts in, does not.
 func TestTestFirstOffOrAnInternalTaskRunsTodaysSequence(t *testing.T) {
-	for name, edit := range map[string]func(*v1alpha1.Task){
-		"internal": func(tk *v1alpha1.Task) { tk.Spec.DataClass = "internal" },
-		"docs":     func(tk *v1alpha1.Task) { tk.Spec.PredictedClass = "docs" },
+	for name, c := range map[string]struct {
+		edit    func(*v1alpha1.Task)
+		cfgEdit func(*config.Config)
+	}{
+		"internal": {edit: func(tk *v1alpha1.Task) { tk.Spec.DataClass = "internal" }},
+		"standard": {cfgEdit: func(c *config.Config) { c.Repositories[0].Workflow.Default = "standard" }},
 	} {
-		if s := testerRig(t, edit).runs.specs[rid(0)]; s.Role != "implementer" {
+		if s := testerRigCfg(t, c.edit, c.cfgEdit).runs.specs[rid(0)]; s.Role != "implementer" {
 			t.Errorf("%s: first run %s, want the implementer", name, s.Role)
 		}
 	}
@@ -87,7 +115,7 @@ func TestTestFirstOffOrAnInternalTaskRunsTodaysSequence(t *testing.T) {
 
 func TestTheScoperRunsBeforeTheTester(t *testing.T) {
 	g := testerRigCfg(t, nil, func(c *config.Config) {
-		c.Loops = map[string]config.Loop{"scripts": {Scope: config.ScopeScoper}}
+		c.Loops = map[string]config.Loop{"careful": {Scope: config.ScopeScoper}}
 		c.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	})
 	if s := g.runs.specs[rid(0)]; s.Role != "triager" {
@@ -363,7 +391,7 @@ func TestAFailedTesterRunWithoutABranchIsNoContract(t *testing.T) {
 // contractedPair is a pair task whose tester left a contract, its implementer rid(1) running.
 func contractedPair(t *testing.T) *rig {
 	t.Helper()
-	g := testerRigCfg(t, nil, func(c *config.Config) { c.Defaults.Template = "pair" })
+	g := testerRigCfg(t, nil, func(c *config.Config) { setDefaultTemplate(c, "pair") })
 	g.pushed(agentsApp)
 	g.contractIs(contractSHA, rid(0), []string{"scripts/ci/tests/test_dry_run.py", "scripts/ci/tests/test_flags.py"}, []string{"a::one", "a::two", "b::three"})
 	g.endTester(t, "Succeeded", "agent_finished")
@@ -419,7 +447,10 @@ func TestAHandoffToTheTesterIsContractDisputed(t *testing.T) {
 		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
 	}
 	// The same handoff on a task without a contract is today's path: the run's pull request is reviewed.
-	g = testerRigCfg(t, func(tk *v1alpha1.Task) { tk.Spec.PredictedClass = "docs" }, func(c *config.Config) { c.Defaults.Template = "pair" })
+	g = testerRigCfg(t, nil, func(c *config.Config) {
+		c.Repositories[0].Workflow.Default = "standard" // the tester runs in careful only (WF7)
+		setDefaultTemplate(c, "pair")
+	})
 	g.log.evs = append(g.log.evs, envelope.Event{Seq: 1, RunID: rid(0), Type: envelope.Handoff, Origin: envelope.OriginClient,
 		Actor:   envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + rid(0), Role: "implementer"},
 		Payload: envelope.Must(envelope.HandoffPayload{FromRole: "implementer", ToRole: "tester", Summary: "x", Commit: head1})})

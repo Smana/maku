@@ -9,7 +9,6 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/roomview"
 )
@@ -37,9 +36,9 @@ type pinSelect struct {
 	Current string
 }
 
-// pinOptions is the select's profiles for plan, read through classes_list for its author: the
-// class's offered floor and allowed profiles, when the author maintains the repository and the class
-// is neither live nor shadow (one profile by its merge policy). None for a plan made without the
+// pinOptions is the select's workflows for plan, read through classes_list for its author: every
+// offered workflow, the repository's default first, when the author maintains the repository. Any
+// class runs any workflow since the workflow left the class (WF4). None for a plan made without the
 // catalogue (no suggestion), for a plan of more than one issue, or when the catalogue cannot be read:
 // the proposal then offers no pin, and nothing else about it changes.
 func (a *App) pinOptions(ctx context.Context, plan intake.Plan, author string) []string {
@@ -54,8 +53,7 @@ func (a *App) pinOptions(ctx context.Context, plan intake.Plan, author string) [
 		}
 		return nil
 	}
-	cl, ok := c.Class(class)
-	if !ok || !c.Maintainer || cl.Mode == catalogue.ModeLive || cl.Mode == catalogue.ModeShadow {
+	if !c.Maintainer {
 		return nil
 	}
 	return c.OfferedProfiles(class)

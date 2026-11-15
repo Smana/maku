@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -60,17 +61,24 @@ type ProfileFact struct {
 	Refused   string `json:"refused,omitempty"`
 }
 
-// ProfileRefusalCodes is intake's closed list of profile refusals (intake.ProfileRefusals, held equal
-// by its test): envelope sits below intake, so the facts' validator keeps its own copy.
-var ProfileRefusalCodes = []string{"profile_unknown", "profile_not_allowed", "profile_not_offered", "class_profile_fixed",
-	"class_no_profiles", "not_maintainer", "profile_conflict", "profile_internal", "profile_no_tests_paths", "catalogue_unavailable"}
+// ProfileSources are where a task's workflow came from (WF3, WF4): the Task CRD's
+// status.profile.source enum. floor is a task triaged before the workflow left the class.
+var ProfileSources = []string{"label", "schedule", "revert", "oracle", "repository", "floor", "control", "treatment", "scoper", "escalation"}
+
+// ProfileRefusalCodes is intake's closed list of profile refusals (intake.ProfileRefusals, held within
+// it by its test), and the four codes a task triaged before the workflow left the class may carry
+// (profile_not_allowed, class_profile_fixed, class_no_profiles, profile_internal; WF4): envelope sits
+// below intake, so the facts' validator keeps its own copy.
+var ProfileRefusalCodes = []string{"profile_unknown", "profile_not_offered", "not_maintainer", "profile_conflict",
+	"profile_no_tests_paths", "catalogue_unavailable",
+	"profile_not_allowed", "class_profile_fixed", "class_no_profiles", "profile_internal"}
 
 func (p ProfileFact) validate() error {
 	switch {
 	case p.Name == "" || utf8.RuneCountInString(p.Name) > 63:
 		return errors.New("name is 1 to 63 characters")
-	case !slices.Contains([]string{"label", "floor", "control", "treatment", "scoper", "escalation"}, p.Source):
-		return errors.New("source is label, floor, control, treatment, scoper or escalation")
+	case !slices.Contains(ProfileSources, p.Source):
+		return errors.New("source is " + strings.Join(ProfileSources, ", "))
 	case !slices.Contains([]string{"labeled", "control", "treatment"}, p.Cohort):
 		return errors.New("cohort is labeled, control or treatment")
 	case utf8.RuneCountInString(p.Recommended) > 63:

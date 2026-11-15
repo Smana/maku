@@ -412,9 +412,9 @@ func TestMakuConfigValidateBaseRef(t *testing.T) {
 	git("init", "-q")
 	git("add", ".")
 	git("commit", "-q", "-m", "base")
-	guarded := strings.Replace(string(split), "  harnessProfiles:", "  mergeGuardrails:\n    maxPerDay: 1\n  harnessProfiles:", 1)
+	guarded := strings.Replace(string(split), "  workflows:", "  mergeGuardrails:\n    maxPerDay: 1\n  workflows:", 1)
 	if guarded == string(split) {
-		t.Fatal("no harnessProfiles key to anchor on")
+		t.Fatal("no workflows key to anchor on")
 	}
 	if err := os.WriteFile(filepath.Join(repo, "objects.yaml"), []byte(guarded), 0o600); err != nil {
 		t.Fatal(err)

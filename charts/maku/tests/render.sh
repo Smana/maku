@@ -335,8 +335,7 @@ ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.ya
 mgtmp="$(mktemp -d)"; trap 'rm -rf "$mgtmp"' EXIT
 mgplan=(--set broker.factoryURL=https://agent-factory.agent-system.svc:8082
   --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true --set broker.human.access.ttl=5m --set broker.githubLink.existingSecret=room-broker-github-link
-  --set broker.human.intake.plan.enabled=true --set 'broker.human.intake.plan.repositories={owner/repo}'
-  --set-json 'broker.human.intake.plan.classes={"docs":{"roles":["implementer"],"ceilingUSD":1,"source":"class:docs"}}')
+  --set broker.human.intake.plan.enabled=true --set 'broker.human.intake.plan.repositories={owner/repo}')
 mgsi=(--set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s'
   --set broker.human.slackIntents.principal=slack-app --set broker.human.slackIntents.teamID=T01ABC)
 brokercfg() { yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$1"; }

@@ -24,8 +24,8 @@ roomsURL: https://rooms.priv.gcp.ogenki.io
 broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, tokenFile: /var/run/secrets/agents/rooms/token}
 github: {appIDFile: /etc/agent-factory-github/app_id, privateKeyFile: /etc/agent-factory-github/private_key, mergerAppIDFile: /etc/agent-factory-merger/app_id, mergerKeyFile: /etc/agent-factory-merger/private_key}
 poll: {issues: 60s, tasks: 30s, meter: 30s}
-defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
-triage: {classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", controlPercent: 10}
+defaults: {dataClass: public, predictedClass: review}
+triage: {controlPercent: 10}
 tiers:
   light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20}
   standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
@@ -33,9 +33,8 @@ tiers:
 templates:
   solo: {roles: [implementer]}
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-  trio: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
-harnessProfiles:
+workflows:
   base: {template: solo, description: the class's floor}
   rich: {template: pair, description: a reviewer for a change that needs one}
 evaluation: {controlPercent: 20, mode: observe}

@@ -430,7 +430,7 @@ func cfg() *config.Config {
 				Breaker: config.Breaker{Window: 10, MaxReverts: 1}}}},
 		FactoryLogin: "ogenki-agent-factory[bot]",
 		Poll:         config.Poll{Tasks: config.Duration{Duration: 30 * time.Second}, Meter: config.Duration{Duration: 30 * time.Second}},
-		Defaults:     config.Defaults{Template: "solo", Tier: "standard", DataClass: "public", PredictedClass: "review"},
+		Defaults:     config.Defaults{DataClass: "public", PredictedClass: "review"},
 		// The reviewer runs on the other tier (4.2): frontier's model is observable as tier-frontier.
 		Tiers: map[string]config.Tier{"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45},
 			"frontier": {Model: "tier-frontier", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}},
@@ -465,7 +465,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{}, Metrics: g.metrics,
+		Triage: triage.Static{Template: "solo"}, Metrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock

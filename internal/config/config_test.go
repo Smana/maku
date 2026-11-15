@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -764,7 +763,7 @@ func TestIntakePlanConfig(t *testing.T) {
 		"a deadline over the bound": intake("      enabled: true\n      model: tier-frontier\n      url: http://gw/v1\n      apiKeyFile: /k\n      deadline: 30s\n"),
 		"a third fallback":          intake("      fallback: template\n"),
 		"a duplicated key":          intake("      enabled: true\n      enabled: false\n"),
-		"a role the factory lacks":  intake("      classes:\n        docs-links:\n          roles: [admin]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"),
+		"the removed class table":   intake("      classes:\n        docs-links:\n          roles: [implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"),
 		"a repository that is not":  intake("      repositories: [not-a-repo]\n"),
 		"enabled with no key file":  intake("      enabled: true\n      url: http://gw/v1\n      model: tier-frontier\n"),
 	} {
@@ -777,7 +776,7 @@ func TestIntakePlanConfig(t *testing.T) {
 		"  intake:\n    plan:\n"+
 		"      enabled: true\n      url: http://model-gateway.maku.svc.cluster.local:8082/clients/planner/v1\n"+
 		"      apiKeyFile: /etc/room-broker/planner/api-key\n      repositories: [Smana/ai-native-ref]\n"+
-		"      classes:\n        docs-links: {roles: [scoper, implementer, reviewer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"))
+		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -798,7 +797,7 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	p := cfg.IntakePlan()
-	if p.Enabled || p.URL != "" || p.APIKeyFile != "" || len(p.Repositories) != 0 || len(p.Classes) != 0 {
+	if p.Enabled || p.URL != "" || p.APIKeyFile != "" || len(p.Repositories) != 0 {
 		t.Fatalf("a config with no block must serve no planner: %+v", p)
 	}
 	if p.Model != "tier-frontier" || p.Deadline.Duration != 20*time.Second || p.DailyPlans != 50 || p.MaxRounds != 10 || p.Fallback != "off" {
@@ -811,21 +810,11 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 	}
 }
 
-// Every rule the brief names, on its own, with the field it is about: a class's roles are the
-// factory's, its money is above zero and says where it came from, and the route is a route whether
+// Every rule the brief names, on its own, with the field it is about: the route is a route whether
 // or not the switch is on yet.
 func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 	intake := func(plan string) string { return valid + "\n  intake:\n    plan:\n" + plan }
-	class := func(body string) string {
-		return intake("      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n      classes:\n        docs-links:\n" + body)
-	}
 	for name, c := range map[string]struct{ body, want string }{
-		"a role twice":                   {class("          roles: [implementer, implementer]\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "declared twice"},
-		"no roles":                       {class("          roles: []\n          ceilingUSD: 2\n          source: class:docs-links.taskUSD\n"), "roles is empty"},
-		"a ceiling of zero":              {class("          roles: [implementer]\n          ceilingUSD: 0\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"a negative ceiling":             {class("          roles: [implementer]\n          ceilingUSD: -2\n          source: class:docs-links.taskUSD\n"), "ceilingUSD"},
-		"no source":                      {class("          roles: [implementer]\n          ceilingUSD: 2\n"), "source is required"},
-		"a class with no name":           {intake("      classes:\n        \"\": {roles: [implementer], ceilingUSD: 2, source: class:x.taskUSD}\n"), "a class needs a name"},
 		"a repository twice":             {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
 		"a route with no scheme":         {intake("      url: gw/v1\n"), "http(s)"},
 		"a route with userinfo":          {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
@@ -878,22 +867,22 @@ func TestHumanLocalModeRefusesThePlanner(t *testing.T) {
 	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      enabled: false\n")); err != nil {
 		t.Fatalf("disabled must land: %v", err)
 	}
-	// The class table is validated in every mode, local included: a typo fails the rollout either way.
+	// The removed class table is refused in every mode, local included (WF13).
 	if _, err := Load(write(t, localConfig+"  intake:\n    plan:\n      classes:\n        docs: {roles: [admin], ceilingUSD: 2, source: class:docs.taskUSD}\n")); err == nil ||
 		!strings.Contains(err.Error(), "human.intake.plan.classes") {
 		t.Fatalf("local mode must check the class table: %v", err)
 	}
 }
 
-// A planner that is on has to be one that can answer: the allowlist and the class table are what a
-// plan may name and what it costs, /mcp is the only listener both tools exist on, and human.access
+// A planner that is on has to be one that can answer: the allowlist and the factory's catalog are
+// what a plan may name and what it costs, /mcp is the only listener both tools exist on, and human.access
 // is the write check the candidate set is drawn from. Each is refused by the field it is about, so
 // a switch flipped ahead of its parts fails the rollout rather than every call.
 func TestThePlannerNeedsWhatItServes(t *testing.T) {
 	// The parts an operator must land, one per line, in the shape ai-native-ref's copy will carry.
 	parts := []struct{ name, want string }{
 		{"the allowlist", "human.intake.plan.repositories: is required"},
-		{"the class table", "human.intake.plan.classes: is required"},
+		{"the factory's catalog", "human.intake.plan: the planner needs factoryURL"},
 		{"the /mcp listener", "human.intake.plan.enabled needs human.mcp.enabled"},
 		{"the write check", "human.intake.plan.enabled needs human.access"},
 	}
@@ -901,7 +890,7 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
 		"      repositories: [Smana/ai-native-ref]\n" +
-		"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
+		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
 	if _, err := Load(write(t, base)); err != nil {
 		t.Fatalf("the parts together must load: %v", err)
 	}
@@ -912,9 +901,8 @@ func TestThePlannerNeedsWhatItServes(t *testing.T) {
 			switch c.name {
 			case "the allowlist":
 				without = strings.Replace(base, "      repositories: [Smana/ai-native-ref]\n", "", 1)
-			case "the class table":
-				without = strings.Replace(base,
-					"      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n", "", 1)
+			case "the factory's catalog":
+				without = strings.Replace(base, "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n", "", 1)
 			case "the /mcp listener":
 				without = strings.Replace(base, "  mcp:\n    enabled: true\n", "  mcp:\n    enabled: false\n", 1)
 			case "the write check":
@@ -1060,7 +1048,7 @@ func TestCoordinationConfig(t *testing.T) {
 		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
 		"      repositories: [Smana/a, Smana/b]\n" +
-		"      classes:\n        scripts: {roles: [implementer, reviewer], ceilingUSD: 5.1, source: class:scripts.taskUSD}\n"
+		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
 	for _, mode := range []string{"plan", "execute", "off"} {
 		cfg, err := Load(write(t, planner+"coordination:\n  mode: "+mode+"\n  publicOnly: true\n  maxChildren: 2\n"))
 		if err != nil || cfg.Coordination.Mode != mode {
@@ -1312,26 +1300,21 @@ func TestPreflightConfig(t *testing.T) {
 	}
 }
 
-// WF9, WF13: human.intake.plan.classes loads with a warning that the next minor refuses it, since
-// the factory's catalog names the workflows; with a factoryURL, the planner needs no class table.
-func TestPlanClassesWarn(t *testing.T) {
+// WF13: human.intake.plan.classes is refused, naming its replacement: the factory's catalog names
+// the workflows, and with a factoryURL the planner needs no class table.
+func TestPlanClassesRemoved(t *testing.T) {
 	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
 		"  access:\n    ttl: 5m\n" + githubLink +
 		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
 		"      repositories: [Smana/ai-native-ref]\n"
 	const classes = "      classes:\n        docs-links: {roles: [implementer], ceilingUSD: 2, source: class:docs-links.taskUSD}\n"
 	const factory = "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
-	warned := func(c Config) bool {
-		return slices.ContainsFunc(c.Warnings, func(w string) bool {
-			return strings.HasPrefix(w, "human.intake.plan.classes:") && strings.Contains(w, "refused from the next minor (WF13)")
-		})
+	if _, err := Load(write(t, base+classes+factory)); err == nil ||
+		!strings.Contains(err.Error(), "human.intake.plan.classes: removed, the factory's catalog names the workflows") ||
+		!strings.Contains(err.Error(), "docs/upgrading.md") {
+		t.Fatalf("the class table: %v", err)
 	}
-	c, err := Load(write(t, base+classes))
-	if err != nil || !warned(c) {
-		t.Fatalf("the class table: %v, warnings %q", err, c.Warnings)
-	}
-	c, err = Load(write(t, base+factory))
-	if err != nil || warned(c) {
-		t.Fatalf("the catalog alone: %v, warnings %q", err, c.Warnings)
+	if _, err := Load(write(t, base+factory)); err != nil {
+		t.Fatalf("the catalog alone: %v", err)
 	}
 }

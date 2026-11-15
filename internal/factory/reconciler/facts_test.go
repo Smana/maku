@@ -664,7 +664,9 @@ func TestPlanOf(t *testing.T) {
 			if tc.scope {
 				task.Spec.ScopeMode = string(config.ScopeScoper)
 			}
-			g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{TestFirst: tc.testRst}
+			if tc.testRst { // the repository's tester runs in its careful default (WF7)
+				testFirstCareful(g.r.Cfg.Current())
+			}
 			if tc.task != nil {
 				tc.task(task)
 			}

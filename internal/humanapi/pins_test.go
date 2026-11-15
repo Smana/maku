@@ -49,9 +49,9 @@ func TestPlanCheckRefusesPin(t *testing.T) {
 		src            CatalogueSource
 		want           string
 	}{
-		"live class":            {"docs-links", "links-solo", &fakeFactoryCatalogue{}, intake.ClassProfileFixed},
+		"a live class (WF4)":    {"docs-links", "review-frontier", &fakeFactoryCatalogue{}, ""},
 		"unknown":               {"review", "ghost", &fakeFactoryCatalogue{}, intake.ProfileUnknown},
-		"not allowed":           {"review", "links-solo", &fakeFactoryCatalogue{}, intake.ProfileNotAllowed},
+		"any workflow (WF4)":    {"review", "links-solo", &fakeFactoryCatalogue{}, ""},
 		"no template":           {"review", "review-floor", &fakeFactoryCatalogue{}, intake.ProfileNotOffered},
 		"not a maintainer":      {"review", "review-frontier", notMaintainerCatalogue{}, intake.NotMaintainer},
 		"catalogue unavailable": {"docs-links", "links-solo", &fakeFactoryCatalogue{byRepo: map[string]error{"Smana/ai-native-ref": errors.New("down")}}, intake.CatalogueUnavailable},
@@ -155,7 +155,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 func TestIntakePlanPinRevision(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
 	base := pinned(t, "review", "")
-	for profile, want := range map[string]string{"review-frontier": "", "links-solo": intake.ProfileNotAllowed} {
+	for profile, want := range map[string]string{"review-frontier": "", "review-floor": intake.ProfileNotOffered} {
 		candidate := base
 		candidate.Issues = []intake.Issue{base.Issues[0]}
 		candidate.Issues[0].Profile = profile

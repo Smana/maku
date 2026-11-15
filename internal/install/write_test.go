@@ -370,9 +370,6 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		if len(f.Spec.Workflows) != len(profiles) {
 			t.Errorf("%s: workflows %v", name, slices.Collect(maps.Keys(f.Spec.Workflows)))
 		}
-		if len(f.Spec.HarnessProfiles) != 0 {
-			t.Errorf("%s: harnessProfiles is written; workflows is the key", name)
-		}
 		if _, ok := f.Spec.Templates["trio"]; ok {
 			t.Errorf("%s: trio is written", name)
 		}
@@ -381,9 +378,6 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		}
 		if len(f.Spec.Templates) != len(templates) {
 			t.Errorf("%s: templates %v", name, slices.Collect(maps.Keys(f.Spec.Templates)))
-		}
-		if f.Spec.Defaults.Template != "" || f.Spec.Defaults.Tier != "" {
-			t.Errorf("%s: defaults.template or defaults.tier is written", name)
 		}
 		if got := slices.Sorted(maps.Keys(f.Spec.Loops)); !slices.Equal(got, slices.Sorted(maps.Keys(loops))) {
 			t.Errorf("%s: loops rows %v, want default and careful only", name, got)

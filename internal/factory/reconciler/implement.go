@@ -194,9 +194,9 @@ func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text 
 	return s
 }
 
-// withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a class
-// that has them (v3 feature 3, RC8): spec.loop.checks and the repository's checks.egress. Any other
-// run, an internal one included, is today's.
+// withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a
+// workflow that has them (v3 feature 3, RC8, WF7): spec.loop.checks and the repository's
+// checks.egress. Any other run, an internal one included, is today's.
 func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Task) {
 	if !r.checksOn(cfg, t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
@@ -205,13 +205,14 @@ func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Ta
 	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(cfg, t).Checks.Egress)
 }
 
-// checksOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+// checksOn: a decision frozen at triage survives later config changes; a task without one (a split
+// part, a RunLore task) reads its repository's default workflow's, live (WF7).
 func (r *Reconciler) checksOn(cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.Profile != nil {
 		return t.Status.Profile.Checks
 	}
-	on, _ := r.repo(cfg, t).ChecksFor(t.Spec.PredictedClass)
-	return on
+	w, _ := cfg.Workflow(r.repo(cfg, t).DefaultWorkflow())
+	return w.Checks
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted
@@ -478,12 +479,22 @@ func (r *Reconciler) unbriefedReviewer(ctx context.Context, t *v1alpha1.Task) {
 	}
 }
 
-// pinModel puts a public run on the provider alias its class's loops.<class>.models names for its
-// role and the tier it runs on (v3 F15, F3), and returns which config chose the run's model, for its
+// row is the loops row t's runs read (RowFor): its workflow's, the one frozen at triage, else its
+// repository's default workflow's for a task without one.
+func (r *Reconciler) row(cfg *config.Config, t *v1alpha1.Task) string {
+	name := r.repo(cfg, t).DefaultWorkflow()
+	if p := t.Status.Profile; p != nil {
+		name = p.Name
+	}
+	return cfg.RowFor(name, cfg.HarnessProfiles[name])
+}
+
+// pinModel puts a public run on the provider alias its workflow's loops row names for its role and
+// the tier it runs on (v3 F15, F3, WF10), and returns which config chose the run's model, for its
 // provenance. ModelFor is "" unless the claim's data class is public: an internal run keeps its
 // tier's model, or the template's reviewerModel, whatever the row says (F4).
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
-	if m := cfg.ModelFor(t.Spec.PredictedClass, s.DataClass, s.Role, s.Tier); m != "" {
+	if m := cfg.ModelFor(r.row(cfg, t), s.DataClass, s.Role, s.Tier); m != "" {
 		s.Model = m
 		return v1alpha1.ModelSourceClassModels
 	}

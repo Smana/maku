@@ -5,18 +5,20 @@ import { classCard, profilesRow } from "../src/class-card";
 import { evaluationWords } from "../src/settings";
 import type { Catalogue, RepositoryPage } from "../src/settings";
 
-// The catalogue shaped like ai-native-ref's live config: docs-links live, review off with a variant.
+// The catalogue shaped like ai-native-ref's live config: docs-links live, review off, and the
+// workflows every class offers (WF4), review-floor the default.
 const catalogue = (): Catalogue => ({
   repository: "o/r", approveToMerge: true, maintainer: true, evaluation: { mode: "observe", controlPercent: 20 },
+  defaultWorkflow: "review-floor",
   classes: [
-    { name: "docs-links", description: "Dead links in docs", mode: "live", ceilingUSD: 2, floor: "links-solo", allowed: [], escalation: null },
-    { name: "review", description: "Anything else", mode: "off", ceilingUSD: 8, floor: "review-floor", allowed: ["review-frontier"],
-      escalation: { outOfBudget: "review-frontier", notConverged: "review-frontier" } },
+    { name: "docs-links", description: "Dead links in docs", mode: "live", ceilingUSD: 2 },
+    { name: "review", description: "Anything else", mode: "off", ceilingUSD: 8 },
   ],
   profiles: {
     "links-solo": { template: "solo", roles: ["implementer"], tier: "light", checks: false, testFirst: false, loop: "", description: "One file of links", offered: true },
-    "review-floor": { template: "", roles: null, tier: "", checks: true, testFirst: false, loop: "", description: "The default", offered: false, notOffered: "no_template" },
-    "review-frontier": { template: "trio", roles: ["implementer", "tester", "reviewer"], tier: "frontier", checks: true, testFirst: true, loop: "", description: "Several files", offered: true },
+    "review-floor": { template: "", roles: null, tier: "", checks: true, testFirst: false, loop: "", description: "The default", offered: false, notOffered: "no_template",
+      escalation: { outOfBudget: "review-frontier", notConverged: "review-frontier" } },
+    "review-frontier": { template: "pair", roles: ["implementer", "reviewer"], tier: "frontier", checks: true, testFirst: true, loop: "", description: "Several files", offered: true },
   },
 });
 const page = (cat: Catalogue | null | undefined = catalogue()): RepositoryPage => ({
@@ -28,19 +30,18 @@ const ctx = (p: RepositoryPage) => ({ page: p, get: fetch, say: document.createE
 const card = (p: RepositoryPage, i: number) => classCard(p.report.classes[i], ctx(p));
 
 describe("a class card's Workflows row", () => {
-  it("shows the floor, the variants and the escalation targets, with each profile's roles and tier", () => {
+  it("shows the repository's default, then every other workflow, with roles, tier and escalation", () => {
     const row = card(page(), 1).querySelector(".class-profiles")!;
     expect(row.querySelector("h4")?.textContent).toBe("Workflows");
     expect([...row.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      "Floor review-floor: roles chosen at triage",
-      "Variant review-frontier: roles implementer, tester, reviewer · tier frontier · tests first",
+      "Default review-floor: roles chosen at triage · out of budget goes to review-frontier; not converged goes to review-frontier",
+      "links-solo: roles implementer · tier light",
+      "review-frontier: roles implementer, reviewer · tier frontier · tests first",
     ]);
-    expect(row.querySelector(".class-escalation")?.textContent).toBe("Escalation: out of budget goes to review-frontier; not converged goes to review-frontier.");
   });
-  it("says a floor with no template has its roles chosen at triage, and names one that has", () => {
+  it("is the same on every class (WF4)", () => {
     const live = card(page(), 0).querySelector(".class-profiles")!;
-    expect([...live.querySelectorAll("li")].map((li) => li.textContent)).toEqual(["Floor links-solo: roles implementer · tier light"]);
-    expect(live.querySelector(".class-escalation")).toBeNull();
+    expect(live.querySelectorAll("li").length).toBe(3);
   });
   it("is absent for a class the catalogue does not offer, and for a page with no catalogue", () => {
     expect(card(page(), 2).querySelector(".class-profiles")).toBeNull(); // revert: the factory's own
@@ -57,10 +58,10 @@ describe("a class card's Workflows row", () => {
     expect(row.querySelector("img")).toBeNull();
     expect(row.textContent).toContain("<img src=x onerror=alert(1)>");
   });
-  it("says so when a class names a profile the factory's list lacks", () => {
+  it("says so when the default is not in the factory's list", () => {
     const cat = catalogue();
-    delete cat.profiles["review-frontier"];
-    expect(card(page(cat), 1).querySelector(".class-profiles")?.textContent).toContain("Variant review-frontier: not in the factory's list of workflows");
+    cat.defaultWorkflow = "gone";
+    expect(card(page(cat), 1).querySelector(".class-profiles")?.textContent).toContain("Default gone: not in the factory's list of workflows");
   });
 });
 

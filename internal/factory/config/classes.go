@@ -25,11 +25,9 @@ type Class struct {
 	Description string `json:"description,omitempty"`
 	Live        bool   `json:"live,omitempty"`
 	Shadow      bool   `json:"shadow,omitempty"`
-	// Checks switches the repository's checks on for the class's public implementer and reviewer
-	// runs (v3 feature 3, RC8): the claim's spec.loop.checks and the repository's checks.egress.
-	Checks bool `json:"checks,omitempty"`
-	// TestFirst starts every public task of the class with a tester run that writes the failing
-	// tests first (v3 feature 4, TF1); needs Checks and the repository's merge.contractCheck.
+	// Checks and TestFirst are read by nothing since the workflow left the class (WF7): a
+	// workflow's checks and the Repository's workflow.testFirst replace them.
+	Checks    bool `json:"checks,omitempty"`
 	TestFirst bool `json:"testFirst,omitempty"`
 	// AllowedFiles: every changed path matches one of these regular expressions.
 	// +kubebuilder:validation:MaxItems=64
@@ -91,9 +89,9 @@ type Class struct {
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
-	// Harness is the class's floor profile, HarnessAllowed the variants the scoper may recommend,
-	// and Escalation the variant a failed run's signal group steps to (team evaluation TE2, TE7).
-	// Absent, the class runs as before.
+	// Harness, HarnessAllowed and Escalation are read by nothing since the workflow left the class
+	// (WF7): the Repository's workflow.default, every workflow, and a workflow's escalation replace
+	// them. A MergePolicy setting them is Deprecated until they are removed.
 	// +kubebuilder:validation:MaxLength=253
 	Harness string `json:"harness,omitempty"`
 	// +kubebuilder:validation:MaxItems=64
@@ -108,15 +106,6 @@ type ApprovalLeaf struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
 	ChangedFiles []string `json:"changedFiles"`
-}
-
-// Escalation maps a signal group to a profile of harnessAllowed; an absent group goes to the human.
-// +kubebuilder:object:generate=true
-type Escalation struct {
-	// +kubebuilder:validation:MaxLength=253
-	OutOfBudget string `json:"outOfBudget,omitempty"`
-	// +kubebuilder:validation:MaxLength=253
-	NotConverged string `json:"notConverged,omitempty"`
 }
 
 // Author is a class's author mode.

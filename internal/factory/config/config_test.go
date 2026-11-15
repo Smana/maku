@@ -25,8 +25,8 @@ roomsURL: https://rooms.priv.gcp.ogenki.io
 broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, tokenFile: /var/run/secrets/agents/rooms/token}
 github: {appIDFile: /etc/agent-factory-github/app_id, privateKeyFile: /etc/agent-factory-github/private_key, mergerAppIDFile: /etc/agent-factory-merger/app_id, mergerKeyFile: /etc/agent-factory-merger/private_key}
 poll: {issues: 60s, tasks: 30s, meter: 30s}
-defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
-triage: {classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", controlPercent: 10}
+defaults: {dataClass: public, predictedClass: review}
+triage: {controlPercent: 10}
 tiers:
   light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20}
   standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
@@ -34,7 +34,6 @@ tiers:
 templates:
   solo: {roles: [implementer]}
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-  trio: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
 caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
 budgets: {enforceTask: false, enforcePrincipal: false, factoryDailyUSD: 42.50, humanDailyUSD: 8.50}
@@ -250,9 +249,6 @@ func TestGoodVariantsParse(t *testing.T) {
 		// P: an explicit Pending bound, inside 5..480.
 		"an explicit pending bound": {"caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}",
 			"caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5, maxPendingMinutes: 20}"},
-		// R8: no C7 service, and the defaults the reconciler never reads, may all be left out.
-		"no classifier URL":           {`classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", `, ""},
-		"no default template or tier": {"defaults: {template: solo, tier: standard, dataClass", "defaults: {dataClass"},
 		// R23: a system caller pairs issuer with JWKS (empty today: none exists).
 		"api with a system caller": {"humanJWKS: https://auth.ogenki.io/oauth/v2/keys",
 			"humanJWKS: https://auth.ogenki.io/oauth/v2/keys\n  systemIssuer: https://accounts.cluster.local\n  systemJWKS: https://accounts.cluster.local/keys"},
@@ -375,15 +371,14 @@ func TestBadConfigsFail(t *testing.T) {
 		"missing tier":               {"  light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20}\n", "", "tier light is missing"},
 		"a fourth tier": {"tiers:\n", "tiers:\n  huge: {model: agent-default, runTokens: 1, taskTokens: 1, runMinutes: 1}\n",
 			"tiers are exactly light, standard and frontier"},
-		"minutes above 480":     {"runMinutes: 90", "runMinutes: 600", "tier frontier: runMinutes must be 1..480"},
-		"minutes below one":     {"runMinutes: 90", "runMinutes: 0", "tier frontier: runMinutes must be 1..480"},
-		"default template gone": {"template: solo", "template: duo", `defaults.template "duo" is not a template`},
-		"no maintainer":         {"maintainers: [Smana]", "maintainers: []", "maintainers is empty"},
-		"a bot maintainer":      {"maintainers: [Smana]", `maintainers: [Smana, "renovate[bot]"]`, `maintainer "renovate[bot]" is an App`},
-		"the factory App":       {"maintainers: [Smana]", `maintainers: ["Ogenki-Agent-Factory[BOT]"]`, `maintainer "Ogenki-Agent-Factory[BOT]" is an App`},
-		"the agents App, bare":  {"maintainers: [Smana]", "maintainers: [ogenki-agents]", `maintainer "ogenki-agents" is an App`},
-		"bad duration":          {"issues: 60s", "issues: 60", "a duration is a string"},
-		"unknown model":         {"model: agent-default, runTokens: 1500000", "model: gpt-5, runTokens: 1500000", `tier standard: model "gpt-5" is not a C5 logical name`},
+		"minutes above 480":    {"runMinutes: 90", "runMinutes: 600", "tier frontier: runMinutes must be 1..480"},
+		"minutes below one":    {"runMinutes: 90", "runMinutes: 0", "tier frontier: runMinutes must be 1..480"},
+		"no maintainer":        {"maintainers: [Smana]", "maintainers: []", "maintainers is empty"},
+		"a bot maintainer":     {"maintainers: [Smana]", `maintainers: [Smana, "renovate[bot]"]`, `maintainer "renovate[bot]" is an App`},
+		"the factory App":      {"maintainers: [Smana]", `maintainers: ["Ogenki-Agent-Factory[BOT]"]`, `maintainer "Ogenki-Agent-Factory[BOT]" is an App`},
+		"the agents App, bare": {"maintainers: [Smana]", "maintainers: [ogenki-agents]", `maintainer "ogenki-agents" is an App`},
+		"bad duration":         {"issues: 60s", "issues: 60", "a duration is a string"},
+		"unknown model":        {"model: agent-default, runTokens: 1500000", "model: gpt-5, runTokens: 1500000", `tier standard: model "gpt-5" is not a C5 logical name`},
 		// Ruling SI: the reconciler creates Tasks from these names, and the Task CRD's enum refuses others.
 		"a template off the CRD enum": {"  solo: {roles: [implementer]}\n", "  solo: {roles: [implementer]}\n  duo: {roles: [implementer]}\n",
 			"template duo is not one of solo, pair, trio, investigate"},
@@ -393,9 +388,8 @@ func TestBadConfigsFail(t *testing.T) {
 			"template investigate: only an implementer writes"},
 		"a triager with a reviewer": {"investigate: {roles: [triager]}", "investigate: {roles: [triager, reviewer]}",
 			"template investigate: only an implementer writes"},
-		"unknown default tier": {"tier: standard,", "tier: medium,", `defaults.tier "medium" is not a tier`},
-		"unknown data class":   {"dataClass: public", "dataClass: secret", "defaults.dataClass is public or internal"},
-		"no predicted class":   {", predictedClass: review}", "}", "defaults.predictedClass is required"},
+		"unknown data class": {"dataClass: public", "dataClass: secret", "defaults.dataClass is public or internal"},
+		"no predicted class": {", predictedClass: review}", "}", "defaults.predictedClass is required"},
 		// §5.2: C7's endpoint, the OD-14 share, and the two entry classes are required.
 		"control percent above 100":  {"controlPercent: 10", "controlPercent: 101", "triage.controlPercent must be 0..100"},
 		"control percent negative":   {"controlPercent: 10", "controlPercent: -1", "triage.controlPercent must be 0..100"},
@@ -635,11 +629,11 @@ func TestValidateNamesAMissingDeploymentFact(t *testing.T) {
 
 // A reviewer's model is chosen per template, apart from the tiers (default: the other tier's).
 func TestAReviewerModelParses(t *testing.T) {
-	c, err := Parse([]byte(strings.Replace(good, "maxReviewRounds: 2}\n  trio", "maxReviewRounds: 2, reviewerModel: tier-frontier}\n  trio", 1)))
+	c, err := Parse([]byte(strings.Replace(good, "maxReviewRounds: 2}\n  investigate", "maxReviewRounds: 2, reviewerModel: tier-frontier}\n  investigate", 1)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.Templates["pair"].ReviewerModel != "tier-frontier" || c.Templates["trio"].ReviewerModel != "" {
+	if c.Templates["pair"].ReviewerModel != "tier-frontier" || c.Templates["solo"].ReviewerModel != "" {
 		t.Fatalf("%+v", c.Templates)
 	}
 }

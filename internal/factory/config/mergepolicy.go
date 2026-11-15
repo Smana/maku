@@ -37,21 +37,32 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
-// HarnessProfile is a named, centrally approved way of running a class (merge policy MP2). Stage 1
-// reads Checks and TestFirst; Template, Tier and Loop are validated here and read from repository
-// cutover on. Empty keeps what the factory selects today.
+// HarnessProfile is one workflow (WF1, WF7): the template it runs, the tier it raises a task to,
+// whether its runs run the repository's checks, its loops row, and where a failed run steps to.
+// Empty keeps what the factory selects today. A Factory spells the map workflows.
 // +kubebuilder:object:generate=true
 type HarnessProfile struct {
 	// +kubebuilder:validation:MaxLength=253
 	Template string `json:"template,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
-	Tier      string  `json:"tier,omitempty"`
-	Checks    bool    `json:"checks,omitempty"`
-	TestFirst bool    `json:"testFirst,omitempty"`
-	Loop      LoopRef `json:"loop,omitempty"`
-	// Description is the line the scoper's brief shows: when to choose the profile.
+	Tier   string  `json:"tier,omitempty"`
+	Checks bool    `json:"checks,omitempty"`
+	Loop   LoopRef `json:"loop,omitempty"`
+	// Description is the line the scoper's brief shows: when to choose the workflow.
 	// +kubebuilder:validation:MaxLength=120
 	Description string `json:"description,omitempty"`
+	// Escalation is the workflow a failed run's signal group steps to (WF7, TE7); absent, or an
+	// absent group, goes to a maintainer.
+	Escalation *Escalation `json:"escalation,omitempty"`
+}
+
+// Escalation maps a signal group to a workflow; an absent group goes to the human.
+// +kubebuilder:object:generate=true
+type Escalation struct {
+	// +kubebuilder:validation:MaxLength=253
+	OutOfBudget string `json:"outOfBudget,omitempty"`
+	// +kubebuilder:validation:MaxLength=253
+	NotConverged string `json:"notConverged,omitempty"`
 }
 
 // MergeGuardrails bound every repository's class policy (MP3, MP6): a class may add protected
@@ -198,25 +209,29 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.HarnessProfiles)) {
 		p := c.HarnessProfiles[name]
 		if !profileRE.MatchString(name) {
-			bad("harnessProfiles: %q is not a profile name", name)
+			bad("workflows: %q is not a workflow name", name)
 		}
 		if p.Template != "" && p.Template != TemplateNone && !slices.Contains(templates(), p.Template) {
-			bad("harnessProfiles.%s: template %q is not one of %v or %s", name, p.Template, templates(), TemplateNone)
+			bad("workflows.%s: template %q is not one of %v or %s", name, p.Template, templates(), TemplateNone)
 		}
 		if p.Tier != "" && !slices.Contains(tiers(), p.Tier) {
-			bad("harnessProfiles.%s: tier %q is not one of %v", name, p.Tier, tiers())
+			bad("workflows.%s: tier %q is not one of %v", name, p.Tier, tiers())
 		}
 		if _, ok := c.Loops[string(p.Loop)]; p.Loop != "" && p.Loop != LoopOff && !ok {
-			bad("harnessProfiles.%s: loop %q is off or a row of loops", name, p.Loop)
+			bad("workflows.%s: loop %q is off or a row of loops", name, p.Loop)
 		}
 		if len(p.Description) > MaxDescription {
-			bad("harnessProfiles.%s: description is %d bytes at most", name, MaxDescription)
+			bad("workflows.%s: description is %d bytes at most", name, MaxDescription)
 		}
-		if p.TestFirst && !p.Checks {
-			bad("harnessProfiles.%s: testFirst needs checks (R17)", name)
+		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil) {
+			bad("workflows.%s: template none runs nothing, so it takes no other key", name)
 		}
-		if p.Template == TemplateNone && (p.Checks || p.TestFirst || p.Tier != "" || p.Loop != "") {
-			bad("harnessProfiles.%s: template none runs nothing, so it takes no other key", name)
+		if e := p.Escalation; e != nil {
+			for _, g := range []struct{ key, target string }{{"outOfBudget", e.OutOfBudget}, {"notConverged", e.NotConverged}} {
+				if !c.IsWorkflow(g.target) && g.target != "" {
+					bad("workflows.%s: escalation %s %q is not a workflow (TE7)", name, g.key, g.target)
+				}
+			}
 		}
 	}
 	c.PolicyManagement.Validate(bad)

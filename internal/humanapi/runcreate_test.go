@@ -430,8 +430,8 @@ func TestRunCreateRepositoryCase(t *testing.T) {
 }
 
 // P7, review B2: a planned task carries the plan's class, bound by its hash, and the suggested
-// profile only as the catalogue re-derives it: an offered one is kept, one the class does not offer
-// or one on the config fallback is never stored.
+// workflow only as the catalogue re-derives it: an offered one is kept, one the catalogue does not
+// offer or one on the config fallback is never stored.
 func TestRunCreateClassBoundByPlan(t *testing.T) {
 	for name, c := range map[string]struct {
 		catalogue bool
@@ -439,7 +439,7 @@ func TestRunCreateClassBoundByPlan(t *testing.T) {
 		want      string
 	}{
 		"offered":             {true, "links-solo", "links-solo"},
-		"not offered":         {true, "review-frontier", ""},
+		"not offered":         {true, "review-floor", ""},
 		"the config fallback": {false, "links-solo", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -475,9 +475,10 @@ func TestRunCreateProfileBoundByPlan(t *testing.T) {
 		class, profile string
 		want           string
 	}{
-		"honoured":          {"review", "review-frontier", ""},
-		"the factory's":     {"review", "", ""},
-		"refused at intake": {"docs-links", "review-frontier", "class_profile_fixed"},
+		"honoured":           {"review", "review-frontier", ""},
+		"the factory's":      {"review", "", ""},
+		"a live class (WF4)": {"docs-links", "review-frontier", ""},
+		"refused at intake":  {"review", "ghost", "profile_unknown"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := &fakeTaskFactory{answer: runrequest.TaskResult{Task: roomID, Room: roomID, Issue: 42}}

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"slices"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -28,23 +27,23 @@ var classesListSchema = json.RawMessage(`{"type":"object","additionalProperties"
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"}}}`)
 
 // classesListOutput declares the structured answer: the catalogue, or, with class, the catalogue cut
-// to that class and the workflows (profiles) it names.
+// to that class; the workflows are every class's (WF4).
 var classesListOutput = json.RawMessage(`{"type":"object","required":["repository","maintainer","classes","profiles"],"properties":{` +
 	`"repository":{"type":"string"},"maintainer":{"type":"boolean"},"approveToMerge":{"type":"boolean"},` +
 	`"generations":{"type":"object","properties":{"factory":{"type":"integer"},"repository":{"type":"integer"},"mergePolicies":{"type":"object","additionalProperties":{"type":"integer"}}}},` +
 	`"evaluation":{"type":"object","properties":{"mode":{"type":"string"},"controlPercent":{"type":"integer"},"treatment":{"type":"string"}}},` +
-	`"classes":{"type":"array","items":{"type":"object","required":["name","mode","floor"],"properties":{"name":{"type":"string"},"description":{"type":"string"},` +
-	`"mode":{"type":"string"},"ceilingUSD":{"type":"number"},"floor":{"type":"string"},"allowed":{"type":"array","items":{"type":"string"}}}}},` +
-	`"profiles":{"type":"object"}}}`)
+	`"classes":{"type":"array","items":{"type":"object","required":["name","mode"],"properties":{"name":{"type":"string"},"description":{"type":"string"},` +
+	`"mode":{"type":"string"},"ceilingUSD":{"type":"number"}}}},` +
+	`"defaultWorkflow":{"type":"string"},"profiles":{"type":"object"}}}`)
 
 // classesListTool is the tool for p. The catalogue is the factory's, read with the caller's own
 // token: a human reads it as themselves, the Slack App for the user it names, and the factory
 // answers "not found" for a repository the caller cannot read, so this tool names nothing either.
 func (s *Server) classesListTool() mcpTool {
 	return mcpTool{name: ClassesList, call: s.classesList, schema: classesListSchema, output: classesListOutput,
-		description: "What a repository offers at intake: its classes, each with how it merges and the workflow it runs, " +
-			"as lines to show as they are (text) and the same as structuredContent (whose profiles are the workflows). With class, that class's workflows: the floor, the variants, " +
-			"each workflow's roles, tier, tests-first, loop and description, the escalation targets, and whether you may pin one (only a maintainer may). " +
+		description: "What a repository offers at intake: its classes, each with how it merges, and the workflows any task may run, " +
+			"the repository's default first, as lines to show as they are (text) and the same as structuredContent (whose profiles are the workflows). Each workflow's roles, tier, " +
+			"tests-first, loop, escalation and description, and whether you may pin one (only a maintainer may). With class, that class's ceiling and description. " +
 			"A workflow is pinned by naming it in a plan revision's profile field, never here; this tool changes nothing."}
 }
 
@@ -74,16 +73,10 @@ func (s *Server) classesList(ctx context.Context, p authn.Principal, args json.R
 	return viewResult{text: roomview.CatalogueText(c, a.Class), data: c}, nil
 }
 
-// only is c cut to class cl and the profiles it names.
+// only is c cut to class cl; every class runs the same workflows (WF4), so they all stay.
 func only(c catalogue.Catalogue, cl catalogue.Class) catalogue.Catalogue {
 	out := c
 	out.Classes = []catalogue.Class{cl}
-	out.Profiles = map[string]catalogue.Profile{}
-	for _, n := range slices.Concat([]string{cl.Floor}, cl.Allowed) {
-		if p, ok := c.Profiles[n]; ok {
-			out.Profiles[n] = p
-		}
-	}
 	return out
 }
 

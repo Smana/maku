@@ -23,7 +23,7 @@ import (
 // A part carries its parent's search, so its implementer claim does too.
 func TestAPartInheritsSearch(t *testing.T) {
 	g := splitRigWith(t, "frontier", false, nil)
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Search: true, Split: &config.SplitPolicy{MaxChildren: 3}}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper, Search: true, Split: &config.SplitPolicy{MaxChildren: 3}}}
 	g.reconcile(t, "3buqdlot", 3)
 	splitHandoffOf(g, 0, readyScope(), parts(2))
 	endScoper(t, g, "Succeeded", "agent_finished")

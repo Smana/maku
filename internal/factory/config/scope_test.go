@@ -14,27 +14,27 @@ import (
 func TestScopeFor(t *testing.T) {
 	cfg, err := Parse([]byte(good + `loops:
   default: {scope: steering}
-  docs: {scope: scoper}
-  tests: {stallSteps: 40}
-  dashboards: {scope: off}
+  standard: {scope: scoper}
+  careful: {stallSteps: 40}
+  quick: {scope: off}
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	for class, want := range map[string]ScopeMode{"docs": ScopeScoper, "tests": ScopeSteering, "dashboards": ScopeOff,
+	for class, want := range map[string]ScopeMode{"standard": ScopeScoper, "careful": ScopeSteering, "quick": ScopeOff,
 		"review": ScopeSteering, "docs-links": ScopeSteering} {
 		if got := cfg.ScopeFor(class); got != want {
 			t.Errorf("ScopeFor(%s) = %s, want %s", class, got, want)
 		}
 	}
-	if cfg.LoopFor("docs") != nil || cfg.LoopFor("review") != nil {
+	if cfg.LoopFor("standard") != nil || cfg.LoopFor("review") != nil {
 		t.Error("a scope row switched the loop on")
 	}
 	none, err := Parse([]byte(good))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := none.ScopeFor("docs"); got != ScopeOff {
+	if got := none.ScopeFor("standard"); got != ScopeOff {
 		t.Errorf("no loops: %s, want off (D4)", got)
 	}
 }
@@ -44,18 +44,18 @@ func TestScopeFor(t *testing.T) {
 func TestAScopeOnlyRowInheritsDefaultsLoop(t *testing.T) {
 	cfg, err := Parse([]byte(good + `loops:
   default: {stallSteps: 40}
-  docs: {scope: steering}
+  standard: {scope: steering}
 `))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if p := cfg.LoopFor("docs"); p == nil || p.StallSteps != 40 {
-		t.Errorf("docs did not inherit default's loop: %+v", p)
+	if p := cfg.LoopFor("standard"); p == nil || p.StallSteps != 40 {
+		t.Errorf("standard did not inherit default's loop: %+v", p)
 	}
-	if cfg.LoopFor("tests") == nil {
-		t.Error("a class without a row gets default's loop")
+	if cfg.LoopFor("quick") == nil {
+		t.Error("a workflow without a row gets default's loop")
 	}
-	if cfg.ScopeFor("docs") != ScopeSteering || cfg.ScopeFor("tests") != ScopeOff || !cfg.SteeringOn() {
+	if cfg.ScopeFor("standard") != ScopeSteering || cfg.ScopeFor("quick") != ScopeOff || !cfg.SteeringOn() {
 		t.Error("scope follows the row")
 	}
 }
@@ -63,15 +63,15 @@ func TestAScopeOnlyRowInheritsDefaultsLoop(t *testing.T) {
 // YAML 1.1 reads bare false and no as the boolean false: both are off. yes is true, which is refused.
 func TestYAML11BooleansInScope(t *testing.T) {
 	for _, v := range []string{"false", "no", "off"} {
-		cfg, err := Parse([]byte(good + "loops: {docs: {scope: " + v + "}}\n"))
+		cfg, err := Parse([]byte(good + "loops: {standard: {scope: " + v + "}}\n"))
 		if err != nil {
 			t.Fatalf("scope: %s: %v", v, err)
 		}
-		if got := cfg.ScopeFor("docs"); got != ScopeOff {
+		if got := cfg.ScopeFor("standard"); got != ScopeOff {
 			t.Errorf("scope: %s = %q, want off", v, got)
 		}
 	}
-	_, err := Parse([]byte(good + "loops: {docs: {scope: yes}}\n"))
+	_, err := Parse([]byte(good + "loops: {standard: {scope: yes}}\n"))
 	if err == nil || !strings.Contains(err.Error(), "scope is off, steering or scoper") {
 		t.Fatalf("scope: yes: err = %v", err)
 	}
@@ -79,9 +79,9 @@ func TestYAML11BooleansInScope(t *testing.T) {
 
 func TestScopesAreRefused(t *testing.T) {
 	for name, c := range map[string]struct{ loops, want string }{
-		"a fourth mode":       {"{docs: {scope: always}}", `loops.docs.scope "always" is off, steering or scoper`},
-		"a bare on":           {"{docs: {scope: on}}", "scope is off, steering or scoper"},
-		"an undeclared class": {"{scripts: {scope: steering}}", `loops.scripts: "scripts" is not default, review or a class`},
+		"a fourth mode":       {"{standard: {scope: always}}", `loops.standard.scope "always" is off, steering or scoper`},
+		"a bare on":           {"{standard: {scope: on}}", "scope is off, steering or scoper"},
+		"an undeclared class": {"{scripts: {scope: steering}}", "loops.scripts: a row is named default or a workflow"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Parse([]byte(good + "loops: " + c.loops + "\n"))
@@ -97,8 +97,8 @@ func TestScopesAreRefused(t *testing.T) {
 // refuses the scoper on the portable runtime, demo or not (its split is refused there: TestSplitIsRefusedOnThePortableRuntime).
 func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 	for _, loops := range []string{
-		"{docs: {scope: scoper}}",
-		"{docs: {scope: steering}}",
+		"{standard: {scope: scoper}}",
+		"{standard: {scope: steering}}",
 	} {
 		if _, err := Parse([]byte(priced + "loops: " + loops + "\nruns: {group: maku.ogenki.io}\n")); err != nil {
 			t.Errorf("%s on the portable runtime: %v", loops, err)
@@ -113,8 +113,8 @@ func TestScoperParsesOnThePortableRuntime(t *testing.T) {
 // meter: the family's budget would never decrease. Refused there, as models is; parses on
 // cloud-native-ref's AgentRun, and on the portable kind with the key (GW10).
 func TestSplitIsRefusedOnThePortableRuntime(t *testing.T) {
-	const want = "loops.docs.split needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime meters no USD, so familyUSD would never be spent"
-	for _, row := range []string{"{docs: {scope: scoper, split: {maxChildren: 3}}}", "{docs: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}"} {
+	const want = "loops.standard.split needs runs.gatewayIdentity (a model gateway, rollout step 4): this runtime meters no USD, so familyUSD would never be spent"
+	for _, row := range []string{"{standard: {scope: scoper, split: {maxChildren: 3}}}", "{standard: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}"} {
 		if _, err := Parse([]byte(priced + "loops: " + row + "\nruns: {group: maku.ogenki.io}\n")); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s portable: %v, want %q", row, err, want)
 		}

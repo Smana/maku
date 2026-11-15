@@ -9,21 +9,22 @@ import (
 	"github.com/Smana/maku/internal/factory/catalogue"
 )
 
-// ainative is shaped like ai-native-ref's live config: docs-links live, review off with variants.
+// ainative is shaped like ai-native-ref's live config: docs-links live, review off, and the
+// workflows every class offers (WF4), careful the default.
 func ainative(maintainer bool) catalogue.Catalogue {
 	return catalogue.Catalogue{
-		Repository: "Smana/ai-native-ref", Maintainer: maintainer, ApproveToMerge: true,
+		Repository: "Smana/ai-native-ref", Maintainer: maintainer, ApproveToMerge: true, DefaultWorkflow: "careful",
 		Evaluation: catalogue.Evaluation{Mode: "observe", ControlPercent: 20},
 		Classes: []catalogue.Class{
-			{Name: "docs-links", Description: "Dead links in docs", Mode: "live", CeilingUSD: 2, Floor: "links-solo", Allowed: []string{}},
-			{Name: "review", Description: "Anything else", Mode: "off", CeilingUSD: 8, Floor: "review-floor", Allowed: []string{"review-frontier"},
-				Escalation: &catalogue.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-frontier"}},
+			{Name: "docs-links", Description: "Dead links in docs", Mode: "live", CeilingUSD: 2},
+			{Name: "review", Description: "Anything else", Mode: "off", CeilingUSD: 8},
 		},
 		Profiles: map[string]catalogue.Profile{
-			"links-solo":   {Template: "solo", Roles: []string{"implementer"}, Tier: "light", Offered: true, Description: "One file of links, no logic"},
-			"review-floor": {Checks: true, Description: "The default: triage picks pair or trio", NotOffered: catalogue.NoTemplate},
-			"review-frontier": {Template: "trio", Roles: []string{"implementer", "tester", "reviewer"}, Tier: "frontier", Checks: true,
-				TestFirst: true, Loop: "review", Offered: true, Description: "Changes across several files"},
+			"quick":    {Template: "solo", Roles: []string{"implementer"}, Tier: "light", Offered: true, Description: "One implementer"},
+			"standard": {Checks: true, Description: "Triage picks the template", NotOffered: catalogue.NoTemplate},
+			"careful": {Template: "pair", Roles: []string{"implementer", "reviewer"}, Tier: "frontier", Checks: true,
+				TestFirst: true, Loop: "careful", Offered: true, Description: "Changes across several files",
+				Escalation: &catalogue.Escalation{NotConverged: "standard"}},
 		},
 	}
 }
@@ -31,8 +32,10 @@ func ainative(maintainer bool) catalogue.Catalogue {
 func TestCatalogueTextSummary(t *testing.T) {
 	got := CatalogueText(ainative(false), "")
 	for _, want := range []string{
-		"docs-links · live · merges on its own when the gate's conditions hold · workflow links-solo\n",
-		"review · off · a maintainer's approval merges it · workflow chosen at triage · variants review-frontier\n",
+		"docs-links · live · merges on its own when the gate's conditions hold\n",
+		"review · off · a maintainer's approval merges it\n",
+		"Workflows, the same for every class:\n- default careful: ",
+		"- quick: roles implementer · tier light",
 		"Evaluation observe, control share 20 %.",
 		"Only a maintainer of this repository can pin a workflow",
 	} {
@@ -49,10 +52,9 @@ func TestCatalogueTextDetail(t *testing.T) {
 	got := CatalogueText(ainative(true), "review")
 	for _, want := range []string{
 		"Ceiling $8.00 a task.",
-		"Floor review-floor: roles chosen at triage, not pinnable",
-		"- review-frontier: roles implementer, tester, reviewer · tier frontier · tests first · checks on · loop review · \"Changes across several files\"",
-		"Escalation: out of budget goes to review-frontier; not converged goes to review-frontier.",
-		"You may pin review-frontier.",
+		"- default careful: roles implementer, reviewer · tier frontier · tests first · checks on · loop careful · not converged goes to standard · \"Changes across several files\"",
+		"- standard: roles chosen at triage, not pinnable",
+		"You may pin careful, quick with a workflow:<name> label.",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("detail lacks %q:\n%s", want, got)
@@ -61,9 +63,9 @@ func TestCatalogueTextDetail(t *testing.T) {
 	if got := CatalogueText(ainative(false), "review"); strings.Contains(got, "You may pin") {
 		t.Errorf("a non-maintainer is offered a pin:\n%s", got)
 	}
-	live := CatalogueText(ainative(true), "docs-links")
-	if !strings.Contains(live, "Fixed: this class's merge policy runs it under links-solo only") || strings.Contains(live, "You may pin") {
-		t.Errorf("a live class has one profile:\n%s", live)
+	// WF4: a live class runs any workflow; the gate holds what it may not merge.
+	if live := CatalogueText(ainative(true), "docs-links"); !strings.Contains(live, "You may pin careful, quick") {
+		t.Errorf("a live class offers the workflows:\n%s", live)
 	}
 	if got := CatalogueText(ainative(true), "nope"); !strings.Contains(got, `No class "nope" is offered`) {
 		t.Errorf("unknown class:\n%s", got)
@@ -75,9 +77,9 @@ func TestCatalogueTextDetail(t *testing.T) {
 func TestCatalogueTextInert(t *testing.T) {
 	c := ainative(true)
 	c.Classes[1].Description = "line one\n# heading <!channel> [x](http://evil.example) \u202e`rm`"
-	pf := c.Profiles["review-frontier"]
+	pf := c.Profiles["careful"]
 	pf.Description = "*bold* @here www.evil.example \u200b"
-	c.Profiles["review-frontier"] = pf
+	c.Profiles["careful"] = pf
 	c.Classes[1].Name = "re*view_"
 	for _, class := range []string{"", "re*view_"} {
 		got := CatalogueText(c, class)

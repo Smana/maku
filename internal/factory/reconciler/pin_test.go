@@ -47,7 +47,7 @@ func pinMetrics(g *rig) []string {
 func TestPinHonouredInObserveAndApply(t *testing.T) {
 	for _, mode := range []string{"observe", "apply"} {
 		t.Run(mode, func(t *testing.T) {
-			g := pinRig(t, resolveCfg(mode, 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "profile:review-search")
+			g := pinRig(t, resolveCfg(mode, 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "workflow:review-search")
 			tk := g.reconcile(t, "3buqdlot", 1)
 			want := v1alpha1.ProfileStatus{Name: "review-search", Source: "label", Cohort: triage.CohortLabeled, Checks: false,
 				Requested: "review-search"}
@@ -61,7 +61,7 @@ func TestPinHonouredInObserveAndApply(t *testing.T) {
 				t.Fatalf("a pinned task was offered %+v", got)
 			}
 			sc := readyScope()
-			sc.Profile, sc.ProfileWhy = "review-tested", "because"
+			sc.Profile, sc.ProfileWhy = "careful", "because"
 			if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 				t.Fatal(err)
 			}
@@ -83,21 +83,16 @@ func TestPinRefusalsAtTriage(t *testing.T) {
 		actor    string
 		internal bool
 		decl     string
-		class    string
 		want     string
 		metric   string
 	}{
-		"unknown":        {labels: []string{"profile:zzz"}, want: "profile_unknown", metric: "pin review other refused profile_unknown"},
-		"not allowed":    {labels: []string{"profile:review-other"}, want: "profile_not_allowed", metric: "pin review review-other refused profile_not_allowed"},
-		"internal":       {labels: []string{"profile:review-tested"}, internal: true, decl: testsDecl, want: "profile_internal", metric: "pin review review-tested refused profile_internal"},
-		"no tests paths": {labels: []string{"profile:review-tested"}, want: "profile_no_tests_paths", metric: "pin review review-tested refused profile_no_tests_paths"},
-		"not maintainer": {labels: []string{"profile:review-search"}, actor: "someone", want: "not_maintainer", metric: "pin review review-search refused not_maintainer"},
-		"conflict":       {labels: []string{"profile:review-search", "profile:review-tested"}, want: "profile_conflict", metric: "pin review review-search refused profile_conflict"},
-		"fixed":          {labels: []string{"class:docs-links", "profile:review-search"}, class: "docs-links", want: "class_profile_fixed", metric: "pin docs-links review-search refused class_profile_fixed"},
+		"unknown":        {labels: []string{"workflow:zzz"}, want: "profile_unknown", metric: "pin review other refused profile_unknown"},
+		"no tests paths": {labels: []string{"workflow:careful"}, want: "profile_no_tests_paths", metric: "pin review careful refused profile_no_tests_paths"},
+		"not maintainer": {labels: []string{"workflow:review-search"}, actor: "someone", want: "not_maintainer", metric: "pin review review-search refused not_maintainer"},
+		"conflict":       {labels: []string{"workflow:review-search", "workflow:careful"}, want: "profile_conflict", metric: "pin review review-search refused profile_conflict"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := resolveCfg("apply", 0)
-			cf.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, Harness: "review-floor"}
 			actor := c.actor
 			if actor == "" {
 				actor = "Smana"
@@ -112,11 +107,11 @@ func TestPinRefusalsAtTriage(t *testing.T) {
 			}
 			tk = g.reconcile(t, "3buqdlot", 1)
 			p := tk.Status.Profile
-			requested := strings.TrimPrefix(c.labels[len(c.labels)-1], "profile:")
+			requested := strings.TrimPrefix(c.labels[len(c.labels)-1], "workflow:")
 			if name == "conflict" {
 				requested = "review-search"
 			}
-			if p == nil || p.Name != "review-floor" || p.Source != "floor" || p.Cohort != triage.CohortTreatment ||
+			if p == nil || p.Name != "review-floor" || p.Source != "repository" || p.Cohort != triage.CohortTreatment ||
 				p.Requested != requested || p.Refused != c.want {
 				t.Fatalf("%+v, want refused %s", p, c.want)
 			}
@@ -145,7 +140,7 @@ func TestPinFieldFromSponsorLogin(t *testing.T) {
 
 // #455: a failed scoper leaves a pinned task under its pin: the label case comes first.
 func TestFailedScoperKeepsPin(t *testing.T) {
-	g := pinRig(t, resolveCfg("apply", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "profile:review-search")
+	g := pinRig(t, resolveCfg("apply", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", "workflow:review-search")
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, nil); err != nil {
 		t.Fatal(err)
@@ -167,16 +162,16 @@ func TestPinRefusalWaitsForATarget(t *testing.T) {
 	}
 }
 
-// WF9, WF13: a workflow: label pins as a profile: label does; a pin read from a profile: label
-// says once that the label is going, and a workflow: one says nothing.
+// WF4, WF13: a workflow: label pins; a profile: label pins nothing, and triage says once that the
+// class: and profile: labels are no longer read.
 func TestWorkflowLabelPinsAndProfileLabelIsNarrated(t *testing.T) {
-	for label, narrated := range map[string]bool{"workflow:review-search": false, "profile:review-search": true} {
+	for label, legacy := range map[string]bool{"workflow:review-search": false, "profile:review-search": true} {
 		g := pinRig(t, resolveCfg("observe", 0), issueTask("3buqdlot", 7, "fix it"), "Smana", label)
 		tk := g.reconcile(t, "3buqdlot", 1)
-		if p := tk.Status.Profile; p == nil || p.Name != "review-search" || p.Source != "label" {
+		if p := tk.Status.Profile; p == nil || (p.Name == "review-search") == legacy || (p.Source == "label") == legacy {
 			t.Fatalf("%s: %+v", label, p)
 		}
-		if got := contains(g.f.Comments(7), "Agent factory: "+triage.ProfileLabelNote); got != narrated {
+		if got := contains(g.f.Comments(7), "Agent factory: "+triage.LegacyLabelNote); got != legacy {
 			t.Fatalf("%s: narrated %v, comments %q", label, got, g.f.Comments(7))
 		}
 	}

@@ -152,15 +152,14 @@ type Config struct {
 	// RunTokens has the factory write the run-controller's two git Secrets (v4 step 2, PR3): off
 	// unless set, and implied by demo.
 	RunTokens RunTokens `json:"runTokens,omitzero"`
-	// Loops is the loop policy per task class (loops design L2, L3), keyed by a class, review
-	// or default. A class with no row reads default's, and a row inherits default's key by key:
-	// each key the row sets is its own (WF10, rowOf).
+	// Loops is the loop policy per workflow (loops design L2, L3), keyed by a workflow or default
+	// (WF10, stage B). A workflow with no row reads default's, and a row inherits default's key by
+	// key: each key the row sets is its own (rowOf).
 	Loops map[string]Loop `json:"loops,omitempty"`
-	// HarnessProfiles, MergeGuardrails and PolicyManagement are the central half of the repository
-	// merge policy (mergepolicy): what a repository's class may reference and how far it may go.
-	HarnessProfiles map[string]HarnessProfile `json:"harnessProfiles,omitempty"`
-	// Workflows is harnessProfiles under its new name (WF9): Parse moves it into HarnessProfiles,
-	// which every reader keeps reading, and refuses a file that sets both.
+	// HarnessProfiles are the workflows (WF1), the shipped ones filled in, under the name every
+	// reader reads; Parse fills it from workflows, the file's only spelling (WF9, WF13).
+	HarnessProfiles map[string]HarnessProfile `json:"-"`
+	// Workflows is the file's workflows: Parse moves it into HarnessProfiles.
 	Workflows        map[string]HarnessProfile `json:"workflows,omitempty"`
 	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
@@ -185,8 +184,6 @@ type Config struct {
 	Warnings []string `json:"-"`
 	// classSource is a cut-over repository's classes (SetClassSource).
 	classSource func(repository string) (map[string]Class, bool)
-	// harnessProfilesKey is whether the file spelled its workflows harnessProfiles (WF9, WF13).
-	harnessProfilesKey bool
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
@@ -405,6 +402,8 @@ type Repository struct {
 	ClassAuthority string `json:"classAuthority,omitempty"`
 	// PrivateCode is v4 D3's opt-in for a private or internal repository: nil acknowledges nothing.
 	PrivateCode *PrivateCode `json:"privateCode,omitempty"`
+	// Workflow is the workflow a task runs when nothing else names one, and the tester's opt-in (WF3, WF7).
+	Workflow RepositoryWorkflow `json:"workflow,omitzero"`
 	// Bound and Bindings are a Repository object's mergePolicies, written by resources.Assemble
 	// alone (a config file setting them is refused): every binding's name, resolved or not, and the
 	// bindings as written. Classes holds the ones that resolved (B9), so the rules that name a class
@@ -423,12 +422,6 @@ func (r *Repository) declares(name string) bool {
 	}
 	_, ok := r.Classes[name]
 	return ok
-}
-
-// TestFirstFor reports whether a public task of class starts with the tester (v3 feature 4, TF1).
-func (r *Repository) TestFirstFor(class string) bool {
-	cl, _ := r.Class(class)
-	return cl.TestFirst
 }
 
 // Class is the repository's class name, and whether it declares it. A nil repository (one the
@@ -452,15 +445,6 @@ type Checks struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
 	Egress []string `json:"egress,omitempty"`
-}
-
-// ChecksFor reports whether a run of class runs the repository's checks in its sandbox (RC8), and
-// the egress profiles it then requests. Absent or false, the run is today's.
-func (r *Repository) ChecksFor(class string) (bool, []string) {
-	if cl, _ := r.Class(class); !cl.Checks {
-		return false, nil
-	}
-	return true, slices.Clone(r.Checks.Egress)
 }
 
 // Control is the pinned issue whose factory/stop label is the global stop (§6.1). Issue 0: none,
@@ -635,24 +619,19 @@ type Poll struct {
 	Meter  Duration `json:"meter"`
 }
 
-// Defaults apply when triage leaves a value open.
+// Defaults apply when triage leaves a value open. A workflow names the template and the tier: the
+// two keys that did were removed (WF9, WF13).
 // +kubebuilder:object:generate=true
 type Defaults struct {
-	// +kubebuilder:validation:MaxLength=253
-	Template string `json:"template"`
-	// +kubebuilder:validation:MaxLength=253
-	Tier string `json:"tier"`
 	// +kubebuilder:validation:MaxLength=253
 	DataClass string `json:"dataClass"`
 	// +kubebuilder:validation:MaxLength=253
 	PredictedClass string `json:"predictedClass"`
 }
 
-// Triage is phase 4's classification config (§2, §5.2).
+// Triage is phase 4's classification config (§2, §5.2). The task classifier's classifierURL was
+// removed (WF9): every task takes the static standard tier.
 type Triage struct {
-	// C7's endpoint (R24). Unset: no C7 call, every task takes the static standard tier. An error
-	// or timeout falls back the same way: never blocks.
-	ClassifierURL string `json:"classifierURL"`
 	// OD-14: this share of tasks runs at tier-frontier whatever C7 says.
 	ControlPercent int `json:"controlPercent"`
 }
@@ -1030,8 +1009,12 @@ type Schedule struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:MaxLength=1024
 	Cron string `json:"cron"` // 5 fields, UTC
+	// Class is the task's predicted class (§2): with a probe, the oracle policy that judges it.
 	// +kubebuilder:validation:MaxLength=253
-	Class string `json:"class"` // the predicted class (§2)
+	Class string `json:"class"`
+	// Workflow is the workflow the schedule's tasks run; unset is quick (WF3).
+	// +kubebuilder:validation:MaxLength=253
+	Workflow string `json:"workflow,omitempty"`
 	// +kubebuilder:validation:MaxLength=14336
 	Text string `json:"text"`
 	// +kubebuilder:validation:MaxLength=253
@@ -1595,7 +1578,7 @@ func (c *Config) needsPrice(bad func(string, ...any), key, alias string) {
 func tiers() []string { return []string{"light", "standard", "frontier"} }
 
 // templates is the Task CRD's template enum (api/factory/v1alpha1).
-func templates() []string { return []string{"solo", "pair", "trio", "investigate"} }
+func templates() []string { return []string{"solo", "pair", "investigate"} }
 
 // Load reads and parses the file at path.
 func Load(path string) (*Config, error) {
@@ -1680,9 +1663,7 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	if err := c.normalize(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	if err := c.readWorkflows(); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
-	}
+	c.readWorkflows()
 	for i := range c.Repositories {
 		r := &c.Repositories[i]
 		if !assembled && (r.Bound != nil || r.Bindings != nil) {
@@ -1772,9 +1753,6 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 		}
 	}
 	c.Warnings = append(c.Warnings, inherits...)
-	for _, d := range c.workflowDeprecations() {
-		c.Warnings = append(c.Warnings, fmt.Sprintf("%s: %s; refused from the next minor (WF13)", d.path, d.instead))
-	}
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
@@ -1843,6 +1821,7 @@ func refuseLegacy(j []byte) error {
 			}
 		}
 	}
+	errs = append(errs, refuseRemoved(top)...)
 	return errors.Join(errs...)
 }
 
@@ -2029,13 +2008,6 @@ func (c *Config) Validate() error {
 		}
 	}
 	c.validateTriageTemplates(bad)
-	// Nothing reads defaults.template or defaults.tier: checked only when set.
-	if _, ok := c.Templates[c.Defaults.Template]; c.Defaults.Template != "" && !ok {
-		bad("defaults.template %q is not a template", c.Defaults.Template)
-	}
-	if c.Defaults.Tier != "" && !slices.Contains(tiers(), c.Defaults.Tier) {
-		bad("defaults.tier %q is not a tier", c.Defaults.Tier)
-	}
 	if c.Defaults.DataClass != "public" && c.Defaults.DataClass != "internal" {
 		bad("defaults.dataClass is public or internal")
 	}
@@ -2233,11 +2205,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 			bad("checks.egress: %q is not one of %v, or is listed twice", p, EgressProfiles)
 		}
 	}
-	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
-		if r.Classes[name].TestFirst && r.Merge.ContractCheck == "" {
-			bad("class %s: testFirst needs merge.contractCheck", name)
-		}
-	}
+	c.validateWorkflow(r, bad)
 	if m := r.Merge; m.ContractCheck != "" && slices.Contains(m.RequiredChecks, m.ContractCheck) {
 		bad("merge.contractCheck %q must not be one of merge.requiredChecks: it only reports on a task without a contract (TF7)", m.ContractCheck)
 	}
@@ -2393,14 +2361,15 @@ type ModelAliases map[string]ModelAlias
 // +kubebuilder:validation:MaxLength=253
 type ModelAlias string
 
-// ModelFor is the provider alias class's row names for role on tier, "" for today's model: always
-// "" unless dataClass is public (F4). A role or tier the row leaves unset is default's (WF10).
-func (c *Config) ModelFor(class, dataClass, role, tier string) string {
+// ModelFor is the provider alias loops row row (RowFor) names for role on tier, "" for today's
+// model: always "" unless dataClass is public (F4). A role or tier the row leaves unset is
+// default's (WF10).
+func (c *Config) ModelFor(row, dataClass, role, tier string) string {
 	if dataClass != "public" {
 		return ""
 	}
-	row := c.rowOf(class)
-	return string(row.Models[role][tier])
+	r := c.rowOf(row)
+	return string(r.Models[role][tier])
 }
 
 // ScopeMode is a row's scope. The config is YAML 1.1, where a bare off is the boolean false: it
@@ -2489,17 +2458,18 @@ func (c *Config) neverSplit(class string) bool {
 	})
 }
 
-// SplitFor is class's split on repository, every value resolved, nil when none is offered: its row,
-// else default's (WF10), each split taken whole, and only beside scope: scoper.
-func (c *Config) SplitFor(repository, class string) *SplitPolicy {
+// SplitFor is the split offered to a task of class on repository that reads loops row row (RowFor),
+// every value resolved, nil when none is offered: the row's, else default's (WF10), each split
+// taken whole, only beside scope: scoper, and never for a class whose tasks are never split.
+func (c *Config) SplitFor(repository, class, row string) *SplitPolicy {
 	if cl, _ := c.RepositoryFor(repository).Class(class); c.neverSplit(class) || cl.Oracle != nil {
 		return nil
 	}
-	row := c.rowOf(class)
-	if row.Split == nil || row.Scope != ScopeScoper {
+	r := c.rowOf(row)
+	if r.Split == nil || r.Scope != ScopeScoper {
 		return nil
 	}
-	p := *row.Split
+	p := *r.Split
 	if p.ChildTier == "" {
 		p.ChildTier = DefaultChildTier
 	}
@@ -2583,12 +2553,8 @@ func (c *Config) validateModels(bad func(string, ...any), name string, byRole ma
 func (c *Config) validateLoops(bad func(string, ...any)) {
 	for _, name := range slices.Sorted(maps.Keys(c.Loops)) {
 		row := c.Loops[name]
-		if name != "default" && name != "review" && !slices.ContainsFunc(c.Repos(), func(r Repository) bool {
-			return r.declares(name)
-		}) && !slices.ContainsFunc(slices.Collect(maps.Values(c.HarnessProfiles)), func(p HarnessProfile) bool {
-			return string(p.Loop) == name && name != string(LoopOff)
-		}) {
-			bad("loops.%s: %q is not default, review or a class a repository declares", name, name)
+		if _, ok := c.HarnessProfiles[name]; name != "default" && !ok {
+			bad("loops.%s: a row is named default or a workflow: rename it after a workflow and set that workflow's loop (%s)", name, upgradeNotes)
 		}
 		if s := row.StallSteps; s != nil && (*s < 1 || *s > MaxStallSteps) {
 			bad("loops.%s.stallSteps must be 1..%d", name, MaxStallSteps)
@@ -2614,8 +2580,6 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 			switch {
 			case row.Scope != ScopeScoper:
 				bad("loops.%s.split needs scope: scoper on the same row: a split is the scoper's second answer", name)
-			case c.neverSplit(name):
-				bad("loops.%s.split: %s tasks are never split", name, name)
 			case s.MaxChildren < 2 || s.MaxChildren > 5:
 				bad("loops.%s.split.maxChildren must be 2..5", name)
 			case !slices.Contains(tiers(), tier):

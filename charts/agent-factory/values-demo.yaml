@@ -140,12 +140,11 @@ maku-factory:
       appIDFile: /etc/agent-factory-github/app_id
       privateKeyFile: /etc/agent-factory-github/private_key
     poll: {issues: 60s, tasks: 30s, meter: 30s}
-    defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
-    # The loop is scoper, implementer, completion judge, reviewer, gate. Without a row a class has no
-    # scope and no judge. `revert` gets none: it is mechanical.
+    defaults: {dataClass: public, predictedClass: review}
+    # The loop is scoper, implementer, completion judge, reviewer, gate, on standard, the workflow a
+    # task runs by default. A row is a workflow's (WF10); quick, which a revert runs, gets none.
     loops:
-      review: {scope: scoper, judge: tier-light}
-      docs-links: {scope: scoper, judge: tier-light}
+      standard: {scope: scoper, judge: tier-light}
     # A values file replaces this list whole: restate the entire entry (see values-mine.example.yaml)
     # with the name, maintainers, mergerLogin and the three check names changed.
     repositories:
@@ -181,10 +180,8 @@ maku-factory:
     templates:
       solo: {roles: [implementer, reviewer], maxReviewRounds: 2}
       pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-      # Triage picks the template by class and tier (its matrix), and `defaults.template` is ignored,
-      # so every template triage can choose must exist. `solo` carries the reviewer so the demo loop
-      # has one; the tester role is deprecated, so `trio` is a pair here.
-      trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
+      # Triage picks the template by class and tier (its matrix), so every template triage can
+      # choose must exist. `solo` carries the reviewer so the demo loop has one.
       investigate: {roles: [triager]}
     caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
     api:

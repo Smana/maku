@@ -301,29 +301,27 @@ func isCandidate(candidates []string, repository string) bool {
 // The closed list of profile refusals (P12): why a pinned harness profile was not applied, shared by
 // intake (CheckPin) and triage (ResolvePin), so a metric labels one spelling and a reader gets one
 // sentence. A pin refused at triage is never a task failure: the task runs as if unpinned.
+//
+// The class refusals (class_no_profiles, class_profile_fixed, profile_not_allowed) and
+// profile_internal went with the workflow's leaving the class (WF4, WF7): every class runs every
+// workflow, and the tester runs public careful tasks only, refusing no pin.
 const (
 	ProfileUnknown       = "profile_unknown"
-	ProfileNotAllowed    = "profile_not_allowed"
 	ProfileNotOffered    = "profile_not_offered" // intake only
-	ClassProfileFixed    = "class_profile_fixed"
-	ClassNoProfiles      = "class_no_profiles"
 	NotMaintainer        = "not_maintainer"
-	ProfileConflict      = "profile_conflict" // triage only
-	ProfileInternal      = "profile_internal"
+	ProfileConflict      = "profile_conflict"       // triage only
 	ProfileNoTestsPaths  = "profile_no_tests_paths" // triage only
 	CatalogueUnavailable = "catalogue_unavailable"  // intake only
 )
 
 // ProfileRefusals is the closed list, in the spec's order.
-var ProfileRefusals = []string{ProfileUnknown, ProfileNotAllowed, ProfileNotOffered, ClassProfileFixed, ClassNoProfiles,
-	NotMaintainer, ProfileConflict, ProfileInternal, ProfileNoTestsPaths, CatalogueUnavailable}
+var ProfileRefusals = []string{ProfileUnknown, ProfileNotOffered, NotMaintainer, ProfileConflict, ProfileNoTestsPaths, CatalogueUnavailable}
 
 // ProfileRefusal is one refused pin with the fields its sentence names. It is kept apart from
 // refuse()'s single-diagnostic rule because these sentences take several fields. Every field is a
 // config name the reader may see in the catalogue: none is a repository.
 type ProfileRefusal struct {
-	Code, Class, Profile, Floor, Mode string
-	Allowed                           []string
+	Code, Class, Profile string
 }
 
 // Sentence is the code's one sentence. The switch is closed: a code outside the list panics, the
@@ -332,24 +330,12 @@ func (r ProfileRefusal) Sentence() string {
 	switch r.Code {
 	case ProfileUnknown:
 		return fmt.Sprintf("`%s` is not a workflow of this factory. `classes_list` shows the workflows.", r.Profile)
-	case ProfileNotAllowed:
-		runs := "`" + r.Floor + "`"
-		if len(r.Allowed) > 0 {
-			runs += " or `" + strings.Join(r.Allowed, "`, `") + "`"
-		}
-		return fmt.Sprintf("Class `%s` runs under %s; `%s` is not one of them.", r.Class, runs, r.Profile)
 	case ProfileNotOffered:
 		return fmt.Sprintf("`%s` names no roles, so they are chosen at triage; it runs only as the factory's choice.", r.Profile)
-	case ClassProfileFixed:
-		return fmt.Sprintf("Class `%s` is %s: its merge policy runs it under `%s` only.", r.Class, r.Mode, r.Floor)
-	case ClassNoProfiles:
-		return fmt.Sprintf("Class `%s` declares no workflows: the factory runs it as configured.", r.Class)
 	case NotMaintainer:
 		return "Only a maintainer of this repository can choose the workflow; the factory will choose it."
 	case ProfileConflict:
 		return "The issue names more than one workflow; none was applied."
-	case ProfileInternal:
-		return fmt.Sprintf("`%s` writes tests first, which runs on public tasks only.", r.Profile)
 	case ProfileNoTestsPaths:
 		return fmt.Sprintf("`%s` writes tests first, and this repository declares no tests paths.", r.Profile)
 	case CatalogueUnavailable:

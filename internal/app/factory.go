@@ -81,8 +81,6 @@ const (
 	githubTimeout    = 15 * time.Second
 	brokerTimeout    = 15 * time.Second
 	vmTimeout        = 10 * time.Second
-	// C7's own deadline is 2 s.
-	classifierTimeout = 3 * time.Second
 	// pingEvery keeps the installation token warm and forge.Healthy true on every replica.
 	pingEvery = time.Minute
 	// traceDrain bounds the span exporter's flush at exit, inside the pod's grace.
@@ -552,14 +550,9 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		rc.Created = perRun.Ensure // the first token, right after the claim exists (plan PR5)
 	}
 	perms := conns.permissions(cfg.API.Access)
-	var c7 triage.Classifier // nil while triage.classifierURL is unset: no HTTP client, no call
-	if cfg.Triage.ClassifierURL != "" {
-		c7 = triage.HTTPClassifier{URL: cfg.Triage.ClassifierURL, HC: httpx.New(classifierTimeout, nil)}
-	}
 	rec := &reconciler.Reconciler{Kind: cfg.Runs.Kind, Client: mgr.GetClient(), Ledger: ledgers, Namespace: ns, Cfg: live, Clients: conns.task, Owned: fenced.Owned,
 		Policy: snapshots, Authority: authority, CanWrite: perms.CanWrite, Runs: rc, Rooms: broker,
-		Triage: triage.Classify{C: c7,
-			Clients: conns.class},
+		Triage:  triage.Classify{Clients: conns.class}, // no C7: every task takes the static standard tier (WF9)
 		Metrics: m, Now: time.Now, Nonce: taskid.Random, Log: log,
 		Trace: sink, Costs: costs, Decisions: recorder, Hardening: hardened}
 	if cfg.PolicyManagement.Manages() { // stage 5: grants read from the broker, never cached

@@ -8,7 +8,7 @@
 
 import { modeMeaning } from "./policy-describe";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
-import type { Binding, Catalogue, CatalogueClass, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
+import type { Binding, Catalogue, CatalogueClass, CatalogueProfile, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
 export const READING = "Reading evidence from GitHub…";
 
@@ -151,23 +151,30 @@ function profileLine(cat: Catalogue, name: string): string {
   return `${name}: ${parts.join(" \u00b7 ")}`;
 }
 
-// profilesRow is a class's Profiles row: the floor it runs under, the variants a maintainer may pin
-// or the scoper may recommend, and where each failed signal escalates. Read-only (factory resources
-// D9); undefined for a class the catalogue does not offer at intake, or no catalogue.
+// escalationWords is where a workflow's failed run steps, or "" without an escalation.
+function escalationWords(p: CatalogueProfile | undefined): string {
+  const e = p?.escalation;
+  if (!e || (!e.outOfBudget && !e.notConverged)) return "";
+  const to = [e.outOfBudget && `out of budget goes to ${e.outOfBudget}`, e.notConverged && `not converged goes to ${e.notConverged}`].filter(Boolean);
+  return ` \u00b7 ${to.join("; ")}`;
+}
+
+// profilesRow is a class's Workflows row: the repository's default, then every other workflow a
+// maintainer may pin, the same on every class since the workflow left the class (WF4), each with
+// where its failed run escalates. Read-only (factory resources D9); undefined for a class the
+// catalogue does not offer at intake, or no catalogue.
 export function profilesRow(cat: Catalogue | null | undefined, cls: string): HTMLElement | undefined {
   const c: CatalogueClass | undefined = cat?.classes.find((x) => x.name === cls);
   if (!cat || !c) return undefined;
   const row = el("section", undefined, "class-profiles");
   row.append(el("h4", "Workflows"));
   const list = el("ul", undefined, "class-profile-list");
-  list.append(el("li", c.floor ? `Floor ${profileLine(cat, c.floor)}` : "Floor: none declared, the factory runs the class as configured"));
-  for (const v of c.allowed ?? []) list.append(el("li", `Variant ${profileLine(cat, v)}`));
-  row.append(list);
-  const e = c.escalation;
-  if (e && (e.outOfBudget || e.notConverged)) {
-    const to = [e.outOfBudget && `out of budget goes to ${e.outOfBudget}`, e.notConverged && `not converged goes to ${e.notConverged}`].filter(Boolean);
-    row.append(el("p", `Escalation: ${to.join("; ")}.`, "class-escalation"));
+  const def = cat.defaultWorkflow;
+  if (def) list.append(el("li", `Default ${profileLine(cat, def)}${escalationWords(cat.profiles[def])}`));
+  for (const name of Object.keys(cat.profiles).sort()) {
+    if (name !== def) list.append(el("li", `${profileLine(cat, name)}${escalationWords(cat.profiles[name])}`));
   }
+  row.append(list);
   return row;
 }
 

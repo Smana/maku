@@ -15,11 +15,10 @@ maku-factory:
         echo-default: {input: 1.00, cacheRead: 0.10, output: 2.00}
         echo-light: {input: 1.00, cacheRead: 0.10, output: 2.00}
         echo-frontier: {input: 3.00, cacheRead: 0.30, output: 9.00}
-    # Restated whole (a values file replaces the map): review offers a split, which a portable runtime
-    # accepts only with runs.gatewayIdentity and a meter.
+    # Restated whole (a values file replaces the map): standard offers a split, which a portable
+    # runtime accepts only with runs.gatewayIdentity and a meter.
     loops:
-      review: {scope: scoper, judge: tier-light, split: {maxChildren: 3}}
-      docs-links: {scope: scoper, judge: tier-light}
+      standard: {scope: scoper, judge: tier-light, split: {maxChildren: 3}}
 maku-gateway:
   # The VictoriaMetrics stub scrapes the gateway's pods on 15020 from its own namespace.
   metrics:

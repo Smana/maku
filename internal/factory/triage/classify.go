@@ -88,20 +88,17 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if dataClass == "" {
 		dataClass = cfg.Defaults.DataClass
 	}
-	class, declared, err := c.predictClass(ctx, cfg, t)
-	if err != nil {
-		return Decision{}, err
-	}
+	class, declared := c.predictClass(cfg, t)
 	if Investigates(cfg, t) {
 		dataClass = "internal" // the investigate template forces it (§2)
 	}
-	pin, legacy, err := c.pin(ctx, cfg, t, class, dataClass == "public")
+	pin, legacy, err := c.pin(ctx, cfg, t)
 	if err != nil {
 		return Decision{}, err
 	}
 	var notes []string
 	if legacy {
-		notes = []string{ProfileLabelNote}
+		notes = []string{LegacyLabelNote}
 	}
 	// Declared is no pin (P8): only an honoured profile pin is labeled.
 	cohort := CohortOf(t.Name, pin.Honoured(), cfg.Evaluation.ControlPercent)
@@ -112,8 +109,8 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 			Classification: v1alpha1.Classification{Tier: "light", Classifier: "static", Fallback: "none"}, Declared: declared,
 			Pinned: pin.Honoured(), Pin: pin, Cohort: cohort, Notes: notes}, nil
 	}
-	res, err := C7Response{}, errors.New("no classifier") // unset URL: no C7 service, no call
-	if cfg.Triage.ClassifierURL != "" && c.C != nil {
+	res, err := C7Response{}, errors.New("no classifier") // no C7 service, no call (WF9)
+	if c.C != nil {
 		res, err = c.C.Classify(ctx, C7Request{Text: t.Spec.Text, Ref: t.Name, DataClass: dataClass})
 	}
 	if err != nil || (res.Tier != "light" && res.Tier != "standard" && res.Tier != "frontier") {
@@ -141,15 +138,15 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 // profileName is a harness profile's name as config and the Task's CRD spell it.
 var profileName = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
 
-// ProfileLabelNote is triage's note on a task pinned through a profile: label (WF9, WF13).
-const ProfileLabelNote = "the `profile:` label is read as `workflow:` and is ignored from the next minor."
+// LegacyLabelNote is triage's note on a task whose issue carries a class: or a profile: label,
+// which nothing reads since the workflow left the class (WF4, WF13).
+const LegacyLabelNote = "the `class:` and `profile:` labels are no longer read; use `workflow:<name>`."
 
-// pin is t's pinned profile as ResolvePin judges it (P5, P6): the workflow:<name> and
-// profile:<name> labels on its issue, one pin under two names (WF9), with each one's last applier,
-// and the intake's profile with the sponsor login the factory resolved. legacy is whether a
-// profile: label was read. A RunLore or internal task, and a scheduled one, has none: no person
-// pinned it.
-func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, class string, public bool) (pin Pin, legacy bool, err error) {
+// pin is t's pinned workflow as ResolvePin judges it (P5, P6): the workflow:<name> labels on its
+// issue, with each one's last applier, and the intake's profile with the sponsor login the factory
+// resolved. legacy is whether the issue carries a class: or profile: label, read by nothing. A
+// RunLore or internal task, and a scheduled one, has none: no person pinned it.
+func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (pin Pin, legacy bool, err error) {
 	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" {
 		return Pin{}, false, nil
 	}
@@ -160,14 +157,13 @@ func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task,
 			return Pin{}, false, err
 		}
 		for _, l := range iss.Labels {
-			name, ok := strings.CutPrefix(l, "workflow:")
-			if !ok {
-				if name, ok = strings.CutPrefix(l, "profile:"); ok && profileName.MatchString(name) {
-					legacy = true
-				}
+			if strings.HasPrefix(l, "class:") || strings.HasPrefix(l, "profile:") {
+				legacy = true
+				continue
 			}
+			name, ok := strings.CutPrefix(l, "workflow:")
 			if !ok || !profileName.MatchString(name) {
-				continue // a name no profile can have pins nothing, and is never echoed back
+				continue // a name no workflow can have pins nothing, and is never echoed back
 			}
 			evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
 			if err != nil {
@@ -184,7 +180,7 @@ func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task,
 	if in := t.Spec.Intake; in != nil {
 		field, login = in.Profile, in.Login
 	}
-	return ResolvePin(cfg, t.Spec.Repository, class, labels, field, login, public), legacy, nil
+	return ResolvePin(cfg, t.Spec.Repository, labels, field, login), legacy, nil
 }
 
 // oracle reports whether class is an oracle class of t's repository; none when it is not served.
@@ -193,53 +189,30 @@ func oracle(cfg *config.Config, t *v1alpha1.Task, class string) bool {
 	return cl.Oracle != nil
 }
 
-// predictClass: the schedule's class; else a maintainer-applied class:<name> label; else a
-// maintainer's intake class (P7); else review.
-// RunLore tasks are always review. Labels are intent, never authority (§2, §8 T3).
-// declared is a class the schedule or a maintainer named, never one inferred.
-func (c Classify) predictClass(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (class string, declared bool, err error) {
+// predictClass: the schedule's class; else a maintainer's intake class (P7); else the class an
+// origin task was inferred under; else review. RunLore tasks are always review. A class: label is
+// read by nothing since the workflow left the class (WF4): a class names an oracle policy on a
+// schedule, and the gate reads the diff. declared is a class the schedule or a maintainer named,
+// never one inferred.
+func (c Classify) predictClass(cfg *config.Config, t *v1alpha1.Task) (class string, declared bool) {
 	if Investigates(cfg, t) {
-		return "review", false, nil
+		return "review", false
 	}
 	if t.Spec.Source.Kind == "schedule" {
 		if _, ok := cfg.RepositoryFor(t.Spec.Repository).Class(t.Spec.PredictedClass); ok {
-			return t.Spec.PredictedClass, true, nil
+			return t.Spec.PredictedClass, true
 		}
-		return "review", false, nil
-	}
-	gh := c.forge(t)
-	if t.Spec.Issue == 0 || gh == nil {
-		if class, ok := intakeClass(cfg, t); ok {
-			return class, true, nil
-		}
-		return c.inferred(cfg, t), false, nil
-	}
-	iss, err := gh.Issue(ctx, t.Spec.Issue)
-	if err != nil {
-		return "", false, err
-	}
-	for _, l := range iss.Labels {
-		name, ok := strings.CutPrefix(l, "class:")
-		if _, known := cfg.RepositoryFor(t.Spec.Repository).Class(name); !ok || !known || name == "revert" {
-			continue // revert is the factory's own class, never predicted from a label
-		}
-		evs, err := gh.LabelEvents(ctx, t.Spec.Issue, l)
-		if err != nil {
-			return "", false, err
-		}
-		if len(evs) > 0 && cfg.RepositoryFor(t.Spec.Repository).IsMaintainer(evs[len(evs)-1].Actor) {
-			return name, true, nil
-		}
+		return "review", false
 	}
 	if class, ok := intakeClass(cfg, t); ok {
-		return class, true, nil
+		return class, true
 	}
-	return c.inferred(cfg, t), false, nil
+	return c.inferred(cfg, t), false
 }
 
 // intakeClass is the class a planned task's intake carried (P7), when the sponsor login the factory
 // resolved still maintains the repository and the repository declares the class; revert is never
-// one. A maintainer's class: label comes first: a label is the later, explicit choice.
+// one.
 func intakeClass(cfg *config.Config, t *v1alpha1.Task) (string, bool) {
 	in := t.Spec.Intake
 	if in == nil || in.Class == "" || in.Class == "revert" {

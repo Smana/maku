@@ -43,13 +43,12 @@ func catalogueServer(promotion bool) *Server {
 	s.Logins = coordLogins{"291": "Smana", "5": "someone"}
 	s.Cfg = &config.Config{
 		PolicyManagement: managed(promotion),
-		Defaults:         config.Defaults{Tier: "standard"},
 		Tiers:            map[string]config.Tier{"standard": {TaskUSD: 4}},
 		Templates:        map[string]config.Template{"pair": {Roles: []string{"implementer", "reviewer"}}},
 		HarnessProfiles:  map[string]config.HarnessProfile{"floor": {Template: "pair"}},
 		Repositories: []config.Repository{
-			{Name: coordPrimary, Maintainers: []string{"smana"}, Classes: map[string]config.Class{
-				"review": {Harness: "floor", Description: "Anything else"}}},
+			{Name: coordPrimary, Maintainers: []string{"smana"}, Workflow: config.RepositoryWorkflow{Default: "floor"},
+				Classes: map[string]config.Class{"review": {Description: "Anything else"}}},
 			{Name: coordOther},
 		},
 		API: config.API{Sponsored: []config.Sponsored{{Name: "slack-app", Sponsor: "Smana", Repositories: []string{coordPrimary},

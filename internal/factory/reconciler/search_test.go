@@ -18,7 +18,7 @@ import (
 func searchRig(t *testing.T, row config.Loop) (*rig, *v1alpha1.Task) {
 	t.Helper()
 	g := newRig(t, issueTask("3buqdlot", 7, "# Fix the link"))
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": row}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": row}
 	tk := g.reconcile(t, "3buqdlot", 3)
 	if !tk.Spec.Search {
 		t.Fatal("triage did not record spec.search")

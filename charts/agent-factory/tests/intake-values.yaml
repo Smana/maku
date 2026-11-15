@@ -6,6 +6,9 @@
 maku:
   broker:
     publicURL: https://rooms.e2e.test
+    # A plan's classes and workflows are the factory's catalog's (WF13): the release's own factory.
+    factoryURL: http://agent-factory.maku.svc.cluster.local:8082
+    factoryInsecure: true
     # The GitHub account link, the only identity source (v4 D8): intake.sh seeds the stub user's link
     # (sub dev, GitHub id 123) in the database, so no OAuth flow runs here (chart:identity:k3d proves it).
     githubLink:
@@ -40,11 +43,6 @@ maku:
           reasoningEffort: low
           repositories: [owner/repo]
           maxRounds: 2
-          classes:
-            docs:
-              roles: [scoper, implementer, reviewer]
-              ceilingUSD: 1
-              source: class:docs
     modelGateway:
       service: model-gateway
     extraEnv:
@@ -98,9 +96,7 @@ maku-factory:
           revertWindow: 168h
           breaker: {window: 10, maxReverts: 1}
     loops:
-      docs: {scope: scoper, judge: tier-light}
-      docs-links: {scope: scoper, judge: tier-light}
-      review: {scope: scoper, judge: tier-light}
+      standard: {scope: scoper, judge: tier-light}
 
 # The model gateway (plan v4 step 4, Task 12): the upstream controller and maku-gateway, the planner
 # and the classifier as clients, the stub as a `custom` provider over plain http. intake.sh sets
