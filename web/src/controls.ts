@@ -5,7 +5,7 @@ import { icon } from "./icons";
 import type { RoomState } from "./room-state";
 import { safeLink, type Summary } from "./summary";
 
-// Human copy for an ack's rejected reason (docs/api.md, Actions).
+// Human copy for an ack's rejected reason (docs/reference/api.md, Actions).
 const rejections: Record<string, string> = {
   not_permitted: "Not allowed: your role in this room, or this client, does not permit it; or the factory refused you a run.",
   stale_epoch: "Someone else holds the driver token now. The page shows the new holder; try again if it still applies.",
@@ -235,7 +235,7 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
   hand.onsubmit = (e) => {
     e.preventDefault();
     const action: Record<string, unknown> = { kind: "start_run", role: role.value };
-    if (role.value === "reviewer" && prUrl.value.trim()) action.prUrl = prUrl.value.trim(); // reviewer only (docs/api.md)
+    if (role.value === "reviewer" && prUrl.value.trim()) action.prUrl = prUrl.value.trim(); // reviewer only (docs/reference/api.md)
     const profiles = egress.value.split(",").map((s) => s.trim()).filter(Boolean);
     if (profiles.length) action.egressProfiles = profiles;
     send(action);

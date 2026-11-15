@@ -74,7 +74,7 @@ func (s *Server) roomFork(ctx context.Context, p authn.Principal, args json.RawM
 }
 
 // mcpAct sends one act to room as p through the MCP client, after the room read's checks, and
-// returns its ack; a refused act is a toolError naming the ack's reason (docs/api.md, Actions).
+// returns its ack; a refused act is a toolError naming the ack's reason (docs/reference/api.md, Actions).
 // Each call is its own session: MCP carries no retry key, so a retried call acts twice.
 func (s *Server) mcpAct(ctx context.Context, p authn.Principal, id string, act Action) (wire.ServerFrame, error) {
 	room, _, _, err := s.readRoom(ctx, id, p)

@@ -23,7 +23,7 @@ var bridgeKinds = map[string]bool{envelope.HarnessStatus: true, "harness_error":
 // the log looks up. A key that folds onto one of them must be spelled as it.
 //
 // state_changed has no envelope struct, so its list is every field
-// docs/event-envelope.md documents for a state_changed kind. Any new reader of
+// docs/reference/event-envelope.md documents for a state_changed kind. Any new reader of
 // a state_changed field must add that field here, or give its kind a struct:
 // otherwise a bridge can store a variant spelling that Go readers see and jsonb
 // readers do not.

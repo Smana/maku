@@ -541,7 +541,7 @@ func TestALiveGapIsReadFromTheLog(t *testing.T) {
 	consecutive(t, events(t, c, 2), 12)
 }
 
-// Everything refused before the upgrade is a plain HTTP status (docs/api.md).
+// Everything refused before the upgrade is a plain HTTP status (docs/reference/api.md).
 func TestRefusedBeforeTheUpgrade(t *testing.T) {
 	cases := []struct {
 		name string

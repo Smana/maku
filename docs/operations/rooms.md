@@ -79,7 +79,7 @@ ROOM=3kq7x2ma
 
 ## The system API from a terminal
 
-The system API needs a token from an allowlisted ServiceAccount (see [API](../api.md#authentication)),
+The system API needs a token from an allowlisted ServiceAccount (see [API](../reference/api.md#authentication)),
 over TLS with the platform CA. From a pod in `agent-system` whose ServiceAccount is in
 `systemPrincipals`, and that the broker's CNP admits:
 

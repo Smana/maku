@@ -16,19 +16,17 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code, sandbox nodes, the support floor |
 | [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), and what production adds |
 | [Team evaluation](team-evaluation.md) | Adding approved workflows to the demo and comparing `apply` and `observe` outcomes |
-| [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
+| [Concepts](concepts.md) | The vocabulary of rooms and the factory; a room's phases; who does what |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
-| [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
+| [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch, splits and the factory's API |
 | [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
 | [Merge policies](merge-policies.md) | A repository's merge policies: start here, the catalog, bindings, rollout stages, every field, worked examples, recipes, checking and promoting, reasons, rollback |
 | [maku](cli.md) | Install and verify, one-command setup, every command, the six MCP tools, the maku-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
-| [Event envelope](event-envelope.md) | The event envelope, its payloads and limits |
 | [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
-| [Room log](room-log.md) | The schema, the guarantees the database enforces, sealing, retention, migrations |
-| [API](api.md) | The broker's four listeners, their errors and limits |
+| [Reference](reference/README.md) | The broker and factory [API](reference/api.md), [event envelope](reference/event-envelope.md), [room log](reference/room-log.md), [Room CRD](reference/room-crd.md), [Task CRD](reference/task-crd.md), [config file](reference/config.md) and [sponsored principals](reference/sponsored-principals.md) |
 | [Injection drills](drills.md) | The drill repository and accounts, `maku drill plant`, how the factory scores a drill, reading a report, the stop rule |
 | [Exposure](exposure.md) | `expose.mode`: the web and Slack surfaces by HTTPRoute or Ingress, what must be public, the web front door (oauth2-proxy) and its policies, what the probe proved |
 | [Install Secrets](install-secrets.md) | Every Secret an install reads, by name and key; the umbrella's optional ExternalSecrets, with OpenBao, CNPG and AWS examples |
@@ -51,7 +49,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | Operate it | [Install](install.md) → [Operations](operations.md) → [Observability](observability.md) → [Security](security.md) |
 
 To change the code, read [AGENTS.md](../AGENTS.md) and [Contributing](contributing/README.md), then the
-[event envelope](event-envelope.md), the [room log](room-log.md) and the [API](api.md).
+[event envelope](reference/event-envelope.md), the [room log](reference/room-log.md) and the [API](reference/api.md).
 
 Design sources: the [rooms design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md),
 the [factory design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-dark-factory-design.md),

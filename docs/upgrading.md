@@ -940,7 +940,7 @@ render that sets one key without the other, or `perRun` without
 `maku.agentRunPolicies.creators` naming the release's factory. `values-demo.yaml` sets all three
 (its creators name `system:serviceaccount:maku:agent-factory`: install the demo in another
 namespace with your own). The App needs every permission of the
-[role table](factory.md#run-tokens-the-role-table). The factory and run-controller configs are
+[role table](reference/config.md#run-tokens-the-role-table). The factory and run-controller configs are
 decoded strictly: upgrade the chart and the images together.
 
 With the standalone `maku` and `maku-factory` charts nothing pairs the two keys, and the factory
