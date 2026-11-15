@@ -457,6 +457,15 @@ func (a *App) postWaitLine(ctx context.Context, th Thread, e webhook.Event) stri
 	if !ok {
 		return "ignored"
 	}
+	if ch, served := a.Channels[th.Channel]; served {
+		if blocks := actLineBlocks(e, ch, line); len(blocks) > 0 {
+			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, line, blocks, nil); err != nil {
+				a.log().Warn("slack post card failed", "room", e.Room, "err", err)
+				return "error"
+			}
+			return "posted"
+		}
+	}
 	if _, err := a.Slack.Post(ctx, th.Channel, th.TS, line, nil); err != nil {
 		a.log().Warn("slack post failed", "room", e.Room, "err", err)
 		return "error"

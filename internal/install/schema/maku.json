@@ -32,7 +32,9 @@
                   }
                 }
               }
-            }
+            },
+            "slackStop": {"$ref": "#/definitions/slackRoute"},
+            "slackRetry": {"$ref": "#/definitions/slackRoute"}
           }
         },
         "suspend": {"description": "The broker's suspend block, verbatim (EX9).", "type": "object"},
@@ -374,6 +376,16 @@
       "description": "A Kubernetes quantity (resource.Quantity's grammar): an integer (--set passes one) or a string such as 500m, 32Gi, 1.5Pi or 1e3.",
       "type": ["string", "integer"],
       "pattern": "^[+-]?([0-9]+(\\.[0-9]*)?|\\.[0-9]+)(Ki|Mi|Gi|Ti|Pi|Ei|m|k|M|G|T|P|E|[eE][+-]?[0-9]+)?$"
+    },
+    "slackRoute": {
+      "description": "One gated Slack acting route (POST /api/slack/stops or /api/slack/retries): its sponsored principal and workspace.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["principal", "teamID"],
+      "properties": {
+        "principal": {"type": "string", "pattern": "^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$"},
+        "teamID": {"type": "string", "pattern": "^T[A-Z0-9]{2,20}$"}
+      }
     }
   }
 }

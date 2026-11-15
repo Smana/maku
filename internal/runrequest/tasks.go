@@ -54,8 +54,81 @@ func (e ErrRefused) Error() string {
 // clipped to "refused", so a factory's free text never reaches a model.
 var refusalCodes = []string{"kill_switch", "bad_json", "idempotency_key_required", "bad_data_class", "bad_ref",
 	"repository_not_allowed", "repository_not_owned", "meter_unpriced", "max_cost_required", "max_cost_over_principal",
-	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "bad_text", "tasks_unavailable",
+	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "access_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "bad_text", "tasks_unavailable",
 	"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "idempotency_conflict"}
+
+var actResults = []string{"stopped", "retried", "not_linked", "not_maintainer", "not_running", "not_escalated", "unknown_task"}
+
+// StopTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/stops with accessToken.
+func (f Factory) StopTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error) {
+	return f.actTask(ctx, "stops", task, onBehalfOf, accessToken)
+}
+
+// RetryTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/retries with accessToken.
+func (f Factory) RetryTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error) {
+	return f.actTask(ctx, "retries", task, onBehalfOf, accessToken)
+}
+
+func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, accessToken string) (string, error) {
+	if accessToken == "" {
+		return "", ErrForbidden
+	}
+	if !envelope.ValidID(task) {
+		return "", fmt.Errorf("runrequest: invalid task id")
+	}
+	body, err := json.Marshal(struct {
+		OnBehalfOf string `json:"onBehalfOf"`
+	}{OnBehalfOf: onBehalfOf})
+	if err != nil {
+		return "", fmt.Errorf("runrequest: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.URL+"/v1/tasks/"+task+"/"+subpath, bytes.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("runrequest: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+accessToken)
+	req.Header.Set("Content-Type", "application/json")
+	hc, err := f.client()
+	if err != nil {
+		return "", err
+	}
+	if f.HC == nil {
+		defer hc.CloseIdleConnections()
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("runrequest: factory: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	raw, err := httpx.ReadBody(resp.Body, maxResponse)
+	if err != nil {
+		return "", fmt.Errorf("runrequest: factory: %w", err)
+	}
+	if resp.StatusCode == http.StatusOK {
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return "", fmt.Errorf("runrequest: factory answer: %w", err)
+		}
+		if !slices.Contains(actResults, out.Result) {
+			return "", fmt.Errorf("runrequest: factory answer: unknown result %q", out.Result)
+		}
+		return out.Result, nil
+	}
+	if resp.StatusCode >= 400 {
+		var out struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(raw, &out)
+		reason := "refused"
+		if slices.Contains(refusalCodes, out.Error) {
+			reason = out.Error
+		}
+		return "", ErrRefused{Status: resp.StatusCode, Reason: reason}
+	}
+	return "", fmt.Errorf("runrequest: factory: %s", resp.Status)
+}
 
 // CreateTask posts r to the factory's POST /v1/tasks with the caller's own token, as Request does.
 func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, error) {

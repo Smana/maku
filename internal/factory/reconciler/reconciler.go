@@ -694,7 +694,7 @@ func (r *Reconciler) onRepo(cfg *config.Config, t *v1alpha1.Task, rc *config.Rep
 }
 
 func stopReasons() map[string]string {
-	return map[string]string{"true": "stopped_by_annotation", "label": "stopped_by_label", "superseded": "superseded", StopFamilyDropped: "family_dropped"}
+	return map[string]string{"true": "stopped_by_annotation", "label": "stopped_by_label", "slack": "stopped_by_slack", "superseded": "superseded", StopFamilyDropped: "family_dropped"}
 }
 
 func (r *Reconciler) stopRequested(ctx context.Context, t *v1alpha1.Task) (bool, string, error) {

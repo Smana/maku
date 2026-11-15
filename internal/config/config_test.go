@@ -661,6 +661,43 @@ func TestLoadSlackDecide(t *testing.T) {
 	}
 }
 
+func TestLoadSlackStopAndRetry(t *testing.T) {
+	if c, err := Load(write(t, valid)); err != nil || c.Human.SlackStop != nil || c.Human.SlackRetry != nil {
+		t.Fatalf("off by default: stop=%+v retry=%+v err=%v", c.Human.SlackStop, c.Human.SlackRetry, err)
+	}
+	for _, key := range []string{"slackStop", "slackRetry"} {
+		t.Run(key, func(t *testing.T) {
+			block := strings.Replace(decideConfig, "  slackDecide:\n", "  "+key+":\n", 1)
+			c, err := Load(write(t, valid+block))
+			if err != nil {
+				t.Fatalf("valid %s: %v", key, err)
+			}
+			got := c.Human.SlackStop
+			if key == "slackRetry" {
+				got = c.Human.SlackRetry
+			}
+			if got == nil || got.Principal != "slack-app" || got.TeamID != "T01ABC" {
+				t.Fatalf("%s = %+v", key, got)
+			}
+			for name, tc := range map[string]struct{ body, want string }{
+				"an undeclared principal": {strings.Replace(block, "principal: slack-app", "principal: other", 1), "human." + key + ".principal"},
+				"a bad team":              {strings.Replace(block, "teamID: T01ABC", "teamID: x", 1), "human." + key + ".teamID"},
+				"no GitHub check":         {strings.Replace(block, access, "", 1), "human." + key + " needs human.access"},
+			} {
+				t.Run(name, func(t *testing.T) {
+					if _, err := Load(write(t, valid+tc.body)); err == nil || !strings.Contains(err.Error(), tc.want) {
+						t.Fatalf("got %v, want %q", err, tc.want)
+					}
+				})
+			}
+			local := strings.Replace(localConfig, "human:\n", "human:\n  "+key+":\n    principal: slack-app\n    teamID: T01ABC\n", 1)
+			if _, err := Load(write(t, local)); err == nil || !strings.Contains(err.Error(), "human."+key) {
+				t.Fatalf("mode local: %v", err)
+			}
+		})
+	}
+}
+
 // human.slackIntents is the classifier's switch: off by default; on, it names a declared sponsored
 // principal, one workspace and the gateway route, and every bound has a default (SI3, SI13, SI18).
 const slackIntentsBlock = access + "  roomctlClientIDFile: /etc/room-broker/oidc/roomctl\n  mcp:\n    enabled: true\n" +
