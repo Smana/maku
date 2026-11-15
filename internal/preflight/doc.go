@@ -8,11 +8,10 @@ import (
 )
 
 // DocTable is the catalog as docs/install.md's check table: one row per check, in the catalog's
-// order, with the seam, where it runs, what it checks, the codes it fails or warns with, and the
-// decisions it proves.
+// order, with the seam, where it runs, what it checks, and the codes it fails or warns with.
 func DocTable() string {
 	var b strings.Builder
-	b.WriteString("| Check | Seam | Runs in | What it checks | Fails with | Warns with | Proves |\n|---|---|---|---|---|---|---|\n")
+	b.WriteString("| Check | Seam | Runs in | What it checks | Fails with | Warns with |\n|---|---|---|---|---|---|\n")
 	for _, c := range Catalog {
 		seams := make([]string, len(c.Seams))
 		for i, s := range c.Seams {
@@ -22,8 +21,8 @@ func DocTable() string {
 		for i, w := range c.RunsIn {
 			where[i] = string(w)
 		}
-		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s | %s |\n", c.ID, strings.Join(seams, ", "), strings.Join(where, ", "),
-			c.What, codes(c.Fail), codes(c.Warn), c.From)
+		fmt.Fprintf(&b, "| `%s` | %s | %s | %s | %s | %s |\n", c.ID, strings.Join(seams, ", "), strings.Join(where, ", "),
+			c.What, codes(c.Fail), codes(c.Warn))
 	}
 	return b.String()
 }

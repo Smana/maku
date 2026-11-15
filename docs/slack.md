@@ -119,7 +119,7 @@ Draft editing needs the `message.channels` (and, for private channels, `message.
 | `proposals.enabled` | Optional, default `false`: a mention is planned by the broker's `intake_plan` and posted as one [proposal](#flows) with Confirm and Cancel. Off, a mention is a draft, as below; on, against a broker with no planner (`intake_plan` unknown), each mention is drafted exactly as if it were off. Turning it off is the rollback: a Confirm on a proposal posted while it was on says to react with a check mark instead |
 | `signingSecretFile`, `botTokenFile`, `webhookKeyFile`, `botUserIDFile` | Required mounted files; each must be readable and non-empty, and the webhook key must parse (one or two base64 lines of at least 32 bytes): the App refuses to start otherwise, naming the field and never the content |
 | `clientIDFile`, `clientSecretFile`, `projectIDFile`, `issuerURL` | Required: the machine client at your identity provider, the project whose audience the token carries ([preset: ZITADEL](identity.md#the-presets); `generic` takes `audience` instead, below), and the issuer (an absolute `https` URL; `http` is accepted only for a loopback host, in tests). The three files are checked at start like the others |
-| `preset`, `tokenURL`, `scopes`, `audience` | Optional (v4 D8). An empty `preset` is `zitadel`: the request above, `projectIDFile` required. `generic` mints at any OIDC issuer: `tokenURL`, else its discovery document's `token_endpoint`, with `scopes` and `audience` sent as a parameter; `projectIDFile` is refused there. See [identity](identity.md#the-slack-app) |
+| `preset`, `tokenURL`, `scopes`, `audience` | Optional. An empty `preset` is `zitadel`: the request above, `projectIDFile` required. `generic` mints at any OIDC issuer: `tokenURL`, else its discovery document's `token_endpoint`, with `scopes` and `audience` sent as a parameter; `projectIDFile` is refused there. See [identity](identity.md#the-slack-app) |
 | `brokerURL`, `roomsURL` | The broker's base URL, its human listener (`http://<svc>.<ns>.svc.cluster.local:8080`, no path: the App calls `<brokerURL>/mcp`), and the room pages' base URL |
 | `namespace` | Where the `factory-slack-threads` ConfigMap lives |
 | `eventsAddr` `:8080` | Slack's events, `POST /slack/events`: the public route |
@@ -274,6 +274,6 @@ Both sides must opt in: the broker's `human.slackLink` (principal, team, reposit
 - Serve another workspace, an unlisted channel or a draft it did not post.
 - Hand its Slack token or its identity-provider client secret to the broker or a run.
 
-## Live proof 5
+## What a live run shows
 
 Offline, `internal/slackapp` and `internal/app` cover the draft, the file, the card and the teardown; the two switches' live behaviour is [the design's eight proofs](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-05-v3x-slack-push-approval-design.md), L1–L8, run on one channel with `approvals: true`. On the cluster, also confirm two things about Slack itself: `conversations.replies` with the reply's `ts` and `limit=1` returns the reply (not the thread's parent), and a bot's messages carry `user=<the bot's U-id>`. The check-mark filter relies on both. The App reads its own message metadata through `conversations.replies`, so `metadata.message:read` is not needed; confirm that too, and that the manifest's bot scopes suffice.

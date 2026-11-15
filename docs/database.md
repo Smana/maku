@@ -48,7 +48,7 @@ preflight's `database` check fails with `db_ledger_unreadable`.
 
 Set `ownerSecret`: the first `migrate` adopts the operator's ledger into
 `public.room_broker_revisions` and grants `rooms_broker` `SELECT (version)` on it, every run. Until
-v4 rollout step 8 this was a warning, the gauge `maku_rooms_schema_unverified` and the alert
+v0.49.0 this was a warning, the gauge `maku_rooms_schema_unverified` and the alert
 `RoomBrokerSchemaUnverified`; both are gone ([upgrading](upgrading.md#an-unreadable-ledger-is-refused)).
 
 ## Bootstrap

@@ -45,14 +45,14 @@ the broker assigns. The rest of this page names the parts.
 
 | Term | Meaning | Where it lives |
 |---|---|---|
-| **Room** | One session: its policy (owner, driver, members, approvals, retention, data class) and its log. Rooms are runtime objects, created by the factory, the broker or the owner, never committed to Git | `Room` CR (`maku.ogenki.io/v1alpha1`) in `agent-system`, named with a C2 id (8 lowercase base32 characters; [reference](#reference-the-room-crd)); its log in Postgres |
+| **Room** | One session: its policy (owner, driver, members, approvals, retention, data class) and its log. Rooms are runtime objects, created by the factory, the broker or the owner, never committed to Git | `Room` CR (`maku.ogenki.io/v1alpha1`) in `agent-system`, named with a room id (8 lowercase base32 characters; [reference](#reference-the-room-crd)); its log in Postgres |
 | **Run** | One agent, one role, one task, one branch, with a deadline. It joins a room by naming it in `spec.roomRef`. One run is `Running` per room at a time | `AgentRun` (`maku.ogenki.io`) in `agents` |
 | **Harness** | The agent loop inside the sandbox: the OpenHands agent-server on `127.0.0.1:8000` | The run's pod |
 | **Bridge** | `maku-bridge`, a native sidecar (container `room-bridge`) in every run pod that has a `roomRef`. It polls the harness and pushes its events to the broker; it carries steering, interrupts and decisions back | The run's pod, namespace `agents` |
 | **Broker** | `maku-broker`, the stateless service (Deployment and Service `room-broker`, an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) that owns rooms: it authenticates writers, redacts, sequences and stores events, and serves them | `agent-system` |
 | **Participant** | Anyone in a room: a human, a run, or a system component, each named by its principal (next row). Joining and leaving are `participant` events | The log |
 | **Principal** | A canonical identity: `agent:<runId>`, `human:<sub>` or `system:<component>`. The broker stamps it on every event from the authenticated credential | Every event's `actor.id` |
-| **C2 id** | 8 characters of lowercase unpadded base32, `[a-z2-7]{8}`. Room, run and task ids share the format, so `agent/<id>` branches match the merge gate | Names of rooms and runs |
+| **Room id** | 8 characters of lowercase unpadded base32, `[a-z2-7]{8}`. Room, run and task ids share the format, so `agent/<id>` branches match the merge gate | Names of rooms and runs |
 | **Role** | One of five, in the order they act: **scoper** (reads the issue and writes the acceptance checks; it may propose parts), **tester** (writes the tests first, where `testFirst` is set), **implementer** (writes the change; search is one of its tools), **judge** (one call when the implementer stops: met, not yet, or impossible) and **reviewer** (a read-only verdict on the pull request). A workflow names which run. A run's role is a policy input, not an identity | `AgentRun.spec.role`; an agent event's `actor.role` |
 | **Room role** | What a human may do in a room: `watcher` < `collaborator` < `owner`, cumulative. **Approver** is a separate flag | `Room.spec.members` |
 | **Driver** | The one principal allowed to steer or interrupt the running run. A token that moves with *give*, *request* and *take*; each change bumps `driverEpoch`, which fences races | `rooms.driver`, `driver_epoch`; `driver` events |
@@ -123,8 +123,8 @@ The full permission matrix is in [Security](security.md#authorization).
 (`api/v1alpha1`, generated into `config/crd/maku.ogenki.io_rooms.yaml`). `kubectl get rooms`
 prints `Phase`, `Driver`, `Seq`, `Pending` and `Class`.
 
-**Name.** A CEL rule requires a C2 id: `self.metadata.name.matches('^[a-z2-7]{8}$')`, message
-"a Room is named with a C2 id: 8 characters of [a-z2-7]".
+**Name.** A CEL rule requires an 8-character base32 room id: `self.metadata.name.matches('^[a-z2-7]{8}$')`, message
+`a Room is named with a C2 id: 8 characters of [a-z2-7]`.
 
 | `spec` field | Type | Required | Default | Validation | Meaning |
 |---|---|---|---|---|---|

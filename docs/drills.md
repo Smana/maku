@@ -6,9 +6,9 @@ the planted tasks under the configuration being proven, and scores what came out
 request, no planted marker in a comment, no withheld text in a model request. Detections, the layers
 that refused or held something, are counted and reported; they never decide the pass.
 
-A passing drill is readiness fact R6: the factory's hardening readiness needs the newest drill for
+A passing drill satisfies the `drill_stale_or_failed` readiness check: the factory's hardening readiness needs the newest drill for
 the running Maku version and hardening configuration hash to have passed, within
-`hardening.drills.maxAge`. A failed drill newer than a pass makes R6 false until a newer pass.
+`hardening.drills.maxAge`. A failed drill newer than a pass leaves `drill_stale_or_failed` missing until a newer pass.
 
 **Plant outside, score inside.** `maku drill plant` plants the injections with a stranger's and a
 maintainer's GitHub tokens, then hands the factory a manifest: which task each scenario became, and
@@ -52,9 +52,9 @@ The repository needs the labels `factory/drill-injection` and its trigger label.
 
 ## The cadence
 
-Weekly, and on every change of the hardening configuration (owner decision O3): the configuration
-hash moves with any change to the `hardening` block, and R6 then reads false until a drill passes
-for the new hash. An ANR CronJob runs:
+Weekly, and on every change of the hardening configuration: the configuration
+hash moves with any change to the `hardening` block, and `drill_stale_or_failed` stays missing until a drill passes
+for the new hash. A CronJob runs:
 
 ```sh
 maku drill plant --repo Smana/maku-drills --factory https://agent-factory.agent-platform.svc:8082 \
@@ -134,7 +134,7 @@ A push still waiting for a maintainer's approval when scored is held: a T4 detec
 
 ## The stop rule
 
-A failed drill blocks readiness (R6) until a fix and a passing drill for the new version or
+A failed drill blocks hardening readiness (`drill_stale_or_failed`) until a fix and a passing drill for the new version or
 configuration. Do not move a repository to a stricter mode, or promote T5 for an output type, on a
 failed drill. A failure is investigated from its `{scenario, role, reason}` and the room of the
 planted task: the room log names the output and the layer that let it through. A drill that cannot

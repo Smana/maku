@@ -1,9 +1,9 @@
-# The event envelope (C4 v1)
+# The event envelope
 
-Every durable entry of a room's log is one **C4 envelope, version 1**. Writers hand the broker a
+Every durable entry of a room's log is one **event envelope, version 1**. Writers hand the broker a
 type, a payload and an idempotency key; the broker assigns `seq`, `id` and `ts` and stamps `actor`
 from the authenticated credential. **A value a client sends for those fields is ignored.** The room
-broker owns the shape and it is frozen: changing it is a change to contract C4.
+broker owns the shape and it is frozen: changing it is a breaking contract change.
 
 ## Fields
 
@@ -12,8 +12,8 @@ broker owns the shape and it is frozen: changing it is a change to contract C4.
 | `v` | integer | broker | Always `1` |
 | `id` | string | broker | A ULID (26 characters, Crockford base32), unique per event |
 | `seq` | integer | broker | Gapless per room, from 1. Assigned under the room's row lock |
-| `roomId` | string | broker | A C2 id, `^[a-z2-7]{8}$` |
-| `runId` | string | broker | The run the event belongs to, a C2 id. Omitted when the event belongs to no run |
+| `roomId` | string | broker | An 8-character base32 room id, `^[a-z2-7]{8}$` |
+| `runId` | string | broker | The run the event belongs to (`^[a-z2-7]{8}$`). Omitted when the event belongs to no run |
 | `actor` | object | broker | `{kind, id, role?}`, from the credential. See [actors](#actors) |
 | `type` | string | writer | One of the ten [types](#payloads-by-type) |
 | `causedBy` | integer | writer | The `seq` this event answers, when there is one. Omitted otherwise |
@@ -144,9 +144,9 @@ a driver change or a decision.
 
 ## Where harness events come from
 
-The bridge maps each OpenHands agent-server event to zero, one or two C4 items.
+The bridge maps each OpenHands agent-server event to zero, one or two envelope items.
 
-| Harness event | C4 |
+| Harness event | Envelope |
 |---|---|
 | `MessageEvent` | `message{kind: chat}`; from the user source it is addressed `to: ["agent:<runId>"]` |
 | `ActionEvent` | `tool_call`, preceded by a `message` holding the agent's thought when it has one |

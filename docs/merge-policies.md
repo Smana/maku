@@ -794,8 +794,8 @@ repositories:
 ```
 
 A repository served from a `Repository` object sets `classAuthority: repository` there instead,
-and drops its `mergePolicies`: the file then holds the bindings (`classAuthority repository: the
-repository's file holds the bindings (MP15)`).
+and drops its `mergePolicies`: the file then holds the bindings
+(`classAuthority repository: the repository's file holds the bindings (MP15)`).
 
 3. Reverting that pull request is the rollback. No tool writes a repository file back to central
    objects, so a binding changed in `.github/agent-factory.yaml` after cutover is carried back by
@@ -1060,9 +1060,9 @@ central", not "valid": a new policy is `only in the repository`. Validate it wit
 
 **`the classes shape was removed in this release`.** The file uses the removed `classes:` map: write
 `mergePolicies` bindings instead, with `maku policy export` once the factory serves the repository
-from a `Repository` ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1)).
+from a `Repository` ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v0480)).
 
-**A policy has unknown field `harness`, `requires` or `mode "off"`.** Release N+1 removed workflow
+**A policy has unknown field `harness`, `requires` or `mode "off"`.** v0.52.0 removed workflow
 fields and `requires` from `MergePolicy`, replaced binding `mode: "off"` with `mode: disabled` (or
 deleting the binding), and replaced the six `policyManagement` switches with `stage`. Run
 `maku config migrate` or consult [merge policies removals](upgrading.md#merge-policies-removals).
@@ -1225,7 +1225,7 @@ none. A repository's own file in `mergePolicies` ([above](#a-binding)) resolves 
 
 The per-repository shape (`spec.repositoryRef`, `classes` and `merge` on one `MergePolicy` per
 repository) is removed: a forgotten object reads as an empty policy with `CONSUMERS 0`, and `maku
-config validate` refuses one ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v04x-release-n1)).
+config validate` refuses one ([upgrading](upgrading.md#the-per-repository-merge-policy-removed-v0480)).
 
 Offline commands prepare the move. `migrate` splits a config file into the `Factory`, each
 `Repository` with its bindings, and one `MergePolicy` per non-catalog policy (rewriting any removed

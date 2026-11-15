@@ -195,7 +195,7 @@ SQL.
 
 | Task | Cluster | What it adds |
 |---|---|---|
-| `task install:kind-calico` | kind, Calico, gVisor's `runsc` (`KIND_MINOR`: 1.37, 1.36 or 1.35) | a pod under the RuntimeClass `gvisor` runs on gVisor's kernel; the web host through agentgateway's Gateway is oauth2-proxy's. `TWO_INSTALLS=1` adds `team-b` beside the first release (D2), with its own runs namespace and database, and checks that its runs reach neither the first broker nor its database |
+| `task install:kind-calico` | kind, Calico, gVisor's `runsc` (`KIND_MINOR`: 1.37, 1.36 or 1.35) | a pod under the RuntimeClass `gvisor` runs on gVisor's kernel; the web host through agentgateway's Gateway is oauth2-proxy's. `TWO_INSTALLS=1` adds `team-b` beside the first release, with its own runs namespace and database, and checks that its runs reach neither the first broker nor its database |
 | `task install:k3s` | k3s (k3d), kube-router, Traefik | Traefik serves the web host to oauth2-proxy, and the broker's `:8080` refuses any other pod. Its RuntimeClass `gvisor` runs on `runc`: this leg proves the network, Ingress and database seams, not the sandbox |
 
 The nightly adds three more, on kind with Calico (`demo-e2e.yaml`'s `install-upgrade` and

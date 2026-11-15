@@ -1,10 +1,10 @@
 # Install on your cluster
 
-This page installs the agent factory on a Kubernetes cluster your platform team already runs (D1):
+This page installs the agent factory on a Kubernetes cluster your platform team already runs:
 with its own identity provider, its own Secrets tooling and its own GitOps controller. It is not the
 way to try the factory: that is the [quickstart](quickstart.md), on a laptop, in about 15 minutes.
 
-An install is one factory (D2): one namespace, two GitHub Apps, one database and the repositories it
+An install is one factory: one namespace, two GitHub Apps, one database and the repositories it
 serves. It runs three components (the factory, the broker and the run-controller) beside the model
 gateway, and it never applies anything on its own. You review the files, then apply them yourself or
 hand them to Flux or Argo CD.
@@ -126,7 +126,7 @@ test hook: run the preflight by hand, as below.
 
 ## Check it: the preflight
 
-`maku.preflight.enabled` and `maku-factory.preflight.enabled`, both on by default since rollout step 8
+`maku.preflight.enabled` and `maku-factory.preflight.enabled`, both on by default since v0.48.0
 (and written by `maku install --print`), render the install's preflight twice: a Helm test hook, which `helm test <release>` runs, and a suspended CronJob for tools that run no
 hooks:
 
@@ -162,23 +162,23 @@ and its `Repository`'s conditions; `maku repo add` writes the files those rows c
 The checks, generated from the catalog in `internal/preflight`:
 
 <!-- preflight:begin -->
-| Check | Seam | Runs in | What it checks | Fails with | Warns with | Proves |
-|---|---|---|---|---|---|---|
-| `kubernetes` | cluster | pod | the server version is 1.30 or later | `kubernetes_too_old` |  | D26 |
-| `crds` | cluster | pod | the six maku CRDs at the chart's served versions, and each CRD the values need (agentgateway's, Gateway API's, prometheus-operator's, ESO's) | `crd_missing`, `crd_version` |  | D13, A11 |
-| `runtimeclass` | sandbox | pod | the RuntimeClass sandbox.runtimeClassName names exists | `runtimeclass_missing` | `unsafe_allow_runc` | D18 |
-| `secrets` | secrets | pod | each Secret of the registry the values enable exists, with its documented keys | `secret_missing`, `secret_key_missing` |  | D14 |
-| `run-path` | network, sandbox | run-controller | the run-controller's preflight: RuntimeClass, git Secrets, the CNI probe, the gateway | `run_path_runtimeclass`, `run_path_git_secrets`, `run_path_network`, `run_path_gateway` | `network_policy_none` | D6, D18 |
-| `database` | postgres | broker | the three DSNs: reachable, Postgres 16 or later, roles without BYPASSRLS, the schema current | `db_unreachable`, `db_too_old`, `db_role_bypasses_rls`, `db_wrong_role`, `db_schema_behind`, `db_schema_ahead`, `db_ledger_unreadable` |  | D9 |
-| `oidc` | identity | broker, factory | discovery answers, its issuer matches, the JWKS fetches | `oidc_discovery`, `oidc_issuer_mismatch`, `oidc_jwks` |  | D8 |
-| `github-link` | identity | broker | the GitHub link's OAuth client authorizes, and its callback is the web host's | `link_client`, `link_callback_mismatch` |  | D8 |
-| `apps` | github | factory | each served repository has both App installations, with their grants | `app_not_installed`, `app_permission_missing` |  | D10, D12 |
-| `merge-gate` | github | factory | the default branch's ruleset requires maku/merge-gate from the posting App | `merge_gate_not_required` | `merge_gate_rules_unread` | D11 |
-| `private-code` | github | factory | each private repository has privateCode.acknowledged: without it, it is refused new tasks | `private_code_unacknowledged` |  | D3 |
-| `models` | models | broker, run-controller | the planner, the classifier and one run alias per listener answer a one-token completion | `model_unreachable`, `model_refused` |  | D7 |
-| `knowledge` | runlore | broker | tools/list lists kb_search and kb_get within the timeout | `knowledge_unreachable`, `knowledge_tools_missing` |  | D20 |
-| `exposure` | exposure | factory, cli | no route reaches the broker around the proxy; each host resolves and answers | `broker_exposed_around_proxy`, `host_unresolved`, `route_unanswered`, `slack_route_too_wide` |  | D19 |
-| `tracing` | observability | run-controller | the collector's OTLP port accepts a run's connection | `collector_unreachable` |  | D21 |
+| Check | Seam | Runs in | What it checks | Fails with | Warns with |
+|---|---|---|---|---|---|
+| `kubernetes` | cluster | pod | the server version is 1.30 or later | `kubernetes_too_old` |  |
+| `crds` | cluster | pod | the six maku CRDs at the chart's served versions, and each CRD the values need (agentgateway's, Gateway API's, prometheus-operator's, ESO's) | `crd_missing`, `crd_version` |  |
+| `runtimeclass` | sandbox | pod | the RuntimeClass sandbox.runtimeClassName names exists | `runtimeclass_missing` | `unsafe_allow_runc` |
+| `secrets` | secrets | pod | each Secret of the registry the values enable exists, with its documented keys | `secret_missing`, `secret_key_missing` |  |
+| `run-path` | network, sandbox | run-controller | the run-controller's preflight: RuntimeClass, git Secrets, the CNI probe, the gateway | `run_path_runtimeclass`, `run_path_git_secrets`, `run_path_network`, `run_path_gateway` | `network_policy_none` |
+| `database` | postgres | broker | the three DSNs: reachable, Postgres 16 or later, roles without BYPASSRLS, the schema current | `db_unreachable`, `db_too_old`, `db_role_bypasses_rls`, `db_wrong_role`, `db_schema_behind`, `db_schema_ahead`, `db_ledger_unreadable` |  |
+| `oidc` | identity | broker, factory | discovery answers, its issuer matches, the JWKS fetches | `oidc_discovery`, `oidc_issuer_mismatch`, `oidc_jwks` |  |
+| `github-link` | identity | broker | the GitHub link's OAuth client authorizes, and its callback is the web host's | `link_client`, `link_callback_mismatch` |  |
+| `apps` | github | factory | each served repository has both App installations, with their grants | `app_not_installed`, `app_permission_missing` |  |
+| `merge-gate` | github | factory | the default branch's ruleset requires maku/merge-gate from the posting App | `merge_gate_not_required` | `merge_gate_rules_unread` |
+| `private-code` | github | factory | each private repository has privateCode.acknowledged: without it, it is refused new tasks | `private_code_unacknowledged` |  |
+| `models` | models | broker, run-controller | the planner, the classifier and one run alias per listener answer a one-token completion | `model_unreachable`, `model_refused` |  |
+| `knowledge` | runlore | broker | tools/list lists kb_search and kb_get within the timeout | `knowledge_unreachable`, `knowledge_tools_missing` |  |
+| `exposure` | exposure | factory, cli | no route reaches the broker around the proxy; each host resolves and answers | `broker_exposed_around_proxy`, `host_unresolved`, `route_unanswered`, `slack_route_too_wide` |  |
+| `tracing` | observability | run-controller | the collector's OTLP port accepts a run's connection | `collector_unreachable` |  |
 <!-- preflight:end -->
 
 ## Private code
@@ -204,7 +204,7 @@ depends on them. The [Repository reference](factory.md#private-code) has the det
 
 ## Sandbox nodes
 
-Every run pod runs under the RuntimeClass `maku.sandbox.runtimeClassName` names (D18), and the
+Every run pod runs under the RuntimeClass `maku.sandbox.runtimeClassName` names, and the
 run-pod admission policy refuses any other. The nodes, and the runtime on them, are yours.
 `sandbox.unsafeAllowRunc` runs agents on the node's own runtime: the demo and kind only, and the
 render refuses it without the demo's `demoValues`.
@@ -223,7 +223,7 @@ does ([operations](operations.md#the-run-controllers-preflight)).
 
 A cold sandbox node costs a run 1.5 to 3.5 minutes at start: the image pull and the sandbox's own
 boot land on the run's clock, before its clone. A low-priority placeholder pod that keeps the run
-images on one node removes most of it for the price of one idle pod. The nodes are yours (v4 D18),
+images on one node removes most of it for the price of one idle pod. The nodes are yours,
 so the chart ships none: schedule the placeholder on a window yourself (for example, on the reference
 platform, 08:00-19:00 Europe/Paris on weekdays), and let the mechanism own the `replicas`
 field so Flux does not revert it.
@@ -242,7 +242,7 @@ field so Flux does not revert it.
 
 ## Several installs in one cluster
 
-Several teams means several installs (D2), each in its own namespace with its own Apps, database,
+Several teams means several installs, each in its own namespace with its own Apps, database,
 runs namespace (`maku.runs.namespace`) and fence. Every cluster-scoped object an install renders
 carries its namespace: the admission policies, the run-controller's and the preflight's cluster
 roles, the broker's token review binding, and the factory's Flux binding. The roles every install
