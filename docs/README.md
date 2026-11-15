@@ -7,7 +7,7 @@
   </picture>
 </a>
 
-The reference for the broker, the bridge, the factory, the CLI and the web UI; the platform's docs site holds the overview and the status.
+The reference for the broker, the bridge, the factory, the CLI and the web UI; the platform's docs site holds the overview, and its [status page](https://airef.ogenki.io/docs/status/) says what is proven live.
 
 ## Pages
 
@@ -19,7 +19,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
 | [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
-| [Merge policies](merge-policies.md) | A repository's own merge classes: the model, the six rollout switches, every field, recipes, checking and promoting, grants, reasons, rollback |
+| [Merge policies](merge-policies.md) | A repository's merge policies: start here, the catalog, bindings, rollout stages, every field, worked examples, recipes, checking and promoting, reasons, rollback |
 | [maku](cli.md) | Install and verify, configure, every command, the factory-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
@@ -46,13 +46,15 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 
 ## Reading paths
 
-| You are | Read |
+| You want to | Read |
 |---|---|
-| New here | [README](../README.md) → [Concepts](concepts.md) → [Architecture](architecture.md) |
-| A maintainer with a factory issue or PR | [The factory](factory.md) → [Web UI](web-ui.md) → [Concepts](concepts.md) |
-| A developer who wants the CLI | [maku](cli.md) → [Web UI](web-ui.md) |
-| Operating a cluster | [Architecture](architecture.md) → [Integration](integration.md) → [chart README](../charts/maku-factory/README.md) → [Operations](operations.md) → [Observability](observability.md) → [Security](security.md) |
-| Changing the code | [AGENTS.md](../AGENTS.md) → [Development](development.md) → [Event envelope](event-envelope.md) → [Room log](room-log.md) → [API](api.md) |
+| Try it | [Quickstart](quickstart.md) |
+| Onboard a repository | [Install](install.md) → [GitHub Apps](github-apps.md) → [Merge policies: start here](merge-policies.md#start-here); `maku repo add` and `maku repo check` write and check one repository's files ([maku](cli.md#commands)) |
+| Turn on auto-merge | [Merge policies](merge-policies.md) |
+| Operate it | [Install](install.md) → [Operations](operations.md) → [Observability](observability.md) → [Security](security.md) |
+
+To change the code, read [AGENTS.md](../AGENTS.md), then [Development](development.md), the
+[event envelope](event-envelope.md), the [room log](room-log.md) and the [API](api.md).
 
 Design sources: the [rooms design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md),
 the [factory design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-dark-factory-design.md),

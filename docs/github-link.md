@@ -4,8 +4,8 @@ Each human links their GitHub account to their rooms account once, in the broker
 OAuth web flow. The broker stores the numeric GitHub id GitHub proved, never a token. Rooms, the
 factory and the Slack App resolve that id to the current login at each use, through the factory
 App, so a renamed account keeps working. The link is the only identity source: `human.access` in
-the broker and `api.access` in the factory need it. It replaced ZITADEL's GitHub IdP link and the
-reader that read it, which v4 step 8 removed ([upgrading](upgrading.md#the-zitadel-reader)).
+the broker and `api.access` in the factory need it. It replaced the identity provider's GitHub link and
+the reader that read it, now removed ([upgrading](upgrading.md#the-zitadel-reader)).
 
 ## Turning it on
 
@@ -127,7 +127,7 @@ line, metric, error or page carries a code, a state, a nonce, a verifier or a to
 ## The proof
 
 `task chart:identity:k3d` runs the flow end to end on a throwaway k3d cluster, with the e2e stub as
-the generic OIDC issuer, GitHub's OAuth web flow and the factory App's API, and no ZITADEL reader: a
+the generic OIDC issuer, GitHub's OAuth web flow and the factory App's API, and no identity-provider reader: a
 member with no link sees no room, links through the stub's redirect and the confirm, reads the room
 through the link, and is unlinked again by an admin. The stub counts the revoked user token and
-proves no ZITADEL endpoint was called.
+proves the removed reader's endpoints were never called.

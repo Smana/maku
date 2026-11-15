@@ -1,7 +1,10 @@
 # Integration
 
 This repository ships six images (`maku-broker`, `maku-bridge`, `maku-factory`, `maku-harness`,
-`maku-run-controller`, `maku-slack`), the `maku-factory` and `maku` charts, the `maku` CLI, two CRDs (`Room`, `Task`) and the log's migrations.
+`maku-run-controller`, `maku-slack`), the charts under [`charts/`](../charts/) (`agent-factory`, the umbrella;
+`agent-factory-crds`; `maku`; `maku-factory`; `maku-gateway`; `maku-slack`), the `maku` CLI, the
+CRDs the `agent-factory-crds` chart installs (`Room`, `AgentRun`, `Task`, `Factory`, `Repository`,
+`MergePolicy`) and the log's migrations.
 [cloud-native-ref](https://github.com/Smana/cloud-native-ref) deploys the broker, the factory chart,
 the databases, the CRDs and the policies; [crossplane-configuration](https://github.com/Smana/crossplane-configuration)
 adds the bridge to every `AgentRun` that names a room. Each consumer pins a build by digest: a
@@ -57,8 +60,8 @@ flowchart LR
 | Observability | Its own `VMServiceScrape`s and `VMRule`s, until it turns on the umbrella chart's `monitoring` values ([observability](observability.md)), which render the scrape objects and the product alerts; the alerts on its own platform (the CNPG volume, Karpenter, its gateway budgets) stay its own |
 | Design records | ADR-0044 (session protocol), ADR-0049 (room client and human auth) |
 
-Every child added to `clusters/aws-0-agent-platform/` has its twin in
-`clusters/gcp-0-agent-platform/`. The whole set sits in the `agent-platform` Flux umbrella,
+Every child added to one cluster's `clusters/<cluster>-agent-platform/` directory has its twin in
+the other cluster's. The whole set sits in the `agent-platform` Flux umbrella,
 suspended by default.
 
 ### crossplane-configuration
