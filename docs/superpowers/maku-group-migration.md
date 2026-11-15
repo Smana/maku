@@ -3,7 +3,7 @@
 > **History.** `maku-broker migrate-group` is removed in v0.48.0. An install still serving
 > `agents.ogenki.io` first upgrades to the last v0.4x release that ships the command, runs the move
 > below with that release's `maku-broker`, then upgrades on
-> ([upgrading](upgrading.md#the-group-migration)).
+> ([upgrading](../upgrading.md#the-group-migration)).
 
 v0.31.0 serves `Room`, `Task` and the quickstart's `AgentRun` under `maku.ogenki.io` only. Kubernetes
 cannot serve one kind under two groups, so every live `Room` and `Task` is **copied** to the new group
@@ -234,7 +234,7 @@ v0.31.0 runs: its finalizer seals the room's log.
 | No copy still guarded | `$K get rooms.maku.ogenki.io,tasks.maku.ogenki.io -A -o json \| jq '[.items[] \| select(.metadata.annotations["maku.ogenki.io/migrating"])] \| length'` | `0` |
 | Every room page loads | open three rooms, a closed one included, at `https://rooms.<domain>/r/<id>` | the transcript, in full |
 | The CLI answers | `maku status <room>` | the room's summary |
-| The logs did not move | `SELECT count(*), max(seq) FROM events` ([SQL](operations.md#reading-the-log-with-sql)), before step 4 and now | equal |
+| The logs did not move | `SELECT count(*), max(seq) FROM events` ([SQL](../operations.md#reading-the-log-with-sql)), before step 4 and now | equal |
 
 **Rollback:** step 4's.
 

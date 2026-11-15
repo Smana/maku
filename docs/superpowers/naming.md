@@ -108,12 +108,12 @@ Recorded 2026-10-27. This is a collision screen, not legal clearance.
 
 ## Visual identity
 
-The authoritative kit lives in [`assets/brand/`](assets/brand/README.md): source marks, PNG exports,
+The authoritative kit lives in [`../assets/brand/`](../assets/brand/README.md): source marks, PNG exports,
 favicons and a social preview. Use those files as supplied; do not redraw or recolour them.
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/brand/png/maku-lockup-horizontal-dark.png">
-  <img src="assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku — a controlled stage for delegated agent work" width="480">
+  <source media="(prefers-color-scheme: dark)" srcset="../assets/brand/png/maku-lockup-horizontal-dark.png">
+  <img src="../assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku — a controlled stage for delegated agent work" width="480">
 </picture>
 
 The web UI does not use this raster lockup: it draws the SVG mark next to real `maku` text.

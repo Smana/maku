@@ -4,7 +4,7 @@ The broker serves four listeners. Every body is JSON.
 
 | Port | Who calls it | Authentication |
 |---|---|---|
-| `:8443` (TLS) | The bridge (container `room-bridge`, an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) in each run pod; system callers such as the factory | Offline JWT: run tokens (audience `room-broker`) or system tokens (audience `rooms-system`) |
+| `:8443` (TLS) | The bridge (container `room-bridge`, an identity that keeps its pre-maku name, see [naming](superpowers/naming.md#technical-names)) in each run pod; system callers such as the factory | Offline JWT: run tokens (audience `room-broker`) or system tokens (audience `rooms-system`) |
 | `:9090` | kubelet, `vmagent` | None: probes and metrics only |
 | `:8080` | Humans, through oauth2-proxy | ID token and access token from your identity provider |
 | `:8090` | Agents' `room_*` tools, through the `agent-router` Gateway only | Injected key plus the gateway's verified `x-ar-agent` |
@@ -765,7 +765,7 @@ Text that comes through `maku` or `POST /mcp`, a message's `text` and a fork's `
 machine-sent (factory interfaces F8): a local agent can drive either on its human's token. The
 broker sanitises it as the factory does an issue (hidden and control characters out, NFKC, fence
 look-alikes, images and raw HTML defused), then stores it between two lines: `machine-sent via roomctl` from the CLI (a stored value
-that keeps its pre-maku name, see [naming](naming.md#technical-names)), `machine-sent via mcp` from `POST /mcp`:
+that keeps its pre-maku name, see [naming](superpowers/naming.md#technical-names)), `machine-sent via mcp` from `POST /mcp`:
 
 ```text
 ⟦machine-sent via mcp: a client wrote this on a human's token⟧

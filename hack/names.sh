@@ -9,7 +9,7 @@ set -euo pipefail
 cd "${1:-$(dirname "$0")/..}"
 
 # History and recorded data keep the old names.
-allow=(':!docs/superpowers' ':!web/test/fixtures' ':!docs/naming.md' ':!hack/names.sh' ':!hack/names_test.sh'
+allow=(':!docs/superpowers' ':!web/test/fixtures' ':!hack/names.sh' ':!hack/names_test.sh'
   ':!internal/maku/legacy.go' ':!internal/maku/legacy_test.go' ':!internal/maku/legacymcp_test.go'
   ':!internal/app/maku_import_test.go' ':!internal/humanapi/ui/dist'
   # web/src/strip.ts:38's comment names roomctl's tokens(); the file is frozen by another branch,
@@ -27,8 +27,6 @@ old='room-broker|room-bridge|agent-factory|agent-harness|run-controller|factory-
 artifacts="Smana/agent-platform|ghcr\\.io/smana/($old)([^a-z-]|\$)|charts/agent-platform([^a-z-]|\$)|ghcr\\.io/smana/charts/agent-platform|(cmd|images)/(roomctl|$old)([^a-z-]|\$)"
 # Phase 2: agents.ogenki.io as an API group, never as a key prefix (agents.ogenki.io/<key> stays, plan D1).
 group='(^|[^.a-z-])agents\.ogenki\.io(/v1alpha1|_[a-z]+\.yaml|`)|(rooms|tasks|agentruns)\.agents\.ogenki\.io|groupName=agents\.ogenki\.io|apiGroups:.*agents\.ogenki\.io|group: *"?agents\.ogenki\.io|Group: "agents\.ogenki\.io"'
-# The migration's history must name the group it moved from (its command is gone, v4 step 8 R6).
-group_allow=(':!docs/maku-group-migration.md')
 # The Slack App's metrics before v4 step 8 (R5): served as maku_slack_app_* since, with no dual
 # export, so the old names are refused everywhere but the history, the upgrade note and the two
 # tests that prove they are no longer served.
@@ -48,7 +46,7 @@ fi
 
 hits="$( { git grep --untracked -nIE "$artifacts" -- . "${allow[@]}" | grep -vF "$history" || true
           git grep --untracked -nIw roomctl -- . "${allow[@]}" | grep -vE "$legacy" || true
-          git grep --untracked -nIE "$group" -- . "${allow[@]}" "${group_allow[@]}" || true
+          git grep --untracked -nIE "$group" -- . "${allow[@]}" || true
           git grep --untracked -nIwF "${metric_args[@]}" -- . ':!*.go' "${allow[@]}" || true
           git grep --untracked -nIE "$slack_metrics" -- . "${allow[@]}" "${slack_allow[@]}" || true; } )"
 if [ -n "$hits" ]; then

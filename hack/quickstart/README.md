@@ -54,4 +54,4 @@ broker's FQDN resolves) and `ok:tcp` (the ClusterIP :8443 answers, which needs C
 `ALLOW_UNSANDBOXED=1`. `quickstart-e2e` runs `up.sh`, so CI exercises it.
 
 Prerequisites, starting a run, the CI secrets and the model-URL rule are in
-[`docs/quickstart.md`](../../docs/quickstart.md), which owns them.
+[`docs/contributing/one-run-quickstart.md`](../../docs/contributing/one-run-quickstart.md), which owns them.

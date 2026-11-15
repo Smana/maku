@@ -601,7 +601,7 @@ maku config migrate --from factory.yaml --residual factory.new.yaml > resources.
 
 `maku-broker migrate-group` and its v0.30.0 upgrade e2e are removed. An install still serving `Room`
 and `Task` under the pre-rebrand API group (older than v0.31.0) first upgrades to the last v0.4x release
-before this one, runs [the group move](maku-group-migration.md) with that release's `maku-broker`,
+before this one, runs [the group move](superpowers/maku-group-migration.md) with that release's `maku-broker`,
 then upgrades here.
 
 ### The Slack App's metric names
