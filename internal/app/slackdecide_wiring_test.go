@@ -16,12 +16,20 @@ import (
 // and a Server with no Sponsored refuses every bearer rather than serving one.
 func TestSlackAppWiring(t *testing.T) {
 	off := &humanapi.Server{}
-	if code := postRoute(t, off.Routes(), "/api/slack/decisions"); code != http.StatusNotFound {
-		t.Fatalf("off: %d", code)
+	for _, path := range []string{"/api/slack/decisions", "/api/slack/stops", "/api/slack/retries"} {
+		if code := postRoute(t, off.Routes(), path); code != http.StatusNotFound {
+			t.Fatalf("%s off: %d", path, code)
+		}
 	}
-	on := &humanapi.Server{SlackDecide: &humanapi.SlackDecider{Principal: "system:slack-app", TeamID: "T01ABC"}}
-	if code := postRoute(t, on.Routes(), "/api/slack/decisions"); code != http.StatusForbidden {
-		t.Fatalf("on: %d", code)
+	on := &humanapi.Server{
+		SlackDecide: &humanapi.SlackDecider{Principal: "system:slack-app", TeamID: "T01ABC"},
+		SlackStop:   &humanapi.SlackActor{Principal: "system:slack-app", TeamID: "T01ABC"},
+		SlackRetry:  &humanapi.SlackActor{Principal: "system:slack-app", TeamID: "T01ABC"},
+	}
+	for _, path := range []string{"/api/slack/decisions", "/api/slack/stops", "/api/slack/retries"} {
+		if code := postRoute(t, on.Routes(), path); code != http.StatusForbidden {
+			t.Fatalf("%s on: %d", path, code)
+		}
 	}
 }
 
