@@ -55,7 +55,7 @@ func TestCentralGrantArms(t *testing.T) {
 	for name, bound := range map[string]bool{"bound to the resolved class": true, "bound to the file's hash": false} {
 		t.Run(name, func(t *testing.T) {
 			g := centralApprovalRig(t, config.Class{Live: true})
-			g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 			hash := centralHash(g)
 			f := &fakeGrants{list: []grant.Grant{boundGrant(rigHash + "0000")}}
 			if bound {
@@ -82,7 +82,7 @@ func TestCentralGrantArms(t *testing.T) {
 // grant, intact; any edit to this class suspends it.
 func TestUnrelatedClassEditKeepsGrants(t *testing.T) {
 	g := centralApprovalRig(t, config.Class{Live: true})
-	g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	g.r.Grants = &fakeGrants{list: []grant.Grant{boundGrant(centralHash(g))}}
 	classes := g.r.Cfg.Current().Repositories[0].Classes
 	classes["revert"] = config.Class{Shadow: true, HoldoutChecks: []string{"another check"}}
@@ -91,7 +91,7 @@ func TestUnrelatedClassEditKeepsGrants(t *testing.T) {
 	}
 
 	g = centralApprovalRig(t, config.Class{Live: true})
-	g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	g.r.Grants = &fakeGrants{list: []grant.Grant{boundGrant(centralHash(g))}}
 	dl := g.r.Cfg.Current().Repositories[0].Classes["docs-links"]
 	dl.ProtectedFiles = []string{"^nothing-here/"} // a tightening: still a new definition

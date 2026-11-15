@@ -16,9 +16,9 @@ import (
 // 20 lines), docs-links and revert.
 func boundRig(t *testing.T) *config.Config {
 	t.Helper()
-	hold := config.PolicySpec{Requires: []string{"holdoutChecks"}}
+	hold := config.PolicySpec{}
 	cfg := &config.Config{Factory: "aws-0", Policies: map[string]config.ServedPolicy{
-		"docs":       {Spec: config.PolicySpec{Class: config.Class{AllowedFiles: []string{`^docs/.+\.md$`}, MaxModifiedLines: 20}}, Generation: 3},
+		"docs":       {Spec: config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{`^docs/.+\.md$`}, MaxModifiedLines: 20}}, Generation: 3},
 		"docs-links": {Spec: hold, Generation: 1}, "revert": {Spec: hold, Generation: 1}}}
 	cfg.Generations.Repos = map[string]config.RepoGenerations{}
 	for _, r := range []struct{ name, object string }{{"Smana/cloud-native-ref", "cloud-native-ref"}, {"Smana/ai-native-ref", "ai-native-ref"}} {
@@ -62,8 +62,8 @@ func TestPolicyPreviewListsItsConsumers(t *testing.T) {
 	if pv := CheckPolicy(cfg, "docs", spec, "factory", func(r string) bool { return r == "Smana/ai-native-ref" }); len(pv.Consumers) != 1 {
 		t.Fatalf("%+v", pv.Consumers)
 	}
-	spec.Live = true
-	if pv := CheckPolicy(cfg, "docs", spec, "factory", func(string) bool { return true }); pv.Valid || !strings.Contains(strings.Join(pv.Errors, " "), "mode is the binding's") {
+	spec.NarrowedFiles = []string{"^docs/"}
+	if pv := CheckPolicy(cfg, "docs", spec, "factory", func(string) bool { return true }); pv.Valid || !strings.Contains(strings.Join(pv.Errors, " "), "narrowedFiles") {
 		t.Fatalf("a policy refused alone: %+v", pv)
 	}
 }
@@ -97,7 +97,7 @@ func TestBindingPreview(t *testing.T) {
 	if pv := CheckBindings(cfg, rc, rep, dropped); pv.Valid || !strings.Contains(strings.Join(pv.Errors, " "), "OD-8") {
 		t.Fatalf("revert dropped: %+v", pv)
 	}
-	unknown := slices.Concat(rc.Bindings, []config.Binding{{Name: "nope", Mode: "off"}})
+	unknown := slices.Concat(rc.Bindings, []config.Binding{{Name: "nope", Mode: "disabled"}})
 	if pv := CheckBindings(cfg, rc, rep, unknown); !pv.Valid || pv.Bindings[3].Resolves || pv.Bindings[3].Reason != "MissingRef" {
 		t.Fatalf("a binding to no policy resolves to nothing, without refusing the edit (B9): %+v", pv.Bindings)
 	}

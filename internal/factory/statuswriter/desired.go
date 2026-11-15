@@ -187,15 +187,7 @@ func (d *desirer) factory(f *v1alpha1.Factory) v1alpha1.FactoryStatus {
 	default:
 		ready(metav1.ConditionTrue, "Ready", "")
 	}
-	d.deprecated(&st.Conditions, g, config.FactoryDeprecations(d.in.Config))
 	return st
-}
-
-// deprecated sets the Deprecated condition (MR13) when paths is not empty. It never affects Ready.
-func (d *desirer) deprecated(cs *[]metav1.Condition, gen int64, paths []string) {
-	if len(paths) > 0 {
-		d.set(cs, gen, config.ConditionDeprecated, metav1.ConditionTrue, config.ReasonRemovedNextRelease, strings.Join(paths, ", "))
-	}
 }
 
 func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
@@ -284,7 +276,6 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 	}
 	st.ClassCount = len(st.Classes)
 	d.fileConditions(&st.Conditions, g, rc.Name, true)
-	d.deprecated(&st.Conditions, g, config.RepositoryDeprecations(rc))
 }
 
 // privateCode is a served repository's PrivateCode (v4 D3, step 7 R1): True when its code is public
@@ -324,7 +315,6 @@ func (d *desirer) mergePolicy(p *v1alpha1.MergePolicy) v1alpha1.MergePolicyStatu
 	} else {
 		d.accepted(&st.Conditions, g, o)
 	}
-	d.deprecated(&st.Conditions, g, config.PolicyDeprecations(p.Spec.PolicySpec))
 	if o == nil {
 		return st
 	}

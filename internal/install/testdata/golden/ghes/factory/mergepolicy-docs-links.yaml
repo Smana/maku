@@ -3,6 +3,4 @@ kind: MergePolicy
 metadata:
   name: docs-links
   namespace: factory
-spec:
-  requires:
-  - allowedFiles
+spec: {}

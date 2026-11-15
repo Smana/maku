@@ -7,7 +7,7 @@ broker:
   suspend:
     enabled: true
     after: 5m
-  policyManagement: {promotion: true, operators: [Smana]}
+  policyManagement: {stage: manage, operators: [Smana]}
   coordination: {mode: "off", maxChildren: 2}
   webhooks:
     - name: slack-app

@@ -179,7 +179,7 @@ func TestRepositoryAuthorityAndClasses(t *testing.T) {
 	})
 	t.Run("cut over", func(t *testing.T) {
 		c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
-		c.PolicyManagement.RepositoryAuthority = true
+		c.PolicyManagement.Stage = config.StageManage
 		if got := Desired(repoIn(c), nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]; got.Authority != "repository" {
 			t.Errorf("authority %q", got.Authority)
 		}
@@ -256,7 +256,7 @@ func TestRepositoryFileConditions(t *testing.T) {
 // Under repository authority the file is the policy, so a file without classes is still invalid.
 func TestFenceOnlyFileUnderRepositoryAuthority(t *testing.T) {
 	c := cfg(config.Repository{Name: repo, ClassAuthority: config.ClassAuthorityRepository})
-	c.PolicyManagement.RepositoryAuthority = true
+	c.PolicyManagement.Stage = config.StageManage
 	in := repoIn(c)
 	in.Snapshot = func(string) (mergepolicy.Snapshot, bool) { return mergepolicy.Snapshot{}, true }
 	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]

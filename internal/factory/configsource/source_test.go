@@ -66,9 +66,9 @@ func servedObjs(t *testing.T, name, repository string, gen, policyGen int64) []c
 	r.Spec.MergePolicies = []config.Binding{
 		{Name: "docs-links", Mode: config.ModeShadow, HoldoutChecks: []string{"validate"}},
 		{Name: "revert", Mode: config.ModeShadow, HoldoutChecks: []string{"validate"}},
-		{Name: "docs", Mode: config.ModeOff},
+		{Name: "docs", Mode: config.ModeDisabled},
 	}
-	holdout := config.PolicySpec{Requires: []string{"holdoutChecks"}}
+	holdout := config.PolicySpec{}
 	return []client.Object{r, classPolicyObj("docs-links", policyGen, holdout), classPolicyObj("revert", policyGen, holdout),
 		classPolicyObj("docs", policyGen, config.PolicySpec{})}
 }

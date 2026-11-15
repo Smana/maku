@@ -10,25 +10,15 @@ import (
 	"unicode/utf8"
 )
 
-// Class is one merge class (§5.2): live classes auto-merge once policy-bot agrees; a shadow
-// class is decided exactly like a live one and never armed until the wave (R32, owner,
-// 2026-09-27); an unmarked class is a prediction and a PR label only (OD-8). Never both.
-//
-// The other fields are the class's declared conditions (merge gate classes MC1), named as gh-aw
-// names them where it has a name. Each is checked on top of the gate's fixed base, which no class
-// can remove; an absent one is not checked, so a class that declares none is decided as before.
+// MergeClass is a MergePolicy's class conditions (MR8, MR9): what a policy declares, without
+// mode (which belongs to each binding) or workflow fields (which moved to Factory.spec.workflows
+// and Repository.spec.workflow).
 // +kubebuilder:object:generate=true
-type Class struct {
+type MergeClass struct {
 	// Description says what the class is for, in plain words, for the settings pages and
 	// `kubectl get`; the gate never reads it.
 	// +kubebuilder:validation:MaxLength=280
 	Description string `json:"description,omitempty"`
-	Live        bool   `json:"live,omitempty"`
-	Shadow      bool   `json:"shadow,omitempty"`
-	// Checks and TestFirst are read by nothing since the workflow left the class (WF7): a
-	// workflow's checks and the Repository's workflow.testFirst replace them.
-	Checks    bool `json:"checks,omitempty"`
-	TestFirst bool `json:"testFirst,omitempty"`
 	// AllowedFiles: every changed path matches one of these regular expressions.
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -60,7 +50,7 @@ type Class struct {
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=1024
 	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
-	// MaxPerDay caps this class's merges a day, under merge.autoMergesPerDay; 0 is no cap of its own.
+	// MaxPerDay caps this class's merges a day, under merge.maxPerDay; 0 is no cap of its own.
 	MaxPerDay int `json:"maxPerDay,omitempty"`
 	// Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
 	// whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
@@ -89,15 +79,136 @@ type Class struct {
 	// the factory to adopt it (K11): RunLore's ready-to-merge.
 	// +kubebuilder:validation:MaxLength=253
 	RequiredLabel string `json:"requiredLabel,omitempty"`
-	// Harness, HarnessAllowed and Escalation are read by nothing since the workflow left the class
-	// (WF7): the Repository's workflow.default, every workflow, and a workflow's escalation replace
-	// them. A MergePolicy setting them is Deprecated until they are removed.
-	// +kubebuilder:validation:MaxLength=253
-	Harness string `json:"harness,omitempty"`
+}
+
+// Class returns a deep copy of m as a resolved Class with Live and Shadow unset.
+func (m MergeClass) Class() Class {
+	cp := m.DeepCopy()
+	return Class{
+		Description:      cp.Description,
+		AllowedFiles:     cp.AllowedFiles,
+		NarrowedFiles:    cp.NarrowedFiles,
+		ProtectedFiles:   cp.ProtectedFiles,
+		RequiresApproval: cp.RequiresApproval,
+		ModifyOnly:       cp.ModifyOnly,
+		MaxPatchFiles:    cp.MaxPatchFiles,
+		MaxModifiedLines: cp.MaxModifiedLines,
+		DiffShape:        cp.DiffShape,
+		HoldoutChecks:    cp.HoldoutChecks,
+		MaxPerDay:        cp.MaxPerDay,
+		Evidence:         cp.Evidence,
+		Oracle:           cp.Oracle,
+		Monitor:          cp.Monitor,
+		Author:           cp.Author,
+		ReleaseAgeCheck:  cp.ReleaseAgeCheck,
+		CompanionFiles:   cp.CompanionFiles,
+		RequiredLabel:    cp.RequiredLabel,
+	}
+}
+
+// Adopted reports whether the policy adopts external pull requests rather than deciding the
+// factory's own.
+func (m MergeClass) Adopted() bool { return m.Author != nil && m.Author.Adopt != nil }
+
+// MinClean is the clean shadow decisions the policy's promotion needs without an exception.
+func (m MergeClass) MinClean(name string) int { return m.Class().MinClean(name) }
+
+// MergeClass returns a deep copy of c without its Live or Shadow mode.
+func (c Class) MergeClass() MergeClass {
+	cp := c.DeepCopy()
+	return MergeClass{
+		Description:      cp.Description,
+		AllowedFiles:     cp.AllowedFiles,
+		NarrowedFiles:    cp.NarrowedFiles,
+		ProtectedFiles:   cp.ProtectedFiles,
+		RequiresApproval: cp.RequiresApproval,
+		ModifyOnly:       cp.ModifyOnly,
+		MaxPatchFiles:    cp.MaxPatchFiles,
+		MaxModifiedLines: cp.MaxModifiedLines,
+		DiffShape:        cp.DiffShape,
+		HoldoutChecks:    cp.HoldoutChecks,
+		MaxPerDay:        cp.MaxPerDay,
+		Evidence:         cp.Evidence,
+		Oracle:           cp.Oracle,
+		Monitor:          cp.Monitor,
+		Author:           cp.Author,
+		ReleaseAgeCheck:  cp.ReleaseAgeCheck,
+		CompanionFiles:   cp.CompanionFiles,
+		RequiredLabel:    cp.RequiredLabel,
+	}
+}
+
+// Class is one merge class (§5.2): live classes auto-merge once policy-bot agrees; a shadow
+// class is decided exactly like a live one and never armed until the wave (R32, owner,
+// 2026-09-27); an unmarked class is disabled. Never both.
+// +kubebuilder:object:generate=true
+type Class struct {
+	// Description says what the class is for, in plain words, for the settings pages and
+	// `kubectl get`; the gate never reads it.
+	// +kubebuilder:validation:MaxLength=280
+	Description string `json:"description,omitempty"`
+	Live        bool   `json:"live,omitempty"`
+	Shadow      bool   `json:"shadow,omitempty"`
+	// AllowedFiles: every changed path matches one of these regular expressions.
 	// +kubebuilder:validation:MaxItems=64
-	// +kubebuilder:validation:items:MaxLength=253
-	HarnessAllowed []string    `json:"harnessAllowed,omitempty"`
-	Escalation     *Escalation `json:"escalation,omitempty"`
+	// +kubebuilder:validation:items:MaxLength=512
+	AllowedFiles []string `json:"allowedFiles,omitempty"`
+	// NarrowedFiles is a binding's allowedFiles over a policy that has its own (MR3): every changed
+	// path matches one of these too. Set only by resolving a binding; refused on a MergePolicy.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	NarrowedFiles []string `json:"narrowedFiles,omitempty"`
+	// ProtectedFiles: no changed path matches one of these.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	ProtectedFiles []string `json:"protectedFiles,omitempty"`
+	// RequiresApproval asks a human about a pull request touching one of its paths, even in a live
+	// class (merge policies MP12).
+	// +kubebuilder:validation:MaxItems=16
+	RequiresApproval []ApprovalLeaf `json:"requiresApproval,omitempty"`
+	// ModifyOnly: no file is added, deleted, renamed or copied.
+	ModifyOnly bool `json:"modifyOnly,omitempty"`
+	// MaxPatchFiles caps the changed files and MaxModifiedLines their additions plus deletions,
+	// as GitHub counts them (policy-bot's modified_lines); 0 is no cap.
+	MaxPatchFiles    int `json:"maxPatchFiles,omitempty"`
+	MaxModifiedLines int `json:"maxModifiedLines,omitempty"`
+	// DiffShape is a shape every changed line must have: links-only is R52's LinksOnly.
+	// +kubebuilder:validation:MaxLength=512
+	DiffShape string `json:"diffShape,omitempty"`
+	// HoldoutChecks are checks GitHub Actions must report SUCCESS on the head; their workflow is
+	// a gate path, so the pull request cannot change them (loops L7).
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=1024
+	HoldoutChecks []string `json:"holdoutChecks,omitempty"`
+	// MaxPerDay caps this class's merges a day, under merge.maxPerDay; 0 is no cap of its own.
+	MaxPerDay int `json:"maxPerDay,omitempty"`
+	// Evidence is how many clean shadow decisions a promotion needs (MR4): low is 5, for a class
+	// whose diff a shape or an oracle checks mechanically; standard, the default, is 20.
+	// +kubebuilder:validation:Enum=low;standard
+	Evidence string `json:"evidence,omitempty"`
+	// Oracle makes the class oracle-backed (MC4–MC6): its tasks are a detector's findings, and its
+	// gate holds only when the head no longer holds them and changes nothing else.
+	Oracle *Oracle `json:"oracle,omitempty"`
+	// Monitor watches each merge of the class after it lands (merge gate classes MC7): main's CI
+	// for every merge, the detector's next runs for an oracle class, Flux on the factory's cluster,
+	// and follow-up fixes for FollowUpWindow. Absent: no monitor, as before.
+	Monitor *Monitor `json:"monitor,omitempty"`
+	// Author is how the class's pull requests are authored (MC1's author row): absent, the agents
+	// App through a task's runs; Adopt, another author's pull requests the factory adopts (MC10).
+	Author *Author `json:"author,omitempty"`
+	// ReleaseAgeCheck names the commit status that holds the release age (MC11), posted by an
+	// adopted login: Renovate's renovate/stability-days.
+	// +kubebuilder:validation:MaxLength=1024
+	ReleaseAgeCheck string `json:"releaseAgeCheck,omitempty"`
+	// CompanionFiles are the paths an added-entry pull request may append to beside its one added
+	// entry (a knowledge base's index and log), anchored like AllowedFiles.
+	// +kubebuilder:validation:MaxItems=64
+	// +kubebuilder:validation:items:MaxLength=512
+	CompanionFiles []string `json:"companionFiles,omitempty"`
+	// RequiredLabel is the label an adopted pull request must carry, set by an adopted login, for
+	// the factory to adopt it (K11): RunLore's ready-to-merge.
+	// +kubebuilder:validation:MaxLength=253
+	RequiredLabel string `json:"requiredLabel,omitempty"`
 }
 
 // ApprovalLeaf asks a human about a pull request touching one of its paths, even in a live class.
@@ -251,21 +362,14 @@ func validateClass(name string, cl Class, bad func(string, ...any)) {
 	if cl.Live && cl.Shadow {
 		bad("class %s: live and shadow never together (R32)", name)
 	}
-	if cl.TestFirst && (name == "docs-links" || name == "revert") {
-		bad("class %s: testFirst is refused: no behaviour to test (TO4)", name)
-	}
-	if cl.TestFirst && !cl.Checks {
-		bad("class %s: testFirst needs checks: true, the red check runs the toolchain (R17)", name)
-	}
 	switch {
 	case cl.Evidence != "" && cl.Evidence != EvidenceLow && cl.Evidence != EvidenceStandard:
 		bad("class %s: evidence %q is low or standard", name, cl.Evidence)
 	case cl.Evidence == EvidenceLow && cl.DiffShape == "" && BuiltInShape(name) == "" && cl.Oracle == nil:
 		bad("class %s: evidence: low needs a diffShape or an oracle: without one, 5 decisions prove too little (MR4)", name)
 	}
-	if name == "review" && (cl.Live || cl.Shadow || cl.ReadsDiff(name) || len(cl.HoldoutChecks) > 0 || cl.MaxPerDay > 0 || cl.Evidence != "" ||
-		cl.Monitor != nil || cl.Author != nil || cl.ReleaseAgeCheck != "" || len(cl.RequiresApproval) > 0) {
-		bad("class review: review takes checks and testFirst only (R17)")
+	if name == "review" {
+		bad("class review: review is not a policy")
 	}
 	if m := cl.Monitor; m != nil {
 		if w := m.FollowUpWindow.Duration; w < time.Hour || w > 720*time.Hour {

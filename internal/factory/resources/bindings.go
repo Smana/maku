@@ -92,7 +92,9 @@ func judgePolicies(policies []Object, ctx config.PolicyContext, res *resolution)
 		}
 		var spec config.PolicySpec
 		var problems []string
-		if err := decodeStrict(p.Spec, &spec); err != nil {
+		if refused := config.RefusePolicySpec(p.Spec); len(refused) > 0 {
+			problems = refused
+		} else if err := decodeStrict(p.Spec, &spec); err != nil {
 			problems = []string{err.Error()}
 		} else {
 			problems = config.ValidatePolicy(p.Name, spec, ctx)

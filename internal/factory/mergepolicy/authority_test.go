@@ -20,7 +20,7 @@ func (r *rec) PolicyChange(_ context.Context, _, class, change string) {
 // test moves.
 func authorityRig() (*Watch, *rec, *time.Time) {
 	c := central()
-	c.PolicyManagement = config.PolicyManagement{Read: true, RepositoryAuthority: true}
+	c.PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	c.Repositories = []config.Repository{{Name: "o/r", Merge: config.Merge{PolicyBot: new(true)}, ClassAuthority: config.ClassAuthorityRepository}}
 	r := &rec{}
 	now := time.Date(2026, 11, 8, 12, 0, 0, 0, time.UTC)

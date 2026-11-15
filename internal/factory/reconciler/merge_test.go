@@ -38,7 +38,7 @@ func mergeRig(t *testing.T, phase string, objs ...client.Object) *rig {
 	// The live path, proven offline now and live after the wave (Task 10.7); the shadow test flips it.
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}}
 	g.r.Cfg.Current().Repositories[0].Merge = config.Merge{RequiredChecks: required, VerifyChecks: required, PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), // the pre-v4 defaults, explicit
-		MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 10, FixRuns: 2,
+		MergerLogin: "ogenki-agent-merger[bot]", MaxPerDay: 10, FixRuns: 2,
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
@@ -722,8 +722,8 @@ func TestASubstantiveHandOffStaysWithTheHuman(t *testing.T) {
 			},
 		},
 		"substantive reason": {
-			handOff: func(g *rig) { g.r.Cfg.Current().Repositories[0].Merge.AutoMergesPerDay = 0 }, // auto_merge_cap
-			after:   func(g *rig) { g.r.Cfg.Current().Repositories[0].Merge.AutoMergesPerDay = 10 },
+			handOff: func(g *rig) { g.r.Cfg.Current().Repositories[0].Merge.MaxPerDay = 0 }, // auto_merge_cap
+			after:   func(g *rig) { g.r.Cfg.Current().Repositories[0].Merge.MaxPerDay = 10 },
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

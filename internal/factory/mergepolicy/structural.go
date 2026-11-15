@@ -105,34 +105,11 @@ func resolvedChange(o, n Resolved) Change {
 	if !superset(n.Approval, o.Approval) {
 		why = append(why, "requiresApproval narrowed")
 	}
-	why = append(why, floorLooser(n.Class, o.Class)...)
 	why = append(why, looser(n.Class, o.Class)...)
 	if len(why) > 0 {
 		return Change{Kind: KindRelaxation, Why: why}
 	}
 	return Change{Kind: KindTightening}
-}
-
-// floorLooser is why n's evaluation floor is not bounded by o's, on resolved classes: a policy
-// sets the harness, checks and testFirst directly.
-func floorLooser(n, o config.Class) []string {
-	var why []string
-	if n.Harness != o.Harness {
-		why = append(why, fmt.Sprintf("harness %q to %q: not proven evidence-neutral", o.Harness, n.Harness))
-	}
-	if !superset(o.HarnessAllowed, n.HarnessAllowed) {
-		why = append(why, "harnessAllowed broadened or rewritten: not proven evidence-neutral")
-	}
-	if n.Escalation != nil && jsonOf(n.Escalation) != jsonOf(o.Escalation) {
-		why = append(why, "escalation added or changed: not proven evidence-neutral")
-	}
-	if o.Checks && !n.Checks {
-		why = append(why, "checks removed")
-	}
-	if o.TestFirst && !n.TestFirst {
-		why = append(why, "testFirst removed")
-	}
-	return why
 }
 
 func jsonOf(v any) string {

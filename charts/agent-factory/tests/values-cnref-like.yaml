@@ -25,7 +25,7 @@ maku:
       "system:serviceaccount:agent-system:agent-factory": system:factory
     factoryURL: http://agent-factory.agent-system.svc.cluster.local:8082
     factoryInsecure: true
-    policyManagement: {promotion: true, operators: [Smana]}
+    policyManagement: {stage: manage, operators: [Smana]}
     suspend: {enabled: true, after: 5m}
     oidc: {existingSecret: room-broker-oidc}
     githubLink: {existingSecret: room-broker-github-link}

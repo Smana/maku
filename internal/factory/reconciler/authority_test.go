@@ -21,7 +21,7 @@ func cutOverRig(t *testing.T, snap mergepolicy.Snapshot, err error) *rig {
 	rc := g.r.Cfg.Current().Repos()[0]
 	rc.Classes, rc.ClassAuthority = nil, config.ClassAuthorityRepository
 	g.r.Cfg.Current().Repositories, g.r.Cfg.Current().Repositories[0].Classes = []config.Repository{rc}, nil
-	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, RepositoryAuthority: true}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	g.r.Cfg.Current().SetClassSource(func(string) (map[string]config.Class, bool) {
 		out := map[string]config.Class{}
 		for n, r := range snap.Classes {
@@ -132,7 +132,7 @@ func TestRepositoryAuthorityOffIsToday(t *testing.T) {
 		g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 		g.f.SetChecks(12, green("SUCCESS"))
 		if wire {
-			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true}
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageRead}
 			g.r.Authority = func(string) (mergepolicy.Snapshot, error) {
 				t.Fatal("read with the switch off")
 				return mergepolicy.Snapshot{}, nil
@@ -152,7 +152,6 @@ func TestRepositoryAuthorityOffIsToday(t *testing.T) {
 // decision to compare it with, so it is not run.
 func TestDualEvaluationSkipsACutOverRepository(t *testing.T) {
 	g := cutOverRig(t, snapshotOf(map[string]mergepolicy.Resolved{"docs-links": resolvedLive("docs-links")}), nil)
-	g.r.Cfg.Current().PolicyManagement.DualEvaluation = true
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		t.Fatal("dual evaluation of a cut-over repository")
 		return mergepolicy.Snapshot{}, false

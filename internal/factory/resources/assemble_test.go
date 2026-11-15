@@ -31,7 +31,7 @@ func mergeBlock(t *testing.T) map[string]any {
 	m := c.RepositoryFor("Smana/cloud-native-ref").Merge
 	return map[string]any{"requiredChecks": toAny(m.RequiredChecks), "verifyChecks": toAny(m.VerifyChecks),
 		"leakScanCheck": m.LeakScanCheck, "policyBotLogin": m.PolicyBotLogin, "mergerLogin": m.MergerLogin,
-		"autoMergesPerDay": m.AutoMergesPerDay, "fixRuns": m.FixRuns, "checkReruns": m.CheckReruns,
+		"maxPerDay": m.MaxPerDay, "fixRuns": m.FixRuns, "checkReruns": m.CheckReruns,
 		"verifyFor": "30m", "revertWindow": "168h", "breaker": map[string]any{"window": 10, "maxReverts": 1}}
 }
 
@@ -55,7 +55,7 @@ func served(t *testing.T, name, repository string) Object {
 	return boundRepo(t, name, repository, 1, `
 - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
 - {name: revert, mode: shadow, holdoutChecks: [validate]}
-- {name: docs, mode: "off"}
+- {name: docs, mode: disabled}
 `)
 }
 
@@ -289,7 +289,7 @@ func TestAssembleRefusedOrder(t *testing.T) {
 // removal makes the config parse: the Factory.
 func TestAssembleBadFactoryIsTheCulpritNotThePairs(t *testing.T) {
 	sched := func(n string) []any {
-		return []any{map[string]any{"name": n, "cron": "0 6 * * 1", "class": "review", "text": "a schedule text well over ten bytes"}}
+		return []any{map[string]any{"name": n, "cron": "0 6 * * 1", "workflow": "base", "text": "a schedule text well over ten bytes"}}
 	}
 	ra, rb := served(t, "a", "Smana/a"), served(t, "b", "Smana/b")
 	ra.Spec["schedules"], rb.Spec["schedules"] = sched("sa"), sched("sb")

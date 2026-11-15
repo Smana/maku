@@ -20,9 +20,12 @@ func boundAsFile(t *testing.T, c *config.Config) mergepolicy.Snapshot {
 	c.Policies = map[string]config.ServedPolicy{}
 	rc.Bindings = nil
 	for _, name := range slices.Sorted(maps.Keys(rc.Classes)) {
+		if name == "review" {
+			continue
+		}
 		src := rc.Classes[name]
 		cl := *src.DeepCopy()
-		b := config.Binding{Name: name, Mode: config.ModeOff}
+		b := config.Binding{Name: name, Mode: config.ModeDisabled}
 		switch {
 		case cl.Live:
 			b.Mode = config.ModeLive
@@ -36,7 +39,7 @@ func boundAsFile(t *testing.T, c *config.Config) mergepolicy.Snapshot {
 		if cl.Monitor != nil && cl.Monitor.Flux != nil {
 			rc.Merge.FluxSource, cl.Monitor.Flux.Source = cl.Monitor.Flux.Source, ""
 		}
-		c.Policies[name] = config.ServedPolicy{Spec: config.PolicySpec{Class: cl}, Generation: 1}
+		c.Policies[name] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: cl.MergeClass()}, Generation: 1}
 		rc.Bindings = append(rc.Bindings, b)
 	}
 	f, err := mergepolicy.Export(&rc, c)

@@ -83,7 +83,7 @@ func TestMigrateReadsTheLegacyShape(t *testing.T) {
 	}
 	rs := got.Config.Repos()
 	if len(rs) != 1 || rs[0].Name != "Smana/cloud-native-ref" || !rs[0].IsMaintainer("Smana") || rs[0].TriggerLabel != "factory/ready" ||
-		len(rs[0].Classes) != 5 || rs[0].Merge.MergerLogin != "ogenki-agent-merger[bot]" {
+		len(rs[0].Classes) != 3 || rs[0].Merge.MergerLogin != "ogenki-agent-merger[bot]" {
 		t.Fatalf("repositories %+v", rs)
 	}
 	if c := got.Config.ControlFor(); c != (config.Control{Repository: "Smana/cloud-native-ref", Issue: 7}) {
@@ -133,7 +133,8 @@ func equalRepos(t *testing.T, a, b []config.Repository) bool {
 	}
 	for i := range a {
 		if a[i].Name != b[i].Name || !equalJSON(t, a[i].Maintainers, b[i].Maintainers) ||
-			a[i].TriggerLabel != b[i].TriggerLabel || !equalJSON(t, classesUnderDefaults(a[i].Classes), classesUnderDefaults(b[i].Classes)) ||
+			a[i].TriggerLabel != b[i].TriggerLabel || !equalJSON(t, a[i].Workflow, b[i].Workflow) ||
+			!equalJSON(t, classesUnderDefaults(a[i].Classes), classesUnderDefaults(b[i].Classes)) ||
 			!equalJSON(t, a[i].Merge, b[i].Merge) || !equalJSON(t, a[i].Schedules, b[i].Schedules) ||
 			!equalJSON(t, a[i].Checks, b[i].Checks) || a[i].ClassAuthority != b[i].ClassAuthority {
 			return false
@@ -174,7 +175,7 @@ func TestMigrateANRConfig(t *testing.T) {
 		t.Fatalf("Decode(Migrate(anr)): %v", err)
 	}
 	r, err := Assemble(residual, objs)
-	if err != nil || len(r.Refused) != 0 || len(r.Accepted) != 16 { // a Factory, three Repositories and twelve class policies
+	if err != nil || len(r.Refused) != 0 || len(r.Accepted) != 12 { // a Factory, three Repositories and eight class policies
 		t.Fatalf("err %v, refused %+v, accepted %d", err, r.Refused, len(r.Accepted))
 	}
 }
@@ -250,5 +251,102 @@ func TestMigrateRewritesTheRemovedWorkflowSettings(t *testing.T) {
 	}
 	if !strings.Contains(string(manifests), "workflows:") {
 		t.Errorf("workflows is not written:\n%s", manifests)
+	}
+}
+
+// MR9, MR13: the v0.47.0 ai-native-ref fixture and every field release N deprecated migrate to
+// objects and residual config that Assemble accepts with no problem.
+func TestMigrateRewritesEveryRemovedField(t *testing.T) {
+	legacy, err := os.ReadFile("testdata/anr-legacy-config.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifests, residual, err := Migrate(legacy, "agent-system")
+	if err != nil {
+		t.Fatalf("Migrate(anr-legacy-config.json): %v", err)
+	}
+	for _, gone := range []string{"autoMergesPerDay", "minPromotionEvidence", "harnessAllowed", "requires:"} {
+		if strings.Contains(string(manifests), gone) || strings.Contains(string(residual), gone) {
+			t.Errorf("%s survived migration", gone)
+		}
+	}
+	for _, gone := range []string{`mode: "off"`, "mode: off"} {
+		if strings.Contains(string(manifests), gone) {
+			t.Errorf("%s survived in manifests:\n%s", gone, manifests)
+		}
+	}
+	objs, err := Decode(manifests)
+	if err != nil {
+		t.Fatalf("Decode(Migrate(anr-legacy-config.json)): %v\n%s", err, manifests)
+	}
+	got, err := Assemble(residual, objs)
+	if err != nil || len(got.Refused) != 0 {
+		t.Fatalf("Assemble: err=%v, refused=%+v", err, got.Refused)
+	}
+
+	// Also exercise every class-workflow move, policyManagement switch and guardrail removal on a single file.
+	var synMap map[string]any
+	if err := yaml.Unmarshal(file(t), &synMap); err != nil {
+		t.Fatal(err)
+	}
+	synMap["policyManagement"] = map[string]any{"promotion": true, "read": true, "operators": []any{"Smana"}}
+	synMap["mergeDefaults"] = map[string]any{"autoMergesPerDay": 3}
+	synMap["mergeGuardrails"] = map[string]any{"minPromotionEvidence": 15}
+	synMap["workflows"] = map[string]any{"plain": map[string]any{"template": "solo"}}
+	repoEntry := synMap["repositories"].([]any)[0].(map[string]any)
+	delete(repoEntry, "workflow")
+	repoEntry["schedules"] = []any{map[string]any{"name": "weekly-links", "cron": "0 6 * * 1", "class": "docs-links", "text": "check links"}}
+	mergeEntry := repoEntry["merge"].(map[string]any)
+	delete(mergeEntry, "maxPerDay")
+	mergeEntry["autoMergesPerDay"] = 4
+	mergeEntry["contractCheck"] = "Test contract 🧪"
+	repoEntry["classes"] = map[string]any{
+		"docs-links": map[string]any{"live": true, "holdoutChecks": []any{"Check the documentation links 🔗"}, "harness": "plain", "harnessAllowed": []any{"careful"}, "escalation": map[string]any{"notConverged": "careful"}, "checks": true, "testFirst": true},
+		"revert":     map[string]any{"live": true, "holdoutChecks": []any{"Check the documentation links 🔗"}},
+		"docs":       map[string]any{},
+		"scripts":    map[string]any{},
+		"review":     map[string]any{"harness": "careful"},
+	}
+	synthetic, err := yaml.Marshal(synMap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := config.Parse(synthetic); err == nil {
+		t.Fatal("Parse accepted a file with removed fields")
+	}
+	m2, r2, err := Migrate(synthetic, "agent-system")
+	if err != nil {
+		t.Fatalf("Migrate(synthetic): %v", err)
+	}
+	var top map[string]any
+	if err := yaml.Unmarshal(r2, &top); err != nil {
+		t.Fatal(err)
+	}
+	if pm, _ := top["policyManagement"].(map[string]any); pm["stage"] != "manage" || pm["promotion"] != nil || pm["read"] != nil {
+		t.Fatalf("policyManagement = %v", pm)
+	}
+	objs2, err := Decode(m2)
+	if err != nil {
+		t.Fatalf("Decode(synthetic): %v\n%s", err, m2)
+	}
+	got2, err := Assemble(r2, objs2)
+	if err != nil || len(got2.Refused) != 0 {
+		t.Fatalf("Assemble(synthetic): err=%v, refused=%+v", err, got2.Refused)
+	}
+	repo := got2.Config.Repos()[0]
+	if repo.DefaultWorkflow() != "careful" || !repo.Workflow.TestFirst {
+		t.Fatalf("Repository.Workflow = %+v, want default=careful testFirst=true", repo.Workflow)
+	}
+	if p := got2.Config.HarnessProfiles["plain"]; !p.Checks || p.Escalation == nil || p.Escalation.NotConverged != "careful" {
+		t.Fatalf("workflows.plain = %+v, want checks=true and escalation.notConverged=careful", p)
+	}
+	if repo.Merge.MaxPerDay != 4 || got2.Config.MergeDefaults == nil || got2.Config.MergeDefaults.MaxPerDay != 3 {
+		t.Fatalf("maxPerDay: repo=%d defaults=%+v", repo.Merge.MaxPerDay, got2.Config.MergeDefaults)
+	}
+	if len(repo.Schedules) != 1 || repo.Schedules[0].Class != "" || repo.Schedules[0].WorkflowOr() != "plain" {
+		t.Fatalf("schedule = %+v, want class cleared and workflow=plain", repo.Schedules)
+	}
+	if _, ok := repo.Classes["scripts"]; ok {
+		t.Fatalf("unarmed non-catalog class scripts kept: %+v", repo.Classes)
 	}
 }

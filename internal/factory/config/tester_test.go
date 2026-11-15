@@ -39,14 +39,10 @@ func TestTestFirstIsTheRepositorysAndNeedsTheContractCheck(t *testing.T) {
 	}
 }
 
-func TestReviewMayBeDeclaredForChecksAndTestFirstOnly(t *testing.T) {
-	ok := strings.Replace(withTestFirst(t), "dashboards: {}", "dashboards: {}, review: {checks: true, testFirst: true}", 1)
-	if _, err := Parse([]byte(ok)); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Parse([]byte(strings.Replace(ok, "review: {checks: true, testFirst: true}", "review: {live: true}", 1))); err == nil ||
-		!strings.Contains(err.Error(), "review takes checks and testFirst only") {
-		t.Fatalf("a live review parsed: %v", err)
+func TestReviewClassIsRefused(t *testing.T) {
+	bad := strings.Replace(withTestFirst(t), "dashboards: {}", "dashboards: {}, review: {}", 1)
+	if _, err := Parse([]byte(bad)); err == nil || !strings.Contains(err.Error(), "review is not a policy") {
+		t.Fatalf("review class parsed: %v", err)
 	}
 }
 

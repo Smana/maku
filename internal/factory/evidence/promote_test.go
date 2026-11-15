@@ -63,7 +63,7 @@ mergePolicies:
   - name: revert
     mode: shadow   # with docs-links
     holdoutChecks: ['Check the documentation links 🔗']
-  - {name: docs, mode: "off"}
+  - {name: docs, mode: disabled}
 `
 
 // B5, follow-up of #538: in the binding shape, promotion edits the binding's mode, one token.

@@ -151,9 +151,6 @@ loops: {default: {scope: "off"}, mine: {scope: scoper}, careful: {scope: scoper}
 			t.Errorf("warned: %s", w)
 		}
 	}
-	if got := FactoryDeprecations(c); len(got) != 0 {
-		t.Errorf("deprecated: %q", got)
-	}
 }
 
 // WF10, stage B: a loops row is named default or a workflow; a class row is refused.
@@ -192,14 +189,14 @@ func TestRepositoryWorkflowProblems(t *testing.T) {
 }
 
 func TestScheduleWorkflowDefaultsToQuick(t *testing.T) {
-	c := mustParse(t, repoWith(`schedules: [{name: s, cron: "0 7 * * *", class: docs, text: x}, {name: t, cron: "0 8 * * *", class: docs, text: z, workflow: careful}]`))
+	c := mustParse(t, repoWith(`schedules: [{name: s, cron: "0 7 * * *", text: x}, {name: t, cron: "0 8 * * *", text: z, workflow: careful}]`))
 	if got := c.Repos()[0].Schedules[0].WorkflowOr(); got != "quick" {
 		t.Fatalf("got %q", got)
 	}
 	if got := c.Repos()[0].Schedules[1].WorkflowOr(); got != "careful" {
 		t.Fatalf("got %q", got)
 	}
-	if _, err := Parse([]byte(repoWith(`schedules: [{name: s, cron: "0 7 * * *", class: docs, text: x, workflow: nope}]`))); err == nil ||
+	if _, err := Parse([]byte(repoWith(`schedules: [{name: s, cron: "0 7 * * *", text: x, workflow: nope}]`))); err == nil ||
 		!strings.Contains(err.Error(), `workflow "nope" is not a workflow`) {
 		t.Fatalf("an unknown schedule workflow: got %v", err)
 	}

@@ -840,7 +840,7 @@ cfg="$(yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' -
   { echo "FAIL: each webhook's secretFile: the mount's path, or the set one ($(yq -o=json -I0 '.webhooks' <<<"$cfg"))" >&2; fail=1; }
 [[ $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg") == '["events","generation","name","network","repositories","secretFile","url"]' ]] ||
   { echo "FAIL: a chart-only webhook key (existingSecret, key, networkPolicy) reached the config: $(yq -o=json -I0 '[.webhooks[] | keys | .[]] | unique' <<<"$cfg")" >&2; fail=1; }
-yq -o=json -I0 '[.suspend, .policyManagement, .coordination]' <<<"$cfg" | jq -e '. == [{"enabled":true,"after":"5m"},{"promotion":true,"operators":["Smana"]},{"mode":"off","maxChildren":2}]' >/dev/null ||
+yq -o=json -I0 '[.suspend, .policyManagement, .coordination]' <<<"$cfg" | jq -e '. == [{"enabled":true,"after":"5m"},{"stage":"manage","operators":["Smana"]},{"mode":"off","maxChildren":2}]' >/dev/null ||
   { echo "FAIL: suspend, policyManagement and coordination are not verbatim" >&2; fail=1; }
 # defaultMode 0440: yq's JSON spells the YAML octal as 440.
 jkind Deployment 'select(.metadata.name=="room-broker") | ([.spec.template.spec.volumes[] | select(.name | startswith("webhook-")) | {(.name): .secret}] | add) == {"webhook-slack-app": {"secretName": "room-broker-webhook-slack-app", "defaultMode": 440}, "webhook-pager": {"secretName": "pager-key", "defaultMode": 440}}' 'one whole-Secret volume (0440) per webhook with existingSecret'

@@ -351,7 +351,7 @@ factory: aws-0
 mergePolicies:
   - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
   - {name: revert,     mode: live, holdoutChecks: ['Check the documentation links 🔗']}
-  - {name: docs,       mode: "off"}
+  - {name: docs,       mode: disabled}
   - name: alert-rules
     mode: shadow
     allowedFiles: ['^observability/.+\.ya?ml$']
@@ -444,9 +444,7 @@ mergeGuardrails:
   maxPerDay: 5
   maxGrantLifetime: 720h
 policyManagement:
-  read: true
-  simulation: true
-  dualEvaluation: true
+  stage: simulate
 ```
 
 A fuller example of the three blocks. The repository files on this page are validated against the [recommended guardrails](#start-here) instead (see [how](#how-this-pages-examples-are-checked)).
@@ -551,8 +549,8 @@ merges.
 ```yaml
 factory: aws-0
 mergePolicies:
-  - {name: docs-links, mode: "off"}
-  - {name: revert,     mode: "off"}
+  - {name: docs-links, mode: disabled}
+  - {name: revert,     mode: disabled}
   - {name: deps-minor, mode: shadow, allowedFiles: ['^(apps|flux|infrastructure)/.+\.ya?ml$']}
 ```
 
@@ -692,7 +690,7 @@ classes.
 
 <!-- check: central -->
 ```yaml
-policyManagement: {read: true, dualEvaluation: true, repositoryAuthority: true}
+policyManagement: {stage: manage}
 repositories:
   - name: Smana/cloud-native-ref
     maintainers: [Smana]

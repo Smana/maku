@@ -107,7 +107,7 @@ func service(src Source, now func() time.Time) *Service {
 // are its classes.
 func cutOver(src Source, now func() time.Time) *Service {
 	cfg := serviceCfg()
-	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.PolicyManagement.Stage = config.StageManage
 	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
 	s := service(src, now)
 	s.Cfg = cfg
@@ -173,7 +173,7 @@ func TestServiceProposesABindingsMode(t *testing.T) {
 	s := service(src, func() time.Time { return now })
 	// Cut over (stage 4): the file holds the authoritative bindings, so it is the one promoted.
 	cfg := s.Cfg.Current()
-	cfg.Repositories[0].ClassAuthority, cfg.PolicyManagement.RepositoryAuthority = config.ClassAuthorityRepository, true
+	cfg.Repositories[0].ClassAuthority, cfg.PolicyManagement.Stage = config.ClassAuthorityRepository, config.StageManage
 	if err := s.Refresh(t.Context(), "smana/cloud-native-ref"); err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestServiceProposesABindingsMode(t *testing.T) {
 	for _, c := range r.Classes {
 		names = append(names, c.Class+":"+c.Source+":"+c.Mode)
 	}
-	if strings.Join(names, " ") != "docs:repository:off docs-links:repository:shadow revert:repository:shadow" {
+	if strings.Join(names, " ") != "docs:repository:disabled docs-links:repository:shadow revert:repository:shadow" {
 		t.Fatalf("classes %v", names)
 	}
 	for _, c := range r.Classes {
@@ -432,15 +432,15 @@ func boundCfg() *config.Config {
 		{Name: "revert", Mode: "shadow", HoldoutChecks: []string{"lint"}},
 		{Name: "dead-links", Mode: "shadow", AllowedFiles: []string{`^docs/`}, HoldoutChecks: []string{"links"}, OracleWorkflow: "dead-links.yaml"}}
 	rc.Merge = config.Merge{RequiredChecks: []string{"lint"}, VerifyChecks: []string{"lint"}, LeakScanCheck: "lint",
-		PolicyBotLogin: "policy-bot[bot]", MergerLogin: "ogenki-agent-merger[bot]", AutoMergesPerDay: 2}
-	rc.MergeDefaulted = []string{"autoMergesPerDay"}
+		PolicyBotLogin: "policy-bot[bot]", MergerLogin: "ogenki-agent-merger[bot]", MaxPerDay: 2}
+	rc.MergeDefaulted = []string{"maxPerDay"}
 	cfg.Factory = "aws-0"
 	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 7, RepositoryName: "cloud-native-ref",
 		Classes: map[string]config.ClassGeneration{"docs-links": {Policy: 1, PolicyName: "docs-links"}, "revert": {Policy: 2, PolicyName: "revert"}}}}}
 	cfg.Policies = map[string]config.ServedPolicy{
-		"docs-links": {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 1},
-		"revert":     {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 2},
-		"dead-links": {Spec: config.PolicySpec{Class: config.Class{Description: "Retargets dead links."}}, Generation: 4},
+		"docs-links": {Spec: config.PolicySpec{}, Generation: 1},
+		"revert":     {Spec: config.PolicySpec{}, Generation: 2},
+		"dead-links": {Spec: config.PolicySpec{MergeClass: config.MergeClass{Description: "Retargets dead links."}}, Generation: 4},
 	}
 	return cfg
 }
@@ -480,7 +480,7 @@ func TestReportOfABoundRepository(t *testing.T) {
 		t.Fatalf("%v %+v\n%s", err, objs, r.RepositoryManifest)
 	}
 	merge, _ := objs[0].Spec["merge"].(map[string]any)
-	if _, defaulted := merge["autoMergesPerDay"]; defaulted || merge["mergerLogin"] != "ogenki-agent-merger[bot]" {
+	if _, defaulted := merge["maxPerDay"]; defaulted || merge["mergerLogin"] != "ogenki-agent-merger[bot]" {
 		t.Fatalf("the manifest's merge is the Repository's own, the defaults left out: %v", merge)
 	}
 	// Review of #546: a zero value is left out, so a default added later applies; one that
@@ -576,7 +576,7 @@ func TestACentralBindingIsPromotedInTheRepositoryManifest(t *testing.T) {
 func TestReportOfARepositoryAuthorityObject(t *testing.T) {
 	cfg := serviceCfg()
 	cfg.Factory = "aws-0"
-	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.PolicyManagement.Stage = config.StageManage
 	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
 	cfg.Generations = config.Generations{Repos: map[string]config.RepoGenerations{"smana/cloud-native-ref": {Repository: 3, RepositoryName: "cloud-native-ref"}}}
 	s := &Service{Cfg: cfg, Namespace: "factory", Now: time.Now,
@@ -591,13 +591,11 @@ func TestReportOfARepositoryAuthorityObject(t *testing.T) {
 	}
 }
 
-// MR4: the clean decisions a class needs are its policy's evidence level, and
-// mergeGuardrails.minPromotionEvidence no longer raises them.
+// MR4: the clean decisions a class needs are its policy's evidence level.
 func TestReportMinimumIsThePolicys(t *testing.T) {
 	now := time.Date(2026, 11, 8, 0, 0, 0, 0, time.UTC)
 	src := &fakeSource{merged: map[string][]PR{"author:app/ogenki-agents": cleanPRs(5)}}
 	cfg := serviceCfg()
-	cfg.MergeGuardrails.MinPromotionEvidence = 40
 	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true, Evidence: config.EvidenceLow}
 	cfg.Repositories[0].Classes["docs"] = config.Class{Shadow: true, AllowedFiles: []string{`^.+\.md$`}}
 	s := service(src, func() time.Time { return now })

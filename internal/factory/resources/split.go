@@ -80,10 +80,22 @@ func split(objs []Object, ns string) ([]Object, error) {
 		if merge == nil {
 			merge = map[string]any{}
 		}
+		if v, has := merge["autoMergesPerDay"]; has {
+			if _, hasMax := merge["maxPerDay"]; !hasMax {
+				merge["maxPerDay"] = v
+			}
+			delete(merge, "autoMergesPerDay")
+		}
 		var sources []string
 		var bindings []any
 		for _, name := range slices.Sorted(maps.Keys(classes)) {
+			if name == "review" {
+				continue
+			}
 			cl := classes[name]
+			if !cl.Live && !cl.Shadow && !isCatalogPolicy(name) {
+				continue
+			}
 			consumers[name] = append(consumers[name], consumer{repo: ref, cl: cl})
 			if s := fluxSource(cl); s != "" && !slices.Contains(sources, s) {
 				sources = append(sources, s)
@@ -175,10 +187,10 @@ func splitClass(name string, cs []consumer) (config.PolicySpec, map[string]confi
 				"one policy per class name, and the converter never renames", name, cs[0].repo, c.repo, strings.Join(diff, ", "))
 		}
 	}
-	p := config.PolicySpec{Class: base}
+	p := config.PolicySpec{MergeClass: base.MergeClass()}
 	bs := map[string]config.Binding{}
 	for _, c := range cs {
-		b := config.Binding{Name: name, Mode: config.ModeOff}
+		b := config.Binding{Name: name, Mode: config.ModeDisabled}
 		switch {
 		case c.cl.Live:
 			b.Mode = config.ModeLive
@@ -194,19 +206,6 @@ func splitClass(name string, cs []consumer) (config.PolicySpec, map[string]confi
 	every := func(set func(config.Class) bool) bool {
 		return !slices.ContainsFunc(cs, func(c consumer) bool { return !set(c.cl) })
 	}
-	for _, f := range []struct {
-		key string
-		set func(config.Class) bool
-	}{
-		{"allowedFiles", func(cl config.Class) bool { return len(cl.AllowedFiles) > 0 }},
-		{"companionFiles", func(cl config.Class) bool { return len(cl.CompanionFiles) > 0 }},
-		{"requiredLabel", func(cl config.Class) bool { return cl.RequiredLabel != "" }},
-		{"oracleWorkflow", func(cl config.Class) bool { return cl.Oracle != nil && cl.Oracle.Workflow != "" }},
-	} {
-		if every(f.set) {
-			p.Requires = append(p.Requires, f.key)
-		}
-	}
 
 	// Additive: on the policy when every consumer has the same set.
 	if sameSet(cs, func(cl config.Class) []string { return cl.HoldoutChecks }) {
@@ -216,9 +215,6 @@ func splitClass(name string, cs []consumer) (config.PolicySpec, map[string]confi
 			b := bs[c.repo]
 			b.HoldoutChecks = c.cl.HoldoutChecks
 			bs[c.repo] = b
-		}
-		if every(func(cl config.Class) bool { return len(cl.HoldoutChecks) > 0 }) {
-			p.Requires = append(p.Requires, "holdoutChecks")
 		}
 	}
 	if sameSet(cs, func(cl config.Class) []string { return cl.ProtectedFiles }) {
@@ -416,10 +412,7 @@ func Equal(before, after *config.Config) []string {
 // underDefaults is cl as the default guardrails leave it (MR7): every bound class carries them,
 // so a class the config file declares is compared as its binding will serve it. A cap over a
 // default stays as written, and so differs from the binding, which is refused GuardrailMismatch.
-func underDefaults(name string, cl config.Class) config.Class {
-	if name == "review" {
-		return cl
-	}
+func underDefaults(_ string, cl config.Class) config.Class {
 	out := *cl.DeepCopy()
 	if config.ApplyGuardrails(&out, config.MergeGuardrails{}.WithDefaults()) != "" {
 		return cl

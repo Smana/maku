@@ -1,15 +1,5 @@
 {
   "Smana/ai-native-ref": {
-    "dashboards": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
-    },
     "dead-links": {
       "shadow": true,
       "allowedFiles": [
@@ -41,7 +31,6 @@
       }
     },
     "docs": {
-      "checks": true,
       "protectedFiles": [
         "^\\.github/",
         "^\\.policy\\.yml$",
@@ -78,26 +67,6 @@
         "validate"
       ],
       "maxPerDay": 5
-    },
-    "scripts": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
-    },
-    "tests": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
     }
   },
   "Smana/cloud-native-ref": {
@@ -120,16 +89,6 @@
         },
         "followUpWindow": "2h0m0s"
       }
-    },
-    "dashboards": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
     },
     "dead-links": {
       "shadow": true,
@@ -242,7 +201,6 @@
       "releaseAgeCheck": "renovate/stability-days"
     },
     "docs": {
-      "checks": true,
       "protectedFiles": [
         "^\\.github/",
         "^\\.policy\\.yml$",
@@ -278,27 +236,6 @@
       "holdoutChecks": [
         "Check the documentation links 🔗"
       ],
-      "maxPerDay": 5
-    },
-    "review": {},
-    "scripts": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
-    },
-    "tests": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
       "maxPerDay": 5
     }
   },

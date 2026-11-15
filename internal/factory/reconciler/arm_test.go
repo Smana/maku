@@ -34,7 +34,7 @@ func armCfg() *config.Config {
 		Templates: map[string]config.Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}},
 		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
 			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}},
-			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), AutoMergesPerDay: 10}}}}
+			Merge:   config.Merge{RequiredChecks: required, LeakScanCheck: "Security scanning", PolicyBotLogin: "ogenki-merge-gate[bot]", PolicyBot: new(true), GateStatus: new(false), MaxPerDay: 10}}}}
 }
 
 func green(policy string) forge.Checks {
@@ -214,7 +214,7 @@ func TestAShadowClassWouldArmAndNeverArms(t *testing.T) {
 func TestAShadowDecisionIgnoresThePauseAndTheCaps(t *testing.T) {
 	cfg := armCfg()
 	cfg.Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
-	cfg.Repositories[0].Merge.AutoMergesPerDay = 1
+	cfg.Repositories[0].Merge.MaxPerDay = 1
 	d := DecideArm(ArmInputs{PR: agentPR(), Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""), Cfg: cfg,
 		ReportedHead: head, Paused: true, ArmedToday: 1, Files: changed("[a](https://x/old)", "[a](https://x/new)"), DiffRead: true})
 	if d.Verdict != "shadow" || d.Reason != "shadow_would_arm" || !d.Paused || !d.Capped {
@@ -431,7 +431,7 @@ func TestAValidApprovalArmsBesideAMovedOne(t *testing.T) {
 // not a human's.
 func TestAnApprovalArmsOutsideTheCaps(t *testing.T) {
 	for name, spent := range map[string]func(*ArmInputs){
-		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Current().Repositories[0].Merge.AutoMergesPerDay },
+		"the day's cap":   func(in *ArmInputs) { in.ArmedToday = in.Cfg.Current().Repositories[0].Merge.MaxPerDay },
 		"the class's cap": func(in *ArmInputs) { in.ClassArmedToday = 1 },
 	} {
 		t.Run(name, func(t *testing.T) {

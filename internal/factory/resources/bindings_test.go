@@ -30,12 +30,11 @@ func classPolicy(t *testing.T, name string, gen int64, spec string) Object {
 	return Object{Kind: KindMergePolicy, Name: name, Generation: gen, Spec: y(t, spec)}
 }
 
-// The spec's policies (with requires per PR3), and the two built-ins every bound repository binds.
+// The spec's policies, and the two built-ins every bound repository binds.
 func specPolicies(t *testing.T) []Object {
 	return []Object{
 		classPolicy(t, "dead-links", 3, `
 description: Retargets dead external links a detector found, and nothing else.
-requires: [allowedFiles, holdoutChecks, oracleWorkflow]
 modifyOnly: true
 maxModifiedLines: 20
 diffShape: links-only
@@ -44,9 +43,9 @@ oracle: {probe: dead-links, maxFindings: 10}
 monitor: {oracleRuns: 2, followUpWindow: 168h}
 maxPerDay: 1
 `),
-		classPolicy(t, "docs-links", 1, "description: Fixes a broken link in the docs, and nothing else.\nrequires: [holdoutChecks]\n"),
-		classPolicy(t, "revert", 1, "requires: [holdoutChecks]\n"),
-		classPolicy(t, "docs", 1, "checks: true\n"),
+		classPolicy(t, "docs-links", 1, "description: Fixes a broken link in the docs, and nothing else.\n"),
+		classPolicy(t, "revert", 1, "{}\n"),
+		classPolicy(t, "docs", 1, "modifyOnly: true\n"),
 	}
 }
 
@@ -64,7 +63,7 @@ func boundRepo(t *testing.T, name, repository string, gen int64, bindings string
 const anrBindings = `
 - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
 - {name: revert, mode: shadow, holdoutChecks: [validate]}
-- {name: docs, mode: "off"}
+- {name: docs, mode: disabled}
 - name: dead-links
   mode: shadow
   allowedFiles: ['^(docs|website/content)/.+\.md$']
@@ -116,7 +115,7 @@ maxPerDay: 1
 	if got := rc.Classes["dead-links"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("dead-links:\n got %+v\nwant %+v", got, want)
 	}
-	if len(rc.Classes) != 4 || !rc.Classes["docs-links"].Shadow || rc.Classes["docs"].Live || rc.Classes["docs"].Shadow || !rc.Classes["docs"].Checks {
+	if len(rc.Classes) != 4 || !rc.Classes["docs-links"].Shadow || rc.Classes["docs"].Live || rc.Classes["docs"].Shadow || !rc.Classes["docs"].ModifyOnly {
 		t.Fatalf("classes %+v", rc.Classes)
 	}
 	if strings.Join(rc.Bound, " ") != "docs-links revert docs dead-links" || len(rc.Bindings) != 4 || rc.Merge.MergerLogin == "" {
@@ -238,7 +237,7 @@ author: {adopt: {logins: ["`+login+`"], branches: ['`+branch+`']}}
 			b := adopt("deps-b", tc.shapeB, "Renovate[bot]", "^renovate/deps-")
 			bindings := "- {name: docs-links, mode: shadow, holdoutChecks: [validate]}\n- {name: revert, mode: shadow, holdoutChecks: [validate]}\n"
 			for _, n := range strings.Fields(tc.order) {
-				bindings += "- {name: deps-" + n + `, mode: "off"}` + "\n"
+				bindings += "- {name: deps-" + n + `, mode: disabled}` + "\n"
 			}
 			r, err := Assemble(file(t), append(slicesClone(base), a, b, boundRepo(t, "maku", "Smana/maku", 1, bindings)))
 			if err != nil {
@@ -392,19 +391,18 @@ func TestFileEntriesCannotCarryBindings(t *testing.T) {
 	}
 }
 
-// WF7: a policy's harness fields are read by nothing, so a policy naming a workflow, shipped or not,
-// resolves.
-func TestAPolicyMayNameAShippedWorkflow(t *testing.T) {
+// MR9: a MergePolicy carrying removed workflow fields is refused alone, leaving its consumer accepted.
+func TestAPolicyWithRemovedWorkflowFieldsIsRefused(t *testing.T) {
 	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], classPolicy(t, "docs", 1, "harness: standard\nharnessAllowed: [careful]\n"),
 		boundRepo(t, "maku", "Smana/maku", 1, anrBindings)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if x := refusal(r, KindMergePolicy, "docs"); x != nil {
-		t.Fatalf("docs refused: %+v", x)
+	if x := refusal(r, KindMergePolicy, "docs"); x == nil || x.Reason != v1alpha1.ReasonInvalid {
+		t.Fatalf("docs: %+v", x)
 	}
-	if b := binding(r, "maku", "docs"); !b.Accepted {
-		t.Fatalf("docs binding: %+v", b)
+	if refused(r, KindRepository, "maku") != "" {
+		t.Fatalf("consumer refused: %+v", r.Refused)
 	}
 }
 

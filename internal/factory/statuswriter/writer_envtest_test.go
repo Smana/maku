@@ -66,7 +66,7 @@ func TestEnvtestWriteOnce(t *testing.T) {
 		Spec: v1alpha1.RepositorySpec{FactoryRef: "aws-0", Repository: repository, Maintainers: []string{"Smana"}, TriggerLabel: "factory/ready",
 			MergePolicies: []config.Binding{{Name: "docs-links", Mode: config.ModeShadow}, {Name: "revert", Mode: config.ModeShadow}}}}
 	policy := &v1alpha1.MergePolicy{ObjectMeta: metav1.ObjectMeta{Name: className, Namespace: envNS},
-		Spec: v1alpha1.MergePolicySpec{PolicySpec: config.PolicySpec{Class: config.Class{Description: "a class definition"}}}}
+		Spec: v1alpha1.MergePolicySpec{PolicySpec: config.PolicySpec{MergeClass: config.MergeClass{Description: "a class definition"}}}}
 	for _, o := range []client.Object{repo, policy} {
 		if err := c.Create(ctx, o); err != nil {
 			t.Fatal(err)
@@ -253,7 +253,7 @@ func TestWriterBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 	if b := apimeta.FindStatusCondition(r.Status.Conditions, v1alpha1.ConditionBindingsValid); b == nil || b.Status != metav1.ConditionFalse || len(r.Status.Classes) != 2 ||
-		r.Status.Merge == nil || r.Status.Merge.AutoMergesPerDay != 2 {
+		r.Status.Merge == nil || r.Status.Merge.MaxPerDay != 2 {
 		t.Fatalf("ai-native-ref status %+v", r.Status)
 	}
 

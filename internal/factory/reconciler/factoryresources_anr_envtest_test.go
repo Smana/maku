@@ -44,7 +44,7 @@ func TestMigratedANRConfigPassesAdmission(t *testing.T) {
 	for _, f := range []struct {
 		file, ns string
 		want     int
-	}{{"anr.yaml", "default", 16}, {"file.yaml", "kube-public", 7}} {
+	}{{"anr.yaml", "default", 12}, {"file.yaml", "kube-public", 5}} {
 		admit(t, c, f.file, f.ns, f.want)
 	}
 }
@@ -137,8 +137,8 @@ func TestANRObjectsServeFourRepositories(t *testing.T) {
 		t.Fatalf("%d repositories served, want 4", n)
 	}
 	out, _ := src.Outcomes()
-	if len(out) != 17 {
-		t.Fatalf("%d outcomes, want 17 (one Factory, four Repositories, twelve MergePolicies)", len(out))
+	if len(out) != 13 {
+		t.Fatalf("%d outcomes, want 13 (one Factory, four Repositories, eight MergePolicies)", len(out))
 	}
 	for _, o := range out {
 		if !o.Accepted {

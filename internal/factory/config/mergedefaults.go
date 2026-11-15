@@ -25,7 +25,7 @@ func ApplyMergeDefaults(defaults, merge map[string]any) (map[string]any, []strin
 	}
 	var taken []string
 	for _, k := range slices.Sorted(maps.Keys(defaults)) {
-		if _, ok := out[k]; !ok && !setsPerDay(out, k) {
+		if _, ok := out[k]; !ok {
 			out[k] = deepCopyValue(defaults[k])
 			taken = append(taken, k)
 		}
@@ -95,35 +95,12 @@ func applyMergeDefaults(j []byte) ([]byte, [][]string, error) {
 	return out, taken, err
 }
 
-// The daily cap's two names (MR9): one key for the defaults, so a repository that sets either takes
-// neither from the Factory.
-var perDayKeys = []string{"maxPerDay", "autoMergesPerDay"}
+// PerDay is the repository's daily auto-merge cap.
+func (m Merge) PerDay() int { return m.MaxPerDay }
 
-// setsPerDay is whether k names the daily cap and merge already sets it under either name.
-func setsPerDay(merge map[string]any, k string) bool {
-	if !slices.Contains(perDayKeys, k) {
-		return false
-	}
-	return slices.ContainsFunc(perDayKeys, func(n string) bool { _, ok := merge[n]; return ok })
-}
-
-// PerDay is the repository's daily auto-merge cap: MaxPerDay, else AutoMergesPerDay.
-func (m Merge) PerDay() int {
-	if m.MaxPerDay != 0 {
-		return m.MaxPerDay
-	}
-	return m.AutoMergesPerDay
-}
-
-// validatePerDay reports the daily cap's rules: both names set to different values is refused.
+// validatePerDay reports the daily cap's rules.
 func (m Merge) validatePerDay(bad func(string, ...any)) {
-	if m.AutoMergesPerDay < 0 {
-		bad("merge.autoMergesPerDay must be 0 or more")
-	}
 	if m.MaxPerDay < 0 {
 		bad("merge.maxPerDay must be 0 or more")
-	}
-	if m.MaxPerDay != 0 && m.AutoMergesPerDay != 0 && m.MaxPerDay != m.AutoMergesPerDay {
-		bad("merge.maxPerDay and merge.autoMergesPerDay differ: set maxPerDay alone")
 	}
 }

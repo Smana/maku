@@ -117,7 +117,7 @@ func TestExportRefusesALegacyServedRepository(t *testing.T) {
 func boundAuthorityRig() (*Watch, *rec, *swapSource) {
 	c, _ := boundCentral()
 	c.Hash = "one"
-	c.PolicyManagement = config.PolicyManagement{Read: true, RepositoryAuthority: true}
+	c.PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	c.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
 	r := &rec{}
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
@@ -163,7 +163,11 @@ func TestARefusedFileBindingIsIsolated(t *testing.T) {
 		t.Fatal("foo has no class")
 	}
 
-	republish(w, src, "two", "alert-rules", config.PolicySpec{Class: config.Class{MaxModifiedLines: 40}, Requires: []string{"allowedFiles", "companionFiles"}})
+	republish(w, src, "two", "alert-rules", config.PolicySpec{MergeClass: config.MergeClass{
+		MaxModifiedLines: 40,
+		DiffShape:        "added-entry",
+		Author:           &config.Author{Adopt: &config.Adopt{Logins: []string{"b[bot]"}, Branches: []string{"^b/"}}},
+	}})
 	w.Observe(t.Context(), "o/r", body)
 	s, err = w.Authority("o/r")
 	if err != nil {
@@ -187,18 +191,18 @@ func TestARefusedFileBindingIsIsolated(t *testing.T) {
 // in shadow, though the file did not change.
 func TestAPolicyRelaxationDemotesALiveBinding(t *testing.T) {
 	w, r, src := boundAuthorityRig()
-	src.c.Policies["paths"] = config.ServedPolicy{Spec: config.PolicySpec{Class: config.Class{AllowedFiles: []string{"^a/.+$"}}}, Generation: 1}
+	src.c.Policies["paths"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{"^a/.+$"}}}, Generation: 1}
 	body := []byte(bindingFile + "  - {name: paths, mode: live}\n")
 	w.Observe(t.Context(), "o/r", body)
 	if s, err := w.Authority("o/r"); err != nil || !s.Classes["paths"].Class.Live {
 		t.Fatalf("%v %+v", err, s.Classes["paths"])
 	}
-	republish(w, src, "two", "paths", config.PolicySpec{Class: config.Class{AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 9}})
+	republish(w, src, "two", "paths", config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 9}})
 	w.Observe(t.Context(), "o/r", body)
 	if s, _ := w.Authority("o/r"); !s.Classes["paths"].Class.Live {
 		t.Fatal("a tightening stays live")
 	}
-	republish(w, src, "three", "paths", config.PolicySpec{Class: config.Class{AllowedFiles: []string{"^a/.+$", "^b/.+$"}}})
+	republish(w, src, "three", "paths", config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{"^a/.+$", "^b/.+$"}}})
 	w.Observe(t.Context(), "o/r", body)
 	s, err := w.Authority("o/r")
 	if err != nil {
@@ -217,17 +221,17 @@ func TestAPolicyRelaxationDemotesALiveBinding(t *testing.T) {
 
 // B11: one class's structural change, on resolved classes.
 func TestClassChange(t *testing.T) {
-	base := config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10, Checks: true}
+	base := config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10, ModifyOnly: true}
 	for name, tc := range map[string]struct {
 		next config.Class
 		kind string
 		why  string
 	}{
-		"the same":       {base, KindUnchanged, ""},
-		"a lower cap":    {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 5, Checks: true}, KindTightening, ""},
-		"a wider fence":  {config.Class{Live: true, AllowedFiles: []string{"^a/.+$", "^b/.+$"}, MaxModifiedLines: 10, Checks: true}, KindRelaxation, "allowedFiles broadened"},
-		"checks dropped": {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10}, KindRelaxation, "checks removed"},
-		"an approval":    {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10, Checks: true, RequiresApproval: []config.ApprovalLeaf{{ChangedFiles: []string{"^a/x$"}}}}, KindTightening, ""},
+		"the same":           {base, KindUnchanged, ""},
+		"a lower cap":        {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 5, ModifyOnly: true}, KindTightening, ""},
+		"a wider fence":      {config.Class{Live: true, AllowedFiles: []string{"^a/.+$", "^b/.+$"}, MaxModifiedLines: 10, ModifyOnly: true}, KindRelaxation, "allowedFiles broadened"},
+		"modifyOnly dropped": {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10}, KindRelaxation, "modifyOnly removed"},
+		"an approval":        {config.Class{Live: true, AllowedFiles: []string{"^a/.+$"}, MaxModifiedLines: 10, ModifyOnly: true, RequiresApproval: []config.ApprovalLeaf{{ChangedFiles: []string{"^a/x$"}}}}, KindTightening, ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c := ClassChange(base, tc.next)
@@ -271,7 +275,7 @@ func TestStructuralBetweenBindingFiles(t *testing.T) {
 func TestAuthorityReadsANewConfigBeforeTheNextRead(t *testing.T) {
 	w, _, src := boundAuthorityRig()
 	w.Observe(t.Context(), "o/r", []byte(bindingFile))
-	republish(w, src, "two", "alert-rules", config.PolicySpec{Class: config.Class{MaxModifiedLines: 10}, Requires: []string{"allowedFiles"}})
+	republish(w, src, "two", "alert-rules", config.PolicySpec{MergeClass: config.MergeClass{MaxModifiedLines: 10}})
 	s, err := w.Authority("o/r")
 	if err != nil {
 		t.Fatal(err)

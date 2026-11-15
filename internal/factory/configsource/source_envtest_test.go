@@ -85,12 +85,12 @@ func TestEnvtestSourceFollowsTheObjects(t *testing.T) {
 	}
 
 	docs := objs[3].(*v1alpha1.MergePolicy)
-	docs.Spec.Checks = true
+	docs.Spec.MaxModifiedLines = 40
 	if err := c.Update(ctx, docs); err != nil {
 		t.Fatal(err)
 	}
 	eventually("the policy's change is served", func() bool {
-		return src.Live.Current().RepositoryFor("Smana/Other").Classes["docs"].Checks
+		return src.Live.Current().RepositoryFor("Smana/Other").Classes["docs"].MaxModifiedLines == 40
 	})
 
 	for _, o := range objs {
@@ -138,7 +138,7 @@ spec:
   repository: Smana/Other
   maintainers: [Smana]
   triggerLabel: factory/ready
-  merge: {autoMergesPerDay: 2}
+  merge: {maxPerDay: 2}
 `, `
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
@@ -164,8 +164,8 @@ spec:
 		merge, _ := o.Spec["merge"].(map[string]any)
 		switch o.Kind {
 		case resources.KindRepository:
-			if len(merge) != 1 || merge["autoMergesPerDay"] == nil {
-				t.Errorf("Repository merge %v, want exactly {autoMergesPerDay: 2}", merge)
+			if len(merge) != 1 || merge["maxPerDay"] == nil {
+				t.Errorf("Repository merge %v, want exactly {maxPerDay: 2}", merge)
 			}
 			for _, k := range []string{"checks", "classAuthority", "mergePolicies"} {
 				if _, ok := o.Spec[k]; ok {

@@ -183,6 +183,7 @@ func refuseRemoved(top map[string]json.RawMessage) []error {
 			}
 		}
 	}
+	errs = append(errs, refuseRemovedMergePolicies(top)...)
 	return errs
 }
 

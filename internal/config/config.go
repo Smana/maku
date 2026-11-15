@@ -1178,8 +1178,8 @@ func (c *Config) Validate() error {
 	c.PolicyManagement.Validate(func(f string, a ...any) { errs = append(errs, fmt.Errorf(f, a...)) })
 	// Asked for by name, promotion needs factoryURL; the default stage, manage, without one serves
 	// no promotion page (policyWorkflow) rather than refusing to start.
-	if pm := c.PolicyManagement; (pm.Promotion || pm.Stage == fconfig.StageManage) && c.FactoryURL == "" {
-		errs = append(errs, errors.New("policyManagement.promotion needs factoryURL: the evidence is the factory's GET /v1/policy/evidence"))
+	if c.PolicyManagement.Stage == fconfig.StageManage && c.FactoryURL == "" {
+		errs = append(errs, errors.New("policyManagement.stage manage needs factoryURL: promotion serves the factory's GET /v1/policy/evidence"))
 	}
 	return errors.Join(errs...)
 }

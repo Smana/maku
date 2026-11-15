@@ -77,7 +77,7 @@ func main() {
 			if len(c.Webhooks) != 3 || c.Webhooks[0].SecretFile != "/etc/room-broker/webhooks/slack-app/signing-key" || c.Webhooks[0].Generation != 1 {
 				return fmt.Errorf("webhooks %+v, want three, slack-app's key at its mount", c.Webhooks)
 			}
-			if !c.Suspend.Enabled || !c.PolicyManagement.Promotion || c.Coordination.Mode != "off" || c.Coordination.MaxChildren != 2 {
+			if !c.Suspend.Enabled || !c.PolicyManagement.Manages() || c.Coordination.Mode != "off" || c.Coordination.MaxChildren != 2 {
 				return fmt.Errorf("suspend %+v, policyManagement %+v, coordination %+v", c.Suspend, c.PolicyManagement, c.Coordination)
 			}
 			return nil

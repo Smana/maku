@@ -477,7 +477,7 @@ data:
     policyManagement:
       operators:
       - Smana
-      promotion: true
+      stage: manage
     webhooks:
       - events:
         - room.task_triaged
@@ -1365,7 +1365,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: 574c670d014b21ba9a3e266c4432489223a0e2f44fce34babc0bf5ac9d7df3d5
+        checksum/config: 270be266b94ead627b97e8b30f6dfa759130e06f59dffae56f5d8a19ec399bdd
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker

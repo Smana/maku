@@ -12,7 +12,7 @@ func TestDecodeRefusesUnknownFields(t *testing.T) {
 kind: MergePolicy
 metadata: {name: x, namespace: agent-system}
 spec:
-  checks: true
+  modifyOnly: true
   typo: 1
 `))
 	if err == nil || !strings.Contains(err.Error(), "typo") {

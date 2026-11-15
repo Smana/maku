@@ -89,7 +89,7 @@ func Migrate(file []byte, ns string) (manifests, residual []byte, err error) {
 		repository := str(m, "name")
 		name := ObjectName(repository, repoNames)
 		rs := map[string]any{"factoryRef": factory, "repository": repository}
-		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "classAuthority"} {
+		for _, k := range []string{"maintainers", "triggerLabel", "checks", "schedules", "workflow", "classAuthority", "privateCode"} {
 			if v, ok := m[k]; ok {
 				rs[k] = v
 			}
@@ -238,20 +238,296 @@ func offFields(spec map[string]any, visit func(path string, row map[string]any, 
 	}
 }
 
-// Upgrade is file as this release reads it: lifted from the single-repository shape (LiftLegacy), and
-// with the workflow settings release N warned about rewritten (upgradeWorkflows, WF9, WF13). A loops
-// row named after a class has no mechanical home, so Parse refuses it with the upgrade note. A file
-// that needs neither is returned as is.
+// Upgrade is file as this release reads it: unwrapped from a saved golden envelope if present,
+// lifted from the single-repository shape (LiftLegacy), and with the workflow and merge-policy
+// settings release N warned about rewritten (upgradeWorkflows, upgradeMergePolicies, WF9, WF13,
+// MR9, MR13). A file that needs none of these is returned as is.
 func Upgrade(file []byte) ([]byte, error) {
+	var env map[string]any
+	if yaml.Unmarshal(file, &env) == nil && env["factory"] == nil {
+		if inner, ok := env["Config"].(map[string]any); ok {
+			var err error
+			if file, err = yaml.Marshal(inner); err != nil {
+				return nil, err
+			}
+		}
+	}
 	file, err := LiftLegacy(file)
 	if err != nil {
 		return nil, err
 	}
 	var base map[string]any
-	if yaml.Unmarshal(file, &base) != nil || !upgradeWorkflows(base) {
+	if yaml.Unmarshal(file, &base) != nil {
 		return file, nil // a file that does not read is Parse's to refuse
 	}
+	wfChanged := upgradeWorkflows(base)
+	mpChanged := upgradeMergePolicies(base)
+	if !wfChanged && !mpChanged {
+		return file, nil
+	}
 	return yaml.Marshal(base)
+}
+
+// isCatalogPolicy reports whether name is one of the shipped catalog policies (MR2, MR9).
+func isCatalogPolicy(name string) bool {
+	switch name {
+	case "docs", "docs-links", "deps-patch", "revert":
+		return true
+	}
+	return false
+}
+
+// upgradeMergePolicies rewrites in base every merge-policy setting release N deprecated and
+// release N+1 refuses (MR9, MR13), moving workflow fields on classes and schedules to their new
+// homes under workflows and Repository.workflow.
+func upgradeMergePolicies(base map[string]any) bool {
+	changed := false
+	truthy := func(v any) bool { b, ok := v.(bool); return ok && b }
+
+	if api, ok := base["api"].(map[string]any); ok {
+		if _, hasRepos := base["repositories"]; hasRepos {
+			if _, hasAPIRepos := api["repositories"]; hasAPIRepos {
+				delete(api, "repositories")
+				changed = true
+			}
+		}
+	}
+
+	if pm, ok := base["policyManagement"].(map[string]any); ok {
+		stage := ""
+		switch {
+		case truthy(pm["promotion"]) || truthy(pm["approvalMemory"]) || truthy(pm["repositoryAuthority"]):
+			stage = config.StageManage
+		case truthy(pm["simulation"]) || truthy(pm["dualEvaluation"]):
+			stage = config.StageSimulate
+		case truthy(pm["read"]):
+			stage = config.StageRead
+		}
+		hadSwitch := false
+		for _, k := range []string{"read", "simulation", "dualEvaluation", "repositoryAuthority", "approvalMemory", "promotion"} {
+			if _, ok := pm[k]; ok {
+				delete(pm, k)
+				hadSwitch = true
+			}
+		}
+		if hadSwitch {
+			if cur, _ := pm["stage"].(string); cur == "" && stage != "" {
+				pm["stage"] = stage
+			}
+			if len(pm) == 0 {
+				delete(base, "policyManagement")
+			}
+			changed = true
+		}
+	}
+
+	if mg, ok := base["mergeGuardrails"].(map[string]any); ok {
+		if _, ok := mg["minPromotionEvidence"]; ok {
+			delete(mg, "minPromotionEvidence")
+			if len(mg) == 0 {
+				delete(base, "mergeGuardrails")
+			}
+			changed = true
+		}
+	}
+
+	renamePerDay := func(m map[string]any) {
+		if m == nil {
+			return
+		}
+		if v, ok := m["autoMergesPerDay"]; ok {
+			if _, hasMax := m["maxPerDay"]; !hasMax {
+				m["maxPerDay"] = v
+			}
+			delete(m, "autoMergesPerDay")
+			changed = true
+		}
+	}
+	if md, ok := base["mergeDefaults"].(map[string]any); ok {
+		renamePerDay(md)
+	}
+
+	wfMap, _ := base["workflows"].(map[string]any)
+	ensureWorkflow := func(name string) map[string]any {
+		if wfMap == nil {
+			wfMap = map[string]any{}
+			base["workflows"] = wfMap
+		}
+		w, ok := wfMap[name].(map[string]any)
+		if !ok {
+			w = map[string]any{}
+			wfMap[name] = w
+		}
+		return w
+	}
+	isKnownWorkflow := func(name string) bool {
+		switch name {
+		case "", config.TemplateNone:
+			return false
+		case config.WorkflowQuick, config.WorkflowStandard, config.WorkflowCareful:
+			return true
+		}
+		return wfMap != nil && wfMap[name] != nil
+	}
+
+	repos, _ := base["repositories"].([]any)
+	for _, entry := range repos {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		merge, _ := m["merge"].(map[string]any)
+		renamePerDay(merge)
+
+		classHarness := map[string]string{}
+		classHasProbe := map[string]bool{}
+		defaultWF := ""
+		anyTestFirst := false
+
+		if classes, ok := m["classes"].(map[string]any); ok {
+			if rev, ok := classes["review"].(map[string]any); ok {
+				if h, _ := rev["harness"].(string); isKnownWorkflow(h) {
+					defaultWF = h
+				}
+			}
+			for _, cname := range slices.Sorted(maps.Keys(classes)) {
+				cl, ok := classes[cname].(map[string]any)
+				if !ok {
+					continue
+				}
+				if oracle, ok := cl["oracle"].(map[string]any); ok {
+					if p, _ := oracle["probe"].(string); p != "" {
+						classHasProbe[cname] = true
+					}
+				}
+				h, _ := cl["harness"].(string)
+				if h != "" {
+					classHarness[cname] = h
+					if defaultWF == "" && isKnownWorkflow(h) {
+						defaultWF = h
+					}
+				}
+				if h != "" && h != config.TemplateNone {
+					if esc, ok := cl["escalation"].(map[string]any); ok && len(esc) > 0 {
+						w := ensureWorkflow(h)
+						if w["escalation"] == nil {
+							w["escalation"] = esc
+						}
+					}
+					if truthy(cl["checks"]) {
+						w := ensureWorkflow(h)
+						w["checks"] = true
+					}
+				}
+				if truthy(cl["testFirst"]) {
+					anyTestFirst = true
+				}
+				for _, f := range []string{"harness", "harnessAllowed", "escalation", "testFirst", "checks"} {
+					if _, ok := cl[f]; ok {
+						delete(cl, f)
+						changed = true
+					}
+				}
+			}
+			for _, cname := range slices.Sorted(maps.Keys(classes)) {
+				if cname == "review" {
+					delete(classes, cname)
+					changed = true
+					continue
+				}
+				cl, _ := classes[cname].(map[string]any)
+				if !truthy(cl["live"]) && !truthy(cl["shadow"]) && !isCatalogPolicy(cname) {
+					delete(classes, cname)
+					changed = true
+				}
+			}
+		}
+
+		rw, _ := m["workflow"].(map[string]any)
+		if defaultWF != "" && (rw == nil || str(rw, "default") == "") {
+			if rw == nil {
+				rw = map[string]any{}
+			}
+			rw["default"] = defaultWF
+			m["workflow"] = rw
+			changed = true
+		}
+		if anyTestFirst && str(merge, "contractCheck") != "" {
+			if rw == nil {
+				rw = map[string]any{}
+			}
+			if !truthy(rw["testFirst"]) {
+				rw["testFirst"] = true
+				m["workflow"] = rw
+				changed = true
+			}
+		}
+
+		if schedules, ok := m["schedules"].([]any); ok {
+			for _, raw := range schedules {
+				s, ok := raw.(map[string]any)
+				if !ok {
+					continue
+				}
+				cname := str(s, "class")
+				if cname != "" && !classHasProbe[cname] {
+					delete(s, "class")
+					if str(s, "workflow") == "" && isKnownWorkflow(classHarness[cname]) {
+						s["workflow"] = classHarness[cname]
+					}
+					changed = true
+				}
+			}
+		}
+
+		if bindings, ok := m["mergePolicies"].([]any); ok {
+			kept := make([]any, 0, len(bindings))
+			for _, raw := range bindings {
+				b, ok := raw.(map[string]any)
+				if !ok {
+					kept = append(kept, raw)
+					continue
+				}
+				bname := str(b, "name")
+				if bname == "review" {
+					changed = true
+					continue
+				}
+				if b["mode"] == "off" || b["mode"] == false {
+					changed = true
+					if isCatalogPolicy(bname) {
+						b["mode"] = config.ModeDisabled
+						kept = append(kept, b)
+					}
+					continue
+				}
+				kept = append(kept, b)
+			}
+			m["mergePolicies"] = kept
+		}
+	}
+
+	if loops, ok := base["loops"].(map[string]any); ok {
+		if docsRow, hasDocs := loops["docs"]; hasDocs {
+			if _, hasCareful := loops[config.WorkflowCareful]; !hasCareful {
+				loops[config.WorkflowCareful] = docsRow
+			}
+			delete(loops, "docs")
+			changed = true
+		}
+		for _, lname := range slices.Sorted(maps.Keys(loops)) {
+			if lname == "default" || lname == config.WorkflowQuick || lname == config.WorkflowStandard || lname == config.WorkflowCareful {
+				continue
+			}
+			if wfMap != nil && wfMap[lname] != nil {
+				continue
+			}
+			delete(loops, lname)
+			changed = true
+		}
+	}
+
+	return changed
 }
 
 // upgradeWorkflows rewrites in base the settings of the workflows design that release N warned

@@ -28,7 +28,7 @@ kind: MergePolicy
 metadata:
   name: typo
 spec:
-  checks: true
+  modifyOnly: true
   typo: true
 `
 
@@ -65,7 +65,7 @@ func TestMakuConfigMigrateThenValidate(t *testing.T) {
 	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, manifests}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "ok: 7 accepted") {
+	if !strings.Contains(out.String(), "ok: 5 accepted") {
 		t.Fatalf("output: %s", out.String())
 	}
 }
@@ -270,7 +270,7 @@ MergePolicy docs-links (generation 1 -> 2):
   runlore                shadow  relaxation: maxModifiedLines raised or removed  resolves
   runlore-kb             shadow  relaxation: maxModifiedLines raised or removed  resolves
 warning: binding: Repository/ai-native-ref dead-links: MissingParameter: monitor.flux needs Repository.spec.merge.fluxSource
-ok: 17 accepted
+ok: 13 accepted
 `
 	if out.String() != want {
 		t.Fatalf("got:\n%s\nwant:\n%s", out.String(), want)
@@ -339,7 +339,7 @@ func TestMakuConfigValidateGuardrails(t *testing.T) {
 	if err := m.run(t.Context(), []string{"config", "validate", "--config", residual, guarded(5)}); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
-	if !strings.Contains(out.String(), "guardrails: 23 bindings within\n") {
+	if !strings.Contains(out.String(), "guardrails: 16 bindings within\n") {
 		t.Fatalf("%s", out.String())
 	}
 }
@@ -443,7 +443,7 @@ func TestMigratedOutputSimulatesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(residual, append(raw, []byte("policyManagement: {simulation: true}\n")...), 0o600); err != nil {
+	if err := os.WriteFile(residual, append(raw, []byte("policyManagement: {stage: simulate}\n")...), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	split := splitANR(t, nil)

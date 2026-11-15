@@ -46,11 +46,24 @@ func anrLegacy(t *testing.T) (residual []byte, objs []Object) {
 }
 
 // legacyServed is the config release N served from anrLegacy's objects (testdata/anr-legacy-config.json,
-// captured from Assemble before the shape was removed): what a split must leave unchanged.
+// captured from Assemble before the shape was removed), with autoMergesPerDay read as maxPerDay and
+// unarmed non-catalog classes dropped as PR E's converter does.
 func legacyServed(t *testing.T) *config.Config {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/anr-legacy-config.json")
 	if err != nil {
+		t.Fatal(err)
+	}
+	var rawEnv struct {
+		Config struct {
+			Repositories []struct {
+				Merge struct {
+					AutoMergesPerDay int `json:"autoMergesPerDay"`
+				} `json:"merge"`
+			} `json:"repositories"`
+		}
+	}
+	if err := json.Unmarshal(raw, &rawEnv); err != nil {
 		t.Fatal(err)
 	}
 	var golden struct{ Config config.Config }
@@ -59,6 +72,16 @@ func legacyServed(t *testing.T) *config.Config {
 	}
 	if len(golden.Config.Repos()) != 4 {
 		t.Fatalf("%d repositories in the golden", len(golden.Config.Repos()))
+	}
+	for i := range golden.Config.Repositories {
+		if golden.Config.Repositories[i].Merge.MaxPerDay == 0 {
+			golden.Config.Repositories[i].Merge.MaxPerDay = rawEnv.Config.Repositories[i].Merge.AutoMergesPerDay
+		}
+		for name, cl := range golden.Config.Repositories[i].Classes {
+			if name == "review" || (!cl.Live && !cl.Shadow && !isCatalogPolicy(name)) {
+				delete(golden.Config.Repositories[i].Classes, name)
+			}
+		}
 	}
 	return &golden.Config
 }
@@ -132,24 +155,24 @@ func TestSplitANR(t *testing.T) {
 			repos++
 		}
 	}
-	want := []string{"alert-rules", "dashboards", "dead-links", "deps-minor", "deps-patch", "docs", "docs-links", "kb-entries", "revert", "review", "scripts", "tests"}
+	want := []string{"alert-rules", "dead-links", "deps-minor", "deps-patch", "docs", "docs-links", "kb-entries", "revert"}
 	if !slices.Equal(policies, want) || repos != 4 || object(out, KindFactory, "aws-0") == nil {
 		t.Fatalf("policies %v, %d bound repositories", policies, repos)
 	}
 
-	// The modes: cloud-native-ref's docs-links and revert live, the rest shadow or off.
+	// The modes: cloud-native-ref's docs-links and revert live, the rest shadow or disabled.
 	for _, tc := range []struct{ repo, name, mode string }{
 		{"cloud-native-ref", "docs-links", config.ModeLive}, {"cloud-native-ref", "revert", config.ModeLive},
 		{"ai-native-ref", "docs-links", config.ModeShadow}, {"cloud-native-ref", "deps-patch", config.ModeShadow},
-		{"cloud-native-ref", "docs", config.ModeOff}, {"cloud-native-ref", "review", config.ModeOff}, {"runlore-kb", "kb-entries", config.ModeShadow},
+		{"cloud-native-ref", "docs", config.ModeDisabled}, {"runlore-kb", "kb-entries", config.ModeShadow},
 	} {
 		if b := bindingOf(t, out, tc.repo, tc.name); b.Mode != tc.mode {
 			t.Errorf("%s %s: mode %q, want %q", tc.repo, tc.name, b.Mode, tc.mode)
 		}
 	}
 
-	// docs-links: the holdouts differ by repository, so they are the bindings', and required.
-	if p := policySpec(t, out, "docs-links"); !slices.Equal(p.Requires, []string{"holdoutChecks"}) || p.HoldoutChecks != nil {
+	// docs-links: the holdouts differ by repository, so they are the bindings'.
+	if p := policySpec(t, out, "docs-links"); p.HoldoutChecks != nil {
 		t.Fatalf("docs-links %+v", p)
 	}
 	if b := bindingOf(t, out, "runlore", "docs-links"); !slices.Equal(b.HoldoutChecks, []string{"build"}) {
@@ -158,8 +181,8 @@ func TestSplitANR(t *testing.T) {
 
 	// dead-links: both consumers set allowedFiles and the workflow, and share holdouts and denials.
 	p := policySpec(t, out, "dead-links")
-	if !slices.Equal(p.Requires, []string{"allowedFiles", "oracleWorkflow"}) || !slices.Equal(p.HoldoutChecks, []string{"External links 🔗"}) ||
-		len(p.ProtectedFiles) != 2 || p.AllowedFiles != nil || p.Oracle == nil || p.Oracle.Workflow != "" || p.MaxPerDay != 1 || p.Live || p.Shadow {
+	if !slices.Equal(p.HoldoutChecks, []string{"External links 🔗"}) ||
+		len(p.ProtectedFiles) != 2 || p.AllowedFiles != nil || p.Oracle == nil || p.Oracle.Workflow != "" || p.MaxPerDay != 1 {
 		t.Fatalf("dead-links %+v", p)
 	}
 	if b := bindingOf(t, out, "ai-native-ref", "dead-links"); b.OracleWorkflow != "dead-links.yaml" || len(b.AllowedFiles) != 1 || b.HoldoutChecks != nil {
@@ -206,8 +229,8 @@ func TestSplitRefuses(t *testing.T) {
 		want string
 	}{
 		"two meanings of docs": {func(objs []Object) {
-			object(objs, KindMergePolicy, "ai-native-ref").Spec["classes"].(map[string]any)["docs"] = map[string]any{}
-		}, "class docs: Repository ai-native-ref and Repository cloud-native-ref declare it differently in checks"},
+			object(objs, KindMergePolicy, "ai-native-ref").Spec["classes"].(map[string]any)["docs"] = map[string]any{"modifyOnly": true}
+		}, "class docs: Repository ai-native-ref and Repository cloud-native-ref declare it differently in modifyOnly"},
 		"two Flux sources": {func(objs []Object) {
 			c := object(objs, KindMergePolicy, "cloud-native-ref").Spec["classes"].(map[string]any)["deps-minor"].(map[string]any)
 			c["monitor"].(map[string]any)["flux"].(map[string]any)["source"] = "flux-system/other"
@@ -269,7 +292,7 @@ func TestSplitOfTheBindingShapeIsANoOp(t *testing.T) {
 // definition, and refused when it is not: Split never replaces a shared policy.
 func TestSplitRefusesACollidingPolicy(t *testing.T) {
 	_, objs := anrLegacy(t)
-	same := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true}}
+	same := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{}}
 	out, err := split(append(slices.Clone(objs), same), "agent-system")
 	if err != nil {
 		t.Fatal(err)
@@ -283,7 +306,7 @@ func TestSplitRefusesACollidingPolicy(t *testing.T) {
 	if n != 1 {
 		t.Fatalf("%d docs policies", n)
 	}
-	other := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"checks": true, "testFirst": true}}
+	other := Object{Kind: KindMergePolicy, Name: "docs", Namespace: "agent-system", Spec: map[string]any{"modifyOnly": true}}
 	if _, err := split(append(slices.Clone(objs), other), "agent-system"); err == nil || !strings.Contains(err.Error(), "MergePolicy docs exists with another definition") {
 		t.Fatalf("got %v", err)
 	}

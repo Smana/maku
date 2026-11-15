@@ -24,10 +24,9 @@ func classPolicyObj(name string, gen int64, spec config.PolicySpec) *v1alpha1.Me
 
 // deadLinks is the spec's dead-links policy; with flux, generation 4 also watches Flux.
 func deadLinks(gen int64, flux bool) *v1alpha1.MergePolicy {
-	spec := config.PolicySpec{Class: config.Class{ModifyOnly: true, MaxModifiedLines: 20, DiffShape: "links-only", MaxPerDay: 1,
+	spec := config.PolicySpec{MergeClass: config.MergeClass{ModifyOnly: true, MaxModifiedLines: 20, DiffShape: "links-only", MaxPerDay: 1,
 		Oracle:  &config.Oracle{Probe: "dead-links", MaxFindings: 10},
-		Monitor: &config.Monitor{OracleRuns: 2, FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}},
-		Requires: []string{"allowedFiles", "holdoutChecks", "oracleWorkflow"}}
+		Monitor: &config.Monitor{OracleRuns: 2, FollowUpWindow: config.Duration{Duration: 168 * time.Hour}}}}
 	if flux {
 		spec.Monitor.Flux = &config.FluxWatch{Within: config.Duration{Duration: 30 * time.Minute}}
 	}
@@ -50,7 +49,7 @@ func boundRepoObj(t *testing.T, name, repository, fluxSource string) *v1alpha1.R
 }
 
 func bindingObjs(t *testing.T) []client.Object {
-	holdout := config.PolicySpec{Requires: []string{"holdoutChecks"}}
+	holdout := config.PolicySpec{}
 	return []client.Object{
 		classPolicyObj("docs-links", 1, holdout), classPolicyObj("revert", 1, holdout), deadLinks(3, false),
 		boundRepoObj(t, "ai-native-ref", "Smana/ai-native-ref", ""),
@@ -164,10 +163,10 @@ func TestSyncReadsTheCatalogLabel(t *testing.T) {
 	merge := fileMerge(t)
 	r := repoObj("other", "Smana/Other", 1)
 	r.Spec.Merge = &merge
-	links := config.Class{DiffShape: "links-only", ModifyOnly: true, MaxModifiedLines: 20, Evidence: config.EvidenceLow}
+	links := config.MergeClass{DiffShape: "links-only", ModifyOnly: true, MaxModifiedLines: 20, Evidence: config.EvidenceLow}
 	var objs []client.Object
 	for _, name := range []string{"docs-links", "revert"} {
-		p := classPolicyObj(name, 1, config.PolicySpec{Class: links})
+		p := classPolicyObj(name, 1, config.PolicySpec{MergeClass: links})
 		p.Labels = map[string]string{v1alpha1.LabelCatalog: "true"}
 		objs = append(objs, p)
 	}

@@ -63,7 +63,7 @@ repositories:
       leakScanCheck: "Security scanning 🔒"
       policyBotLogin: ogenki-merge-gate[bot]
       mergerLogin: ogenki-agent-merger[bot]
-      autoMergesPerDay: 10
+      maxPerDay: 10
       fixRuns: 2
       checkReruns: 1
       verifyFor: 30m
@@ -109,7 +109,7 @@ func TestGoodConfigParses(t *testing.T) {
 	// §5.1 and §6.4: the arming gate's own block, and the classes held in shadow (R32).
 	if len(r.Merge.RequiredChecks) != 8 || len(r.Merge.VerifyChecks) != 5 ||
 		r.Merge.PolicyBotLogin != "ogenki-merge-gate[bot]" || r.Merge.MergerLogin != "ogenki-agent-merger[bot]" ||
-		r.Merge.AutoMergesPerDay != 10 || r.Merge.FixRuns != 2 ||
+		r.Merge.MaxPerDay != 10 || r.Merge.FixRuns != 2 ||
 		r.Merge.VerifyFor.Minutes() != 30 || r.Merge.RevertWindow.Hours() != 168 {
 		t.Fatalf("merge: %+v", r.Merge)
 	}
@@ -395,7 +395,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"control percent negative":   {"controlPercent: 10", "controlPercent: -1", "triage.controlPercent must be 0..100"},
 		"no docs-links class":        {"classes: {docs-links: {shadow: true}, revert: {shadow: true}", "classes: {revert: {shadow: true}", "class docs-links is required (OD-8)"},
 		"no revert class":            {"classes: {docs-links: {shadow: true}, revert: {shadow: true}, ", "classes: {docs-links: {shadow: true}, ", "class revert is required (OD-8)"},
-		"review declared as a class": {"classes: {docs-links:", "classes: {review: {live: true}, docs-links:", "review takes checks and testFirst only"},
+		"review declared as a class": {"classes: {docs-links:", "classes: {review: {live: true}, docs-links:", "class review: review is not a policy"},
 		// R32: a class is decided live or held in shadow, never both.
 		"live and shadow": {"docs-links: {shadow: true}", "docs-links: {live: true, shadow: true}", "class docs-links: live and shadow never together"},
 		// §5.1's arming and §6.4's rollback: the merge block is the gate's own config.
@@ -408,7 +408,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"no leak scan":               {"      leakScanCheck: \"Security scanning 🔒\"\n", "", "merge.leakScanCheck"},
 		"policy bot not a bot":       {"policyBotLogin: ogenki-merge-gate[bot]", "policyBotLogin: ogenki-merge-gate", "merge.policyBotLogin"},
 		"merger not a bot":           {"mergerLogin: ogenki-agent-merger[bot]", "mergerLogin: ogenki-agent-merger", "merge.mergerLogin"},
-		"negative auto merges":       {"autoMergesPerDay: 10", "autoMergesPerDay: -1", "merge.autoMergesPerDay must be 0 or more"},
+		"negative auto merges":       {"maxPerDay: 10", "maxPerDay: -1", "merge.maxPerDay must be 0 or more"},
 		"negative fix runs":          {"fixRuns: 2", "fixRuns: -1", "merge.fixRuns must be 0 or more"},
 		"negative check reruns":      {"checkReruns: 1", "checkReruns: -1", "merge.checkReruns must be 0 or more"},
 		"verify for not positive":    {"verifyFor: 30m", "verifyFor: 0s", "merge.verifyFor must be positive"},
@@ -484,13 +484,13 @@ func TestBadConfigsFail(t *testing.T) {
 		"runlore confidence high": {"minConfidence: 0.75", "minConfidence: 1.25", "runlore.minConfidence must be in (0, 1]"},
 		"runlore confidence zero": {"minConfidence: 0.75", "minConfidence: 0", "runlore.minConfidence must be in (0, 1]"},
 		"runlore cap negative":    {"dailyCap: 5", "dailyCap: -1", "runlore.dailyCap must be 0 or more"},
-		// §1 schedules: the name keys the task, the cron must fire, the class must exist.
-		"schedule name twice":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix links}, {name: a, cron: \"0 7 * * 1\", class: review, text: renovate}]\n", `schedule name "a" is used twice`},
-		"schedule name uppercase":   {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: Link-Rot, cron: \"0 6 * * 1\", class: review, text: fix}]\n", `must match ^[a-z0-9-]{1,40}$`},
-		"schedule cron unparsable":  {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 oops\", class: review, text: fix}]\n", `schedule a: cron "0 6 oops" does not parse`},
-		"schedule class undeclared": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: ops, text: fix}]\n", `schedule a: class "ops" is review or a declared class`},
-		"schedule text empty":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: \"\"}]\n", "schedule a: text must be 1..14336 bytes"},
-		"schedule probe unknown":    {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, probe: dependabot-red}]\n", `schedule a: probe "dependabot-red" is not renovate-red`},
+		// §1 schedules: the name keys the task, the cron must fire, the class must be an oracle policy.
+		"schedule name twice":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", text: fix links}, {name: a, cron: \"0 7 * * 1\", text: renovate}]\n", `schedule name "a" is used twice`},
+		"schedule name uppercase":   {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: Link-Rot, cron: \"0 6 * * 1\", text: fix}]\n", `must match ^[a-z0-9-]{1,40}$`},
+		"schedule cron unparsable":  {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 oops\", text: fix}]\n", `schedule a: cron "0 6 oops" does not parse`},
+		"schedule class undeclared": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: ops, text: fix}]\n", `schedule a: class "ops" is not a declared policy`},
+		"schedule text empty":       {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", text: \"\"}]\n", "schedule a: text must be 1..14336 bytes"},
+		"schedule probe unknown":    {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", text: fix, probe: dependabot-red}]\n", `schedule a: probe "dependabot-red" is not renovate-red`},
 		// A run cap in USD: priced, or the rollout fails (never an unpriced model metered at $0).
 		"runUSD without a price": {"runTokens: 1500000,", "runUSD: 2.55, runTokens: 1500000,", "tier standard: runUSD and taskUSD need meter.prices.agent-default"},
 		"negative taskUSD":       {"runTokens: 1500000,", "taskUSD: -1, runTokens: 1500000,", "tier standard: taskUSD must be a positive amount"},
@@ -506,7 +506,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"a price without its cache-read rate": {"  logsURL:", "  prices: {agent-default: {input: 1.40, output: 4.40}}\n  logsURL:",
 			"meter.prices.agent-default: input, cacheRead and output must be positive"},
 		"an unknown price field":      {"  logsURL:", "  prices: {agent-default: {input: 1.40, cached: 0.26, output: 4.40}}\n  logsURL:", `unknown field "cached"`},
-		"schedule data class unknown": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", class: review, text: fix, dataClass: secret}]\n", `schedule a: dataClass "secret" is public or internal`},
+		"schedule data class unknown": {"      breaker: {window: 10, maxReverts: 1}\n", "      breaker: {window: 10, maxReverts: 1}\n    schedules: [{name: a, cron: \"0 6 * * 1\", text: fix, dataClass: secret}]\n", `schedule a: dataClass "secret" is public or internal`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			raw := strings.Replace(good, c.from, c.to, 1)
@@ -522,11 +522,11 @@ func TestBadConfigsFail(t *testing.T) {
 }
 
 // §1: schedules start tasks from config. The block parses, and a trusted entry carries its
-// class, data class and probe.
+// workflow, data class and probe.
 func TestSchedules(t *testing.T) {
 	raw := good + `    schedules:
-      - {name: link-rot, cron: "0 6 * * 1", class: docs-links, text: Fix broken external links.}
-      - {name: renovate-red, cron: "0 6 * * 1", class: review, text: Fix red Renovate PRs., dataClass: internal, probe: renovate-red}
+      - {name: link-rot, cron: "0 6 * * 1", text: Fix broken external links.}
+      - {name: renovate-red, cron: "0 6 * * 1", workflow: careful, text: Fix red Renovate PRs., dataClass: internal, probe: renovate-red}
 `
 	c, err := Parse([]byte(raw))
 	if err != nil {
@@ -537,7 +537,7 @@ func TestSchedules(t *testing.T) {
 		t.Fatalf("%+v", scheds)
 	}
 	s := scheds[1]
-	if s.Name != "renovate-red" || s.Cron != "0 6 * * 1" || s.Class != "review" || s.DataClass != "internal" || s.Probe != "renovate-red" {
+	if s.Name != "renovate-red" || s.Cron != "0 6 * * 1" || s.Workflow != "careful" || s.DataClass != "internal" || s.Probe != "renovate-red" {
 		t.Fatalf("%+v", s)
 	}
 	if scheds[0].DataClass != "" || scheds[0].Probe != "" {
@@ -588,8 +588,8 @@ func TestDeploymentFactsDefaultAndOverride(t *testing.T) {
 		t.Fatalf("omitted api.groups default to the platform's: %+v", c.API.Groups)
 	}
 	raw := strings.Replace(good, "api:", "api:\n  groups: {admin: ops-admin, member: ops-member}", 1)
-	raw += "    schedules:\n      - {name: renovate-red, cron: \"0 6 * * 1\", class: review, text: Fix red PRs., probe: renovate-red}\n" +
-		"      - {name: other, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red, probeAuthor: \"mend[bot]\"}\n"
+	raw += "    schedules:\n      - {name: renovate-red, cron: \"0 6 * * 1\", text: Fix red PRs., probe: renovate-red}\n" +
+		"      - {name: other, cron: \"0 6 * * 1\", text: Fix, probe: renovate-red, probeAuthor: \"mend[bot]\"}\n"
 	if raw == good {
 		t.Fatal("the edit did not apply")
 	}
@@ -615,7 +615,7 @@ func TestValidateNamesAMissingDeploymentFact(t *testing.T) {
 		"probe author": {func(c *Config) { c.Repositories[0].Schedules[0].ProbeAuthor = "" }, "schedule a: probeAuthor is required"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			c, err := Parse([]byte(good + "    schedules:\n      - {name: a, cron: \"0 6 * * 1\", class: review, text: Fix, probe: renovate-red}\n"))
+			c, err := Parse([]byte(good + "    schedules:\n      - {name: a, cron: \"0 6 * * 1\", text: Fix, probe: renovate-red}\n"))
 			if err != nil {
 				t.Fatal(err)
 			}

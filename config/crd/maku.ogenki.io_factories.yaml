@@ -299,10 +299,6 @@ spec:
                       ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
                       agents pull request (human path AM1). Off, the approval hands off to a human merge.
                     type: boolean
-                  autoMergesPerDay:
-                    description: AutoMergesPerDay is MaxPerDay's former name, read
-                      while MaxPerDay is unset. Deprecated.
-                    type: integer
                   awaitingCIFor:
                     description: |-
                       AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
@@ -428,12 +424,6 @@ spec:
                   maxPatchFiles:
                     type: integer
                   maxPerDay:
-                    type: integer
-                  minPromotionEvidence:
-                    description: |-
-                      MinPromotionEvidence is the clean shadow decisions a class needs before it may be promoted to
-                      live (MP7): 0 is DefaultMinPromotionEvidence, and less is refused here. A promotion on less
-                      needs an operator's exception, recorded per request, never a lower number here.
                     type: integer
                   protectedFiles:
                     items:

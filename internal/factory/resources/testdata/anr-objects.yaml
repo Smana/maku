@@ -61,7 +61,7 @@ spec:
   schedules:
     - name: link-rot
       cron: "0 6 * * 1"  # Mondays, 06:00 UTC
-      class: docs-links
+      workflow: plain
       text: |
         Find broken external Markdown link targets ([text](url) or [ref]: url) under docs/
         and website/content/, outside docs/superpowers/, docs/specs/ and
@@ -85,11 +85,11 @@ spec:
   classes:
     docs-links: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
     revert: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
-    docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
+    docs: {}
     tests: {}
     dashboards: {}
-    scripts: {checks: false, testFirst: false}
-    review: {checks: false, testFirst: false}
+    scripts: {}
+    review: {}
     alert-rules:
       shadow: true
       allowedFiles: ['^observability/.+\.ya?ml$']
@@ -199,7 +199,7 @@ spec:
   classes:
     docs-links: {shadow: true, holdoutChecks: [validate]}
     revert: {shadow: true, holdoutChecks: [validate]}
-    docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
+    docs: {}
     tests: {}
     dashboards: {}
     scripts: {}

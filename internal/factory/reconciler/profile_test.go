@@ -308,32 +308,36 @@ func TestProfileSpec(t *testing.T) {
 	}
 }
 
-// A run reads checks and testFirst frozen on status.profile, not the class's live config; a task
-// without a profile reads the config as today.
+// A run reads checks and testFirst frozen on status.profile, not the workflow's live config; a task
+// without a profile reads the repository's default workflow as configured live.
 func TestRunsReadTheFrozenProfile(t *testing.T) {
 	for name, tc := range map[string]struct {
-		class   config.Class
+		live    bool
 		profile *v1alpha1.ProfileStatus
 		on      bool
 		egress  []string
 	}{
-		"no profile":           {class: config.Class{}},
-		"frozen on, class off": {class: config.Class{}, profile: &v1alpha1.ProfileStatus{Name: "p", Checks: true, TestFirst: true}, on: true, egress: []string{"golang"}},
-		"frozen off, class on": {class: config.Class{Checks: true, TestFirst: true}, profile: &v1alpha1.ProfileStatus{Name: "p"}},
+		"no profile":              {live: false},
+		"no profile, live on":     {live: true, on: true, egress: []string{"golang"}},
+		"frozen on, workflow off": {live: false, profile: &v1alpha1.ProfileStatus{Name: "p", Checks: true, TestFirst: true}, on: true, egress: []string{"golang"}},
+		"frozen off, workflow on": {live: true, profile: &v1alpha1.ProfileStatus{Name: "p"}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := newRig(t)
-			repo := g.r.Cfg.Current().Repos()[0]
-			repo.Classes = map[string]config.Class{"docs-links": {Shadow: true}, "docs": tc.class}
+			cfg := g.r.Cfg.Current()
+			repo := cfg.Repos()[0]
+			repo.Classes = map[string]config.Class{"docs-links": {}, "docs": {}}
 			repo.Checks = config.Checks{Egress: []string{"golang"}}
-			g.r.Cfg.Current().Repositories = []config.Repository{repo}
-			g.r.Cfg.Current().Templates["solo"] = config.Template{Roles: []string{"implementer"}}
+			repo.Workflow = config.RepositoryWorkflow{Default: config.WorkflowCareful, TestFirst: tc.live}
+			cfg.Repositories = []config.Repository{repo}
+			cfg.HarnessProfiles = map[string]config.HarnessProfile{config.WorkflowCareful: {Checks: tc.live}}
+			cfg.Templates["solo"] = config.Template{Roles: []string{"implementer"}}
 			tk := issueTask("3buqdlot", 7, "fix")
 			tk.Spec.PredictedClass, tk.Spec.DataClass, tk.Spec.Template = "docs", "public", "solo"
 			tk.Status.Profile = tc.profile
-			s := g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief")
-			if s.Checks != tc.on || !reflect.DeepEqual(s.EgressProfiles, tc.egress) || g.r.testFirst(g.r.Cfg.Current(), tk) != tc.on {
-				t.Fatalf("checks %v egress %v testFirst %v, want %v %v %v", s.Checks, s.EgressProfiles, g.r.testFirst(g.r.Cfg.Current(), tk), tc.on, tc.egress, tc.on)
+			s := g.r.implementerSpec(cfg, tk, "brief")
+			if s.Checks != tc.on || !reflect.DeepEqual(s.EgressProfiles, tc.egress) || g.r.testFirst(cfg, tk) != tc.on {
+				t.Fatalf("checks %v egress %v testFirst %v, want %v %v %v", s.Checks, s.EgressProfiles, g.r.testFirst(cfg, tk), tc.on, tc.egress, tc.on)
 			}
 		})
 	}

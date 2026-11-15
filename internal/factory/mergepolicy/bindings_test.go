@@ -29,9 +29,9 @@ func boundCentral() (*config.Config, *config.Repository) {
 	c := central()
 	c.Factory = "aws-0"
 	c.Policies = map[string]config.ServedPolicy{
-		"docs-links":  {Spec: config.PolicySpec{Class: config.Class{Description: "Fixes a broken link in the docs."}, Requires: []string{"holdoutChecks"}}, Generation: 1},
-		"revert":      {Spec: config.PolicySpec{Requires: []string{"holdoutChecks"}}, Generation: 1},
-		"alert-rules": {Spec: config.PolicySpec{Class: config.Class{Description: "Tunes an alert rule.", MaxModifiedLines: 40}, Requires: []string{"allowedFiles"}}, Generation: 2},
+		"docs-links":  {Spec: config.PolicySpec{MergeClass: config.MergeClass{Description: "Fixes a broken link in the docs."}}, Generation: 1},
+		"revert":      {Spec: config.PolicySpec{}, Generation: 1},
+		"alert-rules": {Spec: config.PolicySpec{MergeClass: config.MergeClass{Description: "Tunes an alert rule.", MaxModifiedLines: 40}}, Generation: 2},
 	}
 	rc := config.Repository{Name: "o/r", Merge: config.Merge{PolicyBotLogin: "gate[bot]", PolicyBot: new(true)}}
 	c.Repositories = []config.Repository{rc}
@@ -52,11 +52,10 @@ func TestParseTheSpecsBindingFile(t *testing.T) {
 	}
 }
 
-// YAML reads a bare off as false: a binding's mode reads it as off.
-func TestABareOffBindsOff(t *testing.T) {
-	f, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs, mode: off}\n"))
-	if err != nil || f.MergePolicies[0].Mode != config.ModeOff {
-		t.Fatalf("%+v %v", f, err)
+// YAML reads a bare off as false: a binding's mode reads it as "off" and refuses it clearly.
+func TestABareOffIsRefused(t *testing.T) {
+	if _, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs, mode: off}\n")); err == nil || !strings.Contains(err.Error(), `mode "off"`) {
+		t.Fatalf("got %v", err)
 	}
 }
 
@@ -67,16 +66,17 @@ func TestParseRefusesABadBindingFile(t *testing.T) {
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"both shapes":             {"factory: aws-0\nclasses: {docs-links: {mode: off, author: agents, harness: plain}}\nmergePolicies: [{name: docs-links, mode: live}]\n", ErrClassesRemoved},
-		"a name twice":            {"factory: aws-0\nmergePolicies: [{name: docs, mode: live}, {name: docs, mode: off}]\n", "docs is bound twice"},
+		"a name twice":            {"factory: aws-0\nmergePolicies: [{name: docs, mode: live}, {name: docs, mode: disabled}]\n", "docs is bound twice"},
 		"too many":                {many, fmt.Sprintf("at most %d", MaxClasses)},
 		"a bad mode":              {"factory: aws-0\nmergePolicies: [{name: docs, mode: armed}]\n", `mode "armed"`},
+		"mode off":                {"factory: aws-0\nmergePolicies: [{name: docs, mode: \"off\"}]\n", `mode "off"`},
 		"no mode":                 {"factory: aws-0\nmergePolicies: [{name: docs}]\n", `mode ""`},
 		"a bad name":              {"factory: aws-0\nmergePolicies: [{name: Docs, mode: live}]\n", `"Docs" is not a class name`},
 		"an unknown key":          {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, harness: plain}]\n", `key "harness" is not a field`},
 		"an empty path":           {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, allowedFiles: ['']}]\n", "an empty pattern"},
 		"an empty asking":         {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, requiresApproval: [{changedFiles: []}]}]\n", "asks about nothing"},
-		"review with a parameter": {"factory: aws-0\nmergePolicies: [{name: review, mode: \"off\", holdoutChecks: [x]}]\n", "binding review: holdoutChecks is refused on review"},
-		"review in shadow":        {"factory: aws-0\nmergePolicies: [{name: review, mode: shadow}]\n", "binding review: review is bound with mode off"},
+		"review with a parameter": {"factory: aws-0\nmergePolicies: [{name: review, mode: disabled, holdoutChecks: [x]}]\n", "binding review: review is not a policy"},
+		"review in shadow":        {"factory: aws-0\nmergePolicies: [{name: review, mode: shadow}]\n", "binding review: review is not a policy"},
 		"a negative cap":          {"factory: aws-0\nmergePolicies: [{name: docs, mode: live, maxPerDay: -1}]\n", "maxPerDay is 0"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -126,7 +126,7 @@ func TestABindingThatDoesNotResolveIsIsolated(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c.Policies["alert-rules-2"] = config.ServedPolicy{Spec: config.PolicySpec{Class: config.Class{AllowedFiles: []string{"^x$"}, MaxPerDay: 5}}}
+	c.Policies["alert-rules-2"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{"^x$"}, MaxPerDay: 5}}}
 	rep, err := ValidateFile(f, rc, c)
 	if err != nil {
 		t.Fatalf("the file stays valid: %v", err)
@@ -155,11 +155,11 @@ func TestABindingThatDoesNotResolveIsIsolated(t *testing.T) {
 // refused, and keeps the earlier serving.
 func TestAnAmbiguousFileBindingIsRefused(t *testing.T) {
 	c, rc := boundCentral()
-	adopt := config.Class{Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}},
-		DiffShape: "semver-patch", ModifyOnly: true, Harness: "adopted-none", ReleaseAgeCheck: "age"}
-	c.Policies["deps-a"] = config.ServedPolicy{Spec: config.PolicySpec{Class: adopt}}
-	c.Policies["deps-b"] = config.ServedPolicy{Spec: config.PolicySpec{Class: adopt}}
-	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: \"off\"}\n  - {name: deps-a, mode: shadow}\n"))
+	adopt := config.MergeClass{Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}},
+		DiffShape: "semver-patch", ModifyOnly: true, ReleaseAgeCheck: "age"}
+	c.Policies["deps-a"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
+	c.Policies["deps-b"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
+	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: disabled}\n  - {name: deps-a, mode: shadow}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -191,10 +191,9 @@ func equalClass(a, b config.Class) bool {
 	return config.ResolvedHash(a) == config.ResolvedHash(b) && a.Live == b.Live && a.Shadow == b.Shadow
 }
 
-// R30 for the binding shape: review is bound off and nothing else, and parses so.
-func TestReviewIsBoundOff(t *testing.T) {
-	f, err := Parse([]byte("factory: aws-0\nmergePolicies: [{name: review, mode: off}]\n"))
-	if err != nil || f.MergePolicies[0].Mode != config.ModeOff {
-		t.Fatalf("%+v %v", f, err)
+// MR9: review is not a policy and cannot be bound.
+func TestReviewIsRefused(t *testing.T) {
+	if _, err := Parse([]byte("factory: aws-0\nmergePolicies: [{name: review, mode: disabled}]\n")); err == nil || !strings.Contains(err.Error(), "review is not a policy") {
+		t.Fatalf("got %v", err)
 	}
 }
