@@ -39,7 +39,7 @@ func TestSlackPost(t *testing.T) {
 		_ = json.Unmarshal(body, &got)
 		return `{"ok":true,"ts":"1729.0002"}`
 	})
-	meta := metaOf(t, draftEventType, DraftPayload{Repo: "a/b", Title: "t", Body: "b", SHA256: "h"})
+	meta := metaOf(t, filedEventType, MarkerPayload{Repo: "a/b", Room: "r1"})
 	ts, err := c.Post(context.Background(), "C03", "1729.0001", "hello", meta)
 	if err != nil || ts != "1729.0002" {
 		t.Fatalf("%q %v", ts, err)
@@ -50,7 +50,7 @@ func TestSlackPost(t *testing.T) {
 	}
 	m, _ := got["metadata"].(map[string]any)
 	p, _ := m["event_payload"].(map[string]any)
-	if m["event_type"] != "factory_draft" || p["repo"] != "a/b" || p["sha256"] != "h" {
+	if m["event_type"] != "factory_filed" || p["repo"] != "a/b" || p["room"] != "r1" {
 		t.Fatalf("metadata %+v", got["metadata"])
 	}
 }
@@ -67,7 +67,7 @@ func TestSlackMessage(t *testing.T) {
 		return `{"ok":true,"messages":[
 		 {"ts":"1729.0001","user":"U02DEF","text":"parent"},
 		 {"ts":"1729.0002","thread_ts":"1729.0001","user":"U0BOT","text":"draft",
-		  "metadata":{"event_type":"factory_draft","event_payload":{"repo":"a/b","title":"t","body":"b","sha256":"h"}}}]}`
+		  "metadata":{"event_type":"factory_filed","event_payload":{"repo":"a/b","room":"r1"}}}]}`
 	})
 	m, err := c.Message(context.Background(), "C03", "1729.0002")
 	if err != nil {
@@ -80,7 +80,7 @@ func TestSlackMessage(t *testing.T) {
 	if m.TS != "1729.0002" || m.ThreadTS != "1729.0001" || m.User != "U0BOT" || m.Metadata == nil {
 		t.Fatalf("%+v", m)
 	}
-	if p, ok := m.Metadata.draftPayload(); !ok || m.Metadata.EventType != "factory_draft" || p.SHA256 != "h" {
+	if p, ok := m.Metadata.markerPayload(); !ok || m.Metadata.EventType != "factory_filed" || p.Room != "r1" {
 		t.Fatalf("%+v", m)
 	}
 	if _, err := c.Message(context.Background(), "C03", "9999.0000"); err == nil {
@@ -107,13 +107,13 @@ func TestSlackThreadFollowsTheCursor(t *testing.T) {
 			return `{"ok":true,"messages":[{"ts":"1729.0001","user":"U02DEF","text":"parent"}],"response_metadata":{"next_cursor":"c2"}}`
 		}
 		return `{"ok":true,"messages":[{"ts":"1729.0002","thread_ts":"1729.0001","user":"U0BOT","text":"d",
-		 "metadata":{"event_type":"factory_draft","event_payload":{"repo":"a/b","author":"U02DEF","rev":2}}}]}`
+		 "metadata":{"event_type":"factory_filed","event_payload":{"repo":"a/b","room":"26zfnuxm"}}}]}`
 	})
 	msgs, err := c.Thread(context.Background(), "C03", "1729.0001")
 	if err != nil || len(msgs) != 2 || len(cursors) != 2 || cursors[1] != "c2" || msgs[1].Metadata == nil {
 		t.Fatalf("%v %v %+v", err, cursors, msgs)
 	}
-	if p, ok := msgs[1].Metadata.draftPayload(); !ok || p.Author != "U02DEF" || p.Rev != 2 {
+	if p, ok := msgs[1].Metadata.markerPayload(); !ok || p.Repo != "a/b" || p.Room != "26zfnuxm" {
 		t.Fatalf("%+v", msgs[1].Metadata)
 	}
 }
@@ -285,7 +285,7 @@ func TestMetaPayloadRefusesWhatItCannotMarshal(t *testing.T) {
 	if _, err := metaPayload(math.Inf(1)); err == nil {
 		t.Fatal("an unmarshalable payload was accepted")
 	}
-	if raw, err := metaPayload(DraftPayload{Repo: "a/b"}); err != nil || string(raw) != `{"repo":"a/b","title":"","body":"","sha256":""}` {
+	if raw, err := metaPayload(MarkerPayload{Repo: "a/b"}); err != nil || string(raw) != `{"repo":"a/b"}` {
 		t.Fatalf("%s %v", raw, err)
 	}
 }

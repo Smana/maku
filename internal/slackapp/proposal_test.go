@@ -196,8 +196,8 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 	}
 
 	// The tag is what makes it a proposal, and the payload has to be the shape the tag claims.
-	if _, ok := metaOf(t, draftEventType, p).proposalPayload(); ok {
-		t.Error("a draft's tag decoded as a proposal")
+	if _, ok := metaOf(t, approvalEventType, p).proposalPayload(); ok {
+		t.Error("a card's tag decoded as a proposal")
 	}
 	if _, ok := (&Metadata{EventType: proposalEventType, EventPayload: json.RawMessage(`"nope"`)}).proposalPayload(); ok {
 		t.Error("a payload that is not an object decoded as a proposal")
@@ -228,7 +228,7 @@ func TestProposalMetadataRoundTrip(t *testing.T) {
 // Today's Filed lines carry the repository alone, which is why the marker's room is optional: a
 // decoder that insisted on a room would read every Filed line in every deployed thread as foreign.
 func TestMarkerPayloadDecodesFiledLines(t *testing.T) {
-	today := metaOf(t, filedEventType, DraftPayload{Repo: "Smana/ai-native-ref"})
+	today := metaOf(t, filedEventType, MarkerPayload{Repo: "Smana/ai-native-ref"})
 	m, ok := today.markerPayload()
 	if !ok {
 		t.Fatal("a Filed line's tag did not decode as a marker")
@@ -242,8 +242,8 @@ func TestMarkerPayloadDecodesFiledLines(t *testing.T) {
 		t.Errorf("a marker with a room decoded to %+v (%v)", m, ok)
 	}
 
-	if _, ok := metaOf(t, draftEventType, MarkerPayload{Repo: "Smana/ai-native-ref"}).markerPayload(); ok {
-		t.Error("a draft's tag decoded as a marker")
+	if _, ok := metaOf(t, approvalEventType, MarkerPayload{Repo: "Smana/ai-native-ref"}).markerPayload(); ok {
+		t.Error("a card's tag decoded as a marker")
 	}
 	var none *Metadata
 	if _, ok := none.markerPayload(); ok {

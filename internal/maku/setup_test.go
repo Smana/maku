@@ -108,8 +108,8 @@ func TestSetupRegistersThroughTheCLI(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "maku-handoff", "SKILL.md")); err != nil {
 		t.Errorf("maku-handoff is not in <home>/.claude/skills: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "factory-handoff", "SKILL.md")); err != nil {
-		t.Errorf("factory-handoff is not in <home>/.claude/skills: %v", err)
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "maku-handoff", "SKILL.md")); err != nil {
+		t.Errorf("maku-handoff is not in <home>/.claude/skills: %v", err)
 	}
 	if got := filesUnder(t, dir); len(got) != 0 {
 		t.Errorf("a user-level setup wrote into the project: %v", got)
@@ -127,7 +127,7 @@ func TestSetupProjectInstallsInTheProject(t *testing.T) {
 	if len(ran) != 1 || ran[0][4] != "project" {
 		t.Errorf("ran %v, want --scope project", ran)
 	}
-	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "factory-handoff", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "skills", "maku-handoff", "SKILL.md")); err != nil {
 		t.Errorf("the skill is not in <dir>/.claude/skills: %v", err)
 	}
 	if got := filesUnder(t, home); len(got) != 0 {
@@ -164,11 +164,10 @@ func TestSetupNeverEditsAConfig(t *testing.T) {
 				var commands []string
 				if c := a.commandDir(project); c != "" {
 					cd := filepath.Join(root, strings.TrimPrefix(c, "~/"))
-					commands = []string{filepath.Join(cd, "maku.md"), filepath.Join(cd, "factory.md")}
+					commands = []string{filepath.Join(cd, "maku.md")}
 				}
 				for _, f := range filesUnder(t, home, dir) {
-					inSkill := strings.HasPrefix(f, filepath.Join(skills, "maku-handoff")+string(filepath.Separator)) ||
-						strings.HasPrefix(f, filepath.Join(skills, "factory-handoff")+string(filepath.Separator))
+					inSkill := strings.HasPrefix(f, filepath.Join(skills, "maku-handoff")+string(filepath.Separator))
 					if !inSkill && !slices.Contains(commands, f) {
 						t.Errorf("wrote %s, not a skill file or a command file", f)
 					}
@@ -291,7 +290,7 @@ func TestSetupTwiceSucceedsAndRefreshesTheSkill(t *testing.T) {
 	if err := s.Do(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	skillMD := filepath.Join(home, ".claude", "skills", "factory-handoff", "SKILL.md")
+	skillMD := filepath.Join(home, ".claude", "skills", "maku-handoff", "SKILL.md")
 	if err := os.WriteFile(skillMD, []byte("stale"), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -339,10 +338,8 @@ func TestSkillDirsWithoutARepositorySkipsTheProjectScope(t *testing.T) {
 	}
 }
 
-// O6: the MCP prompts autocomplete as /factory:handoff but typing that is rejected, and only
-// /mcp__factory__handoff runs. setup installs a short /factory command, with handoff, status and
-// inbox as its subcommands, for the agents that have a command mechanism.
-func TestSetupInstallsTheFactoryCommand(t *testing.T) {
+// setup installs the short /maku command for the agents that have a command mechanism.
+func TestSetupInstallsTheMakuCommand(t *testing.T) {
 	for name, tc := range map[string]struct{ user, project string }{
 		"claude":   {".claude/commands", ".claude/commands"},
 		"opencode": {".config/opencode/commands", ".opencode/commands"},
@@ -367,16 +364,6 @@ func TestSetupInstallsTheFactoryCommand(t *testing.T) {
 						t.Errorf("maku.md lacks %q:\n%s", w, makuMD)
 					}
 				}
-				b, err := os.ReadFile(filepath.Join(root, sub, "factory.md"))
-				if err != nil {
-					t.Fatal(err)
-				}
-				for _, w := range []string{"description:", "$ARGUMENTS", "handoff", "status", "inbox", "issue_draft", "issue_file", "room_summary", "rooms_list", "never apply a label",
-					"first gap", "accept the rest", "revision envelope", "base `plan`", "`hash`", "`candidate`", "`plan_check`"} {
-					if !strings.Contains(string(b), w) {
-						t.Errorf("the command lacks %q:\n%s", w, b)
-					}
-				}
 			})
 		}
 	}
@@ -387,7 +374,7 @@ func TestSetupInstallsTheFactoryCommand(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range filesUnder(t, home, dir) {
-		if strings.HasSuffix(f, "factory.md") {
+		if strings.HasSuffix(f, "maku.md") {
 			t.Errorf("codex got %s", f)
 		}
 	}
@@ -706,5 +693,50 @@ func TestSetupAdvancedRegistersFlag(t *testing.T) {
 				t.Fatalf("%s snippet lacks --advanced:\n%s", agent, &out)
 			}
 		})
+	}
+}
+
+func TestSetupRefusesNothingButRegistersOnlyMaku(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("testdata", "setup"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("goldens: %v (%d)", err, len(entries))
+	}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join("testdata", "setup", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		txt := string(b)
+		for _, old := range []string{`"factory"`, `[mcp_servers.factory]`, `/factory`, `factory-handoff`, ` user factory`, ` project factory`, ` --global factory`, ` add factory`} {
+			if strings.Contains(txt, old) {
+				t.Errorf("%s still mentions %q:\n%s", e.Name(), old, txt)
+			}
+		}
+	}
+
+	home, dir := t.TempDir(), t.TempDir()
+	cfgPath := filepath.Join(home, ".claude.json")
+	if err := os.WriteFile(cfgPath, []byte(`{"mcpServers":{"factory":{"command":"maku","args":["mcp"]}}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	s := Setup{
+		Agent: Agents["claude"], Home: home, Dir: dir, Cmd: "maku", Version: "v1", LookPath: found, Out: &out,
+		Run: func(context.Context, []string) error { return nil },
+	}
+	if err := s.Do(context.Background()); err != nil {
+		t.Fatalf("setup refused an existing factory entry: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "maku-handoff", "SKILL.md")); err != nil {
+		t.Errorf("maku-handoff not installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "factory-handoff")); !os.IsNotExist(err) {
+		t.Errorf("factory-handoff still installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "commands", "maku.md")); err != nil {
+		t.Errorf("maku.md not installed: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "commands", "factory.md")); !os.IsNotExist(err) {
+		t.Errorf("factory.md still installed: %v", err)
 	}
 }

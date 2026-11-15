@@ -40,7 +40,7 @@ When a maintainer's workflow pin ([Pinning a workflow](../factory.md#pinning-a-w
 
 | Code | Where | Sentence |
 |---|---|---|
-| `profile_unknown` | intake, triage | `<p>` is not a workflow of this factory. `classes_list` shows the workflows. |
+| `profile_unknown` | intake, triage | `<p>` is not a workflow of this factory. The repository's [catalogue](api.md#get-v1catalogueownername) lists them. |
 | `profile_not_offered` | intake | `<p>` names no roles, so they are chosen at triage; it runs only as the factory's choice. |
 | `not_maintainer` | intake, triage | Only a maintainer of this repository can choose the workflow; the factory will choose it. |
 | `profile_conflict` | triage | The issue names more than one workflow; none was applied. |

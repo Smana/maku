@@ -193,14 +193,14 @@ for n in X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Preferred-Usern
 done
 # The security review of #545: with --reverse-proxy=true, oauth2-proxy trusts a client's X-Forwarded-Uri,
 # which then matched the skip-auth route. With false, the request's own path decides.
-for h in 'X-Forwarded-Uri: /.well-known/roomctl' 'X-Forwarded-Uri: /link/github/callback'; do
+for h in 'X-Forwarded-Uri: /.well-known/maku' 'X-Forwarded-Uri: /link/github/callback'; do
   out="$(c http GET "$PROXY/api/rooms" -H "$h" -H 'X-Forwarded-Host: evil.test' -H 'X-Forwarded-Proto: https')"
   [[ $(status "$out") == 302 && $(jq -r .location <<<"$out") == "$ISSUER/oauth/v2/authorize?"* ]] &&
     pass "X4 GET /api/rooms with '$h' and no session redirects to sign in: a client's forwarded path is not trusted" ||
     fail "X4 GET /api/rooms with '$h' skipped sign-in: $out"
 done
-out="$(c http GET "$PROXY/.well-known/roomctl" "${forged[@]}" -H "Authorization: Bearer forged")"
-[[ $(status "$out") == 200 ]] && pass "X4 GET /.well-known/roomctl is a skip-auth route (no session)" || fail "X4 GET /.well-known/roomctl: $out"
+out="$(c http GET "$PROXY/.well-known/maku" "${forged[@]}" -H "Authorization: Bearer forged")"
+[[ $(status "$out") == 200 ]] && pass "X4 GET /.well-known/maku is a skip-auth route (no session)" || fail "X4 GET /.well-known/maku: $out"
 xfat="$(jq -r '.body.headers["x-forwarded-access-token"] // "<absent>"' <<<"$out")"
 [[ $xfat == '<absent>' ]] && pass "X4 a skip-auth route strips a client's X-Forwarded-Access-Token (skip-auth-strip-headers)" || fail "X4 a skip-auth route forwarded X-Forwarded-Access-Token '$xfat'"
 out="$(c http GET "$PROXY/link/github/callback?code=x&state=y")"

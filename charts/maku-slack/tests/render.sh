@@ -43,9 +43,9 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 printf '%s\n' "$cfg" >"$tmp/zitadel.yaml"
 # generic preset: no project id, its own token request keys
 out="$(helm template s . -n agent-system "${base[@]}" --set preset=generic --set audience=maku-api --set-json 'scopes=["agents"]' \
-  --set brokerURL=http://room-broker.maku.svc.example.test:8080 --set clusterDomain=example.test --set config.proposals.enabled=true)"
+  --set brokerURL=http://room-broker.maku.svc.example.test:8080 --set clusterDomain=example.test)"
 yq 'select(.metadata.name == "factory-slack-app-config") | .data."config.yaml"' - <<<"$out" >"$tmp/generic.yaml"
-yq -o=json -I0 '.' "$tmp/generic.yaml" | jq -e '(has("projectIDFile") | not) and .preset == "generic" and .audience == "maku-api" and .scopes == ["agents"] and .brokerURL == "http://room-broker.maku.svc.example.test:8080" and .proposals.enabled' >/dev/null ||
+yq -o=json -I0 '.' "$tmp/generic.yaml" | jq -e '(has("projectIDFile") | not) and .preset == "generic" and .audience == "maku-api" and .scopes == ["agents"] and .brokerURL == "http://room-broker.maku.svc.example.test:8080"' >/dev/null ||
   { echo "FAIL: generic: no projectIDFile, the preset's keys, the set brokerURL, config verbatim" >&2; fail=1; }
 (cd ../.. && go run ./charts/maku/tests/loadconfig slack-app "$tmp/zitadel.yaml" "$tmp/generic.yaml") || fail=1
 # fail closed

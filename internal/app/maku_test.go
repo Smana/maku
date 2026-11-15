@@ -46,6 +46,8 @@ type makuBroker struct {
 	tool  func(name string, args map[string]any) string
 	calls []map[string]any // the arguments of each tools/call, in order
 	proto []string         // the MCP-Protocol-Version header of each /mcp request
+	// brief answers GET /api/rooms/{id}/brief: a status and a body; nil answers 404.
+	brief func() (int, string)
 }
 
 func newMakuBroker(t *testing.T) *makuBroker {
@@ -55,7 +57,7 @@ func newMakuBroker(t *testing.T) *makuBroker {
 		b.mu.Lock()
 		b.reqs++
 		b.mu.Unlock()
-		if r.URL.Path == "/.well-known/roomctl" {
+		if r.URL.Path == "/.well-known/maku" {
 			_, _ = w.Write([]byte(`{"url":"https://elsewhere","issuer":"https://auth.example","clientID":"cli","projectID":"29184"}`))
 			return
 		}
@@ -85,6 +87,15 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
+			if strings.HasSuffix(r.URL.Path, "/brief") {
+				status, body := http.StatusNotFound, ""
+				if b.brief != nil {
+					status, body = b.brief()
+				}
+				w.WriteHeader(status)
+				_, _ = w.Write([]byte(body))
+				return
+			}
 			b.mu.Lock()
 			b.query = r.URL.Path + "?" + r.URL.RawQuery
 			b.mu.Unlock()
@@ -269,7 +280,7 @@ func TestMakuSkillInstall(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, f := range []string{"SKILL.md", filepath.Join("references", "issue-template.md")} {
-		p := filepath.Join(skills, "factory-handoff", f)
+		p := filepath.Join(skills, "maku-handoff", f)
 		if !strings.Contains(out.String(), p) {
 			t.Errorf("output lacks %s:\n%s", p, out)
 		}
@@ -331,7 +342,7 @@ func TestMakuStatusFormat(t *testing.T) {
 	}
 }
 
-// rig is a configured maku over a fake broker that also serves room_brief: the two reads `maku status`
+// rig is a configured maku over a fake broker that also serves the brief route: the two reads `maku status`
 // makes.
 type rig struct {
 	Maku
@@ -349,22 +360,12 @@ func makuRig(t *testing.T) (*rig, *strings.Builder) {
 // stderr is what maku wrote to its hint stream so far.
 func (r *rig) stderr() string { return r.Err.(*strings.Builder).String() }
 
-// servesBrief makes the broker answer room_brief with text, as the tool hands it over: the rendered brief in
-// the result's text.
+// servesBrief makes the broker answer GET /api/rooms/{id}/brief with text, in the route's envelope.
 func (r *rig) servesBrief(text string) {
-	r.broker.tool = func(name string, _ map[string]any) string {
-		if name != "room_brief" {
-			return `"error":{"code":-32602,"message":"unknown tool: ` + name + `"}`
-		}
-		return briefAnswer(text, "seq:142")
-	}
-}
-
-// briefAnswer is room_brief's result: the brief's text, as the tool's text and inside its envelope.
-func briefAnswer(text, cursor string) string {
 	quoted, _ := json.Marshal(text)
-	return `"result":{"content":[{"type":"text","text":` + string(quoted) + `}],"structuredContent":{"apiVersion":"brief/v1",` +
-		`"room":"26zfnuxm","text":` + string(quoted) + `,"cursor":"` + cursor + `"}}`
+	r.broker.brief = func() (int, string) {
+		return http.StatusOK, `{"apiVersion":"brief/v1","room":"26zfnuxm","text":` + string(quoted) + `,"cursor":"seq:142"}`
+	}
 }
 
 // briefText is a brief of the room the fake broker serves: five section lines, then one that the head leaves
@@ -377,7 +378,7 @@ const briefText = "**Resume: 26zfnuxm · #2238 docs: the install link points at 
 	"Links: room https://rooms.example/r/26zfnuxm\n"
 
 // CD11: maku status leads with the brief's head — the lines that say where the task stands — and the room's
-// card follows unchanged. A broker that serves no room_brief, and one whose brief fails for another reason,
+// card follows unchanged. A broker that serves no the brief route, and one whose brief fails for another reason,
 // still print the card: it is what the developer asked for.
 func TestStatusLeadsWithTheBrief(t *testing.T) {
 	const head = "**Resume: 26zfnuxm · #2238 docs: the install link points at a moved page**\n" +
@@ -385,7 +386,7 @@ func TestStatusLeadsWithTheBrief(t *testing.T) {
 		"Plan: scope ready · budget $2.00 ceiling\n" +
 		"Blocked on: `failed_check` — the docs link check fails on the install page\n" +
 		"Next: read the failing check → https://github.com/Smana/a/pull/2238\n"
-	t.Run("a broker that serves room_brief", func(t *testing.T) {
+	t.Run("a broker that serves the brief route", func(t *testing.T) {
 		r, out := makuRig(t)
 		r.servesBrief(briefText)
 		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
@@ -403,15 +404,9 @@ func TestStatusLeadsWithTheBrief(t *testing.T) {
 		if !strings.Contains(got, "hi[2J") || !strings.HasSuffix(got, "\ncursor: seq:142\n") {
 			t.Fatalf("the card does not follow the head:\n%s", got)
 		}
-		if len(r.broker.calls) != 1 || r.broker.calls[0]["room"] != "26zfnuxm" {
-			t.Fatalf("room_brief's arguments: %v", r.broker.calls)
-		}
 	})
 	t.Run("an older broker", func(t *testing.T) {
 		r, out := makuRig(t)
-		r.broker.tool = func(string, map[string]any) string {
-			return `"error":{"code":-32602,"message":"unknown tool: room_brief"}`
-		}
 		before := r.stderr()
 		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
 			t.Fatalf("an older broker is no failure: %v", err)
@@ -420,14 +415,12 @@ func TestStatusLeadsWithTheBrief(t *testing.T) {
 			t.Fatalf("the card alone:\n%s", out)
 		}
 		if msg := r.stderr(); msg != before {
-			t.Fatalf("a broker without room_brief says nothing: %q", strings.TrimPrefix(msg, before))
+			t.Fatalf("a broker without the brief route says nothing: %q", strings.TrimPrefix(msg, before))
 		}
 	})
 	t.Run("a brief that fails for another reason", func(t *testing.T) {
 		r, out := makuRig(t)
-		r.broker.tool = func(string, map[string]any) string {
-			return `"error":{"code":-32603,"message":"log_unreadable"}`
-		}
+		r.broker.brief = func() (int, string) { return http.StatusInternalServerError, "log_unreadable" }
 		before := r.stderr()
 		if err := r.Run(t.Context(), []string{"status", "26zfnuxm"}); err != nil {
 			t.Fatalf("the card prints anyway: %v", err)
@@ -436,7 +429,7 @@ func TestStatusLeadsWithTheBrief(t *testing.T) {
 			t.Fatalf("the card:\n%s", out)
 		}
 		// One line says why the head is missing, naming the tool the broker refused.
-		if msg := strings.TrimPrefix(r.stderr(), before); !strings.Contains(msg, "room_brief") || strings.Count(msg, "\n") != 1 {
+		if msg := strings.TrimPrefix(r.stderr(), before); !strings.Contains(msg, "brief") || strings.Count(msg, "\n") != 1 {
 			t.Fatalf("no one-line reason: %q", msg)
 		}
 	})
@@ -714,7 +707,7 @@ func TestSetupRunsWholeSequence(t *testing.T) {
 	var srv *httptest.Server
 	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/.well-known/roomctl", "/.well-known/maku":
+		case "/.well-known/maku":
 			_, _ = w.Write([]byte(`{"url":"` + srv.URL + `","issuer":"` + srv.URL + `","clientID":"cli","projectID":"29184"}`))
 		case "/oauth/v2/device_authorization":
 			mu.Lock()
@@ -949,7 +942,7 @@ func TestMakuRoomsRendersTheOverview(t *testing.T) {
 func TestMakuChanges(t *testing.T) {
 	b := newMakuBroker(t)
 	b.tool = func(name string, _ map[string]any) string {
-		if name != "room_changes" {
+		if name != "task" {
 			t.Errorf("tool %q", name)
 		}
 		return changesAnswer("seq:9")
@@ -958,20 +951,20 @@ func TestMakuChanges(t *testing.T) {
 	if err := r.Run(t.Context(), []string{"changes", "26zfnuxm", "--format", "text"}); err != nil {
 		t.Fatal(err)
 	}
-	if len(b.calls) != 1 || b.calls[0]["room"] != "26zfnuxm" || b.calls[0]["cursor"] != nil || b.proto[0] != "2025-06-18" ||
+	if len(b.calls) != 1 || b.calls[0]["task"] != "26zfnuxm" || b.calls[0]["since"] != nil || b.proto[0] != "2025-06-18" ||
 		!strings.Contains(out.String(), "26zfnuxm") || strings.ContainsRune(out.String(), 0x1b) {
 		t.Fatalf("first run: %v %v\n%q", b.calls, b.proto, out)
 	}
 	if err := r.Run(t.Context(), []string{"changes", "26zfnuxm"}); err != nil {
 		t.Fatal(err)
 	}
-	if b.calls[1]["cursor"] != "seq:9" {
+	if b.calls[1]["since"] != "seq:9" {
 		t.Fatalf("the second run sends the cursor the first returned: %v", b.calls)
 	}
 	if _, err := os.Stat(filepath.Join(r.Dir, "cursors.json")); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Run(t.Context(), []string{"changes", "26zfnuxm", "--cursor", "seq:2"}); err != nil || b.calls[2]["cursor"] != "seq:2" {
+	if err := r.Run(t.Context(), []string{"changes", "26zfnuxm", "--cursor", "seq:2"}); err != nil || b.calls[2]["since"] != "seq:2" {
 		t.Fatalf("--cursor overrides: %v %v", b.calls, err)
 	}
 	out.Reset()
@@ -989,11 +982,11 @@ func TestMakuChanges(t *testing.T) {
 func TestMakuChangesOldBroker(t *testing.T) {
 	b := newMakuBroker(t)
 	b.tool = func(string, map[string]any) string {
-		return `"error":{"code":-32602,"message":"unknown tool room_changes"}`
+		return `"error":{"code":-32602,"message":"unknown tool task"}`
 	}
 	r, _ := configured(t, b)
 	err := r.Run(t.Context(), []string{"changes", "26zfnuxm"})
-	if err == nil || !strings.Contains(err.Error(), "maku changes needs a broker with room_changes (agent-platform v0.23.0 or later)") {
+	if err == nil || !strings.Contains(err.Error(), "maku changes needs a broker with task") {
 		t.Fatalf("%v", err)
 	}
 }

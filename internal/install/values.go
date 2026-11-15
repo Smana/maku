@@ -213,7 +213,6 @@ func slackValues(in Inputs, put func(string, any)) {
 	put("slack.webhookSecret", secretSlackWebhook)
 	put("slack.config.channels", map[string]any{a.String("slack.channel"): map[string]any{
 		"repositories": anys(a.List("repositories")), "maxCostUSD": 2, "approvals": true}})
-	put("slack.config.proposals", map[string]any{"enabled": true})
 	put("slack.networkPolicy.mode", mode)
 	if mode == "kubernetes" && a.String("network.gatewayNamespace") != "" {
 		put("slack.networkPolicy.from", peers("kubernetes", a.String("network.gatewayNamespace")))

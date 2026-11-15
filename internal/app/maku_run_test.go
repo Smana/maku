@@ -58,7 +58,7 @@ func TestMakuRunIsQuickstartOnly(t *testing.T) {
 func TestMakuRunRefusesABrokerThatIsNotLocal(t *testing.T) {
 	var posts atomic.Int32
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/roomctl" {
+		if r.URL.Path != "/.well-known/maku" {
 			posts.Add(1)
 		}
 		_, _ = w.Write([]byte(`{"url":"https://elsewhere","issuer":"https://auth.example","clientID":"cli","projectID":"29184"}`))

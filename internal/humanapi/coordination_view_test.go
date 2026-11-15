@@ -249,8 +249,8 @@ func TestCoordinationNeedsAreUnifiedAndDoNotDuplicateChildren(t *testing.T) {
 	if got := needKeys(mustNeeds(t, e, "", as("alice", false)).Items); !slices.Equal(got, want) {
 		t.Fatalf("/api/needs %v, want %v", got, want)
 	}
-	if got := needKeysOf(t, call(t, e, viaRoomctl("alice"), "needs_list", map[string]any{})); !slices.Equal(got, want) {
-		t.Fatalf("needs_list %v, want %v", got, want)
+	if got := needKeysOf(t, call(t, e, viaRoomctl("alice"), "inbox", map[string]any{})); !slices.Equal(got, want) {
+		t.Fatalf("inbox %v, want %v", got, want)
 	}
 	_, body := get(t, e, "/api/rooms/"+roomID+"/summary", as("alice", false))
 	var s summary.Summary

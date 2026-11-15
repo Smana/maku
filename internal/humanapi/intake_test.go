@@ -17,9 +17,112 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/mcpwire"
+	"github.com/Smana/maku/internal/roomview"
 )
+
+// callEngine invokes the internal planner or stored-plan validator directly (not via /mcp, where
+// intake_plan and plan_check were removed in favour of handoff and handoff_check).
+func callEngine(t *testing.T, e env, h http.Header, name string, args any) toolCall {
+	t.Helper()
+	rawArgs, err := json.Marshal(args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, e.ts.URL+"/mcp", nil)
+	req.Header = h.Clone()
+	p, ok := e.srv.sponsoredPrincipal(req)
+	if !ok {
+		rec := httptest.NewRecorder()
+		p, ok = e.srv.principal(rec, req)
+		if !ok {
+			t.Fatalf("auth failed: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+	ctx, cancel := mcpContext(req)
+	defer cancel()
+	var out any
+	switch name {
+	case "intake_plan":
+		out, err = e.srv.intakePlanTool(ctx, p, rawArgs)
+	case "plan_check":
+		out, err = checkPlanEngine(ctx, e.srv, p, rawArgs)
+	default:
+		t.Fatalf("unknown engine %q", name)
+	}
+	rec := httptest.NewRecorder()
+	e.srv.writeTool(ctx, rec, json.RawMessage("1"), name, out, err)
+	var rpcOut map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &rpcOut); err != nil {
+		t.Fatalf("decode engine result: %v (%s)", err, rec.Body.String())
+	}
+	b, _ := json.Marshal(rpcOut["result"])
+	var r struct {
+		Structured json.RawMessage `json:"structuredContent"`
+		IsError    bool            `json:"isError"`
+		Content    []struct{ Text string }
+	}
+	if json.Unmarshal(b, &r) != nil || len(r.Content) != 1 {
+		t.Fatalf("%s: not a tool result: %v", name, rpcOut)
+	}
+	return toolCall{structured: r.Structured, isError: r.IsError, text: r.Content[0].Text}
+}
+
+func checkPlanEngine(ctx context.Context, s *Server, p authn.Principal, args json.RawMessage) (any, error) {
+	var a struct {
+		Plan       intake.Plan  `json:"plan"`
+		Hash       string       `json:"hash"`
+		Candidate  *intake.Plan `json:"candidate,omitempty"`
+		OnBehalfOf string       `json:"on_behalf_of"`
+	}
+	if mcpwire.DecodeArgs(args, &a) != nil || !hashRE.MatchString(a.Hash) ||
+		(a.Candidate != nil && a.Plan.APIVersion == "") {
+		return nil, toolError("invalid_arguments: plan is a plan/v2 object and hash is a sha256: value, and no field outside the schema is taken")
+	}
+	surface := intake.SurfaceSession
+	if p.Sponsored {
+		surface = intake.SurfaceSlack
+	}
+	if a.Plan.APIVersion == intake.APIVersionV1 {
+		if intake.Hash(a.Plan) != a.Hash {
+			return nil, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+		}
+		if err := claims(p, a.OnBehalfOf, 0); err != nil {
+			return nil, err
+		}
+		next, ref := s.upgrade(ctx, p, a.OnBehalfOf, a.Plan)
+		if ref != nil {
+			return nil, s.planCheckRefused(ctx, surface, ref)
+		}
+		return replanned{plan: next}.result(s)
+	}
+	if a.Candidate == nil && intake.Hash(a.Plan) != a.Hash {
+		return nil, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+	}
+	if err := claims(p, a.OnBehalfOf, 0); err != nil {
+		return nil, err
+	}
+	profileRev := a.Candidate != nil && intake.IsProfileRevision(a.Plan, *a.Candidate)
+	plan, err := s.validateStoredPlan(ctx, p, a.OnBehalfOf, a.Plan, a.Hash, a.Candidate, profileRev, surface)
+	if err != nil {
+		return nil, err
+	}
+	canStart, why := false, startSponsored
+	if !p.Sponsored {
+		canStart, why = s.canStart(ctx, p, plan.Repository)
+	}
+	if s.choices.first(plan.Hash) {
+		s.countChoices(ctx, plan, surface)
+	}
+	var text strings.Builder
+	if err := roomview.Plan(&text, plan, "", s.viewOptions(false)); err != nil {
+		return nil, err
+	}
+	return viewResult{text: text.String(), data: planChecked{Plan: plan, Hash: plan.Hash, CanStart: canStart, CanStartWhy: why}}, nil
+}
 
 // The plan server: one fake gateway, one class table and one writable public repository, which is
 // what every test below reaches intake_plan through.
@@ -236,7 +339,7 @@ func intakeOption(t *testing.T, set func(*fakeIntake, *Intake)) option {
 			// table knows write it too, which is what makes the daily cap's key the only thing
 			// separating them.
 			w := world(nil)
-			w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev", "u2", "u3"}} })
+			w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev", "own", "u2", "u3"}} })
 			w.gate(s)
 			s.Intake = &Intake{
 				Classes:   intakeClasses(),
@@ -389,7 +492,7 @@ func metricsBody(t *testing.T, e env) string {
 // broker's; roles and ceiling are the config's.
 func TestIntakePlanFromASession(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session")) // a fake gateway: one repository, no question
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link in README.md is dead"})
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link in README.md is dead"})
 	if got.isError {
 		t.Fatalf("%s", got.text)
 	}
@@ -416,7 +519,7 @@ func TestIntakePlanFromASession(t *testing.T) {
 	}
 	// A session cannot claim a user or widen its ceiling: both are a sponsored principal's alone.
 	for _, bad := range []map[string]any{{"text": "x", "ceiling": 99}, {"text": "x", "on_behalf_of": "slack:T01ABC/U02DEF"}} {
-		if got := call(t, e, viaRoomctl("dev"), "intake_plan", bad); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", bad); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
 			t.Errorf("%v: %s", bad, got.text)
 		}
 	}
@@ -438,7 +541,7 @@ func TestIntakePlanFromASession(t *testing.T) {
 // login, and a Slack user with no link is refused before any call.
 func TestIntakePlanFromSlackResolvesTheLinkedLogin(t *testing.T) {
 	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"))
-	got := call(t, e, bearer("slack-app"), "intake_plan", map[string]any{
+	got := callEngine(t, e, bearer("slack-app"), "intake_plan", map[string]any{
 		"text": "the install guide is wrong", "on_behalf_of": "slack:T01ABC/U02DEF",
 		"candidates": []string{"Smana/ai-native-ref"}, "ceiling": 1.5})
 	if got.isError || !strings.Contains(got.text, "$1.50") { // the channel's ceiling binds below the class's
@@ -453,7 +556,7 @@ func TestIntakePlanFromSlackResolvesTheLinkedLogin(t *testing.T) {
 	}
 	// A user the link tables do not know: not_linked, zero calls to the model.
 	before := e.intake.calls()
-	got = call(t, e, bearer("slack-app"), "intake_plan", map[string]any{"text": "x", "on_behalf_of": "slack:T01ABC/U09XYZ"})
+	got = callEngine(t, e, bearer("slack-app"), "intake_plan", map[string]any{"text": "x", "on_behalf_of": "slack:T01ABC/U09XYZ"})
 	if !got.isError || !strings.Contains(got.text, "not_linked") || e.intake.calls() != before {
 		t.Fatalf("%s (%d calls)", got.text, e.intake.calls()-before)
 	}
@@ -463,17 +566,17 @@ func TestIntakePlanFromSlackResolvesTheLinkedLogin(t *testing.T) {
 func TestDailyPlanCapRefusesWithoutACall(t *testing.T) {
 	e := setup(t, mcpOn, withIntakeDaily(t, 2), withIntakeOnHour(t, time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)))
 	for i := 0; i < 2; i++ {
-		if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+		if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
 			t.Fatalf("call %d: %s", i+1, got.text)
 		}
 	}
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
 		!strings.Contains(got.text, "daily_plans_reached") || e.intake.calls() != 2 {
 		t.Fatalf("%s (%d)", got.text, e.intake.calls())
 	}
 	// The day rolls over at 00:00 UTC: the clock is the server's Now, so the test steps it.
 	e.intake.advance(24 * time.Hour)
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
 		t.Fatalf("after midnight: %s", got.text)
 	}
 }
@@ -485,32 +588,24 @@ func TestTheDailyCapIsPerRequesterNotPerApp(t *testing.T) {
 		withIntakeOnHour(t, time.Date(2026, 11, 5, 9, 0, 0, 0, time.UTC)))
 	first := map[string]any{"text": "x", "on_behalf_of": "slack:T01ABC/U02DEF", "candidates": []string{"Smana/ai-native-ref"}}
 	second := map[string]any{"text": "y", "on_behalf_of": "slack:T01ABC/U03GHI", "candidates": []string{"Smana/ai-native-ref"}}
-	if got := call(t, e, bearer("slack-app"), "intake_plan", first); got.isError {
+	if got := callEngine(t, e, bearer("slack-app"), "intake_plan", first); got.isError {
 		t.Fatalf("U2: %s", got.text)
 	}
-	if got := call(t, e, bearer("slack-app"), "intake_plan", first); !got.isError || !strings.Contains(got.text, "daily_plans_reached") {
+	if got := callEngine(t, e, bearer("slack-app"), "intake_plan", first); !got.isError || !strings.Contains(got.text, "daily_plans_reached") {
 		t.Fatalf("U2 twice: %s", got.text)
 	}
-	if got := call(t, e, bearer("slack-app"), "intake_plan", second); got.isError {
+	if got := callEngine(t, e, bearer("slack-app"), "intake_plan", second); got.isError {
 		t.Fatalf("U3 spent U2's allowance: %s", got.text)
 	}
 }
 
-// Off by default: with human.intake.plan.enabled false, neither tool exists, on either list.
-func TestNoIntakeToolsWithoutTheSwitch(t *testing.T) {
+// Off by default: with human.intake.plan.enabled false, handoff answers the fixed unavailable line
+// without calling any model.
+func TestNoIntakePlansWithoutTheSwitch(t *testing.T) {
 	e := setup(t, mcpOn, withSponsored(sponsoredP))
-	for _, h := range []http.Header{viaRoomctl("dev"), bearer("slack-app")} {
-		if got := toolNames(t, e, h); strings.Contains(got, "intake_plan") || strings.Contains(got, "plan_check") {
-			t.Fatalf("%s", got)
-		}
-	}
-	// And the switch that turns it on puts it on both lists.
-	on := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "session"))
-	if got := toolNames(t, on, viaRoomctl("dev")); !strings.Contains(got, "intake_plan") {
-		t.Fatalf("a human's list: %s", got)
-	}
-	if got := toolNames(t, on, bearer("slack-app")); !strings.Contains(got, "intake_plan") {
-		t.Fatalf("the App's list: %s", got)
+	got := call(t, e, viaRoomctl("dev"), "handoff", map[string]any{"text": "fix the dead link"})
+	if !got.isError || got.text != noPlannerLine {
+		t.Fatalf("handoff with planner off: %+v", got)
 	}
 }
 
@@ -518,7 +613,7 @@ func TestNoIntakeToolsWithoutTheSwitch(t *testing.T) {
 // than a slug of its own (invalid_class is a refusal, not the expected answer).
 func TestIntakePlanTellsTheModelTheClassTable(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"))
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
 		t.Fatalf("%s", got.text)
 	}
 	if sent := e.intake.sent(); !strings.Contains(sent, "docs-links") {
@@ -530,7 +625,7 @@ func TestIntakePlanTellsTheModelTheClassTable(t *testing.T) {
 // repositories this requester may actually file into, so the refusal is a way forward and not a wall.
 func TestARefusedRepositoryNamesTheOnesYouMayWrite(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"))
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "x", "repository": "Smana/somewhere-else"})
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "x", "repository": "Smana/somewhere-else"})
 	if !got.isError || !strings.Contains(got.text, "repository_not_allowed") {
 		t.Fatalf("%s", got.text)
 	}
@@ -553,7 +648,7 @@ func TestThePlanIsCheckedBeforeItIsShown(t *testing.T) {
 		return []byte(`{"choices":[{"message":{"content":` + string(content) + `}}],"usage":{"prompt_tokens":1,"completion_tokens":2}}`)
 	}()
 	e.intake.replyWith(outsider)
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
 	if !got.isError || !strings.Contains(got.text, "repository_not_in_candidates") {
 		t.Fatalf("%s", got.text)
 	}
@@ -569,7 +664,7 @@ func TestThePlanIsCheckedBeforeItIsShown(t *testing.T) {
 func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), withIntakeFallback(t, "composer"))
 	e.intake.fail(http.StatusServiceUnavailable)
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
 	if got.isError || !strings.Contains(got.text, intake.TemplateLabel) {
 		t.Fatalf("%s", got.text)
 	}
@@ -585,7 +680,7 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 	// Off, the same failure is a refusal: the composer is not a fallback anyone gets by accident.
 	off := setup(t, mcpOn, withIntake(t, "session"))
 	off.intake.fail(http.StatusServiceUnavailable)
-	if got := call(t, off, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
+	if got := callEngine(t, off, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
 		!strings.Contains(got.text, "planner_unavailable") {
 		t.Fatalf("%s", got.text)
 	}
@@ -596,7 +691,7 @@ func TestTheComposerIsReachedOnlyWhenTheFallbackNamesIt(t *testing.T) {
 func TestAPlannerFailureNamesItsCauseInTheLog(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"))
 	e.intake.fail(http.StatusServiceUnavailable)
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
 	if !got.isError || strings.Contains(got.text, "503") {
 		t.Fatalf("the client's answer stays generic: %s", got.text)
 	}
@@ -616,7 +711,7 @@ func TestRevisionMakesOneOrNoModelCall(t *testing.T) {
 			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 3 }))
 		base, candidate := revisionPlans(t)
 		e.intake.replyWith(revisionModelReply(t, candidate))
-		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
 		if got.isError {
 			t.Fatal(got.text)
 		}
@@ -643,7 +738,7 @@ func TestRevisionMakesOneOrNoModelCall(t *testing.T) {
 		e := setup(t, mcpOn, withIntakeDaily(t, 1), actorOn(&actLog{}),
 			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 2 }))
 		base, candidate := revisionPlans(t)
-		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
 		if got.isError {
 			t.Fatal(got.text)
 		}
@@ -661,7 +756,7 @@ func TestRevisionMakesOneOrNoModelCall(t *testing.T) {
 			strings.Contains(answer.Plan.Issues[0].Body, "NEEDS CLARIFICATION") {
 			t.Fatalf("the remaining recommendation was not accepted: %s", answer.Plan.Issues[0].Body)
 		}
-		if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
+		if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); !got.isError ||
 			!strings.Contains(got.text, "daily_plans_reached") || e.intake.calls() != 0 {
 			t.Fatalf("the deterministic revision did not spend its daily slot: %s", got.text)
 		}
@@ -672,7 +767,7 @@ func TestRevisionMakesOneOrNoModelCall(t *testing.T) {
 			intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 3 }))
 		base, candidate := revisionPlans(t)
 		e.intake.fail(http.StatusServiceUnavailable)
-		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
 		if !got.isError || !strings.Contains(got.text, "planner_unavailable") || strings.Contains(got.text, intake.TemplateLabel) {
 			t.Fatalf("revision fallback = %s", got.text)
 		}
@@ -695,7 +790,7 @@ func TestPlanCheckRevision(t *testing.T) {
 	finalCandidate.Issues[0].Body = strings.Replace(finalCandidate.Issues[0].Body,
 		"[NEEDS CLARIFICATION: g2 Who owns the page?]", "The docs team owns the page.", 1) +
 		"\nA2 [g2]: Accept the documented owner"
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
 		"plan": base, "hash": intake.Hash(base), "candidate": finalCandidate,
 	})
 	if got.isError {
@@ -713,7 +808,7 @@ func TestPlanCheckRevision(t *testing.T) {
 		t.Fatalf("a final revision retained a gap: %+v", checked.Plan)
 	}
 
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
 		"plan": base, "hash": intake.Hash(base),
 	}); !got.isError || !strings.Contains(got.text, "unresolved_marker") {
 		t.Fatalf("the legacy shape accepted a live marker: %s", got.text)
@@ -721,7 +816,7 @@ func TestPlanCheckRevision(t *testing.T) {
 
 	changedHash := map[string]any{"plan": base, "hash": intake.Hash(base), "candidate": candidate}
 	changedHash["hash"] = intake.Hash(planFixture(t, "three"))
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", changedHash); !got.isError ||
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", changedHash); !got.isError ||
 		!strings.Contains(got.text, "plan_changed") {
 		t.Fatalf("base drift = %s", got.text)
 	}
@@ -736,16 +831,16 @@ func TestPlanCheckRevision(t *testing.T) {
 	}
 	mixed["futureVersionField"] = true
 	malformed := map[string]any{"plan": base, "hash": intake.Hash(base), "candidate": mixed}
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", malformed); !got.isError ||
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", malformed); !got.isError ||
 		!strings.Contains(got.text, "invalid_arguments") {
 		t.Fatalf("mixed-version candidate = %s", got.text)
 	}
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
 		"hash": intake.Hash(base), "candidate": candidate,
 	}); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
 		t.Fatalf("candidate without its base = %s", got.text)
 	}
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
 		"text": "revise", "candidate": candidate,
 	}); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
 		t.Fatalf("incomplete intake revision = %s", got.text)
@@ -761,13 +856,13 @@ func TestPlanCheckRefusesAChangedPlan(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
 	shown := planFixture(t, "single")
 	hash := intake.Hash(shown)
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": hash}); got.isError {
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": hash}); got.isError {
 		t.Fatalf("%s", got.text)
 	}
 	changed := shown
 	changed.Issues = slices.Clone(shown.Issues)
 	changed.Issues[0].Body = strings.Replace(shown.Issues[0].Body, "## What is wrong", "## What is wrong\n- sneaked in", 1)
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": changed, "hash": hash}); !got.isError ||
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": changed, "hash": hash}); !got.isError ||
 		!strings.Contains(got.text, "plan_changed") {
 		t.Fatalf("%s", got.text)
 	}
@@ -784,7 +879,7 @@ func TestPlanCheckRefusesAChangedPlan(t *testing.T) {
 func TestPlanCheckAnswersWithThePlanItWasGiven(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
 	shown := planFixture(t, "single")
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": intake.Hash(shown)})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": shown, "hash": intake.Hash(shown)})
 	if got.isError {
 		t.Fatalf("%s", got.text)
 	}
@@ -819,7 +914,7 @@ func TestPlanCheckRunsCheckDraftAndTheRedactor(t *testing.T) {
 	} {
 		p := planFixture(t, "single")
 		mutate(&p)
-		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
+		if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
 			!strings.Contains(got.text, "invalid_draft") {
 			t.Errorf("%s: %s", name, got.text)
 		}
@@ -839,7 +934,7 @@ func TestPlanCheckRefusesANumberingTheContractDoesNotHave(t *testing.T) {
 	} {
 		p := planFixture(t, "single")
 		change(&p)
-		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
+		if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); !got.isError ||
 			!strings.Contains(got.text, "planner_invalid") {
 			t.Errorf("%s: %s", name, got.text)
 		}
@@ -864,7 +959,7 @@ func TestPlanCheckRefusesAHashThatIsNotThePlans(t *testing.T) {
 		"a field inside the plan outside plan/v1": {map[string]any{"hash": intake.Hash(shown),
 			"plan": map[string]any{"apiVersion": "plan/v1", "colour": "red"}}, "invalid_arguments"},
 	} {
-		if got := call(t, e, viaRoomctl("dev"), "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
+		if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
 			t.Errorf("%s: %s", name, got.text)
 		}
 	}
@@ -888,7 +983,7 @@ func TestPlanCheckHoldsThePlansRepositoriesToTheGuard(t *testing.T) {
 	} {
 		p := planFixture(t, "single")
 		tc.change(&p)
-		got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
+		got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
 		if !got.isError || !strings.Contains(got.text, tc.want) {
 			t.Errorf("%s: %s", name, got.text)
 			continue
@@ -907,11 +1002,11 @@ func TestPlanCheckSpendsNoPlanAndCallsNoModel(t *testing.T) {
 	e := setup(t, mcpOn, withIntakeDaily(t, 1), actorOn(&actLog{}))
 	p := planFixture(t, "single")
 	for i := range 2 {
-		if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); got.isError {
+		if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)}); got.isError {
 			t.Fatalf("check %d: %s", i+1, got.text)
 		}
 	}
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
 		t.Fatalf("a check spent the day's plan: %s", got.text)
 	}
 	if e.intake.calls() != 1 {
@@ -934,7 +1029,7 @@ func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
 	}
 	// u2 writes the repository and is linked; the App resolves no login of its own, so an answer that
 	// holds is the link being read.
-	got := call(t, e, bearer("slack-app"), "plan_check", args("slack:T01ABC/U02DEF"))
+	got := callEngine(t, e, bearer("slack-app"), "plan_check", args("slack:T01ABC/U02DEF"))
 	if got.isError {
 		t.Fatalf("%s", got.text)
 	}
@@ -955,7 +1050,7 @@ func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
 		"no linked user named":   {bearer("slack-app"), args(""), "invalid_arguments"},
 		"a session for a person": {viaRoomctl("dev"), args("slack:T01ABC/U02DEF"), "invalid_arguments"},
 	} {
-		if got := call(t, e, tc.h, "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
+		if got := callEngine(t, e, tc.h, "plan_check", tc.args); !got.isError || !strings.Contains(got.text, tc.want) {
 			t.Errorf("%s: %s", name, got.text)
 		}
 	}
@@ -964,159 +1059,12 @@ func TestPlanCheckResolvesTheRequesterAsIntakePlanDoes(t *testing.T) {
 	}
 }
 
-// A client that declares no prompts capability never reads factory_intake. The initialize
-// instructions and intake_plan's own description must therefore carry the whole short loop, rather
-// than leaving that client to compose a plan or file without the final check.
-func TestIntakeInstructionsWithoutPrompt(t *testing.T) {
-	e := setup(t, mcpOn, withIntake(t, "session"))
-	h := viaRoomctl("dev")
-	_, initialized := rpc(t, e, h, "initialize", map[string]any{
-		"protocolVersion": "2025-06-18", "capabilities": map[string]any{},
-	})
-	instructions, _ := initialized["result"].(map[string]any)["instructions"].(string)
-	_, listed := rpc(t, e, h, "tools/list", nil)
-	description := ""
-	for _, item := range listed["result"].(map[string]any)["tools"].([]any) {
-		tool := item.(map[string]any)
-		if tool["name"] == "intake_plan" {
-			description, _ = tool["description"].(string)
-		}
-	}
-	if description == "" {
-		t.Fatal("tools/list has no intake_plan description")
-	}
-	for surface, text := range map[string]string{"intake_plan description": description} {
-		flatText := flat(text)
-		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check"} {
-			if !strings.Contains(flatText, want) {
-				t.Errorf("%s lack %q for a prompts-less client:\n%s", surface, want, text)
-			}
-		}
-	}
-	_ = instructions
-}
-
-// The schema is the client's copy of the check, so it must not disagree with it: each bound is the
-// broker's own constant, and a ceiling of zero is "no channel ceiling" — a value the broker accepts,
-// so a schema refusing it would refuse a request the broker answers.
-func TestTheIntakeSchemasAgreeWithTheBroker(t *testing.T) {
-	type property struct {
-		MaxLength        *int     `json:"maxLength"`
-		MaxItems         *int     `json:"maxItems"`
-		Minimum          *float64 `json:"minimum"`
-		ExclusiveMinimum *float64 `json:"exclusiveMinimum"`
-		Pattern          string   `json:"pattern"`
-		Items            *property
-	}
-	var plan struct {
-		AdditionalProperties *bool               `json:"additionalProperties"`
-		Required             []string            `json:"required"`
-		Properties           map[string]property `json:"properties"`
-	}
-	if err := json.Unmarshal(intakePlanSchema, &plan); err != nil {
-		t.Fatalf("%v: %s", err, intakePlanSchema)
-	}
-	if plan.AdditionalProperties == nil || *plan.AdditionalProperties {
-		t.Error("intake_plan's schema is not closed")
-	}
-	for _, field := range []string{"plan", "hash", "candidate"} {
-		if _, ok := plan.Properties[field]; !ok {
-			t.Errorf("intake_plan's revision envelope does not name %s", field)
-		}
-	}
-	for name, want := range map[string]struct {
-		got *int
-		n   int
-	}{
-		"text":            {plan.Properties["text"].MaxLength, maxPlanText},
-		"context":         {plan.Properties["context"].MaxLength, maxPlanContext},
-		"candidates":      {plan.Properties["candidates"].MaxItems, maxPlanCandidates},
-		"evidence":        {plan.Properties["evidence"].MaxItems, maxPlanEvidence},
-		"evidence[].text": {plan.Properties["evidence"].Items.MaxLength, maxPlanEvidenceRunes},
-	} {
-		if want.got == nil || *want.got != want.n {
-			t.Errorf("%s: the schema holds %v, the broker %d", name, want.got, want.n)
-		}
-	}
-	if c := plan.Properties["ceiling"]; c.Minimum == nil || *c.Minimum != 0 || c.ExclusiveMinimum != nil {
-		t.Errorf("ceiling: the broker takes 0 as absent and refuses below it; the schema says %+v", c)
-	}
-
-	var check struct {
-		AdditionalProperties *bool               `json:"additionalProperties"`
-		Required             []string            `json:"required"`
-		Properties           map[string]property `json:"properties"`
-	}
-	if err := json.Unmarshal(planCheckSchema, &check); err != nil {
-		t.Fatalf("%v: %s", err, planCheckSchema)
-	}
-	if check.AdditionalProperties == nil || *check.AdditionalProperties {
-		t.Error("plan_check's schema is not closed")
-	}
-	if !slices.Equal(check.Required, []string{"plan", "hash"}) {
-		t.Errorf("plan_check requires %v", check.Required)
-	}
-	if _, ok := check.Properties["candidate"]; !ok {
-		t.Error("plan_check's schema does not name candidate")
-	}
-	if got := check.Properties["hash"].Pattern; got != hashRE.String() {
-		t.Errorf("hash pattern %q, the broker's is %q", got, hashRE.String())
-	}
-	if got := check.Properties["on_behalf_of"].Pattern; got != onBehalfRE.String() {
-		t.Errorf("on_behalf_of pattern %q, the broker's is %q", got, onBehalfRE.String())
-	}
-}
-
-// The answer's shape is a contract, not a habit: plan_check declares it, and declares it closed, so a
-// client validating structuredContent sees the four fields and nothing else.
-func TestPlanCheckDeclaresAClosedOutputSchema(t *testing.T) {
-	e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "session"))
-	for name, h := range map[string]http.Header{"a human's": viaRoomctl("dev"), "the App's": bearer("slack-app")} {
-		_, out := rpc(t, e, h, "tools/list", nil)
-		b, _ := json.Marshal(out["result"])
-		var r struct {
-			Tools []struct {
-				Name         string
-				OutputSchema map[string]any
-			}
-		}
-		if err := json.Unmarshal(b, &r); err != nil {
-			t.Fatalf("%s: %s", name, string(b))
-		}
-		i := slices.IndexFunc(r.Tools, func(tool struct {
-			Name         string
-			OutputSchema map[string]any
-		}) bool {
-			return tool.Name == "plan_check"
-		})
-		if i < 0 {
-			t.Fatalf("%s list does not carry plan_check", name)
-		}
-		schema := r.Tools[i].OutputSchema
-		if schema == nil || schema["additionalProperties"] != false {
-			t.Fatalf("%s: plan_check's outputSchema is not closed: %v", name, schema)
-		}
-		props, _ := schema["properties"].(map[string]any)
-		for _, field := range []string{"plan", "hash", "canStart", "canStartWhy"} {
-			if _, ok := props[field]; !ok {
-				t.Errorf("%s: the outputSchema does not name %s: %v", name, field, schema)
-			}
-		}
-		required, _ := schema["required"].([]any)
-		for _, field := range []string{"plan", "hash", "canStart"} {
-			if !slices.Contains(required, any(field)) {
-				t.Errorf("%s: the outputSchema does not require %s: %v", name, field, schema)
-			}
-		}
-	}
-}
-
 // A broker with no redactor wired refuses rather than accepting a plan nobody scanned: checkDraft's
 // own fail-closed rule, which is what makes every other test in this block wire an actor.
 func TestPlanCheckWithoutARedactorRefuses(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"))
 	p := planFixture(t, "single")
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": p, "hash": intake.Hash(p)})
 	if !got.isError || !strings.Contains(got.text, "unavailable") {
 		t.Fatalf("%s", got.text)
 	}
@@ -1134,7 +1082,7 @@ func TestIntakePlanVagueRequestGetsTheFloor(t *testing.T) {
 	content, _ := json.Marshal(draft)
 	e.intake.replyWith([]byte(`{"model":"mistral-medium-2604","choices":[{"message":{"content":` + string(content) + `}}],` +
 		`"usage":{"prompt_tokens":1,"completion_tokens":1}}`))
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
 		"text": "the factory should be better at telling people what's going on"})
 	if got.isError {
 		t.Fatalf("%s", got.text)
@@ -1186,7 +1134,7 @@ func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
 				who = bearer("slack-app")
 			}
 			e := setup(t, opts...)
-			got := call(t, e, who, "intake_plan", tc.args)
+			got := callEngine(t, e, who, "intake_plan", tc.args)
 			if tc.refused {
 				if !got.isError || !strings.Contains(got.text, "repository_not_served_here") ||
 					!strings.Contains(got.text, "runlore isn't served here") || !strings.Contains(got.text, "ai-native-ref") {

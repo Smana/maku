@@ -58,22 +58,6 @@ var waitEntry = map[string]any{
 		`"timeout":{"type":"integer","minimum":1,"maximum":1800}}}`),
 }
 
-var roomWaitEntry = map[string]any{
-	"name": toolRoomWait,
-	"description": "Wait until a room has something new for the developer, polling the broker from their machine: " +
-		"a need (needs_you), a pull request (pr_opened), its end (ended), or any change (any_change). " +
-		"A room is " + refHint + ". Without rooms it watches the developer's own open rooms, the 20 most recently updated. " +
-		"Without until it waits for needs_you, pr_opened and ended. The wait is bounded: timeout is in seconds, " +
-		"300 by default and at most 1800, and then the result says nothing new yet; call it again to keep waiting. " +
-		"It reports progress when the client gave a progress token, and a cancellation ends it at once. " +
-		"The result is the room's card and the condition that was met. Run it in a background task where the client has them.",
-	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{` +
-		`"room":{"type":"string","description":"` + refHint + `"},` +
-		`"rooms":{"type":"array","maxItems":20,"items":{"type":"string","description":"the room's id, #<issue>, PR #<n>, a bare number or a fragment of its title"}},` +
-		`"until":{"type":"array","items":{"type":"string","enum":["needs_you","pr_opened","ended","any_change"]}},` +
-		`"timeout":{"type":"integer","minimum":1,"maximum":1800}}}`),
-}
-
 // waitHit is the room and the condition that ended a wait.
 type waitHit struct{ Room, Condition string }
 
@@ -146,35 +130,6 @@ func parseWaitTimeout(raw *int, usage string) (time.Duration, string) {
 	return time.Duration(timeout) * time.Second, ""
 }
 
-func parseWaitArgs(raw json.RawMessage) (waitArgs, time.Duration, string) {
-	const usage = "invalid_arguments: rooms are room ids, until is some of needs_you, pr_opened, ended, any_change, timeout is 1 to 1800 seconds"
-	var a waitArgs
-	if mcpwire.DecodeArgs(raw, &a) != nil {
-		return a, 0, usage
-	}
-	if a.Room != "" && !slices.Contains(a.Rooms, a.Room) {
-		a.Rooms = append([]string{a.Room}, a.Rooms...)
-	}
-	if len(a.Rooms) > maxWatched {
-		return a, 0, "invalid_arguments: at most " + strconv.Itoa(maxWatched) + " rooms"
-	}
-	for _, id := range a.Rooms {
-		if !roomIDRE.MatchString(id) {
-			return a, 0, usage
-		}
-	}
-	for _, c := range a.Until {
-		if !slices.Contains(waitConditions, c) {
-			return a, 0, usage
-		}
-	}
-	d, bad := parseWaitTimeout(a.Timeout, usage)
-	if bad != "" {
-		return a, 0, bad
-	}
-	return a, d, ""
-}
-
 func (r *Relay) parseTaskWaitArgs(ctx context.Context, raw json.RawMessage) (waitArgs, time.Duration, any) {
 	const usage = "invalid_arguments: task is a task id or reference, timeout is 1 to 1800 seconds"
 	var in struct {
@@ -221,31 +176,13 @@ func (r *Relay) listRows(ctx context.Context, args map[string]any) ([]roomview.R
 	return list.Rooms, nil
 }
 
-// roomWait serves wait and room_wait: it polls rooms_list, one call per tick for every watched room,
-// and returns when a condition newly holds against the snapshot of its first poll, or at its timeout.
-// It sleeps through r.after with no lock and no slot held, and ends with ctx.
+// roomWait serves wait: it polls rooms_list, one call per tick for every watched room, and returns
+// when a condition newly holds against the snapshot of its first poll, or at its timeout. It sleeps
+// through r.after with no lock and no slot held, and ends with ctx.
 func (r *Relay) roomWait(ctx context.Context, c localCall) any {
-	var a waitArgs
-	var timeout time.Duration
-	if c.Name == mcpwire.Wait {
-		var refusal any
-		a, timeout, refusal = r.parseTaskWaitArgs(ctx, c.Args)
-		if refusal != nil {
-			return refusal
-		}
-	} else {
-		for _, k := range []string{"room", "rooms"} {
-			args, refusal := r.resolveArgs(ctx, c.Args, k)
-			if refusal != nil {
-				return refusal
-			}
-			c.Args = args
-		}
-		var bad string
-		a, timeout, bad = parseWaitArgs(c.Args)
-		if bad != "" {
-			return mcpwire.ToolError(bad)
-		}
+	a, timeout, refusal := r.parseTaskWaitArgs(ctx, c.Args)
+	if refusal != nil {
+		return refusal
 	}
 	listArgs := map[string]any{}
 	if len(a.Rooms) == 0 {
@@ -382,9 +319,9 @@ func (r *Relay) timeoutResult(rows map[string]roomview.Row) any {
 func (r *Relay) hitResult(ctx context.Context, h waitHit, row roomview.Row) any {
 	out, _ := mcpwire.ToolResult(map[string]string{"room": h.Room, "condition": h.Condition})
 	text := fmt.Sprintf("Room %s: %s.", h.Room, h.Condition)
-	text0, sc, isErr, err := r.callBroker(ctx, "room_summary", map[string]string{"room": h.Room})
+	text0, sc, isErr, err := r.callBroker(ctx, mcpwire.Task, map[string]string{"task": h.Room})
 	if err == nil && !isErr {
-		if card, ok := cardText(viewed("room_summary", cardResult(text0, sc), r.URL, time.Now())); ok {
+		if card, ok := cardText(viewed(mcpwire.Task, cardResult(text0, sc), r.URL, time.Now())); ok {
 			text = card
 		}
 		if h.Condition == condNeedsYou {

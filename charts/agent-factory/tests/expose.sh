@@ -53,7 +53,7 @@ has_arg '--upstream=http://room-broker.maku.svc.cluster.local:8080' "the upstrea
 for a in --pass-authorization-header=true --pass-access-token=true --skip-auth-strip-headers=true --pass-user-headers=true \
   --pass-basic-auth=false --set-xauthrequest=false --cookie-secure=true --cookie-httponly=true --cookie-samesite=strict \
   --cookie-refresh=1h --reverse-proxy=false --skip-provider-button=true --skip-jwt-bearer-tokens=true --email-domain=* \
-  --http-address=0.0.0.0:4180 --metrics-address=0.0.0.0:44180 '--skip-auth-route=GET=^/\.well-known/roomctl$'; do
+  --http-address=0.0.0.0:4180 --metrics-address=0.0.0.0:44180 '--skip-auth-route=GET=^/\.well-known/maku$'; do
   has_arg "$a" 'EX4'
 done
 has_arg '--scope=openid profile email offline_access groups' 'generic: the base scopes plus human.scopes, once each'

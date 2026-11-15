@@ -20,7 +20,7 @@ import (
 	"github.com/Smana/maku/internal/authn"
 )
 
-// The human listener's modes, as the broker reports one at /.well-known/roomctl: the same two values
+// The human listener's modes, as the broker reports one at /.well-known/maku: the same two values
 // its config takes. A broker without the field is OIDC, so an older release reads as before.
 const (
 	HumanModeOIDC  = "oidc"
@@ -35,12 +35,12 @@ type Config struct {
 	ClientID  string `json:"clientID"`  // the maku native app
 	ProjectID string `json:"projectID"` // zitadel: a token's aud must hold it, and ZITADEL adds it only when asked
 	// FactoryLogin is the factory App's GitHub login. need_answer trusts public bounce comments from
-	// this login alone; empty disables that fallback while leaving authorized room_brief questions available.
+	// this login alone; empty disables that fallback while leaving authorized brief questions available.
 	FactoryLogin string `json:"factoryLogin,omitempty"`
 	// HumanMode is the broker's human listener mode as discovery reported it: "local" means no IdP and
 	// no token, and the three values above are empty. Empty is OIDC, an older broker's answer.
 	HumanMode string `json:"humanMode,omitempty"`
-	// Preset, TokenUse, Scopes and Audience are the broker's human block as /.well-known/roomctl
+	// Preset, TokenUse, Scopes and Audience are the broker's human block as /.well-known/maku
 	// reports it (v4 D8). An empty preset is zitadel: an older broker's answer, and today's config.
 	Preset   string   `json:"preset,omitempty"`
 	TokenUse string   `json:"tokenUse,omitempty"`
@@ -52,7 +52,7 @@ type Config struct {
 	TokenURL      string `json:"tokenEndpoint,omitempty"`
 }
 
-// The broker's presets and token uses, as /.well-known/roomctl reports them (v4 D8).
+// The broker's presets and token uses, as /.well-known/maku reports them (v4 D8).
 const (
 	PresetZITADEL  = "zitadel"
 	PresetGeneric  = "generic"

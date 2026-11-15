@@ -128,7 +128,7 @@ sequenceDiagram
     C->>B: tasks/get
     B-->>C: working, input_required, completed, failed or cancelled
   end
-  C->>B: tasks/result, or room_summary / room_tail / room_changes
+  C->>B: tasks/result, or task / room_tail / inbox
 ```
 
 1. Obtain a token with the client-credentials grant, `scope` including the project audience scope. Its
@@ -136,7 +136,7 @@ sequenceDiagram
 2. Call `initialize` on `/mcp`, then `tools/call` `run_create` with `task: {ttl?}` and an
    `idempotency_key` (the same key makes the same task).
 3. Poll `tasks/get` until `completed`. `input_required` names the room page: a human answers there,
-   never through the client. Read the room with `room_summary`, `room_tail` and `room_changes` (parse `structuredContent`, never the display text).
+   never through the client. Read the room with `task`, `room_tail` and `inbox` (parse `structuredContent`, never the display text).
 
 [`run_create`](reference/api.md#sponsored-principals-on-mcp) and the factory's
 [`POST /v1/tasks`](reference/api.md#post-v1tasks) give the arguments and the refusals.

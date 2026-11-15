@@ -135,7 +135,7 @@ slack:
 # Exposure (D19; docs/exposure.md), through the Gateway or Ingress the cluster already runs. none, the
 # default, renders nothing. Two surfaces, each with its own hosts and its own parentRefs or ingress class,
 # so the Slack events path can be public while the web stays on a private gateway:
-#   web    the broker's human listener (the rooms UI, /api, /v1/ws, /mcp, /.well-known/roomctl,
+#   web    the broker's human listener (the rooms UI, /api, /v1/ws, /mcp, /.well-known/maku,
 #          /link/*), always through the web front door (webProxy, Service rooms-web-proxy);
 #   slack  POST /slack/events only, to the Slack App's Service factory-slack-app (with slack.enabled).
 # The factory polls GitHub and needs no public path. TLS is the gateway's or the Ingress's: the chart
@@ -180,7 +180,7 @@ expose:
 # maku.broker.human: the issuer, the preset's scopes, the roles claim and groups, publicURL's
 # callback, and the CLI client (maku.broker.oidc.existingSecret's cli key) as an extra JWT issuer, so
 # `maku` bearers pass. It overwrites X-Forwarded-Access-Token on every request and strips it on its
-# skip-auth routes (GET /.well-known/roomctl, and GET /link/github/callback with the GitHub account
+# skip-auth routes (GET /.well-known/maku, and GET /link/github/callback with the GitHub account
 # link). Required by expose.web in oidc mode; set maku.broker.webProxy to the same value, which opens
 # the broker's :8080 to this proxy alone.
 webProxy:

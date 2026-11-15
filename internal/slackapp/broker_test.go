@@ -77,27 +77,10 @@ func staticTokens(tok string) *Tokens {
 	}}
 }
 
-func TestBrokerIssueDraft(t *testing.T) {
-	f := newFakeBroker(t, "tok", `{"structuredContent":{"repo":"Smana/x","title":"t2","body":"b2"}}`)
-	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
-	d, err := b.IssueDraft(context.Background(), Draft{Repo: "Smana/x", Title: "t", Body: "b"})
-	if err != nil || d != (Draft{Repo: "Smana/x", Title: "t2", Body: "b2"}) {
-		t.Fatalf("%+v %v", d, err)
-	}
-	c := f.calls[0]
-	if c.Method != "tools/call" || c.Params.Name != "issue_draft" ||
-		!maps.Equal(c.Params.Arguments, map[string]any{"repo": "Smana/x", "title": "t", "body": "b"}) {
-		t.Fatalf("%+v", c)
-	}
-	if h := f.headers[0]; h.Get("MCP-Protocol-Version") != "2025-11-25" || h.Get("Authorization") != "Bearer tok" {
-		t.Fatalf("%v", h)
-	}
-}
-
 func TestBrokerRefusalIsRefused(t *testing.T) {
 	f := newFakeBroker(t, "", `{"isError":true,"content":[{"type":"text","text":"rejected: template"}]}`)
 	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
-	_, err := b.IssueDraft(context.Background(), Draft{Repo: "Smana/x", Title: "t"})
+	_, err := b.RunCreate(context.Background(), RunCreate{Repo: "Smana/x", Title: "t"})
 	var r Refused
 	if !errors.As(err, &r) || string(r) != "rejected: template" || err.Error() != "rejected: template" {
 		t.Fatalf("%T %v", err, err)
@@ -110,7 +93,7 @@ func TestBrokerRunCreate(t *testing.T) {
 	body := "## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz"
 	ref := "slack/T01ABC/C03/1729.0001"
 	res, err := b.RunCreate(context.Background(), RunCreate{
-		Draft:      Draft{Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body},
+		Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body,
 		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: ref, Key: "T01ABC/C03/1729.0002"})
 	if err != nil || res != (RunResult{Room: "r-1", Issue: 42, Duplicate: true}) {
 		t.Fatalf("%+v %v", res, err)
@@ -135,7 +118,7 @@ func TestRunCreateSendsTheHandoff(t *testing.T) {
 	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
 	body := "## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz"
 	draft := RunCreate{
-		Draft:      Draft{Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body},
+		Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body,
 		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: "slack/T01ABC/C03/1729.0001", Key: "T01ABC/C03/1729.0001"}
 
 	if _, err := b.RunCreate(context.Background(), draft); err != nil {
@@ -150,7 +133,7 @@ func TestRunCreateSendsTheHandoff(t *testing.T) {
 
 	plan := planFixture(t, "slack-one-issue")
 	proposal := RunCreate{
-		Draft:      Draft{Repo: "Smana/ai-native-ref"},
+		Repo:       "Smana/ai-native-ref",
 		Handoff:    defaultHandoffID,
 		PlanHash:   intake.Hash(plan),
 		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: "slack/T01ABC/C03/1729.0001", Key: "T01ABC/C03/1729.0001"}
@@ -169,7 +152,6 @@ func TestRunCreateSendsTheHandoff(t *testing.T) {
 func TestBrokerNeverSendsTasks(t *testing.T) {
 	f := newFakeBroker(t, "", `{"structuredContent":{}}`)
 	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
-	_, _ = b.IssueDraft(context.Background(), Draft{})
 	_, _ = b.RunCreate(context.Background(), RunCreate{})
 	for _, c := range f.calls {
 		if strings.HasPrefix(c.Method, "tasks/") {
@@ -258,7 +240,7 @@ func TestBrokerRefreshesOn401(t *testing.T) {
 		return &oauth2.Token{AccessToken: fmt.Sprintf("t%d", n.Add(1)), Expiry: time.Now().Add(time.Hour)}, nil
 	}}
 	b := Broker{URL: f.srv.URL, Tokens: tokens, HC: f.srv.Client()}
-	if _, err := b.IssueDraft(context.Background(), Draft{Repo: "Smana/x", Title: "t"}); err != nil || n.Load() != 2 {
+	if _, err := b.RunCreate(context.Background(), RunCreate{Repo: "Smana/x", Title: "t"}); err != nil || n.Load() != 2 {
 		t.Fatalf("err %v fetches %d", err, n.Load())
 	}
 
@@ -268,7 +250,7 @@ func TestBrokerRefreshesOn401(t *testing.T) {
 		return &oauth2.Token{AccessToken: fmt.Sprintf("t%d", n.Add(1)), Expiry: time.Now().Add(time.Hour)}, nil
 	}}
 	b = Broker{URL: f2.srv.URL, Tokens: tokens, HC: f2.srv.Client()}
-	if _, err := b.IssueDraft(context.Background(), Draft{Repo: "Smana/x", Title: "t"}); err == nil || n.Load() != 2 {
+	if _, err := b.RunCreate(context.Background(), RunCreate{Repo: "Smana/x", Title: "t"}); err == nil || n.Load() != 2 {
 		t.Fatalf("err %v fetches %d", err, n.Load())
 	}
 }
@@ -435,7 +417,6 @@ func TestAppCallsOnlyNewTools(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
-	rig.app.Proposals = Proposals{Enabled: true}
 	rig.app.Broker = Broker{URL: srv.URL, Tokens: staticTokens("tok"), HC: srv.Client()}
 
 	// 1. Mention -> handoff + handoff_check

@@ -119,17 +119,42 @@ func sponsoredMergeRoom(t *testing.T) option {
 // sponsored set is a deliberate, tested amendment — the list is closed and read-only, and the two
 // legacy room reads stay need-free. CD11: room_brief is the human list's alone — a sponsored principal
 // has no developer to resume for, so the App's list must not gain it.
-func TestSponsoredToolList(t *testing.T) {
-	// human.intake.plan on: the planner's two tools join both lists, the App's last and the human's
-	// after issue_draft (PR 2): intake_plan, then plan_check, the door a consumer re-validates through.
+func TestReplacedToolsAreGone(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "slack"))
-	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,handoff,task,inbox,issue_draft,room_summary,room_tail,room_changes,needs_list,intake_plan,plan_check" {
-		t.Fatalf("%s", got)
+	gone := []string{
+		"intake_plan", "plan_check", "issue_draft", "classes_list",
+		"needs_list", "room_summary", "room_brief", "room_changes", "room_queue",
+		"issue_file", "need_answer",
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "handoff,inbox,task,rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check,room_brief" {
-		t.Fatalf("a human's list changed: %s", got)
+	for _, caller := range []struct {
+		name string
+		hdr  http.Header
+	}{
+		{"human", viaRoomctl("dev")},
+		{"sponsored", bearer("slack-app")},
+	} {
+		for _, tool := range gone {
+			_, out := rpc(t, e, caller.hdr, "tools/call", map[string]any{"name": tool, "arguments": map[string]any{}})
+			if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown tool") {
+				t.Errorf("%s calling %s: got %v, want -32602 unknown tool", caller.name, tool, out)
+			}
+		}
 	}
-	for _, name := range []string{"room_queue", "room_fork", "rooms_list", "room_brief"} {
+}
+
+func TestSponsoredToolsAfterRemoval(t *testing.T) {
+	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "slack"))
+	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,handoff,task,inbox,room_tail" {
+		t.Fatalf("without links: got %s, want run_create,handoff,task,inbox,room_tail", got)
+	}
+	linked := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "slack"), slackLinkOn(newMemLinks()))
+	if got := toolNames(t, linked, bearer("slack-app")); got != "run_create,handoff,task,inbox,room_tail,slack_link_code,slack_unlink" {
+		t.Fatalf("with links: got %s, want run_create,handoff,task,inbox,room_tail,slack_link_code,slack_unlink", got)
+	}
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "handoff,inbox,task,rooms_list,room_tail,room_fork" {
+		t.Fatalf("human broker list: got %s, want handoff,inbox,task,rooms_list,room_tail,room_fork", got)
+	}
+	for _, name := range []string{"room_fork", "rooms_list", "task_note"} {
 		_, out := rpc(t, e, bearer("slack-app"), "tools/call", map[string]any{"name": name,
 			"arguments": map[string]any{"room": roomID, "text": "x", "at": 1}})
 		if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown tool: "+name) {
@@ -140,10 +165,10 @@ func TestSponsoredToolList(t *testing.T) {
 
 // CD28: the schema is the whole surface on the App's door too. Nothing outside {since, room, repo} is
 // accepted, so no sponsored call can carry a decision — and what it does not accept, it refuses.
-func TestSponsoredNeedsListRefusesAFieldOutsideTheSchema(t *testing.T) {
+func TestSponsoredInboxRefusesAFieldOutsideTheSchema(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
 	for _, args := range []map[string]any{{"decide": "01JBX3K8"}, {"approve": true}, {"merge": "01JBX3K8"}} {
-		if got := call(t, e, bearer("slack-app"), "needs_list", args); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
+		if got := call(t, e, bearer("slack-app"), "inbox", args); !got.isError || !strings.Contains(got.text, "invalid_arguments") {
 			t.Errorf("%v: %+v", args, got)
 		}
 	}
@@ -151,10 +176,10 @@ func TestSponsoredNeedsListRefusesAFieldOutsideTheSchema(t *testing.T) {
 
 // CD28 with CD26: a sponsored list is the room's, not a login's. The maintainer's merge is in it —
 // with a link to the pull request and no decision — although the App has no login and may not write
-// the repository. The rows and room_summary keep saying nothing (B1): this is the one room-scoped read.
-func TestSponsoredNeedsListIsTheRooms(t *testing.T) {
+// the repository. The rows and task's needsYou keep saying nothing (B1): this is the one room-scoped read.
+func TestSponsoredInboxIsTheRooms(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
-	got := call(t, e, bearer("slack-app"), "needs_list", map[string]any{})
+	got := call(t, e, bearer("slack-app"), "inbox", map[string]any{})
 	var data struct{ Items []summary.Need }
 	if got.isError || json.Unmarshal([]byte(got.structured), &data) != nil {
 		t.Fatalf("%+v", got)
@@ -170,20 +195,20 @@ func TestSponsoredNeedsListIsTheRooms(t *testing.T) {
 	}
 }
 
-// CD28: one tool, one schema. The App's needs_list and the human's are one entry in tools/list, so a
+// CD28: one tool, one schema. The App's inbox and the human's are one entry in tools/list, so a
 // field cannot appear on one door and not the other — the closed schema is the whole surface on both, and
 // so is the outputSchema the answer is declared against.
-func TestSponsoredNeedsListIsTheSameTool(t *testing.T) {
+func TestSponsoredInboxIsTheSameTool(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), sponsoredMergeRoom(t))
-	human, app := toolEntry(t, e, viaRoomctl("dev"), "needs_list"), toolEntry(t, e, bearer("slack-app"), "needs_list")
+	human, app := toolEntry(t, e, viaRoomctl("dev"), "inbox"), toolEntry(t, e, bearer("slack-app"), "inbox")
 	if !reflect.DeepEqual(human, app) {
-		t.Fatalf("the App's needs_list is another tool:\nhuman %v\napp   %v", human, app)
+		t.Fatalf("the App's inbox is another tool:\nhuman %v\napp   %v", human, app)
 	}
 }
 
 // R13, C28: another room's needs are not the App's. Only the rooms it is a watcher of are read, so a
 // room it is not a member of contributes nothing — here the split proposal the same log holds.
-func TestSponsoredNeedsListStaysInItsRooms(t *testing.T) {
+func TestSponsoredInboxStaysInItsRooms(t *testing.T) {
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), needsWorld(t, nil),
 		func(s *Server, _ *fanout.Hub, _ *hubView) {
 			mine := repoRoom(roomID, "Smana/a")
@@ -191,7 +216,7 @@ func TestSponsoredNeedsListStaysInItsRooms(t *testing.T) {
 			mine.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
 			s.Rooms = roomClient(t, mine, repoRoom(splitRoom, "Smana/a"), repoRoom(roomC, "Smana/a"))
 		})
-	if keys := needKeysOf(t, call(t, e, bearer("slack-app"), "needs_list", map[string]any{})); !slices.Equal(keys, []string{roomID + "/merge/2239"}) {
+	if keys := needKeysOf(t, call(t, e, bearer("slack-app"), "inbox", map[string]any{})); !slices.Equal(keys, []string{roomID + "/merge/2239"}) {
 		t.Fatalf("%v, want its own room's merge alone", keys)
 	}
 }
@@ -200,10 +225,10 @@ func TestSponsoredNeedsListStaysInItsRooms(t *testing.T) {
 func TestSponsoredReadsItsRoomsOnly(t *testing.T) {
 	w := world(nil)
 	e := setup(t, mcpOn, withSponsored(sponsoredP), sponsoredRooms(t, w))
-	if got := call(t, e, bearer("slack-app"), "room_summary", map[string]any{"room": roomID}); got.isError {
+	if got := call(t, e, bearer("slack-app"), "task", map[string]any{"task": roomID}); got.isError {
 		t.Fatalf("its own room: %s", got.text)
 	}
-	if got := call(t, e, bearer("slack-app"), "room_summary", map[string]any{"room": roomB}); !got.isError || !strings.Contains(got.text, noSuchRoom) {
+	if got := call(t, e, bearer("slack-app"), "task", map[string]any{"task": roomB}); !got.isError || !strings.Contains(got.text, noSuchRoom) {
 		t.Fatalf("another room: %+v", got)
 	}
 	if n := w.checked(); n != 0 {
@@ -281,28 +306,27 @@ func TestSponsoredInstructions(t *testing.T) {
 	}
 }
 
-// R13: a sponsored principal reads; the summary holds no action and nothing that needs it, however
-// the room stands, since `Allowed` grants it Read only (I1).
-func TestSponsoredSummaryAdvertisesNothing(t *testing.T) {
+// R13: a sponsored principal reads; task holds nothing in needsYou, however the room stands,
+// since `Allowed` grants it Read only (I1).
+func TestSponsoredTaskAdvertisesNothing(t *testing.T) {
 	w := world(nil)
 	e := setup(t, mcpOn, withSponsored(sponsoredP), sponsoredRooms(t, w))
-	got := call(t, e, bearer("slack-app"), "room_summary", map[string]any{"room": roomID})
+	got := call(t, e, bearer("slack-app"), "task", map[string]any{"task": roomID})
 	var s struct {
 		NeedsYou []json.RawMessage
-		Actions  []json.RawMessage
 	}
-	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.Actions) != 0 || len(s.NeedsYou) != 0 {
+	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.NeedsYou) != 0 {
 		t.Fatalf("%s", got.structured)
 	}
 }
 
 // R13 with CD21 and B1: one sponsored principal, one room, and one answer on both surfaces. A pull
 // request whose reviewers name someone else would be a merge — or a review — for a caller GitHub lets
-// write; a sponsored principal has no login and only reads, so the room's rows and its room_summary both
+// write; a sponsored principal has no login and only reads, so the room's rows and task's needsYou both
 // list no need. The rows' derivation (needsFor) takes the login's door and leaves
-// summary.Caller.RoomScoped false, so the two legacy surfaces say what View says; needs_list asks for the
+// summary.Caller.RoomScoped false, so both say what View says; inbox asks for the
 // room-scoped read, which its own test pins.
-func TestSponsoredRowsAndSummaryAgreeOnNoNeeds(t *testing.T) {
+func TestSponsoredRowsAndTaskAgreeOnNoNeeds(t *testing.T) {
 	e := setup(t, mcpOn, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, v *hubView) {
 		mine := repoRoom(roomID, "Smana/a")
 		mine.Spec.Members = []v1alpha1.Member{{Principal: "system:slack-app", Role: "watcher"}}
@@ -312,8 +336,6 @@ func TestSponsoredRowsAndSummaryAgreeOnNoNeeds(t *testing.T) {
 			Payload: envelope.TaskStatePayload(envelope.TaskFacts{Phase: "AwaitingHuman",
 				PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}})})
 	})
-	// The room's row, as the list computes it: a sponsored bearer reaches no /api/rooms route (C18), so the
-	// list's own function is called with the principal the sponsored tools authenticate.
 	rows, _, err := e.srv.roomRows(t.Context(), sponsoredP, &roomFilter{})
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("rows: %+v, %v", rows, err)
@@ -321,14 +343,12 @@ func TestSponsoredRowsAndSummaryAgreeOnNoNeeds(t *testing.T) {
 	if r := rows[0]; r.NeedsMe || r.NeedsYou != 0 || r.Need != nil || r.Step != nil {
 		t.Fatalf("a sponsored row lists %+v", r)
 	}
-	// The room's summary, as the sponsored tool reads it.
-	got := call(t, e, bearer("slack-app"), "room_summary", map[string]any{"room": roomID})
+	got := call(t, e, bearer("slack-app"), "task", map[string]any{"task": roomID})
 	var s struct {
 		NeedsYou []json.RawMessage
-		Step     *summary.Step
 	}
-	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.NeedsYou) != 0 || s.Step != nil {
-		t.Fatalf("the summary: %s", got.structured)
+	if got.isError || json.Unmarshal(got.structured, &s) != nil || len(s.NeedsYou) != 0 {
+		t.Fatalf("the task: %s", got.structured)
 	}
 }
 

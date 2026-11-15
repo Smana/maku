@@ -42,7 +42,6 @@ func coordRig(t *testing.T, served ...string) *appRig {
 		served = []string{repoContracts, repoConsumer}
 	}
 	rig := newAppRig(t, Channel{Repositories: served, MaxCostUSD: 2})
-	rig.app.Proposals = Proposals{Enabled: true}
 	rig.broker.coordResult = func(in CoordinationPlanRequest) CoordinationPlanResult {
 		id, v := in.ID, in.Version
 		if id == "" {

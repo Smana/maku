@@ -103,13 +103,10 @@ func TestSlackInteractivitySignature(t *testing.T) {
 		t.Fatalf("interactions/decided counted %d times, want 1", n)
 	}
 
-	// The JSON body shape still arrives at today's handling: a mention drafts from the same handler.
+	// The JSON body shape still arrives at today's handling: a mention is planned from the same handler.
 	rig.mention("C03", "1729.0001", draftText)
-	if p := rig.lastPost(); !strings.HasPrefix(p.text, "Draft for ") {
-		t.Fatalf("the JSON path no longer drafts: %q", p.text)
-	}
-	if n := rig.metrics.count("events", "drafted"); n != 1 {
-		t.Fatalf("events/drafted counted %d times, want 1", n)
+	if p := rig.lastPost(); !strings.HasPrefix(p.text, "Proposal v") {
+		t.Fatalf("the JSON path no longer proposes: %q", p.text)
 	}
 	if n := rig.metrics.count("events", "bad_signature"); n != 0 {
 		t.Fatalf("a press was counted on the events route %d times", n)

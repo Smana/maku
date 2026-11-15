@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"sort"
 	"strings"
@@ -19,6 +20,8 @@ import (
 
 // minMaxCost is the factory's floor: it refuses a max_cost under one cent.
 const minMaxCost = 0.01
+
+var repoRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 
 // Config is the App's config file, loaded strictly as the broker's config is.
 type Config struct {
@@ -44,8 +47,6 @@ type Config struct {
 	Audience  string             `json:"audience,omitempty"`
 	Namespace string             `json:"namespace"`
 	Channels  map[string]Channel `json:"channels"`
-	// Proposals is the proposal message's switch (CD7): off, a mention drafts as it does today.
-	Proposals Proposals `json:"proposals,omitempty"`
 	// The three listeners (M11): Slack's events (public), the broker's webhooks (cluster only),
 	// and metrics with the probes. Defaults :8080, :8081 and :9090; a test passes 127.0.0.1:0.
 	// APIBaseURL is Slack's Web API base, a test seam (the e2e stub): empty is https://slack.com/api/.
@@ -55,14 +56,7 @@ type Config struct {
 	OpsAddr      string `json:"opsAddr,omitempty"`
 }
 
-// Proposals is the proposal message's switch (CD7, CD20): on, a mention is planned by the broker and
-// posted as one proposal edited in place; off, a mention drafts exactly as it does today. Absent is
-// off, so a deployment that says nothing gets the behaviour it has.
-type Proposals struct {
-	Enabled bool `json:"enabled,omitempty"`
-}
-
-// Channel is a channel the App serves: the repositories a draft there may name, the max_cost a ✅
+// Channel is a channel the App serves: the repositories a proposal there may name, the max_cost a
 // there sends, whether its forge.push approvals are drawn as a card, and which webhook transitions
 // post a line there (CD11, CD24 — declared once in ai-native-ref's slack-bindings.yaml).
 type Channel struct {

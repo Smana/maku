@@ -21,11 +21,12 @@ import (
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/maku/skill"
+	"github.com/Smana/maku/internal/mcpwire"
 )
 
 // setupPath is the broker's unauthenticated endpoint for the values `maku configure` needs.
 // None of them is a secret: the CLI setup view renders them to any member.
-const setupPath = "/.well-known/roomctl"
+const setupPath = "/.well-known/maku"
 
 // maxSetupBody bounds the setup answer.
 const maxSetupBody = 64 << 10
@@ -342,16 +343,13 @@ func hasExecuteDeny(v any) bool {
 	return false
 }
 
-// skill compares the maku-version each installed maku-handoff (or legacy factory-handoff) skill
-// carries with this binary's: a copy from another release names tools or commands this one lacks.
+// skill compares the maku-version each installed maku-handoff skill carries with this binary's:
+// a copy from another release names tools or commands this one lacks.
 func (d Doctor) skill(report func(bool, string, string), skip func(string, string)) {
 	found := false
 	for _, dir := range d.SkillDirs {
 		v, ok, err := skill.Version(dir)
-		skillName := "maku-handoff"
-		if _, statErr := os.Stat(filepath.Join(dir, skillName, "SKILL.md")); statErr != nil {
-			skillName = "factory-handoff"
-		}
+		const skillName = "maku-handoff"
 		switch {
 		case err != nil:
 			found = true
@@ -473,6 +471,7 @@ func (d Doctor) github(ctx context.Context, tok string, report func(bool, string
 	defer func() { _ = resp.Body.Close() }()
 	access := resp.Header.Get("X-Rooms-Access")
 	var rows []struct {
+		ID         string `json:"id"`
 		Repository string `json:"repository"`
 	}
 	if resp.StatusCode == http.StatusOK {
@@ -492,7 +491,7 @@ func (d Doctor) github(ctx context.Context, tok string, report func(bool, string
 		report(false, "github", "the broker cannot verify your GitHub access right now: retry in a minute, and if it persists ask an admin")
 	default:
 		// "ok" is no proof: an admin reads every room with no link, and a list with no room checks
-		// nothing. issue_draft's canStart looks the link up, so ask it.
+		// nothing. task's canStart looks the link up, so ask it.
 		d.linkProbe(ctx, tok, rows, report, warn)
 	}
 }
@@ -504,28 +503,31 @@ func (d Doctor) unlinkedMsg() string {
 // maxProbes is how many repositories the link probe asks about.
 const maxProbes = 3
 
-// linkProbe checks the GitHub link the way issue_draft's canStart does, on the repositories the
-// room list shows, up to maxProbes of them: a repository outside human.mcp.sessionStart cannot
-// answer, another may. Only "linked" and "not linked" are answers; anything else is a warning.
+// linkProbe checks the GitHub link the way task's canStart does, on the repositories the room list
+// shows, up to maxProbes of them: a repository outside human.mcp.start cannot answer, another may.
+// Only "linked" and "not linked" are answers; anything else is a warning.
 func (d Doctor) linkProbe(ctx context.Context, tok string, rows []struct {
+	ID         string `json:"id"`
 	Repository string `json:"repository"`
 }, report func(bool, string, string), warn func(string, string)) {
-	var repos []string
+	type target struct{ id, repo string }
+	var targets []target
+	var seenRepos []string
 	for _, r := range rows {
-		if r.Repository != "" && !slices.Contains(repos, r.Repository) && len(repos) < maxProbes {
-			repos = append(repos, r.Repository)
+		if r.ID != "" && r.Repository != "" && !slices.Contains(seenRepos, r.Repository) && len(targets) < maxProbes {
+			seenRepos = append(seenRepos, r.Repository)
+			targets = append(targets, target{id: r.ID, repo: r.Repository})
 		}
 	}
 	const unverified = "unverified: the room list does not say whether GitHub is linked to your account (an admin reads every room without one)"
-	if len(repos) == 0 {
+	if len(targets) == 0 {
 		warn("github", unverified+", and no room shows a repository to check against")
 		return
 	}
 	rl := &Relay{URL: d.Config.URL, HC: d.HC, Token: func(context.Context) (string, error) { return tok, nil }}
-	last := "issue_draft did not answer"
-	for _, repo := range repos {
-		_, sc, isErr, err := rl.callBroker(ctx, "issue_draft", map[string]string{"repo": repo, "title": "doctor: check the GitHub link",
-			"body": "## What is wrong\nnothing\n\n## What it should be\nnothing\n\n## Acceptance check\nnothing\n"})
+	last := "task did not answer"
+	for _, t := range targets {
+		_, sc, isErr, err := rl.callBroker(ctx, mcpwire.Task, map[string]string{"task": t.id})
 		var got draftShape
 		if err != nil || isErr || json.Unmarshal(sc, &got) != nil {
 			continue
@@ -538,7 +540,7 @@ func (d Doctor) linkProbe(ctx context.Context, tok string, rows []struct {
 			report(false, "github", d.unlinkedMsg())
 			return
 		}
-		last = "issue_draft: " + OneLine(got.CanStartWhy)
+		last = "task: " + OneLine(got.CanStartWhy)
 	}
 	warn("github", unverified+" ("+last+")")
 }

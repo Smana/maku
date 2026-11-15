@@ -60,7 +60,7 @@ func (d OutsideDeps) withDefaults() OutsideDeps {
 
 // OutsideChecks is IN2's exposure row from where the user stands (v4 D24, F7): the hostnames of the
 // release's web and Slack routes (HTTPRoute or Ingress) each resolve; the web host answers
-// oauth2-proxy's /ping and serves /.well-known/roomctl through it; the Slack host answers an unsigned
+// oauth2-proxy's /ping and serves /.well-known/maku through it; the Slack host answers an unsigned
 // POST /slack/events with 401 and nothing else with a 200. One result per host; none is skip.
 func OutsideChecks(ctx context.Context, c client.Reader, ns string, d OutsideDeps) []preflight.Result {
 	d = d.withDefaults()
@@ -97,23 +97,23 @@ func outsideResult(o preflight.Outcome, code, msg string) preflight.Result {
 	return preflight.Result{Check: "exposure", Component: string(preflight.InCLI), Outcome: o, Code: code, Message: msg}
 }
 
-// checkWebHost: oauth2-proxy answers /ping with OK, and lets /.well-known/roomctl through to the
+// checkWebHost: oauth2-proxy answers /ping with OK, and lets /.well-known/maku through to the
 // broker, which answers JSON naming the issuer (F7: maku configure reads it there).
 func checkWebHost(ctx context.Context, d OutsideDeps, host string) preflight.Result {
 	base := d.BaseURL(host)
 	if code, body := statusOf(ctx, d.HC, http.MethodGet, base+"/ping"); code != http.StatusOK || !bytes.Equal(bytes.TrimSpace(body), []byte("OK")) {
 		return outsideResult(preflight.Fail, "route_unanswered", fmt.Sprintf("%s/ping is not oauth2-proxy's (HTTP %d): the web route must reach rooms-web-proxy", host, code))
 	}
-	code, body := statusOf(ctx, d.HC, http.MethodGet, base+"/.well-known/roomctl")
+	code, body := statusOf(ctx, d.HC, http.MethodGet, base+"/.well-known/maku")
 	var doc struct {
 		Issuer    string `json:"issuer"`
 		HumanMode string `json:"humanMode"`
 	}
 	// An oidc broker names its issuer; a local one names none (it needs no IdP).
 	if code != http.StatusOK || json.Unmarshal(body, &doc) != nil || (doc.Issuer == "" && doc.HumanMode != "local") {
-		return outsideResult(preflight.Fail, "route_unanswered", fmt.Sprintf("%s/.well-known/roomctl does not reach the broker (HTTP %d): maku configure reads it there", host, code))
+		return outsideResult(preflight.Fail, "route_unanswered", fmt.Sprintf("%s/.well-known/maku does not reach the broker (HTTP %d): maku configure reads it there", host, code))
 	}
-	return outsideResult(preflight.Pass, "", host+": oauth2-proxy, and /.well-known/roomctl through it")
+	return outsideResult(preflight.Pass, "", host+": oauth2-proxy, and /.well-known/maku through it")
 }
 
 // checkSlackHost: the route is POST /slack/events exactly. An unsigned event is the Slack app's 401;

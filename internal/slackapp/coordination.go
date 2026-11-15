@@ -293,12 +293,12 @@ func (a *App) coordinationPress(_ context.Context, meta *Metadata) string {
 // deliverCoordination posts a parent's event to its thread as the channel may see it, recomputed
 // from the App's own filtered read of the parent now: full, coarse or nothing (dropped).
 func (a *App) deliverCoordination(ctx context.Context, th Thread, ch Channel, room string) string {
-	s, err := a.Broker.RoomSummary(ctx, room)
+	tr, err := a.Broker.Task(ctx, room)
 	if err != nil {
 		a.countProjection(ctx, projectionDropped)
 		return "error"
 	}
-	v, ok := coordinationview.Of(s)
+	v, ok := coordinationview.Of(tr.Summary())
 	if !ok {
 		a.countProjection(ctx, projectionDropped)
 		return "ignored"

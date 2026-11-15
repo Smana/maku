@@ -53,25 +53,28 @@ func TestAdvancedListAddsRareTools(t *testing.T) {
 	s := relayTo(t, b, tok, func(r *Relay) { r.Advanced = true })
 	got := strings.Join(listNames(t, s), ",")
 	want := "handoff,start,inbox,task,wait,answer," +
-		"room_tail,room_fork,room_checkout,coordination_checkout,coordination_open,coordination_plan," +
-		"rooms_list,room_summary,room_brief,room_changes,room_queue,needs_list,intake_plan,plan_check,issue_draft,classes_list," +
-		"issue_file,need_answer,room_wait"
+		"room_tail,room_fork,room_checkout,coordination_checkout,coordination_open,coordination_plan"
 	if got != want {
 		t.Fatalf("advanced list:\n got %s\nwant %s", got, want)
 	}
 }
 
-// Release N: a saved prompt naming a replaced tool still works without --advanced.
-func TestUnlistedToolStillCallable(t *testing.T) {
+func TestReplacedToolsAreGone(t *testing.T) {
 	b := newMCPBroker(t)
-	b.tools = brokerTools()
-	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-	res := s.request(t, 5, "tools/call", map[string]any{"name": "intake_plan", "arguments": map[string]any{"text": "fix it"}})
-	if r, _ := res["result"].(map[string]any); r == nil || r["isError"] == true {
-		t.Fatalf("%v", res)
+	b.tools = []any{
+		map[string]any{"name": "handoff"},
+		map[string]any{"name": "inbox"},
+		map[string]any{"name": "task"},
+		map[string]any{"name": "rooms_list"},
+		map[string]any{"name": "room_tail"},
+		map[string]any{"name": "room_fork"},
 	}
-	if got := lastCall(t, b); got.Name != "intake_plan" {
-		t.Fatalf("intake_plan was not relayed: %+v", got)
+	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
+	for _, name := range []string{"issue_file", "need_answer", "room_wait", "handoff_check", "task_note"} {
+		res := s.request(t, 5, "tools/call", map[string]any{"name": name, "arguments": map[string]any{}})
+		if !strings.Contains(fmt.Sprint(res["error"]), "unknown tool") && !strings.Contains(fmt.Sprint(res["result"]), "unknown tool") {
+			t.Errorf("relay %s: got %v, want unknown tool", name, res)
+		}
 	}
 }
 

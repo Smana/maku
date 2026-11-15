@@ -73,7 +73,7 @@ For a `Factory` without `mergeDefaults`, `--merge-defaults=false` writes the fou
 ## Preflight CLI permissions and checks
 
 It adds the checks that only your machine can make, the `cli` rows of the table below: each hostname
-of the web and Slack routes resolves, the web host is oauth2-proxy's and serves `/.well-known/roomctl`
+of the web and Slack routes resolves, the web host is oauth2-proxy's and serves `/.well-known/maku`
 through it, and the Slack host answers `POST /slack/events` only. `--no-outside` skips them. It exits 1
 on a fail, and 2 when the release renders no preflight or the Job leaves no report. Your kubeconfig
 needs, in the namespace, `get` and `list` on CronJobs, `create`, `get` and `delete` on Jobs, `list` on

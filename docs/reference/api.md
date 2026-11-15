@@ -492,9 +492,9 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
 | `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui-settings.md#install-banner-unsafe-codes) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](../github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
-| `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the text `room_brief` returns and the cursor to ask from next |
+| `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the cursor `task` takes back as `since` |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
-| `GET /api/needs` | What needs the caller, across every room they may read: [`needs/v1`](#get-apineeds), in the one order, with the cursor to ask from next. Served while `human.needs.enabled` (the default); off, `404`, and `needs_list` is not listed either |
+| `GET /api/needs` | What needs the caller, across every room they may read: [`needs/v1`](#get-apineeds), in the one order, with the cursor to ask from next. Served while `human.needs.enabled` (the default); off, `404`, and `inbox` lists the caller's own tasks instead |
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
@@ -503,9 +503,9 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `DELETE /api/links/github/{sub}` | An admin's web session removes another account's GitHub link: `{"unlinked": bool}`; `403` for a member or a CLI bearer |
 | `GET /settings/approval-memory`, `/api/approval-memory/…` | Approval memory (merge policy stage 5), when `human.approvalMemory`; else `404`. `GET grants?repository=&class=&status=&q=` lists the grants of the repositories the caller may read (an admin reads all), `unverified` when an access check failed; `GET grants/{id}` adds its audit and the conditions that stay outside it; `GET export?repository=` is the same list as YAML. `POST preview` and `POST grants` take `{repository, class, caughtFiles (exact paths) or files (patterns), diffShape?, policyHash, pullRequest, lifetimeDays?}` ("merge and create rule", GitHub write on the repository): the preview saves nothing and answers the exact predicate, the future pull requests it would match, what stays outside it, its expiry, its revoke path and what "merge once" does instead; the create saves it and answers the same with the grant; `POST grants/{id}/{revoke,renew,reconfirm}` `{version?, reason?, lifetimeDays?}` moves one: revoking takes write or an admin, the others write, and a reconfirmation rebinds to the policy its suspension was found under. Writes take the web UI's session from the broker's own `Origin` (`web_only`, `cross_origin`), a body of 16 KiB at most; `409 grant_state` for a move its status refuses |
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
-| `GET /.well-known/roomctl` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
+| `GET /.well-known/maku` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
 | `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](web-ui-settings.md#install-banner-unsafe-codes)) |
-| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](config.md#broker-fields), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/roomctl` leaves them out, since `maku configure` has no use for them |
+| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](config.md#broker-fields), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/maku` leaves them out, since `maku configure` has no use for them |
 
 ### `GET /api/rooms/{id}/summary`
 
@@ -543,12 +543,12 @@ The room's resume brief: what the work was asked for, the acceptance checks it r
 since a cursor, the one need that blocks it and the one next step. It is fixed prose over quoted data
 (CD11): every line is a statement, the thing to do is a link the broker built, and nothing here decides
 anything. Same log and same cursor, same text. It is a room read like the summary: the same room access,
-role check and read budget. `room_brief` serves the same envelope over `/mcp`, so an agent resuming a
+role check and read budget. The `task` tool reads the same log with the same cursor over `/mcp`, so an agent resuming a
 session reads what a person reads.
 
 | Param | Holds |
 |---|---|
-| `since` | `seq:N`, the `cursor` of the last brief, or an RFC 3339 instant: only what moved after it. Without one, the last 24 hours, as `room_changes` reads without a cursor. A malformed `since`, or one in the future, is `400`: it is neither everything nor nothing |
+| `since` | `seq:N`, the `cursor` of the last brief, or an RFC 3339 instant: only what moved after it. Without one, the last 24 hours, as `task` reads without a cursor. A malformed `since`, or one in the future, is `400`: it is neither everything nor nothing |
 
 | Field | Holds |
 |---|---|
@@ -556,7 +556,7 @@ session reads what a person reads.
 | `room` | The room id |
 | `text` | The brief, Markdown: `Resume:` and the room, with the issue and its title when it has one; `Asked:`; `Acceptance:`, each check of the last handoff's scope in a code span; `Plan:`; `Changed since …`, at most 20 milestones with the rest counted; `Blocked on:`; `Fix:`, one line naming what to change, when the room's facts or its last notes name one of the three failures a person can fix — the factory App missing a permission, a check the App cannot read, a CI log host outside the egress policy; the one `Next:` step with its action link; `Links:`. A section whose data is absent is left out. The agents' words are quoted, never an instruction |
 | `cursor` | `seq:N`, the last event the changed block covered: pass it back as `since` |
-| `question?` | When the last scope is in `question` state, `{text, recommended}`: the scoper's question and first assumption (empty when there is none), from the same authorized room read as the brief. Omitted for every other scope state; the rendered `text` is unchanged. `maku mcp`'s local `need_answer` reads this first |
+| `question?` | When the last scope is in `question` state, `{text, recommended}`: the scoper's question and first assumption (empty when there is none), from the same authorized room read as the brief. Omitted for every other scope state; the rendered `text` is unchanged. `task` returns the same `question`, which `maku mcp`'s `answer` reads first |
 
 | Status | When |
 |---|---|
@@ -638,11 +638,11 @@ unknown fields refused (`400 bad_json`).
 ### `GET /api/needs`
 
 What needs the caller, across every room they may read: one list, one order. `needs/v1` is one
-derivation, and the room rows, the room summary, this route, `needs_list` and the web panel all read it,
+derivation, and the room rows, the room summary, this route, the `inbox` tool and the web panel all read it,
 so no two surfaces can disagree. It is a human token's route, as every route but `POST /mcp`: a sponsored
-principal reads its own rooms' needs through `needs_list`, and is `401` here. Served unless
+principal reads its own rooms' needs through `inbox`, and is `401` here. Served unless
 `human.needs.enabled` is off ([the broker's configuration](config.md#broker-fields));
-off, it is a `404` and `needs_list` is not listed either.
+off, it is a `404`, and `inbox` lists the caller's own tasks instead.
 
 | Param | Holds |
 |---|---|
@@ -795,7 +795,7 @@ An MCP server for a developer's local coding agent, through [`maku mcp`](../cli.
 streamable HTTP on this listener (factory interfaces F2). It is off unless the broker's config sets
 `human.mcp.enabled` ([integration](../integration.md)); off, `/mcp` is `404`. Every check of the table
 above applies first. Then it takes tokens from the CLI's client (`human.roomctlClientIDFile`) only, so nothing here carries the
-web UI's standing: any other token is `403 mcp_needs_roomctl`, counted in
+web UI's standing: any other token is `403 mcp_needs_maku`, counted in
 `maku_rooms_rejected_actions_total`.
 
 It keeps no session: each `POST` holds one JSON-RPC message and gets its answer as JSON, so either
@@ -809,70 +809,33 @@ notification is `202`. Each person makes 10 requests a second, burst 20, per rep
 
 | Tool | Standing | Arguments | Result |
 |---|---|---|---|
-| `rooms_list` | any member | `repo?`, `mine?`, `needsMe?`, `all?` | The overview table as the text (Markdown, to show as it is), and `{rooms, access}` as `structuredContent`: `GET /api/rooms`'s rows and its `X-Rooms-Access`. `all` adds to the text the rooms that ended over a week ago; `structuredContent` always has every row |
-| `room_summary` | a reader of the room | `room`, `after?` (`seq:N`) | The room's card as the text (Markdown), and its [`summary/v1`](#get-apiroomsidsummary) as `structuredContent` |
+| `handoff` | any member; a sponsored principal | `text` to begin (with `repository?`, `candidates?`, `context?`, `evidence?`), or `id` with `answer` or `acceptRest: true` to continue; a sponsored principal's `on_behalf_of` and `ceiling` | `{apiVersion: "handoff/v1", id, text, question?, ready, workflow, budget}`: the plan as the text (to show as it is), the one question to ask with its recommendation, `ready` once no gap is left, the workflow the plan names and its budget in USD. The broker stores the plan under `id` for 24 hours, bound to the caller, and files nothing ([the planner](#the-planner-on-mcp)). With planning off, the tool is still listed and answers the line `Planning is not available here; file on GitHub.` as a tool error |
+| `inbox` | any member; a sponsored principal, the rooms it watches | `since?` (RFC 3339 UTC instant, not in the future), `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page. When `human.needs.enabled` is off, or nothing waits, the text is instead the table of the caller's own tasks (the rows of `GET /api/rooms` for issues they filed or labelled and pull requests they authored or review) and `items` is empty |
+| `task` | a reader of the room; a sponsored principal, its own task's room | `task` (the 8-character room id), `since?` (`seq:N`, the `cursor` of the last call, or an RFC 3339 instant) | Where one task stands, as the text (Markdown) and as `structuredContent`, `task/v1`: `{apiVersion, room, url?, since?, text, cursor, status, runs?, needsYou?, coordination?, question?, items?, more?, canStart, canStartWhy?, untrusted: true}`. It is the room's [summary](#get-apiroomsidsummary) card (state, budget, the merge gate's decision once the pull request has been evaluated), what needs you, the scoper's `question` (`{text, recommended}`) when one is open, and the milestones since `since` (without one, the last 24 hours; at most 2,000 events scanned, `more > 0` says there is more to read). Pass `cursor` back as `since`: a cursor past the room's last event is clamped to it. `canStart` is true when `human.mcp.start` offers start for the task's repository and the caller writes to it on GitHub; else `canStartWhy` is `off` (not offered, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). A fork's copied events are not its own milestones |
 | `room_tail` | a reader of the room | `room`, `cursor?` (`seq:N`), `kinds?` (at most 10 event types) | `{room, state, events: {untrusted: true, items}, cursor, more}`: at most 100 events and 256 KiB of payload past the first, at most 2,000 scanned for `kinds`; without a cursor, the last 50. Pass `cursor` back; `more` says the log held more when it was read |
-| `room_changes` | a reader of the room | `room`, `cursor?` (`seq:N`) | What changed since a cursor, as a list of milestones (run started and ended, notes, handoffs, approvals asked and decided, verdicts, the PR opened or merged, holds, the budget) in the text, and `{room, url, since, items, more, cursor, untrusted: true}` as `structuredContent`. Without a cursor, the last 24 hours. A call scans at most 2,000 events: `more > 0` says there is more to read (milestones left out, or events past that bound), and `cursor` is the last event it covered: pass it back. A cursor past the room's last event is clamped to it, so the cursor returned can be lower. A fork's copied events are not its own milestones |
-| `room_queue` | collaborator | `room`, `text` | `{room, queued}`: the message's `seq`. Its text is machine-sent |
 | `room_fork` | as the `fork` action | `room`, `at`, `role?`, `prUrl?`, `egress?`, `note?` | `{room, url, run?, runError?}`. The note is machine-sent |
-| `issue_draft` | any member | `repo`, `title`, `body` | `{repo, title, body, stripped, canStart, canStartWhy?}`: the draft with hidden and control characters stripped (`stripped` counts them). `canStart` is true when `repo` is in `human.mcp.sessionStart` and the caller writes to it on GitHub; else `canStartWhy` is `off` (not listed, no GitHub check wired, or a sponsored caller), `not_linked`, `no_write` (read only, or the GitHub App cannot see the repository) or `unverified` (the check failed). Refused unless the title reads `<area>: <what is wrong>` (at most 256 characters), the body holds `## What is wrong`, `## What it should be` and `## Acceptance check` in that order (at most 16 KiB), any `## Decisions` records are valid, no clarification marker remains, and the redactor finds no secret. It files nothing: `maku mcp`'s `issue_file` does |
-| `needs_list` | any member; a sponsored principal, the rooms it watches | `since?`, `room?`, `repo?` | The caller's needs across the rooms they may read, as `needs/v1`, as the text and as `structuredContent`: [`GET /api/needs`](#get-apineeds)'s `{apiVersion, items, cursor, access, unread?}`, item for item and in the same order. Listed only while `human.needs.enabled` serves the route. It decides nothing: each item's `action` is a link — a merge on GitHub, an approval on the room page |
-| `intake_plan` | any caller, when `human.intake.plan.enabled` | `text`, `repository?`, `candidates?`, `context?`, `evidence?`, an optional revision envelope (`plan`, `hash`, `candidate`), and a sponsored principal's `on_behalf_of`, `ceiling` | `plan/v1` and its hash, ranked gaps and the first as the compatibility question, `canStart`. One public-text-only model call below the round cap; it files nothing ([the planner](#the-planner-on-mcp)) |
-| `plan_check` | any caller, when `human.intake.plan.enabled` | `plan`, `hash`, optional `candidate`, `on_behalf_of?` | The final plan re-validated with the hash recomputed, and `canStart`: the door every filing re-validates through ([the planner](#the-planner-on-mcp)) |
 | `intent_classify` | the Slack App's sponsored principal alone, when `human.slackIntents` is set | `team`, `user`, `channel` (Slack ids), `reply`, `phase` (one closed word), `collect?` | `{intent, text, textHash, confidence, expires, sampleId?}`, or one of the refusal words `invalid_arguments`, `not_permitted`, `not_linked`, `link_unverified`, `capped`, `unavailable`. One read-only model call; it reads no room and decides nothing ([`intent_classify`](#intent_classify-on-mcp)) |
 | `coordination_plan` | any caller, when `human.intake.plan.enabled` and `coordination.mode` is not `off` | `text`, `candidates` (2 to 20), `primary`, `context?`, `id?`, `version?`, and a sponsored principal's `on_behalf_of` | A validated two-repository `CoordinationPlan`, its hash, diagnostics and the attempt's planning record. One call on the planner's route; it files nothing ([coordination](#coordination-on-mcp)) |
-| `room_brief` | a reader of the room; never a sponsored principal | `room`, `since?` (`seq:N` or RFC 3339) | The resume brief as the text, and [`brief/v1`](#get-apiroomsidbrief)'s `{apiVersion, room, text, cursor, question?}` as `structuredContent`: what the work was asked for, its acceptance checks, what changed since the cursor (without one, 24 hours), what blocks it and the one next step. Fixed prose over quoted data: pass `cursor` back as `since`. Not on a sponsored principal's list |
 
-The view tools (`rooms_list`, `room_summary`, `room_changes`, `needs_list`, `room_brief`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
+`start`, `wait` and `answer` are `maku mcp`'s own tools: it serves them on the developer's machine, and the broker lists none of them. They are described under [the MCP server](../cli.md#the-mcp-server); they reach the broker through the tools above and its actions.
 
-`prompts/list` and `prompts/get` serve the prompts `factory_intake` (`request`), `handoff` (`what`),
-`plan` (`what`), `status` (`room`), `resume` (`room`) and `inbox`: canned messages the client offers
-as slash commands. A sponsored principal's list is empty. `factory_intake` is the canonical intake
-loop and `handoff` returns the same text for compatibility. It passes the developer's words and
-context to `intake_plan`, shows the answer as it is, asks only the first gap with its recommendation,
-and offers "accept the rest" at every question. Answers replace only clarification markers and append
-matching D/A records in `candidate`, then travel with the base `plan` and its `hash` in the revision
-envelope. Accepting the rest uses `plan_check` with that envelope and one A record per recommendation.
-When no gaps remain, the loop finishes with `plan_check`, shows the final draft and assumptions, then
-calls `issue_file`. The same short contract is in `intake_plan`'s tool description and `initialize`'s
-server instructions, so a client that declares no prompts capability follows the identical loop. The
-broker remains the only planner. `plan` stops after showing what the planner answered. `resume` is one
-call to the needs list, then `room_brief` of the room it names first — or of the room the developer
-passed — so a session starts from the brief rather than from a search of the log, and never claims a
-room exists before `room_brief` shows it. `inbox` is one `needs_list` call: when its list is empty it
-says so in one line and names `rooms_list` with `mine`, rather than making a second call.
+| Tool | Where | Arguments | Result |
+|---|---|---|---|
+| `start` | `maku mcp` | `id` (the id `handoff` answered) | Has the broker re-validate the stored plan, then shows the developer a form: the issue, the workflow (a choice when the repository offers several) and the budget. `File this issue` defaults to no; `Start now` defaults to yes and is offered only where `task`'s `canStart` rule holds. Only an accepted form files the issue with the developer's own `gh`, and `Start now` also labels it `factory/ready`. `{filed, url, started, task?, room?, why?, next?}`; a client that cannot show a form gets `needs_confirmation` and the one `gh` command that files the issue |
+| `wait` | `maku mcp` | `task?` (an id or a reference such as `#<issue>`; without one, the developer's open tasks, at most 20), `timeout?` (seconds, 1 to 1800, default 300) | Returns when a watched task newly needs the developer, opens a pull request or ends, or at the timeout: `{room, condition}` with `condition` one of `needs_you`, `pr_opened`, `ended`, `timeout`, and the task's text |
+| `answer` | `maku mcp` | `task` (an id or a reference), `text?` (at most 16 KiB) | With a question open, a form shows it, the recommendation and the issue's diff; an accepted form appends the answer to the issue's `## Decisions` section with the developer's `gh`, and re-applies `factory/ready` when the developer may start work there and keeps `Restart the task` on. `{answered, issue, task, restarted, next?}`. With no question open, `text` is a note for the task's next run, sent after the developer confirms: `{task, queued}`. Its text is machine-sent |
 
-The local relay's `need_answer` is the post-filing scoper-bounce counterpart, not a second broker
-planner. Its strict arguments are `{repo, issue, room?}`; without `room`, `rooms_list` supplies at most
-one match and several refuse as `ambiguous_room`. It acts only with `factory/needs-author` present and
-`factory/ready` absent. It reads the authorized `room_brief` `question` first, then falls back to the
-newest public factory `event=needs-author-…` comment only when its author case-insensitively matches the
-CLI config's `factoryLogin` (set by `maku configure --factory-login`). An empty login disables the
-fallback; a forged newer comment refuses it rather than using an older trusted comment. No room is
-acceptable only when that trusted public comment supplies the question; an internal, untrusted, or
-missing question refuses as `needs_room_access`, naming the maintainer/room-reader path rather than
-exposing or inventing one.
+`maku mcp --advanced` also lists `room_checkout`, `coordination_checkout` and `coordination_open`, which stay on the developer's machine, and the broker's `room_tail` and `room_fork` (below).
 
-The form shows the question, recommendation and the full line diff of the body, with `<answer>`
-marking the single substitution the developer's trimmed one-line answer makes. For the acceptance
-question ("which command or observation proves it is done?") the diff includes the `## Acceptance check`
-section, created after "What it should be" and before `## Decisions` when the issue has none, with a
-marker replaced or the answer appended when it exists, plus the `D<n>: Acceptance check: <answer>`
-record. A blank `answer` accepts the recommendation when there is one. `send`
-defaults to false. Only an accepted form with send true re-reads the issue and, when body, labels
-and `updatedAt` are all unchanged, calls `gh issue edit --body-file=-` once. It never adds or removes a
-label. Success returns `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply
-factory/ready"}`. Decline, cancel, and send false instead return `next:"the question is unanswered and
-nothing was written"`; those choices, no form capability (`needs_confirmation`), wrong labels,
-`issue_changed`, and every question/authorization refusal write nothing. A GitHub edit failure returns
-`not_answered` and no label operation; inspect the issue before retrying because a transport error cannot
-prove whether the remote edit landed.
+The view tools (`inbox`, `task`) return their text as `content` and their JSON as `structuredContent`, with an `outputSchema`; the JSON is not repeated in the text. `run_create`'s and `room_tail`'s task results stay JSON text, as `tasks/result` returns them.
 
-No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
+`prompts/list` and `prompts/get` serve three prompts, canned messages the client offers as slash commands: `handoff` (`what`), `task` (`task`) and `inbox`. A sponsored principal's list is empty. `handoff` tells the model to pass the developer's words to the `handoff` tool, show the plan as it is, ask only the one question with its recommendation (offering "accept the rest" at every question), answer with `{id, answer}` or `{id, acceptRest: true}`, and call `start` when `ready` is true: the client never writes or edits a plan. The same short contract is in `initialize`'s server instructions, so a client that declares no prompts capability follows the identical loop. `task` is one call for where a task stands, or, with none named, `inbox` and then `task` for the first task that needs the developer, so a session starts from the task's text rather than from a search of the log and never claims a task exists before a tool shows it. `inbox` is one `inbox` call: when nothing needs the developer it says so in one line.
+
+No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `start`'s form, which `maku mcp` offers where `handoff`'s re-validation says `canStart`, can apply `factory/ready` with the developer's own `gh`; `answer` re-applies it on the same standing, after its own form. The tools that write act through
 the CLI's client (`human.roomctlClientIDFile`): the [actions](#actions)' rules, limits and rejections apply. Arguments are
 strict: an unknown field is refused. Every string an agent wrote comes back under `untrusted: true`,
 as the summary's notes do. A refused call is a tool result with `isError: true` whose text starts
-with its reason: `invalid_arguments`, `invalid_draft`, `rejected: <the act's rejection>`, `no such
+with its reason: `invalid_arguments`, `invalid_draft`, `handoff_expired`, `rejected: <the act's rejection>`, `no such
 room` (a missing room and one the caller may not read alike), `access_unverified`, `rooms
 unavailable`, `log unavailable`, `room log unreadable` or `unavailable`. Each call counts in
 `maku_rooms_human_mcp_calls_total{tool, outcome}`.
@@ -894,45 +857,31 @@ Another person's task id, or a malformed one, is `-32602 no such task`. A room r
 a while is `-32603`: poll again. There is no `tasks/list` or `tasks/cancel` (`-32601`), and no task
 is `input_required`: that state belongs to [`run_create`](#sponsored-principals-on-mcp).
 
-### `classes_list` on `/mcp`
-
-`classes_list` shows what a repository offers at intake: the [catalogue](#get-v1catalogueownername) as
-lines to show as they are (text) and as `structuredContent`. It is read-only and changes nothing. It is
-listed only when the broker has a `factoryURL`; without one it is an unknown tool.
-
-| Tool | Arguments | Result |
-|---|---|---|
-| `classes_list` | `repository` (owner/name, required); `class?` (a class name, for its detail); `on_behalf_of?` (`slack:<team>/<user>`), a sponsored principal's alone and required of it | Without `class`, one line per offered class (`docs-links · live · merges on its own when the gate's conditions hold · profile links-solo`), the evaluation mode and control share, and whether the caller may pin. With `class`, that class's ceiling, floor, variants, escalation targets and each profile's roles, tier, tests-first, loop and description. `structuredContent` is the catalogue, cut to that class and its profiles when `class` is set |
-
-A human reads the catalogue as themselves; the Slack App reads it for the user it names. Refusals are
-`not_found` (no such repository, or the caller cannot read it: the same words either way),
-`not_linked`, `not_permitted`, `no_such_class`, `invalid_arguments` and
-`catalogue_unavailable: The factory's list of classes could not be read; try again in a minute.` Only a
-maintainer is told "You may pin ..."; anyone else is told the factory chooses the profile. A class
-description is a maintainer's text, so it is quoted on one line and a name with markup is set in a code
-span. Each call is counted in `maku_rooms_human_mcp_calls_total{tool="classes_list"}`, and each read of
-the factory in `maku_intake_catalogue_reads_total{outcome="hit"|"miss"|"error"}`.
 
 ### The planner on `/mcp`
 
-`intake_plan` and `plan_check` are the governed planner (CD5, CD17, CD18, CD27): a sentence becomes
-`plan/v2` through one bounded call to the model gateway ([`maku-gateway`](../gateway.md#the-planner-and-the-classifier)), and the plan's hash is the value every later
-door re-validates before anything is filed. They are **off** unless the broker's config sets
-`human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
-`run_create` is to a human token. `config.Load` refuses the switch unless it also has
-`human.mcp.enabled` (both tools exist on this listener alone), `human.access` (the write check the
+`handoff` is the governed planner (CD5, CD17, CD18, CD27): a sentence becomes
+`plan/v2` through one bounded call to the model gateway ([`maku-gateway`](../gateway.md#the-planner-and-the-classifier)), the broker stores the plan under the
+`id` it returns for 24 hours, and the plan's hash is the value every later door re-validates before
+anything is filed. It is **on** only when the broker's config sets
+`human.intake.plan.enabled`; off, `handoff` stays listed and answers the one fixed line
+`Planning is not available here; file on GitHub.` as a tool error, as a Slack mention does, and
+`run_create` is an unknown tool to a human token. `config.Load` refuses the switch unless it also has
+`human.mcp.enabled` (the tool exists on this listener alone), `human.access` (the write check the
 candidate set is drawn from) and `factoryURL` (the factory's catalog, which supplies both the
 candidate repositories via [`GET /v1/catalogue`](#get-v1catalogue) and each repository's classes and
 workflows; `human.intake.plan.repositories` is optional and narrows the factory's list when set,
 logging a warning naming any entry the factory does not serve) — each named by its own error, so the
 switch cannot land ahead of its parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
 visibility can be read, so the guard would refuse every plan) or without an `Actor` redactor
-(`plan_check` scans a plan's text as `issue_draft` does).
+(a plan's text is scanned for secrets, as an issue draft is).
 
-| Tool | Arguments | Result |
-|---|---|---|
-| `intake_plan` | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone. A revision adds the previous `plan`, its `hash` and the edited `candidate`, all three together | `{plan, hash, question, canStart, canStartWhy?, degraded}`: the plan, the hash the broker computed over it, the first ranked gap as `question`, whether this caller may start the factory on it, and whether a template rather than the planner wrote it (`degraded`, `human.intake.plan.fallback: composer`) |
-| `plan_check` | `plan` (the base `plan/v2` object as it was shown), `hash` (`sha256:<64 hex>`), optional `candidate` (the deterministic final revision), `on_behalf_of?` (a sponsored principal's, as above) | `{plan, hash, canStart, canStartWhy?, maintainer?}`: the final plan re-validated with the hash recomputed over it or its candidate; `maintainer` is the caller's flag from the repository's catalogue, absent without one. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` with the same issues as `plan/v2` (see below). It files nothing, calls no model, spends no daily plan and writes no record |
+| Part | Holds |
+|---|---|
+| Begin | `text` (one sentence about what is wrong, required, at most 16 KiB); `repository?` and `candidates?` (owner/name, at most 20 candidates); `context?` (at most 4 KiB) and `evidence?` (at most 5 items of at most 280 characters, counted against the same 4 KiB); `on_behalf_of?` (`slack:<team>/<user>`) and `ceiling?` (USD, 0 or absent means the class's), both a sponsored principal's alone |
+| Continue | `id` with either `answer` (at most 16 KiB, no clarification marker) or `acceptRest: true`; nothing else but a sponsored principal's `on_behalf_of` (which must match the one that began it) and `ceiling?`. An expired, unknown or another caller's id is `handoff_expired: start a new handoff` |
+| Result | `{apiVersion: "handoff/v1", id, text, question?, ready, workflow, budget}`: the plan as text to show as it is, the first ranked gap as `question` (`{text, recommended}`), `ready` once no gap is left, the workflow it names and its budget in USD. The merge and the policy are not named: none exists before a pull request does. A template rather than the planner wrote the text when it says so (`human.intake.plan.fallback: composer`) |
+| Re-validation | `start` (through `maku mcp`) and `run_create` have the broker re-validate the stored plan with the hash recomputed, and read `canStart`, the caller's `maintainer` flag and the workflows the repository's catalogue offers. It files nothing, calls no model, spends no daily plan and writes no record. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` with the same issues as `plan/v2` (see below) |
 
 `plan/v2` is `{apiVersion: "plan/v2", rev, round, roundsLeft, planner: {model, surface, at}, repository,
 repositoryEvidence, alternatives, issues, budget: {ceilingUSD, source}, gaps, question, hash}`; each issue
@@ -948,7 +897,7 @@ floor sets none: triage chooses them) and the suggestion come from the plan repo
 answer plans from `human.intake.plan.classes`, with no suggestion.
 
 **The upgrade.** `apiVersion` is material, so every hash changed at `plan/v2`. A `plan/v1` sent to
-`plan_check` or `run_create` (a Slack proposal posted before, a harness mid-loop) is checked against its
+`run_create` (a Slack proposal posted before, a harness mid-loop) is checked against its
 own hash and the requester's guard, then upgraded with no model call: the same issues, `profile: ""`,
 the roles and ceiling of the plan repository's current classes, and the factory's-choice suggestion with
 an empty `why`, under a new hash. The answer is `{status: "replanned", plan, hash}`; nothing is filed,
@@ -959,24 +908,21 @@ and the Slack App redraws the proposal with it. A class the repository no longer
 `roundsLeft` are display and untrusted; the hashed set is `{apiVersion, repository, budget, issues}`
 (CD27), so `hash` — computed by the broker, never by a caller — is what a plan *is*.
 
-A revision envelope carries the base `plan`, its `hash` and a `candidate`. The broker recomputes the
-base hash, then permits only replacement of existing markers with non-empty answers and the appended
-Decision/Assumption records for those gap IDs. Repository, budget, issue order, classes, roles and
-dependencies cannot change. It returns the candidate with remaining gaps recomputed and a **new
-hash**. `plan_check` without `candidate` keeps the old unmodified-plan call shape; with one it performs
-the same deterministic revision and final check without a model call. Slack does not use this envelope:
-its existing thread replies still make initial-shape `intake_plan` calls.
+**A continuation applies to the stored plan.** The caller sends `id` with an `answer` or `acceptRest: true`,
+never a plan: the broker reads the stored plan, recomputes its hash, and permits only replacement of
+existing markers with non-empty answers and the appended Decision/Assumption records for those gap IDs.
+Repository, budget, issue order, classes, roles and dependencies cannot change. With a gap pending,
+`answer` settles the first one; `acceptRest` settles every remaining one with its recommendation, with
+no model call; with none pending, `answer` is added to the context and the plan is made again. The
+result carries the plan with the remaining gaps recomputed and the stored plan's **new hash**, which the
+caller never sees or edits.
 
-Intermediate composition and `intake.Check` tolerate clarification markers. Final `plan_check`,
-`issue_draft`/`issue_file`, `run_create`, factory task creation, hardening issue output and proposal
-publishing do not: a final plan has no gaps or unresolved markers. An optional `## Decisions` section
+Intermediate composition and `intake.Check` tolerate clarification markers. A final plan — the one
+`start` and `run_create` re-validate, as factory task creation, hardening issue output and proposal
+publishing do — has no gaps or unresolved markers. An optional `## Decisions` section
 follows `## Acceptance check`; its one-line records use `D1 [g1]: <choice>, because <reason>` and
 `A2 [g2]: assumed <answer>, because <why>`. IDs ascend and are unique within one issue but need not be
 contiguous. A post-filing scoper record omits the gap reference.
-
-Mixed versions fail closed through strict decoding: an older broker refuses revision fields or a plan
-with `gaps` as `invalid_arguments` rather than ignoring them. A newer broker preserves legacy plan
-hashes and the legacy `Question` mapping, so in-flight Slack proposals still render and confirm.
 
 **What the model decides, and what it does not.** The reply names the class and drafts the issues;
 roles, the ceiling and the hash are the config's and the broker's. A reply naming a role or a budget
@@ -992,12 +938,12 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 
 | Reason | One line |
 |---|---|
-| `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route |
+| `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the issue on GitHub yourself, or wait for the internal route |
 | `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
 | `repository_not_served_here` | the request names a repository outside the candidate set, checked before any model call: `<repo> isn't served here (served: …); an operator adds it to the repositories served here`. Names are `owner/name`, a github.com URL, or a bare name of a repository the broker knows, in the text or the context |
 | `no_write` | you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it |
 | `invalid_draft` | the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order |
-| `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it through a revision |
+| `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it with `handoff` |
 | `invalid_decisions` | the optional Decisions section has malformed, duplicate or descending records |
 | `planner_invalid` | the plan is not the shape the contract asks for (`<field>: <value>, the bound is …`); ask again |
 | `planner_unavailable` | the plan service is unavailable; try again later. The answer stays generic: the broker's `intake plan` log line carries the cause as `cause=` (never the key) |
@@ -1012,16 +958,16 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 
 The daily cap is `human.intake.plan.dailyPlans` per **effective requester** — a human's GitHub login,
 a Slack user's `slack:<team>/<user>` — per UTC day, counted on this replica. The initial plan and every
-`intake_plan` revision spend one daily slot, including a revision that reaches the round cap;
-`plan_check` spends none. `human.intake.plan.maxRounds` (default 10) separately bounds clarification
-rounds in one intake. Below it, an `intake_plan` revision makes one model call. On the cap-reaching
-revision, the broker accepts all remaining recommendations as `A<n> [g<n>]` records and returns a final
-plan without another model call. The two caps are therefore independent: `maxRounds` ends one
-conversation, while `dailyPlans` bounds total attempts across conversations.
+continuation that answers a gap or adds context spend one daily slot, including the one that reaches the
+round cap; `acceptRest` and the re-validation `start` makes spend none. `human.intake.plan.maxRounds`
+(default 10) separately bounds clarification rounds in one intake. Below it, a continuation makes one
+model call. On the cap-reaching one, the broker accepts all remaining recommendations as `A<n> [g<n>]`
+records and returns a final plan without another model call. The two caps are therefore independent:
+`maxRounds` ends one conversation, while `dailyPlans` bounds total attempts across conversations.
 
-Neither tool files, stores or approves anything: the plan is shown, and the coding agent's `issue_file`
-(or the Slack proposal, later) re-validates it through `plan_check` first. Both count in
-`maku_rooms_human_mcp_calls_total{tool, outcome}`, and `intake_plan` also feeds
+`handoff` files and approves nothing: the plan is shown, and `start` (or the Slack confirm) has the
+broker re-validate the stored plan first. It counts in
+`maku_rooms_human_mcp_calls_total{tool, outcome}`, and the planner's model calls also feed
 `maku_intake_plan_total`, `maku_intake_plan_seconds` and `maku_intake_plan_tokens`.
 
 **For the operator:** the planner's model call is the only place the broker reaches a model; it sends
@@ -1036,7 +982,7 @@ provider's: Z.ai names `low` and `high` for `glm-5.3`, not `medium`.
 
 `coordination_plan` (v4 MR4) plans one change across two public repositories on the planner's own
 route: the same call, the same requester resolution, the same guard and the same daily counter as
-`intake_plan`. It is listed only while `human.intake.plan.enabled` and the top-level
+`handoff`. It is listed only while `human.intake.plan.enabled` and the top-level
 `coordination.mode` is `plan` or `execute`; `off`, the default, lists nothing. The block is the
 factory's (`{mode, publicOnly: true, maxChildren: 2}`), read with the same rules, and `config.Load`
 refuses a mode other than `off` without the planner.
@@ -1044,9 +990,9 @@ refuses a mode other than `off` without the planner.
 | Step | What happens | Refusal |
 |---|---|---|
 | Arguments | Closed: no file, confirm, merge, role or budget argument | `invalid_arguments` |
-| Requester and primary | Resolved as `intake_plan` does; the requester must write `primary` | `not_linked`, `no_write`, `repository_not_allowed` |
+| Requester and primary | Resolved as `handoff` does; the requester must write `primary` | `not_linked`, `no_write`, `repository_not_allowed` |
 | Every other candidate | Served by `human.intake.plan.repositories` and public, before any text leaves | `private_repository_unsupported`, `repository_not_allowed`, `repository_unverified` |
-| Daily slot | One of `human.intake.plan.dailyPlans`, shared with `intake_plan` | `daily_plans_reached` |
+| Daily slot | One of `human.intake.plan.dailyPlans`, shared with `handoff` | `daily_plans_reached` |
 | One call | The model proposes the reading only; it may not name roles, a tier, a maintainer or money | `planner_invalid`, `planner_timeout`, `planner_unavailable` |
 | Composition | Children's roles (the class's, without `scoper`) and allocation (its ceiling) from the class table; one run is a tenth of it; planning and each of 4 integration runs cost one run of the primary's class; `coordination.Validate` in plan mode | a coordination reason, such as `policy_unresolved` or `invalid_plan`, with its field |
 
@@ -1062,21 +1008,21 @@ A sponsored principal (a machine client at your identity provider, declared in t
 `human.mcp.sponsored` and the factory's `api.sponsored`, [factory](sponsored-principals.md))
 reaches `/mcp` with its own client-credentials token, whose audience must hold the install's
 audience (`human.audience` or `human.audienceFile`; [preset: ZITADEL](../identity.md#the-presets): the project, `human.projectIDFile`). Nothing
-else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees six tools, plus
-`intent_classify` when `human.slackIntents` names it, and the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`, `room_summary`,
-`room_tail`, `room_changes`, `needs_list`, `intake_plan` and `plan_check`; `room_queue`, `room_fork` and
-`rooms_list` are unknown tools to it, as is `needs_list` while `human.needs.enabled` is off. It reads a
-room only as one of its `watcher` members, which the factory adds when it creates its task's room, with no
-GitHub check.
+else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees `run_create`,
+`handoff`, `task`, `inbox` and `room_tail`, plus `coordination_plan` when `human.intake.plan.enabled`
+and the top-level `coordination.mode` allow it, `intent_classify` when `human.slackIntents` names it, and the
+link tools to `human.slackLink.principal`; every other tool, `room_fork` among them, is an unknown tool to it.
+It reads a room only as one of its `watcher` members, which the factory adds when it creates its task's
+room, with no GitHub check.
 
-`needs_list` is its one room-scoped read (CD28): the room's needs, not a login's, so the merge it cannot
+`inbox` is its room-scoped read (CD28): the room's needs, not a login's, so the merge it cannot
 perform is listed with a link to the pull request and no field that could carry a decision — the schema
-takes `since`, `room` and `repo` only, and refuses anything else. The two legacy room reads stay need-free
-(B1): `room_summary` and the room's row say nothing needs it, as they did before.
+takes `since`, `room` and `repo` only, and refuses anything else. It is served whatever `human.needs.enabled`
+says. `task` reads one of its watched rooms; its `canStart` is always false.
 
 | Tool | Arguments | Result |
 |---|---|---|
-| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, with the `issue_draft` rules), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task); `plan?` (the `plan/v2` the task was confirmed from) with `plan_hash?` (the `sha256:` value the broker answered beside it) — both, or neither. A planned task carries the plan issue's `class` and suggested profile to the factory (`POST /v1/tasks` `class`, `suggested`); the call names neither | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` and files nothing |
+| `run_create` | `repo`, `text`, `dataClass` (`public`), `max_cost` (USD, above 0), all required; `title?` (files the issue, held to the issue template: `<area>: <what is wrong>`, then the three headings in order), `on_behalf_of?` (`slack:<team>/<user>`), `ref?`, `idempotency_key?` (at most 128 characters; default a hash of the arguments, so a retried call makes one task); `plan?` (the `plan/v2` the task was confirmed from) with `plan_hash?` (the `sha256:` value the broker answered beside it) — both, or neither; or `handoff` (the id `handoff` answered, with `on_behalf_of`), instead of `plan`, `title` and `text` (below). A planned task carries the plan issue's `class` and suggested profile to the factory (`POST /v1/tasks` `class`, `suggested`); the call names neither | `{task, room, issue, duplicate, url, sponsor?}`: the factory's answer, the room's page, and the GitHub login that sponsors a new task. A `plan/v1` is answered `{status: "replanned", plan, hash, canStart: false}` and files nothing |
 | `slack_link_code` | `team`, `user` (Slack ids), `handle?`, `name?` (display only). Listed only to `human.slackLink.principal`; `team` must be `human.slackLink.teamID` (`wrong_team`) | `{url, expiresAt}`: `<publicURL>/link/slack?code=<code>`, single use, 10 minutes; it replaces the user's earlier code. `too_many_codes` past 1000 waiting ([Slack self-serve link](../slack.md#self-serve-link)) |
 | `slack_unlink` | `team`, `user`. Listed only to `human.slackLink.principal` | `{unlinked}`: whether the Slack user had a self-serve link |
 
@@ -1091,12 +1037,18 @@ does not match `plan_hash`, so a plan edited after it was shown is never filed),
 does not carry exactly one issue (`invalid_arguments`: Slack files one issue per call, CD19),
 `plan_changed` unless `repo`, `title` and `text` are the plan's own repository, title and body, and
 `invalid_arguments` for a `max_cost` above the plan's ceiling. It then re-validates the plan through
-the same final checks `plan_check` runs — the Slack user's GitHub write access, the allowlist, the class
+the same final checks `handoff` applies — the Slack user's GitHub write access, the allowlist, the class
 table, valid Decisions and no gaps or clarification markers — so a plan this broker cannot hold is
 refused here rather than filed and left to the factory to refuse. `on_behalf_of` is required with a
-plan: the plan is re-validated for the Slack user it was made for, never for the App's own identity. A
-call with no plan is the tool it always was, which is why an App that has not been updated keeps
-working; a titled draft still has to pass `issue_draft`'s final validation.
+plan: the plan is re-validated for the Slack user it was made for, never for the App's own identity.
+
+`handoff` names the same plan without carrying it: the id `handoff` answered replaces `plan`, `title`
+and `text`, and a call that sends any of them beside it is `invalid_arguments`. The broker re-validates
+the stored plan for the Slack user `on_behalf_of` names (required), files its one issue, and refuses an
+expired, unknown or another principal's id as `handoff_expired`. `plan_hash` may pin the hash the plan
+was shown with (`plan_changed` when the stored plan has moved on), and `repo`, when given, must be the
+plan's. A call with no plan and no `handoff` is the tool it always was; a titled draft still has to
+pass the issue template's final validation.
 
 **`run_create` as a task.** With `2025-11-25`, `run_create` lists `execution.taskSupport: optional`.
 A `tools/call` with `task: {ttl?}` creates the factory task and returns an MCP task whose id is
@@ -1129,7 +1081,7 @@ stores nothing unless the caller says the channel opted in, and decides nothing:
 | `team`, `user` | The Slack ids of the reply's author. `team` must be `human.slackIntents.teamID` and the user must be linked (`not_linked` otherwise, with no model call) |
 | `channel` | The channel's id, for the opt-in sample and the log line |
 | `reply` | The reply as Slack decoded it, at most 64 KiB. The model is shown at most `maxInputChars` of it |
-| `phase` | One of `queued`, `running`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `done`, `failed`, `stopped`, `unknown`: the kind of the one `room_summary` status line the App already read. Any other word is `invalid_arguments` |
+| `phase` | One of `queued`, `running`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `done`, `failed`, `stopped`, `unknown`: the kind of the one status line of the room's summary the App already read. Any other word is `invalid_arguments` |
 | `collect` | `true` only for a channel with `collectReplies`: the reply is stored, redacted, for `retentionDays` |
 
 The checks run in one order, and nothing reaches the model before all of them pass: the arguments, the
@@ -1694,7 +1646,7 @@ appended, attributed to `agent:<runId>` with the run's role, origin `client`.
 | `room_progress` | all | `text`, one line of 1–280 characters; one note a minute per run per broker replica, on top of the call limit | `{seq}` | `message{kind: progress}`, delivered to nobody; a refused note over the minute answers `rate_limited: one progress note a minute`. The harness calls it too (#60), through the same identity proxy, so nothing is bypassed: a fixed `Harness (<role>): …` line at the first step and after a commit, push, check run or PR that exited 0, each once, 60 s apart, at most 8. The prefix is a text convention, not an attribution. The minute is shared with the agent's own notes, so the harness's are the guaranteed floor and the model's are best effort. The bounds are per process: the first note of a resumed run starts `(resumed)` |
 | `room_handoff` | implementer, tester, triager | `toRole`, `summary` (1–8 192 bytes), `commit` (the full 40-hex sha, `git rev-parse HEAD`; an abbreviation is refused); `scope` (the triager only, listed to it alone: `{state: ready or question, task, touches, leave, plan, assumptions, acceptance: [{check, proves}], question}`, at most 4096 bytes as JSON; any other role's is refused. It is listed to every triager, but only a scoper run's is used: an investigate triager leaves it empty, as a malformed one refuses the handoff); `split` (the triager only, listed to it alone, and only beside a `scope` in state `ready`: `{why, children: [2 to 5 scopes in state ready, in the order they merge]}`, at most 21 KiB as JSON) | `{seq}` | `handoff{fromRole, toRole, summary, commit, branch, scope?, split?}`; `fromRole` and `branch` from the `AgentRun` |
 | `room_verdict` | reviewer, tester | `verdict: approve \| changes`, `summary`, `commit` (as `room_handoff`) | `{seq}` | `message{kind: review_verdict, verdict, commit, pullRequest}`: `pullRequest` is the run's `spec.task.url` when it is a pull request of `spec.repository`, else absent. The leader then posts it on the PR |
-| `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `room_changes`' `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
+| `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `task`'s `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
 | `room_integration` | triager | `state: passed \| failed`, `reason` (snake_case, 1–64 bytes), `manifestHash` (64-hex) | `{seq}` | `message{kind: integration_result, integration: {state, reason, manifestHash}}`, no text. The harness calls it once at the end of a coordination integration run (v4 MR10, [harness README](../../images/maku-harness/README.md#coordination-integration)); the factory takes it only from the integration Task's current run, under the manifest hash it holds. Harness-only, as `room_judge` |
 | `output_<type>` | implementer, tester, for each type the run's `agents.ogenki.io/safe-outputs` annotation names | the type's payload ([output events](room-log.md#output-events)) | `{outputId, status: requested, seq}` | `message{kind: output_requested, output}`. The factory answers later. `output_push` takes `{bundle}`, a base64 git bundle of at most 8 MiB: the bundle is stored beside the log, and the record keeps its digest and size. `output_push` is harness-only, as `room_judge`: the harness turns the agent's `git push` into it. It is served only when `roomTools.pushRepositories` also names the run's repository |
 | `kb_search` | `roomTools.knowledge.roles` (`triager` by default), with `roomTools.knowledge` set | `query` (1–1024 bytes), `k` 1–20 (absent: the endpoint's default, 5) | `{text, clipped, note}`: the endpoint's answer, as data, never instructions. Over `maxBytes` it is cut at a character and ends with a `[clipped: …]` line, and `clipped` is true | nothing |

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/maku"
+	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomview"
 )
 
@@ -70,13 +71,13 @@ func (r Maku) changes(ctx context.Context, c maku.Client, cursorsPath string, ar
 		return err
 	}
 	room, store := pos[0], maku.Cursors{Path: cursorsPath}
-	args2 := map[string]string{"room": room}
+	args2 := map[string]string{"task": room}
 	if cur := cmp.Or(*cursor, store.Get(room)); cur != "" {
-		args2["cursor"] = cur
+		args2["since"] = cur
 	}
-	_, raw, err := c.Tool(ctx, "room_changes", args2)
+	_, raw, err := c.Tool(ctx, mcpwire.Task, args2)
 	if errors.Is(err, maku.ErrUnknownTool) {
-		return errors.New("maku changes needs a broker with room_changes (agent-platform v0.23.0 or later)")
+		return errors.New("maku changes needs a broker with task")
 	}
 	if err != nil {
 		return err

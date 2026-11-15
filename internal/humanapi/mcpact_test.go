@@ -20,10 +20,10 @@ func actorOn(l *actLog) option {
 }
 
 // F8: a note queued through MCP is stored wrapped, under the caller's standing as maku's.
-func TestMCPRoomQueue(t *testing.T) {
+func TestMCPTaskNote(t *testing.T) {
 	l := &actLog{st: store.RoomState{ID: roomID, Driver: "system:factory", DriverEpoch: 3}}
 	e := setup(t, mcpOn, actorOn(l))
-	got := call(t, e, viaRoomctl("own"), "room_queue", map[string]any{"room": roomID, "text": "use the v2 API"})
+	got := call(t, e, viaRoomctl("own"), "task_note", map[string]any{"room": roomID, "text": "use the v2 API"})
 	if got.isError || !strings.Contains(string(got.structured), `"queued":1`) {
 		t.Fatalf("%+v", got)
 	}
@@ -33,7 +33,7 @@ func TestMCPRoomQueue(t *testing.T) {
 	if d := l.last(); d.OriginClient == "" || !strings.HasPrefix(d.OriginClient, "human:own:mcp-") {
 		t.Fatalf("origin %q", d.OriginClient)
 	}
-	if got := call(t, e, viaRoomctl("dev"), "room_queue", map[string]any{"room": roomID, "text": "x"}); got.text != "rejected: not_permitted" {
+	if got := call(t, e, viaRoomctl("dev"), "task_note", map[string]any{"room": roomID, "text": "x"}); got.text != "rejected: not_permitted" {
 		t.Fatalf("a watcher queues nothing: %+v", got)
 	}
 }

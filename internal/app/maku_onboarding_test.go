@@ -265,7 +265,7 @@ func newLocalBroker(t *testing.T) *localBroker {
 		b.auth = append(b.auth, r.Header.Get("Authorization"))
 		b.mu.Unlock()
 		switch r.URL.Path {
-		case "/.well-known/maku", "/.well-known/roomctl":
+		case "/.well-known/maku":
 			_, _ = w.Write([]byte(`{"url":"` + b.srv.URL + `","humanMode":"local"}`))
 		case "/api/rooms":
 			_, _ = w.Write([]byte(`[{"id":"3kq7x2ma","repository":"Smana/a","phase":"Active","owner":"human:local","lastSeq":42,"you":{"role":"admin"}}]`))
@@ -500,7 +500,7 @@ func TestMakuConfigureKeepsTheIssuersSlash(t *testing.T) {
 	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
-		case "/.well-known/roomctl":
+		case "/.well-known/maku":
 			_ = json.NewEncoder(w).Encode(map[string]any{"url": srv.URL, "issuer": srv.URL + "/", "clientID": "maku-cli",
 				"preset": "generic", "tokenUse": "id"})
 		case "/.well-known/openid-configuration":

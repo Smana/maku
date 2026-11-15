@@ -62,7 +62,7 @@ type Relay struct {
 	// Issues reads and edits an existing issue for need_answer; nil refuses that tool.
 	Issues IssueEditor
 	// FactoryLogin is the only comment author need_answer trusts for its public fallback.
-	// Empty disables that fallback; an authorized room_brief question remains available.
+	// Empty disables that fallback; an authorized brief question remains available.
 	FactoryLogin string
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
@@ -163,8 +163,8 @@ func (r *Relay) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		// is handled inline, and may be the very next line.
 		pre := r.reserve(ctx, m)
 		pool, busy := g, "busy: 8 requests in flight"
-		if pre != nil && (pre.call.Name == toolRoomWait || pre.call.Name == mcpwire.Wait) {
-			pool, busy = gw, "busy: 8 room_wait calls in flight"
+		if pre != nil && pre.call.Name == mcpwire.Wait {
+			pool, busy = gw, "busy: 8 wait calls in flight"
 		}
 		if !pool.TryGo(func() error { r.handle(ctx, m, raw, pre); return nil }) {
 			r.release(pre)
@@ -233,7 +233,12 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 			r.callLocal(m, pre)
 			return
 		}
-		if key, ok := roomRefTools[callName(m.Params)]; ok {
+		name := callName(m.Params)
+		if name == "handoff_check" || name == "task_note" {
+			r.write(mcpwire.Response(m.ID, nil, &mcpwire.Error{Code: mcpwire.InvalidParams, Message: "unknown tool: " + name}))
+			return
+		}
+		if key, ok := roomRefTools[name]; ok {
 			var refusal any
 			if raw, refusal = r.resolveCall(ctx, m, key); refusal != nil {
 				r.write(mcpwire.Response(m.ID, refusal, nil))
@@ -242,7 +247,7 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 		}
 		res, err := r.relay(ctx, raw)
 		if err == nil {
-			res = viewed(callName(m.Params), res, r.URL, time.Now())
+			res = viewed(name, res, r.URL, time.Now())
 		}
 		r.reply(m, res, err)
 	case "tasks/result":

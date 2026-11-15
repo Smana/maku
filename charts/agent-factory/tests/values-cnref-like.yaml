@@ -176,7 +176,6 @@ slack:
     teamID: T07J97G2K2P
     channels:
       C0123ABCD: {repositories: [Smana/cloud-native-ref], maxCostUSD: 2, approvals: true}
-    proposals: {enabled: true}
   networkPolicy: {mode: cilium}
 expose:
   mode: httproute

@@ -4,53 +4,18 @@ package humanapi
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/sanitize"
-	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/repoaccess"
 )
 
-// issueDraft is issue_draft's result: what maku mcp's issue_file shows the developer, then files.
-type issueDraft struct {
-	Repo  string `json:"repo"`
-	Title string `json:"title"`
-	Body  string `json:"body"`
-	// Stripped counts the hidden and control characters removed (F8): what is filed is what is shown.
-	Stripped int `json:"stripped"`
-	// CanStart says whether the handoff may start the factory on Repo for the caller (R11);
-	// CanStartWhy is the reason when not: off, not_linked, no_write or unverified.
-	CanStart    bool   `json:"canStart"`
-	CanStartWhy string `json:"canStartWhy,omitempty"`
-}
-
-// issue_draft validates a factory issue in the skill's shape: hidden characters stripped, the
-// template's title and sections, no secret. It files nothing: issue_file, maku mcp's own tool,
-// files it with the developer's gh after they confirm (F3).
-func (s *Server) issueDraftTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
-	var a struct {
-		Repo  string `json:"repo"`
-		Title string `json:"title"`
-		Body  string `json:"body"`
-	}
-	if mcpwire.DecodeArgs(args, &a) != nil || !repositoryRE.MatchString(a.Repo) {
-		return nil, toolError("invalid_arguments: repo is owner/name; title and body are strings")
-	}
-	d, err := s.checkFinalDraft(ctx, a.Title, a.Body)
-	if err != nil {
-		return nil, err
-	}
-	can, why := s.canStart(ctx, p, a.Repo)
-	return issueDraft{Repo: a.Repo, Title: d.Title, Body: d.Body, Stripped: d.Stripped, CanStart: can, CanStartWhy: why}, nil
-}
-
-// The reasons issue_draft gives when canStart is false.
+// The reasons given when canStart is false.
 const (
-	startOff        = "off"        // the repository is not in human.mcp.sessionStart, or no check is wired
+	startOff        = "off"        // human.mcp.start does not offer start for the repository, or no check is wired
 	startNotLinked  = "not_linked" // the caller has no GitHub link to check
 	startNoWrite    = "no_write"   // the caller cannot write to the repository, or the App cannot see it
 	startUnverified = "unverified" // ZITADEL or GitHub could not answer
@@ -58,16 +23,13 @@ const (
 
 // startOffered reports whether the broker offers to start factory work on repo (UX3): false for a
 // repository in StartExcept; else true when StartDefault is true (on planner-served repositories
-// when a planner is configured) or the repository is in the deprecated SessionStart list.
+// when a planner is configured).
 func (s *Server) startOffered(repo string) bool {
 	r := strings.ToLower(repo)
 	if r == "" || s.StartExcept[r] {
 		return false
 	}
-	if s.StartDefault && (s.Intake == nil || s.intakeAllows(r)) {
-		return true
-	}
-	return s.SessionStart[r]
+	return s.StartDefault && (s.Intake == nil || s.intakeAllows(r))
 }
 
 func (s *Server) intakeAllows(repoLower string) bool {

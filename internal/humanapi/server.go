@@ -144,9 +144,6 @@ type Server struct {
 	Actor            *Actor // serves act frames (phase 4); nil refuses every one
 	// Identity and Access are D7's GitHub check: who the caller is on GitHub, and
 	// whether they may read a room's repository. Either nil shows rooms to admins only.
-	// SessionStart holds the repositories, lowercased owner/name, whose issue_draft says canStart
-	// (human.mcp.sessionStart, deprecated in favour of StartDefault/StartExcept). Empty: none does.
-	SessionStart map[string]bool
 	// StartDefault and StartExcept configure human.mcp.start (UX3): StartDefault offers start on
 	// planner-served repositories (or every repository when no planner is configured), except those
 	// lowercased owner/name entries in StartExcept.
@@ -293,7 +290,6 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/roomctl", s.roomctlSetup)
 	mux.HandleFunc("GET /api/install", s.install)
 	mux.HandleFunc("GET /.well-known/maku", s.publicSetup)
-	mux.HandleFunc("GET /.well-known/roomctl", s.publicSetup)
 	mux.HandleFunc("GET /v1/ws", s.ws)
 	if s.Policy != nil {
 		s.policyRoutes(mux, index)

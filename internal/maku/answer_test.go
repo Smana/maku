@@ -56,9 +56,9 @@ func newAnswerBroker(t *testing.T, rooms []map[string]any, taskData map[string]a
 					"content":           []any{map[string]any{"type": "text", "text": "task card"}},
 					"structuredContent": ab.taskData,
 				}
-			case "room_queue":
+			case "task_note":
 				res = map[string]any{
-					"content": []any{map[string]any{"type": "text", "text": `{"queued":4,"room":"3kq7x2ma"}` + "\n\nDeprecated: use answer; this tool is removed in the next release."}},
+					"content": []any{map[string]any{"type": "text", "text": `{"queued":4,"room":"3kq7x2ma"}` + "\n\nQueued."}},
 					"structuredContent": map[string]any{
 						"room":   c.Arguments["room"],
 						"queued": 4,
@@ -257,12 +257,12 @@ func TestAnswerNoQuestionQueuesNote(t *testing.T) {
 	}
 	var queueCalls []toolCall
 	for _, c := range ab.seenCalls() {
-		if c.Name == "room_queue" {
+		if c.Name == "task_note" {
 			queueCalls = append(queueCalls, c)
 		}
 	}
 	if len(queueCalls) != 1 || queueCalls[0].Args["room"] != "3kq7x2ma" || queueCalls[0].Args["text"] != "check the edge case on empty slices" {
-		t.Fatalf("room_queue calls = %+v", queueCalls)
+		t.Fatalf("task_note calls = %+v", queueCalls)
 	}
 }
 

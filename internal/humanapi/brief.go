@@ -14,7 +14,6 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
-	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomctrl"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/store"
@@ -60,8 +59,8 @@ type briefSince struct {
 	hasSeq bool
 }
 
-// briefWindow is how far back the changed block looks without a `since`, as room_changes does.
-const briefWindow = changesWindow
+// briefWindow is how far back the changed block looks without a `since`.
+const briefWindow = 24 * time.Hour
 
 // parseBriefSince reads the brief's `since`. A future instant is refused with the malformed ones: it would
 // filter every dated event away and answer a quiet brief nobody is in (Review Focus 3, at this door too).
@@ -105,31 +104,6 @@ func (s *Server) roomBriefRoute(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, answer)
-}
-
-type briefArgs struct {
-	Room  string `json:"room"`
-	Since string `json:"since"`
-}
-
-// roomBriefTool is room_brief: the route's brief and cursor for a client that reaches the broker through
-// /mcp (CD11), so an agent starting a session reads what a person reads. It is on the human list alone: a
-// sponsored principal has no developer whose work it resumes (R13).
-func (s *Server) roomBriefTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
-	var a briefArgs
-	bad := toolError("invalid_arguments: " + briefSinceForms)
-	if mcpwire.DecodeArgs(args, &a) != nil || a.Room == "" {
-		return nil, bad
-	}
-	since, err := parseBriefSince(a.Since, s.now())
-	if err != nil {
-		return nil, bad
-	}
-	answer, err := s.briefOf(ctx, a.Room, p, since)
-	if err != nil {
-		return nil, err
-	}
-	return viewResult{text: answer.Text, data: answer}, nil
 }
 
 // briefOf is the resume brief of room id as p reads it: the room's facts, the last handoff's scope, the

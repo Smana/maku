@@ -329,7 +329,7 @@ type ProfileRefusal struct {
 func (r ProfileRefusal) Sentence() string {
 	switch r.Code {
 	case ProfileUnknown:
-		return fmt.Sprintf("`%s` is not a workflow of this factory. `classes_list` shows the workflows.", r.Profile)
+		return fmt.Sprintf("`%s` is not a workflow of this factory.", r.Profile)
 	case ProfileNotOffered:
 		return fmt.Sprintf("`%s` names no roles, so they are chosen at triage; it runs only as the factory's choice.", r.Profile)
 	case NotMaintainer:

@@ -31,13 +31,6 @@ func TestCanonicalRepo(t *testing.T) {
 	}
 }
 
-func TestParseMentionRepositoryCase(t *testing.T) {
-	d, err := ParseMention("<@U0BOT> smana/ai-native-ref the link is dead", "U0BOT", []string{"Smana/ai-native-ref"})
-	if err != nil || d.Repo != "Smana/ai-native-ref" || !strings.HasSuffix(d.Title, "the link is dead") || strings.Contains(d.Title, "smana/") {
-		t.Fatalf("a lowercased repository naming the channel's only one is that repository, not title text: %+v %v", d, err)
-	}
-}
-
 // The live case on gcp-0 (v0.43.0): the planner lowercases the repository, the channel lists it as
 // GitHub spells it, and the Confirm was refused as "isn't served in this channel any more". The plan
 // keeps the planner's form (its hash covers it); what is filed is the channel's spelling.
@@ -48,7 +41,6 @@ func TestProposalConfirmRepositoryCase(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			rig := newAppRig(t, Channel{Repositories: []string{listed}, MaxCostUSD: 2})
-			rig.app.Proposals = Proposals{Enabled: true}
 			plan := planFixture(t, "slack-one-issue")
 			plan.Repository = "smana/ai-native-ref" // what Compose answers with
 			rig.slack.seed(Message{TS: proposalThreadTS, User: proposalAuthor, Text: "<@U0BOT> " + mentionWords})

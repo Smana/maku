@@ -38,7 +38,7 @@ func slackDecode(s string) string {
 
 // tierOne classifies one unknown reply in shadow, after today's line is posted. It is a no-op in a
 // channel whose intents switch is off, and for a thread whose room the marker does not name. The phase
-// is the kind of the one room_summary status line, read here and used for nothing else; an unreadable
+// is the kind of the task's status line, read here and used for nothing else; an unreadable
 // room is the phase `unknown`.
 func (a *App) tierOne(ctx context.Context, ev slackEvent, ch Channel, room string) {
 	if !ch.intentsServed() || !roomRE.MatchString(room) {

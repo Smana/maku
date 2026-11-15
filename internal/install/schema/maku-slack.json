@@ -16,7 +16,7 @@
       }
     },
     "e2e": {"type": "object", "additionalProperties": false, "properties": {"unpinnedImages": {"type": "boolean"}}},
-    "config": {"description": "The App's config, verbatim: teamID, channels, proposals.", "type": "object"},
+    "config": {"description": "The App's config, verbatim: teamID, channels.", "type": "object"},
     "brokerURL": {"type": "string", "pattern": "^(https?://[^\\s/]+)?$"},
     "roomsURL": {"type": "string", "pattern": "^(https?://[^\\s]+)?$"},
     "issuerURL": {"type": "string", "pattern": "^(https://[^\\s]+)?$"},

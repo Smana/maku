@@ -34,10 +34,6 @@ type (
 		NeedsMe bool   `json:"needsMe"`
 		All     bool   `json:"all"`
 	}
-	summaryArgs struct {
-		Room  string `json:"room"`
-		After string `json:"after"`
-	}
 	tailArgs struct {
 		Room   string   `json:"room"`
 		Cursor string   `json:"cursor"`
@@ -89,31 +85,6 @@ func viewRow(r roomRow) roomview.Row {
 // base URL the broker knows.
 func (s *Server) viewOptions(all bool) roomview.Options {
 	return roomview.Options{Format: roomview.Markdown, Rooms: s.PublicURL, Now: s.now(), All: all}
-}
-
-// room_summary is GET /api/rooms/{id}/summary as a tool.
-func (s *Server) roomSummaryTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
-	var a summaryArgs
-	bad := toolError("invalid_arguments: room is a room id; after is a cursor, seq:N")
-	if mcpwire.DecodeArgs(args, &a) != nil || a.Room == "" {
-		return nil, bad
-	}
-	after := int64(0)
-	if a.After != "" {
-		var ok bool
-		if after, ok = parseCursor(a.After); !ok {
-			return nil, bad
-		}
-	}
-	sum, err := s.summaryOf(ctx, a.Room, p, after)
-	if err != nil {
-		return nil, err
-	}
-	var text strings.Builder
-	if err := roomview.Card(&text, sum, s.viewOptions(false)); err != nil {
-		return nil, err
-	}
-	return viewResult{text: text.String(), data: sum}, nil
 }
 
 // room_tail is the room's events after a cursor, a page at a time: what maku watch prints.

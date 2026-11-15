@@ -154,7 +154,7 @@ flowchart LR
 | Entry | `cmd/maku-bridge` | the sidecar binary |
 | Entry | `cmd/maku-slack`, `internal/slackapp` | the factory's Slack App: intake from a thread, webhooks to the thread (docs/slack.md) |
 | Entry | `cmd/maku`, `internal/maku` | the human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
-| Entry | `internal/maku/skill` | the embedded factory-handoff Agent Skill, released with maku; `maku skill install` writes it |
+| Entry | `internal/maku/skill` | the embedded maku-handoff Agent Skill, released with maku; `maku skill install` writes it |
 | Entry | `internal/app` | wiring per binary, the only importer of every adapter |
 | Entry | `internal/config` | the broker's config file: strict decode, defaults, validation |
 | Entry | `internal/logging` | a binary's `*slog.Logger`: JSON or text, level by env |

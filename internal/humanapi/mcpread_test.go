@@ -63,31 +63,6 @@ func TestMCPRoomsList(t *testing.T) {
 	}
 }
 
-func TestMCPRoomSummary(t *testing.T) {
-	e := setup(t, mcpOn)
-	got := call(t, e, viaRoomctl("dev"), "room_summary", map[string]any{"room": roomID, "after": "seq:3"})
-	var s struct {
-		APIVersion string
-		Status     struct{ State string }
-		Notes      struct{ Untrusted bool }
-	}
-	if got.isError || json.Unmarshal(got.structured, &s) != nil || s.APIVersion != "summary/v1" || s.Status.State != "running" || !s.Notes.Untrusted {
-		t.Fatalf("%+v", got)
-	}
-	for name, args := range map[string]map[string]any{
-		"a missing room":   {"room": "aaaaaaaa"},
-		"a bad cursor":     {"room": roomID, "after": "seq:x"},
-		"an unknown field": {"room": roomID, "approve": true},
-	} {
-		if got := call(t, e, viaRoomctl("dev"), "room_summary", args); !got.isError {
-			t.Errorf("%s: %+v", name, got)
-		}
-	}
-	if got := call(t, e, viaRoomctl("dev"), "room_summary", map[string]any{"room": "aaaaaaaa"}); got.text != "no such room" {
-		t.Fatalf("a missing room reads as an unreadable one: %q", got.text)
-	}
-}
-
 func TestMCPRoomTail(t *testing.T) {
 	e := setup(t, mcpOn)
 	e.log.add(50) // 60 events
@@ -121,21 +96,13 @@ func TestMCPRoomTail(t *testing.T) {
 
 func TestViewToolsReturnTextAndStructure(t *testing.T) {
 	e := setup(t, mcpOn)
-	list := call(t, e, viaRoomctl("dev"), "rooms_list", map[string]any{})
-	if !strings.HasPrefix(list.text, "**Factory rooms**") {
-		t.Fatalf("rooms_list text: %q", list.text)
-	}
-	var l struct{ Rooms []json.RawMessage }
-	if json.Unmarshal(list.structured, &l) != nil || len(l.Rooms) == 0 {
-		t.Fatalf("rooms_list structure: %s", list.structured)
-	}
-	sum := call(t, e, viaRoomctl("dev"), "room_summary", map[string]any{"room": roomID})
-	if !strings.HasPrefix(sum.text, "**") || !strings.Contains(sum.text, "\n\n### ") { // the status line, then the heading
-		t.Fatalf("room_summary text: %q", sum.text)
+	sum := call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID})
+	if !strings.Contains(sum.text, "State") {
+		t.Fatalf("task text: %q", sum.text)
 	}
 	var s struct{ APIVersion string }
-	if json.Unmarshal(sum.structured, &s) != nil || s.APIVersion != "summary/v1" {
-		t.Fatalf("room_summary structure: %s", sum.structured)
+	if json.Unmarshal(sum.structured, &s) != nil || s.APIVersion != "task/v1" {
+		t.Fatalf("task structure: %s", sum.structured)
 	}
 }
 
@@ -156,12 +123,9 @@ func TestViewToolsDeclareOutputSchema(t *testing.T) {
 		t.Fatal(string(b))
 	}
 	calls := map[string]toolCall{
-		"inbox":        call(t, e, viaRoomctl("dev"), "inbox", map[string]any{}),
-		"task":         call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID}),
-		"rooms_list":   call(t, e, viaRoomctl("dev"), "rooms_list", map[string]any{}),
-		"room_summary": call(t, e, viaRoomctl("dev"), "room_summary", map[string]any{"room": roomID}),
-		"room_changes": call(t, e, viaRoomctl("dev"), "room_changes", map[string]any{"room": roomID}),
-		"room_brief":   call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID}),
+		"inbox":      call(t, e, viaRoomctl("dev"), "inbox", map[string]any{}),
+		"task":       call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID}),
+		"rooms_list": call(t, e, viaRoomctl("dev"), "rooms_list", map[string]any{}),
 	}
 	seen := 0
 	for _, tool := range r.Tools {
@@ -186,7 +150,7 @@ func TestViewToolsDeclareOutputSchema(t *testing.T) {
 			}
 		}
 	}
-	if seen != 6 {
+	if seen != 3 {
 		t.Fatalf("saw %d view tools", seen)
 	}
 }
@@ -237,12 +201,11 @@ func TestViewToolsOutputSchemaNestedRequired(t *testing.T) {
 		t.Fatal(string(b))
 	}
 	calls := map[string]toolCall{
-		"rooms_list":   call(t, e, viaRoomctl("dev"), "rooms_list", map[string]any{}),
-		"room_summary": call(t, e, viaRoomctl("dev"), "room_summary", map[string]any{"room": roomID}),
-		"room_changes": call(t, e, viaRoomctl("dev"), "room_changes", map[string]any{"room": roomID, "cursor": "seq:0"}),
+		"rooms_list": call(t, e, viaRoomctl("dev"), "rooms_list", map[string]any{}),
+		"task":       call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID, "since": "seq:0"}),
 	}
 	// the nested objects each tool must constrain
-	nested := map[string][]string{"rooms_list": {"rooms"}, "room_summary": {"status"}, "room_changes": {"items"}}
+	nested := map[string][]string{"rooms_list": {"rooms"}, "task": {"status", "items"}}
 	for _, tool := range r.Tools {
 		got, ok := calls[tool.Name]
 		if !ok {
