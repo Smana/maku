@@ -16,7 +16,7 @@ and the command), and remove the two settings named under **What to change befor
 
 | Change | Detail |
 |---|---|
-| The six tools | `handoff` (broker) plans the work, holds the plan on the broker for 24 hours under an id and asks at most one question at a time; `start` (local) re-validates the stored plan and shows the form that files the issue and starts the work; `inbox` and `task` (broker) read what waits and where one task stands; `wait` and `answer` (local) follow a task and answer its question or leave a note. They are always listed, whatever the broker's switches say; with planning off, `handoff` answers `Planning is not available here; file on GitHub.` The client never sees or edits a plan envelope. [The MCP server](cli.md#the-mcp-server), [API](api.md#post-mcp) |
+| The six tools | `handoff` (broker) plans the work, holds the plan on the broker for 24 hours under an id and asks at most one question at a time; `start` (local) re-validates the stored plan and shows the form that files the issue and starts the work; `inbox` and `task` (broker) read what waits and where one task stands; `wait` and `answer` (local) follow a task and answer its question or leave a note. They are always listed, whatever the broker's switches say; with planning off, `handoff` answers `Planning is not available here; file on GitHub.` The client never sees or edits a plan envelope. [The MCP server](cli.md#the-mcp-server), [API](reference/api.md#post-mcp) |
 | `human.mcp.start` | `{default, except[]}` says where `start`'s form offers "Start now": every repository the planner serves except those in `except`, and on by default when `human.intake.plan.enabled` is. It replaces `human.mcp.sessionStart`, which was an allow list and is not inverted. A release before this one honoured `sessionStart` with a warning; this one refuses it (below) |
 | `--advanced` | `maku setup <client> --advanced` registers `maku mcp --advanced`, which also lists `room_tail`, `room_fork`, `room_checkout`, `coordination_checkout`, `coordination_open` and `coordination_plan`, and nothing else |
 | The Slack `notify` default | A channel with no `notify` list posts four transitions: `room.task_triaged`, `room.waiting_for_human`, `room.pr_opened` and `room.ended`. `room.run_started`, `room.verdict_posted`, `room.budget_reached` and `room.approval_closed` post nothing by default, and `room.merged` and `room.reverted` edit the thread's end line in place. A channel that lists its own keys keeps them. To keep the old lines, list them: `notify: [room.task_triaged, room.run_started, room.waiting_for_human, room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.budget_reached, room.ended]` ([Slack](slack.md#config)) |
@@ -982,7 +982,7 @@ render that sets one key without the other, or `perRun` without
 `maku.agentRunPolicies.creators` naming the release's factory. `values-demo.yaml` sets all three
 (its creators name `system:serviceaccount:maku:agent-factory`: install the demo in another
 namespace with your own). The App needs every permission of the
-[role table](factory.md#run-tokens-the-role-table). The factory and run-controller configs are
+[role table](reference/config.md#run-tokens-the-role-table). The factory and run-controller configs are
 decoded strictly: upgrade the chart and the images together.
 
 With the standalone `maku` and `maku-factory` charts nothing pairs the two keys, and the factory

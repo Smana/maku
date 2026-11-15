@@ -26,7 +26,7 @@ type Approvals interface {
 }
 
 const (
-	// maxApprovalBytes caps a request (docs/api.md).
+	// maxApprovalBytes caps a request (docs/reference/api.md).
 	maxApprovalBytes = 64 << 10
 	// maxApprovalAction leaves the approval_requested payload's other fields room
 	// under envelope.MaxPayload once the action is redacted.

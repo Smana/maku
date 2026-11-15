@@ -591,9 +591,9 @@ describe("approvals", () => {
 });
 
 describe("rejection", () => {
-  // Every reason docs/api.md lists for an ack gets its own copy, not the fallback.
+  // Every reason docs/reference/api.md lists for an ack gets its own copy, not the fallback.
   it("has human copy for every rejection the actor can return", () => {
-    const api = readFileSync(join(__dirname, "../../docs/api.md"), "utf8");
+    const api = readFileSync(join(__dirname, "../../docs/reference/api.md"), "utf8");
     const head = api.indexOf("| `rejected` | Meaning |");
     const table = api.slice(api.indexOf("\n", head) + 1);
     const reasons = [...table.slice(0, table.indexOf("\n\n")).matchAll(/^\| `([a-z_]+)` \|/gm)].map((m) => m[1]);

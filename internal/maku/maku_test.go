@@ -335,7 +335,7 @@ func TestActSendsOneActionAndReturnsItsAck(t *testing.T) {
 	}
 }
 
-// Watch follows the room across the broker's reconnect closes (docs/api.md):
+// Watch follows the room across the broker's reconnect closes (docs/reference/api.md):
 // with a fresh token, from the last seq it printed, never printing one twice.
 func TestWatchFollowsAcrossReauth(t *testing.T) {
 	b := newBroker(t)

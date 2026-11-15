@@ -446,7 +446,7 @@ func (c Client) dial(ctx context.Context, hello wire.ClientFrame) (*websocket.Co
 	return conn, nil
 }
 
-// again reports whether the broker asked to be dialled again (docs/api.md: 4001
+// again reports whether the broker asked to be dialled again (docs/reference/api.md: 4001
 // reauth, 1001 shutdown, 1013 log_unavailable, 1008 slow_consumer), or the
 // connection dropped without a close frame. A refusal, no token, a frame over
 // the read limit or another close code (hello first) would fail the same way again.

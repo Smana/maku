@@ -16,7 +16,7 @@ import (
 	"github.com/Smana/maku/internal/hardening"
 )
 
-var update = flag.Bool("update", false, "rewrite the role table in docs/factory.md from Roles")
+var update = flag.Bool("update", false, "rewrite the role table in docs/reference/config.md from Roles")
 
 type ot = hardening.OutputType
 
@@ -150,7 +150,7 @@ func TestRolesIsAVariant(t *testing.T) {
 }
 
 const (
-	docsPath   = "../../../docs/factory.md"
+	docsPath   = "../../../docs/reference/config.md"
 	rolesBegin = "<!-- roles:begin -->\n"
 	rolesEnd   = "<!-- roles:end -->"
 )
@@ -163,11 +163,11 @@ func TestDocsTable(t *testing.T) {
 	doc := string(raw)
 	head, rest, ok := strings.Cut(doc, rolesBegin)
 	if !ok {
-		t.Fatal("docs/factory.md has no roles:begin marker")
+		t.Fatal("docs/reference/config.md has no roles:begin marker")
 	}
 	got, tail, ok := strings.Cut(rest, rolesEnd)
 	if !ok {
-		t.Fatal("docs/factory.md has no roles:end marker")
+		t.Fatal("docs/reference/config.md has no roles:end marker")
 	}
 	want := Render(Roles)
 	if got == want {
@@ -179,7 +179,7 @@ func TestDocsTable(t *testing.T) {
 		}
 		return
 	}
-	t.Fatalf("docs/factory.md's role table differs from Render(Roles); rerun with -update:\n%s", want)
+	t.Fatalf("docs/reference/config.md's role table differs from Render(Roles); rerun with -update:\n%s", want)
 }
 
 // No code outside this package builds a run's permission map: the pull_requests: write and
