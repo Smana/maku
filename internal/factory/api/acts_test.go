@@ -254,6 +254,7 @@ func newActEnv(t *testing.T, objs ...client.Object) *actEnv {
 			"zsub-nowrite": "nowrite",
 		},
 		Writers: canWrite,
+		Answers: func(string) api.AnswerForge { return fg },
 		Log:     slog.New(slog.NewTextHandler(io.Discard, nil)),
 	}
 

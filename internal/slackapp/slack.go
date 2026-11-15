@@ -62,13 +62,14 @@ const (
 	actClosedEventType = "factory_act_closed"
 )
 
-// ActPayload is a stop or retry confirmation's metadata: the action, the room it targets, the
-// Slack user who asked for it (the only one who may confirm or cancel it), and its RFC 3339
-// ten-minute expiry.
+// ActPayload is a stop, retry or answer confirmation's metadata: the action, the room it targets,
+// the Slack user who asked for it (the only one who may confirm or cancel it), the exact answer
+// text when Action is "answer", and its RFC 3339 ten-minute expiry.
 type ActPayload struct {
 	Action  string `json:"action"`
 	Room    string `json:"room"`
 	Presser string `json:"presser"`
+	Text    string `json:"text,omitempty"`
 	Expires string `json:"expires"`
 }
 

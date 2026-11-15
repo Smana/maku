@@ -284,6 +284,21 @@ func (f *Fake) Issue(_ context.Context, n int) (forge.Issue, error) {
 	return i, nil
 }
 
+// EditIssueBody implements the forge's EditIssueBody: sets issue n's body and stamps LastEditedAt.
+func (f *Fake) EditIssueBody(_ context.Context, n int, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	i, ok := f.issues[n]
+	if !ok {
+		return fmt.Errorf("issue %d not found", n)
+	}
+	i.Body = body
+	i.LastEditedAt = f.now()
+	f.issues[n] = i
+	f.calls = append(f.calls, fmt.Sprintf("edit-issue %d", n))
+	return nil
+}
+
 // now is Now's reading, time.Now's when Now is nil.
 func (f *Fake) now() time.Time {
 	if f.Now != nil {

@@ -630,6 +630,7 @@ type stubBroker struct {
 	intentErr    error
 	stops        []Act
 	retries      []Act
+	answeredActs []Answer
 	actAnswer    string
 	actErr       error
 }
@@ -658,6 +659,25 @@ func (b *stubBroker) Retry(_ context.Context, a Act) (ActResult, error) {
 		return ActResult{Result: b.actAnswer}, nil
 	}
 	return ActResult{Result: "retried"}, nil
+}
+
+func (b *stubBroker) Answer(_ context.Context, a Answer) (ActResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.answeredActs = append(b.answeredActs, a)
+	if b.actErr != nil {
+		return ActResult{}, b.actErr
+	}
+	if b.actAnswer != "" {
+		return ActResult{Result: b.actAnswer}, nil
+	}
+	return ActResult{Result: "answered_restarted"}, nil
+}
+
+func (b *stubBroker) answeredCalls() []Answer {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]Answer(nil), b.answeredActs...)
 }
 
 func (b *stubBroker) stoppedCalls() []Act {
