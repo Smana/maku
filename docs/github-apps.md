@@ -36,7 +36,7 @@ flowchart LR
 
 The agents App mints a short-lived installation token for each run. The token is scoped to the
 run's one repository and carries the permissions its role gets from the role table
-([`minter.Roles`](factory.md#run-tokens-the-role-table)). With
+([`minter.Roles`](reference/config.md#run-tokens-the-role-table)). With
 `config.hardening.publisher.minter`, the publisher's token comes from this App too. Its required
 set is the union of the role table over every role and every enforced combination:
 

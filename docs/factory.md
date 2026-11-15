@@ -19,7 +19,7 @@ flowchart LR
 ## Triggers
 
 Every label below is read once a minute (`poll.issues`). A label a non-maintainer applied starts
-nothing; maintainers are the `maintainers` list in the [config](#the-config-file), compared
+nothing; maintainers are the `maintainers` list in the [config](reference/config.md), compared
 without case.
 
 | Trigger | Effect | Who |
@@ -378,7 +378,7 @@ returns it.
 | `maintainer_approved` | A maintainer approved it. With `merge.approveToMerge` off, a human merges it; on, an approval of the current head arms the merger, so this reason is left for adopted classes and for a task handed off before the switch was turned on: that approval predates the hand-off, so a fresh approval of the head returns the task to the gate |
 | `approval_stale` | A maintainer's approval is of an older head, or came before the head stopped moving: before the task's last pushing run ended, or within a minute after. It is also refused when the head's push could not be read from the branch's activity. Next step: approve the current head |
 | `gate_path` | It touches a gate path, so an agent can never merge it; a human re-authors the change |
-| `steering_path` | Steering is on for some class and the pull request changes a [steering note](#steering); a human merges it |
+| `steering_path` | Steering is on for some class and the pull request changes a [steering note](reference/config.md#steering); a human merges it |
 | `not_mergeable` | GitHub refused the merge as the pull request stands |
 | `not_agent_authored` | The pull request is not from `agentsLogin` |
 | `no_policy_matched` | No policy of the repository holds on the diff (each one's refusal is in the record's `considered=`): a maintainer reviews and merges it. Not counted in `maku_factory_class_mismatch_total` |
@@ -404,7 +404,7 @@ returns it.
 | `ci_wait_expired` | The pull request waited `merge.awaitingCIFor` in `AwaitingCI` and a required check never reported. A release-age status posted as pending waits longer, up to 7 days or the bound if that is larger. The message names the checks. A maintainer decides |
 | `auto_merge_cap` | `merge.maxPerDay` is reached |
 | `held` | The pull request carries `factory/hold`. Removing the label returns it to the gate |
-| `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](#the-ownership-fence)) |
+| `not_owned` | The repository's `.github/agent-factory.yaml` does not name this factory ([the fence](reference/config.md#the-ownership-fence)) |
 | `shadow_would_arm` | Every check holds and the class is in shadow. Next step: merge or close it |
 | `ci_cancelled` | A required check was cancelled and re-running it did not settle it |
 | `contract_check_unset` | The task has a contract but `merge.contractCheck` is no longer set: nothing proves it, so a maintainer decides |
@@ -432,7 +432,7 @@ every maintainer.
 | `agent_error`, `agent_stuck` | The agent stopped on an error, or said it was stuck |
 | `model_unavailable_billing`, `model_unavailable_auth`, `model_unavailable_quota` | The model provider refused the run six times in a row (the hold bound) (see [Model provider refusals](#model-provider-refusals)): its balance is empty, its key was rejected, or its quota is spent. Fix the provider, then `/factory retry` |
 | `scoper_failed` | The scoper failed (an agent error, a stuck or lost run) before it checked the scope, so the implementer was not started: the status comment says "scope not checked". `/factory retry` runs the scoper again |
-| `judge_impossible`, `stalled`, `not_met` | Under the [loop policy](#the-config-file) (`loops`): the completion judge found the task impossible, the run made no commit within its step limit (or a judge continuation added none within its 15-minute time box), or the judge still found the acceptance checks unmet after the last continuation (or a continuation did not finish within its time box). The harness ends a continuation before the run's wall clock, so a continuation ends with the loop's reason, not `deadline`; its note in the room names which continuation and why. The issue gets the category; the judge's text stays in the room |
+| `judge_impossible`, `stalled`, `not_met` | Under the [loop policy](reference/config.md) (`loops`): the completion judge found the task impossible, the run made no commit within its step limit (or a judge continuation added none within its 15-minute time box), or the judge still found the acceptance checks unmet after the last continuation (or a continuation did not finish within its time box). The harness ends a continuation before the run's wall clock, so a continuation ends with the loop's reason, not `deadline`; its note in the room names which continuation and why. The issue gets the category; the judge's text stays in the room |
 | `pod_lost`, `Disrupted`, `PodLost`, `PodFailed` | The sandbox failed or was lost and was not resumed. A sandbox lost to its node is resumed by itself, up to `resume.maxPerTask` times |
 | `resumes_exhausted`, `resume_budget` | The sandbox was lost again, and no resume or no budget is left |
 | `run_unschedulable` | The cluster did not admit the run within `caps.maxPendingMinutes` |
@@ -569,7 +569,7 @@ another on one branch, and only the implementer writes. `templates.<name>.roles`
 
 | Template | Picked when |
 |---|---|
-| `investigate` | The task came from RunLore, by `/intake/runlore` or as an [internal principal](#internal-principals); its data class is forced to `internal`. Its triager searches RunLore's knowledge base with `kb_search` and `kb_get` when the broker's `roomTools.knowledge` is set ([RunLore](integration.md#runlore)); without it, the prompt's "if they are available" leaves them out |
+| `investigate` | The task came from RunLore, by `/intake/runlore` or as an [internal principal](reference/sponsored-principals.md#internal-principals); its data class is forced to `internal`. Its triager searches RunLore's knowledge base with `kb_search` and `kb_get` when the broker's `roomTools.knowledge` is set ([RunLore](integration.md#runlore)); without it, the prompt's "if they are available" leaves them out |
 | `solo` | A class with an `oracle` (such as `dead-links`), always at `light`, without the classifier; otherwise class `docs-links`, tier below `frontier` |
 | `pair` | Class `docs-links` at `frontier`, or any other class at any tier |
 
@@ -930,197 +930,6 @@ flowchart LR
 The person's day is in USD, like the fleet's ([Daily budgets](#daily-budgets)). Turning it on: set
 `enabled` and watch `budget-principal-shadow{principal}` for a week, then set `enforcePrincipal`.
 
-## Sponsored principals
-
-Off by default: with no `api.sponsored`, `POST /v1/tasks` is `404` and the broker lists no
-`run_create`. A machine starts factory work only as a **sponsored principal**: a machine client
-at your identity provider that the config binds to a maintainer, with a day in dollars and a ceiling on every request.
-Its request becomes a `Task` of `spec.source.kind: api`, which triage, the gate and narration then
-treat as any other. Source: `internal/factory/api/tasks.go`.
-
-```mermaid
-flowchart LR
-  C["sponsored client<br/>client credentials"] -->|"run_create"| B["broker /mcp"]
-  B -->|"POST /v1/tasks<br/>same token, Idempotency-Key"| F["factory :8082"]
-  F -->|"Task source.kind api<br/>sponsor, maxMicroUSD"| T[("Task + room")]
-  T --> R["triage: task at the ceiling,<br/>each run at a third"]
-  R --> L[("ledger: system:name's day")]
-```
-
-`api.sponsored` is a list; each entry holds:
-
-| Key | Holds |
-|---|---|
-| `name` | A DNS label. The principal is `system:<name>`, the ledger key and `requestedBy`. Never `factory`, `runlore`, `scheduler`, `room-broker` or `policy`, nor a name in `api.systemPrincipals`; unique |
-| `clientIDFile` | The file holding the principal's client id, read at each use (the host's sync rewrites it when ids change). It must name a **machine (client-credentials) client**: every subject of that client becomes `system:<name>`, so a client with human subjects would admit them all as the principal. Unique across entries, and never the web UI's or `maku`'s client |
-| `sponsor` | A GitHub login, the maintainer accountable for the principal. It must be in `maintainers` of every repository in `repositories` |
-| `repositories` | The listed repositories the principal may use, spelled as listed; at least one |
-| `dailyUSD` | The principal's day, in (0, `budgets.factoryDailyUSD`] |
-| `maxCostUSD` | The largest `max_cost` one request may ask for, in (0, `dailyUSD`] |
-| `maxOpenTasks` | How many of its tasks may be open at once. Default 3. A **soft cap**: it is counted before the Task is created, so a burst of N concurrent distinct requests can open up to cap+N-1 tasks |
-| `onBehalfOf.slack` | `{"<team id>/<user id>": <maintainer login>}`: a request naming `slack:<team>/<user>` is sponsored by that maintainer instead. An unknown user is `not_linked`, a login outside `maintainers` is `not_a_maintainer` |
-| `onBehalfOf.slackLinks` | `true`: a Slack user `onBehalfOf.slack` does not list is looked up in the broker's [self-serve link](slack.md#self-serve-link) records (`GET /v1/links/slack` on `:8443`, as `system:factory`). The link names an account at your identity provider, never a login: the factory resolves the account's **current** GitHub login through `api.access`, then holds it to `maintainers` as any sponsor. No link, an inactive account or no GitHub link is `not_linked`; a lookup that fails is `503 link_unverified`. **The config wins**: a user listed in `onBehalfOf.slack` is never looked up. Needs `api.access`; refused on an internal principal |
-
-Whenever `api.sponsored` is set, the client's token must carry the install's audience, or the token
-is refused: `api.audience` or `api.audienceFile` under `preset: generic`.
-
-**Preset: ZITADEL** ([identity](identity.md#the-presets))
-
-The audience is the project: `api.projectIDFile` names the file holding the ZITADEL project id, and
-it is required whenever `api.sponsored` is set.
-
-`api.sponsored` also needs `meter.prices`: a ceiling in dollars is meaningless on unpriced runs, and
-without prices the intake answers `503 meter_unpriced`. The chart mounts the files from
-`sponsoredSecret` ([chart](../charts/maku-factory/README.md)). Config load checks every row above
-and admission checks the sponsor again.
-
-**The request.** `max_cost` is mandatory, in USD: at least $0.01, at most the principal's
-`maxCostUSD` and at most the largest `taskUSD` among the tiers. It is stored as `spec.maxMicroUSD`,
-which the CRD makes immutable. Class, tier, template, auto-merge and egress are never the caller's:
-unknown fields are refused, and `dataClass` is `public` only. The sponsor and `onBehalfOf` come from
-the config and the link map, never from the caller. [The endpoint](api.md#post-v1tasks)
-lists the refusals.
-
-**The ceiling's split.** Triage caps the task at `min(tier taskUSD, max_cost)` and each run at a
-third of `max_cost` (`min(tier runUSD, max_cost / 3)`), the meter holding each run to its own cap.
-Tokens follow at the reference rate ($1.70 per million), so a run that cannot be priced keeps a
-ceiling too.
-
-**An api task is never split.** The scoper offers no split to a task with a ceiling: its children
-would each carry their own and escape it.
-
-**A titled task waits for its issue.** The factory detects a titled api task by its text starting with
-`# `, and waits up to 2 minutes for the issue the intake files just after creating the Task. An
-untitled text that itself starts with `# ` is mistaken for one and waits the same 2 minutes before
-it proceeds. Known; nothing is lost but the wait.
-
-**Who pays.** An api task's runs are charged to `system:<name>` beside the fleet, whether
-`budgets.perPerson` is on or off, and the principal's day is `dailyUSD`. A maintainer's
-`/factory retry` moves the payer to the retrier, as for any task: they pay as the retrier, with
-their own day. With per-person caps off (`budgets.perPerson`), a retried api task's runs are
-charged to the fleet only: nobody's day applies, but the task's ceiling still holds.
-
-**What bounds the day.** The intake checks the principal's day (spent plus reserved, plus the
-request's whole `max_cost`) and answers `429 principal_budget_exhausted`, but that check is
-**advisory**: nothing is reserved at intake. The hard limit is the run-time reservation under
-`system:<name>`, which is enforced whatever `budgets.enforcePrincipal` says, together with each
-run's ceiling/3 cap held by the meter. A later run refused for the day escalates the Task
-(`budget-person`), possibly with a pull request already open.
-
-**If a principal leaves the config.** Its live runs are no longer held to its day (the day comes
-from the declaration), and a task that needs a new run escalates `principal_unknown`. Remove a
-principal only once its tasks have ended.
-
-**The issue.** With a `title`, the factory files the issue itself with the factory App (no label: the
-Task exists already), the body ending with a footer naming the sponsor and the principal;
-`spec.issueAuthor` is the sponsor. Without a `title` the Task has no issue, as a schedule's has
-none. Text from a machine goes through the hidden-character strip, the draft rules (with a title)
-and the redactor, and the Task's `spec.text` is `untrusted`.
-
-
-### Internal principals
-
-Off by default: `api.internalPrincipals` is empty. An internal principal is a sponsored principal
-that may carry **internal** data: RunLore, one known caller, declared beside the others in its own
-list, so a sponsored principal never loosens to `internal`. It reuses the sponsored path end to end
-(the OIDC authenticator, the `api` source kind, the ceilings, `maxOpenTasks`, the day); what
-differs is decided in one place each. Source: `internal/factory/api/internal.go`.
-
-An entry holds a sponsored principal's keys (`name`, `clientIDFile`, `sponsor`, `repositories`,
-`dailyUSD`, `maxCostUSD`, `maxOpenTasks`; `onBehalfOf` is **refused**) and:
-
-| Key | Holds |
-|---|---|
-| `minConfidence` | In (0, 1]: a finding below it is `202 below_threshold` |
-| `dailyTasks` | At least 1: tasks of the principal created this UTC day, any kind, so the retiring `/intake/runlore`'s count while both run |
-| `verification` | Admits [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification) for this principal |
-| `publishStarts` | Default false. `factory/publish` on the stub of this principal's `api` task also starts the fix, see [`factory/publish`](#internal-principals) |
-
-The name `runlore` is allowed on an internal principal only. Names and client id files are unique
-across `api.sponsored`, `api.internalPrincipals` and `api.systemPrincipals`.
-
-Its task is `source.kind: api`, `requestedBy: system:<name>`, `dataClass: internal`, with the
-request's `maxCostUSD`. Triage forces `investigate` for any task whose `requestedBy` is an internal
-principal, never from the body. The gates run in this order: the request's own checks, the verdict
-and `minConfidence` (`202`), the dedup (`200`; a duplicate is answered before the caps, so a replay
-never reads as a refusal), `dailyTasks`, `maxOpenTasks`, the day. The dedup key is
-`api:<name>:<Idempotency-Key>`; the task name carries a generation, so a key whose task ended starts
-a new one. The public issue is the same stub `/intake/runlore` files, from the same code
-(`internal/factory/finding`).
-
-```mermaid
-sequenceDiagram
-  participant R as RunLore
-  participant F as factory
-  participant M as maintainer
-  R->>F: POST /v1/tasks (incident, internal)
-  F-->>R: 201 task, stub issue (factory/proposed)
-  Note over F: investigate: the triager's proposal stays in the room
-  M->>F: label the stub factory/publish
-  F->>F: CheckDraft, redact, sanitise as public text, redact, render through GitHub
-  F->>F: infer the class from the proposal's ## Files
-  F->>M: new issue (no trigger label, class:<c>), status.published recorded
-  alt publishStarts
-    F->>F: fix task, generation 0, charged to the publisher
-  else
-    M->>F: label the new issue factory/ready
-    F->>F: fix task with spec.origin = the investigate task
-  end
-```
-
-**`factory/publish`.** The issue poller (leader only) reads it on the stub issue of an `investigate`
-task. Only the last label event's actor counts, through the same maintainer and write checks as
-`factory/ready`; anyone else's is answered `unauthorised_labeller` and removed. The proposal is the
-last handoff to `implementer` that the task's triager run recorded itself. Its first line is the
-title and the rest the body, held to the issue template, scanned by the redactor as written, then
-made inert (every link, bare URL, address, @mention and issue or commit reference becomes a code
-span, no HTML survives, no hidden character), scanned again, then rendered through GitHub's `POST /markdown` with the repository as context: any anchor or
-mention, issue or commit link in the page refuses it, title and body alike. The footer naming the
-maintainer is added after this gate, and is the one deliberate mention.
-A refusal (`task_not_ended`, `no_proposal`, `invalid_draft`, `redacted`, `live_reference`) is a
-comment on the stub and the label removed, so a retry is a new label; nothing is created. A render
-that fails, a rate limit included, is no refusal: as when the write check gets no answer, nothing is
-filed or said, the error is logged and the label waits for the next poll.
-
-Making text inert has two independent checks, because no parser here is GitHub's. A last scan that
-does not use goldmark trusts only a backtick span on one line and a fence opening and closing at
-column 0. If it finds a form anywhere else the text is withheld (`live_reference`), as it is for an
-unclosed column-0 fence, which would swallow the footer. Indented code and nested fences move to a
-column-0 fence first, which ends a surrounding list or quote there, so their content is kept. What
-is still refused when it holds a link or a reference: an inline code span over several lines, a
-code span with a pipe in a document that has a table, a table cell beyond its header's columns,
-and an ordered list numbered like a commit.
-
-The factory files the issue **once per task**, with no trigger label (only a marker,
-`factory/published-from:<task>`, which grants nothing and lets a retry after a crash find the issue
-instead of filing a second): the maintainer reads it on GitHub and starts it with `factory/ready`, which is the second, money
-spending decision. With `publishStarts` on the principal, `factory/publish` is that decision too (see below).
-
-**`## Files` and the inferred class.** The triager's brief asks for a fourth section, `## Files`: each
-repository path the change touches, one `` - `path` `` per line, at most 10. The factory reads that
-section from the proposal (it ends at the next `## ` heading or the footer's `---` line). A line of any other form, a path with a `..`
-segment, a leading `/`, a path over 200 bytes, or more than 10 lines, empties the list. `filefence.Infer` then names the class: among the
-classes that declare `allowedFiles` and are neither `review`, `revert`, adopted nor oracle-backed, the one whose `allowedFiles` admit
-every path and whose `protectedFiles` admit none. None, several, or no path: `review`. The filed issue carries the label
-`class:<c>` and `status.published.class` records it; a retry re-reads the filed body and adds the label if it is missing. The fix task
-of the published issue (`spec.origin` set) takes it as `spec.predictedClass`, and triage keeps it when the repository declares that
-class and it is not `revert`; a `class:` label a maintainer applies to the issue still takes precedence. Otherwise the class is `review`.
-
-**With `publishStarts`.** For an `api` task of an internal principal that declares it, the same label also starts the fix, as
-`factory/ready` would: generation 0, `spec.origin` the investigate task, `spec.predictedClass` the inferred class, `requestedBy`
-the publisher, who is charged. The start skips intake's advisory day check, so the reservation at queueing binds (see
-[security](reference/security-controls.md#internal-principals-and-publishing)). Nothing starts when any Task exists on the issue, when the
-issue is closed, when it was edited since it was filed, or when its text is withheld: the issue stays filed and `factory/ready`
-remains the way to start it. The invariant is one Task and one charge per issue: when `factory/ready` and a publish retry land in the
-same poll, the publish start wins (generation 0, charged to the publisher), and `factory/ready` is answered `task_active` on a later
-poll. A closed issue starts nothing. The comment on the stub says the fix started, which task and class, and who pays.
-
-**`spec.origin`.** The poller sets it on a new `factory/ready` task only when a task of the same
-repository carries the label `agents.ogenki.io/published-issue: <n>` **and** its
-`status.published.issue` is that issue. It is fixed at creation and never read from issue text, so
-nothing a person or an agent writes can forge one. Every webhook event of the fix's room repeats it
-(`origin`, [API](api.md#webhooks)); it rides the task facts, so the broker needs no new state.
-
 ## The merge gate
 
 Once a task is ready, the gate reads the pull request in `AwaitingCI` and checks, in order;
@@ -1132,7 +941,7 @@ shadow decision. With no class `live` or `shadow` it reads nothing and hands off
 | # | Check | If it fails |
 |---|---|---|
 | 1 | The secret scan (`merge.leakScanCheck`) is not red | Escalated, `secret_scan_red` |
-| 2a | The repository is this factory's ([the fence](#the-ownership-fence)) | `not_owned` |
+| 2a | The repository is this factory's ([the fence](reference/config.md#the-ownership-fence)) | `not_owned` |
 | 2 | Every `merge.requiredChecks` is green | Red: a fix run, up to `merge.fixRuns`, then `ci_red`. Cancelled: re-run, up to `merge.checkReruns`. Pending: wait |
 | 2b | A task with a contract: `merge.contractCheck` is green too, as a required check. On a task without one the job only reports | As row 2: red is a fix run, pending waits |
 | 2c | A task with a contract: no contract file changed since the tester's commit (GitHub's compare of that commit and the head; a head that is not its descendant, such as after a rebase, or more than 100 commits from it, counts every contract file as changed). Read once CI is green | Unread: wait, `contract_unread`. Changed: `contract_modified`, never a fix run |
@@ -1636,7 +1445,7 @@ Without it every read is refused and the signal ends `inconclusive`. `merge.brea
 | Main's CI | The `merge.verifyChecks` on the merge commit. An auto-merge that ended `merged_verified` was already watched by the task, so it counts healthy; one that ended `merged_unverified` is read like any other merge | Red | Green once `verifyFor` has passed. Still pending after twice that: `inconclusive` |
 | Detector (oracle) | Each scheduled run of the class's oracle workflow after the merge, oldest first, through the probe's readers | A run reports gone a target this merge wrote | `oracleRuns` clean runs. A run that failed or whose findings are refused: `inconclusive` |
 | Flux | The `source` GitRepository (`get`), and the Kustomizations and HelmReleases of that source (`list`), on the factory's cluster | A Kustomization or HelmRelease of the source turned not Ready from the blame start (the source's fetch of the merge commit, or the merge's own time when the source was first seen already at a later commit) until `within` after the source was first seen holding it | The source holds the merge, `within` has passed since it applied it, nothing turned not Ready in the window. A source that never holds the merge within `within`, or is suspended: `inconclusive` |
-| RunLore's verification | `status.monitor.verification`, recorded by [`POST /v1/tasks/{task}/verification`](api.md#post-v1taskstaskverification). Only for a merge whose `spec.origin` names a task of an internal principal with `verification: true` | `persisting` | `resolved`. No verdict `within` after the merge: `inconclusive` |
+| RunLore's verification | `status.monitor.verification`, recorded by [`POST /v1/tasks/{task}/verification`](reference/api.md#post-v1taskstaskverification). Only for a merge whose `spec.origin` names a task of an internal principal with `verification: true` | `persisting` | `resolved`. No verdict `within` after the merge: `inconclusive` |
 | Follow-ups | Pull requests merged after this one, within `followUpWindow`, that change lines this one introduced: GitHub's blame at the later pull request's own parent, overlapped with its patch | None: a follow-up is never a verdict, it is a bad outcome counted by the breaker | |
 
 The verification signal is `monitor.verified`. `within` (1 minute up to `followUpWindow`) counts from the
@@ -1679,7 +1488,7 @@ control issue (under their own keys), when it lives on the task's repository.
 `maku_factory_monitor_verdicts_total{class,verdict,repository}` counts each verdict once.
 
 **An origin task's verdict reaches the room.** For a task with `spec.origin`, the verdict is in the task facts (`monitor`) and
-the broker sends it as [`room.monitor_verdict`](api.md#webhooks). A sealed log takes no facts, so the room stays open while
+the broker sends it as [`room.monitor_verdict`](reference/api.md#webhooks). A sealed log takes no facts, so the room stays open while
 the task's monitor is due and has no verdict; the reconciler looks again after `monitorEvery`. A task without an origin closes its room
 as before. Known limit: that wait has no `roomCloseCap` test, so for a class window over 24 h the room stays open past the cap
 until the verdict is decided, and `roomCloseCap` (24 h from the task's end) is not what ends it. The cap acts after the verdict is
@@ -1946,7 +1755,7 @@ The factory reads the block at startup: switching from `off` to `audit` takes a 
   run's writes back from GitHub, as the agents App inside the run's window: pushes, the pull
   request's title and body (the harness footer stripped), comments, labels added and issues opened.
   It runs the threat check on each one with every layer in audit, and appends one
-  [`output_shadowed`](room-log.md#output-events) event per write. The record holds the verdict:
+  [`output_shadowed`](reference/room-log.md#output-events) event per write. The record holds the verdict:
   - `would_apply`;
   - `would_refuse` with the first T1 to T4 finding;
   - `would_wait`, for a push touching a protected path a maintainer would approve under H3.
@@ -2085,7 +1894,7 @@ flowchart LR
   [Security](security.md#untrusted-input-hardening).
 - **The permission gauge.** On each fence pass over an enforced repository, the factory reports
   each sandbox role's and the publisher's permissions from the
-  [role table](#run-tokens-the-role-table).
+  [role table](reference/config.md#run-tokens-the-role-table).
 - **The publisher's token** comes from the factory's own minter (`hardening.publisher.minter:
   true`): the agents App (`runTokens.enabled`), the role table's publisher row, cached until ten
   minutes before it expires or until the repository's enforced set changes. The agents App's
@@ -2094,7 +1903,7 @@ flowchart LR
 
 Without `runTokens.perRun` the factory refuses to start while `enforceOutputs` is set: the
 runs would hold a shared token that can still write directly. With it, each run's token comes from
-the [role table](#run-tokens-the-role-table), where an enforced output takes its write away. Should
+the [role table](reference/config.md#run-tokens-the-role-table), where an enforced output takes its write away. Should
 the table leave the implementer `pull_requests: write` under enforcement,
 the factory warns at start-up, naming the repositories whose enforcement is then advisory.
 Readiness reads the same source: `sandbox_write_token` and `publisher_policy` read the role table under `runTokens.perRun`, and
@@ -2193,7 +2002,7 @@ waits, the task stays `Implementing` with reason `push_awaiting_approval`.
 ### The tokens
 
 With `push` enforced the role table takes `contents: write` from the implementer and the tester
-(`push`: `contents: read` in [the role table](#run-tokens-the-role-table)), and gives it to the
+(`push`: `contents: read` in [the role table](reference/config.md#run-tokens-the-role-table)), and gives it to the
 publisher. `runTokens.perRun` mints each run from that table. GitHub refuses a push that changes
 `.github/workflows/**` from a token without `workflows: write`: unless the publisher's row grants
 it, an approved workflow push is refused `output_unavailable`. Enabling and rolling back are in
@@ -2306,7 +2115,7 @@ hardening:
   the drills off, or off the drill repository, the label holds no room and marks no T5 call. The manifest route accepts only such tasks. Their room stays
   open until the runner scores them, then the runner annotates them `agents.ogenki.io/drill-scored`.
 - **The report.** The runner stores it through the broker's `POST /v1/drills`
-  ([API](api.md#drill-reports)), which only `system:factory` may call, and readiness reads the
+  ([API](reference/api.md#drill-reports)), which only `system:factory` may call, and readiness reads the
   newest pass with `GET /v1/drills/last-pass`.
 - **T5 measured.** The applier also runs T5 in audit on an output refused at T1 for its target, or a
   push refused at T4, once T3's scan of the same text finds no secret and no canary. A T3 refusal,
@@ -2418,368 +2227,6 @@ Two settings stay stricter whatever the acknowledgement says:
   and the GitHub token.
 - **Coordination's `publicOnly`** refuses a family with a private repository.
 
-## Reference
-
-### The Task CRD
-
-`tasks.maku.ogenki.io/v1alpha1`, namespaced, created by the factory at runtime and never
-committed to Git. Its name is an 8-character id (`[a-z2-7]{8}`) derived from the source's key, so
-creating it twice is the dedup. Source: `api/factory/v1alpha1/task_types.go`.
-
-| Field | Meaning |
-|---|---|
-| `spec.source.kind` | `issue`, `runlore`, `schedule` or `api` |
-| `spec.source.ref` | `owner/name#n`, `<alert>/<resource>`, the schedule's name, or an `api` task's `ref` (default `api:<name>`) |
-| `spec.source.key` | The idempotency key the name derives from |
-| `spec.source.requestedBy` | `github:<login>`, `system:runlore`, `system:scheduler`, or `system:<name>` for a sponsored principal |
-| `spec.source.sponsor` | `api` tasks only: `github:<login>`, the maintainer accountable for the request (immutable) |
-| `spec.source.onBehalfOf` | `api` tasks only: `slack:<team>/<user>` when a link chose the sponsor |
-| `spec.maxMicroUSD` | `api` tasks only: the request's `max_cost` ceiling in micro-USD, immutable; 0 for every other task. See [sponsored principals](#sponsored-principals) |
-| `spec.source.trust` | `untrusted` text is fenced as data for the agent; `trusted` (schedules) is not |
-| `spec.source.contentSHA256` | sha256 of the text as labelled |
-| `spec.repository` | `owner/name` |
-| `spec.issue` | The issue the factory narrates on; 0 for none |
-| `spec.issueAuthor` | The issue's author, for the room list's "mine" filter |
-| `spec.text` | The sanitised snapshot; admission caps it at `caps.maxTextBytes` |
-| `spec.dataClass` | `public` or `internal`; every run of the task gets it |
-| `spec.predictedClass` | The merge class triage predicted. Intent, not authority: only the gate merges |
-| `spec.template` | `solo`, `pair`, `trio` or `investigate` |
-| `spec.budget` | `tier`, `model`, `runTokens` (≤ 5,000,000), `taskTokens`, `runMinutes` (≤ 480), `runMicroUSD`, `taskMicroUSD` (0: the token caps) |
-| `spec.loop` | `stallSteps`, `continuations`, `judgeModel` (empty: no judge): the class's `loops` row, resolved at triage; every implementer run of the task gets it as `spec.loop`. Unset: the loop is off |
-| `spec.scopeMode` | `off`, `steering` or `scoper`: the class's `loops` row, fixed at triage. Empty: triaged before the field existed, read as `off`. An `investigate` task is always `off` |
-| `spec.search` | `true` when the class's `loops` row sets `search`, fixed at triage; every implementer run of the task gets `spec.loop.search`. Omitted: off |
-| `spec.steering` | `path`, `sha` (the git blob), `text`: the class's steering note on the default branch, read at triage; unset for none |
-| `status.phase`, `status.reason`, `status.phaseSince` | The phase above, why, and since when |
-| `status.classification` | The classifier's `tier`, `confidence`, `classifier`, `fallback` (`none`, `default`, `static`), `shadow` verdicts, `control` (forced to `frontier`) and `fit` (scored at the end) |
-| `spec.split` | `maxChildren` (2–5), `familyMicroUSD`, `childTier`: set at triage on a task C7 rated `frontier` (any task, with `split.anyTier`) whose class has a `split` row. The family's cap lives here; the parent's `spec.budget` stays its tier's |
-| `spec.parent` | On a part: `task`, `issue`, `index`, `of`. Fixed at creation. A part is requested by the approver and carries its parent's snapshot whole (`text`, `contentSHA256`) |
-| `spec.scope` | On a part: its own scope (`state: ready`, `task`, `touches`, `leave`, `plan`, `assumptions`, `acceptance`), from the approved split. Never changes once set; a revision brief keeps it whole |
-| `status.runs[]` | Each run: `id`, `role`, `trigger` (`initial`, `review`, `human`, `ci`, `retry`, `resume`), `round`, `phase`, `reason`, `verdict`, `tokens`, `costMicroUSD`, `unpriced`, `startSeq`, `headSHA`, `started`, `finished`, and `provenance`, what it ran on: `factoryVersion` (the claim's CREATE-only `agents.ogenki.io/factory-version`), `compositionRevision` (the claim's `spec.crossplane.compositionRevisionRef.name`), `harnessImage` (the claim's `status.harnessImage`, the harness container's `imageID`) and `servedModels` (the meter's `gen_ai_request_model`, at most 8, each at most 64 characters: a longer name is skipped, never truncated). Each is written once, as it becomes known; empty means unknown. A run created before the upgrade (its claim has no factory version) stays empty, and a value over the CRD's bound is not recorded |
-| `status.roomRef` | The task's room, named like the task |
-| `status.pullRequest` | `number`, `url`, `nodeID`, `headSHA`, `mergeCommitSHA`, `mergedBy`, `autoMerged`, `armedAt`, `mergedAt`, `revertNumber`, `author`, `reviewers` |
-| `status.usage` | `tokens` and `costMicroUSD` summed over the runs; never drops |
-| `status.usageSettled` | The meter's late readings had their window and the total is final |
-| `status.endedAt`, `status.outcome` | The task's first end and what it ended as (`accepted`, `merged_human`, `no_op`, `closed`, `stopped`, `rejected`, `reverted`, `failed`): the settle window counts from the first. A later `Reverted` revises neither. `task_outcomes_total` reports `outcome` for a task of its own; an approved split's parent reports the family's outcome, read from its parts at the settle, and its own `outcome` is a part's fallback (a part never opened, or not ended) |
-| `status.evaluated` | A split's part the evaluation counts under its parent's workflow: written at the part's triage when the parent has one. Its merge's provenance is read for the mark, never for the parent |
-| `status.reviewRounds`, `status.fixRuns`, `status.retries`, `status.resumes` | Counters behind `maxReviewRounds`, `merge.fixRuns`, `/factory retry` and `resume.maxPerTask`. `status.fixRunsBeforeStep` is `fixRuns` at the escalation step: the cap counts from it |
-| `status.checkReruns`, `status.checkRerunsHead` | Re-runs of cancelled checks, per head |
-| `status.gateReentries` | Returns from a transient hand-off to the gate (at most 3) |
-| `status.verdict` | The last review's effective verdict: `approve`, `changes` or `none` |
-| `status.narrated`, `status.outbox` | Keys of the comments posted; comments still owed |
-| `status.roomSeq`, `status.facts` | The task's message sequence in its room; the facts last written there |
-| `status.nextTrigger`, `status.nextRole` | Why the next run exists; the verifier it is for |
-| `status.handled` | GitHub review and comment ids already acted on |
-| `status.configHash` | The config that triaged the task |
-| `status.contract` | `runId`, `commit` (40 hex), `files`, `ids` (1 to 50 each): the tester's commit as GitHub recorded it. Set once, when its push is read; every implementer run is held to it |
-| `status.scope` | `state` (`ready`, `question`, `assumed`, `missing`, `failed`) and `seq` (the scope's handoff): the scoper's outcome, kept when the task stops |
-| `status.overlap` | The bounded [outcome-overlap evaluation](#outcome-overlap-detection): repository-scoped `fingerprint` (64 lowercase hex), `classification`, at most 20 `matches` (Task/run 8-character ids, positive issue/PR numbers, `exact`/`lexical`, phase), at most four checked `sources` (`tasks`, `runs`, `rooms`, `github`), optional deterministic evaluation-run `scoperRun`, `checkedAt` and a note of at most 512 characters. Pending has neither classification nor `checkedAt`; a final classification and its evidence are immutable |
-| `status.split` | `state` (`proposed`, `approved`, `declined`, `superseded`, `expired`, `ignored`), `seq` (the split's handoff), `of`, `approvedBy` (`github:<login>`, every part's payer) and `children[]` (`index`, `issue`, `task`, `outcome`: `landed`, `dropped`, `reverted`) |
-| `status.lastActivity` | The running run's last room event, for stuck detection |
-| `status.trace` | The task's root span ids |
-
-| Metadata | Meaning |
-|---|---|
-| Annotation `agents.ogenki.io/stop` | Stop this task: `true` by hand, `label` from `factory/stop`, `superseded` by a new `factory/ready`, `family_dropped` on a part whose family ended `Closed` |
-| Annotation `agents.ogenki.io/revert` | A maintainer's `factory/revert` |
-| Label `agents.ogenki.io/issue` | The issue number |
-| Label `agents.ogenki.io/parent` | A part's parent task: how the factory lists a family and sums its spend. Only `spec.parent` counts as membership |
-| Label `agents.ogenki.io/source-key` | Groups a RunLore finding's tasks |
-
-### The config file
-
-YAML, the chart's `config` value, rendered to `/etc/agent-factory/config/config.yaml`. Unknown keys
-fail the start, every problem is reported at once, and the file is a gate path: only a
-human-authored pull request changes it. Source: `internal/factory/config/config.go`.
-
-| Key | Holds | Default |
-|---|---|---|
-| `factory` | This factory's name, a DNS label such as `prod`: a repository is acted on only while its `.github/agent-factory.yaml` gives it | Required |
-| `repositories` | At most 8 entries, one per repository, names unique (case-insensitive); see the entry table below | Required |
-| `control` | `{repository, issue}`: the issue whose `factory/stop` is the global stop, on a listed repository | `issue` 0: none |
-| `intake.overlap` | `{mode, scoperEnforcement}`: [outcome-overlap detection](#outcome-overlap-detection) for issue, sponsored API and scheduled Tasks. `mode` is `off`, `shadow` or `enforce` (a bare YAML `off` reads as the string); `scoperEnforcement` independently selects scoper-confirmed refusal in `enforce` only. Unknown or duplicated keys are refused | `mode: off`, `scoperEnforcement: false` |
-| `factoryLogin`, `agentsLogin` | The factory App's login (narration) and the agents App's (pull requests) | Required |
-| `roomsURL` | `https://<host>` of the rooms UI, linked in comments | Required |
-| `broker` | `url` (https only), `caFile`, `tokenFile` | Required |
-| `github` | `appIDFile`, `privateKeyFile`; `mergerAppIDFile`, `mergerKeyFile` (both or neither; required once a class is live or shadow; equal to `appIDFile`, the merger is folded into the factory App and every `merge.mergerLogin` must be `factoryLogin`); `agentsAppIDFile`, `agentsKeyFile` (both or neither: the agents App, over the `runTokens.appIDFile` and `privateKeyFile` aliases, which may not name another App). Each App's permissions: [GitHub Apps](github-apps.md) | Required |
-| `poll` | `issues`, `tasks`, `meter`: durations such as `"60s"` | Required, positive |
-| `defaults` | `dataClass`, `predictedClass` (`template` and `tier` were removed: a workflow names them) | Required |
-| `triage` | `controlPercent` (0–100); every task takes the static `standard` tier (`classifierURL` was removed) | Required |
-| `tiers` | Exactly `light`, `standard`, `frontier`; see [Triage](#triage-tiers-templates-classes) | `runUSD`, `taskUSD` from the token caps when `meter.prices` is set |
-| `templates` | `<name>: {roles, maxReviewRounds, reviewerModel}`; every template but a lone `triager` has an `implementer`; `reviewerModel` (a gateway logical name) needs a `reviewer` role. `solo` and `pair` are chosen by triage by class and tier, and a workflow's template replaces triage's; `trio` is refused. Once `runlore` or `api.internalPrincipals` is set, `investigate` is required as `{roles: [triager]}` | The [shipped workflows](#the-shipped-workflows)' `solo`, `pair` and `investigate` where the file omits them; `reviewerModel` unset: the other tier's model |
-| `caps` | `activeTasks`, `concurrentRuns`, `tasksPerDay`, `maxTextBytes` (≤ 14336), `awaitingHumanWIP`, `maxPendingMinutes` (5–480), `escalatedHours`, `preferRevisions` (a revision runs before new intake, caps still binding) | `maxPendingMinutes` 30, `escalatedHours` 168, `preferRevisions` false |
-| `budgets` | `enforceTask`, `enforcePrincipal`, `factoryDailyUSD`, `humanDailyUSD` ([daily budgets](#daily-budgets)), `perPerson: {enabled, dailyUSD}` ([per-person caps](#per-person-caps)), each day positive. The token days `factoryDaily`, `humanDaily` and `perPerson.dailyTokens` load in this release only, ignored, each named in a startup warning | `enforceTask` true, `factoryDailyUSD` 42.50, `humanDailyUSD` 8.50, `perPerson.enabled` false, `perPerson.dailyUSD` `humanDailyUSD` |
-| `resume` | `maxPerTask` (1–5) | 2 |
-| `scoper` | `nudgeAt`, `maxToolCalls` (`1 <= nudgeAt < maxToolCalls <= 200`): the [scoper](#the-scoper)'s tool-call bounds, written as its brief's first line, `<!-- agent-factory scoper nudgeAt=N maxToolCalls=M -->`, which stays first when the run is resumed | `nudgeAt` 25, `maxToolCalls` 40, each defaulted alone |
-| `meter` | `url`, `query`, `prices`, and the gateway's 429s from one source: `throttle.promQuery` (PromQL on `url`), or `logsURL` with `throttleQuery` (VictoriaLogs) | Required but `prices`; one 429 source, never both (`meter.throttle.promQuery and meter.logsURL with meter.throttleQuery: choose one`) |
-| `runs` | `group`, `namespace`, `namePrefix`: where AgentRuns live; `gatewayIdentity: true` states that each portable run calls the model gateway with its own projected token (the run-controller's `model.mode: gateway`, [the gateway](gateway.md)), so the meter prices it and `loops` or `workflows` model overrides and `split` are accepted. `group` is `maku.ogenki.io`, the run-controller's: cloud-native-ref's `cloud.ogenki.io` was removed in v0.49.0 and is refused ([upgrading](upgrading.md#the-xr-run-kind-and-octo-sts)) | the run-controller's AgentRun (`maku.ogenki.io`, `agents`, `run-`); `gatewayIdentity` false |
-| `tracing` | `otlpEndpoint`, `host:port` | Empty: tracing off |
-| `api` | `listen` (the chart's `api` port is `:8082`), `humanIssuer`, `humanJWKS`, `clientIDFiles`; `groups: {admin, member}`, the two groups the API admits; `systemIssuer`, `systemJWKS` (both or neither), `systemPrincipals`; `systemRepositories: {<principal>: [owner/name]}`, the listed repositories each system principal may start runs on; `access: {links: broker, ttl}`, the broker's GitHub account links that resolve a human caller to their GitHub login (`links` must be `broker`, `ttl` at most 5m); `tls: {certFile, keyFile}`, both or neither: the API serves TLS 1.3 from that pair, re-read when it is renewed, and the broker's `factoryURL` becomes `https://` (the chart's `api.tls` writes it); absent, plaintext; `projectIDFile` and `sponsored`, see [sponsored principals](#sponsored-principals); `humanJWKS` is optional with an `https://` `humanIssuer`, whose discovery document names it; `preset` is `zitadel` (the default, today's token rules) or `generic`, any OIDC issuer, which needs `rolesClaim` (a claim name, or an RFC 6901 pointer such as `/realm_access/roles`) and takes `tokenUse` (`id`, the default: the broker forwards the human's ID token, whose `aud` holds one of `clientIDFiles`' ids; or `access`, with `audience` or `audienceFile`, which `sponsored` needs too, in place of `projectIDFile`) and `sponsoredClientClaim` (`generic` only: the claim naming a sponsored token's client, one of `cid` (Okta), `appid` (Entra), `azp` or `client_id`; `azp` or `client_id` naming another client still refuses) | Required but `groups`, `access` and the system keys; `groups` defaults to `agents-admin` and `agents-member`, the broker's values. Without `access` every human run is refused |
-| `runlore` | `listen`, `tokenFile`, `minConfidence` (0–1], `dailyCap`; `repository`, the listed repository its issues and tasks go to | Required but `repository`, which defaults to the first entry |
-| `sandbox` | `suspend: {enabled}`: a run `POST /v1/runs` starts in an attended room gets `spec.suspendable: true`, which lets the room broker suspend it while its approval waits on an idle room (the broker's `suspend` config). Fixed on the claim at create | `enabled` false |
-| `loops` | `<workflow>: {stallSteps (1–500), continuations (0–5), judge (an alias or none)}`, keyed by a workflow or `default` (every workflow without a row); a row named after a class is refused. A task reads its workflow's `loop`, else the row named after its workflow, else `default`'s. A row inherits each key it leaves unset from `default`'s (WF10): `models` role by role and tier by tier, `split` whole, and a key the row sets, `scope: off`, `search: false` and `judge: none` included, is its own; the factory warns at load about each key a row inherits, and when that switches its loop on. A row switches the class's [loop policy](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-10-21-loops-and-teams-design.md) on when it sets any of the three, and an unset one is 80, 2 or `tier-light`; `scope` (`off`, `steering`, `scoper`; unset is `off`, and a bare `off` in YAML reads as `off`) picks the class's [steering](#steering) or [scoper](#the-scoper): never part of the loop, so `{scope: steering}` alone switches no loop on; `split` (`{maxChildren 2–5, familyUSD, childTier, anyTier}`; `familyUSD` defaults to four of the child tier's `taskUSD`, `childTier` to `standard`) is refused without `scope: scoper` on the same row, on `docs-links`, `revert` or an oracle class, and without `meter.prices`; it lets the scoper of a task C7 itself rated `frontier` propose [a split](#splits); `anyTier: true` (default `false`) offers it on every task of the class, whatever tier C7 rated it (needed where no classifier is deployed, so every task is `standard`). `search: true` offers the class's implementer runs the [search tool](../images/maku-harness/README.md) (`spec.loop.search`, which the harness reads as `AGENT_SEARCH=1`); like `scope`, it never switches the loop on, and a class row without `search` takes `default`'s. The room-bridge classes a bare `search` as the plain built-in only on a run given it, assuming MCP tools reach it prefixed (`server_tool`): an unprefixed MCP tool named `search` would also class plain (and the SDK refuses the duplicate tool name at start). `models` (`{<role>: {<tier>: <alias>}}`) puts a role on a provider alias for a **public** task of that tier, the run's tier (the reviewer's is the other tier, the scoper's `light`): `kimi-frontier` (Moonshot's `k3.1-pro`) on `frontier`, `mistral-standard` (Mistral Medium 3.5) on `standard`, `mistral-light` (Mistral Small 4) on `light`, and no alias on another tier, so a run keeps its tier's caps. A role or tier without an entry keeps its tier's `model`, or the template's `reviewerModel`, unless the workflow's own `models` field overrides it; this loops row never gives an internal task a provider alias, since Moonshot processes in China and Mistral in the EU, and the run's `provenance.modelSource` records `tier`, `reviewerModel` or `classModels`. `judge` may be `mistral-light` too, and an internal task of the class then gets `tier-light`. With `meter.prices` set, each alias needs a row: its served model's for a query by `gen_ai_request_model`, else its own. No tier's `model` and no `reviewerModel` may name a provider alias, `POST /v1/runs` refuses one on an internal run (`provider_alias_is_public_only`), every claim is refused one on an internal run, as its model or its judge's, and the Task and AgentRun CRDs hold the same rule; like `scope`, `models` never switches the loop on. The loop policy and the scoper run on either runtime. On the portable `maku.ogenki.io` AgentRun, `models` and `split` need `runs.gatewayIdentity` (`loops.<class>.models needs runs.gatewayIdentity (a model gateway, rollout step 4)`, and the same for `split`), and `split` with it also needs a meter (`meter.url` and `meter.query`: `loops.<class>.split needs a meter: a family's cap is in USD`). With `runs.gatewayIdentity`, each run calls the model gateway with its own token, on the alias its claim names (`spec.model`), and the meter prices it. Without it, USD budgets are not metered on that runtime: its runs carry no gateway identity, so `familyUSD`, the tiers' `runUSD` and `taskUSD`, and the principal caps spend nothing, and a configured meter says so at startup. That runtime then runs every role on modelSecret's model, and resolves no judge alias: its judge calls the run's model endpoint (`JUDGE_BASE_URL`) with the model Secret's optional `judge_model` key, or the run's own model without it (`JUDGE_MODEL`); the demo's `demo.model.judgeName` writes that key | None: every run as before |
-| `workflows` | `<name>: {template (solo, pair, investigate or none), tier, checks, loop (off or a `loops` row), escalation: {outOfBudget, notConverged}, effort: {<role>: low, medium or high}, models: {<role>: <alias>}, description (≤ 120 bytes, the line the scoper's brief shows)}`: the workflows a task may run; `none` is an adopted pull request's (no run) and takes no other key. `escalation` names the workflow a failed run of this one steps to, by signal group, each a defined workflow. `off` is no loop, never `default`'s. The workflow a task [runs](#the-shipped-workflows) shapes its runs: `template` when set, `tier` when above triage's, `checks` and the loop row (`spec.loop`, `spec.scopeMode`, `spec.search`). `effort` and `models` are per-role overrides for a reviewer, tester or triager, never the implementer: absent effort is the harness's `high`, while a set value reaches the claim as `spec.effort` and the harness as `LLM_REASONING_EFFORT`; an absent model keeps the tier's model, then the loops row's public provider override. An internal run's model override is `tier-light`, `tier-standard` or `tier-frontier`, never a provider alias; a public-default workflow's provider override reads as no override on an internal run. Model overrides need `runs.gatewayIdentity`. The map's old name and a workflow's `testFirst` are refused ([upgrading](upgrading.md#workflows-name-what-runs)) | The [shipped workflows](#the-shipped-workflows) where the file omits them |
-| `evaluation` | `{controlPercent (0–100), mode (observe or apply), treatment}`: the team evaluation's control cohort of tasks with no pinned workflow (a class label is no pin), whether a recommended workflow is only recorded or used, and the workflow the treatment cohort runs on a task on the repository's default (a defined workflow other than `none`, else refused). Hashed apart from `triage.controlPercent`. `mode` governs the scoper's recommendation only: a workflow's `escalation` steps under `observe` too | `controlPercent` 0: no cohort; `mode` `observe` |
-| `mergeGuardrails` | `{protectedFiles (regular expressions), mandatoryChecks, maxPatchFiles, maxModifiedLines, maxPerDay, maxGrantLifetime, minPromotionEvidence}`: the bounds a repository's class policy may not loosen; a cap of 0 is no guardrail. `minPromotionEvidence` is the clean shadow decisions a [promotion](#promotion) needs, at least 20; a lower one is refused, and a promotion on fewer needs an operator's exception. Validated only: stage 1 decides nothing with the caps | None; `minPromotionEvidence` 20 |
-| `policyManagement.stage` | How far the merge-policy rollout goes: `read` (stage 1), `simulate` (adds `simulation` and `dualEvaluation`), `manage` (adds `repositoryAuthority`, `approvalMemory` and `promotion`). Replaces the six switches below, which still load as the highest stage they cover and set the `Deprecated` condition; not set together with them | `manage` |
-| `policyManagement.read` | `true` observes each owned repository's class policy and compares it with this config. Stage 1 decides nothing: merge authority stays central | `false` |
-| `policyManagement.simulation` | `true` lets `maku policy simulate` (a policy file decided on decision fixtures by the gate's own evaluator) and `maku policy diff` (tightening or relaxation, class by class) run against this config. Offline; turned off when the simulator disagrees with the gate | `false` |
-| `policyManagement.dualEvaluation` | `true` decides each merge decision again under the repository's policy as `read` last observed it, counts the agreement and writes it into the decision record. Needs `read`. Stage 3 decides nothing: merge authority stays central | `false` |
-| `policyManagement.promotion` | `true` serves `GET /v1/policy/evidence` and `GET /v1/policy/repositories` on the API: each class's [promotion](#promotion) evidence. The broker reads the same key to serve the settings pages and record promotions. Stage 6 changes no class: a maintainer's own pull request does | `false` |
-| `policyManagement.operators` | GitHub logins who decide promotion exceptions; read by the broker | None: no exception can be approved |
-| `policyManagement.approvalMemory` | `true` consults saved approval grants where a live class's `requiresApproval` subset would ask a human (stage 5): the class's grants are read from the broker immediately before the decision and again before the merge call, never cached, and an active grant bound to the policy in force, covering every file the subset caught, lets the decision arm; the record names it (`grant=`). A failed lookup authorizes nothing, a shadow or off class never consults one, and a revert of a merge a grant authorized disables it. Needs `read`, and the broker's `human.approvalMemory`. Until repository authority (stage 4) decides merges, it changes only the dual evaluation's repository decision | `false` |
-| `policyManagement.repositoryAuthority` | `true` lets a repository whose entry sets `classAuthority: repository` be decided on its own `.github/agent-factory.yaml`: the gate decides on its bindings (the `requiresApproval` subset asking a maintainer), and every other reader (triage, intake, schedules, the monitor) reads them. The entry declares no central `classes` (one authoritative source). A file not yet read or older than the fence's window waits (`policy_unavailable`); an invalid one hands off (`policy_invalid`); both pause auto-merge while human merges continue. A relaxation of a live class runs it in shadow. Needs `read`. Rollback: restore the repository's exported central classes and drop `classAuthority` | `false` |
-
-Each `repositories` entry:
-
-| Key | Holds | Default |
-|---|---|---|
-| `name` | `owner/name` | Required |
-| `maintainers` | GitHub logins that may label, retry and review on this repository; never a bot | Required |
-| `triggerLabel` | The start label, `factory/ready` | Required |
-| `classes` | `<name>: {live, shadow, author: {adopt: {logins, branches}}, releaseAgeCheck, allowedFiles, protectedFiles, modifyOnly, maxPatchFiles, maxModifiedLines, diffShape, holdoutChecks, oracle: {probe: dead-links, workflow, maxFindings ≤ 16}, maxPerDay, monitor: {oracleRuns, flux: {source, within}, followUpWindow}}`; `oracle` needs `holdoutChecks`, `diffShape: links-only`, `modifyOnly: true`, a non-empty `allowedFiles`, and, when `maxModifiedLines` is set, `maxModifiedLines >= 2 x oracle.maxFindings` (a retarget changes two lines); `live` and `shadow` never both; every `live` or `shadow` class needs `allowedFiles` or `diffShape`; `allowedFiles` patterns anchored `^…$`; `author.adopt` and the semver shapes: see [adopted classes](#adopted-classes); `docs-links` and `revert` required and hold `diffShape: links-only` built in; `review` and workflow fields (`checks`, `testFirst`, `harness`, `harnessAllowed`, `escalation`) are refused ([upgrading](upgrading.md#merge-policies-removals)); see [merge policies](merge-policies.md#a-binding) | Required when not served from a `Repository` |
-| `checks` | `{egress: [profiles]}`: what a check-enabled run requests beyond `github`, at most 4 of `pypi`, `npm`, `golang`, `crates`. The repository's `.github/agent-checks.yaml` never names egress | None: github only |
-| `merge` | `requiredChecks`, `verifyChecks`, `leakScanCheck` (in both lists), `contractCheck` (the job that runs a task's test contract: not one of `requiredChecks`, and set whenever the repository sets `workflow.testFirst`), `policyBotLogin` (required with `policyBot: true`), `policyBot` (true routes the gate through policy-bot, an opt-in; unset is false, so `maku/merge-gate` is the status branch protection requires, which needs `gateStatus`), `gateStatus` (posts the gate's verdict as the commit status `maku/merge-gate` on the pull request; unset is true; `demo` requires it), `mergerLogin` (bots), `maxPerDay` (the repository's auto-merges a day; `autoMergesPerDay` is refused), `fixRuns`, `checkReruns`, `verifyFor`, `revertWindow`, `awaitingCIFor`, `breaker: {window, maxReverts, maxFollowUps, recoverAfter}`, `approveToMerge` (`awaitingCIFor` optional, 24h when omitted, `0s` for no bound; `maxFollowUps` and `recoverAfter` optional, 0 is off; `recoverAfter` below `window`; `approveToMerge` optional, false is off: on, a maintainer's `APPROVED` review of an agents pull request's current head arms the merger. It acts only when a class of any configured repository is live, shadow or monitored (factory-wide, as the merger key is): with none, the task hands off `merge_gate_off` before the approval is read) | Required |
-| `workflow` | `{default, testFirst}`: `default` is the workflow a task runs when no label and no source names one (`standard` when unset; `none` is refused); `testFirst: true` starts every public `careful` task with the tester and needs `merge.contractCheck` | `standard`; no tester |
-| `schedules` | `[{name, cron, class?, text, workflow?, dataClass?, probe?, probeAuthor?}]`; `workflow` is the workflow its tasks run, `quick` when unset; `class` is set only when its policy declares `oracle.probe` (refused otherwise); `probe` is `renovate-red` or `dead-links`, and `probeAuthor` the login whose open PRs it reads. `dead-links` needs its class to declare the oracle, finds nothing while the class is off or a task of the schedule is open, and reads the newest two runs of the oracle's workflow on `main`. Names are unique across every repository | None; `probeAuthor` defaults to `renovate[bot]` |
-
-`api.repositories`, the run-request API's allowlist, is the entries' names.
-
-#### `demo`
-
-`demo: true` labels a factory on a laptop cluster: no OIDC issuer, no metrics backend, one
-GitHub App. The broker keeps TLS: the umbrella chart generates its CA. Absent, every rule is production's. Under `demo: true`, `Validate`
-changes exactly this:
-
-| Rule today | Under `demo: true` |
-|---|---|
-| `meter.url`, `meter.query`, and a 429 source (`meter.throttle.promQuery`, or `meter.logsURL` with `meter.throttleQuery`) required | optional. If any is set, the existing rules apply. If `meter.url` is empty, any USD cap (`meter.prices`, sponsored USD ceilings, `split.familyUSD`, tier `runUSD` or `taskUSD`) is refused: `demo: %s needs a meter, and the demo has none` |
-| `roomsURL` must be `https://` | `http://localhost[:port]` and `http://127.0.0.1[:port]` also accepted |
-| `api.humanIssuer`, `api.humanJWKS`, `api.clientIDFiles`, `api.groups.*` required | optional, and must all be empty (no group default is applied): `demo: the factory API takes no human tokens` |
-| `api.access` optional | must be unset: `demo: api.access needs an identity provider` |
-
-`demo: true` also requires `merge.gateStatus: true` on every repository.
-
-Without policy-bot (`merge.policyBot` unset or false, the default since v0.49.0) a
-repository needs `merge.gateStatus` left on, since `maku/merge-gate` is then the status branch
-protection requires (see [Branch protection for the merge gate](#branch-protection-for-the-merge-gate)),
-and `merge.policyBotLogin` may be empty (a value that is set must still be a bot login). Every live
-class of the repository then needs `allowedFiles`: policy-bot's gate-path human row is not there,
-and nothing else keeps a gate path from merging. `merge.policyBot: true` opts back into policy-bot.
-
-**A gate path is never the gate's to merge, approval or not** (policy-bot's S9, kept without it).
-With `merge.policyBot: false`, the gate paths are the `protectedFiles` of every class of the
-repository, where the `.policy.yml` gate list moves: the central config's classes and, for a
-repository whose [merge policy](merge-policies.md) is authoritative, every class and every `any`
-branch of its policy. Under `approveToMerge`, a maintainer's approval arms the merge without the
-class's own conditions, so the gate reads the approved head's diff for this one rule, and checks it
-once over the final decision, so no `any` branch can arm an approval over a gate path. A change to
-a gate path, or a rename from one, is handed off as `gate_path` and stays a human merge on GitHub. `allowedFiles` still bounds what a class arms on its own, not
-what a maintainer approves.
-
-**The demo runs on one GitHub App.** A production install runs two or more ([GitHub
-Apps](github-apps.md)). `github.mergerAppIDFile` and `github.mergerKeyFile` may name
-the factory App's own files (the chart's `apps.merger.mode: factory` writes them) (`github.appIDFile`, `github.privateKeyFile`): the merger connection
-then signs with the same key, and a shadow or live class still has its merger. That one App needs
-the union of every permission asked on the demo's behalf, as one list: `actions: write` (optional,
-for check re-runs), `checks: read`, `contents: write`, `issues: write`, `metadata: read`,
-`pull_requests: write`, `statuses: write`. It covers the factory App's own set (contents read,
-issues write, pull_requests write, metadata read), the merger's (checks read, statuses read,
-contents write, pull_requests write, metadata read, plus the optional actions and issues writes
-and `statuses: write` for the gate's verdict) and the run tokens' (the write token: contents write,
-pull_requests write, metadata read; the read token: contents, pull_requests, issues, checks,
-actions and metadata read). `statuses: write` is the merger's alone: the run tokens do not ask for
-it, since one App backs every run and a run that could post a status could forge `maku/merge-gate`.
-A token minted for a narrower profile asks for a subset, which an App holding the union grants.
-
-**Per-run tokens (the only factory-written tokens since v0.49.0).** `runTokens.perRun`
-(with `runTokens.enabled`, or the demo's factory App) gives every run its own token, which the
-run-controller mounts whenever `runController.gitSecret` is empty. `runTokens.enabled` mints from the
-agents App (`github.agentsAppIDFile` and `agentsKeyFile`, which the chart's
-`apps.agents.existingSecret` writes), and is refused without `perRun` or without both files. The
-shared `agent-git` and `agent-git-read` writer is removed; a laptop's one PAT
-(`runController.gitSecret`, demo-only) is the only shared token left:
-
-```mermaid
-sequenceDiagram
-  participant F as factory (minter)
-  participant G as GitHub
-  participant K as runs namespace
-  participant C as run-controller
-  participant H as harness
-  F->>K: create the AgentRun (the leader mints at once, a follower leaves it to the leader)
-  F->>G: installation of owner/repo; a token on repo alone, the role's permissions
-  F->>K: apply <run>-git (token, expires-at, owned by the run)
-  C->>K: get <run>-git: the factory's? 5 minutes left?
-  C->>K: create the pod, mounting <run>-git
-  loop every 30 s, under 10 minutes left
-    F->>G: a fresh token
-    F->>K: apply <run>-git (the kubelet updates the volume in place)
-  end
-  H->>G: revoke the token on exit
-  F->>G: revoke at the run's end
-  F->>K: delete <run>-git
-```
-
-- **Only the leader mints.** The replica that creates a run mints its first token at once when it
-  is the leader; on a follower the leader mints at its next 30-second pass. So no two replicas
-  ever hold a token for one run.
-- **The token** is minted from the App the config names for the run's one repository (its
-  installation is looked up per repository, so runs may span owners), with exactly the
-  permissions the role table below gives the run's role under its `safe-outputs` annotation. A run
-  created without that annotation mints under the repository's live enforced set, which can only
-  narrow the token. A reply granting anything else is revoked and refused (`scope_mismatch`).
-- **Only runs the factory accounts for get one:**
-  - a run naming a live Task on the same repository (its role is checked against the table only:
-    a Task drives several roles);
-  - an API run holding a reservation in today's or yesterday's ledger, whose recorded repository
-    and role the claim must match: the minter trusts what admission recorded, not the claim.
-
-  Anything else is refused once (`maku_factory_run_token_refusals_total{reason}`: `unbound_task`,
-  `unbound_api`, `repository_mismatch`, `role_unknown`, `role_mismatch`) and its run waits Pending.
-  A reservation from before this release names no repository: its run is refused `unbound_api`.
-- **The run-controller** starts a pod only on a Secret that is the factory's (its labels and an
-  ownerReference to that very run), holds a token, and has over 5 minutes left. Otherwise the run
-  waits Pending with reason `SecretMissing` or `SecretExpiring`. A running pod is never stopped for
-  a later expiry.
-- **Suspended runs** are not refreshed; they are re-minted when they leave `Suspended`.
-- **At the run's end** the harness revokes its token after the checkpoint push
-  (`GIT_TOKEN_REVOCABLE=1`), and the factory revokes the token it holds and deletes the Secret.
-- **The factory never reads a Secret** in the runs namespace: see
-  [security](reference/security-controls.md#the-factory-writes-run-token-secrets-it-cannot-read).
-
-#### Run tokens: the role table
-
-The per-run minter gives each run a token scoped to the run's one repository, with the
-permissions its role gets from one table, `minter.Roles` (`internal/factory/minter/roles.go`). The
-scoper and integration runs mint as the triager. "Once enforced" reads the run's own
-`agents.ogenki.io/safe-outputs` annotation, written when the run is created: a type the factory
-publishes for the run takes the matching write away from the sandbox role. The table below is
-generated from the code (`go test ./internal/factory/minter -run TestDocsTable -update`). No role
-holds `statuses`, `workflows`, `administration`, `checks: write` or `actions: write`, and only the
-publisher holds `issues: write`. Runs mint from it under `runTokens.perRun` (above); the shared
-run tokens ignore it.
-
-<!-- roles:begin -->
-| Role | Permissions | Once enforced |
-|---|---|---|
-| implementer | `actions: read`, `checks: read`, `contents: write`, `issues: read`, `metadata: read`, `pull_requests: write` | `pr`, `comment`, `labels`: `pull_requests: read`; `push`: `contents: read` |
-| tester | `actions: read`, `checks: read`, `contents: write`, `issues: read`, `metadata: read`, `pull_requests: read` | `push`: `contents: read` |
-| reviewer | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `metadata: read`, `pull_requests: read` | none |
-| triager | `actions: read`, `checks: read`, `contents: read`, `issues: read`, `metadata: read`, `pull_requests: read` | none |
-| publisher | `contents: read`, `issues: write`, `metadata: read`, `pull_requests: write` | `push`: `contents: write` |
-<!-- roles:end -->
-
-The public-only check runs at start-up and on each labelled issue, so a repository made private
-after start-up is caught only when an issue is labelled.
-
-**The single-repository shape is removed** (v4 step 8): a file with a top-level `repository`,
-`maintainers`, `triggerLabel`, `controlIssue`, `classes`, `merge` or `schedules` fails the start,
-naming each key. Serve the repository from a `Repository` object; `maku config migrate` still reads
-the old file and writes it ([upgrading](upgrading.md#the-single-repository-config)).
-
-**Each repository has its own GitHub connections**, the factory App's and the merger's, one pair
-per entry; a repository either App is not installed on is refused alone: it is not served, its `Repository`
-reports `Connected=False` (`WiringFailed`), the others are served, and the factory retries every
-minute until the App is installed. Each entry has its own issue
-poller, and a task only ever reads and writes its own repository through its own pair. The daily
-auto-merge cap and the breaker count that repository's merges only.
-
-#### The ownership fence
-
-A repository is this factory's only while `.github/agent-factory.yaml` on its default branch names
-it, so two clusters never take the same issue:
-
-```yaml
-# .github/agent-factory.yaml: make it a policy-bot gate path
-factory: aws-0
-```
-
-Every replica reads each listed repository's file at start and every 5 minutes, with the factory
-App. Absent, unparsable (the file names the factory with `factory: <name>`, and may also hold
-`mergePolicies` and a [`hardening`](#the-repositorys-hardening-block) block, neither of which decides
-ownership) or naming another factory, the repository
-gets no trigger-label or revert intake, no orphan scan, no schedules, no RunLore issues
-(`409 repository_not_owned`), no API runs (`409 repository_not_owned`) and no merges (gate step
-`not_owned`, a human merges). Stop labels and the control issue still work. A read that fails keeps
-the last answer for 15 minutes, then the repository counts as not owned until a read succeeds.
-`maku_factory_repository_owned{repository}` shows the state.
-
-#### Who may start work on a repository
-
-| Path | Bound to | GitHub check |
-|---|---|---|
-| Trigger label | The poller's repository; the labeller in that entry's `maintainers` | The labeller has `write` or higher on it; no answer leaves the label for the next poll |
-| `factory/revert` label | The labelled pull request's task, on the poller's repository | Same as the trigger label |
-| `/factory retry` | The escalated task's repository; the commenter in that entry's `maintainers` | Same as the trigger label |
-| Schedule | The entry that lists it | None: the config is the requester |
-| RunLore | `runlore.repository` | None: the config chooses, not the caller |
-| `POST /v1/runs`, roomless | `repository`, in the list | The human has `write` or higher on it, admins included; a system principal needs it in `api.systemRepositories` |
-| `POST /v1/runs` with `roomRef` (broker `start_run`, a fork's runs) | The room's `spec.repository`, else `400 repository_differs_from_the_room` | As roomless |
-| `POST /v1/runs` with `resumeBranch` | The branch's newest run's repository and its room's, else `400 repository_differs_from_the_branch` | As roomless |
-
-The `write` check resolves the token's subject to the caller's GitHub login through their
-[GitHub account link](github-link.md), read from the broker (`api.access.links: broker`), then asks
-GitHub with the factory App; both answers are cached for
-`api.access.ttl`. A caller with no GitHub link, a lookup that fails, or a factory without
-`api.access` is refused `403 repository_permission`. Metrics carry a `repository` label whose
-values are the listed names only, anything else `other`.
-
-### Steering
-
-A repository's maintainers may keep a note per class at `.github/agent-factory/steering/<class>.md`
-(`review.md` for unlabelled issues): at most 2048 bytes, an optional `# ` title, at most three `## `
-modules, one of them `## Verify` listing the checks that prove a change of the class, each with the
-CI check that runs it. `## Leave alone` lists paths not to touch. Under `scope: steering` the factory
-reads it on the default branch at triage, keeps it on `spec.steering`, posts it once in the room after
-the snapshot and puts it, quoted between two fence lines as the maintainers' guidance (not the
-factory's instructions), in every implementer brief. Control and invisible characters are refused. An
-absent note is no steering; an invalid one is not used, counted and logged, and the task proceeds; a
-read that fails is retried. A repository the factory does not own (or whose fence cache is stale) is
-not read: the task proceeds unsteered and the read counts as `unowned`. While any class has steering on, the
-factory reads the diff of every pull request it would arm and refuses one that changes (or renames
-away) a path under `.github/agent-factory/steering/` as `steering_path`, handed to a human; with
-every class `off` there is no extra read. The repository should also make that directory a
-policy-bot gate path. A first brief that cannot hold the note and a 14 KiB snapshot
-points at the snapshot in the room instead.
-
-### The scoper
-
-Under `scope: scoper`, a read-only `triager` run with a scoping brief goes before the implementer
-(after any [outcome-overlap evaluation](#outcome-overlap-detection)), at the light
-tier's run caps (at the task's own tier when it was offered a [split](#splits), since it also plans
-every part), and hands the implementer a bounded task through `room_handoff`'s `scope`: the
-change, the files, the paths to leave alone, a plan, its assumptions and its acceptance checks.
-Every implementer brief carries it after the steering note. The brief asks for the handoff as soon
-as the scope is known, within `scoper.nudgeAt` tool calls (25 by default). The harness bounds its
-exploration: it nudges at `scoper.nudgeAt` tool calls and ends the run at `scoper.maxToolCalls`
-(40 by default), counted as `budget_calls`. A scoper that ends without a handoff on its own
-limits (the run cap or the tool-call limit) or after finishing with no scope starts the implementer
-unscoped, and the room says "scope not checked". Any other failure of the scoper (an agent error, a
-stuck or lost run) never starts the implementer unscoped: the task escalates as `scoper_failed`, and
-the issue's status comment says the scope was not checked. A model provider's refusal is neither: it
-holds the task like any run's ([the hold](#model-provider-refusals)). A run cap counts as `budget` in
-`maku_factory_scoper_runs_total`, the tool-call limit as `budget_calls`. A person's stop, an
-exhausted budget (task, payer, fleet or person), an unschedulable run (`run_unschedulable`), no
-budget to resume it (`resume_budget`) or a deleted claim escalate as any run's. A question no
-default answers bounces the task to the issue's author (`needs_author`); a task without an issue
-takes the scoper's first assumption instead.
-
-- **Read-only at the token level.** The triager's token is minted from the role table's triager
-  row, which grants reads only: the run cannot push or open anything, whatever its brief says. The
-  one exception is a demo's laptop PAT, `runController.gitSecret`, which every role shares. It also
-  refuses a scoper run without the room tools (`broker.roomTools.auth: tokenreview`), since the
-  scoper hands off with `room_handoff`.
-- **The scope has one source.** The factory takes it only from the triager's handoff to the
-  implementer, on the current scoper run, and validates it again (the broker stored it redacted).
-  A scope on any other handoff is ignored, and the task proceeds unscoped (`missing`). It reaches
-  implementer briefs fenced, as the scoper's claim, never as the factory's instructions.
-- **The bounce posts one question.** The question and the scoper's first assumption go in one
-  comment to the author (quoted for a public task, left in the room otherwise), with the label
-  `factory/needs-author`. Only a maintainer ends the wait: a re-applied `factory/ready` (a new
-  task, scoped again), or `/factory retry` from a maintainer with write access (the task proceeds
-  on the assumption, state `assumed`, with no second scoper run). Otherwise it stops at
-  `caps.escalatedHours` (`escalation_expired`). The author's own comments end nothing, and the
-  room's owner sees the wait as an `answer` need.
 
 ## Multi-repository coordination
 
@@ -2806,7 +2253,7 @@ flowchart LR
 ### The switch
 
 `coordination: {mode, publicOnly: true, maxChildren: 2}` in the factory config, the same block the
-broker reads for [`coordination_plan`](api.md#coordination-on-mcp). `publicOnly: false` and any
+broker reads for [`coordination_plan`](reference/api.md#coordination-on-mcp). `publicOnly: false` and any
 other `maxChildren` are refused.
 
 | `mode` | What exists |
@@ -2932,7 +2379,7 @@ before a maintainer's `/factory split`.
 
 `loops.<class>.split.anyTier: true` is the explicit opt-in to offer the split on every tier (splitter design SP1's option (b); the default stays (a), frontier only): the same row, caps and handoff, only the tier test is dropped. Use it where no classifier is deployed.
 
-A task with a `spec.maxMicroUSD` (an api task) is never offered a split: see [sponsored principals](#sponsored-principals).
+A task with a `spec.maxMicroUSD` (an api task) is never offered a split: see [sponsored principals](reference/sponsored-principals.md).
 
 - **The approver pays.** `/factory split` needs `write` on the repository, is read before
   `/factory retry`, and charges the approver for every part: their day is checked first (spent and
@@ -2966,7 +2413,7 @@ A task with a `spec.maxMicroUSD` (an api task) is never offered a split: see [sp
 - **Tier fit** is unscored for a part and for a parent whose split was approved; the parent's room
   summary reads `running` while it is in `Split`.
 
-### The factory's API
+## The factory's API
 
 Both endpoints serve on every replica.
 
@@ -2985,8 +2432,8 @@ system's run request. Source: `internal/factory/api/server.go`.
 | `503` | `kill_switch`, `runs_unavailable`, `rooms_unavailable`, `ledger_busy`, `meter_blind`, `create_failed`, `identity_unavailable` (per-person caps on, and the caller's GitHub link could not be read) |
 
 **`POST /v1/tasks`**, on `api.listen`, registered only while `api.sponsored` or
-`api.internalPrincipals` is non-empty (otherwise `404`): a sponsored or internal principal's task. [Sponsored principals](#sponsored-principals) is the model;
-the broker's `run_create` is its client ([API](api.md#post-v1tasks)).
+`api.internalPrincipals` is non-empty (otherwise `404`): a sponsored or internal principal's task. [Sponsored principals](reference/sponsored-principals.md) is the model;
+the broker's `run_create` is its client ([API](reference/api.md#post-v1tasks)).
 
 **`POST /intake/runlore`**, on `runlore.listen` (the chart's `intake` port, 8080): a RunLore
 finding. Source: `internal/factory/intake/runlore.go`.

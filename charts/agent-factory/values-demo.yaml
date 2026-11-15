@@ -34,7 +34,7 @@ demo:
     judgeName: ""
     apiKey: ""
   # agent-factory-github in the release namespace: keys app_id, private_key. ONE GitHub App backs
-  # the factory, the merger and the run token (docs/factory.md#demo).
+  # the factory, the merger and the run token (docs/reference/config.md#demo).
   githubApp:
     existingSecret: ""
     id: ""

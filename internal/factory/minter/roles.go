@@ -110,7 +110,7 @@ func (t Table) For(role string, enforced []hardening.OutputType) (Permissions, e
 	return out, nil
 }
 
-// Render is t as the Markdown table docs/factory.md carries between its roles markers.
+// Render is t as the Markdown table docs/reference/config.md carries between its roles markers.
 func Render(t Table) string {
 	var b strings.Builder
 	b.WriteString("| Role | Permissions | Once enforced |\n|---|---|---|\n")

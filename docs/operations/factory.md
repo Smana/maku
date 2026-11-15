@@ -123,7 +123,7 @@ leaves the first enforced tasks waiting unanswered (no publisher token).
    `runController.gitSecret` left empty), and the factory's config sets `hardening.publisher.minter:
    true`: the factory mints the publisher's token from the agents App with the role table's
    publisher row. The agents App is installed on the repository and grants every permission of the
-   [role table](../factory.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and
+   [role table](../reference/config.md#run-tokens-the-role-table), the publisher's `pull_requests: write` and
    `issues: write` included; a missing grant fails the publisher's mint with
    `permission_not_granted` (`maku_factory_run_token_mints_total{role="publisher"}`).
 3. **The gateway profile.** `output_pr`, `output_comment`, `output_labels` and `output_issue` are
@@ -301,7 +301,7 @@ that needs another run escalates `principal_unknown`. A refused later run escala
 possibly with a pull request open. A maintainer's `/factory retry` is paid by the retrier.
 
 A `run.` task that stays `failed` with `no such room` was never triaged (the grace is two minutes:
-see [the API](../api.md#sponsored-principals-on-mcp)); check `maku_factory_api_intake_total` and the Task.
+see [the API](../reference/api.md#sponsored-principals-on-mcp)); check `maku_factory_api_intake_total` and the Task.
 
 ### Internal principals and `factory/publish`
 
@@ -317,7 +317,7 @@ An issue the factory filed from a proposal carries a marker label and `class:<c>
 `maku_factory_monitor_verifications_total{verdict="none"}`: a verdict that never arrives.
 
 **Starting the fix from the label.** `publishStarts: true` on an internal principal makes `factory/publish` also start the
-fix, charged to the maintainer who labelled (see [`factory/publish`](../factory.md#internal-principals)). Only that start is off by default. The
+fix, charged to the maintainer who labelled (see [`factory/publish`](../reference/sponsored-principals.md#internal-principals)). Only that start is off by default. The
 factory labels every issue it files `class:<c>`, with or without `publishStarts`: the class inferred from the proposal's `## Files` (`review` when none fits; a live class is never inferred), so each
 `class:<c>` label must exist on the repository, as `factory/ready` does. A `class:` label a maintainer applies takes precedence.
 
@@ -336,7 +336,7 @@ Known limit: a class whose `followUpWindow` is over 24 h can lose its verdict at
 For a repository whose bot adds catalog entries (an [adopted class](../factory.md#adopted-classes) with
 `diffShape: added-entry`), the repository carries, and each is a policy-bot gate path:
 
-- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](../factory.md#the-ownership-fence));
+- the fence file `.github/agent-factory.yaml`, naming this factory ([the fence](../reference/config.md#the-ownership-fence));
 - the policy-bot configuration;
 - the validator's workflow, `.github/workflows/validate-kb.yml`, whose job `validate` is the class's
   holdout check. If a pull request could edit it, it could post `SUCCESS` itself.
@@ -349,7 +349,7 @@ labelling it again ([known limit](../factory.md#adopted-classes)).
 
 ## Webhooks
 
-The broker's `webhooks` list declares the subscribers of [room events](../api.md#webhooks) (including every subscriber key). The broker's egress for the internet subscribers is generated from this list in ai-native-ref.
+The broker's `webhooks` list declares the subscribers of [room events](../reference/api.md#webhooks) (including every subscriber key). The broker's egress for the internet subscribers is generated from this list in ai-native-ref.
 
 **Before enabling.**
 

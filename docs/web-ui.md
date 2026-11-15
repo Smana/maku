@@ -37,7 +37,7 @@ filed or labelled, or whose PR you authored or review, matched on your linked Gi
 **needs me** (rows with something waiting for you) and a repository picker, filled from the
 repositories of the rooms the page first listed. They are the API's `mine`, `needs_me` and
 `repo=owner/name`, applied after the access check so none reveals an unreadable room
-([API](api.md#8080--human-api)). An empty table says why: `No rooms match` under a filter,
+([API](reference/api.md#8080--human-api)). An empty table says why: `No rooms match` under a filter,
 `No rooms you can read yet` without one.
 
 **closed** lists the rooms closed in the last 30 days instead: when a task ends the factory deletes

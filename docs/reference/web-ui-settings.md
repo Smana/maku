@@ -73,7 +73,7 @@ variants a maintainer may pin or the scoper may recommend, where an out-of-budge
 escalates, and each workflow's roles and tier (`Floor review-floor: roles chosen at triage`, `Variant
 review-frontier: roles implementer, tester, reviewer · tier frontier · tests first`). A floor with no
 `template` says its roles are chosen at triage, because the factory picks them from the class and the
-tier. It comes from the factory's [catalogue](../api.md#get-v1catalogueownername), so a class the catalogue
+tier. It comes from the factory's [catalogue](api.md#get-v1catalogueownername), so a class the catalogue
 does not offer at intake (`revert`, an adopted or an oracle class) has no row, and a page whose catalogue
 the factory did not answer has none either. The row writes nothing: pinning a workflow is not a setting.
 

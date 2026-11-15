@@ -11,7 +11,7 @@ README.md:36: docs/factory.md#splits
 README.md:45: docs/factory.md#budgets
 README.md:47: docs/factory.md#the-kill-switch
 [x] README.md:55: docs/web-ui.md
-README.md:59: docs/room-log.md#the-guarantees
+[x] README.md:59: docs/room-log.md#the-guarantees
 [x] README.md:59: docs/security.md#redaction -> docs/reference/security-controls.md#redaction
 [x] README.md:61: docs/web-ui.md#forks -> docs/reference/web-ui-settings.md#forks
 README.md:67: docs/factory.md#the-merge-gate
@@ -207,7 +207,7 @@ charts/agent-factory/tests/golden/production-cnref-like.yaml:4623: docs/factory.
 [x] charts/agent-factory/tests/render.sh:536: docs/install-secrets.md
 [x] charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
 [x] charts/agent-factory/values-demo.yaml:2: docs/gateway.md
-charts/agent-factory/values-demo.yaml:37: docs/factory.md#demo
+[x] charts/agent-factory/values-demo.yaml:37: docs/factory.md#demo
 [x] charts/agent-factory/values-demo.yaml:190: docs/gateway.md
 [x] charts/agent-factory/values-demo.yaml:224: docs/database.md
 [x] charts/agent-factory/values-production.example.yaml:1: docs/upgrading.md#from-the-demo-to-production
@@ -255,7 +255,7 @@ charts/maku-factory/README.md:53: docs/factory.md#hardening-non-code-outputs-enf
 charts/maku-factory/README.md:82: docs/architecture.md#how-the-factory-reads-its-configuration
 charts/maku-factory/README.md:104: docs/architecture.md#live-fields-and-fields-that-need-a-rollout
 charts/maku-factory/README.md:105: docs/factory.md
-charts/maku-factory/README.md:105: docs/factory.md#the-config-file
+[x] charts/maku-factory/README.md:105: docs/factory.md#the-config-file
 charts/maku-factory/README.md:138: docs/factory.md#outcome-overlap-detection
 [x] charts/maku-factory/README.md:140: docs/operations.md#outcome-overlap-rollout-and-shadow-evidence -> docs/operations/factory.md#outcome-overlap-rollout-and-shadow-evidence
 [x] charts/maku-factory/templates/_helpers.tpl:23: docs/upgrading.md#the-old-app-keys
@@ -275,7 +275,7 @@ charts/maku-factory/README.md:138: docs/factory.md#outcome-overlap-detection
 [x] charts/maku-factory/values.schema.json:63: docs/upgrading.md#the-xr-run-kind-and-octo-sts
 [x] charts/maku-factory/values.yaml:10: docs/github-apps.md
 [x] charts/maku-factory/values.yaml:83: docs/upgrading.md#the-xr-run-kind-and-octo-sts
-charts/maku-factory/values.yaml:91: docs/factory.md#the-config-file
+[x] charts/maku-factory/values.yaml:91: docs/factory.md#the-config-file
 [x] charts/maku-factory/values.yaml:93: docs/gateway.md
 [x] charts/maku-gateway/README.md:6: docs/gateway.md
 [x] charts/maku-gateway/README.md:6: docs/gateway.md
@@ -299,7 +299,7 @@ charts/maku-slack/values.yaml:1: docs/slack.md
 [x] charts/maku/README.md:31: docs/upgrading.md#the-run-paths-old-keys
 [x] charts/maku/README.md:32: docs/security.md#the-run-paths-network-modes -> docs/reference/security-controls.md#the-run-paths-network-modes
 charts/maku/README.md:36: docs/factory.md
-charts/maku/README.md:36: docs/factory.md#run-tokens-the-role-table
+[x] charts/maku/README.md:36: docs/factory.md#run-tokens-the-role-table
 [x] charts/maku/README.md:38: docs/gateway.md#runs-through-the-gateway
 [x] charts/maku/README.md:41: docs/security.md#the-run-pods-admission -> docs/reference/security-controls.md#the-run-pods-admission
 [x] charts/maku/README.md:53: docs/upgrading.md#the-run-paths-old-keys
@@ -494,8 +494,8 @@ internal/app/maku_policy_docs_test.go:58: docs/merge-policies.md
 [x] internal/app/seams_test.go:47: docs/install-secrets.md
 [x] internal/app/seams_test.go:66: docs/install-secrets.md
 [x] internal/authn/humans.go:248: docs/identity.md
-internal/bridgeapi/allow.go:26: docs/event-envelope.md
-internal/bridgeapi/approvals.go:29: docs/api.md
+[x] internal/bridgeapi/allow.go:26: docs/event-envelope.md
+[x] internal/bridgeapi/approvals.go:29: docs/api.md
 [x] internal/config/config.go:782: docs/upgrading.md#the-zitadel-reader
 [x] internal/config/config.go:1026: docs/upgrading.md#workflows-name-what-runs
 [x] internal/config/config_test.go:1314: docs/upgrading.md
@@ -606,12 +606,12 @@ internal/factory/mdlinks/mdlinks_test.go:54: docs/new.md
 internal/factory/mdlinks/mdlinks_test.go:54: docs/old.md
 [x] internal/factory/meter/testdata/query_reply.json:2: docs/operations.md (index)
 internal/factory/meter/vm_test.go:144: docs/factory.md
-internal/factory/minter/roles.go:113: docs/factory.md
-internal/factory/minter/roles_test.go:19: docs/factory.md
-internal/factory/minter/roles_test.go:153: docs/factory.md
-internal/factory/minter/roles_test.go:166: docs/factory.md
-internal/factory/minter/roles_test.go:170: docs/factory.md
-internal/factory/minter/roles_test.go:182: docs/factory.md
+[x] internal/factory/minter/roles.go:113: docs/reference/config.md (DocTable source for run-token role permissions)
+[x] internal/factory/minter/roles_test.go:19: docs/factory.md
+[x] internal/factory/minter/roles_test.go:153: docs/reference/config.md (TestDocsTable reads ../../../docs/reference/config.md)
+[x] internal/factory/minter/roles_test.go:166: docs/factory.md
+[x] internal/factory/minter/roles_test.go:170: docs/factory.md
+[x] internal/factory/minter/roles_test.go:182: docs/factory.md
 [x] internal/factory/minter/runs.go:249: docs/security.md
 internal/factory/narrate/revised_test.go:26: docs/reference/commands.md
 internal/factory/narrate/revised_test.go:28: docs/reference/commands.md
@@ -748,10 +748,10 @@ internal/humanapi/acts.go:125: docs/api.md
 internal/humanapi/grants_test.go:306: docs/security/c.md
 internal/humanapi/grants_test.go:372: docs/security/a.md
 internal/humanapi/issuedraft_test.go:85: docs/a.md
-internal/humanapi/mcpact.go:77: docs/api.md
+[x] internal/humanapi/mcpact.go:77: docs/api.md
 [x] internal/humanapi/slackdecide_test.go:1000: docs/operations.md (index)
-internal/humanapi/ws.go:49: docs/api.md
-internal/humanapi/ws_test.go:544: docs/api.md
+[x] internal/humanapi/ws.go:49: docs/api.md
+[x] internal/humanapi/ws_test.go:544: docs/api.md
 internal/install/factory.go:36: docs/merge-policies.md
 internal/install/factory.go:169: docs/factory.md#branch-protection-for-the-merge-gate
 [x] internal/install/gitops.go:128: docs/database.md
@@ -819,7 +819,7 @@ internal/intake/testdata/plan/three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/v1-three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/v1-three.json:7: docs/content/getting-started.md
-internal/maku/client.go:418: docs/api.md
+[x] internal/maku/client.go:418: docs/api.md
 internal/maku/drill.go:38: docs/drills.md
 internal/maku/drill.go:40: docs/drill/injection.md
 internal/maku/drill.go:90: docs/drills.md
@@ -827,8 +827,8 @@ internal/maku/drill.go:113: docs/drills.md
 internal/maku/drill.go:198: docs/drill/injection.md
 internal/maku/drill_test.go:255: docs/drill/injection.md
 internal/maku/drill_test.go:256: docs/drill/injection.md
-internal/maku/format.go:91: docs/api.md
-internal/maku/maku_test.go:338: docs/api.md
+[x] internal/maku/format.go:91: docs/api.md
+[x] internal/maku/maku_test.go:338: docs/api.md
 internal/maku/roomref_test.go:128: docs/cli.md
 [x] internal/preflight/catalog.go:20: docs/install.md
 [x] internal/preflight/catalog.go:67: docs/install.md
@@ -855,22 +855,22 @@ internal/slackapp/draft_test.go:143: docs/runbooks/18.md
 [x] internal/store/check_test.go:226: docs/database.md
 [x] internal/store/check_test.go:232: docs/database.md
 internal/store/store.go:60: docs/architecture.md
-internal/summary/state.go:11: docs/api.md
+[x] internal/summary/state.go:11: docs/api.md
 [x] taskfile.yaml:129: docs/install-secrets.md
 [x] taskfile.yaml:144: docs/install-secrets.md
 [x] taskfile.yaml:202: docs/database.md
 [x] taskfile.yaml:269: docs/upgrading.md
 web/preview/long-fixtures.ts:12: docs/an-old-runbook-page.md#an-anchor-without-any-break-point
 web/preview/long-fixtures.ts:14: docs/an-old-runbook-page.md
-web/src/conn.ts:56: docs/api.md
-web/src/controls.ts:8: docs/api.md
-web/src/controls.ts:238: docs/api.md
-web/src/fork.ts:37: docs/api.md
+[x] web/src/conn.ts:56: docs/api.md
+[x] web/src/controls.ts:8: docs/api.md
+[x] web/src/controls.ts:238: docs/api.md
+[x] web/src/fork.ts:37: docs/api.md
 web/src/strip.ts:158: docs/concepts.md
-web/src/view.ts:42: docs/api.md
-web/src/view.ts:473: docs/api.md
-web/test/controls.test.ts:594: docs/api.md
-web/test/controls.test.ts:596: docs/api.md
+[x] web/src/view.ts:42: docs/api.md
+[x] web/src/view.ts:473: docs/api.md
+[x] web/test/controls.test.ts:594: docs/api.md
+[x] web/test/controls.test.ts:596: docs/api.md
 
 # ai-native-ref
 docs/runbooks/agent-factory/02-identity-tokens.md:5: docs/gateway.md
@@ -895,8 +895,8 @@ website/content/docs/use/guide/merge-policies.md:111: docs/merge-policies.md#sta
 [x] internal/preflight/doc.go:10: docs/install.md (DocTable source for the preflight check table)
 [x] internal/preflight/docs_test.go:14: docs/install.md (TestInstallDocTable reads ../../docs/install.md)
 internal/app/maku_policy_docs_test.go:17: docs/merge-policies.md (TestTheGuidesExamplesValidate validates YAML examples in ../../docs/merge-policies.md)
-internal/factory/minter/roles.go:113: docs/factory.md (DocTable source for run-token role permissions)
-internal/factory/minter/roles_test.go:153: docs/factory.md (TestDocsTable reads ../../../docs/factory.md)
+[x] internal/factory/minter/roles.go:113: docs/reference/config.md (DocTable source for run-token role permissions)
+[x] internal/factory/minter/roles_test.go:153: docs/reference/config.md (TestDocsTable reads ../../../docs/reference/config.md)
 [x] internal/githubapps/apps.go:63: docs/github-apps.md (DocTable source for GitHub App permissions)
 [x] internal/githubapps/apps_test.go:97: docs/github-apps.md (TestDocsTable reads ../../docs/github-apps.md)
 [x] hack/install-e2e/lib.sh:209: docs/database.md (extracts bootstrap SQL from docs/database.md)
@@ -906,3 +906,4 @@ internal/factory/minter/roles_test.go:153: docs/factory.md (TestDocsTable reads 
 [x] charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts (asserts rendered runbook_url) -> docs/operations/failures.md#room-alerts
 hack/vocabulary.sh:11: docs/{api,upgrading,event-envelope,room-log}.md (skip regex in vocabulary check)
 [x] hack/names.sh:33: docs/upgrading.md (slack_allow in old-name check)
+[x] web/test/controls.test.ts:596: docs/reference/api.md (reads ../../docs/reference/api.md for rejection copy)

@@ -39,7 +39,7 @@ export class RoomLog {
   }
 }
 
-// One row of GET /api/rooms (docs/api.md). lastEventAt is omitted for a room with no event.
+// One row of GET /api/rooms (docs/reference/api.md). lastEventAt is omitted for a room with no event.
 export interface RoomRow {
   id: string; phase: string; owner: string; driver: string; dataClass: string; lastSeq: number;
   repository?: string; issue?: number; title?: string; task?: string; pr?: number; needsYou?: number;
@@ -470,7 +470,7 @@ export function cliSetup(get: typeof fetch = fetch): HTMLDetailsElement {
   return d;
 }
 
-// Why POST /api/rooms refused (docs/api.md).
+// Why POST /api/rooms refused (docs/reference/api.md).
 const createErrors: Record<number, string> = {
   400: "That data class or repository is not accepted (repository is owner/name).",
   404: "You cannot read that repository on GitHub, or it does not exist.",

@@ -84,7 +84,7 @@ Residuals of per-run tokens:
 
 ### A sponsored principal's bounds
 
-A sponsored principal ([factory](../factory.md#sponsored-principals)) is a ZITADEL machine user the
+A sponsored principal ([factory](sponsored-principals.md#sponsored-principals)) is a ZITADEL machine user the
 config binds to a maintainer. Every bound below is enforced server-side, and none comes from a token
 claim except the client that issued it.
 
@@ -166,7 +166,7 @@ before printing.
 | `rooms_broker` | Append and read events; insert room rows; update only the `rooms` columns it must move | Update or delete events; unseal, re-date or re-time a room; move `last_seq` by anything but +1 |
 | `rooms_retention` | Find sealed rooms closed past their retention, then delete their events and rows | Read any event column but `room_id`, or any `rooms` column but the four that decide expiry (column grants); see or delete a room that is not expired, or its events (row-level security) |
 
-Details and the tests that prove them: [room log](../room-log.md#the-guarantees).
+Details and the tests that prove them: [room log](room-log.md#the-guarantees).
 
 ## The model gateway's identity
 
@@ -378,7 +378,7 @@ The factory's Slack App (`cmd/maku-slack`, [docs/slack.md](../slack.md)) is the 
 | 7 | No Slack message carries room text: thread lines are templates of ids, states, closed codes and the room's URL | `TestThreadMessagesCarryNoText` |
 | 8 | No tool and no Slack *reply* approves or steers: the App reads no reply in a thread as a command, and no sponsored tool decides. The one Slack path that decides is a signed **button** on a broker-posted card, for `forge.push` only, resolved to the linked human's room standing and repository write, four-eyes included, and recorded as that human's decision | `TestSlackNeverDecidesOnAThreadReply`, `TestSponsoredToolList`, `TestSlackDecidesForgePushOnly` |
 
-- **One class, one surface.** A card's buttons call the broker's `POST /api/slack/decisions` ([api](../api.md#post-apislackdecisions)), which exists only when the broker sets `human.slackDecide` and takes the App's sponsored principal alone. The class is the constant `forge.push`: every other class keeps the room page, whatever the clicker's standing. The click asserts no identity — the Slack user resolves through `slack_links` to a ZITADEL account, its *current* GitHub login, and that login must hold two standings at once: an approver or owner of the room (from the Room CR only, never from a ZITADEL group), and write on the room's repository. The room's four-eyes rule refuses the person who prompted the run, the branch in the body must be the run's own (`binding_mismatch` otherwise), and the reason is empty by construction: a press carries a decision and no sentence a model could be steered by. The room log records a human, never the App: `actor_id=human:<sub>`, with the surface in the idempotency scope (`origin_client=human:<sub>:slack:<approvalId>`). The store's single-decision fence is unchanged, so the card is a view and never the fence.
+- **One class, one surface.** A card's buttons call the broker's `POST /api/slack/decisions` ([api](api.md#post-apislackdecisions)), which exists only when the broker sets `human.slackDecide` and takes the App's sponsored principal alone. The class is the constant `forge.push`: every other class keeps the room page, whatever the clicker's standing. The click asserts no identity — the Slack user resolves through `slack_links` to a ZITADEL account, its *current* GitHub login, and that login must hold two standings at once: an approver or owner of the room (from the Room CR only, never from a ZITADEL group), and write on the room's repository. The room's four-eyes rule refuses the person who prompted the run, the branch in the body must be the run's own (`binding_mismatch` otherwise), and the reason is empty by construction: a press carries a decision and no sentence a model could be steered by. The room log records a human, never the App: `actor_id=human:<sub>`, with the surface in the idempotency scope (`origin_client=human:<sub>:slack:<approvalId>`). The store's single-decision fence is unchanged, so the card is a view and never the fence.
 - **A press is answered in a closed vocabulary, and never with detail.** Every refusal is a `200` with one code, which the App turns into one fixed sentence for the clicker alone ([Slack](../slack.md#the-card)): no repository, branch, GitHub login, approver's name or count of approvers. The card path's codes, beside the two decisions:
 
   | `result` | What it means |

@@ -39,7 +39,7 @@ The repository's default branch must contain `.github/agent-factory.yaml` with `
 | `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | asked | OpenAI-compatible endpoint, model name, and key (saved mode `0600` in `.demo/`, readable by the run pod) |
 | `DEMO_REPO` | asked | Public `owner/name`, created from `Smana/maku-demo` when absent |
 | `DEMO_LOGIN` | `gh` login, else asked | GitHub login allowed to trigger tasks |
-| `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG` | unset | Existing App id, PEM path and URL slug; skips browser creation (permissions in [the factory page](factory.md#demo)) |
+| `GITHUB_APP_ID`, `GITHUB_APP_KEY_FILE`, `DEMO_SLUG` | unset | Existing App id, PEM path and URL slug; skips browser creation (permissions in [the factory page](reference/config.md#demo)) |
 | `CLUSTER` | `k3d`, else `kind` | `k3d`, `kind`, or `current` (confirmed interactively or via `DEMO_CONFIRM_CONTEXT=<context>`) |
 | `MAKU_VERSION` | release tag, else saved | Image and CLI release tag |
 | `DEMO_LIVE` | saved, else `0` | `1` turns the `docs-links` [class](concepts.md#glossary) live so the gate merges (`DEMO_LIVE=0 task demo` reverts it) |
