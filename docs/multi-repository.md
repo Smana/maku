@@ -136,4 +136,4 @@ switch keep theirs.
   internal `coordination.View` is unfiltered and served on no human route.
 - Execute itself, until both prerequisites ship.
 
-Metrics and the parent span: [operations](operations.md#coordination).
+Metrics and the parent span: [operations](operations/factory.md#coordination).

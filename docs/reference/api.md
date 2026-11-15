@@ -448,7 +448,7 @@ already consumed, promoted, removed or never queued is skipped, so a retry is sa
 | `GET /healthz` | The process is up. Body: `ok <version>` | Liveness |
 | `GET /readyz` | Postgres answers a ping and the Kubernetes caches are synced | Readiness |
 | `GET /startupz` | The schema is migrated (`events` exists) | Startup: the first deploy waits for CNPG and the Atlas migration |
-| `GET /metrics` | Always | Prometheus metrics ([operations](../operations.md#metrics)) |
+| `GET /metrics` | Always | Prometheus metrics ([operations](../operations/rooms.md#metrics)) |
 
 The bridge serves `GET /healthz` on `:8085`, for kubelet only, and no metrics. It reports unhealthy only when the
 harness answered once and has been unreachable for more than 60 s: as a native sidecar its startup
@@ -1208,7 +1208,7 @@ The answer is one key, always a closed code and never a sentence: `{"result": "a
 
 Every refusal is a `200` with a code, apart from those four transport ones, so the App never retries
 a refusal and Slack never redelivers one into a loop. Each answer counts in
-`maku_rooms_slack_decisions_total{result, decision}` ([operations](../operations.md)): `result` is the
+`maku_rooms_slack_decisions_total{result, decision}` ([metrics](metrics.md#room-broker-metrics)): `result` is the
 code, `decision` the decision it answered with, and empty when the answer carried none.
 
 What it reads, in order, each step naming the code it refuses with. Nothing comes from the request
@@ -1477,9 +1477,19 @@ caller's GitHub login cannot be resolved. The body is `Cache-Control: no-store`:
 ## Webhooks
 
 The broker sends signed, id-only events to the subscribers declared in its `webhooks` config (see
-[operations](../operations.md#webhooks)). It is off until a subscriber is declared. A payload carries
+[operations](../operations/factory.md#webhooks)). It is off until a subscriber is declared. A payload carries
 ids and closed codes only: never room text, a title or a message — a `branch` is a code shape, on the
 one approval that binds it.
+
+| Key | Meaning |
+|---|---|
+| `name` | A DNS label: the `subscriber` label of the webhook metric series |
+| `network` | `cluster` (`http(s)://<svc>.<ns>.svc.cluster.local:<port>/…`) or `internet` (`https`, a public DNS name, never an address) |
+| `url` | Where the broker posts |
+| `events` | The event types wanted (table below) |
+| `secretFile` | One or two base64 keys of at least 32 bytes, one per line; re-read at each delivery |
+| `repositories` | The repositories whose rooms are sent |
+| `generation` | Bump it to re-enable a disabled subscriber |
 
 | Event | Fires when | Fields beyond `type` and `room` |
 |---|---|---|

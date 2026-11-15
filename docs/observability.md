@@ -48,8 +48,8 @@ monitoring:
 
 The factory has no default-deny policy of maku's, so it needs no entry.
 
-The metric families are listed in [Operations](operations.md#metrics) and
-[Factory metrics](operations.md#factory-metrics).
+The metric families are listed in [Operations](operations/rooms.md#metrics) and
+[Factory metrics](operations/factory.md#factory-metrics).
 
 ## Alerts
 
@@ -57,7 +57,7 @@ The metric families are listed in [Operations](operations.md#metrics) and
 component, every rule in PromQL with `runbook_url` and `dashboard` annotations. The release
 namespace, `maku.runs.namespace`, `maku.broker.human.issuer` and `monitoring.prometheusRule.docsURL`
 are substituted into it, so the schema refuses a double quote or a backslash in them.
-[Operations](operations.md#alerts) lists each alert and the values that shape the rule.
+[Operations](operations/failures.md#alerts) lists each alert and the values that shape the rule.
 
 ## Dashboards
 
