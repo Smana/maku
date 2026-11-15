@@ -62,7 +62,9 @@ func envTesterRig(t *testing.T, edit func(*v1alpha1.Task), cfgEdit func(*config.
 	g.r.Cfg.Current().AgentsLogin = agentsApp
 	g.r.Cfg.Current().Defaults.PredictedClass = "scripts"
 	g.r.Cfg.Current().Repositories[0].Merge.ContractCheck = contractCheck
-	g.r.Cfg.Current().Repositories[0].Classes["scripts"] = config.Class{Live: true}
+	// The one policy (MR1). With no shape and no reviewer in the template it never merges on its
+	// own (MR12): the class rows' outcome is a human's no_policy_matched, after rows 2b and 2c.
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"scripts": {Live: true}}
 	testFirstCareful(g.r.Cfg.Current())
 	if cfgEdit != nil {
 		cfgEdit(g.r.Cfg.Current())
@@ -150,7 +152,7 @@ func TestEnvtestATestFirstTaskJourneyThroughRows2bAnd2c(t *testing.T) {
 		{"a red contract check starts a fix run naming it", withContractCheck("FAILURE"), nil, v1alpha1.PhaseImplementing, ""},
 		{"green with a changed contract file is a human's", withContractCheck("SUCCESS"), []string{"scripts/ci/tests/test_dry_run.py"},
 			v1alpha1.PhaseAwaitingHuman, "contract_modified"},
-		{"green and unchanged is the class rows'", withContractCheck("SUCCESS"), []string{"scripts/other.sh"}, v1alpha1.PhaseAutoMerging, ""},
+		{"green and unchanged is the class rows'", withContractCheck("SUCCESS"), []string{"scripts/other.sh"}, v1alpha1.PhaseAwaitingHuman, reasonNoPolicy},
 	} {
 		t.Run(o.name, func(t *testing.T) {
 			g, _ := envTesterRig(t, nil, soloScripts)
@@ -206,7 +208,7 @@ func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
 	g.finish(rid(1), "Succeeded", "agent_finished")
 	g.reconcile(t, "3buqdlot", 3)
 	g.f.SetChecks(12, withContractCheck("FAILURE")) // the job only reports on a task without a contract (TF7)
-	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging || tk.Status.FixRuns != 0 {
+	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != reasonNoPolicy || tk.Status.FixRuns != 0 {
 		t.Fatalf("%s %q fixes %d", tk.Status.Phase, tk.Status.Reason, tk.Status.FixRuns)
 	}
 }

@@ -148,4 +148,22 @@ expect "$(decisions --strictness | tail -1)" "strictness: refused=3 refused_merg
 for bad in lines files=x size=3 lines=; do
   if decisions --replay "$bad" >/dev/null 2>&1; then echo "FAIL: --replay $bad is refused" >&2; exit 1; fi
 done
+# MR1: one comment carries a marker line per policy, the decision's first and then each shadow
+# policy that held. Each class reads its own line, once: #40's decision is docs-links' cap, and
+# revert's shadow line beside it is revert's would-merge, merged unchanged at a40.
+mk() { printf '<!-- agent-factory-decision head=a40 class=%s decision=%s files=1/3 lines=2/20 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=%s reviewer=none -->' "$1" "$2" "$3"; }
+body="Waits for a human. $(mk docs-links human:auto_merge_cap true) $(mk revert shadow:shadow_would_arm false) <!-- agent-factory scope=x event=human-auto_merge_cap-1 -->"
+jq -n --arg b "$body" '[{number: 40, headRefOid: "a40", mergedBy: {login: "Smana"},
+  comments: [{author: {login: "ogenki-agent-factory"}, createdAt: "2026-10-01T00:00:00Z", body: $b}]}]' > "$tmp/prs-two.json"
+cat > "$tmp/gh-two" <<EOF5
+#!/usr/bin/env bash
+case "\$*" in *"Revert in:title"*) echo '[]' ;; *) cat "$tmp/prs-two.json" ;; esac
+EOF5
+chmod +x "$tmp/gh-two"
+expect "$(GH="$tmp/gh-two" scripts/shadow-merge-tally.sh --class revert | head -2 | paste -sd' ')" \
+  "#40 merged_unchanged merged_unchanged=1 changed=0 reverted=0 auto_merged=0 drill=0" "a shadow line beside the decision counts for its class"
+expect "$(GH="$tmp/gh-two" scripts/shadow-merge-tally.sh --class docs-links | paste -sd' ')" \
+  "merged_unchanged=0 changed=0 reverted=0 auto_merged=0 drill=0" "the decision's own class is not a would-merge"
+expect "$(GH="$tmp/gh-two" scripts/shadow-merge-tally.sh --class revert --replay lines=10 | tail -1)" \
+  "replay lines=10: would_arm=1 would_refuse=0 unreplayable=0" "the replay reads the class's own line"
 echo ok

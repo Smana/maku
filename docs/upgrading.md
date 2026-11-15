@@ -115,7 +115,6 @@ conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned pla
 
 A broker whose planner is on no longer needs `human.intake.plan.classes` when it sets `factoryURL`:
 the plan's classes come from the factory's catalog.
-
 ## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file

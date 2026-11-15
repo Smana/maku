@@ -8,10 +8,11 @@ import (
 
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
-// MP16: the evaluator is DecideArm's own rule with the class handed in, so under the central
-// class it is DecideArm, decision and record alike, on every input.
+// MP16: the evaluator is DecideArm's own rule with the classes handed in, so under the central
+// classes it is DecideArm, decision and record alike, on every input.
 func TestDecideArmUnderTheCentralClassIsDecideArm(t *testing.T) {
 	for name, mutate := range map[string]func(*ArmInputs){
 		"arms":             func(*ArmInputs) {},
@@ -31,8 +32,9 @@ func TestDecideArmUnderTheCentralClassIsDecideArm(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			in := gateInputs()
 			mutate(&in)
-			cl := gateOf(in.Cfg.Current().RepositoryFor(""), "dead-links")
-			if got, want := DecideArmUnder(in, &cl, nil), DecideArm(in); !reflect.DeepEqual(got, want) {
+			cl := in.Cfg.Current().RepositoryFor("").Classes["dead-links"]
+			policy := map[string]mergepolicy.Resolved{"dead-links": {Class: cl}}
+			if got, want := decidePolicy(in, policy), DecideArm(in); !reflect.DeepEqual(got, want) {
 				t.Fatalf("got %+v, want %+v", got, want)
 			}
 		})
@@ -53,7 +55,7 @@ func TestDecideArmUnderOneClass(t *testing.T) {
 		"holds":     {&declared, "arm", ""},
 		"a refusal": {&strict, "human", "patch_too_large"},
 		"a wait":    {&waits, "wait", "holdout_pending"},
-		"no class":  {nil, "human", "class_unarmed"},
+		"no class":  {nil, "human", "no_policy_matched"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			d := DecideArmUnder(gateInputs(), tc.cl, nil)

@@ -115,6 +115,8 @@ var reasonPhrases = map[string]string{
 	"contract_push_unrecorded":  "waiting for GitHub to see the tests",
 	"stalled":                   "the run made no commit",
 	"class_unarmed":             "a maintainer merges this class",
+	"no_policy_matched":         "no merge policy holds on this diff",
+	"reviewer_verdict_missing":  "no reviewer read this change",
 	"policy_unavailable":        "waiting to read the merge policy",
 	"policy_invalid":            "the merge policy is invalid",
 	"approval_required":         "a maintainer approves this change",

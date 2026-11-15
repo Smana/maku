@@ -167,6 +167,8 @@ func reasons() map[string]string {
 		"not_mergeable":             "GitHub does not allow merging it as it stands",
 		"gate_path":                 "it touches a gate path, so an agent can never merge it",
 		"class_unarmed":             "the factory does not merge this class: a maintainer reviews and merges it",
+		"no_policy_matched":         "no merge policy of the repository holds on this diff: a maintainer reviews and merges it",
+		"reviewer_verdict_missing":  "no reviewer read this change, and its policy has no shape to check it",
 		"policy_unavailable":        "the repository's merge policy could not be read recently, so auto-merge waits",
 		"policy_invalid":            "the repository's merge policy is invalid, so auto-merge is paused",
 		"approval_required":         "it changes a file its class asks a maintainer to approve",
@@ -228,7 +230,9 @@ func reasons() map[string]string {
 // returns the hand-off (TaskFacts.MergeByApproval): no one merges by hand, the merger App does.
 func approvalReasons() map[string]string {
 	return map[string]string{
-		"class_unarmed": "the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
+		"class_unarmed":            "the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
+		"no_policy_matched":        "no merge policy of the repository holds on this diff: it merges once a maintainer approves the current commit",
+		"reviewer_verdict_missing": "no reviewer read this change, and its policy has no shape to check it",
 	}
 }
 

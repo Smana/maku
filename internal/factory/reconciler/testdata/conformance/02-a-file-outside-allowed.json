@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "a-file-outside-allowed",
   "inputs": {
     "PR": {
@@ -142,6 +142,6 @@
   "pushed": "factory",
   "want": {
     "verdict": "human",
-    "reason": "file_not_allowed"
+    "reason": "no_policy_matched"
   }
 }

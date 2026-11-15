@@ -5,6 +5,7 @@ package reconciler
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,7 +14,9 @@ import (
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/triage"
 )
 
 // declaredRig is mergeRig's task in a class that declares conditions (MC1): its gate reads the
@@ -29,6 +32,8 @@ func declaredRig(t *testing.T) *rig {
 		t.Fatal(err)
 	}
 	g.r.Cfg.Current().Repositories[0].Classes["dead-links"] = declaredClass()
+	// MR1: the diff picks the policy, so dead-links is the only one that can hold on it.
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"], g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{}, config.Class{}
 	checks := green("SUCCESS")
 	checks.Runs = append(checks.Runs, forge.Check{Name: "External links 🔗", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"})
 	g.f.SetChecks(12, checks)
@@ -45,7 +50,7 @@ func TestADeclaredClassIsDecidedOnItsDiff(t *testing.T) {
 	}
 	g = declaredRig(t)
 	g.f.SetFileStats(forge.FileStat{Path: testFile, Status: "modified", Additions: 15, Deletions: 6})
-	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "patch_too_large" ||
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != reasonNoPolicy ||
 		len(g.f.Armed()) != 0 {
 		t.Fatalf("21 lines refuse: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
@@ -121,5 +126,92 @@ func TestSteeringReadsTheDiffOfAnyClass(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "steering_path" ||
 		len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+}
+
+// MR1: every shadow policy that holds records its own would-merge beside the decision, whether or
+// not a live policy merged: one marker line each, after the decision's, and one latest decision
+// each in the recorder.
+func TestShadowRecordedForEachHoldingPolicy(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	predict(t, g, "review") // the label names neither policy: the diff picks both
+	g.r.Decisions = &decision.Recorder{}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Shadow: true}}
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetFiles(map[string]string{testFile: "[x](https://example.com/old)"}, map[string]string{testFile: "[x](https://example.com/new)"})
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAutoMerging || tk.Status.PullRequest.Policy != "docs-links" {
+		t.Fatalf("docs-links merges it: %s %s %q", tk.Status.Phase, tk.Status.Reason, tk.Status.PullRequest.Policy)
+	}
+	c := strings.Join(g.f.Comments(12), "\n")
+	primary := strings.Index(c, "class=docs-links decision=arm:armed ")
+	shadow := strings.Index(c, "class=revert decision=shadow:shadow_would_arm ")
+	if primary < 0 || shadow < primary {
+		t.Fatalf("two marker lines, the decision's first:\n%s", c)
+	}
+	latest := g.r.Decisions.Latest(tk.Spec.Repository)
+	if latest["docs-links"].Verdict != "arm" || latest["revert"].Verdict != "shadow" {
+		t.Fatalf("%+v", latest)
+	}
+}
+
+// Review Focus 5: a diff no policy admits, on a task whose label names a shadow class, is
+// no_policy_matched: never class_mismatch, and no shadow record for the labelled class.
+func TestNoPolicyMatched(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	predict(t, g, "docs")
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true},
+		"docs": {Shadow: true, AllowedFiles: []string{`^.+\.md$`}}, "revert": {}}
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetFiles(map[string]string{"main.go": "package main\n"}, map[string]string{"main.go": "package main\n\nfunc main() {}\n"})
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != reasonNoPolicy || tk.Status.PullRequest.Policy != "" {
+		t.Fatalf("%s %s %q", tk.Status.Phase, tk.Status.Reason, tk.Status.PullRequest.Policy)
+	}
+	c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
+	if strings.Contains(c, "class=docs decision=shadow") || !strings.Contains(c, "class=- decision=human:no_policy_matched ") ||
+		!strings.Contains(c, " considered=docs:file_not_allowed,docs-links:class_mismatch ") {
+		t.Fatalf("%s", c)
+	}
+	for _, m := range g.metrics.recorded {
+		if strings.HasPrefix(m, "class_mismatch") {
+			t.Fatalf("no label is a mismatch: %q", g.metrics.recorded)
+		}
+	}
+}
+
+// Review Focus 4 (MR12 + WF4): a task pinned workflow:quick runs solo (no reviewer); when its diff
+// touches prose that only a live path-bound policy (docs) admits, the gate refuses docs with
+// reviewer_verdict_missing and hands off as no_policy_matched, never arm.
+func TestQuickWorkflowPathBoundPolicyNeverArms(t *testing.T) {
+	workflows, templates, _ := config.ShippedWorkflows()
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().HarnessProfiles, g.r.Cfg.Current().Templates = workflows, templates
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"docs": {Live: true, AllowedFiles: []string{`^.+\.md$`}},
+	}
+	var tk v1alpha1.Task
+	if err := g.c.Get(t.Context(), keyFor("3buqdlot"), &tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.Spec.PredictedClass = "review"
+	tk.Spec.Template = workflows[config.WorkflowQuick].Template
+	if err := g.c.Update(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: config.WorkflowQuick, Source: "label", Cohort: triage.CohortLabeled,
+		Requested: config.WorkflowQuick, Resolved: true}
+	if err := g.c.Status().Update(t.Context(), &tk); err != nil {
+		t.Fatal(err)
+	}
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetFiles(map[string]string{testFile: "# Heading\n\nOld prose.\n"}, map[string]string{testFile: "# Heading\n\nNew prose.\n"})
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != reasonNoPolicy || len(g.f.Armed()) != 0 {
+		t.Fatalf("%s %s armed=%v, want AwaitingHuman no_policy_matched", got.Status.Phase, got.Status.Reason, g.f.Armed())
+	}
+	c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
+	if !strings.Contains(c, " considered=docs:reviewer_verdict_missing ") {
+		t.Fatalf("missing considered=docs:reviewer_verdict_missing:\n%s", c)
 	}
 }

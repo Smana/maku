@@ -31,13 +31,8 @@ func dualOf(central ArmDecision, in ArmInputs, snap mergepolicy.Snapshot, ok boo
 		return ArmDecision{}, dualNoPolicy
 	}
 	class := in.Task.Spec.PredictedClass
-	r, inPolicy := snap.Classes[class]
-	var repo ArmDecision
-	if inPolicy {
-		repo = DecideArmUnder(in, &r.Class, r.Approval)
-	} else {
-		repo = DecideArmUnder(in, nil, nil)
-	}
+	r := snap.Classes[class]
+	repo := decidePolicy(in, snap.Classes)
 	switch {
 	case repo.Verdict == central.Verdict && repo.Reason == central.Reason && repo.Matched == central.Matched:
 		return repo, dualAgree

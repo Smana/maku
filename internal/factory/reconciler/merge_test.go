@@ -754,12 +754,13 @@ func TestASubstantiveHandOffStaysWithTheHuman(t *testing.T) {
 func TestAnApprovedMergeIsAHumanMergeTheMergerMade(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
-	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{}                                           // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{Live: true, Oracle: &config.Oracle{Probe: "x"}} // live, never a diff's (MR1)
 	g.f.SetChecks(12, green("SUCCESS"))
 	got := g.reconcile(t, "3buqdlot", 1)
-	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_unarmed" ||
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "no_policy_matched" ||
 		got.Status.PullRequest.HandedOffAt == nil || !got.Status.PullRequest.HandedOffAt.Time.Equal(now) ||
-		got.Status.PullRequest.HandedOffReason != "class_unarmed" {
+		got.Status.PullRequest.HandedOffReason != "no_policy_matched" {
 		t.Fatalf("AM9: the first hand-off is recorded: %s %s %+v", got.Status.Phase, got.Status.Reason, got.Status.PullRequest)
 	}
 	// The approval comes ten minutes after the hand-off, and returns the task to the gate.
@@ -770,7 +771,7 @@ func TestAnApprovedMergeIsAHumanMergeTheMergerMade(t *testing.T) {
 	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingCI || got.Status.Reason != "reentered_approved" {
 		t.Fatalf("return: %s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if !slices.Contains(g.metrics.recorded, "wait AwaitingHuman class_unarmed docs-links 600") {
+	if !slices.Contains(g.metrics.recorded, "wait AwaitingHuman no_policy_matched docs-links 600") {
 		t.Fatalf("AM9: the wait carries the hand-off's reason and the class: %q", g.metrics.recorded)
 	}
 	got = g.reconcile(t, "3buqdlot", 1)
@@ -796,7 +797,7 @@ func TestAnApprovedMergeIsAHumanMergeTheMergerMade(t *testing.T) {
 		t.Fatalf("outcomes %q", g.metrics.recorded)
 	}
 	if h := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(s string) bool { return !strings.HasPrefix(s, "handoff_to_merge ") }); len(h) != 1 ||
-		h[0] != "handoff_to_merge docs-links class_unarmed approved 600" {
+		h[0] != "handoff_to_merge docs-links no_policy_matched approved 600" {
 		t.Fatalf("AM9: one hand-off to merge observation: %q", h)
 	}
 	// R-B2: a maintainer's factory/revert on the approved merge opens the revert, and keeps its two labels.
@@ -891,7 +892,7 @@ func TestAnApprovalReturnsATaskToTheGate(t *testing.T) {
 		reason string
 		back   bool
 	}{
-		{"class_unarmed", true}, {"patch_too_large", true}, {"no_approving_verdict", true}, {"maintainer_approved", true},
+		{"no_policy_matched", true}, {"patch_too_large", true}, {"no_approving_verdict", true}, {"maintainer_approved", true},
 		{"policy_pending", true}, {"shadow_would_arm", true}, {"gate_path", false}, {"not_mergeable", false}, {"steering_path", false},
 		{"foreign_trailer", false}, {"human_commit_in_pr", false},
 	} {
@@ -923,12 +924,12 @@ func TestAnApprovalReturnsATaskToTheGate(t *testing.T) {
 // reason, which stands (TestAnApprovalIsShownWithApproveToMergeOff).
 func TestAnApprovalReturnsNothingWithTheSwitchOff(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingHuman)
-	g.handedOff(t, "class_unarmed", 0)
+	g.handedOff(t, "no_policy_matched", 0)
 	pr, _ := g.f.PullRequest(t.Context(), 12)
 	pr.Reviews = []forge.Review{{ID: 77, Author: "Smana", State: "APPROVED", Commit: "abc", At: now}}
 	g.f.SetPR(pr)
 	got := g.reconcile(t, "3buqdlot", 1)
-	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "class_unarmed" || got.Status.GateReentries != 0 ||
+	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "no_policy_matched" || got.Status.GateReentries != 0 ||
 		len(g.f.Armed()) != 0 || got.Status.PullRequest.Approval == nil {
 		t.Fatalf("%s %s reentries %d merged %q approval %+v", got.Status.Phase, got.Status.Reason, got.Status.GateReentries, g.f.Armed(),
 			got.Status.PullRequest.Approval)
@@ -1033,7 +1034,7 @@ func TestAPausedTaskReturnsWhenThePauseLifts(t *testing.T) {
 // request's hand-off says "approve this pull request" unless its reason is one a human fixes by
 // hand; off, or adopted, every hand-off keeps the bypass instructions.
 func TestTheHandOffTextFollowsTheReason(t *testing.T) {
-	approvable := []string{"class_unarmed", "patch_too_large", "policy_pending", "policy_absent", "no_approving_verdict",
+	approvable := []string{"no_policy_matched", "patch_too_large", "policy_pending", "policy_absent", "no_approving_verdict",
 		"maintainer_approved", "approval_stale", "closes_parent", "auto_merge_cap", "class_paused", "file_not_allowed"}
 	byHand := []string{"not_agent_authored", "gate_path", "contract_modified", "not_owned", "steering_path", "foreign_trailer",
 		"not_mergeable", "changes_requested", "human_commit_in_pr", "head_unreported"}
@@ -1117,6 +1118,7 @@ func TestAnApprovalOfAShadowHandOffReturnsIt(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
 	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{Shadow: true}
+	g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{}          // MR1: the only other policy, unarmed
 	g.patch(t, func(tk *v1alpha1.Task) { tk.Status.PullRequest.HeadSHA = "old" }) // what detectPR last wrote
 	g.f.SetChecks(12, green("SUCCESS"))
 	got := g.reconcile(t, "3buqdlot", 1)
@@ -1172,7 +1174,8 @@ func (m racingMerger) Merge(ctx context.Context, nodeID, head string) error {
 func TestAnApprovedMergeSurvivesAConflictingWrite(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
-	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{} // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Repositories[0].Classes["docs-links"] = config.Class{}                                           // unarmed: only the approval can merge it
+	g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{Live: true, Oracle: &config.Oracle{Probe: "x"}} // live, never a diff's (MR1)
 	g.f.SetChecks(12, green("SUCCESS"))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman {
 		t.Fatalf("hand-off: %s %s", got.Status.Phase, got.Status.Reason)

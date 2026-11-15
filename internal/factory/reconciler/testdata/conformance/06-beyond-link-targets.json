@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "name": "beyond-link-targets",
   "inputs": {
     "PR": {
@@ -135,6 +135,6 @@
   "pushed": "factory",
   "want": {
     "verdict": "human",
-    "reason": "class_mismatch"
+    "reason": "no_policy_matched"
   }
 }

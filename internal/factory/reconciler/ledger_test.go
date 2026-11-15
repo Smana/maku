@@ -222,30 +222,30 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 			g.f.SetFileStats(forge.FileStat{Path: testFile, Status: "modified", Additions: 1, Deletions: 1})
 			return g
 		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
-		{"would-arm, diff unread", func(t *testing.T) *rig {
+		{"would-arm, the diff read for the selection", func(t *testing.T) *rig {
 			g := greenRig(t)
-			predict(t, g, "plain") // no shape, no file condition, steering off: the diff is never read
-			g.r.Cfg.Current().Repositories[0].Classes["plain"] = config.Class{Shadow: true}
+			predict(t, g, "plain") // a shape and no file condition: MR1 reads the diff all the same
+			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"plain": {Shadow: true, DiffShape: "links-only"}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=-/0 lines=-/0 shape=n/a holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
-		{"hand-off before the rows", func(t *testing.T) *rig {
+		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=0/0 lines=0/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		{"no policy matched: no class, the rows before any policy", func(t *testing.T) *rig {
 			g := greenRig(t)
-			classes(g, config.Class{})
+			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {}, "revert": {Live: true, Oracle: &config.Oracle{Probe: "x"}}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=human:class_unarmed files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:no_policy_matched files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
 		{"policy_pending stops before the breaker and the count", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
 			g.f.SetChecks(12, green("PENDING"))
 			return g
-		}, "class=docs-links decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
+		}, "class=- decision=human:policy_pending files=-/0 lines=-/0 shape=- holdout=- oracle=- age=- evidence=- paused=- capped=- reviewer=none -->"},
 		{"steering_path, diff read", func(t *testing.T) *rig {
 			g := greenRig(t)
 			classes(g, config.Class{Shadow: true})
 			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering}}
 			g.f.SetFileStats(forge.FileStat{Path: ".github/agent-factory/steering/docs.md", Status: "modified", Additions: 2, Deletions: 1})
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=docs-links decision=human:steering_path files=1/0 lines=3/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=- decision=human:steering_path files=1/0 lines=3/0 shape=- holdout=- oracle=- age=- evidence=ok paused=- capped=- reviewer=none -->"},
 		{"diff too large", func(t *testing.T) *rig {
 			g := declaredRig(t)
 			g.f.SetDiffError(forge.ErrDiffTooLarge)

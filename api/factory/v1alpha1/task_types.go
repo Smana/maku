@@ -1012,6 +1012,12 @@ type PullRequestRef struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	ApprovedBy string `json:"approvedBy,omitempty"`
+	// Policy is the merge policy the gate last decided the pull request under, chosen from its diff
+	// (merge policies MR1): the merge, the breaker, the day's count and the monitor read it. Empty
+	// before a decision named one, and then the task's predictedClass stands for it.
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	Policy string `json:"policy,omitempty"`
 	// +optional
 	ArmedAt *metav1.Time `json:"armedAt,omitempty"`
 	// +optional
