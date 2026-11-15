@@ -251,7 +251,7 @@ func claims(p authn.Principal, onBehalfOf string, ceiling float64) error {
 // asked is the repositories the request named: the one field first, then the candidates, so that a
 // single explicitly named repository is the one the guard refuses by name (CD5).
 func (a intakeArgs) asked() []string {
-	out := make([]string, 0, len(a.Candidates)+1)
+	var out []string
 	if a.Repository != "" {
 		out = append(out, a.Repository)
 	}
