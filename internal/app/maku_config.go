@@ -62,8 +62,9 @@ func (r Maku) config(args []string) error {
 		if err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
-		// The factory refuses the single-repository shape (R7); migrate still converts it.
-		if raw, err = resources.LiftLegacy(raw); err != nil {
+		// The factory refuses the single-repository shape (R7) and the workflow settings release N
+		// warned about (WF13); migrate still converts both.
+		if raw, err = resources.Upgrade(raw); err != nil {
 			return fmt.Errorf("config migrate: %w", err)
 		}
 		before, err := config.Parse(raw)

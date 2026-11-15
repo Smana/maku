@@ -149,12 +149,11 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 			"frontier": map[string]any{"model": "agent-default", "runTokens": 1000, "taskTokens": 2000, "runMinutes": 5}},
 		"templates": map[string]any{"solo": map[string]any{"roles": []any{"implementer"}},
 			"pair":        map[string]any{"roles": []any{"implementer", "reviewer"}},
-			"trio":        map[string]any{"roles": []any{"implementer", "tester", "reviewer"}},
 			"investigate": map[string]any{"roles": []any{"triager"}}},
-		"defaults": map[string]any{"template": "solo", "tier": "standard", "dataClass": "public", "predictedClass": "review"},
+		"defaults": map[string]any{"dataClass": "public", "predictedClass": "review"},
 		"caps":     map[string]any{"activeTasks": 1, "concurrentRuns": 1, "tasksPerDay": 1, "maxTextBytes": 14336, "awaitingHumanWIP": 1},
 		"triage":   map[string]any{"controlPercent": 20},
-		"harnessProfiles": map[string]any{"base": map[string]any{"template": "solo"},
+		"workflows": map[string]any{"base": map[string]any{"template": "solo"},
 			"rich": map[string]any{"template": "pair"}},
 		"evaluation": map[string]any{"controlPercent": 30, "mode": "apply"},
 	}}
@@ -168,9 +167,6 @@ func TestAssembleFactoryReplacesTheCatalogue(t *testing.T) {
 	if r.Config.Tiers["light"].RunTokens != 1000 || r.Config.Caps.ActiveTasks != 1 || r.Config.Triage.ControlPercent != 20 ||
 		r.Config.Evaluation.ControlPercent != 30 || !r.Config.Applies() {
 		t.Fatalf("the Factory's catalogue did not apply: %+v", r.Config.Tiers)
-	}
-	if r.Config.Triage.ClassifierURL == "" {
-		t.Fatal("triage.classifierURL is the file's (D12) and must survive")
 	}
 	// The file sets budgets.enforceTask: false; the Factory omits budgets, so Parse's defaults
 	// apply (enforceTask true, OD-10's 42.50): the raw spec is merged, never a re-marshalled struct.
@@ -407,5 +403,64 @@ func TestAssembleCarriesPrivateCode(t *testing.T) {
 	}
 	if r.Config.RepositoryFor("Smana/cloud-native-ref").PrivateCodeAcknowledged() {
 		t.Fatal("a repository without privateCode acknowledges nothing")
+	}
+}
+
+// WF9: a Factory's workflows are read, with no warning.
+func TestWorkflowsIsReadAsHarnessProfiles(t *testing.T) {
+	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
+	f.Spec["workflows"].(map[string]any)["mine"] = map[string]any{"template": "pair"}
+	r, err := Assemble(file(t), with(t, f))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refused(r, KindFactory, "aws-0") != "" {
+		t.Fatalf("refused: %+v", r.Refused)
+	}
+	if _, ok := r.Config.HarnessProfiles["mine"]; !ok {
+		t.Fatalf("workflows not read: %v", r.Config.HarnessProfiles)
+	}
+	for _, w := range r.Config.Warnings {
+		if strings.HasPrefix(w, "harnessProfiles:") || strings.HasPrefix(w, "workflows") {
+			t.Fatalf("warned: %s", w)
+		}
+	}
+}
+
+// WF13: a Factory that still spells its workflows harnessProfiles is refused, naming the new key.
+func TestHarnessProfilesRefused(t *testing.T) {
+	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
+	f.Spec["harnessProfiles"] = map[string]any{"a": map[string]any{"template": "pair"}}
+	r, _ := Assemble(file(t), with(t, f))
+	if x := refusal(r, KindFactory, "aws-0"); x == nil || !strings.Contains(x.Message, "harnessProfiles: renamed workflows") {
+		t.Fatalf("got %+v", r.Refused)
+	}
+}
+
+// fileCatalogue is the file's catalogue keys, as a Factory's spec.
+func fileCatalogue(t *testing.T) map[string]any {
+	t.Helper()
+	var m map[string]any
+	if err := yaml.Unmarshal(file(t), &m); err != nil {
+		t.Fatal(err)
+	}
+	spec := map[string]any{}
+	for _, k := range CatalogueKeys {
+		if v, ok := m[k]; ok {
+			spec[k] = v
+		}
+	}
+	return spec
+}
+
+// The file's workflows is catalogue: a Factory replaces it.
+func TestFileWorkflowsIsReplacedByTheFactory(t *testing.T) {
+	f := Object{Kind: KindFactory, Name: "aws-0", Spec: fileCatalogue(t)}
+	r, err := Assemble(file(t), with(t, f))
+	if err != nil || refused(r, KindFactory, "aws-0") != "" {
+		t.Fatalf("%v: %+v", err, r.Refused)
+	}
+	if !strings.Contains(strings.Join(r.Warnings, "\n"), "workflows in the file is ignored") {
+		t.Fatalf("warnings: %v", r.Warnings)
 	}
 }

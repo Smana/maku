@@ -329,20 +329,6 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 	var problems []string
 	bad := func(f string, a ...any) { problems = append(problems, fmt.Sprintf(f, a...)) }
 	validateClass(name, cl, bad)
-	floor := &Config{HarnessProfiles: ctx.HarnessProfiles, Templates: ctx.Templates, Loops: ctx.Loops}
-	for _, v := range floor.VariantProblems(name, cl) {
-		bad("class %s: %s", name, v)
-	}
-	if m.ContractCheck == "" {
-		if cl.TestFirst {
-			bad("class %s: testFirst needs merge.contractCheck", name)
-		}
-		for _, pn := range slices.Compact(slices.Sorted(slices.Values(append([]string{cl.Harness}, cl.HarnessAllowed...)))) {
-			if ctx.HarnessProfiles[pn].TestFirst {
-				bad("class %s: profile %q: testFirst needs merge.contractCheck", name, pn)
-			}
-		}
-	}
 	if len(problems) > 0 {
 		return Class{}, ReasonInvalid, problems
 	}

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: Apache-2.0
 
 // Package catalogue is what a repository offers at intake, built from the accepted config snapshot:
-// its classes, their profiles, the roles each runs and the merge outcome. It never reads GitHub.
+// its classes and how each merges, and the workflows any task may run, with the roles each runs and
+// the repository's default. It never reads GitHub.
 package catalogue
 
 import (
@@ -35,15 +36,20 @@ const NoTemplate = "no_template"
 // reviewClass is the class every repository offers: the work no other class claims.
 const reviewClass = "review"
 
-// Catalogue is one repository's offer, as one caller sees it.
+// Catalogue is one repository's offer, as one caller sees it. Since the workflow left the class
+// (WF4), every class offers the same workflows: Profiles, DefaultWorkflow first.
 type Catalogue struct {
-	Repository     string             `json:"repository"`
-	Generations    Generations        `json:"generations"`
-	Evaluation     Evaluation         `json:"evaluation"`
-	ApproveToMerge bool               `json:"approveToMerge"`
-	Maintainer     bool               `json:"maintainer"`
-	Classes        []Class            `json:"classes"`
-	Profiles       map[string]Profile `json:"profiles"`
+	Repository     string      `json:"repository"`
+	Generations    Generations `json:"generations"`
+	Evaluation     Evaluation  `json:"evaluation"`
+	ApproveToMerge bool        `json:"approveToMerge"`
+	Maintainer     bool        `json:"maintainer"`
+	Classes        []Class     `json:"classes"`
+	// DefaultWorkflow is the workflow a task runs when no label names one: the repository's
+	// workflow.default (WF3).
+	DefaultWorkflow string `json:"defaultWorkflow"`
+	// Profiles are the factory's workflows by name, none excepted (WF1).
+	Profiles map[string]Profile `json:"profiles"`
 }
 
 // Generations are the object generations the catalogue was built from: the Factory's, the
@@ -62,20 +68,16 @@ type Evaluation struct {
 	Treatment      string `json:"treatment,omitempty"`
 }
 
-// Class is one class a repository offers at intake.
+// Class is one class a repository offers at intake: how its tasks merge, and what one may spend at
+// the default workflow's tier. It names no workflow (WF7).
 type Class struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Mode        string  `json:"mode"` // live | shadow | off | unarmed
 	CeilingUSD  float64 `json:"ceilingUSD"`
-	// Floor is the profile the class runs under, "" when it declares none; Allowed the variants a
-	// pin or the scoper may choose.
-	Floor      string      `json:"floor"`
-	Allowed    []string    `json:"allowed"`
-	Escalation *Escalation `json:"escalation"`
 }
 
-// Escalation is where a failed run's signal group steps to; "" goes to a maintainer.
+// Escalation is where a workflow's failed run steps to, by signal group; "" goes to a maintainer.
 type Escalation struct {
 	OutOfBudget  string `json:"outOfBudget"`
 	NotConverged string `json:"notConverged"`
@@ -93,7 +95,7 @@ func generations(cfg *config.Config, repository string, factory, repo int64) Gen
 	return g
 }
 
-// Profile is one harness profile, with the roles its template runs.
+// Profile is one workflow, with the roles its template runs.
 type Profile struct {
 	Template    string   `json:"template"`
 	Roles       []string `json:"roles"`
@@ -102,6 +104,8 @@ type Profile struct {
 	TestFirst   bool     `json:"testFirst"`
 	Loop        string   `json:"loop"`
 	Description string   `json:"description"`
+	// Escalation is where a failed run steps to; nil goes to a maintainer.
+	Escalation *Escalation `json:"escalation,omitempty"`
 	// Offered is whether intake may suggest or pin the profile: only one that sets a template, so
 	// the roles shown are exact (P15). NotOffered says why not.
 	Offered    bool   `json:"offered"`
@@ -122,13 +126,19 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 		mode = config.EvaluationObserve
 	}
 	c := Catalogue{
-		Repository:     rc.Name,
-		Generations:    generations(cfg, rc.Name, factory, repo),
-		Evaluation:     Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent, Treatment: cfg.Evaluation.Treatment},
-		ApproveToMerge: gateOn && rc.Merge.ApproveToMerge,
-		Maintainer:     maintainer,
-		Classes:        []Class{},
-		Profiles:       map[string]Profile{},
+		Repository:      rc.Name,
+		Generations:     generations(cfg, rc.Name, factory, repo),
+		Evaluation:      Evaluation{Mode: mode, ControlPercent: cfg.Evaluation.ControlPercent, Treatment: cfg.Evaluation.Treatment},
+		ApproveToMerge:  gateOn && rc.Merge.ApproveToMerge,
+		Maintainer:      maintainer,
+		Classes:         []Class{},
+		DefaultWorkflow: rc.DefaultWorkflow(),
+		Profiles:        map[string]Profile{},
+	}
+	for name, p := range cfg.HarnessProfiles {
+		if cfg.IsWorkflow(name) {
+			c.Profiles[name] = profileOf(cfg, rc, name, p)
+		}
 	}
 	classes := maps.Clone(rc.Classes)
 	if _, ok := classes[reviewClass]; !ok {
@@ -142,12 +152,7 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 		if !offered(name, cl) {
 			continue
 		}
-		c.Classes = append(c.Classes, classOf(cfg, name, cl, gateOn))
-		for _, p := range append([]string{cl.Harness}, cl.HarnessAllowed...) {
-			if hp, ok := cfg.HarnessProfiles[p]; ok {
-				c.Profiles[p] = profileOf(cfg, hp)
-			}
-		}
+		c.Classes = append(c.Classes, Class{Name: name, Description: cl.Description, Mode: ModeOf(cl, gateOn), CeilingUSD: ceilingOf(cfg, rc)})
 	}
 	return c, true
 }
@@ -158,31 +163,22 @@ func offered(name string, cl config.Class) bool {
 	return name != "revert" && !cl.Adopted() && cl.Oracle == nil
 }
 
-func classOf(cfg *config.Config, name string, cl config.Class, gateOn bool) Class {
-	out := Class{Name: name, Description: cl.Description, Mode: ModeOf(cl, gateOn), Floor: cl.Harness,
-		Allowed: slices.Clone(cl.HarnessAllowed), CeilingUSD: ceilingOf(cfg, cl)}
-	if out.Allowed == nil {
-		out.Allowed = []string{}
-	}
-	if e := cl.Escalation; e != nil {
-		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}
-	}
-	return out
-}
-
-// ceilingOf is what a task of the class may spend: the task cap of the tier its floor profile runs
-// at, else of the factory's default tier.
-func ceilingOf(cfg *config.Config, cl config.Class) float64 {
-	tier := cfg.Defaults.Tier
-	if p, ok := cfg.HarnessProfiles[cl.Harness]; ok && p.Tier != "" {
+// ceilingOf is what a task may spend: the task cap of the tier the repository's default workflow
+// runs at, else of the standard tier.
+func ceilingOf(cfg *config.Config, rc *config.Repository) float64 {
+	tier := "standard"
+	if p, ok := cfg.Workflow(rc.DefaultWorkflow()); ok && p.Tier != "" {
 		tier = p.Tier
 	}
 	return cfg.Tiers[tier].TaskUSD
 }
 
-func profileOf(cfg *config.Config, p config.HarnessProfile) Profile {
-	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: p.TestFirst,
+func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.HarnessProfile) Profile {
+	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: rc.TestFirstIn(name),
 		Loop: string(p.Loop), Description: p.Description}
+	if e := p.Escalation; e != nil {
+		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}
+	}
 	if t, ok := cfg.Templates[p.Template]; ok && p.Template != "" {
 		out.Roles = slices.Clone(t.Roles)
 		out.Offered = true
@@ -230,16 +226,25 @@ func (c Catalogue) Class(name string) (Class, bool) {
 	return c.Classes[i], true
 }
 
-// OfferedProfiles are the profiles intake may suggest or pin for a class: its floor, then its
-// allowed variants, each only when offered (P15).
+// OfferedProfiles are the workflows intake may suggest or pin for a task of class: every offered
+// workflow, the default first then by name (Workflows), since the workflow left the class (WF4);
+// none for a class the catalogue does not offer.
 func (c Catalogue) OfferedProfiles(class string) []string {
-	cl, ok := c.Class(class)
-	if !ok {
+	if _, ok := c.Class(class); !ok {
 		return nil
 	}
+	return c.Workflows()
+}
+
+// Workflows are the workflows a maintainer may pin, each only when offered (P15): the default
+// first, then the others by name.
+func (c Catalogue) Workflows() []string {
 	var out []string
-	for _, name := range append([]string{cl.Floor}, cl.Allowed...) {
-		if p, ok := c.Profiles[name]; ok && p.Offered {
+	if p, ok := c.Profiles[c.DefaultWorkflow]; ok && p.Offered {
+		out = append(out, c.DefaultWorkflow)
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Profiles)) {
+		if name != c.DefaultWorkflow && c.Profiles[name].Offered {
 			out = append(out, name)
 		}
 	}

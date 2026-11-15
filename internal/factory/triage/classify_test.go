@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -21,11 +22,23 @@ import (
 func TestMatrix(t *testing.T) { // §2
 	for _, c := range []struct{ class, source, tier, want string }{
 		{"docs-links", "issue", "light", "solo"}, {"docs-links", "issue", "standard", "solo"}, {"docs-links", "issue", "frontier", "pair"},
-		{"docs", "issue", "light", "pair"}, {"review", "issue", "standard", "pair"}, {"tests", "schedule", "frontier", "trio"},
+		{"docs", "issue", "light", "pair"}, {"review", "issue", "standard", "pair"}, {"tests", "schedule", "frontier", "pair"},
 		{"review", "runlore", "light", "investigate"}, {"review", "runlore", "frontier", "investigate"},
 	} {
 		if got := Matrix(c.class, c.source, c.tier); got != c.want {
 			t.Errorf("%s/%s/%s = %s, want %s", c.class, c.source, c.tier, got, c.want)
+		}
+	}
+}
+
+// trio left the shipped templates (workflows WF2): a frontier task runs pair, whatever its class or
+// source, so it never names a template a factory may no longer define.
+func TestMatrixNeverReturnsTrio(t *testing.T) {
+	for _, class := range []string{"docs-links", "docs", "review", "tests", "revert"} {
+		for _, source := range []string{"issue", "schedule", "api", "runlore"} {
+			if got := Matrix(class, source, "frontier"); got == "trio" {
+				t.Errorf("%s/%s/frontier = trio", class, source)
+			}
 		}
 	}
 }
@@ -63,14 +76,15 @@ func (f *fakeC7) Classify(_ context.Context, r C7Request) (C7Response, error) {
 }
 
 func testCfg() *config.Config {
-	return &config.Config{
+	profiles, _, _ := config.ShippedWorkflows()
+	return &config.Config{HarnessProfiles: profiles,
 		Repositories: []config.Repository{{Maintainers: []string{"Smana"},
 			Classes: map[string]config.Class{"docs-links": {Live: true}, "revert": {Live: true}, "docs": {}, "tests": {}, "dashboards": {}}}},
 		Tiers: map[string]config.Tier{
 			"light":    {Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20},
 			"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45},
 			"frontier": {Model: "agent-default", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}},
-		Triage: config.Triage{ClassifierURL: "http://c7.test/v1/classify", ControlPercent: 0}}
+		Triage: config.Triage{ControlPercent: 0}}
 }
 
 func issueTask() *v1alpha1.Task {
@@ -78,18 +92,26 @@ func issueTask() *v1alpha1.Task {
 		Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "issue"}, Issue: 7, Text: "fix a link", DataClass: "public"}}
 }
 
-func TestClassifyUsesAMaintainersClassLabel(t *testing.T) {
+// WF4, WF13: a class: and a profile: label, a maintainer's included, are read by nothing, and
+// triage narrates it once; the classifier still drives the tier.
+func TestClassAndProfileLabelsAreIgnoredAndNarrated(t *testing.T) {
 	f := forgetest.NewFake()
-	f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs-links"}})
-	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs-links", At: time.Now()})
+	f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs", "profile:careful"}})
+	f.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs", At: time.Now()},
+		forge.LabelEvent{Actor: "Smana", Label: "profile:careful", At: time.Now()})
 	c7 := &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.91, Classifier: "semantic-router", Fallback: "none",
 		Shadow: []C7Shadow{{Classifier: "jev", Tier: "standard", Confidence: 0.6}}}}
 	d, err := Classify{C: c7, Forge: f}.Triage(context.Background(), testCfg(), issueTask())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if d.PredictedClass != "docs-links" || d.Template != "solo" || d.Budget.Tier != "light" || d.Budget.RunTokens != 300_000 ||
-		d.Classification.Classifier != "semantic-router" || d.Classification.Confidence != "0.91" || len(d.Classification.Shadow) != 1 {
+	if d.Pin.Name != "" || d.PredictedClass != "review" || d.Declared {
+		t.Fatalf("a removed label was read: %+v", d)
+	}
+	if !slices.Contains(d.Notes, LegacyLabelNote) {
+		t.Fatalf("not narrated: %v", d.Notes)
+	}
+	if d.Budget.Tier != "light" || d.Classification.Classifier != "semantic-router" || d.Classification.Confidence != "0.91" || len(d.Classification.Shadow) != 1 {
 		t.Fatalf("%+v", d)
 	}
 	if c7.got.Ref != "3buqdlot" || c7.got.DataClass != "public" || c7.got.Text != "fix a link" {
@@ -121,43 +143,30 @@ func TestControlGroupRunsAtFrontier(t *testing.T) {
 	}
 }
 
-// A class label is read against the task's repository: its classes and its maintainers (v2 D1).
+// A workflow label is judged against the task's repository's maintainers (v2 D1), read on the
+// task's own repository (v2 D8): B's issue #7 is not A's.
 func TestClassifyReadsTheTasksRepository(t *testing.T) {
 	cfg := testCfg()
-	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
-	b := config.Repository{Name: "Smana/b", Maintainers: []string{"Other"}, Classes: map[string]config.Class{"revert": {}}}
-	cfg.Repositories = []config.Repository{a, b}
-	for name, c := range map[string]struct{ repo, actor, want string }{
-		"A's class by A's maintainer": {"Smana/a", "Smana", "docs-links"},
-		"A's maintainer on B":         {"Smana/b", "Smana", "review"},
-		"a class B does not declare":  {"Smana/b", "Other", "review"},
+	cfg.Repositories = []config.Repository{{Name: "Smana/a", Maintainers: []string{"Smana"}}, {Name: "Smana/b", Maintainers: []string{"Other"}}}
+	for name, c := range map[string]struct{ repo, actor, refused string }{
+		"A's maintainer on A": {"Smana/a", "Smana", ""},
+		"A's maintainer on B": {"Smana/b", "Smana", "not_maintainer"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
-			f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs-links"}})
-			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "class:docs-links", At: time.Now()})
+			f.SetIssue(forge.Issue{Number: 7, Labels: []string{"workflow:careful"}})
+			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "workflow:careful", At: time.Now()})
 			tk := issueTask()
 			tk.Spec.Repository = c.repo
 			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cfg, tk)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if d.PredictedClass != c.want {
-				t.Fatalf("class %q, want %q", d.PredictedClass, c.want)
+			if err != nil || d.Pin != (Pin{Name: "careful", Refused: c.refused}) {
+				t.Fatalf("pin %+v (%v), refused %q", d.Pin, err, c.refused)
 			}
 		})
 	}
-}
-
-// v2 D8: the class label is read on the task's repository: B's issue #7 is not A's.
-func TestClassifyReadsTheIssueOnItsRepository(t *testing.T) {
-	cfg := testCfg()
-	a := config.Repository{Name: "Smana/a", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
-	b := config.Repository{Name: "Smana/b", Maintainers: []string{"Smana"}, Classes: cfg.Repositories[0].Classes}
-	cfg.Repositories = []config.Repository{a, b}
 	onA, onB := forgetest.NewFake(), forgetest.NewFake()
-	onA.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs-links"}})
-	onA.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "class:docs-links", At: time.Now()})
+	onA.SetIssue(forge.Issue{Number: 7, Labels: []string{"workflow:careful"}})
+	onA.SetEvents(7, forge.LabelEvent{Actor: "Smana", Label: "workflow:careful", At: time.Now()})
 	onB.SetIssue(forge.Issue{Number: 7})
 	clients := func(repo string) (ClassForge, bool) {
 		switch repo {
@@ -168,16 +177,12 @@ func TestClassifyReadsTheIssueOnItsRepository(t *testing.T) {
 		}
 		return nil, false
 	}
-	tk := issueTask()
-	tk.Spec.Repository = "Smana/b"
-	d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}.Triage(t.Context(), cfg, tk)
-	if err != nil || d.PredictedClass != "review" {
-		t.Fatalf("B's issue carries no class: %q %v", d.PredictedClass, err)
-	}
-	tk.Spec.Repository = "Smana/elsewhere"
-	if d, err := (Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Clients: clients}).Triage(t.Context(), cfg, tk); err != nil ||
-		d.PredictedClass != "review" {
-		t.Fatalf("an unknown repository reads no label: %q %v", d.PredictedClass, err)
+	for _, repo := range []string{"Smana/b", "Smana/elsewhere"} {
+		tk := issueTask()
+		tk.Spec.Repository = repo
+		if d, err := (Classify{Clients: clients}).Triage(t.Context(), cfg, tk); err != nil || d.Pin != (Pin{}) {
+			t.Fatalf("%s reads A's label: %+v %v", repo, d.Pin, err)
+		}
 	}
 }
 
@@ -199,19 +204,13 @@ func TestAnOracleClassRunsSoloOnLight(t *testing.T) {
 	}
 }
 
-// An unset triage.classifierURL means no C7 service: Triage skips the call and takes the static fallback.
-func TestClassifyWithoutAClassifierURLMakesNoCall(t *testing.T) {
-	cfg := testCfg()
-	cfg.Triage.ClassifierURL = ""
-	c7 := &fakeC7{resp: C7Response{Tier: "light", Classifier: "semantic-router"}}
+// No C7 service (triage.classifierURL was removed, WF9): Triage takes the static fallback.
+func TestClassifyWithoutAClassifierMakesNoCall(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 7})
-	d, err := Classify{C: c7, Forge: f}.Triage(t.Context(), cfg, issueTask())
+	d, err := Classify{Forge: f}.Triage(t.Context(), testCfg(), issueTask())
 	if err != nil {
 		t.Fatal(err)
-	}
-	if c7.got != (C7Request{}) {
-		t.Fatalf("C7 was called: %+v", c7.got)
 	}
 	if d.Classification.Tier != "standard" || d.Classification.Classifier != "static" || d.Classification.Fallback != "static" {
 		t.Fatalf("%+v", d.Classification)
@@ -230,8 +229,8 @@ func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 		template, class, dc string
 	}{
 		"an internal principal":   {"system:runlore", "investigate", "review", "internal"},
-		"a sponsored principal":   {"system:slack-app", "pair", "docs", "public"},
-		"an undeclared principal": {"system:ghost", "pair", "docs", "public"},
+		"a sponsored principal":   {"system:slack-app", "pair", "review", "public"},
+		"an undeclared principal": {"system:ghost", "pair", "review", "public"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
@@ -248,8 +247,8 @@ func TestInternalPrincipalTasksInvestigate(t *testing.T) {
 	}
 }
 
-// K5: a task with an origin keeps the class the factory inferred at publish, unless a maintainer's
-// class: label names another. The factory's own label never counts.
+// K5: a task with an origin keeps the class the factory inferred at publish; no class: label, a
+// maintainer's or the factory's own, names another (WF4).
 func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 	cfg := testCfg()
 	cfg.Repositories[0].Classes["alert-rules"] = config.Class{}
@@ -257,7 +256,7 @@ func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 		predicted, origin, label, actor, want string
 	}{
 		"the factory's own label":    {"alert-rules", "3buqdlot", "class:alert-rules", "ogenki-agent-factory[bot]", "alert-rules"},
-		"a maintainer's other label": {"alert-rules", "3buqdlot", "class:docs", "Smana", "docs"},
+		"a maintainer's other label": {"alert-rules", "3buqdlot", "class:docs", "Smana", "alert-rules"},
 		"revert is never inferred":   {"revert", "3buqdlot", "", "", "review"},
 		"an undeclared class":        {"gone", "3buqdlot", "", "", "review"},
 		"no origin":                  {"alert-rules", "", "", "", "review"},
@@ -280,26 +279,25 @@ func TestAnOriginTaskKeepsItsInferredClass(t *testing.T) {
 	}
 }
 
-// TE: a class a maintainer or a schedule names is declared; an inferred one is not.
+// TE: a class a maintainer's intake or a schedule names is declared; an inferred one is not, and a
+// class: label names none (WF4).
 func TestPredictClassReportsDeclared(t *testing.T) {
 	sched := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Source: v1alpha1.Source{Kind: "schedule"}, PredictedClass: "tests"}}
+	planned := issueTask()
+	planned.Spec.Intake = &v1alpha1.TaskIntake{Class: "docs", Login: "Smana"}
 	for name, c := range map[string]struct {
-		actor    string
 		task     *v1alpha1.Task
 		want     string
 		declared bool
 	}{
-		"a maintainer's label":     {"Smana", issueTask(), "docs", true},
-		"a non-maintainer's label": {"someone", issueTask(), "review", false},
-		"a schedule":               {"", sched, "tests", true},
+		"an issue":            {issueTask(), "review", false},
+		"a maintainer's plan": {planned, "docs", true},
+		"a schedule":          {sched, "tests", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			f := forgetest.NewFake()
-			f.SetIssue(forge.Issue{Number: 7, Labels: []string{"class:docs"}})
-			f.SetEvents(7, forge.LabelEvent{Actor: c.actor, Label: "class:docs", At: time.Now()})
-			class, declared, err := Classify{Forge: f}.predictClass(t.Context(), testCfg(), c.task)
-			if err != nil || class != c.want || declared != c.declared {
-				t.Fatalf("(%q, %v, %v), want (%q, %v)", class, declared, err, c.want, c.declared)
+			class, declared := Classify{}.predictClass(testCfg(), c.task)
+			if class != c.want || declared != c.declared {
+				t.Fatalf("(%q, %v), want (%q, %v)", class, declared, c.want, c.declared)
 			}
 		})
 	}
@@ -329,8 +327,8 @@ func TestCohortIsApartFromControl(t *testing.T) {
 	}
 }
 
-// P8: a maintainer's class: label names the class, never the cohort: the task is hashed into
-// control or treatment like any other.
+// P8: a class: label, read by nothing (WF4), never sets the cohort: the task is hashed into control
+// or treatment like any other.
 func TestClassLabelJoinsCohorts(t *testing.T) {
 	for percent, want := range map[int]string{100: CohortControl, 0: CohortTreatment} {
 		f := forgetest.NewFake()
@@ -339,7 +337,7 @@ func TestClassLabelJoinsCohorts(t *testing.T) {
 		cf := testCfg()
 		cf.Evaluation.ControlPercent = percent
 		d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, issueTask())
-		if err != nil || d.PredictedClass != "docs" || !d.Declared || d.Pinned || d.Cohort != want {
+		if err != nil || d.PredictedClass != "review" || d.Declared || d.Pinned || d.Cohort != want {
 			t.Fatalf("%d %%: %+v (%v), want cohort %s", percent, d, err, want)
 		}
 	}
@@ -359,7 +357,7 @@ func TestScheduledClassJoinsCohorts(t *testing.T) {
 	}
 }
 
-// P7: an intake class a maintainer's plan carried is declared, a maintainer's class: label beats it,
+// P7: an intake class a maintainer's plan carried is declared, a class: label never beats it (WF4),
 // and one from a login that no longer maintains the repository is ignored. None sets the cohort (P8).
 func TestIntakeClass(t *testing.T) {
 	for name, c := range map[string]struct {
@@ -368,7 +366,7 @@ func TestIntakeClass(t *testing.T) {
 	}{
 		"from a maintainer":           {"Smana", "", "docs", "docs", true},
 		"from a non-maintainer":       {"someone", "", "docs", "review", false},
-		"a label beats it":            {"Smana", "class:tests", "docs", "tests", true},
+		"a label never beats it":      {"Smana", "class:tests", "docs", "docs", true},
 		"a class the config lacks":    {"Smana", "", "nope", "review", false},
 		"revert is the factory's own": {"Smana", "", "revert", "review", false},
 	} {
@@ -393,9 +391,9 @@ func TestIntakeClass(t *testing.T) {
 	}
 }
 
-// P5, P6, P9: a profile pin is read from a profile: label (its last applier) or the intake field
+// P5, P6, P9: a workflow pin is read from a workflow: label (its last applier) or the intake field
 // (its resolved login), checked by ResolvePin, and only an honoured one is labeled; a refused one
-// leaves the task in the cohorts by hash, the refusal recorded.
+// leaves the task in the cohorts by hash, the refusal recorded. A profile: label is no pin (WF13).
 func TestTriageResolvesThePin(t *testing.T) {
 	for name, c := range map[string]struct {
 		labels []forge.LabelEvent
@@ -404,26 +402,29 @@ func TestTriageResolvesThePin(t *testing.T) {
 		cohort string
 	}{
 		"no pin": {cohort: CohortControl},
-		"a maintainer's label": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}},
-			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
-		"a stranger's label": {labels: []forge.LabelEvent{{Actor: "someone", Label: "profile:docs-pair"}},
-			want: Pin{Name: "docs-pair", Refused: "not_maintainer"}, cohort: CohortControl},
-		"the last applier counts": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"},
-			{Actor: "someone", Label: "profile:docs-pair"}}, want: Pin{Name: "docs-pair", Refused: "not_maintainer"}, cohort: CohortControl},
-		"two profiles": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "profile:docs-floor"}},
-			want: Pin{Name: "docs-pair", Refused: "profile_conflict"}, cohort: CohortControl},
-		"a maintainer's intake": {intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "docs-pair", Login: "Smana"},
-			want: Pin{Name: "docs-pair"}, cohort: CohortLabeled},
-		"a label and an intake that disagree": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-floor"}},
-			intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "docs-pair", Login: "Smana"},
-			want:   Pin{Name: "docs-floor", Refused: "profile_conflict"}, cohort: CohortControl},
-		"a live class": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:docs-pair"}, {Actor: "Smana", Label: "class:docs-links"}},
-			want: Pin{Name: "docs-pair", Refused: "class_profile_fixed"}, cohort: CohortControl},
+		"a maintainer's label": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:careful"}},
+			want: Pin{Name: "careful"}, cohort: CohortLabeled},
+		"a stranger's label": {labels: []forge.LabelEvent{{Actor: "someone", Label: "workflow:careful"}},
+			want: Pin{Name: "careful", Refused: "not_maintainer"}, cohort: CohortControl},
+		"the last applier counts": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:careful"},
+			{Actor: "someone", Label: "workflow:careful"}}, want: Pin{Name: "careful", Refused: "not_maintainer"}, cohort: CohortControl},
+		"two workflows": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:careful"}, {Actor: "Smana", Label: "workflow:quick"}},
+			want: Pin{Name: "careful", Refused: "profile_conflict"}, cohort: CohortControl},
+		"a maintainer's intake": {intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "careful", Login: "Smana"},
+			want: Pin{Name: "careful"}, cohort: CohortLabeled},
+		"a label and an intake that disagree": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:quick"}},
+			intake: &v1alpha1.TaskIntake{Class: "docs", Profile: "careful", Login: "Smana"},
+			want:   Pin{Name: "quick", Refused: "profile_conflict"}, cohort: CohortControl},
+		"a live class": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:quick"}},
+			intake: &v1alpha1.TaskIntake{Class: "docs-links", Login: "Smana"}, want: Pin{Name: "quick"}, cohort: CohortLabeled},
+		"an unknown workflow": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:nope"}},
+			want: Pin{Name: "nope", Refused: "profile_unknown"}, cohort: CohortControl},
+		"a profile: label is no pin": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:careful"}}, cohort: CohortControl},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()
-			labels := []string{"class:docs"}
-			events := []forge.LabelEvent{{Actor: "Smana", Label: "class:docs", At: time.Now()}}
+			var labels []string
+			var events []forge.LabelEvent
 			for _, e := range c.labels {
 				if !slices.Contains(labels, e.Label) {
 					labels = append(labels, e.Label)
@@ -431,21 +432,19 @@ func TestTriageResolvesThePin(t *testing.T) {
 				e.At = time.Now()
 				events = append(events, e)
 			}
-			if slices.Contains(labels, "class:docs-links") {
-				labels = labels[1:] // the class label alone, so docs-links is the class
-			}
 			f.SetEvents(7, events...)
 			f.SetIssue(forge.Issue{Number: 7, Labels: labels})
 			tk := issueTask()
 			tk.Spec.Intake = c.intake
 			cf := testCfg()
 			cf.Evaluation.ControlPercent = 100
-			cf.HarnessProfiles = map[string]config.HarnessProfile{"docs-floor": {}, "docs-pair": {Template: "pair"}, "links": {}}
-			cf.Repositories[0].Classes["docs"] = config.Class{Harness: "docs-floor", HarnessAllowed: []string{"docs-pair"}}
-			cf.Repositories[0].Classes["docs-links"] = config.Class{Live: true, Harness: "links"}
 			d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "light", Confidence: 0.9}}, Forge: f}.Triage(t.Context(), cf, tk)
 			if err != nil || d.Pin != c.want || d.Pinned != c.want.Honoured() || d.Cohort != c.cohort {
 				t.Fatalf("%+v (%v), want pin %+v cohort %s", d, err, c.want, c.cohort)
+			}
+			legacy := slices.ContainsFunc(c.labels, func(e forge.LabelEvent) bool { return strings.HasPrefix(e.Label, "profile:") })
+			if got := slices.Contains(d.Notes, LegacyLabelNote); got != legacy {
+				t.Fatalf("notes %q, want the legacy note %v", d.Notes, legacy)
 			}
 		})
 	}

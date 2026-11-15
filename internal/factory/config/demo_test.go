@@ -25,7 +25,7 @@ var demoGood = func() string {
 	if i, j := strings.Index(s, "\nmeter:\n"), strings.Index(s, "\nrepositories:\n"); i >= 0 && j > i {
 		s = s[:i] + s[j:] // no meter; the repositories list stays last
 	}
-	return s + "runs: {group: maku.ogenki.io}\nloops: {docs: {scope: scoper}}\n"
+	return s + "runs: {group: maku.ogenki.io}\nloops: {standard: {scope: scoper}}\n"
 }()
 
 func TestDemoGoodParses(t *testing.T) {
@@ -59,7 +59,7 @@ func TestDemoStillRefuses(t *testing.T) {
 
 // The portable AgentRun carries the whole loop policy, so demo takes it.
 func TestDemoAllowsTheLoopPolicy(t *testing.T) {
-	raw := strings.Replace(demoGood, "loops: {docs: {scope: scoper}}", "loops: {docs: {scope: scoper, stallSteps: 90, continuations: 1, judge: tier-light}}", 1)
+	raw := strings.Replace(demoGood, "loops: {standard: {scope: scoper}}", "loops: {standard: {scope: scoper, stallSteps: 90, continuations: 1, judge: tier-light}}", 1)
 	if raw == demoGood {
 		t.Fatal("the edit changed nothing")
 	}

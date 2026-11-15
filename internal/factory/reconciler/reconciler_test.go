@@ -314,6 +314,9 @@ func (m *fakeMetrics) PROutcome(ctx context.Context, class, outcome string) {
 	m.add("pr " + class + " " + outcome)
 	m.who(ctx, "pr "+outcome)
 }
+func (m *fakeMetrics) RunWait(_ context.Context, role string, d time.Duration) {
+	m.add(fmt.Sprintf("run_wait %s %.0f", role, d.Seconds()))
+}
 func (m *fakeMetrics) HumanWait(ctx context.Context, phase, reason, class string, d time.Duration) {
 	m.who(ctx, fmt.Sprintf("wait %s %.0f", phase, d.Seconds()))
 	m.add(fmt.Sprintf("wait %s %s %s %.0f", phase, reason, class, d.Seconds()))
@@ -427,7 +430,7 @@ func cfg() *config.Config {
 				Breaker: config.Breaker{Window: 10, MaxReverts: 1}}}},
 		FactoryLogin: "ogenki-agent-factory[bot]",
 		Poll:         config.Poll{Tasks: config.Duration{Duration: 30 * time.Second}, Meter: config.Duration{Duration: 30 * time.Second}},
-		Defaults:     config.Defaults{Template: "solo", Tier: "standard", DataClass: "public", PredictedClass: "review"},
+		Defaults:     config.Defaults{DataClass: "public", PredictedClass: "review"},
 		// The reviewer runs on the other tier (4.2): frontier's model is observable as tier-frontier.
 		Tiers: map[string]config.Tier{"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45},
 			"frontier": {Model: "tier-frontier", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}},
@@ -462,7 +465,7 @@ func newRig(t *testing.T, objs ...client.Object) *rig {
 	seeingMeter(t, c)
 	g := &rig{c: c, f: forgetest.NewFake(), runs: newRuns(), log: &fakeLog{}, metrics: &fakeMetrics{}}
 	g.r = &Reconciler{Client: c, Ledger: c, Namespace: "agent-system", Cfg: cfg(), Forge: g.f, Merger: g.f, Runs: g.runs, Rooms: g.log,
-		Triage: triage.Static{}, Metrics: g.metrics,
+		Triage: triage.Static{Template: "solo"}, Metrics: g.metrics,
 		Now: func() time.Time { return now }, Nonce: func() string { return "n0nce234" }, Log: slog.New(slog.DiscardHandler),
 		Owned: func(string) bool { return true }, CanWrite: func(context.Context, string, string) (bool, error) { return true, nil }}
 	g.runs.now = func() time.Time { return g.r.Now() } // the claims carry the rig's clock
@@ -555,7 +558,7 @@ func TestLabelToNarratedRun(t *testing.T) {
 		t.Fatalf("settled: %+v %q", tk.Status, eventCommentBodies(g.f, 7))
 	}
 	want := []string{"time_to_pr issue standard solo", "pr review human_merged", "tier_fit static standard over false",
-		"task_tokens 0 standard solo review"} // no profile: the merge's provenance is not read (R39)
+		"task_tokens 0 standard solo review", "task_outcome review none none floor none accepted 0"} // no profile: counted on the none labels (CP3); the merge's provenance is not read (R39)
 	if strings.Join(g.metrics.recorded, "|") != strings.Join(want, "|") {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
@@ -859,10 +862,11 @@ func TestStopAnnotation(t *testing.T) {
 				t.Fatalf("%s %s %v", tk.Status.Phase, tk.Status.Reason, g.runs.patches)
 			}
 			// The stop deleted the task's run, so nothing is left to settle from: the settle
-			// still records the total, once, past its window (R49).
+			// still records the total, once, past its window (R49). No profile: the count reads
+			// none on the profile labels (CP3).
 			g.r.Now = func() time.Time { return now.Add(g.r.settleWindow(g.r.Cfg.Current())) }
 			g.reconcile(t, "3buqdlot", 1)
-			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review" {
+			if strings.Join(g.metrics.recorded, "|") != "intervention stop none none none|task_tokens 0 standard solo review|task_outcome review none none floor none stopped 0" {
 				t.Fatalf("%q", g.metrics.recorded)
 			}
 		})
@@ -994,8 +998,9 @@ func TestAStopIsCountedOnceThroughAConflict(t *testing.T) {
 		t.Fatalf("settled on the replay: %+v", tk.Status)
 	}
 	// The revoke is counted with the claim's annotation, not the status write: the replay finds the
-	// run already gone, so a deferred count would be lost (F30).
-	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review" {
+	// run already gone, so a deferred count would be lost (F30). The task has no profile, and
+	// counts once on the none labels when it settles (CP3).
+	if strings.Join(g.metrics.recorded, "|") != "revoked manual|intervention stop none none none|task_tokens 0 standard solo review|task_outcome review none none floor none stopped 0" {
 		t.Fatalf("%q", g.metrics.recorded)
 	}
 }

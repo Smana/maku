@@ -149,6 +149,8 @@ var (
 	runCostBuckets = []float64{0.1, 0.25, 0.51, 0.75, 1, 1.5, 2, 2.55, 3.5, 5, 6.8, 10}
 	// AM9: 5 m, 15 m, 1 h, 4 h, 1 d, 3 d, 7 d.
 	handoffToMergeBuckets = []float64{300, 900, 3600, 14400, 86400, 259200, 604800}
+	// CP1: from a minute to four hours: the wait between two runs of a task.
+	runWaitBuckets = []float64{30, 60, 120, 300, 600, 1800, 3600, 14400}
 	// CD23: the settle window itself (2.5 m at the default meter poll), then a slow meter, a slow
 	// post, and the 15-minute retention bound past which no settled cost is readable any more.
 	spendFinalBuckets = []float64{60, 150, 300, 600, 900, 1800, 3600}
@@ -236,6 +238,7 @@ type Set struct {
 	charged              metric.Float64Counter
 	prsOpened            metric.Int64Counter
 	humanWait            metric.Float64Counter
+	runWait              metric.Float64Histogram
 	handoffToMerge       metric.Float64Histogram
 	maxCost              metric.Float64Counter
 	apiIntake            metric.Int64Counter
@@ -497,10 +500,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 		metric.WithDescription("Resolved tasks of a class that offers a choice, by whether the planner's suggestion and the scoper's recommendation agree (P13)."))
 	check(err)
 	s.taskOutcomes, err = meter.Int64Counter("agent_factory_task_outcomes_total",
-		metric.WithDescription("Ended tasks with a profile, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed."))
+		metric.WithDescription("Ended tasks, by class, cohort, profile, source, the profile the scoper recommended and outcome: accepted, merged_human, no_op, closed, stopped, rejected, reverted or failed. A task without a profile reads none on the profile labels; its cohort is none."))
 	check(err)
 	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
-		metric.WithDescription("USD of ended tasks with a profile, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome."))
+		metric.WithDescription("USD of ended tasks, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome. A task without a profile reads none on the profile labels; its cohort is none."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -615,6 +618,10 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.humanWait, err = meter.Float64Counter("agent_factory_human_wait_seconds_total",
 		metric.WithDescription("Seconds tasks waited for a human, by the task's payer, the hand-off's reason and the task's class, added when a task leaves AwaitingHuman or Escalated (AM9)."))
+	check(err)
+	s.runWait, err = meter.Float64Histogram("agent_factory_run_wait_seconds",
+		metric.WithDescription("Seconds from a task's previous run ending to its next run starting, by the next run's role; the first run of a task records none (cache-costs review CP1)."),
+		metric.WithExplicitBucketBoundaries(runWaitBuckets...))
 	check(err)
 	s.handoffToMerge, err = meter.Float64Histogram("agent_factory_handoff_to_merge_seconds",
 		metric.WithDescription("From the first hand-off to a human to the merge, by hand-off reason and how it merged (human path AM9)."),
@@ -873,6 +880,16 @@ func (s *Set) HumanWait(ctx context.Context, phase, reason, class string, d time
 		attribute.String("reason", handOffReason(reason)), attribute.String("class", class)))
 }
 
+// RunWait records the time from a task's previous run ending to this run starting, by this run's
+// role (CP1): the wait between two runs of a task, the number that sizes a longer cache TTL. The
+// first run of a task records none, and a run whose predecessor is still running records none.
+func (s *Set) RunWait(ctx context.Context, role string, d time.Duration) {
+	if d <= 0 {
+		return
+	}
+	s.runWait.Record(ctx, d.Seconds(), metric.WithAttributes(attribute.String("role", oneOf(role, costRoles()))))
+}
+
 // HandoffToMerge records how long a pull request waited from its first hand-off to its merge, by
 // the hand-off's reason and how it merged: approved or human (AM9).
 func (s *Set) HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration) {
@@ -921,13 +938,14 @@ func (s *Set) Intervention(ctx context.Context, kind, cohort, profile, recommend
 		attribute.String("profile", profile), attribute.String("recommended", recommended), s.repoOf(ctx)))
 }
 
-// TaskOutcome counts a task with a profile once it ends, and adds the USD its attempts cost.
-// profile and recommended come from config (the caller maps a name no longer offered to other), so
-// the labels stay bounded; no recommendation is none.
+// TaskOutcome counts an ended task once it ends, with or without a profile, and adds the USD its
+// attempts cost. profile and recommended come from config (the caller maps a name no longer
+// offered to other), so the labels stay bounded; a task without a profile reads none, and no
+// recommendation is none.
 func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
-	cohort = oneOf(cohort, []string{"labeled", "control", "treatment"})
+	cohort = oneOf(cohort, []string{"labeled", "control", "treatment", "none"})
 	outcome = oneOf(outcome, taskOutcomes())
-	source = oneOf(source, []string{"label", "floor", "control", "treatment", "scoper", "escalation"})
+	source = oneOf(source, []string{"label", "schedule", "revert", "oracle", "repository", "floor", "control", "treatment", "scoper", "escalation"})
 	if recommended == "" {
 		recommended = "none"
 	}

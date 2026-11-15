@@ -25,15 +25,15 @@ import (
 
 const testsDecl = "tests:\n  paths: [tests/]\n"
 
-// resolveCfg is profileCfg with two variants the review class allows, one it does not, and mode.
+// resolveCfg is profileCfg with two other workflows, search first and careful (its tester the
+// repository's opt-in), and mode.
 func resolveCfg(mode string, percent int) *config.Config {
 	c := profileCfg(true)
 	steps := int32(7)
 	c.Loops["review-search"] = config.Loop{StallSteps: &steps, Search: true}
 	c.HarnessProfiles["review-search"] = config.HarnessProfile{Loop: "review-search", Description: "search first"}
-	c.HarnessProfiles["review-tested"] = config.HarnessProfile{TestFirst: true, Description: "tests first"}
-	c.HarnessProfiles["review-other"] = config.HarnessProfile{Description: "not allowed"}
-	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested"}}
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Loop: "review-floor", Description: "tests first"} // the repository's tester runs in careful (WF7)
+	c.Repositories[0].Workflow.TestFirst = true
 	c.Evaluation = config.Evaluation{Mode: mode, ControlPercent: percent}
 	return c
 }
@@ -65,20 +65,20 @@ func TestResolutionTable(t *testing.T) {
 		internal, failed           bool
 		want                       want
 	}{
-		"applied":        {mode: "apply", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
-		"applied tests":  {mode: "apply", profile: "review-tested", decl: testsDecl, want: want{"review-tested", "scoper", "", "review-tested", 40, true}},
-		"absent":         {mode: "apply", want: floor("floor", "none", "")},
-		"the floor":      {mode: "apply", profile: "review-floor", want: floor("floor", "none", "review-floor")},
-		"unknown":        {mode: "apply", profile: "zzz", want: floor("floor", "unknown", "zzz")},
-		"not allowed":    {mode: "apply", profile: "review-other", want: floor("floor", "not_allowed", "review-other")},
-		"internal":       {mode: "apply", profile: "review-tested", decl: testsDecl, internal: true, want: floor("floor", "internal", "review-tested")},
-		"no tests paths": {mode: "apply", profile: "review-tested", want: floor("floor", "no_tests_paths", "review-tested")},
-		"observe":        {mode: "observe", profile: "review-search", want: floor("floor", "observe", "review-search")},
+		"applied":       {mode: "apply", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
+		"applied tests": {mode: "apply", profile: "careful", decl: testsDecl, want: want{"careful", "scoper", "", "careful", 40, true}},
+		"absent":        {mode: "apply", want: floor("repository", "none", "")},
+		"the floor":     {mode: "apply", profile: "review-floor", want: floor("repository", "none", "review-floor")},
+		"unknown":       {mode: "apply", profile: "zzz", want: floor("repository", "unknown", "zzz")},
+		// WF7: an internal task runs no tester, so careful applies without reading the tests paths.
+		"internal":       {mode: "apply", profile: "careful", internal: true, want: want{"careful", "scoper", "", "careful", 40, true}},
+		"no tests paths": {mode: "apply", profile: "careful", want: floor("repository", "no_tests_paths", "careful")},
+		"observe":        {mode: "observe", profile: "review-search", want: floor("repository", "observe", "review-search")},
 		"control":        {mode: "apply", percent: 100, profile: "review-search", want: floor("control", "", "review-search")},
 		// P8: a class label is no pin: the scoper's pick applies as for any task.
 		"labelled":          {mode: "apply", label: "class:review", profile: "review-search", want: want{"review-search", "scoper", "", "review-search", 7, false}},
 		"labelled, control": {mode: "apply", label: "class:review", percent: 100, profile: "review-search", want: floor("control", "", "review-search")},
-		"scoper failed":     {mode: "apply", failed: true, want: floor("floor", "scoper_failed", "")},
+		"scoper failed":     {mode: "apply", failed: true, want: floor("repository", "scoper_failed", "")},
 		"control, failed":   {mode: "apply", percent: 100, failed: true, want: floor("control", "scoper_failed", "")},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -152,7 +152,7 @@ func TestResolutionRetriesChecksReadErrors(t *testing.T) {
 	merger := &fileAtErrorMerger{Merger: g.f, err: errors.New("GitHub is temporarily unavailable")}
 	g.r.Merger = merger
 	sc := readyScope()
-	sc.Profile = "review-tested"
+	sc.Profile = "careful"
 
 	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err == nil {
 		t.Fatal("the checks read should fail")
@@ -165,7 +165,7 @@ func TestResolutionRetriesChecksReadErrors(t *testing.T) {
 	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
-	if p := tk.Status.Profile; !p.Resolved || p.Name != "review-tested" || p.Source != "scoper" || !p.TestFirst {
+	if p := tk.Status.Profile; !p.Resolved || p.Name != "careful" || p.Source != "scoper" || !p.TestFirst {
 		t.Fatalf("profile after retry %+v", p)
 	}
 }
@@ -236,12 +236,12 @@ func TestADeletedProfileKeepsTheFrozenOne(t *testing.T) {
 	cf := resolveCfg("apply", 0)
 	g, tk := triagedRig(t, cf, "", testsDecl)
 	sc := readyScope()
-	sc.Profile = "review-tested"
+	sc.Profile = "careful"
 	if err := g.r.resolveProfile(t.Context(), g.r.Cfg.Current(), tk, &sc); err != nil {
 		t.Fatal(err)
 	}
-	delete(cf.HarnessProfiles, "review-tested")
-	cf.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor"}
+	delete(cf.HarnessProfiles, "careful")
+	cf.Repositories[0].Workflow.TestFirst = false
 	if !g.r.testFirst(g.r.Cfg.Current(), tk) || !g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks || !g.r.testerDue(g.r.Cfg.Current(), tk) {
 		t.Fatalf("testFirst %v checks %v", g.r.testFirst(g.r.Cfg.Current(), tk), g.r.implementerSpec(g.r.Cfg.Current(), tk, "brief").Checks)
 	}
@@ -276,10 +276,10 @@ func TestASplitChildKeepsToday(t *testing.T) {
 	}
 }
 
-// harnessed gives c's review class a floor and one variant, applied.
+// harnessed gives c's repository a default workflow and one other, applied.
 func harnessed(c *config.Config) {
 	c.HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-wide": {Checks: true, Description: "wide"}}
-	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-wide"}}
+	c.Repositories[0].Workflow.Default = "review-floor"
 	c.Evaluation.Mode = config.EvaluationApply
 }
 
@@ -291,7 +291,7 @@ func harnessedScoper(t *testing.T, edit func(*v1alpha1.Task)) *rig {
 		edit(tk)
 	}
 	g := newRig(t, tk)
-	g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}}
+	g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper}}
 	g.r.Cfg.Current().Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	harnessed(g.r.Cfg.Current())
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
@@ -330,16 +330,16 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "missing" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "floor", "scoper_failed", 1)
+		wantResolved(t, tk, "review-floor", "repository", "scoper_failed", 1)
 	})
-	t.Run("assumed, a schedule", func(t *testing.T) {
-		g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Issue, tk.Spec.Source.Kind = 0, "schedule" })
+	t.Run("assumed, no issue yet", func(t *testing.T) {
+		g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Issue = 0 })
 		scopeHandoff(g, 0, questionScope())
 		tk := endScoper(t, g, "Succeeded", "agent_finished")
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "floor", "none", 1) // no issue yet: the announcement waits for the pull request (R31)
+		wantResolved(t, tk, "review-floor", "repository", "none", 1) // no issue yet: the announcement waits for the pull request (R31)
 		if o := tk.Status.Outbox[len(tk.Status.Outbox)-1]; o.Number != 0 || !strings.HasPrefix(o.Key, "profile-chosen-") {
 			t.Fatalf("%+v", o)
 		}
@@ -356,7 +356,7 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "floor", "none", 1)
+		wantResolved(t, tk, "review-floor", "repository", "none", 1)
 	})
 }
 
@@ -409,7 +409,7 @@ func TestASplitResolvesWhenTheTaskRunsWhole(t *testing.T) {
 func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
 	cf := resolveCfg("apply", 0)
 	steps := int32(40)
-	cf.Loops["review"] = config.Loop{StallSteps: &steps}
+	cf.Loops["review-floor"] = config.Loop{StallSteps: &steps}
 	g := profileRig(t, cf, issueTask("3buqdlot", 7, "fix it"), "")
 	failed := false
 	g.r.Client = interceptor.NewClient(g.c.(client.WithWatch), interceptor.Funcs{
@@ -428,7 +428,7 @@ func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
 	if tk.Spec.ScopeMode != string(config.ScopeOff) {
 		t.Fatalf("scope %s", tk.Spec.ScopeMode)
 	}
-	wantResolved(t, tk, "review-floor", "floor", "", 1)
+	wantResolved(t, tk, "review-floor", "repository", "", 1)
 	if p := tk.Status.Profile; p.Recommended != "" || p.Why != "" || countProfile(g.metrics.recorded) != 0 {
 		t.Fatalf("%+v %v", p, g.metrics.recorded)
 	}
@@ -463,7 +463,7 @@ func TestAnAssumedRetryAppliesNoRecommendation(t *testing.T) {
 	if tk.Status.Scope.State != "assumed" || tk.Status.Profile.Recommended != "" {
 		t.Fatalf("%+v %+v", tk.Status.Scope, tk.Status.Profile)
 	}
-	wantResolved(t, tk, "review-floor", "floor", "none", 1)
+	wantResolved(t, tk, "review-floor", "repository", "none", 1)
 }
 
 // A broker error reading the scope leaves the retry unhandled; the next reconcile replays it once.
@@ -487,7 +487,7 @@ func TestABrokerErrorReplaysTheRetry(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Retries != 1 {
 		t.Fatalf("%s %d", tk.Status.Phase, tk.Status.Retries)
 	}
-	wantResolved(t, tk, "review-floor", "floor", "none", 1)
+	wantResolved(t, tk, "review-floor", "repository", "none", 1)
 }
 
 // A refused spec write leaves the profile unresolved, unnarrated and uncounted; the next try applies once.
@@ -546,11 +546,11 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	if stored := g.get(t); stored.Spec.Loop == nil || stored.Spec.Loop.StallSteps != 7 || stored.Status.Profile.Resolved {
 		t.Fatalf("the spec write landed alone: %+v %+v", stored.Spec.Loop, stored.Status.Profile)
 	}
-	// Between the two writes the config changes under the task: observe, and the class offers no
-	// variant any more. The persisted decision binds: status, narration, the recommendation count
-	// and the outcome's label all say what was decided.
+	// Between the two writes the config changes under the task: observe, and the workflow is gone.
+	// The persisted decision binds: status, narration, the recommendation count and the outcome's
+	// label all say what was decided.
 	cf.Evaluation.Mode = config.EvaluationObserve
-	cf.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor"}
+	delete(cf.HarnessProfiles, "review-search")
 	tk := g.reconcile(t, "3buqdlot", 1)
 	wantResolved(t, tk, "review-search", "scoper", "", 1)
 	if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || tk.Status.Profile.Recommended != "review-search" || tk.Status.Profile.Why != "because" {
@@ -576,14 +576,13 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	}
 }
 
-// R31: a task with no issue (a schedule's) resolves its profile before it has a pull request, so
+// R31: a task with no issue (a planned one's, before it is filed) resolves its workflow before it has a pull request, so
 // the announcement has nowhere to go yet. It stays in the outbox, is posted once the pull request
 // exists, and once only.
 func TestAProfileAnnouncementWaitsForATarget(t *testing.T) {
 	cf := resolveCfg("apply", 0)
 	cf.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	tk := issueTask("3buqdlot", 0, "# Fix the link\n\n## Acceptance check\nthe link resolves")
-	tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "weekly-links", Key: "k", RequestedBy: "schedule:weekly-links", Trust: "trusted", ContentSHA256: strings.Repeat("b", 64)}
 	g := profileRig(t, cf, tk, "")
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
 	g.reconcile(t, "3buqdlot", 3)
@@ -615,13 +614,13 @@ func TestAProfileAnnouncementWaitsForATarget(t *testing.T) {
 	announced := func() int {
 		n := 0
 		for _, c := range g.f.Comments(12) {
-			if strings.Contains(c, "runs under profile `review-search`") {
+			if strings.Contains(c, "runs the workflow `review-search`") {
 				n++
 			}
 		}
 		return n
 	}
-	if got := g.f.Comments(12); announced() != 1 || !strings.Contains(got[0], "runs under profile") {
+	if got := g.f.Comments(12); announced() != 1 || !strings.Contains(got[0], "runs the workflow") {
 		t.Fatalf("posted first, once: %q", got)
 	}
 	tk = g.reconcile(t, "3buqdlot", 2)
@@ -636,7 +635,6 @@ func TestAWaitingAnnouncementIsDroppedAtTheEnd(t *testing.T) {
 	cf := resolveCfg("apply", 0)
 	cf.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	tk := issueTask("3buqdlot", 0, "# Fix the link\n\n## Acceptance check\nthe link resolves")
-	tk.Spec.Source = v1alpha1.Source{Kind: "schedule", Ref: "weekly-links", Key: "k", RequestedBy: "schedule:weekly-links", Trust: "trusted", ContentSHA256: strings.Repeat("b", 64)}
 	g := profileRig(t, cf, tk, "")
 	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
 	g.reconcile(t, "3buqdlot", 3)
@@ -773,9 +771,6 @@ func TestTreatmentArmKeepsItsWorkflowAtResolution(t *testing.T) {
 	cf := treatmentCfg(0)
 	cf.Evaluation.Mode = config.EvaluationApply
 	cf.HarnessProfiles["review-search"] = config.HarnessProfile{Template: "pair", Description: "search first"}
-	review := cf.Repositories[0].Classes["review"]
-	review.HarnessAllowed = append(review.HarnessAllowed, "review-search")
-	cf.Repositories[0].Classes["review"] = review
 	g, tk := triagedRig(t, cf, "", "")
 	s := readyScope()
 	s.Profile, s.ProfileWhy = "review-search", "because"

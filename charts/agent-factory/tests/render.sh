@@ -323,8 +323,7 @@ fq '.demo == true' 'demo: true'
 fq '.broker.url == "https://room-broker.maku.svc.cluster.local:8443" and .broker.caFile == "/etc/agent-factory/openbao-ca/ca.crt" and .broker.tokenFile == "/var/run/secrets/agents/rooms/token"' 'the broker over https with the mounted CA and the projected token'
 fq '.runs.group == "maku.ogenki.io" and .runs.namespace == "agents" and .runs.namePrefix == "run-"' 'the portable runs kind'
 [[ "$(yq '.runs | del(.gatewayIdentity)' - <<<"$fcfg" | yq -o=json -I0 'sort_keys(.)' -)" == "$(yq '.runs' - <<<"$bcfg" | yq -o=json -I0 'sort_keys(.)' -)" ]] || { echo "FAIL: the factory and the broker disagree on runs" >&2; fail=1; }
-fq '.loops.review.scope == "scoper" and (.loops.review.judge | length > 0)' 'the review class has a scoper and a judge'
-fq '.loops."docs-links".scope == "scoper" and (.loops."docs-links".judge | length > 0)' 'the docs-links class has a scoper and a judge'
+fq '.loops.standard.scope == "scoper" and (.loops.standard.judge | length > 0)' 'the standard workflow has a scoper and a judge'
 fq '.templates.solo.roles | contains(["reviewer"])' 'solo carries the reviewer'
 fq '.repositories | length == 1' 'one repository'
 fq '.repositories[0].merge.gateStatus == true and .repositories[0].merge.policyBot == false' 'gateStatus on, policy-bot off'
@@ -438,7 +437,7 @@ yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config")
 mout="$(helm template af . -n maku "${gwd[@]}" -f tests/metering-values.yaml \
   --set maku-gateway.aliases.public.agent-default.model=echo-default --set maku-gateway.aliases.public.tier-light.model=echo-light)" || { echo "FAIL: the metering values do not render" >&2; fail=1; mout=''; }
 yq ea 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-config") | .data."config.yaml"' - <<<"$mout" >"$tmp/metering-config.yaml"
-yq -e '.loops.review.split.maxChildren == 3 and .meter.throttle.promQuery != null and .runs.gatewayIdentity' "$tmp/metering-config.yaml" >/dev/null 2>&1 ||
+yq -e '.loops.standard.split.maxChildren == 3 and .meter.throttle.promQuery != null and .runs.gatewayIdentity' "$tmp/metering-config.yaml" >/dev/null 2>&1 ||
   { echo "FAIL: the metering config lacks its split, throttle or identity" >&2; fail=1; }
 (cd ../.. && CHART_DEMO_FACTORY_CONFIG="$tmp/metering-config.yaml" go test -count=1 -run TestRenderedDemoChartConfigParses ./internal/factory/config >"$tmp/parse-m.log" 2>&1) ||
   { echo "FAIL: the metering leg's factory config does not parse:" >&2; cat "$tmp/parse-m.log" >&2; fail=1; }
@@ -758,6 +757,25 @@ grep -qF 'system:serviceaccount:xr-runs:agt-' <<<"$dsub" && ! grep -qF 'system:s
 out="$(helm template af . -n maku "${gwd[@]}" "${dash[@]}")" || { echo "FAIL: dashboards with maku-gateway do not render" >&2; fail=1; out=''; }
 dashcheck "agent-factory,agent-fleet,agent-gateway,agent-identity,agent-room,agent-run,agents-overview"
 grep -qF 'job=\"model-gateway\", namespace=\"maku\"' <<<"$out" || { echo "FAIL: the gateway panels read maku-gateway's job and namespace" >&2; fail=1; }
+# cache-costs review CP1/CP3: the panels the new series answer. The PromQL reads the served
+# maku_factory_* names; the dashboard JSON keeps the portable chart free of trace panels (the host
+# dashboard owns the agent-run.boot and agent-run.clone span durations).
+has_panel() { # has_panel DASHBOARD TITLE [EXPR]: a panel or row carries the title; EXPR, given, is one of its or its children's targets exactly
+  local dash="$1" title="$2" expr="${3:-}"
+  jq -e --arg t "$title" '[.. | objects | select(.title? == $t)] | length >= 1' "files/dashboards/$dash.json" >/dev/null ||
+    { echo "FAIL: no panel \"$title\" in $dash" >&2; fail=1; return; }
+  if [[ -n $expr ]]; then
+    jq -e --arg t "$title" --arg e "$expr" '[.. | objects | select(.title? == $t) | .. | objects | select(has("targets")) | .targets[].expr] | any(. == $e)' \
+      "files/dashboards/$dash.json" >/dev/null || { echo "FAIL: no panel \"$title\" in $dash targets exactly: $expr" >&2; fail=1; }
+  fi
+}
+has_panel agent-factory "Cost per merged pull request, by workflow" \
+  'sum by (profile) (increase(maku_factory_task_usd_total[$__range])) / sum by (profile) (increase(maku_factory_task_outcomes_total{outcome=~"accepted|merged_human"}[$__range]))'
+has_panel agent-factory "Cost per merged pull request, by role" \
+  'sum by (role) (increase(maku_factory_run_cost_usd_sum[$__range])) / scalar(sum(increase(maku_factory_task_outcomes_total{outcome=~"accepted|merged_human"}[$__range])))'
+has_panel agent-factory "Wait between runs over 5 minutes" \
+  '1 - sum by (role) (increase(maku_factory_run_wait_seconds_bucket{le="300"}[$__range])) / sum by (role) (increase(maku_factory_run_wait_seconds_count[$__range]))'
+has_panel agent-run "Start: pod, boot, clone" ''
 out="$(helm template af . -n maku "${args[@]}" --set monitoring.dashboards.enabled=true --set-json 'monitoring.dashboards.labels={"team":"agents"}')"
 ykind ConfigMap 'select(.metadata.name | test("^maku-dashboard-")) | (.metadata.labels.team == "agents" and (.metadata.labels | has("grafana_dashboard") | not))' 'monitoring.dashboards.labels replace the sidecar label (grafana_dashboard: "1"), never merge with it'
 out="$(helm template af . -n maku "${args[@]}" "${dash[@]}" --set maku.broker.publicURL=http://localhost:18080)" || { echo "FAIL: dashboards with a broker publicURL do not render" >&2; fail=1; out=''; }

@@ -37,6 +37,7 @@ func readPins(t *testing.T) pinFixture {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
+	f.Config.HarnessProfiles = f.Config.Workflows // what Parse does with the key (WF9)
 	return f
 }
 
@@ -50,7 +51,7 @@ func TestCheckPinFixture(t *testing.T) {
 				t.Fatal("fixture repository is not served")
 			}
 			got := ""
-			if r := intake.CheckPin(c, row.Class, row.Profile, row.Public); r != nil {
+			if r := intake.CheckPin(c, row.Class, row.Profile); r != nil {
 				got = r.Code
 				_ = r.Sentence() // every code it answers is in the closed list
 			}
@@ -65,21 +66,17 @@ func TestCheckPinFixture(t *testing.T) {
 func TestCheckPinFactorysChoice(t *testing.T) {
 	f := readPins(t)
 	c, _ := catalogue.Build(&f.Config, f.Repository, false)
-	if r := intake.CheckPin(c, "review", "", true); r != nil {
+	if r := intake.CheckPin(c, "review", ""); r != nil {
 		t.Fatalf("empty pin refused: %+v", r)
 	}
 }
 
-// The refusal carries what its sentence names: the class, its floor and allowed profiles, the mode.
+// The refusal carries what its sentence names: the class and the workflow.
 func TestCheckPinRefusalFields(t *testing.T) {
 	f := readPins(t)
 	c, _ := catalogue.Build(&f.Config, f.Repository, true)
-	r := intake.CheckPin(c, "docs-links", "review-pair", true)
-	if r == nil || r.Class != "docs-links" || r.Floor != "links-solo" || r.Mode != "live" || r.Profile != "review-pair" {
-		t.Fatalf("fixed = %+v", r)
-	}
-	r = intake.CheckPin(c, "docs", "review-frontier", true)
-	if r == nil || r.Floor != "review-pair" || len(r.Allowed) != 0 {
-		t.Fatalf("not allowed = %+v", r)
+	r := intake.CheckPin(c, "docs-links", "ghost")
+	if r == nil || r.Class != "docs-links" || r.Profile != "ghost" || r.Code != intake.ProfileUnknown {
+		t.Fatalf("unknown = %+v", r)
 	}
 }

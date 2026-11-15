@@ -118,11 +118,29 @@ func (r *Reconciler) revisionWaiting(ctx context.Context, t *v1alpha1.Task) (boo
 // name, so the claim's name is always <runs.namePrefix><id>.
 func runID(task string, n int) string { return taskid.Run(task, n) }
 
+// waitSinceEnded is the end of the task's most recent run, or nil while that run is still going:
+// the wait a new launch would answer (CP1). Only the latest run governs.
+func waitSinceEnded(t *v1alpha1.Task) *metav1.Time {
+	if len(t.Status.Runs) == 0 {
+		return nil
+	}
+	return t.Status.Runs[len(t.Status.Runs)-1].Finished
+}
+
+// runWait records the wait this launch answers (CP1): from the most recent run's end to the new
+// run's start, by the new run's role. A first run, or one launched while its predecessor is still
+// running, records nothing.
+func (r *Reconciler) runWait(ctx context.Context, t *v1alpha1.Task, role string, started time.Time) {
+	if ended := waitSinceEnded(t); ended != nil {
+		record(ctx, func(ctx context.Context) { r.Metrics.RunWait(ctx, role, started.Sub(ended.Time)) })
+	}
+}
+
 // recordExisting records a claim the task's status does not know (R48): the run was created and
 // the write that recorded it was lost, so the replay found the claim by its deterministic id.
 // The claim is the record — its own role, start seq, head and tokens, whatever its phase — never
 // the replay's spec, which may hold a newer brief or a later room seq.
-func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs.Run) error {
+func (r *Reconciler) recordExisting(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, x runs.Run) error {
 	if x.TaskID != t.Name {
 		return fmt.Errorf("record run %s of task %s: the id belongs to task %q", x.ID, t.Name, x.TaskID)
 	}
@@ -136,6 +154,7 @@ func (r *Reconciler) recordExisting(cfg *config.Config, t *v1alpha1.Task, x runs
 	if !x.Created.IsZero() {
 		started = metav1.NewTime(x.Created) // when the claim really was created, not the replay
 	}
+	r.runWait(ctx, t, x.Role, started.Time)
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
 		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
@@ -175,9 +194,9 @@ func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text 
 	return s
 }
 
-// withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a class
-// that has them (v3 feature 3, RC8): spec.loop.checks and the repository's checks.egress. Any other
-// run, an internal one included, is today's.
+// withChecks switches the repository's checks on for a public implementer, tester or reviewer run of a
+// workflow that has them (v3 feature 3, RC8, WF7): spec.loop.checks and the repository's
+// checks.egress. Any other run, an internal one included, is today's.
 func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Task) {
 	if !r.checksOn(cfg, t) || t.Spec.DataClass != "public" || (s.Role != "implementer" && s.Role != "reviewer" && s.Role != "tester") {
 		s.Checks, s.EgressProfiles = false, nil
@@ -186,13 +205,14 @@ func (r *Reconciler) withChecks(cfg *config.Config, s *runs.Spec, t *v1alpha1.Ta
 	s.Checks, s.EgressProfiles = true, slices.Clone(r.repo(cfg, t).Checks.Egress)
 }
 
-// checksOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+// checksOn: a decision frozen at triage survives later config changes; a task without one (a split
+// part, a RunLore task) reads its repository's default workflow's, live (WF7).
 func (r *Reconciler) checksOn(cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.Profile != nil {
 		return t.Status.Profile.Checks
 	}
-	on, _ := r.repo(cfg, t).ChecksFor(t.Spec.PredictedClass)
-	return on
+	w, _ := cfg.Workflow(r.repo(cfg, t).DefaultWorkflow())
+	return w.Checks
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted
@@ -306,9 +326,10 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 		if !found {
 			return err
 		}
-		return r.recordExisting(cfg, t, x)
+		return r.recordExisting(ctx, cfg, t, x)
 	}
 	now := metav1.NewTime(r.Now())
+	r.runWait(ctx, t, s.Role, now.Time)
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Trigger: trigger,
 		Round: t.Status.ReviewRounds, StartSeq: last, HeadSHA: s.Head, Started: &now, ChargedTo: s.ChargedTo,
 		Provenance: v1alpha1.RunProvenance{ModelSource: source}, Audited: r.auditsRun(cfg, t, s.Role)})
@@ -458,12 +479,22 @@ func (r *Reconciler) unbriefedReviewer(ctx context.Context, t *v1alpha1.Task) {
 	}
 }
 
-// pinModel puts a public run on the provider alias its class's loops.<class>.models names for its
-// role and the tier it runs on (v3 F15, F3), and returns which config chose the run's model, for its
+// row is the loops row t's runs read (RowFor): its workflow's, the one frozen at triage, else its
+// repository's default workflow's for a task without one.
+func (r *Reconciler) row(cfg *config.Config, t *v1alpha1.Task) string {
+	name := r.repo(cfg, t).DefaultWorkflow()
+	if p := t.Status.Profile; p != nil {
+		name = p.Name
+	}
+	return cfg.RowFor(name, cfg.HarnessProfiles[name])
+}
+
+// pinModel puts a public run on the provider alias its workflow's loops row names for its role and
+// the tier it runs on (v3 F15, F3, WF10), and returns which config chose the run's model, for its
 // provenance. ModelFor is "" unless the claim's data class is public: an internal run keeps its
 // tier's model, or the template's reviewerModel, whatever the row says (F4).
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
-	if m := cfg.ModelFor(t.Spec.PredictedClass, s.DataClass, s.Role, s.Tier); m != "" {
+	if m := cfg.ModelFor(r.row(cfg, t), s.DataClass, s.Role, s.Tier); m != "" {
 		s.Model = m
 		return v1alpha1.ModelSourceClassModels
 	}

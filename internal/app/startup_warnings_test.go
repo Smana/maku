@@ -16,7 +16,7 @@ import (
 	"github.com/Smana/maku/internal/metrics"
 )
 
-// Offline proof 4, startup: the deployed config lists the tester in `trio` and two live classes without
+// Offline proof 4, startup: the deployed config lists the tester in `pair` and two live classes without
 // holdoutChecks. It loads without the tester, the warnings are logged and the gauge reads 1.
 func TestStartupWithATesterTemplateAndALiveClassWithoutHoldouts(t *testing.T) {
 	raw := strings.Replace(factoryCfg, "classes: {docs-links: {shadow: true}, revert: {shadow: true}",
@@ -25,8 +25,8 @@ func TestStartupWithATesterTemplateAndALiveClassWithoutHoldouts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if roles := cfg.Templates["trio"].Roles; len(roles) != 2 || roles[0] != "implementer" || roles[1] != "reviewer" {
-		t.Fatalf("trio still lists the tester: %v", roles)
+	if roles := cfg.Templates["pair"].Roles; len(roles) != 2 || roles[0] != "implementer" || roles[1] != "reviewer" {
+		t.Fatalf("pair still lists the tester: %v", roles)
 	}
 	exp, err := metrics.NewExporter(metrics.FactoryBuildInfo, "v0.0.0")
 	if err != nil {
@@ -40,7 +40,7 @@ func TestStartupWithATesterTemplateAndALiveClassWithoutHoldouts(t *testing.T) {
 	m.ListRepositories("Smana/cloud-native-ref")
 	var logs bytes.Buffer
 	warnConfig(slog.New(slog.NewTextHandler(&logs, nil)), cfg, m)
-	for _, want := range []string{"template trio: tester is the test writer", "class docs-links of Smana/cloud-native-ref is live without holdoutChecks",
+	for _, want := range []string{"template pair: tester is the test writer", "class docs-links of Smana/cloud-native-ref is live without holdoutChecks",
 		"class revert of Smana/cloud-native-ref is live without holdoutChecks"} {
 		if !strings.Contains(logs.String(), want) {
 			t.Errorf("no warning %q:\n%s", want, logs.String())
@@ -64,16 +64,15 @@ roomsURL: https://rooms.priv.gcp.ogenki.io
 broker: {url: "https://room-broker.agent-system.svc.cluster.local:8443", caFile: /etc/agent-factory/openbao-ca/ca.crt, tokenFile: /var/run/secrets/agents/rooms/token}
 github: {appIDFile: /etc/agent-factory-github/app_id, privateKeyFile: /etc/agent-factory-github/private_key, mergerAppIDFile: /etc/agent-factory-merger/app_id, mergerKeyFile: /etc/agent-factory-merger/private_key}
 poll: {issues: 60s, tasks: 30s, meter: 30s}
-defaults: {template: solo, tier: standard, dataClass: public, predictedClass: review}
-triage: {classifierURL: "http://complexity-classifier.agent-system.svc.cluster.local:8080/v1/classify", controlPercent: 10}
+defaults: {dataClass: public, predictedClass: review}
+triage: {controlPercent: 10}
 tiers:
   light:    {model: agent-default, runTokens: 300000,  taskTokens: 600000,  runMinutes: 20}
   standard: {model: agent-default, runTokens: 1500000, taskTokens: 3000000, runMinutes: 45}
   frontier: {model: agent-default, runTokens: 4000000, taskTokens: 8000000, runMinutes: 90}
 templates:
   solo: {roles: [implementer]}
-  pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-  trio: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}
+  pair: {roles: [implementer, tester, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
 caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
 budgets: {enforceTask: false, enforcePrincipal: false, factoryDailyUSD: 42.50, humanDailyUSD: 8.50}

@@ -83,3 +83,8 @@ func FactoryDeprecations(c *Config) []string {
 	slices.Sort(out)
 	return out
 }
+
+// readWorkflows moves workflows into HarnessProfiles, the name every reader reads (WF9).
+func (c *Config) readWorkflows() {
+	c.HarnessProfiles, c.Workflows = c.Workflows, nil
+}

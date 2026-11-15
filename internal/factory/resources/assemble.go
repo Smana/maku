@@ -71,7 +71,7 @@ type Result struct {
 }
 
 // CatalogueKeys are the top-level file keys a Factory replaces (D12), in the file's spelling.
-var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "harnessProfiles", "mergeGuardrails", "evaluation", "mergeDefaults"}
+var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "workflows", "mergeGuardrails", "evaluation", "mergeDefaults"}
 
 // candidate is one element of the candidate set: a Factory, or a Repository with its merge and
 // bindings.

@@ -9,23 +9,17 @@ spec:
   - alice
   merge:
     autoMergesPerDay: 5
-    breaker:
-      maxReverts: 1
-      window: 10
     checkReruns: 1
     fixRuns: 2
     gateStatus: true
     leakScanCheck: lint
-    mergerLogin: example-factory[bot]
     policyBot: false
     requiredChecks:
     - lint
     - test
-    revertWindow: 168h
     verifyChecks:
     - lint
     - test
-    verifyFor: 30m
   mergePolicies:
   - allowedFiles:
     - ^.+\.(md|mdx|adoc|rst)$

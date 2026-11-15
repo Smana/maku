@@ -49,9 +49,9 @@ func TestPlanCheckRefusesPin(t *testing.T) {
 		src            CatalogueSource
 		want           string
 	}{
-		"live class":            {"docs-links", "links-solo", &fakeFactoryCatalogue{}, intake.ClassProfileFixed},
+		"a live class (WF4)":    {"docs-links", "review-frontier", &fakeFactoryCatalogue{}, ""},
 		"unknown":               {"review", "ghost", &fakeFactoryCatalogue{}, intake.ProfileUnknown},
-		"not allowed":           {"review", "links-solo", &fakeFactoryCatalogue{}, intake.ProfileNotAllowed},
+		"any workflow (WF4)":    {"review", "links-solo", &fakeFactoryCatalogue{}, ""},
 		"no template":           {"review", "review-floor", &fakeFactoryCatalogue{}, intake.ProfileNotOffered},
 		"not a maintainer":      {"review", "review-frontier", notMaintainerCatalogue{}, intake.NotMaintainer},
 		"catalogue unavailable": {"docs-links", "links-solo", &fakeFactoryCatalogue{byRepo: map[string]error{"Smana/ai-native-ref": errors.New("down")}}, intake.CatalogueUnavailable},
@@ -98,7 +98,7 @@ func TestPlanCheckPinRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	is := out.Plan.Issues[0]
-	if is.Profile != "review-frontier" || !strings.HasSuffix(is.Body, "D1: profile: review-frontier, pinned by the developer") ||
+	if is.Profile != "review-frontier" || !strings.HasSuffix(is.Body, "D1: workflow: review-frontier, pinned by the developer") ||
 		!slices.Equal(is.Roles, []string{"implementer", "tester", "reviewer"}) ||
 		out.Hash == base.Hash || out.Hash != intake.Hash(out.Plan) {
 		t.Fatalf("%+v %s", is, out.Hash)
@@ -136,7 +136,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 	if err := json.Unmarshal(got.structured, &out); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.HasSuffix(out.Plan.Issues[0].Body, "A1: profile: factory's choice; suggested review-frontier") || out.Hash != intake.Hash(out.Plan) {
+	if !strings.HasSuffix(out.Plan.Issues[0].Body, "A1: workflow: factory's choice; suggested review-frontier") || out.Hash != intake.Hash(out.Plan) {
 		t.Fatalf("%q", out.Plan.Issues[0].Body)
 	}
 	// The answer is a plan plan_check holds again, unchanged.
@@ -155,7 +155,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 func TestIntakePlanPinRevision(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
 	base := pinned(t, "review", "")
-	for profile, want := range map[string]string{"review-frontier": "", "links-solo": intake.ProfileNotAllowed} {
+	for profile, want := range map[string]string{"review-frontier": "", "review-floor": intake.ProfileNotOffered} {
 		candidate := base
 		candidate.Issues = []intake.Issue{base.Issues[0]}
 		candidate.Issues[0].Profile = profile

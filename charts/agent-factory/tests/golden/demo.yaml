@@ -381,8 +381,6 @@ data:
     defaults:
       dataClass: public
       predictedClass: review
-      template: solo
-      tier: standard
     demo: true
     factory: demo
     factoryLogin: maku-demo[bot]
@@ -392,10 +390,7 @@ data:
       mergerKeyFile: /etc/agent-factory-github/private_key
       privateKeyFile: /etc/agent-factory-github/private_key
     loops:
-      docs-links:
-        judge: tier-light
-        scope: scoper
-      review:
+      standard:
         judge: tier-light
         scope: scoper
     poll:
@@ -452,11 +447,6 @@ data:
         - implementer
         - reviewer
       solo:
-        maxReviewRounds: 2
-        roles:
-        - implementer
-        - reviewer
-      trio:
         maxReviewRounds: 2
         roles:
         - implementer
@@ -562,6 +552,7 @@ data:
         aliases:
           public: ["agent-default","tier-light"]
           internal: []
+        lightAlias: ""
     broker:
       url: "https://room-broker.maku.svc.cluster.local:8443"
       namespace: "maku"
@@ -1499,7 +1490,7 @@ spec:
         app.kubernetes.io/name: agent-factory
         app.kubernetes.io/version: "0.0.0"
       annotations:
-        checksum/config: 3c8713b8d5de8104100fd0c0da5ebb34654a7642134f85718085789ac22fd3c3
+        checksum/config: c49b0f79e2301e133e4386f8d8ecfdef65ff8d129e385b8ab3e7d9d42d1fd7fe
     spec:
       serviceAccountName: agent-factory
       automountServiceAccountToken: true  # a controller: it watches Tasks and AgentRuns
@@ -1705,7 +1696,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: b09a3a096489552f0c1b4a1abfac3645bb2bf4404c68bd47c18cf8506f92c3c7
+        checksum/config: fd8c3ea4c191bef97d18fce4f4807b93bf0c0b624493613932802e6ba21270f4
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer

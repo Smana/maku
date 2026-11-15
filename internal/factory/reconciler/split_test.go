@@ -57,7 +57,7 @@ func splitRigWith(t *testing.T, tier string, control bool, edit func(*v1alpha1.T
 		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
 		c.Tiers[name] = tr
 	}
-	c.Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3}}}
+	c.Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3}}}
 	g.r.Triage = c7{cfg: c, tier: tier, control: control}
 	return g
 }
@@ -108,7 +108,7 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := splitRig(t, c.tier, false)
-			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3, AnyTier: c.anyTier}}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper, Split: &config.SplitPolicy{MaxChildren: 3, AnyTier: c.anyTier}}}
 			tk := g.reconcile(t, "3buqdlot", 1)
 			if (tk.Spec.Split != nil) != c.offered {
 				t.Fatalf("split %+v", tk.Spec.Split)
@@ -123,9 +123,9 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 // No row, a row without split, a mode other than scoper, or no issue: no split.
 func TestNoSplitOutsideItsRow(t *testing.T) {
 	for name, edit := range map[string]func(*rig){
-		"a scoper row without split": func(g *rig) { g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeScoper}} },
+		"a scoper row without split": func(g *rig) { g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeScoper}} },
 		"a steering row with split": func(g *rig) {
-			g.r.Cfg.Current().Loops = map[string]config.Loop{"review": {Scope: config.ScopeSteering, Split: &config.SplitPolicy{MaxChildren: 3}}}
+			g.r.Cfg.Current().Loops = map[string]config.Loop{"default": {Scope: config.ScopeSteering, Split: &config.SplitPolicy{MaxChildren: 3}}}
 		},
 		"no loops": func(g *rig) { g.r.Cfg.Current().Loops = nil },
 	} {

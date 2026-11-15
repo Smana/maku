@@ -181,6 +181,10 @@ type Gateway struct {
 	// Aliases are the aliases each listener serves (maku-gateway aliases.<class>'s keys): a run whose
 	// alias its listener does not serve is refused before its pod exists.
 	Aliases GatewayAliases `json:"aliases,omitzero"`
+	// LightAlias is the alias the light jobs run on (CP12): an internal run's condenser summary
+	// and a search implementer's child. Every non-empty listener must serve it, so no pod is
+	// created with a dead LIGHT_BASE_URL.
+	LightAlias string `json:"lightAlias,omitempty"`
 	// ServiceAccount is the run-controller's own, which the gateway-token-ttl preflight requests a
 	// token for, at the longest run's lifetime (GW9).
 	ServiceAccount ServiceAccountRef `json:"serviceAccount,omitzero"`
@@ -266,6 +270,17 @@ func (c Config) model() []error {
 			}
 		}
 	}
+	if !aliasRE.MatchString(g.LightAlias) {
+		errs = append(errs, fmt.Errorf("model.gateway.lightAlias %q is not an alias", g.LightAlias))
+	}
+	for _, cl := range []struct {
+		class   string
+		aliases []string
+	}{{"public", g.Aliases.Public}, {"internal", g.Aliases.Internal}} {
+		if len(cl.aliases) > 0 && !slices.Contains(cl.aliases, g.LightAlias) {
+			errs = append(errs, fmt.Errorf("model.gateway.lightAlias %s is not served on the %s listener (maku-gateway aliases.%s)", g.LightAlias, cl.class, cl.class))
+		}
+	}
 	return errs
 }
 
@@ -336,6 +351,7 @@ func LoadConfig(path string) (Config, error) {
 		g := &c.Model.Gateway
 		g.Ports.Public, g.Ports.Internal = cmp.Or(g.Ports.Public, 8080), cmp.Or(g.Ports.Internal, 8081)
 		g.AudiencePrefix = cmp.Or(g.AudiencePrefix, "maku-gateway")
+		g.LightAlias = cmp.Or(g.LightAlias, "tier-light")
 	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)
@@ -569,9 +585,12 @@ func addUnique(list []string, h string) []string {
 // optional judge_model: the completion judge's model on the same endpoint, "" for the run's own.
 // In gateway mode (GatewayModel), Name and Judge are the run's aliases, and JudgeBaseURL the judge
 // alias's path on the same listener.
+// Model is the run's model: its endpoint, name, the gateway listener's host and port, the judge's
+// endpoint when a judge runs, and the light alias's when the run can use it (CP12).
 type Model struct {
 	BaseURL, Name, Host, Judge string
 	JudgeBaseURL               string
+	Light, LightBaseURL        string
 	Port                       int
 }
 
@@ -589,9 +608,15 @@ func class(r *v1alpha1.AgentRun) string {
 // alias is the run's model alias, its CRD default when unset.
 func alias(r *v1alpha1.AgentRun) string { return cmp.Or(r.Spec.Model, defaultAlias) }
 
+// lightOn: the run can spend the light alias (CP12) — an internal run, or an implementer with
+// search on: the condenser (CP6) and the search child (CP7) then run on it.
+func lightOn(r *v1alpha1.AgentRun) bool {
+	return class(r) == "internal" || (r.Spec.Loop.Search && r.Spec.Role == "implementer")
+}
+
 // GatewayModel is a gateway-mode run's model: the gateway's listener for the run's data class, under
-// /m/<alias>/v1 for the run's alias and its judge's (GW5). Host and Port are the listener's, so the
-// run's policies admit the gateway's namespace on it as for any in-cluster model.
+// /m/<alias>/v1 for the run's alias, its judge's and the light alias's (GW5, CP12). Host and Port are
+// the listener's, so the run's policies admit the gateway's namespace on it as for any in-cluster model.
 func (c Config) GatewayModel(r *v1alpha1.AgentRun) Model {
 	g := c.Model.Gateway
 	u, _ := url.Parse(g.URL) // validated at load
@@ -601,6 +626,9 @@ func (c Config) GatewayModel(r *v1alpha1.AgentRun) Model {
 	}
 	base := fmt.Sprintf("http://%s:%d/m/", u.Hostname(), port)
 	m := Model{BaseURL: base + alias(r) + "/v1", Name: alias(r), Host: u.Hostname(), Port: port}
+	if lightOn(r) {
+		m.Light, m.LightBaseURL = g.LightAlias, base+g.LightAlias+"/v1"
+	}
 	if j := r.Spec.Loop.JudgeModel; j != "" {
 		m.Judge, m.JudgeBaseURL = j, base+j+"/v1"
 	}

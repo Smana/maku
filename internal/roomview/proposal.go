@@ -261,7 +261,7 @@ func (c *card) proposalIssue(p ProposalView) string {
 		}
 	}
 	if pin := slackInert(p.Issue.Profile); pin != "" {
-		lines = append(lines, "Pinned: profile "+pin+", a maintainer's choice; the factory checks it at triage")
+		lines = append(lines, "Pinned: workflow "+pin+", a maintainer's choice; the factory checks it at triage")
 	}
 	return strings.Join(lines, "\n")
 }
@@ -270,9 +270,9 @@ func (c *card) proposalIssue(p ProposalView) string {
 // (implementer) · merges on its own when the gate's conditions hold`, or `profile: the factory's
 // choice` with none. Plain text: each surface makes it inert its own way.
 func SuggestionLine(class, profile string, roles []string, outcome string) string {
-	p := "profile: the factory's choice"
+	p := "workflow: the factory's choice"
 	if profile != "" {
-		p = "profile " + profile
+		p = "workflow " + profile
 		if len(roles) > 0 {
 			p += " (" + strings.Join(roles, ", ") + ")"
 		}

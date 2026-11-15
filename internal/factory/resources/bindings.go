@@ -58,7 +58,7 @@ func policyContext(m map[string]any) (config.PolicyContext, error) {
 	for _, f := range []struct {
 		key string
 		dst any
-	}{{"harnessProfiles", &ctx.HarnessProfiles}, {"mergeGuardrails", &ctx.Guardrails}, {"templates", &ctx.Templates}, {"loops", &ctx.Loops}} {
+	}{{"workflows", &ctx.HarnessProfiles}, {"mergeGuardrails", &ctx.Guardrails}, {"templates", &ctx.Templates}, {"loops", &ctx.Loops}} {
 		if v, ok := m[f.key]; ok && v != nil {
 			if err := decodeStrict(v, f.dst); err != nil {
 				return config.PolicyContext{}, fmt.Errorf("%s: %w", f.key, err)
@@ -66,6 +66,8 @@ func policyContext(m map[string]any) (config.PolicyContext, error) {
 		}
 	}
 	ctx.Guardrails = ctx.Guardrails.WithDefaults() // MR7
+	// WF2: the shipped workflows, as Parse fills them. A split is no part of a floor (TE6).
+	ctx.HarnessProfiles, ctx.Templates, ctx.Loops = config.FillShippedWorkflows(ctx.HarnessProfiles, ctx.Templates, ctx.Loops, false)
 	return ctx, nil
 }
 

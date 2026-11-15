@@ -43,7 +43,7 @@ func ChildTask(ns string, cfg *config.Config, parent *v1alpha1.Task, c v1alpha1.
 			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", c.Repository, issue), Key: key,
 				RequestedBy: v1alpha1.Person(MaintainerLogin(c)), Trust: "untrusted", ContentSHA256: cs.PlanHash},
 			Repository: c.Repository, Issue: issue, IssueAuthor: cfg.FactoryLogin, Text: c.Scope.Task, DataClass: "public",
-			PredictedClass: c.Class, Template: templateFor(cfg, c.Roles), Budget: b, Scope: &scope,
+			PredictedClass: c.Class, Template: templateFor(cfg, c.Repository, c.Roles), Budget: b, Scope: &scope,
 			CoordinationParent: &v1alpha1.CoordinationParent{Task: parent.Name, PlanVersion: cs.Plan.Version, ChildID: c.ID},
 		},
 	}
@@ -60,15 +60,15 @@ func LimitAllocation(t *v1alpha1.Task, left int64) {
 	}
 }
 
-// templateFor is the config template whose roles are exactly roles, by name order; the default
-// template when none is.
-func templateFor(cfg *config.Config, roles []string) string {
+// templateFor is the config template whose roles are exactly roles, by name order; the template of
+// repository's default workflow when none is.
+func templateFor(cfg *config.Config, repository string, roles []string) string {
 	for _, name := range slices.Sorted(maps.Keys(cfg.Templates)) {
 		if slices.Equal(cfg.Templates[name].Roles, roles) {
 			return name
 		}
 	}
-	return cfg.Defaults.Template
+	return cfg.DefaultTemplate(cfg.RepositoryFor(repository))
 }
 
 // PlanChild is child id of cs's current plan.

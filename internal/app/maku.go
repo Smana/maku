@@ -90,7 +90,7 @@ const makuUsage = `usage: maku <command>
                                   2 when the release has no preflight
   repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory NAME] [--namespace NS]
            [--maintainer LOGIN]... [--check NAME]... [--leak-scan-check NAME] [--acknowledge-private-code]
-           [--merge-defaults] [--force]
+           [--merge-defaults=false] [--force]
                                   read the default branch, its required checks and visibility with your gh
                                   login, and write the repository's Repository, fence, ruleset and its gh
                                   script to DIR; it applies nothing and opens no pull request
@@ -863,7 +863,7 @@ func (r Maku) fork(ctx context.Context, c maku.Client, base string, args []strin
 	at := fs.Int64("at", 0, "the last seq to copy")
 	role := fs.String("role", "", "request a run in the new room: implementer, reviewer or triager")
 	pr := fs.String("pr", "", "the reviewer's pull request")
-	egress := fs.String("egress", "", "extra egress profiles for that run: pypi,npm,golang,crates")
+	egress := fs.String("egress", "", "extra egress allow-lists for that run: pypi,npm,golang,crates")
 	note := fs.String("note", "", "why you fork")
 	approvals := fs.String("approvals", "", "attended (the default): the fork asks before risky actions; unattended keeps an unattended source's policy")
 	pos, err := flags(fs, args)

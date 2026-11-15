@@ -30,7 +30,7 @@ func (s *Server) checkPins(ctx context.Context, p authn.Principal, onBehalfOf st
 			refused = &intake.ProfileRefusal{Code: intake.CatalogueUnavailable}
 			break
 		}
-		if refused = intake.CheckPin(c, is.Class, is.Profile, true); refused != nil {
+		if refused = intake.CheckPin(c, is.Class, is.Profile); refused != nil {
 			break
 		}
 		if !slices.Equal(is.Roles, c.Profiles[is.Profile].Roles) {
@@ -38,7 +38,7 @@ func (s *Server) checkPins(ctx context.Context, p authn.Principal, onBehalfOf st
 			// not a plan the broker made.
 			return &intake.Refusal{Reason: intake.ReasonPlannerInvalid,
 				Sentence: "the plan is not the shape the contract asks for (issue " + strconv.Itoa(is.Index) +
-					": roles are not the pinned profile's); ask again"}
+					": roles are not the pinned workflow's); ask again"}
 		}
 	}
 	if refused == nil {

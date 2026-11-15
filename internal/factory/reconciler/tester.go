@@ -46,17 +46,19 @@ func ranTester(t *v1alpha1.Task) bool {
 	return slices.ContainsFunc(t.Status.Runs, func(x v1alpha1.RunRecord) bool { return x.Role == "tester" })
 }
 
-// testFirst: the task's class writes its tests first and its template has an implementer to follow.
+// testFirst: the task writes its tests first (WF7) and its template has an implementer to follow.
 func (r *Reconciler) testFirst(cfg *config.Config, t *v1alpha1.Task) bool {
 	return r.testFirstOn(cfg, t) && slices.Contains(cfg.Templates[t.Spec.Template].Roles, "implementer")
 }
 
-// testFirstOn: a decision frozen at triage survives later config changes; a task without one reads live config.
+// testFirstOn: a decision frozen at triage survives later config changes; a task without one reads
+// live config: its repository's opt-in, for its default workflow (WF7).
 func (r *Reconciler) testFirstOn(cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.Profile != nil {
 		return t.Status.Profile.TestFirst
 	}
-	return r.repo(cfg, t).TestFirstFor(t.Spec.PredictedClass)
+	rc := r.repo(cfg, t)
+	return rc.TestFirstIn(rc.DefaultWorkflow())
 }
 
 // testerRun: the task's current run is its tester's.

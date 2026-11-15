@@ -3,6 +3,7 @@
 package roomview
 
 import (
+	"maps"
 	"math"
 	"slices"
 	"strconv"
@@ -11,9 +12,11 @@ import (
 	"github.com/Smana/maku/internal/factory/catalogue"
 )
 
-// CatalogueText is a repository's catalogue as the text a person reads: without class, one line per
-// offered class; with it, that class's floor, variants and escalation, each profile's roles, tier,
-// tests-first, loop and description, and whether the caller may pin. The word is "profile" (P1).
+// CatalogueText is a repository's catalogue as the text a person reads: one line per offered class
+// (or the one class asked for, with its ceiling and description), then the workflows any task may
+// run, the repository's default first, with each one's roles, tier, tests-first, checks, loop,
+// escalation and description, and whether the caller may pin one. The word is "workflow" (WF1);
+// since the workflow left the class (WF4), a class says only how its tasks merge.
 //
 // Names and descriptions come from the factory's config, which a repository's maintainers write,
 // so they are untrusted like any other text a view quotes: a name is plain unless it holds markup
@@ -22,46 +25,34 @@ import (
 func CatalogueText(c catalogue.Catalogue, class string) string {
 	var b strings.Builder
 	if class == "" {
-		b.WriteString("Classes of " + inertWord(c.Repository, clean(c.Repository)) + ", with the profile each runs and how it merges.\n")
+		b.WriteString("Classes of " + inertWord(c.Repository, clean(c.Repository)) + ", with how each merges.\n")
 		for _, cl := range c.Classes {
 			b.WriteString(classLine(c, cl) + "\n")
 		}
-		b.WriteString("Evaluation " + inertWord(c.Evaluation.Mode, clean(c.Evaluation.Mode)) + ", control share " + strconv.Itoa(c.Evaluation.ControlPercent) + " %.\n")
-		b.WriteString("Ask for one class to see what each of its profiles runs.\n")
-		b.WriteString(pinLine(c, nil))
-		return b.String()
-	}
-	cl, ok := c.Class(class)
-	if !ok {
-		return "No class " + quote(class) + " is offered on " + inertWord(c.Repository, clean(c.Repository)) + ".\n"
-	}
-	b.WriteString(classLine(c, cl) + "\n")
-	b.WriteString("Ceiling " + dollars(int64(math.Round(cl.CeilingUSD*1e6))) + " a task.\n")
-	if d := strip(cl.Description); d != "" {
-		b.WriteString("About " + quote(cl.Description) + "\n")
-	}
-	if cl.Floor == "" {
-		b.WriteString("Floor: none declared, the factory runs the class as configured.\n")
 	} else {
-		b.WriteString("Floor " + profileLine(c, cl.Floor) + "\n")
-	}
-	if len(cl.Allowed) > 0 {
-		b.WriteString("Variants:\n")
-		for _, name := range cl.Allowed {
-			b.WriteString("- " + profileLine(c, name) + "\n")
+		cl, ok := c.Class(class)
+		if !ok {
+			return "No class " + quote(class) + " is offered on " + inertWord(c.Repository, clean(c.Repository)) + ".\n"
+		}
+		b.WriteString(classLine(c, cl) + "\n")
+		b.WriteString("Ceiling " + dollars(int64(math.Round(cl.CeilingUSD*1e6))) + " a task.\n")
+		if d := strip(cl.Description); d != "" {
+			b.WriteString("About " + quote(cl.Description) + "\n")
 		}
 	}
-	if e := cl.Escalation; e != nil && (e.OutOfBudget != "" || e.NotConverged != "") {
-		var parts []string
-		if e.OutOfBudget != "" {
-			parts = append(parts, "out of budget goes to "+name(e.OutOfBudget))
-		}
-		if e.NotConverged != "" {
-			parts = append(parts, "not converged goes to "+name(e.NotConverged))
-		}
-		b.WriteString("Escalation: " + strings.Join(parts, "; ") + ".\n")
+	b.WriteString("Workflows, the same for every class:\n")
+	if _, ok := c.Profiles[c.DefaultWorkflow]; ok {
+		b.WriteString("- default " + profileLine(c, c.DefaultWorkflow) + "\n")
 	}
-	b.WriteString(pinLine(c, &cl))
+	for _, n := range slices.Sorted(maps.Keys(c.Profiles)) {
+		if n != c.DefaultWorkflow {
+			b.WriteString("- " + profileLine(c, n) + "\n")
+		}
+	}
+	if class == "" {
+		b.WriteString("Evaluation " + inertWord(c.Evaluation.Mode, clean(c.Evaluation.Mode)) + ", control share " + strconv.Itoa(c.Evaluation.ControlPercent) + " %.\n")
+	}
+	b.WriteString(pinLine(c))
 	return b.String()
 }
 
@@ -78,31 +69,16 @@ func MergeWords(outcome string) string {
 	return "a maintainer merges it"
 }
 
-// classLine is `docs-links · live · merges on its own when the gate's conditions hold · profile links-solo`.
+// classLine is `docs-links · live · merges on its own when the gate's conditions hold`.
 func classLine(c catalogue.Catalogue, cl catalogue.Class) string {
-	line := name(cl.Name) + " · " + name(cl.Mode) + " · " + MergeWords(catalogue.Outcome(cl.Mode, c.ApproveToMerge))
-	if p, ok := c.Profiles[cl.Floor]; ok && p.Offered {
-		line += " · profile " + name(cl.Floor)
-	} else {
-		line += " · profile chosen at triage"
-	}
-	var more []string
-	for _, v := range c.OfferedProfiles(cl.Name) {
-		if v != cl.Floor {
-			more = append(more, name(v))
-		}
-	}
-	if len(more) > 0 {
-		line += " · variants " + strings.Join(more, ", ")
-	}
-	return line
+	return name(cl.Name) + " · " + name(cl.Mode) + " · " + MergeWords(catalogue.Outcome(cl.Mode, c.ApproveToMerge))
 }
 
-// profileLine is one profile: its roles, tier, tests-first, loop and description.
+// profileLine is one workflow: its roles, tier, tests-first, checks, loop, escalation and description.
 func profileLine(c catalogue.Catalogue, n string) string {
 	p, ok := c.Profiles[n]
 	if !ok {
-		return name(n) + ": not in the factory's list of profiles"
+		return name(n) + ": not in the factory's list of workflows"
 	}
 	var parts []string
 	if p.Offered {
@@ -122,30 +98,29 @@ func profileLine(c catalogue.Catalogue, n string) string {
 	if p.Loop != "" {
 		parts = append(parts, "loop "+name(p.Loop))
 	}
+	if e := p.Escalation; e != nil && e.OutOfBudget != "" {
+		parts = append(parts, "out of budget goes to "+name(e.OutOfBudget))
+	}
+	if e := p.Escalation; e != nil && e.NotConverged != "" {
+		parts = append(parts, "not converged goes to "+name(e.NotConverged))
+	}
 	if strip(p.Description) != "" {
 		parts = append(parts, quote(p.Description))
 	}
 	return name(n) + ": " + strings.Join(parts, " · ")
 }
 
-// pinLine says whether the caller may pin a profile, and which. Only a maintainer may (P5), and
-// only on a class with an offered variant or an offered floor that is not fixed by a live or
-// shadow merge policy (one profile by TE2).
-func pinLine(c catalogue.Catalogue, only *catalogue.Class) string {
+// pinLine says whether the caller may pin a workflow, and which. Only a maintainer may (P5), on any
+// class (WF4): the workflow:<name> label or the confirmation's choice.
+func pinLine(c catalogue.Catalogue) string {
 	if !c.Maintainer {
-		return "Only a maintainer of this repository can pin a profile; the factory chooses it.\n"
+		return "Only a maintainer of this repository can pin a workflow; the factory chooses it.\n"
 	}
-	if only == nil {
-		return "You maintain this repository: you may pin a profile where a class lists variants.\n"
-	}
-	if only.Mode == catalogue.ModeLive || only.Mode == catalogue.ModeShadow {
-		return "Fixed: this class's merge policy runs it under " + name(only.Floor) + " only, so there is no profile to pin.\n"
-	}
-	offered := c.OfferedProfiles(only.Name)
+	offered := c.Workflows()
 	if len(offered) == 0 {
-		return "You may pin no profile here: none of this class's profiles is offered.\n"
+		return "You may pin no workflow here: none is offered.\n"
 	}
-	return "You may pin " + strings.Join(mapStrings(offered, name), ", ") + ".\n"
+	return "You may pin " + strings.Join(mapStrings(offered, name), ", ") + " with a workflow:<name> label.\n"
 }
 
 // name is a config name on one line, plain unless it holds markup.

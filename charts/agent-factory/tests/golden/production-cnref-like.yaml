@@ -437,34 +437,6 @@ data:
       intake:
         plan:
           apiKeyFile: /var/run/secrets/maku/model-gateway/planner
-          classes:
-            docs:
-              ceilingUSD: 2
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:docs.taskUSD
-            docs-links:
-              ceilingUSD: 2
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:docs-links.taskUSD
-            review:
-              ceilingUSD: 2
-              roles:
-              - implementer
-              - reviewer
-              source: class:review.taskUSD
-            scripts:
-              ceilingUSD: 5.1
-              roles:
-              - scoper
-              - implementer
-              - reviewer
-              source: class:scripts.taskUSD
           dailyPlans: 50
           deadline: 20s
           enabled: true
@@ -591,6 +563,7 @@ data:
         aliases:
           public: ["agent-default","kimi-frontier","mistral-light","mistral-standard","tier-frontier","tier-light","tier-standard"]
           internal: ["agent-default","tier-frontier","tier-light","tier-standard"]
+        lightAlias: ""
     broker:
       url: "https://room-broker.agent-system.svc.cluster.local:8443"
       namespace: "agent-system"
@@ -1392,7 +1365,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The broker reads its config once at start: a changed config must roll the pods.
-        checksum/config: 7fd4a7047b6d941c186e2c273d99d0e44483d5cb317e4b9d36c37a363fbd21c7
+        checksum/config: 574c670d014b21ba9a3e266c4432489223a0e2f44fce34babc0bf5ac9d7df3d5
     spec:
       # No runtimeClassName, ever: kubectl port-forward, local mode's only way in, cannot reach a runsc pod.
       serviceAccountName: room-broker
@@ -1522,7 +1495,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: aadc1191698f2c8cd9b50b2b8e0f25b9ec7e7bafab1b2871d7a114fae2d36b70
+        checksum/config: 33848be7b18d113063d155a1c45c0146a632cb795c75b247cc7cb42417d6982c
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer

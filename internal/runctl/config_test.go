@@ -134,7 +134,7 @@ var gatewayConfig = strings.Replace(goodConfig, "modelSecret: agent-model\n", ""
     serviceAccount: {namespace: maku, name: run-controller}
     aliases:
       public: [agent-default, tier-light, tier-standard, kimi-frontier]
-      internal: [tier-standard]
+      internal: [tier-light, tier-standard]
 `
 
 func gatewayTestConfig(t *testing.T) Config {
@@ -165,7 +165,7 @@ func TestLoadConfigModelMode(t *testing.T) {
 		"url port":     {strings.Replace(gatewayConfig, "cluster.local\n", "cluster.local:8080\n", 1), "model.gateway.url"},
 		"url path":     {strings.Replace(gatewayConfig, "cluster.local\n", "cluster.local/v1\n", 1), "model.gateway.url"},
 		"no aliases":   {strings.Replace(gatewayConfig, "      public: [agent-default, tier-light, tier-standard, kimi-frontier]\n", "", 1), "model.gateway.aliases.public"},
-		"bad alias":    {strings.Replace(gatewayConfig, "[tier-standard]", "[Tier_X]", 1), "model.gateway.aliases.internal"},
+		"bad alias":    {strings.Replace(gatewayConfig, "[tier-light, tier-standard]", "[tier-light, Tier_X]", 1), "model.gateway.aliases.internal"},
 		"bad port":     {gatewayConfig + "    ports: {public: 70000}\n", "model.gateway.ports.public"},
 		"no sa":        {strings.Replace(gatewayConfig, "    serviceAccount: {namespace: maku, name: run-controller}\n", "", 1), "model.gateway.serviceAccount"},
 		"bad prefix":   {gatewayConfig + "    audiencePrefix: \"a b\"\n", "model.gateway.audiencePrefix"},
@@ -205,5 +205,23 @@ func TestModelFrom(t *testing.T) {
 	}
 	if _, err := ModelFrom(map[string][]byte{"api_key": []byte("k")}); err == nil {
 		t.Fatal("no model: want an error")
+	}
+}
+
+// Review Focus 2: a gateway listener that does not serve the light alias refuses the config at
+// load, naming the alias and the listener: no pod is ever created with a dead LIGHT_BASE_URL.
+func TestConfigRefusesALightAliasItsListenerDoesNotServe(t *testing.T) {
+	body := strings.Replace(gatewayConfig, "internal: [tier-light, tier-standard]", "internal: [agent-default]", 1)
+	_, err := cfgFrom(t, body)
+	if err == nil || !strings.Contains(err.Error(),
+		"model.gateway.lightAlias tier-light is not served on the internal listener (maku-gateway aliases.internal)") {
+		t.Fatalf("err %v", err)
+	}
+}
+
+func TestLoadConfigDefaultsTheLightAlias(t *testing.T) {
+	c := gatewayTestConfig(t)
+	if c.Model.Gateway.LightAlias != "tier-light" {
+		t.Fatalf("lightAlias %q, want the tier-light default", c.Model.Gateway.LightAlias)
 	}
 }

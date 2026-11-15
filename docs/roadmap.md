@@ -25,7 +25,7 @@ As of v0.49.0.
 | Slack: self-serve linking and the proposal message | [Slack App](slack.md) |
 | The factory on a laptop: `task demo`, the `charts/agent-factory` umbrella chart and the quickstart | [Quickstart](quickstart.md) |
 | Factory resources: `Factory`, `Repository` and `MergePolicy` objects the factory reads live, with the last good version kept on a bad edit, and `maku config migrate` and `validate` (v0.41.x) | [Merge policies](merge-policies.md) |
-| Team evaluation profiles with outcome metrics | [Web UI](web-ui.md) |
+| Team evaluation workflows with outcome metrics | [Web UI](web-ui.md) |
 | A form that never answers: `issue_file` falls back to the draft after 60 s, and the handoff skill checks the repository first (v0.42.0) | [The MCP server](cli.md#the-mcp-server) |
 | Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed (v0.42.0) | [Slack App](slack.md) |
 | The chart contract, v4 rollout step 1: the `agent-factory-crds` chart, the demo in `values-demo.yaml`, a values schema, `kubeVersion` 1.30 or later, the umbrella published and signed | [Upgrading](upgrading.md#the-chart-contract-v04x-v4-rollout-step-1) |
@@ -43,7 +43,7 @@ As of v0.49.0.
 | Merge policies, from shadow to authority | Stage 3's exit: a week of dual decisions with no unexplained disagreement. Then a repository's cutover with central guardrails, a policy-bot rule generated from a class, `maku policy init`, a hold label, and simulation over real pull requests ([UX review](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-08-merge-policy-ux-review.md#the-proposal-ranked)) |
 | The planner's grounding | It accepted a false premise in a request; a plan must check its claims against the repository |
 | Natural-language intents in Slack rooms | Design, open ([#441](https://github.com/Smana/maku/pull/441)) |
-| A suggested workflow and profile override at intake | Design, open ([#443](https://github.com/Smana/maku/pull/443)) |
+| A suggested workflow and a workflow override at intake | Design, open ([#443](https://github.com/Smana/maku/pull/443)) |
 
 ## Roadmap
 

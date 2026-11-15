@@ -336,17 +336,17 @@ func TestSkillShowsTheSuggestion(t *testing.T) {
 	body := string(b)
 	for _, want := range []string{
 		"**Show the suggestion first.** Relay each issue's suggestion as the plan returns it",
-		"| what classes and harness profiles a repository offers | `classes_list`",
+		"| what classes and workflows a repository offers | `classes_list`",
 		"**A pin is the developer's choice.** If `classes_list` says the developer is a maintainer, offer three answers",
 		"Otherwise show the suggestion only and offer no pin.",
 		"call `plan_check` with only `profile` changed",
-		"never apply `class:` or `profile:` labels yourself",
+		"never apply `class:` or `workflow:` labels yourself",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("SKILL.md lacks %q", want)
 		}
 	}
-	if strings.Contains(strings.ToLower(body), "workflow") {
-		t.Error("SKILL.md says workflow: the word is profile (P1)")
+	if strings.Contains(strings.ToLower(body), "harness profile") {
+		t.Error("SKILL.md says harness profile: the word is workflow (WF1)")
 	}
 }

@@ -13,15 +13,20 @@ spec:
   defaults:
     dataClass: public
     predictedClass: review
-    template: solo
-    tier: standard
   loops:
-    docs-links:
+    careful:
       judge: tier-light
       scope: scoper
-    review:
-      judge: tier-light
-      scope: scoper
+      search: true
+    default:
+      scope: "off"
+  mergeDefaults:
+    breaker:
+      maxReverts: 1
+      window: 10
+    mergerLogin: example-factory[bot]
+    revertWindow: 168h
+    verifyFor: 30m
   templates:
     investigate:
       roles:
@@ -32,15 +37,8 @@ spec:
       - implementer
       - reviewer
     solo:
-      maxReviewRounds: 2
       roles:
       - implementer
-      - reviewer
-    trio:
-      maxReviewRounds: 2
-      roles:
-      - implementer
-      - reviewer
   tiers:
     frontier:
       model: agent-default
@@ -57,3 +55,17 @@ spec:
       runMinutes: 45
       runTokens: 1500000
       taskTokens: 3000000
+  workflows:
+    careful:
+      description: Scoped first, judged before review. For wide or unclear tasks.
+      loop: careful
+      template: pair
+      tier: frontier
+    none:
+      template: none
+    quick:
+      description: One implementer. For changes a check can verify.
+      template: solo
+    standard:
+      description: An implementer and a reviewer. The default.
+      template: pair

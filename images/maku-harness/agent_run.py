@@ -15,6 +15,7 @@ import os
 import re
 import secrets
 import shlex
+import shutil
 import signal
 import subprocess
 import sys
@@ -167,7 +168,7 @@ def mcp_bearer(env) -> str | None:
 
 def redact(text: str) -> str:
     for var, marker in (("GIT_TOKEN_FILE", REDACTED), ("LLM_API_KEY_FILE", REDACTED_KEY), ("JUDGE_API_KEY_FILE", REDACTED_KEY),
-                        ("MCP_TOKEN_FILE", REDACTED)):
+                        ("LIGHT_API_KEY_FILE", REDACTED_KEY), ("MCP_TOKEN_FILE", REDACTED)):
         value = _read_secret(os.environ.get(var) or os.devnull)
         if value:
             text = text.replace(value, marker)
@@ -331,6 +332,37 @@ def search_summary(path: str = SEARCH_LEDGER) -> str:
         " ".join("%s=%d" % kv for kv in sorted(outcomes.items())) or "none")
 
 
+def light_llm(env: dict, usage_id: str, effort: str):
+    """The LLM for the light alias, or None when the run has none (CP12): the condenser's summary
+    and the search child spend the light tier's tokens, never the run's."""
+    if not env.get("LIGHT_BASE_URL"):
+        return None
+    from openhands.sdk import LLM
+    return LLM(model="openai/" + env["LIGHT_MODEL"], base_url=env["LIGHT_BASE_URL"],
+               api_key=_api_key(env, "LIGHT_API_KEY_FILE"), usage_id=usage_id,
+               # A budget 429 is terminal for the run's own calls; a summary the gateway refuses
+               # must not retry either. The run's prices are not applied: the meter prices by the
+               # model the gateway served.
+               num_retries=0, litellm_extra_body={"reasoning_effort": effort})
+
+
+# CP6: an internal run condenses later (240 kept where 80, the first 8 where 4), and its summary
+# runs at low effort on the light alias when the run holds one.
+CONDENSER_MAX_SIZE = 240
+CONDENSER_KEEP_FIRST = 8
+CONDENSER_EFFORT = "low"
+
+
+def internal_condenser(condenser, env: dict):
+    """The default agent's condenser tuned for an internal run (CP6): a larger window, and the
+    summary on the light alias at low effort, or on the run's own model when it has no light alias."""
+    if not condenser:
+        return condenser
+    llm = light_llm(env, "condenser", CONDENSER_EFFORT) or condenser.llm
+    return condenser.model_copy(update={"max_size": CONDENSER_MAX_SIZE, "keep_first": CONDENSER_KEEP_FIRST,
+                                        "llm": llm})
+
+
 def build_request(env: dict, task: str, rules: str, span=None, search: bool = False) -> dict:
     """The StartConversationRequest body, as plain JSON.
 
@@ -372,6 +404,8 @@ def build_request(env: dict, task: str, rules: str, span=None, search: bool = Fa
     if search:
         from openhands.sdk.tool import Tool
         agent = agent.model_copy(update={"tools": [*agent.tools, Tool(name=SEARCH_TOOL)]})
+    if env.get("DATA_CLASS") == "internal":
+        agent = agent.model_copy(update={"condenser": internal_condenser(agent.condenser, env)})
     agent = agent.model_dump(mode="json", context=plain)
     print(tool_names(agent), flush=True)
     mcp_url = env.get("MCP_URL")
@@ -427,6 +461,18 @@ def wait_ready(deadline_s: int = 120, server=None) -> None:
         except (urllib.error.URLError, OSError):
             time.sleep(1)
     raise TimeoutError("agent-server never became ready")
+
+
+def boot(start_span=None, wait=wait_ready) -> None:
+    """The agent-run.boot span over the wait for agent-server's /ready: it ends when ready
+    answers, or with the error that aborts the start. Tracing off (no start_span) is a no-op."""
+    span = start_span(BOOT_SPAN) if start_span else None
+    try:
+        wait()
+    except Exception as exc:  # noqa: BLE001 -- the span records why the start aborted
+        _end(span, type(exc).__name__)
+        raise
+    _end(span, None)
 
 
 def outcome(status: str) -> int | None:
@@ -788,6 +834,7 @@ NOTE_MAX = 280
 CHECKS_SKIPS = {"deadline", "no result", "unreadable result"}
 CHECKS_RESULTS = {"pass", "fail", "timeout", "skip"}
 CHECKS_SPAN, INSTALL_SPAN = "agent-run.checks", "agent-run.checks.install"
+BOOT_SPAN, CLONE_SPAN = "agent-run.boot", "agent-run.clone"
 
 
 def checks_module():
@@ -1258,6 +1305,32 @@ def model_retries() -> int:
         return 0
 
 
+def cache_line(step: int, usage: dict, miss: str) -> str:
+    """One line per model response: the response's input and cache tokens, and the miss kind."""
+    return "agent-run cache: step=%d input=%d cache_read=%d cache_write=%d miss=%s" % (
+        step, usage.get("prompt_tokens") or 0, usage.get("cache_read_tokens") or 0,
+        usage.get("cache_write_tokens") or 0, miss)
+
+
+def miss_kind(step: int, cache_read: int, after_condensation: bool, resumed: bool) -> str:
+    """Why a response read nothing from the prompt cache. Only 'unexpected' is a defect: the first
+    response, a resumed run's first and the one right after a condensation are misses by design."""
+    if cache_read:
+        return "none"
+    if resumed:
+        return "resume"
+    if after_condensation:
+        return "condensation"
+    if step == 1:
+        return "first"
+    return "unexpected"
+
+
+def condensation_line(step: int, forgotten: int, summary_model: str) -> str:
+    """One line per condensation: how many events were forgotten and which model wrote the summary."""
+    return "agent-run condensation: step=%d forgotten=%d summary_model=%s" % (step, forgotten, summary_model)
+
+
 class StepLog:
     """Prints each new agent step to stdout, one line each, so `kubectl logs -c
     harness` shows what the agent is doing, and VictoriaLogs keeps it after the
@@ -1267,7 +1340,8 @@ class StepLog:
     text is redacted first."""
 
     def __init__(self, cid: str, trace_id: str = "", notes: "ProgressNotes | None" = None, ledger: str | None = None,
-                 nudge_after: int = 0, scoper: tuple[int, int] | None = None, resumed: bool = False):
+                 nudge_after: int = 0, scoper: tuple[int, int] | None = None, resumed: bool = False,
+                 summary_model: str = ""):
         self.notes = notes
         # The scoper's bounds (HR2): one nudge at nudgeAt own tool calls, CallLimit at maxToolCalls. A handoff
         # ends the count once its observation comes back with no error; while one is in flight, no stop.
@@ -1284,6 +1358,13 @@ class StepLog:
         # ST7: a search's tool calls are the run's steps, read from its ledger when search is on.
         self.ledger, self.searched = ledger, 0
         self.last_message = ""
+        # CP2: one cache line per model response, read from the stats update the SDK streams after
+        # each response; one condensation line per Condensation event. The response ordinal is the
+        # line's step: the first response is 1. A resumed run's first response misses by design.
+        self.responses = 0
+        self.after_condensation = False
+        self.start_resumed = resumed
+        self.summary_model = summary_model
 
     @property
     def steps(self) -> int:
@@ -1339,8 +1420,42 @@ class StepLog:
         if self.own >= limit and not self.handoffs:
             raise CallLimit(self.own)
 
+    def cache_stats(self, value) -> "str | None":
+        """The cache line for the newest response, from the per-response stats update the SDK
+        streams (ConversationStateUpdateEvent key=stats). Unreadable shapes are skipped: the line
+        is observability, never a reason to fail the run."""
+        if not isinstance(value, dict):
+            return None
+        metrics = value.get("usage_to_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        agent = metrics.get("agent")
+        if not isinstance(agent, dict):
+            return None
+        usages = agent.get("token_usages")
+        if not isinstance(usages, list) or not usages or not isinstance(usages[-1], dict):
+            return None
+        usage = usages[-1]
+        self.responses += 1
+        cache_read = usage.get("cache_read_tokens") or 0
+        miss = miss_kind(self.responses, cache_read, self.after_condensation,
+                         self.start_resumed and self.responses == 1)
+        self.after_condensation = False
+        return cache_line(self.responses, usage, miss)
+
+    def condensed(self, forgotten) -> "str | None":
+        """The condensation line; the response that follows re-reads nothing from the cache by design."""
+        if not isinstance(forgotten, (list, set, tuple)):
+            return None
+        self.after_condensation = True
+        return condensation_line(self.responses + 1, len(forgotten), self.summary_model)
+
     def describe(self, event: dict) -> str | None:
         kind = event.get("kind")
+        if kind == "ConversationStateUpdateEvent" and event.get("key") == "stats":
+            return self.cache_stats(event.get("value"))
+        if kind == "Condensation":
+            return self.condensed(event.get("forgotten_event_ids"))
         if kind == "ActionEvent":
             self.own += 1
             action = event.get("action") or {}
@@ -1387,9 +1502,12 @@ def _verified(ref: str) -> bool:
     return subprocess.run(["git", "-C", REPO_DIR, "rev-parse", "--verify", "--quiet", ref], capture_output=True).returncode == 0
 
 
-def clone(env: dict) -> bool:
-    """Clones the repo and checks the run's branch out; True when it resumed a pushed one."""
-    subprocess.run(["git", "clone", "--no-tags", "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR], check=True)
+def _clone(env: dict, filter_blobs: bool) -> bool:
+    # No --depth: a shallow clone breaks merge-base on an old base (CP5).
+    args = ["git", "clone", "--no-tags"]
+    if filter_blobs:
+        args.append("--filter=blob:none")
+    subprocess.run([*args, "https://github.com/" + env["REPOSITORY"] + ".git", REPO_DIR], check=True)
     # Resume the run's branch when an earlier run of the same task pushed it (R7).
     resumed = _verified("origin/" + env["BRANCH"])
     if resumed:
@@ -1399,6 +1517,33 @@ def clone(env: dict) -> bool:
     else:
         start = env["BASE_REF"]  # a commit
     subprocess.run(["git", "-C", REPO_DIR, "checkout", "-B", env["BRANCH"], start], check=True)
+    return resumed
+
+
+def clone(env: dict, start_span=None) -> bool:
+    """Clones the repo and checks the run's branch out; True when it resumed a pushed one.
+    The clone is blobless (CP5) — blobs arrive on checkout, so a run that reads little clones
+    little — and a forge that refuses the filter gets a full clone after the partial is removed;
+    the agent-run.clone span says which filter ran. A clone that fails twice fails the run."""
+    span = start_span(CLONE_SPAN) if start_span else None
+    used = "none"
+    try:
+        resumed = _clone(env, True)
+        used = "blob:none"
+    except subprocess.CalledProcessError:
+        shutil.rmtree(REPO_DIR, ignore_errors=True)
+        try:
+            resumed = _clone(env, False)
+        except Exception as exc:  # noqa: BLE001 -- the span records why the clone failed
+            _end(span, type(exc).__name__)
+            raise
+    except Exception as exc:  # noqa: BLE001 -- the span records why the clone failed
+        _end(span, type(exc).__name__)
+        raise
+    if span:
+        span.set_attribute("resumed", resumed)
+        span.set_attribute("filter", used)
+    _end(span, None)
     return resumed
 
 
@@ -2365,8 +2510,8 @@ def main() -> int:
     server = subprocess.Popen(SERVER_CMD, cwd="/", env=server_env({**env, **trace_env}))
     cid, steps, code, end, signalled, read = None, None, None, None, False, False
     try:
-        wait_ready(server=server)
         # agent-server still runs: the pod's probes are its. Exit 0 latches Succeeded at once.
+        boot(child_spans(provider, span), wait=lambda: wait_ready(server=server))
         if coordination_integration.requested(env):
             code = integration(env)
             return code
@@ -2374,7 +2519,7 @@ def main() -> int:
         # request reattaches the stored conversation and starts nothing. agent-run sends it nothing
         # either: it waits on a call's approval, a new message would reject that call, and a bare
         # run would execute it unconfirmed. The bridge answers it from the room's decision.
-        resumed = persisted(env) or clone(env)
+        resumed = persisted(env) or clone(env, start_span=child_spans(provider, span))
         disable_push(env)
         decl = declared(env)
         base = ""
@@ -2412,7 +2557,8 @@ def main() -> int:
                               start_span=child_spans(provider, span), token_file=env.get("MCP_TOKEN_FILE")) if env.get("MCP_URL") else None
         # A scoper's StepLog raises CallLimit, which only scoper_poll catches: a triager has no policy and no hold.
         steps = StepLog(cid, trace_id, notes, SEARCH_LEDGER if search else None,
-                       nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed)
+                        nudge_steps(env) if search else 0, scoper_bounds(env, task), resumed,
+                        summary_model=env.get("LIGHT_MODEL") or env.get("MODEL") or "")
         hold = make_hold(env, base, contract, decl, prefetched) if contract else None
         if policy:
             limit = env.get("AGENT_RUN_SECONDS", "")

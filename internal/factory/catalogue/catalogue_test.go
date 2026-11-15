@@ -12,30 +12,30 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// live is shaped like ai-native-ref's config: docs-links live, review off with variants.
+// live is shaped like ai-native-ref's config: docs-links live, review off, three workflows and none.
 func live() *config.Config {
 	return &config.Config{
-		Defaults: config.Defaults{Tier: "standard"},
-		Tiers:    map[string]config.Tier{"light": {TaskUSD: 2}, "standard": {TaskUSD: 4}, "frontier": {TaskUSD: 8}},
+		Tiers: map[string]config.Tier{"light": {TaskUSD: 2}, "standard": {TaskUSD: 4}, "frontier": {TaskUSD: 8}},
 		Templates: map[string]config.Template{
 			"solo": {Roles: []string{"implementer"}},
-			"trio": {Roles: []string{"implementer", "tester", "reviewer"}},
+			"pair": {Roles: []string{"implementer", "reviewer"}},
 		},
 		HarnessProfiles: map[string]config.HarnessProfile{
-			"links-solo":      {Template: "solo", Tier: "light", Description: "One file of links, no logic"},
-			"review-floor":    {Checks: true, Description: "The default: triage picks pair or trio"},
-			"review-frontier": {Template: "trio", Tier: "frontier", Checks: true, TestFirst: true, Description: "Changes across several files"},
+			"quick":    {Template: "solo", Tier: "light", Description: "One implementer"},
+			"standard": {Checks: true, Description: "The default: triage picks the template"},
+			"careful": {Template: "pair", Tier: "frontier", Checks: true, Description: "Changes across several files",
+				Escalation: &config.Escalation{NotConverged: "standard"}},
+			"none": {Template: config.TemplateNone},
 		},
-		Evaluation: config.Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "review-frontier"},
+		Evaluation: config.Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "careful"},
 		Repositories: []config.Repository{{
 			Name:        "Smana/cloud-native-ref",
 			Maintainers: []string{"Smana"},
-			Merge:       config.Merge{ApproveToMerge: true},
+			Merge:       config.Merge{ApproveToMerge: true, ContractCheck: "contract"},
+			Workflow:    config.RepositoryWorkflow{Default: "careful", TestFirst: true},
 			Classes: map[string]config.Class{
-				"docs-links": {Description: "Dead links in docs", Live: true, Harness: "links-solo"},
-				"review": {Description: "Anything else: a maintainer merges", Harness: "review-floor",
-					HarnessAllowed: []string{"review-frontier"},
-					Escalation:     &config.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-frontier"}},
+				"docs-links": {Description: "Dead links in docs", Live: true},
+				"review":     {Description: "Anything else: a maintainer merges"},
 				"revert":     {Shadow: true},
 				"deps-patch": {Shadow: true, Author: &config.Author{Adopt: &config.Adopt{Logins: []string{"renovate[bot]"}}}},
 				"oracled":    {Oracle: &config.Oracle{}},
@@ -63,16 +63,14 @@ func TestBuildOffersClasses(t *testing.T) {
 	if c.Repository != "Smana/cloud-native-ref" {
 		t.Fatalf("repository = %q: want the configured spelling", c.Repository)
 	}
-	dl, _ := c.Class("docs-links")
-	if dl.Mode != ModeLive || dl.Floor != "links-solo" || dl.CeilingUSD != 2 || len(dl.Allowed) != 0 || dl.Escalation != nil {
+	// Every class's ceiling is the default workflow's tier's (careful, frontier).
+	if dl, _ := c.Class("docs-links"); dl != (Class{Name: "docs-links", Description: "Dead links in docs", Mode: ModeLive, CeilingUSD: 8}) {
 		t.Fatalf("docs-links = %+v", dl)
 	}
-	rv, _ := c.Class("review")
-	if rv.Mode != ModeOff || rv.Floor != "review-floor" || !slices.Equal(rv.Allowed, []string{"review-frontier"}) ||
-		rv.Escalation == nil || rv.Escalation.OutOfBudget != "review-frontier" || rv.CeilingUSD != 4 {
+	if rv, _ := c.Class("review"); rv.Mode != ModeOff || rv.CeilingUSD != 8 {
 		t.Fatalf("review = %+v", rv)
 	}
-	if !c.ApproveToMerge || !c.Maintainer || c.Evaluation != (Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "review-frontier"}) {
+	if !c.ApproveToMerge || !c.Maintainer || c.DefaultWorkflow != "careful" || c.Evaluation != (Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "careful"}) {
 		t.Fatalf("catalogue = %+v", c)
 	}
 
@@ -81,7 +79,7 @@ func TestBuildOffersClasses(t *testing.T) {
 		delete(cfg.Repositories[0].Classes, "review")
 		c, _ := Build(cfg, "Smana/cloud-native-ref", false)
 		rv, ok := c.Class("review")
-		if !ok || rv.Mode != ModeOff || rv.Floor != "" || len(rv.Allowed) != 0 || c.Maintainer {
+		if !ok || rv.Mode != ModeOff || c.Maintainer {
 			t.Fatalf("review = %+v, %t", rv, ok)
 		}
 	})
@@ -95,28 +93,37 @@ func TestBuildOffersClasses(t *testing.T) {
 	})
 }
 
+// WF4: every workflow is offered on every class, the repository's default first; none never is.
 func TestProfileOffered(t *testing.T) {
 	c, _ := Build(live(), "Smana/cloud-native-ref", false)
-	if p := c.Profiles["links-solo"]; !p.Offered || p.NotOffered != "" || !slices.Equal(p.Roles, []string{"implementer"}) || p.Tier != "light" {
-		t.Fatalf("links-solo = %+v", p)
+	if p := c.Profiles["quick"]; !p.Offered || p.NotOffered != "" || !slices.Equal(p.Roles, []string{"implementer"}) || p.Tier != "light" || p.TestFirst {
+		t.Fatalf("quick = %+v", p)
 	}
-	if p := c.Profiles["review-frontier"]; !p.Offered || !slices.Equal(p.Roles, []string{"implementer", "tester", "reviewer"}) || !p.TestFirst {
-		t.Fatalf("review-frontier = %+v", p)
+	if p := c.Profiles["careful"]; !p.Offered || !p.TestFirst || p.Escalation == nil || p.Escalation.NotConverged != "standard" {
+		t.Fatalf("careful = %+v: the repository's testFirst runs in careful (WF7)", p)
 	}
-	if p := c.Profiles["review-floor"]; p.Offered || p.NotOffered != "no_template" || p.Roles != nil {
-		t.Fatalf("review-floor = %+v: a profile with no template is not offered (P15)", p)
+	if p := c.Profiles["standard"]; p.Offered || p.NotOffered != "no_template" || p.Roles != nil {
+		t.Fatalf("standard = %+v: a workflow with no template is not offered (P15)", p)
 	}
-	if got := c.OfferedProfiles("review"); !slices.Equal(got, []string{"review-frontier"}) {
-		t.Fatalf("OfferedProfiles(review) = %v: the unoffered floor is left out", got)
+	if _, ok := c.Profiles["none"]; ok {
+		t.Fatal("none is offered: it runs nothing")
 	}
-	if got := c.OfferedProfiles("docs-links"); !slices.Equal(got, []string{"links-solo"}) {
-		t.Fatalf("OfferedProfiles(docs-links) = %v", got)
+	for _, class := range []string{"review", "docs-links"} {
+		if got := c.OfferedProfiles(class); !slices.Equal(got, []string{"careful", "quick"}) {
+			t.Fatalf("OfferedProfiles(%s) = %v: the default first, the unoffered one left out", class, got)
+		}
 	}
 	if got := c.OfferedProfiles("nope"); got != nil {
 		t.Fatalf("OfferedProfiles(nope) = %v", got)
 	}
-	if _, ok := c.Profiles["revert"]; ok {
-		t.Fatal("profiles of classes that are not offered leak into the catalogue")
+	cfg := live()
+	cfg.Repositories[0].Workflow = config.RepositoryWorkflow{}
+	c, _ = Build(cfg, "Smana/cloud-native-ref", false)
+	if c.DefaultWorkflow != "standard" || c.Profiles["careful"].TestFirst {
+		t.Fatalf("a repository without a workflow block: default %q, careful %+v", c.DefaultWorkflow, c.Profiles["careful"])
+	}
+	if got := c.Workflows(); !slices.Equal(got, []string{"careful", "quick"}) {
+		t.Fatalf("Workflows = %v: an unoffered default is left out, the rest by name", got)
 	}
 }
 
@@ -169,7 +176,7 @@ func TestBuildUnservedRepository(t *testing.T) {
 
 func TestBuildGateOff(t *testing.T) {
 	cfg := live()
-	cfg.Repositories[0].Classes = map[string]config.Class{"review": {Harness: "review-floor"}}
+	cfg.Repositories[0].Classes = map[string]config.Class{"review": {}}
 	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
 	rv, _ := c.Class("review")
 	if rv.Mode != ModeUnarmed || c.ApproveToMerge {
@@ -181,9 +188,9 @@ func TestBuildRepositoryAuthority(t *testing.T) {
 	cfg := live()
 	cfg.PolicyManagement.RepositoryAuthority = true
 	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
-	cfg.Repositories[0].Classes = map[string]config.Class{"stale": {Harness: "links-solo"}}
+	cfg.Repositories[0].Classes = map[string]config.Class{"stale": {}}
 	cfg.SetClassSource(func(string) (map[string]config.Class, bool) {
-		return map[string]config.Class{"from-file": {Description: "from the repository's file", Harness: "links-solo"}}, true
+		return map[string]config.Class{"from-file": {Description: "from the repository's file"}}, true
 	})
 	c, _ := Build(cfg, "Smana/cloud-native-ref", false)
 	if got := names(c); !slices.Equal(got, []string{"from-file", "review"}) {
@@ -222,7 +229,7 @@ func TestCatalogueJSON(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"ceilingUSD":2`, `"floor":"links-solo"`, `"allowed":[]`, `"escalation":null`,
+	for _, want := range []string{`"ceilingUSD":8`, `"defaultWorkflow":"careful"`, `"escalation":{"outOfBudget":"","notConverged":"standard"}`,
 		`"generations":{"factory":0,"repository":0}`, `"notOffered":"no_template"`, `"approveToMerge":true`,
 		`"maintainer":true`, `"controlPercent":20`} {
 		if !strings.Contains(string(b), want) {

@@ -33,7 +33,7 @@ the broker assigns. The rest of this page names the parts.
 | **Task** | One labelled issue's journey: a `Task` CR the intake creates, with its room, runs, PR and end, narrated on the issue | `Task` CR (`maku.ogenki.io`), kept by `internal/factory/reconciler` |
 | **Trigger** | What starts or stops a task: the labels `factory/ready`, `factory/stop` and `factory/revert`; `/factory retry`; the control issue; a schedule; a RunLore finding | Issue labels and comments; `control` and each repository's `schedules` in the factory config |
 | **Tier** | `light`, `standard`, `frontier`: a run's model, deadline and budget, chosen once per task. The model is a logical name on the agent gateway (`tier-light`, `tier-standard`, `tier-frontier`). Rooms do not carry or change it: escalating a task means a new run, never a switch inside one | `tiers` in the factory config; `AgentRun.spec.model` |
-| **Template** | `solo`, `pair`, `trio`, `investigate`: which roles run in which order | The `Task` CRD's template enum |
+| **Workflow** | Which agents work on a task: `quick` (an implementer), `standard` (an implementer and a reviewer, the default) or `careful` (scoped first, judged before review), and `none` for an adopted pull request. A maintainer may pin one per task; the repository names its default | `workflows`, `templates` and `loops` in the factory config, the `Repository`'s `workflow` ([the shipped workflows](factory.md#the-shipped-workflows)); the task's `status.profile` |
 | **Merge gate** | Which agent PRs may merge themselves: only low-risk classes, green CI, policy-bot's check. Each class is live, shadow (decided like a live one, never armed) or off | `merge` and `classes` in the factory config |
 | **Kill switch** | The stop ConfigMap `agent-factory-stop` or the control issue's `factory/stop`: intake pauses, every run is revoked | `internal/factory/killswitch` |
 | **Narration** | The factory's comments on the issue and PR, at least once each, from an outbox | `internal/factory/narrate` |
@@ -53,7 +53,7 @@ the broker assigns. The rest of this page names the parts.
 | **Participant** | Anyone in a room: a human, a run, or a system component, each named by its principal (next row). Joining and leaving are `participant` events | The log |
 | **Principal** | A canonical identity: `agent:<runId>`, `human:<zitadel sub>` or `system:<component>`. The broker stamps it on every event from the authenticated credential | Every event's `actor.id` |
 | **C2 id** | 8 characters of lowercase unpadded base32, `[a-z2-7]{8}`. Room, run and task ids share the format, so `agent/<id>` branches match the merge gate | Names of rooms and runs |
-| **Run role** | What a run may do: `implementer`, `reviewer`, `tester` or `triager`. A policy input, not an identity | `AgentRun.spec.role`; an agent event's `actor.role` |
+| **Role** | One of five, in the order they act: **scoper** (reads the issue and writes the acceptance checks; it may propose parts), **tester** (writes the tests first, where `testFirst` is set), **implementer** (writes the change; search is one of its tools), **judge** (one call when the implementer stops: met, not yet, or impossible) and **reviewer** (a read-only verdict on the pull request). A workflow names which run. A run's role is a policy input, not an identity | `AgentRun.spec.role`; an agent event's `actor.role` |
 | **Room role** | What a human may do in a room: `watcher` < `collaborator` < `owner`, cumulative. **Approver** is a separate flag | `Room.spec.members` |
 | **Driver** | The one principal allowed to steer or interrupt the running run. A token that moves with *give*, *request* and *take*; each change bumps `driverEpoch`, which fences races | `rooms.driver`, `driver_epoch`; `driver` events |
 | **Message delivery** | `none` (chat, delivered to nobody), `queued` (FIFO, goes into the next run's brief) or `steering` (injected into the running run now, driver only) | `message` payload |
@@ -135,8 +135,8 @@ prints `Phase`, `Driver`, `Seq`, `Pending` and `Class`.
 | `members[].role` | string | yes | — | `watcher`, `collaborator`, `owner` | Cumulative room role |
 | `members[].approver` | bool | no | `false` | — | The approver flag |
 | `approvals` | object | no | `{}` | — | Present even when omitted, so its own defaults apply |
-| `approvals.profile` | string | no | `attended` | `attended`, `unattended` | `attended`: `forge.pr`, `forge.other` and `mcp.write` ask a human, denied after 30 min. `unattended`: no human by default, so `forge.pr` is allowed and `forge.other`, `mcp.write` and `egress.new` are denied outright; a class overridden to `human` waits `approvals.ttl`, then is denied |
-| `approvals.overrides` | map | no | — | Keys: `forge.push`, `forge.pr`, `forge.other`, `mcp.write`, `shell.high`; values: `allow`, `deny`, `human` | Per-class override of the profile |
+| `approvals.profile` | string | no | `attended` | `attended`, `unattended` | The approval mode. `attended`: `forge.pr`, `forge.other` and `mcp.write` ask a human, denied after 30 min. `unattended`: no human by default, so `forge.pr` is allowed and `forge.other`, `mcp.write` and `egress.new` are denied outright; a class overridden to `human` waits `approvals.ttl`, then is denied |
+| `approvals.overrides` | map | no | — | Keys: `forge.push`, `forge.pr`, `forge.other`, `mcp.write`, `shell.high`; values: `allow`, `deny`, `human` | Per-class override of the approval mode |
 | `approvals.ttl` | string | no | `4h` | `^[1-9][0-9]{0,3}(m\|h)$` (at most 9999h) | Auto-deny delay for an unattended approval |
 | `approvals.fourEyes` | bool | no | `false` | — | The approver must not have prompted the turn |
 | `retention` | string | no | `90d` | `^[1-9][0-9]{0,3}d$` | How long the sealed log is kept; immutable |

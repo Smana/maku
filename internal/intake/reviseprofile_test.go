@@ -53,7 +53,7 @@ func TestReviseProfileOnly(t *testing.T) {
 	if got.Issues[0].Body != base.Issues[0].Body {
 		t.Fatalf("unpinned issue body changed: %q", got.Issues[0].Body)
 	}
-	wantBody := base.Issues[1].Body + "\n\n## Decisions\nD3: profile: review-frontier, pinned by the developer"
+	wantBody := base.Issues[1].Body + "\n\n## Decisions\nD3: workflow: review-frontier, pinned by the developer"
 	if got.Issues[1].Body != wantBody {
 		t.Fatalf("body = %q\nwant %q", got.Issues[1].Body, wantBody)
 	}
@@ -77,7 +77,7 @@ func TestReviseProfileOnly(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if !strings.HasSuffix(next.Issues[1].Body, "\nD4: profile: factory's choice, chosen by the developer") {
+		if !strings.HasSuffix(next.Issues[1].Body, "\nD4: workflow: factory's choice, chosen by the developer") {
 			t.Fatalf("body = %q", next.Issues[1].Body)
 		}
 	})
@@ -116,7 +116,7 @@ func TestReviseProfileRejectsOtherEdits(t *testing.T) {
 func TestProfileRecord(t *testing.T) {
 	base := finalBase()
 	got := intake.RecordProfiles(base)
-	want := base.Issues[0].Body + "\nA3: profile: factory's choice; suggested review-frontier"
+	want := base.Issues[0].Body + "\nA3: workflow: factory's choice; suggested review-frontier"
 	if got.Issues[0].Body != want {
 		t.Fatalf("body = %q\nwant %q", got.Issues[0].Body, want)
 	}
@@ -156,7 +156,7 @@ func TestReviseProfileReplacesTheAssumption(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := got.Issues[0].Body
-	if strings.Contains(body, "factory's choice; suggested") || !strings.HasSuffix(body, "\nD4: profile: review-frontier, pinned by the developer") {
+	if strings.Contains(body, "factory's choice; suggested") || !strings.HasSuffix(body, "\nD4: workflow: review-frontier, pinned by the developer") {
 		t.Fatalf("body = %q", body)
 	}
 	if !strings.Contains(body, "D2 [g1]: docs team") {
@@ -198,5 +198,36 @@ func TestMaterialRoles(t *testing.T) {
 	got.Issues[0].Profile = ""
 	if back := intake.MaterialRoles(got, classes); len(back.Issues[0].Roles) != 0 {
 		t.Fatalf("unpinned roles %v, want the floor's", back.Issues[0].Roles)
+	}
+}
+
+// WF1: records are written with workflow:, and a plan recorded before that, with profile:, still
+// reads: its pin holds CheckFinal, its factory's-choice Assumption counts and a pin replaces it.
+func TestRevisePlanReadsBothSpellings(t *testing.T) {
+	for _, word := range []string{"profile", "workflow"} {
+		t.Run(word, func(t *testing.T) {
+			pinned := finalBase()
+			pinned.Issues[0].Body += "\nD3: " + word + ": review-frontier, pinned by the developer"
+			pinned.Issues[0].Profile = "review-frontier"
+			if r := intake.CheckFinal(pinned, []string{"owner/repository"}, map[string]intake.Class{"review": {}}); r != nil {
+				t.Fatalf("the pin's record is not read: %v", r)
+			}
+
+			kept := finalBase()
+			kept.Issues[0].Body += "\nA3: " + word + ": factory's choice; suggested review-frontier"
+			kept.Hash = intake.Hash(kept)
+			if again := intake.RecordProfiles(kept); again.Hash != kept.Hash {
+				t.Fatalf("a second Assumption was written: %q", again.Issues[0].Body)
+			}
+			candidate := cloneRevisionPlan(kept)
+			candidate.Issues[0].Profile = "review-frontier"
+			got, err := intake.Revise(kept, kept.Hash, candidate, 10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(got.Issues[0].Body, "factory's choice; suggested") {
+				t.Fatalf("the Assumption was kept beside the pin: %q", got.Issues[0].Body)
+			}
+		})
 	}
 }

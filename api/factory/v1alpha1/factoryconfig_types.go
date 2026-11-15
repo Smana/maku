@@ -60,8 +60,11 @@ type FactorySpec struct {
 	Scoper    config.Scoper              `json:"scoper,omitzero"`
 	// +kubebuilder:validation:MaxProperties=32
 	Loops map[string]config.Loop `json:"loops,omitempty"`
+	// Workflows are the factory's workflows (WF1, WF2): quick, standard, careful and none are
+	// shipped, and an entry here replaces the shipped one of its name whole. harnessProfiles, its
+	// old name, was removed (WF9, WF13).
 	// +kubebuilder:validation:MaxProperties=16
-	HarnessProfiles map[string]config.HarnessProfile `json:"harnessProfiles,omitempty"`
+	Workflows       map[string]config.HarnessProfile `json:"workflows,omitempty"`
 	MergeGuardrails config.MergeGuardrails           `json:"mergeGuardrails,omitzero"`
 	// Evaluation is the team evaluation's cohort share and mode, read per decision.
 	Evaluation config.Evaluation `json:"evaluation,omitzero"`
@@ -137,6 +140,9 @@ type RepositorySpec struct {
 	Checks       config.Checks `json:"checks,omitzero"`
 	// +kubebuilder:validation:MaxItems=16
 	Schedules []config.Schedule `json:"schedules,omitempty"`
+	// Workflow is the workflow a task of the repository runs when no label and no source names one,
+	// standard by default, and whether its careful tasks start with the tester (WF3, WF7).
+	Workflow config.RepositoryWorkflow `json:"workflow,omitzero"`
 	// +kubebuilder:validation:Enum=central;repository
 	ClassAuthority string `json:"classAuthority,omitempty"`
 	// Merge is the repository's merge settings (B2): config.Merge, plus fluxSource.

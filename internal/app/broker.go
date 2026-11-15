@@ -245,6 +245,9 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 	if err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
+	for _, w := range cfg.Warnings {
+		log.Warn("config warning", "warning", w)
+	}
 	if err := checkBrokerSecrets(cfg, readMounted); err != nil {
 		return fmt.Errorf("room-broker: %w", err)
 	}
@@ -582,11 +585,8 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 	for _, repository := range plan.Repositories {
 		allow[strings.ToLower(repository)] = true
 	}
-	classes := make(map[string]intake.Class, len(plan.Classes))
-	for name, class := range plan.Classes {
-		classes[name] = intake.Class{Roles: class.Roles, CeilingUSD: class.CeilingUSD, Source: class.Source}
-	}
-	return &humanapi.Intake{Classes: classes, Allow: allow,
+	// A plan's classes are the factory's catalog's (WF13): no config table backs them.
+	return &humanapi.Intake{Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
 			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
 		Public:    intakePublicity(vis, accessTTL(cfg.Human)),

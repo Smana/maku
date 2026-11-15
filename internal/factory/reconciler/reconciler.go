@@ -114,6 +114,7 @@ type metrics interface {
 	MonitorVerdict(ctx context.Context, class, verdict string)
 	MonitorVerification(ctx context.Context, class, verdict string)
 	HumanWait(ctx context.Context, phase, reason, class string, d time.Duration)
+	RunWait(ctx context.Context, role string, d time.Duration)
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
@@ -646,13 +647,6 @@ func (r *Reconciler) repo(cfg *config.Config, t *v1alpha1.Task) *config.Reposito
 	return cfg.RepositoryFor(t.Spec.Repository)
 }
 
-// class is the task's repository's class name, the zero class when the repository does not declare
-// it or the config does not serve the repository.
-func (r *Reconciler) class(cfg *config.Config, t *v1alpha1.Task, name string) config.Class {
-	cl, _ := r.repo(cfg, t).Class(name)
-	return cl
-}
-
 func (r *Reconciler) narrator(ctx context.Context, cfg *config.Config) narrate.Narrator {
 	return narrate.Narrator{Forge: r.gh(ctx), Login: cfg.FactoryLogin}
 }
@@ -1151,15 +1145,17 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	if !triage.Investigates(cfg, t) && !cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation
 		profile = r.floorProfile(cfg, t, d)
 	}
-	var floor config.HarnessProfile
+	var name string
+	var w config.HarnessProfile
 	if profile != nil {
-		floor, _ = cfg.ProfileFor(r.class(cfg, t, d.PredictedClass), profile.Name)
+		name = profile.Name
+		w, _ = cfg.Workflow(name)
 	}
-	r.profileSpec(cfg, t, d.PredictedClass, floor)
+	r.profileSpec(cfg, t, name, w)
 	if err := r.scopeAtTriage(ctx, t); err != nil {
 		return err // a note that cannot be read is retried, never read as none (SC4)
 	}
-	r.splitAtTriage(cfg, t, d.Classification)
+	r.splitAtTriage(cfg, t, cfg.RowFor(name, w), d.Classification)
 	status := t.Status // Update returns the server's status into t; keep ours
 	if err := r.Client.Update(ctx, t); err != nil {
 		return err
@@ -1168,19 +1164,23 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
 	r.notePin(ctx, cfg, t, d)
+	for i, n := range d.Notes {
+		narrateLater(t, narrate.TriageNote(i, n))
+	}
 	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }
 
-// profileSpec writes what profile p changes on t's spec: its template when set, the loop, search and
-// scope of its row (the class's when it names none), and its tier only when above t's, through the
-// same ceiling as triage so a sponsored task's cap holds. A zero p is the class's row: today's spec.
-func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class string, p config.HarnessProfile) {
+// profileSpec writes what workflow p, called name, changes on t's spec: its template when set, the
+// loop, search and scope of its row (RowFor: its loop, else its own name's, else default's), and its
+// tier only when above t's, through the same ceiling as triage so a sponsored task's cap holds. An
+// empty name is default's row.
+func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name string, p config.HarnessProfile) {
 	if p.Template != "" {
 		t.Spec.Template = p.Template
 	}
-	row := cfg.RowFor(class, p)
+	row := cfg.RowFor(name, p)
 	t.Spec.Loop = nil
 	if lp := cfg.LoopFor(row); lp != nil {
 		judge := lp.JudgeModel
@@ -1200,27 +1200,27 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, class str
 	}
 }
 
-// floorProfile is the profile t is frozen under at triage: an honoured pin (source label, cohort
-// labeled, P9), else its class's floor with the cohort's source; nil for a class without a harness,
-// whose task carries no status.profile. A pin, honoured or refused, is recorded as requested, and a
-// refused one with its code: the task runs as if unpinned (P6). A class label alone is no pin (P8).
-// A treatment-cohort task runs evaluation.treatment instead (source treatment) when treated allows
-// it; one that cannot keeps its floor and source floor, so the measurement leaves it out (WF8).
+// floorProfile is the workflow t is frozen under at triage (WF3, WF4): triage.WorkflowFor's, the
+// first of an honoured pin (source label, cohort labeled, P9), the task's source (a schedule, a
+// revert, an oracle finding) and the repository's default. A pin, honoured or refused, is recorded
+// as requested, and a refused one with its code: the task runs as if unpinned (P6). The measurement
+// (WF8) takes only a task on the repository's default: in the control cohort it keeps it with source
+// control, in the treatment cohort it runs evaluation.treatment with source treatment when the key
+// is set. nil for a workflow the config no longer defines.
 func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage.Decision) *v1alpha1.ProfileStatus {
-	cl := r.class(cfg, t, d.PredictedClass)
-	name := cl.Harness
-	if d.Pin.Honoured() {
-		name = d.Pin.Name
-	}
-	p, ok := cfg.ProfileFor(cl, name)
+	name, source := triage.WorkflowFor(cfg, t, d.Pin)
+	p, ok := cfg.Workflow(name)
 	if !ok {
 		return nil
 	}
-	source := map[string]string{triage.CohortLabeled: "label", triage.CohortControl: "control"}[d.Cohort]
-	if source == "" {
-		source = "floor"
-		if v, ok := treated(cfg, t, cl); ok {
-			name, p, source = cfg.Evaluation.Treatment, v, "treatment"
+	if source == triage.SourceRepository {
+		switch {
+		case d.Cohort == triage.CohortControl:
+			source = "control"
+		case cfg.Evaluation.Treatment != "":
+			if v, ok := cfg.Workflow(cfg.Evaluation.Treatment); ok {
+				name, p, source = cfg.Evaluation.Treatment, v, "treatment"
+			}
 		}
 	}
 	cohort := d.Cohort
@@ -1228,25 +1228,15 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 		cohort = triage.CohortTreatment
 	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
-		Checks: cl.Checks || p.Checks, TestFirst: cl.TestFirst || p.TestFirst, Requested: d.Pin.Name, Refused: d.Pin.Refused}
-}
-
-// treated is the treatment workflow t's class runs it under, when t may take the treatment arm: the
-// key is set, t is an issue's or a planned task (not a schedule's), its class is neither live nor
-// shadow (one workflow each), and the class allows the workflow. An adopted pull request never
-// reaches triage's profile.
-func treated(cfg *config.Config, t *v1alpha1.Task, cl config.Class) (config.HarnessProfile, bool) {
-	if cfg.Evaluation.Treatment == "" || t.Spec.Source.Kind == "schedule" || cl.Live || cl.Shadow {
-		return config.HarnessProfile{}, false
-	}
-	return cfg.ProfileFor(cl, cfg.Evaluation.Treatment)
+		Checks: p.Checks, TestFirst: r.repo(cfg, t).TestFirstIn(name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
 }
 
 // pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:
-// an honoured tests-first pin on a repository that declares no tests paths is refused
-// profile_no_tests_paths, and the task joins the cohorts by hash, as for any refused pin.
+// an honoured pin of a public task that would run the tester (TestFirstIn) on a repository that
+// declares no tests paths is refused profile_no_tests_paths, and the task joins the cohorts by hash,
+// as for any refused pin.
 func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) (triage.Decision, error) {
-	if !d.Pin.Honoured() || !cfg.HarnessProfiles[d.Pin.Name].TestFirst {
+	if !d.Pin.Honoured() || d.DataClass != "public" || !r.repo(cfg, t).TestFirstIn(d.Pin.Name) {
 		return d, nil
 	}
 	paths, err := r.testPaths(ctx, t)
@@ -1271,7 +1261,7 @@ func (r *Reconciler) notePin(ctx context.Context, cfg *config.Config, t *v1alpha
 	}
 	if reason != "" {
 		outcome = "refused"
-		narrateLater(t, narrate.ProfileRefused(d.Pin.Name, triage.PinRefusal(cfg, t.Spec.Repository, class, d.Pin).Sentence()))
+		narrateLater(t, narrate.ProfileRefused(d.Pin.Name, triage.PinRefusal(class, d.Pin).Sentence()))
 	}
 	record(ctx, func(ctx context.Context) { r.Metrics.ProfilePin(ctx, class, profile, outcome, reason) })
 }
@@ -1449,7 +1439,7 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 		return err
 	}
 	if found {
-		return r.recordExisting(cfg, t, x)
+		return r.recordExisting(ctx, cfg, t, x)
 	}
 	// The records are refreshed here too (R49): a task waiting in Queued still holds ended runs
 	// whose late readings must land.

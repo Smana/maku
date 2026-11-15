@@ -225,9 +225,9 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
   const role = select("role", "Start a run as", runRoles.map((r): [string, string] => [r, r]));
   const prUrl = named(el("input", { name: "prUrl", type: "url" }), "Pull request URL (reviewer only)");
   const prLabel = labelled("Pull request URL", prUrl);
-  const egress = named(el("input", { name: "egress" }), "Egress profiles (comma-separated)");
+  const egress = named(el("input", { name: "egress" }), "Egress allow-lists (comma-separated)");
   const advanced = el("details", { className: "advanced" });
-  advanced.append(el("summary", { textContent: "advanced" }), labelled("Egress profiles (comma-separated)", egress));
+  advanced.append(el("summary", { textContent: "advanced" }), labelled("Egress allow-lists (comma-separated)", egress));
   const showPr = () => { prUrl.hidden = prLabel.hidden = role.value !== "reviewer"; };
   role.onchange = showPr;
   showPr();

@@ -39,7 +39,8 @@ type CoordinationPlanner struct {
 	// Mode is the coordination switch (MR16): off lists nothing; plan and execute both plan, since
 	// this tool never files.
 	Mode string
-	// Resolve is the broker-side policy: the class table's roles and ceiling (ClassPolicy). The
+	// Resolve is the broker-side policy when the factory's catalogue is not read: the class table's
+	// roles and ceiling (ClassPolicy). With Server.Catalogue, CataloguePolicy replaces it (WF13). The
 	// factory re-resolves each child at its repository's confirmed policy before anything is filed.
 	Resolve coordination.ResolvePolicy
 	// NewID is a fresh draft id when the request names none; nil means taskid.Random.
@@ -70,6 +71,57 @@ const (
 	// post-filing scoper run (MR2).
 	scoperRole = "scoper"
 )
+
+// coordinationPolicy is the policy children resolve through for p: the factory's catalogue, read as
+// p for onBehalfOf, when the broker reads it, else the planner's own Resolve.
+func (s *Server) coordinationPolicy(p authn.Principal, onBehalfOf string) coordination.ResolvePolicy {
+	if s.Catalogue != nil {
+		return CataloguePolicy(s.Catalogue, p, onBehalfOf)
+	}
+	return s.Coordination.Resolve
+}
+
+// coordinationClasses are the class names the model may give a child: the class table's, and every
+// class a candidate's catalogue offers, read as p, sorted once each. A candidate whose catalogue
+// cannot be read adds none: its children are refused at composition, never guessed.
+func (s *Server) coordinationClasses(ctx context.Context, p authn.Principal, onBehalfOf string, candidates []string) []string {
+	out := classNames(s.Intake.Classes)
+	if s.Catalogue == nil {
+		return out
+	}
+	for _, repo := range candidates {
+		c, err := s.Catalogue.Get(ctx, p, repo, onBehalfOf)
+		if err != nil {
+			continue
+		}
+		for _, cl := range c.Classes {
+			out = append(out, cl.Name)
+		}
+	}
+	slices.Sort(out)
+	return slices.Compact(out)
+}
+
+// CataloguePolicy is the broker's ResolvePolicy over the factory's catalogue, read as p for
+// onBehalfOf (WF13): a class the repository offers, with the roles of the repository's default
+// workflow (WF3) without the scoper, and the class's ceiling as the task ceiling, one run priced at
+// a tenth of it. A class the catalogue does not offer is coordination.ErrUnknownClass.
+func CataloguePolicy(cat *CatalogueCache, p authn.Principal, onBehalfOf string) coordination.ResolvePolicy {
+	return func(ctx context.Context, repository, class, tier string) (coordination.RepositoryPolicy, error) {
+		c, err := cat.Get(ctx, p, repository, onBehalfOf)
+		if err != nil {
+			return coordination.RepositoryPolicy{}, err
+		}
+		cl, ok := c.Class(class)
+		if !ok {
+			return coordination.RepositoryPolicy{}, coordination.ErrUnknownClass
+		}
+		task := int64(math.Round(cl.CeilingUSD * 1e6))
+		return coordination.RepositoryPolicy{Repository: repository, Class: class, Tier: tier,
+			Roles:       slices.DeleteFunc(slices.Clone(c.Profiles[c.DefaultWorkflow].Roles), func(r string) bool { return r == scoperRole }),
+			RunMicroUSD: task / coordinationRunsPerTask, TaskMicroUSD: task}, nil
+	}
+}
 
 // ClassPolicy is the broker's ResolvePolicy over the intake class table: a class's roles (without
 // the scoper) and its ceiling as the task ceiling, one run priced at a tenth of it. A class the table
@@ -172,7 +224,7 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 	var draft coordination.CoordinationDraft
 	usage, err := s.Intake.Model.Generate(ctx, intake.GovernedRequest{Text: a.Text,
 		Context: strings.TrimSpace(a.Context + primaryLine + primary[0]), Candidates: candidates,
-		Classes: classNames(s.Intake.Classes), SystemPrompt: coordination.SystemPrompt}, &draft)
+		Classes: s.coordinationClasses(ctx, p, a.OnBehalfOf, candidates), SystemPrompt: coordination.SystemPrompt}, &draft)
 	run.usage = usage
 	if err != nil {
 		ref, ok := intake.RefusalOf(err)
@@ -198,7 +250,7 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 	}
 	res, err := coordination.ComposeCoordination(ctx, draft, coordination.ComposeInput{ID: id, Version: version,
 		Primary: primary[0], Maintainer: "github:" + req.Login, Tier: coordinationTier, Candidates: candidates,
-		Resolve: s.Coordination.Resolve, Attempt: attempt})
+		Resolve: s.coordinationPolicy(p, a.OnBehalfOf), Attempt: attempt})
 	if err != nil {
 		var pe *coordination.PlanError
 		if !errors.As(err, &pe) {

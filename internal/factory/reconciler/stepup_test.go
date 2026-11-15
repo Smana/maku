@@ -24,14 +24,20 @@ import (
 	"github.com/Smana/maku/internal/factory/triage"
 )
 
-// stepCfg is resolveCfg with the spec's review escalation: outOfBudget to review-frontier,
-// notConverged to review-search.
+// stepCfg is resolveCfg with the spec's escalation on the review-floor workflow (WF7): outOfBudget to
+// review-frontier, notConverged to review-search.
 func stepCfg() *config.Config {
 	c := resolveCfg("apply", 0)
 	c.HarnessProfiles["review-frontier"] = config.HarnessProfile{Template: "pair", Tier: "frontier", Description: "a large change"}
-	c.Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search", "review-tested", "review-frontier"},
-		Escalation: &config.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-search"}}
+	escalate(c, &config.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-search"})
 	return c
+}
+
+// escalate sets the review-floor workflow's escalation to e.
+func escalate(c *config.Config, e *config.Escalation) {
+	p := c.HarnessProfiles["review-floor"]
+	p.Escalation = e
+	c.HarnessProfiles["review-floor"] = p
 }
 
 // stepRig is a review task under cf whose first implementer run, rid(0), has ended: its profile
@@ -43,19 +49,19 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	tk.Spec.Budget = triage.BudgetFor(cf, "standard")
 	start := metav1.NewTime(now.Add(-time.Hour))
 	tk.Status = v1alpha1.TaskStatus{Phase: v1alpha1.PhaseImplementing, RoomRef: "3buqdlot", PhaseSince: &start,
-		Profile: &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Reason: "none", Checks: true, Resolved: true},
+		Profile: &v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Reason: "none", Checks: true, Resolved: true},
 		Runs:    []v1alpha1.RunRecord{{ID: rid(0), Role: "implementer", Trigger: "initial", StartSeq: 1, Started: &start}}}
 	if edit != nil {
 		edit(tk)
 	}
 	g := newRig(t, tk, roomOf("3buqdlot"))
 	g.r.Cfg = cf
-	g.r.Triage = triage.Static{}
+	g.r.Triage = triage.Static{Template: "solo"}
 	st := tk.Status
 	tk = g.get(t)
 	tk.Status = st
-	p, _ := cf.ProfileFor(cf.Repositories[0].Classes["review"], "review-floor")
-	g.r.profileSpec(g.r.Cfg.Current(), tk, "review", p)
+	p, _ := cf.Workflow("review-floor")
+	g.r.profileSpec(g.r.Cfg.Current(), tk, "review-floor", p)
 	tk.Spec.ScopeMode = string(config.ScopeOff)
 	tk.Spec.Budget.Tier = "standard"
 	if err := g.c.Update(t.Context(), tk); err != nil {
@@ -180,9 +186,7 @@ func TestNoStepWithoutAResolvedProfile(t *testing.T) {
 
 func TestNoStepWithoutAGroup(t *testing.T) {
 	cf := stepCfg()
-	cl := cf.Repositories[0].Classes["review"]
-	cl.Escalation = &config.Escalation{OutOfBudget: "review-frontier"}
-	cf.Repositories[0].Classes["review"] = cl
+	escalate(cf, &config.Escalation{OutOfBudget: "review-frontier"})
 	g, tk := stepRig(t, cf, nil)
 	wantEscalated(t, g.fail(t, tk, "not_met"), "not_met")
 }
@@ -228,7 +232,7 @@ func TestARefusedStepWriteChangesNothing(t *testing.T) {
 		t.Fatalf("%+v", tk.Status)
 	}
 	stored := g.get(t)
-	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "floor" {
+	if stored.Spec.Budget.Tier != "standard" || stored.Status.Profile.Name != "review-floor" || stored.Status.Profile.Source != "repository" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
 	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
@@ -398,11 +402,10 @@ func TestARoundsExhaustedReviewSteps(t *testing.T) {
 	g := pairRig(t)
 	steps := int32(7)
 	g.r.Cfg.Current().Loops = map[string]config.Loop{"review-search": {StallSteps: &steps}}
-	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{"review-floor": {}, "review-search": {Loop: "review-search"}}
-	g.r.Cfg.Current().Repositories[0].Classes["review"] = config.Class{Harness: "review-floor", HarnessAllowed: []string{"review-search"},
-		Escalation: &config.Escalation{NotConverged: "review-search"}}
+	g.r.Cfg.Current().HarnessProfiles = map[string]config.HarnessProfile{
+		"review-floor": {Escalation: &config.Escalation{NotConverged: "review-search"}}, "review-search": {Loop: "review-search"}}
 	tk := g.get(t)
-	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "floor", Cohort: "treatment", Resolved: true}
+	tk.Status.Profile = &v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Resolved: true}
 	if err := g.c.Status().Update(t.Context(), tk); err != nil {
 		t.Fatal(err)
 	}
@@ -493,12 +496,10 @@ func TestAReplayRecoversThePersistedStep(t *testing.T) {
 		t.Fatal(err)
 	}
 	stored := g.get(t) // the spec write landed, the status write never happened
-	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "floor" {
+	if stored.Spec.Budget.Tier != "frontier" || stored.Status.Profile.Source != "repository" {
 		t.Fatalf("%s %+v", stored.Spec.Budget.Tier, stored.Status.Profile)
 	}
-	cl := g.r.Cfg.Current().Repositories[0].Classes["review"]
-	cl.Escalation = nil
-	g.r.Cfg.Current().Repositories[0].Classes["review"] = cl
+	escalate(g.r.Cfg.Current(), nil)
 	if err := g.r.end(t.Context(), g.r.Cfg.Current(), stored, v1alpha1.PhaseEscalated, "stalled"); err != nil {
 		t.Fatal(err)
 	}

@@ -104,7 +104,7 @@ func (g *governed) draft() draftShape {
 }
 
 // planLabels are the labels start applies before factory/ready, in order: class:<c>, then
-// profile:<p> when the plan pins one (P5, P7), unless the catalogue says this developer does not
+// workflow:<p> when the plan pins one (P5, P7, WF9), unless the catalogue says this developer does not
 // maintain the repository (the factory would count neither). None without a class.
 func (g *governed) planLabels() []string {
 	is := g.view.Issues[0]
@@ -113,13 +113,13 @@ func (g *governed) planLabels() []string {
 	}
 	labels := []string{"class:" + is.Class}
 	if is.Profile != "" {
-		labels = append(labels, "profile:"+is.Profile)
+		labels = append(labels, "workflow:"+is.Profile)
 	}
 	return labels
 }
 
-// suggestion is the form's lines about the class and the profile (O1): the class, the factory's
-// choice of profile and the merge outcome in the broker's words, then the planner's suggested profile
+// suggestion is the form's lines about the class and the workflow (O1): the class, the factory's
+// choice of workflow and the merge outcome in the broker's words, then the planner's suggested workflow
 // with its why, folded to one inert line. Empty for a plan without a class.
 func (g *governed) suggestion() string {
 	is := g.view.Issues[0]
@@ -127,14 +127,14 @@ func (g *governed) suggestion() string {
 		return ""
 	}
 	line := "Class " + OneLine(is.Class)
-	profile := "profile: the factory's choice"
+	profile := "workflow: the factory's choice"
 	if is.Profile != "" {
-		profile = "profile " + OneLine(is.Profile) + ", pinned"
+		profile = "workflow " + OneLine(is.Profile) + ", pinned"
 	}
 	if s := is.Suggestion; s != nil {
 		line += " · " + profile + " · " + roomview.MergeWords(s.Merge.Outcome)
 		if s.Profile != "" {
-			line += "\nSuggested profile " + OneLine(s.Profile)
+			line += "\nSuggested workflow " + OneLine(s.Profile)
 			if len(s.Roles) > 0 {
 				line += " (" + OneLine(strings.Join(s.Roles, ", ")) + ")"
 			}
@@ -145,7 +145,7 @@ func (g *governed) suggestion() string {
 	}
 	if g.Maintainer != nil && !*g.Maintainer {
 		if is.Profile != "" {
-			line += "\nThe class:" + OneLine(is.Class) + " and profile:" + OneLine(is.Profile) +
+			line += "\nThe class:" + OneLine(is.Class) + " and workflow:" + OneLine(is.Profile) +
 				" labels are skipped: you do not maintain this repository, so the factory would count neither."
 		} else {
 			line += "\nThe class:" + OneLine(is.Class) + " label is skipped: you do not maintain this repository, so the factory would not count it."
@@ -495,7 +495,7 @@ func (r *Relay) planned(ctx context.Context, args json.RawMessage) (*governed, a
 		// P14, review B1: the plan was never checked as final, so nothing is filed from it. The
 		// developer is shown the plan/v2 and confirms that one, through issue_file again.
 		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "status": "replanned", "plan": p.Plan, "hash": p.Hash,
-			"next": "the plan was made before profiles, so nothing was filed: show the developer this plan/v2 and, on their yes, call issue_file again with it and this hash"})
+			"next": "the plan was made before workflows could be chosen, so nothing was filed: show the developer this plan/v2 and, on their yes, call issue_file again with it and this hash"})
 		return nil, out
 	}
 	var v planView

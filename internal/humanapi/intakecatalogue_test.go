@@ -32,7 +32,7 @@ func TestIntakePlanReadsTheCatalogue(t *testing.T) {
 	if got.isError {
 		t.Fatal(got.text)
 	}
-	if sent := e.intake.sent(); !strings.Contains(sent, "review-frontier") || !strings.Contains(sent, "links-solo (default)") {
+	if sent := e.intake.sent(); !strings.Contains(sent, "review-frontier") || !strings.Contains(sent, "links-solo") {
 		t.Fatalf("the model was not told the catalogue's profiles: %s", sent)
 	}
 	var out struct {
@@ -86,11 +86,11 @@ func TestIntakePlanCatalogueDown(t *testing.T) {
 }
 
 // Review B2: plan_check answers the broker's suggestion, never the client's: a merge outcome or a
-// profile the catalogue does not give is replaced, and the hash still holds.
+// workflow the catalogue does not offer is replaced, and the hash still holds.
 func TestPlanCheckRederivesTheSuggestion(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
-	plan := planFixture(t, "single") // docs-links: live, floor links-solo
-	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-frontier", Roles: []string{"admin"},
+	plan := planFixture(t, "single") // docs-links: live
+	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-floor", Roles: []string{"admin"},
 		Merge: intake.MergeShown{Outcome: "approval"}, Why: "trust me"}
 	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": intake.Hash(plan)})
 	if got.isError {

@@ -7,7 +7,7 @@ metadata:
   name: aws-0
   namespace: agent-system
 spec:
-  harnessProfiles:
+  workflows:
     plain: {}
     checked: {checks: true}
     adopted-none: {template: none}
@@ -22,7 +22,6 @@ spec:
   templates:
     solo: {roles: [implementer]}
     pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-    trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
     investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
   caps: {activeTasks: 3, concurrentRuns: 4, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5, preferRevisions: true}
   facts: {finalSpend: true}
@@ -36,12 +35,7 @@ spec:
   resume: {maxPerTask: 2}
   loops:
     default: {scope: "off"}
-    docs: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
-    scripts: {scope: scoper, split: {maxChildren: 4, familyUSD: 20.40, childTier: standard, anyTier: true}, judge: tier-light}
-    docs-links: {models: {reviewer: {frontier: kimi-frontier}}}
-    revert: {models: {reviewer: {frontier: kimi-frontier}}}
-    dead-links: {models: {reviewer: {frontier: kimi-frontier}}}
-    deps-patch: {models: {reviewer: {frontier: kimi-frontier}}}
+    careful: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
   prices:
     glm-5.3: {input: 1.40, cacheRead: 0.26, output: 4.40, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}
     glm-5.3-flashx: {input: 0.37, cacheRead: 0.075, output: 1.25, source: "https://docs.z.ai/guides/overview/pricing", checkedAt: "2026-10-16"}

@@ -15,23 +15,22 @@ import (
 	"github.com/Smana/maku/internal/runrequest"
 )
 
-// aiNativeRef is the catalogue shaped like ai-native-ref's live config: docs-links live, review off
-// with a variant and an escalation.
+// aiNativeRef is the catalogue shaped like ai-native-ref's live config: docs-links live, review off,
+// and the workflows every class offers (WF4), review-floor (no template) the default.
 func aiNativeRef(maintainer bool) catalogue.Catalogue {
 	return catalogue.Catalogue{
-		Repository: "Smana/ai-native-ref", Maintainer: maintainer, ApproveToMerge: true,
+		Repository: "Smana/ai-native-ref", Maintainer: maintainer, ApproveToMerge: true, DefaultWorkflow: "review-floor",
 		Evaluation: catalogue.Evaluation{Mode: "observe", ControlPercent: 20},
 		Classes: []catalogue.Class{
-			{Name: "docs-links", Description: "Dead links in docs", Mode: "live", CeilingUSD: 2, Floor: "links-solo", Allowed: []string{}},
-			{Name: "review", Description: "Anything else: a maintainer merges", Mode: "off", CeilingUSD: 8, Floor: "review-floor",
-				Allowed:    []string{"review-frontier"},
-				Escalation: &catalogue.Escalation{OutOfBudget: "review-frontier", NotConverged: "review-frontier"}},
+			{Name: "docs-links", Description: "Dead links in docs", Mode: "live", CeilingUSD: 2},
+			{Name: "review", Description: "Anything else: a maintainer merges", Mode: "off", CeilingUSD: 8},
 		},
 		Profiles: map[string]catalogue.Profile{
 			"links-solo":   {Template: "solo", Roles: []string{"implementer"}, Tier: "light", Offered: true, Description: "One file of links, no logic"},
-			"review-floor": {Checks: true, Description: "The default: triage picks pair or trio", NotOffered: catalogue.NoTemplate},
+			"review-floor": {Checks: true, Description: "The default: triage picks the template", NotOffered: catalogue.NoTemplate},
 			"review-frontier": {Template: "trio", Roles: []string{"implementer", "tester", "reviewer"}, Tier: "frontier",
-				Checks: true, TestFirst: true, Offered: true, Description: "Changes across several files"},
+				Checks: true, TestFirst: true, Offered: true, Description: "Changes across several files",
+				Escalation: &catalogue.Escalation{NotConverged: "review-floor"}},
 		},
 	}
 }
@@ -61,15 +60,16 @@ func TestClassesListSummary(t *testing.T) {
 		t.Fatalf("%s", got.text)
 	}
 	for _, want := range []string{
-		"docs-links · live · merges on its own when the gate's conditions hold · profile links-solo\n",
-		"review · off · a maintainer's approval merges it · profile chosen at triage · variants review-frontier\n",
+		"docs-links · live · merges on its own when the gate's conditions hold\n",
+		"review · off · a maintainer's approval merges it\n",
+		"- default review-floor: roles chosen at triage, not pinnable",
 	} {
 		if !strings.Contains(got.text, want) {
 			t.Errorf("text lacks %q:\n%s", want, got.text)
 		}
 	}
 	var c catalogue.Catalogue
-	if err := json.Unmarshal(got.structured, &c); err != nil || len(c.Classes) != 2 || !c.Profiles["review-frontier"].Offered {
+	if err := json.Unmarshal(got.structured, &c); err != nil || len(c.Classes) != 2 || !c.Profiles["review-frontier"].Offered || c.DefaultWorkflow != "review-floor" {
 		t.Fatalf("%v %s", err, got.structured)
 	}
 	// The call is counted like every tool's.
@@ -85,25 +85,24 @@ func TestClassesListDetail(t *testing.T) {
 		t.Fatalf("%s", got.text)
 	}
 	for _, want := range []string{
-		"Floor review-floor: roles chosen at triage, not pinnable",
-		"- review-frontier: roles implementer, tester, reviewer · tier frontier · tests first · checks on",
-		"Escalation: out of budget goes to review-frontier; not converged goes to review-frontier.",
-		"You may pin review-frontier.", // the caller is a maintainer
+		"- default review-floor: roles chosen at triage, not pinnable",
+		"- review-frontier: roles implementer, tester, reviewer · tier frontier · tests first · checks on · not converged goes to review-floor",
+		"You may pin links-solo, review-frontier with a workflow:<name> label.", // the caller is a maintainer
 	} {
 		if !strings.Contains(got.text, want) {
 			t.Errorf("detail lacks %q:\n%s", want, got.text)
 		}
 	}
 	var c catalogue.Catalogue
-	if json.Unmarshal(got.structured, &c) != nil || len(c.Classes) != 1 || c.Classes[0].Name != "review" || len(c.Profiles) != 2 {
-		t.Fatalf("the structured answer is the class and its profiles: %s", got.structured)
+	if json.Unmarshal(got.structured, &c) != nil || len(c.Classes) != 1 || c.Classes[0].Name != "review" || len(c.Profiles) != 3 {
+		t.Fatalf("the structured answer is the class and every workflow: %s", got.structured)
 	}
 
 	// The App reads for a Slack user who is no maintainer: no pin is offered.
 	e = setup(t, mcpOn, withSponsored(sponsoredP), withCatalogue(&fakeFactoryCatalogue{}))
 	got = call(t, e, bearer("slack-app"), ClassesList, map[string]any{"repository": "Smana/ai-native-ref", "class": "review",
 		"on_behalf_of": "slack:T01ABC/U09XYZ"})
-	if got.isError || strings.Contains(got.text, "You may pin") || !strings.Contains(got.text, "Only a maintainer of this repository can pin a profile") {
+	if got.isError || strings.Contains(got.text, "You may pin") || !strings.Contains(got.text, "Only a maintainer of this repository can pin a workflow") {
 		t.Fatalf("%s", got.text)
 	}
 }

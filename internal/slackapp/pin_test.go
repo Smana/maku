@@ -13,19 +13,19 @@ import (
 	"github.com/Smana/maku/internal/intake"
 )
 
-// catalogueOf is a repository's catalogue with docs-links (mode given) and review (off, floor
-// review-floor without a template, review-frontier allowed and offered).
+// catalogueOf is a repository's catalogue with docs-links (mode given) and review (off), and the
+// workflows every class offers (WF4): links-solo the default, review-floor without a template.
 func catalogueOf(maintainer bool, docsMode string) catalogue.Catalogue {
-	return catalogue.Catalogue{Repository: "Smana/ai-native-ref", Maintainer: maintainer,
+	return catalogue.Catalogue{Repository: "Smana/ai-native-ref", Maintainer: maintainer, DefaultWorkflow: "links-solo",
 		Classes: []catalogue.Class{
-			{Name: "docs-links", Mode: docsMode, Floor: "links-solo", Allowed: []string{"links-pair"}},
-			{Name: "review", Mode: "off", Floor: "review-floor", Allowed: []string{"review-frontier"}},
+			{Name: "docs-links", Mode: docsMode},
+			{Name: "review", Mode: "off"},
 		},
 		Profiles: map[string]catalogue.Profile{
 			"links-solo":      {Template: "solo", Roles: []string{"implementer"}, Offered: true},
 			"links-pair":      {Template: "pair", Roles: []string{"implementer", "reviewer"}, Offered: true},
 			"review-floor":    {NotOffered: catalogue.NoTemplate},
-			"review-frontier": {Template: "trio", Roles: []string{"implementer", "tester", "reviewer"}, Offered: true},
+			"review-frontier": {Template: "pair", Roles: []string{"implementer", "reviewer"}, Offered: true},
 		}}
 }
 
@@ -38,8 +38,8 @@ func suggested(t *testing.T, class string) intake.Plan {
 	return p
 }
 
-// P5, spec "Slack proposal": the select is offered for a maintainer and an off class only, and lists
-// the factory's choice then the class's offered profiles.
+// P5, spec "Slack proposal": the select is offered to a maintainer on any class (WF4), and lists the
+// offered workflows, the repository's default first.
 func TestProposalPinOptions(t *testing.T) {
 	for name, c := range map[string]struct {
 		cat   catalogue.Catalogue
@@ -48,11 +48,11 @@ func TestProposalPinOptions(t *testing.T) {
 		plain bool // a plan made without the catalogue
 		want  []string
 	}{
-		"a maintainer, an off class":  {cat: catalogueOf(true, "off"), class: "docs-links", want: []string{"links-solo", "links-pair"}},
-		"only offered profiles":       {cat: catalogueOf(true, "off"), class: "review", want: []string{"review-frontier"}},
+		"a maintainer, an off class":  {cat: catalogueOf(true, "off"), class: "docs-links", want: []string{"links-solo", "links-pair", "review-frontier"}},
+		"only offered workflows":      {cat: catalogueOf(true, "off"), class: "review", want: []string{"links-solo", "links-pair", "review-frontier"}},
 		"a non-maintainer":            {cat: catalogueOf(false, "off"), class: "docs-links"},
-		"a live class":                {cat: catalogueOf(true, "live"), class: "docs-links"},
-		"a shadow class":              {cat: catalogueOf(true, "shadow"), class: "docs-links"},
+		"a live class":                {cat: catalogueOf(true, "live"), class: "docs-links", want: []string{"links-solo", "links-pair", "review-frontier"}},
+		"a shadow class":              {cat: catalogueOf(true, "shadow"), class: "docs-links", want: []string{"links-solo", "links-pair", "review-frontier"}},
 		"the catalogue is down":       {err: errors.New("down"), class: "docs-links"},
 		"a plan without a suggestion": {cat: catalogueOf(true, "off"), class: "docs-links", plain: true},
 	} {
@@ -93,14 +93,14 @@ func TestProposalSelectBlocks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"static_select"`, actionProposalProfile, actionProposalOptions, "Profile: factory's choice",
+	for _, want := range []string{`"static_select"`, actionProposalProfile, actionProposalOptions, "Workflow: factory's choice",
 		`"value":"` + profileValue(p.Hash, p.Rev, "links-pair") + `"`, `"value":"` + profileValue(p.Hash, p.Rev, "") + `"`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("blocks lack %q: %s", want, raw)
 		}
 	}
-	if strings.Contains(strings.ToLower(string(raw)), "workflow") {
-		t.Error("the word is profile (P1)")
+	if strings.Contains(string(raw), `"Profile`) {
+		t.Error("the word is workflow (WF1)")
 	}
 }
 
@@ -194,7 +194,7 @@ func TestProposalStaleSelect(t *testing.T) {
 func TestProposalPinRefused(t *testing.T) {
 	rig, p, ts := pinRig(t)
 	rig.broker.intakeAnswer = nil
-	rig.broker.intakeErr = Refused("not_maintainer: Only a maintainer of this repository can choose the profile; the factory will choose it.")
+	rig.broker.intakeErr = Refused("not_maintainer: Only a maintainer of this repository can choose the workflow; the factory will choose it.")
 	rig.interact(selectPressOf(t, ts, proposalPresser, profileValue(p.Hash, 1, "links-pair")))
 	if e := rig.slack.whispers(); len(e) != 1 || !strings.Contains(e[0].text, "Only a maintainer") {
 		t.Fatalf("whispers %+v", e)

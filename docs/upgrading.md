@@ -12,9 +12,9 @@ strictest `live` one that holds ([selection](merge-policies.md#selection-from-th
 
 | Change | Before | Now | What to do |
 |---|---|---|---|
-| Which policy decides | the class fixed at intake (a `class:` label, a schedule, the plan; else `review`) | the strictest `live` policy whose every condition holds on the diff; a task with findings (a schedule's probe) or an adopted pull request keeps its one class | none: labels still pick the workflow, never the merge policy |
+| Which policy decides | the class fixed at intake (a `class:` label, a schedule, the plan; else `review`) | the strictest `live` policy whose every condition holds on the diff; a task with findings (a schedule's probe) or an adopted pull request keeps its one class | none: `workflow:<name>` picks the workflow, never the merge policy |
 | A diff no policy admits | `class_unarmed`, or `class_mismatch` against the label | `no_policy_matched`, with each policy's refusal in the record's `considered=` | Alerts or dashboards on `class_unarmed` read `no_policy_matched` |
-| A policy with no `diffShape` and no `oracle` (MR12) | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer leaves it `reviewer_verdict_missing` | Run such a class with a reviewer, or give the policy a shape |
+| A policy with no `diffShape` and no `oracle` (MR12) | merged on its conditions | holds only on a reviewer's approve: a workflow without a reviewer (`quick`) leaves it `reviewer_verdict_missing` | Run with a reviewer (`standard` or `careful`), or give the policy a shape |
 | Shadow evidence | one record, the class's | one record line per shadow policy that holds, beside the decision's | `scripts/shadow-merge-tally.sh` reads each class's own line |
 | A capped or paused strictest policy | — | the pull request goes to a human: a looser policy never takes over | none |
 | The decision's wording | "merged by the merger App: the class's conditions held" | "Merged automatically by policy `<name>`", or "Waits for a human: `<reason>`" | none |
@@ -23,6 +23,71 @@ strictest `live` one that holds ([selection](merge-policies.md#selection-from-th
 A saved approval grant still binds to the task's class's resolved hash: a pull request the diff
 assigns to another policy finds no grant and asks for an approval (`approval_required`).
 
+## Workflows name what runs
+
+Workflows release N+1 (v0.5x, shipped with the merge gate that reads the diff): the class no longer
+chooses what runs on a task. A task's workflow is the first of a maintainer's `workflow:<name>`
+label (or the choice at confirmation), the task's source (a `Schedule`'s `workflow`, `quick` when
+it names none; `quick` for a revert and an oracle finding; `none` for an adopted pull request), and
+the `Repository`'s `workflow.default`, `standard` when unset. A maintainer may pin any workflow on any
+class, `quick` included: a pull request no reviewer read waits for a human unless a shape or an
+oracle checks its diff.
+
+Everything release N warned about is refused, each error naming this section:
+
+| Old key or label | Write instead | Refused from |
+|---|---|---|
+| `harnessProfiles` (a `Factory`, the file) | `workflows`, the same map | N+1 |
+| `templates.trio` | `pair` | N+1 |
+| `triage.classifierURL` (the values file) | nothing: remove the key | N+1 |
+| `defaults.template`, `defaults.tier` | nothing: a workflow names its template and its tier | N+1 |
+| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row named after a workflow; set that workflow's `loop` to share one | N+1 |
+| `workflows.<name>.testFirst` | the `Repository`'s `workflow.testFirst`: the tester runs in `careful` | N+1 |
+| `human.intake.plan.classes` (the broker) | `factoryURL`: the factory's catalog names the classes and workflows | N+1 |
+| the `profile:<name>` label | `workflow:<name>`; a `profile:` or `class:` label is read by nothing and told once on its issue | N+1 |
+| the `class:<name>` label | nothing: the gate reads the diff | N+1 |
+
+Where a `MergePolicy`'s workflow fields go. They are read by nothing in this release and stay
+accepted, with the `Deprecated` condition, until the merge policies' removal lands:
+
+| Field on `MergePolicy` | Lands on |
+|---|---|
+| `harness` | the `Repository`'s `workflow.default` (one per repository) |
+| `harnessAllowed` | nothing: every workflow the `Factory` defines may be pinned |
+| `escalation` | `Factory.spec.workflows.<name>.escalation`, on the workflow a task steps from |
+| `testFirst` | the `Repository`'s `workflow.testFirst` (needs `merge.contractCheck`) |
+| `checks` | `Factory.spec.workflows.<name>.checks` |
+
+`maku config migrate` rewrites `harnessProfiles` as `workflows`, `trio` as `pair`, and drops
+`templates.trio`, `triage.classifierURL`, `defaults.template`, `defaults.tier` and a workflow's
+`testFirst`; a `loops` row named after a class has no mechanical home and is refused. The pin
+refusals `class_no_profiles`, `class_profile_fixed`, `profile_not_allowed` and `profile_internal`
+are gone; a task triaged before this release keeps the code it recorded. The status source `floor`
+is now `repository`.
+
+## Workflows: old names warn (v0.5x, workflows release N)
+
+This release is additive: every config and manifest the previous one accepts still loads. What the
+next minor refuses loads with a warning in the factory's log (`config warning`, ending
+`refused from the next minor (WF13)`), and the `Factory`'s `Deprecated` condition lists its path.
+
+| Setting or label | Why it goes | What to write instead |
+|---|---|---|
+| `templates.trio` | the same roles as `pair` since the tester left it | name `pair` |
+| `triage.classifierURL` (the values file) | the task classifier was never deployed; the scoper replaced it | remove the key |
+| `defaults.template`, `defaults.tier` | a workflow names its template and its tier | remove the keys |
+| `harnessProfiles` | renamed | `workflows`, the same map |
+| a `loops` row named neither `default` nor a workflow (`loops.docs`) | a row is named by the workflow whose loop it is | rename the row after a workflow and set that workflow's `loop` |
+| `human.intake.plan.classes` (the broker) | the factory's catalog names the workflows | set `factoryURL` and remove the table |
+| the `profile:<name>` label | renamed | `workflow:<name>`; a task pinned through `profile:` is told once on its issue |
+
+Two synonyms are read from this release: `workflows` is `harnessProfiles` (a `Factory` or a file
+that sets both is refused: `workflows and harnessProfiles: set one`), and a `workflow:<name>` label
+is the same pin as `profile:<name>` (a `profile:` and a `workflow:` label naming different workflows
+conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned plan `workflow:<name>`.
+
+A broker whose planner is on no longer needs `human.intake.plan.classes` when it sets `factoryURL`:
+the plan's classes come from the factory's catalog.
 ## Merge policies: bounds, guardrail defaults and evidence levels (v0.5x, merge policies review)
 
 Four changes reach a bound class, a `Repository`'s or a repository file's. A class the config file

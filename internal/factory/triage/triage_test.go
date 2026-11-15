@@ -11,10 +11,12 @@ import (
 )
 
 func cfg() *config.Config {
-	return &config.Config{Defaults: config.Defaults{Template: "solo", Tier: "standard", DataClass: "public", PredictedClass: "review"},
-		Tiers: map[string]config.Tier{"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45}}}
+	return &config.Config{Defaults: config.Defaults{DataClass: "public", PredictedClass: "review"},
+		HarnessProfiles: map[string]config.HarnessProfile{"standard": {Template: "solo"}},
+		Tiers:           map[string]config.Tier{"standard": {Model: "agent-default", RunTokens: 1_500_000, TaskTokens: 3_000_000, RunMinutes: 45}}}
 }
 
+// Static: the standard tier and the default workflow's template (WF3), the defaults' classes.
 func TestStaticUsesTheDefaults(t *testing.T) {
 	d, err := Static{}.Triage(t.Context(), cfg(), &v1alpha1.Task{})
 	if err != nil {

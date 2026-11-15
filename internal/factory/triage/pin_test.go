@@ -36,6 +36,7 @@ func readPins(t *testing.T) pinFixture {
 	if err := json.Unmarshal(raw, &f); err != nil {
 		t.Fatal(err)
 	}
+	f.Config.HarnessProfiles = f.Config.Workflows // what Parse does with the key (WF9)
 	return f
 }
 
@@ -56,15 +57,14 @@ func TestResolvePinFixture(t *testing.T) {
 		}
 		t.Run(row.Name, func(t *testing.T) {
 			for via, pin := range map[string]Pin{
-				"field": ResolvePin(&f.Config, f.Repository, row.Class, nil, row.Profile, loginOf(row.Maintainer), row.Public),
-				"label": ResolvePin(&f.Config, f.Repository, row.Class,
-					[]LabelPin{{Name: row.Profile, Actor: loginOf(row.Maintainer)}}, "", "", row.Public),
+				"field": ResolvePin(&f.Config, f.Repository, nil, row.Profile, loginOf(row.Maintainer)),
+				"label": ResolvePin(&f.Config, f.Repository, []LabelPin{{Name: row.Profile, Actor: loginOf(row.Maintainer)}}, "", ""),
 			} {
 				if pin.Name != row.Profile || pin.Refused != want {
 					t.Errorf("%s: %+v, want refused %q", via, pin, want)
 				}
 				if pin.Refused != "" {
-					_ = PinRefusal(&f.Config, f.Repository, row.Class, pin).Sentence()
+					_ = PinRefusal(row.Class, pin).Sentence()
 				}
 			}
 		})
@@ -83,18 +83,36 @@ func TestResolvePinConflict(t *testing.T) {
 		want   Pin
 	}{
 		"no pin": {want: Pin{}},
-		"two labels": {labels: []LabelPin{{"review-pair", "Smana"}, {"review-frontier", "Smana"}},
-			want: Pin{Name: "review-pair", Refused: intake.ProfileConflict}},
-		"label and field disagree": {labels: []LabelPin{{"review-pair", "Smana"}}, field: "review-frontier", login: "Smana",
-			want: Pin{Name: "review-pair", Refused: intake.ProfileConflict}},
-		"label and field agree": {labels: []LabelPin{{"review-pair", "Smana"}}, field: "review-pair", login: "Smana",
-			want: Pin{Name: "review-pair"}},
-		"a non-maintainer's label": {labels: []LabelPin{{"review-pair", "someone"}}, want: Pin{Name: "review-pair", Refused: intake.NotMaintainer}},
-		"a maintainer's label, any field login": {labels: []LabelPin{{"review-pair", "Smana"}}, field: "review-pair", login: "someone",
-			want: Pin{Name: "review-pair"}},
+		"two labels": {labels: []LabelPin{{"standard", "Smana"}, {"careful", "Smana"}},
+			want: Pin{Name: "standard", Refused: intake.ProfileConflict}},
+		"label and field disagree": {labels: []LabelPin{{"standard", "Smana"}}, field: "careful", login: "Smana",
+			want: Pin{Name: "standard", Refused: intake.ProfileConflict}},
+		"label and field agree": {labels: []LabelPin{{"standard", "Smana"}}, field: "standard", login: "Smana",
+			want: Pin{Name: "standard"}},
+		"a non-maintainer's label": {labels: []LabelPin{{"standard", "someone"}}, want: Pin{Name: "standard", Refused: intake.NotMaintainer}},
+		"a maintainer's label, any field login": {labels: []LabelPin{{"standard", "Smana"}}, field: "standard", login: "someone",
+			want: Pin{Name: "standard"}},
 	} {
-		if got := ResolvePin(cfg, f.Repository, "review", tc.labels, tc.field, tc.login, true); got != tc.want {
+		if got := ResolvePin(cfg, f.Repository, tc.labels, tc.field, tc.login); got != tc.want {
 			t.Errorf("%s: %+v, want %+v", name, got, tc.want)
 		}
+	}
+}
+
+// Stage B (WF4): a pin is refused only for who pins, which workflow, and how many; the class, its
+// mode and the task's data no longer refuse one.
+func TestPinRefusalsAfterStageB(t *testing.T) {
+	f := readPins(t)
+	for code, labels := range map[string][]LabelPin{
+		intake.NotMaintainer:   {{Name: "quick", Actor: "mallory"}},
+		intake.ProfileUnknown:  {{Name: "nope", Actor: "Smana"}},
+		intake.ProfileConflict: {{Name: "quick", Actor: "Smana"}, {Name: "careful", Actor: "Smana"}},
+	} {
+		if got := ResolvePin(&f.Config, f.Repository, labels, "", "").Refused; got != code {
+			t.Errorf("want %s, got %s", code, got)
+		}
+	}
+	if got := ResolvePin(&f.Config, f.Repository, []LabelPin{{Name: "quick", Actor: "Smana"}}, "", ""); !got.Honoured() {
+		t.Fatalf("a maintainer's quick, below the default: %+v", got)
 	}
 }

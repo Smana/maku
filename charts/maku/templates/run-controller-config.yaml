@@ -50,6 +50,7 @@ data:
         aliases:
           public: {{ $gw.aliases.public | toJson }}
           internal: {{ $gw.aliases.internal | toJson }}
+        lightAlias: {{ default "" $gw.lightAlias | quote }}
     {{- else }}
     modelSecret: {{ required "runController.modelSecret is required" $c.modelSecret | quote }}
     {{- end }}

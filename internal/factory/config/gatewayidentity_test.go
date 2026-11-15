@@ -14,20 +14,20 @@ import (
 // refused by runs.group since v4 step 8 (D5), so a config only its refusal caught is refused there.
 func TestGatewayIdentity(t *testing.T) {
 	const (
-		models   = "loops: {review: {models: {reviewer: {frontier: kimi-frontier}}}}\n"
-		split    = "loops: {docs: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}\n"
+		models   = "loops: {standard: {models: {reviewer: {frontier: kimi-frontier}}}}\n"
+		split    = "loops: {standard: {scope: scoper, split: {maxChildren: 3, familyUSD: 12}}}\n"
 		portable = "runs: {group: maku.ogenki.io, gatewayIdentity: true}\n"
 		noKey    = "runs: {group: maku.ogenki.io}\n"
 	)
-	demoMeter := strings.Replace(demoGood, "runs: {group: maku.ogenki.io}\nloops: {docs: {scope: scoper}}\n", "", 1)
+	demoMeter := strings.Replace(demoGood, "runs: {group: maku.ogenki.io}\nloops: {standard: {scope: scoper}}\n", "", 1)
 	for name, c := range map[string]struct{ raw, err string }{
 		"portable with the key: models":             {byModel + models + portable, ""},
 		"portable with the key: split":              {priced + split + portable, ""},
-		"portable with the key: split, demo":        {demoMeter + split + portable, "loops.docs.split needs a meter: a family's cap is in USD"},
-		"portable without the key: models":          {byModel + models + noKey, "loops.review.models needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
-		"portable without the key: split":           {priced + split + noKey, "loops.docs.split needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
+		"portable with the key: split, demo":        {demoMeter + split + portable, "loops.standard.split needs a meter: a family's cap is in USD"},
+		"portable without the key: models":          {byModel + models + noKey, "loops.standard.models needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
+		"portable without the key: split":           {priced + split + noKey, "loops.standard.split needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
 		"the default group with the key":            {good + "runs: {gatewayIdentity: true}\n", ""},
-		"the default group without the key: models": {byModel + models, "loops.review.models needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
+		"the default group without the key: models": {byModel + models, "loops.standard.models needs runs.gatewayIdentity (a model gateway, rollout step 4)"},
 		"the XR with the key":                       {good + "runs: {group: cloud.ogenki.io, gatewayIdentity: true}\n", "runs: group cloud.ogenki.io, cloud-native-ref's Crossplane AgentRun, was removed in v4 step 8 (D5)"},
 		"the XR without the key: models":            {byModel + models + "runs: {group: cloud.ogenki.io}\n", "removed in v4 step 8 (D5)"},
 	} {

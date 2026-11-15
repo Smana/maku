@@ -326,6 +326,8 @@ spec:
                     is a gate path, so its text is trusted.
                   properties:
                     class:
+                      description: 'Class is the task''s predicted class (§2): with
+                        a probe, the oracle policy that judges it.'
                       maxLength: 253
                       type: string
                     cron:
@@ -348,12 +350,33 @@ spec:
                     text:
                       maxLength: 14336
                       type: string
+                    workflow:
+                      description: Workflow is the workflow the schedule's tasks run;
+                        unset is quick (WF3).
+                      maxLength: 253
+                      type: string
                   type: object
                 maxItems: 16
                 type: array
               triggerLabel:
                 maxLength: 50
                 type: string
+              workflow:
+                description: |-
+                  Workflow is the workflow a task of the repository runs when no label and no source names one,
+                  standard by default, and whether its careful tasks start with the tester (WF3, WF7).
+                properties:
+                  default:
+                    description: Default is the workflow a task runs when nothing
+                      else names one; unset is standard.
+                    maxLength: 253
+                    type: string
+                  testFirst:
+                    description: |-
+                      TestFirst starts every public careful task with a tester run that writes the failing tests
+                      first (v3 feature 4, TF1); needs merge.contractCheck.
+                    type: boolean
+                type: object
             required:
             - factoryRef
             - repository

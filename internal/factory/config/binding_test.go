@@ -35,7 +35,7 @@ func adoptPolicy(shape string) PolicySpec {
 		Author: &Author{Adopt: &Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}}}
 }
 
-var testProfiles = map[string]HarnessProfile{"solo": {Template: "solo", Tier: "standard"}, "tf": {Checks: true, TestFirst: true}}
+var testProfiles = map[string]HarnessProfile{"solo": {Template: "solo", Tier: "standard"}, "tf": {Checks: true}}
 
 // B4: one row per field kind. Each row starts from dead-links (or names its own policy), changes
 // one thing, and states the reason or the resolved class.
@@ -147,24 +147,11 @@ func TestResolve(t *testing.T) {
 		// Invalid: the resolved class fails the class rules.
 		"semver-minor live": {class: "deps-minor", policy: func(p *PolicySpec) { *p = adoptPolicy("semver-minor") }, bind: func(b *Binding) { *b = Binding{Name: "deps-minor", Mode: ModeLive} },
 			reason: ReasonInvalid, msg: "class deps-minor: semver-minor is shadow only (M2)"},
-		"testFirst without a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
-			reason: ReasonInvalid, msg: "class x: testFirst needs merge.contractCheck"},
-		"a testFirst profile without a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "tf"}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
-			reason: ReasonInvalid, msg: `class x: profile "tf": testFirst needs merge.contractCheck`},
 		"testFirst with a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
 			merge: Merge{ContractCheck: "contract"}, check: func(t *testing.T, c Class) { want(t, c.TestFirst, "testFirst") }},
 		// MR6, judged per binding (B9): an evaluated class without allowedFiles or a shape.
 		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
 			merge: Merge{PolicyBot: new(false)}, reason: ReasonUnbounded, msg: "class x: an evaluated policy needs allowedFiles or a diffShape"},
-		// The variant floor reads the templates (TE2): checked per binding, never left to Parse,
-		// where it would refuse every consumer Repository.
-		"a variant below its floor": {class: "x", ctx: PolicyContext{
-			HarnessProfiles: map[string]HarnessProfile{"rich": {Template: "pair"}, "base": {Template: "solo"}},
-			Templates:       map[string]Template{"solo": {Roles: []string{"implementer"}}, "pair": {Roles: []string{"implementer", "reviewer"}}}},
-			policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "rich", HarnessAllowed: []string{"base"}}} },
-			bind:   func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
-			reason: ReasonInvalid, msg: `harnessAllowed "base" drops roles of the floor (TE2)`},
-		"an unknown harness": {policy: func(p *PolicySpec) { p.Harness = "nope" }, reason: ReasonInvalid, msg: `harness "nope" is not in harnessProfiles (TE2)`},
 		"live on the policy": {policy: func(p *PolicySpec) { p.Live = true }, reason: ReasonInvalid, msg: "mode is the binding's"},
 	} {
 		t.Run(name, func(t *testing.T) {

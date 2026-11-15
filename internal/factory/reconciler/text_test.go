@@ -700,32 +700,31 @@ func TestScoperBriefListsProfiles(t *testing.T) {
 	}
 }
 
+// WF4: every workflow is a choice, the one the task runs first, unless a label or the task's source
+// chose it.
 func TestProfileChoices(t *testing.T) {
 	cfg := &config.Config{
 		HarnessProfiles: map[string]config.HarnessProfile{
-			"standard": {Description: "One pass."}, "test-first": {Description: "Tests first."}, "careful": {Description: "Two reviews."}},
-		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Classes: map[string]config.Class{
-			"docs":  {Harness: "standard", HarnessAllowed: []string{"test-first", "careful"}},
-			"fixed": {Harness: "standard"},
-		}}},
+			"standard": {Description: "One pass."}, "test-first": {Description: "Tests first."}, "careful": {Description: "Two reviews."},
+			"none": {Template: config.TemplateNone}},
+		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref"}},
 	}
 	r := &Reconciler{Cfg: cfg}
-	both := []ProfileChoice{{Name: "standard", Description: "One pass.", Floor: true},
-		{Name: "test-first", Description: "Tests first."}, {Name: "careful", Description: "Two reviews."}}
+	all := []ProfileChoice{{Name: "standard", Description: "One pass.", Floor: true},
+		{Name: "careful", Description: "Two reviews."}, {Name: "test-first", Description: "Tests first."}}
 	for name, c := range map[string]struct {
-		class   string
 		profile *v1alpha1.ProfileStatus
 		want    []ProfileChoice
 	}{
-		"floor":          {"docs", &v1alpha1.ProfileStatus{Name: "standard", Source: "floor"}, both},
-		"control":        {"docs", &v1alpha1.ProfileStatus{Name: "standard", Source: "control"}, both},
-		"label":          {"docs", &v1alpha1.ProfileStatus{Name: "test-first", Source: "label"}, nil},
-		"no profile":     {"docs", nil, nil},
-		"nothing to add": {"fixed", &v1alpha1.ProfileStatus{Name: "standard", Source: "floor"}, nil},
+		"the repository's": {&v1alpha1.ProfileStatus{Name: "standard", Source: "repository"}, all},
+		"control":          {&v1alpha1.ProfileStatus{Name: "standard", Source: "control"}, all},
+		"label":            {&v1alpha1.ProfileStatus{Name: "test-first", Source: "label"}, nil},
+		"a schedule's":     {&v1alpha1.ProfileStatus{Name: "standard", Source: "schedule"}, nil},
+		"no profile":       {nil, nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			tk := issueTask("3buqdlot", 7, "x")
-			tk.Spec.Repository, tk.Spec.PredictedClass, tk.Status.Profile = "Smana/cloud-native-ref", c.class, c.profile
+			tk.Spec.Repository, tk.Status.Profile = "Smana/cloud-native-ref", c.profile
 			if got := r.profileChoices(cfg, tk); !slices.Equal(got, c.want) {
 				t.Fatalf("%+v, want %+v", got, c.want)
 			}

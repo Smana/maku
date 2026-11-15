@@ -31,7 +31,7 @@ spec:
     # R41: 1 revert in the last 10 merges demotes a class; human path AM7: 3 clean mature merges
     # after the bad one lift it (half-open), and a maintainer's factory/drill revert never counts (AM6).
     breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}
-  harnessProfiles:
+  workflows:
     plain: {}
     checked: {checks: true}
     adopted-none: {template: none}
@@ -54,8 +54,6 @@ spec:
   templates:
     solo: {roles: [implementer]}
     pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-    # TF2, TO1: the tester writes the tests first (testFirst), never a verdict; trio is pair's shape until the bench.
-    trio: {roles: [implementer, reviewer], maxReviewRounds: 2}
     investigate: {roles: [triager]}  # R38: proposes a public issue text, never writes
   # CD22: a revision of another task runs before new intake. One wait reason, no reservation; the review
   # WIP cap and the run slot are still checked first.
@@ -102,7 +100,7 @@ spec:
     # 5): a read-only child on the run's token, 40 iterations, 300k tokens, 300 s, six a run. No
     # other class has it (D4): the gcp-0 session of 2026-10-27 flips it on for the paired live
     # gate (SQ5) and, if the pairs do not hold, back off.
-    docs: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
+    careful: {scope: scoper, stallSteps: 60, continuations: 2, judge: tier-light, search: true}
     # scripts: the splitter's class for the gcp-0 session of 2026-10-27 (runbook 17 §2, splitter
     # design SL3). split needs scope: scoper on the same row, and a row is read whole, so the scoper
     # is on for scripts too. maxChildren 4 (2..5); familyUSD 20.40, the parent's and every part's
@@ -113,7 +111,6 @@ spec:
     # Harness roles HR7: judge tier-light switches the loop on for scripts too (stallSteps 80,
     # continuations 2 by default), so split parts and test-first tasks are judged; the judge reads
     # the head's GitHub check runs, so checks: false on the class is fine.
-    scripts: {scope: scoper, split: {maxChildren: 4, familyUSD: 20.40, childTier: standard, anyTier: true}, judge: tier-light}
     # A second-family reviewer on the classes the merge gate may merge without a person: the
     # live ones and the two shadowed toward going live. A reviewer on the implementer's model
     # shares its blind spots, and here its approval is the only review. The reviewer runs on
@@ -121,10 +118,6 @@ spec:
     # Public tasks only (maku pins no provider alias on an internal task); Kimi processes in
     # China. A row with only models keeps the loop and the scoper off. ADR-0058 kept the GLM
     # reviewer because no other family had a public route; Kimi has had one since v3.
-    docs-links: {models: {reviewer: {frontier: kimi-frontier}}}
-    revert: {models: {reviewer: {frontier: kimi-frontier}}}
-    dead-links: {models: {reviewer: {frontier: kimi-frontier}}}
-    deps-patch: {models: {reviewer: {frontier: kimi-frontier}}}
   # The price overlay (plan J.1), meter.prices in the file: one row per model a backend in
   # infrastructure/base/agent-gateway pins, so no agentgateway release moves a price
   # without a commit here. AG10 fails a pinned model without its row. A model with no

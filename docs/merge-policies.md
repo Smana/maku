@@ -91,7 +91,7 @@ It is **not yet deployed** on aws-0, where `mergeGuardrails` is unset:
 
 <!-- check: central -->
 ```yaml
-harnessProfiles:
+workflows:
   plain: {}
   checked: {checks: true}
   adopted-none: {template: none}
@@ -132,7 +132,7 @@ land them in the cutover's own pull request.
 ```mermaid
 flowchart LR
   subgraph central["Central config and objects (operators, Flux-managed)"]
-    hp["harnessProfiles"]
+    hp["workflows"]
     mg["mergeGuardrails"]
     pm["policyManagement switches"]
     ca["repositories[].classAuthority"]
@@ -157,7 +157,7 @@ flowchart LR
 | Repository policy | The `mergePolicies` bindings of `.github/agent-factory.yaml` on the default branch. A file with `factory:` alone is the ownership fence and binds no policy | `internal/factory/mergepolicy/policy.go` |
 | Policy | A `MergePolicy` object: one class's definition, named by the object. What it may say is in [policies and bindings](#policies-and-bindings) | `config.PolicySpec` |
 | Binding | One entry of `mergePolicies`: a policy's name, the mode, and this repository's parameters | `config.Binding` |
-| Central config | The factory's config file: `harnessProfiles`, `mergeGuardrails`, `policyManagement`, and per repository `classAuthority`, maintainers, `merge`, schedules, budgets | `internal/factory/config/mergepolicy.go` |
+| Central config | The factory's config file: `workflows`, `mergeGuardrails`, `policyManagement`, and per repository `classAuthority`, maintainers, `merge`, schedules, budgets | `internal/factory/config/mergepolicy.go` |
 | Class | A named kind of change: what it may touch, which evidence it needs, whether it merges. `docs-links` and `revert` are bound in every policy; `review` never merges through the gate and is bound only as `"off"` | `mergepolicy.Validate` |
 | Mode | `live` merges, `shadow` records what it would have done, `off` does neither. Always the binding's | `config.Binding.Mode` |
 | Author mode | `agents`: the factory's agents App wrote it through a task's runs. `adopt`: another App's pull requests (Renovate), adopted by login and branch prefix | `Class.Author` |
@@ -165,7 +165,7 @@ flowchart LR
 | `requiresApproval` | Paths that send an otherwise-arming pull request to a maintainer, even in a live class. A [saved grant](#approval-memory) can let a later one arm | `ApprovalLeaf` |
 | `maxPerDay` | The class's own daily cap, at most the guardrail's | `Class.MaxPerDay` |
 | Monitor | The existing [post-merge monitor](factory.md#the-post-merge-monitor) settings, on the policy | `config.Monitor` |
-| Harness profile | A centrally named way to run a class (`checks`, `testFirst`, `template`, `tier`, `loop`). A policy names one; it cannot invent one | `HarnessProfile` |
+| Workflow | A centrally named way to run a class (`checks`, `testFirst`, `template`, `tier`, `loop`). A policy names one; it cannot invent one | `HarnessProfile` |
 | Guardrails | Central bounds: protected paths and mandatory checks every binding gains, caps no binding may exceed | `MergeGuardrails` |
 | Snapshot | One read of the file: its sha256, the resolved classes, the error. Each decision binds to it (`policy=<12 hex>`) | `mergepolicy.Snapshot` |
 | policy-bot | The optional second evaluator (`merge.policyBot: true`; off by default since v4 step 8). With it, the gate's fixed base needs `policy-bot: main` green, posted by `merge.policyBotLogin`, so every class that should arm needs a policy-bot rule that approves its pull requests. Without it, `maku/merge-gate` is the required status and every live class needs `allowedFiles` | `baseChecks` in `internal/factory/reconciler/arm.go` |
@@ -183,7 +183,7 @@ file.
    (`mandatoryChecks` become holdout checks, so GitHub Actions must report them); a cap the class
    leaves unset inherits the guardrail's; a cap above it refuses the binding (`GuardrailMismatch`).
 4. The resolved class passes the gate's own class check (`Invalid` otherwise), its `harness` naming
-   a central profile.
+   a central workflow.
 
 ### Resolution order
 
@@ -422,7 +422,7 @@ All three blocks live at the top level of the factory's config. Defaults are off
 
 | Key | Type | Default | Constraint |
 |---|---|---|---|
-| `harnessProfiles.<name>` | `{template, tier, checks, testFirst, loop, description}` | none | Name like a class name. `template`: `solo`, `pair`, `trio`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `testFirst` needs `checks`; `none` takes no other key; `description` ≤ 120 bytes |
+| `workflows.<name>` | `{template, tier, checks, loop, escalation, description}` | the shipped `quick`, `standard`, `careful`, `none` | Name like a class name. `template`: `solo`, `pair`, `investigate` or `none`; `tier`: a tier; `loop`: `off` or a `loops` row; `escalation`: `{outOfBudget, notConverged}`, each a workflow; `none` takes no other key; `description` ≤ 120 bytes |
 | `mergeGuardrails.protectedFiles` | list of regexp | `^\.github/`, `^\.policy\.yml$`, `^CODEOWNERS$`, always first | Appended to every bound class's `protectedFiles` |
 | `mergeGuardrails.mandatoryChecks` | list of check names | none | Appended to every class's `holdoutChecks` |
 | `mergeGuardrails.maxPatchFiles`, `maxModifiedLines`, `maxPerDay` | int | 0, read as 10, 300 and 5 | A bound class above it is refused (`GuardrailMismatch`); one without it inherits it |
@@ -431,28 +431,23 @@ All three blocks live at the top level of the factory's config. Defaults are off
 | `policyManagement.stage` | `read` \| `simulate` \| `manage` | `manage` | See [the stages](#rollout-stages) |
 | `policyManagement.read`, `simulation`, `dualEvaluation`, `repositoryAuthority`, `approvalMemory`, `promotion` | bool | `false` | Deprecated: read as the highest stage they cover; not set with `stage` |
 | `policyManagement.operators` | list of GitHub logins | none: no exception can be approved | Read by the broker |
-| `classes.<c>.harnessAllowed` | list of profile names | none | Each in `harnessProfiles`, none below `harness` (roles, tier, the loop row's `scope` and `judge`); refused on a `live` or `shadow` class. Carried into the gate's class only when set |
-| `classes.<c>.escalation` | `{outOfBudget, notConverged}` | none: the group goes to the human | Each a profile of `harnessAllowed`; refused on a `live` or `shadow` class |
 | `repositories[].classAuthority` | `central` \| `repository` | `central` | `repository` needs `repositoryAuthority` and no `classes` |
 
 The broker reads `policyManagement` (only `promotion` and `operators` matter there) and
 `human.approvalMemory` (bool, default `false`) from its own config.
 
-A profile's `checks` and `testFirst` are the class's. Its `template`, `tier` and `loop` shape the
-runs of a task whose class declares `harnessAllowed` or `escalation` ([the scoper](factory.md#the-scoper)
-resolves the profile); `template` is also read for [coordination](factory.md#multi-repository-coordination)
-checks. A file binds `review` only as `{name: review, mode: "off"}`: its `harness`, `harnessAllowed`
-and `escalation` are the `review` policy's, and on `review` the `harness` is always the evaluation's
-floor, so a cut-over repository's review tasks keep the floor, the variants and the steps the
-policy gives. A file that does not bind `review` leaves it implicit, and its tasks run as before the
-evaluation.
+A policy selects no workflow: a task's workflow comes from a maintainer's label, its source or the
+`Repository`'s `workflow.default` ([how the workflow is chosen](factory.md#the-shipped-workflows)). A
+policy's `harness`, `harnessAllowed`, `escalation`, `checks` and `testFirst` are read by nothing and
+carry the `Deprecated` condition until they are removed ([upgrading](upgrading.md#workflows-name-what-runs)).
+The default workflow's `template` is read for [coordination](factory.md#multi-repository-coordination)
+checks. A file binds `review` only as `{name: review, mode: "off"}`.
 
 <!-- check: central -->
 ```yaml
-harnessProfiles:
+workflows:
   plain: {}
   checked: {checks: true}
-  tested: {checks: true, testFirst: true}
   adopted-none: {template: none}
 mergeGuardrails:
   protectedFiles: ['^\.github/', '^\.policy\.yml$']
@@ -525,7 +520,7 @@ Paths and caps only: a symlink or a file mode change under `docs/` is not told a
 
 ### Dependency updates
 
-An adopted class: Renovate's pull requests, no run. Its profile is a `template: none` one.
+An adopted class: Renovate's pull requests, no run. Its workflow is `none`, a `template: none` one.
 
 <!-- check: none -->
 ```yaml
@@ -609,7 +604,7 @@ any byte of difference; Maku reads its result and never runs repository code.
 `maku policy diff` proves a change structural, class by class (`mergepolicy.Structural`), on the
 resolved classes. A tightening is bounded on every row by the old class: fewer allowed paths, more
 denied ones, a wider approval subset, lower caps, more evidence, a lower mode. Anything else,
-including a rewritten pattern, another harness profile, a `harnessAllowed` variant or an
+including a rewritten pattern, another workflow, a `harnessAllowed` variant or an
 `escalation` step added or changed, is a relaxation.
 
 | Change to the `docs-broad` binding above | Verdict | Why, as printed |
@@ -732,7 +727,7 @@ repository's file holds the bindings (MP15)`).
 ### Validate a class: `maku policy diff`
 
 To validate a new or changed binding, use `diff`, never `check`. `diff` parses both files strictly,
-resolves each binding against the policies `--manifests` serves, the guardrails and the profiles,
+resolves each binding against the policies `--manifests` serves, the guardrails and the workflows,
 and names each class's structural change. Pass
 the same file twice to validate one file alone. It needs `policyManagement.simulation` in the
 config you pass.
@@ -927,7 +922,7 @@ record's fields are in [the factory](factory.md#the-merge-gate):
 | `considered=` | Each candidate policy that did not hold, as `<policy>:<reason>`, comma-separated. Each shadow policy that held has a record line of its own after the decision's |
 | `resolved=` | The first 12 hex digits of the resolved class's hash: the policy's definition and this repository's binding together, mode excluded. It is what an approval grant binds to, so the approval-memory form prefills from it; an edit to another class leaves it, and its grants, unchanged |
 
-The guardrails and profiles in force are the pod's config, bound by its checksum, not per record.
+The guardrails and workflows in force are the pod's config, bound by its checksum, not per record.
 `policy_unavailable` and `policy_invalid` decisions map to no stage on the timeline.
 
 ### Reasons
@@ -1007,9 +1002,6 @@ write it as bindings, with `maku policy export` once the factory serves the repo
 **A class I bound is missing.** Its binding did not resolve and dropped that class alone. `maku policy
 check` prints `<class>: refused, <reason>: …`, and a `Repository`'s `BindingsValid` condition names
 it; the reasons are in [policies and bindings](#policies-and-bindings).
-
-**`harness "x" is not in harnessProfiles`.** The policy names a profile the central config does not
-have. Ask an operator to add it, or to change the policy.
 
 **`maxPatchFiles 30 is over the guardrail's 20`.** A binding may only lower a guardrail cap
 (`GuardrailMismatch`). Leave the key out to inherit it.

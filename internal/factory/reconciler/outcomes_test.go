@@ -4,9 +4,12 @@ package reconciler
 
 import (
 	"errors"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 
@@ -165,5 +168,63 @@ func TestAFullRegressionPageThatMissesTheWindowIsTruncated(t *testing.T) {
 	}
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Reason != "ledger_truncated" || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+}
+
+// CP1: the wait between two runs of a task, recorded when the second run launches, by its role.
+func TestASecondRunRecordsTheWaitSinceTheFirstEnded(t *testing.T) {
+	g := newRig(t, issueTask("3buqdlot", 7, "x"))
+	g.r.Triage = staticWith("pair")
+	tk := g.reconcile(t, "3buqdlot", 3) // → Implementing; the first run launches
+	if len(tk.Status.Runs) != 1 {
+		t.Fatalf("runs: %+v", tk.Status.Runs)
+	}
+	for _, m := range g.metrics.recorded {
+		if strings.HasPrefix(m, "run_wait ") {
+			t.Fatalf("the first run of a task records no wait: %q", g.metrics.recorded)
+		}
+	}
+	g.f.SetBranch("agent/3buqdlot", 12)
+	g.f.SetPR(pr12At(head1))
+	g.finish(rid(0), "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 1) // the implementer's end is recorded
+	if len(tk.Status.Runs) != 1 || tk.Status.Runs[0].Finished == nil || !tk.Status.Runs[0].Finished.Time.Equal(now) {
+		t.Fatalf("the implementer's end is stamped: %+v", tk.Status.Runs)
+	}
+	g.r.Now = func() time.Time { return now.Add(7 * time.Minute) }
+	tk = g.reconcile(t, "3buqdlot", 1) // the reviewer launches
+	if tk.Status.Phase != v1alpha1.PhaseReviewing || len(tk.Status.Runs) != 2 {
+		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Runs)
+	}
+	if !slices.Contains(g.metrics.recorded, "run_wait reviewer 420") {
+		t.Fatalf("the wait is the reviewer's, since the implementer ended: %q", g.metrics.recorded)
+	}
+}
+
+// CP1: a run whose predecessor is still running records no wait.
+func TestRunWaitNeedsThePreviousRunEnded(t *testing.T) {
+	started := metav1.NewTime(now.Add(-time.Hour))
+	for name, runs := range map[string][]v1alpha1.RunRecord{
+		"no run yet":    nil,
+		"still running": {{ID: "runone12", Role: "implementer", Started: &started}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			tk := issueTask("3buqdlot", 7, "x")
+			tk.Status.Runs = runs
+			if waitSinceEnded(tk) != nil {
+				t.Fatalf("a wait needs an ended previous run: %+v", runs)
+			}
+		})
+	}
+	tk := issueTask("3buqdlot", 7, "x")
+	ended := metav1.NewTime(now.Add(-time.Hour))
+	tk.Status.Runs = []v1alpha1.RunRecord{{ID: "runone12", Role: "implementer", Started: &started, Finished: &ended},
+		{ID: "runtwo12", Role: "reviewer", Started: &started}}
+	if got := waitSinceEnded(tk); got != nil {
+		t.Fatalf("the most recent run governs: %+v", got)
+	}
+	tk.Status.Runs[1].Finished = &ended
+	if got := waitSinceEnded(tk); got == nil || !got.Time.Equal(now.Add(-time.Hour)) {
+		t.Fatalf("the latest ended run's end: %+v", got)
 	}
 }

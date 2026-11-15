@@ -10,6 +10,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
+	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
@@ -37,11 +38,11 @@ func factoryConfig(in Inputs) map[string]any {
 				"docs-links": map[string]any{"shadow": true, "allowedFiles": []any{`^.+\.(md|mdx|adoc|rst)$`}},
 				"revert":     map[string]any{"shadow": true, "allowedFiles": []any{`^.+$`}},
 			},
+			// The settings every repository shares are the Factory's mergeDefaults (Q15).
 			"merge": map[string]any{
 				"requiredChecks": checks, "verifyChecks": checks, "leakScanCheck": checks[0],
-				"gateStatus": true, "policyBot": false, "mergerLogin": factoryLogin,
+				"gateStatus": true, "policyBot": false,
 				"autoMergesPerDay": 5, "fixRuns": 2, "checkReruns": 1,
-				"verifyFor": "30m", "revertWindow": "168h", "breaker": map[string]any{"window": 10, "maxReverts": 1},
 			},
 		})
 	}
@@ -80,26 +81,53 @@ func factoryConfig(in Inputs) map[string]any {
 				"promQuery": fmt.Sprintf(`sum by (ar_agent) (increase(agentgateway_requests_total{status="429", reason="RateLimit", ar_agent=~%q}[5m])) > 0`, runsSubject),
 			},
 		},
-		"defaults": map[string]any{"template": "solo", "tier": "standard", "dataClass": "public", "predictedClass": "review"},
-		"loops": map[string]any{
-			"review":     map[string]any{"scope": "scoper", "judge": "tier-light"},
-			"docs-links": map[string]any{"scope": "scoper", "judge": "tier-light"},
-		},
+		"defaults": map[string]any{"dataClass": "public", "predictedClass": "review"},
 		"tiers": map[string]any{
 			"light":    map[string]any{"model": "tier-light", "runTokens": 300000, "taskTokens": 600000, "runMinutes": 20},
 			"standard": map[string]any{"model": "agent-default", "runTokens": 1500000, "taskTokens": 3000000, "runMinutes": 45},
 			"frontier": map[string]any{"model": "agent-default", "runTokens": 4000000, "taskTokens": 8000000, "runMinutes": 90},
 		},
-		"templates": map[string]any{
-			"solo":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"pair":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"trio":        map[string]any{"roles": []any{"implementer", "reviewer"}, "maxReviewRounds": 2},
-			"investigate": map[string]any{"roles": []any{"triager"}},
-		},
-		"caps":         map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
-		"repositories": repos,
+		"mergeDefaults": mergeDefaults(factoryLogin),
+		"caps":          map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
+		"repositories":  repos,
 	}
+	// The three workflows, written out (workflows WF2): a platform reads and edits what it runs. The
+	// careful row splits only where the meter prices the runs (validateLoops).
+	profiles, templates, loops := config.FillShippedWorkflows(nil, nil, nil, len(a.List("models.prices")) > 0)
+	cfg["workflows"], cfg["templates"], cfg["loops"] = plain(profiles), plain(templates), plain(loops)
 	return cfg
+}
+
+// plain is v as the untyped map the config is written from.
+func plain(v any) map[string]any {
+	raw, err := json.Marshal(v)
+	if err != nil {
+		panic(err) // config types always marshal
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		panic(err)
+	}
+	return m
+}
+
+// The merge settings every repository shares, which the factory requires and fills from nowhere
+// else: install writes them once, in the Factory's spec.mergeDefaults (Q15), and maku repo add
+// --merge-defaults=false writes the same into a Repository.
+const (
+	defaultVerifyFor         = "30m"  // a merge is watched this long for a failing verify check
+	defaultRevertWindow      = "168h" // a revert within it counts against the class
+	defaultBreakerWindow     = 10     // R41: 1 revert in the last 10 merges demotes the class
+	defaultBreakerMaxReverts = 1
+)
+
+// mergeDefaults is the Factory's spec.mergeDefaults: the merger is the factory App (the merger folded
+// in), and gateStatus and policyBot are left to the factory's defaults (true and false).
+func mergeDefaults(factoryLogin string) map[string]any {
+	return map[string]any{
+		"mergerLogin": factoryLogin, "verifyFor": defaultVerifyFor, "revertWindow": defaultRevertWindow,
+		"breaker": map[string]any{"window": defaultBreakerWindow, "maxReverts": defaultBreakerMaxReverts},
+	}
 }
 
 // chartWritten are the config keys the maku-factory chart writes itself from apps.*: a values file
