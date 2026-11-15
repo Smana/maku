@@ -183,7 +183,7 @@ The checks, generated from the catalog in `internal/preflight`:
 
 ## Private code
 
-A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
+A `Repository` serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS; self-hosted models remain possible through agentgateway, though nothing in the product depends on them.
 
 ```yaml
 apiVersion: maku.ogenki.io/v1alpha1
@@ -195,12 +195,16 @@ spec:
   privateCode: {acknowledged: true}   # true or absent: false is refused
 ```
 
-The factory reads each served repository's visibility through the factory App. `private` and
-`internal` count as private code, and so does a read that fails. A private repository without the
-field is refused new tasks, and tasks already started finish: its `PrivateCode` condition is `False`,
-the gauge `maku_factory_private_code_unacknowledged` reads 1, the preflight fails
-`private_code_unacknowledged`, and the install banner says so. Self-hosted models remain possible through agentgateway, but nothing in the product
-depends on them. The [Repository reference](factory.md#private-code) has the details.
+On each 5-minute fence pass, the factory reads every served repository's visibility through the factory App (`private`, `internal`, and failed reads all fail closed as private code, and nothing starts before the first read after startup). Without `privateCode.acknowledged: true`, tasks already started finish, while new work is refused (`factory/ready` comments and removes the label, the API answers `403 private_code_unacknowledged`, and neither schedules nor adoption start tasks):
+
+| Surface | Reports |
+|---|---|
+| `Repository` `PrivateCode` condition | `False` `Unacknowledged` ("No new task starts until it is set"); `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read or `NotServed` |
+| Preflight `private-code` check | `fail` `private_code_unacknowledged`, naming the repositories |
+| Metric and alert | `maku_factory_private_code_unacknowledged{repository}` (`1` or `0`); `AgentFactoryPrivateCodeUnacknowledged` fires after 15 minutes at `1` |
+| Web UI install banner and logs | `private_code_unacknowledged` via `GET /v1/install` (requires `factoryURL` on the broker); one `WARN` per visibility change |
+
+Two paths remain public-only regardless of acknowledgement: **demo mode** (where runs can read the model key and GitHub token) and **[multi-repository coordination](multi-repository.md)** (`publicOnly: true`).
 
 ## Sandbox nodes
 

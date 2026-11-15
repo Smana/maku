@@ -267,7 +267,7 @@ gateway's token metrics carry the run's subject in `ar_agent`: the subject the f
 matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The factory then:
 
 - prices the runs from `meter.query`, which reads agentgateway's own series, cache types included
-  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](factory.md#budgets));
+  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](reference/budgets.md));
 - reads the gateway's 429s from `meter.throttle.promQuery`, PromQL on the same `meter.url`, or from
   VictoriaLogs as before;
 - accepts `loops.<class>.models`, a provider alias per role and tier, which becomes the run's

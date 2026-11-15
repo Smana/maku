@@ -18,7 +18,9 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Team evaluation](team-evaluation.md) | Adding approved workflows to the demo and comparing `apply` and `observe` outcomes |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; a room's phases; who does what |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
-| [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch, splits and the factory's API |
+| [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch and splits |
+| [Hardening](hardening.md) | Untrusted-input hardening across stages H1–H5: audit, safe outputs, enforced push, filtered reads, drills, readiness and T5 promotion |
+| [Multi-repository coordination](multi-repository.md) | Cross-repository plan, confirmations, exact artifact dependencies, integration manifests, budgets and recovery |
 | [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
 | [Merge policies](merge-policies.md) | A repository's merge policies: start here, the catalog, bindings, rollout stages, every field, worked examples, recipes, checking and promoting, reasons, rollback |
 | [maku](cli.md) | Install and verify, one-command setup, every command, the six MCP tools, the maku-handoff skill |
@@ -26,7 +28,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
 | [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
-| [Reference](reference/README.md) | The broker and factory [API](reference/api.md), [event envelope](reference/event-envelope.md), [room log](reference/room-log.md), [Room CRD](reference/room-crd.md), [Task CRD](reference/task-crd.md), [config file](reference/config.md) and [sponsored principals](reference/sponsored-principals.md) |
+| [Reference](reference/README.md) | The broker and factory [API](reference/api.md), [event envelope](reference/event-envelope.md), [room log](reference/room-log.md), [Room CRD](reference/room-crd.md), [Task CRD](reference/task-crd.md), [config file](reference/config.md), [sponsored principals](reference/sponsored-principals.md), [narration](reference/narration.md) and [budgets](reference/budgets.md) |
 | [Injection drills](drills.md) | The drill repository and accounts, `maku drill plant`, how the factory scores a drill, reading a report, the stop rule |
 | [Exposure](exposure.md) | `expose.mode`: the web and Slack surfaces by HTTPRoute or Ingress, what must be public, the web front door (oauth2-proxy) and its policies, what the probe proved |
 | [Install Secrets](install-secrets.md) | Every Secret an install reads, by name and key; the umbrella's optional ExternalSecrets, with OpenBao, CNPG and AWS examples |

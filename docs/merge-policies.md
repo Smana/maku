@@ -497,7 +497,7 @@ source or the `Repository`'s `workflow.default` ([how the workflow is chosen](fa
 Workflow fields (`harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`), `requires`,
 `mode: "off"`, and the `review` policy were removed from `MergePolicy` and bindings
 ([upgrading](upgrading.md#merge-policies-removals)). The default workflow's `template` is read for
-[coordination](factory.md#multi-repository-coordination) checks.
+[coordination](multi-repository.md) checks.
 
 <!-- check: central -->
 ```yaml
@@ -1281,7 +1281,7 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
 | `RepositoryFileValid` | `Repository` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central policies decide); `False` `Invalid` (the file does not parse, is in the removed `classes:` shape, or, under repository authority, binds no policy); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
 | `InSync` | `Repository` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
-| `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](factory.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
+| `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](install.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 A `Repository` reports its `authority` (`central` or `repository`), its resolved `merge` and

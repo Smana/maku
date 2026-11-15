@@ -103,7 +103,7 @@ fresh-run revisions are unchanged.
 
 ## Coordination
 
-[Multi-repository coordination](../factory.md#multi-repository-coordination)'s eight series. With
+[Multi-repository coordination](../multi-repository.md)'s eight series. With
 `coordination.mode: off` none is recorded, so none is served; under `plan` only what drafts and
 confirmations do: plan versions, dropped children, authorization waits and allocations. The Go instruments keep the `agent_factory_` prefix like every factory instrument; the
 exporter serves them as below.
@@ -113,7 +113,7 @@ The eight series and trace attributes are in [Coordination metrics](../reference
 
 ## Hardening, non-code outputs
 
-[Stage H2](../factory.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
+[Stage H2](../hardening.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
 and is checked before the next. Steps 1 to 4 are inert, because nothing reads them until a run
 carries the `safe-outputs` annotation, and only step 4 writes it. Listing the repository earlier
 leaves the first enforced tasks waiting unanswered (no publisher token).
@@ -159,7 +159,7 @@ an enforced repository off cloud-native-ref's XR and octo-sts went with both in 
 
 ## Hardening, push enforced
 
-[Stage H3](../factory.md#hardening-push-enforced) for one repository that already enforces the
+[Stage H3](../hardening.md#hardening-push-enforced) for one repository that already enforces the
 non-code outputs. Each step lands and is checked before the next.
 
 1. **The Maku release** runs on the cluster: the factory image with `git`, and the harness image
@@ -208,7 +208,7 @@ the run supersedes the approval.
 
 ## Hardening, reads filtered
 
-[Stage H4](../factory.md#hardening-reads-filtered) for a repository that already enforces all five
+[Stage H4](../hardening.md#hardening-reads-filtered) for a repository that already enforces all five
 output types, on the run-controller.
 
 1. **The Maku release** on the factory, the broker and the run-controller, one version for all
