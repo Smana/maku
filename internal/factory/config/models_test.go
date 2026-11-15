@@ -59,6 +59,60 @@ func TestModelFor(t *testing.T) {
 	}
 }
 
+func TestEffortForReadsTheWorkflowsRole(t *testing.T) {
+	cfg := mustParse(t, clean+"workflows: {standard: {template: pair, effort: {reviewer: medium}}}\n")
+	for role, want := range map[string]string{"reviewer": "medium", "implementer": "", "triager": ""} {
+		if got := cfg.EffortFor("standard", role); got != want {
+			t.Errorf("EffortFor standard %s = %q, want %q", role, got, want)
+		}
+	}
+	if got := mustParse(t, clean).EffortFor("standard", "reviewer"); got != "" {
+		t.Errorf("no effort row: %q, want the harness default", got)
+	}
+}
+
+func TestWorkflowModelsApplyPerRole(t *testing.T) {
+	cfg := mustParse(t, clean+gatewayIdentity+"workflows: {standard: {template: pair, models: {reviewer: tier-standard}}}\n")
+	for _, dataClass := range []string{"public", "internal"} {
+		if got := cfg.ModelFor("standard", dataClass, "reviewer", "frontier"); got != "tier-standard" {
+			t.Errorf("%s reviewer model = %q, want tier-standard", dataClass, got)
+		}
+		if got := cfg.ModelFor("standard", dataClass, "implementer", "frontier"); got != "" {
+			t.Errorf("%s implementer model = %q, want the tier's model", dataClass, got)
+		}
+	}
+}
+
+func TestWorkflowProviderModelIsPublicOnly(t *testing.T) {
+	cfg := mustParse(t, byModel+gatewayIdentity+"workflows: {standard: {template: pair, models: {reviewer: kimi-frontier}}}\n")
+	if got := cfg.ModelFor("standard", "public", "reviewer", "frontier"); got != "kimi-frontier" {
+		t.Fatalf("public reviewer model = %q, want kimi-frontier", got)
+	}
+	if got := cfg.ModelFor("standard", "internal", "reviewer", "frontier"); got != "" {
+		t.Fatalf("internal reviewer model = %q, want the tier's model", got)
+	}
+}
+
+func TestWorkflowEffortAndModelsValidation(t *testing.T) {
+	for name, c := range map[string]struct{ raw, want string }{
+		"unknown effort":      {clean + "workflows: {standard: {template: pair, effort: {reviewer: max}}}\n", `workflows.standard.effort.reviewer "max" is low, medium or high`},
+		"unknown effort role": {clean + "workflows: {standard: {template: pair, effort: {merger: low}}}\n", `workflows.standard.effort: unknown role "merger"`},
+		"implementer effort":  {clean + "workflows: {standard: {template: pair, effort: {implementer: low}}}\n", "workflows.standard.effort.implementer: the implementer's effort is not settable"},
+		"unknown model role":  {clean + "workflows: {standard: {template: pair, models: {merger: tier-light}}}\n", `workflows.standard.models: unknown role "merger"`},
+		"implementer model":   {clean + "workflows: {standard: {template: pair, models: {implementer: tier-light}}}\n", "workflows.standard.models.implementer: the implementer's model is not settable"},
+		"unknown model alias": {clean + "workflows: {standard: {template: pair, models: {reviewer: huge}}}\n", `workflows.standard.models.reviewer: "huge" is not a model alias`},
+		"internal provider":   {strings.Replace(byModel, "dataClass: public", "dataClass: internal", 1) + "workflows: {standard: {template: pair, models: {reviewer: kimi-frontier}}}\n", "workflows.standard.models.reviewer kimi-frontier: an internal task takes tier-light, tier-standard or tier-frontier"},
+		"none runs no effort": {clean + "workflows: {none: {template: none, effort: {reviewer: low}}}\n", "workflows.none: template none runs nothing, so it takes no other key"},
+		"none runs no models": {clean + "workflows: {none: {template: none, models: {reviewer: tier-light}}}\n", "workflows.none: template none runs nothing, so it takes no other key"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(c.raw)); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("err = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
 func TestPublicOnly(t *testing.T) {
 	for _, m := range []string{"kimi-frontier", "mistral-standard", "mistral-light"} {
 		if !PublicOnly(m) {

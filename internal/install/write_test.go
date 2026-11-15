@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"sort"
@@ -363,7 +364,7 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		f := renderedFactory(t, name)
 		profiles, templates, loops := config.ShippedWorkflows()
 		for n, want := range profiles {
-			if got, ok := f.Spec.Workflows[n]; !ok || got != want {
+			if got, ok := f.Spec.Workflows[n]; !ok || !reflect.DeepEqual(got, want) {
 				t.Errorf("%s: workflow %s = %+v, want %+v", name, n, got, want)
 			}
 		}

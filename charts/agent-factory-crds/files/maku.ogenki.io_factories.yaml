@@ -239,9 +239,9 @@ spec:
                         maxProperties: 32
                         type: object
                       description: |-
-                        Models is role → tier → the provider alias that role runs on for a public task of that tier
-                        (v3 F15, F3); a role or tier without an entry, and every internal task, keep today's model.
-                        It never switches the loop on.
+                        Models is the loops row's public fallback: role → tier → provider alias (F3). A role or tier
+                        without an entry keeps today's model; a workflow's models override takes precedence, including
+                        a tier alias on an internal task (CP10). It never switches the loop on.
                       maxProperties: 32
                       type: object
                     scope:
@@ -565,6 +565,20 @@ spec:
                         when to choose the workflow.'
                       maxLength: 120
                       type: string
+                    effort:
+                      additionalProperties:
+                        description: Effort is a role's reasoning effort (CP9).
+                        enum:
+                        - low
+                        - medium
+                        - high
+                        maxLength: 6
+                        type: string
+                      description: |-
+                        Effort maps a non-implementer role to low, medium or high (CP9). An absent role keeps the
+                        harness's default, high.
+                      maxProperties: 4
+                      type: object
                     escalation:
                       description: |-
                         Escalation is the workflow a failed run's signal group steps to (WF7, TE7); absent, or an
@@ -581,6 +595,17 @@ spec:
                       description: LoopRef names a row of loops, or off.
                       maxLength: 253
                       type: string
+                    models:
+                      additionalProperties:
+                        description: ModelAlias is a provider alias, a named type
+                          for the same reason.
+                        maxLength: 253
+                        type: string
+                      description: |-
+                        Models maps a non-implementer role to a model alias (CP10). Internal runs accept only the
+                        tier-light, tier-standard and tier-frontier aliases; provider aliases are public only.
+                      maxProperties: 4
+                      type: object
                     template:
                       maxLength: 253
                       type: string

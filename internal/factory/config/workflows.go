@@ -141,6 +141,43 @@ func (c *Config) validateWorkflow(r *Repository, bad func(string, ...any)) {
 	}
 }
 
+// validateWorkflowTuning checks the per-role effort and model overrides (CP9, CP10). A provider
+// alias under an internal default is refused at load; under a public default, ModelFor still keeps
+// it off an internal run.
+func (c *Config) validateWorkflowTuning(bad func(string, ...any), name string, p HarnessProfile) {
+	for _, role := range slices.Sorted(maps.Keys(p.Effort)) {
+		key := "workflows." + name + ".effort." + role
+		switch effort := string(p.Effort[role]); {
+		case !slices.Contains(roles(), role):
+			bad("workflows.%s.effort: unknown role %q", name, role)
+		case role == "implementer":
+			bad("%s: the implementer's effort is not settable", key)
+		case !slices.Contains([]string{"low", "medium", "high"}, effort):
+			bad("%s %q is low, medium or high", key, effort)
+		}
+	}
+	for _, role := range slices.Sorted(maps.Keys(p.Models)) {
+		alias, key := string(p.Models[role]), "workflows."+name+".models."+role
+		_, provider := providerModels()[alias]
+		switch {
+		case !slices.Contains(roles(), role):
+			bad("workflows.%s.models: unknown role %q", name, role)
+			continue
+		case role == "implementer":
+			bad("%s: the implementer's model is not settable", key)
+		case !slices.Contains(models(), alias) && !provider:
+			bad("%s: %q is not a model alias", key, alias)
+		case c.Defaults.DataClass == "internal" && !slices.Contains([]string{"tier-light", "tier-standard", "tier-frontier"}, alias):
+			bad("%s %s: an internal task takes tier-light, tier-standard or tier-frontier", key, alias)
+		case provider:
+			c.needsPrice(bad, key, alias)
+		}
+	}
+	if len(p.Models) > 0 && !c.Runs.GatewayIdentity {
+		bad("workflows.%s.models needs runs.gatewayIdentity (a model gateway): the portable runtime ignores a run's model alias", name)
+	}
+}
+
 // upgradeNotes is where every refusal of a removed setting points (WF13).
 const upgradeNotes = "docs/upgrading.md#workflows-name-what-runs"
 
