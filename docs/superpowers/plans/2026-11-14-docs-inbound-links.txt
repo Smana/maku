@@ -249,9 +249,9 @@ charts/maku-factory/README.md:50: docs/security.md
 charts/maku-factory/README.md:50: docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read
 charts/maku-factory/README.md:51: docs/factory.md
 charts/maku-factory/README.md:51: docs/factory.md#the-post-merge-monitor
-charts/maku-factory/README.md:53: docs/factory.md
-charts/maku-factory/README.md:53: docs/factory.md#hardening-non-code-outputs-enforced
-charts/maku-factory/README.md:53: docs/upgrading.md#the-xr-run-kind-and-octo-sts
+[x] charts/maku-factory/README.md:53: docs/factory.md
+[x] charts/maku-factory/README.md:53: docs/factory.md#hardening-non-code-outputs-enforced
+[x] charts/maku-factory/README.md:53: docs/upgrading.md#the-xr-run-kind-and-octo-sts
 charts/maku-factory/README.md:82: docs/architecture.md#how-the-factory-reads-its-configuration
 charts/maku-factory/README.md:104: docs/architecture.md#live-fields-and-fields-that-need-a-rollout
 charts/maku-factory/README.md:105: docs/factory.md
