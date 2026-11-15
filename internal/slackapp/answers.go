@@ -204,10 +204,8 @@ func statusAnswer(sum summary.Summary, page string) string {
 		}
 		lines = append(lines, "Budget: "+b)
 	}
-	if sum.Status.Policy != nil {
-		if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
-			lines = append(lines, "Merge: "+gp)
-		}
+	if gp := gatePart(sum); gp != "" {
+		lines = append(lines, "Merge: "+gp)
 	}
 	lines = append(lines, "Room: "+page)
 	return capLines(lines)

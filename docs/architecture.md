@@ -25,7 +25,7 @@ the `agents` namespace is one the pod opens.
 | Room controller | Inside the broker, reconciling `Room` CRs | Creates the room's log row and its first event, projects `status`, runs the finalizer that seals the log |
 | `AgentRun` watch | Inside the broker, on every replica | Admits bridges of live runs only, drops a run's connections when it ends, records joins, phases and end reasons |
 | Log store | CNPG `SQLInstance xplane-rooms`, database `rooms` | Append-only events, one gapless `seq` per room |
-| `Room` CRD | `maku.ogenki.io/v1alpha1`, namespaced | The room's policy and projected status ([reference](concepts.md#reference-the-room-crd)) |
+| `Room` CRD | `maku.ogenki.io/v1alpha1`, namespaced | The room's policy and projected status ([reference](reference/room-crd.md)) |
 | `Task` CRD | `charts/maku-factory`, shipped with the factory | One issue's state machine, from `Received` to `Done` ([factory](factory.md)) |
 | Fan-out | Postgres `LISTEN`/`NOTIFY` on channel `rooms_events`, one listener connection per replica | Every append notifies `"<room> <last_seq>"` in its own transaction, so only committed events are announced. Each replica reads a notified room once for all its viewers, and polls every second while its listener is down ([connection budget](#connection-budget)) |
 | Web UI | Embedded in the broker (`web/`, TypeScript), behind oauth2-proxy | Watch a room, post, steer, approve, fork, invite and close |
@@ -156,11 +156,11 @@ sequenceDiagram
 |---|---|---|
 | 1. Label | A maintainer labels the issue | [factory](factory.md) |
 | 2. Implementer run | The factory starts a run in a new room; the run opens the pull request | [concepts](concepts.md) |
-| 3. Reviewer verdict | A reviewer run in the same room reads the diff and records a verdict | [room log](room-log.md) |
+| 3. Reviewer verdict | A reviewer run in the same room reads the diff and records a verdict | [room log](reference/room-log.md) |
 | 4. CI | The factory waits for the required checks | [factory](factory.md) |
 | 5. Wait for a maintainer | Outside the auto-merge classes the task is `AwaitingHuman` | [factory](factory.md) |
 | 6. Review and revise | A person steers in the room, or requests changes on the pull request (queued as the room's message); the next run starts from the brief | [concepts](concepts.md) |
-| 7. Resume a lost sandbox | The next run rebuilds its context from the log | [room log](room-log.md) |
+| 7. Resume a lost sandbox | The next run rebuilds its context from the log | [room log](reference/room-log.md) |
 | 8. Approve and merge | The merger App merges, or a maintainer does | [security](security.md) |
 
 ### Outcome-overlap evaluation

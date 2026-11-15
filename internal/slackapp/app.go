@@ -1133,10 +1133,8 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		sum := a.taskSummary(ctx, e.Room)
 		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
 		head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
-		if sum.Status.Policy != nil {
-			if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
-				head += " · " + gp
-			}
+		if gp := gatePart(sum); gp != "" {
+			head += " · " + gp
 		}
 		text := head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
 		if blocks := actLineBlocks(e, ch, text); len(blocks) > 0 {

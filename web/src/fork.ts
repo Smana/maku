@@ -34,7 +34,7 @@ export function mountFork(root: HTMLElement, conn: Sender, state: RoomState) {
     if (note.value.trim()) action.note = note.value.trim();
     if (role.value) {
       action.role = role.value;
-      if (role.value === "reviewer" && prUrl.value.trim()) action.prUrl = prUrl.value.trim(); // reviewer only (docs/api.md)
+      if (role.value === "reviewer" && prUrl.value.trim()) action.prUrl = prUrl.value.trim(); // reviewer only (docs/reference/api.md)
       const profiles = egress.value.split(",").map((s) => s.trim()).filter(Boolean);
       if (profiles.length) action.egressProfiles = profiles;
     }
