@@ -475,7 +475,7 @@ func TestHumanLocalModeRefusesMCP(t *testing.T) {
 		{"enabled", "  mcp:\n    enabled: true\n", "human.mcp.enabled: mode local"},
 		{"sponsored", "  mcp:\n    sponsored:\n      - name: slack-app\n        clientIDFile: /etc/room-broker/sponsored/slack-app\n",
 			"human.mcp.sponsored: mode local"},
-		{"sessionStart", "  mcp:\n    sessionStart: [Smana/a]\n", "human.mcp.sessionStart: mode local"},
+		{"start", "  mcp:\n    start:\n      except: [Smana/a]\n", "human.mcp.start: mode local"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1407,21 +1407,18 @@ func TestStartExcept(t *testing.T) {
 	}
 }
 
-func TestSessionStartHonouredWithWarning(t *testing.T) {
+func TestSessionStartRefused(t *testing.T) {
 	maku := strings.Replace(valid, "  projectIDFile:", "  roomctlClientIDFile: /etc/room-broker/roomctl/client-id\n  projectIDFile:", 1)
-	doc := maku + access + "  mcp:\n    enabled: true\n    sessionStart: [o/r]\n    start:\n      default: false\n"
-	cfg, err := Load(write(t, doc))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if cfg.Human.MCP.Start.Default == nil || *cfg.Human.MCP.Start.Default {
-		t.Fatalf("Start.Default = %v, want false", cfg.Human.MCP.Start.Default)
-	}
-	if len(cfg.Human.MCP.SessionStart) != 1 || cfg.Human.MCP.SessionStart[0] != "o/r" {
-		t.Fatalf("SessionStart = %v, want [o/r]", cfg.Human.MCP.SessionStart)
-	}
-	const wantWarning = "human.mcp.sessionStart is deprecated: use human.mcp.start"
-	if len(cfg.Warnings) != 1 || cfg.Warnings[0] != wantWarning {
-		t.Fatalf("Warnings = %v, want [%q]", cfg.Warnings, wantWarning)
+	const wantErr = "human.mcp.sessionStart was removed: use human.mcp.start"
+	for name, doc := range map[string]string{
+		"non-empty": maku + access + "  mcp:\n    enabled: true\n    sessionStart: [o/r]\n",
+		"empty":     maku + access + "  mcp:\n    enabled: true\n    sessionStart: []\n",
+		"local":     localConfig + "  mcp:\n    sessionStart: [o/r]\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, doc)); err == nil || !strings.Contains(err.Error(), wantErr) {
+				t.Fatalf("got %v, want %q", err, wantErr)
+			}
+		})
 	}
 }

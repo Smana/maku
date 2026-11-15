@@ -476,10 +476,6 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	hub humanapi.Hub, runs humanapi.Runs, actor *humanapi.Actor, vis gitHubVisibilities, m *metrics.Set, log *slog.Logger,
 ) (*humanapi.Server, error) {
 	h := cfg.Human
-	start := make(map[string]bool, len(h.MCP.SessionStart))
-	for _, r := range h.MCP.SessionStart {
-		start[strings.ToLower(r)] = true
-	}
 	startDefault := h.StartDefault()
 	startExcept := make(map[string]bool, len(h.MCP.Start.Except))
 	for _, r := range h.MCP.Start.Except {
@@ -531,7 +527,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, StartDefault: startDefault, StartExcept: startExcept,
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), StartDefault: startDefault, StartExcept: startExcept,
 		Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
 		FactoryInstall: factoryInstall(cfg)}, nil
 }

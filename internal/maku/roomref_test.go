@@ -44,11 +44,11 @@ func TestRoomReferencesResolve(t *testing.T) {
 			b := newMCPBroker(t)
 			b.rooms = refRooms
 			s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-			res := s.request(t, 5, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": tc.ref}})
+			res := s.request(t, 5, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": tc.ref}})
 			if r := res["result"].(map[string]any); r["isError"] == true {
 				t.Fatalf("%v", r)
 			}
-			if got := lastCall(t, b); got.Name != "room_summary" || got.Args["room"] != tc.want {
+			if got := lastCall(t, b); got.Name != "room_tail" || got.Args["room"] != tc.want {
 				t.Fatalf("the broker got %+v, want room %s", got, tc.want)
 			}
 		})
@@ -63,10 +63,10 @@ func TestRoomReferenceKinds(t *testing.T) {
 		b := newMCPBroker(t)
 		b.rooms = rows
 		s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-		res := s.request(t, 5, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": ref}})["result"].(map[string]any)
+		res := s.request(t, 5, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": ref}})["result"].(map[string]any)
 		got := lastCall(t, b)
 		if want == "" {
-			if res["isError"] != true || !strings.Contains(fmt.Sprint(res["content"]), "unknown_room") || got.Name == "room_summary" {
+			if res["isError"] != true || !strings.Contains(fmt.Sprint(res["content"]), "unknown_room") || got.Name == "room_tail" {
 				t.Errorf("%q: %v %+v", ref, res, got)
 			}
 			continue
@@ -82,14 +82,14 @@ func TestRoomReferenceBareNumberAcrossKindsAsks(t *testing.T) {
 	b := newMCPBroker(t)
 	b.rooms = refRooms
 	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-	res := s.request(t, 5, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": "12"}})["result"].(map[string]any)
+	res := s.request(t, 5, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": "12"}})["result"].(map[string]any)
 	text := fmt.Sprint(res["content"])
 	for _, w := range []string{"ambiguous_room", "issue", "PR", "bcdefghi", "abcdefgh", "#12", "PR #12"} {
 		if res["isError"] != true || !strings.Contains(text, w) {
 			t.Fatalf("lacks %q: %v", w, res)
 		}
 	}
-	if got := lastCall(t, b); got.Name == "room_summary" {
+	if got := lastCall(t, b); got.Name == "room_tail" {
 		t.Fatalf("the broker was called: %+v", got)
 	}
 }
@@ -100,12 +100,12 @@ func TestRoomReferenceTitleFragment(t *testing.T) {
 	b := newMCPBroker(t)
 	b.rooms = refRooms
 	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-	res := s.request(t, 5, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": "chore: forty"}})["result"].(map[string]any)
+	res := s.request(t, 5, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": "chore: forty"}})["result"].(map[string]any)
 	if text := fmt.Sprint(res["content"]); res["isError"] != true || !strings.Contains(text, "ambiguous_room") || !strings.Contains(text, "defghijk") || !strings.Contains(text, "efghijkl") {
 		t.Fatalf("several titles: %v", res)
 	}
 	for _, frag := range []string{"no such title", "ab", "zz"} { // none, or under 3 characters: passed through
-		s.request(t, 6, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": frag}})
+		s.request(t, 6, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": frag}})
 		if got := lastCall(t, b); got.Args["room"] != frag {
 			t.Errorf("%q: the broker got %+v", frag, got)
 		}
@@ -125,73 +125,9 @@ func TestRoomTailAndForkResolveReferences(t *testing.T) {
 	}
 }
 
-// CD11, O7: `room_brief` takes a reference too — the resume prompt, the short command and docs/cli.md all
-// say it does — so `#<issue>`, `PR #<n>`, a bare number and a title fragment resolve through the room list
-// for it as they do for its siblings. The relay rewrites the broker's own entry and adds no tool: the list a
-// client sees is still the broker's plus maku's three, so a principal the broker excludes stays excluded.
-func TestRoomBriefResolvesReferences(t *testing.T) {
-	schema := map[string]any{"type": "object", "properties": map[string]any{
-		"room":  map[string]any{"type": "string", "pattern": "^[a-z2-7]{8}$"},
-		"since": map[string]any{"type": "string"}}}
-	for name, tc := range map[string]struct {
-		ref, want string
-		refused   bool // the reference names no room the caller can see, or several: the tool asks, nothing is called
-	}{
-		"#issue":          {ref: "#7", want: "abcdefgh"},
-		"PR #n":           {ref: "PR #12", want: "abcdefgh"},
-		"bare number":     {ref: "30", want: "cdefghij"},
-		"title fragment":  {ref: "DEAD LINK", want: "abcdefgh"},
-		"no title has it": {ref: "followed link", want: "followed link"}, // passed to the broker as typed, as its siblings do
-		"id as is":        {ref: "abcdefgh", want: "abcdefgh"},
-		"no such issue":   {ref: "#999", refused: true},
-		"several titles":  {ref: "chore", refused: true},
-	} {
-		t.Run(name, func(t *testing.T) {
-			b := newMCPBroker(t)
-			b.rooms = refRooms
-			s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-			res := s.request(t, 5, "tools/call", map[string]any{"name": "room_brief", "arguments": map[string]any{"room": tc.ref}})["result"].(map[string]any)
-			got := lastCall(t, b)
-			if tc.refused { // never guessed: the tool refuses and calls nothing
-				if res["isError"] != true || got.Name == "room_brief" {
-					t.Fatalf("%q: %v %+v", tc.ref, res, got)
-				}
-				return
-			}
-			if res["isError"] == true || got.Name != "room_brief" || got.Args["room"] != tc.want {
-				t.Fatalf("%q: %v %+v, want room %s", tc.ref, res, got, tc.want)
-			}
-		})
-	}
-
-	// The broker's entry says it takes a reference, so a client validating the schema never refuses `#7`;
-	// nothing was added beside maku's own tools.
-	b := newMCPBroker(t)
-	b.tools = []any{
-		map[string]any{"name": "room_summary", "description": "d", "inputSchema": schema},
-		map[string]any{"name": "room_brief", "description": "The room's resume brief", "inputSchema": schema},
-	}
-	s := relayTo(t, b, tok, func(r *Relay) { r.Advanced = true })
-	list := s.request(t, 5, "tools/list", map[string]any{})["result"].(map[string]any)
-	var names []string
-	for _, raw := range list["tools"].([]any) {
-		tool := raw.(map[string]any)
-		names = append(names, fmt.Sprint(tool["name"]))
-		if tool["name"] != "room_brief" {
-			continue
-		}
-		if strings.Contains(fmt.Sprint(tool["inputSchema"]), "[a-z2-7]") || !strings.Contains(fmt.Sprint(tool["description"]), "#<issue>") {
-			t.Fatalf("room_brief does not say it takes a reference: %v", tool)
-		}
-	}
-	if got := strings.Join(names, ","); got != "start,wait,answer,room_checkout,coordination_checkout,coordination_open,room_summary,room_brief,issue_file,need_answer,room_wait" {
-		t.Fatalf("the tools are the broker's plus maku's: %s", got)
-	}
-}
-
 // Several rooms match: the developer is asked, nothing is guessed, and the broker is not called.
 func TestRoomReferenceAmbiguousAsksAndNeverGuesses(t *testing.T) {
-	for _, tool := range []string{"room_summary", "room_changes", "room_queue", "room_checkout"} {
+	for _, tool := range []string{"room_tail", "room_fork", "room_checkout"} {
 		t.Run(tool, func(t *testing.T) {
 			b := newMCPBroker(t)
 			b.rooms = refRooms
@@ -215,22 +151,22 @@ func TestRoomReferenceUnknown(t *testing.T) {
 	b.rooms = refRooms
 	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
 	for ref, want := range map[string]string{"#999": "unknown_room", "PR #999": "unknown_room"} {
-		res := s.request(t, 5, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": ref}})["result"].(map[string]any)
+		res := s.request(t, 5, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": ref}})["result"].(map[string]any)
 		if res["isError"] != true || !strings.Contains(fmt.Sprint(res["content"]), want) {
 			t.Fatalf("%q: %v", ref, res)
 		}
 	}
-	if got := lastCall(t, b); got.Name == "room_summary" {
+	if got := lastCall(t, b); got.Name == "room_tail" {
 		t.Fatalf("the broker was called with %+v", got)
 	}
 }
 
-// room_wait takes references in its rooms list too.
+// wait takes a reference as its task.
 func TestRoomWaitResolvesReferences(t *testing.T) {
 	b := newMCPBroker(t)
 	b.rooms = []map[string]any{{"id": "abcdefgh", "repository": "Smana/a", "issue": 7, "title": "t", "state": "done", "phase": "Sealed"}}
 	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
-	res := s.request(t, 5, "tools/call", map[string]any{"name": "room_wait", "arguments": map[string]any{"rooms": []string{"#7"}, "timeout": 1}})["result"].(map[string]any)
+	res := s.request(t, 5, "tools/call", map[string]any{"name": "wait", "arguments": map[string]any{"task": "#7", "timeout": 1}})["result"].(map[string]any)
 	if res["isError"] == true && strings.Contains(fmt.Sprint(res["content"]), "invalid_arguments") {
 		t.Fatalf("%v", res)
 	}

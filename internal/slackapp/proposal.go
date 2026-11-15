@@ -19,6 +19,8 @@ import (
 )
 
 const (
+	// noPlannerLine is the one fixed line a Slack mention answers when planning is off or unavailable (UX9).
+	noPlannerLine = "Planning is not available here; file on GitHub."
 	// proposalEventType tags the App's proposal message (CD20): the whole plan, its hash, its author
 	// and its revision are that message's metadata, and nothing about a proposal lives anywhere else.
 	proposalEventType = "factory_proposal"
@@ -319,6 +321,28 @@ func proposalView(p ProposalPayload, q *intake.Question, changed []string) roomv
 		v.Issue = issue
 	}
 	return v
+}
+
+var bodyHeadings = [3]string{"## What is wrong", "## What it should be", "## Acceptance check"}
+
+// parseBody splits a three-section issue body into What, Should and Acceptance; ok is false for a
+// body that does not carry the template headings (it is then shown whole).
+func parseBody(body string) (secs [3]string, ok bool) {
+	var sec [3][]string
+	cur := -1
+	for line := range strings.SplitSeq(body, "\n") {
+		if i := slices.Index(bodyHeadings[:], strings.TrimSpace(line)); i >= 0 {
+			cur = i
+			continue
+		}
+		if cur >= 0 {
+			sec[cur] = append(sec[cur], line)
+		}
+	}
+	for i := range sec {
+		secs[i] = strings.TrimSpace(strings.Join(sec[i], "\n"))
+	}
+	return secs, cur >= 0 && secs[0] != ""
 }
 
 // proposalQuestion is the question the message asks: the caller's, when it has one, else the one the
@@ -1606,7 +1630,7 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		return &Metadata{EventType: filedEventType, EventPayload: payload}
 	}
 	res, err := a.Broker.RunCreate(ctx, RunCreate{
-		Draft:      Draft{Repo: repo},
+		Repo:       repo,
 		Handoff:    p.ID,
 		PlanHash:   p.Hash,
 		MaxCostUSD: ch.MaxCostUSD,

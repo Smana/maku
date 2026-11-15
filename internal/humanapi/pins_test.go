@@ -64,7 +64,7 @@ func TestPlanCheckRefusesPin(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(tc.src))
 			plan := pinned(t, tc.class, tc.profile)
-			got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
+			got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
 			if tc.want == "" {
 				if got.isError {
 					t.Fatal(got.text)
@@ -93,7 +93,7 @@ func TestPlanCheckPinRevision(t *testing.T) {
 	candidate := base
 	candidate.Issues = []intake.Issue{base.Issues[0]}
 	candidate.Issues[0].Profile = "review-frontier"
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": base, "hash": base.Hash, "candidate": candidate})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": base, "hash": base.Hash, "candidate": candidate})
 	if got.isError {
 		t.Fatal(got.text)
 	}
@@ -121,7 +121,7 @@ func TestPlanCheckRefusesPinnedRolesOtherThanTheProfiles(t *testing.T) {
 	plan := pinned(t, "review", "review-frontier")
 	plan.Issues[0].Roles = []string{"implementer"}
 	plan.Hash = intake.Hash(plan)
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
 	if !got.isError || !strings.Contains(got.text, "planner_invalid") {
 		t.Fatal(got.text)
 	}
@@ -132,7 +132,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(&fakeFactoryCatalogue{}))
 	plan := pinned(t, "review", "")
 	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-frontier"}
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": plan.Hash})
 	if got.isError {
 		t.Fatal(got.text)
 	}
@@ -144,7 +144,7 @@ func TestPlanCheckRecordsTheFactorysChoice(t *testing.T) {
 		t.Fatalf("%q", out.Plan.Issues[0].Body)
 	}
 	// The answer is a plan plan_check holds again, unchanged.
-	again := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": out.Plan, "hash": out.Hash})
+	again := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": out.Plan, "hash": out.Hash})
 	var second planChecked
 	if again.isError || json.Unmarshal(again.structured, &second) != nil || second.Hash != out.Hash {
 		t.Fatalf("not idempotent: %s", again.text)
@@ -163,7 +163,7 @@ func TestIntakePlanPinRevision(t *testing.T) {
 		candidate := base
 		candidate.Issues = []intake.Issue{base.Issues[0]}
 		candidate.Issues[0].Profile = profile
-		got := call(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", revisionArgs(base, candidate))
 		if want != "" {
 			if !got.isError || !strings.Contains(got.text, want) {
 				t.Fatalf("%s: %s", profile, got.text)

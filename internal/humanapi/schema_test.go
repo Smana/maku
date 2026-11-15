@@ -15,7 +15,7 @@ import (
 func TestEveryMCPToolSchemaNodeNamesItsType(t *testing.T) {
 	s := &Server{}
 	tools := s.mcpTools(authn.Principal{})
-	tools = append(tools, s.intakeTools()...)
+	tools = append(tools, s.handoffToolEntry(), s.inboxToolEntry(), s.taskToolEntry(), s.intentClassifyTool())
 	tools = append(tools, s.coordinationTool(), s.coordinationDraftTool())
 	tools = append(tools, s.slackLinkTools()...)
 	tools = append(tools, mcpTool{name: "run_create", schema: runCreateSchema})

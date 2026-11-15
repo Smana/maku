@@ -114,7 +114,7 @@ at use, so the render never sees their content. Keep the two sides' Secrets in s
 ### `maku`
 
 `maku configure` reads `preset`, `tokenUse`, `scopes` and `audience` from the broker's
-`/.well-known/roomctl`. With `--from`, it shows each of them before it writes, beside the value it
+`/.well-known/maku`. With `--from`, it shows each of them before it writes, beside the value it
 replaces, with the hosts of the two endpoints: a broker cannot redirect a sign-in or change the
 token's audience unseen. The issuer is kept exactly as given, a trailing `/` included (Auth0's). Under `generic` it also reads the issuer's device and token endpoints from
 its discovery document, and stores them. `maku login` then runs the device grant there.
@@ -197,7 +197,7 @@ oauth2-proxy sets the same:
 | `cookie-refresh` | below the ID token's lifetime (`webProxy.cookieRefresh`, `1h`) |
 | `reverse-proxy` | `false`: oauth2-proxy then never reads a client's `X-Forwarded-Uri`, which would otherwise select a skip-auth route. The redirect URL is fixed, so nothing needs it |
 | `skip-provider-button` | `true` |
-| `skip-auth-route` | `GET=^/\.well-known/roomctl$`, plus `GET=^/link/github/callback$` with the [GitHub account link](github-link.md) |
+| `skip-auth-route` | `GET=^/\.well-known/maku$`, plus `GET=^/link/github/callback$` with the [GitHub account link](github-link.md) |
 
 ## The IdPs
 

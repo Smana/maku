@@ -4,6 +4,49 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)
+
+A coding agent sees six tools, `handoff`, `start`, `inbox`, `task`, `wait` and `answer`, where it saw up to
+nineteen. Every tool, prompt, command, key and route the six replace is removed, not deprecated: a client,
+a saved prompt or a config that still names one fails as the table below says. Upgrade the broker and
+the Slack App first, then `maku` (`maku setup <client>` again, which rewrites the registration, the skill
+and the command), and remove the two settings named under **What to change before upgrading**, below.
+
+**What the six tools change.**
+
+| Change | Detail |
+|---|---|
+| The six tools | `handoff` (broker) plans the work, holds the plan on the broker for 24 hours under an id and asks at most one question at a time; `start` (local) re-validates the stored plan and shows the form that files the issue and starts the work; `inbox` and `task` (broker) read what waits and where one task stands; `wait` and `answer` (local) follow a task and answer its question or leave a note. They are always listed, whatever the broker's switches say; with planning off, `handoff` answers `Planning is not available here; file on GitHub.` The client never sees or edits a plan envelope. [The MCP server](cli.md#the-mcp-server), [API](api.md#post-mcp) |
+| `human.mcp.start` | `{default, except[]}` says where `start`'s form offers "Start now": every repository the planner serves except those in `except`, and on by default when `human.intake.plan.enabled` is. It replaces `human.mcp.sessionStart`, which was an allow list and is not inverted. A release before this one honoured `sessionStart` with a warning; this one refuses it (below) |
+| `--advanced` | `maku setup <client> --advanced` registers `maku mcp --advanced`, which also lists `room_tail`, `room_fork`, `room_checkout`, `coordination_checkout`, `coordination_open` and `coordination_plan`, and nothing else |
+| The Slack `notify` default | A channel with no `notify` list posts four transitions: `room.task_triaged`, `room.waiting_for_human`, `room.pr_opened` and `room.ended`. `room.run_started`, `room.verdict_posted`, `room.budget_reached` and `room.approval_closed` post nothing by default, and `room.merged` and `room.reverted` edit the thread's end line in place. A channel that lists its own keys keeps them. To keep the old lines, list them: `notify: [room.task_triaged, room.run_started, room.waiting_for_human, room.pr_opened, room.verdict_posted, room.merged, room.reverted, room.budget_reached, room.ended]` ([Slack](slack.md#config)) |
+| The MCP server's name | `maku`. `maku setup <client>` rewrites an existing `factory` entry in the client's config to `maku` and says so |
+| The setup route | `maku configure` reads `/.well-known/maku`; the web host's skip-auth route is `^/\.well-known/maku$` (the chart sets it) |
+| Stored plans | The broker keeps each plan `handoff` shows in a new `handoffs` table, bound to the caller, for 24 hours; the retention job deletes expired rows without reading them. The broker's `migrate` creates it at start ([database](database.md)) |
+
+**What is removed now.**
+
+| Removed | Replacement |
+|---|---|
+| Broker tools `intake_plan`, `plan_check` | `handoff`: `{text, repository?, ...}` to begin, `{id, answer}` or `{id, acceptRest: true}` to continue. The `{plan, hash, candidate}` envelope is gone |
+| Broker tool `issue_draft` | `handoff` plans and checks the issue; `start`'s form files it. `task`'s `canStart` and `canStartWhy` say whether the caller may start work on a repository |
+| Broker tool `classes_list` | `start`'s form offers the workflows the repository's catalogue allows, with the default pre-filled |
+| Broker tools `needs_list`, and `rooms_list` in the list your agent sees | `inbox`: what needs you, or your own tasks when nothing waits or `human.needs.enabled` is off. `maku rooms`, `maku needs` and `GET /api/rooms`, `GET /api/needs` are unchanged |
+| Broker tools `room_summary`, `room_brief`, `room_changes` | `task {task, since?}`: the state, what needs you, the budget, the merge gate's decision once there is one, and the milestones since `since`, with one cursor. `maku status` and `maku changes` read it |
+| Broker tool `room_queue` | `answer {task, text}` with no question open: a note for the next run, after a form |
+| Relay tool `issue_file` | `start {id}` |
+| Relay tool `need_answer` | `answer {task, text?}`, which also restarts the task when you may start work on the repository |
+| Relay tool `room_wait` | `wait {task?, timeout?}` |
+| Unlisted `handoff_check` and `task_note` | They are internal calls of `start`, `answer` and the Slack App, not a surface to depend on |
+| Prompts `factory_intake`, `plan`, `status`, `resume` | The three prompts `handoff`, `task` and `inbox` |
+| The `/factory` command and the `factory-handoff` skill | `/maku` and the `maku-handoff` skill. `maku setup` and `maku skill install` no longer write the old pair, and `maku doctor` no longer reads it: delete a copy an older maku wrote |
+| The route `/.well-known/roomctl` (`404`) | `/.well-known/maku`. `GET /api/roomctl` stays |
+| Config `human.mcp.sessionStart` | `human.mcp.start`. The broker refuses to start: `human.mcp.sessionStart was removed: use human.mcp.start` |
+| The Slack `proposals:` switch | Removed: the App's config fails to load on an unknown field. A mention is always planned through `handoff` and posted as a proposal; with no planner it answers `Planning is not available here; file on GitHub.` |
+| The Slack draft grammar (`@factory [repo] title`, `Should:`, `Acceptance:`, the draft reply edits and the `factory_draft` message tag) | Plain words in the mention. A reply by the author re-plans the proposal |
+
+**What to change before upgrading.** Delete `human.mcp.sessionStart` from the broker's values (the broker refuses it even when it is empty) and `proposals:` from the Slack App's `config`. `sessionStart` was an allow list and `human.mcp.start` is not: with the planner on, "Start now" is now offered on every repository the planner serves, so list in `human.mcp.start.except` each one where the form must not offer it, or set `default: false` to offer it nowhere. Replace a saved prompt or script that calls a removed tool. The `/factory retry` and `/factory split` comments on a GitHub issue are the factory's own triggers and are unchanged.
+
 ## Merge policies removals
 
 This release removes every field and mode v0.50.0 deprecated. Unknown
@@ -50,7 +93,6 @@ strictest `live` one that holds ([selection](merge-policies.md#selection-from-th
 
 A saved approval grant still binds to the task's class's resolved hash: a pull request the diff
 assigns to another policy finds no grant and asks for an approval (`approval_required`).
-
 ## Workflows name what runs
 
 Shipped in v0.52.0 with the merge gate that reads the diff: the class no longer
@@ -111,7 +153,7 @@ next minor refuses loads with a warning in the factory's log (`config warning`, 
 Two synonyms are read from this release: `workflows` is `harnessProfiles` (a `Factory` or a file
 that sets both is refused: `workflows and harnessProfiles: set one`), and a `workflow:<name>` label
 is the same pin as `profile:<name>` (a `profile:` and a `workflow:` label naming different workflows
-conflict, `profile_conflict`). `maku mcp`'s `issue_file` now labels a pinned plan `workflow:<name>`.
+conflict, `profile_conflict`). `maku mcp` now labels a pinned plan `workflow:<name>`.
 
 A broker whose planner is on no longer needs `human.intake.plan.classes` or
 `human.intake.plan.repositories` when it sets `factoryURL`: the plan's classes and candidate
@@ -499,7 +541,7 @@ links with a PAT, kept beside the link since v0.47.0, is removed:
 Each `readerFile` is refused at start, naming its replacement. The schema refuses
 `zitadelReaderSecret`, and so does the template under `--skip-schema-validation`. A human with no
 link now has no GitHub login, with no fallback: they see no room (`X-Rooms-Access: unlinked`),
-`issue_draft` answers `not_linked`, and the factory refuses their runs (`repository_permission`).
+the MCP draft check answers `not_linked`, and the factory refuses their runs (`repository_permission`).
 The reader's other job, refusing at once a user deactivated in ZITADEL, is gone too: a link is active
 while its human signed in within `human.githubLink.activeWindow` (default `168h`).
 

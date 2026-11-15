@@ -30,7 +30,7 @@ func TestLinkCommands(t *testing.T) {
 		}
 	}
 	if len(rig.slack.whispers()) != 0 || len(rig.broker.links) != 1 || rig.broker.links[0] != "T01ABC/U02DEF/dana.h/dana" {
-		t.Fatalf("an ephemeral or a draft: %v", rig.broker.links)
+		t.Fatalf("an ephemeral or a proposal: %v", rig.broker.links)
 	}
 	if rig.metrics.count("events", "link") != 1 {
 		t.Fatal("uncounted")
@@ -52,10 +52,10 @@ func TestLinkCommands(t *testing.T) {
 	if w := rig.slack.dms("U02DEF"); !strings.HasPrefix(w[len(w)-1].text, "Link refused: too_many_codes") {
 		t.Fatalf("refused: %+v", w[len(w)-1])
 	}
-	// "link" inside a title is a draft, never the command.
+	// "link" inside a title is a proposal, never the command.
 	rig.mention("C03", "1729.0006", "<@U0BOT> docs: link the runbook")
 	if p := rig.lastPost(); p.meta == nil {
-		t.Fatalf("a draft with the word link: %+v", p)
+		t.Fatalf("a proposal with the word link: %+v", p)
 	}
 }
 
@@ -63,12 +63,12 @@ func TestLinkCommands(t *testing.T) {
 // sponsor that is not a login is left out.
 func TestFiledNamesTheSponsor(t *testing.T) {
 	for sponsor, want := range map[string]string{"smana": "Filed #42 for <@U02DEF>, sponsored by GitHub @smana; ", "<!channel>": "Filed #42 for <@U02DEF>; "} {
-		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig, _, ts := proposalSeeded(t)
 		rig.broker.sponsor = sponsor
-		rig.mention("C03", "1729.0001", draftText)
-		rig.react("C03", rig.lastPost().ts, "U02DEF", "white_check_mark")
-		if got := rig.lastPost().text; !strings.HasPrefix(got, want) {
-			t.Fatalf("%q, want %q", got, want)
+		rig.react("C03", ts, "U02DEF", "white_check_mark")
+		edits := rig.slack.proposalEdits()
+		if len(edits) != 1 || !strings.HasPrefix(edits[0].text, want) {
+			t.Fatalf("%+v, want prefix %q", edits, want)
 		}
 	}
 }
@@ -76,9 +76,8 @@ func TestFiledNamesTheSponsor(t *testing.T) {
 // B: a ✅ on the App's draft is never refused without a word. Each refusal names the reason and
 // the fix, once per draft, user and reason; a passing failure is said again after retryEvery.
 func TestNoSilentCheckMark(t *testing.T) {
-	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
-	rig.mention("C03", "1729.0001", draftText)
-	draft := rig.lastPost()
+	rig, _, ts := proposalSeeded(t)
+	draft := post{ts: ts}
 	n := len(rig.posts())
 	said := func(want string) {
 		t.Helper()
@@ -147,7 +146,7 @@ func TestNoSilentCheckMark(t *testing.T) {
 	// A ✅ typed as a reply files as the reaction does, and its refusal is said once too.
 	rig.broker.refuse("slack:T01ABC/U08NEW", "rejected: not_linked")
 	rig.message("C03", "1729.0001", "U08NEW", ":white_check_mark:")
-	said("<@U08NEW> is not linked to a GitHub account here; mention me with `link` to link it, then react again. A maintainer reacts :white_check_mark: to file it.")
+	said("<@U08NEW> is not linked to a GitHub account here; mention me with `link` to link it, then react again.")
 	rig.message("C03", "1729.0001", "U08NEW", "✅")
 	silent("a second typed ✅")
 	if rig.broker.created() != 0 {

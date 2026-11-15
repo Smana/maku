@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
 )
@@ -123,7 +124,7 @@ func row(id string, f func(map[string]any)) map[string]any {
 
 func waitCall(t *testing.T, s session, id any, args map[string]any, token any) {
 	t.Helper()
-	p := map[string]any{"name": toolRoomWait, "arguments": args}
+	p := map[string]any{"name": mcpwire.Wait, "arguments": args}
 	if token != nil {
 		p["_meta"] = map[string]any{"progressToken": token}
 	}
@@ -166,7 +167,7 @@ func TestRoomWaitDefaultsToMyOpenRooms(t *testing.T) {
 			rows = append(rows, row(fmt.Sprintf("aaaaaa%c%c", 'a'+i/10, 'a'+i%10), func(m map[string]any) {
 				m["lastEventAt"] = time.Date(2026, 10, 20, 10, 60-i, 0, 0, time.UTC).Format(time.RFC3339)
 				if n > 1 && (i == 0 || i == 20 || i == 21) {
-					m["lastSeq"] = 9
+					m["state"] = "done"
 				}
 			}))
 		}
@@ -187,9 +188,9 @@ func TestRoomWaitDefaultsToMyOpenRooms(t *testing.T) {
 		return rows
 	}
 	s := relayTo(t, b, tok, withAfter((&steps{}).after))
-	waitCall(t, s, 1, map[string]any{"until": []string{"any_change"}}, nil)
+	waitCall(t, s, 1, map[string]any{}, nil)
 	_, sc, isErr := resultOf(first(answer(t, s, 1.0)))
-	if isErr || sc["room"] != "aaaaaaaa" || sc["condition"] != "any_change" {
+	if isErr || sc["room"] != "aaaaaaaa" || sc["condition"] != "ended" {
 		t.Fatalf("%v", sc)
 	}
 	if args[0]["mine"] != true {
@@ -207,7 +208,7 @@ func TestRoomWaitReturnsTheCard(t *testing.T) {
 	}
 	st := &steps{}
 	s := relayTo(t, b, tok, withAfter(st.after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa"}, nil)
 	text, sc, isErr := resultOf(first(answer(t, s, 1.0)))
 	if isErr || text != "# card of aaaaaaaa" || sc["room"] != "aaaaaaaa" || sc["condition"] != "needs_you" {
 		t.Fatalf("%q %v", text, sc)
@@ -233,7 +234,7 @@ func TestRoomWaitReturnsOnASplitProposal(t *testing.T) {
 		})}
 	}
 	s := relayTo(t, b, tok, withAfter((&steps{}).after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}, "until": []string{"needs_you"}}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa"}, nil)
 	res, _ := answer(t, s, 1.0)
 	_, sc, isErr := resultOf(res)
 	if isErr || sc["condition"] != "needs_you" || !strings.Contains(fmt.Sprint(res), "needs_you") {
@@ -254,7 +255,7 @@ func TestRoomWaitBacksOff(t *testing.T) {
 	}
 	st := &steps{}
 	s := relayTo(t, b, tok, withAfter(st.after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}, "until": []string{"needs_you"}}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa"}, nil)
 	answer(t, s, 1.0)
 	sec := func(f float64) time.Duration { return time.Duration(f * float64(time.Second)) }
 	want := []time.Duration{sec(5), sec(7.5), sec(11.25), sec(16.875), sec(25.3125), sec(30), sec(30), sec(5), sec(7.5)}
@@ -268,7 +269,7 @@ func TestRoomWaitTimesOut(t *testing.T) {
 	b.roomsFn = func(int, map[string]any) []map[string]any { return []map[string]any{row("aaaaaaaa", nil)} }
 	st := &steps{}
 	s := relayTo(t, b, tok, withAfter(st.after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}, "timeout": 12}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa", "timeout": 12}, nil)
 	text, sc, isErr := resultOf(first(answer(t, s, 1.0)))
 	if isErr || !strings.Contains(text, "nothing new yet") || !strings.Contains(text, "aaaaaaaa") || sc["room"] != "" || sc["condition"] != "timeout" {
 		t.Fatalf("%q %v", text, sc)
@@ -291,7 +292,7 @@ func TestRoomWaitProgressOnlyWithAToken(t *testing.T) {
 				return []map[string]any{row("aaaaaaaa", func(m map[string]any) { m["needsYou"] = map[bool]int{false: 0, true: 1}[n >= 4] })}
 			}
 			s := relayTo(t, b, tok, withAfter((&steps{}).after))
-			waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}}, tc.token)
+			waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa"}, tc.token)
 			_, before := answer(t, s, 1.0)
 			n := 0
 			for _, m := range before {
@@ -311,7 +312,7 @@ func TestRoomWaitStopsOnCancel(t *testing.T) {
 	b.roomsFn = func(int, map[string]any) []map[string]any { return []map[string]any{row("aaaaaaaa", nil)} }
 	g := newGate()
 	s := relayTo(t, b, tok, withAfter(g.after))
-	waitCall(t, s, 7, map[string]any{"rooms": []string{"aaaaaaaa"}}, "tk")
+	waitCall(t, s, 7, map[string]any{"task": "aaaaaaaa"}, "tk")
 	g.await(t)
 	if m := s.next(t); m["method"] != "notifications/progress" { // the first poll's, before the cancel
 		t.Fatalf("%v", m)
@@ -343,7 +344,7 @@ func TestRoomWaitStopsWhenStdinCloses(t *testing.T) {
 	b.roomsFn = func(int, map[string]any) []map[string]any { return []map[string]any{row("aaaaaaaa", nil)} }
 	g := newGate()
 	s := relayTo(t, b, tok, withAfter(g.after))
-	waitCall(t, s, 7, map[string]any{"rooms": []string{"aaaaaaaa"}}, "tk")
+	waitCall(t, s, 7, map[string]any{"task": "aaaaaaaa"}, "tk")
 	g.await(t)
 	if m := s.next(t); m["method"] != "notifications/progress" {
 		t.Fatalf("%v", m)
@@ -395,7 +396,7 @@ func TestRoomWaitURLForm(t *testing.T) {
 			}
 			s := relayTo(t, b, tok, withAfter((&steps{}).after))
 			s.request(t, 1, "initialize", map[string]any{"capabilities": map[string]any{"elicitation": tc.caps}})
-			waitCall(t, s, 2, map[string]any{"rooms": []string{room}}, nil)
+			waitCall(t, s, 2, map[string]any{"task": room}, nil)
 			res, before := answer(t, s, 2.0)
 			_, sc, _ := resultOf(res)
 			if sc["condition"] != "needs_you" {
@@ -420,17 +421,13 @@ func TestRoomWaitURLForm(t *testing.T) {
 
 func TestRoomWaitRefusesBadArguments(t *testing.T) {
 	s := relayTo(t, newMCPBroker(t), tok)
-	var many []string
-	for i := range 21 {
-		many = append(many, fmt.Sprintf("aaaaaaa%c", 'a'+i%20))
-	}
 	for name, tc := range map[string]struct {
 		args map[string]any
 		want string
 	}{
-		"21 rooms":            {map[string]any{"rooms": many}, "at most 20 rooms"},
-		"a bad room id":       {map[string]any{"rooms": []string{"../etc"}}, "invalid_arguments"},
-		"a bad condition":     {map[string]any{"until": []string{"soon"}}, "invalid_arguments"},
+		"a bad task":          {map[string]any{"task": "../etc"}, "invalid_arguments"},
+		"a rooms list":        {map[string]any{"rooms": []string{"aaaaaaaa"}}, "invalid_arguments"},
+		"an until":            {map[string]any{"until": []string{"ended"}}, "invalid_arguments"},
 		"a timeout too long":  {map[string]any{"timeout": 1801}, "invalid_arguments"},
 		"a timeout too short": {map[string]any{"timeout": 0}, "invalid_arguments"},
 		"an unknown argument": {map[string]any{"after": "x"}, "invalid_arguments"},
@@ -449,7 +446,7 @@ func TestRoomWaitUnknownRoom(t *testing.T) {
 	b := newMCPBroker(t)
 	b.roomsFn = func(int, map[string]any) []map[string]any { return []map[string]any{row("aaaaaaaa", nil)} }
 	s := relayTo(t, b, tok, withAfter((&steps{}).after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa", "bbbbbbbb"}}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "bbbbbbbb"}, nil)
 	text, _, isErr := resultOf(first(answer(t, s, 1.0)))
 	if !isErr || !strings.Contains(text, "bbbbbbbb") {
 		t.Fatalf("%v %q", isErr, text)
@@ -461,7 +458,7 @@ func TestRoomWaitGivesUpAfterFailedPolls(t *testing.T) {
 	b.status = 500
 	st := &steps{}
 	s := relayTo(t, b, tok, withAfter(st.after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa"}, nil)
 	text, _, isErr := resultOf(first(answer(t, s, 1.0)))
 	if !isErr || !strings.HasPrefix(text, "not_watching:") || len(st.waits()) != 12 { // 60 s of 5 s waits
 		t.Fatalf("%q %v", text, st.waits())
@@ -475,7 +472,7 @@ func TestRoomWaitLeavesSlots(t *testing.T) {
 	g := newGate()
 	s := relayTo(t, b, tok, withAfter(g.after))
 	for i := 1; i <= maxWaits; i++ {
-		waitCall(t, s, i, map[string]any{"rooms": []string{"aaaaaaaa"}}, nil)
+		waitCall(t, s, i, map[string]any{"task": "aaaaaaaa"}, nil)
 	}
 	for range maxWaits {
 		g.await(t)
@@ -488,7 +485,7 @@ func TestRoomWaitLeavesSlots(t *testing.T) {
 		}
 	}
 	// A ninth wait is refused, not queued.
-	waitCall(t, s, 50, map[string]any{"rooms": []string{"aaaaaaaa"}}, nil)
+	waitCall(t, s, 50, map[string]any{"task": "aaaaaaaa"}, nil)
 	if res := s.next(t); res["id"] != 50.0 || !strings.Contains(fmt.Sprint(res["error"]), "busy") {
 		t.Fatalf("%v", res)
 	}
@@ -496,7 +493,7 @@ func TestRoomWaitLeavesSlots(t *testing.T) {
 	cancelOf(s, t, 3)
 	deadline := time.After(5 * time.Second)
 	for id := 60; ; id++ {
-		waitCall(t, s, id, map[string]any{"rooms": []string{"aaaaaaaa"}}, nil)
+		waitCall(t, s, id, map[string]any{"task": "aaaaaaaa"}, nil)
 		select {
 		case <-g.asked: // accepted, and polling
 			return
@@ -510,31 +507,19 @@ func TestRoomWaitLeavesSlots(t *testing.T) {
 	}
 }
 
-func TestRoomWaitSchema(t *testing.T) {
+func TestWaitSchema(t *testing.T) {
 	var sch struct {
 		AdditionalProperties bool `json:"additionalProperties"`
 		Properties           struct {
-			Rooms struct {
-				MaxItems int `json:"maxItems"`
-			} `json:"rooms"`
-			Until struct {
-				Items struct {
-					Enum []string `json:"enum"`
-				} `json:"items"`
-			} `json:"until"`
+			Task    struct{}                       `json:"task"`
 			Timeout struct{ Minimum, Maximum int } `json:"timeout"`
 		} `json:"properties"`
 	}
-	if err := json.Unmarshal(roomWaitEntry["inputSchema"].(json.RawMessage), &sch); err != nil {
+	if err := json.Unmarshal(waitEntry["inputSchema"].(json.RawMessage), &sch); err != nil {
 		t.Fatal(err)
 	}
-	p := sch.Properties
-	if sch.AdditionalProperties || p.Rooms.MaxItems != 20 || strings.Join(p.Until.Items.Enum, ",") != "needs_you,pr_opened,ended,any_change" ||
-		p.Timeout.Minimum != 1 || p.Timeout.Maximum != 1800 {
+	if sch.AdditionalProperties || sch.Properties.Timeout.Minimum != 1 || sch.Properties.Timeout.Maximum != 1800 {
 		t.Fatalf("%+v", sch)
-	}
-	if d := roomWaitEntry["description"].(string); strings.Contains(d, "Not yet available") || !strings.Contains(d, "1800") {
-		t.Fatalf("%q", d)
 	}
 }
 
@@ -569,7 +554,7 @@ func TestRoomWaitTimeoutAfterFailedPollsSaysSo(t *testing.T) {
 	b := newMCPBroker(t)
 	b.status = 500
 	s := relayTo(t, b, tok, withAfter((&steps{}).after))
-	waitCall(t, s, 1, map[string]any{"rooms": []string{"aaaaaaaa"}, "timeout": 1}, nil)
+	waitCall(t, s, 1, map[string]any{"task": "aaaaaaaa", "timeout": 1}, nil)
 	text, _, _ := resultOf(first(answer(t, s, 1.0)))
 	if !strings.Contains(text, "could not reach the broker") || strings.Contains(text, "nothing new") {
 		t.Fatalf("%q", text)
@@ -577,32 +562,3 @@ func TestRoomWaitTimeoutAfterFailedPollsSaysSo(t *testing.T) {
 }
 
 func brokerMethods(b *mcpBroker) []string { m, _ := b.seen(); return m }
-
-func TestWaitIsRoomWait(t *testing.T) {
-	runOne := func(tool string, args map[string]any) (string, map[string]any, bool) {
-		b := newMCPBroker(t)
-		b.roomText = "#412 docs: runbook 18\nState     ended"
-		b.roomsFn = func(n int, _ map[string]any) []map[string]any {
-			return []map[string]any{row("aaaaaaaa", func(m map[string]any) {
-				m["issue"] = 412
-				m["repository"] = "Smana/ai-native-ref"
-				if n >= 2 {
-					m["state"] = "done"
-				}
-			})}
-		}
-		s := relayTo(t, b, tok, withAfter((&steps{}).after))
-		s.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
-			"params": map[string]any{"name": tool, "arguments": args}})
-		return resultOf(first(answer(t, s, 1.0)))
-	}
-
-	wText, wSC, wErr := runOne("wait", map[string]any{"task": "aaaaaaaa"})
-	rText, rSC, rErr := runOne("room_wait", map[string]any{"room": "aaaaaaaa"})
-	if wErr || rErr {
-		t.Fatalf("wait err=%v (%q), room_wait err=%v (%q)", wErr, wText, rErr, rText)
-	}
-	if wText != rText || fmt.Sprint(wSC) != fmt.Sprint(rSC) {
-		t.Fatalf("wait=(%q, %v) != room_wait=(%q, %v)", wText, wSC, rText, rSC)
-	}
-}

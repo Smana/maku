@@ -91,7 +91,7 @@ func TestDiscoverReadsTheBrokersPublicEndpoint(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 	got, err := Discover(t.Context(), srv.Client(), srv.URL+"/")
-	if err != nil || path != "/.well-known/roomctl" {
+	if err != nil || path != "/.well-known/maku" {
 		t.Fatalf("%v at %q", err, path)
 	}
 	// url is the one asked for, not the broker's own idea of it: a proxy may differ.
@@ -119,8 +119,8 @@ type doctorRig struct {
 	d      Doctor
 	access *string
 	rooms  *string           // GET /api/rooms' body
-	draft  *string           // issue_draft's structuredContent
-	byRepo map[string]string // issue_draft's structuredContent for one repository, over draft
+	draft  *string           // task's structuredContent
+	byRepo map[string]string // task's structuredContent for one repository, over draft
 }
 
 func newDoctorRig(t *testing.T) doctorRig {
@@ -129,7 +129,7 @@ func newDoctorRig(t *testing.T) doctorRig {
 	byRepo := map[string]string{}
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/.well-known/roomctl":
+		case "/.well-known/maku":
 			_, _ = w.Write([]byte(`{}`))
 		case "/api/rooms":
 			if r.Header.Get("Authorization") != "Bearer tok" {
@@ -143,12 +143,20 @@ func newDoctorRig(t *testing.T) doctorRig {
 		case "/mcp":
 			var m struct {
 				Params struct {
-					Arguments struct{ Repo string } `json:"arguments"`
+					Arguments struct{ Task string } `json:"arguments"`
 				} `json:"params"`
 			}
 			_ = json.NewDecoder(r.Body).Decode(&m)
+			var listed []struct{ ID, Repository string }
+			_ = json.Unmarshal([]byte(rooms), &listed)
+			repo := ""
+			for _, l := range listed {
+				if l.ID == m.Params.Arguments.Task {
+					repo = l.Repository
+				}
+			}
 			sc := draft
-			if v, ok := byRepo[m.Params.Arguments.Repo]; ok {
+			if v, ok := byRepo[repo]; ok {
 				sc = v
 			}
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":"x","result":{"content":[{"type":"text","text":"d"}],"structuredContent":` + sc + `}}`))
@@ -167,7 +175,7 @@ func newDoctorRig(t *testing.T) doctorRig {
 
 func TestDoctorPassesWhenEverythingWorks(t *testing.T) {
 	r := newDoctorRig(t)
-	*r.rooms, *r.draft = `[{"repository":"Smana/a"}]`, `{"canStart":true}`
+	*r.rooms, *r.draft = `[{"id":"aaaaaaa1","repository":"Smana/a"}]`, `{"canStart":true}`
 	var out strings.Builder
 	if err := r.d.Run(t.Context(), &out); err != nil {
 		t.Fatalf("%v\n%s", err, &out)
@@ -232,7 +240,7 @@ func TestDoctorSkillDrift(t *testing.T) {
 		"none": {func(*testing.T, string, string) {}, []string{"skip skill"}, false},
 		"unreadable": {func(t *testing.T, d1, _ string) {
 			stamp(t, d1, "v0.2.0")
-			p := filepath.Join(d1, "factory-handoff", "SKILL.md")
+			p := filepath.Join(d1, "maku-handoff", "SKILL.md")
 			if err := os.Chmod(p, 0); err != nil {
 				t.Fatal(err)
 			}
@@ -259,8 +267,8 @@ func TestDoctorSkillDrift(t *testing.T) {
 		}, []string{"skip skill"}, false},
 		"no stamp": {func(t *testing.T, d1, _ string) {
 			stamp(t, d1, "v0.2.0")
-			p := filepath.Join(d1, "factory-handoff", "SKILL.md")
-			if err := os.WriteFile(p, []byte("---\nname: factory-handoff\n---\n"), 0o644); err != nil {
+			p := filepath.Join(d1, "maku-handoff", "SKILL.md")
+			if err := os.WriteFile(p, []byte("---\nname: maku-handoff\n---\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}, []string{"FAIL skill", "maku-version"}, true},
@@ -316,7 +324,7 @@ func TestDoctorSkillCheckRunsWithAnUnusableURL(t *testing.T) {
 }
 
 // O3b: the room list answers "ok" for an admin whatever the GitHub link, so the header cannot say
-// "linked". doctor asks issue_draft, as the broker's canStart does, and tells what it learns.
+// "linked". doctor asks task, as the broker's canStart does, and tells what it learns.
 func TestDoctorGitHubLinkIsNeverAssumed(t *testing.T) {
 	const room = `[{"id":"3kq7x2ma","repository":"Smana/a"}]`
 	for name, tc := range map[string]struct {
@@ -355,7 +363,7 @@ func TestDoctorGitHubLinkIsNeverAssumed(t *testing.T) {
 // Review 6: the probe tries another repository when the first one cannot answer (not in
 // sessionStart), up to three, and "unverified" is a warning that does not fail the run.
 func TestDoctorProbeTriesOtherRepositories(t *testing.T) {
-	rooms := `[{"repository":"Smana/a"},{"repository":"Smana/a"},{"repository":"Smana/b"},{"repository":"Smana/c"}]`
+	rooms := `[{"id":"aaaaaaa1","repository":"Smana/a"},{"id":"aaaaaaa2","repository":"Smana/a"},{"id":"bbbbbbb3","repository":"Smana/b"},{"id":"ccccccc4","repository":"Smana/c"}]`
 	for name, tc := range map[string]struct {
 		byRepo map[string]string
 		want   string
@@ -370,7 +378,7 @@ func TestDoctorProbeTriesOtherRepositories(t *testing.T) {
 			r := newDoctorRig(t)
 			*r.rooms = rooms
 			if name == "the fourth repository is not asked" {
-				*r.rooms = `[{"repository":"Smana/a"},{"repository":"Smana/b"},{"repository":"Smana/c"},{"repository":"Smana/d"}]`
+				*r.rooms = `[{"id":"aaaaaaa1","repository":"Smana/a"},{"id":"bbbbbbb2","repository":"Smana/b"},{"id":"ccccccc3","repository":"Smana/c"},{"id":"ddddddd4","repository":"Smana/d"}]`
 			}
 			for k, v := range tc.byRepo {
 				r.byRepo[k] = v
@@ -483,7 +491,7 @@ func (c *countingRoundTrip) RoundTrip(*http.Request) (*http.Response, error) {
 // install needs no IdP values. Every other plain-HTTP host is refused before the request.
 func TestDiscoverLocal(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/.well-known/roomctl" || r.Header.Get("Authorization") != "" {
+		if r.URL.Path != "/.well-known/maku" || r.Header.Get("Authorization") != "" {
 			t.Errorf("%s with %q: discovery is unauthenticated", r.URL.Path, r.Header.Get("Authorization"))
 		}
 		_, _ = w.Write([]byte(`{"url":"http://` + r.Host + `","humanMode":"local"}`))
@@ -559,7 +567,7 @@ func TestDoctorLocal(t *testing.T) {
 		t.Fatalf("the room list carried %q", auth)
 	}
 	for _, p := range paths {
-		if p != "/.well-known/roomctl" && p != "/api/rooms" {
+		if p != "/.well-known/maku" && p != "/api/rooms" {
 			t.Fatalf("doctor called %s", p)
 		}
 	}

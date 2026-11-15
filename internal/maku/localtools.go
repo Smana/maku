@@ -22,7 +22,6 @@ import (
 // The local tools maku mcp serves beside the broker's, named once by mcpwire so the broker's
 // instructions and this relay cannot drift (L16).
 const (
-	toolRoomWait             = mcpwire.RoomWait
 	toolRoomCheckout         = mcpwire.RoomCheckout
 	toolCoordinationCheckout = mcpwire.CoordinationCheckout
 	toolCoordinationOpen     = mcpwire.CoordinationOpen
@@ -47,9 +46,6 @@ func buildHandlers() map[string]localTool {
 		mcpwire.Start:    func(ctx context.Context, r *Relay, c localCall) any { return r.startTool(ctx, c.Args) },
 		mcpwire.Wait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
 		mcpwire.Answer:   func(ctx context.Context, r *Relay, c localCall) any { return r.answerTool(ctx, c.Args) },
-		issueFileTool:    func(ctx context.Context, r *Relay, c localCall) any { return r.issueFile(ctx, c.Args) },
-		needAnswerTool:   func(ctx context.Context, r *Relay, c localCall) any { return r.needAnswer(ctx, c.Args) },
-		toolRoomWait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
 		toolRoomCheckout: func(ctx context.Context, r *Relay, c localCall) any { return r.roomCheckout(ctx, c) },
 		toolCoordinationCheckout: func(ctx context.Context, r *Relay, c localCall) any {
 			return r.coordinationCheckout(ctx, c)
@@ -65,9 +61,6 @@ var localEntries = []any{
 	startEntry,
 	waitEntry,
 	answerEntry,
-	issueFileEntry,
-	needAnswerEntry,
-	roomWaitEntry,
 	roomCheckoutEntry,
 	coordinationCheckoutEntry,
 	coordinationOpenEntry,
@@ -89,7 +82,6 @@ func withLocalTools(res json.RawMessage, advanced bool) (json.RawMessage, error)
 		return nil, fmt.Errorf("tools/list: %w", err)
 	}
 	tools, _ := list["tools"].([]any)
-	all := make([]any, 0, len(tools)+len(localEntries))
 	byName := map[string]any{}
 	for i, t := range append(tools, localEntries...) {
 		tool, ok := t.(map[string]any)
@@ -105,24 +97,15 @@ func withLocalTools(res json.RawMessage, advanced bool) (json.RawMessage, error)
 			tool["description"] = fmt.Sprint(tool["description"]) + " " + key + " is " + refHint + "."
 		}
 		byName[name] = tool
-		all = append(all, tool)
 	}
 	order := sixTools
 	if advanced {
 		order = append(slices.Clone(sixTools), advancedTools...)
 	}
-	listed := make([]any, 0, len(all))
-	seen := map[string]bool{}
+	listed := make([]any, 0, len(order))
 	for _, n := range order {
 		if t, ok := byName[n]; ok {
-			listed, seen[n] = append(listed, t), true
-		}
-	}
-	if advanced {
-		for _, t := range all {
-			if n := fmt.Sprint(t.(map[string]any)["name"]); !seen[n] {
-				listed = append(listed, t)
-			}
+			listed = append(listed, t)
 		}
 	}
 	list["tools"] = listed
@@ -366,7 +349,7 @@ func (r *Relay) workspace(ctx context.Context) (string, error) {
 // not write: when the text is JSON, it is replaced by the view of structuredContent, which stays
 // as it was. Anything else passes through byte for byte.
 func viewed(tool string, res json.RawMessage, rooms string, now time.Time) json.RawMessage {
-	if tool != "rooms_list" && tool != "room_summary" {
+	if tool != "rooms_list" && tool != mcpwire.Task {
 		return res
 	}
 	var out map[string]json.RawMessage

@@ -113,8 +113,8 @@ their last sign-in. A smaller window shortens it; an admin unlink ends it at onc
 ## A human with no link
 
 A human with no link has no GitHub login: nothing else is asked. The room list shows them no room
-(`X-Rooms-Access: unlinked`; an admin still sees every room), `issue_draft` and the Slack App's
-self-serve link answer `not_linked`, and the factory's run-request API refuses their runs
+(`X-Rooms-Access: unlinked`; an admin still sees every room), `task`'s `canStart` is false with `not_linked`, and the Slack App's
+self-serve link answers `not_linked`, and the factory's run-request API refuses their runs
 (`repository_permission`). Opening `/link/github` once ends it.
 
 ## Signals

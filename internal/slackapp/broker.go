@@ -82,7 +82,9 @@ type Broker struct {
 // refuses `plan_changed` when they disagree (CD20, CD27). A draft sets neither, and its arguments stay
 // exactly what they were.
 type RunCreate struct {
-	Draft
+	Repo       string
+	Title      string
+	Body       string
 	Handoff    string // the handoff id the proposal's metadata carries
 	PlanHash   string // the hash the proposal showed, "" to file whatever the id holds
 	MaxCostUSD float64
@@ -152,24 +154,10 @@ func (b Broker) Decide(ctx context.Context, d Decision) (DecisionResult, error) 
 	}
 }
 
-// IssueDraft asks the broker to judge a draft against the issue template. Only the draft grammar
-// calls it, which release N keeps behind proposals.enabled: false.
-func (b Broker) IssueDraft(ctx context.Context, d Draft) (Draft, error) {
-	sc, err := b.call(ctx, "issue_draft", map[string]any{"repo": d.Repo, "title": d.Title, "body": d.Body})
-	if err != nil {
-		return Draft{}, err
-	}
-	var out struct{ Repo, Title, Body string }
-	if err := json.Unmarshal(sc, &out); err != nil {
-		return Draft{}, fmt.Errorf("slackapp: issue_draft result: %w", err)
-	}
-	return Draft(out), nil
-}
-
 // RunCreate files the run. Its arguments are run_create's schema exactly: `text` is the draft's
 // body and dataClass is always public. A proposal sends `handoff` (and `plan_hash`, the hash it
 // showed) in place of the repository's issue: the broker files the plan it stored, so the App carries
-// no plan and no body (UX2). A draft's arguments are the ones they always were.
+// no plan and no body (UX2).
 func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 	args := map[string]any{"dataClass": "public", "max_cost": c.MaxCostUSD, "on_behalf_of": c.OnBehalfOf,
 		"ref": c.Ref, "idempotency_key": c.Key}
@@ -311,43 +299,30 @@ func (b Broker) HandoffCheck(ctx context.Context, id, onBehalfOf string, workflo
 	return out, nil
 }
 
-// RoomSummary is room_summary: the room's summary/v1 object with its coordination view attached. Only
-// a coordination parent's thread reads it, since task/v1 carries no coordination view; every other
-// read of a task goes through Task.
-func (b Broker) RoomSummary(ctx context.Context, room string) (summary.Summary, error) {
-	sc, err := b.call(ctx, "room_summary", map[string]any{"room": room})
-	if err != nil {
-		return summary.Summary{}, err
-	}
-	var out summary.Summary
-	if err := json.Unmarshal(sc, &out); err != nil {
-		return summary.Summary{}, fmt.Errorf("slackapp: room_summary result: %w", err)
-	}
-	return out, nil
-}
-
 // TaskResult is task/v1 as a thread reads it (UX4): the task's room, its page, its status (the
-// summary's, with the spend and the gate's decision), its runs, what it needs and the milestones since
-// the cursor.
+// summary's, with the spend and the gate's decision), its runs, what it needs, its coordination view
+// when it is a parent, and the milestones since the cursor.
 type TaskResult struct {
-	Room     string               `json:"room"`
-	URL      string               `json:"url"`
-	Text     string               `json:"text"`
-	Cursor   string               `json:"cursor"`
-	Runs     []envelope.RunFact   `json:"runs"`
-	NeedsYou []summary.Need       `json:"needsYou"`
-	Items    []roomview.Milestone `json:"items"`
-	More     int                  `json:"more"`
+	Room         string               `json:"room"`
+	URL          string               `json:"url"`
+	Text         string               `json:"text"`
+	Cursor       string               `json:"cursor"`
+	Runs         []envelope.RunFact   `json:"runs"`
+	NeedsYou     []summary.Need       `json:"needsYou"`
+	Coordination json.RawMessage      `json:"coordination"`
+	Items        []roomview.Milestone `json:"items"`
+	More         int                  `json:"more"`
 	// Status is summary/v1's status object, decoded into a summary so the thread's answers read the
 	// same fields the room page renders.
 	Status json.RawMessage `json:"status"`
 }
 
-// Summary is the task as summary/v1: the room, its page, its status, its runs and its needs — the
-// fields a thread's answers and the end line read. A status that does not decode is left empty.
+// Summary is the task as summary/v1: the room, its page, its status, its runs, its needs and its
+// coordination view — the fields a thread's answers, coordination updates and the end line read.
+// A status that does not decode is left empty.
 func (t TaskResult) Summary() summary.Summary {
 	var s summary.Summary
-	s.Room, s.URL, s.Runs, s.NeedsYou = t.Room, t.URL, t.Runs, t.NeedsYou
+	s.Room, s.URL, s.Runs, s.NeedsYou, s.Coordination = t.Room, t.URL, t.Runs, t.NeedsYou, t.Coordination
 	if len(t.Status) > 0 {
 		_ = json.Unmarshal(t.Status, &s.Status)
 	}

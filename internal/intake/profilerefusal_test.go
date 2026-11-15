@@ -16,7 +16,7 @@ import (
 func TestProfileRefusalSentences(t *testing.T) {
 	base := intake.ProfileRefusal{Class: "review", Profile: "review-frontier"}
 	want := map[string]string{
-		intake.ProfileUnknown:       "`review-frontier` is not a workflow of this factory. `classes_list` shows the workflows.",
+		intake.ProfileUnknown:       "`review-frontier` is not a workflow of this factory.",
 		intake.ProfileNotOffered:    "`review-frontier` names no roles, so they are chosen at triage; it runs only as the factory's choice.",
 		intake.NotMaintainer:        "Only a maintainer of this repository can choose the workflow; the factory will choose it.",
 		intake.ProfileConflict:      "The issue names more than one workflow; none was applied.",

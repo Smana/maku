@@ -44,7 +44,12 @@ func TestUpgradeIsShownNeverFiled(t *testing.T) {
 			if c.headers == "slack-app" {
 				h = bearer("slack-app")
 			}
-			got := call(t, e, h, c.tool, c.args(v1))
+			var got toolCall
+			if c.tool == "run_create" {
+				got = call(t, e, h, c.tool, c.args(v1))
+			} else {
+				got = callEngine(t, e, h, c.tool, c.args(v1))
+			}
 			if got.isError {
 				t.Fatal(got.text)
 			}
@@ -69,7 +74,7 @@ func TestUpgradeIsShownNeverFiled(t *testing.T) {
 				if got := call(t, e, h, c.tool, args); got.isError || len(f.got) != 1 {
 					t.Fatalf("%s %d", got.text, len(f.got))
 				}
-			} else if got := call(t, e, h, c.tool, map[string]any{"plan": out.Plan, "hash": out.Hash}); got.isError {
+			} else if got := callEngine(t, e, h, c.tool, map[string]any{"plan": out.Plan, "hash": out.Hash}); got.isError {
 				t.Fatal(got.text)
 			}
 		})
@@ -81,7 +86,7 @@ func TestUpgradeIsShownNeverFiled(t *testing.T) {
 func TestIntakePlanUpgradesAV1Revision(t *testing.T) {
 	e := setup(t, mcpOn, actorOn(&actLog{}), withIntakeDaily(t, 1))
 	v1 := planFixture(t, "v1-single")
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link is dead",
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{"text": "the install link is dead",
 		"plan": v1, "hash": intake.Hash(v1), "candidate": v1})
 	if got.isError {
 		t.Fatal(got.text)
@@ -93,7 +98,7 @@ func TestIntakePlanUpgradesAV1Revision(t *testing.T) {
 	if e.intake.calls() != 0 {
 		t.Fatalf("%d model calls", e.intake.calls())
 	}
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
+	if got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
 		t.Fatalf("the day's one plan was spent: %s", got.text)
 	}
 }

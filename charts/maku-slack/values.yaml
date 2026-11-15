@@ -10,13 +10,12 @@ image:
 e2e:
   unpinnedImages: false
 
-# The App's own config, verbatim (internal/slackapp): teamID, channels and proposals. The chart
+# The App's own config, verbatim (internal/slackapp): teamID and channels. The chart
 # derives the file paths, the three addresses and the namespace; setting one here fails the render.
 config: {}
 #  teamID: T0123ABCD
 #  channels:
 #    C0123ABCD: {repositories: [owner/repo], maxCostUSD: 2, approvals: true}
-#  proposals: {enabled: true}
 
 # The broker's human listener (no path: the App appends /mcp). Empty:
 # http://room-broker.<release namespace>.svc.<clusterDomain>:8080.

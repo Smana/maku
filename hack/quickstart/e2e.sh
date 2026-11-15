@@ -79,12 +79,12 @@ kubectl -n maku port-forward deploy/room-broker 18080:8080 >.quickstart/e2e/port
 pf=$!
 ready=0
 for _ in $(seq 30); do
-  if curl -fsS -o /dev/null http://localhost:18080/.well-known/roomctl 2>/dev/null; then ready=1; break; fi
+  if curl -fsS -o /dev/null http://localhost:18080/.well-known/maku 2>/dev/null; then ready=1; break; fi
   sleep 1
 done
 ((ready)) || { echo "port-forward never ready" >&2; exit 1; }
 code() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-[[ $(curl -fsS http://localhost:18080/.well-known/roomctl | yq -p=json '.humanMode + " " + .url') == "local http://localhost:18080" ]] ||
+[[ $(curl -fsS http://localhost:18080/.well-known/maku | yq -p=json '.humanMode + " " + .url') == "local http://localhost:18080" ]] ||
   { echo "discovery is not local at http://localhost:18080" >&2; exit 1; }
 [[ $(code http://localhost:18080/api/rooms) == 200 ]] || { echo "localhost: no 200" >&2; exit 1; }
 [[ $(code http://127.0.0.1:18080/api/rooms) == 200 ]] || { echo "127.0.0.1 (the loopback-literal fix): no 200" >&2; exit 1; }

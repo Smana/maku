@@ -318,7 +318,7 @@ provider's answer, and the meter never revokes the run for it.
 
 ## The planner and the classifier
 
-The broker makes two kinds of model call: the planner (`intake_plan`, alias `tier-frontier`) and the
+The broker makes two kinds of model call: the planner (`handoff`, alias `tier-frontier`) and the
 Slack intent classifier (`intent_classify`, alias `tier-light`). Both go to the `clients` listener
 (8082), which admits one subject only, `system:serviceaccount:<release namespace>:room-broker`. Each
 client has its own route and its own audience:

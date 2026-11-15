@@ -30,11 +30,16 @@ func (bearerAuth) Authenticate(r *http.Request) (authn.Principal, error) {
 	return headerAuth{}.Authenticate(c)
 }
 
-// The design's live proof 1, offline: an agent on maku mcp lists, reads, queues (wrapped),
-// tails as a task, and files a draft only once its developer accepts it.
+// The design's live proof 1, offline: an agent on maku mcp lists the six tools, queues a note via
+// answer (only after the developer accepts), tails as a task, and files a handoff via start only
+// once the developer accepts it.
 func TestMakuMCPAgainstTheBroker(t *testing.T) {
 	l := &actLog{st: store.RoomState{ID: roomID, Driver: "system:factory", DriverEpoch: 3}}
-	e := setup(t, mcpOn, actorOn(l), func(s *Server, _ *fanout.Hub, _ *hubView) { s.Humans = bearerAuth{} })
+	hs := newMemHandoffStore()
+	e := setup(t, mcpOn, actorOn(l), withIntake(t, "session"), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.Humans = bearerAuth{}
+		s.Handoffs = hs
+	})
 	var mu sync.Mutex
 	var filed []string
 	polled := make(chan struct{}, 8)
@@ -44,8 +49,9 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 			mu.Lock()
 			defer mu.Unlock()
 			filed = append(filed, repo+"|"+title+"|"+body)
-			return "https://github.com/Smana/a/issues/7", nil
+			return "https://github.com/Smana/ai-native-ref/issues/7", nil
 		},
+		Label: func(_ context.Context, _ string, _ int, _ string) error { return nil },
 		After: func(time.Duration) <-chan time.Time {
 			polled <- struct{}{}
 			c := make(chan time.Time, 1)
@@ -80,7 +86,6 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 		t.Fatalf("initialize: %v", res)
 	}
 	send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	// Default list is the six in order; unlisted release-N tools stay callable below.
 	var names []string
 	for _, tl := range ask(2, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
@@ -88,11 +93,18 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 	if strings.Join(names, ",") != "handoff,start,inbox,task,wait,answer" {
 		t.Fatalf("the default list is the six in order: %v", names)
 	}
-	if res := ask(3, "tools/call", map[string]any{"name": "room_queue", "arguments": map[string]any{"room": roomID, "text": "use v2"}}); strings.Contains(fmt.Sprint(res), "isError:true") {
-		t.Fatalf("queue: %v", res)
+
+	send(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{"name": "answer", "arguments": map[string]any{"task": roomID, "text": "use v2"}}})
+	elNote := next()
+	if elNote["method"] != "elicitation/create" {
+		t.Fatalf("answer elicitation: %v", elNote)
 	}
-	if !strings.HasPrefix(l.queue[0].Text, "⟦machine-sent via mcp") {
-		t.Fatalf("queued %q", l.queue[0].Text)
+	send(map[string]any{"jsonrpc": "2.0", "id": elNote["id"], "result": map[string]any{"action": "accept", "content": map[string]any{"send": true}}})
+	if res := next(); strings.Contains(fmt.Sprint(res), "isError:true") {
+		t.Fatalf("answer: %v", res)
+	}
+	if len(l.queue) != 1 || !strings.HasPrefix(l.queue[0].Text, "⟦machine-sent via mcp") {
+		t.Fatalf("queued %+v", l.queue)
 	}
 
 	created := ask(4, "tools/call", map[string]any{"name": "room_tail", "arguments": map[string]any{"room": roomID}, "task": map[string]any{"ttl": 60000}})
@@ -104,19 +116,23 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 		t.Fatalf("tasks/result: %v", res)
 	}
 
-	body := "## What is wrong\nx\u200b\n## What it should be\ny\n## Acceptance check\nz"
-	send(map[string]any{"jsonrpc": "2.0", "id": 6, "method": "tools/call", "params": map[string]any{"name": "issue_file",
-		"arguments": map[string]any{"repo": "Smana/a", "title": "docs: a dead link", "body": body}}})
+	ho := ask(6, "tools/call", map[string]any{"name": "handoff", "arguments": map[string]any{"text": "fix the broken install link in README.md"}})
+	if ho["result"].(map[string]any)["structuredContent"] == nil {
+		t.Fatalf("handoff: %v", ho)
+	}
+	hoID := ho["result"].(map[string]any)["structuredContent"].(map[string]any)["id"].(string)
+	send(map[string]any{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": map[string]any{"name": "start",
+		"arguments": map[string]any{"id": hoID}}})
 	el := next()
 	if el["method"] != "elicitation/create" {
 		t.Fatalf("%v", el)
 	}
 	send(map[string]any{"jsonrpc": "2.0", "id": el["id"], "result": map[string]any{"action": "accept", "content": map[string]any{"file": true}}})
 	if res := next(); !strings.Contains(fmt.Sprint(res["result"]), "issues/7") {
-		t.Fatalf("issue_file: %v", res)
+		t.Fatalf("start: %v", res)
 	}
 	mu.Lock()
-	if len(filed) != 1 || filed[0] != "Smana/a|docs: a dead link|## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz" {
+	if len(filed) != 1 || !strings.HasPrefix(filed[0], "smana/ai-native-ref|") {
 		t.Fatalf("filed %q", filed)
 	}
 	mu.Unlock()

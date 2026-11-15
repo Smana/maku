@@ -28,7 +28,7 @@ func TestIntakePlanReadsTheCatalogue(t *testing.T) {
 	src := &fakeFactoryCatalogue{}
 	e := setup(t, mcpOn, withIntake(t, "session"), withCatalogue(src))
 	e.intake.replyWith(reviewReply)
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
 	if got.isError {
 		t.Fatal(got.text)
 	}
@@ -53,7 +53,7 @@ func TestIntakePlanReadsTheCatalogue(t *testing.T) {
 	}
 	// plan_check holds the shown plan to the same catalogue: review is not in the config's table,
 	// so only the catalogue lets it past the class rule (its floor gaps are what remain).
-	if got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": out.Plan, "hash": out.Plan.Hash}); !got.isError ||
+	if got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": out.Plan, "hash": out.Plan.Hash}); !got.isError ||
 		!strings.Contains(got.text, "unresolved_marker") {
 		t.Fatal(got.text)
 	}
@@ -67,7 +67,7 @@ func TestIntakePlanCatalogueDown(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), func(s *Server, _ *fanout.Hub, _ *hubView) {
 		s.Catalogue = NewCatalogueCache(src, reads, nil)
 	})
-	got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
 	if got.isError {
 		t.Fatal(got.text)
 	}
@@ -92,7 +92,7 @@ func TestPlanCheckRederivesTheSuggestion(t *testing.T) {
 	plan := planFixture(t, "single") // docs-links: live
 	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "review-floor", Roles: []string{"admin"},
 		Merge: intake.MergeShown{Outcome: "approval"}, Why: "trust me"}
-	got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": intake.Hash(plan)})
+	got := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": plan, "hash": intake.Hash(plan)})
 	if got.isError {
 		t.Fatal(got.text)
 	}

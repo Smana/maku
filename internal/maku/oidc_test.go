@@ -171,7 +171,7 @@ func TestDoctorNamesAFailingIssuer(t *testing.T) {
 	}
 }
 
-// Discover takes the generic fields from /.well-known/roomctl, and needs no project id there.
+// Discover takes the generic fields from /.well-known/maku, and needs no project id there.
 func TestDiscoverGeneric(t *testing.T) {
 	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"url": "https://rooms.example", "issuer": "https://idp.example",

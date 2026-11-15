@@ -32,18 +32,6 @@ type Metadata struct {
 	EventPayload json.RawMessage `json:"event_payload"`
 }
 
-// DraftPayload is the checked draft and its hash, sha256 hex of repo, title and body joined by NUL.
-type DraftPayload struct {
-	Repo   string `json:"repo"`
-	Title  string `json:"title"`
-	Body   string `json:"body"`
-	SHA256 string `json:"sha256"`
-	// Author is the Slack user who wrote the mention: the only one whose thread replies edit the
-	// draft. Rev counts the drafts the thread has had, 1 for the first.
-	Author string `json:"author,omitempty"`
-	Rev    int    `json:"rev,omitempty"`
-}
-
 // ApprovalPayload is a card's metadata (§5): what finds the card again without a search scope.
 type ApprovalPayload struct {
 	ApprovalID string `json:"approvalId"`
@@ -65,19 +53,6 @@ type MarkerPayload struct {
 	Repo      string `json:"repo"`
 	Room      string `json:"room,omitempty"`
 	Cancelled bool   `json:"cancelled,omitempty"`
-}
-
-// draftPayload decodes the payload as the draft the event type claims; false when it is anything
-// else, which reads as "not a draft", the branch a foreign message already takes.
-func (m *Metadata) draftPayload() (DraftPayload, bool) {
-	if m == nil || m.EventType != draftEventType {
-		return DraftPayload{}, false
-	}
-	var p DraftPayload
-	if err := json.Unmarshal(m.EventPayload, &p); err != nil {
-		return DraftPayload{}, false
-	}
-	return p, true
 }
 
 // approvalPayload decodes the payload as a card's; false when it is anything else.

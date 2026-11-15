@@ -75,37 +75,19 @@ func TestLoadConfigApprovals(t *testing.T) {
 	}
 }
 
-// CD11: proposals are off unless the deployment says otherwise, and the decoder is strict, so a
-// switch never lands ahead of the release that reads it.
-func TestLoadProposals(t *testing.T) {
+func TestProposalsSwitchRemoved(t *testing.T) {
 	for _, tc := range []struct {
-		name   string
-		text   string
-		want   bool
-		errHas string
+		name string
+		text string
 	}{
-		{name: "absent, the switch is off", text: goodConfig},
-		{name: "enabled", text: goodConfig + "proposals:\n  enabled: true\n", want: true},
-		{name: "explicitly off", text: goodConfig + "proposals:\n  enabled: false\n"},
-		{name: "not an object", text: goodConfig + "proposals: true\n", errHas: "proposals"},
-		{name: "unknown key", text: goodConfig + "proposals:\n  on: true\n", errHas: "on"},
+		{name: "enabled", text: goodConfig + "proposals:\n  enabled: true\n"},
+		{name: "disabled", text: goodConfig + "proposals:\n  enabled: false\n"},
+		{name: "scalar", text: goodConfig + "proposals: true\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c, err := loadConfigText(t, tc.text)
-			if tc.errHas != "" {
-				if err == nil {
-					t.Fatalf("accepted, want an error naming %q", tc.errHas)
-				}
-				if !strings.Contains(err.Error(), tc.errHas) {
-					t.Fatalf("error %q does not name %q", err, tc.errHas)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := c.Proposals.Enabled; got != tc.want {
-				t.Fatalf("Proposals.Enabled = %v, want %v", got, tc.want)
+			_, err := loadConfigText(t, tc.text)
+			if err == nil || !strings.Contains(err.Error(), "proposals") {
+				t.Fatalf("got %v, want unknown-field error naming proposals", err)
 			}
 		})
 	}

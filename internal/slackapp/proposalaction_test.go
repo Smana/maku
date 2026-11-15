@@ -226,7 +226,6 @@ func TestProposalConfirmRefusals(t *testing.T) {
 	// serving the plan's repository.
 	t.Run("a channel that stopped serving the plan's repository", func(t *testing.T) {
 		rig := newAppRig(t, Channel{Repositories: []string{"Smana/cloud-native-ref"}, MaxCostUSD: 2})
-		rig.app.Proposals = Proposals{Enabled: true}
 		plan := planFixture(t, "slack-one-issue")
 		rig.slack.seed(Message{TS: proposalThreadTS, User: proposalAuthor, Text: "<@U0BOT> " + mentionWords})
 		p, err := newProposal(plan, intake.Hash(plan), proposalAuthor, 1)
@@ -263,26 +262,6 @@ func TestProposalConfirmRefusals(t *testing.T) {
 			t.Fatalf("interactions/refused counted %d times, want 1", n)
 		}
 		_ = plan
-	})
-
-	// The switch flipped under a live message: the buttons no longer decide here, and the message's
-	// ✅ fallback still files it, so the one line teaches that.
-	t.Run("the switch flipped under a live proposal", func(t *testing.T) {
-		rig, plan, ts := proposalAt(t, 1)
-		rig.app.Proposals = Proposals{}
-		if st := rig.interact(proposalPressOf(t, ts, proposalPresser, actionProposalConfirm,
-			proposalValue(intake.Hash(plan), 1))); st != http.StatusOK {
-			t.Fatalf("%d, want 200", st)
-		}
-		// The door answers before it reads anything, as the card path's not_enabled answer does: the
-		// presser is told, and no message or thread is read to say it.
-		pressSaid(t, rig, proposalPresser, "", proposalOffLine)
-		if calls := rig.broker.all(); len(calls) != 0 {
-			t.Fatalf("a channel with proposals off reached the broker: %+v", calls)
-		}
-		if n := rig.metrics.count("interactions", "not_enabled"); n != 1 {
-			t.Fatalf("interactions/not_enabled counted %d times, want 1", n)
-		}
 	})
 
 	// The same hash check the Confirm's own case asserts, here as the one refusal whose message is
@@ -511,7 +490,6 @@ func TestProposalInteractionDispatch(t *testing.T) {
 
 	t.Run("an approval press in a channel with proposals on is the card's", func(t *testing.T) {
 		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, Approvals: true})
-		rig.app.Proposals = Proposals{Enabled: true}
 		seedCard(t, rig, cardTS, cardApprovalID)
 		if st := rig.interact(pressPayload(t, nil)); st != http.StatusOK {
 			t.Fatalf("%d, want 200", st)

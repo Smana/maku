@@ -595,12 +595,12 @@ func toolBroker(t *testing.T, status int, fn func(req map[string]any) string) (c
 func TestToolCallsOneStatelessTool(t *testing.T) {
 	c, proto := toolBroker(t, http.StatusOK, func(req map[string]any) string {
 		p := req["params"].(map[string]any)
-		if req["method"] != "tools/call" || p["name"] != "room_summary" {
+		if req["method"] != "tools/call" || p["name"] != "task" {
 			t.Errorf("request %v", req)
 		}
 		return `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"hello"}],"structuredContent":{"a":1}}}`
 	})
-	text, sc, err := c.Tool(t.Context(), "room_summary", map[string]string{"room": "x"})
+	text, sc, err := c.Tool(t.Context(), "task", map[string]string{"room": "x"})
 	if err != nil || text != "hello" || string(sc) != `{"a":1}` || *proto != "2025-06-18" {
 		t.Fatalf("%q %s %v %q", text, sc, err, *proto)
 	}
@@ -661,33 +661,29 @@ func TestBriefHead(t *testing.T) {
 	}
 }
 
-// Brief is room_brief's text for one room, and since the cursor a previous brief handed back when there is
-// one (CD11). A broker without the tool is ErrUnknownTool, which the caller tells apart from a failure.
-func TestBriefCallsRoomBrief(t *testing.T) {
-	var since any = "unset"
-	c, _ := toolBroker(t, http.StatusOK, func(req map[string]any) string {
-		p := req["params"].(map[string]any)
-		if req["method"] != "tools/call" || p["name"] != "room_brief" {
-			t.Errorf("request %v", req)
+// Brief is GET /api/rooms/{id}/brief's text, and since the cursor a previous brief handed back when
+// there is one. A broker without the route is ErrUnknownTool, which the caller tells apart from a failure.
+func TestBriefReadsTheBriefRoute(t *testing.T) {
+	var path, since string
+	status := http.StatusOK
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, since = r.URL.Path, r.URL.Query().Get("since")
+		if status != http.StatusOK {
+			w.WriteHeader(status)
+			return
 		}
-		a := p["arguments"].(map[string]any)
-		if a["room"] != "26zfnuxm" {
-			t.Errorf("room: %v", a)
-		}
-		since = a["since"]
-		return `{"jsonrpc":"2.0","id":1,"result":{"content":[{"type":"text","text":"**Resume: 26zfnuxm**"}],` +
-			`"structuredContent":{"apiVersion":"brief/v1","room":"26zfnuxm","text":"**Resume: 26zfnuxm**","cursor":"seq:12"}}}`
-	})
+		_, _ = w.Write([]byte(`{"apiVersion":"brief/v1","room":"26zfnuxm","text":"**Resume: 26zfnuxm**","cursor":"seq:12"}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := Client{URL: srv.URL, Token: fixed, HC: srv.Client()}
 	text, err := c.Brief(t.Context(), "26zfnuxm", "seq:9")
-	if err != nil || text != "**Resume: 26zfnuxm**" || since != "seq:9" {
-		t.Fatalf("%q %v, since %v", text, err, since)
+	if err != nil || text != "**Resume: 26zfnuxm**" || since != "seq:9" || path != "/api/rooms/26zfnuxm/brief" {
+		t.Fatalf("%q %v, since %q, path %q", text, err, since, path)
 	}
-	if _, err := c.Brief(t.Context(), "26zfnuxm", ""); err != nil || since != nil {
-		t.Fatalf("no cursor is no since argument: %v", since)
+	if _, err := c.Brief(t.Context(), "26zfnuxm", ""); err != nil || since != "" {
+		t.Fatalf("no cursor is no since parameter: %q %v", since, err)
 	}
-	c, _ = toolBroker(t, http.StatusOK, func(map[string]any) string {
-		return `{"jsonrpc":"2.0","id":1,"error":{"code":-32602,"message":"unknown tool: room_brief"}}`
-	})
+	status = http.StatusNotFound
 	if _, err := c.Brief(t.Context(), "26zfnuxm", ""); !errors.Is(err, ErrUnknownTool) {
 		t.Fatalf("an older broker is ErrUnknownTool: %v", err)
 	}

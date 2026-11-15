@@ -370,20 +370,51 @@ func (c Client) Tool(ctx context.Context, name string, args any) (text string, s
 	return b.String(), out.Structured, nil
 }
 
-// Brief is room_brief's text for one room: the resume brief, the same one GET /api/rooms/{id}/brief serves
-// (CD11), so `maku status` can lead with it. since is the cursor a previous brief handed back (seq:N) or an
-// RFC 3339 instant, and empty reads the broker's window. A broker that serves no room_brief answers
-// ErrUnknownTool, which the caller tells apart from a failure of this read.
+// Brief is GET /api/rooms/{id}/brief: the resume brief, so `maku status` can lead with it. since is
+// the cursor a previous brief handed back (seq:N) or an RFC 3339 instant, and empty reads the
+// broker's window. A 404 (no brief route or no such room) answers ErrUnknownTool, which the caller
+// tells apart from a failure of this read.
 func (c Client) Brief(ctx context.Context, room, since string) (string, error) {
-	args := map[string]string{"room": room}
-	if since != "" {
-		args["since"] = since
-	}
-	text, _, err := c.Tool(ctx, "room_brief", args)
+	h, err := c.header(ctx)
 	if err != nil {
 		return "", err
 	}
-	return text, nil
+	u := c.URL + "/api/rooms/" + url.PathEscape(room) + "/brief"
+	if since != "" {
+		u += "?since=" + url.QueryEscape(since)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header = h
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("brief: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusNotFound:
+		return "", ErrUnknownTool
+	default:
+		msg, _ := httpx.ReadBody(resp.Body, 1<<10)
+		if text := OneLine(string(msg)); text != "" {
+			return "", fmt.Errorf("brief: %s", text)
+		}
+		return "", refusal("brief", resp)
+	}
+	body, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return "", fmt.Errorf("brief: %w", err)
+	}
+	var env struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return "", fmt.Errorf("brief: %w", err)
+	}
+	return env.Text, nil
 }
 
 // dial opens the room's WebSocket and says hello.

@@ -91,18 +91,6 @@ var mcpPrompts = []mcpPrompt{
 	},
 }
 
-// promptAlias is an old prompt name that still answers prompts/get in release N: the prompt it
-// stands for, and its old argument's name mapped to the new one.
-type promptAlias struct{ as, arg, asArg string }
-
-// promptAliases are the replaced prompts (UX1); none is listed, and release N+1 removes them.
-var promptAliases = map[string]promptAlias{
-	"factory_intake": {mcpwire.Handoff, "request", "what"},
-	"plan":           {mcpwire.Handoff, "what", "what"},
-	"status":         {mcpwire.Task, "room", "task"},
-	"resume":         {mcpwire.Task, "room", "task"},
-}
-
 // mcpPromptsList is prompts/list: a sponsored principal has no prompts, so its list is empty.
 func mcpPromptsList(w http.ResponseWriter, req mcpwire.Request, p authn.Principal) {
 	list := []map[string]any{}
@@ -132,29 +120,18 @@ func mcpPromptsGet(w http.ResponseWriter, req mcpwire.Request, p authn.Principal
 		bad("prompts/get takes {name, arguments}")
 		return
 	}
-	name, args := g.Name, g.Arguments
-	if al, ok := promptAliases[name]; ok {
-		name, args = al.as, map[string]string{}
-		for k, v := range g.Arguments {
-			if k != al.arg {
-				bad("unknown argument: " + k)
-				return
-			}
-			args[al.asArg] = v
-		}
-	}
-	i := slices.IndexFunc(mcpPrompts, func(pr mcpPrompt) bool { return pr.name == name })
+	i := slices.IndexFunc(mcpPrompts, func(pr mcpPrompt) bool { return pr.name == g.Name })
 	if i < 0 || p.Sponsored {
 		bad("unknown prompt: " + g.Name)
 		return
 	}
 	pr := mcpPrompts[i]
-	for k := range args {
+	for k := range g.Arguments {
 		if !slices.ContainsFunc(pr.args, func(a promptArg) bool { return a.name == k }) {
 			bad("unknown argument: " + k)
 			return
 		}
 	}
 	mcpwire.Write(w, req.ID, map[string]any{"description": pr.description, "messages": []map[string]any{
-		{"role": "user", "content": map[string]string{"type": "text", "text": pr.text(args)}}}}, nil)
+		{"role": "user", "content": map[string]string{"type": "text", "text": pr.text(g.Arguments)}}}}, nil)
 }

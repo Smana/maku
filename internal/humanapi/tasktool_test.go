@@ -322,7 +322,7 @@ func TestTaskCanStart(t *testing.T) {
 			rm := taskFixtureRoom(roomID, tc.repo, "Active", 1)
 			rm.Spec.Owner = "human:dev"
 			e := setup(t, mcpOn, withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
-				s.SessionStart = map[string]bool{"smana/ai-native-ref": true}
+				s.StartDefault = true
 				s.Rooms = roomClient(t, rm)
 				v.mu.Lock()
 				v.evs = []envelope.Event{progress(1, "working")}

@@ -76,7 +76,7 @@ flowchart LR
 | Broker → database | Postgres `:5432` | The `rooms_broker` role: append and read events; no update or delete |
 | Broker → Kubernetes | The API server | Read and delete `AgentRun`s, never create; CRUD on `Room`s; no cluster-admin |
 
-One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `intake_plan`
+One boundary crosses out to a model, and only one. A broker's planner reaches an LLM: `handoff`
 — off unless the broker's config turns it on — makes **at most one** `chat/completions` call per attempt,
 in-cluster and straight to the model gateway's clients listener (agentgateway, [`maku-gateway`](gateway.md#the-planner-and-the-classifier):
 no vendor egress from the broker, and the gateway verifies the broker's own token for the client
@@ -86,15 +86,16 @@ only: the requester's own sentence, the context the agent read and the evidence 
 repository GitHub reports public — a private one is refused before the call. The answer becomes a
 plan only through the strict decode, the roles and the money come from the config rather than from
 the model, and the call is audited by the plan's hash, the model, the token counts and the outcome,
-never by the text. It files nothing and stores nothing: the plan is shown, and the consumer that
-owns the message re-validates it through `plan_check` before anything is filed.
+never by the text. It files nothing: the plan is shown and held on the broker for 24 hours under the id `handoff`
+returns, and `start` (or the Slack confirm) has the broker re-validate it before anything is filed.
 
-A clarification revision carries the verified base plan, its hash and an edited candidate. The broker
+A clarification continuation names the stored plan's id and carries an answer, never a plan. The broker
 permits only marker replacements and their Decision/Assumption records, recomputes the remaining
-ranked gaps and returns a new material hash. `plan_check` applies the same revision deterministically
-with no model call. Every initial or revision `intake_plan` spends one `dailyPlans` slot, including the
-cap-reaching revision; `plan_check` spends none. `maxRounds` independently ends one intake by turning
-the remaining recommendations into assumptions without another model call.
+ranked gaps and the new material hash. `acceptRest` applies the recommendations deterministically
+with no model call. Every initial plan and every continuation that answers a gap spends one `dailyPlans`
+slot, including the cap-reaching one; `acceptRest` and the re-validation spend none. `maxRounds`
+independently ends one intake by turning the remaining recommendations into assumptions without another
+model call.
 
 **The broker does not take the model's word that nothing is missing.** After the model answers, a
 deterministic gap floor reads each issue body (no model call) and adds ranked gaps, after the model's
@@ -107,11 +108,9 @@ the model writes is labelled `kind: model_claim` and shown as unverified, and `p
 the model the gateway reported answering next to the alias, so a swap behind `tier-frontier` is visible.
 Both are outside the material hash.
 
-Intermediate composition remains marker-tolerant. Final `plan_check`, `issue_draft`/`issue_file`,
+Intermediate composition remains marker-tolerant. The final re-validation (`start`),
 `run_create`, factory task creation, hardening issue output and proposal publishing all fail closed on
-an unresolved marker or malformed Decisions section. Strict decoding also makes mixed versions fail
-closed: an older broker refuses revision fields and `gaps`, while a newer broker preserves legacy
-hashes and maps only the first ranked gap to the old `Question` view for Slack and room rendering.
+an unresolved marker or malformed Decisions section.
 
 ## One task's life
 
@@ -385,7 +384,7 @@ Broker, bridge and CLI, by pipeline stage:
 | `cmd/maku-run-controller` | The AgentRun controller binary |
 | `cmd/maku`, `internal/maku` | The human CLI and its client; `maku mcp`, the stdio relay to `/mcp` |
 | `cmd/maku-slack`, `internal/slackapp` | The factory's Slack App: intake from a thread, webhooks to the thread ([Slack App](slack.md)) |
-| `internal/maku/skill` | The embedded factory-handoff Agent Skill (MCP first, shell fallback), released with maku; `maku setup` and `skill install` write it, `skill.Version` reads its stamp for the doctor's `skill` drift check |
+| `internal/maku/skill` | The embedded maku-handoff Agent Skill (MCP first, shell fallback), released with maku; `maku setup` and `skill install` write it, `skill.Version` reads its stamp for the doctor's `skill` drift check |
 | `internal/app` | Wiring per binary, the only importer of every adapter |
 | `internal/config` | The broker's config file: strict decode, defaults, validation |
 | `internal/logging` | A binary's `*slog.Logger`: JSON or text, level by env |
@@ -497,7 +496,7 @@ The factory, by the same stages. Its wiring is `internal/app/factory.go`.
 | `maku-harness` | Main container of every `AgentRun` pod: OpenHands agent-server plus `agent-run`, the git credential helper, `gh` with the PR footer and the trailer hook ([`images/maku-harness`](../images/maku-harness/README.md)) | `ghcr.io/smana/maku-harness` |
 | `maku-run-controller` | A Deployment, on clusters without cloud-native-ref's Crossplane runtime; reconciles `maku.ogenki.io` AgentRuns into gVisor pods | `ghcr.io/smana/maku-run-controller` |
 | `maku-slack` | The factory's Slack App, a Deployment beside the factory; its config is `--config` or `SLACK_APP_CONFIG` ([Slack App](slack.md)) | `ghcr.io/smana/maku-slack` |
-| `maku` | A developer's CLI: list, follow, post, queue and fork rooms; `maku skill install` writes the factory-handoff Agent Skill for local coding agents; `maku token` for scripts. Never steers or approves: those stay in the web UI | Release assets `maku-{linux,darwin}-{amd64,arm64}` + `maku.sha256`; before a release, `go build ./cmd/maku` |
+| `maku` | A developer's CLI: list, follow, post, queue and fork rooms; `maku skill install` writes the maku-handoff Agent Skill for local coding agents; `maku token` for scripts. Never steers or approves: those stay in the web UI | Release assets `maku-{linux,darwin}-{amd64,arm64}` + `maku.sha256`; before a release, `go build ./cmd/maku` |
 
 Every image is multi-arch (`linux/amd64`, `linux/arm64`). The Go ones are static binaries on distroless `nonroot`; the harness is OpenHands' Python image, run as uid 10001.
 
@@ -510,7 +509,7 @@ maku status 3kq7x2ma                                              # the brief's 
 maku watch 3kq7x2ma
 maku post 3kq7x2ma --queue "address L42"
 maku fork 3kq7x2ma --at 42 --role implementer --egress pypi --note "try uv"
-maku skill install                                                # .agents/skills/factory-handoff in this repo
+maku skill install                                                # .agents/skills/maku-handoff in this repo
 ```
 
 ### Releases

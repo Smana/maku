@@ -30,10 +30,6 @@ const (
 	// replannedLine is a confirm of a proposal made before profiles (P14): the message now shows the
 	// same issue as plan/v2, with its suggestion and new hash, and that is the one to confirm.
 	replannedLine = "Not filed yet: this proposal was made before workflows could be chosen, so it now shows the current plan; check it and confirm again."
-	// proposalOffLine is a press in a channel whose proposals switch is off (the switch flipped under a
-	// live message). The buttons no longer file anything here; the message's ✅ fallback does not
-	// depend on the switch, so the one line teaches it.
-	proposalOffLine = "Not filed: proposals are off in this channel; a maintainer reacts :white_check_mark: to the message to file it."
 	// proposalGoneLine is a press on a message whose metadata is no longer a proposal: the plan lives
 	// nowhere else (CD20) and no rendered text is ever parsed to recover one, so the fix is a new
 	// mention.
@@ -78,12 +74,6 @@ const (
 // The outcome is the door's word — "not_enabled", "duplicate", "busy" or "queued", whose work counts
 // its own ("filed", "duplicate", "unrewritten", "cancelled", "refused", "replanned", "error", "ignored").
 func (a *App) proposalAction(ctx context.Context, in interaction) string {
-	if !a.Proposals.Enabled {
-		// Answered locally, with no broker call: the switch was flipped under a live message, and the
-		// ✅ fallback the line names does not depend on it.
-		a.sayProposalOff(ctx, in)
-		return "not_enabled"
-	}
 	// Stable across Slack's retries of one press and distinct from the card's key, which is keyed by
 	// the approval it binds: a proposal press binds a message and a moment, not an approval (F-10).
 	key := proposalDedupKey(in)
@@ -106,18 +96,6 @@ func (a *App) proposalAction(ctx context.Context, in interaction) string {
 // one interaction and distinct from the card's key, which names the approval a press binds.
 func proposalDedupKey(in interaction) string {
 	return "i|" + in.ActionID + "/" + in.User + "/" + in.ActionTS + "/" + in.MessageTS
-}
-
-// sayProposalOff tells the presser alone that the buttons no longer file anything here, inside
-// pressAnswerBound: the one Slack call the door makes on this path, and so the one that must not
-// outlast Slack's three seconds. A failed or timed-out answer is logged and dropped, as the card
-// path's is: it is never retried and never turns the press into a filing.
-func (a *App) sayProposalOff(ctx context.Context, in interaction) {
-	actx, cancel := context.WithTimeout(ctx, pressAnswerBound)
-	defer cancel()
-	if err := a.Slack.PostEphemeral(actx, in.Channel, in.User, "", proposalOffLine); err != nil {
-		a.log().Warn("slack ephemeral post failed", "channel", in.Channel, "err", err)
-	}
 }
 
 // proposalPress is the press's work, after the 200 (under handleTimeout). The message it was made on

@@ -158,10 +158,10 @@ func TestCreateRoomErrorsAreLoggedAndMapped(t *testing.T) {
 }
 
 // #48: the same values, with no sign-in, for `maku configure --url`. None is a secret.
-func TestRoomctlSetupIsPublicToConfigure(t *testing.T) {
+func TestWellKnownMaku(t *testing.T) {
 	srv := &Server{Humans: headerAuth{}, Groups: groups, PublicURL: "https://rooms.priv.example", Issuer: "https://auth.example",
 		RoomctlClient: func() string { return "3434@agents" }, ProjectID: func() string { return "29184" }}
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/roomctl", nil)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/maku", nil)
 	rec := httptest.NewRecorder()
 	srv.Routes().ServeHTTP(rec, req)
 	var out map[string]string
@@ -172,19 +172,14 @@ func TestRoomctlSetupIsPublicToConfigure(t *testing.T) {
 	}
 }
 
-func TestWellKnownMaku(t *testing.T) {
+func TestWellKnownRoomctlGone(t *testing.T) {
 	srv := &Server{Humans: headerAuth{}, Groups: groups, PublicURL: "https://rooms.priv.example", Issuer: "https://auth.example",
 		RoomctlClient: func() string { return "3434@agents" }, ProjectID: func() string { return "29184" }}
-	get := func(path string) (int, string) {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
-		rec := httptest.NewRecorder()
-		srv.Routes().ServeHTTP(rec, req)
-		return rec.Code, rec.Body.String()
-	}
-	c1, b1 := get("/.well-known/maku")
-	c2, b2 := get("/.well-known/roomctl")
-	if c1 != http.StatusOK || c2 != http.StatusOK || b1 == "" || b1 != b2 {
-		t.Fatalf("/.well-known/maku=%d %q, /.well-known/roomctl=%d %q", c1, b1, c2, b2)
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/roomctl", nil)
+	rec := httptest.NewRecorder()
+	srv.Routes().ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("/.well-known/roomctl = %d %q, want 404", rec.Code, rec.Body.String())
 	}
 }
 
@@ -229,7 +224,7 @@ func TestRoomctlSetup(t *testing.T) {
 
 // GET /api/roomctl carries the room page's dashboard templates (human.dashboards) to any member,
 // unfilled: the page fills each room's ids. Absent, the field is left out. The unauthenticated
-// /.well-known/roomctl never carries them: maku configure has no use for them.
+// /.well-known/maku never carries them: maku configure has no use for them.
 func TestRoomctlSetupDashboards(t *testing.T) {
 	links := []Dashboard{{Label: "Room metrics", URL: "https://grafana.example.com/d/agent-room/x?var-room={room}"},
 		{Label: "Run", URL: "https://grafana.example.com/d/agent-run/x?var-run={run}"}}
@@ -240,7 +235,7 @@ func TestRoomctlSetupDashboards(t *testing.T) {
 	}{
 		"present":            {links, "/api/roomctl", "alice", links},
 		"absent":             {nil, "/api/roomctl", "alice", nil},
-		"never to the world": {links, "/.well-known/roomctl", "", nil},
+		"never to the world": {links, "/.well-known/maku", "", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			srv := &Server{Humans: headerAuth{}, Groups: groups, PublicURL: "https://rooms.priv.example", Dashboards: c.dashboards}
@@ -273,7 +268,7 @@ func TestRoomctlSetupDashboards(t *testing.T) {
 // signs in to any OIDC issuer; under zitadel they say so, and the project id stays filled.
 func TestRoomctlSetupPreset(t *testing.T) {
 	setup := func(srv *Server) map[string]any {
-		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/roomctl", nil)
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/.well-known/maku", nil)
 		rec := httptest.NewRecorder()
 		srv.Routes().ServeHTTP(rec, req)
 		var out map[string]any

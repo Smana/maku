@@ -37,7 +37,7 @@ func TestMCPToolList(t *testing.T) {
 			t.Errorf("%s: execution %+v", tool.Name, tool.Execution)
 		}
 	}
-	if want := []string{"handoff", "inbox", "task", "rooms_list", "room_summary", "room_tail", "room_changes", "room_queue", "room_fork", "issue_draft", "needs_list", "room_brief"}; !slices.Equal(names, want) {
+	if want := []string{"handoff", "inbox", "task", "rooms_list", "room_tail", "room_fork"}; !slices.Equal(names, want) {
 		t.Fatalf("tools %v, want %v", names, want)
 	}
 }
@@ -105,7 +105,7 @@ func TestMCPTailTask(t *testing.T) {
 	if failed := taskOf(t, e, viaRoomctl("dev"), map[string]any{"room": "aaaaaaaa"}, map[string]any{}); failed.Status != "failed" || failed.StatusMessage != "no such room" {
 		t.Fatalf("a missing room: %+v", failed)
 	}
-	if _, out := rpc(t, e, viaRoomctl("dev"), "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": roomID}, "task": map[string]any{}}); rpcCode(out) != -32601 {
+	if _, out := rpc(t, e, viaRoomctl("dev"), "tools/call", map[string]any{"name": "task", "arguments": map[string]any{"task": roomID}, "task": map[string]any{}}); rpcCode(out) != -32601 {
 		t.Fatalf("a tool that does not run as a task: %v", out)
 	}
 }

@@ -14,7 +14,7 @@ import (
 	"net/http"
 )
 
-// The tools the broker's /mcp and maku mcp share by name: maku mcp serves RoomWait and
+// The tools the broker's /mcp and maku mcp share by name: maku mcp serves Start, Wait, Answer and
 // RoomCheckout itself, and the broker's instructions and prompts name them (one spelling, so the
 // two cannot drift).
 const (
@@ -26,19 +26,13 @@ const (
 	Wait    = "wait"
 	Answer  = "answer"
 
-	RoomWait     = "room_wait"
 	RoomCheckout = "room_checkout"
-	RoomChanges  = "room_changes"
 	// CoordinationCheckout is maku mcp's parent checkout (v4 MR14): every child of a family at its
 	// exact commit. Local, like RoomCheckout; it confirms, files, merges and recovers nothing.
 	CoordinationCheckout = "coordination_checkout"
 	// CoordinationOpen is maku mcp's draft opener (v4): a coordination_plan result stored as its
 	// parent's draft, as the developer. It confirms nothing.
 	CoordinationOpen = "coordination_open"
-	// IntakePlan and PlanCheck are the broker's governed planner: the plan a sentence becomes, and
-	// the door every consumer re-validates one through before anything is filed.
-	IntakePlan = "intake_plan"
-	PlanCheck  = "plan_check"
 	// IntentClassify is the Slack App's read-only classification of a thread reply (natural-language
 	// intents, SI3): a label and a span, never an action.
 	IntentClassify = "intent_classify"

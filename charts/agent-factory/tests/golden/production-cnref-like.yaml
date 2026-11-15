@@ -602,8 +602,6 @@ data:
     issuerURL: https://auth.example.test
     namespace: agent-system
     projectIDFile: /etc/factory-slack-app/principal/project-id
-    proposals:
-      enabled: true
     roomsURL: https://rooms.priv.example.test
     signingSecretFile: /etc/factory-slack-app/slack/signing-secret
     teamID: T07J97G2K2P
@@ -1569,7 +1567,7 @@ spec:
         app.kubernetes.io/part-of: agent-factory
         app.kubernetes.io/managed-by: Helm
       annotations:
-        checksum/config: 94adece520ec47933207be2c3506a9a35f4000063b87747e3f041e3f5209c2c0
+        checksum/config: ee7df0063a7d719283a5ad772445cb7518d7594fea4c0292081a3ce2dcddc4c8
     spec:
       serviceAccountName: factory-slack-app
       # The thread map's get and update (rbac.yaml).
@@ -1675,7 +1673,7 @@ spec:
             - "--redirect-url=https://rooms.priv.example.test/oauth2/callback"
             - "--reverse-proxy=false"
             - "--set-xauthrequest=false"
-            - "--skip-auth-route=GET=^/\\.well-known/roomctl$"
+            - "--skip-auth-route=GET=^/\\.well-known/maku$"
             - "--skip-auth-route=GET=^/link/github/callback$"
             - "--skip-auth-strip-headers=true"
             - "--skip-jwt-bearer-tokens=true"

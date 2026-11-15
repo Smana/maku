@@ -8,7 +8,7 @@ Your gateway or Ingress terminates TLS: the chart never issues a certificate.
 
 | Surface | Callers | Must be public | Path |
 |---|---|---|---|
-| `web` | people's browsers, `maku`, the `maku mcp` server | no: a private gateway (a VPN, a tailnet) is enough | everything on its hosts: the rooms UI, `/api`, `/v1/ws`, `/mcp`, `/.well-known/roomctl`, `/link/*` |
+| `web` | people's browsers, `maku`, the `maku mcp` server | no: a private gateway (a VPN, a tailnet) is enough | everything on its hosts: the rooms UI, `/api`, `/v1/ws`, `/mcp`, `/.well-known/maku`, `/link/*` |
 | `slack` | Slack's servers | yes | `POST /slack/events` only |
 | the factory | no one outside the cluster | no: never exposed | the factory polls GitHub, so GitHub needs no webhook path. Its run API (`:8082`) is the broker's, its intake (`:8080`) is in-cluster |
 
@@ -205,8 +205,8 @@ e2e stub issuer.
 | X2 | The web route removes each of the ten identity headers and the three forwarded headers | all removed; the gateway may set its own `X-Forwarded-Host` and `-Proto` after the filter |
 | X3 | `/v1/ws`, pinged every 30 s, stays open 6 minutes | through agentgateway with and without `timeouts`, through Traefik, and through agentgateway then oauth2-proxy |
 | X4 | oauth2-proxy never forwards a client's `X-Forwarded-Access-Token` or user headers | with a CLI bearer it is overwritten with the bearer (both headers equal: never a web session); with a session it is the session's own access token; on a skip-auth route it is stripped. `pass-user-headers` overwrites the four `X-Forwarded-*` user headers. A client's `X-Auth-Request-*` headers pass unchanged: the broker reads only `Authorization` and `X-Forwarded-Access-Token` |
-| X4 | A forwarded path never selects a skip-auth route | with `reverse-proxy=false`, `GET /api/rooms` with `X-Forwarded-Uri: /.well-known/roomctl` (or the GitHub callback) and no session redirects to sign in |
-| X4 | The skip-auth routes and the cookies | `GET /.well-known/roomctl` and `GET /link/github/callback?…` pass without a session; `POST /link/github/callback`, `GET /link/github` and `/link/github/callbackx` redirect to sign in. The cookies are `Secure`, `HttpOnly`, `SameSite=Strict`. A bearer in no agents group is 403 |
+| X4 | A forwarded path never selects a skip-auth route | with `reverse-proxy=false`, `GET /api/rooms` with `X-Forwarded-Uri: /.well-known/maku` (or the GitHub callback) and no session redirects to sign in |
+| X4 | The skip-auth routes and the cookies | `GET /.well-known/maku` and `GET /link/github/callback?…` pass without a session; `POST /link/github/callback`, `GET /link/github` and `/link/github/callbackx` redirect to sign in. The cookies are `Secure`, `HttpOnly`, `SameSite=Strict`. A bearer in no agents group is 403 |
 | X5 | `oidc-groups-claim` with a nested claim (`realm_access.roles`) | not read: a member's bearer is 403. So the chart sets `allowed-group` only for a top-level roles claim |
 | X6 | `HTTPRoute.spec.rules[].timeouts` on the v1.2.1 standard CRDs | kept, and agentgateway accepts the route |
 

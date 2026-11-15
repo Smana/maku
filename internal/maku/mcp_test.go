@@ -102,7 +102,7 @@ func newMCPBroker(t *testing.T) *mcpBroker {
 			tools := b.tools
 			if tools == nil {
 				tools = []any{map[string]any{"name": "rooms_list"},
-					map[string]any{"name": "room_summary", "description": "d", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+					map[string]any{"name": "task", "description": "d", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 						"room": map[string]any{"type": "string", "pattern": "^[a-z2-7]{8}$"}}}}}
 			}
 			res = map[string]any{"tools": tools}
@@ -115,15 +115,20 @@ func newMCPBroker(t *testing.T) *mcpBroker {
 			if c.Name != "rooms_list" {
 				b.calls = append(b.calls, toolCall{c.Name, c.Arguments})
 			}
+			if b.tools != nil && !toolListed(b.tools, c.Name) {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{"code": -32602, "message": "unknown tool: " + c.Name}})
+				return
+			}
 			switch {
-			case c.Name == "room_summary" && b.card != nil:
+			case c.Name == "task" && b.card != nil:
 				res = map[string]any{"content": []any{map[string]any{"type": "text", "text": b.roomText}}, "structuredContent": b.card}
 			case c.Name == "rooms_list" && b.roomsFn != nil:
 				b.listed++
 				res = map[string]any{"content": []any{map[string]any{"type": "text", "text": "rooms"}}, "structuredContent": map[string]any{"rooms": b.roomsFn(b.listed, c.Arguments)}}
 			case c.Name == "issue_draft" && b.draftErr != "":
 				res = map[string]any{"isError": true, "content": []any{map[string]any{"type": "text", "text": b.draftErr}}}
-			case c.Name == "room_summary" && b.roomText != "":
+			case c.Name == "task" && b.roomText != "":
 				res = map[string]any{"content": []any{map[string]any{"type": "text", "text": b.roomText}}, "structuredContent": map[string]any{"room": "r1", "url": "https://rooms.example/r/r1"}}
 			case c.Name == "issue_draft":
 				d := map[string]any{"repo": "Smana/a", "title": "docs: a dead link", "body": "## What is wrong\nstripped"}
@@ -420,14 +425,14 @@ func TestRelayCancelsALocalTool(t *testing.T) {
 	b := newMCPBroker(t)
 	started, ended := make(chan struct{}), make(chan struct{})
 	s, _ := locals(t, b, func(r *Relay) {
-		r.handlers = map[string]localTool{toolRoomWait: func(ctx context.Context, _ *Relay, _ localCall) any {
+		r.handlers = map[string]localTool{mcpwire.Wait: func(ctx context.Context, _ *Relay, _ localCall) any {
 			close(started)
 			<-ctx.Done()
 			close(ended)
 			return mcpwire.ToolError("cancelled")
 		}}
 	})
-	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": map[string]any{"name": toolRoomWait}})
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 7, "method": "tools/call", "params": map[string]any{"name": mcpwire.Wait}})
 	<-started
 	s.send(t, map[string]any{"jsonrpc": "2.0", "method": "notifications/cancelled", "params": map[string]any{"requestId": 7}})
 	<-ended
@@ -445,7 +450,7 @@ func TestRelayRendersForAnOlderBroker(t *testing.T) {
 	b := newMCPBroker(t)
 	b.roomText = `{"room":"r1","url":"https://rooms.example/r/r1"}`
 	s := relayTo(t, b, tok)
-	res := s.request(t, 1, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": "r1"}})["result"].(map[string]any)
+	res := s.request(t, 1, "tools/call", map[string]any{"name": "task", "arguments": map[string]any{"task": "aaaaaaaa"}})["result"].(map[string]any)
 	text := res["content"].([]any)[0].(map[string]any)["text"].(string)
 	if strings.HasPrefix(text, "{") || !strings.Contains(text, "r1") {
 		t.Fatalf("the card, not the JSON: %q", text)
@@ -459,7 +464,7 @@ func TestRelayPassesANewBrokersView(t *testing.T) {
 	b := newMCPBroker(t)
 	b.roomText = "# r1 <b>card</b>\n\n| x |"
 	s := relayTo(t, b, tok)
-	res := s.request(t, 1, "tools/call", map[string]any{"name": "room_summary", "arguments": map[string]any{"room": "r1"}})["result"].(map[string]any)
+	res := s.request(t, 1, "tools/call", map[string]any{"name": "task", "arguments": map[string]any{"task": "aaaaaaaa"}})["result"].(map[string]any)
 	if text := res["content"].([]any)[0].(map[string]any)["text"]; text != b.roomText {
 		t.Fatalf("%q", text)
 	}
@@ -471,7 +476,7 @@ func TestRelayListsLocalTools(t *testing.T) {
 	for _, tl := range s.request(t, 1, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if got := strings.Join(names, ","); got != "start,wait,answer,room_checkout,coordination_checkout,coordination_open,rooms_list,room_summary,issue_file,need_answer,room_wait" {
+	if got := strings.Join(names, ","); got != "start,task,wait,answer,room_checkout,coordination_checkout,coordination_open" {
 		t.Fatalf("%s", got)
 	}
 }
@@ -526,7 +531,7 @@ func TestRelayCallsTheBroker(t *testing.T) {
 	b := newMCPBroker(t)
 	b.roomText = "the card"
 	_, r := locals(t, b)
-	text, structured, isErr, err := r.callBroker(t.Context(), "room_summary", map[string]any{"room": "r1"})
+	text, structured, isErr, err := r.callBroker(t.Context(), "task", map[string]any{"task": "aaaaaaaa"})
 	if err != nil || isErr || text != "the card" || !strings.Contains(string(structured), `"room":"r1"`) {
 		t.Fatalf("%q %s %v %v", text, structured, isErr, err)
 	}
@@ -563,11 +568,11 @@ func (b *blocker) tool(ctx context.Context, _ *Relay, _ localCall) any {
 }
 
 func withBlocker(b *blocker) func(*Relay) {
-	return func(r *Relay) { r.handlers = map[string]localTool{toolRoomWait: b.tool} }
+	return func(r *Relay) { r.handlers = map[string]localTool{mcpwire.Wait: b.tool} }
 }
 
 func callWait(s session, t *testing.T, id any) {
-	s.send(t, map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": map[string]any{"name": toolRoomWait}})
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": id, "method": "tools/call", "params": map[string]any{"name": mcpwire.Wait}})
 }
 
 func cancelOf(s session, t *testing.T, id any) {
@@ -641,7 +646,7 @@ func TestIDKey(t *testing.T) {
 
 // A call that finishes after its cancellation is never answered, for any local tool.
 func TestRelayNoReplyToACancelledLocalToolThatFinishesLater(t *testing.T) {
-	for _, name := range []string{toolRoomCheckout, issueFileTool} {
+	for _, name := range []string{toolRoomCheckout, mcpwire.Start} {
 		t.Run(name, func(t *testing.T) {
 			started, release := make(chan struct{}), make(chan struct{})
 			s, _ := locals(t, newMCPBroker(t), func(r *Relay) {
@@ -703,13 +708,13 @@ func TestViewedKeepsWhatItCannotRender(t *testing.T) {
 		res  json.RawMessage
 		same bool
 	}{
-		"null":        {"room_summary", mk(false, "null", ""), true},
-		"absent":      {"room_summary", mk(false, "", ""), true},
-		"empty":       {"room_summary", mk(false, "{}", ""), true},
-		"wrong shape": {"room_summary", mk(false, `[1]`, ""), true},
+		"null":        {"task", mk(false, "null", ""), true},
+		"absent":      {"task", mk(false, "", ""), true},
+		"empty":       {"task", mk(false, "{}", ""), true},
+		"wrong shape": {"task", mk(false, `[1]`, ""), true},
 		"list no key": {"rooms_list", mk(false, `{"x":1}`, ""), true},
-		"is error":    {"room_summary", mk(true, `{"room":"r1"}`, ""), true},
-		"renders":     {"room_summary", mk(false, `{"room":"r1"}`, ""), false},
+		"is error":    {"task", mk(true, `{"room":"r1"}`, ""), true},
+		"renders":     {"task", mk(false, `{"room":"r1"}`, ""), false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := viewed(tc.tool, tc.res, "https://rooms.example", time.Now())
@@ -719,7 +724,7 @@ func TestViewedKeepsWhatItCannotRender(t *testing.T) {
 		})
 	}
 	t.Run("keeps the other content", func(t *testing.T) {
-		got := viewed("room_summary", mk(false, `{"room":"r1"}`, `,{"type":"text","text":"second"}`), "", time.Now())
+		got := viewed("task", mk(false, `{"room":"r1"}`, `,{"type":"text","text":"second"}`), "", time.Now())
 		if !strings.Contains(string(got), `"second"`) {
 			t.Fatalf("%s", got)
 		}
@@ -757,4 +762,14 @@ func TestRelayAcceptsBothMCPNeedsReasons(t *testing.T) {
 			t.Errorf("%s: got %q", reason, got)
 		}
 	}
+}
+
+// toolListed is whether a broker serving tools lists name: a call to any other is unknown.
+func toolListed(tools []any, name string) bool {
+	for _, t := range tools {
+		if m, ok := t.(map[string]any); ok && m["name"] == name {
+			return true
+		}
+	}
+	return false
 }

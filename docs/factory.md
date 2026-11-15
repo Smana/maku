@@ -29,7 +29,7 @@ without case.
 | Label `factory/revert` on an auto-merged pull request, within `merge.revertWindow` | The factory opens a revert pull request through the merger App and the task ends `Reverted`; the class counts the revert towards its [breaker](#the-merge-gate). A human merge is never reverted | A maintainer |
 | Label `factory/drill` on an auto-merged pull request, **before** `factory/revert` | Marks the revert a [drill](#the-merge-gate): the merger copies the label to the revert pull request and the breaker does not count it. Read only when `factory/revert` is, so a label added after it changes nothing while the merge's Task exists (see [drills](#the-merge-gate)) | A maintainer |
 | Label `factory/hold` on a pull request | The [merge gate](#the-merge-gate) hands it to a human with `held` before any class or approval is read: nothing merges it, and no shadow would-merge is counted. Removing the label returns it to the gate on the head it was held at (`reentered_unheld`). A hold placed after the gate armed GitHub's auto-merge does not disarm it | Anyone who can label: it only ever stops a merge |
-| Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert`. `issue_file` applies the plan's class this way before `factory/ready` | A maintainer |
+| Label `class:<name>` on the issue, before triage | Predicts the task's merge class, when `<name>` is a class in the config other than `revert`. `start` applies the plan's class this way before `factory/ready` | A maintainer |
 | Comment `/factory split` alone on a line, on the issue of a task escalated `split_proposed` | Approves the proposed [split](#splits); the commenter pays for every part. Read before `/factory retry` | A maintainer with `write` on the repository |
 | Comment `/factory retry` alone on a line, on an escalated task's issue or pull request | A fresh run; see [Escalation](#escalation-reminders-and-stale-tasks) | A maintainer with `write` on the repository |
 | A **Request changes** review on the task's pull request | Queued in the room; the next implementer run revises on the same branch with the review in its brief, then the pull request goes straight back to the maintainer | A maintainer |
@@ -689,10 +689,10 @@ those releases reads two populations; annotate the release dates.
 ### Pinning a workflow
 
 A maintainer may pin the workflow a task runs, on any class and below the repository's default
-included: a `workflow:<name>` label on the issue (`issue_file` applies it before `factory/ready`), or
+included: a `workflow:<name>` label on the issue (`start` applies it before `factory/ready`), or
 the plan's `profile`, which `run_create` carries as `spec.intake.profile`. A `profile:<name>` label
-pins nothing, and triage says so once. A pin is checked twice: by the broker at intake (`plan_check`,
-`run_create`, against the repository's catalogue), and again by triage, because a label can be added
+pins nothing, and triage says so once. A pin is checked twice: by the broker at intake (`handoff`'s
+re-validation and `run_create`, against the repository's catalogue), and again by triage, because a label can be added
 by hand. Triage checks it in this order:
 
 1. Two `workflow:` labels naming different workflows, or a label and the intake's workflow that
@@ -721,14 +721,13 @@ task's ceiling), in `evaluation.mode` `observe` and `apply` alike: the task is `
 `source: label`, and the scoper is offered no choice. A refused pin is never a task failure: the task
 runs as if unpinned (its cohort by hash, its source's or the repository's workflow, the scoper as the mode allows), and the factory
 narrates one line, `profile_refused`, in the refusal's sentence, for example "Agent factory: the
-pinned workflow `carefull` was not applied: `carefull` is not a workflow of this factory.
-`classes_list` shows the workflows." `status.profile.requested` holds the pinned name and `status.profile.refused` the
+pinned workflow `carefull` was not applied: `carefull` is not a workflow of this factory." `status.profile.requested` holds the pinned name and `status.profile.refused` the
 code; both reach the `profile` task fact and `summary/v1`, and the room's *Workflow* block shows
 them.
 
 | Code | Where | Sentence |
 |---|---|---|
-| `profile_unknown` | intake, triage | `<p>` is not a workflow of this factory. `classes_list` shows the workflows. |
+| `profile_unknown` | intake, triage | `<p>` is not a workflow of this factory. The repository's [catalogue](api.md#get-v1catalogueownername) lists them. |
 | `profile_not_offered` | intake | `<p>` names no roles, so they are chosen at triage; it runs only as the factory's choice. |
 | `not_maintainer` | intake, triage | Only a maintainer of this repository can choose the workflow; the factory will choose it. |
 | `profile_conflict` | triage | The issue names more than one workflow; none was applied. |

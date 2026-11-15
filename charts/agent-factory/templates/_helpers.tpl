@@ -503,7 +503,7 @@ scope come from the environment, built from Secrets, never from a rendered value
 {{- $b := .Values.maku.broker -}}
 {{- $h := $b.human | default dict -}}
 {{- $preset := $h.preset | default "zitadel" -}}
-{{- $skip := list "GET=^/\\.well-known/roomctl$" -}}
+{{- $skip := list "GET=^/\\.well-known/maku$" -}}
 {{- if include "afumbrella.githubLink" . -}}
 {{- $skip = append $skip "GET=^/link/github/callback$" -}}
 {{- end -}}

@@ -62,8 +62,8 @@ leg_checks() {
   local out
   out="$(curl_in "http://traefik.kube-system.svc.cluster.local/ping" rooms.e2e.test)"
   [[ $out == "200 OK" ]] || die "Traefik's rooms.e2e.test/ping is not oauth2-proxy's: $out"
-  out="$(curl_in "http://traefik.kube-system.svc.cluster.local/.well-known/roomctl" rooms.e2e.test)"
-  [[ $out == "200 "*'"issuer":"https://e2e-stub.e2e.svc.cluster.local"'* ]] || die "/.well-known/roomctl does not reach the broker through Traefik: $out"
+  out="$(curl_in "http://traefik.kube-system.svc.cluster.local/.well-known/maku" rooms.e2e.test)"
+  [[ $out == "200 "*'"issuer":"https://e2e-stub.e2e.svc.cluster.local"'* ]] || die "/.well-known/maku does not reach the broker through Traefik: $out"
   out="$(curl_in "http://traefik.kube-system.svc.cluster.local/api/rooms" rooms.e2e.test)"
   [[ $out == 302* || $out == 401* ]] || die "/api/rooms without a session answered $out: oauth2-proxy must refuse it"
   out="$(curl_in "https://room-broker.$NS.svc.cluster.local:8080/" "")"

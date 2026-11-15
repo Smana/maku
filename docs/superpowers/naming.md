@@ -175,8 +175,8 @@ the CRD group.
 
 Unchanged, because issuers, allowlists, network policies or older clients key on them: the
 ServiceAccounts, Deployments and Services (`room-broker`, `agent-factory`), the JWT audiences
-`room-broker`, `rooms-system` and `agent-factory`, the leader-election leases, the routes
-`/api/roomctl` and `/.well-known/roomctl`, the config key `human.roomctlClientIDFile`, the `room.*`
-event types and the web host `rooms.<domain>`. Since v0.31.0 the CRD group is `maku.ogenki.io`;
+`room-broker`, `rooms-system` and `agent-factory`, the leader-election leases, the route
+`/api/roomctl`, the config key `human.roomctlClientIDFile`, the `room.*`
+event types and the web host `rooms.<domain>`. The route `/.well-known/roomctl` is gone: it is `/.well-known/maku`. Since v0.31.0 the CRD group is `maku.ogenki.io`;
 Kubernetes label and annotation keys keep the `agents.ogenki.io/` prefix that other repositories
 select on ([the group move](maku-group-migration.md)).

@@ -34,7 +34,7 @@ const (
 
 var (
 	taskInputSchema  = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["task"],"properties":{"task":{"type":"string","pattern":"^[a-z2-7]{8}$"},"since":{"type":"string","pattern":"^(seq:[0-9]{1,18}|[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?(Z|[+-][0-9]{2}:[0-9]{2}))$"}}}`)
-	taskOutputSchema = json.RawMessage(`{"type":"object","required":["apiVersion","room","text","cursor","status","canStart","untrusted"],"properties":{"apiVersion":{"type":"string"},"room":{"type":"string"},"url":{"type":"string"},"text":{"type":"string"},"cursor":{"type":"string"},"status":{"type":"object","required":["phase"]},"runs":{"type":"array","items":{"type":"object","required":["id","role"]}},"items":{"type":"array","items":{"type":"object","required":["seq","at","kind"]}},"more":{"type":"integer"},"question":{"type":"object","required":["text","recommended"],"properties":{"text":{"type":"string"},"recommended":{"type":"string"}}},"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"},"untrusted":{"type":"boolean"}}}`)
+	taskOutputSchema = json.RawMessage(`{"type":"object","required":["apiVersion","room","text","cursor","status","canStart","untrusted"],"properties":{"apiVersion":{"type":"string"},"room":{"type":"string"},"url":{"type":"string"},"since":{"type":"string"},"text":{"type":"string"},"cursor":{"type":"string"},"status":{"type":"object","required":["phase"]},"runs":{"type":"array","items":{"type":"object","required":["id","role"]}},"needsYou":{"type":"array","items":{"type":"object"}},"coordination":{"type":"object"},"items":{"type":"array","items":{"type":"object","required":["seq","at","kind"]}},"more":{"type":"integer"},"question":{"type":"object","required":["text","recommended"],"properties":{"text":{"type":"string"},"recommended":{"type":"string"}}},"canStart":{"type":"boolean"},"canStartWhy":{"type":"string"},"untrusted":{"type":"boolean"}}}`)
 	taskRoomPathRE   = regexp.MustCompile(`^/r/[a-z0-9]{1,32}(#[A-Za-z0-9_-]{1,64})?$`)
 )
 
@@ -44,20 +44,22 @@ type taskArgs struct {
 }
 
 type taskEnvelope struct {
-	APIVersion  string               `json:"apiVersion"`
-	Room        string               `json:"room"`
-	URL         string               `json:"url,omitempty"`
-	Text        string               `json:"text"`
-	Cursor      string               `json:"cursor"`
-	Status      any                  `json:"status"`
-	Runs        []envelope.RunFact   `json:"runs,omitempty"`
-	NeedsYou    []summary.Need       `json:"needsYou,omitempty"`
-	Question    *briefQuestion       `json:"question,omitempty"`
-	Items       []roomview.Milestone `json:"items,omitempty"`
-	More        int                  `json:"more,omitempty"`
-	CanStart    bool                 `json:"canStart"`
-	CanStartWhy string               `json:"canStartWhy,omitempty"`
-	Untrusted   bool                 `json:"untrusted"`
+	APIVersion   string               `json:"apiVersion"`
+	Room         string               `json:"room"`
+	URL          string               `json:"url,omitempty"`
+	Since        time.Time            `json:"since,omitzero"`
+	Text         string               `json:"text"`
+	Cursor       string               `json:"cursor"`
+	Status       any                  `json:"status"`
+	Runs         []envelope.RunFact   `json:"runs,omitempty"`
+	NeedsYou     []summary.Need       `json:"needsYou,omitempty"`
+	Coordination json.RawMessage      `json:"coordination,omitempty"`
+	Question     *briefQuestion       `json:"question,omitempty"`
+	Items        []roomview.Milestone `json:"items,omitempty"`
+	More         int                  `json:"more,omitempty"`
+	CanStart     bool                 `json:"canStart"`
+	CanStartWhy  string               `json:"canStartWhy,omitempty"`
+	Untrusted    bool                 `json:"untrusted"`
 }
 
 func (s *Server) taskToolEntry() mcpTool {
@@ -146,21 +148,28 @@ func (s *Server) readTask(ctx context.Context, id string, p authn.Principal, sin
 		PublicURL: s.PublicURL,
 	})
 
+	sinceAt := at
+	if sinceAt.IsZero() {
+		sinceAt = changed.Since
+	}
+
 	return taskEnvelope{
-		APIVersion:  taskVersion,
-		Room:        id,
-		URL:         sum.URL,
-		Text:        text,
-		Cursor:      cursor,
-		Status:      sum.Status,
-		Runs:        sum.Runs,
-		NeedsYou:    sum.NeedsYou,
-		Question:    question,
-		Items:       changed.Items,
-		More:        changed.More,
-		CanStart:    canStart,
-		CanStartWhy: canStartWhy,
-		Untrusted:   true,
+		APIVersion:   taskVersion,
+		Room:         id,
+		URL:          sum.URL,
+		Since:        sinceAt,
+		Text:         text,
+		Cursor:       cursor,
+		Status:       sum.Status,
+		Runs:         sum.Runs,
+		NeedsYou:     sum.NeedsYou,
+		Coordination: sum.Coordination,
+		Question:     question,
+		Items:        changed.Items,
+		More:         changed.More,
+		CanStart:     canStart,
+		CanStartWhy:  canStartWhy,
+		Untrusted:    true,
 	}, nil
 }
 

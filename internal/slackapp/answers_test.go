@@ -55,14 +55,15 @@ type answerBroker struct {
 func taskFromSummary(sum summary.Summary, changes roomview.ChangeSet) TaskResult {
 	st, _ := json.Marshal(sum.Status)
 	return TaskResult{
-		Room:     sum.Room,
-		URL:      sum.URL,
-		Runs:     sum.Runs,
-		NeedsYou: sum.NeedsYou,
-		Items:    changes.Items,
-		More:     changes.More,
-		Cursor:   changes.Cursor,
-		Status:   st,
+		Room:         sum.Room,
+		URL:          sum.URL,
+		Runs:         sum.Runs,
+		NeedsYou:     sum.NeedsYou,
+		Items:        changes.Items,
+		More:         changes.More,
+		Cursor:       changes.Cursor,
+		Status:       st,
+		Coordination: sum.Coordination,
 	}
 }
 
@@ -83,16 +84,6 @@ func (b *answerBroker) Inbox(_ context.Context, room string) ([]summary.Need, er
 		return nil, b.needsErr
 	}
 	return b.needs, nil
-}
-
-// The reads on the plain stub, which every other flow uses: an empty room unless summary was set.
-func (b *stubBroker) RoomSummary(context.Context, string) (summary.Summary, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.summary != nil {
-		return *b.summary, nil
-	}
-	return summary.Summary{}, nil
 }
 
 func (b *stubBroker) Task(context.Context, string) (TaskResult, error) {

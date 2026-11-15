@@ -64,71 +64,8 @@ func TestEveryToolSchemaNodeNamesItsType(t *testing.T) {
 				t.Errorf("%s: %s", name, bad)
 			}
 		}
-		if !slices.Contains(names, ClassesList) {
-			t.Errorf("%s list does not carry classes_list: %v", name, names)
-		}
-		if !slices.Contains(names, mcpwire.IntakePlan) || !slices.Contains(names, mcpwire.PlanCheck) {
-			t.Errorf("%s list does not carry the planner's two tools: %v", name, names)
+		if !slices.Contains(names, mcpwire.Handoff) || !slices.Contains(names, mcpwire.Task) || !slices.Contains(names, mcpwire.Inbox) {
+			t.Errorf("%s list does not carry handoff, task and inbox: %v", name, names)
 		}
 	}
-}
-
-// jsonType is a decoded JSON value's schema type, as encoding/json decodes it: numbers are float64.
-func jsonType(v any) string {
-	switch v.(type) {
-	case map[string]any:
-		return "object"
-	case []any:
-		return "array"
-	case string:
-		return "string"
-	case float64:
-		return "number"
-	case bool:
-		return "boolean"
-	default:
-		return "null"
-	}
-}
-
-// schemaFaults reports where value does not satisfy schema, one level of composition deep plus items: the
-// declared type of every property the schema names, the presence of every required name, object members
-// and array items included. It is what makes an outputSchema a claim rather than a comment.
-func schemaFaults(schema, value any, path string) []string {
-	s, ok := schema.(map[string]any)
-	if !ok {
-		return nil
-	}
-	// "integer" is the one declared type encoding/json's float64 decodes to as "number".
-	actual := jsonType(value)
-	declared, hasType := s["type"].(string)
-	compatible := declared == actual || (declared == "integer" && actual == "number")
-	if hasType && !compatible {
-		return []string{fmt.Sprintf("%s: %s, want %s", path, actual, declared)}
-	}
-	var faults []string
-	switch v := value.(type) {
-	case map[string]any:
-		if req, ok := s["required"].([]any); ok {
-			for _, name := range req {
-				if _, has := v[fmt.Sprint(name)]; !has {
-					faults = append(faults, fmt.Sprintf("%s: missing required %q", path, name))
-				}
-			}
-		}
-		if props, ok := s["properties"].(map[string]any); ok {
-			for name, sub := range props {
-				if member, has := v[name]; has {
-					faults = append(faults, schemaFaults(sub, member, path+"."+name)...)
-				}
-			}
-		}
-	case []any:
-		if items, has := s["items"]; has {
-			for i, element := range v {
-				faults = append(faults, schemaFaults(items, element, fmt.Sprintf("%s[%d]", path, i))...)
-			}
-		}
-	}
-	return faults
 }

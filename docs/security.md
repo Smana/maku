@@ -211,8 +211,8 @@ claim except the client that issued it.
 | Ceiling | `max_cost` is mandatory and at most `maxCostUSD`; the task is capped at it and each run at a third, by the meter |
 | Open tasks | `maxOpenTasks`, a soft cap (a burst of N can open cap+N-1) |
 | Repositories | Its `repositories` list, exact spelling, and only ones this factory owns |
-| Reads | `/mcp` only, four tools, and a room only as one of its `watcher` members |
-| Never | `/v1/runs`, `room_queue`, `room_fork`, `rooms_list`, approvals, class, tier or auto-merge. Its text is machine-sent, redacted and stored as untrusted |
+| Reads | `/mcp` only, `handoff`, `task`, `inbox` and `room_tail`, and a room only as one of its `watcher` members |
+| Never | `/v1/runs`, a task note, `room_fork`, approvals, class, tier or auto-merge. Its text is machine-sent, redacted and stored as untrusted |
 
 ### Coordination parents
 
@@ -543,7 +543,7 @@ The factory's Slack App (`cmd/maku-slack`, [docs/slack.md](slack.md)) is the onl
 `maku mcp` and `maku checkout` run as the developer, beside a local coding agent that room
 text and a branch can try to steer ([maku](cli.md#the-mcp-server)).
 
-- **The start form.** The factory starts only from a form field that defaults to no, in `issue_file`.
+- **The start form.** The factory starts only from a form the model cannot answer, in `start` (and in `answer`, which can restart a task). `File this issue` defaults to no; `Start now` defaults to yes and is offered only where the caller writes to the repository and `human.mcp.start` allows it.
   The model can call the tool but cannot answer the form. The factory still takes only a
   maintainer's label, and the per-task, per-person and daily dollar caps bound the spend.
   **Accepted risk:** a client that auto-accepts forms (some headless modes) lets the agent start

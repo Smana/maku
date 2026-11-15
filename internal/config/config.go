@@ -564,7 +564,7 @@ type MCPConfig struct {
 	// generic, for an IdP that puts it elsewhere than azp or client_id: cid (Okta) or appid
 	// (Entra). It mirrors the factory's api.sponsoredClientClaim, so both admit the same principals.
 	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
-	// SessionStart lists the repositories ("owner/name") whose issue_draft says canStart: the
+	// SessionStart lists the repositories ("owner/name") whose task says canStart: the
 	// handoff prompt may start the factory there for a caller who writes to them. Empty, none does.
 	// Start's former list, honoured with a warning in release N.
 	SessionStart []string `json:"sessionStart,omitempty"`
@@ -1115,10 +1115,10 @@ func (c *Config) ApplyDefaults() {
 // so the broker's own regexp.MustCompile cannot panic.
 func (c *Config) Validate() error {
 	c.Warnings = nil
-	if c.Human.MCP.SessionStart != nil {
-		c.Warnings = append(c.Warnings, "human.mcp.sessionStart is deprecated: use human.mcp.start")
-	}
 	var errs []error
+	if c.Human.MCP.SessionStart != nil {
+		errs = append(errs, errors.New("human.mcp.sessionStart was removed: use human.mcp.start"))
+	}
 	if len(c.RunIssuers) == 0 {
 		errs = append(errs, errors.New("runIssuers: at least one is required"))
 	}
@@ -1305,9 +1305,6 @@ func (h HumanConfig) validate(system []string) []error {
 		if len(h.MCP.Sponsored) > 0 {
 			errs = append(errs, errors.New("human.mcp.sponsored: mode local takes no sponsored principal"))
 		}
-		if len(h.MCP.SessionStart) > 0 {
-			errs = append(errs, errors.New("human.mcp.sessionStart: mode local takes no sessionStart repository"))
-		}
 		if h.MCP.Start.Default != nil || len(h.MCP.Start.Except) > 0 {
 			errs = append(errs, errors.New("human.mcp.start: mode local takes no start configuration"))
 		}
@@ -1379,23 +1376,6 @@ func (h HumanConfig) validate(system []string) []error {
 			repos[r] = true
 		}
 		seen[sp.Name] = true
-	}
-	if len(h.MCP.SessionStart) > 0 && !h.MCP.Enabled {
-		errs = append(errs, errors.New("human.mcp.sessionStart needs human.mcp.enabled"))
-	}
-	if len(h.MCP.SessionStart) > 0 && h.Access == nil {
-		errs = append(errs, errors.New("human.mcp.sessionStart needs human.access: without the GitHub check canStart is always off"))
-	}
-	listed := map[string]bool{}
-	for i, r := range h.MCP.SessionStart {
-		key := strings.ToLower(r)
-		switch {
-		case !repositoryRE.MatchString(r):
-			errs = append(errs, fmt.Errorf("human.mcp.sessionStart[%d]: %q is not owner/name", i, r))
-		case listed[key]:
-			errs = append(errs, fmt.Errorf("human.mcp.sessionStart: %q is declared twice", r))
-		}
-		listed[key] = true
 	}
 	startActive := (h.MCP.Start.Default != nil && *h.MCP.Start.Default) || len(h.MCP.Start.Except) > 0
 	if startActive && !h.MCP.Enabled {

@@ -19,12 +19,12 @@ is the platform's [status page](https://airef.ogenki.io/docs/status/).
 | Untrusted-input hardening, ready (stage H5): per-repository readiness reported (gauge, API, Evidence page), coordination's execute gated on class authority and readiness, T5 promoted per output type | [Hardening, ready](factory.md#hardening-ready) |
 | Untrusted-input hardening, push enforced (stage H3): `git push` becomes a bundle the factory inspects and pushes as the publisher, a protected path waits for a maintainer's approval of its digest, and the tracer traces pushes; per repository, off by default | [Hardening, push enforced](factory.md#hardening-push-enforced) |
 | The room page: a header grouped by topic, an action on every need, folded briefs, settings in tabs | [Web UI](web-ui.md) |
-| The factory from your coding agent: hand off, file, wait (`room_wait`) and check out (`room_checkout`) through the MCP server | [The MCP server](cli.md#the-mcp-server) |
+| The factory from your coding agent: hand off, file, wait (`wait`) and check out (`room_checkout`) through the MCP server | [The MCP server](cli.md#the-mcp-server) |
 | Slack: self-serve linking and the proposal message | [Slack App](slack.md) |
 | The factory on a laptop: `task demo`, the `charts/agent-factory` umbrella chart and the quickstart | [Quickstart](quickstart.md) |
 | Factory resources: `Factory`, `Repository` and `MergePolicy` objects the factory reads live, with the last good version kept on a bad edit, and `maku config migrate` and `validate` (v0.41.x) | [Merge policies](merge-policies.md) |
 | Team evaluation workflows with outcome metrics | [Web UI](web-ui.md) |
-| A form that never answers: `issue_file` falls back to the draft after 60 s, and the handoff skill checks the repository first (v0.42.0) | [The MCP server](cli.md#the-mcp-server) |
+| A form that never answers: `start` falls back to the `gh issue create` command after 60 s, and the handoff skill checks the repository first (v0.42.0) | [The MCP server](cli.md#the-mcp-server) |
 | Slack quick wins: a refused first mention is explained, planner progress shows, the closed phrases are listed (v0.42.0) | [Slack App](slack.md) |
 | The chart contract: the `agent-factory-crds` chart, the demo in `values-demo.yaml`, a values schema, `kubeVersion` 1.30 or later, the umbrella published and signed (v0.46.0) | [Upgrading](upgrading.md#the-chart-contract-v0460) |
 | The run path: the scoper and the loop policies on the run controller, read-only tokens for reviewers and triagers, the sandbox value and the preflight, the runs quota, the run-pod admission policy, and the `kubernetes` network mode with its egress proxy (v0.46.0) | [Upgrading](upgrading.md#the-run-path-v0460), [Security](security.md#the-run-paths-network-modes) |

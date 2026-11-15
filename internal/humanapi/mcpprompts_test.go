@@ -124,31 +124,13 @@ func namedTools(text string) []string {
 	return out
 }
 
-// Release N: the old prompt names still answer prompts/get, as aliases of handoff and task, and
-// their text names only the six tools.
-func TestOldPromptsAnswerAsAliases(t *testing.T) {
+func TestOldPromptsAreGone(t *testing.T) {
 	e := setup(t, mcpOn)
 	h := viaRoomctl("dev")
-	for _, c := range []struct {
-		name, arg, as, asArg string
-	}{
-		{"factory_intake", "request", "handoff", "what"},
-		{"plan", "what", "handoff", "what"},
-		{"status", "room", "task", "task"},
-		{"resume", "room", "task", "task"},
-	} {
-		got := promptText(t, e, h, c.name, map[string]string{c.arg: "#42"})
-		want := promptText(t, e, h, c.as, map[string]string{c.asArg: "#42"})
-		if got != want {
-			t.Errorf("%s is not an alias of %s:\n got %s\nwant %s", c.name, c.as, got, want)
-		}
-		for _, n := range namedTools(got) {
-			if !slices.Contains(sixTools, n) {
-				t.Errorf("%s names %s, not one of the six", c.name, n)
-			}
-		}
-		if got := promptText(t, e, h, c.name, nil); got == "" {
-			t.Errorf("%s with no argument answers nothing", c.name)
+	for _, name := range []string{"factory_intake", "plan", "status", "resume"} {
+		_, out := rpc(t, e, h, "prompts/get", map[string]any{"name": name})
+		if rpcCode(out) != -32602 || !strings.Contains(fmt.Sprint(out["error"]), "unknown prompt: "+name) {
+			t.Errorf("%s: got %v, want -32602 unknown prompt", name, out)
 		}
 	}
 }

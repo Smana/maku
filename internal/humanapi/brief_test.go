@@ -15,8 +15,7 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-// briefBody is GET /api/rooms/{id}/brief's answer, as a client reads it (CD11): the brief's own envelope,
-// the one room_brief serves too.
+// briefBody is GET /api/rooms/{id}/brief's answer, as a client reads it (CD11).
 type briefBody struct {
 	APIVersion string `json:"apiVersion"`
 	Room       string `json:"room"`
@@ -112,21 +111,8 @@ func TestBriefNamesTheFixOfAPermission(t *testing.T) {
 	}
 }
 
-// room_brief returns the brief and the cursor the caller passes back next time, as room_changes does.
-func TestRoomBrief(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
-	got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
-	if !strings.HasPrefix(got.text, "**Resume: "+roomID) {
-		t.Fatalf("%s", got.text)
-	}
-	var data struct{ Cursor string }
-	if err := json.Unmarshal([]byte(got.structured), &data); err != nil || !maku.IsCursor(data.Cursor) {
-		t.Fatalf("%q %v", data.Cursor, err)
-	}
-}
-
-// CD11: the route and the tool are one brief, the cursor it hands back is the next call's `since`, and a
-// `since` that is neither a cursor nor an instant is refused rather than read as everything or as nothing.
+// CD11: the route hands back a cursor that is the next call's `since`, and a `since` that is neither a
+// cursor nor an instant is refused rather than read as everything or as nothing.
 func TestBriefRoute(t *testing.T) {
 	e := setup(t, worldWithSplitAndMerge(t).gate)
 	got, code := briefAt(t, e, "", header("dev"))
@@ -163,16 +149,19 @@ func TestBriefRouteRefusesASponsoredToken(t *testing.T) {
 // CD11 with SC6: the brief quotes the scope the task ran under — its acceptance checks and the plan line —
 // from the newest handoff that carries one, so a resumed room says what "done" means.
 func TestBriefScope(t *testing.T) {
-	e := setup(t, mcpOn, scopedHandoffs(0))
-	got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
+	e := setup(t, scopedHandoffs(0))
+	got, code := briefAt(t, e, "", header("dev"))
+	if code != http.StatusOK {
+		t.Fatalf("%d %+v", code, got)
+	}
 	for _, want := range []string{"Acceptance: `go test ./internal/roomview/`", "Plan: scope ready"} {
-		if !strings.Contains(got.text, want) {
-			t.Errorf("no %q in\n%s", want, got.text)
+		if !strings.Contains(got.Text, want) {
+			t.Errorf("no %q in\n%s", want, got.Text)
 		}
 	}
 }
 
-// A scoper's question is structured data for the local answer tool, never a new line in the rendered brief.
+// A scoper's question is structured data on the brief envelope, never a new line in the rendered brief.
 func TestBriefQuestion(t *testing.T) {
 	tests := []struct {
 		name            string
@@ -189,63 +178,28 @@ func TestBriefQuestion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			scope := &envelope.Scope{State: tc.state, Task: "prove the resume brief", Question: "Which command proves this?",
 				Assumptions: tc.assumptions, Acceptance: []envelope.Acceptance{{Check: "go test ./internal/humanapi", Proves: "the brief still passes"}}}
-			e := setup(t, mcpOn, handoffScope(scope))
-			got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
-			var structured briefQuestionAnswer
-			if err := json.Unmarshal(got.structured, &structured); err != nil {
-				t.Fatalf("MCP brief: %v", err)
-			}
-			check := func(door string, answer briefQuestionAnswer) {
-				if !tc.wantQuestion {
-					if answer.Question != nil {
-						t.Fatalf("%s question = %+v, want nil", door, answer.Question)
-					}
-					return
-				}
-				if answer.Question == nil || answer.Question.Text != "Which command proves this?" || answer.Question.Recommended != tc.wantRecommended {
-					t.Fatalf("%s question = %+v", door, answer.Question)
-				}
-			}
-			check("MCP", structured)
-			wantText := strings.TrimRight(structured.Text, "\n") + "\n\nDeprecated: use task; this tool is removed in the next release."
-			if got.text != wantText {
-				t.Fatalf("MCP text differs from its envelope:\n%s\n%s", got.text, wantText)
-			}
-			for _, unwanted := range []string{scope.Question, tc.wantRecommended} {
-				if unwanted != "" && strings.Contains(structured.Text, unwanted) {
-					t.Errorf("rendered brief gained structured question text %q:\n%s", unwanted, structured.Text)
-				}
-			}
-			for _, want := range []string{"Acceptance: `go test ./internal/humanapi`", "Plan: scope " + tc.state} {
-				if !strings.Contains(structured.Text, want) {
-					t.Errorf("rendered brief lost %q:\n%s", want, structured.Text)
-				}
-			}
-
+			e := setup(t, handoffScope(scope))
 			code, body := get(t, e, "/api/rooms/"+roomID+"/brief", header("dev"))
 			var route briefQuestionAnswer
 			if code != http.StatusOK || json.Unmarshal([]byte(body), &route) != nil {
 				t.Fatalf("HTTP brief: %d %s", code, body)
 			}
-			check("HTTP", route)
-			if route.Text != structured.Text {
-				t.Fatalf("HTTP and MCP rendered briefs differ:\n%s\n%s", route.Text, structured.Text)
+			if !tc.wantQuestion {
+				if route.Question != nil {
+					t.Fatalf("HTTP question = %+v, want nil", route.Question)
+				}
+			} else if route.Question == nil || route.Question.Text != "Which command proves this?" || route.Question.Recommended != tc.wantRecommended {
+				t.Fatalf("HTTP question = %+v", route.Question)
 			}
-
-			schema, ok := toolEntry(t, e, viaRoomctl("dev"), "room_brief")["outputSchema"].(map[string]any)
-			if !ok {
-				t.Fatalf("room_brief declares no outputSchema")
+			for _, unwanted := range []string{scope.Question, tc.wantRecommended} {
+				if unwanted != "" && strings.Contains(route.Text, unwanted) {
+					t.Errorf("rendered brief gained structured question text %q:\n%s", unwanted, route.Text)
+				}
 			}
-			properties, ok := schema["properties"].(map[string]any)
-			if !ok || properties["question"] == nil {
-				t.Fatalf("room_brief outputSchema has no question: %+v", schema)
-			}
-			var served any
-			if err := json.Unmarshal(got.structured, &served); err != nil {
-				t.Fatalf("%s: %v", got.structured, err)
-			}
-			for _, fault := range schemaFaults(schema, served, "structuredContent") {
-				t.Errorf("%s", fault)
+			for _, want := range []string{"Acceptance: `go test ./internal/humanapi`", "Plan: scope " + tc.state} {
+				if !strings.Contains(route.Text, want) {
+					t.Errorf("rendered brief lost %q:\n%s", want, route.Text)
+				}
 			}
 		})
 	}
@@ -254,30 +208,9 @@ func TestBriefQuestion(t *testing.T) {
 // The scope is found however long the room's log has grown since: the scoper's handoff lands early and a
 // resumed room is the one the brief is for, so the search widens past one tail rather than losing it.
 func TestBriefScopeSurvivesALongLog(t *testing.T) {
-	e := setup(t, mcpOn, scopedHandoffs(600))
-	got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
-	if !strings.Contains(got.text, "Acceptance: `go test ./internal/roomview/`") {
-		t.Fatalf("the scope was lost past one page:\n%s", got.text)
-	}
-}
-
-// CD11: room_brief declares its answer, as rooms_list and needs_list do: the envelope the route serves,
-// field for field, and the structuredContent the tool gives satisfies it.
-func TestRoomBriefDeclaresItsOutput(t *testing.T) {
-	e := setup(t, mcpOn, worldWithSplitAndMerge(t).gate)
-	schema, ok := toolEntry(t, e, viaRoomctl("dev"), "room_brief")["outputSchema"].(map[string]any)
-	if !ok {
-		t.Fatalf("room_brief declares no outputSchema")
-	}
-	got := call(t, e, viaRoomctl("dev"), "room_brief", map[string]any{"room": roomID})
-	if got.isError || got.structured == nil {
-		t.Fatalf("%+v", got)
-	}
-	var served any
-	if err := json.Unmarshal(got.structured, &served); err != nil {
-		t.Fatalf("%s: %v", got.structured, err)
-	}
-	for _, fault := range schemaFaults(schema, served, "structuredContent") {
-		t.Errorf("%s", fault)
+	e := setup(t, scopedHandoffs(600))
+	got, code := briefAt(t, e, "", header("dev"))
+	if code != http.StatusOK || !strings.Contains(got.Text, "Acceptance: `go test ./internal/roomview/`") {
+		t.Fatalf("the scope was lost past one page: %d\n%s", code, got.Text)
 	}
 }

@@ -49,7 +49,7 @@ func outsideClient(t *testing.T, objs ...client.Object) client.Reader {
 	return fake.NewClientBuilder().WithScheme(s).WithObjects(objs...).Build()
 }
 
-// webProxy answers as oauth2-proxy in front of the broker: /ping is OK, /.well-known/roomctl is
+// webProxy answers as oauth2-proxy in front of the broker: /ping is OK, /.well-known/maku is
 // skip-auth, everything else redirects to sign in.
 func webProxy(ping string) http.Handler {
 	return webProxyDoc(ping, `{"issuer":"https://idp.example.com","preset":"generic","tokenUse":"id","humanMode":"oidc"}`)
@@ -60,7 +60,7 @@ func webProxyDoc(ping, discovery string) http.Handler {
 		switch r.URL.Path {
 		case "/ping":
 			_, _ = io.WriteString(w, ping)
-		case "/.well-known/roomctl":
+		case "/.well-known/maku":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(w, discovery)
 		default:
@@ -117,7 +117,7 @@ func codes(rs []preflight.Result) string {
 }
 
 // The exposure row from where the user stands (IN2, F7): each host resolves, the web host is
-// oauth2-proxy's and serves /.well-known/roomctl, and the Slack host answers POST /slack/events only.
+// oauth2-proxy's and serves /.well-known/maku, and the Slack host answers POST /slack/events only.
 func TestOutsideChecks(t *testing.T) {
 	web, slack := exposeRoute("rooms-web", "rooms.example.com"), exposeRoute("factory-slack-events", "slack.example.com")
 	for name, c := range map[string]struct {

@@ -195,17 +195,19 @@ func TestCoordinationPlanSessionAndSponsoredParity(t *testing.T) {
 	}
 }
 
-// CD18, design §budget: coordination_plan spends intake_plan's daily counter, exactly at N and N+1;
+// CD18, design §budget: coordination_plan spends handoff's daily counter, exactly at N and N+1;
 // the refusal makes no call.
 func TestCoordinationPlanUsesExistingDailyCounter(t *testing.T) {
+	hs := newMemHandoffStore()
 	e := setup(t, mcpOn, withCoordination(t, "plan", &tripwires{}), withIntakeDaily(t, 2),
-		withIntakeOnHour(t, time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)))
-	if got := call(t, e, viaRoomctl("dev"), "intake_plan", planArgs()); got.isError {
-		t.Fatalf("intake_plan: %s", got.text)
+		withIntakeOnHour(t, time.Date(2026, 11, 7, 9, 0, 0, 0, time.UTC)),
+		func(s *Server, _ *fanout.Hub, _ *hubView) { s.Handoffs = hs })
+	if got := call(t, e, viaRoomctl("dev"), "handoff", map[string]any{"text": "the install link is dead"}); got.isError {
+		t.Fatalf("handoff: %s", got.text)
 	}
 	decodeCoord(t, call(t, e, viaRoomctl("dev"), "coordination_plan", coordArgs()))
-	for _, tool := range []string{"coordination_plan", "intake_plan"} {
-		args := planArgs()
+	for _, tool := range []string{"coordination_plan", "handoff"} {
+		args := map[string]any{"text": "the install link is dead"}
 		if tool == "coordination_plan" {
 			args = coordArgs()
 		}
@@ -243,12 +245,12 @@ func TestCoordinationPlanHasNoSideEffects(t *testing.T) {
 
 // MR16: off lists the tool on neither list and a call is an unknown tool; plan lists it on both;
 // execute plans as plan does (the tool never files, so a missing execute prerequisite cannot matter
-// here). intake_plan's and plan_check's tools/list entries are byte-identical either way.
+// here). handoff's and handoff_check's tools/list entries are byte-identical either way.
 func TestCoordinationPlanOffAndPlanModes(t *testing.T) {
 	entries := func(e env, h http.Header) string {
 		var out []string
 		for _, tool := range tools(t, e, h) {
-			if n := tool["name"]; n == "intake_plan" || n == "plan_check" {
+			if n := tool["name"]; n == "handoff" || n == "handoff_check" {
 				b, _ := json.Marshal(tool)
 				out = append(out, string(b))
 			}

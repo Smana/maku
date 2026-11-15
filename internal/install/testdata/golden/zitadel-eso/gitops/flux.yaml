@@ -348,8 +348,6 @@ spec:
             maxCostUSD: 2
             repositories:
             - Example/platform
-        proposals:
-          enabled: true
         teamID: T07J97G2K2P
       enabled: true
       image:

@@ -16,7 +16,7 @@
 # agentgateway (Gateway API) or k3s's Traefik (Ingress), and plays the browser from a client pod:
 #   - GET / redirects to the stub issuer, and its code flow signs in; that session lists the rooms
 #     as the web UI;
-#   - GET /.well-known/roomctl answers without a session, and so does GET /link/github/callback when
+#   - GET /.well-known/maku answers without a session, and so does GET /link/github/callback when
 #     the GitHub account link is on, while POST to it and GET /link/github still need a session;
 #   - a CLI bearer reads /api/rooms, and the same bearer with a forged X-Forwarded-Access-Token is
 #     still not the web UI (P18);
@@ -502,9 +502,9 @@ if [[ -n $EXPOSE ]]; then
     die "the session through the front door: $out"
   echo "ok   the session lists the rooms as the web UI (a client's X-Forwarded-Access-Token dropped)"
   room="$(jq -r '.body[0].id' <<<"$out")"
-  out="$(c http GET "$web/.well-known/roomctl")"
-  [[ $(status "$out") == 200 && $(jq -r '.body | type' <<<"$out") == object ]] || die "GET /.well-known/roomctl without a session: $out"
-  echo "ok   GET /.well-known/roomctl answers without a session"
+  out="$(c http GET "$web/.well-known/maku")"
+  [[ $(status "$out") == 200 && $(jq -r '.body | type' <<<"$out") == object ]] || die "GET /.well-known/maku without a session: $out"
+  echo "ok   GET /.well-known/maku answers without a session"
   if [[ -n $(yq '.maku.broker.githubLink.existingSecret // ""' "$LINK_VALUES") ]]; then
     out="$(c http GET "$web/link/github/callback?code=x&state=y")"
     [[ $(status "$out") != 302 && $(status "$out") -lt 500 ]] || die "GET /link/github/callback did not reach the broker: $out"
@@ -516,9 +516,9 @@ if [[ -n $EXPOSE ]]; then
     echo "ok   POST /link/github/callback and GET /link/github still need a session"
   fi
   # The security review of #545: a client's X-Forwarded-Uri must never select a skip-auth route.
-  out="$(c http GET "$web/api/rooms" -H 'X-Forwarded-Uri: /.well-known/roomctl')"
+  out="$(c http GET "$web/api/rooms" -H 'X-Forwarded-Uri: /.well-known/maku')"
   [[ $(status "$out") == 302 && $(jq -r .location <<<"$out") == https://e2e-stub.e2e.svc.cluster.local/oauth/v2/authorize?* ]] ||
-    die "GET /api/rooms with X-Forwarded-Uri: /.well-known/roomctl skipped sign-in: $out"
+    die "GET /api/rooms with X-Forwarded-Uri: /.well-known/maku skipped sign-in: $out"
   echo "ok   GET /api/rooms with a forged X-Forwarded-Uri still redirects to sign in"
   cli="$(id_token admin maku-cli agents-admin)"
   out="$(c http GET "$web/api/rooms" -H "Authorization: Bearer $cli")"

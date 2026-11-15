@@ -14,6 +14,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/intake"
 )
 
 // gatedSlack holds every Message call until release closes, signalling each arrival on entered:
@@ -88,8 +90,14 @@ func TestAFullEventQueueAnswers503(t *testing.T) {
 // included, before Wait returns; its request's context being cancelled changes nothing.
 func TestWaitFinishesTheEventInFlight(t *testing.T) {
 	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
-	rig.slack.seed(Message{TS: "1729.0009", ThreadTS: "1729.0001", User: "U0BOT", Text: "draft",
-		Metadata: metaOf(t, draftEventType, draftPayload("Smana/ai-native-ref", "t", "b"))})
+	plan := planFixture(t, "slack-one-issue")
+	p, err := newProposal(plan, intake.Hash(plan), "U02DEF", 1)
+	if err != nil {
+		t.Fatalf("newProposal: %v", err)
+	}
+	rig.slack.seed(Message{TS: "1729.0001", User: "U02DEF", Text: "<@U0BOT> " + mentionWords})
+	rig.slack.seed(Message{TS: "1729.0009", ThreadTS: "1729.0001", User: "U0BOT", Text: "Proposal v1 · " + p.Hash,
+		Metadata: metaOf(t, proposalEventType, p)})
 	gate := &gatedBroker{stubBroker: rig.broker, entered: make(chan struct{}, 1), release: make(chan struct{})}
 	rig.app.Broker, rig.app.Async = gate, nil
 
@@ -119,8 +127,8 @@ func TestWaitFinishesTheEventInFlight(t *testing.T) {
 	if th, ok := rig.threads.get("aaaaaaaa"); !ok || th.TS != "1729.0001" {
 		t.Fatalf("the thread map was not written before Wait returned: %+v %v", th, ok)
 	}
-	if !strings.Contains(rig.lastPost().text, "Filed #42") {
-		t.Fatalf("the reply was not posted before Wait returned: %q", rig.lastPost().text)
+	if edits := rig.slack.proposalEdits(); len(edits) != 1 || !strings.Contains(edits[0].text, "Filed #42") {
+		t.Fatalf("the Filed line was not written before Wait returned: %+v", edits)
 	}
 }
 

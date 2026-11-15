@@ -15,7 +15,22 @@ import (
 	"github.com/Smana/maku/internal/summary"
 )
 
-const inboxDescription = "Use to see what is waiting for the developer across their tasks."
+const (
+	inboxDescription = "Use to see what is waiting for the developer across their tasks."
+	needsSurfaceTool = "tool"
+)
+
+type needsArgs struct {
+	Since string `json:"since"`
+	Room  string `json:"room"`
+	Repo  string `json:"repo"`
+}
+
+func (s *Server) needsServedTool(ctx context.Context, p authn.Principal, outcome string) {
+	if s.Metrics != nil {
+		s.Metrics.NeedsList(ctx, needsSurfaceTool, p.ID, outcome)
+	}
+}
 
 var inboxInputSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"since":{"type":"string","pattern":"^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"},"room":{"type":"string","pattern":"^[a-z2-7]{8}$"},"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}}}`)
 

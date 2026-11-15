@@ -4,13 +4,12 @@ package humanapi
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/repoaccess"
@@ -21,25 +20,10 @@ import (
 func TestFinalDraftDoors(t *testing.T) {
 	markerBody := strings.Replace(runDraft, "\nx\n", "\n[NEEDS CLARIFICATION: g1 which check?]\n", 1)
 
-	t.Run("issue_draft", func(t *testing.T) {
+	t.Run("checkFinalDraft", func(t *testing.T) {
 		e := setup(t, mcpOn, actorOn(&actLog{}))
-		got := call(t, e, viaRoomctl("dev"), "issue_draft", map[string]any{
-			"repo": "Smana/a", "title": "docs(x): y", "body": markerBody,
-		})
-		if !got.isError || !strings.Contains(got.text, "unresolved_marker") {
-			t.Fatalf("issue_draft accepted a marker: %+v", got)
-		}
-	})
-
-	t.Run("plan_check", func(t *testing.T) {
-		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
-		plan := planFixture(t, "single")
-		plan.Issues[0].Body = markerBody
-		got := call(t, e, viaRoomctl("dev"), "plan_check", map[string]any{
-			"plan": plan, "hash": intake.Hash(plan),
-		})
-		if !got.isError || !strings.Contains(got.text, "unresolved_marker") {
-			t.Fatalf("plan_check accepted a marker: %+v", got)
+		if _, err := e.srv.checkFinalDraft(t.Context(), "docs(x): y", markerBody); err == nil || !strings.Contains(err.Error(), "unresolved_marker") {
+			t.Fatalf("checkFinalDraft accepted a marker: %v", err)
 		}
 	})
 
@@ -80,13 +64,12 @@ func TestFinalDraftDoors(t *testing.T) {
 	})
 }
 
-func TestMCPIssueDraft(t *testing.T) {
+func TestCheckFinalDraft(t *testing.T) {
 	e := setup(t, mcpOn, actorOn(&actLog{}))
 	body := "## What is wrong\ndocs/a.md:3 links\u200b a removed runbook\n\n## What it should be\nthe new one\n\n## Acceptance check\nhack/docs.sh passes\n"
-	got := call(t, e, viaRoomctl("dev"), "issue_draft", map[string]any{"repo": "Smana/a", "title": "docs(agents): a dead link", "body": body})
-	var d issueDraft
-	if got.isError || json.Unmarshal(got.structured, &d) != nil || d.Stripped != 1 || strings.Contains(d.Body, "\u200b") || d.Title != "docs(agents): a dead link" {
-		t.Fatalf("%+v", got)
+	d, err := e.srv.checkFinalDraft(t.Context(), "docs(agents): a dead link", body)
+	if err != nil || d.Stripped != 1 || strings.Contains(d.Body, "\u200b") || d.Title != "docs(agents): a dead link" {
+		t.Fatalf("%+v, %v", d, err)
 	}
 	for name, c := range map[string]struct {
 		title, body, want string
@@ -97,46 +80,48 @@ func TestMCPIssueDraft(t *testing.T) {
 		"a secret":                 {"docs: x", body + "token SECRET", "invalid_draft: it holds what looks like a secret (test)"},
 	} {
 		t.Run(name, func(t *testing.T) {
-			got := call(t, e, viaRoomctl("dev"), "issue_draft", map[string]any{"repo": "Smana/a", "title": c.title, "body": c.body})
-			if !got.isError || !strings.Contains(got.text, c.want) {
-				t.Fatalf("%+v", got)
+			if _, err := e.srv.checkFinalDraft(t.Context(), c.title, c.body); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("got %v, want %q", err, c.want)
 			}
 		})
 	}
 }
 
-// issue_draft says whether the caller may start the factory on the repository (R11): the
-// repository is in human.mcp.sessionStart, and the caller writes to it on GitHub.
-func TestIssueDraftCanStart(t *testing.T) {
-	listed := func(s *Server, _ *fanout.Hub, _ *hubView) { s.SessionStart = map[string]bool{"smana/a": true} }
+// canStart says whether the caller may start the factory on the repository (UX3):
+// human.mcp.start offers it for the repository, and the caller writes to it on GitHub.
+func TestCanStart(t *testing.T) {
+	offered := func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = true
+		s.StartExcept = map[string]bool{"smana/b": true}
+	}
+	human := authn.Principal{ID: "dev", Sub: "dev"}
+	sponsored := authn.Principal{ID: "slack-app", Sub: "slack-app", Sponsored: true}
 	tests := []struct {
 		name    string
 		w       *gitHubWorld
 		opts    []option
-		caller  http.Header
+		caller  authn.Principal
 		repo    string
 		want    bool
 		wantWhy string
 	}{
-		{"listed, linked, write", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, []option{listed}, viaRoomctl("dev"), "Smana/a", true, ""},
-		{"not listed", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{listed}, viaRoomctl("dev"), "Smana/b", false, "off"},
-		{"listed, Identity nil", &gitHubWorld{}, []option{listed, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Identity = nil }}, viaRoomctl("dev"), "Smana/a", false, "off"},
-		{"listed, unlinked", &gitHubWorld{unlinked: map[string]bool{"dev": true}}, []option{listed}, viaRoomctl("dev"), "Smana/a", false, "not_linked"},
-		{"listed, read only", &gitHubWorld{}, []option{listed}, viaRoomctl("dev"), "Smana/a", false, "no_write"},
-		{"listed, the App cannot see it", &gitHubWorld{unseen: map[string]bool{"Smana/a": true}}, []option{listed}, viaRoomctl("dev"), "Smana/a", false, "no_write"},
-		{"listed, the lookup fails", &gitHubWorld{down: true}, []option{listed}, viaRoomctl("dev"), "Smana/a", false, "unverified"},
-		{"nil Access", &gitHubWorld{}, []option{listed, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Access = nil }}, viaRoomctl("dev"), "Smana/a", false, "off"},
-		{"empty SessionStart", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, []option{func(s *Server, _ *fanout.Hub, _ *hubView) { s.SessionStart = map[string]bool{} }}, viaRoomctl("dev"), "Smana/a", false, "off"},
-		{"nil SessionStart", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, nil, viaRoomctl("dev"), "Smana/a", false, "off"},
-		{"the write check itself says no repository", &gitHubWorld{}, []option{listed, func(s *Server, _ *fanout.Hub, _ *hubView) {
+		{"offered, linked, write", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, []option{offered}, human, "Smana/a", true, ""},
+		{"excepted", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "Smana/b", false, "off"},
+		{"offered, Identity nil", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Identity = nil }}, human, "Smana/a", false, "off"},
+		{"offered, unlinked", &gitHubWorld{unlinked: map[string]bool{"dev": true}}, []option{offered}, human, "Smana/a", false, "not_linked"},
+		{"offered, read only", &gitHubWorld{}, []option{offered}, human, "Smana/a", false, "no_write"},
+		{"offered, the App cannot see it", &gitHubWorld{unseen: map[string]bool{"Smana/a": true}}, []option{offered}, human, "Smana/a", false, "no_write"},
+		{"offered, the lookup fails", &gitHubWorld{down: true}, []option{offered}, human, "Smana/a", false, "unverified"},
+		{"nil Access", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Access = nil }}, human, "Smana/a", false, "off"},
+		{"StartDefault false", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, nil, human, "Smana/a", false, "off"},
+		{"the write check itself says no repository", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) {
 			s.Access.Perm = func(context.Context, string, string, string) (string, error) {
 				return "", fmt.Errorf("installation: %w", repoaccess.ErrNoRepository)
 			}
-		}}, viaRoomctl("dev"), "Smana/a", false, "no_write"},
-		{"the list is matched case-insensitively", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, []option{func(s *Server, _ *fanout.Hub, _ *hubView) { s.SessionStart = map[string]bool{"smana/a": true} }}, viaRoomctl("dev"), "Smana/a", true, ""},
-		{"a sponsored caller", &gitHubWorld{writes: map[string][]string{"Smana/a": {"slack-app"}}}, []option{listed, withSponsored(sponsoredP)}, bearer("slack-app"), "Smana/a", false, "off"},
+		}}, human, "Smana/a", false, "no_write"},
+		{"except list is matched case-insensitively", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "SMANA/B", false, "off"},
+		{"a sponsored caller", &gitHubWorld{writes: map[string][]string{"Smana/a": {"slack-app"}}}, []option{offered}, sponsored, "Smana/a", false, "off"},
 	}
-	body := "## What is wrong\nx\n\n## What it should be\ny\n\n## Acceptance check\nz\n"
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			tc.w.now = time.Now()
@@ -147,51 +132,37 @@ func TestIssueDraftCanStart(t *testing.T) {
 				tc.w.inactive = map[string]bool{}
 			}
 			e := setup(t, append([]option{mcpOn, actorOn(&actLog{}), tc.w.option()}, tc.opts...)...)
-			got := call(t, e, tc.caller, "issue_draft", map[string]any{"repo": tc.repo, "title": "docs(agents): a dead link", "body": body})
-			var d issueDraft
-			if got.isError || json.Unmarshal(got.structured, &d) != nil || d.CanStart != tc.want || d.CanStartWhy != tc.wantWhy {
-				t.Fatalf("%+v: %+v", got, d)
+			got, why := e.srv.canStart(t.Context(), tc.caller, tc.repo)
+			if got != tc.want || why != tc.wantWhy {
+				t.Fatalf("canStart(%q) = (%v, %q), want (%v, %q)", tc.repo, got, why, tc.want, tc.wantWhy)
 			}
 		})
 	}
 }
 
-// A lookup that never answers is cut at accessWait, as the gate's is: the draft comes back
+// A lookup that never answers is cut at accessWait, as the gate's is: canStart comes back
 // unverified, not after mcpTimeout.
-func TestIssueDraftCanStartLookupIsBounded(t *testing.T) {
+func TestCanStartLookupIsBounded(t *testing.T) {
 	old := accessWait
 	accessWait = 200 * time.Millisecond
 	t.Cleanup(func() { accessWait = old })
 	w := &gitHubWorld{now: time.Now(), unlinked: map[string]bool{}, inactive: map[string]bool{}}
 	hung := func(s *Server, _ *fanout.Hub, _ *hubView) {
-		s.SessionStart = map[string]bool{"smana/a": true}
+		s.StartDefault = true
 		s.Access.Perm = func(ctx context.Context, _, _, _ string) (string, error) {
 			<-ctx.Done()
 			return "", ctx.Err()
 		}
 	}
 	e := setup(t, mcpOn, actorOn(&actLog{}), w.option(), hung)
-	body := "## What is wrong\nx\n\n## What it should be\ny\n\n## Acceptance check\nz\n"
 	start := time.Now()
-	got := call(t, e, viaRoomctl("dev"), "issue_draft", map[string]any{"repo": "Smana/a", "title": "docs(agents): a dead link", "body": body})
-	var d issueDraft
-	if got.isError || json.Unmarshal(got.structured, &d) != nil || d.CanStart || d.CanStartWhy != "unverified" {
-		t.Fatalf("%+v: %+v", got, d)
+	got, why := e.srv.canStart(t.Context(), authn.Principal{ID: "dev", Sub: "dev"}, "Smana/a")
+	if got || why != "unverified" {
+		t.Fatalf("got (%v, %q), want (false, unverified)", got, why)
 	}
 	if took := time.Since(start); took > 5*time.Second {
-		t.Fatalf("the draft took %v with a hung lookup", took)
+		t.Fatalf("canStart took %v with a hung lookup", took)
 	}
-}
-
-func draftCheck(t *testing.T, e env, caller http.Header, repo string) issueDraft {
-	t.Helper()
-	const body = "## What is wrong\nx\n\n## What it should be\ny\n\n## Acceptance check\nz\n"
-	got := call(t, e, caller, "issue_draft", map[string]any{"repo": repo, "title": "docs(agents): a dead link", "body": body})
-	var d issueDraft
-	if got.isError || json.Unmarshal(got.structured, &d) != nil {
-		t.Fatalf("issue_draft failed: %+v", got)
-	}
-	return d
 }
 
 func TestStartDefaultsOnWithPlanner(t *testing.T) {
@@ -204,18 +175,17 @@ func TestStartDefaultsOnWithPlanner(t *testing.T) {
 	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
 		s.StartDefault = true
 	})
+	dev := authn.Principal{ID: "dev", Sub: "dev"}
 
-	served := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
-	if !served.CanStart || served.CanStartWhy != "" {
-		t.Fatalf("planner-served repo: got canStart=%v why=%q, want true", served.CanStart, served.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), dev, "Smana/ai-native-ref"); !ok || why != "" {
+		t.Fatalf("planner-served repo: got canStart=%v why=%q, want true", ok, why)
 	}
 	if !e.srv.startOffered("Smana/ai-native-ref") {
 		t.Fatal("startOffered(Smana/ai-native-ref) = false, want true")
 	}
 
-	unserved := draftCheck(t, e, viaRoomctl("dev"), "Smana/other")
-	if unserved.CanStart || unserved.CanStartWhy != "off" {
-		t.Fatalf("unserved repo: got canStart=%v why=%q, want false/off", unserved.CanStart, unserved.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), dev, "Smana/other"); ok || why != "off" {
+		t.Fatalf("unserved repo: got canStart=%v why=%q, want false/off", ok, why)
 	}
 }
 
@@ -230,49 +200,8 @@ func TestStartExcept(t *testing.T) {
 		s.StartDefault = true
 		s.StartExcept = map[string]bool{"smana/ai-native-ref": true}
 	})
-	d := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
-	if d.CanStart || d.CanStartWhy != "off" {
-		t.Fatalf("excepted repo: got canStart=%v why=%q, want false/off", d.CanStart, d.CanStartWhy)
-	}
-}
-
-func TestSessionStartHonouredWithWarning(t *testing.T) {
-	w := &gitHubWorld{
-		now:      time.Now(),
-		writes:   map[string][]string{"o/r": {"dev"}, "o/other": {"dev"}, "Smana/ai-native-ref": {"dev"}},
-		unlinked: map[string]bool{},
-		inactive: map[string]bool{},
-	}
-	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
-		s.StartDefault = false
-		s.SessionStart = map[string]bool{"o/r": true}
-	})
-	onListed := draftCheck(t, e, viaRoomctl("dev"), "o/r")
-	if !onListed.CanStart || onListed.CanStartWhy != "" {
-		t.Fatalf("o/r: got canStart=%v why=%q, want true", onListed.CanStart, onListed.CanStartWhy)
-	}
-	for _, repo := range []string{"o/other", "Smana/ai-native-ref"} {
-		d := draftCheck(t, e, viaRoomctl("dev"), repo)
-		if d.CanStart || d.CanStartWhy != "off" {
-			t.Fatalf("%s: got canStart=%v why=%q, want false/off", repo, d.CanStart, d.CanStartWhy)
-		}
-	}
-}
-
-func TestStartWinsOverSessionStart(t *testing.T) {
-	w := &gitHubWorld{
-		now:      time.Now(),
-		writes:   map[string][]string{"o/r": {"dev"}},
-		unlinked: map[string]bool{},
-		inactive: map[string]bool{},
-	}
-	e := setup(t, mcpOn, actorOn(&actLog{}), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
-		s.SessionStart = map[string]bool{"o/r": true}
-		s.StartExcept = map[string]bool{"o/r": true}
-	})
-	d := draftCheck(t, e, viaRoomctl("dev"), "o/r")
-	if d.CanStart || d.CanStartWhy != "off" {
-		t.Fatalf("o/r in both sessionStart and start.except: got canStart=%v why=%q, want false/off", d.CanStart, d.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "dev", Sub: "dev"}, "Smana/ai-native-ref"); ok || why != "off" {
+		t.Fatalf("excepted repo: got canStart=%v why=%q, want false/off", ok, why)
 	}
 }
 
@@ -287,18 +216,15 @@ func TestStartNeedsLinkAndWrite(t *testing.T) {
 		s.StartDefault = true
 	})
 
-	unlinked := draftCheck(t, e, viaRoomctl("unlinked-user"), "Smana/ai-native-ref")
-	if unlinked.CanStart || unlinked.CanStartWhy != "not_linked" {
-		t.Fatalf("unlinked caller: got canStart=%v why=%q, want false/not_linked", unlinked.CanStart, unlinked.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "unlinked-user", Sub: "unlinked-user"}, "Smana/ai-native-ref"); ok || why != "not_linked" {
+		t.Fatalf("unlinked caller: got canStart=%v why=%q, want false/not_linked", ok, why)
 	}
 
-	readonly := draftCheck(t, e, viaRoomctl("reader"), "Smana/ai-native-ref")
-	if readonly.CanStart || readonly.CanStartWhy != "no_write" {
-		t.Fatalf("read-only caller: got canStart=%v why=%q, want false/no_write", readonly.CanStart, readonly.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "reader", Sub: "reader"}, "Smana/ai-native-ref"); ok || why != "no_write" {
+		t.Fatalf("read-only caller: got canStart=%v why=%q, want false/no_write", ok, why)
 	}
 
-	writer := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
-	if !writer.CanStart || writer.CanStartWhy != "" {
-		t.Fatalf("writer caller: got canStart=%v why=%q, want true", writer.CanStart, writer.CanStartWhy)
+	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "dev", Sub: "dev"}, "Smana/ai-native-ref"); !ok || why != "" {
+		t.Fatalf("linked writer: got canStart=%v why=%q, want true", ok, why)
 	}
 }

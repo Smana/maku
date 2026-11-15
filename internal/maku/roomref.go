@@ -26,12 +26,9 @@ var refRE = regexp.MustCompile(`(?i)^(pr|pull request|pull)?\s*#?\s*([1-9][0-9]{
 const refHint = "the room's id, #<issue>, PR #<n>, a bare number (asked about when it is an issue in one room and a PR in another) or a fragment of its title"
 
 // roomRefTools are the broker tools whose room argument the relay resolves, by the argument's name:
-// `room` for the room_* tools, `task` for task. wait, answer, room_wait and room_checkout resolve
-// their own, as local tools. room_brief is one of them (CD11): the resume prompt, the
-// `/factory resume` short command and the docs hand it `#<issue>`, a `PR #<n>`, a bare number or a
-// title fragment, and it is resolved here so the broker is asked about a room id.
-var roomRefTools = map[string]string{"room_summary": "room", mcpwire.RoomChanges: "room", "room_queue": "room",
-	"room_tail": "room", "room_fork": "room", "room_brief": "room", mcpwire.Task: "task"}
+// `room` for the room_* tools, `task` for task. wait, answer and room_checkout resolve their own,
+// as local tools.
+var roomRefTools = map[string]string{"room_tail": "room", "room_fork": "room", mcpwire.Task: "task"}
 
 // minFragment is the shortest title fragment that names a room.
 const minFragment = 3
@@ -118,7 +115,7 @@ func (r *Relay) resolveRef(ctx context.Context, ref string) (string, any) {
 		if !refRE.MatchString(ref) {
 			return ref, nil // no title has it: the tool or the broker refuses it
 		}
-		return "", mcpwire.ToolError("unknown_room: no room you can see is for " + OneLine(ref) + "; rooms_list shows the rooms")
+		return "", mcpwire.ToolError("unknown_room: no room you can see is for " + OneLine(ref) + "; inbox shows the tasks")
 	case 1:
 		return matches[0].row.ID, nil
 	}

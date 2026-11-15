@@ -3,15 +3,32 @@
 package maku
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"math"
+	"os/exec"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/Smana/maku/internal/mcpwire"
 )
+
+// IssueFiler files a confirmed draft as the developer and returns the issue's URL. GH is the one
+// maku mcp uses.
+type IssueFiler func(ctx context.Context, repo, title, body string) (string, error)
+
+// Labeler puts a label on an issue as the developer. GHLabel is the one maku mcp uses.
+type Labeler func(ctx context.Context, repo string, issue int, label string) error
+
+// readyLabel is the label that starts the factory: the developer's own, never run_create.
+const readyLabel = "factory/ready"
 
 const startDescription = "Use when the plan is ready. Shows the developer a form; only their answer files the issue and starts the work."
 
@@ -25,6 +42,86 @@ var startEntry = map[string]any{
 type startArgs struct {
 	ID string `json:"id"`
 }
+
+// planShape is handoff_check's validated plan envelope: the plan the broker re-validated, the hash
+// it recomputed over it, and whether this developer may start the factory on it.
+type planShape struct {
+	Plan        json.RawMessage `json:"plan"`
+	Hash        string          `json:"hash"`
+	CanStart    bool            `json:"canStart"`
+	CanStartWhy string          `json:"canStartWhy"`
+	Maintainer  *bool           `json:"maintainer"`
+	Status      string          `json:"status"`
+}
+
+// planView is what the form shows of a validated plan: the repository it files into, the issue it
+// files first, and the ceiling its work is charged against.
+type planView struct {
+	Repository string `json:"repository"`
+	Issues     []struct {
+		Index      int    `json:"index"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		Class      string `json:"class"`
+		Profile    string `json:"profile"`
+		Suggestion *struct {
+			Profile string   `json:"profile"`
+			Roles   []string `json:"roles"`
+			Merge   struct {
+				Outcome string `json:"outcome"`
+			} `json:"merge"`
+			Why string `json:"why"`
+		} `json:"suggestion"`
+	} `json:"issues"`
+	Budget struct {
+		CeilingUSD float64 `json:"ceilingUSD"`
+		Source     string  `json:"source"`
+	} `json:"budget"`
+}
+
+// governed is a plan the broker re-validated and the view of it the form shows.
+type governed struct {
+	planShape
+	view planView
+}
+
+// planLabels are the labels start applies before factory/ready, in order: class:<c>, then
+// workflow:<p> when the plan pins one (P5, P7, WF9), unless the catalogue says this developer does
+// not maintain the repository. None without a class.
+func (g *governed) planLabels() []string {
+	is := g.view.Issues[0]
+	if is.Class == "" || (g.Maintainer != nil && !*g.Maintainer) {
+		return nil
+	}
+	labels := []string{"class:" + is.Class}
+	if is.Profile != "" {
+		labels = append(labels, "workflow:"+is.Profile)
+	}
+	return labels
+}
+
+// dollars is a plan's USD ceiling as a person reads it: two decimals, from the cent up.
+func dollars(usd float64) string {
+	cents := int64(math.Round(usd * 100))
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
+// draftShape is the issue the form shows and start files as it stands.
+type draftShape struct {
+	Repo        string `json:"repo"`
+	Title       string `json:"title"`
+	Body        string `json:"body"`
+	CanStart    bool   `json:"canStart"`
+	CanStartWhy string `json:"canStartWhy"`
+}
+
+// The issue's repository and title, checked again here: they become gh's arguments.
+var (
+	repoRE  = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
+	titleRE = regexp.MustCompile(`^[A-Za-z0-9]`)
+)
+
+const needsConfirmation = "needs_confirmation"
 
 type handoffCheckShape struct {
 	planShape
@@ -236,6 +333,38 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	return r.startFromHandoff(ctx, draft.Repo, url, checked.governed().planLabels())
 }
 
+// fallbackCommand is one shell command that files the draft with gh and nothing else. Every value is
+// single-quoted and the body rides a quoted heredoc whose end never occurs in it.
+func fallbackCommand(d draftShape) string {
+	eof := "BODY_EOF"
+	for i := 1; strings.Contains(d.Body, "\n"+eof+"\n") || strings.HasPrefix(d.Body, eof+"\n") || strings.HasSuffix(d.Body, "\n"+eof) || d.Body == eof; i++ {
+		eof = fmt.Sprintf("BODY_EOF_%d", i)
+	}
+	return fmt.Sprintf("gh issue create --repo=%s --title=%s --body-file=- <<'%s'\n%s\n%s\n", d.Repo, shQuote(d.Title), eof, strings.TrimRight(d.Body, "\n"), eof)
+}
+
+// shQuote single-quotes s for a POSIX shell.
+func shQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+// formBool reads a form field: a JSON boolean, or the strings "true" and "false" some clients send.
+// ok is false when the field is absent, null or neither, which callers treat as false.
+func formBool(raw json.RawMessage) (v, ok bool) {
+	var b bool
+	if json.Unmarshal(raw, &b) == nil && len(raw) > 0 && string(raw) != "null" {
+		return b, true
+	}
+	var str string
+	if json.Unmarshal(raw, &str) == nil {
+		switch strings.ToLower(strings.TrimSpace(str)) {
+		case "true":
+			return true, true
+		case "false":
+			return false, true
+		}
+	}
+	return false, false
+}
+
 func formString(raw json.RawMessage) string {
 	if len(raw) == 0 || string(raw) == "null" {
 		return ""
@@ -297,4 +426,146 @@ func (r *Relay) startFromHandoff(ctx context.Context, repo, url string, labels [
 		}
 	}
 	return out
+}
+
+// awaitRoom polls rooms_list every 5 s for the room of the issue, up to RoomWait; "" if none came.
+func (r *Relay) awaitRoom(ctx context.Context, repo string, issue int) string {
+	wait := r.RoomWait
+	if wait <= 0 {
+		wait = roomWait
+	}
+	ctx, cancel := context.WithTimeout(ctx, wait)
+	defer cancel()
+	for {
+		if _, sc, isErr, err := r.callBroker(ctx, "rooms_list", map[string]any{}); err == nil && !isErr {
+			var list struct {
+				Rooms []struct {
+					ID         string `json:"id"`
+					Repository string `json:"repository"`
+					Issue      int    `json:"issue"`
+				} `json:"rooms"`
+			}
+			if json.Unmarshal(sc, &list) == nil {
+				for _, row := range list.Rooms {
+					if strings.EqualFold(row.Repository, repo) && row.Issue == issue && row.ID != "" {
+						return row.ID
+					}
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ""
+		case <-r.after(defaultPoll):
+		}
+	}
+}
+
+// cardResult rebuilds a tools/call result from what callBroker returned, for viewed.
+func cardResult(text string, structured json.RawMessage) json.RawMessage {
+	b, _ := json.Marshal(map[string]any{"content": []map[string]string{{"type": "text", "text": text}}, "structuredContent": structured})
+	return b
+}
+
+// cardText is the first text of a tools/call result.
+func cardText(res json.RawMessage) (string, bool) {
+	var out struct {
+		Content []struct{ Text string } `json:"content"`
+	}
+	if json.Unmarshal(res, &out) != nil || len(out.Content) == 0 || out.Content[0].Text == "" {
+		return "", false
+	}
+	return out.Content[0].Text, true
+}
+
+// issueURL is the shape of the URL gh prints for an issue.
+var issueURL = regexp.MustCompile(`^https://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/issues/([1-9][0-9]{0,8})$`)
+
+// issueNumber is the number in https://github.com/<repo>/issues/<n>; any other shape, or another
+// repository, is refused: the number becomes gh's argument.
+func issueNumber(url, repo string) (int, error) {
+	m := issueURL.FindStringSubmatch(strings.TrimSpace(url))
+	if m == nil || !strings.EqualFold(m[1], repo) {
+		return 0, fmt.Errorf("gh printed %q, not an issue of %s", OneLine(url), repo)
+	}
+	return strconv.Atoi(m[2])
+}
+
+// GHLabel labels the issue with the developer's gh: each value joined to its flag, never a shell.
+func GHLabel(ctx context.Context, repo string, issue int, label string) error {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "issue", "edit", strconv.Itoa(issue), "--repo="+repo, "--add-label="+label) //nolint:gosec // gh, with a checked repository, a number and a fixed label, never through a shell
+	var errOut bytes.Buffer
+	cmd.Stderr = &capped{b: &errOut}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh issue edit: %w: %s", err, OneLine(errOut.String()))
+	}
+	return nil
+}
+
+// GHUnlabel removes a label from the issue with the developer's gh before GHLabel re-applies it:
+// each value joined to its flag, never a shell.
+func GHUnlabel(ctx context.Context, repo string, issue int, label string) error {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "issue", "edit", strconv.Itoa(issue), "--repo="+repo, "--remove-label="+label) //nolint:gosec // gh, with a checked repository, a number and a fixed label, never through a shell
+	var errOut bytes.Buffer
+	cmd.Stderr = &capped{b: &errOut}
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh issue edit: %w: %s", err, OneLine(errOut.String()))
+	}
+	return nil
+}
+
+// GHAddLabel adds a label with the developer's gh through the REST route, which creates a label the
+// repository does not have yet (G5; gh issue edit --add-label refuses one): each value its own
+// argument, never a shell.
+func GHAddLabel(ctx context.Context, repo string, issue int, label string) error {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", "api", "-X", "POST", "repos/"+repo+"/issues/"+strconv.Itoa(issue)+"/labels", "-f", "labels[]="+label) //nolint:gosec // gh, with a checked repository, a number and the plan's class, never through a shell
+	var errOut bytes.Buffer
+	cmd.Stderr = &capped{b: &errOut}
+	cmd.Stdout = io.Discard
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh api labels: %w: %s", err, OneLine(errOut.String()))
+	}
+	return nil
+}
+
+// ghTimeout bounds one gh call.
+var ghTimeout = 60 * time.Second
+
+// maxGHOutput bounds what gh's stdout and stderr keep.
+const maxGHOutput = 4 << 10
+
+// GH files the issue with the developer's gh: their identity, the body on stdin, never a label.
+func GH(ctx context.Context, repo, title, body string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, ghTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "gh", ghArgs(repo, title)...) //nolint:gosec // gh, with a checked repository and title, never through a shell
+	cmd.Stdin = strings.NewReader(body)
+	var out, errOut bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &capped{b: &out}, &capped{b: &errOut}
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("gh issue create: %w: %s", err, OneLine(errOut.String()))
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	return strings.TrimSpace(lines[len(lines)-1]), nil
+}
+
+// ghArgs are gh's arguments: each value joined to its flag, so none reads as a flag of its own.
+func ghArgs(repo, title string) []string {
+	return []string{"issue", "create", "--repo=" + repo, "--title=" + title, "--body-file=-"}
+}
+
+// capped keeps the first maxGHOutput bytes written to it and drops the rest.
+type capped struct{ b *bytes.Buffer }
+
+func (c *capped) Write(p []byte) (int, error) {
+	if room := maxGHOutput - c.b.Len(); room > 0 {
+		c.b.Write(p[:min(len(p), room)])
+	}
+	return len(p), nil
 }

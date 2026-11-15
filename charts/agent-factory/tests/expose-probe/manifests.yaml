@@ -177,7 +177,7 @@ spec:
             - --skip-provider-button=true
             - --skip-jwt-bearer-tokens=true
             - --extra-jwt-issuers=__ISSUER__=maku-cli
-            - --skip-auth-route=GET=^/\.well-known/roomctl$
+            - --skip-auth-route=GET=^/\.well-known/maku$
             - --skip-auth-route=GET=^/link/github/callback$
             - --oidc-groups-claim=groups
             - --allowed-group=agents-admin

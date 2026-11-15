@@ -107,7 +107,7 @@ func TestLocalHumanOriginPolicy(t *testing.T) {
 		b, _ := io.ReadAll(resp.Body)
 		return resp.StatusCode, string(b)
 	}
-	for _, path := range []string{"/api/rooms", "/.well-known/roomctl", "/"} {
+	for _, path := range []string{"/api/rooms", "/.well-known/maku", "/"} {
 		if code, body := get(e, path, ""); code != http.StatusOK {
 			t.Fatalf("%s with no token and no Origin: %d %s", path, code, body)
 		}
@@ -120,7 +120,7 @@ func TestLocalHumanOriginPolicy(t *testing.T) {
 			}
 		}
 	}
-	if _, body := get(e, "/.well-known/roomctl", ""); !strings.Contains(body, `"humanMode":"local"`) {
+	if _, body := get(e, "/.well-known/maku", ""); !strings.Contains(body, `"humanMode":"local"`) {
 		t.Fatalf("local discovery: %s", body)
 	}
 
@@ -130,7 +130,7 @@ func TestLocalHumanOriginPolicy(t *testing.T) {
 		s.RoomctlClient, s.ProjectID, s.UI = func() string { return "cli" }, func() string { return "proj" }, index
 	})
 	for _, origin := range []string{"", "https://evil.example"} {
-		code, body := get(o, "/.well-known/roomctl", origin)
+		code, body := get(o, "/.well-known/maku", origin)
 		if code != http.StatusOK || !strings.Contains(body, `"humanMode":"oidc"`) || !strings.Contains(body, `"clientID":"cli"`) ||
 			!strings.Contains(body, `"projectID":"proj"`) {
 			t.Fatalf("oidc discovery from %q: %d %s", origin, code, body)
