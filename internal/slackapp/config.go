@@ -73,7 +73,8 @@ type Channel struct {
 	// retentionDays (SI19). Without it nothing a person typed here is kept. It needs intents.
 	CollectReplies bool `json:"collectReplies,omitempty"`
 	// IntentActions is the App's per-action switch for the write intents (SI21): any of stop, retry,
-	// steer, amend, each once. None is served yet; the list is validated and ignored.
+	// answer, steer, amend, each once. stop, retry and answer are served without needing intents: on;
+	// steer and amend remain ignored.
 	IntentActions []string `json:"intentActions,omitempty"`
 	// Notify is which webhook transitions post a line in this channel (UX8, CD11). Absent means
 	// defaultNotify — the four transitions a person is told about by default; an explicit empty list
@@ -95,8 +96,12 @@ const (
 // intentsServed reports whether tier 1 reads this channel's unknown replies: shadow or on.
 func (c Channel) intentsServed() bool { return c.Intents == IntentsShadow || c.Intents == IntentsOn }
 
+// actsOn reports whether act ("stop", "retry" or "answer") is turned on in this channel's
+// intentActions, independent of the channel's intents switch.
+func (c Channel) actsOn(act string) bool { return slices.Contains(c.IntentActions, act) }
+
 // intentActionNames are the write intents a channel may list (SI21).
-var intentActionNames = []string{"stop", "retry", "steer", "amend"}
+var intentActionNames = []string{"stop", "retry", "answer", "steer", "amend"}
 
 // notifies reports whether t posts a line in this channel. nil and empty are different answers: nil
 // is a deployment that said nothing (defaultNotify), empty is a channel where nothing is news.

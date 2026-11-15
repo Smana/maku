@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # The model gateway
 
 Agent Factory reaches every model through one gateway: [agentgateway](https://agentgateway.dev) v1.6,
@@ -17,6 +19,18 @@ flowchart LR
   BE --> P["provider (Z.ai, Anthropic, Kimi, Mistral, OpenAI, custom)"]
   C["agentgateway controller"] -.->|"xDS, the JWKS"| GW
 ```
+
+## Contents
+
+- [The seam](#the-seam)
+- [Values](#values)
+- [Presets](#presets)
+- [Identity](#identity)
+- [Runs through the gateway](#runs-through-the-gateway)
+- [Metering the runs](#metering-the-runs)
+- [The planner and the classifier](#the-planner-and-the-classifier)
+- [Network](#network)
+- [Proving it](#proving-it)
 
 ## The seam
 
@@ -194,7 +208,7 @@ fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verifie
 - An apiserver that admits anonymous requests. kubeadm and kind do. k3s does not:
   start it with `--kube-apiserver-arg=anonymous-auth=true`.
 
-Both widen the cluster ([Security](security.md#the-model-gateways-identity)). `source: inline` avoids them:
+Both widen the cluster ([Security](reference/security-controls.md#the-model-gateways-identity)). `source: inline` avoids them:
 `jwks.inline` holds the keyset (`kubectl get --raw /openid/v1/jwks`), and nothing is fetched. Its cost is
 rotation: when the issuer rotates its signing keys, update the value and upgrade, or new tokens get 401.
 
@@ -267,7 +281,7 @@ gateway's token metrics carry the run's subject in `ar_agent`: the subject the f
 matches. Set `maku-factory.config.runs.gatewayIdentity: true` to say so. The factory then:
 
 - prices the runs from `meter.query`, which reads agentgateway's own series, cache types included
-  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](factory.md#budgets));
+  (`input_cache_read`, `input_cache_write`), with no relabel ([the query](reference/budgets.md));
 - reads the gateway's 429s from `meter.throttle.promQuery`, PromQL on the same `meter.url`, or from
   VictoriaLogs as before;
 - accepts `loops.<class>.models`, a provider alias per role and tier, which becomes the run's

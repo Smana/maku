@@ -14,5 +14,5 @@ tests:
             exp_annotations:
               summary: "Room r1 has a running run and no event for 30 minutes"
               description: "The run is Running but silent, and the room shows AwaitingHuman. Find its run: kubectl get agentrun -n agents -o custom-columns=RUN:.metadata.name,ROOM:.spec.roomRef | grep r1, then read its bridge: kubectl logs -n agents <the run's pod> -c room-bridge"
-              runbook_url: "https://docs.example.test/operations.md#room-alerts"
+              runbook_url: "https://docs.example.test/operations/failures.md#room-alerts"
               dashboard: "/d/agent-room"

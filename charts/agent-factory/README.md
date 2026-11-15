@@ -60,7 +60,7 @@ policy, `networkPolicies.plain`, was removed in v0.49.0: the factory's own defau
 
 `--set maku.networkPolicies.mode=kubernetes` confines the runs too, on a CNI that enforces
 NetworkPolicy: default-deny in `agents`, one NetworkPolicy per run, and the egress proxy holding each
-run's HTTPS to its own hosts ([the network modes](../../docs/security.md#the-run-paths-network-modes)).
+run's HTTPS to its own hosts ([the network modes](../../docs/reference/security-controls.md#the-run-paths-network-modes)).
 The run controller's preflight then refuses runs until it proves the CNI enforces them. The demo's
 `maku.broker.database.podLabels` lets the broker's policy reach `rooms-db`. `task chart:install:k3d:netpol`
 proves both outcomes on k3d: kube-router enforcing (the preflight passes) and a k3s started with

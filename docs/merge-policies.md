@@ -271,7 +271,7 @@ A policy's `description` says, in one plain sentence, what the policy is for: "F
 the docs, and nothing else." It is optional plain text of at most **280** characters, set on the
 `MergePolicy` (`spec.description`) or on a class of the central config; a binding has none. **The
 gate never reads it**: two policies that differ only in their description decide every pull request
-alike. A policy's [settings page](web-ui.md#settings) shows it.
+alike. A policy's [settings page](reference/web-ui-settings.md#settings) shows it.
 
 ### Shadow and live
 
@@ -497,7 +497,7 @@ source or the `Repository`'s `workflow.default` ([how the workflow is chosen](fa
 Workflow fields (`harness`, `harnessAllowed`, `escalation`, `checks`, `testFirst`), `requires`,
 `mode: "off"`, and the `review` policy were removed from `MergePolicy` and bindings
 ([upgrading](upgrading.md#merge-policies-removals)). The default workflow's `template` is read for
-[coordination](factory.md#multi-repository-coordination) checks.
+[coordination](multi-repository.md) checks.
 
 <!-- check: central -->
 ```yaml
@@ -848,7 +848,7 @@ repository's pull requests.
 
 With `policyManagement.stage: manage` (factory and broker), `/settings/merge-policies/<owner>/<name>`
 shows a repository's policies and evidence, and `/settings/merge-policies/policies/<name>` shows one
-policy; see [the web UI](web-ui.md#settings) for permissions. **Maku writes nothing**: each page
+policy; see [the web UI](reference/web-ui-settings.md#settings) for permissions. **Maku writes nothing**: each page
 answers with the manifest or file edit to commit.
 
 | Repository | Where its bindings are edited | **Check** answers |
@@ -953,7 +953,7 @@ from a cache; a failed lookup authorizes nothing. The decision record names the 
 
 ### Metrics
 
-Definitions are in [operations](operations.md#factory-metrics); this is what to watch per stage.
+Definitions are in [operations](operations/factory.md#factory-metrics); this is what to watch per stage.
 
 | `stage` | Query | Healthy |
 |---|---|---|
@@ -1281,7 +1281,7 @@ error, the first time it refuses a generation, and one `binding refused` line pe
 | `Connected` | `Repository` | `True` `Healthy`; `False` `Unhealthy` (the GitHub connection), `WiringFailed` (the message is the error), `NotServed`; `Unknown` `NotChecked` (no GitHub call yet) |
 | `RepositoryFileValid` | `Repository` | `True` `Valid`, or `FenceOnly` (the file gives only `factory:` and the repository is under central authority, so the central policies decide); `False` `Invalid` (the file does not parse, is in the removed `classes:` shape, or, under repository authority, binds no policy); `Unknown` `PolicyReadOff`, `NotServed`, `NotRead` |
 | `InSync` | `Repository` | `True` `InSync`, or `FenceOnly`; `False` `FileInvalid`, or `Diverges` (the message lists up to five differences from the repository's file); `Unknown`, same reasons as above |
-| `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](factory.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
+| `PrivateCode` | `Repository` | `True` `Public`, `Acknowledged`; `False` `Unacknowledged` (private, internal or unread code without `spec.privateCode.acknowledged`: [private code](install.md#private-code)); `Unknown` `NotChecked`, `NotServed` |
 | `Ready` | `Factory` | `True` `Ready`; `True` `ServingLastGood` (a newer generation was refused and the last accepted one keeps serving: the message reads `serving generation 3; generation 4 refused`, and `Accepted` carries the error); `False` `NotAccepted` (nothing is served), `GitHubDown` (a served repository is unhealthy; one not checked yet is not counted), `SyncFailing` (the last sync failed, or none in 15 minutes) |
 
 A `Repository` reports its `authority` (`central` or `repository`), its resolved `merge` and

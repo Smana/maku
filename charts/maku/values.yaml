@@ -78,6 +78,8 @@ broker:
     # mcp: {enabled, start: {default: true, except: []}, sponsored: [...]} serves /mcp (docs/cli.md).
     # slackIntents: {principal, teamID, url, apiKeyFile, ...} serves intent_classify, the Slack App's
     # read-only classification of a thread reply (docs/slack.md). Unset, the tool is on no list.
+    # slackDecide / slackStop / slackRetry / slackAnswer: {principal, teamID} serve POST /api/slack/decisions,
+    # POST /api/slack/stops, POST /api/slack/retries and POST /api/slack/answers (docs/slack.md). Unset, each path is a 404.
   # The agents' room tools listener, :8090 (internal/config's roomTools, I8). On by default, as every
   # existing deployment runs it; ROOMS_MCP_KEY alone decides whether calls are accepted, so bring it
   # through extraEnv. Off, the broker binds no :8090 at all. auth (unset is key): key trusts a gateway's
@@ -237,7 +239,7 @@ broker:
   suspend: {}
   policyManagement: {}
   coordination: {}
-  # The room-event subscribers (docs/operations.md, "Webhooks"): each entry is the broker's own
+  # The room-event subscribers (docs/operations/factory.md#webhooks): each entry is the broker's own
   # (name, network, url, events, secretFile, repositories, generation), plus three chart keys:
   #   existingSecret  the signing key's Secret, mounted at /etc/room-broker/webhooks/<name>/; it fills
   #                   secretFile with <that dir>/<key> unless secretFile is set (a set one wins);

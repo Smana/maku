@@ -578,6 +578,15 @@ func (g *GitHub) CloseIssue(ctx context.Context, number int) error {
 	return wrap("close an issue", err)
 }
 
+// EditIssueBody sets an issue's body, and nothing else (SI24: a Slack answer writes a decision
+// record to ## Decisions).
+func (g *GitHub) EditIssueBody(ctx context.Context, number int, body string) error {
+	_, _, err := g.rest.Issues.Update(ctx, g.owner, g.name, number,
+		github.UpdateIssueRequest{Body: new(body)})
+	g.mark(err)
+	return wrap("edit an issue", err)
+}
+
 // ClosePR closes a pull request without merging it (§6.3's stale close).
 func (g *GitHub) ClosePR(ctx context.Context, number int) error {
 	_, _, err := g.rest.PullRequests.Edit(ctx, g.owner, g.name, number, &github.PullRequest{State: new("closed")})

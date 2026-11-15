@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # Exposure
 
 How people and Slack reach an install, through the Gateway or the Ingress controller the cluster

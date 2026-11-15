@@ -26,7 +26,7 @@ The broker serves four listeners. Every body is JSON.
 
 Served with `ListenAndServeTLS` on the pair cert-manager writes to `/etc/room-broker/tls/`. The
 broker re-reads the files when they change, so a renewal needs no restart, and a plain-HTTP request
-fails. See [security](../security.md#tls-on-8443) for the certificate and its CA.
+fails. See [security](security-controls.md#tls-on-8443) for the certificate and its CA.
 
 Errors are JSON, `{"error": "<reason>"}`, with the status codes below. The reasons are stable
 strings, the `wire.Reason*` constants: branch on them, not on the status text.
@@ -47,7 +47,7 @@ builds a system authenticator that never authenticates, so the system routes ans
 than disappearing. It takes `mode: jwks` (the default, verifying against `issuer` and `jwksURL`) or
 `mode: tokenreview`, which asks the apiserver and needs no reachable issuer. `systemPrincipals`
 requires it: without an issuer no system caller could ever be vouched for, and the config is
-refused ([integration](../integration.md#the-brokers-configuration)).
+refused ([integration](config.md#broker-fields)).
 
 No call reaches Kubernetes' TokenReview unless an issuer says `mode: tokenreview`: every other token
 is validated offline and issuer-agnostically. A run
@@ -448,7 +448,7 @@ already consumed, promoted, removed or never queued is skipped, so a retry is sa
 | `GET /healthz` | The process is up. Body: `ok <version>` | Liveness |
 | `GET /readyz` | Postgres answers a ping and the Kubernetes caches are synced | Readiness |
 | `GET /startupz` | The schema is migrated (`events` exists) | Startup: the first deploy waits for CNPG and the Atlas migration |
-| `GET /metrics` | Always | Prometheus metrics ([operations](../operations.md#metrics)) |
+| `GET /metrics` | Always | Prometheus metrics ([operations](../operations/rooms.md#metrics)) |
 
 The bridge serves `GET /healthz` on `:8085`, for kubelet only, and no metrics. It reports unhealthy only when the
 harness answered once and has been unreachable for more than 60 s: as a native sidecar its startup
@@ -490,7 +490,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | Method and path | Does |
 |---|---|
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
-| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](../web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](../github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
+| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui-settings.md#install-banner-unsafe-codes) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](../github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
 | `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the cursor `task` takes back as `since` |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
@@ -498,13 +498,14 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
+| `POST /api/slack/stops`, `POST /api/slack/retries`, `POST /api/slack/answers` | The Slack App's stop, retry and question-answer routes, when `human.slackStop` / `human.slackRetry` / `human.slackAnswer`: `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`) → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 4 KiB cap (8 KiB on `/answers`), 10 a minute (burst 5, per `(team,user)`, per replica), identity checked in `slack_links` and forwarded as `onBehalfOf: slack:<team>/<user>` to [`POST /v1/tasks/{task}/stops`, `/retries` and `/answers`](#post-v1taskstaskstops-post-v1taskstaskretries-and-post-v1taskstaskanswers) |
 | `GET /link/github`, `POST /link/github/{start,confirm,unlink}`, `GET /link/github/callback` | The [GitHub account link](../github-link.md), when `human.githubLink`; else `404`. The page and its POSTs take the web UI's session and the broker's own `Origin`; the callback takes no session (the front door lets `GET=^/link/github/callback$` through) and links nothing |
 | `DELETE /api/links/github/{sub}` | An admin's web session removes another account's GitHub link: `{"unlinked": bool}`; `403` for a member or a CLI bearer |
 | `GET /settings/approval-memory`, `/api/approval-memory/…` | Approval memory (merge policy stage 5), when `human.approvalMemory`; else `404`. `GET grants?repository=&class=&status=&q=` lists the grants of the repositories the caller may read (an admin reads all), `unverified` when an access check failed; `GET grants/{id}` adds its audit and the conditions that stay outside it; `GET export?repository=` is the same list as YAML. `POST preview` and `POST grants` take `{repository, class, caughtFiles (exact paths) or files (patterns), diffShape?, policyHash, pullRequest, lifetimeDays?}` ("merge and create rule", GitHub write on the repository): the preview saves nothing and answers the exact predicate, the future pull requests it would match, what stays outside it, its expiry, its revoke path and what "merge once" does instead; the create saves it and answers the same with the grant; `POST grants/{id}/{revoke,renew,reconfirm}` `{version?, reason?, lifetimeDays?}` moves one: revoking takes write or an admin, the others write, and a reconfirmation rebinds to the policy its suspension was found under. Writes take the web UI's session from the broker's own `Origin` (`web_only`, `cross_origin`), a body of 16 KiB at most; `409 grant_state` for a move its status refuses |
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
 | `GET /.well-known/maku` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
-| `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](../web-ui.md#the-room-list)) |
-| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](../integration.md#the-brokers-configuration), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/maku` leaves them out, since `maku configure` has no use for them |
+| `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](web-ui-settings.md#install-banner-unsafe-codes)) |
+| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](config.md#broker-fields), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/maku` leaves them out, since `maku configure` has no use for them |
 
 ### `GET /api/rooms/{id}/summary`
 
@@ -640,7 +641,7 @@ What needs the caller, across every room they may read: one list, one order. `ne
 derivation, and the room rows, the room summary, this route, the `inbox` tool and the web panel all read it,
 so no two surfaces can disagree. It is a human token's route, as every route but `POST /mcp`: a sponsored
 principal reads its own rooms' needs through `inbox`, and is `401` here. Served unless
-`human.needs.enabled` is off ([the broker's configuration](../integration.md#the-brokers-configuration));
+`human.needs.enabled` is off ([the broker's configuration](config.md#broker-fields));
 off, it is a `404`, and `inbox` lists the caller's own tasks instead.
 
 | Param | Holds |
@@ -1159,7 +1160,7 @@ The answer is one key, always a closed code and never a sentence: `{"result": "a
 
 Every refusal is a `200` with a code, apart from those four transport ones, so the App never retries
 a refusal and Slack never redelivers one into a loop. Each answer counts in
-`maku_rooms_slack_decisions_total{result, decision}` ([operations](../operations.md)): `result` is the
+`maku_rooms_slack_decisions_total{result, decision}` ([metrics](metrics.md#room-broker-metrics)): `result` is the
 code, `decision` the decision it answered with, and empty when the answer carried none.
 
 What it reads, in order, each step naming the code it refuses with. Nothing comes from the request
@@ -1193,7 +1194,55 @@ beyond its ids: the body cannot name a human, a room or a class.
 Merging is untouched: this route decides an approval, and the merge stays a review of the current
 head on GitHub.
 
+### `POST /api/slack/stops`, `POST /api/slack/retries` and `POST /api/slack/answers`
+
+Mounted independently when `human.slackStop`, `human.slackRetry` or `human.slackAnswer` is set (each
+shaped like `human.slackDecide`: `principal`, `teamID`, `repositories`; unset is the mux's `404`).
+Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on `/answers`, unknown
+fields refused): `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`, 1..4 000
+bytes with no control characters), all validated by shape before any read. Bearer: the App's
+configured sponsored principal alone; `team` must match `teamID`; `10` requests a minute per `(team,
+user)` with burst `5` (`429 {"result": "rate_limited"}`). The broker checks `slack_links`
+(`not_linked`, `link_unverified`), checks that the room's repository is in the route's `repositories`
+(`not_permitted`) and resolves a task (`unknown_task`), then forwards `{onBehalfOf:
+"slack:<team>/<user>"}` (with `answer` on `/answers`) with the App's own bearer token to the
+factory's stop, retry or answer route and returns its `{"result"}`.
+
 ## `:8082` — the factory's task intake
+
+### The factory's API
+
+All factory HTTP routes serve on every replica.
+
+#### `POST /v1/runs`
+
+Serves on `api.listen` (the chart's `api` port, `8082`, TLS 1.3 when `api.tls` is set (`internal/tlsreload`)): a human's or allowlisted system's run request. Source: `internal/factory/api/server.go`.
+
+| | |
+|---|---|
+| Auth | `Authorization: Bearer`: a human's token from `api.humanIssuer`, issued to one of the `api.clientIDFiles` clients (the rooms UI's proxy or the CLI's), and the human in one of the two groups `api.groups` names; or a token from `api.systemIssuer` for audience `agent-factory`, its subject in `api.systemPrincipals`. Internal data and the `triager` role are for admins only |
+| Body | `role`, `repository` (in `api.repositories`, the listed repositories, spelled as listed), `baseRef` (default `main`), `task: {text \| url}` (one of them; a reviewer or tester needs a pull request URL), `dataClass`, `roomRef`, `model` (default `agent-default`), `maxTokens` (default 2,000,000), `egressProfiles` (`pypi`, `npm`, `golang`, `crates`; none for internal data), `resumeBranch`. The principal and the branch are never the body's |
+| `Idempotency-Key` | The same key from the same caller within 24 h answers the first `201` with `Idempotent-Replayed: true` and creates nothing. Same key, different body: `422 idempotency_key_reused`. A key whose run another caller owns: `409 idempotency_key_collision`. Over 255 bytes: `400 bad_idempotency_key`. Two first requests with one key either side of 00:00 UTC make two runs |
+| `201` | `{runId, branch}`: `agent/<roomRef>` in a room, else `agent/<runId>` |
+| `400` | `bad_json`, a validation code (`bad_role`, `exactly_one_of_task_text_or_url`, …), `no_room`, `data_class_differs_from_the_room`, `repository_differs_from_the_room`, `repository_differs_from_the_branch` |
+| `401`, `403` | `unauthenticated`; `not_permitted`, `repository_not_allowed`, `admin_only`, `task_branch`, `repository_permission` (no `write` on the repository, or it could not be verified) |
+| `409`, `429` | `room_busy`, `branch_busy`, `run_busy`, `repository_not_owned` (the repository's fence names another factory, or none); `over_budget`, `person_budget_exhausted` (the caller's own day, [per-person caps](budgets.md#per-person-caps)) |
+| `503` | `kill_switch`, `runs_unavailable`, `rooms_unavailable`, `ledger_busy`, `meter_blind`, `create_failed`, `identity_unavailable` (per-person caps on, and the caller's GitHub link could not be read) |
+
+#### `POST /intake/runlore`
+
+Serves on `runlore.listen` (the chart's `intake` port, `8080`): a RunLore finding. Source: `internal/factory/intake/runlore.go`.
+
+| | |
+|---|---|
+| Auth | `Authorization: Bearer <token>`, compared with the file at `runlore.tokenFile`, re-read on every request |
+| Body | `{title, verdict, confidence, alert_name, resource_ref, severity, cluster, text}`, at most 256 KiB; `alert_name` and `resource_ref` required |
+| `201` | `{task, issue}`: a task and a public issue labelled `factory/proposed`. The issue names the alert, resource and room, never the finding |
+| `200` | `{duplicate: true, task}`: a task for this alert and resource is still open |
+| `202` | `{accepted: false, reason: below_threshold}`: the verdict is not `action_required` or `action_suggested`, or the confidence is under `runlore.minConfidence` |
+| `400`, `401`, `429` | `bad_finding`; `unauthenticated`; `runlore_daily_cap` (`runlore.dailyCap` a UTC day) |
+| `409` | `repository_not_owned`: `runlore.repository`'s fence does not name this factory |
+| `503` | `intake_unconfigured` (the token file is missing or empty: the intake is off, never open), `factory_stopped`, `intake_failed` |
 
 ### `POST /v1/tasks`
 
@@ -1237,6 +1286,29 @@ required). `Idempotency-Key` is the incident's trigger key.
 
 A sponsored principal's request refuses an `incident` (`bad_json`), and an internal principal's refuses
 everything a sponsored one's does beyond its own keys.
+
+### `POST /v1/tasks/{task}/stops`, `POST /v1/tasks/{task}/retries` and `POST /v1/tasks/{task}/answers`
+
+Served on the same port while `api.sponsored` is non-empty, for a sponsored principal's bearer token
+alone (`403 sponsored_only` for a human, internal or run caller). `{task}` is the task's name or
+8-character room id. Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on
+`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>"}` (plus `answer` on
+`/answers`, 1..4 000 bytes with no control characters). The factory re-resolves the GitHub login
+from `onBehalfOf` (config map, else `slack_links`, never from a body field) and checks that the
+principal lists the task's repository. `/stops` and `/retries` require maintainer write permission on
+GitHub (`not_maintainer`) and apply the exact transition of the `factory/stop` label (`Queued` or
+`Running` → `Stopped`, else `not_running`) or the `/factory retry` comment (`Escalated` → `Queued`,
+proceeding on the scoper's first assumption when the escalation was a question; a `Queued` task held
+by a model hold answers `not_escalated`). `/answers` requires an open scoper question on the task
+(`Escalated` or `AwaitingHuman` with `scope.question` or `needs_author`, else `no_question`); when
+the resolved login is a maintainer of the repository (`admin`, `maintain`, `write`) or the issue's
+author (`not_permitted` for anyone else), the factory appends a decision record to `## Decisions` in
+the issue body on GitHub and, for a maintainer, clears the question and restarts the task (`Queued`
+at `scope` with `ScopeAttempts` decremented), while for a non-maintainer issue author it leaves the
+task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, answered,
+answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
+no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
+caller auth, or `503` (`link_unverified`, `tasks_unavailable`).
 
 ### `POST /v1/tasks/{task}/verification`
 
@@ -1357,9 +1429,19 @@ caller's GitHub login cannot be resolved. The body is `Cache-Control: no-store`:
 ## Webhooks
 
 The broker sends signed, id-only events to the subscribers declared in its `webhooks` config (see
-[operations](../operations.md#webhooks)). It is off until a subscriber is declared. A payload carries
+[operations](../operations/factory.md#webhooks)). It is off until a subscriber is declared. A payload carries
 ids and closed codes only: never room text, a title or a message — a `branch` is a code shape, on the
 one approval that binds it.
+
+| Key | Meaning |
+|---|---|
+| `name` | A DNS label: the `subscriber` label of the webhook metric series |
+| `network` | `cluster` (`http(s)://<svc>.<ns>.svc.cluster.local:<port>/…`) or `internet` (`https`, a public DNS name, never an address) |
+| `url` | Where the broker posts |
+| `events` | The event types wanted (table below) |
+| `secretFile` | One or two base64 keys of at least 32 bytes, one per line; re-read at each delivery |
+| `repositories` | The repositories whose rooms are sent |
+| `generation` | Bump it to re-enable a disabled subscriber |
 
 | Event | Fires when | Fields beyond `type` and `room` |
 |---|---|---|
@@ -1530,7 +1612,7 @@ cannot read whole within max(8 × `maxBytes`, 1 MiB) is not clipped but refused 
 `knowledge_bad_answer`, since it is not yet parsed. A redirect is never followed, every request after
 `initialize` names the protocol version, and a session the endpoint hands out is closed with
 `DELETE` at the end of the call. An event stream is read up to the call's answer, not to its end. Each call is counted in
-`maku_rooms_knowledge_calls_total{tool, outcome}`. See [the broker's configuration](../integration.md#the-brokers-configuration).
+`maku_rooms_knowledge_calls_total{tool, outcome}`. See [the broker's configuration](config.md#broker-fields).
 
 `roomTools.pushRepositories` lists the repositories `output_push` is served to: the broker's own
 gate, beside the run's safe-outputs annotation, so a claim alone never opens a push. It stays empty
@@ -1550,7 +1632,7 @@ never opens a stream or sends a request of its own (agent-router#2715).
 | `413` | A body over 128 KiB, except the harness's `output_push`: a request with `X-Agent-Harness: 1` may be up to 12 MiB, and past 128 KiB only a `tools/call` of `output_push` is accepted |
 | `503` | A call over 15 s |
 
-`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](../web-ui.md#what-each-standing-may-do))
+`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](web-ui-settings.md#what-each-standing-may-do))
 (`read` for `room_read`, `kb_search` and `kb_get`, `chat` for the three writes), then spends the run's one call per second.
 The limit is per broker replica: with two replicas, a run whose calls the gateway
 spreads across both can make two a second. Arguments are strict: an unknown field is refused, and text holds
@@ -1564,7 +1646,7 @@ appended, attributed to `agent:<runId>` with the run's role, origin `client`.
 | `room_progress` | all | `text`, one line of 1–280 characters; one note a minute per run per broker replica, on top of the call limit | `{seq}` | `message{kind: progress}`, delivered to nobody; a refused note over the minute answers `rate_limited: one progress note a minute`. The harness calls it too (#60), through the same identity proxy, so nothing is bypassed: a fixed `Harness (<role>): …` line at the first step and after a commit, push, check run or PR that exited 0, each once, 60 s apart, at most 8. The prefix is a text convention, not an attribution. The minute is shared with the agent's own notes, so the harness's are the guaranteed floor and the model's are best effort. The bounds are per process: the first note of a resumed run starts `(resumed)` |
 | `room_handoff` | implementer, tester, triager | `toRole`, `summary` (1–8 192 bytes), `commit` (the full 40-hex sha, `git rev-parse HEAD`; an abbreviation is refused); `scope` (the triager only, listed to it alone: `{state: ready or question, task, touches, leave, plan, assumptions, acceptance: [{check, proves}], question}`, at most 4096 bytes as JSON; any other role's is refused. It is listed to every triager, but only a scoper run's is used: an investigate triager leaves it empty, as a malformed one refuses the handoff); `split` (the triager only, listed to it alone, and only beside a `scope` in state `ready`: `{why, children: [2 to 5 scopes in state ready, in the order they merge]}`, at most 21 KiB as JSON) | `{seq}` | `handoff{fromRole, toRole, summary, commit, branch, scope?, split?}`; `fromRole` and `branch` from the `AgentRun` |
 | `room_verdict` | reviewer, tester | `verdict: approve \| changes`, `summary`, `commit` (as `room_handoff`) | `{seq}` | `message{kind: review_verdict, verdict, commit, pullRequest}`: `pullRequest` is the run's `spec.task.url` when it is a pull request of `spec.repository`, else absent. The leader then posts it on the PR |
-| `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `room_changes`' `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
+| `room_judge` | implementer | `verdict: met \| not_yet \| impossible`, `reason` (1–1000 bytes), `evidence` (1–20 ids, one line each) | `{seq}` | `message{kind: judge_verdict, verdict, text, evidence}`. The harness calls it (O15) after each completion-judge round, once its own override is applied (a failing check is never `met`); the summary's `status.lastJudge` and `task`'s `judge` milestone show it, the reason as untrusted text. It is the judge's reading, not a decision. It is the harness's alone: the tool is listed and callable only on a request carrying the harness client's `X-Agent-Harness: 1` marker, which the model's own MCP client is configured without, so it is not on the model's tool list and its call is refused `not_permitted`. The marker is not a secret: a command the model runs could send it if it can reach the route with the run's credentials |
 | `room_integration` | triager | `state: passed \| failed`, `reason` (snake_case, 1–64 bytes), `manifestHash` (64-hex) | `{seq}` | `message{kind: integration_result, integration: {state, reason, manifestHash}}`, no text. The harness calls it once at the end of a coordination integration run (v4 MR10, [harness README](../../images/maku-harness/README.md#coordination-integration)); the factory takes it only from the integration Task's current run, under the manifest hash it holds. Harness-only, as `room_judge` |
 | `output_<type>` | implementer, tester, for each type the run's `agents.ogenki.io/safe-outputs` annotation names | the type's payload ([output events](room-log.md#output-events)) | `{outputId, status: requested, seq}` | `message{kind: output_requested, output}`. The factory answers later. `output_push` takes `{bundle}`, a base64 git bundle of at most 8 MiB: the bundle is stored beside the log, and the record keeps its digest and size. `output_push` is harness-only, as `room_judge`: the harness turns the agent's `git push` into it. It is served only when `roomTools.pushRepositories` also names the run's repository |
 | `kb_search` | `roomTools.knowledge.roles` (`triager` by default), with `roomTools.knowledge` set | `query` (1–1024 bytes), `k` 1–20 (absent: the endpoint's default, 5) | `{text, clipped, note}`: the endpoint's answer, as data, never instructions. Over `maxBytes` it is cut at a character and ends with a `[clipped: …]` line, and `clipped` is true | nothing |

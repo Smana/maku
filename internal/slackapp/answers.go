@@ -27,8 +27,10 @@ const (
 	QuestionChanges Question = "changes"
 	// QuestionPR is the pull request the task opened, if it has one.
 	QuestionPR Question = "pr"
-	// QuestionStop is how to stop a run, which the App can only say, never do.
+	// QuestionStop is how to stop a run, or behind intentActions a stop confirmation.
 	QuestionStop Question = "stop"
+	// QuestionRetry is how to retry an escalated task, or behind intentActions a retry confirmation.
+	QuestionRetry Question = "retry"
 	// QuestionUnknown is every phrase outside the vocabulary: answered with where things happen.
 	QuestionUnknown Question = "unknown"
 )
@@ -44,6 +46,7 @@ const (
 	// here.
 	stopLine = "I can't stop a run from here. Apply the `factory/stop` label on the issue, or use " +
 		"Stop on the room page: "
+	retryLine = "I can't retry a task from here. Comment `/factory retry` on the issue, or open "
 	// unknownQuestionLine takes the room page: a phrase outside the vocabulary is not guessed at, it is
 	// answered with where the work is and what can be asked.
 	unknownQuestionLine = "I only understand these here: `status`, `needs me`, `what changed`, `the pull request` " +
@@ -81,6 +84,8 @@ var questionPhrases = map[string]Question{
 	"stop":              QuestionStop,
 	"stop it":           QuestionStop,
 	"how do i stop it":  QuestionStop,
+	"retry":             QuestionRetry,
+	"try again":         QuestionRetry,
 }
 
 // questionOf reads a reply as one of the five questions (CD25). It lowercases, strips the punctuation a
@@ -114,6 +119,8 @@ func (a *App) answer(ctx context.Context, ev slackEvent, room string) string {
 	switch q {
 	case QuestionStop:
 		return capLines([]string{stopLine + page})
+	case QuestionRetry:
+		return capLines([]string{retryLine + page})
 	case QuestionUnknown:
 		return capLines([]string{fmt.Sprintf(unknownQuestionLine, page)})
 	case QuestionStatus, QuestionPR:

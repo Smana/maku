@@ -1,3 +1,4 @@
+<!-- page-type: how-to -->
 # Contributing notes
 
 **[CONTRIBUTING.md](../../CONTRIBUTING.md)** covers workflow, checks, commits, migrations and releases; **[AGENTS.md](../../AGENTS.md)** covers package boundaries, conventions, tests and security rules. The pages here hold contributor-only procedures and harnesses:

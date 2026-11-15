@@ -98,7 +98,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- end -}}
 {{- range $images -}}
 {{- if not (regexMatch $pin (toString (index . 1))) -}}
-{{- $errs = append $errs (printf "%s: <version>@sha256:<digest>, never a bare tag (got %q; docs/security.md#supply-chain)" (index . 0) (index . 1)) -}}
+{{- $errs = append $errs (printf "%s: <version>@sha256:<digest>, never a bare tag (got %q; docs/reference/security-controls.md#supply-chain)" (index . 0) (index . 1)) -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -122,9 +122,9 @@ three Secret names are its schema's (minLength 1). */}}
 {{- end -}}
 {{- $sb := $maku.sandbox | default dict -}}
 {{- if $sb.unsafeAllowRunc -}}
-{{- $errs = append $errs "maku.sandbox.unsafeAllowRunc: runs on the node's own runtime are for the demo and kind only (D18), admitted by values-demo.yaml alone; name the sandbox in maku.sandbox.runtimeClassName (docs/security.md#the-run-pods-admission)" -}}
+{{- $errs = append $errs "maku.sandbox.unsafeAllowRunc: runs on the node's own runtime are for the demo and kind only (D18), admitted by values-demo.yaml alone; name the sandbox in maku.sandbox.runtimeClassName (docs/reference/security-controls.md#the-run-pods-admission)" -}}
 {{- else if not $sb.runtimeClassName -}}
-{{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/security.md#the-run-pods-admission)" -}}
+{{- $errs = append $errs "maku.sandbox.runtimeClassName: the RuntimeClass every run pod runs under, e.g. gvisor (docs/reference/security-controls.md#the-run-pods-admission)" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}
@@ -133,7 +133,7 @@ three Secret names are its schema's (minLength 1). */}}
 {{- if not (dig "e2e" "unpinnedImages" false $f) -}}
 {{- $t := dig "image" "tag" "" $f -}}
 {{- if not (regexMatch $pin (toString $t)) -}}
-{{- $errs = append $errs (printf "maku-factory.image.tag: <version>@sha256:<digest>, never a bare tag (got %q; docs/security.md#supply-chain)" $t) -}}
+{{- $errs = append $errs (printf "maku-factory.image.tag: <version>@sha256:<digest>, never a bare tag (got %q; docs/reference/security-controls.md#supply-chain)" $t) -}}
 {{- end -}}
 {{- end -}}
 {{- if or $f.demo (dig "config" "demo" false $f) -}}

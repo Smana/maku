@@ -355,6 +355,21 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		// Groups stays zero on purpose (D15): standing is the Room CR's alone, never a ZITADEL grant the
 		// broker would have to hold a token for.
 	}
+	if l := cfg.Human.SlackStop; l != nil {
+		humans.SlackStop = &humanapi.SlackActor{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID,
+			Rooms: mgr.GetClient(), Namespace: ns, Identity: humans.Identity, Access: humans.Access,
+			Tasks: runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, Metrics: m, Logger: log}
+	}
+	if l := cfg.Human.SlackRetry; l != nil {
+		humans.SlackRetry = &humanapi.SlackActor{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID,
+			Rooms: mgr.GetClient(), Namespace: ns, Identity: humans.Identity, Access: humans.Access,
+			Tasks: runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, Metrics: m, Logger: log}
+	}
+	if l := cfg.Human.SlackAnswer; l != nil {
+		humans.SlackAnswer = &humanapi.SlackActor{Store: st, Principal: "system:" + l.Principal, TeamID: l.TeamID,
+			Rooms: mgr.GetClient(), Namespace: ns, Identity: humans.Identity, Access: humans.Access,
+			Tasks: runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}, Metrics: m, Logger: log}
+	}
 	if sc, on := cfg.SlackIntents(); on { // intent_classify: the App's read-only classification (natural-language intents)
 		humans.Intents = intentClassifier(sc, st, red)
 	}

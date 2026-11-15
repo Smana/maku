@@ -63,7 +63,7 @@ label_replace, and a PromQL string needs each backslash doubled. */ -}}
 {{- if and (has $f $on) $rules }}{{ $groups = append $groups (dict "name" $g.name "rules" $rules) }}{{ end -}}
 {{- end -}}
 {{- range $r.disabled -}}
-{{- if not (has . $known) }}{{ fail (printf "monitoring.prometheusRule.disabled names %s, which no group holds (docs/operations.md#alerts lists them)" .) }}{{ end -}}
+{{- if not (has . $known) }}{{ fail (printf "monitoring.prometheusRule.disabled names %s, which no group holds (docs/operations/failures.md#alerts lists them)" .) }}{{ end -}}
 {{- end -}}
 {{- if $groups }}
 apiVersion: monitoring.coreos.com/v1

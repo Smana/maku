@@ -1,3 +1,5 @@
+<!-- page-type: how-to -->
+
 # GitHub account link
 
 Each human links their GitHub account to their rooms account once, in the broker, through GitHub's

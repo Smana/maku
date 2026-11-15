@@ -125,6 +125,15 @@ type HumanConfig struct {
 	// SlackDecide turns on POST /api/slack/decisions: the Slack App's Approve/Deny buttons decide a
 	// forge.push approval. Off unless set: the path is then the mux's 404.
 	SlackDecide *SlackDecideConfig `json:"slackDecide,omitempty"`
+	// SlackStop turns on POST /api/slack/stops: a confirmed Slack stop ends a queued or running task.
+	// Off unless set: the path is then the mux's 404.
+	SlackStop *SlackDecideConfig `json:"slackStop,omitempty"`
+	// SlackRetry turns on POST /api/slack/retries: a confirmed Slack retry re-queues an escalated task.
+	// Off unless set: the path is then the mux's 404.
+	SlackRetry *SlackDecideConfig `json:"slackRetry,omitempty"`
+	// SlackAnswer turns on POST /api/slack/answers: a confirmed Slack answer writes a decision record
+	// to the issue's ## Decisions section and, for a maintainer, restarts the task. Off unless set.
+	SlackAnswer *SlackDecideConfig `json:"slackAnswer,omitempty"`
 	// SlackIntents serves intent_classify, the Slack App's read-only classification of a thread reply
 	// (natural-language intents, SI3). Off unless set: the tool is then on no list.
 	SlackIntents *SlackIntentsConfig `json:"slackIntents,omitempty"`
@@ -1291,6 +1300,9 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.slackLink", h.SlackLink != nil, "a link code names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.githubLink", h.GitHubLink != nil, "the local user is an admin with no GitHub account to link"},
 			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackStop", h.SlackStop != nil, "a stop names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackRetry", h.SlackRetry != nil, "a retry names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackAnswer", h.SlackAnswer != nil, "an answer names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackIntents", h.SlackIntents != nil, "a classification names a sponsored principal and a Slack link, neither of which mode local has"},
 		} {
 			if f.refused {
@@ -1410,18 +1422,29 @@ func (h HumanConfig) validate(system []string) []error {
 			errs = append(errs, errors.New("human.slackLink needs human.access: a link is to the account's GitHub link"))
 		}
 	}
-	// D14: the decide switch names what the route resolves a click through — a declared sponsored
-	// principal and the GitHub check that turns the linked human into a login — and nothing else:
-	// the one class it decides is a constant (D13). The workspace is the App's, as slackLink's.
-	if d := h.SlackDecide; d != nil {
-		if !slices.ContainsFunc(h.MCP.Sponsored, func(sp SponsoredConfig) bool { return sp.Name == d.Principal }) {
-			errs = append(errs, fmt.Errorf("human.slackDecide.principal: %q is not one of human.mcp.sponsored", d.Principal))
+	// D14, SI6: each Slack acting switch names what the route resolves a click through — a declared
+	// sponsored principal and the GitHub check that turns the linked human into a login.
+	for _, sr := range []struct {
+		name string
+		cfg  *SlackDecideConfig
+		why  string
+	}{
+		{"human.slackDecide", h.SlackDecide, "a decision is the linked human's room standing and repository write"},
+		{"human.slackStop", h.SlackStop, "a stop requires the linked human's repository write"},
+		{"human.slackRetry", h.SlackRetry, "a retry requires the linked human's repository write"},
+		{"human.slackAnswer", h.SlackAnswer, "an answer resolves the linked human's GitHub login"},
+	} {
+		if sr.cfg == nil {
+			continue
 		}
-		if !slackTeamRE.MatchString(d.TeamID) {
-			errs = append(errs, fmt.Errorf("human.slackDecide.teamID: %q is not a Slack workspace id", d.TeamID))
+		if !slices.ContainsFunc(h.MCP.Sponsored, func(sp SponsoredConfig) bool { return sp.Name == sr.cfg.Principal }) {
+			errs = append(errs, fmt.Errorf("%s.principal: %q is not one of human.mcp.sponsored", sr.name, sr.cfg.Principal))
+		}
+		if !slackTeamRE.MatchString(sr.cfg.TeamID) {
+			errs = append(errs, fmt.Errorf("%s.teamID: %q is not a Slack workspace id", sr.name, sr.cfg.TeamID))
 		}
 		if h.Access == nil {
-			errs = append(errs, errors.New("human.slackDecide needs human.access: a decision is the linked human's room standing and repository write"))
+			errs = append(errs, fmt.Errorf("%s needs human.access: %s", sr.name, sr.why))
 		}
 	}
 	if i := h.SlackIntents; i != nil {

@@ -154,6 +154,82 @@ func (b Broker) Decide(ctx context.Context, d Decision) (DecisionResult, error) 
 	}
 }
 
+const (
+	stopPath   = "/api/slack/stops"
+	retryPath  = "/api/slack/retries"
+	answerPath = "/api/slack/answers"
+)
+
+// Act is one confirmed stop or retry press, as POST /api/slack/stops and POST /api/slack/retries
+// take it: the ids Slack signed on the click and the room the confirmation's metadata bound.
+type Act struct {
+	Team, User, Channel, MessageTS, Room string
+}
+
+// Answer is one confirmed answer press, as POST /api/slack/answers takes it: the ids Slack signed
+// on the click, the room the confirmation's metadata bound, and the exact words the confirmation
+// showed.
+type Answer struct {
+	Team, User, Channel, MessageTS, Room, Text string
+}
+
+// ActResult is the closed code the broker's stop, retry or answer route answered.
+type ActResult struct{ Result string }
+
+// Stop posts one confirmed stop press to the broker's human listener as the App's principal.
+func (b Broker) Stop(ctx context.Context, a Act) (ActResult, error) {
+	return b.act(ctx, stopPath, a)
+}
+
+// Retry posts one confirmed retry press to the broker's human listener as the App's principal.
+func (b Broker) Retry(ctx context.Context, a Act) (ActResult, error) {
+	return b.act(ctx, retryPath, a)
+}
+
+// Answer posts one confirmed answer press to the broker's human listener as the App's principal.
+func (b Broker) Answer(ctx context.Context, a Answer) (ActResult, error) {
+	return b.actMap(ctx, answerPath, map[string]string{
+		"team": a.Team, "user": a.User, "channel": a.Channel,
+		"messageTS": a.MessageTS, "room": a.Room, "text": a.Text,
+	})
+}
+
+func (b Broker) act(ctx context.Context, path string, a Act) (ActResult, error) {
+	return b.actMap(ctx, path, map[string]string{
+		"team": a.Team, "user": a.User, "channel": a.Channel,
+		"messageTS": a.MessageTS, "room": a.Room,
+	})
+}
+
+func (b Broker) actMap(ctx context.Context, path string, payload map[string]string) (ActResult, error) {
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return ActResult{}, err
+	}
+	for attempt := 0; ; attempt++ {
+		raw, status, err := b.send(ctx, path, body, false)
+		if err != nil {
+			return ActResult{}, err
+		}
+		if status == http.StatusUnauthorized && attempt == 0 {
+			b.Tokens.Invalidate()
+			continue
+		}
+		if status != http.StatusOK && status != http.StatusTooManyRequests {
+			return ActResult{}, fmt.Errorf("slackapp: broker answered %d", status)
+		}
+		var out struct {
+			Result string `json:"result"`
+		}
+		if err := json.Unmarshal(raw, &out); err != nil {
+			return ActResult{}, fmt.Errorf("slackapp: act result: %w", err)
+		}
+		if out.Result == "" {
+			return ActResult{}, errors.New("slackapp: broker reply has no result")
+		}
+		return ActResult{Result: out.Result}, nil
+	}
+}
 // RunCreate files the run. Its arguments are run_create's schema exactly: `text` is the draft's
 // body and dataClass is always public. A proposal sends `handoff` (and `plan_hash`, the hash it
 // showed) in place of the repository's issue: the broker files the plan it stored, so the App carries
@@ -299,6 +375,12 @@ func (b Broker) HandoffCheck(ctx context.Context, id, onBehalfOf string, workflo
 	return out, nil
 }
 
+// TaskQuestion is task/v1's open question from the scoper's handoff.
+type TaskQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended,omitempty"`
+}
+
 // TaskResult is task/v1 as a thread reads it (UX4): the task's room, its page, its status (the
 // summary's, with the spend and the gate's decision), its runs, what it needs, its coordination view
 // when it is a parent, and the milestones since the cursor.
@@ -309,6 +391,7 @@ type TaskResult struct {
 	Cursor       string               `json:"cursor"`
 	Runs         []envelope.RunFact   `json:"runs"`
 	NeedsYou     []summary.Need       `json:"needsYou"`
+	Question     *TaskQuestion        `json:"question,omitempty"`
 	Coordination json.RawMessage      `json:"coordination"`
 	Items        []roomview.Milestone `json:"items"`
 	More         int                  `json:"more"`
@@ -325,6 +408,9 @@ func (t TaskResult) Summary() summary.Summary {
 	s.Room, s.URL, s.Runs, s.NeedsYou, s.Coordination = t.Room, t.URL, t.Runs, t.NeedsYou, t.Coordination
 	if len(t.Status) > 0 {
 		_ = json.Unmarshal(t.Status, &s.Status)
+	}
+	if t.Question != nil && s.Status.Question == "" {
+		s.Status.Question = t.Question.Text
 	}
 	return s
 }

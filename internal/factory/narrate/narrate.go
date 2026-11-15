@@ -262,6 +262,7 @@ func reasons() map[string]string {
 		"overlap_active_duplicate":    "an active task is already pursuing the same outcome",
 		"kill_switch":                 "the factory's kill switch is engaged",
 		"stopped_by_label":            "a maintainer applied factory/stop",
+		"stopped_by_slack":            "a maintainer stopped it from Slack",
 		"stopped_by_annotation":       "an operator stopped it",
 		"superseded":                  "a new factory/ready replaced it",
 		"family_dropped":              "the family was dropped because another part was dropped or reverted",
