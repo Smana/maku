@@ -4,8 +4,6 @@ Feature level only. What shipped, release by release, is the
 [releases page](https://github.com/Smana/maku/releases); what is proven live, and on which cluster,
 is the platform's [status page](https://airef.ogenki.io/docs/status/).
 
-As of v0.49.0.
-
 ## Landed
 
 | Feature | Docs |
@@ -54,5 +52,5 @@ As of v0.49.0.
 | OTel spans across bridge → broker → store, `traceparent` on every hop | `AGENTS.md`, Observability |
 | The platform-agnostic decision after the UX sign-off | 2 of 4 triggers: daily use, AHP 1.0 without identity and audit, a second harness or runtime, outside demand (`AGENTS.md`, Seams) |
 | A two-pane room page: the task panel on the left, the stream and the dock on the right, two tabs on a phone | Usage says people live in the page ([room readability](superpowers/specs/2026-10-15-room-readability-design.md#later-two-panes)) |
-| v4.0.0, the production path: the chart's defaults are the product path, proved on GKE and kubeadm | Not cut now (the owner, 2026-11-14). Five further specs, planned for the week of 2026-11-16; the next minor, which ships step 8 PR F; the recorded GKE and kubeadm installs on it, once gcp-0 is rebuilt; then the owner's go ([the v4.0 decision pack](v4-readiness.md)) |
+| v4.0.0, the production path: the chart's defaults are the product path, proved on GKE and kubeadm | Not cut now (the owner, 2026-11-14). Five further specs, planned for the week of 2026-11-16; the next minor, which ships step 8 PR F; the recorded GKE and kubeadm installs on it; then the owner's go ([the v4.0 decision pack](v4-readiness.md)) |
 | A migration that drops `rooms.bridge_seen_at` | Every broker runs a release that no longer writes it ([room log](room-log.md#schema)) |

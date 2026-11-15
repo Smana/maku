@@ -4,8 +4,7 @@ A maintainer labels an issue; the factory turns it into a task, runs agents on i
 narrates each step on the issue, and stops at its budget. The agent run opens the pull request;
 the factory watches it through CI and its merge gate. Humans steer through GitHub reviews and
 comments, or from the task's room. Only low-risk classes the config marks `live` merge
-themselves; a `shadow` class is decided the same way and never merged. On cloud-native-ref,
-`docs-links` and `revert` are live; on ai-native-ref, they are in shadow.
+themselves; a `shadow` class is decided the same way and never merged.
 
 ```mermaid
 flowchart LR
@@ -2488,7 +2487,7 @@ human-authored pull request changes it. Source: `internal/factory/config/config.
 
 | Key | Holds | Default |
 |---|---|---|
-| `factory` | This factory's name, a DNS label such as `aws-0`: a repository is acted on only while its `.github/agent-factory.yaml` gives it | Required |
+| `factory` | This factory's name, a DNS label such as `prod`: a repository is acted on only while its `.github/agent-factory.yaml` gives it | Required |
 | `repositories` | At most 8 entries, one per repository, names unique (case-insensitive); see the entry table below | Required |
 | `control` | `{repository, issue}`: the issue whose `factory/stop` is the global stop, on a listed repository | `issue` 0: none |
 | `intake.overlap` | `{mode, scoperEnforcement}`: [outcome-overlap detection](#outcome-overlap-detection) for issue, sponsored API and scheduled Tasks. `mode` is `off`, `shadow` or `enforce` (a bare YAML `off` reads as the string); `scoperEnforcement` independently selects scoper-confirmed refusal in `enforce` only. Unknown or duplicated keys are refused | `mode: off`, `scoperEnforcement: false` |
