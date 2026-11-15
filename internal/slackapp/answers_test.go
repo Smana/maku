@@ -175,7 +175,7 @@ func TestThreadQuestionVocabulary(t *testing.T) {
 		b.changes = set
 	}
 
-	status := []string{"Phase: Running", "Issue #42", "the install link in the README is dead", answerPage}
+	status := []string{"State: Running", "Issue #42", "the install link in the README is dead", answerPage}
 	cases := []asked{
 		{name: "status", phrase: "status", want: status, label: "status", reads: 1},
 		{name: "Status?", phrase: "Status?", want: status, label: "status", reads: 1},

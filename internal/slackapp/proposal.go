@@ -348,6 +348,7 @@ func proposalSections(p ProposalPayload, q *intake.Question, changed []string, c
 	if err != nil {
 		return "", nil, err
 	}
+	sections = adaptProposalSections(p, sections)
 	text = proposalText(sections)
 	if utf8.RuneCountInString(text) > maxSlackText {
 		return "", nil, errProposalTooLarge
@@ -357,6 +358,56 @@ func proposalSections(p ProposalPayload, q *intake.Question, changed []string, c
 		return "", nil, err
 	}
 	return text, blocks, nil
+}
+
+// proposalWorkflowName is the workflow name the proposal displays: a pinned workflow first, else the
+// resolved workflow from handoff, else the planner's suggested workflow.
+func proposalWorkflowName(p ProposalPayload) string {
+	if p.Pinned != "" {
+		return p.Pinned
+	}
+	if len(p.Plan.Issues) > 0 && p.Plan.Issues[0].Profile != "" {
+		return p.Plan.Issues[0].Profile
+	}
+	if p.Workflow != "" {
+		return p.Workflow
+	}
+	if len(p.Plan.Issues) > 0 && p.Plan.Issues[0].Suggestion != nil && p.Plan.Issues[0].Suggestion.Profile != "" {
+		return p.Plan.Issues[0].Suggestion.Profile
+	}
+	return ""
+}
+
+// adaptProposalSections applies UX11 and UX14 to roomview's sections: Roles becomes Workflow, Ceiling
+// becomes Budget ("Budget    up to $X"), and no merge outcome is named before a pull request exists.
+func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSection) []roomview.ProposalSection {
+	wf := proposalWorkflowName(p)
+	var mergeSuffix string
+	if len(p.Plan.Issues) > 0 && p.Plan.Issues[0].Suggestion != nil {
+		mergeSuffix = " · " + slackText(roomview.MergeWords(p.Plan.Issues[0].Suggestion.Merge.Outcome))
+	}
+	out := slices.Clone(sections)
+	for i := range out {
+		switch out[i].Key {
+		case proposalKeyIssue:
+			if mergeSuffix != "" {
+				out[i].Body = strings.Replace(out[i].Body, mergeSuffix, "", 1)
+			}
+		case proposalKeyRoles:
+			out[i].Heading = strings.Replace(out[i].Heading, "Roles", "Workflow", 1)
+			if wf != "" {
+				if rolesPart, rest, ok := strings.Cut(out[i].Body, " · "); ok {
+					out[i].Body = slackText(wf) + " (" + rolesPart + ") · " + rest
+				} else {
+					out[i].Body = slackText(wf) + " · " + out[i].Body
+				}
+			}
+		case proposalKeyBudget:
+			out[i].Heading = strings.Replace(out[i].Heading, "Ceiling", "Budget", 1)
+			out[i].Body = "Budget    up to " + out[i].Body
+		}
+	}
+	return out
 }
 
 // firstChannel is the channel the caller named, or "": a variadic parameter cannot hold two.
@@ -643,10 +694,10 @@ func commandless(text, bot string) string {
 // "error"), updateProposal's ("updated", "reposted"), "refused" for a refusal whose fix is a new
 // mention, and "error" for a passing one. noPlanner is a broker without intake_plan: nothing was said
 // in the thread, and the caller drafts the mention instead.
-func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) (code string, noPlanner bool) {
+func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, text string, rev int) string {
 	say := func(line string) bool { return a.sayLine(ctx, ev.Channel, thread, line) }
 	if len(text) > maxProposalRequestBytes {
-		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large"), false
+		return a.refusedWith(ctx, ev.Channel, thread, RequestedTextTooLong.Error(), "too_large")
 	}
 	// The read, the plan and the write are one step, as a filing is: two mentions that both read "no
 	// proposal" would post two live ones, and the whole point of the branch below is that a thread has
@@ -665,9 +716,9 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	latest, closed := a.threadProposal(msgs)
 	if closed {
 		if !say(a.proposalClosedLine(a.threadRoom(msgs))) {
-			return "error", false
+			return "error"
 		}
-		return "refused", false
+		return "refused"
 	}
 	// The live proposal this mention revises, when there is one: its payload is the plan the message
 	// shows, so the update marks what moved against it (CD14, CD27) and the revision continues.
@@ -682,19 +733,19 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	coordLatest, _, coordThread := a.coordinationThread(msgs)
 	repos, code := a.coordinationRoute(ctx, ev, ch, thread, text, latest != nil)
 	if code != "" {
-		return code, false
+		return code
 	}
 	if repos != nil {
-		return a.proposeCoordination(ctx, ev, thread, text, repos, coordLatest), false
+		return a.proposeCoordination(ctx, ev, thread, text, repos, coordLatest)
 	}
 	if coordThread {
-		return a.refusedLine(ctx, ev.Channel, thread, coordinationTooManyLine), false
+		return a.refusedLine(ctx, ev.Channel, thread, coordinationTooManyLine)
 	}
 	if prev != nil && prev.Rev >= maxProposalRevisions {
 		if !say(proposalCappedLine) {
-			return "error", false
+			return "error"
 		}
-		return "refused", false
+		return "refused"
 	}
 
 	if prev != nil && prev.Plan.APIVersion == "" {
@@ -711,16 +762,14 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
 		CeilingUSD: ch.MaxCostUSD,
 	})
-	if errors.Is(err, ErrUnknownTool) {
-		// A thread is the kind it started as: one that holds a proposal never gets a draft beside it,
-		// so its mention is told what its reply is. A thread without one is drafted by the caller.
+	if isNoPlannerErr(err) {
 		if latest != nil {
-			return a.refusedLine(ctx, ev.Channel, thread, planUnsupported), false
+			return a.refusedLine(ctx, ev.Channel, thread, planUnsupported)
 		}
-		return "", true // nothing said: the caller drafts the mention instead
+		return a.refusedLine(ctx, ev.Channel, thread, noPlannerLine)
 	}
 	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {
-		return code, false
+		return code
 	}
 
 	// The broker's answer is held to the message's own contract before a byte of it is posted: a plan
@@ -733,7 +782,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	}
 	prop, err := newProposal(res.Plan, res.Hash, ev.User, nextRev)
 	if err != nil {
-		return a.notShown(ctx, ev.Channel, thread, err), false
+		return a.notShown(ctx, ev.Channel, thread, err)
 	}
 	prop.ID = res.ID
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
@@ -743,9 +792,9 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 		// One proposal per thread: the live message becomes this revision in place, or is reposted and
 		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
 		// two cards binding two hashes (Review Focus 1, CD7).
-		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question), false
+		return a.updateProposal(ctx, ev.Channel, latest.TS, *prev, prop, res.Question)
 	}
-	return a.postProposalIn(ctx, ev.Channel, thread, st, prop, res.Question), false
+	return a.postProposalIn(ctx, ev.Channel, thread, st, prop, res.Question)
 }
 
 // proposalClosedLine is the mention's answer in a thread whose task is filed or cancelled: one line,
@@ -1129,12 +1178,20 @@ func (a *App) settle(ctx context.Context, channel string, st *planStatus, text s
 // — "refused" for a decision, "error" for a passing failure whose fix is to ask again, and for the
 // three refusals a person can fix themselves their own word (orientations), so the next live session
 // can tell which cause hit.
+func isNoPlannerErr(err error) bool {
+	if errors.Is(err, ErrUnknownTool) {
+		return true
+	}
+	var r Refused
+	return errors.As(err, &r) && strings.TrimSpace(string(r)) == noPlannerLine
+}
+
 func (a *App) planFailed(ctx context.Context, channel, thread, user string, served []string, err error) string {
 	var r Refused
 	switch {
 	case err == nil:
 		return ""
-	case errors.Is(err, ErrUnknownTool):
+	case isNoPlannerErr(err):
 		return a.refusedLine(ctx, channel, thread, planUnsupported)
 	case errors.As(err, &r):
 		code, line, passing := notProposed(string(r), user, served...)

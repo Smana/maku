@@ -456,11 +456,9 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	// ahead of its broker still files.
 	// The mention counts as a draft then, not as a proposal action, since no proposal was posted.
 	if a.Proposals.Enabled {
-		code, noPlanner := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
-		if !noPlanner {
-			a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
-			return code
-		}
+		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+		return code
 	}
 	return a.draftMention(ctx, ev, ch, thread)
 }
@@ -1047,7 +1045,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	// v4: a coordination parent's thread is told only what its channel may see of the family now.
 	if th.Coordination {
 		ch, served := a.Channels[th.Channel]
-		if !served || !ch.notifies(e.Type) {
+		if !served || !coordinationNotifies(ch, e.Type) {
 			return "ignored"
 		}
 		return a.deliverCoordination(ctx, th, ch, e.Room)
@@ -1068,14 +1066,103 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 			return countedInPlace
 		}
 	}
-	// CD11: a line is posted only for a transition the thread's channel is told about (its notify
-	// list, webhook.Notify() when it gave none), so a run start says nothing by default. The card
-	// branches above are the approvals switch's, not a line, and are not filtered. A thread whose
-	// channel the config no longer serves posts nothing rather than guessing.
-	if ch, served := a.Channels[th.Channel]; !served || !ch.notifies(e.Type) {
+	ch, served := a.Channels[th.Channel]
+	if !served {
 		return "ignored"
 	}
+	// UX7: room.merged and room.reverted edit the thread's one end line before the notify filter.
+	switch e.Type {
+	case "room.merged":
+		if th.EndTS == "" && !ch.notifies("room.ended") && !ch.notifies("room.merged") {
+			return "ignored"
+		}
+		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+	case "room.reverted":
+		wantLine := ch.Notify != nil && slices.Contains(ch.Notify, "room.reverted")
+		if th.EndTS == "" && !wantLine {
+			return "ignored"
+		}
+		if th.EndTS != "" {
+			text := endLine(e, a.taskSummary(ctx, e.Room))
+			if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
+				a.log().Warn("slack update failed", "room", e.Room, "err", err)
+				return "error"
+			}
+		}
+		if wantLine {
+			return a.postWaitLine(ctx, th, e)
+		}
+		return "posted"
+	}
+	// UX8, CD11: a line is posted only for a transition the thread's channel is told about (its notify
+	// list, defaultNotify when it gave none), so a run start says nothing by default.
+	if !ch.notifies(e.Type) {
+		return "ignored"
+	}
+	switch e.Type {
+	case "room.ended":
+		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+	case "room.task_triaged":
+		sum := a.taskSummary(ctx, e.Room)
+		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
+		text := "Started. Room: " + url
+		if sum.Status.Issue != nil && sum.Status.Issue.Number > 0 {
+			text = fmt.Sprintf("Started #%d. Room: %s", sum.Status.Issue.Number, url)
+		}
+		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
+			a.log().Warn("slack post failed", "room", e.Room, "err", err)
+			return "error"
+		}
+		return "posted"
+	case "room.waiting_for_human":
+		sum := a.taskSummary(ctx, e.Room)
+		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
+		head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
+		if sum.Status.Policy != nil {
+			if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
+				head += " · " + gp
+			}
+		}
+		text := head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
+		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
+			a.log().Warn("slack post failed", "room", e.Room, "err", err)
+			return "error"
+		}
+		return "posted"
+	}
 	return a.postWaitLine(ctx, th, e)
+}
+
+func (a *App) taskSummary(ctx context.Context, room string) summary.Summary {
+	tv, err := a.Broker.Task(ctx, room)
+	if err != nil {
+		a.log().Warn("task read for webhook failed", "room", room, "err", err)
+		return summary.Summary{}
+	}
+	return tv.Summary()
+}
+
+func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string) string {
+	if th.EndTS != "" {
+		if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
+			a.log().Warn("slack update failed", "room", room, "err", err)
+			return "error"
+		}
+		return "posted"
+	}
+	ts, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil)
+	if err != nil {
+		a.log().Warn("slack post failed", "room", room, "err", err)
+		return "error"
+	}
+	th.EndTS = ts
+	if th.At.IsZero() {
+		th.At = a.now()
+	}
+	if err := a.Threads.Put(ctx, room, th); err != nil {
+		a.log().Warn("thread map put failed", "room", room, "err", err)
+	}
+	return "posted"
 }
 
 // line is the event's thread template. Every value is clipped to the broker's own vocabulary
@@ -1085,11 +1172,11 @@ func (a *App) line(e webhook.Event) (string, bool) {
 	reason, limit, state := webhook.Clip("reason", e.Reason), webhook.Clip("limit", e.Limit), webhook.Clip("state", e.State)
 	switch e.Type {
 	case "room.task_triaged":
-		return "Triaged. Room: " + url, true
+		return "Started. Room: " + url, true
 	case "room.run_started":
 		return "A run started.", true
 	case "room.waiting_for_human":
-		return fmt.Sprintf("The work waits for a human (%s): answer it on the room page, %s. Nothing posted here reaches the run.", reason, url), true
+		return fmt.Sprintf("Needs you (%s): answer it on the room page, %s. Nothing posted here reaches the run.", reason, url), true
 	case "room.pr_opened":
 		return fmt.Sprintf("Pull request #%d opened.", e.PR), true
 	case "room.verdict_posted":
@@ -1101,11 +1188,18 @@ func (a *App) line(e webhook.Event) (string, bool) {
 	case "room.budget_reached":
 		return fmt.Sprintf("A budget was reached (%s).", limit), true
 	case "room.ended":
-		return fmt.Sprintf("Ended, state: %s. Room: %s", state, url), true
+		return fmt.Sprintf("Ended: %s. Room: %s", state, url), true
 	case "room.approval_closed":
 		// D10: the thread that draws no card still hears how its wait closed; a channel that draws
 		// cards has the card itself as that message (closeCard), and this line is never reached.
 		return fmt.Sprintf("The approval closed: %s. Room: %s", webhook.Clip("decision", e.Decision), url), true
 	}
 	return "", false
+}
+
+func coordinationNotifies(ch Channel, event string) bool {
+	if ch.notifies(event) {
+		return true
+	}
+	return ch.Notify == nil && (event == "room.merged" || event == "room.reverted")
 }

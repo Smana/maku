@@ -730,7 +730,7 @@ func TestSlackDecideRefusalsAreAnswered(t *testing.T) {
 const cardRoom = "aaaaaaaa"
 
 // waitLine is today's text for a wait: what every case that is not a card must still read.
-const waitLine = "The work waits for a human (approval): answer it on the room page, https://rooms.example/r/aaaaaaaa. Nothing posted here reaches the run."
+const waitLine = "Needs you (approval): answer it on the room page, https://rooms.example/r/aaaaaaaa. Nothing posted here reaches the run."
 
 // waitBody is one room.waiting_for_human delivery with every field §5 draws a card from; mutate
 // changes or (with a nil value) drops one, so a case tests exactly that field.
@@ -845,7 +845,7 @@ func TestCardOnlyForForgePush(t *testing.T) {
 				`{"type":"mrkdwn","text":"*Deadline*\n` + deadline + `"}]}`,
 			`{"type":"section","text":{"type":"mrkdwn","text":"If you approve: the push goes out and the run continues.\n` +
 				`If you deny: nothing is pushed; the agent is told no and none of it runs."}}`,
-			`{"type":"button","text":{"type":"plain_text","text":"Approve"},"action_id":"factory_approval_approve","value":"` +
+			`{"type":"button","text":{"type":"plain_text","text":"Allow the push"},"action_id":"factory_approval_approve","value":"` +
 				cardValue(cardApprovalID, cardBranch) + `","style":"primary"}`,
 			`{"type":"button","text":{"type":"plain_text","text":"Deny"},"action_id":"factory_approval_deny","value":"` +
 				cardValue(cardApprovalID, cardBranch) + `","style":"danger"}`,
@@ -1154,7 +1154,7 @@ func TestCardCloseIsInert(t *testing.T) {
 	// A channel that draws no card (approvals off) had the wait as a text line, so its close is the
 	// thread's own line: the card's absence is not a silent thread.
 	t.Run("a channel that draws no card", func(t *testing.T) {
-		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+		rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2, Notify: []string{"room.approval_closed"}})
 		rig.threads.put(cardRoom, Thread{Channel: "C03", TS: pressThread})
 		rig.webhook(closeBody("expired"))
 		p := rig.lastPost()

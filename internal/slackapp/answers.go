@@ -168,21 +168,42 @@ func (a *App) roomLink(room string) string {
 	return "<" + strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + room + "|the room page>"
 }
 
-// statusAnswer is where the task is: its phase, the issue it works on, and the room page. The issue's
+// statusAnswer is where the task stands (UX7, UX11): its state, the issue it works on, the spend
+// against its budget, the merge gate's decision once there is one, and the room page. The issue's
 // title is a person's words, so it is quoted inert rather than shown as a mark of its own.
 func statusAnswer(sum summary.Summary, page string) string {
-	phase := strings.TrimSpace(sum.Status.Phase)
-	if phase == "" {
-		phase = "no phase yet"
+	state := strings.TrimSpace(sum.Status.Phase)
+	if state == "" {
+		state = strings.TrimSpace(sum.Status.State)
 	}
-	head := "Phase: " + answerText(phase)
+	if state == "" {
+		state = "no state yet"
+	}
+	head := "State: " + answerText(state)
 	if issue := sum.Status.Issue; issue != nil && issue.Number > 0 {
 		head += fmt.Sprintf(". Issue #%d", issue.Number)
 		if title := strings.TrimSpace(issue.Title); title != "" {
 			head += " " + answerText(title)
 		}
 	}
-	return capLines([]string{head, "Room: " + page})
+	lines := []string{head}
+	if sp := sum.Status.Spend; sp != nil && (sp.UsedMicroUSD > 0 || sp.LimitMicroUSD > 0) {
+		b := slackDollars(sp.UsedMicroUSD)
+		if sp.LimitMicroUSD > 0 {
+			b += fmt.Sprintf(" of %s (%d %%)", slackDollars(sp.LimitMicroUSD), slackPercent(sp.UsedMicroUSD, sp.LimitMicroUSD))
+		}
+		if !sum.Status.SpendFinal && sum.Status.Phase != "Closed" && sum.Status.Phase != "Sealed" {
+			b += " so far"
+		}
+		lines = append(lines, "Budget: "+b)
+	}
+	if sum.Status.Policy != nil {
+		if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
+			lines = append(lines, "Merge: "+gp)
+		}
+	}
+	lines = append(lines, "Room: "+page)
+	return capLines(lines)
 }
 
 // prAnswer names the pull request the task opened, or says there is none yet. The number is the

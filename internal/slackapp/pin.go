@@ -44,7 +44,7 @@ func pinsShown(p ProposalPayload) *pinSelect {
 	if p.Plan.APIVersion != "" && len(p.Plan.Issues) == 1 {
 		cur = p.Plan.Issues[0].Profile
 	}
-	return &pinSelect{Options: p.Pins, Current: cur, Workflow: p.Workflow}
+	return &pinSelect{Options: p.Pins, Current: cur, Workflow: proposalWorkflowName(p)}
 }
 
 // profileValue is a select option's value: the proposal's value and the profile ("" for the
@@ -89,15 +89,21 @@ func pinBlock(hash string, rev int, s pinSelect) slackBlock {
 	opt := func(text, profile string) slackOption {
 		return slackOption{Text: &slackBlockText{Type: "plain_text", Text: text}, Value: profileValue(hash, rev, profile)}
 	}
+	placeholder := s.Workflow
+	if placeholder == "" {
+		placeholder = "factory's choice"
+	}
 	sel := slackSelect{Type: "static_select", ActionID: actionProposalProfile,
-		Placeholder: &slackBlockText{Type: "plain_text", Text: "Workflow"},
+		Placeholder: &slackBlockText{Type: "plain_text", Text: placeholder},
 		Options:     []slackOption{opt("Workflow: factory's choice", "")}}
 	for _, name := range s.Options {
 		sel.Options = append(sel.Options, opt("Workflow: "+name, name))
 	}
-	for i := range sel.Options {
-		if strings.HasSuffix(sel.Options[i].Value, "|"+s.Current) {
-			sel.InitialOption = &sel.Options[i]
+	if s.Current != "" {
+		for i := range sel.Options {
+			if strings.HasSuffix(sel.Options[i].Value, "|"+s.Current) {
+				sel.InitialOption = &sel.Options[i]
+			}
 		}
 	}
 	return slackBlock{Type: "actions", Elements: []any{sel}}

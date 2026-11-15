@@ -409,7 +409,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 
 	// One section block per remaining section: its heading in bold, its body under it, and every
 	// body also in the fallback text.
-	headings := []string{"Repository", "Issue", "Roles", "Ceiling", "Editing"}
+	headings := []string{"Repository", "Issue", "Workflow", "Budget", "Editing"}
 	sections := blocks[2 : len(blocks)-2]
 	if len(sections) != len(headings) {
 		t.Fatalf("%d section blocks, want %d: %+v", len(sections), len(headings), sections)
@@ -496,7 +496,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 	if !strings.HasPrefix(text, "Proposal v1 · "+p.Hash+" · by <@U07JY4EQNDN>") {
 		t.Errorf("the text starts %q", text)
 	}
-	for _, want := range []string{"\nRepository\n", "\nIssue\n", "\nRoles\n", "\nCeiling\n", "\nEditing\n", "$1.50 (channel:C1.maxCostUSD)"} {
+	for _, want := range []string{"\nRepository\n", "\nIssue\n", "\nWorkflow\n", "\nBudget\n", "\nEditing\n", "$1.50 (channel:C1.maxCostUSD)"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the text is missing %q:\n%s", want, text)
 		}
@@ -518,7 +518,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 		}
 		if strings.Contains(b.Text.Text, "‹changed›") {
 			marks++
-			if !strings.HasPrefix(b.Text.Text, "*Ceiling ‹changed›*") {
+			if !strings.HasPrefix(b.Text.Text, "*Budget ‹changed›*") {
 				t.Errorf("a marked block reads %q", b.Text.Text)
 			}
 		}
@@ -1157,7 +1157,7 @@ func TestProposalShowsTheSuggestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Suggested: class docs-links · workflow links-solo (implementer) · merges on its own", "why (the planner's reading): one file"} {
+	for _, want := range []string{"Suggested: class docs-links · workflow links-solo (implementer)", "why (the planner's reading): one file"} {
 		if !strings.Contains(string(raw), want) && !strings.Contains(text, want) {
 			t.Errorf("the message lacks %q: %s", want, raw)
 		}

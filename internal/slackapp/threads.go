@@ -28,6 +28,9 @@ type Thread struct {
 	Channel string    `json:"channel"`
 	TS      string    `json:"ts"`
 	At      time.Time `json:"at"`
+	// EndTS is the ts of the thread's one end line (UX7): posted on room.ended (or room.merged when it
+	// arrives first) and rewritten in place on a later merge or revert.
+	EndTS string `json:"endTS,omitempty"`
 	// Coordination marks a coordination parent's thread (v4): its deliveries are recomputed against
 	// the channel at every event (projectCoordination), never posted as a single room's line.
 	Coordination bool `json:"coordination,omitempty"`

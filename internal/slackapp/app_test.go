@@ -141,7 +141,7 @@ func TestThreadMessagesCarryNoText(t *testing.T) {
 		rig.webhook(body)
 	}
 	posts := rig.posts()
-	if len(posts) != 4 {
+	if len(posts) != 3 {
 		t.Fatalf("%d posts", len(posts))
 	}
 	if !strings.Contains(posts[0].text, "https://rooms.example/r/aaaaaaaa") || !strings.Contains(posts[0].text, "answer it on the room page") {
@@ -150,14 +150,15 @@ func TestThreadMessagesCarryNoText(t *testing.T) {
 	if !strings.Contains(posts[1].text, "Pull request #7 opened.") {
 		t.Fatalf("%q", posts[1].text)
 	}
-	if strings.Contains(posts[3].text, "ignore") || strings.Contains(posts[3].text, "<!channel>") || !strings.Contains(posts[3].text, "state: other") {
-		t.Fatalf("an unknown value is clipped: %q", posts[3].text)
+	updates := rig.slack.updatesMade()
+	if len(updates) != 1 || strings.Contains(updates[0].text, "ignore") || strings.Contains(updates[0].text, "<!channel>") || !strings.Contains(updates[0].text, "Ended: other") {
+		t.Fatalf("an unknown value is clipped on end-line update: %+v", updates)
 	}
 	if rig.webhookStatus(`{"type":"room.ended","room":"aaaaaaaa","state":"done"}`, "unsigned") != 401 {
 		t.Fatal("an unsigned webhook was accepted")
 	}
-	if rig.webhookReplay() != 200 || len(rig.posts()) != 4 {
-		t.Fatal("a replayed webhook-id posted twice")
+	if rig.webhookReplay() != 200 || len(rig.posts()) != 3 || len(rig.slack.updatesMade()) != 1 {
+		t.Fatal("a replayed webhook-id posted or updated twice")
 	}
 
 	// The same rule over the card, for a room whose repository and branch are the most hostile values
@@ -1838,20 +1839,19 @@ func TestMentionProposes(t *testing.T) {
 	})
 }
 
-// A broker with no planner answers intake_plan with ErrUnknownTool. With proposals on, that mention is
-// drafted exactly as if the switch were off: the same grammar, the same issue_draft, the same draft
-// message, and its thread is a draft thread from then on — a reply amends the draft rather than
-// re-planning, and a ✅ files it.
+// With proposals off (release N compatibility), a mention is drafted in the old grammar, a reply amends
+// the draft, and a ✅ files it. With proposals on and no planner, a new mention answers noPlannerLine
+// and an existing proposal thread answers planUnsupported without drafting beside it (UX9).
 func TestMentionWithoutPlannerDrafts(t *testing.T) {
-	noPlanner := func(t *testing.T) *appRig {
+	draftMode := func(t *testing.T) *appRig {
 		t.Helper()
 		rig, _ := withProposals(t)
-		rig.broker.handoffErr = ErrUnknownTool
+		rig.app.Proposals = Proposals{Enabled: false}
 		return rig
 	}
 
-	t.Run("the mention posts a draft, a reply amends it and a check mark files it", func(t *testing.T) {
-		rig := noPlanner(t)
+	t.Run("with proposals off the mention posts a draft, a reply amends it and a check mark files it", func(t *testing.T) {
+		rig := draftMode(t)
 		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
 		posts := rig.posts()
 		if len(posts) != 1 {
@@ -1860,9 +1860,6 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		d := posts[0]
 		if d.meta == nil || d.meta.EventType != draftEventType || len(d.blocks) != 0 || !strings.HasPrefix(d.text, "Draft for Smana/ai-native-ref") {
 			t.Fatalf("the mention is not a draft: %+v", d)
-		}
-		if n := len(rig.broker.handoffCalls()); n != 1 {
-			t.Fatalf("%d handoff calls, want the one that found no planner", n)
 		}
 		if got := rig.metrics.count("events", "drafted"); got != 1 {
 			t.Fatalf("events/drafted counted %d times, want 1: %v", got, rig.metrics.counted("events"))
@@ -1876,9 +1873,6 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		if p := rig.payload(edit); p.Rev != 2 || !strings.Contains(p.Body, "the link resolves") {
 			t.Fatalf("the reply did not amend the draft: %+v", p)
 		}
-		if n := len(rig.broker.handoffCalls()); n != 1 {
-			t.Fatalf("the reply re-planned: %d handoff calls", n)
-		}
 		if got := rig.metrics.count("events", "edited"); got != 1 {
 			t.Fatalf("events/edited counted %d times, want 1", got)
 		}
@@ -1890,8 +1884,8 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		}
 	})
 
-	t.Run("the draft's own refusal is said, not the planner's", func(t *testing.T) {
-		rig := noPlanner(t)
+	t.Run("with proposals off the draft's own refusal is said", func(t *testing.T) {
+		rig := draftMode(t)
 		rig.mention("C03", "1729.0001", "<@U0BOT> Smana/other-repo docs: fix a dead link")
 		p := rig.lastPost()
 		if len(rig.posts()) != 1 || p.meta != nil || !strings.HasPrefix(p.text, "Draft refused: ") {
@@ -1902,16 +1896,15 @@ func TestMentionWithoutPlannerDrafts(t *testing.T) {
 		}
 	})
 
-	// A filed fallback draft's Filed line names its room, so the thread answers the five questions from
-	// it, as a filed proposal's thread does, instead of saying it cannot tell which room it filed.
-	t.Run("a filed fallback draft answers from its room", func(t *testing.T) {
-		rig := noPlanner(t)
+	t.Run("a filed draft answers from its room when proposals are turned on", func(t *testing.T) {
+		rig := draftMode(t)
 		rig.mention("C03", proposalThreadTS, "<@U0BOT> Smana/ai-native-ref docs: fix a dead link")
 		rig.react("C03", rig.lastPost().ts, "U02DEF", "white_check_mark")
+		rig.app.Proposals = Proposals{Enabled: true}
 		ab := &answerBroker{stubBroker: rig.broker, sum: answerSummary()}
 		rig.app.Broker = ab
 		rig.replySaid("U02DEF", "1729.9001", "status")
-		if p := rig.lastPost(); !strings.Contains(p.text, "Phase: Running") {
+		if p := rig.lastPost(); !strings.Contains(p.text, "State: Running") {
 			t.Fatalf("the filed draft's thread answered %q, want the room's status", p.text)
 		}
 		if !reflect.DeepEqual(ab.rooms, []string{"task/aaaaaaaa"}) {
