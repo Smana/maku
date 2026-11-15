@@ -35,10 +35,8 @@ func waitingLine(e webhook.Event, sum summary.Summary, roomsURL string) string {
 	}
 	url := strings.TrimSuffix(roomsURL, "/") + "/r/" + e.Room
 	head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
-	if sum.Status.Policy != nil {
-		if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
-			head += " · " + gp
-		}
+	if gp := gatePart(sum); gp != "" {
+		head += " · " + gp
 	}
 	return head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
 }
