@@ -1,22 +1,17 @@
+<!-- page-type: how-to -->
+
 # Install on your cluster
 
-This page installs the agent factory on a Kubernetes cluster your platform team already runs:
-with its own identity provider, its own Secrets tooling and its own GitOps controller. It is not the
-way to try the factory: that is the [quickstart](quickstart.md), on a laptop, in about 15 minutes.
+Install the agent factory on a Kubernetes cluster your platform team runs, with your own identity provider, Secrets tooling and GitOps controller. To try the loop on a laptop in 15 minutes, run the [quickstart](quickstart.md).
 
-An install is one factory: one namespace, two GitHub Apps, one database and the repositories it
-serves. It runs three components (the factory, the broker and the run-controller) beside the model
-gateway, and it never applies anything on its own. You review the files, then apply them yourself or
-hand them to Flux or Argo CD.
+An install is one factory (one namespace, two GitHub Apps, one database and the repositories it serves) running the factory, the broker and the run-controller beside the model gateway. `maku install --print` writes plain manifests for review; apply them with Helm, Flux or Argo CD.
 
 ```mermaid
 flowchart LR
-  wizard["maku install --print"] --> files["values.yaml, Secrets,<br/>factory objects, ruleset,<br/>GitOps files"]
-  files --> crds["agent-factory-crds<br/>agentgateway CRDs"]
-  crds --> umbrella["agent-factory<br/>(the production defaults)"]
-  umbrella --> objects["Factory, Repository,<br/>MergePolicy"]
-  objects --> ruleset["the merge gate's ruleset"]
-  ruleset --> preflight["helm test<br/>(the preflight)"]
+  crds["1. CRDs\nagent-factory-crds &\nagentgateway CRDs"] --> secrets["2. Secrets\nsecrets/ or\nExternalSecrets"]
+  secrets --> umbrella["3. Umbrella chart\nagent-factory\n(production seams)"]
+  umbrella --> preflight["4. Preflight\nhelm test /\nmaku preflight"]
+  preflight --> repo["5. First repository\nFactory, Repository,\nMergePolicy & ruleset"]
 ```
 
 ## What you bring
@@ -28,7 +23,7 @@ key and its doc ([from the demo to production](upgrading.md#from-the-demo-to-pro
 | Seam | Required | You bring | The chart's default | Without it |
 |---|---|---|---|---|
 | Kubernetes 1.30 or later, with a CNI that enforces NetworkPolicy | yes | the cluster | `maku.networkPolicies.mode: cilium`; `kubernetes` for any other CNI | the run-controller's preflight refuses runs |
-| A sandbox RuntimeClass | yes | gVisor or Kata on the nodes ([below](#sandbox-nodes)) | `gvisor` | the preflight refuses runs |
+| A sandbox RuntimeClass | yes | gVisor or Kata on the nodes ([sandbox nodes](sandbox-nodes.md)) | `gvisor` | the preflight refuses runs |
 | Postgres 16 or later | yes | a database, its three roles and one DSN Secret each ([the database](database.md)) | none: the bundled Postgres is the demo's | the render fails |
 | An OIDC issuer | yes | the issuer, a web client, a CLI client and a groups claim ([identity](identity.md)) | `preset: generic`, `tokenUse: id` | nobody can sign in |
 | Two GitHub Apps | yes | created by `maku install --print` ([GitHub Apps](github-apps.md)) | the merger folded into the factory App | no work starts |
@@ -50,46 +45,7 @@ Slack App's events path must be public, and only when it is installed.
 maku install --print --out ./maku-install
 ```
 
-It asks one question per seam, with its default in brackets, and checks each answer against the
-charts' own values schemas, so it refuses what `helm template` would refuse. `--answers FILE` answers
-every question from a YAML file keyed by question id instead, for CI. With `apps.create` it creates
-the agents App and the factory App through GitHub's manifest flow, then waits until you install both
-on your repositories. It never prints a key. [maku](cli.md) lists every flag.
-
-The directory it writes:
-
-| Path | What it holds |
-|---|---|
-| `values.yaml` | the umbrella's values, every image by digest, no secret value |
-| `crds/values.yaml` | the CRD chart's values |
-| `factory/` | the `Factory`, one `Repository` per repository, and a `MergePolicy` per class, every class in shadow. The `Factory`'s `spec.mergeDefaults` holds the merge settings every repository shares, so each `Repository` names only its own ([below](#onboard-another-repository)), and it writes out the three workflows, `quick`, `standard` and `careful` ([the shipped workflows](factory.md#the-shipped-workflows)) |
-| `github/` | the merge gate's ruleset and the `gh` commands that create it, which it never runs |
-| `secrets/` | mode 0700, files 0600, git-ignored: the Apps' keys, a generated cookie secret, the client ids, and templates with empty keys for what it never asks (the DSNs, the provider key, the issuer's client secret, Slack's) |
-| `gitops/` | the same install for Flux and for Argo CD |
-| `README.md` | the commands to run next, in order |
-
-It refuses a non-empty directory without `--force`, and never overwrites `secrets/`. The factory's
-API runs on TLS from the cert-manager ClusterIssuer you name (`tls.issuer`); without one, only an
-explicit `factory.insecure: true` accepts plaintext, which the install banner then shows.
-
-### Onboard another repository
-
-`maku repo add owner/name` writes the next repository's `Repository`, fence and ruleset
-([maku](cli.md)). The `Factory` above already carries the settings every repository shares:
-
-```yaml
-spec:
-  mergeDefaults:
-    mergerLogin: <factory-app>[bot]   # the factory App, which merges (the merger folded in)
-    verifyFor: 30m                    # a merge is watched this long for a failing verify check
-    revertWindow: 168h                # a revert within it counts against the class
-    breaker: {window: 10, maxReverts: 1}  # 1 revert in the last 10 merges demotes the class
-```
-
-So the `Repository` it writes is 12 lines: the repository, its maintainers, its trigger label and its
-checks. A key the `Repository` sets wins whole ([merge policies](merge-policies.md#factory-resources)).
-For a `Factory` without `mergeDefaults`, `--merge-defaults=false` writes the four keys into the
-`Repository` instead: the factory refuses a `Repository` that lacks them and has no default to fill.
+It asks one question per seam (or reads `--answers FILE` in CI), validates answers against the chart schemas, optionally creates both GitHub Apps (`apps.create`), and writes `values.yaml`, `crds/values.yaml`, `factory/`, `github/`, `secrets/` (mode `0700`, never overwritten), `gitops/` and `README.md` ([generated install directory](reference/support.md#generated-install-directory)). Add repositories later with `maku repo add owner/name` ([onboard another repository](reference/support.md#onboard-another-repository), [CLI](cli.md)).
 
 ## Apply it
 
@@ -126,40 +82,17 @@ test hook: run the preflight by hand, as below.
 
 ## Check it: the preflight
 
-`maku.preflight.enabled` and `maku-factory.preflight.enabled`, both on by default since v0.48.0
-(and written by `maku install --print`), render the install's preflight twice: a Helm test hook, which `helm test <release>` runs, and a suspended CronJob for tools that run no
-hooks:
+`maku.preflight.enabled` and `maku-factory.preflight.enabled` (on by default) render a Helm test hook and a suspended CronJob. Each check logs a JSON line and fails closed (`undecided` fails; `preflight.strict: true` fails on warnings):
 
 ```bash
 helm test agent-factory -n maku
 kubectl -n maku create job --from=cronjob/agent-factory-preflight preflight-now   # Argo CD
+maku preflight --namespace maku --release agent-factory                            # adds outside route checks
 ```
 
-Each result is one JSON line on the Job's log, and its summary is the termination message. A check
-that cannot decide fails with the code `undecided`; it never passes. `preflight.strict: true` fails
-on a warning too.
+Pass `--json` in pipelines, `--no-outside` to skip client-side route probes, or run `maku repo check owner/name` for one repository ([CLI permissions and checks](reference/support.md#preflight-cli-permissions-and-checks)).
 
-`maku preflight` runs it from your machine, through any of these tools: it creates a Job from the
-CronJob, waits for it, prints one table by seam and the summary, and deletes the Job.
-
-```bash
-maku preflight --namespace maku --release agent-factory          # --strict: fail on a warning too
-maku preflight --namespace maku --release agent-factory --json   # the JSON lines, for a pipeline
-```
-
-It adds the checks that only your machine can make, the `cli` rows of the table below: each hostname
-of the web and Slack routes resolves, the web host is oauth2-proxy's and serves `/.well-known/roomctl`
-through it, and the Slack host answers `POST /slack/events` only. `--no-outside` skips them. It exits 1
-on a fail, and 2 when the release renders no preflight or the Job leaves no report. Your kubeconfig
-needs, in the namespace, `get` and `list` on CronJobs, `create`, `get` and `delete` on Jobs, `list` on
-Pods, `get` on `pods/log`, and `get` on HTTPRoutes and Ingresses ([CLI](cli.md)).
-
-For one repository, `maku repo check owner/name` asks the factory for its `apps`, `merge-gate` and
-`private-code` rows alone (`GET /preflight?repository=owner/name`), and adds the repository's fence
-and its `Repository`'s conditions; `maku repo add` writes the files those rows check
-([CLI](cli.md)).
-
-The checks, generated from the catalog in `internal/preflight`:
+The checks, generated from `internal/preflight`:
 
 <!-- preflight:begin -->
 | Check | Seam | Runs in | What it checks | Fails with | Warns with |
@@ -183,7 +116,7 @@ The checks, generated from the catalog in `internal/preflight`:
 
 ## Private code
 
-A `Repository` serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS; self-hosted models remain possible through agentgateway, though nothing in the product depends on them.
+A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
 
 ```yaml
 apiVersion: maku.ogenki.io/v1alpha1
@@ -195,76 +128,13 @@ spec:
   privateCode: {acknowledged: true}   # true or absent: false is refused
 ```
 
-On each 5-minute fence pass, the factory reads every served repository's visibility through the factory App (`private`, `internal`, and failed reads all fail closed as private code, and nothing starts before the first read after startup). Without `privateCode.acknowledged: true`, tasks already started finish, while new work is refused (`factory/ready` comments and removes the label, the API answers `403 private_code_unacknowledged`, and neither schedules nor adoption start tasks):
-
-| Surface | Reports |
-|---|---|
-| `Repository` `PrivateCode` condition | `False` `Unacknowledged` ("No new task starts until it is set"); `True` `Public` or `Acknowledged`; `Unknown` `NotChecked` before the first read or `NotServed` |
-| Preflight `private-code` check | `fail` `private_code_unacknowledged`, naming the repositories |
-| Metric and alert | `maku_factory_private_code_unacknowledged{repository}` (`1` or `0`); `AgentFactoryPrivateCodeUnacknowledged` fires after 15 minutes at `1` |
-| Web UI install banner and logs | `private_code_unacknowledged` via `GET /v1/install` (requires `factoryURL` on the broker); one `WARN` per visibility change |
-
-Two paths remain public-only regardless of acknowledgement: **demo mode** (where runs can read the model key and GitHub token) and **[multi-repository coordination](multi-repository.md)** (`publicOnly: true`).
-
-## Sandbox nodes
-
-Every run pod runs under the RuntimeClass `maku.sandbox.runtimeClassName` names, and the
-run-pod admission policy refuses any other. The nodes, and the runtime on them, are yours.
-`sandbox.unsafeAllowRunc` runs agents on the node's own runtime: the demo and kind only, and the
-render refuses it without the demo's `demoValues`.
-
-| Platform | The runtime | `sandbox.runtimeClassName` |
-|---|---|---|
-| GKE | a node pool with GKE Sandbox enabled, which brings gVisor and its RuntimeClass `gvisor` (handler `gvisor`) | `gvisor` |
-| k3s | gVisor's `runsc` and its containerd shim on each node, added to k3s's containerd through its config template | `gvisor` |
-| kubeadm | gVisor's `runsc`, or Kata Containers, registered as a containerd runtime handler | `gvisor`, or your Kata class |
-| EKS | no managed sandbox: a node group whose image (a custom AMI, or a Bottlerocket variant) carries a `runsc` or Kata handler in containerd | the class you create for it |
-
-Where the cluster has the handler but no RuntimeClass, `maku.runController.createRuntimeClass: true`
-with `runtimeHandler` renders one under the class's name. The preflight's `runtimeclass` check fails
-`runtimeclass_missing` when the class does not exist, and the run-controller refuses runs until it
-does ([operations](operations/failures.md#the-run-controllers-preflight)).
-
-A cold sandbox node costs a run 1.5 to 3.5 minutes at start: the image pull and the sandbox's own
-boot land on the run's clock, before its clone. A low-priority placeholder pod that keeps the run
-images on one node removes most of it for the price of one idle pod. The nodes are yours,
-so the chart ships none: schedule the placeholder on a window yourself (for example, on the reference
-platform, 08:00-19:00 Europe/Paris on weekdays), and let the mechanism own the `replicas`
-field so Flux does not revert it.
-
-## The support floor
-
-| Piece | Floor |
-|---|---|
-| Kubernetes | 1.30 (the ValidatingAdmissionPolicies), tested on the three latest minors |
-| Postgres | 16 |
-| GitHub | GitHub.com, or GHES 3.14 |
-| Helm | 3.15. Helm 3.14 assumes Kubernetes 1.29 when it renders offline, so its `helm template` needs `--kube-version` |
-| Flux | 2.4 |
-| Argo CD | 2.12 |
-| Gateway API | v1.2 |
-
-## Several installs in one cluster
-
-Several teams means several installs, each in its own namespace with its own Apps, database,
-runs namespace (`maku.runs.namespace`) and fence. Every cluster-scoped object an install renders
-carries its namespace: the admission policies, the run-controller's and the preflight's cluster
-roles, the broker's token review binding, and the factory's Flux binding. The roles every install
-shares, the three aggregated into `admin`, `edit` and `view` and `agent-factory-flux-reader`, are
-`agent-factory-crds`', installed once per cluster with the CRDs. `tests/two-installs.sh` renders two
-installs of the same release name in two namespaces and finds no cluster-scoped name they share.
-
-Two things stay the cluster's, so one install at most renders them:
-
-- the RuntimeClass, when `maku.runController.createRuntimeClass` is set; leave it off elsewhere, or
-  create the class yourself;
-- agentgateway's controller (`agentgateway.enabled`): it serves every Gateway of its class, so the
-  other installs set it false and use the same controller.
+The factory reads each served repository's visibility through the factory App. `private` and
+`internal` count as private code, and so does a read that fails. A private repository without the
+field is refused new tasks, and tasks already started finish: its `PrivateCode` condition is `False`,
+the gauge `maku_factory_private_code_unacknowledged` reads 1, the preflight fails
+`private_code_unacknowledged`, and the install banner says so. Self-hosted models remain possible through agentgateway, but nothing in the product
+depends on them. The [Repository reference](factory.md#private-code) has the details.
 
 ## Upgrading
 
-Every release that changes an install step has a section in [upgrading](upgrading.md), and
-the chart fails a render that misses a seam a newer release requires, naming it.
-[From the demo to production](upgrading.md#from-the-demo-to-production) lists the seams the gate
-checks, and [adopting the umbrella from `maku-factory`](upgrading.md#adopting-the-umbrella-from-maku-factory)
-moves an existing factory release under the umbrella without replacing its Deployment.
+See [upgrading](upgrading.md) for release-by-release install changes, and [install support and cluster reference](reference/support.md) for the support floor and running several installs in one cluster.

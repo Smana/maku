@@ -26,7 +26,7 @@ The broker serves four listeners. Every body is JSON.
 
 Served with `ListenAndServeTLS` on the pair cert-manager writes to `/etc/room-broker/tls/`. The
 broker re-reads the files when they change, so a renewal needs no restart, and a plain-HTTP request
-fails. See [security](../security.md#tls-on-8443) for the certificate and its CA.
+fails. See [security](security-controls.md#tls-on-8443) for the certificate and its CA.
 
 Errors are JSON, `{"error": "<reason>"}`, with the status codes below. The reasons are stable
 strings, the `wire.Reason*` constants: branch on them, not on the status text.
@@ -1680,7 +1680,7 @@ never opens a stream or sends a request of its own (agent-router#2715).
 | `413` | A body over 128 KiB, except the harness's `output_push`: a request with `X-Agent-Harness: 1` may be up to 12 MiB, and past 128 KiB only a `tools/call` of `output_push` is accepted |
 | `503` | A call over 15 s |
 
-`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](../web-ui.md#what-each-standing-may-do))
+`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](web-ui-settings.md#what-each-standing-may-do))
 (`read` for `room_read`, `kb_search` and `kb_get`, `chat` for the three writes), then spends the run's one call per second.
 The limit is per broker replica: with two replicas, a run whose calls the gateway
 spreads across both can make two a second. Arguments are strict: an unknown field is refused, and text holds

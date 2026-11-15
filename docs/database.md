@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # The database
 
 Maku keeps every room's log in a Postgres you run. Bring Postgres 16 or later: the broker refuses an

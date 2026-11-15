@@ -11,7 +11,7 @@ README.md:36: docs/factory.md#splits
 README.md:45: docs/factory.md#budgets
 README.md:47: docs/factory.md#the-kill-switch
 README.md:55: docs/web-ui.md
-[x] README.md:59: docs/room-log.md#the-guarantees
+README.md:59: docs/room-log.md#the-guarantees
 README.md:59: docs/security.md#redaction
 README.md:61: docs/web-ui.md#forks
 README.md:67: docs/factory.md#the-merge-gate
@@ -20,7 +20,7 @@ README.md:77: docs/cli.md
 README.md:79: docs/cli.md#the-mcp-server
 README.md:80: docs/cli.md#the-factory-handoff-skill
 README.md:82: docs/slack.md
-[x] README.md:84: docs/operations.md (index)
+README.md:84: docs/operations.md
 README.md:108: docs/architecture.md
 README.md:114: docs/quickstart.md
 README.md:114: docs/quickstart.md#what-production-adds
@@ -36,7 +36,7 @@ README.md:147: docs/cli.md
 README.md:147: docs/web-ui.md
 README.md:148: docs/security.md
 README.md:149: docs/integration.md
-[x] README.md:149: docs/operations.md (index)
+README.md:149: docs/operations.md
 README.md:150: docs/contributing/development.md
 charts/agent-factory-crds/README.md:39: docs/upgrading.md#the-per-repository-merge-policy-removed-v0480
 charts/agent-factory-crds/README.md:71: docs/upgrading.md
@@ -60,56 +60,56 @@ charts/agent-factory/README.md:90: docs/gateway.md
 charts/agent-factory/README.md:90: docs/gateway.md
 charts/agent-factory/README.md:102: docs/gateway.md
 charts/agent-factory/README.md:102: docs/gateway.md#agentgateways-crds
-[x] charts/agent-factory/files/rules/factory.yaml:2: docs/operations.md (index)
-[x] charts/agent-factory/files/rules/factory.yaml:14: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:23: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:32: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:46: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:58: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/files/rules/factory.yaml:69: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/files/rules/factory.yaml:80: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:89: docs/operations.md#escalated-tasks-and-the-kill-switch -> docs/operations/failures.md#escalated-tasks-and-the-kill-switch
-[x] charts/agent-factory/files/rules/factory.yaml:100: docs/operations.md#factory-failures -> docs/operations/failures.md#factory-failures
-[x] charts/agent-factory/files/rules/factory.yaml:112: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/files/rules/factory.yaml:123: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/files/rules/factory.yaml:134: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/files/rules/factory.yaml:143: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/files/rules/factory.yaml:154: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/files/rules/factory.yaml:173: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/files/rules/factory.yaml:184: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/files/rules/factory.yaml:196: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/files/rules/factory.yaml:208: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:2: docs/operations.md
+charts/agent-factory/files/rules/factory.yaml:14: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:23: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:32: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:46: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:58: docs/operations.md#budget-signals
+charts/agent-factory/files/rules/factory.yaml:69: docs/operations.md#budget-signals
+charts/agent-factory/files/rules/factory.yaml:80: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:89: docs/operations.md#escalated-tasks-and-the-kill-switch
+charts/agent-factory/files/rules/factory.yaml:100: docs/operations.md#factory-failures
+charts/agent-factory/files/rules/factory.yaml:112: docs/operations.md#budget-signals
+charts/agent-factory/files/rules/factory.yaml:123: docs/operations.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:134: docs/operations.md#coordination
+charts/agent-factory/files/rules/factory.yaml:143: docs/operations.md#coordination
+charts/agent-factory/files/rules/factory.yaml:154: docs/operations.md#coordination
+charts/agent-factory/files/rules/factory.yaml:173: docs/operations.md#coordination
+charts/agent-factory/files/rules/factory.yaml:184: docs/operations.md#budget-signals
+charts/agent-factory/files/rules/factory.yaml:196: docs/operations.md#budget-signals
+charts/agent-factory/files/rules/factory.yaml:208: docs/operations.md#factory-alerts
 charts/agent-factory/files/rules/factory.yaml:217: docs/factory.md
-[x] charts/agent-factory/files/rules/factory.yaml:218: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:218: docs/operations.md#factory-alerts
 charts/agent-factory/files/rules/factory.yaml:228: docs/factory.md#private-code
-[x] charts/agent-factory/files/rules/factory.yaml:238: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
+charts/agent-factory/files/rules/factory.yaml:238: docs/operations.md#factory-alerts
 charts/agent-factory/files/rules/gateway.yaml:22: docs/gateway.md
-[x] charts/agent-factory/files/rules/gateway.yaml:23: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/gateway.yaml:33: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/gateway.yaml:44: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/gateway.yaml:53: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/gateway.yaml:65: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/gateway.yaml:106: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:17: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:27: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:36: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:47: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:57: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:66: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:77: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:88: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:100: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:109: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:121: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:130: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/rooms.yaml:142: docs/operations.md#webhooks -> docs/operations/factory.md#webhooks
-[x] charts/agent-factory/files/rules/rooms.yaml:157: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/files/rules/run-path.yaml:16: docs/operations.md#the-run-controllers-preflight -> docs/operations/failures.md#the-run-controllers-preflight
-[x] charts/agent-factory/files/rules/run-path.yaml:26: docs/operations.md#run-path-alerts -> docs/operations/failures.md#run-path-alerts
-[x] charts/agent-factory/files/rules/run-path.yaml:36: docs/operations.md#run-path-alerts -> docs/operations/failures.md#run-path-alerts
-[x] charts/agent-factory/files/rules/run-path.yaml:46: docs/operations.md#run-path-alerts -> docs/operations/failures.md#run-path-alerts
-[x] charts/agent-factory/files/rules/slack.yaml:15: docs/operations.md#slack-alerts -> docs/operations/failures.md#slack-alerts
-[x] charts/agent-factory/files/rules/slack.yaml:25: docs/operations.md#slack-alerts -> docs/operations/failures.md#slack-alerts
+charts/agent-factory/files/rules/gateway.yaml:23: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/gateway.yaml:33: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/gateway.yaml:44: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/gateway.yaml:53: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/gateway.yaml:65: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/gateway.yaml:106: docs/operations.md#gateway-alerts
+charts/agent-factory/files/rules/rooms.yaml:17: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:27: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:36: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:47: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:57: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:66: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:77: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:88: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:100: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:109: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:121: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:130: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/rooms.yaml:142: docs/operations.md#webhooks
+charts/agent-factory/files/rules/rooms.yaml:157: docs/operations.md#room-alerts
+charts/agent-factory/files/rules/run-path.yaml:16: docs/operations.md#the-run-controllers-preflight
+charts/agent-factory/files/rules/run-path.yaml:26: docs/operations.md#run-path-alerts
+charts/agent-factory/files/rules/run-path.yaml:36: docs/operations.md#run-path-alerts
+charts/agent-factory/files/rules/run-path.yaml:46: docs/operations.md#run-path-alerts
+charts/agent-factory/files/rules/slack.yaml:15: docs/operations.md#slack-alerts
+charts/agent-factory/files/rules/slack.yaml:25: docs/operations.md#slack-alerts
 charts/agent-factory/templates/_helpers.tpl:32: docs/upgrading.md#the-chart-contract
 charts/agent-factory/templates/_helpers.tpl:35: docs/upgrading.md#the-chart-contract
 charts/agent-factory/templates/_helpers.tpl:81: docs/upgrading.md#from-the-demo-to-production
@@ -134,56 +134,56 @@ charts/agent-factory/templates/externalsecrets.yaml:59: docs/install-secrets.md
 charts/agent-factory/templates/externalsecrets.yaml:81: docs/install-secrets.md
 charts/agent-factory/templates/externalsecrets.yaml:99: docs/install-secrets.md
 charts/agent-factory/templates/externalsecrets.yaml:111: docs/install-secrets.md
-[x] charts/agent-factory/templates/monitoring-rules.yaml:66: docs/operations.md#alerts -> docs/operations/failures.md#alerts
+charts/agent-factory/templates/monitoring-rules.yaml:66: docs/operations.md#alerts
 charts/agent-factory/templates/secrets.yaml:2: docs/install-secrets.md
 charts/agent-factory/templates/tls.yaml:2: docs/install-secrets.md
 charts/agent-factory/tests/adopt-roles.sh:6: docs/upgrading.md
 charts/agent-factory/tests/adopt-roles.sh:64: docs/upgrading.md
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4311: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4321: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4331: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4340: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4349: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4358: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4367: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4376: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4386: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4396: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4405: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4415: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4424: docs/operations.md#webhooks -> docs/operations/factory.md#webhooks
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4436: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4446: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4455: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4464: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4474: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4484: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4493: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4503: docs/operations.md#escalated-tasks-and-the-kill-switch -> docs/operations/failures.md#escalated-tasks-and-the-kill-switch
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4512: docs/operations.md#factory-failures -> docs/operations/failures.md#factory-failures
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4522: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4532: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4542: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4551: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4560: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4569: docs/operations.md#coordination -> docs/operations/factory.md#coordination
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4586: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4595: docs/operations.md#budget-signals -> docs/operations/failures.md#budget-signals
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4604: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4311: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4321: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4331: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4340: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4349: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4358: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4367: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4376: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4386: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4396: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4405: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4415: docs/operations.md#room-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4424: docs/operations.md#webhooks
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4436: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4446: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4455: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4464: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4474: docs/operations.md#budget-signals
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4484: docs/operations.md#budget-signals
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4493: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4503: docs/operations.md#escalated-tasks-and-the-kill-switch
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4512: docs/operations.md#factory-failures
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4522: docs/operations.md#budget-signals
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4532: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4542: docs/operations.md#coordination
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4551: docs/operations.md#coordination
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4560: docs/operations.md#coordination
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4569: docs/operations.md#coordination
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4586: docs/operations.md#budget-signals
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4595: docs/operations.md#budget-signals
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4604: docs/operations.md#factory-alerts
 charts/agent-factory/tests/golden/production-cnref-like.yaml:4612: docs/factory.md
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4613: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4613: docs/operations.md#factory-alerts
 charts/agent-factory/tests/golden/production-cnref-like.yaml:4623: docs/factory.md#private-code
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4633: docs/operations.md#factory-alerts -> docs/operations/failures.md#factory-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4645: docs/operations.md#the-run-controllers-preflight -> docs/operations/failures.md#the-run-controllers-preflight
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4655: docs/operations.md#run-path-alerts -> docs/operations/failures.md#run-path-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4667: docs/operations.md#slack-alerts -> docs/operations/failures.md#slack-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4676: docs/operations.md#slack-alerts -> docs/operations/failures.md#slack-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4633: docs/operations.md#factory-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4645: docs/operations.md#the-run-controllers-preflight
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4655: docs/operations.md#run-path-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4667: docs/operations.md#slack-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4676: docs/operations.md#slack-alerts
 charts/agent-factory/tests/golden/production-cnref-like.yaml:4687: docs/gateway.md
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4688: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4698: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4708: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4718: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
-[x] charts/agent-factory/tests/golden/production-cnref-like.yaml:4727: docs/operations.md#gateway-alerts -> docs/operations/failures.md#gateway-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4688: docs/operations.md#gateway-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4698: docs/operations.md#gateway-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4708: docs/operations.md#gateway-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4718: docs/operations.md#gateway-alerts
+charts/agent-factory/tests/golden/production-cnref-like.yaml:4727: docs/operations.md#gateway-alerts
 charts/agent-factory/tests/identity.sh:45: docs/database.md
 charts/agent-factory/tests/identity.sh:47: docs/upgrading.md
 charts/agent-factory/tests/identity.sh:293: docs/database.md
@@ -205,9 +205,9 @@ charts/agent-factory/tests/render.sh:214: docs/upgrading.md#from-the-demo-to-pro
 charts/agent-factory/tests/render.sh:534: docs/install-secrets.md
 charts/agent-factory/tests/render.sh:535: docs/install-secrets.md
 charts/agent-factory/tests/render.sh:536: docs/install-secrets.md
-[x] charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts -> docs/operations/failures.md#room-alerts
+charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts
 charts/agent-factory/values-demo.yaml:2: docs/gateway.md
-[x] charts/agent-factory/values-demo.yaml:37: docs/factory.md#demo
+charts/agent-factory/values-demo.yaml:37: docs/factory.md#demo
 charts/agent-factory/values-demo.yaml:190: docs/gateway.md
 charts/agent-factory/values-demo.yaml:224: docs/database.md
 charts/agent-factory/values-production.example.yaml:1: docs/upgrading.md#from-the-demo-to-production
@@ -236,7 +236,7 @@ charts/agent-factory/values.yaml:40: docs/install-secrets.md
 charts/agent-factory/values.yaml:49: docs/gateway.md
 charts/agent-factory/values.yaml:53: docs/gateway.md
 charts/agent-factory/values.yaml:82: docs/observability.md
-[x] charts/agent-factory/values.yaml:105: docs/operations.md#alerts -> docs/operations/failures.md#alerts
+charts/agent-factory/values.yaml:105: docs/operations.md#alerts
 charts/agent-factory/values.yaml:116: docs/observability.md#dashboards
 charts/agent-factory/values.yaml:128: docs/slack.md#install
 charts/agent-factory/values.yaml:135: docs/exposure.md
@@ -249,15 +249,15 @@ charts/maku-factory/README.md:50: docs/security.md
 charts/maku-factory/README.md:50: docs/security.md#the-factory-writes-run-token-secrets-it-cannot-read
 charts/maku-factory/README.md:51: docs/factory.md
 charts/maku-factory/README.md:51: docs/factory.md#the-post-merge-monitor
-[x] charts/maku-factory/README.md:53: docs/factory.md
-[x] charts/maku-factory/README.md:53: docs/factory.md#hardening-non-code-outputs-enforced
-[x] charts/maku-factory/README.md:53: docs/upgrading.md#the-xr-run-kind-and-octo-sts
+charts/maku-factory/README.md:53: docs/factory.md
+charts/maku-factory/README.md:53: docs/factory.md#hardening-non-code-outputs-enforced
+charts/maku-factory/README.md:53: docs/upgrading.md#the-xr-run-kind-and-octo-sts
 charts/maku-factory/README.md:82: docs/architecture.md#how-the-factory-reads-its-configuration
 charts/maku-factory/README.md:104: docs/architecture.md#live-fields-and-fields-that-need-a-rollout
 charts/maku-factory/README.md:105: docs/factory.md
-[x] charts/maku-factory/README.md:105: docs/factory.md#the-config-file
+charts/maku-factory/README.md:105: docs/factory.md#the-config-file
 charts/maku-factory/README.md:138: docs/factory.md#outcome-overlap-detection
-[x] charts/maku-factory/README.md:140: docs/operations.md#outcome-overlap-rollout-and-shadow-evidence -> docs/operations/factory.md#outcome-overlap-rollout-and-shadow-evidence
+charts/maku-factory/README.md:140: docs/operations.md#outcome-overlap-rollout-and-shadow-evidence
 charts/maku-factory/templates/_helpers.tpl:23: docs/upgrading.md#the-old-app-keys
 charts/maku-factory/templates/_helpers.tpl:26: docs/upgrading.md#the-old-app-keys
 charts/maku-factory/templates/_helpers.tpl:29: docs/upgrading.md#the-old-app-keys
@@ -275,7 +275,7 @@ charts/maku-factory/values.schema.json:55: docs/upgrading.md#the-old-app-keys
 charts/maku-factory/values.schema.json:63: docs/upgrading.md#the-xr-run-kind-and-octo-sts
 charts/maku-factory/values.yaml:10: docs/github-apps.md
 charts/maku-factory/values.yaml:83: docs/upgrading.md#the-xr-run-kind-and-octo-sts
-[x] charts/maku-factory/values.yaml:91: docs/factory.md#the-config-file
+charts/maku-factory/values.yaml:91: docs/factory.md#the-config-file
 charts/maku-factory/values.yaml:93: docs/gateway.md
 charts/maku-gateway/README.md:6: docs/gateway.md
 charts/maku-gateway/README.md:6: docs/gateway.md
@@ -299,7 +299,7 @@ charts/maku/README.md:31: docs/security.md#the-run-paths-network-modes
 charts/maku/README.md:31: docs/upgrading.md#the-run-paths-old-keys
 charts/maku/README.md:32: docs/security.md#the-run-paths-network-modes
 charts/maku/README.md:36: docs/factory.md
-[x] charts/maku/README.md:36: docs/factory.md#run-tokens-the-role-table
+charts/maku/README.md:36: docs/factory.md#run-tokens-the-role-table
 charts/maku/README.md:38: docs/gateway.md#runs-through-the-gateway
 charts/maku/README.md:41: docs/security.md#the-run-pods-admission
 charts/maku/README.md:53: docs/upgrading.md#the-run-paths-old-keys
@@ -325,7 +325,7 @@ charts/maku/values.yaml:90: docs/integration.md
 charts/maku/values.yaml:148: docs/install-secrets.md#rotation
 charts/maku/values.yaml:177: docs/database.md
 charts/maku/values.yaml:219: docs/gateway.md
-[x] charts/maku/values.yaml:239: docs/operations.md -> docs/operations/factory.md#webhooks
+charts/maku/values.yaml:239: docs/operations.md
 charts/maku/values.yaml:277: docs/gateway.md
 charts/maku/values.yaml:317: docs/observability.md
 charts/maku/values.yaml:333: docs/install-secrets.md
@@ -494,8 +494,8 @@ internal/app/seams_test.go:37: docs/install-secrets.md
 internal/app/seams_test.go:47: docs/install-secrets.md
 internal/app/seams_test.go:66: docs/install-secrets.md
 internal/authn/humans.go:248: docs/identity.md
-[x] internal/bridgeapi/allow.go:26: docs/event-envelope.md
-[x] internal/bridgeapi/approvals.go:29: docs/api.md
+internal/bridgeapi/allow.go:26: docs/event-envelope.md
+internal/bridgeapi/approvals.go:29: docs/api.md
 internal/config/config.go:782: docs/upgrading.md#the-zitadel-reader
 internal/config/config.go:1026: docs/upgrading.md#workflows-name-what-runs
 internal/config/config_test.go:1314: docs/upgrading.md
@@ -604,14 +604,14 @@ internal/factory/mdlinks/mdlinks_test.go:46: docs/new.md
 internal/factory/mdlinks/mdlinks_test.go:46: docs/old.md
 internal/factory/mdlinks/mdlinks_test.go:54: docs/new.md
 internal/factory/mdlinks/mdlinks_test.go:54: docs/old.md
-[x] internal/factory/meter/testdata/query_reply.json:2: docs/operations.md (index)
+internal/factory/meter/testdata/query_reply.json:2: docs/operations.md
 internal/factory/meter/vm_test.go:144: docs/factory.md
-[x] internal/factory/minter/roles.go:113: docs/reference/config.md (DocTable source for run-token role permissions)
-[x] internal/factory/minter/roles_test.go:19: docs/factory.md
-[x] internal/factory/minter/roles_test.go:153: docs/reference/config.md (TestDocsTable reads ../../../docs/reference/config.md)
-[x] internal/factory/minter/roles_test.go:166: docs/factory.md
-[x] internal/factory/minter/roles_test.go:170: docs/factory.md
-[x] internal/factory/minter/roles_test.go:182: docs/factory.md
+internal/factory/minter/roles.go:113: docs/factory.md
+internal/factory/minter/roles_test.go:19: docs/factory.md
+internal/factory/minter/roles_test.go:153: docs/factory.md
+internal/factory/minter/roles_test.go:166: docs/factory.md
+internal/factory/minter/roles_test.go:170: docs/factory.md
+internal/factory/minter/roles_test.go:182: docs/factory.md
 internal/factory/minter/runs.go:249: docs/security.md
 internal/factory/narrate/revised_test.go:26: docs/reference/commands.md
 internal/factory/narrate/revised_test.go:28: docs/reference/commands.md
@@ -748,10 +748,10 @@ internal/humanapi/acts.go:125: docs/api.md
 internal/humanapi/grants_test.go:306: docs/security/c.md
 internal/humanapi/grants_test.go:372: docs/security/a.md
 internal/humanapi/issuedraft_test.go:85: docs/a.md
-[x] internal/humanapi/mcpact.go:77: docs/api.md
-[x] internal/humanapi/slackdecide_test.go:1000: docs/operations.md (index)
-[x] internal/humanapi/ws.go:49: docs/api.md
-[x] internal/humanapi/ws_test.go:544: docs/api.md
+internal/humanapi/mcpact.go:77: docs/api.md
+internal/humanapi/slackdecide_test.go:1000: docs/operations.md
+internal/humanapi/ws.go:49: docs/api.md
+internal/humanapi/ws_test.go:544: docs/api.md
 internal/install/factory.go:36: docs/merge-policies.md
 internal/install/factory.go:169: docs/factory.md#branch-protection-for-the-merge-gate
 internal/install/gitops.go:128: docs/database.md
@@ -819,7 +819,7 @@ internal/intake/testdata/plan/three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/v1-three.json:7: docs/content/getting-started.md
 internal/intake/testdata/plan/v1-three.json:7: docs/content/getting-started.md
-[x] internal/maku/client.go:418: docs/api.md
+internal/maku/client.go:418: docs/api.md
 internal/maku/drill.go:38: docs/drills.md
 internal/maku/drill.go:40: docs/drill/injection.md
 internal/maku/drill.go:90: docs/drills.md
@@ -827,8 +827,8 @@ internal/maku/drill.go:113: docs/drills.md
 internal/maku/drill.go:198: docs/drill/injection.md
 internal/maku/drill_test.go:255: docs/drill/injection.md
 internal/maku/drill_test.go:256: docs/drill/injection.md
-[x] internal/maku/format.go:91: docs/api.md
-[x] internal/maku/maku_test.go:338: docs/api.md
+internal/maku/format.go:91: docs/api.md
+internal/maku/maku_test.go:338: docs/api.md
 internal/maku/roomref_test.go:128: docs/cli.md
 internal/preflight/catalog.go:20: docs/install.md
 internal/preflight/catalog.go:67: docs/install.md
@@ -855,22 +855,22 @@ internal/store/check.go:190: docs/database.md
 internal/store/check_test.go:226: docs/database.md
 internal/store/check_test.go:232: docs/database.md
 internal/store/store.go:60: docs/architecture.md
-[x] internal/summary/state.go:11: docs/api.md
+internal/summary/state.go:11: docs/api.md
 taskfile.yaml:129: docs/install-secrets.md
 taskfile.yaml:144: docs/install-secrets.md
 taskfile.yaml:202: docs/database.md
 taskfile.yaml:269: docs/upgrading.md
 web/preview/long-fixtures.ts:12: docs/an-old-runbook-page.md#an-anchor-without-any-break-point
 web/preview/long-fixtures.ts:14: docs/an-old-runbook-page.md
-[x] web/src/conn.ts:56: docs/api.md
-[x] web/src/controls.ts:8: docs/api.md
-[x] web/src/controls.ts:238: docs/api.md
-[x] web/src/fork.ts:37: docs/api.md
+web/src/conn.ts:56: docs/api.md
+web/src/controls.ts:8: docs/api.md
+web/src/controls.ts:238: docs/api.md
+web/src/fork.ts:37: docs/api.md
 web/src/strip.ts:158: docs/concepts.md
-[x] web/src/view.ts:42: docs/api.md
-[x] web/src/view.ts:473: docs/api.md
-[x] web/test/controls.test.ts:594: docs/api.md
-[x] web/test/controls.test.ts:596: docs/api.md
+web/src/view.ts:42: docs/api.md
+web/src/view.ts:473: docs/api.md
+web/test/controls.test.ts:594: docs/api.md
+web/test/controls.test.ts:596: docs/api.md
 
 # ai-native-ref
 docs/runbooks/agent-factory/02-identity-tokens.md:5: docs/gateway.md
@@ -895,15 +895,14 @@ internal/app/seams_test.go:37: docs/install-secrets.md (asserts seam error hints
 internal/preflight/doc.go:10: docs/install.md (DocTable source for the preflight check table)
 internal/preflight/docs_test.go:14: docs/install.md (TestInstallDocTable reads ../../docs/install.md)
 internal/app/maku_policy_docs_test.go:17: docs/merge-policies.md (TestTheGuidesExamplesValidate validates YAML examples in ../../docs/merge-policies.md)
-[x] internal/factory/minter/roles.go:113: docs/reference/config.md (DocTable source for run-token role permissions)
-[x] internal/factory/minter/roles_test.go:153: docs/reference/config.md (TestDocsTable reads ../../../docs/reference/config.md)
+internal/factory/minter/roles.go:113: docs/factory.md (DocTable source for run-token role permissions)
+internal/factory/minter/roles_test.go:153: docs/factory.md (TestDocsTable reads ../../../docs/factory.md)
 internal/githubapps/apps.go:63: docs/github-apps.md (DocTable source for GitHub App permissions)
 internal/githubapps/apps_test.go:97: docs/github-apps.md (TestDocsTable reads ../../docs/github-apps.md)
 hack/install-e2e/lib.sh:209: docs/database.md (extracts bootstrap SQL from docs/database.md)
 charts/agent-factory/tests/identity.sh:328: docs/database.md (extracts bootstrap SQL from docs/database.md)
 charts/agent-factory/tests/install.sh:412: docs/database.md (extracts bootstrap SQL from docs/database.md)
 .github/workflows/demo-e2e.yaml:71: docs/database.md (CI path trigger for install e2e)
-[x] charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts (asserts rendered runbook_url) -> docs/operations/failures.md#room-alerts
+charts/agent-factory/tests/render.sh:668: docs/operations.md#room-alerts (asserts rendered runbook_url)
 hack/vocabulary.sh:11: docs/{api,upgrading,event-envelope,room-log}.md (skip regex in vocabulary check)
 hack/names.sh:33: docs/upgrading.md (slack_allow in old-name check)
-[x] web/test/controls.test.ts:596: docs/reference/api.md (reads ../../docs/reference/api.md for rejection copy)

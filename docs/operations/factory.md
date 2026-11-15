@@ -257,7 +257,7 @@ Refusal reasons (`MissingRef`, `MissingParameter`, `ParameterTwice`, `OverPolicy
 A `MergePolicy` refused alone (`Accepted` `False`, `serving generation 3; generation 4 refused: …`)
 keeps its last accepted generation serving every consumer. `maku config validate --base-ref
 origin/main` prints the same per-consumer lines before the merge, and the
-[settings pages](../web-ui.md#settings) show them after it.
+[settings pages](../reference/web-ui-settings.md#settings) show them after it.
 
 
 ## Spend per identity

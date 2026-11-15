@@ -13,7 +13,8 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 
 | Page | Answers |
 |---|---|
-| [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code, sandbox nodes, the support floor |
+| [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code |
+| [Sandbox nodes](sandbox-nodes.md) | gVisor and Kata RuntimeClasses by platform, `createRuntimeClass`, warm-node placeholders |
 | [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), and what production adds |
 | [Team evaluation](team-evaluation.md) | Adding approved workflows to the demo and comparing `apply` and `observe` outcomes |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; a room's phases; who does what |
@@ -24,7 +25,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
 | [Merge policies](merge-policies.md) | A repository's merge policies: start here, the catalog, bindings, rollout stages, every field, worked examples, recipes, checking and promoting, reasons, rollback |
 | [maku](cli.md) | Install and verify, one-command setup, every command, the six MCP tools, the maku-handoff skill |
-| [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
+| [Web UI](web-ui.md) | Signing in, the room list, working a room, deciding approvals and reading refusals ([settings and standings](reference/web-ui-settings.md)) |
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |
 | [The database](database.md) | Bring your own Postgres 16 or later: the three roles and their DSN Secrets, the bootstrap, the start-up checks, managed services, CNPG and Atlas adoption |
@@ -33,7 +34,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Exposure](exposure.md) | `expose.mode`: the web and Slack surfaces by HTTPRoute or Ingress, what must be public, the web front door (oauth2-proxy) and its policies, what the probe proved |
 | [Install Secrets](install-secrets.md) | Every Secret an install reads, by name and key; the umbrella's optional ExternalSecrets, with OpenBao, CNPG and AWS examples |
 | [Identity](identity.md) | Any OIDC issuer: the presets, the roles claim, token use `id`, oauth2-proxy's arguments, what each IdP issues, moving off ZITADEL |
-| [Security](security.md) | Threat model, identities, TLS, redaction, database roles, network, supply chain |
+| [Security](security.md) | Threat model, trust boundaries, identities, authorization, network confinement and untrusted-input hardening ([security controls](reference/security-controls.md)) |
 | [Model gateway](gateway.md) | agentgateway in front of every model: the seam, the values, the provider presets, each caller's token |
 | [Integration](integration.md) | What this repo ships and what each consumer pins; the broker's config |
 | [Observability](observability.md) | The scrape objects, the alert rule and the dashboards the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |

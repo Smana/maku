@@ -171,7 +171,7 @@ sequenceDiagram
 - **At the run's end** the harness revokes its token after the checkpoint push
   (`GIT_TOKEN_REVOCABLE=1`), and the factory revokes the token it holds and deletes the Secret.
 - **The factory never reads a Secret** in the runs namespace: see
-  [security](../security.md#the-factory-writes-run-token-secrets-it-cannot-read).
+  [security](security-controls.md#the-factory-writes-run-token-secrets-it-cannot-read).
 
 ## Run tokens: the role table
 
