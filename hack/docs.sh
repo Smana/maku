@@ -93,9 +93,40 @@ ids() {
   ' "$1"
 }
 
+# ceiling FILE: checks the word ceiling declared by <!-- page-type: T --> within the first 5 lines.
+# Untyped files are ignored until every reader page carries a marker.
+ceiling() {
+  local f=$1 t w limit
+  t=$(awk 'NR<=5 && match($0, /<!--[[:space:]]*page-type:[[:space:]]*[^[:space:]]+[[:space:]]*-->/) {
+    s = substr($0, RSTART, RLENGTH)
+    sub(/^<!--[[:space:]]*page-type:[[:space:]]*/, "", s)
+    sub(/[[:space:]]*-->$/, "", s)
+    print s; exit
+  }' "$f")
+  [ -z "$t" ] && return 0
+  case "$t" in
+    tutorial|how-to) limit=1500 ;;
+    explanation|operations) limit=4000 ;;
+    reference) limit=0 ;;
+    moved) limit=40 ;;
+    *) echo "$f: unknown page-type: $t"; return 1 ;;
+  esac
+  [ "$limit" -eq 0 ] && return 0
+  w=$(wc -w < "$f" | tr -d '[:space:]')
+  if [ "$w" -gt "$limit" ]; then
+    if [ "$t" = moved ]; then
+      echo "$f: moved stub over 40 words"
+    else
+      echo "$f: over ceiling: $w words, $t allows $limit"
+    fi
+    return 1
+  fi
+}
+
 rc=0
 for f in "${files[@]}"; do
   case "$f" in *docs/superpowers/*) continue;; esac
+  if ! ceiling "$f"; then rc=1; fi
   while IFS=$'\t' read -r n word; do
     echo "$f:$n: status vocabulary: $word"; rc=1
   done < <(status "$f" | awk '!seen[$0]++')

@@ -67,4 +67,16 @@ rc=0; hack/docs.sh "$tmp/docs/g.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 0 ]
 printf '# U\n\n## 🚀 Démarrage rapide\n\n## Écrire\n\n## Ça va ?\n' > "$tmp/docs/u.md"
 printf '# V\n\n[a](u.md#-démarrage-rapide) [b](u.md#écrire) [c](u.md#ça-va-)\n' > "$tmp/docs/v.md"
 hack/docs.sh "$tmp/docs/v.md"
+
+# Page-type ceilings: marker within first 5 lines; unknown type; moved stub <= 40 words; untyped ignored.
+awk 'BEGIN{printf "<!-- page-type: how-to -->\n# H\n\n"; for(i=0;i<1600;i++) printf "word "; printf "\n"}' > "$tmp/docs/h.md"
+awk 'BEGIN{printf "<!-- page-type: reference -->\n# R\n\n"; for(i=0;i<9000;i++) printf "word "; printf "\n"}' > "$tmp/docs/r.md"
+printf '<!-- page-type: essay -->\n# X\n' > "$tmp/docs/x.md"
+awk 'BEGIN{printf "<!-- page-type: moved -->\n# M\n\n"; for(i=0;i<40;i++) printf "word "; printf "\n"}' > "$tmp/docs/m-bad.md"
+printf '<!-- page-type: moved -->\n# M\n\nMoved to [B](b.md).\n' > "$tmp/docs/m-ok.md"
+out=$(hack/docs.sh "$tmp/docs/h.md" "$tmp/docs/r.md" "$tmp/docs/x.md" "$tmp/docs/m-bad.md" "$tmp/docs/m-ok.md" "$tmp/docs/b.md" 2>&1 || true)
+grep -q 'h.md: over ceiling: 160[0-9] words, how-to allows 1500' <<<"$out"
+grep -q 'x.md: unknown page-type: essay' <<<"$out"
+grep -q 'm-bad.md: moved stub over 40 words' <<<"$out"
+if grep -q 'r.md\|m-ok.md\|b.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
 echo ok
