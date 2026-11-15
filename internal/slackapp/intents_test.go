@@ -67,8 +67,8 @@ func TestShadowAnswersAsToday(t *testing.T) {
 		got.Reply != "could you please stop the task, it is going the wrong way & I am out of patience" {
 		t.Fatalf("the request = %+v", got)
 	}
-	if reads := strings.Join(ab.rooms, ","); reads != "room_summary/"+answerRoom {
-		t.Fatalf("the reads = %s, want the one room_summary", reads)
+	if reads := strings.Join(ab.rooms, ","); reads != "task/"+answerRoom {
+		t.Fatalf("the reads = %s, want the one task", reads)
 	}
 	if c := intentCounts(rig); len(c) != 1 || c["1/stop/shadowed"] != 1 {
 		t.Fatalf("counted %v, want one 1/stop/shadowed", c)

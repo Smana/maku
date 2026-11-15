@@ -160,11 +160,9 @@ func TestLoadNotify(t *testing.T) {
 			}
 			ch := c.Channels["C03"]
 			if tc.want == nil {
-				// The default is webhook.Meaningful's table, per type: a local list that drifted
-				// from it would fail here rather than at the renderer.
 				for _, typ := range webhook.Types() {
-					if got, want := ch.notifies(typ), webhook.Meaningful(typ); got != want {
-						t.Errorf("notifies(%q) = %v, want %v: absent must be the meaningful table", typ, got, want)
+					if got, want := ch.notifies(typ), slices.Contains(defaultNotify, typ); got != want {
+						t.Errorf("notifies(%q) = %v, want %v: absent must be defaultNotify", typ, got, want)
 					}
 				}
 				// The two anchors the design names, whichever way the table is spelled.

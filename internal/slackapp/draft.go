@@ -9,6 +9,9 @@ import (
 	"strings"
 )
 
+// noPlannerLine is the one fixed line a Slack mention answers when planning is off or unavailable (UX9).
+const noPlannerLine = "Planning is not available here; file on GitHub."
+
 // Draft is an issue as typed in a thread: the repository, the title and the body.
 type Draft struct{ Repo, Title, Body string }
 

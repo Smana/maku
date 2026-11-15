@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -127,10 +128,9 @@ func TestBrokerRunCreate(t *testing.T) {
 	}
 }
 
-// A draft's run_create arguments are exactly today's; a proposal's add the plan and its hash and
-// nothing else moves. run_create recomputes the hash over the plan it is sent, so a plan edited after
-// it was shown is `plan_changed` and files nothing (CD19, CD27).
-func TestRunCreateSendsThePlan(t *testing.T) {
+// A draft's run_create arguments are exactly today's; a proposal's send handoff and plan_hash in
+// place of title, text and plan (UX2).
+func TestRunCreateSendsTheHandoff(t *testing.T) {
 	f := newFakeBroker(t, "", `{"structuredContent":{"room":"r-1","issue":42}}`)
 	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
 	body := "## What is wrong\nx\n## What it should be\ny\n## Acceptance check\nz"
@@ -149,27 +149,20 @@ func TestRunCreateSendsThePlan(t *testing.T) {
 	}
 
 	plan := planFixture(t, "slack-one-issue")
-	raw, err := plan.JSON()
-	if err != nil {
-		t.Fatalf("the plan's JSON: %v", err)
-	}
-	proposal := draft
-	proposal.Plan, proposal.PlanHash = raw, intake.Hash(plan)
+	proposal := RunCreate{
+		Draft:      Draft{Repo: "Smana/ai-native-ref"},
+		Handoff:    defaultHandoffID,
+		PlanHash:   intake.Hash(plan),
+		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: "slack/T01ABC/C03/1729.0001", Key: "T01ABC/C03/1729.0001"}
 	if _, err := b.RunCreate(context.Background(), proposal); err != nil {
-		t.Fatalf("run_create with a plan: %v", err)
+		t.Fatalf("run_create with a handoff: %v", err)
 	}
-	var planArg any
-	if err := json.Unmarshal(raw, &planArg); err != nil {
-		t.Fatalf("decode the plan: %v", err)
-	}
-	want := maps.Clone(plain)
-	want["plan"], want["plan_hash"] = planArg, intake.Hash(plan)
+	want := map[string]any{"repo": "Smana/ai-native-ref", "handoff": defaultHandoffID, "plan_hash": intake.Hash(plan),
+		"dataClass": "public", "max_cost": 2.0, "on_behalf_of": "slack:T01ABC/U02DEF",
+		"ref": "slack/T01ABC/C03/1729.0001", "idempotency_key": "T01ABC/C03/1729.0001"}
 	got := f.calls[1].Params.Arguments
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("a proposal's arguments: %+v, want %+v", got, want)
-	}
-	if len(got) != len(plain)+2 {
-		t.Fatalf("%d arguments, want the draft's and the two the plan adds", len(got))
 	}
 }
 
@@ -350,35 +343,22 @@ func TestBrokerSlackLink(t *testing.T) {
 	}
 }
 
-// intake_plan's schema exactly: the requester's words, the channel's repositories as the candidate
-// set, the App's principal and the channel's ceiling — a context key only when the App has one, and
-// no repository the App picked. Its data decodes into the App's own result.
-func TestIntakePlanCall(t *testing.T) {
-	plan := planFixture(t, "slack-one-issue")
-	raw, err := plan.JSON()
-	if err != nil {
-		t.Fatalf("the plan's JSON: %v", err)
-	}
-	hash := intake.Hash(plan)
-	question := `{"text":"Which repository should this go to?","recommended":{"answer":"Smana/ai-native-ref","why":"the thread is about it"}}`
-	f := newFakeBroker(t, "", `{"structuredContent":{"plan":`+string(raw)+`,"hash":"`+hash+`","question":`+question+
-		`,"canStart":true,"canStartWhy":"a channel ceiling binds","degraded":true}}`)
+// handoff's schema exactly: a mention sends text and candidates, a reply continues by id and answer;
+// handoff_check reads or pins the stored plan's workflow.
+func TestHandoffCall(t *testing.T) {
+	f := newFakeBroker(t, "", `{"structuredContent":{"id":"`+defaultHandoffID+`","text":"Repository Smana/ai-native-ref","question":{"text":"Which repository should this go to?","recommended":"Smana/ai-native-ref"},"ready":false,"workflow":"links-solo","budget":1.5}}`)
 	b := Broker{URL: f.srv.URL, Tokens: staticTokens("tok"), HC: f.srv.Client()}
 
-	got, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "the install link in the README is dead",
+	got, err := b.Handoff(context.Background(), HandoffRequest{Text: "the install link in the README is dead",
 		OnBehalfOf: "slack:T01ABC/U02DEF", Candidates: []string{"Smana/ai-native-ref"}, CeilingUSD: 1.5})
-	wantPlan := plan
-	wantPlan.Hash = hash // a plan sent without one gains the hash it computes
-	want := IntakeResult{Plan: wantPlan, Hash: hash,
-		Question: &intake.Question{Text: "Which repository should this go to?",
-			Recommended: intake.Answer{Answer: "Smana/ai-native-ref", Why: "the thread is about it"}},
-		CanStart: true, CanStartWhy: "a channel ceiling binds", Degraded: true}
+	want := HandoffResult{ID: defaultHandoffID, Text: "Repository Smana/ai-native-ref",
+		Question: &HandoffQuestion{Text: "Which repository should this go to?", Recommended: "Smana/ai-native-ref"},
+		Ready:    false, Workflow: "links-solo", Budget: 1.5}
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("the result is %+v (%v), want %+v", got, err, want)
 	}
-
 	c := f.calls[0]
-	if c.Method != "tools/call" || c.Params.Name != "intake_plan" {
+	if c.Method != "tools/call" || c.Params.Name != "handoff" {
 		t.Fatalf("%+v", c)
 	}
 	wantArgs := map[string]any{"text": "the install link in the README is dead",
@@ -387,13 +367,140 @@ func TestIntakePlanCall(t *testing.T) {
 		t.Fatalf("the arguments are %+v, want exactly %+v", c.Params.Arguments, wantArgs)
 	}
 
-	// A context the App does have is the one extra key; nothing else moves.
-	if _, err := b.IntakePlan(context.Background(), IntakeRequest{Text: "x", Context: "the thread says the link is dead",
-		Candidates: []string{"Smana/ai-native-ref"}}); err != nil {
-		t.Fatalf("intake_plan with a context: %v", err)
+	if _, err := b.Handoff(context.Background(), HandoffRequest{ID: defaultHandoffID, Answer: "the README in root",
+		OnBehalfOf: "slack:T01ABC/U02DEF", CeilingUSD: 1.5}); err != nil {
+		t.Fatalf("handoff continuation: %v", err)
 	}
-	more := f.calls[1].Params.Arguments
-	if len(more) != 5 || more["context"] != "the thread says the link is dead" {
-		t.Fatalf("the arguments with a context: %+v", more)
+	cont := f.calls[1].Params.Arguments
+	wantCont := map[string]any{"id": defaultHandoffID, "answer": "the README in root",
+		"on_behalf_of": "slack:T01ABC/U02DEF", "ceiling": 1.5}
+	if !reflect.DeepEqual(cont, wantCont) {
+		t.Fatalf("continuation arguments: %+v, want %+v", cont, wantCont)
+	}
+}
+
+// UX2, UX4: over a mention, revise, workflow select, confirm, and status / needs me / what changed
+// flow, the App calls handoff, handoff_check, run_create, task, and inbox — never intake_plan,
+// classes_list, room_summary, room_changes, or needs_list.
+func TestAppCallsOnlyNewTools(t *testing.T) {
+	plan := planFixture(t, "slack-one-issue")
+	plan.Issues[0].Suggestion = &intake.Suggestion{Profile: "links-solo", Roles: []string{"implementer"}}
+
+	var mu sync.Mutex
+	var tools []string
+	var runCreateArgs map[string]any
+	curPlan := clonePlan(t, plan)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req rpc
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode rpc: %v", err)
+			http.Error(w, "bad", http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		tools = append(tools, req.Params.Name)
+		var out string
+		switch req.Params.Name {
+		case "handoff":
+			if req.Params.Arguments["id"] != nil {
+				curPlan.Issues[0].Title = "docs: fix the install and quickstart links"
+			}
+			out = `{"structuredContent":{"id":"` + defaultHandoffID + `","text":"Repository Smana/ai-native-ref","ready":true,"workflow":"links-solo","budget":2}}`
+		case "handoff_check":
+			if wf, ok := req.Params.Arguments["workflow"].(string); ok {
+				curPlan.Issues[0].Profile = wf
+			}
+			raw, err := curPlan.JSON()
+			if err != nil {
+				t.Errorf("plan json: %v", err)
+			}
+			hash := intake.Hash(curPlan)
+			out = `{"structuredContent":{"plan":` + string(raw) + `,"hash":"` + hash + `","workflows":["links-solo","links-pair"],"repository":` + jsonString(curPlan.Repository) + `,"title":` + jsonString(curPlan.Issues[0].Title) + `}}`
+		case "run_create":
+			runCreateArgs = maps.Clone(req.Params.Arguments)
+			out = `{"structuredContent":{"room":"26zfnuxm","issue":42,"sponsor":"dana"}}`
+		case "task":
+			out = `{"structuredContent":{"room":"26zfnuxm","url":"https://rooms.example/r/26zfnuxm","status":{"phase":"Running","state":"running","issue":{"number":42,"title":"docs: fix the install and quickstart links"}},"items":[{"seq":1,"kind":"run_started","text":"run 1 started"}]}}`
+		case "inbox":
+			out = `{"structuredContent":{"items":[{"kind":"review","id":"7","what":"review PR #7","action":{"kind":"review","label":"review PR #7","url":"https://github.com/Smana/ai-native-ref/pull/7"}}]}}`
+		default:
+			t.Errorf("unexpected tool call %q", req.Params.Name)
+			out = `{"structuredContent":{}}`
+		}
+		mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"jsonrpc":"2.0","id":1,"result":`+out+`}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	rig := newAppRig(t, Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 2})
+	rig.app.Proposals = Proposals{Enabled: true}
+	rig.app.Broker = Broker{URL: srv.URL, Tokens: staticTokens("tok"), HC: srv.Client()}
+
+	// 1. Mention -> handoff + handoff_check
+	rig.slack.seed(Message{TS: proposalThreadTS, User: "U02DEF", Text: "<@U0BOT> " + mentionWords})
+	rig.mention("C03", proposalThreadTS, "<@U0BOT> "+mentionWords)
+	posts := rig.posts()
+	if len(posts) != 1 {
+		t.Fatalf("posts after mention: %+v", posts)
+	}
+	propTS := posts[0].ts
+	p1, ok := posts[0].meta.proposalPayload()
+	if !ok || p1.ID != defaultHandoffID {
+		t.Fatalf("proposal payload: %+v (%v)", p1, ok)
+	}
+
+	// 2. Revise reply -> handoff {id, answer} + handoff_check
+	rig.replySaid("U02DEF", "1729.9001", "also fix the quickstart link")
+	edits := rig.slack.proposalEdits()
+	if len(edits) != 1 {
+		t.Fatalf("edits after reply: %+v", edits)
+	}
+	p2, ok := edits[0].meta.proposalPayload()
+	if !ok || p2.Rev != 2 {
+		t.Fatalf("revised payload: %+v (%v)", p2, ok)
+	}
+
+	// 3. Workflow select -> handoff_check {id, workflow}
+	if st := rig.interact(selectPressOf(t, propTS, proposalPresser, profileValue(p2.Hash, 2, "links-pair"))); st != http.StatusOK {
+		t.Fatalf("select status: %d", st)
+	}
+	edits = rig.slack.proposalEdits()
+	if len(edits) != 2 {
+		t.Fatalf("edits after workflow select: %+v", edits)
+	}
+	p3, ok := edits[1].meta.proposalPayload()
+	if !ok || p3.Rev != 3 {
+		t.Fatalf("pinned payload: %+v (%v)", p3, ok)
+	}
+
+	// 4. Confirm -> run_create {handoff, plan_hash}
+	if st := rig.interact(proposalPressOf(t, propTS, proposalPresser, actionProposalConfirm, proposalValue(p3.Hash, 3))); st != http.StatusOK {
+		t.Fatalf("confirm status: %d", st)
+	}
+
+	// 5. Thread questions -> task and inbox
+	rig.replySaid("U02DEF", "1729.9002", "status")
+	rig.replySaid("U02DEF", "1729.9003", "what changed")
+	rig.replySaid("U02DEF", "1729.9004", "needs me")
+
+	mu.Lock()
+	called := slices.Clone(tools)
+	rc := maps.Clone(runCreateArgs)
+	mu.Unlock()
+
+	for _, must := range []string{"handoff", "handoff_check", "run_create", "task", "inbox"} {
+		if !slices.Contains(called, must) {
+			t.Errorf("flow never called %q; called %v", must, called)
+		}
+	}
+	for _, replaced := range []string{"intake_plan", "classes_list", "room_summary", "room_changes", "needs_list", "rooms_list", "issue_draft"} {
+		if slices.Contains(called, replaced) {
+			t.Errorf("flow called replaced tool %q; called %v", replaced, called)
+		}
+	}
+	if rc["handoff"] != defaultHandoffID || rc["plan"] != nil || rc["text"] != nil || rc["title"] != nil {
+		t.Fatalf("run_create args: %+v", rc)
 	}
 }

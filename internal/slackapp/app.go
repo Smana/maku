@@ -20,9 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/coordination"
-	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -65,25 +63,25 @@ type BrokerAPI interface {
 	RunCreate(ctx context.Context, c RunCreate) (RunResult, error)
 	SlackLinkCode(ctx context.Context, team, user, handle, name string) (string, error)
 	SlackUnlink(ctx context.Context, team, user string) (bool, error)
-	// IntakePlan is the governed planner (CD18): a mention's words become the plan/v1 the proposal
-	// message carries. It files nothing, and ErrUnknownTool is a broker without the tool.
-	IntakePlan(ctx context.Context, in IntakeRequest) (IntakeResult, error)
-	// ClassesList is classes_list for one class of a repository, read for the Slack user named: its
-	// profiles and whether that user may pin one (P5). It changes nothing.
-	ClassesList(ctx context.Context, repository, class, onBehalfOf string) (catalogue.Catalogue, error)
+	// Handoff and HandoffCheck are the governed planner and its stored-plan check (UX2): a mention or a
+	// reply goes through Handoff, and HandoffCheck reads or pins the stored plan's workflow without a
+	// model call. Neither files anything, and ErrUnknownTool is a broker without the tool.
+	Handoff(ctx context.Context, in HandoffRequest) (HandoffResult, error)
+	HandoffCheck(ctx context.Context, id, onBehalfOf string, workflow *string) (HandoffChecked, error)
 	// Decide records one press of an approval's card, on the broker's decide route (§1): the only
 	// thing the App decides, and only for forge.push.
 	Decide(ctx context.Context, d Decision) (DecisionResult, error)
-	// The three reads a filed thread's questions make (CD25): the room's summary, its changes and its
-	// needs, each one sponsored call for the room the thread's Filed line named.
+	// Task and Inbox are the reads a filed thread makes (UX4): Task for status, changes and PR, Inbox
+	// for what needs a person in that room. RoomSummary is read only by a coordination parent's thread,
+	// since task/v1 carries no coordination view.
+	Task(ctx context.Context, room string) (TaskResult, error)
+	Inbox(ctx context.Context, room string) ([]summary.Need, error)
 	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
-	RoomChanges(ctx context.Context, room string) (roomview.ChangeSet, error)
-	NeedsList(ctx context.Context, room string) ([]summary.Need, error)
-	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
-	// draft (v4): neither confirms, files nor runs anything.
 	// IntentClassify is tier 1's one read-only classification of a reply tier 0 does not know
 	// (natural-language intents): a label, never an action. ErrUnknownTool is a broker without it.
 	IntentClassify(ctx context.Context, in IntentRequest) (IntentResult, error)
+	// CoordinationPlan and CoordinationDraft are a two-repository mention's planner and its parent's
+	// draft (v4): neither confirms, files nor runs anything.
 	CoordinationPlan(ctx context.Context, in CoordinationPlanRequest) (CoordinationPlanResult, error)
 	CoordinationDraft(ctx context.Context, parent string, in coordination.CoordinationConfirmation, onBehalfOf string) (coordination.CoordinationConfirmation, error)
 }
@@ -458,11 +456,9 @@ func (a *App) mention(ctx context.Context, ev slackEvent) string {
 	// ahead of its broker still files.
 	// The mention counts as a draft then, not as a proposal action, since no proposal was posted.
 	if a.Proposals.Enabled {
-		code, noPlanner := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
-		if !noPlanner {
-			a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
-			return code
-		}
+		code := a.propose(ctx, ev, ch, thread, commandless(ev.Text, a.BotUserID), 1)
+		a.proposalUpdate(ctx, countMention) // one mention, one action, whatever the planner answered
+		return code
 	}
 	return a.draftMention(ctx, ev, ch, thread)
 }
@@ -929,8 +925,15 @@ var githubLoginRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]{0,38}$`)
 // confirm is the surface's verb, not a second vocabulary: a ✅ is reacted and a Confirm is pressed, so
 // the one line that names who may file names it in the caller's own word (CD8's two callers are one
 // code path).
+var refusalCodeRE = regexp.MustCompile(`^[a-z][a-z0-9_]*$`)
+
 func notFiled(refusal, user, repo string, confirm bool) (code, text string, passing bool) {
 	code, coded := strings.CutPrefix(refusal, "rejected: ")
+	if !coded {
+		if head, _, ok := strings.Cut(refusal, ": "); ok && refusalCodeRE.MatchString(head) {
+			code, coded = head, true
+		}
+	}
 	who := "<@" + user + ">"
 	switch {
 	case !coded:
@@ -948,10 +951,12 @@ func notFiled(refusal, user, repo string, confirm bool) (code, text string, pass
 	case code == "kill_switch":
 		return code, "Not filed: the factory is paused (kill switch); react again once an operator resumes it.", true
 	case code == "plan_changed":
-		// The broker recomposes the plan from the submitted fields and re-hashes it (CD20, CD27): the
-		// message's plan is no longer the one it was asked about, so nothing is filed from it. The
-		// same sentence this family's own hash check says before the broker is called.
+		// The broker checks the stored handoff against the hash shown (UX2, CD27): the message's plan is
+		// no longer the one it was asked about, so nothing is filed from it. The same sentence this
+		// family's own hash check says before the broker is called.
 		return code, planChangedLine, false
+	case code == "handoff_expired":
+		return code, "Not filed: this proposal expired; mention me again to plan it.", false
 	case code == "principal_budget_exhausted":
 		return code, "Not filed: the Slack App's budget for today is spent; react again tomorrow.", false
 	case code == "daily_task_cap":
@@ -1040,7 +1045,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	// v4: a coordination parent's thread is told only what its channel may see of the family now.
 	if th.Coordination {
 		ch, served := a.Channels[th.Channel]
-		if !served || !ch.notifies(e.Type) {
+		if !served || !coordinationNotifies(ch, e.Type) {
 			return "ignored"
 		}
 		return a.deliverCoordination(ctx, th, ch, e.Room)
@@ -1061,14 +1066,103 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 			return countedInPlace
 		}
 	}
-	// CD11: a line is posted only for a transition the thread's channel is told about (its notify
-	// list, webhook.Notify() when it gave none), so a run start says nothing by default. The card
-	// branches above are the approvals switch's, not a line, and are not filtered. A thread whose
-	// channel the config no longer serves posts nothing rather than guessing.
-	if ch, served := a.Channels[th.Channel]; !served || !ch.notifies(e.Type) {
+	ch, served := a.Channels[th.Channel]
+	if !served {
 		return "ignored"
 	}
+	// UX7: room.merged and room.reverted edit the thread's one end line before the notify filter.
+	switch e.Type {
+	case "room.merged":
+		if th.EndTS == "" && !ch.notifies("room.ended") && !ch.notifies("room.merged") {
+			return "ignored"
+		}
+		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+	case "room.reverted":
+		wantLine := ch.Notify != nil && slices.Contains(ch.Notify, "room.reverted")
+		if th.EndTS == "" && !wantLine {
+			return "ignored"
+		}
+		if th.EndTS != "" {
+			text := endLine(e, a.taskSummary(ctx, e.Room))
+			if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
+				a.log().Warn("slack update failed", "room", e.Room, "err", err)
+				return "error"
+			}
+		}
+		if wantLine {
+			return a.postWaitLine(ctx, th, e)
+		}
+		return "posted"
+	}
+	// UX8, CD11: a line is posted only for a transition the thread's channel is told about (its notify
+	// list, defaultNotify when it gave none), so a run start says nothing by default.
+	if !ch.notifies(e.Type) {
+		return "ignored"
+	}
+	switch e.Type {
+	case "room.ended":
+		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+	case "room.task_triaged":
+		sum := a.taskSummary(ctx, e.Room)
+		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
+		text := "Started. Room: " + url
+		if sum.Status.Issue != nil && sum.Status.Issue.Number > 0 {
+			text = fmt.Sprintf("Started #%d. Room: %s", sum.Status.Issue.Number, url)
+		}
+		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
+			a.log().Warn("slack post failed", "room", e.Room, "err", err)
+			return "error"
+		}
+		return "posted"
+	case "room.waiting_for_human":
+		sum := a.taskSummary(ctx, e.Room)
+		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
+		head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
+		if sum.Status.Policy != nil {
+			if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
+				head += " · " + gp
+			}
+		}
+		text := head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
+		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
+			a.log().Warn("slack post failed", "room", e.Room, "err", err)
+			return "error"
+		}
+		return "posted"
+	}
 	return a.postWaitLine(ctx, th, e)
+}
+
+func (a *App) taskSummary(ctx context.Context, room string) summary.Summary {
+	tv, err := a.Broker.Task(ctx, room)
+	if err != nil {
+		a.log().Warn("task read for webhook failed", "room", room, "err", err)
+		return summary.Summary{}
+	}
+	return tv.Summary()
+}
+
+func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string) string {
+	if th.EndTS != "" {
+		if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
+			a.log().Warn("slack update failed", "room", room, "err", err)
+			return "error"
+		}
+		return "posted"
+	}
+	ts, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil)
+	if err != nil {
+		a.log().Warn("slack post failed", "room", room, "err", err)
+		return "error"
+	}
+	th.EndTS = ts
+	if th.At.IsZero() {
+		th.At = a.now()
+	}
+	if err := a.Threads.Put(ctx, room, th); err != nil {
+		a.log().Warn("thread map put failed", "room", room, "err", err)
+	}
+	return "posted"
 }
 
 // line is the event's thread template. Every value is clipped to the broker's own vocabulary
@@ -1078,11 +1172,11 @@ func (a *App) line(e webhook.Event) (string, bool) {
 	reason, limit, state := webhook.Clip("reason", e.Reason), webhook.Clip("limit", e.Limit), webhook.Clip("state", e.State)
 	switch e.Type {
 	case "room.task_triaged":
-		return "Triaged. Room: " + url, true
+		return "Started. Room: " + url, true
 	case "room.run_started":
 		return "A run started.", true
 	case "room.waiting_for_human":
-		return fmt.Sprintf("The work waits for a human (%s): answer it on the room page, %s. Nothing posted here reaches the run.", reason, url), true
+		return fmt.Sprintf("Needs you (%s): answer it on the room page, %s. Nothing posted here reaches the run.", reason, url), true
 	case "room.pr_opened":
 		return fmt.Sprintf("Pull request #%d opened.", e.PR), true
 	case "room.verdict_posted":
@@ -1094,11 +1188,18 @@ func (a *App) line(e webhook.Event) (string, bool) {
 	case "room.budget_reached":
 		return fmt.Sprintf("A budget was reached (%s).", limit), true
 	case "room.ended":
-		return fmt.Sprintf("Ended, state: %s. Room: %s", state, url), true
+		return fmt.Sprintf("Ended: %s. Room: %s", state, url), true
 	case "room.approval_closed":
 		// D10: the thread that draws no card still hears how its wait closed; a channel that draws
 		// cards has the card itself as that message (closeCard), and this line is never reached.
 		return fmt.Sprintf("The approval closed: %s. Room: %s", webhook.Clip("decision", e.Decision), url), true
 	}
 	return "", false
+}
+
+func coordinationNotifies(ch Channel, event string) bool {
+	if ch.notifies(event) {
+		return true
+	}
+	return ch.Notify == nil && (event == "room.merged" || event == "room.reverted")
 }

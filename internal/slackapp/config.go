@@ -81,11 +81,15 @@ type Channel struct {
 	// IntentActions is the App's per-action switch for the write intents (SI21): any of stop, retry,
 	// steer, amend, each once. None is served yet; the list is validated and ignored.
 	IntentActions []string `json:"intentActions,omitempty"`
-	// Notify is which webhook transitions post a line in this channel (CD11). Absent means
-	// webhook.Notify() — the nine a person is told about; an explicit empty list means none, which
-	// is a choice, not an omission.
+	// Notify is which webhook transitions post a line in this channel (UX8, CD11). Absent means
+	// defaultNotify — the four transitions a person is told about by default; an explicit empty list
+	// means none, which is a choice, not an omission.
 	Notify []string `json:"notify,omitempty"`
 }
+
+// defaultNotify are the four transitions a channel with no notify list posts (UX8). room.merged and
+// room.reverted edit the thread's one end line rather than posting a separate line by default.
+var defaultNotify = []string{"room.task_triaged", "room.waiting_for_human", "room.pr_opened", "room.ended"}
 
 // The values of a channel's intents switch (SI20).
 const (
@@ -101,14 +105,13 @@ func (c Channel) intentsServed() bool { return c.Intents == IntentsShadow || c.I
 var intentActionNames = []string{"stop", "retry", "steer", "amend"}
 
 // notifies reports whether t posts a line in this channel. nil and empty are different answers: nil
-// is a deployment that said nothing (the nine webhook.Notify() names), empty is a channel where
-// nothing is news. Validation reads the decoded slice, so a declared list is checked, never the
-// default.
+// is a deployment that said nothing (defaultNotify), empty is a channel where nothing is news.
+// Validation reads the decoded slice, so a declared list is checked, never the default.
 func (c Channel) notifies(t string) bool {
 	if c.Notify != nil {
 		return slices.Contains(c.Notify, t)
 	}
-	return slices.Contains(webhook.Notify(), t)
+	return slices.Contains(defaultNotify, t)
 }
 
 // LoadConfig reads, strictly decodes, defaults and validates the file at path.

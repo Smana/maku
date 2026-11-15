@@ -4,6 +4,7 @@ package slackapp
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -51,32 +52,40 @@ type answerBroker struct {
 	rooms      []string // every read, as "tool/room", oldest first
 }
 
-func (b *answerBroker) RoomSummary(_ context.Context, room string) (summary.Summary, error) {
-	b.rooms = append(b.rooms, "room_summary/"+room)
+func taskFromSummary(sum summary.Summary, changes roomview.ChangeSet) TaskResult {
+	st, _ := json.Marshal(sum.Status)
+	return TaskResult{
+		Room:     sum.Room,
+		URL:      sum.URL,
+		Runs:     sum.Runs,
+		NeedsYou: sum.NeedsYou,
+		Items:    changes.Items,
+		More:     changes.More,
+		Cursor:   changes.Cursor,
+		Status:   st,
+	}
+}
+
+func (b *answerBroker) Task(_ context.Context, room string) (TaskResult, error) {
+	b.rooms = append(b.rooms, "task/"+room)
 	if b.sumErr != nil {
-		return summary.Summary{}, b.sumErr
+		return TaskResult{}, b.sumErr
 	}
-	return b.sum, nil
-}
-
-func (b *answerBroker) RoomChanges(_ context.Context, room string) (roomview.ChangeSet, error) {
-	b.rooms = append(b.rooms, "room_changes/"+room)
 	if b.changesErr != nil {
-		return roomview.ChangeSet{}, b.changesErr
+		return TaskResult{}, b.changesErr
 	}
-	return b.changes, nil
+	return taskFromSummary(b.sum, b.changes), nil
 }
 
-func (b *answerBroker) NeedsList(_ context.Context, room string) ([]summary.Need, error) {
-	b.rooms = append(b.rooms, "needs_list/"+room)
+func (b *answerBroker) Inbox(_ context.Context, room string) ([]summary.Need, error) {
+	b.rooms = append(b.rooms, "inbox/"+room)
 	if b.needsErr != nil {
 		return nil, b.needsErr
 	}
 	return b.needs, nil
 }
 
-// The three reads on the plain stub, which every other flow uses: an empty room, so a test about
-// something else never depends on them. The tests below use answerBroker.
+// The reads on the plain stub, which every other flow uses: an empty room unless summary was set.
 func (b *stubBroker) RoomSummary(context.Context, string) (summary.Summary, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -86,11 +95,16 @@ func (b *stubBroker) RoomSummary(context.Context, string) (summary.Summary, erro
 	return summary.Summary{}, nil
 }
 
-func (b *stubBroker) RoomChanges(context.Context, string) (roomview.ChangeSet, error) {
-	return roomview.ChangeSet{}, nil
+func (b *stubBroker) Task(context.Context, string) (TaskResult, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.summary != nil {
+		return taskFromSummary(*b.summary, roomview.ChangeSet{}), nil
+	}
+	return TaskResult{}, nil
 }
 
-func (b *stubBroker) NeedsList(context.Context, string) ([]summary.Need, error) { return nil, nil }
+func (b *stubBroker) Inbox(context.Context, string) ([]summary.Need, error) { return nil, nil }
 
 // filedThread is a thread the App filed: the parent mention and the Filed line that closes it, with the
 // room the marker carries ("" for a Filed line posted before markers carried one).
@@ -161,7 +175,7 @@ func TestThreadQuestionVocabulary(t *testing.T) {
 		b.changes = set
 	}
 
-	status := []string{"Phase: Running", "Issue #42", "the install link in the README is dead", answerPage}
+	status := []string{"State: Running", "Issue #42", "the install link in the README is dead", answerPage}
 	cases := []asked{
 		{name: "status", phrase: "status", want: status, label: "status", reads: 1},
 		{name: "Status?", phrase: "Status?", want: status, label: "status", reads: 1},

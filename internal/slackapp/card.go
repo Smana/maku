@@ -113,7 +113,7 @@ func notEnabledLine(roomsURL string) string {
 // surfaces. Nothing here is room text, a reason, a GitHub login or another person's name (D5, D12).
 const (
 	cardTitle    = "Approval needed: push to the forge"
-	cardApprove  = "Approve"
+	cardApprove  = "Allow the push"
 	cardDeny     = "Deny"
 	cardOpenRoom = "Open the room"
 	cardProse    = "If you approve: the push goes out and the run continues.\n" +

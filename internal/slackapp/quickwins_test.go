@@ -32,7 +32,7 @@ func TestMentionRefusalOrients(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			rig, _ := withProposals(t)
-			rig.broker.intakeErr = Refused(tc.refusal)
+			rig.broker.handoffErr = Refused(tc.refusal)
 			rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
 
 			w := rig.slack.whispers()
@@ -55,7 +55,7 @@ func TestMentionRefusalOrients(t *testing.T) {
 
 	t.Run("a failed ephemeral falls back to the thread", func(t *testing.T) {
 		rig, _ := withProposals(t)
-		rig.broker.intakeErr = Refused("not_linked: link it first")
+		rig.broker.handoffErr = Refused("not_linked: link it first")
 		rig.slack.failEphemerals = 1
 		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
 		posts := rig.posts()
@@ -71,7 +71,7 @@ func TestMentionRefusalOrients(t *testing.T) {
 		rig, _ := withProposals(t)
 		var buf bytes.Buffer
 		rig.app.Logger = slog.New(slog.NewTextHandler(&buf, nil))
-		rig.broker.intakeErr = Refused("not_linked: link it first")
+		rig.broker.handoffErr = Refused("not_linked: link it first")
 		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
 		log := buf.String()
 		for _, s := range []string{"reason=not_linked", "channel=C03", "user=U02DEF"} {
@@ -89,7 +89,7 @@ func TestPlannerProgress(t *testing.T) {
 	slow := func(t *testing.T) *appRig {
 		rig, _ := withProposals(t)
 		rig.app.PlanningAfter = 5 * time.Millisecond
-		rig.broker.intakeGate = func() { // hold the plan until the status has been posted
+		rig.broker.handoffGate = func() { // hold the plan until the status has been posted
 			for i := 0; i < 400 && len(rig.posts()) == 0; i++ {
 				time.Sleep(5 * time.Millisecond)
 			}
@@ -126,7 +126,7 @@ func TestPlannerProgress(t *testing.T) {
 
 	t.Run("a slow refusal closes the status and says the refusal", func(t *testing.T) {
 		rig := slow(t)
-		rig.broker.intakeErr = Refused("planner_unavailable: down")
+		rig.broker.handoffErr = Refused("planner_unavailable: down")
 		rig.mention("C03", "1729.0001", "<@U0BOT> "+mentionWords)
 		posts, ups := rig.posts(), rig.slack.updatesMade()
 		if len(posts) != 2 || !strings.HasPrefix(posts[1].text, "Not proposed:") {

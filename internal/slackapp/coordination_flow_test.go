@@ -64,8 +64,8 @@ func TestSlackCoordinationOriginUsesTheSharedPlanner(t *testing.T) {
 		strings.Join(b.coordPlans[0].Candidates, ",") != repoContracts+","+repoConsumer || b.coordPlans[0].OnBehalfOf != "slack:T01ABC/U02DEF" {
 		t.Fatalf("%+v", b.coordPlans)
 	}
-	if len(b.coordDrafts) != 1 || b.coordDrafts[0] != "pppppppp slack:T01ABC/U02DEF" || len(b.intake) != 0 || len(b.accepted) != 0 {
-		t.Fatalf("drafts %v, intake %d, runs %d", b.coordDrafts, len(b.intake), len(b.accepted))
+	if len(b.coordDrafts) != 1 || b.coordDrafts[0] != "pppppppp slack:T01ABC/U02DEF" || len(b.handoffs) != 0 || len(b.accepted) != 0 {
+		t.Fatalf("drafts %v, handoffs %d, runs %d", b.coordDrafts, len(b.handoffs), len(b.accepted))
 	}
 	posts := rig.posts()
 	if len(posts) != 1 {
@@ -89,14 +89,14 @@ func TestSlackCoordinationRefusesBeforeAnyModelCall(t *testing.T) {
 	t.Run("an unserved repository", func(t *testing.T) {
 		rig := coordRig(t, repoContracts)
 		rig.mention("C03", "1729.0001", "<@U0BOT> change "+repoContracts+" and https://github.com/"+repoConsumer)
-		if len(rig.broker.coordPlans) != 0 || len(rig.broker.intake) != 0 || len(rig.posts()) != 1 {
-			t.Fatalf("plans %d, intake %d, posts %d", len(rig.broker.coordPlans), len(rig.broker.intake), len(rig.posts()))
+		if len(rig.broker.coordPlans) != 0 || len(rig.broker.handoffs) != 0 || len(rig.posts()) != 1 {
+			t.Fatalf("plans %d, handoffs %d, posts %d", len(rig.broker.coordPlans), len(rig.broker.handoffs), len(rig.posts()))
 		}
 	})
 	t.Run("a third repository", func(t *testing.T) {
 		rig := coordRig(t, repoContracts, repoConsumer, "Smana/third")
 		rig.mention("C03", "1729.0001", "<@U0BOT> "+repoContracts+" "+repoConsumer+" Smana/third")
-		if len(rig.broker.coordPlans) != 0 || len(rig.broker.intake) != 0 || !strings.Contains(rig.posts()[0].text, "two repositories") {
+		if len(rig.broker.coordPlans) != 0 || len(rig.broker.handoffs) != 0 || !strings.Contains(rig.posts()[0].text, "two repositories") {
 			t.Fatalf("%+v", rig.posts())
 		}
 	})

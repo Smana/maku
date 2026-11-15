@@ -45,8 +45,8 @@ func (a *App) tierOne(ctx context.Context, ev slackEvent, ch Channel, room strin
 		return
 	}
 	phase := "unknown"
-	if sum, err := a.Broker.RoomSummary(ctx, room); err == nil {
-		if kind := summary.StatusOf(sum, a.now()).Kind; intent.ValidPhase(kind) {
+	if tv, err := a.Broker.Task(ctx, room); err == nil {
+		if kind := summary.StatusOf(tv.Summary(), a.now()).Kind; intent.ValidPhase(kind) {
 			phase = kind
 		}
 	}

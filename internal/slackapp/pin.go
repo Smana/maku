@@ -6,18 +6,13 @@ import (
 	"context"
 	"errors"
 	"regexp"
-	"slices"
 	"strings"
-
-	"github.com/Smana/maku/internal/intake"
-	"github.com/Smana/maku/internal/roomview"
 )
 
-// A maintainer pins a workflow (a harness profile) from the proposal (P5, spec "Slack proposal"): a static select
-// under the suggestion lists the factory's choice and the class's offered workflows, choosing one is a
-// profile-only revision the broker answers with no model call, and the message becomes that revision
-// with its new hash. Confirm binds the hash shown, as it always did. The broker checks every pin
-// against the catalogue as the presser reads it, and the factory checks it again at triage (P6).
+// A maintainer pins a workflow (a harness profile) from the proposal (P5, UX2, spec "Slack plan"): a
+// static select lists the factory's choice and the repository's offered workflows, choosing one calls
+// handoff_check with {id, on_behalf_of, workflow} and no model call, and the message becomes that
+// revision with its new hash. Confirm binds the hash shown, as it always did.
 
 // The lines a pin's press is answered with, to the presser alone.
 const (
@@ -26,46 +21,30 @@ const (
 	pinUnchangedLine   = "That workflow is already the one this proposal shows."
 	pinRefusedPrefix   = "Workflow not changed: "
 	pinUnreachableLine = "Workflow not changed: the planner could not be reached; try again in a minute."
-	optionsLine        = "Options not shown: "
 )
 
-// pinSelect is what the select shows: the offered profiles and the one the plan pins ("" for the
-// factory's choice).
+// pinSelect is what the select shows: the offered workflows, the one the plan pins ("" for the
+// factory's choice), and the plan's resolved workflow name.
 type pinSelect struct {
-	Options []string
-	Current string
-}
-
-// pinOptions is the select's workflows for plan, read through classes_list for its author: every
-// offered workflow, the repository's default first, when the author maintains the repository. Any
-// class runs any workflow since the workflow left the class (WF4). None for a plan made without the
-// catalogue (no suggestion), for a plan of more than one issue, or when the catalogue cannot be read:
-// the proposal then offers no pin, and nothing else about it changes.
-func (a *App) pinOptions(ctx context.Context, plan intake.Plan, author string) []string {
-	if len(plan.Issues) != 1 || plan.Issues[0].Suggestion == nil || !userRE.MatchString(author) {
-		return nil
-	}
-	class := plan.Issues[0].Class
-	c, err := a.Broker.ClassesList(ctx, plan.Repository, class, "slack:"+a.TeamID+"/"+author)
-	if err != nil {
-		if !errors.Is(err, ErrUnknownTool) {
-			a.log().Info("proposal: no profile select, the catalogue is unavailable", "err", err)
-		}
-		return nil
-	}
-	if !c.Maintainer {
-		return nil
-	}
-	return c.OfferedProfiles(class)
+	Options  []string
+	Current  string
+	Workflow string
 }
 
 // pinsShown is the select p's message carries: none without pins, and none while the plan still asks
 // a question, since the broker pins only a plan with every gap answered.
 func pinsShown(p ProposalPayload) *pinSelect {
-	if len(p.Pins) == 0 || len(p.Plan.Issues) != 1 || p.Plan.Question != nil || len(p.Plan.Gaps) > 0 {
+	if len(p.Pins) == 0 {
 		return nil
 	}
-	return &pinSelect{Options: p.Pins, Current: p.Plan.Issues[0].Profile}
+	if p.Plan.APIVersion != "" && (len(p.Plan.Issues) != 1 || p.Plan.Question != nil || len(p.Plan.Gaps) > 0) {
+		return nil
+	}
+	cur := p.Pinned
+	if p.Plan.APIVersion != "" && len(p.Plan.Issues) == 1 {
+		cur = p.Plan.Issues[0].Profile
+	}
+	return &pinSelect{Options: p.Pins, Current: cur, Workflow: proposalWorkflowName(p)}
 }
 
 // profileValue is a select option's value: the proposal's value and the profile ("" for the
@@ -105,36 +84,39 @@ type slackSelect struct {
 	InitialOption *slackOption    `json:"initial_option,omitempty"`
 }
 
-// pinBlock is the select and the Options button, both binding the hash and revision shown.
+// pinBlock is the workflow static select, binding the hash and revision shown.
 func pinBlock(hash string, rev int, s pinSelect) slackBlock {
 	opt := func(text, profile string) slackOption {
 		return slackOption{Text: &slackBlockText{Type: "plain_text", Text: text}, Value: profileValue(hash, rev, profile)}
 	}
+	placeholder := s.Workflow
+	if placeholder == "" {
+		placeholder = "factory's choice"
+	}
 	sel := slackSelect{Type: "static_select", ActionID: actionProposalProfile,
-		Placeholder: &slackBlockText{Type: "plain_text", Text: "Workflow"},
+		Placeholder: &slackBlockText{Type: "plain_text", Text: placeholder},
 		Options:     []slackOption{opt("Workflow: factory's choice", "")}}
 	for _, name := range s.Options {
 		sel.Options = append(sel.Options, opt("Workflow: "+name, name))
 	}
-	for i := range sel.Options {
-		if strings.HasSuffix(sel.Options[i].Value, "|"+s.Current) {
-			sel.InitialOption = &sel.Options[i]
+	if s.Current != "" {
+		for i := range sel.Options {
+			if strings.HasSuffix(sel.Options[i].Value, "|"+s.Current) {
+				sel.InitialOption = &sel.Options[i]
+			}
 		}
 	}
-	return slackBlock{Type: "actions", Elements: []any{sel,
-		slackButton{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Options"},
-			ActionID: actionProposalOptions, Value: proposalValue(hash, rev)}}}
+	return slackBlock{Type: "actions", Elements: []any{sel}}
 }
 
-// pinProposal is a select's press: the plan shown with only its profile changed, sent to the broker
-// as a revision for the presser (whose maintainer flag the broker reads), and the message rewritten
-// as the revision it answers. The thread is read under the edit lock first, so a press on a replaced
-// or closed proposal changes nothing.
+// pinProposal is a select's press: handoff_check with {id, on_behalf_of, workflow} for the presser
+// (whose maintainer flag the broker reads), and the message rewritten as the revision it answers. The
+// thread is read under the edit lock first, so a press on a replaced or closed proposal changes nothing.
 func (a *App) pinProposal(ctx context.Context, in interaction, thread string, p ProposalPayload, profile string) string {
-	if len(p.Plan.Issues) != 1 {
+	if !proposalHashHolds(p) {
 		return a.pressAnswer(ctx, in, thread, proposalGoneLine, "refused")
 	}
-	if p.Plan.Issues[0].Profile == profile {
+	if p.Pinned == profile {
 		return a.pressAnswer(ctx, in, thread, pinUnchangedLine, "ignored")
 	}
 	a.editMu.Lock()
@@ -153,55 +135,48 @@ func (a *App) pinInPlace(ctx context.Context, in interaction, thread string, p P
 	if code, line := a.threadPress(in, msgs); code != "" {
 		return code, line
 	}
-	base := p.Plan
-	candidate := base
-	candidate.Issues = slices.Clone(base.Issues)
-	candidate.Issues[0].Profile = profile
-	ch := a.Channels[in.Channel]
-	text := "profile: factory's choice"
-	if profile != "" {
-		text = "profile: " + profile
+	latest, _ := a.threadProposal(msgs)
+	if latest == nil {
+		return "refused", proposalStaleLine
 	}
-	res, err := a.Broker.IntakePlan(ctx, IntakeRequest{Text: text, OnBehalfOf: "slack:" + a.TeamID + "/" + in.User,
-		Candidates: ch.Repositories, CeilingUSD: ch.MaxCostUSD, Plan: &base, Hash: p.Hash, Candidate: &candidate})
+	current, ok := latest.Metadata.proposalPayload()
+	if !ok || current.Hash != p.Hash || current.ID != p.ID {
+		return "refused", planChangedLine
+	}
+	checked, err := a.Broker.HandoffCheck(ctx, p.ID, "slack:"+a.TeamID+"/"+in.User, &profile)
 	var r Refused
 	switch {
 	case errors.As(err, &r):
 		return "refused", pinRefusedPrefix + shown(string(r))
 	case err != nil:
-		a.log().Warn("intake_plan pin failed", "err", err)
+		a.log().Warn("handoff_check pin failed", "err", err)
 		return "error", pinUnreachableLine
 	}
-	next, err := newProposal(res.Plan, res.Hash, p.Author, p.Rev+1)
+	if checked.Hash == p.Hash {
+		return "ignored", pinUnchangedLine
+	}
+	next, err := newProposal(checked.Plan, checked.Hash, p.Author, p.Rev+1)
 	if err != nil {
 		a.log().Warn("pinned proposal not built", "channel", in.Channel, "err", err)
 		return "error", pinUnreachableLine
 	}
-	next.Pins = p.Pins // the same class: the offered profiles have not moved
-	if code := a.updateProposal(ctx, in.Channel, in.MessageTS, p, next, res.Question); code == "error" {
+	next.ID = p.ID
+	next.Degraded = p.Degraded
+	next.Pins = p.Pins
+	if len(checked.Workflows) > 0 {
+		next.Pins = checked.Workflows
+	}
+	next.Workflow = p.Workflow
+	if profile != "" {
+		next.Workflow = profile
+	}
+	prev := p
+	prev.Plan = checked.Plan
+	if code := a.updateProposal(ctx, in.Channel, in.MessageTS, prev, next, checked.Plan.Question); code == "error" {
 		return "error", proposalUnreadableLine
 	}
 	if profile == "" {
 		return "pinned", unpinnedLine
 	}
 	return "pinned", strings.Replace(pinnedLine, "%s", profile, 1)
-}
-
-// proposalOptions is the Options button: classes_list's answer for the plan's class, read for the
-// presser, to the presser alone.
-func (a *App) proposalOptions(ctx context.Context, in interaction, thread string, p ProposalPayload) string {
-	if len(p.Plan.Issues) != 1 {
-		return a.pressAnswer(ctx, in, thread, proposalGoneLine, "refused")
-	}
-	class := p.Plan.Issues[0].Class
-	c, err := a.Broker.ClassesList(ctx, p.Plan.Repository, class, "slack:"+a.TeamID+"/"+in.User)
-	var r Refused
-	switch {
-	case errors.As(err, &r):
-		return a.pressAnswer(ctx, in, thread, optionsLine+shown(string(r)), "refused")
-	case err != nil:
-		a.log().Warn("classes_list failed", "err", err)
-		return a.pressAnswer(ctx, in, thread, optionsLine+"the factory's list of classes could not be read; try again in a minute.", "error")
-	}
-	return a.pressAnswer(ctx, in, thread, roomview.CatalogueText(c, class), "options")
 }

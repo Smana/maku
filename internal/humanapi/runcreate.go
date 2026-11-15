@@ -33,13 +33,16 @@ const maxIdempotencyKey = 128
 // factory sees, system:<name>:<key>, stays under its 255. plan and plan_hash are the pair a caller
 // that was shown a plan passes (CD19, CD27): both are optional, so an App without a plan sends the
 // four fields it always sent, and the hash's pattern is plan_check's, interpolated, so a client's copy
-// and the broker's cannot drift.
-var runCreateSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["repo","text","dataClass","max_cost"],` +
+// and the broker's cannot drift. handoff is the third way (UX2): the id of a plan the broker stored,
+// in place of plan and plan_hash, and of the repository, title and text the stored plan already
+// carries; repo and text are therefore required by the tool itself unless a handoff is passed.
+var runCreateSchema = json.RawMessage(`{"type":"object","additionalProperties":false,"required":["dataClass","max_cost"],` +
 	`"properties":{"repo":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},"title":{"type":"string","maxLength":1024},` +
 	`"text":{"type":"string","minLength":1,"maxLength":16384},"dataClass":{"type":"string","enum":["public"]},"max_cost":{"type":"number","exclusiveMinimum":0},` +
 	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},"ref":{"type":"string","maxLength":256},` +
 	`"idempotency_key":{"type":"string","minLength":1,"maxLength":128},` +
-	`"plan":{"type":"object"},"plan_hash":{"type":"string","pattern":"` + hashRE.String() + `"}}}`)
+	`"plan":{"type":"object"},"plan_hash":{"type":"string","pattern":"` + hashRE.String() + `"},` +
+	`"handoff":{"type":"string","minLength":1,"maxLength":128}}}`)
 
 var onBehalfRE = regexp.MustCompile(`^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$`)
 
@@ -58,6 +61,10 @@ type runCreateArgs struct {
 	// re-validates it — and a call carrying neither is the tool it always was.
 	Plan     json.RawMessage `json:"plan"`
 	PlanHash string          `json:"plan_hash"`
+	// Handoff is the id of a plan the broker stored (UX2): the call files that plan, after
+	// handoffCheck, and carries no plan of its own. PlanHash may ride beside it, binding the plan the
+	// person was shown to the one stored.
+	Handoff string `json:"handoff"`
 }
 
 // slackFiles is how many issues one run_create call files: a task is one issue's work, and a plan of
@@ -176,10 +183,18 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 		return runrequest.TaskResult{}, toolError("unknown tool: run_create")
 	}
 	var a runCreateArgs
-	if mcpwire.DecodeArgs(args, &a) != nil || !repositoryRE.MatchString(a.Repo) || a.MaxCost <= 0 || a.Text == "" ||
-		a.DataClass != "public" || len(a.IdempotencyKey) > maxIdempotencyKey {
-		return runrequest.TaskResult{}, toolError("invalid_arguments: repo, text, dataClass public and max_cost above 0 are required; " +
-			"idempotency_key is at most 128 characters")
+	bad := toolError("invalid_arguments: repo, text, dataClass public and max_cost above 0 are required; " +
+		"idempotency_key is at most 128 characters")
+	if mcpwire.DecodeArgs(args, &a) != nil || a.MaxCost <= 0 || a.DataClass != "public" || len(a.IdempotencyKey) > maxIdempotencyKey {
+		return runrequest.TaskResult{}, bad
+	}
+	if a.Handoff != "" {
+		if err := s.fromHandoff(ctx, p, &a); err != nil {
+			return runrequest.TaskResult{}, err
+		}
+	}
+	if !repositoryRE.MatchString(a.Repo) || a.Text == "" {
+		return runrequest.TaskResult{}, bad
 	}
 	if !sponsored.ValidRef(a.Ref) {
 		return runrequest.TaskResult{}, toolError("bad_ref: ref is a git ref of at most 256 characters")
@@ -233,6 +248,52 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 		s.countChoices(ctx, intake.Plan{Issues: []intake.Issue{intake.Issue(planned)}}, intake.SurfaceSlack)
 	}
 	return res, err
+}
+
+// fromHandoff turns a run_create {handoff} into the plan-carrying call it stands for (UX2): the id's
+// stored plan, re-validated by handoffCheck for the Slack user the call names, becomes the call's plan,
+// hash, title and text, so everything below holds it exactly as it holds a plan the App carried. The
+// call carries none of those itself — a plan or a body beside the id would be two answers to what is
+// filed — and a repository it names must be the stored plan's, as GitHub reads a name. An id that
+// expired, is unknown or is another principal's answers handoff_expired, and nothing of the stored plan
+// reaches the refusal.
+func (s *Server) fromHandoff(ctx context.Context, p authn.Principal, a *runCreateArgs) error {
+	switch {
+	case len(a.Handoff) > 128 || strings.TrimSpace(a.Handoff) == "":
+		return toolError("invalid_arguments: handoff is the id handoff answered")
+	case planPresent(a.Plan) || a.Title != "" || a.Text != "":
+		return toolError("invalid_arguments: handoff replaces plan, title and text: the broker files the plan it stored")
+	case a.OnBehalfOf == "":
+		return toolError("invalid_arguments: on_behalf_of is required with a handoff: it is the Slack user who confirmed it")
+	case !onBehalfRE.MatchString(a.OnBehalfOf):
+		return toolError("invalid_arguments: on_behalf_of is slack:<team>/<user>")
+	case a.PlanHash != "" && !hashRE.MatchString(a.PlanHash):
+		return toolError("invalid_arguments: plan_hash is the sha256: value the plan was shown with")
+	}
+	checked, _, err := s.handoffCheckFor(ctx, p, a.Handoff, nil, a.OnBehalfOf)
+	if err != nil {
+		return err
+	}
+	if a.PlanHash != "" && a.PlanHash != checked.Hash {
+		return toolError(intake.ReasonRefusal(intake.ReasonPlanChanged).Error())
+	}
+	plan := checked.Plan
+	if len(plan.Issues) != slackFiles {
+		return toolError("invalid_arguments: Slack files exactly one issue: the plan carries " + strconv.Itoa(len(plan.Issues)))
+	}
+	if a.Repo != "" && !strings.EqualFold(a.Repo, plan.Repository) {
+		return toolError(intake.ReasonRefusal(intake.ReasonPlanChanged).Error())
+	}
+	raw, err := plan.JSON()
+	if err != nil {
+		return err
+	}
+	if a.Repo == "" {
+		a.Repo = plan.Repository
+	}
+	a.Plan, a.PlanHash = raw, checked.Hash
+	a.Title, a.Text = plan.Issues[0].Title, plan.Issues[0].Body
+	return nil
 }
 
 // redactCheck refuses text holding what the redactor flags, failing closed without a redactor.
