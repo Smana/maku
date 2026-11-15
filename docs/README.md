@@ -1,6 +1,6 @@
 # maku documentation
 
-<a href="naming.md">
+<a href="../README.md">
   <picture>
     <source media="(prefers-color-scheme: dark)" srcset="assets/brand/png/maku-lockup-horizontal-dark.png">
     <img src="assets/brand/png/maku-lockup-horizontal-light.png" alt="Maku, a controlled stage for delegated agent work" width="300">
@@ -14,7 +14,8 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | Page | Answers |
 |---|---|
 | [Install on your cluster](install.md) | A production install on a cluster your team runs: the seams you bring, `maku install --print`, Helm, Flux and Argo CD, the preflight, private code, sandbox nodes, the support floor |
-| [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), what production adds, and the older one-run path |
+| [Quickstart](quickstart.md) | The factory loop on a laptop in one command (`task demo`), and what production adds |
+| [Team evaluation](team-evaluation.md) | Adding approved workflows to the demo and comparing `apply` and `observe` outcomes |
 | [Concepts](concepts.md) | The vocabulary of rooms and the factory; the room's phases; the Room CRD |
 | [Architecture](architecture.md) | The services and images, the trust boundaries, one task's life, where each piece runs |
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
@@ -38,11 +39,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [Observability](observability.md) | The scrape objects, the alert rule and the dashboards the umbrella chart renders, what each component serves; traces, their two endpoints and what run tracing opens on the network |
 | [Operations](operations.md) | Metrics, alerts, SQL on the log, retention, backups, failures; the factory's signals |
 | [Upgrading](upgrading.md) | What changes in the install steps, release by release: from the demo to production (the production seams), adopting the umbrella from `maku-factory`, the CRD chart and its adoption, `values-demo.yaml` |
-| [The group move](maku-group-migration.md) | History: v0.31.0's quiet window, `Room` and `Task` to `maku.ogenki.io`; its command is removed |
-| [Development](development.md) | The store test harness, migrations, the web build and preview |
 | [Roadmap](roadmap.md) | What shipped, what is open |
-| [The v4.0 decision pack](superpowers/v4-readiness.md) | Each v4 design decision with what implements and proves it, every item still owed before v4.0.0 with its owner, the manual GKE and kubeadm install runbooks and their ledger entry |
-| [Naming](naming.md) | Maku the product name, the unchanged technical names, the visual identity |
 
 ## Reading paths
 
@@ -53,7 +50,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | Turn on auto-merge | [Merge policies](merge-policies.md) |
 | Operate it | [Install](install.md) → [Operations](operations.md) → [Observability](observability.md) → [Security](security.md) |
 
-To change the code, read [AGENTS.md](../AGENTS.md), then [Development](development.md), the
+To change the code, read [AGENTS.md](../AGENTS.md) and [Contributing](contributing/README.md), then the
 [event envelope](event-envelope.md), the [room log](room-log.md) and the [API](api.md).
 
 Design sources: the [rooms design](https://github.com/Smana/cloud-native-ref/blob/main/docs/superpowers/specs/2026-09-23-agent-collaboration-rooms-design.md),

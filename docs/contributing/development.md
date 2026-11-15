@@ -1,7 +1,8 @@
+<!-- page-type: reference -->
 # Development
 
-**[CONTRIBUTING.md](../CONTRIBUTING.md) is the workflow** (prerequisites, `task check`, commits,
-migrations, releases) and **[AGENTS.md](../AGENTS.md) is the coding standard** (conventions, the
+**[CONTRIBUTING.md](../../CONTRIBUTING.md) is the workflow** (prerequisites, `task check`, commits,
+migrations, releases) and **[AGENTS.md](../../AGENTS.md) is the coding standard** (conventions, the
 package map, test rules, security rules). This page adds only what those two leave out: how the store
 test harness mirrors the cluster, and the checks around a migration.
 
@@ -21,7 +22,7 @@ A grant or policy that works only for a superuser therefore fails here, not in t
 that proves a database guarantee connects **as the role it constrains** and asserts the exact
 SQLSTATE, for example `42501` (insufficient privilege) when `rooms_broker` tries
 `UPDATE events`. The guarantees and their tests are listed in
-[room log](room-log.md#the-guarantees).
+[room log](../room-log.md#the-guarantees).
 
 ```bash
 go test -race ./internal/store/...
@@ -44,7 +45,7 @@ CONTRIBUTING.md has the steps to add one. Two checks it does not spell out:
   Atlas operator retries.
 
 Why `atlas.sum` exists, which migration each phase adds, and how `atlasSchema.ref` tracks them:
-[room log](room-log.md#migrations-with-atlas).
+[room log](../room-log.md#migrations-with-atlas).
 
 ## The web UI
 
@@ -70,7 +71,7 @@ npm --prefix web run preview   # http://127.0.0.1:4180/preview/preview.html (?li
 
 The theme is the Ogenki design system's: `web/src/app.css` holds the design tokens, Day in
 `:root` (light) and Night in `.dark`, on the same semantic names (`--background`, `--card`,
-`--primary`, …), so a component never picks a colour of its own. [`web/DESIGN.md`](../web/DESIGN.md)
+`--primary`, …), so a component never picks a colour of its own. [`web/DESIGN.md`](../../web/DESIGN.md)
 is the reference for UI work: the token map, the type scale, cards, focus, the one gradient and the
 motion rules. `web/src/theme.ts` keeps the three-mode theme (light/dark/system, the `dark` class on
 `<html>`, the `app-wizard:theme` storage key).
@@ -190,7 +191,7 @@ harness (`hack/install-e2e`) or the e2e stub (`hack/ci-changes.sh`'s `install` k
 3. runs `maku preflight --strict`: every check passes and none warns.
 
 The e2e stub (`hack/e2e-stub`) plays the humans' issuer, GitHub's API and the model provider.
-Postgres 16 runs as a plain Deployment outside the chart, bootstrapped with [the database page's](database.md)
+Postgres 16 runs as a plain Deployment outside the chart, bootstrapped with [the database page's](../database.md)
 SQL.
 
 | Task | Cluster | What it adds |

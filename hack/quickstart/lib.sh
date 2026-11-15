@@ -7,7 +7,7 @@
 # 2026-10-27). Elsewhere gVisor in kind and a port-forward to a loopback-only listener never ran.
 qs_platform_ok() {
   [[ $1 == Linux ]] && return 0
-  echo "the quickstart runs on Linux with Docker only: $1 is unproven (gVisor in kind and a port-forward to a loopback-only listener were never run there); see docs/quickstart.md#prerequisites" >&2
+  echo "the quickstart runs on Linux with Docker only: $1 is unproven (gVisor in kind and a port-forward to a loopback-only listener were never run there); see docs/contributing/one-run-quickstart.md#prerequisites" >&2
   return 1
 }
 

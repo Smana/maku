@@ -122,8 +122,7 @@ task demo          # a cluster, a GitHub App, your repository from a template, t
 ```
 
 It asks for an OpenAI-compatible model and two GitHub clicks, and runs on a public repository you own: on a
-laptop, the agent can read the model key. The [quickstart](docs/quickstart.md) walks the loop; its last
-section is the older one-run path, `task quickstart`.
+laptop, the agent can read the model key. The [quickstart](docs/quickstart.md) walks the loop.
 
 ## Status
 
@@ -148,7 +147,7 @@ Maku is for platform teams who want coding agents under their own rules. It isn'
 | Following a run | [Web UI](docs/web-ui.md) and [the `maku` CLI](docs/cli.md) |
 | Assessing the risk | [Security](docs/security.md): the threat model and what each control leaves open |
 | Operating a cluster | [Integration](docs/integration.md), then [Operations](docs/operations.md) |
-| Changing the code | [AGENTS.md](AGENTS.md), then [Development](docs/development.md) |
+| Changing the code | [AGENTS.md](AGENTS.md), then [Development](docs/contributing/development.md) |
 
 Every page is indexed in [docs/](docs/README.md).
 
