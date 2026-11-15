@@ -47,7 +47,7 @@ builds a system authenticator that never authenticates, so the system routes ans
 than disappearing. It takes `mode: jwks` (the default, verifying against `issuer` and `jwksURL`) or
 `mode: tokenreview`, which asks the apiserver and needs no reachable issuer. `systemPrincipals`
 requires it: without an issuer no system caller could ever be vouched for, and the config is
-refused ([broker fields](config.md#broker-fields)).
+refused ([integration](config.md#broker-fields)).
 
 No call reaches Kubernetes' TokenReview unless an issuer says `mode: tokenreview`: every other token
 is validated offline and issuer-agnostically. A run
@@ -490,7 +490,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | Method and path | Does |
 |---|---|
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
-| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](../web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](../github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
+| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui-settings.md#install-banner-unsafe-codes) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](../github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
 | `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the text `room_brief` returns and the cursor to ask from next |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
@@ -498,6 +498,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
+| `POST /api/slack/stops`, `POST /api/slack/retries`, `POST /api/slack/answers` | The Slack App's stop, retry and question-answer routes, when `human.slackStop` / `human.slackRetry` / `human.slackAnswer`: `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`) → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 4 KiB cap (8 KiB on `/answers`), 10 a minute (burst 5, per `(team,user)`, per replica), identity checked in `slack_links` and forwarded as `onBehalfOf: slack:<team>/<user>` to [`POST /v1/tasks/{task}/stops`, `/retries` and `/answers`](#post-v1taskstaskstops-post-v1taskstaskretries-and-post-v1taskstaskanswers) |
 | `GET /link/github`, `POST /link/github/{start,confirm,unlink}`, `GET /link/github/callback` | The [GitHub account link](../github-link.md), when `human.githubLink`; else `404`. The page and its POSTs take the web UI's session and the broker's own `Origin`; the callback takes no session (the front door lets `GET=^/link/github/callback$` through) and links nothing |
 | `DELETE /api/links/github/{sub}` | An admin's web session removes another account's GitHub link: `{"unlinked": bool}`; `403` for a member or a CLI bearer |
 | `GET /settings/approval-memory`, `/api/approval-memory/…` | Approval memory (merge policy stage 5), when `human.approvalMemory`; else `404`. `GET grants?repository=&class=&status=&q=` lists the grants of the repositories the caller may read (an admin reads all), `unverified` when an access check failed; `GET grants/{id}` adds its audit and the conditions that stay outside it; `GET export?repository=` is the same list as YAML. `POST preview` and `POST grants` take `{repository, class, caughtFiles (exact paths) or files (patterns), diffShape?, policyHash, pullRequest, lifetimeDays?}` ("merge and create rule", GitHub write on the repository): the preview saves nothing and answers the exact predicate, the future pull requests it would match, what stays outside it, its expiry, its revoke path and what "merge once" does instead; the create saves it and answers the same with the grant; `POST grants/{id}/{revoke,renew,reconfirm}` `{version?, reason?, lifetimeDays?}` moves one: revoking takes write or an admin, the others write, and a reconfirmation rebinds to the policy its suspension was found under. Writes take the web UI's session from the broker's own `Origin` (`web_only`, `cross_origin`), a body of 16 KiB at most; `409 grant_state` for a move its status refuses |
@@ -1241,6 +1242,20 @@ beyond its ids: the body cannot name a human, a room or a class.
 Merging is untouched: this route decides an approval, and the merge stays a review of the current
 head on GitHub.
 
+### `POST /api/slack/stops`, `POST /api/slack/retries` and `POST /api/slack/answers`
+
+Mounted independently when `human.slackStop`, `human.slackRetry` or `human.slackAnswer` is set (each
+shaped like `human.slackDecide`: `principal`, `teamID`, `repositories`; unset is the mux's `404`).
+Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on `/answers`, unknown
+fields refused): `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`, 1..4 000
+bytes with no control characters), all validated by shape before any read. Bearer: the App's
+configured sponsored principal alone; `team` must match `teamID`; `10` requests a minute per `(team,
+user)` with burst `5` (`429 {"result": "rate_limited"}`). The broker checks `slack_links`
+(`not_linked`, `link_unverified`), checks that the room's repository is in the route's `repositories`
+(`not_permitted`) and resolves a task (`unknown_task`), then forwards `{onBehalfOf:
+"slack:<team>/<user>"}` (with `answer` on `/answers`) with the App's own bearer token to the
+factory's stop, retry or answer route and returns its `{"result"}`.
+
 ## `:8082` — the factory's task intake
 
 ### The factory's API
@@ -1319,6 +1334,29 @@ required). `Idempotency-Key` is the incident's trigger key.
 
 A sponsored principal's request refuses an `incident` (`bad_json`), and an internal principal's refuses
 everything a sponsored one's does beyond its own keys.
+
+### `POST /v1/tasks/{task}/stops`, `POST /v1/tasks/{task}/retries` and `POST /v1/tasks/{task}/answers`
+
+Served on the same port while `api.sponsored` is non-empty, for a sponsored principal's bearer token
+alone (`403 sponsored_only` for a human, internal or run caller). `{task}` is the task's name or
+8-character room id. Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on
+`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>"}` (plus `answer` on
+`/answers`, 1..4 000 bytes with no control characters). The factory re-resolves the GitHub login
+from `onBehalfOf` (config map, else `slack_links`, never from a body field) and checks that the
+principal lists the task's repository. `/stops` and `/retries` require maintainer write permission on
+GitHub (`not_maintainer`) and apply the exact transition of the `factory/stop` label (`Queued` or
+`Running` → `Stopped`, else `not_running`) or the `/factory retry` comment (`Escalated` → `Queued`,
+proceeding on the scoper's first assumption when the escalation was a question; a `Queued` task held
+by a model hold answers `not_escalated`). `/answers` requires an open scoper question on the task
+(`Escalated` or `AwaitingHuman` with `scope.question` or `needs_author`, else `no_question`); when
+the resolved login is a maintainer of the repository (`admin`, `maintain`, `write`) or the issue's
+author (`not_permitted` for anyone else), the factory appends a decision record to `## Decisions` in
+the issue body on GitHub and, for a maintainer, clears the question and restarts the task (`Queued`
+at `scope` with `ScopeAttempts` decremented), while for a non-maintainer issue author it leaves the
+task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, answered,
+answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
+no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
+caller auth, or `503` (`link_unverified`, `tasks_unavailable`).
 
 ### `POST /v1/tasks/{task}/verification`
 

@@ -54,11 +54,16 @@ type answerBroker struct {
 
 func taskFromSummary(sum summary.Summary, changes roomview.ChangeSet) TaskResult {
 	st, _ := json.Marshal(sum.Status)
+	var q *TaskQuestion
+	if sum.Status.Question != "" {
+		q = &TaskQuestion{Text: sum.Status.Question}
+	}
 	return TaskResult{
 		Room:     sum.Room,
 		URL:      sum.URL,
 		Runs:     sum.Runs,
 		NeedsYou: sum.NeedsYou,
+		Question: q,
 		Items:    changes.Items,
 		More:     changes.More,
 		Cursor:   changes.Cursor,

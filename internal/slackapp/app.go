@@ -76,6 +76,10 @@ type BrokerAPI interface {
 	// since task/v1 carries no coordination view.
 	Task(ctx context.Context, room string) (TaskResult, error)
 	Inbox(ctx context.Context, room string) ([]summary.Need, error)
+	// Stop, Retry and Answer record one confirmed press on the broker's stop, retry and answer routes.
+	Stop(ctx context.Context, a Act) (ActResult, error)
+	Retry(ctx context.Context, a Act) (ActResult, error)
+	Answer(ctx context.Context, a Answer) (ActResult, error)
 	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
 	// IntentClassify is tier 1's one read-only classification of a reply tier 0 does not know
 	// (natural-language intents): a label, never an action. ErrUnknownTool is a broker without it.
@@ -716,10 +720,26 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			return "ignored" // a cancelled proposal filed nothing: its own message says so, and there is no room to ask about
 		}
 		if closed {
-			// CD25: a thread whose task is filed answers the five questions, and nothing else — the
-			// room is the one its own Filed line names, never a guess from the issue number. Still a
-			// reply and still no command: the answer says where approving, steering and stopping happen.
+			// CD25: a thread whose task is filed answers the closed question set, and when the channel's
+			// intentActions turns stop or retry on, draws a confirmation named to the replier.
 			room := a.threadRoom(msgs)
+			q := questionOf(ev.Text)
+			if (q == QuestionStop && ch.actsOn(actStop)) || (q == QuestionRetry && ch.actsOn(actRetry)) {
+				a.answerCount(ctx, q)
+				if !roomRE.MatchString(room) {
+					if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, unknownRoomLine, nil); err != nil {
+						a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
+						return "error"
+					}
+					return "answered"
+				}
+				return a.actConfirm(ctx, Thread{Channel: ev.Channel, TS: ev.ThreadTS}, string(q), room, ev.User)
+			}
+			if q == QuestionUnknown && ch.actsOn(actAnswer) && roomRE.MatchString(room) {
+				if hasOpenQuestion(a.taskSummary(ctx, room)) {
+					return a.answerConfirm(ctx, Thread{Channel: ev.Channel, TS: ev.ThreadTS}, room, ev.User, ev.Text)
+				}
+			}
 			line := a.answer(ctx, ev, room)
 			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
 				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
@@ -727,7 +747,7 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 			}
 			// Tier 1, in shadow: the thread already has today's line; the classification is read, counted
 			// and logged after it, so the person never waits on a model (SI20).
-			if questionOf(ev.Text) == QuestionUnknown {
+			if q == QuestionUnknown {
 				a.tierOne(ctx, ev, ch, room)
 			}
 			return "answered"
@@ -1076,7 +1096,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		if th.EndTS == "" && !ch.notifies("room.ended") && !ch.notifies("room.merged") {
 			return "ignored"
 		}
-		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)), nil)
 	case "room.reverted":
 		wantLine := ch.Notify != nil && slices.Contains(ch.Notify, "room.reverted")
 		if th.EndTS == "" && !wantLine {
@@ -1101,7 +1121,8 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	}
 	switch e.Type {
 	case "room.ended":
-		return a.upsertEndLine(ctx, e.Room, th, endLine(e, a.taskSummary(ctx, e.Room)))
+		text := endLine(e, a.taskSummary(ctx, e.Room))
+		return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text))
 	case "room.task_triaged":
 		sum := a.taskSummary(ctx, e.Room)
 		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
@@ -1116,12 +1137,14 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		return "posted"
 	case "room.waiting_for_human":
 		sum := a.taskSummary(ctx, e.Room)
-		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
-		head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
-		if gp := gatePart(sum); gp != "" {
-			head += " · " + gp
+		text := waitingLine(e, sum, a.RoomsURL)
+		if blocks := actLineBlocks(e, ch, text); len(blocks) > 0 {
+			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, nil); err != nil {
+				a.log().Warn("slack post card failed", "room", e.Room, "err", err)
+				return "error"
+			}
+			return "posted"
 		}
-		text := head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
 		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
 			a.log().Warn("slack post failed", "room", e.Room, "err", err)
 			return "error"
@@ -1140,15 +1163,23 @@ func (a *App) taskSummary(ctx context.Context, room string) summary.Summary {
 	return tv.Summary()
 }
 
-func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string) string {
+func (a *App) upsertEndLine(ctx context.Context, room string, th Thread, text string, blocks json.RawMessage) string {
 	if th.EndTS != "" {
-		if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, nil); err != nil {
+		if err := a.Slack.Update(ctx, th.Channel, th.EndTS, text, blocks); err != nil {
 			a.log().Warn("slack update failed", "room", room, "err", err)
 			return "error"
 		}
 		return "posted"
 	}
-	ts, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil)
+	var (
+		ts  string
+		err error
+	)
+	if len(blocks) > 0 {
+		ts, err = a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, nil)
+	} else {
+		ts, err = a.Slack.Post(ctx, th.Channel, th.TS, text, nil)
+	}
 	if err != nil {
 		a.log().Warn("slack post failed", "room", room, "err", err)
 		return "error"

@@ -328,6 +328,17 @@ si="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCont
   --set broker.human.slackIntents.url=http://gw.ai.svc:8080/v1 --set broker.human.slackIntents.apiKeyFile=/etc/classifier/key)"
 out="$si"
 ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackIntents.principal == "slack-app" and .human.slackIntents.apiKeyFile == "/etc/classifier/key")' 'slackIntents reaches the broker config'
+sa="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false \
+  --set broker.factoryURL=https://agent-factory.agent-system.svc:8082 \
+  --set broker.human.roomctlClientIDFile=/r --set broker.human.mcp.enabled=true \
+  --set broker.human.access.ttl=5m --set broker.githubLink.existingSecret=room-broker-github-link \
+  --set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s' \
+  --set broker.human.slackStop.principal=slack-app --set broker.human.slackStop.teamID=T01ABC \
+  --set broker.human.slackRetry.principal=slack-app --set broker.human.slackRetry.teamID=T01ABC \
+  --set broker.human.slackAnswer.principal=slack-app --set broker.human.slackAnswer.teamID=T01ABC)"
+out="$sa"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackStop.principal == "slack-app" and .human.slackRetry.teamID == "T01ABC" and .human.slackAnswer.teamID == "T01ABC")' 'slackStop, slackRetry and slackAnswer reach the broker config'
+bad '/broker/human/slackStop/teamID' --set broker.human.slackStop.principal=slack-app --set broker.human.slackStop.teamID=bad
 
 # broker.modelGateway (plan v4 step 4, GW8): the planner and the classifier call the model gateway's
 # clients listener, each with its own projected token. The chart fills url and apiKeyFile only where
@@ -762,6 +773,8 @@ go run ./tests/loadconfig broker "$tmp/githublink.yaml" || fail=1
 go run ./tests/loadconfig broker "$tmp/quickstart.yaml" "$tmp/production.yaml" "$tmp/forwarded.yaml" "$tmp/factory-ca.yaml" "$tmp/factory-insecure.yaml" "$tmp/unsafe.yaml" || fail=1
 yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$si" >"$tmp/slackintents.yaml"
 go run ./tests/loadconfig broker-slackintents "$tmp/slackintents.yaml" || fail=1
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$sa" >"$tmp/slackacts.yaml"
+go run ./tests/loadconfig broker-slackacts "$tmp/slackacts.yaml" || fail=1
 go run ./tests/loadconfig broker-planner-gateway "$mgtmp/planner-gateway.yaml" || fail=1
 go run ./tests/loadconfig broker-slackintents-gateway "$mgtmp/slackintents-gateway.yaml" || fail=1
 go run ./tests/loadconfig broker-roomtools-off "$tmp/quickstart.yaml" || fail=1
