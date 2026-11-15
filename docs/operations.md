@@ -445,7 +445,7 @@ fresh-run revisions are unchanged.
 
 ### Coordination
 
-[Multi-repository coordination](factory.md#multi-repository-coordination)'s eight series. With
+[Multi-repository coordination](multi-repository.md)'s eight series. With
 `coordination.mode: off` none is recorded, so none is served; under `plan` only what drafts and
 confirmations do: plan versions, dropped children, authorization waits and allocations. The Go instruments keep the `agent_factory_` prefix like every factory instrument; the
 exporter serves them as below.
@@ -454,7 +454,7 @@ exporter serves them as below.
 |---|---|---|---|
 | `maku_factory_coordination_families_total` | counter | `repository`, `outcome` | Families by primary: `filed` once, when the last issue and the parent's `filed` write land; `done` once, when the final integration completed the parent. A parent has no closed or stopped end: `factory/stop` pauses it |
 | `maku_factory_coordination_plan_versions_total` | counter | `repository`, `outcome` | Plan versions by primary: `confirmed` by the confirmation that completed them, `superseded` when a newer version was accepted, `stale_refused` for a confirmation of a hash that is no longer current |
-| `maku_factory_coordination_admission_refusals_total` | counter | `repository`, `reason` | Refused filings and integration admissions (on the primary) and child admissions or resumes (on the child's repository), once per change of reason, never per pass; `reason` is one of the [reason codes](factory.md#reason-codes) |
+| `maku_factory_coordination_admission_refusals_total` | counter | `repository`, `reason` | Refused filings and integration admissions (on the primary) and child admissions or resumes (on the child's repository), once per change of reason, never per pass; `reason` is one of the [reason codes](multi-repository.md#reason-codes) |
 | `maku_factory_coordination_children_total` | counter | `repository`, `class`, `outcome` | Children in their own repository, by plan class: `admitted` (Task created), `landed` (merged, in landing order), `dropped` (removed by an accepted version), `reverted` |
 | `maku_factory_coordination_integration_runs_total` | counter | `repository`, `purpose`, `result` | Integration attempts on the primary, at their end: `passed`, `checks_failed` (a typed failure or no result); and `infrastructure_failed` once when its run was lost and the Task escalated (an attempt resumed after that is counted again at its end) |
 | `maku_factory_coordination_wait_seconds` | histogram | `repository`, `reason` | Ended waits: `authorization` (the version's acceptance to its last confirmation), `artifact` (a dependent's earliest producer admitted to the dependent admitted), `integration` (an integration Task created to its result), `recovery` (a proposal made to replaced or cleared); buckets 1 min, 5 min, 15 min, 1 h, 4 h, 1 d, 3 d, 7 d |
@@ -472,7 +472,7 @@ acceptance or artifact bytes. The parent's reason is the span's `agent.task.reas
 
 ### Hardening, non-code outputs
 
-[Stage H2](factory.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
+[Stage H2](hardening.md#hardening-non-code-outputs-enforced) for one repository. Each step lands
 and is checked before the next. Steps 1 to 4 are inert, because nothing reads them until a run
 carries the `safe-outputs` annotation, and only step 4 writes it. Listing the repository earlier
 leaves the first enforced tasks waiting unanswered (no publisher token).
@@ -526,7 +526,7 @@ an enforced repository off cloud-native-ref's XR and octo-sts went with both in 
 
 ### Hardening, push enforced
 
-[Stage H3](factory.md#hardening-push-enforced) for one repository that already enforces the
+[Stage H3](hardening.md#hardening-push-enforced) for one repository that already enforces the
 non-code outputs. Each step lands and is checked before the next.
 
 1. **The Maku release** runs on the cluster: the factory image with `git`, and the harness image
@@ -575,7 +575,7 @@ the run supersedes the approval.
 
 ### Hardening, reads filtered
 
-[Stage H4](factory.md#hardening-reads-filtered) for a repository that already enforces all five
+[Stage H4](hardening.md#hardening-reads-filtered) for a repository that already enforces all five
 output types, on the run-controller.
 
 1. **The Maku release** on the factory, the broker and the run-controller, one version for all
@@ -661,7 +661,7 @@ Group `maku-factory` of the chart's [`PrometheusRule`](#alerts), with `maku-fact
 | `FactoryAgentMerged` | An `agent_merged` outcome in 15 min, the first one of a repository included | — | An agent token merged a pull request past the factory's own merge. Find it in the factory's error log (`the agents App merged a pull request`), check the ruleset requires `maku/merge-gate` from the posting App, that the agents App is not one of its bypass actors and that no run holds a person's token, and review the merged change |
 | `FactoryMergeGateNotRequired` | `min by (repository) (maku_factory_merge_gate_required) == 0` | 30 min | The repository's ruleset no longer requires `maku/merge-gate` from the App that posts it: [branch protection for the merge gate](factory.md#branch-protection-for-the-merge-gate) |
 | `FactoryMergeGateRulesUnread` | `increase(maku_factory_merge_gate_rules_unread_total[30m]) > 0` | 30 min | The gauge is stale: the factory's log names the failed read (the merger App id file, the repository, or the branch rules) |
-| `AgentFactoryPrivateCodeUnacknowledged` | `max by (repository) (maku_factory_private_code_unacknowledged) == 1` | 15 min | A served repository is private code without `spec.privateCode.acknowledged`: set it on the `Repository`, or stop serving it ([private code](factory.md#private-code)). The next release refuses it |
+| `AgentFactoryPrivateCodeUnacknowledged` | `max by (repository) (maku_factory_private_code_unacknowledged) == 1` | 15 min | A served repository is private code without `spec.privateCode.acknowledged`: set it on the `Repository`, or stop serving it ([private code](install.md#private-code)). The next release refuses it |
 
 No series, no alert: on a release without a gauge the expression is empty, so a rule is safe to ship ahead of it.
 

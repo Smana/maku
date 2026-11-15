@@ -299,7 +299,7 @@ Details and the tests that prove them: [room log](reference/room-log.md#the-guar
 A run sends the repository's code to the configured models, which are usually SaaS. A Repository serving private code needs `spec.privateCode.acknowledged: true`. That field states the code is sent to the configured models, which are usually SaaS.
 The factory reads each repository's visibility through its App and fails closed: an internal
 repository, or one whose visibility it cannot read, counts as private. This release warns and the
-next refuses ([private code](factory.md#private-code)). Demo mode and coordination's `publicOnly`
+next refuses ([private code](install.md#private-code)). Demo mode and coordination's `publicOnly`
 serve public code only, acknowledged or not.
 
 ## The model gateway's identity
@@ -617,7 +617,7 @@ the sandbox:
 | T4, paths | A push's files against the protected paths |
 | T5, classifier | agent-guard's prompt-injection verdict |
 
-This release runs it in **audit** only ([Hardening, audit](factory.md#hardening-audit)):
+This release runs it in **audit** only ([Hardening, audit](hardening.md#hardening-audit)):
 
 - **What runs.** The checks run on the writes a run already made, as `output_shadowed` records.
 - **What is recorded.** Each task records the lowest author trust its runs could read.
@@ -635,7 +635,7 @@ Residuals while in audit:
   the room is not an alert.
 
 A repository listed in `enforceOutputs` goes one stage further
-([Hardening, non-code outputs enforced](factory.md#hardening-non-code-outputs-enforced)):
+([Hardening, non-code outputs enforced](hardening.md#hardening-non-code-outputs-enforced)):
 
 - **What is enforced.** Its writer runs request `pr`, `comment`, `labels` and `issue` through
   `output_*` tools. The factory applies each one after T1 to T4 at enforce, or refuses it with a
@@ -686,7 +686,7 @@ Residuals with non-code outputs enforced:
   over-count them as untraced.
 
 A repository whose `enforceOutputs` names `push` goes one stage further
-([Hardening, push enforced](factory.md#hardening-push-enforced)):
+([Hardening, push enforced](hardening.md#hardening-push-enforced)):
 
 - **What is enforced.** The harness turns the run's `git push` into a git bundle, requested
   through the harness-only `output_push`. The factory inspects the bundle outside the sandbox, in
@@ -718,7 +718,7 @@ Residuals with push enforced:
   permission gauge shows it.
 
 A repository at `mode: enforce` goes one stage further
-([Hardening, reads filtered](factory.md#hardening-reads-filtered)):
+([Hardening, reads filtered](hardening.md#hardening-reads-filtered)):
 
 - **What is withheld.** The run reads its issue, pull request and checks through `forge_read`. The
   factory reads them with its App and withholds text below the repository's `minAuthorTrust`
@@ -737,7 +737,7 @@ Residuals with reads filtered:
 - A run-controller older than the factory ignores `forge-api: deny`. The chart pins both to one
   version.
 
-A repository is **ready** when all seven readiness checks hold ([Hardening, ready](factory.md#hardening-ready)), and
+A repository is **ready** when all seven readiness checks hold ([Hardening, ready](hardening.md#hardening-ready)), and
 only then does coordination's execute admit it. Residuals once ready:
 
 - Readiness is read at each admission and every five minutes, not continuously: a Secret swapped

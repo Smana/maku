@@ -10,3 +10,5 @@
 | [The Task CRD](task-crd.md) | `tasks.maku.ogenki.io/v1alpha1` `spec`, `status`, annotations and labels |
 | [The config file](config.md) | `maku-factory` configuration keys, `demo` rules, per-run token minting and role table, ownership fence, steering and the scoper |
 | [Sponsored principals](sponsored-principals.md) | Machine-triggered `api` tasks (`api.sponsored`) and internal principals (`api.internalPrincipals`, `factory/publish`) |
+| [Narration and task status](narration.md) | Issue and PR event comments, live status comment, workflow pin refusals, and waiting/escalation/terminal reason codes |
+| [Budgets](budgets.md) | Model pricing, `meter.query` PromQL, daily USD ledger ConfigMaps, failover accounting and per-person caps |
