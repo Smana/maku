@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -33,6 +34,7 @@ var errCatalogueUnavailable = errors.New("catalogue unavailable")
 // token; runrequest.Factory implements it.
 type CatalogueSource interface {
 	Catalogue(ctx context.Context, accessToken, repository, onBehalfOf string) (catalogue.Catalogue, error)
+	Repositories(ctx context.Context, accessToken string) ([]string, error)
 }
 
 // CatalogueReads counts a read by outcome; *metrics.Set implements it.
@@ -57,6 +59,7 @@ type catalogueEntry struct {
 	key     string
 	until   time.Time
 	catalog catalogue.Catalogue
+	repos   []string
 }
 
 // NewCatalogueCache is a cache over src. reads and now may be nil: no counting, the wall clock.
@@ -73,6 +76,11 @@ func catalogueKey(p authn.Principal, repository, onBehalfOf string) string {
 	return strings.ToLower(repository) + "\x00" + p.ID + "\x00" + onBehalfOf
 }
 
+// repositoriesKey is the cache key for the factory's served repository list, keyed by caller.
+func repositoriesKey(p authn.Principal) string {
+	return "\x00repos\x00" + p.ID
+}
+
 // Get is repository's catalogue for p. A factory refusal comes back as the runrequest.ErrRefused it
 // is; every other failure is errCatalogueUnavailable.
 func (c *CatalogueCache) Get(ctx context.Context, p authn.Principal, repository, onBehalfOf string) (catalogue.Catalogue, error) {
@@ -80,9 +88,9 @@ func (c *CatalogueCache) Get(ctx context.Context, p authn.Principal, repository,
 		return catalogue.Catalogue{}, errCatalogueUnavailable
 	}
 	key := catalogueKey(p, repository, onBehalfOf)
-	if cat, ok := c.cached(key); ok {
+	if e, ok := c.cached(key); ok {
 		c.count(ctx, metrics.CatalogueHit)
-		return cat, nil
+		return e.catalog, nil
 	}
 	cat, err := c.src.Catalogue(ctx, p.AccessToken, repository, onBehalfOf)
 	if err != nil {
@@ -94,8 +102,33 @@ func (c *CatalogueCache) Get(ctx context.Context, p authn.Principal, repository,
 		return catalogue.Catalogue{}, fmt.Errorf("%w: %w", errCatalogueUnavailable, err)
 	}
 	c.count(ctx, metrics.CatalogueMiss)
-	c.store(key, cat)
+	c.store(&catalogueEntry{key: key, catalog: cat})
 	return cat, nil
+}
+
+// Repositories is the factory's served repository list for p, cached for catalogueTTL (WF12). No
+// stale list older than the cache's lifetime is ever returned.
+func (c *CatalogueCache) Repositories(ctx context.Context, p authn.Principal) ([]string, error) {
+	if c == nil || c.src == nil {
+		return nil, errCatalogueUnavailable
+	}
+	key := repositoriesKey(p)
+	if e, ok := c.cached(key); ok {
+		c.count(ctx, metrics.CatalogueHit)
+		return slices.Clone(e.repos), nil
+	}
+	repos, err := c.src.Repositories(ctx, p.AccessToken)
+	if err != nil {
+		c.count(ctx, metrics.CatalogueError)
+		var ref runrequest.ErrRefused
+		if errors.As(err, &ref) && ref.Status < http.StatusInternalServerError {
+			return nil, err
+		}
+		return nil, fmt.Errorf("%w: %w", errCatalogueUnavailable, err)
+	}
+	c.count(ctx, metrics.CatalogueMiss)
+	c.store(&catalogueEntry{key: key, repos: slices.Clone(repos)})
+	return slices.Clone(repos), nil
 }
 
 func (c *CatalogueCache) count(ctx context.Context, outcome string) {
@@ -104,33 +137,33 @@ func (c *CatalogueCache) count(ctx context.Context, outcome string) {
 	}
 }
 
-func (c *CatalogueCache) cached(key string) (catalogue.Catalogue, bool) {
+func (c *CatalogueCache) cached(key string) (*catalogueEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	el, ok := c.entries[key]
 	if !ok {
-		return catalogue.Catalogue{}, false
+		return nil, false
 	}
 	e, _ := el.Value.(*catalogueEntry)
 	if !c.now().Before(e.until) {
 		c.order.Remove(el)
 		delete(c.entries, key)
-		return catalogue.Catalogue{}, false
+		return nil, false
 	}
 	c.order.MoveToFront(el)
-	return e.catalog, true
+	return e, true
 }
 
-func (c *CatalogueCache) store(key string, cat catalogue.Catalogue) {
+func (c *CatalogueCache) store(e *catalogueEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	e := &catalogueEntry{key: key, until: c.now().Add(catalogueTTL), catalog: cat}
-	if el, ok := c.entries[key]; ok {
+	e.until = c.now().Add(catalogueTTL)
+	if el, ok := c.entries[e.key]; ok {
 		el.Value = e
 		c.order.MoveToFront(el)
 		return
 	}
-	c.entries[key] = c.order.PushFront(e)
+	c.entries[e.key] = c.order.PushFront(e)
 	for c.order.Len() > catalogueCap {
 		oldest := c.order.Back()
 		c.order.Remove(oldest)

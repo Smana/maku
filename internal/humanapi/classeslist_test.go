@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,8 +38,10 @@ func aiNativeRef(maintainer bool) catalogue.Catalogue {
 
 // fakeFactoryCatalogue answers by repository; onBehalfOf "slack:T01ABC/U02DEF" is the maintainer.
 type fakeFactoryCatalogue struct {
-	byRepo map[string]error
-	asked  []string
+	byRepo   map[string]error
+	repos    []string
+	reposErr error
+	asked    []string
 }
 
 func (f *fakeFactoryCatalogue) Catalogue(_ context.Context, _, repository, onBehalfOf string) (catalogue.Catalogue, error) {
@@ -47,6 +50,16 @@ func (f *fakeFactoryCatalogue) Catalogue(_ context.Context, _, repository, onBeh
 		return catalogue.Catalogue{}, err
 	}
 	return aiNativeRef(onBehalfOf == "slack:T01ABC/U02DEF" || onBehalfOf == ""), nil
+}
+
+func (f *fakeFactoryCatalogue) Repositories(_ context.Context, _ string) ([]string, error) {
+	if f.reposErr != nil {
+		return nil, f.reposErr
+	}
+	if f.repos != nil {
+		return slices.Clone(f.repos), nil
+	}
+	return []string{"Smana/ai-native-ref"}, nil
 }
 
 func withCatalogue(src CatalogueSource) option {

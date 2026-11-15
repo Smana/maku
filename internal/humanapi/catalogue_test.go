@@ -3,24 +3,31 @@
 package humanapi
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/catalogue"
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/metrics"
 	"github.com/Smana/maku/internal/runrequest"
 )
 
 type fakeCatalogue struct {
-	calls  []string
-	err    error
-	byUser map[string]bool // access token -> maintainer
+	calls    []string
+	err      error
+	repos    []string
+	reposErr error
+	byUser   map[string]bool // access token -> maintainer
 }
 
 func (f *fakeCatalogue) Catalogue(_ context.Context, token, repository, onBehalfOf string) (catalogue.Catalogue, error) {
@@ -29,6 +36,17 @@ func (f *fakeCatalogue) Catalogue(_ context.Context, token, repository, onBehalf
 		return catalogue.Catalogue{}, f.err
 	}
 	return catalogue.Catalogue{Repository: repository, Maintainer: f.byUser[token]}, nil
+}
+
+func (f *fakeCatalogue) Repositories(_ context.Context, token string) ([]string, error) {
+	f.calls = append(f.calls, token+"|*repos*")
+	if f.reposErr != nil {
+		return nil, f.reposErr
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return slices.Clone(f.repos), nil
 }
 
 type countReads map[string]int
@@ -145,5 +163,124 @@ func TestCatalogueReadsMetric(t *testing.T) {
 	_, _ = c.Get(t.Context(), human("2"), "Smana/r", "") // error
 	if reads[metrics.CatalogueMiss] != 1 || reads[metrics.CatalogueHit] != 1 || reads[metrics.CatalogueError] != 1 {
 		t.Fatalf("reads = %v", reads)
+	}
+}
+
+type planBroker struct {
+	srv   *Server
+	logs  *bytes.Buffer
+	clock *tick
+}
+
+type planOpt func(*planBroker)
+
+func planEnabled(b *planBroker) {
+	b.srv.Intake = &Intake{
+		Public: publicRepos{"acme/a": true, "acme/b": true, "acme/gone": true},
+		Daily:  50,
+	}
+}
+
+func planRepositories(repos ...string) planOpt {
+	return func(b *planBroker) {
+		allow := make(map[string]bool, len(repos))
+		for _, r := range repos {
+			allow[strings.ToLower(r)] = true
+		}
+		b.srv.Intake.Allow = allow
+	}
+}
+
+func brokerWith(opts ...planOpt) *planBroker {
+	var logs bytes.Buffer
+	clock := &tick{t: time.Unix(1_000, 0)}
+	w := world(nil)
+	w.set(func() {
+		w.writes = map[string][]string{
+			"acme/a":    {"dev"},
+			"acme/b":    {"dev"},
+			"acme/gone": {"dev"},
+		}
+	})
+	srv := &Server{Logger: slog.New(slog.NewTextHandler(&logs, nil))}
+	w.gate(srv)
+	b := &planBroker{srv: srv, logs: &logs, clock: clock}
+	for _, opt := range opts {
+		opt(b)
+	}
+	return b
+}
+
+func factoryServing(repos ...string) *fakeCatalogue {
+	return &fakeCatalogue{repos: repos}
+}
+
+var factoryDown = &fakeCatalogue{reposErr: errors.New("connection refused")}
+
+func candidatesErr(b *planBroker, src CatalogueSource) ([]string, error) {
+	if b.srv.Catalogue == nil {
+		b.srv.Catalogue = NewCatalogueCache(src, nil, b.clock.now)
+	}
+	return b.srv.planRepositories(context.Background(), human("dev"))
+}
+
+func candidates(t *testing.T, b *planBroker, src CatalogueSource) []string {
+	t.Helper()
+	got, err := candidatesErr(b, src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, reqCandidates, ref := b.srv.requester(t.Context(), human("dev"), intakeArgs{})
+	if ref != nil {
+		t.Fatalf("requester refused: %v", ref)
+	}
+	if !slices.Equal(reqCandidates, got) {
+		t.Fatalf("requester candidates = %v, planRepositories = %v", reqCandidates, got)
+	}
+	return got
+}
+
+func TestPlannerCandidatesComeFromTheFactory(t *testing.T) { // no plan.repositories in the broker's config
+	got := candidates(t, brokerWith(planEnabled), factoryServing("acme/a", "acme/b"))
+	if !slices.Equal(got, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("got %v", got)
+	}
+}
+
+func TestPlanRepositoriesNarrows(t *testing.T) {
+	b := brokerWith(planEnabled, planRepositories("acme/a", "acme/gone"))
+	got := candidates(t, b, factoryServing("acme/a", "acme/b"))
+	if !slices.Equal(got, []string{"acme/a"}) {
+		t.Fatalf("got %v", got)
+	}
+	if !strings.Contains(b.logs.String(), "acme/gone") {
+		t.Fatalf("expected warning naming unserved repository acme/gone, got logs: %s", b.logs.String())
+	}
+}
+
+func TestPlannerRefusesWhenTheFactoryIsUnreachable(t *testing.T) { // no stale list older than the cache's lifetime
+	b := brokerWith(planEnabled)
+	_, err := candidatesErr(b, factoryDown)
+	if !errors.Is(err, errCatalogueUnavailable) {
+		t.Fatalf("got %v", err)
+	}
+	if _, _, ref := b.srv.requester(t.Context(), human("dev"), intakeArgs{}); ref == nil || ref.Reason != intake.CatalogueUnavailable {
+		t.Fatalf("requester refusal = %+v, want %s", ref, intake.CatalogueUnavailable)
+	}
+
+	// Warm cache: valid within catalogueTTL, refused once catalogueTTL expires and factory is down.
+	warm := brokerWith(planEnabled)
+	src := factoryServing("acme/a", "acme/b")
+	if got := candidates(t, warm, src); !slices.Equal(got, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("got %v", got)
+	}
+	src.reposErr = errors.New("factory down")
+	warm.clock.t = warm.clock.t.Add(catalogueTTL - time.Second)
+	if got := candidates(t, warm, src); !slices.Equal(got, []string{"acme/a", "acme/b"}) {
+		t.Fatalf("within TTL: got %v", got)
+	}
+	warm.clock.t = warm.clock.t.Add(2 * time.Second)
+	if _, err := candidatesErr(warm, src); !errors.Is(err, errCatalogueUnavailable) {
+		t.Fatalf("after TTL: got %v, want errCatalogueUnavailable", err)
 	}
 }

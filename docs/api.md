@@ -910,9 +910,11 @@ door re-validates before anything is filed. They are **off** unless the broker's
 `human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
 `run_create` is to a human token. `config.Load` refuses the switch unless it also has
 `human.mcp.enabled` (both tools exist on this listener alone), `human.access` (the write check the
-candidate set is drawn from), a non-empty `human.intake.plan.repositories` and a non-empty
-`human.intake.plan.classes` — each named by its own error, so the switch cannot land ahead of its
-parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
+candidate set is drawn from) and `factoryURL` (the factory's catalog, which supplies both the
+candidate repositories via [`GET /v1/catalogue`](#get-v1catalogue) and each repository's classes and
+workflows; `human.intake.plan.repositories` is optional and narrows the factory's list when set,
+logging a warning naming any entry the factory does not serve) — each named by its own error, so the
+switch cannot land ahead of its parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
 visibility can be read, so the guard would refuse every plan) or without an `Actor` redactor
 (`plan_check` scans a plan's text as `issue_draft` does).
 
@@ -1317,6 +1319,21 @@ decision timeline from the factory's own comments, for a reader. `GET /v1/policy
 of (`404 not_found` otherwise, alike), each cut to those consumers. For a repository served from its
 `Repository`'s bindings, the evidence report adds `repositoryObject`, `repositoryManifest`,
 `repositoryManifestPath`, `repositoryStatus` and `bindings`.
+
+### `GET /v1/catalogue`
+
+The names of the repositories this factory serves — public ones and private ones whose
+`privateCode.acknowledged` is set — sorted (`Cache-Control: no-store`, WF12):
+
+```json
+{"repositories": ["acme/a", "acme/b"]}
+```
+
+Mounted whenever the API is, with the same caller rules as [`GET /v1/catalogue/{owner}/{name}`](#get-v1catalogueownername):
+a human with the member role receives the factory's served list, a declared sponsored principal
+receives the subset in its `repositories` list, and an internal principal or machine token is
+`403 human_only`. The broker caches each caller's answer for 60 seconds and refuses planning with
+`catalogue_unavailable` when no fresh answer can be read.
 
 ### `GET /v1/catalogue/{owner}/{name}`
 
