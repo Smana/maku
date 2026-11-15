@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # Install Secrets
 
 Every credential and id an install reads is a Kubernetes Secret, named by a value and holding

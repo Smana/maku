@@ -151,7 +151,7 @@ sequenceDiagram
 ```
 
 The caller redacts first: every payload passes through the redactor before `Append` (see
-[security](security.md#redaction)).
+[security](reference/security-controls.md#redaction)).
 
 ## Output events
 

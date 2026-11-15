@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # Observability
 
 Every component serves `/metrics`; the umbrella chart (`charts/agent-factory`) can also render the
@@ -220,7 +222,7 @@ gains one rule: egress to the collector's pods, on the endpoint's port, and noth
 | `cilium` | One `toEndpoints` rule in the run's CiliumNetworkPolicy on the port, and the collector's name in its DNS allow-list |
 | `none` | Nothing: no policy confines a run |
 
-This is the only destination tracing adds to a run's egress ([Security](security.md#the-run-paths-network-modes)).
+This is the only destination tracing adds to a run's egress ([Security](reference/security-controls.md#the-run-paths-network-modes)).
 A run reaches the collector directly, not through the egress proxy: the harness's `NO_PROXY` holds
 the cluster's Services.
 

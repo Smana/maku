@@ -115,7 +115,7 @@ just before that run starts, so a review submitted while the task waits joins it
 already dismissed is skipped. A review dismissed after it was queued still drives that run, since
 the system API cannot remove a queued message.
 
-The full permission matrix is in [Security](security.md#authorization).
+The full permission matrix is in [Security controls](reference/security-controls.md#authorization-matrix).
 
 ## Reference: the Room CRD
 

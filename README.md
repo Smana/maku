@@ -56,9 +56,9 @@ A room is a flight recorder and a group chat for one piece of agent work.
 - **Approvals.** The push waits for your decision, and the card shows the raw action rather than the
   agent's description of it.
 - **A record you can trust.** The broker's database role can only read and insert events
-  ([the guarantees](docs/room-log.md#the-guarantees)). Secrets are [redacted](docs/security.md#redaction)
+  ([the guarantees](docs/room-log.md#the-guarantees)). Secrets are [redacted](docs/reference/security-controls.md#redaction)
   before anything is stored, and each event carries an identity taken from a verified credential.
-- **Fork and hand off.** [Start a new room](docs/web-ui.md#forks) from any message, or hand the
+- **Fork and hand off.** [Start a new room](docs/reference/web-ui-settings.md#forks) from any message, or hand the
   context to the next run.
 
 ### A merge gate for low-risk changes

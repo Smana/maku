@@ -94,7 +94,7 @@ Rules that keep pins honest:
 
 - **Digest, never tag alone.** Read the digest with
   `skopeo inspect --raw docker://<ref> | sha256sum`, or copy it from the CI job summary.
-- **Verify before pinning**: [security](security.md#supply-chain) gives the cosign command.
+- **Verify before pinning**: [security](reference/security-controls.md#supply-chain) gives the cosign command.
 - **Re-vendor the CRD and move `atlasSchema.ref` with every broker pin**, so the three never drift.
   The composition resolves a `v*` ref as a tag and anything else as a branch; this repository
   deletes a branch on merge, so a branch ref 404s once its PR merges.

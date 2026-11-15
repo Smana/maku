@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # GitHub Apps
 
 A production factory talks to GitHub through two GitHub Apps, and optionally a third and a fourth.

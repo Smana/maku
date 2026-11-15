@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # Identity: any OIDC issuer
 
 The broker, the factory, `maku` and the Slack App sign humans in through any OpenID Connect
