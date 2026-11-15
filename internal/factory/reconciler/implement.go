@@ -294,6 +294,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
 	source := r.pinModel(cfg, t, &s)
+	s.Effort = cfg.EffortFor(r.workflow(cfg, t), s.Role)
 	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
 	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
 	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)
@@ -479,22 +480,20 @@ func (r *Reconciler) unbriefedReviewer(ctx context.Context, t *v1alpha1.Task) {
 	}
 }
 
-// row is the loops row t's runs read (RowFor): its workflow's, the one frozen at triage, else its
-// repository's default workflow's for a task without one.
-func (r *Reconciler) row(cfg *config.Config, t *v1alpha1.Task) string {
-	name := r.repo(cfg, t).DefaultWorkflow()
+// workflow is the workflow t runs: the one frozen at triage, else its repository's default.
+func (r *Reconciler) workflow(cfg *config.Config, t *v1alpha1.Task) string {
 	if p := t.Status.Profile; p != nil {
-		name = p.Name
+		return p.Name
 	}
-	return cfg.RowFor(name, cfg.HarnessProfiles[name])
+	return r.repo(cfg, t).DefaultWorkflow()
 }
 
-// pinModel puts a public run on the provider alias its workflow's loops row names for its role and
-// the tier it runs on (v3 F15, F3, WF10), and returns which config chose the run's model, for its
-// provenance. ModelFor is "" unless the claim's data class is public: an internal run keeps its
-// tier's model, or the template's reviewerModel, whatever the row says (F4).
+// pinModel applies the workflow's per-role model override, else its loops row's public provider
+// alias for the role and tier (CP10, F3, WF10), and returns which config chose it for provenance.
+// An internal run accepts only a tier alias; with no override it keeps its tier's model, or the
+// template's reviewerModel.
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
-	if m := cfg.ModelFor(r.row(cfg, t), s.DataClass, s.Role, s.Tier); m != "" {
+	if m := cfg.ModelFor(r.workflow(cfg, t), s.DataClass, s.Role, s.Tier); m != "" {
 		s.Model = m
 		return v1alpha1.ModelSourceClassModels
 	}
@@ -505,7 +504,7 @@ func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec
 }
 
 // modelSourceOf is pinModel's answer for a run adopted from its claim (R48), derived from the
-// claim's model: only loops.<class>.models names a provider alias, and a reviewer on the
+// claim's model: a provider alias came from the loops or workflows models, and a reviewer on the
 // template's reviewerModel ran on it.
 func (r *Reconciler) modelSourceOf(cfg *config.Config, t *v1alpha1.Task, x runs.Run) string {
 	switch rm := cfg.Templates[t.Spec.Template].ReviewerModel; {

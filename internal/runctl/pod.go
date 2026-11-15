@@ -126,6 +126,9 @@ func Pod(r *v1alpha1.AgentRun, c Config, m Model, runID string) *corev1.Pod {
 		{Name: "TASK_FILE", Value: "/run/agent/task/task.md"}, {Name: "RULES_FILE", Value: "/run/agent/task/rules.md"},
 		{Name: "HOME", Value: "/home/openhands"},
 	}
+	if s.Effort != "" {
+		env = append(env, corev1.EnvVar{Name: "LLM_REASONING_EFFORT", Value: s.Effort})
+	}
 	if c.PerRun() { // the harness revokes the run's minted token on exit (plan PR5)
 		env = append(env, corev1.EnvVar{Name: "GIT_TOKEN_REVOCABLE", Value: "1"})
 	}

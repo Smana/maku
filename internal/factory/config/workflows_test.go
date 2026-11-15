@@ -3,6 +3,7 @@
 package config
 
 import (
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -47,7 +48,7 @@ func TestShippedWorkflowsFillAnEmptyFactory(t *testing.T) {
 	if p := c.HarnessProfiles["careful"]; p.Template != "pair" || p.Tier != "frontier" || p.Loop != "careful" || p.Description == "" {
 		t.Fatalf("careful = %+v", p)
 	}
-	if p := c.HarnessProfiles["none"]; p != (HarnessProfile{Template: TemplateNone}) {
+	if p := c.HarnessProfiles["none"]; !reflect.DeepEqual(p, HarnessProfile{Template: TemplateNone}) {
 		t.Fatalf("none = %+v", p)
 	}
 	if c.ScopeFor("careful") != ScopeScoper || c.LoopFor("careful") == nil || c.LoopFor("careful").JudgeModel != "tier-light" || !c.SearchFor("careful") {

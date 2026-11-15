@@ -107,6 +107,17 @@ func TestPodInvariants(t *testing.T) {
 	}
 }
 
+func TestEffortReachesTheHarness(t *testing.T) {
+	withEffort := run("run-abcdefgh", func(r *v1alpha1.AgentRun) { r.Spec.Effort = "medium" })
+	if got := harnessEnv(Pod(withEffort, testConfig(t), testModel, "abcdefgh"))["LLM_REASONING_EFFORT"]; got != "medium" {
+		t.Fatalf("LLM_REASONING_EFFORT = %q, want medium", got)
+	}
+	without := harnessEnv(Pod(run("run-abcdefgh"), testConfig(t), testModel, "abcdefgh"))
+	if value, ok := without["LLM_REASONING_EFFORT"]; ok {
+		t.Fatalf("no spec.effort: LLM_REASONING_EFFORT = %q, want absent", value)
+	}
+}
+
 // An ingress section is what enables ingress default-deny in Cilium; a missing one leaves the
 // pod open to every peer.
 func TestCNPAlwaysDeniesIngress(t *testing.T) {

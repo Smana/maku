@@ -82,7 +82,7 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 		}
 		t.Errorf("%s lacks its immutability rule", name)
 	}
-	for _, f := range []string{"role", "repository", "baseRef", "principal", "model", "dataClass", "harness", "size", "egress", "task"} {
+	for _, f := range []string{"role", "repository", "baseRef", "principal", "model", "effort", "dataClass", "harness", "size", "egress", "task"} {
 		immutable(f, spec.Properties[f])
 	}
 	immutable("budget.maxMinutes", spec.Properties["budget"].Properties["maxMinutes"])
@@ -104,6 +104,9 @@ func TestAgentRunCRDKeepsTheXRDContract(t *testing.T) {
 	}
 	if got := enum(spec.Properties["role"]); !slices.Equal(got, []string{`"implementer"`, `"reviewer"`, `"tester"`, `"triager"`}) {
 		t.Errorf("role enum %v", got)
+	}
+	if got := enum(spec.Properties["effort"]); !slices.Equal(got, []string{`"low"`, `"medium"`, `"high"`}) {
+		t.Errorf("effort enum %v, want low, medium, high", got)
 	}
 	if got := enum(*spec.Properties["egress"].Properties["profiles"].Items.Schema); !slices.Equal(got, []string{`"pypi"`, `"npm"`, `"golang"`, `"crates"`}) {
 		t.Errorf("egress.profiles enum %v", got)

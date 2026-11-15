@@ -127,6 +127,8 @@ type Spec struct {
 	// MeteredBy is spec.meteredBy, written only when set: MeteredByGateway when the factory prices
 	// the run from the gateway's per-run identity (runs.gatewayIdentity). Client.Create fills it.
 	MeteredBy string
+	// Effort is spec.effort (CP9), low, medium or high; empty keeps the harness's default.
+	Effort string
 	// Loop is spec.loop (loops design L2, L3), written only when set: it is immutable.
 	Loop *Loop
 	// Checks is spec.loop.checks (v3 feature 3), written only when true, so every other claim is
@@ -202,6 +204,9 @@ func (s Spec) Validate() error {
 	if s.Tier != "" && !slices.Contains([]string{"light", "standard", "frontier"}, s.Tier) {
 		errs = append(errs, fmt.Errorf("tier %q is not light, standard or frontier", s.Tier))
 	}
+	if s.Effort != "" && !slices.Contains([]string{"low", "medium", "high"}, s.Effort) {
+		errs = append(errs, fmt.Errorf("effort %q is low, medium, high or empty", s.Effort))
+	}
 	// v3 F15, F4: Moonshot processes in China and Mistral in the EU. Every claim, the factory's and
 	// the API's, passes here, so no internal run names a provider alias, as its model or its judge's.
 	judge := ""
@@ -253,6 +258,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	}
 	if s.MeteredBy != "" {
 		spec["meteredBy"] = s.MeteredBy
+	}
+	if s.Effort != "" {
+		spec["effort"] = s.Effort
 	}
 	if l := s.Loop; l != nil || s.Checks || s.Search {
 		loop := map[string]any{}
@@ -460,10 +468,10 @@ func (c Client) Create(ctx context.Context, s Spec) error {
 	if err := s.Validate(); err != nil {
 		return fmt.Errorf("create run %s: %w", s.RunID, err)
 	}
-	// A claim that carries spec.loop is created under Strict field validation: a host XRD without
-	// spec.loop would prune it and run loop-off while the Task records the policy; refuse instead.
+	// A claim carrying a newer spec field is created under Strict field validation: an old schema
+	// would prune it and run with defaults while the Task records the requested policy; refuse instead.
 	var opts []client.CreateOption
-	if s.Loop != nil || s.Checks || s.Search {
+	if s.Loop != nil || s.Checks || s.Search || s.Effort != "" {
 		opts = append(opts, client.FieldValidation("Strict"))
 	}
 	claim := Build(c.Kind, s)
