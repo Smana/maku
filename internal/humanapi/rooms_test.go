@@ -172,6 +172,22 @@ func TestRoomctlSetupIsPublicToConfigure(t *testing.T) {
 	}
 }
 
+func TestWellKnownMaku(t *testing.T) {
+	srv := &Server{Humans: headerAuth{}, Groups: groups, PublicURL: "https://rooms.priv.example", Issuer: "https://auth.example",
+		RoomctlClient: func() string { return "3434@agents" }, ProjectID: func() string { return "29184" }}
+	get := func(path string) (int, string) {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		srv.Routes().ServeHTTP(rec, req)
+		return rec.Code, rec.Body.String()
+	}
+	c1, b1 := get("/.well-known/maku")
+	c2, b2 := get("/.well-known/roomctl")
+	if c1 != http.StatusOK || c2 != http.StatusOK || b1 == "" || b1 != b2 {
+		t.Fatalf("/.well-known/maku=%d %q, /.well-known/roomctl=%d %q", c1, b1, c2, b2)
+	}
+}
+
 // GET /api/roomctl: what `maku configure` needs, and the broker's version for the
 // install snippet to pin maku's release, for any agents member. The
 // client id is read at use, like the web client's: the IdP mints it per build.

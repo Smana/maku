@@ -577,3 +577,32 @@ func TestRoomWaitTimeoutAfterFailedPollsSaysSo(t *testing.T) {
 }
 
 func brokerMethods(b *mcpBroker) []string { m, _ := b.seen(); return m }
+
+func TestWaitIsRoomWait(t *testing.T) {
+	runOne := func(tool string, args map[string]any) (string, map[string]any, bool) {
+		b := newMCPBroker(t)
+		b.roomText = "#412 docs: runbook 18\nState     ended"
+		b.roomsFn = func(n int, _ map[string]any) []map[string]any {
+			return []map[string]any{row("aaaaaaaa", func(m map[string]any) {
+				m["issue"] = 412
+				m["repository"] = "Smana/ai-native-ref"
+				if n >= 2 {
+					m["state"] = "done"
+				}
+			})}
+		}
+		s := relayTo(t, b, tok, withAfter((&steps{}).after))
+		s.send(t, map[string]any{"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+			"params": map[string]any{"name": tool, "arguments": args}})
+		return resultOf(first(answer(t, s, 1.0)))
+	}
+
+	wText, wSC, wErr := runOne("wait", map[string]any{"task": "aaaaaaaa"})
+	rText, rSC, rErr := runOne("room_wait", map[string]any{"room": "aaaaaaaa"})
+	if wErr || rErr {
+		t.Fatalf("wait err=%v (%q), room_wait err=%v (%q)", wErr, wText, rErr, rText)
+	}
+	if wText != rText || fmt.Sprint(wSC) != fmt.Sprint(rSC) {
+		t.Fatalf("wait=(%q, %v) != room_wait=(%q, %v)", wText, wSC, rText, rSC)
+	}
+}

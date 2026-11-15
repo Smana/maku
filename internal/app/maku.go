@@ -118,11 +118,11 @@ const makuUsage = `usage: maku <command>
               --factory-token-file F [--id ID] [--runlore-hook X --tool-result-hook X --room-hook X]
                                   plant an injection drill in the drill repository and hand its manifest to the
                                   factory, which scores it (docs/drills.md); a missing hook exits 2
-  mcp                             the factory's MCP tools on stdio, for a local coding agent:
-                                  claude mcp add factory -- maku mcp
-  setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]
-                                  register maku mcp with that agent (through its own CLI, else the
-                                  snippet to paste) and install the factory-handoff skill; --print writes nothing
+  mcp [--advanced]                Maku's six tools on stdio, for a local coding agent (maku setup registers it);
+                                  --advanced also lists the rare tools
+  setup <claude|opencode|codex|gemini|cursor|copilot> [--advanced] [--project] [--print] [--restart-service]
+                                  configure, sign in, register maku mcp as maku, install maku-handoff and /maku,
+                                  and run doctor --client, skipping what is already done; --print writes nothing
   fork <room> --at SEQ [--role R] [--pr URL] [--egress pypi,npm] [--note TEXT] [--approvals attended|unattended]
                                   a room of your own from events 1..SEQ, with an optional run; the
                                   fork asks before risky actions (attended) unless you pass --approvals
@@ -286,23 +286,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		if _, err := flags(fs, args); err != nil {
 			return err
 		}
-		dirs, err := r.skillDirs(ctx)
-		if err != nil {
-			return err
-		}
-		home, cwd, herr := r.homeAndCwd()
-		if herr != nil {
-			return herr
-		}
-		top, terr := repoTop(ctx, cwd)
-		if terr != nil {
-			top = "" // outside a repository: no project-scoped entry to check
-		}
-		return maku.Doctor{Config: cfg, HC: r.HC, TokenPath: tokPath,
-			SkillDirs: dirs, Version: version.Version,
-			OpenCodeConfigs: maku.OpenCodeConfigs(home), ServiceStart: opencodeServiceStart(ctx),
-			LegacyMCP: maku.LegacyEntries(home, top),
-			Caps:      maku.CapsStore{Path: maku.CapsPath(r.Dir)}, Client: client}.Run(ctx, r.Out)
+		return r.runDoctor(ctx, cfg, tokPath, client)
 	}
 	if cmd == "mcp" {
 		return r.mcp(ctx, cfg, tokPath, args)
@@ -581,8 +565,12 @@ func originOf(raw string) (string, error) {
 // mcp relays the broker's MCP server on stdio until the client closes it: one token source for
 // every request, so a refresh happens once (factory interfaces F2).
 func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []string) error {
-	if len(args) != 0 {
-		return fmt.Errorf("mcp: no arguments\n%s", makuUsage)
+	advanced := false
+	for _, a := range args {
+		if a != "--advanced" {
+			return fmt.Errorf("mcp: unknown argument %q\n%s", a, makuUsage)
+		}
+		advanced = true
 	}
 	in := r.In
 	if in == nil {
@@ -593,7 +581,7 @@ func (r Maku) mcp(ctx context.Context, cfg maku.Config, tokPath string, args []s
 		hints = os.Stderr
 	}
 	relay := &maku.Relay{URL: cfg.URL, HC: r.HC, Token: maku.SharedToken(r.HC, cfg, tokPath), File: maku.GH, Issues: maku.GHIssues{}, FactoryLogin: cfg.FactoryLogin,
-		Label: maku.GHLabel, ClassLabel: maku.GHAddLabel, Dir: r.Dir, Log: slog.New(slog.NewTextHandler(hints, nil))}
+		Label: maku.GHLabel, Unlabel: maku.GHUnlabel, ClassLabel: maku.GHAddLabel, Dir: r.Dir, Advanced: advanced, Log: slog.New(slog.NewTextHandler(hints, nil))}
 	return relay.Serve(ctx, in, r.Out)
 }
 
@@ -658,21 +646,80 @@ func repoTop(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// setup registers maku mcp with a coding agent and installs the skill; it needs no configuration.
+func (r Maku) runDoctor(ctx context.Context, cfg maku.Config, tokPath, client string) error {
+	dirs, err := r.skillDirs(ctx)
+	if err != nil {
+		return err
+	}
+	home, cwd, herr := r.homeAndCwd()
+	if herr != nil {
+		return herr
+	}
+	top, terr := repoTop(ctx, cwd)
+	if terr != nil {
+		top = "" // outside a repository: no project-scoped entry to check
+	}
+	hc := r.HC
+	if hc == nil {
+		hc = httpx.New(makuTimeout, nil)
+	}
+	return maku.Doctor{Config: cfg, HC: hc, TokenPath: tokPath,
+		SkillDirs: dirs, Version: version.Version,
+		OpenCodeConfigs: maku.OpenCodeConfigs(home), ServiceStart: opencodeServiceStart(ctx),
+		LegacyMCP: maku.LegacyEntries(home, top),
+		Caps:      maku.CapsStore{Path: maku.CapsPath(r.Dir)}, Client: client}.Run(ctx, r.Out)
+}
+
+func doctorClient(caps maku.CapsStore, agent string) string {
+	if agent == "claude" {
+		if _, ok := caps.Get("claude"); !ok {
+			if _, ok := caps.Get("claude-code"); ok {
+				return "claude-code"
+			}
+		}
+	}
+	return agent
+}
+
+func (r Maku) promptRoomsURL() (string, error) {
+	in := r.In
+	if in == nil {
+		in = os.Stdin
+	}
+	if _, err := fmt.Fprint(r.Out, "Rooms URL (https://rooms.<your private domain>): "); err != nil {
+		return "", err
+	}
+	line, err := bufio.NewReader(io.LimitReader(in, 1024)).ReadString('\n')
+	if err != nil && line == "" {
+		return "", errors.New("not configured: enter the rooms URL, or run maku configure --url https://rooms.<your private domain>")
+	}
+	raw := strings.TrimSpace(line)
+	if raw == "" {
+		return "", errors.New("not configured: enter the rooms URL, or run maku configure --url https://rooms.<your private domain>")
+	}
+	if u, perr := url.Parse(raw); perr == nil && u.Host != "" && (u.Scheme == "https" || u.Scheme == "http") {
+		return u.Scheme + "://" + u.Host, nil
+	}
+	return raw, nil
+}
+
+// setup runs configure (asking for the rooms URL when there is no config), login, the registration
+// and doctor --client, skipping what is already done; --print writes nothing.
 func (r Maku) setup(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("setup", flag.ContinueOnError)
+	advanced := fs.Bool("advanced", false, "register maku mcp --advanced")
 	project := fs.Bool("project", false, "register and install in this repository, not for the user")
 	dry := fs.Bool("print", false, "print what setup would do, and write nothing")
 	restart := fs.Bool("restart-service", false, "opencode: restart its background service if it runs, without asking")
 	pos, err := flags(fs, args)
 	if err != nil || len(pos) != 1 {
-		return fmt.Errorf("setup <claude|opencode|codex|gemini|cursor|copilot> [--project] [--print] [--restart-service]: %w", errors.Join(err, errors.New("one client")))
+		return fmt.Errorf("setup <claude|opencode|codex|gemini|cursor|copilot> [--advanced] [--project] [--print] [--restart-service]: %w", errors.Join(err, errors.New("one client")))
 	}
 	agent, err := maku.LookupAgent(pos[0])
 	if err != nil {
 		return err
 	}
-	s := maku.Setup{Agent: agent, Project: *project, Print: *dry, Home: r.Home, Dir: r.Cwd, Version: version.Version,
+	s := maku.Setup{Agent: agent, Advanced: *advanced, Project: *project, Print: *dry, Home: r.Home, Dir: r.Cwd, Version: version.Version,
 		LookPath: r.LookPath, Run: r.RunCmd, Out: r.Out, Capture: r.Capture, Ask: r.asker(), RestartService: *restart}
 	if s.Capture == nil {
 		s.Capture = func(ctx context.Context, argv []string) (string, error) {
@@ -703,7 +750,42 @@ func (r Maku) setup(ctx context.Context, args []string) error {
 		}
 	}
 	s.Cmd = maku.SetupCmd(s.LookPath, os.Executable)
-	return s.Do(ctx)
+	if s.Print {
+		return s.Do(ctx)
+	}
+	cfgPath, tokPath := filepath.Join(r.Dir, "config.json"), filepath.Join(r.Dir, "token.json")
+	var cfg maku.Config
+	if maku.LoadJSON(cfgPath, &cfg) != nil || cfg.Validate() != nil {
+		rawURL, perr := r.promptRoomsURL()
+		if perr != nil {
+			return perr
+		}
+		if err := r.configure(ctx, cfgPath, []string{"--url", rawURL}); err != nil {
+			return err
+		}
+		if err := maku.LoadJSON(cfgPath, &cfg); err != nil {
+			return err
+		}
+	}
+	hc := r.HC
+	if hc == nil {
+		hc = httpx.New(makuTimeout, nil)
+	}
+	if cfg.HumanMode != maku.HumanModeLocal {
+		if _, err := maku.Token(ctx, hc, cfg, tokPath); err != nil {
+			tok, lerr := maku.Login(ctx, hc, cfg, r.Out)
+			if lerr != nil {
+				return lerr
+			}
+			if err := maku.SaveToken(tokPath, tok); err != nil {
+				return err
+			}
+		}
+	}
+	if err := s.Do(ctx); err != nil {
+		return err
+	}
+	return r.runDoctor(ctx, cfg, tokPath, doctorClient(maku.CapsStore{Path: maku.CapsPath(r.Dir)}, pos[0]))
 }
 
 // status prints where a room stands; --json is the broker's body unchanged.

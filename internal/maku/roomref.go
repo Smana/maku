@@ -25,12 +25,13 @@ var refRE = regexp.MustCompile(`(?i)^(pr|pull request|pull)?\s*#?\s*([1-9][0-9]{
 // refHint is what the tools say a room can be.
 const refHint = "the room's id, #<issue>, PR #<n>, a bare number (asked about when it is an issue in one room and a PR in another) or a fragment of its title"
 
-// roomRefTools are the broker tools whose `room` the relay resolves; room_wait and room_checkout
-// resolve their own, as local tools. room_brief is one of them (CD11): the resume prompt, the
+// roomRefTools are the broker tools whose room argument the relay resolves, by the argument's name:
+// `room` for the room_* tools, `task` for task. wait, answer, room_wait and room_checkout resolve
+// their own, as local tools. room_brief is one of them (CD11): the resume prompt, the
 // `/factory resume` short command and the docs hand it `#<issue>`, a `PR #<n>`, a bare number or a
 // title fragment, and it is resolved here so the broker is asked about a room id.
-var roomRefTools = map[string]bool{"room_summary": true, mcpwire.RoomChanges: true, "room_queue": true,
-	"room_tail": true, "room_fork": true, "room_brief": true}
+var roomRefTools = map[string]string{"room_summary": "room", mcpwire.RoomChanges: "room", "room_queue": "room",
+	"room_tail": "room", "room_fork": "room", "room_brief": "room", mcpwire.Task: "task"}
 
 // minFragment is the shortest title fragment that names a room.
 const minFragment = 3
@@ -133,16 +134,17 @@ func (r *Relay) resolveRef(ctx context.Context, ref string) (string, any) {
 	return "", mcpwire.ToolError(strings.TrimRight(b.String(), "\n"))
 }
 
-// resolveArgs rewrites the room reference of a call's arguments to a room id: key is "room" (a
-// string) or "rooms" (a list of them). Anything else passes unchanged, for the tool to refuse.
+// resolveArgs rewrites the room reference of a call's arguments to a room id: key is "room" or
+// "task" (a string) or "rooms" (a list of them). Anything else passes unchanged, for the tool to refuse.
 func (r *Relay) resolveArgs(ctx context.Context, args json.RawMessage, key string) (json.RawMessage, any) {
 	var m map[string]json.RawMessage
 	if json.Unmarshal(args, &m) != nil || m == nil {
 		return args, nil
 	}
 	var refs []string
-	switch key {
-	case "room":
+	single := key != "rooms"
+	switch {
+	case single:
 		var s string
 		if json.Unmarshal(m[key], &s) != nil {
 			return args, nil
@@ -161,7 +163,7 @@ func (r *Relay) resolveArgs(ctx context.Context, args json.RawMessage, key strin
 		refs[i] = id
 	}
 	var out []byte
-	if key == "room" {
+	if single {
 		out, _ = json.Marshal(refs[0])
 	} else {
 		out, _ = json.Marshal(refs)
@@ -182,7 +184,7 @@ func refSchema(schema any) any {
 		return schema
 	}
 	props, _ := sch["properties"].(map[string]any)
-	for _, k := range []string{"room", "rooms"} {
+	for _, k := range []string{"room", "rooms", "task"} {
 		p, _ := props[k].(map[string]any)
 		if p == nil {
 			continue

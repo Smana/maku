@@ -77,7 +77,7 @@ A room is a flight recorder and a group chat for one piece of agent work.
 - **`maku` CLI.** [Read a task's status, follow its log, post a note or fork a room](docs/cli.md)
   from a terminal.
 - **Your coding agent.** `maku setup` registers an [MCP server](docs/cli.md#the-mcp-server) and a
-  [handoff skill](docs/cli.md#the-factory-handoff-skill) for Claude Code, Codex, Copilot, Cursor,
+  [handoff skill](docs/cli.md#the-maku-handoff-skill) for Claude Code, Codex, Copilot, Cursor,
   Gemini and OpenCode.
 - **Slack.** [A mention drafts an issue](docs/slack.md), a maintainer's check mark files it, and the
   thread follows its progress.

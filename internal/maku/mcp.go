@@ -66,6 +66,12 @@ type Relay struct {
 	FactoryLogin string
 	// Label puts a label on the issue just filed, as the developer; nil refuses to start one.
 	Label Labeler
+	// Unlabel removes a label before Label re-applies it when answer restarts an escalated task;
+	// nil skips the removal step.
+	Unlabel Labeler
+	// Advanced lists the rare tools after the six, then every other tool the broker lists (maku mcp
+	// --advanced). Without it only the six are listed; an unlisted tool is still relayed when called.
+	Advanced bool
 	// ClassLabel puts a planned issue's class:<c> label, then its workflow:<p> pin, on it before Label
 	// starts the factory (P5, P7); nil starts without them, and the factory then decides both itself.
 	ClassLabel Labeler
@@ -157,7 +163,7 @@ func (r *Relay) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 		// is handled inline, and may be the very next line.
 		pre := r.reserve(ctx, m)
 		pool, busy := g, "busy: 8 requests in flight"
-		if pre != nil && pre.call.Name == toolRoomWait {
+		if pre != nil && (pre.call.Name == toolRoomWait || pre.call.Name == mcpwire.Wait) {
 			pool, busy = gw, "busy: 8 room_wait calls in flight"
 		}
 		if !pool.TryGo(func() error { r.handle(ctx, m, raw, pre); return nil }) {
@@ -219,7 +225,7 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 	case "tools/list":
 		res, err := r.relay(ctx, raw)
 		if err == nil {
-			res, err = withLocalTools(res)
+			res, err = withLocalTools(res, r.Advanced)
 		}
 		r.reply(m, res, err)
 	case "tools/call":
@@ -227,9 +233,9 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 			r.callLocal(m, pre)
 			return
 		}
-		if roomRefTools[callName(m.Params)] {
+		if key, ok := roomRefTools[callName(m.Params)]; ok {
 			var refusal any
-			if raw, refusal = r.resolveCall(ctx, m); refusal != nil {
+			if raw, refusal = r.resolveCall(ctx, m, key); refusal != nil {
 				r.write(mcpwire.Response(m.ID, refusal, nil))
 				return
 			}
@@ -294,16 +300,20 @@ func explainRelay(err error) string {
 		return "not_logged_in: run maku login in a terminal; maku mcp reads the new token on the next call, with no restart"
 	case errors.As(err, &refused) && refused.Code == http.StatusNotFound:
 		return "mcp_off: the broker serves no /mcp; an operator turns on human.mcp.enabled"
-	case errors.As(err, &refused) && refused.Reason == mcpNeedsRoomctl:
-		return mcpNeedsRoomctl + ": the broker takes maku's own token only"
+	case errors.As(err, &refused) && (refused.Reason == mcpNeedsMaku || refused.Reason == mcpNeedsRoomctl):
+		return mcpNeedsMaku + ": the broker takes maku's own token only"
 	case errors.As(err, &refused):
 		return refused.Error()
 	}
 	return "unavailable: " + err.Error()
 }
 
-// mcpNeedsRoomctl is the broker's 403 for a token that is not maku's.
-const mcpNeedsRoomctl = "mcp_needs_roomctl"
+// mcpNeedsMaku is the broker's 403 for a token that is not maku's; mcpNeedsRoomctl is its
+// pre-rename spelling, accepted during release N.
+const (
+	mcpNeedsMaku    = "mcp_needs_maku"
+	mcpNeedsRoomctl = "mcp_needs_roomctl"
+)
 
 // forward posts raw to the broker's /mcp and returns the JSON-RPC answer: nil for a notification.
 func (r *Relay) forward(ctx context.Context, raw []byte) ([]byte, error) {
@@ -347,7 +357,7 @@ func (r *Relay) forward(ctx context.Context, raw []byte) ([]byte, error) {
 	}
 	why, _ := httpx.ReadBody(resp.Body, 1<<10)
 	ref := &Refusal{Op: "mcp", Code: resp.StatusCode}
-	if r := strings.TrimSpace(string(why)); r == userInactive || r == mcpNeedsRoomctl {
+	if r := strings.TrimSpace(string(why)); r == userInactive || r == mcpNeedsMaku || r == mcpNeedsRoomctl {
 		ref.Reason = r
 	}
 	return nil, ref
@@ -463,13 +473,14 @@ func (r *Relay) write(v any) {
 	_, _ = r.out.Write(append(b, '\n'))
 }
 
-// resolveCall is the tools/call m with its room reference resolved to an id, or the refusal.
-func (r *Relay) resolveCall(ctx context.Context, m message) ([]byte, any) {
+// resolveCall is the tools/call m with its room reference, the argument key, resolved to an id, or
+// the refusal.
+func (r *Relay) resolveCall(ctx context.Context, m message, key string) ([]byte, any) {
 	var p map[string]json.RawMessage
 	if json.Unmarshal(m.Params, &p) != nil {
 		return nil, nil
 	}
-	args, refusal := r.resolveArgs(ctx, p["arguments"], "room")
+	args, refusal := r.resolveArgs(ctx, p["arguments"], key)
 	if refusal != nil {
 		return nil, refusal
 	}

@@ -99,7 +99,7 @@ func TestMCPTakesRoomctlTokensOnly(t *testing.T) {
 			}
 		})
 	}
-	if !strings.Contains(scrape(t, e), `rooms_rejected_actions_total{reason="mcp_needs_roomctl"} 2`) {
+	if !strings.Contains(scrape(t, e), `rooms_rejected_actions_total{reason="mcp_needs_maku"} 2`) {
 		t.Fatal("refusals uncounted")
 	}
 	noClient := setup(t, func(s *Server, _ *fanout.Hub, _ *hubView) { s.MCP = true })

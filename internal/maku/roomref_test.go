@@ -171,7 +171,7 @@ func TestRoomBriefResolvesReferences(t *testing.T) {
 		map[string]any{"name": "room_summary", "description": "d", "inputSchema": schema},
 		map[string]any{"name": "room_brief", "description": "The room's resume brief", "inputSchema": schema},
 	}
-	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
+	s := relayTo(t, b, tok, func(r *Relay) { r.Advanced = true })
 	list := s.request(t, 5, "tools/list", map[string]any{})["result"].(map[string]any)
 	var names []string
 	for _, raw := range list["tools"].([]any) {
@@ -184,7 +184,7 @@ func TestRoomBriefResolvesReferences(t *testing.T) {
 			t.Fatalf("room_brief does not say it takes a reference: %v", tool)
 		}
 	}
-	if got := strings.Join(names, ","); got != "room_summary,room_brief,issue_file,need_answer,room_wait,room_checkout,coordination_checkout,coordination_open" {
+	if got := strings.Join(names, ","); got != "start,wait,answer,room_checkout,coordination_checkout,coordination_open,room_summary,room_brief,issue_file,need_answer,room_wait" {
 		t.Fatalf("the tools are the broker's plus maku's: %s", got)
 	}
 }
@@ -239,7 +239,7 @@ func TestRoomWaitResolvesReferences(t *testing.T) {
 // The tools' schemas no longer pin the room to an id, or a client validating them would refuse #7.
 func TestToolsListAcceptsReferences(t *testing.T) {
 	b := newMCPBroker(t)
-	s := startSession(t, b, &filing{}, &labeling{}, time.Second)
+	s := relayTo(t, b, tok, func(r *Relay) { r.Advanced = true })
 	res := s.request(t, 5, "tools/list", map[string]any{})["result"].(map[string]any)
 	for _, raw := range res["tools"].([]any) {
 		tool := raw.(map[string]any)

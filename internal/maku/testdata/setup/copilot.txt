@@ -2,7 +2,7 @@ add this to ~/.copilot/mcp-config.json (maku setup never edits a config):
 
 {
   "mcpServers": {
-    "factory": {
+    "maku": {
       "type": "local",
       "command": "maku",
       "args": ["mcp"],
@@ -11,4 +11,4 @@ add this to ~/.copilot/mcp-config.json (maku setup never edits a config):
   }
 }
 
-setup installs the factory-handoff skill in ~/.copilot/skills
+setup installs the maku-handoff skill in ~/.copilot/skills

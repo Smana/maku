@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -43,6 +44,9 @@ var localHandlers = buildHandlers()
 
 func buildHandlers() map[string]localTool {
 	return map[string]localTool{
+		mcpwire.Start:    func(ctx context.Context, r *Relay, c localCall) any { return r.startTool(ctx, c.Args) },
+		mcpwire.Wait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
+		mcpwire.Answer:   func(ctx context.Context, r *Relay, c localCall) any { return r.answerTool(ctx, c.Args) },
 		issueFileTool:    func(ctx context.Context, r *Relay, c localCall) any { return r.issueFile(ctx, c.Args) },
 		needAnswerTool:   func(ctx context.Context, r *Relay, c localCall) any { return r.needAnswer(ctx, c.Args) },
 		toolRoomWait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
@@ -58,6 +62,9 @@ func buildHandlers() map[string]localTool {
 
 // localEntries are the local tools' tools/list entries, in the order they are appended.
 var localEntries = []any{
+	startEntry,
+	waitEntry,
+	answerEntry,
 	issueFileEntry,
 	needAnswerEntry,
 	roomWaitEntry,
@@ -66,20 +73,59 @@ var localEntries = []any{
 	coordinationOpenEntry,
 }
 
-// withLocalTools adds the local tools to the broker's tools/list result.
-func withLocalTools(res json.RawMessage) (json.RawMessage, error) {
+// sixTools are the tools every client lists, in this order (UX1).
+var sixTools = []string{mcpwire.Handoff, mcpwire.Start, mcpwire.Inbox, mcpwire.Task, mcpwire.Wait, mcpwire.Answer}
+
+// advancedTools are the rare tools maku mcp --advanced lists after the six.
+var advancedTools = []string{"room_tail", "room_fork", toolRoomCheckout, toolCoordinationCheckout, toolCoordinationOpen,
+	mcpwire.CoordinationPlan}
+
+// withLocalTools merges the local tools into the broker's tools/list result: the six, in order, and
+// with advanced the rare tools after them, then every other tool the broker or the relay still has.
+// A broker tool that takes a room says it takes a reference.
+func withLocalTools(res json.RawMessage, advanced bool) (json.RawMessage, error) {
 	var list map[string]any
 	if err := json.Unmarshal(res, &list); err != nil {
 		return nil, fmt.Errorf("tools/list: %w", err)
 	}
 	tools, _ := list["tools"].([]any)
-	for _, t := range tools {
-		if tool, ok := t.(map[string]any); ok && roomRefTools[fmt.Sprint(tool["name"])] {
+	all := make([]any, 0, len(tools)+len(localEntries))
+	byName := map[string]any{}
+	for i, t := range append(tools, localEntries...) {
+		tool, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		name := fmt.Sprint(tool["name"])
+		if _, dup := byName[name]; dup {
+			continue
+		}
+		if key, ok := roomRefTools[name]; ok && i < len(tools) { // a local entry is shared: never rewritten
 			tool["inputSchema"] = refSchema(tool["inputSchema"])
-			tool["description"] = fmt.Sprint(tool["description"]) + " room is " + refHint + "."
+			tool["description"] = fmt.Sprint(tool["description"]) + " " + key + " is " + refHint + "."
+		}
+		byName[name] = tool
+		all = append(all, tool)
+	}
+	order := sixTools
+	if advanced {
+		order = append(slices.Clone(sixTools), advancedTools...)
+	}
+	listed := make([]any, 0, len(all))
+	seen := map[string]bool{}
+	for _, n := range order {
+		if t, ok := byName[n]; ok {
+			listed, seen[n] = append(listed, t), true
 		}
 	}
-	list["tools"] = append(tools, localEntries...)
+	if advanced {
+		for _, t := range all {
+			if n := fmt.Sprint(t.(map[string]any)["name"]); !seen[n] {
+				listed = append(listed, t)
+			}
+		}
+	}
+	list["tools"] = listed
 	return json.Marshal(list)
 }
 

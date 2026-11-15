@@ -20,7 +20,7 @@ The reference for the broker, the bridge, the factory, the CLI and the web UI; t
 | [The factory](factory.md) | What a label starts, the Task lifecycle, triage and budgets, the merge gate, escalation, the kill switch; the Task CRD, the config file, the factory's API |
 | [GitHub Apps](github-apps.md) | The agents App and the factory App, the optional merger App and policy-bot: each App's permissions, where its key goes, the startup check |
 | [Merge policies](merge-policies.md) | A repository's merge policies: start here, the catalog, bindings, rollout stages, every field, worked examples, recipes, checking and promoting, reasons, rollback |
-| [maku](cli.md) | Install and verify, configure, every command, the factory-handoff skill |
+| [maku](cli.md) | Install and verify, one-command setup, every command, the six MCP tools, the maku-handoff skill |
 | [Web UI](web-ui.md) | The room list, the room page, what each standing may do |
 | [GitHub account link](github-link.md) | Each human links their GitHub account once: the flow, revocation, the activity window, a human with no link |
 | [Slack App](slack.md) | The factory's Slack App: manifest, config, the two flows, what it never does |

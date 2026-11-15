@@ -290,8 +290,8 @@ func (d Doctor) opencode(report func(bool, string, string), warn func(string, st
 	}
 }
 
-// opencodeCodeMode warns when an `execute` deny rule turns OpenCode's Code Mode off and the factory
-// entry does not opt out with codemode:false: Code Mode servers are hidden, the factory's with them.
+// opencodeCodeMode warns when an `execute` deny rule turns OpenCode's Code Mode off and the maku
+// (or legacy factory) entry does not opt out with codemode:false.
 func (d Doctor) opencodeCodeMode(warn func(string, string)) {
 	for _, p := range d.OpenCodeConfigs {
 		b, err := os.ReadFile(filepath.Clean(p))
@@ -302,13 +302,20 @@ func (d Doctor) opencodeCodeMode(warn func(string, string)) {
 		if json.Unmarshal(b, &cfg) != nil { // comments: not ours to read
 			continue
 		}
-		factory, ok := mapAt(mapAt(cfg, "mcp"), "servers")["factory"].(map[string]any)
-		if ok && executionTimeout(factory) == 0 {
-			warn("opencode", p+" sets no timeout.execution on mcp.servers.factory: OpenCode cuts issue_file's form at its default tool timeout (add \"timeout\": {\"execution\": 900000}; maku setup opencode does it)")
-		}
-		if ok && factory["codemode"] != false && hasExecuteDeny(cfg) {
-			warn("opencode", p+" denies execute, which turns Code Mode off and hides the factory tools: add \"codemode\": false to mcp.servers.factory (maku setup opencode does it)")
-			return
+		servers := mapAt(mapAt(cfg, "mcp"), "servers")
+		for _, key := range []string{"maku", "factory"} {
+			entry, ok := servers[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			if executionTimeout(entry) == 0 {
+				warn("opencode", p+" sets no timeout.execution on mcp.servers."+key+": OpenCode cuts start's form at its default tool timeout (add \"timeout\": {\"execution\": 900000}; maku setup opencode does it)")
+			}
+			if entry["codemode"] != false && hasExecuteDeny(cfg) {
+				warn("opencode", p+" denies execute, which turns Code Mode off and hides the "+key+" tools: add \"codemode\": false to mcp.servers."+key+" (maku setup opencode does it)")
+				return
+			}
+			break
 		}
 	}
 }
@@ -335,12 +342,16 @@ func hasExecuteDeny(v any) bool {
 	return false
 }
 
-// skill compares the maku-version each installed factory-handoff skill carries with this
-// binary's: a copy from another release names tools or commands this one lacks.
+// skill compares the maku-version each installed maku-handoff (or legacy factory-handoff) skill
+// carries with this binary's: a copy from another release names tools or commands this one lacks.
 func (d Doctor) skill(report func(bool, string, string), skip func(string, string)) {
 	found := false
 	for _, dir := range d.SkillDirs {
 		v, ok, err := skill.Version(dir)
+		skillName := "maku-handoff"
+		if _, statErr := os.Stat(filepath.Join(dir, skillName, "SKILL.md")); statErr != nil {
+			skillName = "factory-handoff"
+		}
 		switch {
 		case err != nil:
 			found = true
@@ -348,14 +359,14 @@ func (d Doctor) skill(report func(bool, string, string), skip func(string, strin
 		case !ok:
 		case v != d.Version:
 			found = true
-			report(false, "skill", fmt.Sprintf("%s holds factory-handoff %s, this maku is %s: run maku setup <client> (add --project for a repository copy), or delete the directory", filepath.Join(dir, "factory-handoff"), v, d.Version))
+			report(false, "skill", fmt.Sprintf("%s holds %s %s, this maku is %s: run maku setup <client> (add --project for a repository copy), or delete the directory", filepath.Join(dir, skillName), skillName, v, d.Version))
 		default:
 			found = true
-			report(true, "skill", fmt.Sprintf("%s is %s", filepath.Join(dir, "factory-handoff"), v))
+			report(true, "skill", fmt.Sprintf("%s is %s", filepath.Join(dir, skillName), v))
 		}
 	}
 	if !found {
-		skip("skill", "no factory-handoff skill installed: run maku setup <client>")
+		skip("skill", "no maku-handoff skill installed: run maku setup <client>")
 	}
 }
 
@@ -476,7 +487,7 @@ func (d Doctor) github(ctx context.Context, tok string, report func(bool, string
 	case resp.StatusCode != http.StatusOK:
 		report(false, "github", (&Refusal{Op: "rooms", Code: resp.StatusCode}).Error())
 	case access == "unlinked":
-		report(false, "github", "your account has no linked GitHub identity: ask an admin to link GitHub to it at "+d.Config.Issuer)
+		report(false, "github", d.unlinkedMsg())
 	case access == "unverified":
 		report(false, "github", "the broker cannot verify your GitHub access right now: retry in a minute, and if it persists ask an admin")
 	default:
@@ -484,6 +495,10 @@ func (d Doctor) github(ctx context.Context, tok string, report func(bool, string
 		// nothing. issue_draft's canStart looks the link up, so ask it.
 		d.linkProbe(ctx, tok, rows, report, warn)
 	}
+}
+
+func (d Doctor) unlinkedMsg() string {
+	return "your account has no linked GitHub identity: open " + strings.TrimRight(d.Config.URL, "/") + "/link/github to link it, or ask an admin to link GitHub to it at " + d.Config.Issuer
 }
 
 // maxProbes is how many repositories the link probe asks about.
@@ -520,7 +535,7 @@ func (d Doctor) linkProbe(ctx context.Context, tok string, rows []struct {
 			report(true, "github", "your GitHub identity is linked")
 			return
 		case got.CanStartWhy == "not_linked":
-			report(false, "github", "your account has no linked GitHub identity: ask an admin to link GitHub to it at "+d.Config.Issuer)
+			report(false, "github", d.unlinkedMsg())
 			return
 		}
 		last = "issue_draft: " + OneLine(got.CanStartWhy)

@@ -80,23 +80,13 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 		t.Fatalf("initialize: %v", res)
 	}
 	send(map[string]any{"jsonrpc": "2.0", "method": "notifications/initialized"})
-	// Names, not a count: PR 3 and PR 4 each add tools, in either merge order (M3).
+	// Default list is the six in order; unlisted release-N tools stay callable below.
 	var names []string
 	for _, tl := range ask(2, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	count := func(name string) int {
-		n := 0
-		for _, x := range names {
-			if x == name {
-				n++
-			}
-		}
-		return n
-	}
-	if n := len(names); n < 6 || strings.Join(names[n-6:], ",") != "issue_file,need_answer,room_wait,room_checkout,coordination_checkout,coordination_open" ||
-		count("rooms_list") != 1 || count("room_summary") != 1 || count("room_changes") != 1 {
-		t.Fatalf("the broker's tools, then issue_file, need_answer, room_wait, room_checkout and coordination_checkout: %v", names)
+	if strings.Join(names, ",") != "handoff,start,inbox,task,wait,answer" {
+		t.Fatalf("the default list is the six in order: %v", names)
 	}
 	if res := ask(3, "tools/call", map[string]any{"name": "room_queue", "arguments": map[string]any{"room": roomID, "text": "use v2"}}); strings.Contains(fmt.Sprint(res), "isError:true") {
 		t.Fatalf("queue: %v", res)

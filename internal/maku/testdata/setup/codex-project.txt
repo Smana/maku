@@ -1,7 +1,7 @@
 add this to .codex/config.toml (maku setup never edits a config):
 
-[mcp_servers.factory]
+[mcp_servers.maku]
 command = "maku"
 args = ["mcp"]
 
-setup installs the factory-handoff skill in .agents/skills
+setup installs the maku-handoff skill in .agents/skills

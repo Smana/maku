@@ -36,7 +36,7 @@ var mcpProtocols = []string{"2025-06-18", mcpTasks}
 const mcpTasks = "2025-11-25"
 
 // reasonMCPClient refuses /mcp to any token but maku's.
-const reasonMCPClient = "mcp_needs_roomctl"
+const reasonMCPClient = "mcp_needs_maku"
 
 // acceptRestInstructions is the deterministic stop route shared by legacy prompts and intake_plan's
 // description during release N.
