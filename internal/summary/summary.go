@@ -62,6 +62,7 @@ type State struct {
 	// FactsAt is the ts of the event that carried Facts: when the room last heard what its task waits on,
 	// which a needs/v1 item's At carries (a member's row and the room summary date an item alike).
 	FactsAt   time.Time
+	Scope     *envelope.Scope
 	Verdict   *Verdict
 	Judge     *JudgeVerdict
 	Pending   map[string]Approval // approval id -> still open
@@ -230,6 +231,8 @@ type Summary struct {
 		LastRunModel *RunModel `json:"lastRunModel,omitempty"`
 		// Policy is the merge policy that governs the task, absent until the factory posts one.
 		Policy *PolicyView `json:"policy,omitempty"`
+		// Question is the scoper's open question when the task is Escalated with needs_author.
+		Question string `json:"question,omitempty"`
 	} `json:"status"`
 	// Runs is the task's run history, oldest first: the factory's facts, so a sealed room keeps it.
 	Runs     []envelope.RunFact `json:"runs,omitempty"`
@@ -279,6 +282,12 @@ func (st *State) Add(evs []envelope.Event) {
 		switch ev.Type {
 		case envelope.StateChanged:
 			foldState(st, ev)
+		case envelope.Handoff:
+			var h envelope.HandoffPayload
+			if json.Unmarshal(ev.Payload, &h) == nil && h.Scope != nil && h.Scope.Validate() == nil {
+				cp := *h.Scope
+				st.Scope = &cp
+			}
 		case envelope.ApprovalRequested:
 			var a envelope.ApprovalRequestedPayload
 			if json.Unmarshal(ev.Payload, &a) == nil {
@@ -527,6 +536,9 @@ func View(st State, room, url string, sub policy.Subject, standing GitHubStandin
 		return s                   // read-only: no wait, no needs, no actions
 	}
 	s.Status.Reason, s.Status.Next = Waiting(st.Facts)
+	if st.Facts != nil && st.Facts.Phase == "Escalated" && st.Facts.Reason == "needs_author" && st.Scope != nil && st.Scope.State == envelope.ScopeQuestion {
+		s.Status.Question = st.Scope.Question
+	}
 	// Deciding happens in the web UI: judge "could decide" as the web UI would, so a CLI caller
 	// still learns an approval is needed, with a link and no command (D4).
 	web := sub

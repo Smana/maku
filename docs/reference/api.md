@@ -498,7 +498,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /v1/ws?room=<id>` | The live room, over WebSocket |
 | `POST /mcp` | The [MCP server](#post-mcp) `maku mcp` relays, when `human.mcp.enabled`; else `404` |
 | `POST /api/slack/decisions` | The Slack App's one deciding route, when `human.slackDecide`: `{team, user, channel, messageTS, approvalId, branch, decision}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 200 with a closed code for every refusal, `400` for shape, size or content type, `429` over 10 a minute (burst 5, per `(team,user)`, per replica), `503` when the store, the room or the log cannot be read. `forge.push` only; the human is resolved from `slack_links`, and must be an approver or owner of the room *and* write on its repository |
-| `POST /api/slack/stops`, `POST /api/slack/retries` | The Slack App's stop and retry routes, when `human.slackStop` / `human.slackRetry`: `{team, user, channel, messageTS, room}` → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 4 KiB cap, 10 a minute (burst 5, per `(team,user)`, per replica), identity checked in `slack_links` and forwarded as `onBehalfOf: slack:<team>/<user>` to [`POST /v1/tasks/{task}/stops` and `/retries`](#post-v1taskstaskstops-and-post-v1taskstaskretries) |
+| `POST /api/slack/stops`, `POST /api/slack/retries`, `POST /api/slack/answers` | The Slack App's stop, retry and question-answer routes, when `human.slackStop` / `human.slackRetry` / `human.slackAnswer`: `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`) → `{"result": "<code>"}`. Bearer: the App's sponsored principal only. 4 KiB cap (8 KiB on `/answers`), 10 a minute (burst 5, per `(team,user)`, per replica), identity checked in `slack_links` and forwarded as `onBehalfOf: slack:<team>/<user>` to [`POST /v1/tasks/{task}/stops`, `/retries` and `/answers`](#post-v1taskstaskstops-post-v1taskstaskretries-and-post-v1taskstaskanswers) |
 | `GET /link/github`, `POST /link/github/{start,confirm,unlink}`, `GET /link/github/callback` | The [GitHub account link](../github-link.md), when `human.githubLink`; else `404`. The page and its POSTs take the web UI's session and the broker's own `Origin`; the callback takes no session (the front door lets `GET=^/link/github/callback$` through) and links nothing |
 | `DELETE /api/links/github/{sub}` | An admin's web session removes another account's GitHub link: `{"unlinked": bool}`; `403` for a member or a CLI bearer |
 | `GET /settings/approval-memory`, `/api/approval-memory/…` | Approval memory (merge policy stage 5), when `human.approvalMemory`; else `404`. `GET grants?repository=&class=&status=&q=` lists the grants of the repositories the caller may read (an admin reads all), `unverified` when an access check failed; `GET grants/{id}` adds its audit and the conditions that stay outside it; `GET export?repository=` is the same list as YAML. `POST preview` and `POST grants` take `{repository, class, caughtFiles (exact paths) or files (patterns), diffShape?, policyHash, pullRequest, lifetimeDays?}` ("merge and create rule", GitHub write on the repository): the preview saves nothing and answers the exact predicate, the future pull requests it would match, what stays outside it, its expiry, its revoke path and what "merge once" does instead; the create saves it and answers the same with the grant; `POST grants/{id}/{revoke,renew,reconfirm}` `{version?, reason?, lifetimeDays?}` moves one: revoking takes write or an admin, the others write, and a reconfirmation rebinds to the policy its suspension was found under. Writes take the web UI's session from the broker's own `Origin` (`web_only`, `cross_origin`), a body of 16 KiB at most; `409 grant_state` for a move its status refuses |
@@ -1242,17 +1242,19 @@ beyond its ids: the body cannot name a human, a room or a class.
 Merging is untouched: this route decides an approval, and the merge stays a review of the current
 head on GitHub.
 
-### `POST /api/slack/stops` and `POST /api/slack/retries`
+### `POST /api/slack/stops`, `POST /api/slack/retries` and `POST /api/slack/answers`
 
-Mounted independently when `human.slackStop` or `human.slackRetry` is set (each shaped like
-`human.slackDecide`: `principal`, `teamID`, `repositories`; unset is the mux's `404`). Body
-(`application/json`, at most 4 KiB, unknown fields refused): `{team, user, channel, messageTS, room}`,
-all validated by shape before any read. Bearer: the App's configured sponsored principal alone;
-`team` must match `teamID`; `10` requests a minute per `(team, user)` with burst `5` (`429
-{"result": "rate_limited"}`). The broker checks `slack_links` (`not_linked`, `link_unverified`),
-checks that the room's repository is in the route's `repositories` (`not_permitted`) and resolves a
-task (`unknown_task`), then forwards `{onBehalfOf: "slack:<team>/<user>"}` with the App's own
-bearer token to the factory's stop or retry route and returns its `{"result"}`.
+Mounted independently when `human.slackStop`, `human.slackRetry` or `human.slackAnswer` is set (each
+shaped like `human.slackDecide`: `principal`, `teamID`, `repositories`; unset is the mux's `404`).
+Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on `/answers`, unknown
+fields refused): `{team, user, channel, messageTS, room}` (plus `answer` on `/answers`, 1..4 000
+bytes with no control characters), all validated by shape before any read. Bearer: the App's
+configured sponsored principal alone; `team` must match `teamID`; `10` requests a minute per `(team,
+user)` with burst `5` (`429 {"result": "rate_limited"}`). The broker checks `slack_links`
+(`not_linked`, `link_unverified`), checks that the room's repository is in the route's `repositories`
+(`not_permitted`) and resolves a task (`unknown_task`), then forwards `{onBehalfOf:
+"slack:<team>/<user>"}` (with `answer` on `/answers`) with the App's own bearer token to the
+factory's stop, retry or answer route and returns its `{"result"}`.
 
 ## `:8082` — the factory's task intake
 
@@ -1333,20 +1335,28 @@ required). `Idempotency-Key` is the incident's trigger key.
 A sponsored principal's request refuses an `incident` (`bad_json`), and an internal principal's refuses
 everything a sponsored one's does beyond its own keys.
 
-### `POST /v1/tasks/{task}/stops` and `POST /v1/tasks/{task}/retries`
+### `POST /v1/tasks/{task}/stops`, `POST /v1/tasks/{task}/retries` and `POST /v1/tasks/{task}/answers`
 
 Served on the same port while `api.sponsored` is non-empty, for a sponsored principal's bearer token
 alone (`403 sponsored_only` for a human, internal or run caller). `{task}` is the task's name or
-8-character room id. Body (`application/json`, at most 4 KiB, unknown fields refused):
-`{onBehalfOf: "slack:<team>/<user>"}`. The factory re-resolves the GitHub login from `onBehalfOf`
-(config map, else `slack_links`), checks that the principal lists the task's repository and that the
-resolved login has maintainer write permission on GitHub (`not_maintainer`), and applies the exact
-transition of the `factory/stop` label (`Queued` or `Running` → `Stopped`, else `not_running`) or
-the `/factory retry` comment (`Escalated` → `Queued`, proceeding on the scoper's first assumption
-when the escalation was a question; a `Queued` task held by a model hold answers `not_escalated`).
-Answers `200 {"result"}` in `{stopped, retried, not_linked, not_maintainer, not_running,
-not_escalated, unknown_task}`, `400 bad_json` / `bad_on_behalf_of`, `401` / `403` for caller auth,
-or `503` (`link_unverified`, `tasks_unavailable`).
+8-character room id. Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on
+`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>"}` (plus `answer` on
+`/answers`, 1..4 000 bytes with no control characters). The factory re-resolves the GitHub login
+from `onBehalfOf` (config map, else `slack_links`, never from a body field) and checks that the
+principal lists the task's repository. `/stops` and `/retries` require maintainer write permission on
+GitHub (`not_maintainer`) and apply the exact transition of the `factory/stop` label (`Queued` or
+`Running` → `Stopped`, else `not_running`) or the `/factory retry` comment (`Escalated` → `Queued`,
+proceeding on the scoper's first assumption when the escalation was a question; a `Queued` task held
+by a model hold answers `not_escalated`). `/answers` requires an open scoper question on the task
+(`Escalated` or `AwaitingHuman` with `scope.question` or `needs_author`, else `no_question`); when
+the resolved login is a maintainer of the repository (`admin`, `maintain`, `write`) or the issue's
+author (`not_permitted` for anyone else), the factory appends a decision record to `## Decisions` in
+the issue body on GitHub and, for a maintainer, clears the question and restarts the task (`Queued`
+at `scope` with `ScopeAttempts` decremented), while for a non-maintainer issue author it leaves the
+task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, answered,
+answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
+no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
+caller auth, or `503` (`link_unverified`, `tasks_unavailable`).
 
 ### `POST /v1/tasks/{task}/verification`
 

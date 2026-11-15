@@ -14,8 +14,9 @@ import (
 )
 
 const (
-	actStop  = "stop"
-	actRetry = "retry"
+	actStop   = "stop"
+	actRetry  = "retry"
+	actAnswer = "answer"
 
 	actConfirmTTL = 10 * time.Minute
 
@@ -57,7 +58,7 @@ func actValue(action, room string) string {
 func parseActValue(v string) (action, room string, ok bool) {
 	parts := strings.Split(v, "|")
 	if len(parts) != 4 || parts[0] != pressVersion || parts[1] != "act" ||
-		(parts[2] != actStop && parts[2] != actRetry) || !roomRE.MatchString(parts[3]) {
+		(parts[2] != actStop && parts[2] != actRetry && parts[2] != actAnswer) || !roomRE.MatchString(parts[3]) {
 		return "", "", false
 	}
 	return parts[2], parts[3], true
@@ -257,10 +258,20 @@ func (a *App) actPress(ctx context.Context, in interaction) string {
 			Room:      p.Room,
 		}
 		var res ActResult
-		if p.Action == actStop {
+		switch p.Action {
+		case actStop:
 			res, err = a.Broker.Stop(ctx, req)
-		} else {
+		case actRetry:
 			res, err = a.Broker.Retry(ctx, req)
+		case actAnswer:
+			res, err = a.Broker.Answer(ctx, Answer{
+				Team:      in.Team,
+				User:      in.User,
+				Channel:   in.Channel,
+				MessageTS: in.MessageTS,
+				Room:      p.Room,
+				Text:      p.Text,
+			})
 		}
 		if err != nil {
 			a.log().Warn("slack act failed", "action", p.Action, "err", err)
@@ -285,10 +296,14 @@ func (a *App) closeActMessage(ctx context.Context, channel, ts, line string) err
 }
 
 func actDisabledLine(action string) string {
-	if action == actRetry {
+	switch action {
+	case actRetry:
 		return actRetryDisabledLine
+	case actAnswer:
+		return actAnswerDisabledLine
+	default:
+		return actStopDisabledLine
 	}
-	return actStopDisabledLine
 }
 
 func actResultLine(action, code, user string) (outcome, line string) {
@@ -297,11 +312,23 @@ func actResultLine(action, code, user string) (outcome, line string) {
 		return "decided", actStoppedLine
 	case "retried":
 		return "decided", actRetriedLine
+	case "answered_restarted":
+		return "decided", actAnsweredRestartedLine
+	case "answered":
+		return "decided", actAnsweredLine
+	case "not_allowed":
+		return "refused", actAnswerNotAllowedLine
+	case "no_question":
+		return "refused", actNoQuestionLine
 	case "not_maintainer", "not_permitted", "repository_permission":
-		if action == actRetry {
+		switch action {
+		case actRetry:
 			return "refused", actRetryNotMaintainerLine
+		case actAnswer:
+			return "refused", actAnswerNotAllowedLine
+		default:
+			return "refused", actStopNotMaintainerLine
 		}
-		return "refused", actStopNotMaintainerLine
 	case "not_running":
 		return "refused", actNotRunningLine
 	case "not_escalated":

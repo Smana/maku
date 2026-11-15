@@ -100,8 +100,8 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if c.Human.SlackStop == nil || c.Human.SlackRetry == nil {
-				return fmt.Errorf("slackStop=%+v slackRetry=%+v, want both on", c.Human.SlackStop, c.Human.SlackRetry)
+			if c.Human.SlackStop == nil || c.Human.SlackRetry == nil || c.Human.SlackAnswer == nil {
+				return fmt.Errorf("slackStop=%+v slackRetry=%+v slackAnswer=%+v, want all on", c.Human.SlackStop, c.Human.SlackRetry, c.Human.SlackAnswer)
 			}
 			return nil
 		}

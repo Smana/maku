@@ -662,10 +662,10 @@ func TestLoadSlackDecide(t *testing.T) {
 }
 
 func TestLoadSlackStopAndRetry(t *testing.T) {
-	if c, err := Load(write(t, valid)); err != nil || c.Human.SlackStop != nil || c.Human.SlackRetry != nil {
-		t.Fatalf("off by default: stop=%+v retry=%+v err=%v", c.Human.SlackStop, c.Human.SlackRetry, err)
+	if c, err := Load(write(t, valid)); err != nil || c.Human.SlackStop != nil || c.Human.SlackRetry != nil || c.Human.SlackAnswer != nil {
+		t.Fatalf("off by default: stop=%+v retry=%+v answer=%+v err=%v", c.Human.SlackStop, c.Human.SlackRetry, c.Human.SlackAnswer, err)
 	}
-	for _, key := range []string{"slackStop", "slackRetry"} {
+	for _, key := range []string{"slackStop", "slackRetry", "slackAnswer"} {
 		t.Run(key, func(t *testing.T) {
 			block := strings.Replace(decideConfig, "  slackDecide:\n", "  "+key+":\n", 1)
 			c, err := Load(write(t, valid+block))
@@ -673,8 +673,11 @@ func TestLoadSlackStopAndRetry(t *testing.T) {
 				t.Fatalf("valid %s: %v", key, err)
 			}
 			got := c.Human.SlackStop
-			if key == "slackRetry" {
+			switch key {
+			case "slackRetry":
 				got = c.Human.SlackRetry
+			case "slackAnswer":
+				got = c.Human.SlackAnswer
 			}
 			if got == nil || got.Principal != "slack-app" || got.TeamID != "T01ABC" {
 				t.Fatalf("%s = %+v", key, got)

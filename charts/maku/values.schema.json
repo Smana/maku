@@ -34,7 +34,8 @@
               }
             },
             "slackStop": {"$ref": "#/definitions/slackRoute"},
-            "slackRetry": {"$ref": "#/definitions/slackRoute"}
+            "slackRetry": {"$ref": "#/definitions/slackRoute"},
+            "slackAnswer": {"$ref": "#/definitions/slackRoute"}
           }
         },
         "suspend": {"description": "The broker's suspend block, verbatim (EX9).", "type": "object"},

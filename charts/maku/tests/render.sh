@@ -334,9 +334,10 @@ sa="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCont
   --set broker.human.access.ttl=5m --set broker.githubLink.existingSecret=room-broker-github-link \
   --set 'broker.human.mcp.sponsored[0].name=slack-app' --set 'broker.human.mcp.sponsored[0].clientIDFile=/s' \
   --set broker.human.slackStop.principal=slack-app --set broker.human.slackStop.teamID=T01ABC \
-  --set broker.human.slackRetry.principal=slack-app --set broker.human.slackRetry.teamID=T01ABC)"
+  --set broker.human.slackRetry.principal=slack-app --set broker.human.slackRetry.teamID=T01ABC \
+  --set broker.human.slackAnswer.principal=slack-app --set broker.human.slackAnswer.teamID=T01ABC)"
 out="$sa"
-ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackStop.principal == "slack-app" and .human.slackRetry.teamID == "T01ABC")' 'slackStop and slackRetry reach the broker config'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.slackStop.principal == "slack-app" and .human.slackRetry.teamID == "T01ABC" and .human.slackAnswer.teamID == "T01ABC")' 'slackStop, slackRetry and slackAnswer reach the broker config'
 bad '/broker/human/slackStop/teamID' --set broker.human.slackStop.principal=slack-app --set broker.human.slackStop.teamID=bad
 
 # broker.modelGateway (plan v4 step 4, GW8): the planner and the classifier call the model gateway's

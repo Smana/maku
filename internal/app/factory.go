@@ -670,6 +670,13 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return c.gh
 		},
+		Answers: func(repo string) api.AnswerForge {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil // a nil interface, never a typed-nil *forge.GitHub (C24)
+			}
+			return c.gh
+		},
 		// Hardening H4 (HR35): the broker's forge_read reads through the factory App, filtered by
 		// the repository's trust floor; the route serves only repositories in mode enforce.
 		Readers: func(repo string) api.ForgeThreads {

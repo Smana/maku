@@ -107,6 +107,9 @@ type Server struct {
 	// Forges files an api task's issue as the factory App on its repository (R10): nil files none;
 	// a nil filer for a repository refuses a titled request.
 	Forges func(repository string) IssueFiler
+	// Answers reads and edits an issue's body for POST /v1/tasks/{task}/answers (SI24); when nil,
+	// Forges or Readers is used when it implements AnswerForge.
+	Answers func(repository string) AnswerForge
 	// Log records the causes the intake never answers; nil records none.
 	Log *slog.Logger
 	// Redact is the broker's secret redactor (*redact.Redactor), applied to an api task's issue
@@ -209,6 +212,7 @@ func (s *Server) Handler() http.Handler {
 	if len(cfg.API.Sponsored) > 0 {
 		mux.HandleFunc("POST /v1/tasks/{task}/stops", s.stopTask)
 		mux.HandleFunc("POST /v1/tasks/{task}/retries", s.retryTask)
+		mux.HandleFunc("POST /v1/tasks/{task}/answers", s.answerTask)
 	}
 	if s.anyVerifies(cfg) { // RA11, D4: a 404 until an internal principal may send verdicts
 		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
