@@ -30,21 +30,15 @@ spec:
     predictedClass: review
   facts:
     finalSpend: true
-  workflows:
-    adopted-none:
-      template: none
-    checked:
-      checks: true
-    plain: {}
   loops:
-    default:
-      scope: "off"
     careful:
       continuations: 2
       judge: tier-light
       scope: scoper
       search: true
       stallSteps: 60
+    default:
+      scope: "off"
   prices:
     claude-haiku-5-5:
       cacheRead: 0.05
@@ -142,6 +136,12 @@ spec:
       taskUSD: 5.1
   triage:
     controlPercent: 10
+  workflows:
+    adopted-none:
+      template: none
+    checked:
+      checks: true
+    plain: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: Repository
@@ -157,7 +157,6 @@ spec:
   - Smana
   merge:
     approveToMerge: true
-    autoMergesPerDay: 1
     awaitingCIFor: 24h
     breaker:
       maxFollowUps: 1
@@ -170,6 +169,7 @@ spec:
     fluxSource: flux-system/flux-system
     gateStatus: false
     leakScanCheck: "Security scanning \U0001F512"
+    maxPerDay: 1
     mergerLogin: ogenki-agent-merger[bot]
     policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
@@ -195,8 +195,6 @@ spec:
     - ^observability/.+\.ya?ml$
     mode: shadow
     name: alert-rules
-  - mode: "off"
-    name: dashboards
   - allowedFiles:
     - ^(docs|website/content)/.+\.md$
     mode: shadow
@@ -210,7 +208,7 @@ spec:
     - ^(apps|flux|infrastructure|observability|security|tooling)/.+\.ya?ml$
     mode: shadow
     name: deps-patch
-  - mode: "off"
+  - mode: disabled
     name: docs
   - holdoutChecks:
     - "Check the documentation links \U0001F517"
@@ -220,16 +218,9 @@ spec:
     - "Check the documentation links \U0001F517"
     mode: live
     name: revert
-  - mode: "off"
-    name: review
-  - mode: "off"
-    name: scripts
-  - mode: "off"
-    name: tests
   repository: Smana/cloud-native-ref
   schedules:
-  - class: docs-links
-    cron: 0 6 * * 1
+  - cron: 0 6 * * 1
     name: link-rot
     text: |
       Find broken external Markdown link targets ([text](url) or [ref]: url) under docs/
@@ -238,6 +229,7 @@ spec:
       host, changing only the link target: leave code blocks, prose and link text alone,
       change fewer than 21 lines in total and add or delete no file. If none is broken,
       change nothing and open no pull request.
+    workflow: plain
   - class: dead-links
     cron: 0 7 * * *
     name: dead-links
@@ -260,7 +252,6 @@ spec:
   - Smana
   merge:
     approveToMerge: true
-    autoMergesPerDay: 2
     awaitingCIFor: 24h
     breaker:
       maxFollowUps: 1
@@ -271,6 +262,7 @@ spec:
     fixRuns: 1
     gateStatus: false
     leakScanCheck: lint
+    maxPerDay: 2
     mergerLogin: ogenki-agent-merger[bot]
     policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
@@ -283,14 +275,12 @@ spec:
     - lint
     verifyFor: 30m
   mergePolicies:
-  - mode: "off"
-    name: dashboards
   - allowedFiles:
     - ^(docs|website/content)/.+\.md$
     mode: shadow
     name: dead-links
     oracleWorkflow: dead-links.yaml
-  - mode: "off"
+  - mode: disabled
     name: docs
   - holdoutChecks:
     - validate
@@ -300,10 +290,6 @@ spec:
     - validate
     mode: shadow
     name: revert
-  - mode: "off"
-    name: scripts
-  - mode: "off"
-    name: tests
   repository: Smana/ai-native-ref
   schedules:
   - class: dead-links
@@ -324,7 +310,6 @@ spec:
   - Smana
   merge:
     approveToMerge: true
-    autoMergesPerDay: 5
     awaitingCIFor: 24h
     breaker:
       maxFollowUps: 1
@@ -335,6 +320,7 @@ spec:
     fixRuns: 1
     gateStatus: false
     leakScanCheck: leak-scan
+    maxPerDay: 5
     mergerLogin: ogenki-agent-merger[bot]
     policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
@@ -377,7 +363,6 @@ spec:
   - Smana
   merge:
     approveToMerge: true
-    autoMergesPerDay: 5
     awaitingCIFor: 24h
     breaker:
       maxFollowUps: 1
@@ -388,6 +373,7 @@ spec:
     fixRuns: 1
     gateStatus: false
     leakScanCheck: build
+    maxPerDay: 5
     mergerLogin: ogenki-agent-merger[bot]
     policyBot: true
     policyBotLogin: ogenki-merge-gate[bot]
@@ -419,15 +405,6 @@ spec:
     followUpWindow: 2h0m0s
     verification:
       within: 2h0m0s
-  requires:
-  - allowedFiles
----
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: dashboards
-  namespace: agent-system
-spec: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
@@ -450,9 +427,6 @@ spec:
   protectedFiles:
   - ^docs/(superpowers|specs)/
   - ^website/content/docs/decisions/
-  requires:
-  - allowedFiles
-  - oracleWorkflow
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
@@ -482,8 +456,6 @@ spec:
   - ^flux/sources/gitrepo-gateway-api\.yaml$
   - ^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$
   releaseAgeCheck: renovate/stability-days
-  requires:
-  - allowedFiles
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
@@ -514,25 +486,20 @@ spec:
   - ^flux/sources/gitrepo-gateway-api\.yaml$
   - ^observability/base/victoria-metrics-k8s-stack/vm-common-helm-values-configmap\.yaml$
   releaseAgeCheck: renovate/stability-days
-  requires:
-  - allowedFiles
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata:
   name: docs
   namespace: agent-system
-spec:
-  checks: true
+spec: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata:
   name: docs-links
   namespace: agent-system
-spec:
-  requires:
-  - holdoutChecks
+spec: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
@@ -550,37 +517,10 @@ spec:
   holdoutChecks:
   - validate
   maxPerDay: 5
-  requires:
-  - allowedFiles
-  - companionFiles
-  - requiredLabel
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata:
   name: revert
-  namespace: agent-system
-spec:
-  requires:
-  - holdoutChecks
----
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: review
-  namespace: agent-system
-spec: {}
----
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: scripts
-  namespace: agent-system
-spec: {}
----
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: tests
   namespace: agent-system
 spec: {}

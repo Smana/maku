@@ -31,7 +31,6 @@ func TestACutOverRepositoryConsultsItsGrants(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			snap, _ := approvalSnapshot()
 			g := cutOverRig(t, snap, nil)
-			g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
 			g.r.Grants = tc.grants
 			files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
 			g.f.SetFiles(files.Base, files.Head)
@@ -67,7 +66,7 @@ func TestAGrantOfACutOverRepositoryIsReadAgainUnderItsAuthority(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			cfg := &config.Config{Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", ClassAuthority: config.ClassAuthorityRepository}},
-				PolicyManagement: config.PolicyManagement{Read: true, RepositoryAuthority: true, ApprovalMemory: true}}
+				PolicyManagement: config.PolicyManagement{Stage: config.StageManage}}
 			f := &fakeGrants{list: []grant.Grant{rigGrant()}}
 			r := &Reconciler{Cfg: cfg, Grants: f, Metrics: &fakeMetrics{}, Now: func() time.Time { return now },
 				Authority: func(string) (mergepolicy.Snapshot, error) { s, _ := approvalSnapshot(); return s, tc.err },

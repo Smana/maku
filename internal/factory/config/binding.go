@@ -4,22 +4,20 @@ package config
 
 import (
 	"fmt"
-	"reflect"
 	"slices"
 	"strings"
 )
 
-// The modes a binding puts its class in (B4): live merges, shadow is decided and never armed,
-// disabled is neither (Q7, MR9). off is read as disabled until the release that removes it.
+// The modes a binding puts its class in (B4, MR9): live merges, shadow is decided and never armed,
+// disabled is neither (Q7, MR9).
 const (
 	ModeLive     = "live"
 	ModeShadow   = "shadow"
 	ModeDisabled = "disabled"
-	ModeOff      = "off"
 )
 
-// Disabled reports whether mode evaluates nothing: disabled, or off, its old name.
-func Disabled(mode string) bool { return mode == ModeDisabled || mode == ModeOff }
+// Disabled reports whether mode evaluates nothing.
+func Disabled(mode string) bool { return mode == ModeDisabled }
 
 // The reasons a binding does not resolve (B9). MissingRef, the reason for a binding to an absent
 // policy, is the resources layer's: Resolve is handed a policy.
@@ -34,12 +32,6 @@ const (
 	ReasonInvalid   = "Invalid"
 )
 
-// Requirable are the fields a policy's requires may name (B4, plan PR3): the four fill-once
-// parameters, and holdoutChecks, which a binding then adds to.
-func Requirable() []string {
-	return []string{"allowedFiles", "companionFiles", "requiredLabel", "oracleWorkflow", "holdoutChecks"}
-}
-
 // Binding is one repository's use of a MergePolicy (B3, B4): the policy's name, which is the class
 // name (B1), the mode, and the parameters this repository supplies. A binding tightens or fills;
 // it never widens what the policy says.
@@ -51,7 +43,7 @@ type Binding struct {
 	// +kubebuilder:validation:Pattern=`^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$`
 	Name string `json:"name"`
 	// +kubebuilder:validation:Required
-	// +kubebuilder:validation:Enum=live;shadow;disabled;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled
 	Mode string `json:"mode"`
 	// CompanionFiles, RequiredLabel and OracleWorkflow are fill-once: set here or on the policy,
 	// never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
@@ -84,16 +76,11 @@ type Binding struct {
 	MaxPerDay int `json:"maxPerDay,omitempty"`
 }
 
-// PolicySpec is a MergePolicy's class definition (B7, D16): a Class, less the mode, which is the
-// binding's, plus the parameters every binding must supply.
+// PolicySpec is a MergePolicy's class definition (B7, D16, MR9): MergeClass, without mode,
+// workflow fields or requires.
 // +kubebuilder:object:generate=true
 type PolicySpec struct {
-	Class `json:",inline"`
-	// Requires names the parameters each binding must set: of Requirable.
-	// +listType=set
-	// +kubebuilder:validation:MaxItems=5
-	// +kubebuilder:validation:items:Enum=allowedFiles;companionFiles;requiredLabel;oracleWorkflow;holdoutChecks
-	Requires []string `json:"requires,omitempty"`
+	MergeClass `json:",inline"`
 }
 
 // ServedPolicy is an accepted class-shape MergePolicy and the generation the factory serves.
@@ -132,38 +119,36 @@ func Resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 }
 
 // ValidatePolicy is every reason a policy is refused alone (B9): its own shape, then a resolve
-// with a placeholder in each field it requires, in mode off.
+// with placeholders for parameters a binding may supply, in mode disabled.
 func ValidatePolicy(name string, p PolicySpec, ctx PolicyContext) []string {
 	if problems := policyShapeProblems(name, p); len(problems) > 0 {
 		return problems
 	}
-	b := Binding{Name: name, Mode: ModeOff}
-	for _, f := range p.Requires {
-		switch f {
-		case "allowedFiles":
-			b.AllowedFiles = []string{"^placeholder$"}
-		case "companionFiles":
-			b.CompanionFiles = []string{"^placeholder$"}
-		case "requiredLabel":
-			b.RequiredLabel = "placeholder"
-		case "oracleWorkflow":
-			b.OracleWorkflow = "placeholder.yaml"
-		case "holdoutChecks":
-			b.HoldoutChecks = []string{"placeholder"}
-		}
+	b := Binding{Name: name, Mode: ModeDisabled}
+	if len(p.AllowedFiles) == 0 {
+		b.AllowedFiles = []string{"^placeholder$"}
+	}
+	if p.Oracle != nil {
+		b.OracleWorkflow = "placeholder.yaml"
+	}
+	if len(p.HoldoutChecks) == 0 {
+		b.HoldoutChecks = []string{"placeholder"}
+	}
+	if p.DiffShape == "added-entry" && p.RequiredLabel == "" {
+		b.RequiredLabel = "placeholder"
 	}
 	ctx.Guardrails = MergeGuardrails{} // valid alone: a binding may lower a cap under a guardrail
 	_, _, problems := resolve(name, p, b, ctx, Merge{FluxSource: "ns/name", ContractCheck: "placeholder"})
 	return problems
 }
 
-// policyShapeProblems is what a policy may not say whatever binds it: the mode, the repository's
-// parameters, a requires outside Requirable, or one naming a field the policy sets.
+// policyShapeProblems is what a policy may not say whatever binds it: review (which is not a
+// policy) or repository-specific parameters.
 func policyShapeProblems(name string, p PolicySpec) []string {
 	var out []string
 	bad := func(f string, a ...any) { out = append(out, fmt.Sprintf("class %s: ", name)+fmt.Sprintf(f, a...)) }
-	if p.Live || p.Shadow {
-		bad("mode is the binding's: live and shadow are refused on a MergePolicy (B4)")
+	if name == "review" {
+		bad("review is not a policy")
 	}
 	if len(p.NarrowedFiles) > 0 {
 		bad("narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy")
@@ -173,23 +158,6 @@ func policyShapeProblems(name string, p PolicySpec) []string {
 	}
 	if p.Monitor != nil && p.Monitor.Flux != nil && p.Monitor.Flux.Source != "" {
 		bad("the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)")
-	}
-	// review's CEL rule, mirrored so offline validation and admission agree (R17): review merges
-	// nothing, so it takes description, harness, harnessAllowed, escalation, checks and testFirst
-	// only. validateClass refuses the rest of its fields; these three it does not read.
-	if name == "review" && (len(p.CompanionFiles) > 0 || p.RequiredLabel != "" || len(p.Requires) > 0) {
-		bad("review takes only description, harness, harnessAllowed, escalation, checks and testFirst")
-	}
-	set := map[string]bool{"allowedFiles": len(p.AllowedFiles) > 0, "companionFiles": len(p.CompanionFiles) > 0, "requiredLabel": p.RequiredLabel != ""}
-	for i, f := range p.Requires {
-		switch {
-		case !slices.Contains(Requirable(), f):
-			bad("requires %q is not one of %v", f, Requirable())
-		case slices.Index(p.Requires, f) != i:
-			bad("requires names %q twice", f)
-		case set[f]:
-			bad("requires %s, which it sets: a parameter is set in one place (B4)", f)
-		}
 	}
 	return out
 }
@@ -204,15 +172,13 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		return refuse(ReasonInvalid, "class %s: the binding names MergePolicy %q", name, b.Name)
 	case b.Mode != ModeLive && b.Mode != ModeShadow && !Disabled(b.Mode):
 		return refuse(ReasonInvalid, "class %s: mode %q is live, shadow or disabled", name, b.Mode)
-	case name == "review" && !Disabled(b.Mode):
-		return refuse(ReasonInvalid, "class review: review takes only mode disabled")
-	case name == "review" && !reflect.DeepEqual(b, Binding{Name: b.Name, Mode: b.Mode}):
-		return refuse(ReasonInvalid, "class review: review is bound with mode disabled and no parameter")
+	case name == "review":
+		return refuse(ReasonInvalid, "class review: review is not a policy")
 	}
 	if problems := policyShapeProblems(name, p); len(problems) > 0 {
 		return Class{}, ReasonInvalid, problems
 	}
-	cl := *p.Class.DeepCopy()
+	cl := p.Class()
 	cl.Live, cl.Shadow = b.Mode == ModeLive, b.Mode == ModeShadow
 
 	// MR3: a binding's allowedFiles over the policy's narrows it; both must admit a path.
@@ -220,8 +186,7 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		cl.NarrowedFiles = slices.Clone(b.AllowedFiles)
 	}
 
-	// Fill once: in exactly one place, and in the binding when the policy requires it.
-	// allowedFiles is filled from the binding only where the policy has none.
+	// Fill once: in one place; allowedFiles is filled from the binding only where the policy has none.
 	for _, f := range []struct {
 		key          string
 		policy, bind bool
@@ -241,20 +206,14 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 			return refuse(ReasonParameterTwice, "%s is set by MergePolicy %s and by the binding", f.key, name)
 		case f.bind:
 			f.fill()
-		case !f.policy && slices.Contains(p.Requires, f.key):
-			return refuse(ReasonMissingParameter, "MergePolicy %s requires %s", name, f.key)
 		}
 	}
 	if b.OracleWorkflow != "" && p.Oracle == nil {
 		return refuse(ReasonInvalid, "class %s: oracleWorkflow needs an oracle on MergePolicy %s", name, name)
 	}
 
-	// Additive: the policy's, then the binding's new entries, as written. A required holdoutChecks
-	// is met only by a check the policy does not already name (PR3, A-L2).
+	// Additive: the policy's, then the binding's new entries, as written.
 	cl.HoldoutChecks = union(cl.HoldoutChecks, b.HoldoutChecks)
-	if slices.Contains(p.Requires, "holdoutChecks") && len(cl.HoldoutChecks) == len(p.HoldoutChecks) {
-		return refuse(ReasonMissingParameter, "MergePolicy %s requires holdoutChecks: the binding adds none of its own", name)
-	}
 	cl.ProtectedFiles = union(cl.ProtectedFiles, b.ProtectedFiles)
 	for _, a := range b.RequiresApproval {
 		if !slices.ContainsFunc(cl.RequiresApproval, func(x ApprovalLeaf) bool { return slices.Equal(x.ChangedFiles, a.ChangedFiles) }) {
@@ -312,11 +271,29 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 		mo.Flux.Source = m.FluxSource
 	}
 
-	// The guardrails cap what merges: review merges nothing (R30), and a cap or check they gave it
-	// would be a field review may not hold.
-	if name != "review" {
-		if over := ApplyGuardrails(&cl, ctx.Guardrails); over != "" {
-			return refuse(ReasonGuardrailMismatch, "class %s: %s", name, over)
+	if over := ApplyGuardrails(&cl, ctx.Guardrails); over != "" {
+		return refuse(ReasonGuardrailMismatch, "class %s: %s", name, over)
+	}
+
+	// Missing binding parameters on oracle and added-entry policies.
+	if cl.Oracle != nil {
+		switch {
+		case cl.Oracle.Workflow == "":
+			return refuse(ReasonMissingParameter, "class %s: an oracle policy needs oracleWorkflow on the binding", name)
+		case len(cl.AllowedFiles) == 0:
+			return refuse(ReasonMissingParameter, "class %s: an oracle policy needs allowedFiles", name)
+		case len(cl.HoldoutChecks) == 0:
+			return refuse(ReasonMissingParameter, "class %s: an oracle policy needs holdoutChecks", name)
+		}
+	}
+	if cl.DiffShape == "added-entry" {
+		switch {
+		case len(cl.AllowedFiles) == 0:
+			return refuse(ReasonMissingParameter, "class %s: added-entry needs allowedFiles", name)
+		case len(cl.HoldoutChecks) == 0:
+			return refuse(ReasonMissingParameter, "class %s: added-entry needs holdoutChecks", name)
+		case cl.RequiredLabel == "":
+			return refuse(ReasonMissingParameter, "class %s: added-entry needs requiredLabel", name)
 		}
 	}
 

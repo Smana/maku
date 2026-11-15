@@ -28,7 +28,7 @@ func TestValidate(t *testing.T) {
 		"fine":           {head + required, ""},
 		"fence only":     {"factory: aws-0\n", ""},
 		"no revert":      {head + "  - {name: docs-links, mode: live}\n", "revert"},
-		"no revert, how": {head + "  - {name: docs-links, mode: live}\n", `"- {name: revert, mode: 'off'}"`},
+		"no revert, how": {head + "  - {name: docs-links, mode: live}\n", `"- {name: revert, mode: disabled}"`},
 		"unserved":       {head + required + "  - {name: docs, mode: shadow}\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {

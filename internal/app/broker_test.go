@@ -1015,7 +1015,7 @@ func TestPolicyWorkflowOnlyWhenOn(t *testing.T) {
 	if policyWorkflow(cfg, nil) != nil {
 		t.Fatal("a workflow while off")
 	}
-	cfg.PolicyManagement = fconfig.PolicyManagement{Promotion: true, Operators: []string{"Smana"}}
+	cfg.PolicyManagement = fconfig.PolicyManagement{Stage: fconfig.StageManage, Operators: []string{"Smana"}}
 	p := policyWorkflow(cfg, nil)
 	if f, ok := p.Factory.(runrequest.Factory); !ok || f.URL != cfg.FactoryURL || !p.Operator("smana") || p.Operator("other") ||
 		len(p.NewID()) != 8 {

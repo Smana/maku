@@ -99,10 +99,6 @@ spec:
                       ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
                       agents pull request (human path AM1). Off, the approval hands off to a human merge.
                     type: boolean
-                  autoMergesPerDay:
-                    description: AutoMergesPerDay is MaxPerDay's former name, read
-                      while MaxPerDay is unset. Deprecated.
-                    type: integer
                   awaitingCIFor:
                     description: |-
                       AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
@@ -253,7 +249,6 @@ spec:
                       - live
                       - shadow
                       - disabled
-                      - "off"
                       type: string
                     name:
                       description: Name is the MergePolicy's, so the class's (B1).
@@ -326,8 +321,8 @@ spec:
                     is a gate path, so its text is trusted.
                   properties:
                     class:
-                      description: 'Class is the task''s predicted class (§2): with
-                        a probe, the oracle policy that judges it.'
+                      description: Class names the oracle policy that judges a probe
+                        schedule's tasks; unset otherwise (WF6).
                       maxLength: 253
                       type: string
                     cron:
@@ -382,16 +377,9 @@ spec:
             - repository
             type: object
             x-kubernetes-validations:
-            - message: review is bound with mode off and no parameter
+            - message: review is not a policy
               rule: '!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name
-                == ''review'' && (!(b.mode in [''off'', ''disabled'']) || has(b.allowedFiles)
-                || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow)
-                || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval)
-                || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))'
-            - message: bind docs-links and revert when any policy is bound (OD-8)
-              rule: '!has(self.mergePolicies) || size(self.mergePolicies) == 0 ||
-                (self.mergePolicies.exists(b, b.name == ''docs-links'') && self.mergePolicies.exists(b,
-                b.name == ''revert''))'
+                == ''review'')'
             - message: 'classAuthority repository: the repository''s file holds the
                 bindings (MP15)'
               rule: '!has(self.classAuthority) || self.classAuthority != ''repository''
@@ -440,7 +428,6 @@ spec:
                       - live
                       - shadow
                       - disabled
-                      - "off"
                       type: string
                     name:
                       maxLength: 63
@@ -533,10 +520,6 @@ spec:
                       ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
                       agents pull request (human path AM1). Off, the approval hands off to a human merge.
                     type: boolean
-                  autoMergesPerDay:
-                    description: AutoMergesPerDay is MaxPerDay's former name, read
-                      while MaxPerDay is unset. Deprecated.
-                    type: integer
                   awaitingCIFor:
                     description: |-
                       AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,

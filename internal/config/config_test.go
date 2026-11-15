@@ -1108,17 +1108,17 @@ func TestPolicyManagementConfig(t *testing.T) {
 		t.Fatalf("omitted: %+v %v", cfg.PolicyManagement, err)
 	}
 	factory := "factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
-	cfg, err = Load(write(t, valid+factory+"policyManagement:\n  promotion: true\n  operators: [Smana]\n"))
-	if err != nil || !cfg.PolicyManagement.Promotion || !cfg.PolicyManagement.IsOperator("smana") {
+	cfg, err = Load(write(t, valid+factory+"policyManagement:\n  stage: manage\n  operators: [Smana]\n"))
+	if err != nil || !cfg.PolicyManagement.Manages() || !cfg.PolicyManagement.IsOperator("smana") {
 		t.Fatalf("%+v %v", cfg.PolicyManagement, err)
 	}
 	for name, body := range map[string]string{
-		"promotion without the factory": valid + "policyManagement:\n  promotion: true\n",
-		"manage without the factory":    valid + "policyManagement:\n  stage: manage\n",
-		"an operator that is no login":  valid + factory + "policyManagement:\n  operators: [\"not a login\"]\n",
-		"an unknown key":                valid + factory + "policyManagement:\n  promote: true\n",
+		"manage without the factory":   valid + "policyManagement:\n  stage: manage\n",
+		"an operator that is no login": valid + factory + "policyManagement:\n  operators: [\"not a login\"]\n",
+		"removed promotion switch":     valid + factory + "policyManagement:\n  promotion: true\n",
+		"an unknown key":               valid + factory + "policyManagement:\n  promote: true\n",
 	} {
-		if _, err := Load(write(t, body)); err == nil || !strings.Contains(err.Error(), "promot") && !strings.Contains(err.Error(), "operators") {
+		if _, err := Load(write(t, body)); err == nil || !strings.Contains(err.Error(), "promot") && !strings.Contains(err.Error(), "operators") && !strings.Contains(err.Error(), "policyManagement") {
 			t.Errorf("%s: %v", name, err)
 		}
 	}

@@ -6,28 +6,22 @@ kind: MergePolicy
 metadata: {name: docs-links, namespace: agent-system}
 spec:
   description: Fixes a broken link in the docs, and nothing else.
-  requires: [holdoutChecks]
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata: {name: revert, namespace: agent-system}
-spec:
-  requires: [holdoutChecks]
+spec: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata: {name: docs, namespace: agent-system}
-spec:
-  harness: base
-  harnessAllowed: [rich]
-  escalation: {notConverged: rich}
+spec: {}
 ---
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata: {name: dead-links, namespace: agent-system}
 spec:
   description: Retargets dead external links a detector found, and nothing else.
-  requires: [allowedFiles, holdoutChecks, oracleWorkflow]
   modifyOnly: true
   maxModifiedLines: 20
   diffShape: links-only
@@ -44,6 +38,8 @@ spec:
   repository: Smana/cloud-native-ref
   maintainers: [Smana]
   triggerLabel: factory/ready
+  workflow:
+    default: base
   merge:
     requiredChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Check the documentation links 🔗"]
     verifyChecks: ["Pre-commit checks 🛃", "Security scanning 🔒", "Check the documentation links 🔗"]
@@ -52,7 +48,7 @@ spec:
     policyBot: true  # the pre-v4 defaults, written out as ANR does
     gateStatus: false
     mergerLogin: ogenki-agent-merger[bot]
-    autoMergesPerDay: 10
+    maxPerDay: 10
     fixRuns: 2
     checkReruns: 1
     verifyFor: 30m
@@ -61,7 +57,7 @@ spec:
   mergePolicies:
     - {name: docs-links, mode: live, holdoutChecks: ['Check the documentation links 🔗']}
     - {name: revert, mode: shadow, holdoutChecks: ['Check the documentation links 🔗']}
-    - {name: docs, mode: "off"}
+    - {name: docs, mode: disabled}
     - name: dead-links
       mode: shadow
       allowedFiles: ['^(docs|website/content)/.+\.md$']

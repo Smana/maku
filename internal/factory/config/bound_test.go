@@ -58,7 +58,7 @@ func TestBoundNamesHoldTheRepositoryRules(t *testing.T) {
 		want  string
 	}{
 		{[]string{"docs-links", "dead-links"}, "class revert is required (OD-8)"},
-		{[]string{"docs-links", "revert"}, `schedule dead-links-weekly: class "dead-links" is review or a declared class`},
+		{[]string{"docs-links", "revert"}, `schedule dead-links-weekly: class "dead-links" is not a declared policy`},
 	} {
 		if _, err := ParseAssembled(listShape(t, good, bound(tc.names...))); err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("bound %v: %v, want %q", tc.names, err, tc.want)
@@ -167,10 +167,10 @@ func TestUnboundedIsRefusedInShadowAndLive(t *testing.T) {
 		{"shadow, empty", "docs", PolicySpec{}, Binding{Mode: ModeShadow}, Merge{}, ReasonUnbounded},
 		{"live, empty, policy-bot", "docs", PolicySpec{}, Binding{Mode: ModeLive}, Merge{PolicyBot: &yes}, ReasonUnbounded},
 		{"live, the binding's paths", "docs", PolicySpec{}, Binding{Mode: ModeLive, AllowedFiles: []string{`^docs/.+\.md$`}}, Merge{}, ""},
-		{"shadow, the policy's paths", "docs", PolicySpec{Class: Class{AllowedFiles: []string{`^docs/.+\.md$`}}}, Binding{Mode: ModeShadow}, Merge{}, ""},
-		{"shadow, a shape", "deps", PolicySpec{Class: Class{DiffShape: "links-only"}}, Binding{Mode: ModeShadow}, Merge{}, ""},
+		{"shadow, the policy's paths", "docs", PolicySpec{MergeClass: MergeClass{AllowedFiles: []string{`^docs/.+\.md$`}}}, Binding{Mode: ModeShadow}, Merge{}, ""},
+		{"shadow, a shape", "deps", PolicySpec{MergeClass: MergeClass{DiffShape: "links-only"}}, Binding{Mode: ModeShadow}, Merge{}, ""},
 		{"shadow, a built-in shape", "docs-links", PolicySpec{}, Binding{Mode: ModeShadow}, Merge{}, ""},
-		{"off, empty", "docs", PolicySpec{}, Binding{Mode: ModeOff}, Merge{}, ""},
+		{"disabled, empty", "docs", PolicySpec{}, Binding{Mode: ModeDisabled}, Merge{}, ""},
 	} {
 		tc.binding.Name = tc.name
 		_, refused := Resolve(tc.name, tc.policy, tc.binding, PolicyContext{}, tc.merge)

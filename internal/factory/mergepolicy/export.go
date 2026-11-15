@@ -50,7 +50,7 @@ func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	for _, b := range f.MergePolicies {
 		names[b.Name] = true
 	}
-	if !declares(f, "review") && rc.Classes["review"].Harness == "" {
+	if !declares(f, "review") {
 		delete(names, "review")
 	}
 	var out []string

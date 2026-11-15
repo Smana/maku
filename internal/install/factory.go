@@ -42,7 +42,7 @@ func factoryConfig(in Inputs) map[string]any {
 			"merge": map[string]any{
 				"requiredChecks": checks, "verifyChecks": checks, "leakScanCheck": checks[0],
 				"gateStatus": true, "policyBot": false,
-				"autoMergesPerDay": 5, "fixRuns": 2, "checkReruns": 1,
+				"maxPerDay": 5, "fixRuns": 2, "checkReruns": 1,
 			},
 		})
 	}

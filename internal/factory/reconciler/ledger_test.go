@@ -94,7 +94,7 @@ func TestADrillRevertDoesNotTripTheBreaker(t *testing.T) {
 // D1: the daily cap counts today's labelled merges of every class, which a rebuild keeps.
 func TestTheDailyCapCountsTodaysLabelledMerges(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().Repositories[0].Merge.AutoMergesPerDay = 1
+	g.r.Cfg.Current().Repositories[0].Merge.MaxPerDay = 1
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetPR(forge.PR{Number: 5, State: "MERGED", MergedAt: now.Add(-time.Hour), Labels: []string{AutoMergedLabel("revert")}})
 	g.f.SetPR(forge.PR{Number: 4, State: "MERGED", MergedAt: now.Add(-30 * time.Hour), Labels: []string{AutoMergedLabel("docs-links")}})

@@ -186,7 +186,7 @@ func TestBuildGateOff(t *testing.T) {
 
 func TestBuildRepositoryAuthority(t *testing.T) {
 	cfg := live()
-	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.PolicyManagement.Stage = config.StageManage
 	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
 	cfg.Repositories[0].Classes = map[string]config.Class{"stale": {}}
 	cfg.SetClassSource(func(string) (map[string]config.Class, bool) {

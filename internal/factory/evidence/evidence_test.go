@@ -236,3 +236,41 @@ func TestDrillIsPerRepository(t *testing.T) {
 		t.Fatal("RepoDrilled: a merged factory/drill revert of one of the repository's pull requests, and only that")
 	}
 }
+
+// Shadow evidence spans the label-chosen and diff-chosen gates (merge policies review MR1): both
+// eras fill class=<policy> on the decision marker and the would-arm comment, so five clean
+// decisions from each era give ShadowTally and Evaluate a clean count of 10 with no migration.
+func TestEvidenceCountsBothEras(t *testing.T) {
+	var prs []PR
+	add := func(n int, extra string) {
+		head := fmt.Sprintf("b%03x", n)
+		prs = append(prs, PR{
+			Number:     n,
+			HeadRefOid: head,
+			MergedBy:   &Actor{Login: "Smana"},
+			Comments: []Comment{{
+				Author:    Actor{Login: "ogenki-agent-factory"},
+				CreatedAt: time.Date(2026, 11, n, 12, 0, 0, 0, time.UTC),
+				Body: "Agent factory task `task`: would auto-merge: `docs`, checks green, verdict approve. " +
+					"<!-- agent-factory scope=x event=would-arm-1 head=" + head + " paused=false capped=false -->\n\n" +
+					"<!-- agent-factory-decision head=" + head + " class=docs decision=shadow:shadow_would_arm files=2/5 lines=31/100 shape=n/a holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false" +
+					extra + " reviewer=glm-5.3 -->",
+			}},
+		})
+	}
+	for i := 1; i <= 5; i++ {
+		// Label-chosen gate era (release N): class fixed at intake, no considered= field.
+		add(i, " policygen=1 repogen=2 resolved=0123456789ab")
+	}
+	for i := 6; i <= 10; i++ {
+		// Diff-chosen gate era (release N+1): policy picked from the diff, with considered= naming candidates that refused.
+		add(i, " policygen=2 repogen=3 resolved=fedcba987654 considered=docs-links:class_mismatch,revert:class_mismatch")
+	}
+	sh := Shadow(prs, nil, "docs", repo, logins)
+	if sh.MergedUnchanged != 10 || sh.Changed != 0 || len(sh.Judged) != 10 {
+		t.Fatalf("ShadowTally = %+v, want MergedUnchanged=10 across both eras", sh)
+	}
+	if e := Evaluate(sh, OutcomeTally{}, nil, repo, 10, true); e.Clean != 10 || !e.Eligible {
+		t.Fatalf("Evaluate = %+v, want Clean=10 and Eligible=true", e)
+	}
+}

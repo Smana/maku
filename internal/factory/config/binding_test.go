@@ -9,17 +9,16 @@ import (
 	"time"
 )
 
-// deadLinksPolicy is the spec's dead-links MergePolicy, with requires per plan PR3.
+// deadLinksPolicy is the spec's dead-links MergePolicy.
 func deadLinksPolicy() PolicySpec {
 	return PolicySpec{
-		Class: Class{
+		MergeClass: MergeClass{
 			Description: "Retargets dead external links a detector found, and nothing else.",
 			ModifyOnly:  true, MaxModifiedLines: 20, DiffShape: "links-only", MaxPerDay: 1,
 			ProtectedFiles: []string{`^docs/(superpowers|specs)/`},
 			Oracle:         &Oracle{Probe: "dead-links", MaxFindings: 10},
 			Monitor:        &Monitor{OracleRuns: 2, FollowUpWindow: Duration{168 * time.Hour}},
 		},
-		Requires: []string{"allowedFiles", "holdoutChecks", "oracleWorkflow"},
 	}
 }
 
@@ -31,7 +30,7 @@ func deadLinksBinding() Binding {
 }
 
 func adoptPolicy(shape string) PolicySpec {
-	return PolicySpec{Class: Class{DiffShape: shape, ModifyOnly: true,
+	return PolicySpec{MergeClass: MergeClass{DiffShape: shape, ModifyOnly: true,
 		Author: &Author{Adopt: &Adopt{Logins: []string{"renovate[bot]"}, Branches: []string{"^renovate/"}}}}}
 }
 
@@ -53,17 +52,13 @@ func TestResolve(t *testing.T) {
 		// Mode.
 		"live":            {bind: func(b *Binding) { b.Mode = ModeLive }, check: func(t *testing.T, c Class) { want(t, c.Live && !c.Shadow, "live") }},
 		"shadow":          {check: func(t *testing.T, c Class) { want(t, c.Shadow && !c.Live, "shadow") }},
-		"off":             {bind: func(b *Binding) { b.Mode = ModeOff }, check: func(t *testing.T, c Class) { want(t, !c.Live && !c.Shadow, "off is neither (Q7)") }},
+		"disabled":        {bind: func(b *Binding) { b.Mode = ModeDisabled }, check: func(t *testing.T, c Class) { want(t, !c.Live && !c.Shadow, "disabled is neither (Q7)") }},
 		"an unknown mode": {bind: func(b *Binding) { b.Mode = "on" }, reason: ReasonInvalid, msg: `mode "on" is live, shadow or disabled`},
-		"review in shadow": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeShadow} },
-			reason: ReasonInvalid, msg: "review takes only mode disabled"},
-		"review off": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Harness: "solo"}} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} },
-			check: func(t *testing.T, c Class) {
-				want(t, c.Harness == "solo" && !c.Live && !c.Shadow, "review off keeps its harness")
-			}},
+		"review refused": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeShadow} },
+			reason: ReasonInvalid, msg: "review is not a policy"},
 		// Meaning: the policy's.
-		"meaning": {policy: func(p *PolicySpec) { p.Harness = "solo" }, check: func(t *testing.T, c Class) {
-			want(t, c.Description == deadLinksPolicy().Description && c.Harness == "solo" && c.DiffShape == "links-only" && c.ModifyOnly &&
+		"meaning": {check: func(t *testing.T, c Class) {
+			want(t, c.Description == deadLinksPolicy().Description && c.DiffShape == "links-only" && c.ModifyOnly &&
 				c.Oracle.Probe == "dead-links" && c.Oracle.MaxFindings == 10 && c.Monitor.OracleRuns == 2 && c.Monitor.FollowUpWindow.Duration == 168*time.Hour, "the policy's meaning")
 		}},
 		"adopt is the policy's": {class: "deps-patch", policy: func(p *PolicySpec) { *p = adoptPolicy("semver-patch") }, bind: func(b *Binding) {
@@ -77,7 +72,6 @@ func TestResolve(t *testing.T) {
 			want(t, slices.Equal(c.AllowedFiles, deadLinksBinding().AllowedFiles), "allowedFiles from the binding")
 		}},
 		"the policy fills allowedFiles": {policy: func(p *PolicySpec) {
-			p.Requires = []string{"holdoutChecks", "oracleWorkflow"}
 			p.AllowedFiles = []string{"^docs/.+$"}
 		},
 			bind: func(b *Binding) { b.AllowedFiles = nil }, check: func(t *testing.T, c Class) {
@@ -85,17 +79,17 @@ func TestResolve(t *testing.T) {
 			}},
 		// MR3: set on both, the binding's allowedFiles narrows the policy's instead of refusing.
 		"allowedFiles twice narrows": {policy: func(p *PolicySpec) {
-			p.Requires = []string{"holdoutChecks", "oracleWorkflow"}
 			p.AllowedFiles = []string{"^docs/.+$"}
 		},
 			check: func(t *testing.T, c Class) {
 				want(t, slices.Equal(c.AllowedFiles, []string{"^docs/.+$"}) && slices.Equal(c.NarrowedFiles, deadLinksBinding().AllowedFiles), "the binding narrows")
 			}},
-		"requiredLabel twice": {class: "kb", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{RequiredLabel: "a"}} }, bind: func(b *Binding) { *b = Binding{Name: "kb", Mode: ModeOff, RequiredLabel: "b"} },
+		"requiredLabel twice": {class: "kb", policy: func(p *PolicySpec) { *p = PolicySpec{MergeClass: MergeClass{RequiredLabel: "a"}} }, bind: func(b *Binding) { *b = Binding{Name: "kb", Mode: ModeDisabled, RequiredLabel: "b"} },
 			reason: ReasonParameterTwice, msg: "requiredLabel is set by MergePolicy kb and by the binding"},
-		"allowedFiles missing":            {bind: func(b *Binding) { b.AllowedFiles = nil }, reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires allowedFiles"},
+		"allowedFiles missing":            {bind: func(b *Binding) { b.AllowedFiles = nil }, reason: ReasonMissingParameter, msg: "an oracle policy needs allowedFiles"},
+		"oracleWorkflow missing":          {bind: func(b *Binding) { b.OracleWorkflow = "" }, reason: ReasonMissingParameter, msg: "an oracle policy needs oracleWorkflow on the binding"},
 		"oracleWorkflow fills the oracle": {check: func(t *testing.T, c Class) { want(t, c.Oracle.Workflow == "dead-links.yaml", "oracle.workflow") }},
-		"oracleWorkflow without an oracle": {class: "docs", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "docs", Mode: ModeOff, OracleWorkflow: "x.yaml"} },
+		"oracleWorkflow without an oracle": {class: "docs", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "docs", Mode: ModeDisabled, OracleWorkflow: "x.yaml"} },
 			reason: ReasonInvalid, msg: "oracleWorkflow needs an oracle on MergePolicy docs"},
 		// Additive.
 		"additive lists": {policy: func(p *PolicySpec) {
@@ -110,19 +104,8 @@ func TestResolve(t *testing.T) {
 			want(t, slices.Equal(c.ProtectedFiles, []string{`^docs/(superpowers|specs)/`, "^website/content/docs/decisions/"}), "protectedFiles")
 			want(t, len(c.RequiresApproval) == 2 && c.RequiresApproval[1].ChangedFiles[0] == "^docs/adr/", "requiresApproval")
 		}},
-		"holdoutChecks missing": {bind: func(b *Binding) { b.HoldoutChecks = nil }, reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks"},
-		// A-L2: a binding that only repeats the policy's holdouts adds none.
-		"holdoutChecks only the policy's": {policy: func(p *PolicySpec) { p.HoldoutChecks = []string{"lint"} }, bind: func(b *Binding) { b.HoldoutChecks = []string{"lint"} },
-			reason: ReasonMissingParameter, msg: "MergePolicy dead-links requires holdoutChecks: the binding adds none of its own"},
+		"holdoutChecks missing":       {bind: func(b *Binding) { b.HoldoutChecks = nil }, reason: ReasonMissingParameter, msg: "an oracle policy needs holdoutChecks"},
 		"a binding of another policy": {bind: func(b *Binding) { b.Name = "docs-links" }, reason: ReasonInvalid, msg: `class dead-links: the binding names MergePolicy "docs-links"`},
-		"review bound with a parameter": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff, MaxPerDay: 1} },
-			reason: ReasonInvalid, msg: "review is bound with mode disabled and no parameter"},
-		// R17: review keeps checks and testFirst.
-		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} },
-			bind: func(b *Binding) { *b = Binding{Name: "review", Mode: ModeOff} }, merge: Merge{ContractCheck: "contract"},
-			check: func(t *testing.T, c Class) {
-				want(t, c.Checks && c.TestFirst && !c.Live && !c.Shadow, "review keeps checks and testFirst")
-			}},
 		// Caps.
 		"a cap under the policy's": {bind: func(b *Binding) { b.MaxPerDay = 0; b.MaxModifiedLines = 20 }, check: func(t *testing.T, c Class) { want(t, c.MaxModifiedLines == 20 && c.MaxPerDay == 1, "caps") }},
 		"a cap lowered":            {policy: func(p *PolicySpec) { p.MaxPatchFiles = 10 }, bind: func(b *Binding) { b.MaxPatchFiles = 5 }, check: func(t *testing.T, c Class) { want(t, c.MaxPatchFiles == 5, "5 under 10") }},
@@ -147,12 +130,9 @@ func TestResolve(t *testing.T) {
 		// Invalid: the resolved class fails the class rules.
 		"semver-minor live": {class: "deps-minor", policy: func(p *PolicySpec) { *p = adoptPolicy("semver-minor") }, bind: func(b *Binding) { *b = Binding{Name: "deps-minor", Mode: ModeLive} },
 			reason: ReasonInvalid, msg: "class deps-minor: semver-minor is shadow only (M2)"},
-		"testFirst with a contract check": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeOff} },
-			merge: Merge{ContractCheck: "contract"}, check: func(t *testing.T, c Class) { want(t, c.TestFirst, "testFirst") }},
 		// MR6, judged per binding (B9): an evaluated class without allowedFiles or a shape.
 		"live without allowedFiles and no policy-bot": {class: "x", policy: func(p *PolicySpec) { *p = PolicySpec{} }, bind: func(b *Binding) { *b = Binding{Name: "x", Mode: ModeLive} },
 			merge: Merge{PolicyBot: new(false)}, reason: ReasonUnbounded, msg: "class x: an evaluated policy needs allowedFiles or a diffShape"},
-		"live on the policy": {policy: func(p *PolicySpec) { p.Live = true }, reason: ReasonInvalid, msg: "mode is the binding's"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			class, p, b := "dead-links", deadLinksPolicy(), deadLinksBinding()
@@ -212,7 +192,7 @@ func TestResolveNeverAliasesThePolicy(t *testing.T) {
 	}
 }
 
-// B9: a policy is Accepted when it is valid alone, a placeholder in each field it requires.
+// B9: a policy is Accepted when it is valid alone, a placeholder in each field a binding may fill.
 func TestValidatePolicy(t *testing.T) {
 	ctx := PolicyContext{HarnessProfiles: testProfiles}
 	for name, tc := range map[string]struct {
@@ -221,25 +201,9 @@ func TestValidatePolicy(t *testing.T) {
 		msg    string
 	}{
 		"dead-links is valid alone": {},
-		"dead-links without holdoutChecks": {policy: func(p *PolicySpec) { p.Requires = []string{"allowedFiles", "oracleWorkflow"} },
-			msg: "an oracle needs holdoutChecks"},
-		"review with allowedFiles": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{AllowedFiles: []string{"^docs/.+$"}}} },
-			msg: "review takes checks and testFirst only"},
-		// A-L1: the fields of review's CEL rule validateClass does not read.
-		"review with requires": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Requires: []string{"holdoutChecks"}} },
-			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
-		"review with companionFiles": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{CompanionFiles: []string{"^x$"}}} },
-			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
-		"review with requiredLabel": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{RequiredLabel: "x"}} },
-			msg: "review takes only description, harness, harnessAllowed, escalation, checks and testFirst"},
-		"review with checks and testFirst": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{Class: Class{Checks: true, TestFirst: true}} }},
-		"a flux monitor":                   {policy: func(p *PolicySpec) { p.Monitor.Flux = &FluxWatch{Within: Duration{30 * time.Minute}} }},
-		"requires an unknown field": {policy: func(p *PolicySpec) { p.Requires = append(p.Requires, "maxPerDay") },
-			msg: `requires "maxPerDay" is not one of [allowedFiles companionFiles requiredLabel oracleWorkflow holdoutChecks]`},
-		"requires a field twice": {policy: func(p *PolicySpec) { p.Requires = append(p.Requires, "allowedFiles") }, msg: `requires names "allowedFiles" twice`},
-		"requires what it sets": {policy: func(p *PolicySpec) { p.AllowedFiles = []string{"^docs/.+$"} },
-			msg: "requires allowedFiles, which it sets: a parameter is set in one place (B4)"},
-		"live on a policy":       {policy: func(p *PolicySpec) { p.Shadow = true }, msg: "mode is the binding's: live and shadow are refused on a MergePolicy (B4)"},
+		"review is not a policy": {class: "review", policy: func(p *PolicySpec) { *p = PolicySpec{} },
+			msg: "review is not a policy"},
+		"a flux monitor":         {policy: func(p *PolicySpec) { p.Monitor.Flux = &FluxWatch{Within: Duration{30 * time.Minute}} }},
 		"a workflow on a policy": {policy: func(p *PolicySpec) { p.Oracle.Workflow = "x.yaml" }, msg: "oracle.workflow is the repository's: set oracleWorkflow on the binding"},
 		"a source on a policy": {policy: func(p *PolicySpec) { p.Monitor.Flux = &FluxWatch{Source: "a/b", Within: Duration{30 * time.Minute}} },
 			msg: "the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"},
@@ -306,15 +270,13 @@ func TestRecheck(t *testing.T) {
 	}
 }
 
-// review merges nothing (R30), so the guardrails, which cap what merges, leave it as bound: a cap
-// they would give it is a field review may not hold, and would drop its binding.
-func TestGuardrailsLeaveReview(t *testing.T) {
+// review is not a policy: neither Resolve nor Recheck accepts it.
+func TestResolveRefusesReview(t *testing.T) {
 	ctx := PolicyContext{Guardrails: MergeGuardrails{MaxPerDay: 2, MandatoryChecks: []string{"lint"}, ProtectedFiles: []string{"^x$"}}}
-	cl, refusal := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: ModeOff}, ctx, Merge{})
-	if refusal != nil || cl.MaxPerDay != 0 || cl.HoldoutChecks != nil || cl.ProtectedFiles != nil {
-		t.Fatalf("%+v %+v", cl, refusal)
+	if _, refusal := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: ModeDisabled}, ctx, Merge{}); refusal == nil || !strings.Contains(refusal.Message, "review is not a policy") {
+		t.Fatalf("%+v", refusal)
 	}
-	if _, refusal := Recheck("review", Class{}, ctx, Merge{}); refusal != nil {
+	if _, refusal := Recheck("review", Class{}, ctx, Merge{}); refusal == nil || !strings.Contains(refusal.Message, "review is not a policy") {
 		t.Fatalf("%+v", refusal)
 	}
 }
@@ -322,7 +284,7 @@ func TestGuardrailsLeaveReview(t *testing.T) {
 // MR3: a binding's allowedFiles narrows a policy's that already has one: the policy's list stays,
 // the binding's is NarrowedFiles, and a path must match both.
 func TestBindingNarrowsAllowedFiles(t *testing.T) {
-	p := PolicySpec{Class: Class{AllowedFiles: []string{`^.+\.mdx?$`}, MaxModifiedLines: 100}}
+	p := PolicySpec{MergeClass: MergeClass{AllowedFiles: []string{`^.+\.mdx?$`}, MaxModifiedLines: 100}}
 	b := Binding{Name: "docs", Mode: ModeShadow, AllowedFiles: []string{`^website/content/.+\.md$`}, MaxModifiedLines: 60}
 	cl, refused := Resolve("docs", p, b, PolicyContext{}, Merge{})
 	if refused != nil {
@@ -340,25 +302,22 @@ func TestBindingNarrowsAllowedFiles(t *testing.T) {
 		t.Fatalf("%+v %+v", cl, refused)
 	}
 	// NarrowedFiles is the resolution's: a policy may not set it.
-	if problems := ValidatePolicy("docs", PolicySpec{Class: Class{NarrowedFiles: []string{`^x$`}}}, PolicyContext{}); len(problems) != 1 ||
+	if problems := ValidatePolicy("docs", PolicySpec{MergeClass: MergeClass{NarrowedFiles: []string{`^x$`}}}, PolicyContext{}); len(problems) != 1 ||
 		!strings.Contains(problems[0], "narrowedFiles is set by a binding's allowedFiles") {
 		t.Fatalf("%v", problems)
 	}
 }
 
-// A binding switches a policy off with disabled; off still reads as disabled (MR9).
+// A binding switches a policy off with disabled; off and unknown modes are refused (MR9).
 func TestModeDisabled(t *testing.T) {
-	for _, mode := range []string{ModeDisabled, ModeOff} {
-		cl, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: mode}, PolicyContext{}, Merge{})
-		if refused != nil || cl.Live || cl.Shadow {
-			t.Errorf("%s: %+v %+v", mode, cl, refused)
-		}
-		if _, refused := Resolve("review", PolicySpec{}, Binding{Name: "review", Mode: mode}, PolicyContext{}, Merge{}); refused != nil {
-			t.Errorf("review %s: %+v", mode, refused)
-		}
+	cl, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: ModeDisabled}, PolicyContext{}, Merge{})
+	if refused != nil || cl.Live || cl.Shadow {
+		t.Errorf("disabled: %+v %+v", cl, refused)
 	}
-	_, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: "paused"}, PolicyContext{}, Merge{})
-	if refused == nil || refused.Reason != ReasonInvalid || !strings.Contains(refused.Message, `mode "paused" is live, shadow or disabled`) {
-		t.Fatalf("paused: %+v", refused)
+	for _, mode := range []string{"off", "paused"} {
+		_, refused := Resolve("docs", PolicySpec{}, Binding{Name: "docs", Mode: mode}, PolicyContext{}, Merge{})
+		if refused == nil || refused.Reason != ReasonInvalid || !strings.Contains(refused.Message, `is live, shadow or disabled`) {
+			t.Fatalf("%s: %+v", mode, refused)
+		}
 	}
 }

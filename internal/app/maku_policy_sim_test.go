@@ -10,10 +10,10 @@ import (
 	"testing"
 )
 
-// simulationArgs is boundManifests with policyManagement.simulation on.
+// simulationArgs is boundManifests with policyManagement.stage set to simulate.
 func simulationArgs(t *testing.T) []string {
 	t.Helper()
-	return policyManagementArgs(t, "{simulation: true}")
+	return policyManagementArgs(t, "{stage: simulate}")
 }
 
 // policyManagementArgs is boundManifests with the factory config's policyManagement set to pm.

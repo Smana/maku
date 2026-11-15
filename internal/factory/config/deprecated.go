@@ -3,85 +3,100 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"maps"
 	"slices"
 )
 
-// ConditionDeprecated names, on a Factory, Repository or MergePolicy, the fields it sets that the
-// next release refuses (MR13). True with ReasonRemovedNextRelease and the paths as its message;
-// absent when there are none. It never affects Ready.
-const (
-	ConditionDeprecated      = "Deprecated"
-	ReasonRemovedNextRelease = "RemovedNextRelease"
-)
+// mergePoliciesUpgradeNotes is where every refusal of a removed merge-policy setting points (MR9, MR13).
+const mergePoliciesUpgradeNotes = "docs/upgrading.md#merge-policies-removals"
 
-// PolicyDeprecations are the deprecated fields a policy sets (MR9), sorted: the workflow fields,
-// whose new home is the workflows design, and requires.
-func PolicyDeprecations(p PolicySpec) []string {
+// removedPolicySpecFields maps each field removed from MergePolicy.spec in release N+1 to what
+// replaces it (MR9, MR13).
+var removedPolicySpecFields = map[string]string{
+	"harness":        "removed, set Repository.spec.workflow.default",
+	"harnessAllowed": "removed, every workflow the Factory defines may be pinned",
+	"escalation":     "removed, set Factory.spec.workflows.<workflow>.escalation",
+	"testFirst":      "removed, set Repository.spec.workflow.testFirst",
+	"checks":         "removed, set Factory.spec.workflows.<workflow>.checks",
+	"requires":       "removed, incomplete bindings are refused by the bound and parameter rules",
+	"live":           "removed, set mode: live on the Repository's mergePolicies binding",
+	"shadow":         "removed, set mode: shadow on the Repository's mergePolicies binding",
+}
+
+// removedClassFields maps each workflow field removed from a class in release N+1 to its new home.
+var removedClassFields = map[string]string{
+	"harness":        "removed, set workflow.default on the repository",
+	"harnessAllowed": "removed, every workflow the Factory defines may be pinned",
+	"escalation":     "removed, set workflows.<workflow>.escalation",
+	"testFirst":      "removed, set workflow.testFirst on the repository",
+	"checks":         "removed, set workflows.<workflow>.checks",
+}
+
+// RefusePolicySpec reports any removed field present on a raw MergePolicy spec map (MR9, MR13).
+func RefusePolicySpec(spec map[string]any) []string {
 	var out []string
-	for _, f := range []struct {
-		path string
-		set  bool
-	}{
-		{"checks", p.Checks},
-		{"escalation", p.Escalation != nil},
-		{"harness", p.Harness != ""},
-		{"harnessAllowed", len(p.HarnessAllowed) > 0},
-		{"requires", len(p.Requires) > 0},
-		{"testFirst", p.TestFirst},
-	} {
-		if f.set {
-			out = append(out, f.path)
+	for _, k := range slices.Sorted(maps.Keys(spec)) {
+		if msg, ok := removedPolicySpecFields[k]; ok {
+			out = append(out, fmt.Sprintf("%s: %s (%s)", k, msg, mergePoliciesUpgradeNotes))
 		}
 	}
 	return out
 }
 
-// RepositoryDeprecations are the deprecated fields a repository sets itself (MR9), sorted: its own
-// merge.autoMergesPerDay (one taken from the Factory's mergeDefaults is the Factory's) and each
-// binding in mode off.
-func RepositoryDeprecations(r *Repository) []string {
-	var out []string
-	if r.Merge.AutoMergesPerDay != 0 && !slices.Contains(r.MergeDefaulted, "autoMergesPerDay") {
-		out = append(out, "merge.autoMergesPerDay")
+// refuseRemovedMergePolicies names each merge-policy setting release N deprecated and release N+1
+// refuses (MR9, MR13), with what to write instead.
+func refuseRemovedMergePolicies(top map[string]json.RawMessage) []error {
+	var errs []error
+	removed := func(path, instead string) {
+		errs = append(errs, fmt.Errorf("%s: %s (%s)", path, instead, mergePoliciesUpgradeNotes))
 	}
-	for _, b := range r.Bindings {
-		if b.Mode == ModeOff { // disabled is its replacement (MR9)
-			out = append(out, fmt.Sprintf("mergePolicies[%s].mode: off", b.Name))
+	var block map[string]json.RawMessage
+	if json.Unmarshal(top["mergeDefaults"], &block) == nil {
+		if _, ok := block["autoMergesPerDay"]; ok {
+			removed("mergeDefaults.autoMergesPerDay", "renamed mergeDefaults.maxPerDay")
 		}
 	}
-	slices.Sort(out)
-	return out
-}
-
-// FactoryDeprecations are the deprecated fields of the factory's config and Factory object (MR9),
-// sorted: mergeDefaults.autoMergesPerDay, mergeGuardrails.minPromotionEvidence and each of the six
-// policyManagement switches stage replaces.
-func FactoryDeprecations(c *Config) []string {
-	if c == nil {
-		return nil
-	}
-	pm := c.PolicyManagement
-	var out []string
-	for _, f := range []struct {
-		path string
-		set  bool
-	}{
-		{"mergeDefaults.autoMergesPerDay", c.MergeDefaults != nil && c.MergeDefaults.AutoMergesPerDay != 0},
-		{"mergeGuardrails.minPromotionEvidence", c.MergeGuardrails.MinPromotionEvidence != 0},
-		{"policyManagement.read", pm.Read},
-		{"policyManagement.simulation", pm.Simulation},
-		{"policyManagement.dualEvaluation", pm.DualEvaluation},
-		{"policyManagement.repositoryAuthority", pm.RepositoryAuthority},
-		{"policyManagement.approvalMemory", pm.ApprovalMemory},
-		{"policyManagement.promotion", pm.Promotion},
-	} {
-		if f.set {
-			out = append(out, f.path)
+	block = nil
+	if json.Unmarshal(top["mergeGuardrails"], &block) == nil {
+		if _, ok := block["minPromotionEvidence"]; ok {
+			removed("mergeGuardrails.minPromotionEvidence", "removed, set evidence (low or standard) on each MergePolicy")
 		}
 	}
-	slices.Sort(out)
-	return out
+	block = nil
+	if json.Unmarshal(top["policyManagement"], &block) == nil {
+		for _, k := range []string{"approvalMemory", "dualEvaluation", "promotion", "read", "repositoryAuthority", "simulation"} {
+			if _, ok := block[k]; ok {
+				removed("policyManagement."+k, "removed, set policyManagement.stage (read, simulate or manage)")
+			}
+		}
+	}
+	var repos []struct {
+		Name    string                                `json:"name"`
+		Merge   map[string]json.RawMessage            `json:"merge"`
+		Classes map[string]map[string]json.RawMessage `json:"classes"`
+	}
+	if json.Unmarshal(top["repositories"], &repos) == nil {
+		for i, r := range repos {
+			prefix := fmt.Sprintf("repositories[%d]", i)
+			if r.Name != "" {
+				prefix = fmt.Sprintf("repositories[%s]", r.Name)
+			}
+			if _, ok := r.Merge["autoMergesPerDay"]; ok {
+				removed(prefix+".merge.autoMergesPerDay", "renamed merge.maxPerDay")
+			}
+			for _, cname := range slices.Sorted(maps.Keys(r.Classes)) {
+				cl := r.Classes[cname]
+				for _, f := range []string{"checks", "escalation", "harness", "harnessAllowed", "testFirst"} {
+					if _, ok := cl[f]; ok {
+						removed(fmt.Sprintf("%s.classes.%s.%s", prefix, cname, f), removedClassFields[f])
+					}
+				}
+			}
+		}
+	}
+	return errs
 }
 
 // readWorkflows moves workflows into HarnessProfiles, the name every reader reads (WF9).

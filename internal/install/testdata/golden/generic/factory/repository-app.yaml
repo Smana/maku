@@ -9,11 +9,11 @@ spec:
   - alice
   - bob
   merge:
-    autoMergesPerDay: 5
     checkReruns: 1
     fixRuns: 2
     gateStatus: true
     leakScanCheck: ci
+    maxPerDay: 5
     policyBot: false
     requiredChecks:
     - ci

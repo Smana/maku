@@ -673,9 +673,6 @@ type Merge struct {
 	// +kubebuilder:validation:MaxLength=253
 	// +optional
 	MergerLogin string `json:"mergerLogin"` // the arming actor, so the merge actor (R16)
-	// AutoMergesPerDay is MaxPerDay's former name, read while MaxPerDay is unset. Deprecated.
-	// +optional
-	AutoMergesPerDay int `json:"autoMergesPerDay"`
 	// MaxPerDay caps the repository's auto-merges a day, every live policy together (MR9): the
 	// name a policy's own cap has. Read it through PerDay.
 	// +kubebuilder:validation:Minimum=0
@@ -1009,9 +1006,10 @@ type Schedule struct {
 	Name string `json:"name"`
 	// +kubebuilder:validation:MaxLength=1024
 	Cron string `json:"cron"` // 5 fields, UTC
-	// Class is the task's predicted class (§2): with a probe, the oracle policy that judges it.
+	// Class names the oracle policy that judges a probe schedule's tasks; unset otherwise (WF6).
+	// +optional
 	// +kubebuilder:validation:MaxLength=253
-	Class string `json:"class"`
+	Class string `json:"class,omitempty"`
 	// Workflow is the workflow the schedule's tasks run; unset is quick (WF3).
 	// +kubebuilder:validation:MaxLength=253
 	Workflow string `json:"workflow,omitempty"`
@@ -2223,9 +2221,11 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		if _, err := cron.ParseStandard(e.Cron); err != nil {
 			bad("schedule %s: cron %q does not parse", e.Name, e.Cron)
 		}
-		if e.Class != "review" && !cutOver {
+		if e.Class != "" && !cutOver {
 			if !r.declares(e.Class) {
-				bad("schedule %s: class %q is review or a declared class", e.Name, e.Class)
+				bad("schedule %s: class %q is not a declared policy", e.Name, e.Class)
+			} else if cl, ok := r.Classes[e.Class]; ok && (cl.Oracle == nil || cl.Oracle.Probe == "") {
+				bad("schedule %s: class %q has no oracle.probe: a schedule sets workflow, and names class only for an oracle policy", e.Name, e.Class)
 			}
 		}
 		if e.Text == "" || len(e.Text) > c.Caps.MaxTextBytes {
@@ -2234,8 +2234,9 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		switch e.Probe {
 		case "", "renovate-red":
 		case "dead-links":
-			// A bound class whose binding did not resolve is absent: its policy was checked alone (B9).
-			if cl, ok := r.Classes[e.Class]; !cutOver && (ok || !slices.Contains(r.Bound, e.Class)) && (cl.Oracle == nil || cl.Oracle.Probe != "dead-links") {
+			if e.Class == "" {
+				bad("schedule %s: probe dead-links needs class to name an oracle policy", e.Name)
+			} else if cl, ok := r.Classes[e.Class]; !cutOver && (ok || !slices.Contains(r.Bound, e.Class)) && (cl.Oracle == nil || cl.Oracle.Probe != "dead-links") {
 				bad("schedule %s: probe dead-links needs class %q to declare oracle.probe dead-links", e.Name, e.Class)
 			}
 		default:

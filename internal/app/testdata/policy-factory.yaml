@@ -59,7 +59,7 @@ repositories:
       policyBot: true  # the pre-v4 defaults, written out as ANR does
       gateStatus: false
       mergerLogin: ogenki-agent-merger[bot]
-      autoMergesPerDay: 10
+      maxPerDay: 10
       fixRuns: 2
       checkReruns: 1
       verifyFor: 30m

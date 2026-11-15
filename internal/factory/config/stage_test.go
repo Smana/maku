@@ -8,23 +8,18 @@ import (
 	"testing"
 )
 
-// MR9: policyManagement.stage replaces the six switches; set switches map to the highest stage
-// they cover, and nothing set is manage.
+// MR9: policyManagement.stage is read, simulate or manage; nothing set is manage.
 func TestEffectiveStage(t *testing.T) {
 	for name, tc := range map[string]struct {
 		pm                       PolicyManagement
 		want                     string
 		reads, simulates, manage bool
 	}{
-		"nothing set":         {PolicyManagement{}, StageManage, true, true, true},
-		"operators only":      {PolicyManagement{Operators: []string{"Smana"}}, StageManage, true, true, true},
-		"stage read":          {PolicyManagement{Stage: StageRead}, StageRead, true, false, false},
-		"stage simulate":      {PolicyManagement{Stage: StageSimulate}, StageSimulate, true, true, false},
-		"read switch":         {PolicyManagement{Read: true}, StageRead, true, false, false},
-		"simulation switches": {PolicyManagement{Read: true, Simulation: true, DualEvaluation: true}, StageSimulate, true, true, false},
-		"promotion switch":    {PolicyManagement{Read: true, Promotion: true}, StageManage, true, true, true},
-		"memory switch":       {PolicyManagement{Read: true, ApprovalMemory: true}, StageManage, true, true, true},
-		"authority switch":    {PolicyManagement{Read: true, RepositoryAuthority: true}, StageManage, true, true, true},
+		"nothing set":    {PolicyManagement{}, StageManage, true, true, true},
+		"operators only": {PolicyManagement{Operators: []string{"Smana"}}, StageManage, true, true, true},
+		"stage read":     {PolicyManagement{Stage: StageRead}, StageRead, true, false, false},
+		"stage simulate": {PolicyManagement{Stage: StageSimulate}, StageSimulate, true, true, false},
+		"stage manage":   {PolicyManagement{Stage: StageManage}, StageManage, true, true, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			pm := tc.pm
@@ -45,7 +40,6 @@ func TestStageValidate(t *testing.T) {
 	}{
 		"a stage":          {PolicyManagement{Stage: StageSimulate}, ""},
 		"an unknown stage": {PolicyManagement{Stage: "promote"}, `policyManagement.stage "promote" is one of read, simulate, manage`},
-		"stage and switch": {PolicyManagement{Stage: StageRead, Promotion: true}, "stage and the six switches are not set together"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var got []string

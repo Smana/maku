@@ -15,14 +15,13 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// The spec's class-shape policies (reusable merge policies, "The model"), with requires per plan PR3.
+// The spec's class-shape policies (reusable merge policies, "The model").
 const (
 	deadLinksPolicy = `apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata: {name: dead-links}
 spec:
   description: Retargets dead external links a detector found, and nothing else.
-  requires: [allowedFiles, holdoutChecks, oracleWorkflow]
   modifyOnly: true
   maxModifiedLines: 20
   diffShape: links-only
@@ -36,7 +35,6 @@ kind: MergePolicy
 metadata: {name: docs-links}
 spec:
   description: Fixes a broken link in the docs, and nothing else.
-  requires: [holdoutChecks]
 `
 	anrRepository = `apiVersion: maku.ogenki.io/v1alpha1
 kind: Repository
@@ -51,14 +49,14 @@ spec:
     verifyChecks: [validate, lint]
     policyBotLogin: ogenki-merge-gate[bot]
     mergerLogin: ogenki-agent-merger[bot]
-    autoMergesPerDay: 2
+    maxPerDay: 2
     leakScanCheck: lint
     approveToMerge: true
     breaker: {window: 10, maxReverts: 1, maxFollowUps: 1, recoverAfter: 3}
   mergePolicies:
     - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
     - {name: revert,     mode: shadow, holdoutChecks: [validate]}
-    - {name: docs,       mode: "off"}
+    - {name: docs,       mode: disabled}
     - name: dead-links
       mode: shadow
       allowedFiles: ['^(docs|website/content)/.+\.md$']
@@ -145,11 +143,10 @@ func edit(t *testing.T, manifest, name string, set map[string]string) string {
 	return string(b)
 }
 
-// B1, B4, B7: the class shape admitted, each of its rules refusing.
+// B1, B7, MR9: the class shape admitted, each of its rules refusing.
 func TestMergePolicyAdmission(t *testing.T) {
 	a := startAdmission(t)
-	reviewOK := "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {description: d, harness: solo, checks: true, testFirst: true}\n"
-	for name, m := range map[string]string{"dead-links": deadLinksPolicy, "docs-links": docsLinksPolicy, "review": reviewOK} {
+	for name, m := range map[string]string{"dead-links": deadLinksPolicy, "docs-links": docsLinksPolicy} {
 		if err := a.create(t, m); err != nil {
 			t.Errorf("%s refused: %v", name, err)
 		}
@@ -158,27 +155,19 @@ func TestMergePolicyAdmission(t *testing.T) {
 	for name, tc := range map[string]struct{ manifest, want string }{
 		"a name that is no class":   {edit(t, docsLinksPolicy, "docs.links", nil), msgPolicyName},
 		"a name too long":           {edit(t, docsLinksPolicy, strings.Repeat("d", 41), nil), msgPolicyName},
-		"live on a policy":          {edit(t, docsLinksPolicy, "live", map[string]string{"spec.live": "true"}), msgModeOnBinding},
 		"a workflow on a policy":    {edit(t, deadLinksPolicy, "workflow", map[string]string{"spec.oracle.workflow": "dead-links.yaml"}), msgWorkflow},
 		"a source on a policy":      {edit(t, deadLinksPolicy, "source", map[string]string{"spec.monitor.flux": "{source: flux-system/flux-system, within: 30m}"}), msgFluxSource},
 		"narrowedFiles on a policy": {edit(t, docsLinksPolicy, "narrowed", map[string]string{"spec.narrowedFiles": "['^docs/.+$']"}), msgNarrowed},
 		"an evidence level unknown": {edit(t, docsLinksPolicy, "evidence", map[string]string{"spec.evidence": "high"}), `Unsupported value: "high"`},
-		"review with evidence":      {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.evidence": "low"}), msgReviewPolicy},
-		"requires a cap":            {edit(t, docsLinksPolicy, "requires", map[string]string{"spec.requires": "[maxPerDay]"}), `Unsupported value: "maxPerDay"`},
-		"review with files":         {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.allowedFiles": "['^docs/.+$']"}), msgReviewPolicy},
-		"review with requires":      {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requires": "[holdoutChecks]"}), msgReviewPolicy},
-		"review with a label":       {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.requiredLabel": "x"}), msgReviewPolicy},
-		"review with modifyOnly":    {edit(t, reviewOK, "", map[string]string{"metadata.name": "review", "spec.modifyOnly": "true"}), msgReviewPolicy},
+		"review":                    {"apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {}\n", msgReviewPolicy},
 	} {
 		t.Run(name, func(t *testing.T) {
-			_ = a.c.Delete(t.Context(), a.object(t, tc.manifest)) // review was admitted above
 			err := a.create(t, tc.manifest)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})
 	}
-
 }
 
 // B8, plan PR20: the per-repository fields are gone from the schema. A legacy object created under
@@ -231,42 +220,39 @@ func TestLegacyMergePolicyReadsBackEmptyAfterTheUpgrade(t *testing.T) {
 	}
 }
 
-// B2, B3, OD-8, MP15, Q8: bindings keyed by name, a closed mode, review off, the entry classes,
-// and a Factory's merge defaults.
+// B2, B3, MP15, MR9, Q8: bindings keyed by name, a closed mode (live, shadow, disabled), review
+// refused, and a Factory's merge defaults.
 func TestRepositoryAdmission(t *testing.T) {
 	a := startAdmission(t)
 	if err := a.create(t, anrRepository); err != nil {
 		t.Fatalf("the spec's ai-native-ref Repository refused: %v", err)
 	}
-	factory := "apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: aws-0}\nspec: {mergeDefaults: {autoMergesPerDay: 2}}\n"
+	factory := "apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: aws-0}\nspec: {mergeDefaults: {maxPerDay: 2}}\n"
 	if err := a.create(t, factory); err != nil {
 		t.Fatalf("a Factory with mergeDefaults refused: %v", err)
 	}
 
-	// MR9: disabled is a mode, review's included.
-	disabled := edit(t, anrRepository, "r-disabled", map[string]string{"spec.mergePolicies": `[{name: docs-links, mode: disabled}, {name: revert, mode: "off"}, {name: review, mode: disabled}]`})
+	// MR9: disabled is a mode for catalog policies.
+	disabled := edit(t, anrRepository, "r-disabled", map[string]string{"spec.mergePolicies": `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}]`})
 	if err := a.create(t, disabled); err != nil {
 		t.Fatalf("mode disabled refused: %v", err)
 	}
 
 	var many []string
 	for i := range 31 {
-		many = append(many, fmt.Sprintf("{name: c%d, mode: \"off\"}", i))
+		many = append(many, fmt.Sprintf("{name: c%d, mode: disabled}", i))
 	}
 	for name, tc := range map[string]struct{ bindings, extra, want string }{
-		"a name twice": {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: docs, mode: "off"}, {name: docs, mode: shadow}]`, want: "Duplicate value"},
-		"mode on":      {bindings: `[{name: docs-links, mode: 'on'}, {name: revert, mode: "off"}]`, want: `Unsupported value: "on"`},
-		"no mode":      {bindings: `[{name: docs-links}, {name: revert, mode: "off"}]`, want: "Required value"},
-		"review shadow": {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: review, mode: shadow}]`,
-			want: msgReviewBinding},
-		"review with a parameter": {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: review, mode: "off", maxPerDay: 1}]`,
-			want: msgReviewBinding},
-		"no revert": {bindings: `[{name: docs-links, mode: shadow}]`, want: msgEntryClasses},
-		"file authority": {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}]`, extra: "repository",
-			want: msgFileBindings},
-		"33 bindings":    {bindings: "[{name: docs-links, mode: \"off\"}, {name: revert, mode: \"off\"}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
-		"a negative cap": {bindings: `[{name: docs-links, mode: "off", maxPerDay: -1}, {name: revert, mode: "off"}]`, want: "should be greater than or equal to 0"},
-		"a bad name":     {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: "off"}, {name: Docs, mode: "off"}]`, want: "should match"},
+		"a name twice":    {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: docs, mode: disabled}, {name: docs, mode: shadow}]`, want: "Duplicate value"},
+		"mode on":         {bindings: `[{name: docs-links, mode: 'on'}, {name: revert, mode: disabled}]`, want: `Unsupported value: "on"`},
+		"mode off":        {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: disabled}]`, want: `Unsupported value: "off"`},
+		"no mode":         {bindings: `[{name: docs-links}, {name: revert, mode: disabled}]`, want: "Required value"},
+		"review shadow":   {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: shadow}]`, want: msgReviewBinding},
+		"review disabled": {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: disabled}]`, want: msgReviewBinding},
+		"file authority":  {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}]`, extra: "repository", want: msgFileBindings},
+		"33 bindings":     {bindings: "[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
+		"a negative cap":  {bindings: `[{name: docs-links, mode: disabled, maxPerDay: -1}, {name: revert, mode: disabled}]`, want: "should be greater than or equal to 0"},
+		"a bad name":      {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: Docs, mode: disabled}]`, want: "should match"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			set := map[string]string{"spec.mergePolicies": tc.bindings}
@@ -340,6 +326,55 @@ func TestFactoryHarnessProfilesRefused(t *testing.T) {
 	}
 }
 
+// MR9, MR13: every field release N deprecated on MergePolicy, Repository and Factory is gone from
+// the CRD schema or refused by its enum/CEL rules.
+func TestRemovedFieldsAreRefused(t *testing.T) {
+	a := startAdmission(t)
+	for _, field := range []struct{ key, val string }{
+		{"harness", "standard"},
+		{"harnessAllowed", "[careful]"},
+		{"escalation", "{notConverged: careful}"},
+		{"testFirst", "true"},
+		{"checks", "true"},
+		{"requires", "[allowedFiles]"},
+		{"live", "true"},
+		{"shadow", "true"},
+	} {
+		t.Run("MergePolicy."+field.key, func(t *testing.T) {
+			u := a.object(t, fmt.Sprintf("apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: p-%s}\nspec: {%s: %s}\n",
+				strings.ToLower(field.key), field.key, field.val))
+			err := a.c.Create(t.Context(), u, client.FieldValidation("Strict"))
+			if err == nil || !strings.Contains(err.Error(), field.key) || !strings.Contains(err.Error(), "unknown field") {
+				t.Fatalf("MergePolicy with %s: got %v, want strict schema refusal", field.key, err)
+			}
+		})
+	}
+	t.Run("MergePolicy.review", func(t *testing.T) {
+		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {}\n")
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), "review is not a policy") {
+			t.Fatalf("MergePolicy review: got %v", err)
+		}
+	})
+	t.Run("Repository.mode.off", func(t *testing.T) {
+		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: Repository\nmetadata: {name: r-off}\nspec:\n  factoryRef: aws-0\n  repository: Smana/x\n  mergePolicies: [{name: docs, mode: \"off\"}]\n")
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), `Unsupported value: "off"`) {
+			t.Fatalf("Repository mode off: got %v", err)
+		}
+	})
+	t.Run("Repository.autoMergesPerDay", func(t *testing.T) {
+		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: Repository\nmetadata: {name: r-ampd}\nspec:\n  factoryRef: aws-0\n  repository: Smana/x\n  merge: {autoMergesPerDay: 2}\n")
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), "autoMergesPerDay") {
+			t.Fatalf("Repository autoMergesPerDay: got %v", err)
+		}
+	})
+	t.Run("Factory.minPromotionEvidence", func(t *testing.T) {
+		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: Factory\nmetadata: {name: f-mpe}\nspec:\n  mergeGuardrails: {minPromotionEvidence: 10}\n")
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), "minPromotionEvidence") {
+			t.Fatalf("Factory minPromotionEvidence: got %v", err)
+		}
+	})
+}
+
 // ai-native-ref's live objects (testdata/anr-live-objects.yaml, copied from its main) pass this
 // CRD's admission strictly: the binding-shape Repositories with partial merge blocks over the
 // Factory's mergeDefaults, durations as written, and the twelve class policies. Strict field
@@ -369,7 +404,7 @@ func TestTheLiveANRObjectsAreAdmitted(t *testing.T) {
 		}
 		kinds[u.GetKind()]++
 	}
-	if kinds["Factory"] != 1 || kinds["Repository"] != 4 || kinds["MergePolicy"] != 12 {
-		t.Fatalf("objects %v, want 1 Factory, 4 Repositories, 12 MergePolicies", kinds)
+	if kinds["Factory"] != 1 || kinds["Repository"] != 4 || kinds["MergePolicy"] != 8 {
+		t.Fatalf("objects %v, want 1 Factory, 4 Repositories, 8 MergePolicies", kinds)
 	}
 }

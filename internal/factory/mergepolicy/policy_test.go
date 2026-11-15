@@ -70,7 +70,7 @@ func TestParseBoundsThePatternsOfTheWholeFile(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("factory: aws-0\nmergePolicies:\n")
 	for i := range 5 {
-		b.WriteString("  - name: c" + string(rune('a'+i)) + "\n    mode: \"off\"\n    allowedFiles: [")
+		b.WriteString("  - name: c" + string(rune('a'+i)) + "\n    mode: disabled\n    allowedFiles: [")
 		for j := range MaxPatterns {
 			if j > 0 {
 				b.WriteString(", ")
@@ -84,9 +84,9 @@ func TestParseBoundsThePatternsOfTheWholeFile(t *testing.T) {
 	}
 }
 
-// MR9: a repository's file disables a policy with mode disabled, review's included.
+// MR9: a repository's file disables a policy with mode disabled.
 func TestParseReadsModeDisabled(t *testing.T) {
-	f, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: shadow}\n  - {name: revert, mode: shadow}\n  - {name: docs, mode: disabled}\n  - {name: review, mode: disabled}\n"))
+	f, err := Parse([]byte("factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: shadow}\n  - {name: revert, mode: shadow}\n  - {name: docs, mode: disabled}\n"))
 	if err != nil || f.MergePolicies[2].Mode != "disabled" {
 		t.Fatalf("%+v %v", f, err)
 	}

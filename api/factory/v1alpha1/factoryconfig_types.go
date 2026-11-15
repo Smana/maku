@@ -119,8 +119,7 @@ type FactoryList struct {
 // RepositorySpec is one repository served (D3): today's repositories[] entry, with its merge
 // settings and the MergePolicies it binds (reusable merge policies B2, B3).
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name == 'review' && (!(b.mode in ['off', 'disabled']) || has(b.allowedFiles) || has(b.companionFiles) || has(b.requiredLabel) || has(b.oracleWorkflow) || has(b.holdoutChecks) || has(b.protectedFiles) || has(b.requiresApproval) || has(b.maxPatchFiles) || has(b.maxModifiedLines) || has(b.maxPerDay)))",message="review is bound with mode off and no parameter"
-// +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || size(self.mergePolicies) == 0 || (self.mergePolicies.exists(b, b.name == 'docs-links') && self.mergePolicies.exists(b, b.name == 'revert'))",message="bind docs-links and revert when any policy is bound (OD-8)"
+// +kubebuilder:validation:XValidation:rule="!has(self.mergePolicies) || !self.mergePolicies.exists(b, b.name == 'review')",message="review is not a policy"
 // +kubebuilder:validation:XValidation:rule="!has(self.classAuthority) || self.classAuthority != 'repository' || !has(self.mergePolicies)",message="classAuthority repository: the repository's file holds the bindings (MP15)"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.factoryRef) || self.factoryRef == oldSelf.factoryRef",message="spec.factoryRef is fixed once set"
 // +kubebuilder:validation:XValidation:rule="!has(oldSelf.repository) || self.repository == oldSelf.repository",message="spec.repository is fixed once set"
@@ -194,7 +193,7 @@ type RepositoryStatus struct {
 type BindingStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
-	// +kubebuilder:validation:Enum=live;shadow;disabled;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled
 	Mode string `json:"mode,omitempty"`
 	// PolicyGeneration is the generation of the MergePolicy the class serves.
 	PolicyGeneration int64 `json:"policyGeneration,omitempty"`
@@ -242,12 +241,11 @@ type RepositoryList struct {
 // (reusable merge policies B1). The per-repository shape (repositoryRef, classes, merge) was
 // removed in the release after N (B8): the API server prunes those fields on read.
 //
-// +kubebuilder:validation:XValidation:rule="!has(self.live) && !has(self.shadow)",message="mode is the binding's: live and shadow are refused on a MergePolicy (B4)"
 // +kubebuilder:validation:XValidation:rule="!has(self.oracle) || !has(self.oracle.workflow)",message="oracle.workflow is the repository's: set oracleWorkflow on the binding"
 // +kubebuilder:validation:XValidation:rule="!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)",message="the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
 // +kubebuilder:validation:XValidation:rule="!has(self.narrowedFiles)",message="narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy"
 type MergePolicySpec struct {
-	// PolicySpec is the class definition: config.Class less the mode, plus requires.
+	// PolicySpec is the class definition: config.MergeClass.
 	config.PolicySpec `json:",inline"`
 }
 
@@ -282,7 +280,7 @@ type ConsumerStatus struct {
 	// Repository is the Repository object's name.
 	// +kubebuilder:validation:MaxLength=253
 	Repository string `json:"repository"`
-	// +kubebuilder:validation:Enum=live;shadow;disabled;off
+	// +kubebuilder:validation:Enum=live;shadow;disabled
 	Mode             string `json:"mode,omitempty"`
 	ServedGeneration int64  `json:"servedGeneration,omitempty"`
 	// Accepted is always serialized, false included.
@@ -300,7 +298,7 @@ const LabelCatalog = "maku.ogenki.io/catalog"
 // B1).
 //
 // +kubebuilder:validation:XValidation:rule="self.metadata.name.matches('^[a-z0-9]([-a-z0-9]{0,38}[a-z0-9])?$')",message="a MergePolicy's name is its class name (B1)"
-// +kubebuilder:validation:XValidation:rule="self.metadata.name != 'review' || !(has(self.spec.live) || has(self.spec.shadow) || has(self.spec.allowedFiles) || has(self.spec.narrowedFiles) || has(self.spec.protectedFiles) || has(self.spec.requiresApproval) || (has(self.spec.modifyOnly) && self.spec.modifyOnly) || has(self.spec.maxPatchFiles) || has(self.spec.maxModifiedLines) || has(self.spec.diffShape) || has(self.spec.holdoutChecks) || has(self.spec.maxPerDay) || has(self.spec.evidence) || has(self.spec.oracle) || has(self.spec.monitor) || has(self.spec.author) || has(self.spec.releaseAgeCheck) || has(self.spec.companionFiles) || has(self.spec.requiredLabel) || has(self.spec.requires))",message="review takes only description, harness, harnessAllowed, escalation, checks and testFirst"
+// +kubebuilder:validation:XValidation:rule="self.metadata.name != 'review'",message="review is not a policy"
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:resource:scope=Namespaced

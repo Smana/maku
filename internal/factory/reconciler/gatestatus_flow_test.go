@@ -47,7 +47,6 @@ func TestTheGateNeverLeavesASuccessItDidNotMerge(t *testing.T) {
 	t.Run("a grant gone before the merge call", func(t *testing.T) {
 		snap, _ := approvalSnapshot()
 		g := cutOverRig(t, snap, nil)
-		g.r.Cfg.Current().PolicyManagement.ApprovalMemory = true
 		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
 		f := &laterFailingGrants{fakeGrants{list: []grant.Grant{rigGrant()}}}
 		g.r.Grants = f

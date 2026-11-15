@@ -57,7 +57,7 @@ func TestReadinessReadsTheRoleTable(t *testing.T) {
 // authoritative and hardened passes.
 func TestPrerequisitesWired(t *testing.T) {
 	cfg := &config.Config{Repositories: []config.Repository{{Name: "o/r", ClassAuthority: config.ClassAuthorityRepository}}}
-	cfg.PolicyManagement.RepositoryAuthority = true
+	cfg.PolicyManagement.Stage = config.StageManage
 	now := time.Date(2026, 11, 13, 12, 0, 0, 0, time.UTC)
 	good := func() hardening.Settings {
 		return hardening.Settings{Mode: hardening.ModeEnforce, Layers: hardening.LayersFor(hardening.ModeEnforce, hardening.ModeAudit),

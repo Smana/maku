@@ -10,7 +10,7 @@ factory: aws-0
 # without acting on it (dualEvaluation). Promotion (stage 6) serves each class's shadow
 # evidence to the broker's settings pages; it changes no class. The central config stays the
 # only merge authority: repositoryAuthority is off.
-policyManagement: {read: true, simulation: true, dualEvaluation: true, promotion: true}
+policyManagement: {stage: manage}
 workflows:
   plain: {}
   checked: {checks: true}
@@ -28,12 +28,7 @@ repositories:
       # with it, or an auto-merge waits on a human to merge its own revert (D5).
       docs-links: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
       revert: {live: true, holdoutChecks: ["Check the documentation links 🔗"]}
-      docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
-      tests: {}
-      dashboards: {}
-      # TO4: the bench's variant turns testFirst on; it needs checks: true (R17)
-      scripts: {checks: false, testFirst: false}
-      review: {checks: false, testFirst: false}
+      docs: {}
       # Feature 14's seeded fix (runbook 20): an alerting rule RunLore found broken. No switch: a
       # maintainer merges, the monitor watches. RunLore's verdict is a signal for 2h after the merge;
       # a persisting one is a regression, which with the breaker's maxFollowUps: 1 pauses the class.
@@ -123,7 +118,7 @@ repositories:
       policyBot: true  # the pre-v4 defaults, written out as ANR does
       gateStatus: false
       mergerLogin: ogenki-agent-merger[bot]
-      autoMergesPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
+      maxPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
       fixRuns: 2
       # Re-runs of a cancelled required check per task (agent-platform #86); 0 hands it to a
       # human. Above 0 the merger App needs actions: write.
@@ -142,7 +137,7 @@ repositories:
     schedules:
       - name: link-rot
         cron: "0 6 * * 1"  # Mondays, 06:00 UTC
-        class: docs-links
+        workflow: plain
         # R52: the gate accepts only Markdown link targets ([text](url), [ref]: url); a URL in a
         # code block or in prose is held as class_mismatch (runbook 12, 2026-10-18).
         text: |
@@ -172,10 +167,7 @@ repositories:
       # No testFirst here (TO4): the tests live under the gate path scripts/ci/.
       docs-links: {shadow: true, holdoutChecks: [validate]}
       revert: {shadow: true, holdoutChecks: [validate]}
-      docs: {checks: true}  # public runs only: an internal claim with checks is refused by the XRD
-      tests: {}
-      dashboards: {}
-      scripts: {}
+      docs: {}
       # Shadow (MC14, runbook 15 §6): intake and decisions, nothing armed. Its detector is this
       # repository's dead-links.yaml and its rule `low-risk: dead-links` in .policy.yml
       # (test-agent-merge-gate-parity.py holds the two).
@@ -201,7 +193,7 @@ repositories:
       policyBot: true  # the pre-v4 defaults, written out as ANR does
       gateStatus: false
       mergerLogin: ogenki-agent-merger[bot]
-      autoMergesPerDay: 2
+      maxPerDay: 2
       fixRuns: 1
       checkReruns: 0  # a cancelled check goes to a human
       verifyFor: 30m
@@ -250,7 +242,7 @@ repositories:
       policyBot: true  # the pre-v4 defaults, written out as ANR does
       gateStatus: false
       mergerLogin: ogenki-agent-merger[bot]
-      autoMergesPerDay: 5
+      maxPerDay: 5
       fixRuns: 1
       checkReruns: 0
       verifyFor: 30m

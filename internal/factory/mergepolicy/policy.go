@@ -134,13 +134,14 @@ func Parse(raw []byte) (*File, error) {
 	return &f, nil
 }
 
-// bareOff reads a binding's bare off, which YAML reads as false, as the mode off. j is re-encoded only when one is found.
+// bareOff reads a binding's bare off, which YAML reads as false, as the string "off" so bindingShape
+// refuses it clearly. j is re-encoded only when one is found.
 func bareOff(root map[string]any, j []byte) ([]byte, error) {
 	list, _ := root["mergePolicies"].([]any)
 	found := false
 	for _, e := range list {
 		if m, ok := e.(map[string]any); ok && m["mode"] == false {
-			m["mode"], found = config.ModeOff, true
+			m["mode"], found = "off", true
 		}
 	}
 	if !found {
@@ -211,25 +212,14 @@ func patternErrors(lists [][]string) []error {
 	return errs
 }
 
-// reviewKeys refuses every key but name and mode on review's binding as written, before decoding:
-// review is bound off, with no parameter (R30, B1), and an empty, null or zero value decodes to the
-// absent value, and would otherwise pass as undeclared.
+// reviewKeys refuses any binding named review: review is not a policy (MR9).
 func reviewKeys(root map[string]any) error {
 	var errs []error
 	list, _ := root["mergePolicies"].([]any)
 	for _, e := range list {
 		b, _ := e.(map[string]any)
-		if b["name"] != "review" {
-			continue
-		}
-		for _, k := range slices.Sorted(maps.Keys(b)) {
-			if k != "name" && k != "mode" {
-				errs = append(errs, fmt.Errorf("binding review: %s is refused on review: it is bound with mode off and nothing else, "+
-					"and a human merges it", k))
-			}
-		}
-		if m := b["mode"]; m != false && m != config.ModeOff && m != config.ModeDisabled {
-			errs = append(errs, errors.New("binding review: review is bound with mode off: a human merges it"))
+		if b["name"] == "review" {
+			errs = append(errs, errors.New("binding review: review is not a policy"))
 		}
 	}
 	return errors.Join(errs...)

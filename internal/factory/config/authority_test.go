@@ -25,17 +25,16 @@ func TestRepositoryAuthorityValidates(t *testing.T) {
 		repo func(*Repository)
 		want string
 	}{
-		"the switch with read":       {PolicyManagement{Read: true, RepositoryAuthority: true}, func(*Repository) {}, ""},
-		"the switch alone":           {PolicyManagement{RepositoryAuthority: true}, func(*Repository) {}, "repositoryAuthority needs read"},
-		"a cut-over without classes": {PolicyManagement{Read: true, RepositoryAuthority: true}, func(*Repository) {}, ""},
-		"a cut-over, the switch off": {PolicyManagement{Read: true}, func(*Repository) {}, "needs policyManagement.stage manage"},
-		"a cut-over at stage read":   {PolicyManagement{Stage: StageRead}, func(*Repository) {}, "needs policyManagement.stage manage"},
-		"a cut-over at the default":  {PolicyManagement{}, func(*Repository) {}, ""},
-		"two sources": {PolicyManagement{Read: true, RepositoryAuthority: true},
+		"stage manage":                 {PolicyManagement{Stage: StageManage}, func(*Repository) {}, ""},
+		"a cut-over without classes":   {PolicyManagement{Stage: StageManage}, func(*Repository) {}, ""},
+		"a cut-over at stage read":     {PolicyManagement{Stage: StageRead}, func(*Repository) {}, "needs policyManagement.stage manage"},
+		"a cut-over at stage simulate": {PolicyManagement{Stage: StageSimulate}, func(*Repository) {}, "needs policyManagement.stage manage"},
+		"a cut-over at the default":    {PolicyManagement{}, func(*Repository) {}, ""},
+		"two sources": {PolicyManagement{Stage: StageManage},
 			func(r *Repository) { r.Classes = map[string]Class{"docs-links": {}} }, "two authoritative sources"},
-		"an unknown authority": {PolicyManagement{Read: true, RepositoryAuthority: true},
+		"an unknown authority": {PolicyManagement{Stage: StageManage},
 			func(r *Repository) { r.ClassAuthority = "git" }, `classAuthority "git"`},
-		"a schedule naming a class the file declares": {PolicyManagement{Read: true, RepositoryAuthority: true},
+		"a schedule naming a class the file declares": {PolicyManagement{Stage: StageManage},
 			func(r *Repository) {
 				r.Schedules = []Schedule{{Name: "links", Cron: "0 6 * * 1", Class: "dead-links", Text: "fix links", Probe: "dead-links", ProbeAuthor: "x"}}
 			}, ""},
@@ -60,7 +59,7 @@ func TestRepositoryAuthorityValidates(t *testing.T) {
 // set: the gate, triage, intake and the monitor read one set of classes (MP15).
 func TestACutOverRepositoryReadsItsClassesFromTheSource(t *testing.T) {
 	central := Repository{Name: "Smana/b", Classes: map[string]Class{"docs-links": {Shadow: true}}}
-	c := &Config{Repositories: []Repository{cutOver(), central}, PolicyManagement: PolicyManagement{Read: true, RepositoryAuthority: true}}
+	c := &Config{Repositories: []Repository{cutOver(), central}, PolicyManagement: PolicyManagement{Stage: StageManage}}
 	if got := c.RepositoryFor("smana/a").Classes; got != nil {
 		t.Fatalf("no source yet: %v", got)
 	}
@@ -95,7 +94,7 @@ func TestTheSourceIsReadOnlyWithTheSwitch(t *testing.T) {
 // A cut-over repository's classes arrive at run time, so what the binary builds at start assumes
 // they may be live, monitored and watching Flux.
 func TestACutOverRepositoryNeedsTheMerger(t *testing.T) {
-	c := &Config{Repositories: []Repository{cutOver()}, PolicyManagement: PolicyManagement{Read: true, RepositoryAuthority: true}}
+	c := &Config{Repositories: []Repository{cutOver()}, PolicyManagement: PolicyManagement{Stage: StageManage}}
 	if !c.NeedsMerger() || !c.AnyMonitored() || !c.AnyFlux() {
 		t.Fatal("a cut-over repository may hold any class")
 	}

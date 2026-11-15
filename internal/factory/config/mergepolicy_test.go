@@ -63,17 +63,11 @@ func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
 		"negative cap":     {Config{MergeGuardrails: MergeGuardrails{MaxPerDay: -1}}, "maxPerDay"},
 		"bad protected":    {Config{MergeGuardrails: MergeGuardrails{ProtectedFiles: []string{"("}}}, "protectedFiles"},
 		"blank check":      {Config{MergeGuardrails: MergeGuardrails{MandatoryChecks: []string{""}}}, "mandatoryChecks"},
-		"simulation alone": {Config{PolicyManagement: PolicyManagement{Simulation: true}}, ""},
-		"dual with read":   {Config{PolicyManagement: PolicyManagement{Read: true, DualEvaluation: true}}, ""},
-		"dual alone":       {Config{PolicyManagement: PolicyManagement{DualEvaluation: true}}, "dualEvaluation needs read"},
-		"promotion alone":  {Config{PolicyManagement: PolicyManagement{Promotion: true}}, ""},
+		"stage simulate":   {Config{PolicyManagement: PolicyManagement{Stage: StageSimulate}}, ""},
+		"stage read":       {Config{PolicyManagement: PolicyManagement{Stage: StageRead}}, ""},
+		"stage manage":     {Config{PolicyManagement: PolicyManagement{Stage: StageManage}}, ""},
 		"an operator":      {Config{PolicyManagement: PolicyManagement{Operators: []string{"Smana"}}}, ""},
 		"a bad operator":   {Config{PolicyManagement: PolicyManagement{Operators: []string{"not a login"}}}, "operators"},
-		"evidence at 20":   {Config{MergeGuardrails: MergeGuardrails{MinPromotionEvidence: 20}}, ""},
-		"evidence raised":  {Config{MergeGuardrails: MergeGuardrails{MinPromotionEvidence: 29}}, ""},
-		"evidence lowered": {Config{MergeGuardrails: MergeGuardrails{MinPromotionEvidence: 10}}, "minPromotionEvidence"},
-		"memory with read": {Config{PolicyManagement: PolicyManagement{Read: true, ApprovalMemory: true}}, ""},
-		"memory alone":     {Config{PolicyManagement: PolicyManagement{ApprovalMemory: true}}, "approvalMemory needs read"},
 		"a year of grant":  {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{MaxGrantLifetime}}}, ""},
 		"negative grant":   {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{-time.Hour}}}, "maxGrantLifetime"},
 		"too long a grant": {Config{MergeGuardrails: MergeGuardrails{MaxGrantLifetime: Duration{MaxGrantLifetime + time.Hour}}}, "maxGrantLifetime"},
@@ -84,16 +78,6 @@ func TestHarnessProfilesAndGuardrailsValidate(t *testing.T) {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
-	}
-}
-
-// MP7: twenty clean decisions unless the operators raise it; 0 is the default, never "none".
-func TestMinPromotionEvidenceDefaultsToTwenty(t *testing.T) {
-	if got := (MergeGuardrails{}).MinPromotion(); got != 20 || DefaultMinPromotionEvidence != 20 {
-		t.Fatal(got)
-	}
-	if got := (MergeGuardrails{MinPromotionEvidence: 46}).MinPromotion(); got != 46 {
-		t.Fatal(got)
 	}
 }
 

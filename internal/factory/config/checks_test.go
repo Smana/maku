@@ -7,13 +7,10 @@ import (
 	"testing"
 )
 
-// withChecks is the list-shaped good with v3 feature 3's keys: the repository's checks.egress, and
-// the docs class's checks, which nothing reads since the workflow left the class (WF7).
+// withChecks is the list-shaped good with v3 feature 3's repository checks.egress.
 func withChecks(t *testing.T, egress string) string {
 	t.Helper()
-	raw := good
-	raw = strings.Replace(raw, "  - name: Smana/cloud-native-ref\n", "  - name: Smana/cloud-native-ref\n    checks: {egress: "+egress+"}\n", 1)
-	return strings.Replace(raw, "docs: {}", "docs: {checks: true}", 1)
+	return strings.Replace(good, "  - name: Smana/cloud-native-ref\n", "  - name: Smana/cloud-native-ref\n    checks: {egress: "+egress+"}\n", 1)
 }
 
 func TestChecksEgressIsTheProfileEnumAtMostFourOnce(t *testing.T) {

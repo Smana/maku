@@ -15,11 +15,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/envtest"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
-	"github.com/Smana/maku/internal/factory/config"
 )
 
 // The three factory-resource CRDs install: their CEL compiles within the API server's cost budget,
-// and a MergePolicy that sets a mode is refused (B4).
+// and a MergePolicy named review is refused.
 func TestFactoryResourceCRDsInstall(t *testing.T) {
 	if os.Getenv("KUBEBUILDER_ASSETS") == "" {
 		t.Skip("KUBEBUILDER_ASSETS unset: run `task test`, which sets it")
@@ -46,10 +45,9 @@ func TestFactoryResourceCRDsInstall(t *testing.T) {
 		}
 	}
 	mp := &v1alpha1.MergePolicy{
-		ObjectMeta: metav1.ObjectMeta{Name: "deps", Namespace: "default"},
-		Spec:       v1alpha1.MergePolicySpec{PolicySpec: config.PolicySpec{Class: config.Class{Live: true}}},
+		ObjectMeta: metav1.ObjectMeta{Name: "review", Namespace: "default"},
 	}
-	if err := c.Create(ctx, mp); err == nil || !strings.Contains(err.Error(), "mode is the binding's") {
-		t.Fatalf("got %v, want the mode-is-the-binding's rule", err)
+	if err := c.Create(ctx, mp); err == nil || !strings.Contains(err.Error(), "review is not a policy") {
+		t.Fatalf("got %v, want the review-is-not-a-policy rule", err)
 	}
 }

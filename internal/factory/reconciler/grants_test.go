@@ -91,7 +91,7 @@ func rigGrant() grant.Grant {
 // what dual evaluation alone writes.
 func TestApprovalMemoryOffReadsNoGrant(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageSimulate}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }
 	g.r.Grants = refusingGrants{t}
 	g.f.SetChecks(12, green("SUCCESS"))
@@ -117,7 +117,7 @@ func TestDualEvaluationConsultsAGrantReadImmediatelyBefore(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 			g.r.Cfg.Current().MergeGuardrails.MaxGrantLifetime = config.Duration{Duration: 30 * 24 * time.Hour}
 			g.r.Policy = func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }
 			g.r.Grants = tc.grants
@@ -147,7 +147,7 @@ func TestDualEvaluationConsultsAGrantReadImmediatelyBefore(t *testing.T) {
 // subset.
 func TestNoLookupWithoutAnApprovalSubset(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
-	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, DualEvaluation: true, ApprovalMemory: true}
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 	g.r.Policy = func(string) (mergepolicy.Snapshot, bool) {
 		s, ok := approvalSnapshot()
 		r := s.Classes["docs-links"]
@@ -186,7 +186,11 @@ func TestAGrantIsReadAgainBeforeTheMergeCall(t *testing.T) {
 		"a malformed grant id": {ArmDecision{Verdict: "arm", Rows: rigDecisionRows("x:1")}, true, &fakeGrants{list: []grant.Grant{centralGrant()}}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
-			r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Read: true, ApprovalMemory: tc.on},
+			stage := config.StageRead
+			if tc.on {
+				stage = config.StageManage
+			}
+			r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Stage: stage},
 				Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Classes: map[string]config.Class{"docs-links": central}}}},
 				Grants: tc.grants, Metrics: &fakeMetrics{}, Now: func() time.Time { return now },
 				Policy: func(string) (mergepolicy.Snapshot, bool) { return approvalSnapshot() }}
@@ -200,7 +204,7 @@ func TestAGrantIsReadAgainBeforeTheMergeCall(t *testing.T) {
 // A merge on a grant records its use, and the task keeps the grant for a revert to find.
 func TestAMergeOnAGrantRecordsItsUse(t *testing.T) {
 	f := &fakeGrants{}
-	r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Read: true, ApprovalMemory: true}},
+	r := &Reconciler{Cfg: &config.Config{PolicyManagement: config.PolicyManagement{Stage: config.StageManage}},
 		Grants: f, Metrics: &fakeMetrics{}}
 	tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Repository: "Smana/cloud-native-ref", PredictedClass: "docs-links"}}
 	ref := &v1alpha1.PullRequestRef{Number: 12}
@@ -231,7 +235,7 @@ func TestARevertDisablesTheGrantItsMergeUsed(t *testing.T) {
 			g := mergeRig(t, v1alpha1.PhaseVerifying)
 			f := &fakeGrants{disabled: tc.disabled}
 			g.r.Grants = f
-			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Read: true, ApprovalMemory: true}
+			g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
 			var tk v1alpha1.Task
 			_ = g.c.Get(t.Context(), client.ObjectKey{Namespace: "agent-system", Name: "3buqdlot"}, &tk)
 			if tc.drill { // a maintainer's drill: factory/revert with the drill annotation (AM6)

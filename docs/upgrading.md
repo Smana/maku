@@ -4,6 +4,34 @@ What changes in the install steps, release by release. A release that is not lis
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
 
+## Merge policies removals
+
+Merge policies release N+1 removes every field and mode release N deprecated (MR9, MR13). Unknown
+fields on a `MergePolicy`, `Repository` or `Factory` are rejected by the CRD schema, and the config
+file refuses removed keys with a message pointing here. See [merge policies](merge-policies.md#start-here)
+for the zero-binding catalog setup and [worked examples](merge-policies.md#worked-examples):
+
+| Removed field or value | Replacement |
+|---|---|
+| `MergePolicy.spec.harness`, `classes.<name>.harness` | `Repository.spec.workflow.default` (`workflow.default` on the repository) |
+| `MergePolicy.spec.harnessAllowed`, `classes.<name>.harnessAllowed` | nothing: every workflow the `Factory` defines may be pinned |
+| `MergePolicy.spec.escalation`, `classes.<name>.escalation` | `Factory.spec.workflows.<workflow>.escalation` |
+| `MergePolicy.spec.testFirst`, `classes.<name>.testFirst` | `Repository.spec.workflow.testFirst` (needs `merge.contractCheck`) |
+| `MergePolicy.spec.checks`, `classes.<name>.checks` | `Factory.spec.workflows.<workflow>.checks` |
+| `MergePolicy.spec.requires` | nothing: incomplete bindings are refused by the bound and parameter rules |
+| `MergePolicy.spec.live`, `MergePolicy.spec.shadow` | `mode: live` or `mode: shadow` on each `Repository.spec.mergePolicies` binding |
+| `MergePolicy` named `review`, or a binding named `review` | nothing: `no_policy_matched` sends unmatched pull requests to a human |
+| `mode: "off"` on a `mergePolicies` binding | delete the binding, or set `mode: disabled` for a catalog policy (`docs-links`, `revert`, `deps-patch`, `docs`) |
+| `Schedule.class` without an `oracle.probe` policy | `Schedule.workflow` (`workflow` on the schedule) |
+| `merge.autoMergesPerDay`, `mergeDefaults.autoMergesPerDay` | `merge.maxPerDay`, `mergeDefaults.maxPerDay` |
+| `mergeGuardrails.minPromotionEvidence` | `evidence` (`low` or `standard`) on each `MergePolicy` |
+| `policyManagement.{read,simulation,dualEvaluation,repositoryAuthority,approvalMemory,promotion}` | `policyManagement.stage` (`read`, `simulate` or `manage`) |
+
+`maku config migrate` rewrites every removed field above into its new home when converting a legacy
+config file into `Factory`, `Repository` and `MergePolicy` manifests. Shadow evidence recorded under
+earlier label-chosen decisions (`class=<name>` in the merge gate's marker) carries over unchanged to
+diff-chosen decisions for the same policy name.
+
 ## The gate picks the policy from the diff (v0.5x, merge policies release N+1)
 
 Breaking: the merge gate no longer decides on the task's class. It judges the pull request's diff
@@ -47,8 +75,7 @@ Everything release N warned about is refused, each error naming this section:
 | the `profile:<name>` label | `workflow:<name>`; a `profile:` or `class:` label is read by nothing and told once on its issue | N+1 |
 | the `class:<name>` label | nothing: the gate reads the diff | N+1 |
 
-Where a `MergePolicy`'s workflow fields go. They are read by nothing in this release and stay
-accepted, with the `Deprecated` condition, until the merge policies' removal lands:
+Where a `MergePolicy`'s workflow fields moved (now refused; see [merge policies removals](#merge-policies-removals)):
 
 | Field on `MergePolicy` | Lands on |
 |---|---|

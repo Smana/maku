@@ -163,7 +163,7 @@ spec:
   schedules:
     - name: link-rot
       cron: "0 6 * * 1"  # Mondays, 06:00 UTC
-      class: docs-links
+      workflow: plain
       # R52: the gate accepts only Markdown link targets ([text](url), [ref]: url); a URL in a
       # code block or in prose is held as class_mismatch (runbook 12, 2026-10-18).
       text: |
@@ -203,7 +203,7 @@ spec:
       - "Check the shell scripts 💻"
       - "Check the documentation links 🔗"
     contractCheck: "Test contract 🧪"  # required on a task with a contract (TF8, row 2b); report-only otherwise
-    autoMergesPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
+    maxPerDay: 1  # one unattended merge a day across live classes; shadow decisions are not counted
     fixRuns: 2
     # Re-runs of a cancelled required check per task (agent-platform #86); 0 hands it to a
     # human. Above 0 the merger App needs actions: write.
@@ -216,11 +216,7 @@ spec:
     # with it, or an auto-merge waits on a human to merge its own revert (D5).
     - {name: docs-links, mode: live, holdoutChecks: ["Check the documentation links 🔗"]}
     - {name: revert, mode: live, holdoutChecks: ["Check the documentation links 🔗"]}
-    - {name: docs, mode: "off"}
-    - {name: tests, mode: "off"}
-    - {name: dashboards, mode: "off"}
-    - {name: scripts, mode: "off"}
-    - {name: review, mode: "off"}
+    - {name: docs, mode: disabled}
     - {name: alert-rules, mode: shadow, allowedFiles: ['^observability/.+\.ya?ml$']}
     # Shadow since the gcp-0 session of 2026-10-27 (runbook 15 §2): decided, never armed. Its fence
     # repeats the host's `low-risk: docs-links` rule, which approves its pull requests until
@@ -269,7 +265,7 @@ spec:
     # ci.yaml runs both on push to main too; TruffleHog is a step of `lint`.
     requiredChecks: [validate, lint]
     verifyChecks: [validate, lint]
-    autoMergesPerDay: 2
+    maxPerDay: 2
     fixRuns: 1
     checkReruns: 0  # a cancelled check goes to a human
     leakScanCheck: lint
@@ -277,10 +273,7 @@ spec:
     # No testFirst here (TO4): the tests live under the gate path scripts/ci/.
     - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
     - {name: revert, mode: shadow, holdoutChecks: [validate]}
-    - {name: docs, mode: "off"}
-    - {name: tests, mode: "off"}
-    - {name: dashboards, mode: "off"}
-    - {name: scripts, mode: "off"}
+    - {name: docs, mode: disabled}
     # Shadow (MC14, runbook 15 §6): its detector is this repository's dead-links.yaml and its rule
     # `low-risk: dead-links` in .policy.yml (test-agent-merge-gate-parity.py holds the two).
     - name: dead-links
@@ -305,7 +298,7 @@ spec:
   merge:
     requiredChecks: [validate, leak-scan]
     verifyChecks: [validate, leak-scan]
-    autoMergesPerDay: 5
+    maxPerDay: 5
     fixRuns: 1
     checkReruns: 0
     # K12: the knowledge base is public text with secret redaction at each tool output (RK13).
@@ -339,7 +332,7 @@ spec:
     # the merge and its verification wait on.
     requiredChecks: [build]
     verifyChecks: [build]
-    autoMergesPerDay: 5
+    maxPerDay: 5
     fixRuns: 1
     checkReruns: 0
     # The factory's validation (R42) wants a leak check in both lists above. RunLore has no
@@ -359,8 +352,7 @@ kind: MergePolicy
 metadata:
   name: docs-links
   namespace: agent-system
-spec:
-  requires: [holdoutChecks]
+spec: {}
 ---
 # A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
 # Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
@@ -372,62 +364,15 @@ kind: MergePolicy
 metadata:
   name: revert
   namespace: agent-system
-spec:
-  requires: [holdoutChecks]
+spec: {}
 ---
 # A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
 # Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
 # refused edit keeps the last accepted generation serving every consumer.
-# Run-only (Q7): bound off, a maintainer merges.
 apiVersion: maku.ogenki.io/v1alpha1
 kind: MergePolicy
 metadata:
   name: docs
-  namespace: agent-system
-spec:
-  checks: true  # public runs only: an internal claim with checks is refused by the XRD
----
-# A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
-# Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
-# refused edit keeps the last accepted generation serving every consumer.
-# Run-only (Q7): bound off, a maintainer merges.
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: tests
-  namespace: agent-system
-spec: {}
----
-# A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
-# Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
-# refused edit keeps the last accepted generation serving every consumer.
-# Run-only (Q7): bound off, a maintainer merges.
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: dashboards
-  namespace: agent-system
-spec: {}
----
-# A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
-# Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
-# refused edit keeps the last accepted generation serving every consumer.
-# Run-only (Q7): bound off. TO4: the bench's variant turns testFirst on; it needs checks: true (R17).
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: scripts
-  namespace: agent-system
-spec: {}
----
-# A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
-# Repository binds it under spec.mergePolicies with its own mode and parameters. Read live; a
-# refused edit keeps the last accepted generation serving every consumer.
-# Anything else: a human merges it. Bound off with no parameter.
-apiVersion: maku.ogenki.io/v1alpha1
-kind: MergePolicy
-metadata:
-  name: review
   namespace: agent-system
 spec: {}
 ---
@@ -443,7 +388,6 @@ metadata:
   name: alert-rules
   namespace: agent-system
 spec:
-  requires: [allowedFiles]
   monitor: {verification: {within: 2h}, followUpWindow: 2h}
 ---
 # A class definition (Maku reusable merge policies, B1): the object's name is the class name, and a
@@ -458,7 +402,6 @@ metadata:
   name: dead-links
   namespace: agent-system
 spec:
-  requires: [allowedFiles, oracleWorkflow]
   protectedFiles: ['^docs/(superpowers|specs)/', '^website/content/docs/decisions/']
   modifyOnly: true
   maxModifiedLines: 20
@@ -482,7 +425,6 @@ metadata:
   name: deps-patch
   namespace: agent-system
 spec:
-  requires: [allowedFiles]
   author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
   diffShape: semver-patch
   protectedFiles:
@@ -509,7 +451,6 @@ metadata:
   name: deps-minor
   namespace: agent-system
 spec:
-  requires: [allowedFiles]
   author: {adopt: {logins: ["renovate[bot]"], branches: ['^renovate/']}}
   diffShape: semver-minor
   protectedFiles:
@@ -536,7 +477,6 @@ metadata:
   name: kb-entries
   namespace: agent-system
 spec:
-  requires: [allowedFiles, companionFiles, requiredLabel]
   author: {adopt: {logins: ["runlore[bot]"], branches: ["^runlore/kb-"]}}
   diffShape: added-entry
   holdoutChecks: [validate]

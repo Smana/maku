@@ -61,7 +61,7 @@ func ValidateFile(f *File, rc *config.Repository, c *config.Config) (Report, err
 	for _, name := range []string{"docs-links", "revert"} {
 		if !declares(f, name) {
 			errs = append(errs, fmt.Errorf("class %s is required in a file that declares classes (OD-8): add it, "+
-				"%s keeps it unarmed", name, fmt.Sprintf(`"- {name: %s, mode: 'off'}"`, name)))
+				"%s keeps it unarmed", name, fmt.Sprintf(`"- {name: %s, mode: disabled}"`, name)))
 		}
 	}
 	rep.Classes, rep.BindingErrors = ResolveBindings(f, rc, c)

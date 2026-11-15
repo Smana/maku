@@ -25,7 +25,7 @@ func bindingsWorld() (Inputs, []v1alpha1.Repository, []v1alpha1.MergePolicy) {
 	const anr, cnr = "Smana/ai-native-ref", "Smana/cloud-native-ref"
 	c := cfg(
 		config.Repository{Name: anr, Classes: map[string]config.Class{"docs-links": {Shadow: true}, "dead-links": {Shadow: true}},
-			Merge: config.Merge{AutoMergesPerDay: 2, RequiredChecks: []string{"lint"}, VerifyChecks: []string{"lint"}}, MergeDefaulted: []string{"autoMergesPerDay"},
+			Merge: config.Merge{MaxPerDay: 2, RequiredChecks: []string{"lint"}, VerifyChecks: []string{"lint"}}, MergeDefaulted: []string{"maxPerDay"},
 			Bound: []string{"docs-links", "dead-links"}},
 		config.Repository{Name: cnr, Classes: map[string]config.Class{"docs-links": {Live: true}, "dead-links": {Shadow: true}},
 			Bound: []string{"docs-links", "dead-links"}},
@@ -89,7 +89,7 @@ func TestDesiredBindings(t *testing.T) {
 	if anr.Authority != config.ClassAuthorityCentral || anr.ClassCount != 2 || anr.LiveCount != 0 {
 		t.Fatalf("ai-native-ref %+v", anr)
 	}
-	if anr.Merge == nil || anr.Merge.AutoMergesPerDay != 2 || strings.Join(anr.MergeDefaulted, ",") != "autoMergesPerDay" {
+	if anr.Merge == nil || anr.Merge.MaxPerDay != 2 || strings.Join(anr.MergeDefaulted, ",") != "maxPerDay" {
 		t.Fatalf("merge %+v, defaulted %v", anr.Merge, anr.MergeDefaulted)
 	}
 	want(t, anr.Conditions, ConditionRepositoryFileValid, metav1.ConditionTrue, "Valid")
