@@ -75,6 +75,7 @@ broker:
   human:
     mode: oidc
     # issuer, jwksURL, clientIDFile, projectIDFile, origin, groups, access ... (internal/config)
+    # mcp: {enabled, start: {default: true, except: []}, sponsored: [...]} serves /mcp (docs/cli.md).
     # slackIntents: {principal, teamID, url, apiKeyFile, ...} serves intent_classify, the Slack App's
     # read-only classification of a thread reply (docs/slack.md). Unset, the tool is on no list.
   # The agents' room tools listener, :8090 (internal/config's roomTools, I8). On by default, as every

@@ -1318,3 +1318,92 @@ func TestPlanClassesRemoved(t *testing.T) {
 		t.Fatalf("the catalog alone: %v", err)
 	}
 }
+
+func TestStartDefaultsOnWithPlanner(t *testing.T) {
+	base := valid + "\n  mcp:\n    enabled: true\n  roomctlClientIDFile: /etc/room-broker/maku/client-id\n" +
+		"  access:\n    ttl: 5m\n" + githubLink +
+		"  intake:\n    plan:\n      enabled: true\n      url: http://gw/v1\n      apiKeyFile: /k\n" +
+		"      repositories: [Smana/ai-native-ref]\n" +
+		"factoryURL: https://agent-factory.agent-system.svc.cluster.local:8080\n"
+	cfg, err := Load(write(t, base))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Human.MCP.Start.Default == nil || !*cfg.Human.MCP.Start.Default {
+		t.Fatalf("Start.Default = %v, want true with planner enabled", cfg.Human.MCP.Start.Default)
+	}
+	if len(cfg.Warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", cfg.Warnings)
+	}
+
+	// Without planner, Default stays nil (off).
+	noPlan, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if noPlan.Human.MCP.Start.Default != nil {
+		t.Fatalf("Start.Default without planner = %v, want nil", noPlan.Human.MCP.Start.Default)
+	}
+}
+
+func TestStartExcept(t *testing.T) {
+	maku := strings.Replace(valid, "  projectIDFile:", "  roomctlClientIDFile: /etc/room-broker/roomctl/client-id\n  projectIDFile:", 1)
+	okDoc := maku + access + "  mcp:\n    enabled: true\n    start:\n      default: true\n      except: [Smana/a]\n"
+	cfg, err := Load(write(t, okDoc))
+	if err != nil {
+		t.Fatalf("valid start block failed: %v", err)
+	}
+	if cfg.Human.MCP.Start.Default == nil || !*cfg.Human.MCP.Start.Default || len(cfg.Human.MCP.Start.Except) != 1 || cfg.Human.MCP.Start.Except[0] != "Smana/a" {
+		t.Fatalf("Start = %+v", cfg.Human.MCP.Start)
+	}
+
+	for name, tc := range map[string]struct {
+		doc, want string
+	}{
+		"not owner/name": {
+			maku + access + "  mcp:\n    enabled: true\n    start:\n      except: [not-a-repo]\n",
+			"owner/name",
+		},
+		"duplicate except": {
+			maku + access + "  mcp:\n    enabled: true\n    start:\n      except: [Smana/a, smana/A]\n",
+			"declared twice",
+		},
+		"without human.access": {
+			maku + "  mcp:\n    enabled: true\n    start:\n      default: true\n",
+			"human.mcp.start needs human.access",
+		},
+		"without mcp.enabled": {
+			maku + access + "  mcp:\n    start:\n      default: true\n",
+			"human.mcp.start needs human.mcp.enabled",
+		},
+		"local mode": {
+			localConfig + "  mcp:\n    start:\n      default: true\n",
+			"human.mcp.start: mode local",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Load(write(t, tc.doc)); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("want %q, got %v", tc.want, err)
+			}
+		})
+	}
+}
+
+func TestSessionStartHonouredWithWarning(t *testing.T) {
+	maku := strings.Replace(valid, "  projectIDFile:", "  roomctlClientIDFile: /etc/room-broker/roomctl/client-id\n  projectIDFile:", 1)
+	doc := maku + access + "  mcp:\n    enabled: true\n    sessionStart: [o/r]\n    start:\n      default: false\n"
+	cfg, err := Load(write(t, doc))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Human.MCP.Start.Default == nil || *cfg.Human.MCP.Start.Default {
+		t.Fatalf("Start.Default = %v, want false", cfg.Human.MCP.Start.Default)
+	}
+	if len(cfg.Human.MCP.SessionStart) != 1 || cfg.Human.MCP.SessionStart[0] != "o/r" {
+		t.Fatalf("SessionStart = %v, want [o/r]", cfg.Human.MCP.SessionStart)
+	}
+	const wantWarning = "human.mcp.sessionStart is deprecated: use human.mcp.start"
+	if len(cfg.Warnings) != 1 || cfg.Warnings[0] != wantWarning {
+		t.Fatalf("Warnings = %v, want [%q]", cfg.Warnings, wantWarning)
+	}
+}

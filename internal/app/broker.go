@@ -480,6 +480,11 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	for _, r := range h.MCP.SessionStart {
 		start[strings.ToLower(r)] = true
 	}
+	startDefault := h.StartDefault()
+	startExcept := make(map[string]bool, len(h.MCP.Start.Except))
+	for _, r := range h.MCP.Start.Except {
+		startExcept[strings.ToLower(r)] = true
+	}
 	mode := h.EffectiveMode()
 	webClient, roomctlClient := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile)
 	// maku reads the project id under zitadel, the audience under generic (v4 D8).
@@ -526,7 +531,8 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, StartDefault: startDefault, StartExcept: startExcept,
+		Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
 		FactoryInstall: factoryInstall(cfg)}, nil
 }
 

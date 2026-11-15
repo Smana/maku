@@ -182,3 +182,123 @@ func TestIssueDraftCanStartLookupIsBounded(t *testing.T) {
 		t.Fatalf("the draft took %v with a hung lookup", took)
 	}
 }
+
+func draftCheck(t *testing.T, e env, caller http.Header, repo string) issueDraft {
+	t.Helper()
+	const body = "## What is wrong\nx\n\n## What it should be\ny\n\n## Acceptance check\nz\n"
+	got := call(t, e, caller, "issue_draft", map[string]any{"repo": repo, "title": "docs(agents): a dead link", "body": body})
+	var d issueDraft
+	if got.isError || json.Unmarshal(got.structured, &d) != nil {
+		t.Fatalf("issue_draft failed: %+v", got)
+	}
+	return d
+}
+
+func TestStartDefaultsOnWithPlanner(t *testing.T) {
+	w := &gitHubWorld{
+		now:      time.Now(),
+		writes:   map[string][]string{"Smana/ai-native-ref": {"dev"}, "Smana/other": {"dev"}},
+		unlinked: map[string]bool{},
+		inactive: map[string]bool{},
+	}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = true
+	})
+
+	served := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
+	if !served.CanStart || served.CanStartWhy != "" {
+		t.Fatalf("planner-served repo: got canStart=%v why=%q, want true", served.CanStart, served.CanStartWhy)
+	}
+	if !e.srv.startOffered("Smana/ai-native-ref") {
+		t.Fatal("startOffered(Smana/ai-native-ref) = false, want true")
+	}
+
+	unserved := draftCheck(t, e, viaRoomctl("dev"), "Smana/other")
+	if unserved.CanStart || unserved.CanStartWhy != "off" {
+		t.Fatalf("unserved repo: got canStart=%v why=%q, want false/off", unserved.CanStart, unserved.CanStartWhy)
+	}
+}
+
+func TestStartExcept(t *testing.T) {
+	w := &gitHubWorld{
+		now:      time.Now(),
+		writes:   map[string][]string{"Smana/ai-native-ref": {"dev"}},
+		unlinked: map[string]bool{},
+		inactive: map[string]bool{},
+	}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = true
+		s.StartExcept = map[string]bool{"smana/ai-native-ref": true}
+	})
+	d := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
+	if d.CanStart || d.CanStartWhy != "off" {
+		t.Fatalf("excepted repo: got canStart=%v why=%q, want false/off", d.CanStart, d.CanStartWhy)
+	}
+}
+
+func TestSessionStartHonouredWithWarning(t *testing.T) {
+	w := &gitHubWorld{
+		now:      time.Now(),
+		writes:   map[string][]string{"o/r": {"dev"}, "o/other": {"dev"}, "Smana/ai-native-ref": {"dev"}},
+		unlinked: map[string]bool{},
+		inactive: map[string]bool{},
+	}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = false
+		s.SessionStart = map[string]bool{"o/r": true}
+	})
+	onListed := draftCheck(t, e, viaRoomctl("dev"), "o/r")
+	if !onListed.CanStart || onListed.CanStartWhy != "" {
+		t.Fatalf("o/r: got canStart=%v why=%q, want true", onListed.CanStart, onListed.CanStartWhy)
+	}
+	for _, repo := range []string{"o/other", "Smana/ai-native-ref"} {
+		d := draftCheck(t, e, viaRoomctl("dev"), repo)
+		if d.CanStart || d.CanStartWhy != "off" {
+			t.Fatalf("%s: got canStart=%v why=%q, want false/off", repo, d.CanStart, d.CanStartWhy)
+		}
+	}
+}
+
+func TestStartWinsOverSessionStart(t *testing.T) {
+	w := &gitHubWorld{
+		now:      time.Now(),
+		writes:   map[string][]string{"o/r": {"dev"}},
+		unlinked: map[string]bool{},
+		inactive: map[string]bool{},
+	}
+	e := setup(t, mcpOn, actorOn(&actLog{}), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.SessionStart = map[string]bool{"o/r": true}
+		s.StartExcept = map[string]bool{"o/r": true}
+	})
+	d := draftCheck(t, e, viaRoomctl("dev"), "o/r")
+	if d.CanStart || d.CanStartWhy != "off" {
+		t.Fatalf("o/r in both sessionStart and start.except: got canStart=%v why=%q, want false/off", d.CanStart, d.CanStartWhy)
+	}
+}
+
+func TestStartNeedsLinkAndWrite(t *testing.T) {
+	w := &gitHubWorld{
+		now:      time.Now(),
+		writes:   map[string][]string{"Smana/ai-native-ref": {"dev"}},
+		unlinked: map[string]bool{"unlinked-user": true},
+		inactive: map[string]bool{},
+	}
+	e := setup(t, mcpOn, actorOn(&actLog{}), withIntake(t, "session"), w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.StartDefault = true
+	})
+
+	unlinked := draftCheck(t, e, viaRoomctl("unlinked-user"), "Smana/ai-native-ref")
+	if unlinked.CanStart || unlinked.CanStartWhy != "not_linked" {
+		t.Fatalf("unlinked caller: got canStart=%v why=%q, want false/not_linked", unlinked.CanStart, unlinked.CanStartWhy)
+	}
+
+	readonly := draftCheck(t, e, viaRoomctl("reader"), "Smana/ai-native-ref")
+	if readonly.CanStart || readonly.CanStartWhy != "no_write" {
+		t.Fatalf("read-only caller: got canStart=%v why=%q, want false/no_write", readonly.CanStart, readonly.CanStartWhy)
+	}
+
+	writer := draftCheck(t, e, viaRoomctl("dev"), "Smana/ai-native-ref")
+	if !writer.CanStart || writer.CanStartWhy != "" {
+		t.Fatalf("writer caller: got canStart=%v why=%q, want true", writer.CanStart, writer.CanStartWhy)
+	}
+}

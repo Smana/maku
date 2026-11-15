@@ -572,7 +572,29 @@ type MCPConfig struct {
 	SponsoredClientClaim string `json:"sponsoredClientClaim,omitempty"`
 	// SessionStart lists the repositories ("owner/name") whose issue_draft says canStart: the
 	// handoff prompt may start the factory there for a caller who writes to them. Empty, none does.
+	// Start's former list, honoured with a warning in release N.
 	SessionStart []string `json:"sessionStart,omitempty"`
+	// Start configures where the broker offers to start factory work from a coding session (UX3).
+	Start MCPStart `json:"start,omitzero"`
+}
+
+// MCPStart configures where the broker offers to start factory work from a coding session (UX3).
+type MCPStart struct {
+	// Default offers start on planner-served repositories (or every repository when no planner is
+	// configured) except those in Except. ApplyDefaults sets it to true when human.intake.plan is
+	// enabled and Default is unset.
+	Default *bool `json:"default,omitempty"`
+	// Except lists repositories ("owner/name") where start is never offered.
+	Except []string `json:"except,omitempty"`
+}
+
+// StartDefault reports whether human.mcp.start.default is on: explicit Default wins; unset defaults
+// to true in OIDC mode when human.intake.plan is enabled (UX3).
+func (h HumanConfig) StartDefault() bool {
+	if h.MCP.Start.Default != nil {
+		return *h.MCP.Start.Default
+	}
+	return h.EffectiveMode() != HumanModeLocal && h.Intake.Plan.Enabled
 }
 
 // RoomToolsConfig switches the agents' :8090 room tools listener (I8). It sits at the top level, apart
@@ -1089,12 +1111,19 @@ func (c *Config) ApplyDefaults() {
 		if c.Human.Origin == "" {
 			c.Human.Origin = c.PublicURL
 		}
+	} else if c.Human.Intake.Plan.Enabled && c.Human.MCP.Start.Default == nil {
+		on := true
+		c.Human.MCP.Start.Default = &on
 	}
 }
 
 // Validate reports every problem at once. The run issuers' patterns compile here,
 // so the broker's own regexp.MustCompile cannot panic.
 func (c *Config) Validate() error {
+	c.Warnings = nil
+	if c.Human.MCP.SessionStart != nil {
+		c.Warnings = append(c.Warnings, "human.mcp.sessionStart is deprecated: use human.mcp.start")
+	}
 	var errs []error
 	if len(c.RunIssuers) == 0 {
 		errs = append(errs, errors.New("runIssuers: at least one is required"))
@@ -1285,6 +1314,9 @@ func (h HumanConfig) validate(system []string) []error {
 		if len(h.MCP.SessionStart) > 0 {
 			errs = append(errs, errors.New("human.mcp.sessionStart: mode local takes no sessionStart repository"))
 		}
+		if h.MCP.Start.Default != nil || len(h.MCP.Start.Except) > 0 {
+			errs = append(errs, errors.New("human.mcp.start: mode local takes no start configuration"))
+		}
 		if h.MCP.SponsoredClientClaim != "" {
 			errs = append(errs, errors.New("human.mcp.sponsoredClientClaim: mode local takes no sponsored principal"))
 		}
@@ -1370,6 +1402,24 @@ func (h HumanConfig) validate(system []string) []error {
 			errs = append(errs, fmt.Errorf("human.mcp.sessionStart: %q is declared twice", r))
 		}
 		listed[key] = true
+	}
+	startActive := (h.MCP.Start.Default != nil && *h.MCP.Start.Default) || len(h.MCP.Start.Except) > 0
+	if startActive && !h.MCP.Enabled {
+		errs = append(errs, errors.New("human.mcp.start needs human.mcp.enabled"))
+	}
+	if startActive && h.Access == nil {
+		errs = append(errs, errors.New("human.mcp.start needs human.access: without the GitHub check canStart is always off"))
+	}
+	excepted := map[string]bool{}
+	for i, r := range h.MCP.Start.Except {
+		key := strings.ToLower(r)
+		switch {
+		case !repositoryRE.MatchString(r):
+			errs = append(errs, fmt.Errorf("human.mcp.start.except[%d]: %q is not owner/name", i, r))
+		case excepted[key]:
+			errs = append(errs, fmt.Errorf("human.mcp.start.except: %q is declared twice", r))
+		}
+		excepted[key] = true
 	}
 	errs = append(errs, validateDashboards(h.Dashboards)...)
 	if l := h.SlackLink; l != nil {

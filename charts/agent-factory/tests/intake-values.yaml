@@ -26,7 +26,6 @@ maku:
         ttl: 5m
       mcp:
         enabled: true
-        sessionStart: [owner/repo]
         # The Slack App's principal, which slackIntents names (the classifier is on, in shadow).
         sponsored:
           - {name: slack-app, clientIDFile: /etc/e2e/config/sponsored-client-id}

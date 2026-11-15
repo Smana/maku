@@ -145,8 +145,13 @@ type Server struct {
 	// Identity and Access are D7's GitHub check: who the caller is on GitHub, and
 	// whether they may read a room's repository. Either nil shows rooms to admins only.
 	// SessionStart holds the repositories, lowercased owner/name, whose issue_draft says canStart
-	// (human.mcp.sessionStart). Empty: none does.
+	// (human.mcp.sessionStart, deprecated in favour of StartDefault/StartExcept). Empty: none does.
 	SessionStart map[string]bool
+	// StartDefault and StartExcept configure human.mcp.start (UX3): StartDefault offers start on
+	// planner-served repositories (or every repository when no planner is configured), except those
+	// lowercased owner/name entries in StartExcept.
+	StartDefault bool
+	StartExcept  map[string]bool
 	Identity     *ghidentity.Resolver
 	Access       *repoaccess.Checker
 	// CoordinationViews reads coordination parents' views (v4 MR13); nil while coordination is

@@ -10,6 +10,31 @@
       "type": "object",
       "additionalProperties": true,
       "properties": {
+        "human": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "mcp": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "start": {
+                  "description": "Where the broker offers to start factory work from a coding session (UX3).",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "default": {"type": "boolean"},
+                    "except": {
+                      "type": "array",
+                      "uniqueItems": true,
+                      "items": {"type": "string", "pattern": "^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
         "suspend": {"description": "The broker's suspend block, verbatim (EX9).", "type": "object"},
         "policyManagement": {"description": "The factory's merge-policy switches, verbatim (EX9).", "type": "object"},
         "coordination": {"description": "The factory's coordination switch, verbatim (EX9).", "type": "object"},
