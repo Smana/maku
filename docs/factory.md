@@ -899,7 +899,7 @@ one ledger entry, so no run holds one reservation without the other.
 |---|---|
 | A labelled task's first run and its automatic follow-ups | The labeller, `github:<login>` |
 | A task's runs after a `/factory retry` | The maintainer who typed it (`status.retriedBy`) |
-| `POST /v1/runs` by a human | Their GitHub login through their ZITADEL link; with no link, their own `human:<sub>` |
+| `POST /v1/runs` by a human | Their GitHub login through their [GitHub account link](github-link.md); with no link, their own `human:<sub>` |
 | A schedule's or RunLore's task, a system caller's API run | The fleet alone, as before |
 
 Each run record keeps its person in `status.runs[].chargedTo`, and the claim in
@@ -933,8 +933,8 @@ The person's day is in USD, like the fleet's ([Daily budgets](#daily-budgets)). 
 ## Sponsored principals
 
 Off by default: with no `api.sponsored`, `POST /v1/tasks` is `404` and the broker lists no
-`run_create`. A machine starts factory work only as a **sponsored principal**: a ZITADEL machine
-user that the config binds to a maintainer, with a day in dollars and a ceiling on every request.
+`run_create`. A machine starts factory work only as a **sponsored principal**: a machine client
+at your identity provider that the config binds to a maintainer, with a day in dollars and a ceiling on every request.
 Its request becomes a `Task` of `spec.source.kind: api`, which triage, the gate and narration then
 treat as any other. Source: `internal/factory/api/tasks.go`.
 
@@ -952,19 +952,25 @@ flowchart LR
 | Key | Holds |
 |---|---|
 | `name` | A DNS label. The principal is `system:<name>`, the ledger key and `requestedBy`. Never `factory`, `runlore`, `scheduler`, `room-broker` or `policy`, nor a name in `api.systemPrincipals`; unique |
-| `clientIDFile` | The file holding the principal's ZITADEL client id, read at each use (the host's sync rewrites it when ids change). It must name a **machine (client-credentials) client**: every subject of that client becomes `system:<name>`, so a client with human subjects would admit them all as the principal. Unique across entries, and never the web UI's or `maku`'s client |
+| `clientIDFile` | The file holding the principal's client id, read at each use (the host's sync rewrites it when ids change). It must name a **machine (client-credentials) client**: every subject of that client becomes `system:<name>`, so a client with human subjects would admit them all as the principal. Unique across entries, and never the web UI's or `maku`'s client |
 | `sponsor` | A GitHub login, the maintainer accountable for the principal. It must be in `maintainers` of every repository in `repositories` |
 | `repositories` | The listed repositories the principal may use, spelled as listed; at least one |
 | `dailyUSD` | The principal's day, in (0, `budgets.factoryDailyUSD`] |
 | `maxCostUSD` | The largest `max_cost` one request may ask for, in (0, `dailyUSD`] |
 | `maxOpenTasks` | How many of its tasks may be open at once. Default 3. A **soft cap**: it is counted before the Task is created, so a burst of N concurrent distinct requests can open up to cap+N-1 tasks |
 | `onBehalfOf.slack` | `{"<team id>/<user id>": <maintainer login>}`: a request naming `slack:<team>/<user>` is sponsored by that maintainer instead. An unknown user is `not_linked`, a login outside `maintainers` is `not_a_maintainer` |
-| `onBehalfOf.slackLinks` | `true`: a Slack user `onBehalfOf.slack` does not list is looked up in the broker's [self-serve link](slack.md#self-serve-link) records (`GET /v1/links/slack` on `:8443`, as `system:factory`). The link names a ZITADEL account, never a login: the factory resolves the account's **current** GitHub login through `api.access`, then holds it to `maintainers` as any sponsor. No link, an inactive account or no GitHub link is `not_linked`; a lookup that fails is `503 link_unverified`. **The config wins**: a user listed in `onBehalfOf.slack` is never looked up. Needs `api.access`; refused on an internal principal |
+| `onBehalfOf.slackLinks` | `true`: a Slack user `onBehalfOf.slack` does not list is looked up in the broker's [self-serve link](slack.md#self-serve-link) records (`GET /v1/links/slack` on `:8443`, as `system:factory`). The link names an account at your identity provider, never a login: the factory resolves the account's **current** GitHub login through `api.access`, then holds it to `maintainers` as any sponsor. No link, an inactive account or no GitHub link is `not_linked`; a lookup that fails is `503 link_unverified`. **The config wins**: a user listed in `onBehalfOf.slack` is never looked up. Needs `api.access`; refused on an internal principal |
 
-`api.projectIDFile` is required whenever `api.sponsored` is set: it names the file holding the
-ZITADEL project id, and the client's token must carry it in its audience, or the token is refused.
+Whenever `api.sponsored` is set, the client's token must carry the install's audience, or the token
+is refused: `api.audience` or `api.audienceFile` under `preset: generic`.
+
+**Preset: ZITADEL** ([identity](identity.md#the-presets))
+
+The audience is the project: `api.projectIDFile` names the file holding the ZITADEL project id, and
+it is required whenever `api.sponsored` is set.
+
 `api.sponsored` also needs `meter.prices`: a ceiling in dollars is meaningless on unpriced runs, and
-without prices the intake answers `503 meter_unpriced`. The chart mounts both files from
+without prices the intake answers `503 meter_unpriced`. The chart mounts the files from
 `sponsoredSecret` ([chart](../charts/maku-factory/README.md)). Config load checks every row above
 and admission checks the sponsor again.
 
@@ -1017,7 +1023,7 @@ and the redactor, and the Task's `spec.text` is `untrusted`.
 Off by default: `api.internalPrincipals` is empty. An internal principal is a sponsored principal
 that may carry **internal** data: RunLore, one known caller, declared beside the others in its own
 list, so a sponsored principal never loosens to `internal`. It reuses the sponsored path end to end
-(the ZITADEL authenticator, the `api` source kind, the ceilings, `maxOpenTasks`, the day); what
+(the OIDC authenticator, the `api` source kind, the ceilings, `maxOpenTasks`, the day); what
 differs is decided in one place each. Source: `internal/factory/api/internal.go`.
 
 An entry holds a sponsored principal's keys (`name`, `clientIDFile`, `sponsor`, `repositories`,

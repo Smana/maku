@@ -9,13 +9,13 @@ person; the vocabulary is in [Concepts](concepts.md).
 
 | Step | What happens |
 |---|---|
-| Open `https://rooms.<domain>` | Your browser needs the tailnet; the host resolves only there |
-| oauth2-proxy | Sends you to ZITADEL and keeps your session in a `SameSite=Strict` cookie |
+| Open `https://rooms.<domain>` | Your browser must reach the broker's address (see [Exposure](exposure.md)) |
+| oauth2-proxy | Sends you to your identity provider and keeps your session in a `SameSite=Strict` cookie |
 | The broker checks your groups | `agents-member` reads the rooms you are let into and acts where a room grants it; `agents-admin` is owner and approver in every room |
 | An expired session | A `401` from the API sends the page back through `/oauth2/start` |
 
 - **Neither group: `403`.** Ask an operator to add you to `agents-member`; the group names are the broker's config ([Integration](integration.md)).
-- **Room visibility follows GitHub.** A member sees a room only if GitHub lets the account linked to their ZITADEL user read the room's repository. No link, no rooms: the list is empty rather than an error. An admin sees every room. A room you may not read answers exactly like one that does not exist. The fix for an empty list is the one in [maku's troubleshooting](cli.md#troubleshooting).
+- **Room visibility follows GitHub.** A member sees a room only if GitHub lets the account they linked ([GitHub account link](github-link.md)) read the room's repository. No link, no rooms: the list is empty rather than an error. An admin sees every room. A room you may not read answers exactly like one that does not exist. The fix for an empty list is the one in [maku's troubleshooting](cli.md#troubleshooting).
 
 Sources: `docs/api.md` (the `:8080` checks), `internal/policy/policy.go` (`Groups`, `Resolve`).
 
