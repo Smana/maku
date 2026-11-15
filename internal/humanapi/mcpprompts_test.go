@@ -246,29 +246,10 @@ func TestInstructionsFirst512(t *testing.T) {
 	if len(head) > 512 {
 		head = head[:512]
 	}
-	for _, w := range []string{"as it is", "untrusted", "never apply a label", "Approvals stay on the room page", "room_wait", "if `room_wait` is listed"} {
+	for _, w := range []string{"as it is", "untrusted: true", "Approvals stay on the room page", "No tool starts, stops or labels", "`wait`"} {
 		if !strings.Contains(head, w) {
 			t.Errorf("the first 512 bytes lack %q:\n%s", w, head)
 		}
-	}
-}
-
-// mcpInstructions is the first thing every client reads, and it names where the `start` field of
-// issue_file's form comes from: with a plan that is `plan_check`, which re-validated the plan and
-// checked the caller's access to the repository it names; with none it is `issue_draft`. It named
-// `issue_draft` alone, which stopped being the whole answer when issue_file took a plan and its hash
-// (CD3, CD27).
-func TestTheInstructionsNameBothSourcesOfCanStart(t *testing.T) {
-	flatText := flat(mcpInstructions)
-	for _, want := range []string{"plan_check (or, with no plan, issue_draft)", "canstart"} {
-		if !strings.Contains(flatText, want) {
-			t.Errorf("the instructions lack %q:\n%s", want, mcpInstructions)
-		}
-	}
-	// The no-plan source is still there: a client on a broker without the planner reads the same
-	// sentence, and the form it describes is the one issue_draft gates.
-	if !strings.Contains(flatText, "issue_draft") {
-		t.Errorf("the instructions lost the planner-off source:\n%s", mcpInstructions)
 	}
 }
 

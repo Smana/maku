@@ -207,8 +207,9 @@ func TestBriefQuestion(t *testing.T) {
 				}
 			}
 			check("MCP", structured)
-			if got.text != structured.Text {
-				t.Fatalf("MCP text differs from its envelope:\n%s\n%s", got.text, structured.Text)
+			wantText := strings.TrimRight(structured.Text, "\n") + "\n\nDeprecated: use task; this tool is removed in the next release."
+			if got.text != wantText {
+				t.Fatalf("MCP text differs from its envelope:\n%s\n%s", got.text, wantText)
 			}
 			for _, unwanted := range []string{scope.Question, tc.wantRecommended} {
 				if unwanted != "" && strings.Contains(structured.Text, unwanted) {

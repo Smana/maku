@@ -123,10 +123,10 @@ func TestSponsoredToolList(t *testing.T) {
 	// human.intake.plan on: the planner's two tools join both lists, the App's last and the human's
 	// after issue_draft (PR 2): intake_plan, then plan_check, the door a consumer re-validates through.
 	e := setup(t, mcpOn, needsOn, withSponsored(sponsoredP), withIntake(t, "slack"))
-	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,handoff,task,issue_draft,room_summary,room_tail,room_changes,needs_list,intake_plan,plan_check" {
+	if got := toolNames(t, e, bearer("slack-app")); got != "run_create,handoff,task,inbox,issue_draft,room_summary,room_tail,room_changes,needs_list,intake_plan,plan_check" {
 		t.Fatalf("%s", got)
 	}
-	if got := toolNames(t, e, viaRoomctl("dev")); got != "handoff,task,rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check,room_brief" {
+	if got := toolNames(t, e, viaRoomctl("dev")); got != "handoff,inbox,task,rooms_list,room_summary,room_tail,room_changes,room_queue,room_fork,issue_draft,needs_list,intake_plan,plan_check,room_brief" {
 		t.Fatalf("a human's list changed: %s", got)
 	}
 	for _, name := range []string{"room_queue", "room_fork", "rooms_list", "room_brief"} {

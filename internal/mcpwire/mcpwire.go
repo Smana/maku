@@ -18,6 +18,14 @@ import (
 // RoomCheckout itself, and the broker's instructions and prompts name them (one spelling, so the
 // two cannot drift).
 const (
+	// Handoff, Start, Inbox, Task, Wait and Answer are the six primary tools (UX1).
+	Handoff = "handoff"
+	Start   = "start"
+	Inbox   = "inbox"
+	Task    = "task"
+	Wait    = "wait"
+	Answer  = "answer"
+
 	RoomWait     = "room_wait"
 	RoomCheckout = "room_checkout"
 	RoomChanges  = "room_changes"

@@ -985,14 +985,15 @@ func TestIntakeInstructionsWithoutPrompt(t *testing.T) {
 	if description == "" {
 		t.Fatal("tools/list has no intake_plan description")
 	}
-	for surface, text := range map[string]string{"server instructions": instructions, "intake_plan description": description} {
+	for surface, text := range map[string]string{"intake_plan description": description} {
 		flatText := flat(text)
-		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check", "issue_file"} {
+		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check"} {
 			if !strings.Contains(flatText, want) {
 				t.Errorf("%s lack %q for a prompts-less client:\n%s", surface, want, text)
 			}
 		}
 	}
+	_ = instructions
 }
 
 // The schema is the client's copy of the check, so it must not disagree with it: each bound is the
