@@ -23,18 +23,28 @@ From a checkout: `go build -o maku ./cmd/maku`. The release workflow is `.github
 
 ## Configure and sign in
 
+For a coding agent, one command runs the whole setup — configuring, signing in, registering the
+`maku` MCP server and skill, and running the checks:
+
+```bash
+maku setup claude                             # or codex, copilot, cursor, gemini, opencode
+```
+
+To set up the terminal CLI on its own:
+
 ```bash
 maku configure --url https://rooms.<domain>   # the broker serves the other three values
 maku login                                    # device flow: open the printed URL, enter the code
 maku doctor                                   # check the setup
 ```
 
-- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/roomctl`. Pass `--issuer`, `--client-id` or `--project-id` to override one. `--factory-login LOGIN` saves the factory App's GitHub login (for example `my-factory[bot]`): `need_answer` trusts public bounce comments from that login alone. If it is empty, including in an older config, the public fallback refuses securely while authorized `room_brief` questions remain available. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
+- `maku setup <client>` runs in order, skipping what is already done: `configure` (asking for the rooms URL when there is no config), `login`, registering `maku mcp` as the `maku` MCP server (rewriting an existing `factory` entry to `maku` and printing a note), installing the `maku-handoff` skill and `/maku` command, and `doctor --client <client>`.
+- `configure` reads the issuer, client id and project id from the broker's unauthenticated `/.well-known/maku` (with `/.well-known/roomctl` served beside it in this release). Pass `--issuer`, `--client-id` or `--project-id` to override one. `--factory-login LOGIN` saves the factory App's GitHub login (for example `my-factory[bot]`): `answer` trusts public bounce comments from that login alone when no room question is readable. If it is empty, including in an older config, the public fallback refuses securely while authorized room questions remain available. The URL must be `https`, except for a local install (`humanMode: local`), whose listener is the `kubectl port-forward`: `http://localhost:<port>` is accepted on `localhost` or a loopback address only, and anything else in clear is refused before any request.
 - `configure --from <rooms URL>` replaces the whole config with what the broker serves now (a room page's URL works: only its origin is used). Use it after a platform rebuild: a stale client id makes the identity provider answer `invalid_client`, and `maku login` then prints this fix. It refuses a non-`https` URL or issuer — a local install configures with `--url http://localhost:<port>` instead — and cannot be combined with the other broker-value flags. `--factory-login` is the one override: it sets the public-comment trust identity alongside the discovered values. It prints the four broker values it will write (and the old ones when they change) and, on a terminal, asks `y/N`; `--yes` skips the question. An issuer outside the URL's registrable domain (`rooms.ogenki.io` and `auth.ogenki.io` share one) is refused unless `--yes` says you checked it.
 - A local broker needs no `login` and takes no token: `login` says so, `token` says so, and no request carries an `Authorization` header.
 - The config and token files sit in `<user config dir>/maku/` (`config.json`, `token.json`), owner-only. The directory a CLI before v0.30.0 wrote (formerly `roomctl/`, beside it) is copied there once, the first time `maku` runs without one; the old directory stays.
 - `login` prints `Open <verification URL> and enter the code …` (the URL is the one your identity provider returns), then `logged in; …`.
-- `doctor` prints one line per check, `ok` or the failure with its fix: `dns`, `tls`, `login`, `github`, `skill`, and `factory capabilities`. The room list cannot tell an admin without a GitHub link from one with it, so `github` asks `issue_draft` (the check `issue_file` relies on when it is given no plan) (on up to three of your rooms' repositories) and prints a `warn` line, which does not fail the run, when none can answer: it never says "linked" unproven. A broker that stated the link in the room list would make this probe unnecessary; the probe stays as the fallback for brokers that do not. `factory capabilities` reports what a coding client declared when it opened `maku mcp`, from `capabilities.json` beside the config: whether it answers with forms, with URL mode, with its roots and with prompts, and the protocol revision it asked for, with the day maku measured it. `--client <name>` names one client; a name no session ever gave reads `not measured yet — run a session and ask again`, and nothing else is printed about it. Without the flag, the five clients measured most recently are listed, the last one first. It reads a file, so it answers with the VPN down or the URL wrong, and it never fills a client maku has not met from a guess.
+- `doctor` prints one line per check, `ok` or the failure with its fix: `dns`, `tls`, `login`, `github`, `skill`, and `factory capabilities`. When your account is not yet linked to GitHub, `github` prints `<rooms URL>/link/github` so you can link it directly (or ask an admin to link it at your identity provider); when the room list cannot prove the link on its own, `github` probes up to three of your rooms' repositories and prints `warn`, never claiming "linked" unproven. `skill` checks the installed `maku-handoff` skill (and any legacy `factory-handoff` copy alongside it). `factory capabilities` reports what a coding client declared when it opened `maku mcp`, from `capabilities.json` beside the config: whether it answers with forms, with URL mode, with its roots and with prompts, and the protocol revision it asked for, with the day maku measured it. `--client <name>` names one client; a name no session ever gave reads `not measured yet — run a session and ask again`, and nothing else is printed about it. Without the flag, the five clients measured most recently are listed, the last one first. It reads a file, so it answers with the VPN down or the URL wrong, and it never fills a client maku has not met from a guess.
 
 ## Commands
 
@@ -45,7 +55,7 @@ maku doctor                                   # check the setup
 | `configure --url URL [--issuer URL --client-id ID --project-id ID --factory-login LOGIN]` | Saves the config. The broker's URL is enough; the factory login enables the trusted public-comment fallback |
 | `configure --from URL [--yes] [--factory-login LOGIN]` | Replaces the config with the values the broker serves now, whatever is stored, with an optional factory-login override |
 | `login` | Signs in with the device flow |
-| `setup <claude\|codex\|copilot\|cursor\|gemini\|opencode> [--project] [--print]` | Registers `maku mcp` as the `factory` MCP server of a coding agent and writes the factory-handoff skill and, for `claude` and `opencode`, the short `/factory` command ([below](#short-commands)). `--project` writes under the repository's top instead of your home; `--print` shows what it would do and writes nothing |
+| `setup <claude\|codex\|copilot\|cursor\|gemini\|opencode> [--advanced] [--project] [--print] [--restart-service]` | Runs the whole setup in order, skipping what is already done: `configure` (asking for the rooms URL when there is no config), `login`, registering `maku mcp` (or `maku mcp --advanced` with `--advanced`) as the `maku` MCP server (rewriting an existing `factory` entry to `maku` and printing a note), writing the `maku-handoff` skill and, for `claude` and `opencode`, the short `/maku` command ([below](#short-commands); `factory-handoff` and `/factory` stay alongside in this release), and running `doctor --client`. `--project` writes under the repository's top instead of your home; `--print` shows what it would do and writes nothing |
 | `install --print --out DIR [--answers FILE] [--force] [--no-wait]` | Writes a production install of the umbrella chart and applies nothing. It asks the seam questions one per line (`[default]` on Enter), or reads them all from `--answers`, a YAML map keyed by question id, decoded strictly: an unknown key, a value of the wrong kind, or an answer the other answers leave out is refused. Every answer is checked against the charts' own `values.schema.json` (embedded, kept equal by `task chart:check`), so the wizard refuses what `helm template` would. It asks for what the factory needs to start outside the demo: a meter URL and at least one repository. With `apps.create`, it creates the agents App and the factory App (the merger folded in, the GitHub account link's callback) through one manifest flow and waits until you install both (`--no-wait` skips the wait). DIR gets `values.yaml` (the production defaults, images by digest, no secret value), `crds/values.yaml`, `factory/` (the `Factory`, its `spec.mergeDefaults` the merge settings every repository shares: `mergerLogin` the factory App's bot, `verifyFor: 30m`, `revertWindow: 168h`, `breaker` 1 revert in 10; a `Repository` each, the classes' `MergePolicy` objects, every class in shadow), `github/` (the merge gate's ruleset and the `gh` commands, never run), `gitops/flux.yaml` and `gitops/argocd.yaml`, a `README.md` with the commands in order, and `secrets/` (mode 0700, files 0600, its own `.gitignore`): the Apps' keys and OAuth client, a generated cookie secret and webhook key, and templates with empty keys for what it never asks (the DSNs, the provider key, the IdP's client secret, Slack's). It refuses a non-empty DIR without `--force`, and never overwrites `secrets/`, before it asks anything or creates an App. The factory's API runs on TLS from `tls.issuer` (a cert-manager ClusterIssuer); without one, only an explicit `factory.insecure: true` accepts plaintext. `--out -` prints `values.yaml` alone, generates no key and names the Secrets you create instead; it is refused when Apps would be created. Bare `maku install` is refused |
 | `preflight [--namespace NS] [--release NAME] [--kubeconfig FILE] [--context NAME] [--strict] [--json] [--keep] [--no-outside] [--timeout D]` | Runs a release's install preflight from your machine: it creates a Job, `maku-preflight-<rand>`, from the release's `<release>-preflight` CronJob (rendered by `maku.preflight.enabled`; without it, it says so and exits 2), owned by that CronJob, waits for it, reads its pod's JSON lines and deletes the Job unless `--keep`. It adds the outside checks, run from where you stand: each hostname of the release's `rooms-web` and `factory-slack-events` routes (HTTPRoute or Ingress) resolves, the web host answers oauth2-proxy's `/ping` and serves `/.well-known/roomctl` through it, and the Slack host answers an unsigned `POST /slack/events` with 401 and a `GET` with no 2xx (`--no-outside` skips them). It prints one table by seam and the summary, or with `--json` the pod's lines verbatim then the outside ones. Exit 1 on a fail (`--strict`: on a warning too), 2 when no report could be read. Your kubeconfig needs, in the namespace: `get`/`list` on CronJobs, `create`/`get`/`delete` on Jobs, `list` on Pods and `get` on `pods/log`, and `get` on HTTPRoutes and Ingresses |
 | `repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory NAME] [--namespace NS] [--maintainer LOGIN]... [--check NAME]... [--leak-scan-check NAME] [--acknowledge-private-code] [--merge-defaults=false] [--force]` | Writes one repository's onboarding files and applies nothing: it opens no pull request and needs no administration right. With your `gh` login it reads the repository's default branch, its visibility, its required checks (the branch's rulesets and its classic protection, `maku/merge-gate` left out) and the two Apps (`GET apps/<slug>`, public). A protection it cannot read (classic protection needs admin rights) fails, naming `--check`, rather than write a `Repository` that merges on no check; so does a branch that requires none. `--check` names the checks and skips that read. DIR gets `factory/repository-<name>.yaml` (a `Repository` with no binding: the chart's catalog is evaluated in shadow without one), `repo/.github/agent-factory.yaml` (the fence, one line), `github/ruleset-merge-gate.json` and `github/apply-ruleset.sh` (the merge gate's ruleset and its `gh` command, as `install --print` writes them, never run) and a `README.md` with the steps in order; it prints both Apps' install links. The `Repository` is 12 lines: the merge settings every repository shares (`mergerLogin`, `verifyFor`, `revertWindow`, `breaker`) are left to the `Factory`'s `spec.mergeDefaults`, which `install --print` writes. For a `Factory` without them, `--merge-defaults=false` writes them into the `Repository` (`mergerLogin` the factory App's bot), since the factory refuses a `Repository` that lacks them. A private repository needs `--acknowledge-private-code`. `--maintainer` defaults to your `gh` login, `--leak-scan-check` to the first required check. It refuses a non-empty DIR without `--force` |
@@ -66,8 +76,8 @@ maku doctor                                   # check the setup
 | `policy export\|check\|simulate\|diff --config FILE [--manifests FILE]... --repository owner/name [files]` | A repository's merge policy file, offline against a factory config and the manifests served over it: `export` writes a bound repository's bindings as the file's `mergePolicies` (a repository whose classes are the config file's is refused: `maku config migrate --from` first), `check FILE` proves it equivalent to them (not merely valid), `diff OLD NEW` validates both and names each class's tightening or relaxation, `simulate FILE FIXTURE...` replays the conformance fixtures under both. `diff` and `simulate` need `policyManagement.simulation` in that config. See [merge policies](merge-policies.md#workflows) |
 | `config migrate --from FILE [--residual FILE [--force]] [--namespace NS]` | Converts a factory config file's `repositories[]` into the binding shape: the Factory, each Repository with its `merge` and `mergePolicies`, and one `MergePolicy` per class. `--manifests`, which converted per-repository `MergePolicy` objects, is removed and refused. It assembles both and writes nothing, the residual included, unless every resolved class and merge setting is unchanged, printing a `changed:` line for each difference. The residual never replaces the `--from` file, nor an existing file without `--force` |
 | `config validate --config FILE [--base-ref REF \| --base-config FILE --base FILE...] [--expect-unchanged] [--resolved] [--allow-refused-bindings] MANIFEST...` | Checks manifests the way the factory would. A binding that does not resolve drops its class without refusing its `Repository`, so it is one `binding: Repository/<name> <policy>: <reason>: <message>` line and a failure; `--allow-refused-bindings` prints it as a warning instead. A base, either `--base-ref` (the config file and each manifest as committed at that git ref, such as `origin/main`) or `--base-config` with `--base`, prints each policy whose definition or consumers changed, with each consumer's change, live ones first and a live relaxation marked `LIVE`. `--expect-unchanged` fails when a resolved class differs from the base's. `--resolved` prints every repository's resolved classes as JSON, alone on stdout, with every other line on stderr. A binding over a guardrail is one `guardrail:` line and a failure. A `MergePolicy` in the removed per-repository shape is refused: `the per-repository MergePolicy was removed in this release: maku config migrate --manifests (from the previous release)` |
-| `skill install [--dir .agents/skills]` | Writes the factory-handoff skill. Needs no config or login |
-| `mcp` | Serves the factory's MCP tools on stdio, for a local coding agent ([below](#the-mcp-server)) |
+| `skill install [--dir .agents/skills]` | Writes the `maku-handoff` skill (and `factory-handoff` alongside it in this release). Needs no config or login |
+| `mcp [--advanced]` | Serves Maku's six MCP tools on stdio for a local coding agent, plus the rare and deprecated tools with `--advanced` ([below](#the-mcp-server)) |
 | `fork <room> --at SEQ [--role R] [--pr URL] [--egress pypi,npm] [--note TEXT] [--approvals attended\|unattended]` | A room of your own from events 1 to `SEQ`, with an optional run. `--role`: `implementer`, `reviewer` or `triager`; `--pr`: the reviewer's pull request; `--egress`: extra egress allow-lists (`pypi`, `npm`, `golang`, `crates`); `--note`: why you fork, under 1 KiB once labelled as machine-sent (about 900 bytes); `--approvals`: `attended` by default, so the fork asks before risky actions even when the source is an unattended factory room, `unattended` keeps an unattended source's policy (an attended source stays attended). Prints the new room's URL |
 
 Flags may come before or after the positional arguments. Source: `internal/app/maku.go`.
@@ -123,143 +133,72 @@ Source: `internal/maku/status.go`.
 
 ## The MCP server
 
-`maku mcp` is an MCP server on stdio. It relays each message to the broker's
-[`/mcp`](api.md#post-mcp) with your token, so your agent configures one command and no token is
-pasted:
+`maku mcp` is an MCP server on stdio. `maku setup <client>` registers it as `maku` (or register it
+directly; no token is pasted):
 
 ```bash
-claude mcp add factory -- maku mcp    # Claude Code; any agent that runs a stdio MCP server works
+claude mcp add --scope user maku -- maku mcp    # Claude Code; any agent that runs a stdio MCP server works
 ```
 
-- The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`.
-- The tools: `rooms_list`, `room_summary`, `room_brief`, `room_tail`, `room_changes`, `needs_list`,
-  `room_queue`, `room_fork` and `issue_draft` from the broker; `classes_list` too, when the broker has a
-  factory to ask (it shows the classes and workflows a repository offers, and changes nothing);
-  `intake_plan` and `plan_check` too, when
-  the broker's operator has turned the planner on ([below](#the-plan)); and `issue_file`, `need_answer`,
-  `room_wait` and `room_checkout`, maku's own. `room_tail` also runs as an MCP Task that waits for the room's next
-  events; `maku mcp` polls it for your agent. The broker also serves the prompts `factory_intake`
-  (`request`), `handoff` (`what`, an alias for the same intake loop), `plan` (`what`), `status`
-  (`room`), `resume` (`room`) and `inbox`, which your agent offers as slash commands (see
-  [Short commands](#short-commands) for how to type them).
-- `factory_intake` is the canonical filing loop: show `intake_plan`'s text, ask only the first gap
-  with its recommendation, offer "accept the rest" at every question, and revise through the base
-  `plan` + `hash` + edited `candidate` envelope with matching D/A records. When no gaps remain, it
-  finishes with `plan_check`, shows the final draft and assumptions, then calls `issue_file`. A client
-  without MCP prompt support gets the same short contract from `intake_plan`'s description and the
-  server instructions; neither route makes the client a second planner.
-- `resume` is the one to start a session with: it calls `needs_list` once, then `room_brief` of the
-  first room that needs you — or of the room you passed — and names the brief's `Next:` line as the
-  one step. `inbox` is one `needs_list` call: when the list is empty it says so in one line and names
-  `rooms_list` with `mine` instead of asking the broker twice.
-- `issue_file` files a draft with your `gh`, as you, only after you accept it in a prompt your agent
-  shows you (MCP elicitation). Pass it a plan and the hash `intake_plan` answered with, and the
-  broker's `plan_check` re-validates both before the prompt is built: the prompt then shows the
-  plan's own issue and its ceiling, and a plan edited after it was shown is refused (`plan_changed`)
-  instead of filed. A call with no plan is checked by the broker's `issue_draft`, as it always was;
-  either way the prompt shows exactly what is filed. An agent that cannot prompt you is refused: file the draft yourself
-  with `gh issue create`. The form's "file" toggle defaults to no (so Claude Code shows it set, not "required"), and a second field, "start", defaults to no too and appears
-  only when `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`: yes labels the issue `factory/ready` with
-  your `gh`, which starts the factory. With a plan, start first applies the plan's `class:<name>` label (`gh api -X POST repos/{r}/issues/{n}/labels`, which creates a missing label), then the plan's `workflow:<name>` when it pins one, then `factory/ready`; a failed class or workflow label starts nothing. When the repository's catalogue says you do not maintain it, both labels are skipped (the factory would count neither) and the prompt says so. The prompt also shows the class, the factory's choice of profile, the merge outcome and the planner's suggestion. A client that returns the form without `start` (or with a value that is not a boolean) gets `started:false` and a `next` that says start was not chosen, and `maku mcp` logs it on stderr: your agent then asks you rather than guessing. It is a form field, never a tool argument: your agent can
-  call `issue_file` but cannot answer the form.
-- `need_answer {repo, issue, room?}` answers a scoper's post-filing question on the issue. It acts only
-  while `factory/needs-author` is present and `factory/ready` is absent. With no `room`, it resolves the
-  issue through `rooms_list`: several matches refuse as `ambiguous_room` rather than guessing. It reads
-  the authorized `room_brief` question first; if that is unavailable, only the newest factory
-  `event=needs-author-…` comment is the public fallback, and its author must case-insensitively match the
-  configured `factoryLogin`. A forged newer comment or an empty login refuses the fallback rather than
-  using an older comment. No resolved room is not by itself an error for a public issue, but a missing,
-  untrusted, or internal-only question refuses as `needs_room_access` and writes nothing.
-  When the question is the acceptance question (the scoper's "which command or observation proves it is
-  done?"), the answer is written into `## Acceptance check` first: the section is created after "What it
-  should be" (before `## Decisions`) when the issue has none, a `[NEEDS CLARIFICATION: g<n> …]` marker in it
-  is replaced, and an existing section with text and no marker gets the answer as a new paragraph. The
-  matching `D<n>: Acceptance check: <answer>` record follows. Any other question appends only the Decision.
-  The form shows the question, recommendation and the full line diff of the body, takes a one-line
-  `answer` (blank accepts the recommendation, with the scoper's "No acceptance stated; proceed on the
-  scoper's own:" lead dropped), and defaults `send` to no. On explicit send it re-reads the issue and requires the body, labels
-  and `updatedAt` to be unchanged before one body-only `gh issue edit --body-file=-`. A decline, cancel,
-  false toggle, client without forms, wrong labels, conflict, or missing question writes nothing. Success
-  is `{answered:true, issue:<url>, started:false, next:"a maintainer must re-apply factory/ready"}`; the
-  tool never calls the labeler. Decline, cancel, and false send return `next:"the question is unanswered
-  and nothing was written"`. An edit failure returns `not_answered` and applies no label: inspect the
-  issue before retrying, since the transport failure cannot prove whether GitHub accepted the edit.
-- Every tool and prompt that takes a room (`room_summary`, `room_brief`, `room_changes`, `room_queue`,
-  `room_tail`, `room_fork`, `room_wait`, `room_checkout`, the `status` and `resume` prompts) accepts
-  the room id, `#<issue>`
-  (the issue only), `PR #<n>` (the PR only), a bare number (an issue or a PR), or a fragment of the
-  task's title (3 characters or more, case-insensitive; not an id or a number). `maku mcp` resolves
-  it through the room list, open rooms first and then the ended ones. When several rooms match (the
-  same number in two repositories, a bare number that is an issue in one room and a PR in another,
-  a fragment in several titles), the tool lists them with their ids and asks, and calls nothing: your
-  agent asks you. Text that matches nothing goes to the broker as typed, which refuses it. Cards and
-  the overview lead with the issue number and title, and end with the room id.
-- `room_wait` polls `rooms_list` from your machine until a room needs you, opens a pull request or
-  ends, or until its timeout (300 s by default, at most 1800 s), and returns the room's card. A
-  cancellation ends it at once. Run it in a background task where your client has them.
-- `room_checkout {room}` is `maku checkout`, for your agent. The repository and the pull request
-  come from the broker's row of the room, and the workspace is your client's first root, else
-  where `maku mcp` runs.
-- `coordination_checkout {parent, workspaces?}` is `maku coordination checkout`, for your agent: the
-  family comes from the broker's checkout document, the workspace is your client's first root, and
-  one form asks about every child's files that run code. It confirms, files, merges and recovers
-  nothing.
-- No tool approves, steers or stops, and none labels on the agent's say: only your answer to the start form does. Approvals stay on the room page.
-- What your agent queues is stored labelled as [machine-sent](api.md#machine-sent-text).
-- Every request reads `token.json` and refreshes the token when it has expired, one refresh at a
-  time. When the refresh is refused, a call answers `not_logged_in`: run `maku login` in a
-  terminal, and the running server uses the new token, with no restart.
+- The broker's operator turns `/mcp` on (`human.mcp.enabled`). Off, every call answers `mcp_off`. `/mcp` accepts `maku`'s own token only (`mcp_needs_maku`; the relay also translates `mcp_needs_roomctl` in this release).
+- **Six tools by default**, always listed in this order regardless of broker switches:
 
-The [factory-handoff skill](#the-factory-handoff-skill) does the same jobs through the shell, for an
-agent with no MCP configuration. Configure one of the two.
+| Tool | Where | Input | What it does |
+|---|---|---|---|
+| `handoff` | broker | `{text, repository?, candidates?, context?, evidence?}` to begin; `{id, answer}` or `{id, acceptRest: true}` to continue | Plans the work you described, holds the plan on the broker for 24 hours bound to you, and returns the plan text as it is plus at most one question with its recommendation and why ([below](#the-plan)). With planning off, returns `Planning is not available here; file on GitHub.` |
+| `start` | local | `{id}` | Re-validates the stored plan on the broker, then shows a confirmation form with the issue, `workflow` and `budget`. Only your answer files the issue and starts the work |
+| `inbox` | broker | `{repo?}` | What needs you across your tasks (or your recent tasks when nothing is waiting or `needs` is off) |
+| `task` | broker | `{task, since?}` | Where one task stands (`State`), `Needs you`, `Budget`, `Merge` (once the merge gate has evaluated a pull request), what was asked, `Next` and the milestones since `since`, with one cursor |
+| `wait` | local | `{task, timeout?}` | Polls from your machine until a task needs you, opens a pull request or ends (300 s by default, at most 1800 s), and returns the task view. Run it in a background task |
+| `answer` | local | `{task, text?}` | Replies to an open question on the task's issue (and restarts the task when you may start work there) or leaves a note for its next run, behind a confirmation form |
+
+- **`start {id}` and its form.** `start` asks the broker's `handoff_check` to re-validate the stored plan, then builds a confirmation form (MCP elicitation). The form shows the issue, the `workflow` (pre-filled with the default; when several workflows are offered, changing it re-validates the plan on the broker) and the `budget` — no policy or merge line is shown before a pull request exists. `"File this issue"` (`file`) defaults to no. `"Start now"` (`start`) appears and defaults to yes when `human.mcp.start {default, except}` allows starting work on that repository (`human.mcp.sessionStart` is still honoured with a warning in this release) and your linked GitHub account has write access. On yes, your own `gh` creates the issue and applies the plan's `class:<name>` label, any pinned `workflow:<name>` label (when you maintain the repository; skipped and noted otherwise), and `factory/ready`. A failed class or workflow label starts nothing. A client without forms or an unanswered form writes nothing and returns a `gh issue create` fallback command for you to run. It is a form field, never a tool argument: your agent can call `start` but cannot answer the form.
+- **`answer {task, text?}` and its form.** `answer` reads the task first (`task`, falling back on `needs_author` to the newest public bounce comment from the configured `factoryLogin`).
+  - **When a question is open**, the form shows the question, the recommendation and the full body diff (`## Acceptance check` plus `D<n>: Acceptance check: <answer>` for the acceptance question, or `D<n>` under `## Decisions` otherwise), takes a one-line `answer` (blank accepts the recommendation), and defaults `send` to no. When `canStart` is true, `"Restart the task"` (`restart`) appears and defaults to yes: after verifying the issue's body, labels and `updatedAt` are unchanged and writing the body edit with `gh issue edit --body-file=-`, yes re-applies `factory/ready` with your `gh` so the task is scoped again with the answer. Without `canStart`, the answer is written and `next` says a maintainer must restart the task.
+  - **When no question is open**, `answer {task, text}` asks to confirm (`send` default no) and queues `text` as a [machine-sent](api.md#machine-sent-text) note for the task's next run.
+- **Task references.** Every tool and prompt that takes a task or room (`task`, `wait`, `answer`, the `task` prompt, and under `--advanced` the `room_*` tools) accepts the id, `#<issue>` (the issue only), `PR #<n>` (the PR only), a bare number (an issue or a PR), or a fragment of the task's title (3 characters or more, case-insensitive; not an id or a number). `maku mcp` resolves it through the room list, open tasks first and then ended ones. When several match, the tool lists them with their ids and asks, calling nothing. Text that matches nothing goes to the broker as typed, which refuses it.
+- **`--advanced`.** `maku setup <client> --advanced` registers `maku mcp --advanced`. Beyond the six tools, `--advanced` lists `room_tail` (which also runs as an MCP Task that `maku mcp` polls), `room_fork`, `room_checkout`, `coordination_checkout`, `coordination_open` and `coordination_plan` — plus, during this release, the deprecated tools the six replace (with a deprecation line on their output; unlisted deprecated tools stay callable without `--advanced` in this release so saved prompts keep working).
+  - `room_checkout {room}` is `maku checkout` for your agent, rooted at your client's first root (else where `maku mcp` runs).
+  - `coordination_checkout {parent, workspaces?}` is `maku coordination checkout` for your agent, asking one form for every child's files that run code.
+- **Prompts.** Three prompts are listed: `handoff` (`what`), `task` (`task`, optional) and `inbox` (see [Short commands](#short-commands)). `prompts/get` still answers `factory_intake` and `plan` as aliases of `handoff`, and `status` and `resume` as aliases of `task`, in this release.
+- No tool approves, steers or stops, and none labels on the agent's say: only your answer to `start`'s or `answer`'s form does. Approvals stay on the room page.
+- Every request reads `token.json` and refreshes the token when it has expired, one refresh at a time. When the refresh is refused, a call answers `not_logged_in`: run `maku login` in a terminal, and the running server uses the new token, with no restart.
+
+The [maku-handoff skill](#the-maku-handoff-skill) does the same jobs through the shell for an
+agent with no MCP configuration.
 
 ### The plan
 
-`intake_plan` and `plan_check` are the broker's governed planner: your own sentence about what is
-wrong becomes a plan of factory work, and the plan's hash is what every door after it re-validates
-before anything is filed. The broker's operator turns them on (`human.intake.plan.enabled`); off,
-both are unknown tools, as `run_create` is to your token, and the skill's switch-off route takes
-over. Candidate repositories come from the factory's served `Repository` objects through its catalog
-(cached for 60 s); `human.intake.plan.repositories` is optional and narrows that list when set,
-logging a warning for any entry the factory does not serve.
+`handoff` is the broker's governed planner (`human.intake.plan.enabled`). Your own sentence about
+what is wrong becomes a plan stored on the broker for 24 hours under a random `id` bound to your
+identity: your coding agent passes `{text}` (and optional `repository`, `candidates`, `context` or
+`evidence`) to begin, then `{id, answer}` to answer the current question or `{id, acceptRest: true}`
+to record the remaining recommendations as assumptions. The client never holds or edits a plan
+envelope. An expired or foreign `id` is refused in one line: start a new handoff. With the planner
+off, `handoff` stays listed and returns `Planning is not available here; file on GitHub.` Candidate
+repositories come from the factory's served `Repository` objects through its catalog (cached for
+60 s); `human.intake.plan.repositories` is optional and narrows that list when set, logging a
+warning for any entry the factory does not serve.
 
-| Tool | What it does | What it answers |
-|---|---|---|
-| `intake_plan` | Plans the factory work a sentence asks for, from `text` (your own words), `repository` or `candidates` (owner/name), the `context` your agent has read and the `evidence` you passed it; a clarification revision also carries the base plan, its hash and your edited candidate | `plan/v2`, the hash the broker computed over it (each issue with its class, its `profile` (`""`, the factory's choice) and, from the repository's catalogue, a display `suggestion`: the suggested workflow with its roles, the merge outcome and the planner's why), ranked gaps with the first as the compatibility question, and `canStart`: whether you may start the factory on it. One model call below the round cap, on public text only; it files nothing |
-| `plan_check` | Re-validates a final plan you were shown, against the hash the broker answered with; an optional candidate applies a deterministic final revision | The final plan as it was validated, its hash, and `canStart`. It calls no model, spends no daily plan and files nothing |
+The broker still computes and checks the plan's hash across the stored plan and the one `start`
+re-validates (`handoff_check`), including your chosen workflow. When you change `workflow` in
+`start`'s form, the relay re-validates that workflow on the broker before anything is filed: for a
+maintainer, the broker records `D<n>: workflow: <w>, pinned by the developer` in `## Decisions`
+(replacing a `workflow: factory's choice` Assumption), sets the issue's roles to that workflow, and
+checks the choice against the repository's catalog with no model call and no daily plan slot. A
+choice the catalog refuses comes back as one closed reason and sentence (`profile_not_allowed`,
+`class_profile_fixed`, `not_maintainer`, …; see [the factory's docs](factory.md#pinning-a-workflow))
+and files nothing. Keeping the default pins nothing (`A<n>: workflow: factory's choice; suggested <s>`
+when the planner suggested one).
 
-The canonical intake loop calls `plan_check` for the final draft (including an accept-the-rest
-revision), then `issue_file` with the returned plan and new hash. `issue_file` calls `plan_check`
-again itself, so a plan that changed after it was shown files nothing rather than something else.
-
-To answer a gap, your agent passes `intake_plan` the original request fields plus the revision envelope:
-`plan` (the base plan), `hash` (its hash) and `candidate` (the edited plan). Only marker replacements
-and their new Decision/Assumption records may change. The broker verifies the base and returns the
-candidate's new hash. To accept every remaining recommendation, the agent records each as an
-`A<n> [g<n>]` assumption and calls `plan_check` with the same envelope; no model call is needed.
-
-A maintainer may pin a workflow once every gap is answered: the agent calls `plan_check` (or
-`intake_plan`) with a candidate where only an issue's `profile` changed. The broker appends
-`D<n>: workflow: <p>, pinned by the developer` to that issue's Decisions (replacing a
-`workflow: factory's choice` Assumption), sets the issue's roles to the pinned workflow's template,
-checks the pin against the repository's catalogue and answers the new hash, with no model call and
-no daily plan. A final plan whose issue names a workflow without that Decision is refused. A pin the
-catalogue refuses comes back as one closed reason and sentence (`profile_not_allowed`,
-`class_profile_fixed`, `not_maintainer`, …; the list is in [the factory's docs](factory.md#pinning-a-workflow));
-the plan is not finalised and you pick again or keep the factory's choice. Keeping the factory's
-choice pins nothing: when the plan suggested a workflow, `plan_check` records
-`A<n>: workflow: factory's choice; suggested <s>` so the issue says what was chosen. A plan recorded
-by an earlier release says `profile:` in these records; both spellings are read. Only a
-maintainer may pin; the skill offers no pin to anyone else.
-
-What a plan shows, as `intake_plan` answers and your agent shows it back:
+What a plan shows, as `handoff` answers and your agent shows it back:
 
 ````text
-**Plan** · Smana/maku · `sha256:1c99586a84c6b989c46ff70880ee92f709be6db398101b25241fca552fd8363f`
-Ceiling $2.00 · class:docs
-Planner tier-frontier on session · 09:12 UTC
+**Plan** · Smana/maku · `h_9f3k2m7q`
+Workflow standard (scoper, implementer, reviewer)
+Budget up to $2.00
 
-1. `docs: the install link in the coding-agent guide 404s` · class docs · roles scoper, implementer, reviewer
+1. `docs: the install link in the coding-agent guide 404s`
 
 Issue 1
 ```
@@ -278,80 +217,42 @@ The page's link resolves, and `hack/docs.sh` passes.
 Question `Should the link point at the latest release, or at a pinned version?`
 Recommended `the latest release, as the rest of the page does` · `the page already reads as a live guide`
 
-Why this repository
+Why this repository (unverified: model claim)
 - `docs/cli.md is the page that carries the install section`
 - `nothing else in the repository names that asset`
 ````
 
 Its sections, in the order they are read:
 
-- **The repository, and its evidence.** The head line names the one repository the plan files into
-  and the plan's hash. `Why this repository` is the planner's own reading — a path, a thread, a
-  channel — one quoted item per line and never a link: the links are the broker's to build, never
-  the model's. The broker reads no repository to check it, so the heading says `(unverified: …)`
-  and every item has `kind: model_claim`. The head line also names the model the gateway reported
-  answering (`served by …`) when it differs from the alias. A repository outside the ones this request may use refuses the plan whole, and is
-  not named back.
-- **The issue.** One numbered line per issue (one to three), then `Issue 1`, `Issue 2` … with each
-  draft as it will be filed. One call files the **first**: with a longer plan, say the others are
-  not filed.
-- **The roles.** `roles scoper, implementer, reviewer` and `class docs` on the issue's line, from
-  the class's template in the broker's config, never from the model: a role the reply names is
-  dropped and logged. `waits for #1` says an issue comes after an earlier one.
-- **The acceptance check.** `## Acceptance check`, the third heading inside the issue's block, with
-  `## What is wrong` and `## What it should be` before it: the factory reads the same three sections
-  on a hand-written issue, and a draft without them is refused before a plan exists.
-- **The decisions.** An optional `## Decisions` section after Acceptance check records answers as
-  `D1 [g1]: <choice>, because <reason>` and assumptions as `A2 [g2]: assumed <answer>, because <why>`.
-  IDs ascend and stay unique in each issue; numeric gaps are allowed when a split issue carries only
-  the records it needs. Intermediate plans may retain markers; final filing refuses them.
-- **The ceiling.** `Ceiling $2.00 · class:docs`: the money this plan's work is charged against and
-  where that number came from, both from the broker's config. The roles and the money are the
-  config's whatever the reply says, and a class the config does not define makes no plan.
+- **The repository, handoff id, workflow and budget.** The head names the repository, the handoff `id`, the default `Workflow` (its roles come from the workflow config, never from the model) and the `Budget` (from the broker's config). No merge policy is named before a pull request exists. `Why this repository` is the planner's own reading — one quoted item per line and never a link (`kind: model_claim`, marked unverified). The head also names the model the model gateway reported answering (`served by …`) when it differs from the alias. A repository outside the ones this request may use refuses the plan whole, and is not named back.
+- **The issue.** One numbered line per issue (one to three), then `Issue 1`, `Issue 2` … with each draft as it will be filed (`## What is wrong`, `## What it should be`, `## Acceptance check`, plus optional `## Decisions` with `D<n>` answers and `A<n>` assumptions). One `start` call files the **first**: with a longer plan, say the others are not filed.
+- **One question at a time.** A plan may carry ranked gaps; `Question` shows only the first, with its recommendation and why. Reply with `{id, answer}` or accept the remaining recommendations with `{id, acceptRest: true}`; once no gaps remain, `handoff` marks the plan `ready: true` for `start {id}`. A plan marked `degraded` came from the broker's deterministic composer (`human.intake.plan.fallback: composer`) rather than the model, and says so on its first line.
 
-A plan may carry ranked gaps; the `Question` shown here is only the first, with the broker's
-recommendation and why. Answer it through the revision envelope, then repeat with the next first gap.
-The answer is yours. A plan marked `degraded` came from the broker's deterministic template rather than the model
-(`human.intake.plan.fallback: composer`): it says so in its first line, and it is not the
-natural-language planner.
+The initial plan and every `handoff {id, answer}` round below the cap cost one of your day's plans
+(`human.intake.plan.dailyPlans` per requester, reset at 00:00 UTC); `{id, acceptRest: true}` and
+`handoff_check` cost none. `human.intake.plan.maxRounds` (default 10) caps clarification rounds in
+one handoff: reaching the cap records the remaining recommendations as assumptions without another
+model call.
 
-The initial plan and every `intake_plan` revision cost one of your day's plans
-(`human.intake.plan.dailyPlans` per requester, reset at 00:00 UTC); `plan_check` costs none.
-`human.intake.plan.maxRounds` (default 10) separately caps clarification rounds in one intake. Below
-the cap a revision makes one model call. The cap-reaching revision instead records all remaining
-recommendations as assumptions and returns a final plan without another model call, but still spends
-its daily slot. Thus `maxRounds` ends one conversation; `dailyPlans` bounds all attempts that day.
-
-Neither tool files, labels, stores or approves anything: the plan is shown, and `issue_file` files its
-first issue once you answer its form. Strict decoding makes mixed versions fail closed: an older
-broker refuses revision fields or `gaps`; a newer broker keeps legacy hashes and maps the first gap to
-the old `Question` view, so existing Slack proposals still render and confirm.
-
-After filing, `need_answer` is the scoper-bounce counterpart: it reads the authorized room question,
-confirms the answer and appends the next issue-local Decision to the issue body; an acceptance answer is also written into `## Acceptance check`, created when the issue has none. It never adds or
-removes a label; a maintainer re-applies `factory/ready` when the answer is ready for another run.
-
-The refusals you can meet, with the next step. The broker answers a plan or a check it will not make
-with one reason of a closed list, each with its own sentence; the whole list is
-[the planner on `/mcp`](api.md#the-planner-on-mcp).
+The refusals you can meet, with the next step (the full list is [the planner on `/mcp`](api.md#the-planner-on-mcp)):
 
 | Reason | Next step |
 |---|---|
-| `private_repository_unsupported` | The planner reads public text only, so a private repository is refused before any call. Have your agent write the issue itself in the template's three sections and file it through `issue_file`'s form with no plan (`issue_draft` checks it), or wait for the internal route |
+| `private_repository_unsupported` | The planner reads public text only, so a private repository is refused before any call. File on GitHub in the template's three sections, or wait for the internal route |
 | `repository_not_allowed` | Name the repository as `owner/name`, or pick one of the ones the refusal lists: those are the repositories you may file into. A candidate that is private is left out of that list without a word |
 | `no_write` | Your GitHub access to that repository is read-only, and the planner plans only what you may push to. Ask for one you may write in, or show the plan to someone who can file it |
 | `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |
-| `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository. The cause (the gateway's status, a missing or empty key file, a DNS or connection error) is in the broker's `intake plan` log line, as `cause=`; ask the operator |
+| `planner_unavailable` | The plan service is down or refused the call. Try again later: nothing was filed, and the refusal names no repository. The cause (the model gateway's status, a missing or empty key file, a DNS or connection error) is in the broker's `intake plan` log line, as `cause=`; ask the operator |
 | `catalogue_unavailable` | The factory's catalog could not be read, and no fresh cached list remains (60 s TTL). Try again in a minute |
-| `plan_changed` | The plan and the hash you passed do not hold together: it was edited after it was shown. Show the newer plan and confirm that one, never the older text |
-| `unresolved_marker` | A final draft still has a gap or clarification marker. Resolve it through a revision, or accept the remaining recommendations |
+| `plan_changed` | The stored plan and hash no longer hold together. Run `handoff` again and confirm the new plan |
+| `unresolved_marker` | The plan still has an open question. Answer it with `handoff {id, answer}` or pass `{id, acceptRest: true}` |
 | `invalid_decisions` | Fix the Decisions records: one line each, with ascending unique IDs and valid gap references |
 
 ### OpenCode's background service
 
 OpenCode v2 runs a background service (`opencode service start|restart|status|stop`) that keeps the
 config it started with. A service started before `maku setup opencode` gives its attached sessions
-no factory tools, while `opencode mcp list` still says `factory` is connected. After it registers the
+no Maku tools, while `opencode mcp list` still says `maku` is connected. After it registers the
 server, `setup opencode` runs `opencode service status`: when the service runs it says so and asks
 `y/N` on a terminal before running `opencode service restart`; `--restart-service` restarts without
 asking. It never restarts silently, since other sessions may be attached; without a terminal or the
@@ -363,39 +264,40 @@ file's last change.
 
 OpenCode v2 exposes MCP tools through Code Mode by default (`tools.<server>.<tool>` through its
 `execute` tool). A config with the permission `{"action":"execute","resource":"*","effect":"deny"}`
-turns Code Mode off and hides every Code Mode server: the factory is "connected" in
-`opencode mcp list`, yet a session has no factory tools. `"codemode": false` on
+turns Code Mode off and hides every Code Mode server: `maku` is "connected" in
+`opencode mcp list`, yet a session has no Maku tools. `"codemode": false` on
 `mcp.servers.<name>` keeps that server's tools on the native tool list (OpenCode's
-"Disable Code Mode for an MCP Server"), which also suits the elicitation forms and `room_wait`.
-After `opencode mcp add`, `maku setup opencode` sets `"codemode": false` on `mcp.servers.factory`
-and keeps the rest of the file (it is rewritten as indented JSON; a file with comments is left
-alone and setup says what to add). The pasted snippet carries it too. `maku doctor` warns
-(`warn opencode`) when the factory entry lacks it and an `execute` deny rule exists. This is the one
-config edit setup makes; every other client's config is only ever printed.
+"Disable Code Mode for an MCP Server"), which also suits the confirmation forms and `wait`.
+After `opencode mcp add`, `maku setup opencode` sets `"codemode": false` on `mcp.servers.maku`
+(rewriting an older `factory` entry to `maku` when present) and keeps the rest of the file (it is
+rewritten as indented JSON; a file with comments is left alone and setup says what to add). The
+pasted snippet carries it too. `maku doctor` warns (`warn opencode`) when the `maku` entry (or a
+legacy `factory` entry) lacks it and an `execute` deny rule exists.
 
 It also sets `"timeout": {"execution": 900000}` (ms) there: OpenCode cuts a tool at its execution
-timeout, which cut `issue_file`'s form ("context deadline exceeded"). `maku doctor` warns when the
-factory entry has none. When a form cannot be shown or is not answered, `issue_file` answers with a
+timeout, which cut `start`'s confirmation form ("context deadline exceeded"). `maku doctor` warns
+when the entry has none. When a form cannot be shown or is not answered, `start` answers with a
 `next:` hint holding one `gh` command that only files the issue, for the developer to run. It never
-labels: starting the factory stays the developer's act (the label, or choosing start in the form).
+labels: starting the work stays the developer's act (the label, or choosing `"Start now"` in the
+form).
 
 ### Short commands
 
-Claude Code lists the MCP prompts as `/factory:handoff`, but typing that is rejected as an unknown
-command: only `/mcp__factory__handoff` runs. So `maku setup claude` and `maku setup opencode`
-also write one command file, `factory.md`, that calls the same prompts' tools:
+Claude Code lists the MCP prompts as `/maku:handoff`, but typing that is rejected as an unknown
+command: only `/mcp__maku__handoff` runs. So `maku setup claude` and `maku setup opencode`
+also write `maku.md` (`factory.md` stays installed beside it in this release), calling the same
+tools:
 
 | Type | Does |
 |---|---|
-| `/factory handoff [what]` | runs the canonical `factory_intake` loop: clarify one first gap at a time or accept the rest, finish with `plan_check`, then file the first issue through `issue_file`; with the planner off, writes the issue, has `issue_draft` check it, and files it |
-| `/factory status [room]` | `room_summary` of the room; none: your most recently updated room |
-| `/factory resume [room]` | `needs_list` once, then `room_brief` of the first room that needs you (or of the room you passed); names the brief's `Next:` line as the one step |
-| `/factory inbox` | `needs_list` once: the rooms that need you. Empty, it says so and names `rooms_list` with `mine` |
+| `/maku handoff [what]` | calls `handoff` with your words, asks one question at a time (or accepts the rest with `acceptRest: true`), then calls `start` so you can confirm and start the work |
+| `/maku task [#issue]` | calls `task` (or `inbox` first when no task is named, then `task` on the first item waiting on you) and shows the result |
+| `/maku inbox` | calls `inbox` once and shows what needs you across your tasks |
 
-Where: `~/.claude/commands/factory.md` (`.claude/commands/` with `--project`) for Claude Code,
-`~/.config/opencode/commands/factory.md` (`.opencode/commands/`) for OpenCode, which reads the same
+Where: `~/.claude/commands/maku.md` (`.claude/commands/` with `--project`) for Claude Code,
+`~/.config/opencode/commands/maku.md` (`.opencode/commands/`) for OpenCode, which reads the same
 markdown file with `$ARGUMENTS`. A second `setup` rewrites it. The MCP prompts stay as they are.
-Source: `internal/maku/skill/commands/factory.md`.
+Source: `internal/maku/skill/commands/maku.md`.
 
 ### Checking out an agent's branch
 
@@ -458,54 +360,45 @@ you made while the form was open is never used, moved or deleted, and a worktree
 git does not list as this call's is left alone. A worktree of the branch whose folder is gone is
 removed and made again, unless you locked it (`git worktree lock`).
 
-## The factory-handoff skill
+## The maku-handoff skill
 
-`maku skill install` writes an Agent Skill that lets a local coding agent hand a side task to the [factory](factory.md) and follow it. The skill is embedded in the binary, so it always matches the CLI that runs its commands (`internal/maku/skill`).
+`maku skill install` writes an Agent Skill that lets a local coding agent hand a side task to Maku ([the factory](factory.md)) and follow it. The skill is embedded in the binary, so it always matches the CLI that runs its commands (`internal/maku/skill`).
 
-It works MCP first. With the `factory` MCP server registered (`maku setup <client>`), it uses
-`intake_plan`, `plan_check`, `rooms_list`, `room_summary`, `room_changes`, `room_wait`,
-`room_checkout`, `issue_draft` and `issue_file`, and shows each tool's text as it is. Without the
-server, a shell fallback section runs the same jobs through `gh` and `maku`.
+It works MCP first. With the `maku` MCP server registered (`maku setup <client>`), it uses the six tools — `handoff`, `start`, `inbox`, `task`, `wait` and `answer` (plus `room_checkout` when `--advanced` is enabled) — and shows each tool's text as it is. Without the server, a shell fallback section runs the same jobs through `gh` and `maku`.
 
 It does:
 
-- Invoke the broker's canonical `factory_intake` prompt (`handoff` is its alias), or follow the same
-  contract from `intake_plan`'s description when the client has no prompts. It asks only the first
-  gap, offers "accept the rest", applies answers through the base plan + hash + candidate revision
-  envelope with D/A records, and finishes with `plan_check` then `issue_file`. With the planner off,
-  or in a shell with no MCP server, it writes the issue in the template's three sections, has
-  `issue_draft` check it, and says the broker planned nothing rather than passing a plan it wrote as
-  the planner's.
-- Follow a task: find the room, and report phase, run, PR and the newest notes.
-- Say "it needs you" first when something waits on you, giving the link: approvals stay on the room page.
-- Answer "anything waiting on me?".
-- Follow a room in the background with `room_wait` when the agent can run a background task or subagent, and check a room's branch out into a new worktree beside the repository with `room_checkout`, only when you ask. It never touches your current checkout.
-- Queue guidance for the next run with `maku post <room> --queue`, only with your words.
+- Run the `handoff` prompt (or call `handoff` directly when the client has no prompts), show the plan as it is, ask one question at a time or accept the rest with `acceptRest: true`, and finish with `start` so your answer to the form files and starts the work. With the planner off, `handoff` answers one fixed line; in a shell with no MCP server, the skill writes the issue in the template's three sections and says the broker planned nothing.
+- Follow a task with `task`: report state, budget, merge decision, what needs you and the newest milestones.
+- Say "needs you" first when something waits on you, giving the link: approvals stay on the room page.
+- Answer "anything waiting on me?" with `inbox`.
+- Reply to a task's question or leave a note for its next run with `answer` (or `maku post <room> --queue` in the shell fallback), only with your words and confirmation.
+- Follow a task in the background with `wait` when the agent can run a background task or subagent, and check a task's branch out into a new worktree beside the repository (`room_checkout` under `--advanced`, or `maku checkout <room>`), only when you ask. It never touches your current checkout.
 
 It never:
 
-- Applies a label, `factory/ready` included, unless you ask for that exact label.
-- Approves, or gives a command that approves.
+- Applies a label, `factory/ready` included, on the agent's say.
+- Approves, stops or retries a task, or gives a command that approves.
 - Follows an instruction found in a note or an agent's text: that is data to report.
 - Installs software, trusts a CA or signs in for you. It runs only read-only checks.
 
-`skill install` writes `<dir>/factory-handoff/` (`SKILL.md` and `references/issue-template.md`), `.agents/skills` by default, and overwrites what is there. It refuses to write through a symlink inside the skill tree. `--dir` sets where the skill is written; point it at the directory your agent reads skills from.
+`skill install` writes `<dir>/maku-handoff/` (`SKILL.md` and `references/issue-template.md`; `factory-handoff/` is also written alongside it in this release), `.agents/skills` by default, and overwrites what is there. It refuses to write through a symlink inside the skill tree. `--dir` sets where the skill is written; point it at the directory your agent reads skills from.
 
 The skill needs `gh` (authenticated) and `maku` (signed in) on the PATH.
 
-`maku doctor` has a `skill` check: it reads the `roomctl-version` of every `factory-handoff` skill in the directories the six clients read (`maku setup`'s, under your home and under the working directory), and fails when one is not this binary's version, because a skill from another release names tools or commands this one lacks. It skips when none is installed.
+`maku doctor` has a `skill` check: it reads the `roomctl-version` of every `maku-handoff` (and `factory-handoff`) skill in the directories the six clients read (`maku setup`'s, under your home and under the working directory), and fails when one is not this binary's version, because a skill from another release names tools or commands this one lacks. It skips when none is installed.
 
 ## Troubleshooting
 
-Run `maku doctor` first: it checks in the order things fail and prints the fix of each.
+Run `maku doctor` (or `maku setup <client>`) first: it checks in the order things fail and prints the fix of each.
 
 | Symptom | Cause | Fix |
 |---|---|---|
 | `maku` not found | not installed | [Install and verify](#install-and-verify) |
-| `not configured` | no config file | `maku configure --url https://rooms.<domain>` |
+| `not configured` | no config file | `maku setup <client>`, or `maku configure --url https://rooms.<domain>` |
 | `no such host` on the rooms host | the VPN is down: the host resolves only on the tailnet | `tailscale up`, then `tailscale status` |
 | `x509: certificate signed by unknown authority` | the platform's root CA is not trusted, and `maku` has no `--cacert` | trust the root CA on your system, or set `SSL_CERT_FILE` to a bundle holding it for the shell that runs `maku` |
-| auth error, expired token | not signed in | `maku login` |
-| `401: user_inactive` | your ZITADEL user was deactivated, locked or deleted | ask an admin to reactivate it; `maku login` cannot help |
-| `rooms` lists nothing | your ZITADEL user has no linked GitHub identity, so no repository is readable | ask an admin to link your GitHub account to your ZITADEL user; `maku doctor` reports it on its `github` line |
-| `FAIL skill` on `maku doctor` | a `factory-handoff` skill from another maku release, in your home or in the repository (`cloud-native-ref` carries `.agents/skills/factory-handoff` at `roomctl-version: "v0.11.0"`, so this fails there until that copy is removed) | delete the stale copy, or rewrite it: a stale copy in your home needs `maku setup <client>` without `--project`, and `--project` only rewrites the repository's copy |
+| auth error, expired token | not signed in | `maku login` (or re-run `maku setup <client>`) |
+| `401: user_inactive` | your identity provider user was deactivated, locked or deleted | ask an admin to reactivate it; `maku login` cannot help |
+| `rooms` lists nothing | your identity provider user has no linked GitHub identity, so no repository is readable | open `<rooms URL>/link/github` (printed on `maku doctor`'s `github` line), or ask an admin to link your GitHub account at your identity provider |
+| `FAIL skill` on `maku doctor` | a `maku-handoff` or `factory-handoff` skill from another maku release, in your home or in the repository (`cloud-native-ref` carries `.agents/skills/factory-handoff` at `roomctl-version: "v0.11.0"`, so this fails there until that copy is removed) | delete the stale copy, or rewrite it: a stale copy in your home needs `maku setup <client>` without `--project`, and `--project` only rewrites the repository's copy |

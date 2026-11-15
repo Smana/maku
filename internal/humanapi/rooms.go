@@ -147,10 +147,11 @@ func (s *Server) roomctlSetup(w http.ResponseWriter, r *http.Request) {
 	s.writeSetup(w, s.Dashboards)
 }
 
-// publicSetup is GET /.well-known/roomctl: the same values with no sign-in, so `maku
-// configure --url` needs nothing else (#48). The issuer, the client id and the project id are
-// public by design (a native app has no secret) and the CLI setup view shows them to any member.
-// The proxy in front must let this path through unauthenticated.
+// publicSetup is GET /.well-known/maku (and GET /.well-known/roomctl during release N): the same
+// values with no sign-in, so `maku setup` and `maku configure --url` need nothing else (#48). The
+// issuer, the client id and the project id are public by design (a native app has no secret) and
+// the CLI setup view shows them to any member. The proxy in front must let this path through
+// unauthenticated.
 func (s *Server) publicSetup(w http.ResponseWriter, _ *http.Request) { s.writeSetup(w, nil) }
 
 // Dashboard is one link template the room page fills with a room's ids (human.dashboards):

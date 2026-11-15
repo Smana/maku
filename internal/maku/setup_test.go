@@ -101,12 +101,15 @@ func TestSetupRegistersThroughTheCLI(t *testing.T) {
 	if err := s.Do(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"claude", "mcp", "add", "--scope", "user", "factory", "--", "maku", "mcp"}
+	want := []string{"claude", "mcp", "add", "--scope", "user", "maku", "--", "maku", "mcp"}
 	if len(ran) != 1 || !slices.Equal(ran[0], want) {
 		t.Fatalf("ran %v, want %v", ran, want)
 	}
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "maku-handoff", "SKILL.md")); err != nil {
+		t.Errorf("maku-handoff is not in <home>/.claude/skills: %v", err)
+	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "factory-handoff", "SKILL.md")); err != nil {
-		t.Errorf("the skill is not in <home>/.claude/skills: %v", err)
+		t.Errorf("factory-handoff is not in <home>/.claude/skills: %v", err)
 	}
 	if got := filesUnder(t, dir); len(got) != 0 {
 		t.Errorf("a user-level setup wrote into the project: %v", got)
@@ -158,13 +161,16 @@ func TestSetupNeverEditsAConfig(t *testing.T) {
 					root = dir
 				}
 				skills := filepath.Join(root, strings.TrimPrefix(a.skillDir(project), "~/"))
-				command := ""
+				var commands []string
 				if c := a.commandDir(project); c != "" {
-					command = filepath.Join(root, strings.TrimPrefix(c, "~/"), "factory.md")
+					cd := filepath.Join(root, strings.TrimPrefix(c, "~/"))
+					commands = []string{filepath.Join(cd, "maku.md"), filepath.Join(cd, "factory.md")}
 				}
 				for _, f := range filesUnder(t, home, dir) {
-					if !strings.HasPrefix(f, filepath.Join(skills, "factory-handoff")+string(filepath.Separator)) && f != command {
-						t.Errorf("wrote %s, not a skill file or the /factory command", f)
+					inSkill := strings.HasPrefix(f, filepath.Join(skills, "maku-handoff")+string(filepath.Separator)) ||
+						strings.HasPrefix(f, filepath.Join(skills, "factory-handoff")+string(filepath.Separator))
+					if !inSkill && !slices.Contains(commands, f) {
+						t.Errorf("wrote %s, not a skill file or a command file", f)
 					}
 				}
 			})
@@ -315,7 +321,7 @@ func TestSetupInstallsTheSkillBeforeRegistering(t *testing.T) {
 
 // What the CLI writes, then setup's codemode flag (O9).
 func TestSetupOpencodeSnippetIsWhatTheCLIWrites(t *testing.T) {
-	want := `{"mcp":{"servers":{"factory":{"type":"local","command":["maku","mcp"],"codemode":false,"timeout":{"execution":900000}}}}}`
+	want := `{"mcp":{"servers":{"maku":{"type":"local","command":["maku","mcp"],"codemode":false,"timeout":{"execution":900000}}}}}`
 	got := strings.NewReplacer(" ", "", "\n", "").Replace(strings.ReplaceAll(Agents["opencode"].Snippet, "{CMD}", "maku"))
 	if got != want {
 		t.Errorf("opencode snippet %s, want %s", got, want)
@@ -351,6 +357,15 @@ func TestSetupInstallsTheFactoryCommand(t *testing.T) {
 				root, sub := home, tc.user
 				if project {
 					root, sub = dir, tc.project
+				}
+				makuMD, err := os.ReadFile(filepath.Join(root, sub, "maku.md"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, w := range []string{"description:", "$ARGUMENTS", "handoff", "task", "inbox", "start", "wait", "never apply a label", "accept the rest"} {
+					if !strings.Contains(string(makuMD), w) {
+						t.Errorf("maku.md lacks %q:\n%s", w, makuMD)
+					}
 				}
 				b, err := os.ReadFile(filepath.Join(root, sub, "factory.md"))
 				if err != nil {
@@ -463,7 +478,7 @@ func TestSetupOpenCodeServiceRestart(t *testing.T) {
 // deny rule turns Code Mode off, hiding every Code Mode server. `"codemode": false` on the server
 // keeps its tools on the native list, where the elicitation forms and room_wait also belong.
 func TestSetupOpenCodeWritesCodeModeOff(t *testing.T) {
-	const existing = `{"theme":"dark","permission":[{"action":"execute","resource":"*","effect":"deny"}],"mcp":{"servers":{"other":{"type":"local","command":["x"]},"factory":{"type":"local","command":["maku","mcp"]}}}}`
+	const existing = `{"theme":"dark","permission":[{"action":"execute","resource":"*","effect":"deny"}],"mcp":{"servers":{"other":{"type":"local","command":["x"]},"maku":{"type":"local","command":["maku","mcp"]}}}}`
 	for name, project := range map[string]bool{"user": false, "project": true} {
 		t.Run(name, func(t *testing.T) {
 			home, dir := t.TempDir(), t.TempDir()
@@ -491,8 +506,8 @@ func TestSetupOpenCodeWritesCodeModeOff(t *testing.T) {
 				t.Fatalf("%v\n%s", err, b)
 			}
 			servers := got["mcp"].(map[string]any)["servers"].(map[string]any)
-			if f := servers["factory"].(map[string]any); f["codemode"] != false || f["type"] != "local" || fmt.Sprint(f["timeout"]) != "map[execution:900000]" {
-				t.Errorf("factory: %v", f)
+			if f := servers["maku"].(map[string]any); f["codemode"] != false || f["type"] != "local" || fmt.Sprint(f["timeout"]) != "map[execution:900000]" {
+				t.Errorf("maku: %v", f)
 			}
 			if _, ok := servers["other"]; !ok || got["theme"] != "dark" || got["permission"] == nil {
 				t.Errorf("the rest of the file was not kept: %s", b)
@@ -508,7 +523,7 @@ func TestSetupOpenCodeWritesCodeModeOff(t *testing.T) {
 func TestSetupOpenCodeLeavesACommentedConfig(t *testing.T) {
 	home := t.TempDir()
 	path := filepath.Join(home, ".config", "opencode", "opencode.json")
-	const commented = "// mine\n{\"mcp\":{\"servers\":{\"factory\":{}}}}\n"
+	const commented = "// mine\n{\"mcp\":{\"servers\":{\"maku\":{}}}}\n"
 	var out bytes.Buffer
 	s := Setup{Agent: Agents["opencode"], Home: home, Dir: t.TempDir(), Cmd: "maku", Version: "v1", LookPath: found, Out: &out,
 		Run: func(context.Context, []string) error {
@@ -532,5 +547,164 @@ func TestSetupOpenCodeSnippetHasCodeModeOff(t *testing.T) {
 	}
 	if !strings.Contains(out.String(), `"codemode": false`) || !strings.Contains(out.String(), `"execution": 900000`) {
 		t.Fatalf("%s", &out)
+	}
+}
+
+func TestSetupRegistersMaku(t *testing.T) {
+	entries, err := os.ReadDir(filepath.Join("testdata", "setup"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("goldens: %v (%d)", err, len(entries))
+	}
+	for _, e := range entries {
+		b, err := os.ReadFile(filepath.Join("testdata", "setup", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		txt := string(b)
+		if !strings.Contains(txt, `"maku":`) && !strings.Contains(txt, `[mcp_servers.maku]`) {
+			t.Errorf("%s registers no server named maku:\n%s", e.Name(), txt)
+		}
+		for _, old := range []string{`"factory":`, `[mcp_servers.factory]`, ` user factory `, ` project factory `, ` --global factory `, ` add factory `} {
+			if strings.Contains(txt, old) {
+				t.Errorf("%s still registers %q:\n%s", e.Name(), old, txt)
+			}
+		}
+	}
+
+	for _, tc := range []struct {
+		name, agent string
+		project     bool
+		file, body  string
+		look        func(string) (string, error)
+		check       func(t *testing.T, raw string)
+	}{
+		{
+			name: "claude json", agent: "claude", file: ".claude.json", look: found,
+			body: `{"mcpServers":{"factory":{"command":"maku","args":["mcp"]},"other":{"command":"x"}}}`,
+			check: func(t *testing.T, raw string) {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(raw), &m); err != nil {
+					t.Fatal(err)
+				}
+				srvs := m["mcpServers"].(map[string]any)
+				if _, ok := srvs["factory"]; ok {
+					t.Errorf("factory kept: %s", raw)
+				}
+				if got := srvs["maku"].(map[string]any); got["command"] != "maku" || srvs["other"] == nil {
+					t.Errorf("maku entry or other lost: %s", raw)
+				}
+			},
+		},
+		{
+			name: "cursor json without CLI", agent: "cursor", project: true, file: ".cursor/mcp.json", look: absent,
+			body: `{"mcpServers":{"factory":{"type":"stdio","command":"maku","args":["mcp"]},"other":{"command":"x"}}}`,
+			check: func(t *testing.T, raw string) {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(raw), &m); err != nil {
+					t.Fatal(err)
+				}
+				srvs := m["mcpServers"].(map[string]any)
+				if _, ok := srvs["factory"]; ok {
+					t.Errorf("factory kept: %s", raw)
+				}
+				if got := srvs["maku"].(map[string]any); got["type"] != "stdio" || got["command"] != "maku" || srvs["other"] == nil {
+					t.Errorf("maku entry or other lost: %s", raw)
+				}
+			},
+		},
+		{
+			name: "opencode json", agent: "opencode", file: ".config/opencode/opencode.json", look: found,
+			body: `{"theme":"dark","mcp":{"servers":{"factory":{"type":"local","command":["maku","mcp"]},"other":{"type":"local","command":["x"]}}}}`,
+			check: func(t *testing.T, raw string) {
+				var m map[string]any
+				if err := json.Unmarshal([]byte(raw), &m); err != nil {
+					t.Fatal(err)
+				}
+				srvs := m["mcp"].(map[string]any)["servers"].(map[string]any)
+				if _, ok := srvs["factory"]; ok {
+					t.Errorf("factory kept: %s", raw)
+				}
+				if got := srvs["maku"].(map[string]any); got["codemode"] != false || srvs["other"] == nil || m["theme"] != "dark" {
+					t.Errorf("maku entry or other lost: %s", raw)
+				}
+			},
+		},
+		{
+			name: "codex toml", agent: "codex", file: ".codex/config.toml", look: found,
+			body: "[other]\ncommand = \"x\"\n\n[mcp_servers.factory]\ncommand = \"maku\"\nargs = [\"mcp\"]\n",
+			check: func(t *testing.T, raw string) {
+				if strings.Contains(raw, "[mcp_servers.factory]") || !strings.Contains(raw, "[mcp_servers.maku]") || !strings.Contains(raw, "[other]") {
+					t.Errorf("toml not rewritten cleanly:\n%s", raw)
+				}
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			home, dir := t.TempDir(), t.TempDir()
+			root := home
+			if tc.project {
+				root = dir
+			}
+			p := filepath.Join(root, tc.file)
+			if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(p, []byte(tc.body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			s := Setup{
+				Agent: Agents[tc.agent], Project: tc.project, Home: home, Dir: dir, Cmd: "maku", Version: "v1",
+				LookPath: tc.look, Out: &out,
+				Run:     func(context.Context, []string) error { return nil },
+				Capture: func(context.Context, []string) (string, error) { return "not running\n", nil },
+			}
+			if err := s.Do(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			b, err := os.ReadFile(p)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.check(t, string(b))
+			if !strings.Contains(out.String(), "factory") || !strings.Contains(out.String(), "maku") {
+				t.Errorf("output did not report rewriting factory to maku:\n%s", &out)
+			}
+		})
+	}
+}
+
+func TestSetupAdvancedRegistersFlag(t *testing.T) {
+	for _, agent := range []string{"claude", "opencode", "codex", "gemini"} {
+		t.Run(agent+" cli", func(t *testing.T) {
+			var ran [][]string
+			s := Setup{
+				Agent: Agents[agent], Advanced: true, Home: t.TempDir(), Dir: t.TempDir(), Cmd: "maku", Version: "v1",
+				LookPath: found, Out: &bytes.Buffer{},
+				Run:     func(_ context.Context, argv []string) error { ran = append(ran, argv); return nil },
+				Capture: func(context.Context, []string) (string, error) { return "not running\n", nil },
+			}
+			if err := s.Do(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(ran) == 0 || ran[0][len(ran[0])-1] != "--advanced" {
+				t.Fatalf("ran %v, want trailing --advanced", ran)
+			}
+		})
+	}
+	for _, agent := range []string{"claude", "opencode", "codex", "cursor", "copilot"} {
+		t.Run(agent+" print", func(t *testing.T) {
+			var out bytes.Buffer
+			s := Setup{
+				Agent: Agents[agent], Advanced: true, Print: true, Home: "/home/dev", Dir: "/work/repo", Cmd: "maku",
+				Version: "v1", LookPath: found, Run: noRun(t), Out: &out,
+			}
+			if err := s.Do(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(out.String(), `"--advanced"`) {
+				t.Fatalf("%s snippet lacks --advanced:\n%s", agent, &out)
+			}
+		})
 	}
 }

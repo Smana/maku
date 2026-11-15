@@ -637,11 +637,12 @@ func TestMakuMCP(t *testing.T) {
 
 func TestMakuSetup(t *testing.T) {
 	home, cwd := t.TempDir(), t.TempDir()
+	b := newLocalBroker(t)
 	run := func(args ...string) (string, error) {
-		out := &strings.Builder{}
-		r := Maku{Dir: t.TempDir(), Out: out, Home: home, Cwd: cwd,
-			LookPath: func(string) (string, error) { return "", errors.New("absent") },
-			RunCmd:   func(context.Context, []string) error { t.Error("ran a command"); return nil }}
+		r, out := configuredLocal(t, b)
+		r.Home, r.Cwd = home, cwd
+		r.LookPath = func(string) (string, error) { return "", errors.New("absent") }
+		r.RunCmd = func(context.Context, []string) error { t.Error("ran a command"); return nil }
 		err := r.Run(context.Background(), args)
 		return out.String(), err
 	}
@@ -651,21 +652,23 @@ func TestMakuSetup(t *testing.T) {
 	if _, err := run("setup"); err == nil {
 		t.Error("setup with no client: want usage")
 	}
-	out, err := run("setup", "cursor", "--print")
-	if err != nil || !strings.Contains(out, "~/.cursor/mcp.json") {
-		t.Errorf("setup cursor --print: %q, %v", out, err)
+	plain := Maku{Dir: t.TempDir(), Out: &strings.Builder{}, Home: home, Cwd: cwd,
+		LookPath: func(string) (string, error) { return "", errors.New("absent") },
+		RunCmd:   func(context.Context, []string) error { t.Error("ran a command"); return nil }}
+	if err := plain.Run(context.Background(), []string{"setup", "cursor", "--print"}); err != nil ||
+		!strings.Contains(plain.Out.(*strings.Builder).String(), "~/.cursor/mcp.json") {
+		t.Errorf("setup cursor --print: %q, %v", plain.Out, err)
 	}
 	if _, err := os.Stat(filepath.Join(home, ".cursor")); err == nil {
 		t.Error("--print wrote")
 	}
-	// No configure needed: the config is absent in Dir, and the skill still lands.
 	if out, err := exec.CommandContext(context.Background(), "git", "-C", cwd, "init", "-q").CombinedOutput(); err != nil {
 		t.Skipf("git init: %v %s", err, out)
 	}
 	if _, err := run("setup", "cursor", "--project"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(cwd, ".cursor", "skills", "factory-handoff", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(cwd, ".cursor", "skills", "maku-handoff", "SKILL.md")); err != nil {
 		t.Error(err)
 	}
 }
@@ -679,15 +682,17 @@ func TestMakuSetupProjectIsRootedAtTheRepository(t *testing.T) {
 	if err := os.MkdirAll(sub, 0o755); err != nil {
 		t.Fatal(err)
 	}
+	b := newLocalBroker(t)
 	run := func(cwd string) error {
-		r := Maku{Dir: t.TempDir(), Out: &strings.Builder{}, Home: t.TempDir(), Cwd: cwd,
-			LookPath: func(string) (string, error) { return "", errors.New("absent") }}
+		r, _ := configuredLocal(t, b)
+		r.Home, r.Cwd = t.TempDir(), cwd
+		r.LookPath = func(string) (string, error) { return "", errors.New("absent") }
 		return r.Run(context.Background(), []string{"setup", "cursor", "--project"})
 	}
 	if err := run(sub); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := os.Stat(filepath.Join(repo, ".cursor", "skills", "factory-handoff", "SKILL.md")); err != nil {
+	if _, err := os.Stat(filepath.Join(repo, ".cursor", "skills", "maku-handoff", "SKILL.md")); err != nil {
 		t.Errorf("not at the repository top: %v", err)
 	}
 	if _, err := os.Stat(filepath.Join(sub, ".cursor")); err == nil {
@@ -700,6 +705,106 @@ func TestMakuSetupProjectIsRootedAtTheRepository(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(plain, ".cursor")); err == nil {
 		t.Error("wrote outside a repository")
+	}
+}
+
+func TestSetupRunsWholeSequence(t *testing.T) {
+	var mu sync.Mutex
+	deviceCalls := 0
+	var srv *httptest.Server
+	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/.well-known/roomctl", "/.well-known/maku":
+			_, _ = w.Write([]byte(`{"url":"` + srv.URL + `","issuer":"` + srv.URL + `","clientID":"cli","projectID":"29184"}`))
+		case "/oauth/v2/device_authorization":
+			mu.Lock()
+			deviceCalls++
+			mu.Unlock()
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"device_code":"dc","user_code":"ABCD-EFGH","verification_uri":"https://auth.example/device","expires_in":300,"interval":1}`))
+		case "/oauth/v2/token":
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"access_token":"tok-dev","token_type":"Bearer","expires_in":3600,"refresh_token":"rt"}`))
+		case "/api/rooms":
+			_, _ = w.Write([]byte(`[{"id":"3kq7x2ma","repository":"Smana/a"}]`))
+		case "/mcp":
+			var m struct {
+				ID json.RawMessage `json:"id"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&m)
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":` + string(m.ID) + `,"result":{"content":[],"structuredContent":{"canStart":true}}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	dir, home, cwd := t.TempDir(), t.TempDir(), t.TempDir()
+	var ran [][]string
+	out := &strings.Builder{}
+	r := Maku{
+		Dir: dir, HC: srv.Client(), Stream: srv.Client(),
+		In: strings.NewReader(srv.URL + "\n"), Out: out, Err: &strings.Builder{},
+		Home: home, Cwd: cwd,
+		LookPath: func(string) (string, error) { return "/usr/bin/x", nil },
+		RunCmd:   func(_ context.Context, argv []string) error { ran = append(ran, argv); return nil },
+	}
+	if err := r.Run(t.Context(), []string{"setup", "claude"}); err != nil {
+		t.Fatalf("%v\n%s", err, out)
+	}
+	got := out.String()
+	for _, want := range []string{"Rooms URL", "ABCD-EFGH", "registered the maku MCP server", "ok   dns", "ok   login", "ok   github", "ok   skill", "factory capabilities (claude)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("setup output lacks %q:\n%s", want, got)
+		}
+	}
+	mu.Lock()
+	firstDevices := deviceCalls
+	mu.Unlock()
+	if firstDevices != 1 {
+		t.Fatalf("deviceCalls = %d, want 1", firstDevices)
+	}
+	wantArgv := []string{"claude", "mcp", "add", "--scope", "user", "maku", "--", "maku", "mcp"}
+	if len(ran) != 1 || !slices.Equal(ran[0], wantArgv) {
+		t.Fatalf("ran %v, want %v", ran, wantArgv)
+	}
+
+	// Second run: valid config and token already on disk, so configure and login are skipped.
+	out.Reset()
+	ran = nil
+	r.In = strings.NewReader("")
+	if err := r.Run(t.Context(), []string{"setup", "claude", "--advanced"}); err != nil {
+		t.Fatalf("second setup: %v\n%s", err, out)
+	}
+	mu.Lock()
+	afterDevices := deviceCalls
+	mu.Unlock()
+	if afterDevices != 1 {
+		t.Errorf("second run signed in again: deviceCalls = %d", afterDevices)
+	}
+	if strings.Contains(out.String(), "Rooms URL") || strings.Contains(out.String(), "ABCD-EFGH") {
+		t.Errorf("second run prompted or logged in again:\n%s", out)
+	}
+	wantAdv := []string{"claude", "mcp", "add", "--scope", "user", "maku", "--", "maku", "mcp", "--advanced"}
+	if len(ran) != 1 || !slices.Equal(ran[0], wantAdv) {
+		t.Fatalf("ran %v, want %v", ran, wantAdv)
+	}
+}
+
+func TestSetupUnlinkedPrintsLinkURL(t *testing.T) {
+	b := newMakuBroker(t)
+	b.access = "unlinked"
+	r, out := configured(t, b)
+	r.Home, r.Cwd = t.TempDir(), t.TempDir()
+	r.LookPath = func(string) (string, error) { return "", errors.New("absent") }
+	err := r.Run(t.Context(), []string{"setup", "cursor"})
+	if err == nil {
+		t.Fatalf("want doctor failure for unlinked user:\n%s", out)
+	}
+	wantURL := b.srv.URL + "/link/github"
+	if !strings.Contains(out.String(), wantURL) {
+		t.Fatalf("unlinked output lacks %q:\n%s", wantURL, out)
 	}
 }
 

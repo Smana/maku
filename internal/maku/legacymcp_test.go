@@ -12,26 +12,19 @@ import (
 	"testing"
 )
 
-// An agent set up with roomctl keeps a factory entry that runs `roomctl mcp`: the add refuses the
-// duplicate, and setup must say the entry is stale and how to replace it, never "which is fine".
-func TestSetupFlagsAFactoryEntryThatStillRunsRoomctl(t *testing.T) {
+// An agent set up with roomctl kept a factory entry that ran `roomctl mcp`: setup now rewrites that
+// factory entry directly to `maku` running `maku mcp` and says so.
+func TestSetupRewritesAFactoryEntryThatStillRunsRoomctl(t *testing.T) {
 	for _, tc := range []struct {
 		name, agent string
 		project     bool
 		file, body  string
-		fix         string // "" when the entry is maku's and the duplicate is fine
 	}{
-		{"claude, user scope", "claude", false, ".claude.json", `{"mcpServers":{"factory":{"command":"roomctl","args":["mcp"]}}}`,
-			"claude mcp remove --scope user factory"},
-		{"claude, an absolute roomctl", "claude", false, ".claude.json", `{"mcpServers":{"factory":{"command":"/usr/local/bin/roomctl","args":["mcp"]}}}`,
-			"claude mcp remove --scope user factory"},
-		{"gemini, project scope", "gemini", true, ".gemini/settings.json", `{"mcpServers":{"factory":{"command":"roomctl","args":["mcp"]}}}`,
-			"gemini mcp remove --scope project factory"},
-		{"codex", "codex", false, ".codex/config.toml", "[other]\ncommand = \"x\"\n\n[mcp_servers.factory]\ncommand = \"roomctl\"\nargs = [\"mcp\"]\n",
-			"codex mcp remove factory"},
-		{"opencode, a command array", "opencode", false, ".config/opencode/opencode.json", `{"mcp":{"servers":{"factory":{"type":"local","command":["roomctl","mcp"]}}}}`,
-			"delete the factory entry from"},
-		{"claude, already maku", "claude", false, ".claude.json", `{"mcpServers":{"factory":{"command":"maku","args":["mcp"]}}}`, ""},
+		{"claude, user scope", "claude", false, ".claude.json", `{"mcpServers":{"factory":{"command":"roomctl","args":["mcp"]}}}`},
+		{"claude, an absolute roomctl", "claude", false, ".claude.json", `{"mcpServers":{"factory":{"command":"/usr/local/bin/roomctl","args":["mcp"]}}}`},
+		{"gemini, project scope", "gemini", true, ".gemini/settings.json", `{"mcpServers":{"factory":{"command":"roomctl","args":["mcp"]}}}`},
+		{"codex", "codex", false, ".codex/config.toml", "[other]\ncommand = \"x\"\n\n[mcp_servers.factory]\ncommand = \"roomctl\"\nargs = [\"mcp\"]\n"},
+		{"opencode, a command array", "opencode", false, ".config/opencode/opencode.json", `{"mcp":{"servers":{"factory":{"type":"local","command":["roomctl","mcp"]}}}}`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			home, dir := t.TempDir(), t.TempDir()
@@ -48,30 +41,17 @@ func TestSetupFlagsAFactoryEntryThatStillRunsRoomctl(t *testing.T) {
 			}
 			var out bytes.Buffer
 			s := Setup{Agent: Agents[tc.agent], Project: tc.project, Home: home, Dir: dir, Cmd: "maku", Version: "v1", LookPath: found, Out: &out,
-				Run: func(_ context.Context, argv []string) error {
-					if argv[1] == "mcp" && argv[2] == "add" {
-						return errors.New("exit status 1: MCP server factory already exists")
-					}
-					return nil
-				},
+				Run:     func(context.Context, []string) error { return nil },
 				Capture: func(context.Context, []string) (string, error) { return "", errors.New("no service") }}
 			if err := s.Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
-			got := out.String()
-			if tc.fix == "" {
-				if !strings.Contains(got, "which is fine") || strings.Contains(got, "roomctl") {
-					t.Fatalf("a maku entry is fine:\n%s", got)
-				}
-				return
+			if legacyCommand(p) {
+				b, _ := os.ReadFile(p)
+				t.Fatalf("still has legacy roomctl factory entry:\n%s", b)
 			}
-			setup := "maku setup " + tc.agent
-			if tc.project {
-				setup += " --project"
-			}
-			if strings.Contains(got, "which is fine") || !strings.Contains(got, "still runs roomctl") ||
-				!strings.Contains(got, tc.fix) || !strings.Contains(got, setup) || !strings.Contains(got, p) {
-				t.Fatalf("want the stale entry (%s), %q and %q named:\n%s", p, tc.fix, setup, got)
+			if !strings.Contains(out.String(), "rewrote the factory MCP server entry") || !strings.Contains(out.String(), p) {
+				t.Fatalf("output did not report rewriting %s:\n%s", p, &out)
 			}
 		})
 	}

@@ -46,85 +46,61 @@ func refText(s string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// factoryIntakeText is the canonical intake loop (D6). The broker's planner remains the only
-// planner: the harness asks and edits, while intake_plan and plan_check validate every revision.
-// The guarded planner-off route is the pre-existing handoff exception, not another planning flow.
-func factoryIntakeText(what string) string {
-	return "Call `intake_plan` with the developer's own words, " + orElse(what, "the side task we just discussed") +
+// handoffText is the handoff loop (UX1, UX2): the broker's planner writes and holds the plan, the
+// model passes the developer's words and answers, and only the developer's answer to start's form
+// files the issue and starts the work.
+func handoffText(what string) string {
+	return "Call `" + mcpwire.Handoff + "` with the developer's own words, " + orElse(what, "the side task we just discussed") +
 		", and the context you have: the repository you are in and the paths you read. Show its text as it is. " +
-		"While gaps remain, ask only the first gap with its recommendation and why, and offer \"accept the rest\" at every question. " +
-		"For an answer, resolve only its clarification markers and append their matching D/A records (Decision/Assumption) in a candidate. " +
-		"Call `intake_plan` with the original request and the revision envelope `plan` (the base plan), `hash` (the base plan's hash), " +
-		"and `candidate`; show each revised plan as it is and repeat with its first gap. " + acceptRestInstructions +
-		" When no gaps remain, finish with `plan_check`, show the final draft and every assumption, then call `issue_file` with the returned " +
-		"plan and its new hash. It files the plan's first issue, so with a longer plan say the others are not filed. " +
-		"Only if `intake_plan` is not listed, the planner is off: write the issue in the template's three sections " +
-		"(`## What is wrong`, `## What it should be`, `## Acceptance check`), have `issue_draft` check it, then call " +
-		"`issue_file`, and say the broker planned nothing rather than passing a plan you wrote as the planner's. " +
+		"When it asks one question, ask the developer that question with its recommendation and why, and offer \"accept the rest\"; " +
+		"call `" + mcpwire.Handoff + "` with its id and their answer, or with acceptRest: true, and show each plan as it is. " +
+		"When the plan is ready, call `" + mcpwire.Start + "` with the id: its form is the developer's, and only their answer files " +
+		"the plan's first issue and starts the work, so with a longer plan say the others are not filed. " +
+		"Once the work started, run `" + mcpwire.Wait + "` on the task in a background task where the client can. " +
 		"Never write the plan yourself and never apply a label."
+}
+
+// taskText is the task prompt: one call for where a task stands, or, with none named, the first one
+// that needs the developer. A task is never claimed to exist before a tool has shown it.
+func taskText(ref string) string {
+	if ref != "" {
+		return "Call `" + mcpwire.Task + "` with task `" + ref + "` (as written: maku resolves #<issue>, PR #<n>, numbers and " +
+			"title fragments, and says when several tasks match; ask the developer then, never guess), and show its text as it is."
+	}
+	return "Call `" + mcpwire.Inbox + "`, take its first task, and call `" + mcpwire.Task + "` for it: show each text as it is, " +
+		"and never say a task exists before a tool has shown it. If nothing needs the developer, say so in one line."
 }
 
 // mcpPrompts are the prompts a human's maku is offered; a sponsored principal has none.
 var mcpPrompts = []mcpPrompt{
 	{
-		name: "factory_intake", description: "Plan a side task through clarification, then hand it to the agent factory.",
-		args: []promptArg{{"request", "the side task; default: the one just discussed"}},
-		text: func(a map[string]string) string { return factoryIntakeText(a["request"]) },
+		name: mcpwire.Handoff, description: "Hand a piece of work to Maku: a plan, its questions, then the start form.",
+		args: []promptArg{{"what", "the work; default: the one just discussed"}},
+		text: func(a map[string]string) string { return handoffText(a["what"]) },
 	},
 	{
-		name: "handoff", description: "Hand a side task to the agent factory as one issue (alias for factory_intake).",
-		args: []promptArg{{"what", "the side task; default: the one just discussed"}},
-		text: func(a map[string]string) string { return factoryIntakeText(a["what"]) },
+		name: mcpwire.Task, description: "Where one task stands, what it needs and what changed since you last asked.",
+		args: []promptArg{{"task", "a task id, #<issue>, PR #<n> or an issue number; default: the first task that needs you"}},
+		text: func(a map[string]string) string { return taskText(refText(a["task"])) },
 	},
 	{
-		name: "plan", description: "Plan a side task for the agent factory, without filing it.",
-		args: []promptArg{{"what", "the side task; default: the one just discussed"}},
-		text: func(a map[string]string) string {
-			return "Call `intake_plan` with the developer's own words, " + orElse(a["what"], "the side task we just discussed") +
-				", and the context you have: the repository you are in and the paths you read. " +
-				"Show its text and the hash it answered with, and stop there: filing is the developer's. " +
-				"Never write the plan yourself."
-		},
-	},
-	{
-		name: "status", description: "Show one room's card.",
-		args: []promptArg{{"room", "a room id, #<issue>, PR #<n> or an issue number; default: your most recently updated room"}},
-		text: func(a map[string]string) string {
-			if r := refText(a["room"]); r != "" {
-				return "Call `room_summary` with room `" + r + "` (as written: maku resolves #<issue>, PR #<n> and numbers, and says when several rooms match; ask the developer then, never guess), and show its text as it is."
-			}
-			return "Find the caller's most recently updated room (from `rooms_list`), call `room_summary` for it, and show its text as it is."
-		},
-	},
-	{
-		name: "resume", description: "Come back to a task: what it needs, the plan, what changed, and the one next step.",
-		args: []promptArg{{"room", "a room id, #<issue> or PR #<n>; default: the first room in your needs list"}},
-		text: func(a map[string]string) string { return resumeText(refText(a["room"])) },
-	},
-	{
-		name: "inbox", description: "Show what waits on you, from one needs_list call; when nothing does, point to rooms_list.",
+		name: mcpwire.Inbox, description: "What needs you across your tasks.",
 		text: func(map[string]string) string {
-			return "Call `needs_list`. Show its text as it is. If it is empty, say so in one line and name " +
-				"`rooms_list` with `mine` for the rest."
+			return "Call `" + mcpwire.Inbox + "`. Show its text as it is. If nothing needs you, say so in one line."
 		},
 	},
 }
 
-// resumeText is the resume prompt (CD11): one call to the needs list, then the brief of the room that needs
-// the developer, so a session starts from the brief rather than from a search of the logs. The brief decides
-// nothing — its one next step is a statement and a link — and a room is never claimed to exist before the
-// brief has shown it, which keeps a resume from inventing a room id the broker would refuse.
-func resumeText(room string) string {
-	if room != "" {
-		return "Call `room_brief` for room `" + room + "` (as written: maku resolves #<issue>, PR #<n> and numbers, " +
-			"and says when several rooms match; ask the developer then, never guess), and `needs_list` with `room` `" +
-			room + "` for what it waits on: show each tool's text as it is, name the brief's `Next:` line as the one " +
-			"next step, and never say a room exists before room_brief shows it."
-	}
-	return "Call `needs_list`, take its first item's room, and call `room_brief` for that room: show each tool's " +
-		"text as it is, name the brief's `Next:` line as the one next step and the item's action link with it, and " +
-		"never say a room exists before room_brief shows it. If the list is empty, say so in one line and name " +
-		"`rooms_list` with `mine`."
+// promptAlias is an old prompt name that still answers prompts/get in release N: the prompt it
+// stands for, and its old argument's name mapped to the new one.
+type promptAlias struct{ as, arg, asArg string }
+
+// promptAliases are the replaced prompts (UX1); none is listed, and release N+1 removes them.
+var promptAliases = map[string]promptAlias{
+	"factory_intake": {mcpwire.Handoff, "request", "what"},
+	"plan":           {mcpwire.Handoff, "what", "what"},
+	"status":         {mcpwire.Task, "room", "task"},
+	"resume":         {mcpwire.Task, "room", "task"},
 }
 
 // mcpPromptsList is prompts/list: a sponsored principal has no prompts, so its list is empty.
@@ -156,18 +132,29 @@ func mcpPromptsGet(w http.ResponseWriter, req mcpwire.Request, p authn.Principal
 		bad("prompts/get takes {name, arguments}")
 		return
 	}
-	i := slices.IndexFunc(mcpPrompts, func(pr mcpPrompt) bool { return pr.name == g.Name })
+	name, args := g.Name, g.Arguments
+	if al, ok := promptAliases[name]; ok {
+		name, args = al.as, map[string]string{}
+		for k, v := range g.Arguments {
+			if k != al.arg {
+				bad("unknown argument: " + k)
+				return
+			}
+			args[al.asArg] = v
+		}
+	}
+	i := slices.IndexFunc(mcpPrompts, func(pr mcpPrompt) bool { return pr.name == name })
 	if i < 0 || p.Sponsored {
 		bad("unknown prompt: " + g.Name)
 		return
 	}
 	pr := mcpPrompts[i]
-	for k := range g.Arguments {
+	for k := range args {
 		if !slices.ContainsFunc(pr.args, func(a promptArg) bool { return a.name == k }) {
 			bad("unknown argument: " + k)
 			return
 		}
 	}
 	mcpwire.Write(w, req.ID, map[string]any{"description": pr.description, "messages": []map[string]any{
-		{"role": "user", "content": map[string]string{"type": "text", "text": pr.text(g.Arguments)}}}}, nil)
+		{"role": "user", "content": map[string]string{"type": "text", "text": pr.text(args)}}}}, nil)
 }

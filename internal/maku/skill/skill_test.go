@@ -43,10 +43,10 @@ func frontMatter(t *testing.T, b []byte) map[string]any {
 	return m
 }
 
-func assertSpec(t *testing.T, fm map[string]any) {
+func assertSpec(t *testing.T, fm map[string]any, wantName string) {
 	t.Helper()
-	if fm["name"] != "factory-handoff" {
-		t.Errorf("name = %v, must equal the directory name", fm["name"])
+	if fm["name"] != wantName {
+		t.Errorf("name = %v, must equal the directory name %s", fm["name"], wantName)
 	}
 	d, _ := fm["description"].(string)
 	if d == "" || len(d) > 1024 {
@@ -62,19 +62,21 @@ func assertSpec(t *testing.T, fm map[string]any) {
 func TestInstallWritesTheSkill(t *testing.T) {
 	dir := t.TempDir()
 	got, err := Install(dir, "v0.8.0")
-	if err != nil || len(got) != 2 {
+	if err != nil || len(got) != 4 {
 		t.Fatalf("Install = %v, %v", got, err)
 	}
-	b, err := os.ReadFile(filepath.Join(dir, "factory-handoff", "SKILL.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(b), `maku-version: "v0.8.0"`) || strings.Contains(string(b), "{{VERSION}}") {
-		t.Errorf("version not stamped:\n%s", b)
-	}
-	tpl, err := os.ReadFile(filepath.Join(dir, "factory-handoff", "references", "issue-template.md"))
-	if err != nil || !strings.Contains(string(tpl), "Acceptance check") {
-		t.Errorf("template: %v", err)
+	for _, skillDir := range []string{"maku-handoff", "factory-handoff"} {
+		b, err := os.ReadFile(filepath.Join(dir, skillDir, "SKILL.md"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(b), `maku-version: "v0.8.0"`) || strings.Contains(string(b), "{{VERSION}}") {
+			t.Errorf("%s version not stamped:\n%s", skillDir, b)
+		}
+		tpl, err := os.ReadFile(filepath.Join(dir, skillDir, "references", "issue-template.md"))
+		if err != nil || !strings.Contains(string(tpl), "Acceptance check") {
+			t.Errorf("%s template: %v", skillDir, err)
+		}
 	}
 	if fi, _ := os.Stat(got[0]); fi.Mode().Perm() != 0o644 {
 		t.Errorf("mode = %v", fi.Mode().Perm())
@@ -86,38 +88,40 @@ func TestInstallWritesTheSkill(t *testing.T) {
 	if _, err := Install(dir, "v0.9.0"); err != nil {
 		t.Fatal(err)
 	}
-	if b, _ = os.ReadFile(got[0]); !strings.Contains(string(b), `"v0.9.0"`) {
+	if b, _ := os.ReadFile(got[0]); !strings.Contains(string(b), `"v0.9.0"`) {
 		t.Errorf("not overwritten:\n%s", b)
 	}
 }
 
 func TestFrontMatterMeetsTheAgentSkillsSpec(t *testing.T) {
-	b, err := files.ReadFile("factory-handoff/SKILL.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	fm := frontMatter(t, b)
-	assertSpec(t, fm)
-	// The installed file, version substituted, must stay valid YAML too.
 	got, err := Install(t.TempDir(), "v0.8.0")
 	if err != nil {
 		t.Fatal(err)
 	}
+	for _, skillDir := range []string{"maku-handoff", "factory-handoff"} {
+		b, err := files.ReadFile(skillDir + "/SKILL.md")
+		if err != nil {
+			t.Fatal(err)
+		}
+		fm := frontMatter(t, b)
+		assertSpec(t, fm, skillDir)
+		// Applying the label is the developer's decision (D1): no tool may do it.
+		tools, _ := fm["allowed-tools"].(string)
+		for _, bad := range []string{"gh issue edit", "label", "gh api"} {
+			if strings.Contains(tools, bad) {
+				t.Errorf("%s allowed-tools grants %q: %s", skillDir, bad, tools)
+			}
+		}
+	}
+	// The installed file, version substituted, must stay valid YAML too.
 	inst, err := os.ReadFile(got[0])
 	if err != nil {
 		t.Fatal(err)
 	}
 	ifm := frontMatter(t, inst)
-	assertSpec(t, ifm)
+	assertSpec(t, ifm, "maku-handoff")
 	if v := ifm["metadata"].(map[string]any)["maku-version"]; v != "v0.8.0" {
 		t.Errorf("maku-version = %v", v)
-	}
-	// Applying the label is the developer's decision (D1): no tool may do it.
-	tools, _ := fm["allowed-tools"].(string)
-	for _, bad := range []string{"gh issue edit", "label", "gh api"} {
-		if strings.Contains(tools, bad) {
-			t.Errorf("allowed-tools grants %q: %s", bad, tools)
-		}
 	}
 }
 

@@ -300,16 +300,20 @@ func explainRelay(err error) string {
 		return "not_logged_in: run maku login in a terminal; maku mcp reads the new token on the next call, with no restart"
 	case errors.As(err, &refused) && refused.Code == http.StatusNotFound:
 		return "mcp_off: the broker serves no /mcp; an operator turns on human.mcp.enabled"
-	case errors.As(err, &refused) && refused.Reason == mcpNeedsRoomctl:
-		return mcpNeedsRoomctl + ": the broker takes maku's own token only"
+	case errors.As(err, &refused) && (refused.Reason == mcpNeedsMaku || refused.Reason == mcpNeedsRoomctl):
+		return mcpNeedsMaku + ": the broker takes maku's own token only"
 	case errors.As(err, &refused):
 		return refused.Error()
 	}
 	return "unavailable: " + err.Error()
 }
 
-// mcpNeedsRoomctl is the broker's 403 for a token that is not maku's.
-const mcpNeedsRoomctl = "mcp_needs_roomctl"
+// mcpNeedsMaku is the broker's 403 for a token that is not maku's; mcpNeedsRoomctl is its
+// pre-rename spelling, accepted during release N.
+const (
+	mcpNeedsMaku    = "mcp_needs_maku"
+	mcpNeedsRoomctl = "mcp_needs_roomctl"
+)
 
 // forward posts raw to the broker's /mcp and returns the JSON-RPC answer: nil for a notification.
 func (r *Relay) forward(ctx context.Context, raw []byte) ([]byte, error) {
@@ -353,7 +357,7 @@ func (r *Relay) forward(ctx context.Context, raw []byte) ([]byte, error) {
 	}
 	why, _ := httpx.ReadBody(resp.Body, 1<<10)
 	ref := &Refusal{Op: "mcp", Code: resp.StatusCode}
-	if r := strings.TrimSpace(string(why)); r == userInactive || r == mcpNeedsRoomctl {
+	if r := strings.TrimSpace(string(why)); r == userInactive || r == mcpNeedsMaku || r == mcpNeedsRoomctl {
 		ref.Reason = r
 	}
 	return nil, ref

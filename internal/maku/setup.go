@@ -40,17 +40,17 @@ type Agent struct {
 }
 
 const (
-	mcpServersJSON = "{\n  \"mcpServers\": {\n    \"factory\": {\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n"
-	copilotJSON    = "{\n  \"mcpServers\": {\n    \"factory\": {\n      \"type\": \"local\",\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"],\n      \"tools\": [\"*\"]\n    }\n  }\n}\n"
-	cursorJSON     = "{\n  \"mcpServers\": {\n    \"factory\": {\n      \"type\": \"stdio\",\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n"
+	mcpServersJSON = "{\n  \"mcpServers\": {\n    \"maku\": {\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n"
+	copilotJSON    = "{\n  \"mcpServers\": {\n    \"maku\": {\n      \"type\": \"local\",\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"],\n      \"tools\": [\"*\"]\n    }\n  }\n}\n"
+	cursorJSON     = "{\n  \"mcpServers\": {\n    \"maku\": {\n      \"type\": \"stdio\",\n      \"command\": \"{CMD}\",\n      \"args\": [\"mcp\"]\n    }\n  }\n}\n"
 	// opencodeJSON is what opencode 2.0.22's own `mcp add` writes to ./opencode.json (observed):
 	// mcp.servers.<name>, not the mcp.<name> its docs show. The CLI is the authority for the version
 	// we target.
-	// timeout.execution (ms) outlives issue_file's form: OpenCode v2 otherwise cuts the tool (O10).
+	// timeout.execution (ms) outlives start's form: OpenCode v2 otherwise cuts the tool (O10).
 	// "codemode": false keeps the server's tools on the native list: OpenCode v2 otherwise exposes
 	// them through Code Mode, which an `execute` deny rule turns off, hiding the server.
-	opencodeJSON = "{\n  \"mcp\": {\n    \"servers\": {\n      \"factory\": {\n        \"type\": \"local\",\n        \"command\": [\"{CMD}\", \"mcp\"],\n        \"codemode\": false,\n        \"timeout\": {\"execution\": 900000}\n      }\n    }\n  }\n}\n"
-	codexTOML    = "[mcp_servers.factory]\ncommand = \"{CMD}\"\nargs = [\"mcp\"]\n"
+	opencodeJSON = "{\n  \"mcp\": {\n    \"servers\": {\n      \"maku\": {\n        \"type\": \"local\",\n        \"command\": [\"{CMD}\", \"mcp\"],\n        \"codemode\": false,\n        \"timeout\": {\"execution\": 900000}\n      }\n    }\n  }\n}\n"
+	codexTOML    = "[mcp_servers.maku]\ncommand = \"{CMD}\"\nargs = [\"mcp\"]\n"
 )
 
 // Agents is keyed by the maku setup argument. Sources, read at build time:
@@ -74,30 +74,30 @@ var Agents = map[string]Agent{
 	"claude": {Name: "claude",
 		Remove:        []string{"claude", "mcp", "remove", "--scope", "user", "factory"},
 		RemoveProject: []string{"claude", "mcp", "remove", "--scope", "project", "factory"},
-		Add:           []string{"claude", "mcp", "add", "--scope", "user", "factory", "--", "{CMD}", "mcp"},
-		AddProject:    []string{"claude", "mcp", "add", "--scope", "project", "factory", "--", "{CMD}", "mcp"},
+		Add:           []string{"claude", "mcp", "add", "--scope", "user", "maku", "--", "{CMD}", "mcp"},
+		AddProject:    []string{"claude", "mcp", "add", "--scope", "project", "maku", "--", "{CMD}", "mcp"},
 		Snippet:       mcpServersJSON, SnippetProject: mcpServersJSON,
 		SnippetPath: "~/.claude.json", SnippetProjectPath: ".mcp.json",
 		SkillDir: "~/.claude/skills", SkillProjectDir: ".claude/skills",
 		CommandDir: "~/.claude/commands", CommandProjectDir: ".claude/commands"},
 	"opencode": {Name: "opencode",
-		Add:        []string{"opencode", "mcp", "add", "--global", "factory", "--", "{CMD}", "mcp"},
-		AddProject: []string{"opencode", "mcp", "add", "factory", "--", "{CMD}", "mcp"},
+		Add:        []string{"opencode", "mcp", "add", "--global", "maku", "--", "{CMD}", "mcp"},
+		AddProject: []string{"opencode", "mcp", "add", "maku", "--", "{CMD}", "mcp"},
 		Snippet:    opencodeJSON, SnippetProject: opencodeJSON,
 		SnippetPath: "~/.config/opencode/opencode.json", SnippetProjectPath: "opencode.json",
 		SkillDir: "~/.agents/skills", SkillProjectDir: ".agents/skills",
 		CommandDir: "~/.config/opencode/commands", CommandProjectDir: ".opencode/commands"},
 	"codex": {Name: "codex",
 		Remove:  []string{"codex", "mcp", "remove", "factory"},
-		Add:     []string{"codex", "mcp", "add", "factory", "--", "{CMD}", "mcp"},
+		Add:     []string{"codex", "mcp", "add", "maku", "--", "{CMD}", "mcp"},
 		Snippet: codexTOML, SnippetProject: codexTOML,
 		SnippetPath: "~/.codex/config.toml", SnippetProjectPath: ".codex/config.toml",
 		SkillDir: "~/.agents/skills", SkillProjectDir: ".agents/skills"},
 	"gemini": {Name: "gemini",
 		Remove:        []string{"gemini", "mcp", "remove", "--scope", "user", "factory"},
 		RemoveProject: []string{"gemini", "mcp", "remove", "--scope", "project", "factory"},
-		Add:           []string{"gemini", "mcp", "add", "--scope", "user", "factory", "{CMD}", "mcp"},
-		AddProject:    []string{"gemini", "mcp", "add", "--scope", "project", "factory", "{CMD}", "mcp"},
+		Add:           []string{"gemini", "mcp", "add", "--scope", "user", "maku", "{CMD}", "mcp"},
+		AddProject:    []string{"gemini", "mcp", "add", "--scope", "project", "maku", "{CMD}", "mcp"},
 		Snippet:       mcpServersJSON, SnippetProject: mcpServersJSON,
 		SnippetPath: "~/.gemini/settings.json", SnippetProjectPath: ".gemini/settings.json",
 		SkillDir: "~/.gemini/skills", SkillProjectDir: ".gemini/skills",
@@ -169,17 +169,19 @@ func SetupCmd(lookPath func(string) (string, error), executable func() (string, 
 	return "maku"
 }
 
-// Setup is one `maku setup <agent>`: it registers `maku mcp` through the agent's own CLI when
-// that exists and edits no config file itself but the codemode flag of the OpenCode entry it just registered, else it prints the snippet. It installs the
-// skill, the one thing it writes. Print writes and runs nothing.
+// Setup is one `maku setup <agent>`: it registers `maku mcp` (or `maku mcp --advanced`) as `maku`
+// through the agent's own CLI when that exists, rewrites an older `factory` entry in the agent's
+// config to `maku`, sets the codemode flag on OpenCode's entry, else prints the snippet. Print
+// writes and runs nothing.
 type Setup struct {
-	Agent          Agent
-	Project, Print bool
-	Home, Dir      string // the home directory, and the repository
-	Cmd, Version   string
-	LookPath       func(string) (string, error)
-	Run            func(ctx context.Context, argv []string) error
-	Out            io.Writer
+	Agent             Agent
+	Advanced, Project bool
+	Print             bool
+	Home, Dir         string // the home directory, and the repository
+	Cmd, Version      string
+	LookPath          func(string) (string, error)
+	Run               func(ctx context.Context, argv []string) error
+	Out               io.Writer
 	// Capture runs argv and returns its output; nil skips the OpenCode service check.
 	Capture func(ctx context.Context, argv []string) (string, error)
 	// Ask puts a yes/no question to the developer; nil when there is no terminal.
@@ -209,12 +211,19 @@ func (s Setup) Do(ctx context.Context) error {
 	if s.Project {
 		argv, snippet, path = a.AddProject, a.SnippetProject, a.SnippetProjectPath
 	}
+	if s.Advanced {
+		snippet = strings.ReplaceAll(snippet, `["mcp"]`, `["mcp", "--advanced"]`)
+		snippet = strings.ReplaceAll(snippet, `["{CMD}", "mcp"]`, `["{CMD}", "mcp", "--advanced"]`)
+	}
 	snippet = strings.ReplaceAll(snippet, "{CMD}", quoted(s.Cmd))
 	argv = slices.Clone(argv)
 	for i, v := range argv {
 		if v == "{CMD}" {
 			argv[i] = s.Cmd
 		}
+	}
+	if len(argv) > 0 && s.Advanced {
+		argv = append(argv, "--advanced")
 	}
 	skillDir := a.skillDir(s.Project)
 	warn := s.warning(path)
@@ -229,7 +238,7 @@ func (s Setup) Do(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(s.Out, "installed the factory-handoff skill in %s (%d files)\n", s.resolve(skillDir), len(paths)); err != nil {
+	if _, err := fmt.Fprintf(s.Out, "installed the maku-handoff skill in %s (%d files)\n", s.resolve(skillDir), len(paths)); err != nil {
 		return err
 	}
 	if cd := a.commandDir(s.Project); cd != "" {
@@ -237,9 +246,13 @@ func (s Setup) Do(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if _, err := fmt.Fprintf(s.Out, "installed the /factory command in %s: /factory handoff, /factory status, /factory inbox\n", p); err != nil {
+		if _, err := fmt.Fprintf(s.Out, "installed the /maku command in %s: /maku handoff, /maku task, /maku inbox\n", p); err != nil {
 			return err
 		}
+	}
+	rewritten, err := s.rewriteFactory(s.resolve(path))
+	if err != nil {
+		return err
 	}
 	if len(argv) > 0 {
 		if _, err := s.LookPath(argv[0]); err != nil {
@@ -250,12 +263,12 @@ func (s Setup) Do(ctx context.Context) error {
 		}
 	}
 	if len(argv) > 0 {
-		line := "registered the factory MCP server: " + strings.Join(argv, " ")
+		line := "registered the maku MCP server: " + strings.Join(argv, " ")
 		if err := s.Run(ctx, argv); err != nil {
 			if !alreadyRegistered(err) {
 				return fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 			}
-			line = "the factory MCP server is already registered: " + strings.Join(argv, " ") + " refused a duplicate, which is fine"
+			line = "the maku MCP server is already registered: " + strings.Join(argv, " ") + " refused a duplicate, which is fine"
 			if p := s.resolve(path); legacyCommand(p) {
 				line = LegacyEntry{Agent: a, Project: s.Project, Path: p}.Fix()
 			}
@@ -269,11 +282,129 @@ func (s Setup) Do(ctx context.Context) error {
 		if err := s.opencodeService(ctx); err != nil {
 			return err
 		}
-	} else if err := s.printSnippet(snippet, path); err != nil {
-		return err
+	} else if !rewritten {
+		if err := s.printSnippet(snippet, path); err != nil {
+			return err
+		}
 	}
 	_, err = io.WriteString(s.Out, s.notes(warn))
 	return err
+}
+
+// rewriteFactory rewrites a legacy `factory` MCP server entry in resolvedPath to `maku` and prints
+// a note; when resolvedPath is absent, not plain JSON/TOML, or holds no `factory` entry, it leaves
+// the file untouched and reports false.
+func (s Setup) rewriteFactory(resolvedPath string) (bool, error) {
+	b, err := os.ReadFile(filepath.Clean(resolvedPath))
+	if err != nil {
+		return false, nil //nolint:nilerr // absent or unreadable config is left alone
+	}
+	if strings.HasSuffix(resolvedPath, ".toml") {
+		out, ok := s.rewriteFactoryTOML(string(b))
+		if !ok {
+			return false, nil
+		}
+		if err := os.WriteFile(resolvedPath, []byte(out), 0o644); err != nil { //nolint:gosec // a config the developer owns
+			return false, err
+		}
+		_, err := fmt.Fprintf(s.Out, "rewrote the factory MCP server entry in %s to maku\n", resolvedPath)
+		return true, err
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.UseNumber()
+	var cfg map[string]any
+	if err := dec.Decode(&cfg); err != nil {
+		return false, nil //nolint:nilerr // commented JSON is not ours to rewrite
+	}
+	servers := mapAt(cfg, "mcpServers")
+	if s.Agent.Name == "opencode" {
+		servers = mapAt(mapAt(cfg, "mcp"), "servers")
+	}
+	if servers == nil {
+		return false, nil
+	}
+	raw, hasFactory := servers["factory"]
+	if !hasFactory {
+		return false, nil
+	}
+	entry := map[string]any{}
+	if prev, ok := raw.(map[string]any); ok {
+		maps.Copy(entry, prev)
+	}
+	if s.Agent.Name == "opencode" {
+		cmd := []string{s.Cmd, "mcp"}
+		if s.Advanced {
+			cmd = append(cmd, "--advanced")
+		}
+		entry["type"] = "local"
+		entry["command"] = cmd
+		entry["codemode"] = false
+		if executionTimeout(entry) < opencodeExecutionTimeout {
+			t := map[string]any{}
+			if old, ok := entry["timeout"].(map[string]any); ok {
+				maps.Copy(t, old)
+			}
+			t["execution"] = opencodeExecutionTimeout
+			entry["timeout"] = t
+		}
+	} else {
+		args := []string{"mcp"}
+		if s.Advanced {
+			args = append(args, "--advanced")
+		}
+		entry["command"] = s.Cmd
+		entry["args"] = args
+	}
+	servers["maku"] = entry
+	delete(servers, "factory")
+	out, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return false, err
+	}
+	if err := os.WriteFile(resolvedPath, append(out, '\n'), 0o644); err != nil { //nolint:gosec // a config the developer owns
+		return false, err
+	}
+	_, err = fmt.Fprintf(s.Out, "rewrote the factory MCP server entry in %s to maku\n", resolvedPath)
+	return true, err
+}
+
+func (s Setup) rewriteFactoryTOML(doc string) (string, bool) {
+	lines := strings.Split(doc, "\n")
+	var kept []string
+	inFactory, hasFactory, hasMaku := false, false, false
+	for _, l := range lines {
+		trimmed := strings.TrimSpace(l)
+		if strings.HasPrefix(trimmed, "[") {
+			switch {
+			case trimmed == "[mcp_servers.factory]" || strings.HasPrefix(trimmed, "[mcp_servers.factory."):
+				inFactory, hasFactory = true, true
+				continue
+			case trimmed == "[mcp_servers.maku]":
+				inFactory, hasMaku = false, true
+			default:
+				inFactory = false
+			}
+		}
+		if !inFactory {
+			kept = append(kept, l)
+		}
+	}
+	if !hasFactory {
+		return "", false
+	}
+	out := strings.TrimRight(strings.Join(kept, "\n"), "\n")
+	if !hasMaku {
+		args := `["mcp"]`
+		if s.Advanced {
+			args = `["mcp", "--advanced"]`
+		}
+		block := fmt.Sprintf("[mcp_servers.maku]\ncommand = %q\nargs = %s\n", s.Cmd, args)
+		if out == "" {
+			return block, true
+		}
+		return out + "\n\n" + block, true
+	}
+	return out + "\n", true
 }
 
 // snippetPath is the resolved config file a setup edits or tells the developer about.
@@ -298,15 +429,15 @@ func executionTimeout(factory map[string]any) float64 {
 	return 0
 }
 
-// opencodeCodeMode sets "codemode": false on mcp.servers.factory of the config `opencode mcp add`
-// just wrote, keeping the rest of the file. It is the one config edit setup makes, and it refuses a
-// file that is not plain JSON (comments), telling the developer what to add instead.
+// opencodeCodeMode sets "codemode": false on mcp.servers.maku of the config `opencode mcp add`
+// just wrote, keeping the rest of the file. It refuses a file that is not plain JSON (comments),
+// telling the developer what to add instead.
 func (s Setup) opencodeCodeMode(path string) error {
 	if s.Agent.Name != "opencode" {
 		return nil
 	}
 	tell := func(why string) error {
-		_, err := fmt.Fprintf(s.Out, "%s: %s: add \"codemode\": false and \"timeout\": {\"execution\": 900000} to mcp.servers.factory yourself, or OpenCode's Code Mode (which an execute deny rule turns off) may hide the factory tools, and its tool timeout may cut issue_file's form\n", path, why)
+		_, err := fmt.Fprintf(s.Out, "%s: %s: add \"codemode\": false and \"timeout\": {\"execution\": 900000} to mcp.servers.maku yourself, or OpenCode's Code Mode (which an execute deny rule turns off) may hide Maku's tools, and its tool timeout may cut start's form\n", path, why)
 		return err
 	}
 	b, err := os.ReadFile(filepath.Clean(path))
@@ -320,24 +451,24 @@ func (s Setup) opencodeCodeMode(path string) error {
 		return tell("not plain JSON, left untouched")
 	}
 	servers := mapAt(mapAt(cfg, "mcp"), "servers")
-	factory, ok := servers["factory"].(map[string]any)
+	entry, ok := servers["maku"].(map[string]any)
 	if !ok {
-		return tell("no mcp.servers.factory")
+		return tell("no mcp.servers.maku")
 	}
 	changed := false
-	if factory["codemode"] != false {
-		factory["codemode"], changed = false, true
+	if entry["codemode"] != false {
+		entry["codemode"], changed = false, true
 	}
-	if executionTimeout(factory) < opencodeExecutionTimeout {
+	if executionTimeout(entry) < opencodeExecutionTimeout {
 		t := map[string]any{}
-		switch old := factory["timeout"].(type) {
+		switch old := entry["timeout"].(type) {
 		case map[string]any:
 			t = old
 		case json.Number: // a v1-style number: the catalog's
 			t["catalog"] = old
 		}
 		t["execution"], changed = opencodeExecutionTimeout, true
-		factory["timeout"] = t
+		entry["timeout"] = t
 	}
 	if !changed {
 		return nil
@@ -349,7 +480,7 @@ func (s Setup) opencodeCodeMode(path string) error {
 	if err := os.WriteFile(path, append(out, '\n'), 0o644); err != nil { //nolint:gosec // a config the developer owns
 		return err
 	}
-	_, err = fmt.Fprintf(s.Out, "set \"codemode\": false and timeout.execution %d on mcp.servers.factory in %s: its tools stay on OpenCode's native list, and issue_file's form can wait for you\n", opencodeExecutionTimeout, path)
+	_, err = fmt.Fprintf(s.Out, "set \"codemode\": false and timeout.execution %d on mcp.servers.maku in %s: its tools stay on OpenCode's native list, and start's form can wait for you\n", opencodeExecutionTimeout, path)
 	return err
 }
 
@@ -434,9 +565,9 @@ func (s Setup) print(argv []string, snippet, path, skillDir, warn string) error 
 	errs = append(errs, s.printSnippet(snippet, path))
 	extra := ""
 	if cd := s.Agent.commandDir(s.Project); cd != "" {
-		extra = fmt.Sprintf("and the /factory command (handoff, status, inbox) in %s\n", cd)
+		extra = fmt.Sprintf("and the /maku command (handoff, task, inbox) in %s\n", cd)
 	}
-	_, err := fmt.Fprintf(s.Out, "\nsetup installs the factory-handoff skill in %s\n%s%s", skillDir, extra, s.notes(warn))
+	_, err := fmt.Fprintf(s.Out, "\nsetup installs the maku-handoff skill in %s\n%s%s", skillDir, extra, s.notes(warn))
 	return errors.Join(append(errs, err)...)
 }
 

@@ -744,3 +744,17 @@ func TestRelayCheckoutToolIsDescribed(t *testing.T) {
 		}
 	}
 }
+
+func TestRelayAcceptsBothMCPNeedsReasons(t *testing.T) {
+	for _, reason := range []string{"mcp_needs_maku", "mcp_needs_roomctl"} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, reason, http.StatusForbidden)
+		}))
+		t.Cleanup(srv.Close)
+		r := &Relay{URL: srv.URL, HC: srv.Client(), Token: tok}
+		_, err := r.forward(t.Context(), []byte(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+		if got := explainRelay(err); !strings.Contains(got, "mcp_needs_maku: the broker takes maku's own token only") {
+			t.Errorf("%s: got %q", reason, got)
+		}
+	}
+}

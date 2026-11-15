@@ -229,11 +229,12 @@ func TestSameRegistrableDomain(t *testing.T) {
 func TestMakuSetupOpenCodeRestartsTheServiceOnTheFlag(t *testing.T) {
 	for flagOn, wantRestart := range map[bool]bool{true: true, false: false} {
 		var ran [][]string
-		out := &strings.Builder{}
-		r := Maku{Dir: t.TempDir(), Out: out, Err: &strings.Builder{}, Home: t.TempDir(), Cwd: t.TempDir(),
-			LookPath: func(string) (string, error) { return "/usr/bin/opencode", nil },
-			RunCmd:   func(_ context.Context, argv []string) error { ran = append(ran, argv); return nil },
-			Capture:  func(context.Context, []string) (string, error) { return "http://127.0.0.1:49374\n", nil }}
+		b := newLocalBroker(t)
+		r, out := configuredLocal(t, b)
+		out.Reset()
+		r.LookPath = func(string) (string, error) { return "/usr/bin/opencode", nil }
+		r.RunCmd = func(_ context.Context, argv []string) error { ran = append(ran, argv); return nil }
+		r.Capture = func(context.Context, []string) (string, error) { return "http://127.0.0.1:49374\n", nil }
 		args := []string{"setup", "opencode"}
 		if flagOn {
 			args = append(args, "--restart-service")
@@ -264,7 +265,7 @@ func newLocalBroker(t *testing.T) *localBroker {
 		b.auth = append(b.auth, r.Header.Get("Authorization"))
 		b.mu.Unlock()
 		switch r.URL.Path {
-		case "/.well-known/roomctl":
+		case "/.well-known/maku", "/.well-known/roomctl":
 			_, _ = w.Write([]byte(`{"url":"` + b.srv.URL + `","humanMode":"local"}`))
 		case "/api/rooms":
 			_, _ = w.Write([]byte(`[{"id":"3kq7x2ma","repository":"Smana/a","phase":"Active","owner":"human:local","lastSeq":42,"you":{"role":"admin"}}]`))

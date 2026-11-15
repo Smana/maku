@@ -1,12 +1,12 @@
 with opencode on the PATH, setup runs:
-  opencode mcp add factory -- maku mcp
+  opencode mcp add maku -- maku mcp
 
 otherwise: add this to opencode.json (maku setup never edits a config):
 
 {
   "mcp": {
     "servers": {
-      "factory": {
+      "maku": {
         "type": "local",
         "command": ["maku", "mcp"],
         "codemode": false,
@@ -16,5 +16,5 @@ otherwise: add this to opencode.json (maku setup never edits a config):
   }
 }
 
-setup installs the factory-handoff skill in .agents/skills
-and the /factory command (handoff, status, inbox) in .opencode/commands
+setup installs the maku-handoff skill in .agents/skills
+and the /maku command (handoff, task, inbox) in .opencode/commands
