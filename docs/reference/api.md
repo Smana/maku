@@ -47,7 +47,7 @@ builds a system authenticator that never authenticates, so the system routes ans
 than disappearing. It takes `mode: jwks` (the default, verifying against `issuer` and `jwksURL`) or
 `mode: tokenreview`, which asks the apiserver and needs no reachable issuer. `systemPrincipals`
 requires it: without an issuer no system caller could ever be vouched for, and the config is
-refused ([integration](../integration.md#the-brokers-configuration)).
+refused ([broker fields](config.md#broker-fields)).
 
 No call reaches Kubernetes' TokenReview unless an issuer says `mode: tokenreview`: every other token
 is validated offline and issuer-agnostically. A run
@@ -504,7 +504,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
 | `GET /.well-known/roomctl` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
 | `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](web-ui-settings.md#install-banner-unsafe-codes)) |
-| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](../integration.md#the-brokers-configuration), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/roomctl` leaves them out, since `maku configure` has no use for them |
+| `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](config.md#broker-fields), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/roomctl` leaves them out, since `maku configure` has no use for them |
 
 ### `GET /api/rooms/{id}/summary`
 
@@ -640,7 +640,7 @@ What needs the caller, across every room they may read: one list, one order. `ne
 derivation, and the room rows, the room summary, this route, `needs_list` and the web panel all read it,
 so no two surfaces can disagree. It is a human token's route, as every route but `POST /mcp`: a sponsored
 principal reads its own rooms' needs through `needs_list`, and is `401` here. Served unless
-`human.needs.enabled` is off ([the broker's configuration](../integration.md#the-brokers-configuration));
+`human.needs.enabled` is off ([the broker's configuration](config.md#broker-fields));
 off, it is a `404` and `needs_list` is not listed either.
 
 | Param | Holds |
@@ -1622,7 +1622,7 @@ cannot read whole within max(8 × `maxBytes`, 1 MiB) is not clipped but refused 
 `knowledge_bad_answer`, since it is not yet parsed. A redirect is never followed, every request after
 `initialize` names the protocol version, and a session the endpoint hands out is closed with
 `DELETE` at the end of the call. An event stream is read up to the call's answer, not to its end. Each call is counted in
-`maku_rooms_knowledge_calls_total{tool, outcome}`. See [the broker's configuration](../integration.md#the-brokers-configuration).
+`maku_rooms_knowledge_calls_total{tool, outcome}`. See [the broker's configuration](config.md#broker-fields).
 
 `roomTools.pushRepositories` lists the repositories `output_push` is served to: the broker's own
 gate, beside the run's safe-outputs annotation, so a claim alone never opens a push. It stays empty
