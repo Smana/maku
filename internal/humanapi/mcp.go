@@ -110,6 +110,7 @@ func (e toolError) Error() string { return string(e) }
 func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 	all := []mcpTool{
 		s.handoffToolEntry(),
+		s.taskToolEntry(),
 		{name: "rooms_list", call: s.roomsList,
 			description: "The factory rooms you can read, as a table to show as it is (text), and one row each as structuredContent: its state (queued, running, waiting_for_human, done, failed, stopped), " +
 				"phase, the task's issue, title, phase, reason and PR, what waits for you (needsYou) and its url. access says why the list may be short. " +
@@ -231,7 +232,7 @@ func (s *Server) mcpTools(p authn.Principal) []mcpTool {
 // the draft check, the planner's two doors and coordination_plan, the reads of its own tasks' rooms, and needs_list — the one
 // room-scoped read, which lists what the room has to act on with a link and no decision (CD28). The two
 // legacy room reads stay need-free.
-var sponsoredTools = []string{"handoff", "issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
+var sponsoredTools = []string{"handoff", "task", "issue_draft", "room_summary", "room_tail", mcpwire.RoomChanges, "needs_list", mcpwire.IntakePlan, mcpwire.PlanCheck,
 	mcpwire.CoordinationPlan, ClassesList, mcpwire.IntentClassify}
 
 // sponsoredPrincipal is the request's sponsored principal (R13), when the broker declares any and
