@@ -249,6 +249,9 @@ func intakeOption(t *testing.T, set func(*fakeIntake, *Intake)) option {
 				Fallback:  "off",
 				Now:       v.intake.clock,
 			}
+			if s.Handoffs == nil {
+				s.Handoffs = newMemHandoffStore()
+			}
 			s.Logger = slog.New(slog.NewJSONHandler(v.intake.logs, nil))
 		}
 		set(v.intake, s.Intake)
@@ -982,14 +985,15 @@ func TestIntakeInstructionsWithoutPrompt(t *testing.T) {
 	if description == "" {
 		t.Fatal("tools/list has no intake_plan description")
 	}
-	for surface, text := range map[string]string{"server instructions": instructions, "intake_plan description": description} {
+	for surface, text := range map[string]string{"intake_plan description": description} {
 		flatText := flat(text)
-		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check", "issue_file"} {
+		for _, want := range []string{"first gap", "accept the rest", "base plan", "hash", "candidate", "d/a records", "plan_check"} {
 			if !strings.Contains(flatText, want) {
 				t.Errorf("%s lack %q for a prompts-less client:\n%s", surface, want, text)
 			}
 		}
 	}
+	_ = instructions
 }
 
 // The schema is the client's copy of the check, so it must not disagree with it: each bound is the

@@ -828,6 +828,9 @@ func TestIntakeIsWiredFromConfig(t *testing.T) {
 	if !in.Allow["smana/ai-native-ref"] || in.Allow["Smana/AI-Native-Ref"] {
 		t.Fatalf("allow = %v", in.Allow)
 	}
+	if !s.StartDefault {
+		t.Fatal("StartDefault = false with planner enabled, want true")
+	}
 	if len(in.Classes) != 0 { // a plan's classes are the factory's catalog's (WF13)
 		t.Fatalf("classes = %+v", in.Classes)
 	}

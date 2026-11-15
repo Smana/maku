@@ -60,7 +60,6 @@ maku:
       needs: {enabled: true}
       mcp:
         enabled: true
-        sessionStart: []
         sponsored:
           - {name: slack-app, clientIDFile: /etc/room-broker/sponsored/slack-app-client-id}
       slackLink: {principal: slack-app, teamID: T07J97G2K2P, repository: Smana/ai-native-ref}

@@ -1,0 +1,738 @@
+// SPDX-License-Identifier: Apache-2.0
+
+package humanapi
+
+import (
+	"context"
+	"crypto/rand"
+	"encoding/base32"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/factory/sanitize"
+	"github.com/Smana/maku/internal/intake"
+	"github.com/Smana/maku/internal/mcpwire"
+	"github.com/Smana/maku/internal/roomview"
+	"github.com/Smana/maku/internal/store"
+)
+
+const (
+	handoffAPIVersion = "handoff/v1"
+	handoffTTL        = 24 * time.Hour
+	noPlannerLine     = "Planning is not available here; file on GitHub."
+	errHandoffExpired = toolError("handoff_expired: start a new handoff")
+)
+
+const handoffDescription = "Use when the developer wants Maku to do a piece of work. Returns a plan to show as it is and, when something is unclear, one question to ask."
+
+// HandoffStore stores and reads in-progress handoff plans on the broker.
+// *store.Store implements it.
+type HandoffStore interface {
+	PutHandoff(ctx context.Context, h store.Handoff) error
+	GetHandoff(ctx context.Context, id string, now time.Time) (store.Handoff, error)
+}
+
+type handoffArgs struct {
+	Text       string   `json:"text"`
+	ID         string   `json:"id"`
+	Answer     string   `json:"answer"`
+	AcceptRest bool     `json:"acceptRest"`
+	Repository string   `json:"repository"`
+	Context    string   `json:"context"`
+	Candidates []string `json:"candidates"`
+	Evidence   []string `json:"evidence"`
+	OnBehalfOf string   `json:"on_behalf_of"`
+	Ceiling    float64  `json:"ceiling"`
+}
+
+func (a handoffArgs) toIntakeArgs() intakeArgs {
+	return intakeArgs{
+		Text:       a.Text,
+		Repository: a.Repository,
+		Context:    a.Context,
+		Candidates: a.Candidates,
+		Evidence:   a.Evidence,
+		OnBehalfOf: a.OnBehalfOf,
+		Ceiling:    a.Ceiling,
+	}
+}
+
+func (a handoffArgs) check(p authn.Principal) error {
+	if a.ID == "" {
+		if a.Answer != "" || a.AcceptRest {
+			return toolError("invalid_arguments: answer and acceptRest require id")
+		}
+		return a.toIntakeArgs().check(p)
+	}
+	if len(a.ID) > 128 || strings.TrimSpace(a.ID) == "" {
+		return toolError("invalid_arguments: id is a handoff identifier")
+	}
+	if a.Text != "" || a.Repository != "" || a.Context != "" || len(a.Candidates) > 0 || len(a.Evidence) > 0 {
+		return toolError("invalid_arguments: a continuation takes id with answer or acceptRest")
+	}
+	hasAnswer := strings.TrimSpace(a.Answer) != ""
+	if hasAnswer == a.AcceptRest {
+		return toolError("invalid_arguments: pass either answer or acceptRest: true with id")
+	}
+	if len(a.Answer) > maxPlanText {
+		return toolError("invalid_arguments: answer is at most " + strconv.Itoa(maxPlanText>>10) + " KiB")
+	}
+	return claims(p, a.OnBehalfOf, a.Ceiling)
+}
+
+type handoffQuestion struct {
+	Text        string `json:"text"`
+	Recommended string `json:"recommended"`
+}
+
+type handoffResult struct {
+	APIVersion string           `json:"apiVersion"`
+	ID         string           `json:"id"`
+	Text       string           `json:"text"`
+	Question   *handoffQuestion `json:"question"`
+	Ready      bool             `json:"ready"`
+	Workflow   string           `json:"workflow"`
+	Budget     float64          `json:"budget"`
+}
+
+type handoffDraft struct {
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Repository string   `json:"repository"`
+	Workflows  []string `json:"workflows,omitempty"`
+}
+
+type handoffChecked struct {
+	planChecked
+	Workflows  []string `json:"workflows,omitempty"`
+	Title      string   `json:"title"`
+	Body       string   `json:"body"`
+	Repository string   `json:"repository"`
+}
+
+type handoffCheckArgs struct {
+	ID         string  `json:"id"`
+	Workflow   *string `json:"workflow,omitempty"`
+	OnBehalfOf string  `json:"on_behalf_of"`
+}
+
+var handoffSchema = json.RawMessage(`{"type":"object","additionalProperties":false,` +
+	`"properties":{"text":{"type":"string","minLength":1,"maxLength":16384},` +
+	`"id":{"type":"string","minLength":1,"maxLength":128},` +
+	`"answer":{"type":"string","minLength":1,"maxLength":16384},` +
+	`"acceptRest":{"type":"boolean"},` +
+	`"repository":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"},` +
+	`"context":{"type":"string","maxLength":4096},` +
+	`"candidates":{"type":"array","maxItems":20,"items":{"type":"string","pattern":"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$"}},` +
+	`"evidence":{"type":"array","maxItems":5,"items":{"type":"string","maxLength":280}},` +
+	`"on_behalf_of":{"type":"string","pattern":"^slack:T[A-Z0-9]{2,20}/[UW][A-Z0-9]{2,20}$"},` +
+	`"ceiling":{"type":"number","minimum":0}}}`)
+
+func (s *Server) handoffToolEntry() mcpTool {
+	return mcpTool{
+		name:        "handoff",
+		description: handoffDescription,
+		schema:      handoffSchema,
+		call:        s.handoffTool,
+	}
+}
+
+func (s *Server) handoffNow() time.Time {
+	if s.Intake != nil {
+		return s.Intake.now()
+	}
+	return s.now()
+}
+
+func newHandoffID() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", err
+	}
+	enc := base32.StdEncoding.WithPadding(base32.NoPadding).EncodeToString(raw[:])
+	return strings.ToLower(enc), nil
+}
+
+func (s *Server) handoffTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
+	var a handoffArgs
+	if mcpwire.DecodeArgs(args, &a) != nil {
+		return nil, toolError("invalid_arguments: pass {text} to begin, or {id, answer} / {id, acceptRest: true} to continue")
+	}
+	if err := a.check(p); err != nil {
+		return nil, err
+	}
+	if s.Intake == nil {
+		return nil, toolError(noPlannerLine)
+	}
+	if s.Handoffs == nil {
+		return nil, errors.New("humanapi: no handoff store wired")
+	}
+
+	now := s.handoffNow()
+	if a.ID == "" {
+		ia := a.toIntakeArgs()
+		plan, degraded, err := s.executeIntakePlan(ctx, p, ia, planRev)
+		if err != nil {
+			return nil, err
+		}
+		id, err := newHandoffID()
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saveHandoff(ctx, id, p.ID, ia, *plan, now, now.Add(handoffTTL)); err != nil {
+			return nil, err
+		}
+		return s.handoffAnswer(ctx, p, ia.OnBehalfOf, id, *plan, degraded)
+	}
+
+	surface := intake.SurfaceSession
+	if p.Sponsored {
+		surface = intake.SurfaceSlack
+	}
+	row, storedArgs, base, err := s.readHandoff(ctx, p, a.ID, a.OnBehalfOf, true, surface)
+	if err != nil {
+		return nil, err
+	}
+	if a.Ceiling > 0 {
+		storedArgs.Ceiling = a.Ceiling
+	}
+
+	if a.AcceptRest {
+		var cand *intake.Plan
+		if len(base.Gaps) > 0 {
+			accepted, err := acceptAllGaps(base)
+			if err != nil {
+				return nil, s.planCheckRefused(ctx, surface, err)
+			}
+			cand = &accepted
+		}
+		finalPlan, err := s.validateStoredPlan(ctx, p, storedArgs.OnBehalfOf, base, row.Hash, cand, false, surface)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, finalPlan, row.CreatedAt, now.Add(handoffTTL)); err != nil {
+			return nil, err
+		}
+		return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, finalPlan, false)
+	}
+
+	cleanAnswer := strings.Join(strings.Fields(a.Answer), " ")
+	if strings.Contains(cleanAnswer, "[NEEDS CLARIFICATION:") {
+		return nil, toolError("invalid_arguments: answer cannot contain a clarification marker")
+	}
+
+	if len(base.Gaps) > 0 {
+		cand, err := answerFirstGap(base, cleanAnswer)
+		if err != nil {
+			return nil, s.planCheckRefused(ctx, surface, err)
+		}
+		ia := storedArgs
+		ia.Plan = &base
+		ia.Hash = row.Hash
+		ia.Candidate = &cand
+		revisedPlan, degraded, err := s.executeIntakePlan(ctx, p, ia, cand.Rev)
+		if err != nil {
+			return nil, err
+		}
+		if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, *revisedPlan, row.CreatedAt, now.Add(handoffTTL)); err != nil {
+			return nil, err
+		}
+		return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, *revisedPlan, degraded)
+	}
+
+	storedArgs = appendHandoffContext(storedArgs, cleanAnswer)
+	replanned, degraded, err := s.executeIntakePlan(ctx, p, storedArgs, base.Rev+1)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, *replanned, row.CreatedAt, now.Add(handoffTTL)); err != nil {
+		return nil, err
+	}
+	return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, *replanned, degraded)
+}
+
+func appendHandoffContext(a intakeArgs, answer string) intakeArgs {
+	evLen := len(a.evidence())
+	budget := maxPlanContext - evLen
+	if budget <= 0 {
+		return a
+	}
+	line := "Reply: " + answer
+	next := line
+	if strings.TrimSpace(a.Context) != "" {
+		next = a.Context + "\n" + line
+	}
+	for len(next) > budget && strings.Contains(next, "\n") {
+		_, rest, _ := strings.Cut(next, "\n")
+		next = rest
+	}
+	if len(next) > budget {
+		cut := 0
+		for i := range next {
+			if i > budget {
+				break
+			}
+			cut = i
+		}
+		next = next[:cut]
+	}
+	a.Context = next
+	return a
+}
+
+// executeIntakePlan runs intakePlanTool's exact pipeline and extracts the resulting plan.
+func (s *Server) executeIntakePlan(ctx context.Context, p authn.Principal, a intakeArgs, initialRev int) (*intake.Plan, bool, error) {
+	raw, err := json.Marshal(a)
+	if err != nil {
+		return nil, false, err
+	}
+	out, err := s.intakePlanTool(ctx, p, raw)
+	if err != nil {
+		return nil, false, err
+	}
+	vr, ok := out.(viewResult)
+	if !ok {
+		return nil, false, errors.New("humanapi: unexpected intake_plan result")
+	}
+	pa, ok := vr.data.(planAnswer)
+	if !ok {
+		return nil, false, errors.New("humanapi: unexpected intake_plan data")
+	}
+	plan := pa.Plan
+	if a.Candidate == nil && initialRev > planRev {
+		plan.Rev = initialRev
+	}
+	return &plan, pa.Degraded, nil
+}
+
+func (s *Server) saveHandoff(ctx context.Context, id, principal string, a intakeArgs, plan intake.Plan, createdAt, expiresAt time.Time) error {
+	storedA := a
+	storedA.Plan = nil
+	storedA.Hash = ""
+	storedA.Candidate = nil
+	argsRaw, err := json.Marshal(storedA)
+	if err != nil {
+		return err
+	}
+	planRaw, err := plan.JSON()
+	if err != nil {
+		return err
+	}
+	return s.Handoffs.PutHandoff(ctx, store.Handoff{
+		ID:        id,
+		Principal: principal,
+		Args:      argsRaw,
+		Plan:      planRaw,
+		Hash:      plan.Hash,
+		CreatedAt: createdAt,
+		ExpiresAt: expiresAt,
+	})
+}
+
+func (s *Server) readHandoff(ctx context.Context, p authn.Principal, id, onBehalfOf string, matchAuthor bool, surface intake.Surface) (store.Handoff, intakeArgs, intake.Plan, error) {
+	row, err := s.Handoffs.GetHandoff(ctx, id, s.handoffNow())
+	if errors.Is(err, store.ErrNoHandoff) {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, errHandoffExpired
+	}
+	if err != nil {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, err
+	}
+	if row.Principal != p.ID {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, errHandoffExpired
+	}
+	var storedArgs intakeArgs
+	if err := json.Unmarshal(row.Args, &storedArgs); err != nil {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, err
+	}
+	if p.Sponsored && matchAuthor && storedArgs.OnBehalfOf != onBehalfOf {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, errHandoffExpired
+	}
+	var base intake.Plan
+	if err := mcpwire.DecodeArgs(row.Plan, &base); err != nil {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, err
+	}
+	if intake.Hash(base) != row.Hash {
+		return store.Handoff{}, intakeArgs{}, intake.Plan{}, s.planCheckRefused(ctx, surface, intake.ReasonRefusal(intake.ReasonPlanChanged))
+	}
+	base.Hash = row.Hash
+	return row, storedArgs, base, nil
+}
+
+func (s *Server) handoffWorkflowName(ctx context.Context, p authn.Principal, onBehalfOf string, plan intake.Plan) string {
+	if len(plan.Issues) > 0 && plan.Issues[0].Profile != "" {
+		return plan.Issues[0].Profile
+	}
+	if s.Catalogue != nil {
+		if cat, err := s.Catalogue.Get(ctx, p, plan.Repository, onBehalfOf); err == nil && cat.DefaultWorkflow != "" {
+			return cat.DefaultWorkflow
+		}
+	}
+	if len(plan.Issues) > 0 && plan.Issues[0].Suggestion != nil && plan.Issues[0].Suggestion.Profile != "" {
+		return plan.Issues[0].Suggestion.Profile
+	}
+	return "default"
+}
+
+func (s *Server) handoffAnswer(ctx context.Context, p authn.Principal, onBehalfOf, id string, plan intake.Plan, degraded bool) (viewResult, error) {
+	wf := s.handoffWorkflowName(ctx, p, onBehalfOf, plan)
+	text, err := renderHandoffPlan(plan, wf, degraded, s.handoffNow())
+	if err != nil {
+		return viewResult{}, err
+	}
+	var q *handoffQuestion
+	if len(plan.Gaps) > 0 {
+		plan = intake.WithGaps(plan, plan.Gaps)
+	}
+	if plan.Question != nil {
+		q = &handoffQuestion{
+			Text:        plan.Question.Text,
+			Recommended: plan.Question.Recommended.Answer,
+		}
+	}
+	res := handoffResult{
+		APIVersion: handoffAPIVersion,
+		ID:         id,
+		Text:       text,
+		Question:   q,
+		Ready:      q == nil && len(plan.Gaps) == 0,
+		Workflow:   wf,
+		Budget:     plan.Budget.CeilingUSD,
+	}
+	return viewResult{text: text, data: res}, nil
+}
+
+func renderHandoffPlan(plan intake.Plan, workflow string, degraded bool, now time.Time) (string, error) {
+	shown := plan
+	shown.Budget.Source = ""
+	shown.Issues = slices.Clone(plan.Issues)
+	for i := range shown.Issues {
+		shown.Issues[i].Class = ""
+		shown.Issues[i].Suggestion = nil
+	}
+	label := ""
+	if degraded {
+		label = intake.TemplateLabel
+	}
+	var b strings.Builder
+	if err := roomview.Plan(&b, shown, label, roomview.Options{Format: roomview.Markdown, Now: now}); err != nil {
+		return "", err
+	}
+	out := strings.Replace(b.String(), "\nCeiling ", "\nWorkflow "+workflow+"\nBudget up to ", 1)
+	return out, nil
+}
+
+func lastDecisionNumber(p intake.Plan) (int, error) {
+	last := 0
+	for _, is := range p.Issues {
+		recs, err := sanitize.DecisionRecords(is.Body)
+		if err != nil {
+			return 0, err
+		}
+		for _, r := range recs {
+			last = max(last, r.Number)
+		}
+	}
+	return last, nil
+}
+
+func appendDecisionLine(body, record string) string {
+	if !hasDecisionsHeading(body) {
+		switch {
+		case strings.HasSuffix(body, "\n\n"):
+			body += "## Decisions\n"
+		case strings.HasSuffix(body, "\n"):
+			body += "\n## Decisions\n"
+		default:
+			body += "\n\n## Decisions\n"
+		}
+	} else if !strings.HasSuffix(body, "\n") {
+		body += "\n"
+	}
+	return body + record
+}
+
+func hasDecisionsHeading(body string) bool {
+	for line := range strings.SplitSeq(body, "\n") {
+		if strings.TrimSpace(line) == "## Decisions" {
+			return true
+		}
+	}
+	return false
+}
+
+func clonePlanForEdit(p intake.Plan) intake.Plan {
+	out := p
+	out.Issues = slices.Clone(p.Issues)
+	for i := range out.Issues {
+		out.Issues[i].Roles = slices.Clone(p.Issues[i].Roles)
+		out.Issues[i].DependsOn = slices.Clone(p.Issues[i].DependsOn)
+	}
+	return out
+}
+
+func answerFirstGap(base intake.Plan, answer string) (intake.Plan, error) {
+	last, err := lastDecisionNumber(base)
+	if err != nil {
+		return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+	}
+	gap := base.Gaps[0]
+	cand := clonePlanForEdit(base)
+	cand.Rev = base.Rev + 1
+	resolved := false
+	for i := range cand.Issues {
+		markers, err := sanitize.ClarificationMarkers(cand.Issues[i].Body)
+		if err != nil {
+			return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+		}
+		for _, m := range markers {
+			if m.ID != gap.ID {
+				continue
+			}
+			body := cand.Issues[i].Body
+			body = body[:m.Start] + answer + body[m.End:]
+			body = appendDecisionLine(body, fmt.Sprintf("D%d [%s]: %s", last+1, gap.ID, answer))
+			cand.Issues[i].Body = body
+			resolved = true
+			break
+		}
+		if resolved {
+			break
+		}
+	}
+	if !resolved {
+		return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+	}
+	return cand, nil
+}
+
+func acceptAllGaps(base intake.Plan) (intake.Plan, error) {
+	last, err := lastDecisionNumber(base)
+	if err != nil {
+		return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+	}
+	gapsByID := make(map[string]intake.Gap, len(base.Gaps))
+	for _, g := range base.Gaps {
+		gapsByID[g.ID] = g
+	}
+	cand := clonePlanForEdit(base)
+	cand.Rev = base.Rev + 1
+	for i := range cand.Issues {
+		markers, err := sanitize.ClarificationMarkers(cand.Issues[i].Body)
+		if err != nil {
+			return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+		}
+		type pending struct {
+			marker sanitize.ClarificationMarker
+			answer string
+			record string
+		}
+		added := make([]pending, 0, len(markers))
+		for _, m := range markers {
+			g, ok := gapsByID[m.ID]
+			if !ok || strings.TrimSpace(g.Recommended.Answer) == "" {
+				return intake.Plan{}, intake.ReasonRefusal(intake.ReasonPlannerInvalid)
+			}
+			last++
+			text := "assumed " + g.Recommended.Answer
+			if strings.TrimSpace(g.Recommended.Why) != "" {
+				text += ", because " + g.Recommended.Why
+			}
+			added = append(added, pending{
+				marker: m,
+				answer: g.Recommended.Answer,
+				record: fmt.Sprintf("A%d [%s]: %s", last, m.ID, text),
+			})
+		}
+		body := cand.Issues[i].Body
+		for j := len(added) - 1; j >= 0; j-- {
+			m := added[j].marker
+			body = body[:m.Start] + added[j].answer + body[m.End:]
+		}
+		for _, a := range added {
+			body = appendDecisionLine(body, a.record)
+		}
+		cand.Issues[i].Body = body
+	}
+	return cand, nil
+}
+
+func (s *Server) validateStoredPlan(ctx context.Context, p authn.Principal, onBehalfOf string, base intake.Plan, baseHash string, candidate *intake.Plan, profileRev bool, surface intake.Surface) (intake.Plan, error) {
+	plan := base
+	plan.Hash = baseHash
+	if candidate != nil {
+		revised, err := intake.Revise(base, baseHash, *candidate, s.Intake.MaxRounds)
+		if err != nil {
+			return intake.Plan{}, s.planCheckRefused(ctx, surface, err)
+		}
+		plan = revised
+	}
+	_, candidates, ref := s.requester(ctx, p, intakeArgs{
+		Repository: plan.Repository, Candidates: alternativeRepos(plan), OnBehalfOf: onBehalfOf,
+	})
+	if ref != nil {
+		return intake.Plan{}, s.planCheckRefused(ctx, surface, ref)
+	}
+	classes := s.planClasses(ctx, p, onBehalfOf, plan.Repository)
+	if profileRev {
+		plan = intake.MaterialRoles(plan, classes)
+	}
+	if ref := intake.CheckFinal(plan, candidates, classes); ref != nil {
+		return intake.Plan{}, s.planCheckRefused(ctx, surface, ref)
+	}
+	if ref := s.checkPins(ctx, p, onBehalfOf, plan, surface); ref != nil {
+		return intake.Plan{}, s.planCheckRefused(ctx, surface, ref)
+	}
+	plan = intake.Resuggest(plan, classes)
+	plan = intake.RecordProfiles(plan)
+	if err := s.checkPlanDrafts(ctx, plan); err != nil {
+		return intake.Plan{}, s.planCheckRefused(ctx, surface, err)
+	}
+	return plan, nil
+}
+
+// handoffCheck validates a stored handoff plan (optionally pinning workflow) and returns the
+// checked plan and its first issue draft.
+func (s *Server) handoffCheck(ctx context.Context, p authn.Principal, id, workflow string) (planChecked, handoffDraft, error) {
+	var wf *string
+	if workflow != "" {
+		wf = &workflow
+	}
+	return s.handoffCheckFor(ctx, p, id, wf, "")
+}
+
+func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
+	var a handoffCheckArgs
+	if mcpwire.DecodeArgs(args, &a) != nil || strings.TrimSpace(a.ID) == "" || len(a.ID) > 128 {
+		return nil, toolError("invalid_arguments: id is required, and no field outside {id, workflow, on_behalf_of} is taken")
+	}
+	if err := claims(p, a.OnBehalfOf, 0); err != nil {
+		return nil, err
+	}
+	var (
+		checked planChecked
+		draft   handoffDraft
+		err     error
+	)
+	if a.OnBehalfOf == "" && (a.Workflow == nil || *a.Workflow != "") {
+		wf := ""
+		if a.Workflow != nil {
+			wf = *a.Workflow
+		}
+		checked, draft, err = s.handoffCheck(ctx, p, a.ID, wf)
+	} else {
+		checked, draft, err = s.handoffCheckFor(ctx, p, a.ID, a.Workflow, a.OnBehalfOf)
+	}
+	if err != nil {
+		return nil, err
+	}
+	wf := s.handoffWorkflowName(ctx, p, a.OnBehalfOf, checked.Plan)
+	text, err := renderHandoffPlan(checked.Plan, wf, false, s.handoffNow())
+	if err != nil {
+		return nil, err
+	}
+	return viewResult{
+		text: text,
+		data: handoffChecked{
+			planChecked: checked,
+			Workflows:   draft.Workflows,
+			Title:       draft.Title,
+			Body:        draft.Body,
+			Repository:  draft.Repository,
+		},
+	}, nil
+}
+
+func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id string, workflow *string, onBehalfOf string) (planChecked, handoffDraft, error) {
+	if s.Intake == nil {
+		return planChecked{}, handoffDraft{}, toolError(noPlannerLine)
+	}
+	if s.Handoffs == nil {
+		return planChecked{}, handoffDraft{}, errors.New("humanapi: no handoff store wired")
+	}
+	surface := intake.SurfaceSession
+	if p.Sponsored {
+		surface = intake.SurfaceSlack
+	}
+	row, storedArgs, base, err := s.readHandoff(ctx, p, id, onBehalfOf, false, surface)
+	if err != nil {
+		return planChecked{}, handoffDraft{}, err
+	}
+
+	var workflows []string
+	var maintainer *bool
+	defaultNotOffered := ""
+	if s.Catalogue != nil {
+		if cat, err := s.Catalogue.Get(ctx, p, base.Repository, onBehalfOf); err == nil {
+			m := cat.Maintainer
+			maintainer = &m
+			if cat.DefaultWorkflow != "" && !cat.Profiles[cat.DefaultWorkflow].Offered {
+				defaultNotOffered = cat.DefaultWorkflow
+			}
+			if cat.Maintainer {
+				offered := cat.Workflows()
+				if len(offered) > 0 {
+					if cat.DefaultWorkflow != "" && !slices.Contains(offered, cat.DefaultWorkflow) {
+						workflows = append([]string{cat.DefaultWorkflow}, offered...)
+					} else {
+						workflows = offered
+					}
+				}
+			}
+		}
+	}
+
+	var cand *intake.Plan
+	profileRev := false
+	if workflow != nil && len(base.Issues) > 0 {
+		want := *workflow
+		if want != "" && want == defaultNotOffered {
+			want = ""
+		}
+		if base.Issues[0].Profile != want {
+			edited := clonePlanForEdit(base)
+			for i := range edited.Issues {
+				edited.Issues[i].Profile = want
+			}
+			cand = &edited
+			profileRev = true
+		}
+	}
+
+	plan, err := s.validateStoredPlan(ctx, p, onBehalfOf, base, row.Hash, cand, profileRev, surface)
+	if err != nil {
+		return planChecked{}, handoffDraft{}, err
+	}
+	if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, plan, row.CreatedAt, row.ExpiresAt); err != nil {
+		return planChecked{}, handoffDraft{}, err
+	}
+
+	canStart, why := false, startSponsored
+	if !p.Sponsored {
+		canStart, why = s.canStart(ctx, p, plan.Repository)
+	}
+	checked := planChecked{
+		Plan:        plan,
+		Hash:        plan.Hash,
+		CanStart:    canStart,
+		CanStartWhy: why,
+		Maintainer:  maintainer,
+	}
+	if s.choices.first(plan.Hash) {
+		s.countChoices(ctx, plan, surface)
+	}
+	draft := handoffDraft{
+		Repository: plan.Repository,
+		Workflows:  workflows,
+	}
+	if len(plan.Issues) > 0 {
+		draft.Title = plan.Issues[0].Title
+		draft.Body = plan.Issues[0].Body
+	}
+	return checked, draft, nil
+}

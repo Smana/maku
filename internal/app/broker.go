@@ -142,6 +142,12 @@ func runRetention(ctx context.Context, log *slog.Logger, getenv func(string) str
 	if err != nil {
 		return fmt.Errorf("room-broker retention: %w", err)
 	}
+	// Stored handoff plans expire after 24 hours (UX2).
+	handoffs, err := st.PruneHandoffs(ctx, time.Now())
+	log.Info("pruned expired handoffs", "handoffs", handoffs)
+	if err != nil {
+		return fmt.Errorf("room-broker retention: %w", err)
+	}
 	return nil
 }
 
@@ -359,6 +365,7 @@ func serveBroker(ctx context.Context, log *slog.Logger, getenv func(string) stri
 		}
 	}
 	humans.Policy = policyWorkflow(cfg, st)
+	humans.Handoffs = st
 	if humans.Intake != nil {
 		// A sponsored plan resolves the Slack user to the account it is linked to, so the link tables
 		// are the planner's too (internal/humanapi/intake.go's requester).
@@ -473,6 +480,11 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 	for _, r := range h.MCP.SessionStart {
 		start[strings.ToLower(r)] = true
 	}
+	startDefault := h.StartDefault()
+	startExcept := make(map[string]bool, len(h.MCP.Start.Except))
+	for _, r := range h.MCP.Start.Except {
+		startExcept[strings.ToLower(r)] = true
+	}
 	mode := h.EffectiveMode()
 	webClient, roomctlClient := idFile(h.ClientIDFile), idFile(h.RoomctlClientIDFile)
 	// maku reads the project id under zitadel, the audience under generic (v4 D8).
@@ -519,7 +531,8 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
 		FactoryPrincipal: fconfig.PrincipalFactory,
 		Rooms:            rooms, Namespace: ns, Log: roomLog, Hub: hub, Runs: runs, Actor: actor, Metrics: m, UI: ui.FS, Logger: log,
-		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
+		MCP: h.MCP.Enabled, Needs: h.NeedsEnabled(), SessionStart: start, StartDefault: startDefault, StartExcept: startExcept,
+		Dashboards: dashboards, Unsafe: cfg.Install.Unsafe,
 		FactoryInstall: factoryInstall(cfg)}, nil
 }
 

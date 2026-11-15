@@ -1,0 +1,9 @@
+#412 docs: runbook 18 never says where the key lives        ai-native-ref
+State     waiting for a human
+Needs you nothing
+Budget    $0.31 of $1.50 (21 %)
+Merge     Waits for a human: it would auto-merge, and the merge gate is in shadow
+Since you last looked (12 min)
+  11:02  pull request #418 opened
+  11:04  review started
+Room      https://rooms.example/r/k3f7q2ab

@@ -56,11 +56,37 @@ const (
 	startUnverified = "unverified" // ZITADEL or GitHub could not answer
 )
 
-// canStart is true when repo is in human.mcp.sessionStart and the caller writes to it on GitHub,
+// startOffered reports whether the broker offers to start factory work on repo (UX3): false for a
+// repository in StartExcept; else true when StartDefault is true (on planner-served repositories
+// when a planner is configured) or the repository is in the deprecated SessionStart list.
+func (s *Server) startOffered(repo string) bool {
+	r := strings.ToLower(repo)
+	if r == "" || s.StartExcept[r] {
+		return false
+	}
+	if s.StartDefault && (s.Intake == nil || s.intakeAllows(r)) {
+		return true
+	}
+	return s.SessionStart[r]
+}
+
+func (s *Server) intakeAllows(repoLower string) bool {
+	if s.Intake.Allow[repoLower] {
+		return true
+	}
+	for k, on := range s.Intake.Allow {
+		if on && strings.ToLower(k) == repoLower {
+			return true
+		}
+	}
+	return false
+}
+
+// canStart is true when startOffered(repo) holds and the caller writes to repo on GitHub,
 // following gate's lookup with CanWrite for CanRead. A sponsored caller never starts a session. It
 // fails closed: an answer that cannot be had is false.
 func (s *Server) canStart(ctx context.Context, p authn.Principal, repo string) (bool, string) {
-	if p.Sponsored || !s.SessionStart[strings.ToLower(repo)] || s.Identity == nil || s.Access == nil {
+	if p.Sponsored || !s.startOffered(repo) || s.Identity == nil || s.Access == nil {
 		return false, startOff
 	}
 	ctx, cancel := context.WithTimeout(ctx, accessWait) // as the gate's lookup is: a hung one is unverified
