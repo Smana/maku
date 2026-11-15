@@ -43,6 +43,7 @@ var localHandlers = buildHandlers()
 
 func buildHandlers() map[string]localTool {
 	return map[string]localTool{
+		mcpwire.Start:    func(ctx context.Context, r *Relay, c localCall) any { return r.startTool(ctx, c.Args) },
 		issueFileTool:    func(ctx context.Context, r *Relay, c localCall) any { return r.issueFile(ctx, c.Args) },
 		needAnswerTool:   func(ctx context.Context, r *Relay, c localCall) any { return r.needAnswer(ctx, c.Args) },
 		toolRoomWait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
@@ -58,6 +59,7 @@ func buildHandlers() map[string]localTool {
 
 // localEntries are the local tools' tools/list entries, in the order they are appended.
 var localEntries = []any{
+	startEntry,
 	issueFileEntry,
 	needAnswerEntry,
 	roomWaitEntry,
