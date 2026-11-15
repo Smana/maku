@@ -21,6 +21,10 @@ func (notMaintainerCatalogue) Catalogue(context.Context, string, string, string)
 	return aiNativeRef(false), nil
 }
 
+func (notMaintainerCatalogue) Repositories(context.Context, string) ([]string, error) {
+	return []string{"Smana/ai-native-ref"}, nil
+}
+
 // pinned is the single-issue fixture in class, pinned to profile, with its hash renewed.
 func pinned(t *testing.T, class, profile string) intake.Plan {
 	t.Helper()

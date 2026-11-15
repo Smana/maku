@@ -31,7 +31,7 @@ The merge gate itself (the fixed base, the decision record, adopted classes, the
 ## Start here
 
 **A new `Repository` binds nothing.** Leave `spec.mergePolicies` unset on the `Repository`, and put
-only the ownership fence in `.github/agent-factory.yaml` (`factory: aws-0`). No `MergePolicy`
+only the ownership fence in `.github/agent-factory.yaml` (`factory: <name>`). No `MergePolicy`
 manifest and no `.policy.yml` rule is needed (`maku/merge-gate` is the gate status by default):
 
 1. Every served `Repository` automatically evaluates [the catalog](#the-catalog) (`docs-links`,

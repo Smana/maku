@@ -184,6 +184,8 @@ type Config struct {
 	Warnings []string `json:"-"`
 	// classSource is a cut-over repository's classes (SetClassSource).
 	classSource func(repository string) (map[string]Class, bool)
+	// privateRefused reports a private repository whose acknowledgement is absent (SetPrivateRefused).
+	privateRefused func(repository string) bool
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and

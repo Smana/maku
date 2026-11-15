@@ -95,6 +95,23 @@ func generations(cfg *config.Config, repository string, factory, repo int64) Gen
 	return g
 }
 
+// Repositories returns the served repositories — public ones and private ones whose acknowledgement
+// is set — sorted (WF12).
+func Repositories(cfg *config.Config) []string {
+	if cfg == nil {
+		return []string{}
+	}
+	out := make([]string, 0, len(cfg.Repos()))
+	for _, r := range cfg.Repos() {
+		if cfg.PrivateRefused(r.Name) {
+			continue
+		}
+		out = append(out, r.Name)
+	}
+	slices.Sort(out)
+	return out
+}
+
 // Profile is one workflow, with the roles its template runs.
 type Profile struct {
 	Template    string   `json:"template"`

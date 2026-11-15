@@ -215,6 +215,7 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
 	}
 	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
+	mux.HandleFunc(catalogueListRoute, s.catalogueRepositories)
 	mux.HandleFunc(catalogueRoute, s.catalogue)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)

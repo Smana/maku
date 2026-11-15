@@ -227,9 +227,9 @@ only to a caller who reads every child. The unfiltered view never leaves the bro
 
 ## TLS on :8443
 
-The bridge-to-broker hop serves TLS **on both clouds**. gcp-0's Cilium has no WireGuard to
-encrypt pod traffic, and one configuration for both clouds is simpler than two. The manifests live in
-cloud-native-ref.
+The bridge-to-broker hop serves TLS on every cluster, whatever the CNI encrypts: a cluster whose Cilium
+has no WireGuard (for example, the reference platform's GCP cluster) leaves pod traffic in clear, and
+one configuration for every cluster is simpler than two. The manifests live in your GitOps repository.
 
 | Piece | Setting |
 |---|---|
@@ -323,7 +323,7 @@ Every other anonymous request is then refused at authentication, before any bind
 
 ## Network
 
-These policies live in cloud-native-ref. Default deny everywhere; one allow per flow.
+These policies live in your GitOps repository. Default deny everywhere; one allow per flow.
 
 | Endpoint | Ingress | Egress |
 |---|---|---|
@@ -332,8 +332,8 @@ These policies live in cloud-native-ref. Default deny everywhere; one allow per 
 | CNPG `xplane-rooms` | The broker and the retention job on 5432; the Atlas and CNPG operators; `vmagent` on 9187 | DNS, the Kubernetes API, peers, the backup plugin, object storage |
 | Retention job | None | DNS; CNPG on 5432 |
 
-On gcp-0 the identity-provider rule is `toEntities: [all]` without ports: a port-scoped rule to the
-cluster's own gateway hairpins through the socket load balancer and is dropped.
+Where the identity provider sits behind the cluster's own gateway (for example, on the reference
+platform's GCP cluster), its rule is `toEntities: [all]` without ports: a port-scoped rule to that gateway hairpins through the socket load balancer and is dropped.
 
 ### The run path's network modes
 

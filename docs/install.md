@@ -224,8 +224,8 @@ does ([operations](operations.md#the-run-controllers-preflight)).
 A cold sandbox node costs a run 1.5 to 3.5 minutes at start: the image pull and the sandbox's own
 boot land on the run's clock, before its clone. A low-priority placeholder pod that keeps the run
 images on one node removes most of it for the price of one idle pod. The nodes are yours (v4 D18),
-so the chart ships none: cloud-native-ref schedules the placeholder on its own clusters, on a
-window (08:00-19:00 Europe/Paris on weekdays on aws-0), and the mechanism owns the `replicas`
+so the chart ships none: schedule the placeholder on a window yourself (for example, on the reference
+platform, 08:00-19:00 Europe/Paris on weekdays), and let the mechanism own the `replicas`
 field so Flux does not revert it.
 
 ## The support floor

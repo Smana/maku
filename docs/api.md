@@ -6,7 +6,7 @@ The broker serves four listeners. Every body is JSON.
 |---|---|---|
 | `:8443` (TLS) | The bridge (container `room-bridge`, an identity that keeps its pre-maku name, see [naming](naming.md#technical-names)) in each run pod; system callers such as the factory | Offline JWT: run tokens (audience `room-broker`) or system tokens (audience `rooms-system`) |
 | `:9090` | kubelet, `vmagent` | None: probes and metrics only |
-| `:8080` | Humans, through oauth2-proxy | ZITADEL ID token and access token |
+| `:8080` | Humans, through oauth2-proxy | ID token and access token from your identity provider |
 | `:8090` | Agents' `room_*` tools, through the `agent-router` Gateway only | Injected key plus the gateway's verified `x-ar-agent` |
 | `:8085` (bridge) | kubelet | None |
 
@@ -457,7 +457,7 @@ It also serves `GET /admission`, read by `maku-bridge gate` on loopback:
 ## `:8080` — human API
 
 Reached only through oauth2-proxy on `rooms.<private domain>`. Every request carries the human's
-ZITADEL **ID token** in `Authorization` and their **JWT access token** in `X-Forwarded-Access-Token`,
+**ID token** from your identity provider in `Authorization` and their **JWT access token** in `X-Forwarded-Access-Token`,
 both from oauth2-proxy.
 
 | Check | Rule |
@@ -465,12 +465,12 @@ both from oauth2-proxy.
 | ID token | Issuer is the identity provider, audience holds the `rooms-proxy` client id, not expired |
 | Access token | Same `sub`; issued for `rooms-proxy`. A web session requires it to differ from the ID token |
 | Groups | `agents-admin` or `agents-member`, else `403` |
-| User state | The ZITADEL user must be active, admins included: an inactive, locked, deleted or initial user is refused `401 user_inactive` on every route, and an open WebSocket closes `1008 user_inactive`. Read with the room-access reader, cached with its answers for at most 5 minutes; past that, a state ZITADEL cannot give fails closed (`503 access_unverified`). Counted in `maku_rooms_rejected_actions_total{reason="user_inactive"}` |
-| Room access | `agents-admin` sees every room. Anyone else sees a room only if GitHub lets the login linked to their ZITADEL user read the room's `repository`; a room with none is admins-only. A closed room, whose `Room` the factory deleted when its task ended, stays readable for its retention under the same check, on the repository its factory task facts name; it is not listed in `GET /api/rooms`, and its owner and members are gone with the `Room`. Answers are cached for at most 5 minutes; past that, a check ZITADEL or GitHub cannot answer fails closed. A room you may not see answers exactly like a missing one |
+| User state | The user must be active, admins included: an account whose GitHub link was not seen within its activity window ([GitHub account link](github-link.md#active-without-an-idp-admin-api)) is refused `401 user_inactive` on every route, and an open WebSocket closes `1008 user_inactive`. Cached with the access answers for at most 5 minutes; past that, a state the broker cannot read fails closed (`503 access_unverified`). Counted in `maku_rooms_rejected_actions_total{reason="user_inactive"}` |
+| Room access | `agents-admin` sees every room. Anyone else sees a room only if GitHub lets the GitHub login they linked ([GitHub account link](github-link.md)) read the room's `repository`; a room with none is admins-only. A closed room, whose `Room` the factory deleted when its task ended, stays readable for its retention under the same check, on the repository its factory task facts name; it is not listed in `GET /api/rooms`, and its owner and members are gone with the `Room`. Answers are cached for at most 5 minutes; past that, a check the link records or GitHub cannot answer fails closed. A room you may not see answers exactly like a missing one |
 | `Origin` | Must match the room host: no cross-site WebSocket |
 | Lifetime | A connection lasts `min(token expiry, 1 h)`, then closes for re-authentication |
 
-`maku` presents a bearer token from its own native ZITADEL client; oauth2-proxy lets it
+`maku` presents a bearer token from its own native client at your identity provider; oauth2-proxy lets it
 through with `skip-jwt-bearer-tokens`. Such a token can read, post, queue and fork, but the broker
 refuses `decide`, `message{steering}`, `interrupt` and every `driver_*` action from it. Its text is
 [machine-sent](#machine-sent-text).
@@ -480,7 +480,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | Method and path | Does |
 |---|---|
 | `GET /`, `GET /r/{id}`, `GET /assets/{file...}` | The embedded UI, under a strict Content Security Policy. `/assets/` serves nested files (`/assets/svg/…`, `/assets/fonts/…`); a directory, `/assets` or `/assets/` is a `404`, never a listing. A room's page keeps its newest 5 000 events; older ones leave the page, never the log. A `401` from the API, or one behind a refused WebSocket upgrade, sends the page to `/oauth2/start?rd=<the page>` |
-| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no GitHub link on their ZITADEL user), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
+| `GET /api/rooms` | One row per room the caller may read (room access, then their role): id, `url` (the room's page), phase, `state` (the [coarse state](#the-coarse-state)), owner, driver, data class, last `seq`, `lastEventAt` (when the log last moved; omitted when the room has no events or the time could not be read), `repository`, the task (`issue`, `title`, `task` phase, `pr`; absent when the room has none), `reason` (the task's wait code from its last facts, while its phase is `Queued`, `AwaitingCI`, `AwaitingHuman` or `Escalated`; absent otherwise or when it cannot be read), `needsYou` (how many things wait for the caller), `needsMe` (`needsYou` > 0: an approval is pending that the caller could decide in the web UI, or the factory's task is held on the room and the caller is its driver or owner — the summary's `kind: hold`, or a PR waits for the caller's merge — `kind: merge`, or an Escalated task waits for its issue's author and the caller owns the room — `kind: answer`; an approval past its deadline that the sweep has not decided yet counts for neither `needsYou` nor `need`, as the summary drops it), `need` (the first of those things, in the summary's order: the pending approval with the lowest id, then a hold, then a merge, then an answer; the same `kind`, `id`, `what`, `deadline?` and `url` as a `needsYou` item; absent when nothing waits for the caller), `status` (`{kind, icon, text}`: the room page's [status line](web-ui.md#the-room-list) for the caller, from the same `summary.StatusLine` and the same cases as the room page and `maku status`, fed from the row's own data: the run from the broker's run watch, a failed row's reason code from one store read for every failed row listed, and the approvals the caller may decide (an approver who prompted the turn under four-eyes may not) against those only others may; fixed phrases and numbers, never agent text; `kind` is one of `running`, `queued`, `waiting-you`, `waiting-other`, `waiting-pr`, `waiting`, `finished`, `done`, `failed`, `stopped`; absent when the state is one this broker does not know), and the caller's own role. A room whose access cannot be verified is left out, with no error. The `X-Rooms-Access` header says why a list may be short, about the caller only: `unlinked` (not an admin, and no [GitHub account link](github-link.md)), `unverified` (a check failed past the cache, or none is configured), else `ok`. Filters, applied after the access and role checks so none reveals an unreadable room: `?repo=owner/name`; `?mine=1`, rooms whose task's issue the caller filed or labelled or whose PR they authored or review, matched on their linked GitHub login; `?needs_me=1`, rows with `needsMe`. `?closed=1` lists the closed rooms instead, whose Room objects the factory deleted when their task ended: the rooms sealed in the last 30 days, the last closed first, at most 200, each one that `/r/<id>` would open for the caller (the same gate, so the same access and role checks), with `phase: Closed`, `closedAt` and the task from its last facts; `?repo` applies, `mine` and `needs_me` do not. `429 rate_limited` past the caller's read budget: 10/s, burst 20, per replica, shared with the summary and apart from acts |
 | `GET /api/rooms/{id}/summary` | The room's [`summary/v1`](#get-apiroomsidsummary): status, what needs the caller, what they can do, the agents' notes |
 | `GET /api/rooms/{id}/brief` | The room's resume brief: [`brief/v1`](#get-apiroomsidbrief), the text `room_brief` returns and the cursor to ask from next |
 | `GET /api/rooms/{id}/events` | A page of the room's log for the run view: [`events`](#get-apiroomsidevents) |
@@ -508,7 +508,7 @@ keeps only the notes after `seq` N; pass back the number of the previous answer'
 | `400` | `after` is not a non-negative integer |
 | `404` | No such room, or one the caller may not read: the same `no such room` |
 | `429` | `rate_limited`: over the caller's read budget (10/s, burst 20, per replica), shared with `GET /api/rooms` |
-| `503` | `access_unverified`: ZITADEL or GitHub cannot confirm the caller's access past the cache; or the rooms or the log are unavailable. Retry |
+| `503` | `access_unverified`: the broker cannot confirm the caller's access through their GitHub link past the cache; or the rooms or the log are unavailable. Retry |
 
 | Field | Holds |
 |---|---|
@@ -553,7 +553,7 @@ session reads what a person reads.
 | `400` | `since` is neither `seq:N` nor an RFC 3339 instant, or is in the future |
 | `404` | No such room, or one the caller may not read: the same `no such room` |
 | `429` | `rate_limited`: over the caller's read budget (10/s, burst 20, per replica), shared with `GET /api/rooms` |
-| `503` | `access_unverified`: ZITADEL or GitHub cannot confirm the caller's access past the cache; or the rooms or the log are unavailable. Retry |
+| `503` | `access_unverified`: the broker cannot confirm the caller's access through their GitHub link past the cache; or the rooms or the log are unavailable. Retry |
 
 ### `GET /api/rooms/{id}/events`
 
@@ -681,11 +681,11 @@ phase, no task) is `queued`. Each state maps onto one A2A task state, so a later
 
 | Status before upgrade | When |
 |---|---|
-| `401` | Not authenticated, or the token is already past its expiry; `user_inactive`: the ZITADEL user is no longer active |
+| `401` | Not authenticated, or the token is already past its expiry; `user_inactive`: the user is no longer active |
 | `403` | A foreign `Origin`; not in an agents group |
 | `404` | No such room, or one the caller may not read: the same `no such room` |
 | `429` | More than 10 connections for this person, or more than 20 people in this room (per replica) |
-| `503` | The log is unavailable; `access_unverified`: ZITADEL or GitHub cannot confirm the caller's access past the cache |
+| `503` | The log is unavailable; `access_unverified`: the broker cannot confirm the caller's access through their GitHub link past the cache |
 
 One JSON object per text frame.
 
@@ -713,8 +713,8 @@ live `seq` triggers a range read.
 | `1001` | `shutdown` | Reconnect: the replica is stopping |
 | `1013` | `log_unavailable` | Reconnect with `afterSeq` after a backoff |
 | `1008` | `no such room` | Stop: the caller may no longer read the room (room access, re-checked on every ping against the access cache, so within the TTL plus 30 s); a re-dial is refused `404` |
-| `1013` | `access_unverified` | Reconnect after a backoff: ZITADEL or GitHub could not confirm the caller's access past the cache |
-| `1008` | `user_inactive` | Stop: the caller's ZITADEL user is no longer active (re-checked on every ping, admins included, so within the TTL plus 30 s); a re-dial is refused `401` |
+| `1013` | `access_unverified` | Reconnect after a backoff: the broker could not confirm the caller's access through their GitHub link past the cache |
+| `1008` | `user_inactive` | Stop: the caller is no longer active (re-checked on every ping, admins included, so within the TTL plus 30 s); a re-dial is refused `401` |
 
 The broker pings every 30 s; a peer that does not answer within 10 s is disconnected without a
 close frame. So is a peer that does not take a frame within 10 s (`write_timeout`): reconnect with
@@ -783,7 +783,7 @@ token stays the prompter for four-eyes.
 An MCP server for a developer's local coding agent, through [`maku mcp`](cli.md#the-mcp-server):
 streamable HTTP on this listener (factory interfaces F2). It is off unless the broker's config sets
 `human.mcp.enabled` ([integration](integration.md)); off, `/mcp` is `404`. Every check of the table
-above applies first. Then it takes tokens from the CLI's ZITADEL client (formerly `roomctl`) only, so nothing here carries the
+above applies first. Then it takes tokens from the CLI's client (`human.roomctlClientIDFile`) only, so nothing here carries the
 web UI's standing: any other token is `403 mcp_needs_roomctl`, counted in
 `maku_rooms_rejected_actions_total`.
 
@@ -858,7 +858,7 @@ nothing was written"`; those choices, no form capability (`needs_confirmation`),
 prove whether the remote edit landed.
 
 No tool approves, steers or stops, and none labels or starts factory work by itself: only the developer's answer to `issue_file`'s form, which `maku` serves where `plan_check` (with a plan) or `issue_draft` (without one) says `canStart`, can apply `factory/ready` with the developer's own `gh`. The two write tools are acts through
-the CLI's ZITADEL client (formerly `roomctl`): the [actions](#actions)' rules, limits and rejections apply. Arguments are
+the CLI's client (`human.roomctlClientIDFile`): the [actions](#actions)' rules, limits and rejections apply. Arguments are
 strict: an unknown field is refused. Every string an agent wrote comes back under `untrusted: true`,
 as the summary's notes do. A refused call is a tool result with `isError: true` whose text starts
 with its reason: `invalid_arguments`, `invalid_draft`, `rejected: <the act's rejection>`, `no such
@@ -910,9 +910,11 @@ door re-validates before anything is filed. They are **off** unless the broker's
 `human.intake.plan.enabled`; off, both are unknown tools (`unknown tool: intake_plan`), as
 `run_create` is to a human token. `config.Load` refuses the switch unless it also has
 `human.mcp.enabled` (both tools exist on this listener alone), `human.access` (the write check the
-candidate set is drawn from), a non-empty `human.intake.plan.repositories` and a non-empty
-`human.intake.plan.classes` — each named by its own error, so the switch cannot land ahead of its
-parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
+candidate set is drawn from) and `factoryURL` (the factory's catalog, which supplies both the
+candidate repositories via [`GET /v1/catalogue`](#get-v1catalogue) and each repository's classes and
+workflows; `human.intake.plan.repositories` is optional and narrows the factory's list when set,
+logging a warning naming any entry the factory does not serve) — each named by its own error, so the
+switch cannot land ahead of its parts. The broker in turn refuses to start with `ROOMS_GITHUB_APP_DIR` unset (no repository's
 visibility can be read, so the guard would refuse every plan) or without an `Actor` redactor
 (`plan_check` scans a plan's text as `issue_draft` does).
 
@@ -1045,9 +1047,10 @@ the plan is confirmed; that, and filing, are not on `/mcp`.
 
 ### Sponsored principals on `/mcp`
 
-A sponsored principal (a ZITADEL machine user declared in the broker's `human.mcp.sponsored` and the
-factory's `api.sponsored`, [factory](factory.md#sponsored-principals)) reaches `/mcp` with its own
-client-credentials token, whose audience must hold the project (`human.projectIDFile`). Nothing
+A sponsored principal (a machine client at your identity provider, declared in the broker's
+`human.mcp.sponsored` and the factory's `api.sponsored`, [factory](factory.md#sponsored-principals))
+reaches `/mcp` with its own client-credentials token, whose audience must hold the install's
+audience (`human.audience` or `human.audienceFile`; [preset: ZITADEL](identity.md#the-presets): the project, `human.projectIDFile`). Nothing
 else serves it: every other route refuses it, and it never reaches `/v1/runs`. It sees six tools, plus
 `intent_classify` when `human.slackIntents` names it, and the planner's two when `human.intake.plan.enabled` is on: `run_create`, `issue_draft`, `room_summary`,
 `room_tail`, `room_changes`, `needs_list`, `intake_plan` and `plan_check`; `room_queue`, `room_fork` and
@@ -1179,7 +1182,7 @@ The answer is one key, always a closed code and never a sentence: `{"result": "a
 | `200` | `already_decided` | Someone, or this same click replayed, closed it first; nothing was appended |
 | `200` | `approval_expired` | The deadline had passed; the click closed it `expired` if it was still pending |
 | `200` | `not_linked` | The Slack user has no `slack_links` row, or the account has no GitHub identity |
-| `200` | `link_unverified` | ZITADEL or GitHub could not be asked; it fails closed, with no detail |
+| `200` | `link_unverified` | The link records or GitHub could not be asked; it fails closed, with no detail |
 | `200` | `not_permitted` | Not an approver or owner in this room, or the room is admins-only |
 | `200` | `repository_permission` | The resolved login cannot write the room's repository |
 | `200` | `four_eyes` | This human prompted the run (or the room), and the room sets four eyes |
@@ -1204,17 +1207,17 @@ beyond its ids: the body cannot name a human, a room or a class.
    `403`.
 2. **The workspace.** `team` must be `human.slackDecide.teamID`. Different: `not_permitted`, and the
    answer says nothing about which workspace it was.
-3. **The link.** `slack_links` says which ZITADEL account the Slack user is ([Slack self-serve
+3. **The link.** `slack_links` says which account the Slack user is ([Slack self-serve
    link](slack.md#self-serve-link)). None: `not_linked`.
 4. **The room.** The approval row names it, so a card cannot be pointed at another room's approval.
    No such approval: `not_found`. The room's state seals it: `sealed`.
 5. **The class.** `forge.push` only: `not_supported` for any other, before any GitHub call.
 6. **Room standing.** The Room CR alone decides it: its `spec.owner`, a `spec.members` role or the
-   `approver` flag. The broker holds no token for the linked human, so no ZITADEL group grant is
-   read: an `agents-admin` who is neither the room's owner nor one of its approvers is
+   `approver` flag. The broker holds no token for the linked human, so no group grant from the
+   identity provider is read: an `agents-admin` who is neither the room's owner nor one of its approvers is
    `not_permitted` here, and decides on the room page.
-7. **The account.** The current GitHub login of that ZITADEL account: no GitHub link is
-   `not_linked`, and a ZITADEL or GitHub read that fails is `link_unverified`.
+7. **The account.** The current GitHub login of that account: no GitHub link is
+   `not_linked`, and a link or GitHub read that fails is `link_unverified`.
 8. **Repository write.** `repository_permission` when the login cannot write the room's repository,
    which is the second standing a maintainer outside the room does not have.
 9. **The binding.** The approval recorded its run's branch when it was requested, and the run is
@@ -1248,7 +1251,7 @@ limits: [sponsored principals](factory.md#sponsored-principals).
 | `200` | `{task, room, issue, duplicate: true}` |
 | `400` | `bad_json`, `idempotency_key_required`, `bad_data_class`, `bad_ref`, `max_cost_required`, `max_cost_over_principal`, `max_cost_over_class`, `invalid_draft`, `bad_text` |
 | `401`, `403` | `unauthenticated`; `not_permitted`, `sponsored_only`, `repository_not_allowed`, `not_linked`, `not_a_maintainer` |
-| `503` (link) | `link_unverified`: a [self-serve link](factory.md#sponsored-principals) the broker or ZITADEL could not answer for; retry |
+| `503` (link) | `link_unverified`: a [self-serve link](factory.md#sponsored-principals) the broker or GitHub could not answer for; retry |
 | `409`, `429` | `repository_not_owned`, `idempotency_conflict`; `daily_task_cap` (the factory's `caps.tasksPerDay` is spent for this UTC day, counted as the reconciler counts it: refused before any Task or issue exists), `principal_task_cap`, `principal_budget_exhausted` (advisory: the hard limit is the run-time reservation) |
 | `503` | `kill_switch`, `meter_unpriced`, `tasks_unavailable`, `ledger_unavailable`, `intake_failed` |
 
@@ -1317,6 +1320,21 @@ decision timeline from the factory's own comments, for a reader. `GET /v1/policy
 of (`404 not_found` otherwise, alike), each cut to those consumers. For a repository served from its
 `Repository`'s bindings, the evidence report adds `repositoryObject`, `repositoryManifest`,
 `repositoryManifestPath`, `repositoryStatus` and `bindings`.
+
+### `GET /v1/catalogue`
+
+The names of the repositories this factory serves — public ones and private ones whose
+`privateCode.acknowledged` is set — sorted (`Cache-Control: no-store`, WF12):
+
+```json
+{"repositories": ["acme/a", "acme/b"]}
+```
+
+Mounted whenever the API is, with the same caller rules as [`GET /v1/catalogue/{owner}/{name}`](#get-v1catalogueownername):
+a human with the member role receives the factory's served list, a declared sponsored principal
+receives the subset in its `repositories` list, and an internal principal or machine token is
+`403 human_only`. The broker caches each caller's answer for 60 seconds and refuses planning with
+`catalogue_unavailable` when no fresh answer can be read.
 
 ### `GET /v1/catalogue/{owner}/{name}`
 

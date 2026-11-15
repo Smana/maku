@@ -25,3 +25,13 @@ func (f Factory) Catalogue(ctx context.Context, accessToken, repository, onBehal
 	err := f.call(ctx, http.MethodGet, accessToken, path, http.NoBody, &out)
 	return out, err
 }
+
+// Repositories is GET /v1/catalogue with the caller's own token: the names of the repositories the
+// factory serves (WF12).
+func (f Factory) Repositories(ctx context.Context, accessToken string) ([]string, error) {
+	var out struct {
+		Repositories []string `json:"repositories"`
+	}
+	err := f.call(ctx, http.MethodGet, accessToken, "/v1/catalogue", http.NoBody, &out)
+	return out.Repositories, err
+}

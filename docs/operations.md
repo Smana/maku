@@ -1,7 +1,8 @@
 # Operations
 
 Operate rooms through three windows: the **`Room` CR's status** (`kubectl get room -n agent-system`),
-the broker's **metrics and alerts**, and **SQL on the log**. The manifests live in cloud-native-ref.
+the broker's **metrics and alerts**, and **SQL on the log**. The manifests live in your GitOps
+repository; [ai-native-ref](https://github.com/Smana/ai-native-ref) is one example.
 The factory's signals are [at the end](#the-factory).
 
 ## Health at a glance
@@ -215,7 +216,7 @@ the harnesses still hold.
 | A room run's pod waits in `ContainerCreating` | The `room-broker-ca` Secret is not in `agents`: the bridge mounts it, and the mount is not optional | `kubectl describe pod -n agents <pod>` names the missing Secret; `kubectl get externalsecret -n agents room-broker-ca` |
 | Bridge refuses to start: URL not `https://`, or no CA in the file | The composition is older than the bridge's TLS requirement | Pin a composition package that mounts `room-broker-ca` and sets `BROKER_CA_FILE` |
 | Bridge logs `x509: certificate signed by unknown authority` | The CA it trusts is not the one that signed the broker's certificate | Compare `room-broker-ca` with the `openbao` issuer's CA |
-| JWKS or identity-provider calls time out on gcp-0 only | A port-scoped egress rule to the cluster's own gateway is dropped by the socket-LB hairpin | Keep the `toEntities: [all]` rule without ports |
+| JWKS or identity-provider calls time out on one cluster only | A port-scoped egress rule to the cluster's own gateway is dropped by the socket-LB hairpin | Keep the `toEntities: [all]` rule without ports |
 | A run ends `agent_error`; the harness log has `agent-run error: LLMServiceUnavailableError` | The model path failed three times in about 30 s: a provider or gateway outage, not one blip | The harness's `agent-run model retry` lines show the attempts. Retry policy: [harness README](../images/maku-harness/README.md#model-errors). A `429` is never retried: check the run's budget first |
 | A run ends `model_unavailable_billing` (or `_auth`, `_quota`); the room has a `harness_error` with `Insufficient balance` | The model provider refused the run: an empty wallet, a rejected key or a spent quota. The task is held in `Queued` and retried with a backoff, and escalates after six refusals in a row | Recharge the provider account or rotate the key, then the held task runs by itself, or `/factory retry` an escalated one |
 | A run ends `pod_lost` | The pod died before the harness finished and before its deadline | Expected for evictions; `deadline` means it hit `maxMinutes` |

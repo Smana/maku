@@ -6,6 +6,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log/slog"
 	"regexp"
 	"slices"
 	"strconv"
@@ -103,7 +105,27 @@ type Intake struct {
 	// Now is the clock the daily cap and the plan's composition read; nil means time.Now.
 	Now func() time.Time
 
-	limits dailyLimits
+	limits   dailyLimits
+	unserved unservedWarnings
+}
+
+type unservedWarnings struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+func (in *Intake) warnUnserved(log *slog.Logger, repository string) {
+	key := strings.ToLower(strings.TrimSpace(repository))
+	in.unserved.mu.Lock()
+	if in.unserved.seen == nil {
+		in.unserved.seen = map[string]bool{}
+	}
+	already := in.unserved.seen[key]
+	in.unserved.seen[key] = true
+	in.unserved.mu.Unlock()
+	if !already {
+		log.Warn("human.intake.plan.repositories names a repository the factory does not serve", "repository", repository)
+	}
 }
 
 // dailyLimits is the per-requester daily cap (CD18): how many plans each effective requester asked
@@ -335,7 +357,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	// A request that names a repository is planned for that repository or refused, before a daily
 	// slot or a model call is spent: the planner never picks a different one (#469). The reply that
 	// re-plans carries its words in the context, so it is read the same way.
-	candidates, ref = intake.CheckNamed(a.Text+"\n"+a.Context, s.knownRepositories(a, candidates), candidates)
+	candidates, ref = intake.CheckNamed(a.Text+"\n"+a.Context, s.knownRepositories(ctx, p, a, candidates), candidates)
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
@@ -643,7 +665,11 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 		sub, req.Key = linked, "slack:"+team+"/"+user
 	}
 
-	probe := s.probe(a)
+	served, err := s.planRepositories(ctx, p)
+	if err != nil {
+		return req, nil, (&intake.ProfileRefusal{Code: intake.CatalogueUnavailable}).Refusal()
+	}
+	probe := s.probe(a, served)
 	if len(probe) == 0 {
 		// Nothing is served: the honest reason is that, not that the caller is unlinked.
 		return req, nil, intake.ReasonRefusal(intake.ReasonRepositoryNotAllowed)
@@ -657,7 +683,7 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 	}
 	req.Login = login
 
-	candidates, ref := s.intakeGuard(login).Candidates(ctx, a.asked())
+	candidates, ref := s.intakeGuard(login, allowMap(served)).Candidates(ctx, a.asked())
 	if ref != nil {
 		return req, nil, ref
 	}
@@ -666,9 +692,12 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 
 // knownRepositories is every repository the broker can tell a request names: the allowlist, the
 // ones the request listed and the candidates.
-func (s *Server) knownRepositories(a intakeArgs, candidates []string) []string {
+func (s *Server) knownRepositories(ctx context.Context, p authn.Principal, a intakeArgs, candidates []string) []string {
 	known := slices.Clone(candidates)
 	known = append(known, a.asked()...)
+	if served, err := s.planRepositories(ctx, p); err == nil {
+		known = append(known, served...)
+	}
 	for repository, on := range s.Intake.Allow {
 		if on {
 			known = append(known, repository)
@@ -710,19 +739,88 @@ func (s *Server) intakeLogin(ctx context.Context, sub string, repos []string) (s
 }
 
 // probe is the repositories the caller's login is resolved through: the ones the request named, else
-// the allowlist in its one order (sorted: a map has none, and two replicas must agree).
-func (s *Server) probe(a intakeArgs) []string {
+// the served allowlist in its one order (sorted: two replicas must agree).
+func (s *Server) probe(a intakeArgs, served []string) []string {
 	if asked := a.asked(); len(asked) > 0 {
 		return asked
 	}
-	served := make([]string, 0, len(s.Intake.Allow))
+	return served
+}
+
+// planRepositories is the sorted list of repositories the planner serves for p (WF12): the factory's
+// served list when human.intake.plan.repositories is unset, or its intersection with Allow when set
+// (logging a warning naming any Allow entry the factory does not serve).
+func (s *Server) planRepositories(ctx context.Context, p authn.Principal) ([]string, error) {
+	if s.Catalogue == nil {
+		if len(s.Intake.Allow) > 0 {
+			out := make([]string, 0, len(s.Intake.Allow))
+			seen := make(map[string]bool, len(s.Intake.Allow))
+			for repository, on := range s.Intake.Allow {
+				key := strings.ToLower(strings.TrimSpace(repository))
+				if on && key != "" && !seen[key] {
+					seen[key] = true
+					out = append(out, key)
+				}
+			}
+			slices.Sort(out)
+			return out, nil
+		}
+		return nil, errCatalogueUnavailable
+	}
+	served, err := s.Catalogue.Repositories(ctx, p)
+	if err != nil {
+		if !errors.Is(err, errCatalogueUnavailable) {
+			err = fmt.Errorf("%w: %w", errCatalogueUnavailable, err)
+		}
+		return nil, err
+	}
+	servedSet := make(map[string]bool, len(served))
+	fromFactory := make([]string, 0, len(served))
+	for _, repository := range served {
+		key := strings.ToLower(strings.TrimSpace(repository))
+		if key == "" || servedSet[key] {
+			continue
+		}
+		servedSet[key] = true
+		fromFactory = append(fromFactory, key)
+	}
+	slices.Sort(fromFactory)
+	if len(s.Intake.Allow) == 0 {
+		return fromFactory, nil
+	}
+	narrow := make(map[string]string, len(s.Intake.Allow))
 	for repository, on := range s.Intake.Allow {
 		if on {
-			served = append(served, repository)
+			if key := strings.ToLower(strings.TrimSpace(repository)); key != "" {
+				narrow[key] = repository
+			}
 		}
 	}
-	slices.Sort(served)
-	return served
+	narrowKeys := make([]string, 0, len(narrow))
+	for key := range narrow {
+		narrowKeys = append(narrowKeys, key)
+	}
+	slices.Sort(narrowKeys)
+	for _, key := range narrowKeys {
+		if !servedSet[key] {
+			s.Intake.warnUnserved(s.log(), narrow[key])
+		}
+	}
+	out := make([]string, 0, len(fromFactory))
+	for _, key := range fromFactory {
+		if _, ok := narrow[key]; ok {
+			out = append(out, key)
+		}
+	}
+	return out, nil
+}
+
+func allowMap(repos []string) map[string]bool {
+	out := make(map[string]bool, len(repos))
+	for _, r := range repos {
+		out[r] = true
+	}
+	return out
 }
 
 // intakeGuard is the guard for one effective requester: the allowlist, the public-only read, and the
@@ -730,8 +828,8 @@ func (s *Server) probe(a intakeArgs) []string {
 // repoaccess.Checker), so an intake plan and an issue_draft cannot disagree about who may file. A
 // broker with no write check wired verifies nothing, and the guard then refuses rather than planning
 // on the assumption.
-func (s *Server) intakeGuard(login string) intake.Guard {
-	return intake.Guard{Allow: s.Intake.Allow, Public: s.Intake.Public,
+func (s *Server) intakeGuard(login string, allow map[string]bool) intake.Guard {
+	return intake.Guard{Allow: allow, Public: s.Intake.Public,
 		MayWrite: func(ctx context.Context, repository string) (bool, error) {
 			if s.Access == nil || login == "" {
 				return false, errors.New("humanapi: no GitHub write check is wired")
@@ -813,7 +911,7 @@ func (s *Server) finishPlan(ctx context.Context, run planRun, plan *intake.Plan,
 	s.log().Info("intake plan", line...)
 
 	if ref != nil {
-		return nil, s.withWritable(ctx, run.requester, ref)
+		return nil, s.withWritable(ctx, run.principal, run.requester, ref)
 	}
 	canStart, why := false, startSponsored
 	if !run.principal.Sponsored {
@@ -836,11 +934,15 @@ func (s *Server) finishPlan(ctx context.Context, run planRun, plan *intake.Plan,
 // served by the allowlist, writable and public — rather than leaving them to guess (CD5's
 // repositories are never named back, and the ones they may use are not a secret from them). Every
 // other refusal is about the request itself and stands alone.
-func (s *Server) withWritable(ctx context.Context, req intake.Requester, ref *intake.Refusal) *intake.Refusal {
+func (s *Server) withWritable(ctx context.Context, p authn.Principal, req intake.Requester, ref *intake.Refusal) *intake.Refusal {
 	if ref == nil || ref.Reason != intake.ReasonRepositoryNotAllowed {
 		return ref
 	}
-	served, err := s.intakeGuard(req.Login).Candidates(ctx, nil)
+	repos, rerr := s.planRepositories(ctx, p)
+	if rerr != nil {
+		return ref
+	}
+	served, err := s.intakeGuard(req.Login, allowMap(repos)).Candidates(ctx, nil)
 	if err != nil || len(served) == 0 {
 		return ref
 	}

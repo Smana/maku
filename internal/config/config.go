@@ -202,9 +202,9 @@ type PlanConfig struct {
 	// Fallback is "off" or "composer": only the second reaches the degraded deterministic composer,
 	// and it is unreachable otherwise (CD18).
 	Fallback string `json:"fallback,omitempty"`
-	// Repositories is the allowlist the candidate set is drawn from (CD5): the planner never plans
-	// for a repository this list does not carry. It is deliberately not human.mcp.sessionStart,
-	// which means "the form may offer to start the factory here".
+	// Repositories narrows the factory's served repositories for the planner (WF12): when empty, the
+	// planner's candidates come from the factory's catalog; when set, only repositories both lists
+	// name are planned for, and an entry the factory does not serve logs a warning.
 	Repositories []string `json:"repositories,omitempty"`
 	// The class table (classes) was removed (WF13): a plan's roles and ceiling come from the
 	// factory's catalog at factoryURL.
@@ -251,12 +251,6 @@ func (i IntakeConfig) validate() []error {
 		}
 		if p.APIKeyFile == "" {
 			errs = append(errs, errors.New("human.intake.plan.apiKeyFile: is required when the planner is enabled: a planner with no key would 401 every plan"))
-		}
-		// A planner with nothing to serve is a switch that reads as on and refuses every request:
-		// the allowlist is the candidate set's whole supply (CD5) and the class table is every
-		// issue's roles and money (CD17).
-		if len(p.Repositories) == 0 {
-			errs = append(errs, errors.New("human.intake.plan.repositories: is required when the planner is enabled: the allowlist is every repository a plan may name (CD5)"))
 		}
 	}
 	if p.URL != "" {
