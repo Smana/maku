@@ -46,7 +46,7 @@ const (
 	// waits for it.
 	actWait = 15 * time.Second
 
-	// closeReauth asks the client to reconnect with a fresh token (docs/api.md).
+	// closeReauth asks the client to reconnect with a fresh token (docs/reference/api.md).
 	closeReauth websocket.StatusCode = 4001
 )
 

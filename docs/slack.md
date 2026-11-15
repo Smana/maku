@@ -126,7 +126,7 @@ Draft editing needs the `message.channels` (and, for private channels, `message.
 | `webhooksAddr` `:8081` | The broker's webhooks, `POST /webhooks`: cluster only |
 | `opsAddr` `:9090` | Metrics and the probes |
 
-The App's token is a client-credentials grant from your identity provider ([preset: ZITADEL](identity.md#the-presets): the project-audience scope, `openid` and `urn:zitadel:iam:org:project:id:<project id>:aud`). The factory serves a Slack user listed in its `onBehalfOf.slack`, or, with `onBehalfOf.slackLinks`, one who linked themselves ([self-serve link](#self-serve-link), [The factory](factory.md#sponsored-principals)).
+The App's token is a client-credentials grant from your identity provider ([preset: ZITADEL](identity.md#the-presets): the project-audience scope, `openid` and `urn:zitadel:iam:org:project:id:<project id>:aud`). The factory serves a Slack user listed in its `onBehalfOf.slack`, or, with `onBehalfOf.slackLinks`, one who linked themselves ([self-serve link](#self-serve-link), [The factory](reference/sponsored-principals.md)).
 
 The broker needs one `webhooks` entry for the App ([operations](operations.md#webhooks)):
 
@@ -172,7 +172,7 @@ An answer is at most 12 lines; a longer one is cut at the tenth with `…`. Ever
 
 ## Understanding a reply
 
-A reply in a filed thread is read in two tiers. **Tier 0** is the table of five questions above, unchanged and always first: a reply it knows never reaches tier 1. **Tier 1** reads a reply tier 0 does not know, in a channel with `intents` `shadow` or `on`, from a linked Slack user, against a broker that serves [`intent_classify`](api.md#intent_classify-on-mcp). The broker makes one bounded call on a cheap model, through the model gateway's classifier route ([gateway](gateway.md#the-planner-and-the-classifier)), shown the reply alone and the thread's phase as one closed word, never the thread's history, and maps the reply to one of nine intents: `status`, `needs`, `changes`, `pr`, `steer`, `amend`, `stop`, `retry` or `unknown`. A label with a confidence under the threshold, or one the model got wrong in shape, is `unknown`.
+A reply in a filed thread is read in two tiers. **Tier 0** is the table of five questions above, unchanged and always first: a reply it knows never reaches tier 1. **Tier 1** reads a reply tier 0 does not know, in a channel with `intents` `shadow` or `on`, from a linked Slack user, against a broker that serves [`intent_classify`](reference/api.md#intent_classify-on-mcp). The broker makes one bounded call on a cheap model, through the model gateway's classifier route ([gateway](gateway.md#the-planner-and-the-classifier)), shown the reply alone and the thread's phase as one closed word, never the thread's history, and maps the reply to one of nine intents: `status`, `needs`, `changes`, `pr`, `steer`, `amend`, `stop`, `retry` or `unknown`. A label with a confidence under the threshold, or one the model got wrong in shape, is `unknown`.
 
 In **shadow** nothing a person can see changes. The thread gets exactly today's unknown line, posted before the classifier is asked, and the App counts `maku_slack_intents_total{tier="1", intent, outcome="shadowed"}` and logs the label, its confidence, the phase and the reply's SHA-256 and length, never its text. A classification the broker refuses (an author who is not linked, a cap reached, a model that timed out) leaves the same line and counts `outcome="refused"`; a broker without the tool counts `not_enabled`. No reply approves, steers, stops or confirms anything: a label is a count and nothing else.
 
@@ -244,7 +244,7 @@ A Slack user links themselves instead of waiting for an `onBehalfOf.slack` entry
 
 `@factory unlink` removes the user's self-serve link (never a config entry); the page, opened without a code, lists the account's links with an Unlink button each. Refusals on the page: the code expired or was used, the code is for another workspace, the account has no GitHub link (with the broker's [GitHub account link](github-link.md) on, the page sends them to `/link/github`), it holds 5 Slack users already, or the Slack user is linked to another account (it unlinks first: a link never moves silently). With the broker's `human.slackLink` off, both commands answer that self-serve linking is not turned on. `link` and `unlink` are the whole mention; a draft whose title holds the word is a draft.
 
-Both sides must opt in: the broker's `human.slackLink` (principal, team, repository; [integration](integration.md)) and the factory's `onBehalfOf.slackLinks` ([The factory](factory.md#sponsored-principals)). A user in `onBehalfOf.slack` keeps that entry whatever they link: **the config wins**.
+Both sides must opt in: the broker's `human.slackLink` (principal, team, repository; [integration](integration.md)) and the factory's `onBehalfOf.slackLinks` ([The factory](reference/sponsored-principals.md)). A user in `onBehalfOf.slack` keeps that entry whatever they link: **the config wins**.
 
 ### Follow and the end line
 

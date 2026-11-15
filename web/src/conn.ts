@@ -53,7 +53,7 @@ const settled = 30_000;
 const pingEvery = 30_000;
 const tail = 500;
 
-// Why the broker closed, for the status line (docs/api.md). A write_timeout, a ping
+// Why the broker closed, for the status line (docs/reference/api.md). A write_timeout, a ping
 // timeout and a refused upgrade all end without a close frame: 1006.
 function why(e: { code: number; reason: string }): string {
   if (e.reason) return e.reason;

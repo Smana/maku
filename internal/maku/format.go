@@ -88,7 +88,7 @@ func SafeText(s string) string {
 	}, s)
 }
 
-// reasons explains the rejections maku's acts can meet (docs/api.md).
+// reasons explains the rejections maku's acts can meet (docs/reference/api.md).
 var reasons = map[string]string{
 	"not_permitted":       "not allowed: your role in this room or this client does not permit it, or the factory refused you a run",
 	"rate_limited":        "too many actions at once, or over 3 forks then one a minute; wait and retry",

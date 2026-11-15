@@ -22,7 +22,7 @@ A grant or policy that works only for a superuser therefore fails here, not in t
 that proves a database guarantee connects **as the role it constrains** and asserts the exact
 SQLSTATE, for example `42501` (insufficient privilege) when `rooms_broker` tries
 `UPDATE events`. The guarantees and their tests are listed in
-[room log](../room-log.md#the-guarantees).
+[room log](../reference/room-log.md#the-guarantees).
 
 ```bash
 go test -race ./internal/store/...
@@ -45,7 +45,7 @@ CONTRIBUTING.md has the steps to add one. Two checks it does not spell out:
   Atlas operator retries.
 
 Why `atlas.sum` exists, which migration each phase adds, and how `atlasSchema.ref` tracks them:
-[room log](../room-log.md#migrations-with-atlas).
+[room log](../reference/room-log.md#migrations-with-atlas).
 
 ## The web UI
 
