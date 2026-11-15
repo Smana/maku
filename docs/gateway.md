@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # The model gateway
 
 Agent Factory reaches every model through one gateway: [agentgateway](https://agentgateway.dev) v1.6,
@@ -17,6 +19,18 @@ flowchart LR
   BE --> P["provider (Z.ai, Anthropic, Kimi, Mistral, OpenAI, custom)"]
   C["agentgateway controller"] -.->|"xDS, the JWKS"| GW
 ```
+
+## Contents
+
+- [The seam](#the-seam)
+- [Values](#values)
+- [Presets](#presets)
+- [Identity](#identity)
+- [Runs through the gateway](#runs-through-the-gateway)
+- [Metering the runs](#metering-the-runs)
+- [The planner and the classifier](#the-planner-and-the-classifier)
+- [Network](#network)
+- [Proving it](#proving-it)
 
 ## The seam
 
@@ -194,7 +208,7 @@ fetches `https://kubernetes.default.svc.<clusterDomain>/openid/v1/jwks`, verifie
 - An apiserver that admits anonymous requests. kubeadm and kind do. k3s does not:
   start it with `--kube-apiserver-arg=anonymous-auth=true`.
 
-Both widen the cluster ([Security](security.md#the-model-gateways-identity)). `source: inline` avoids them:
+Both widen the cluster ([Security](reference/security-controls.md#the-model-gateways-identity)). `source: inline` avoids them:
 `jwks.inline` holds the keyset (`kubectl get --raw /openid/v1/jwks`), and nothing is fetched. Its cost is
 rotation: when the issuer rotates its signing keys, update the value and upgrade, or new tokens get 401.
 

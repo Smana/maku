@@ -26,7 +26,7 @@ The broker serves four listeners. Every body is JSON.
 
 Served with `ListenAndServeTLS` on the pair cert-manager writes to `/etc/room-broker/tls/`. The
 broker re-reads the files when they change, so a renewal needs no restart, and a plain-HTTP request
-fails. See [security](../security.md#tls-on-8443) for the certificate and its CA.
+fails. See [security](security-controls.md#tls-on-8443) for the certificate and its CA.
 
 Errors are JSON, `{"error": "<reason>"}`, with the status codes below. The reasons are stable
 strings, the `wire.Reason*` constants: branch on them, not on the status text.
@@ -448,7 +448,7 @@ already consumed, promoted, removed or never queued is skipped, so a retry is sa
 | `GET /healthz` | The process is up. Body: `ok <version>` | Liveness |
 | `GET /readyz` | Postgres answers a ping and the Kubernetes caches are synced | Readiness |
 | `GET /startupz` | The schema is migrated (`events` exists) | Startup: the first deploy waits for CNPG and the Atlas migration |
-| `GET /metrics` | Always | Prometheus metrics ([operations](../operations.md#metrics)) |
+| `GET /metrics` | Always | Prometheus metrics ([operations](../operations/rooms.md#metrics)) |
 
 The bridge serves `GET /healthz` on `:8085`, for kubelet only, and no metrics. It reports unhealthy only when the
 harness answered once and has been unreachable for more than 60 s: as a native sidecar its startup
@@ -503,7 +503,7 @@ Errors before a WebSocket upgrade are plain-text HTTP errors.
 | `GET /settings/approval-memory`, `/api/approval-memory/…` | Approval memory (merge policy stage 5), when `human.approvalMemory`; else `404`. `GET grants?repository=&class=&status=&q=` lists the grants of the repositories the caller may read (an admin reads all), `unverified` when an access check failed; `GET grants/{id}` adds its audit and the conditions that stay outside it; `GET export?repository=` is the same list as YAML. `POST preview` and `POST grants` take `{repository, class, caughtFiles (exact paths) or files (patterns), diffShape?, policyHash, pullRequest, lifetimeDays?}` ("merge and create rule", GitHub write on the repository): the preview saves nothing and answers the exact predicate, the future pull requests it would match, what stays outside it, its expiry, its revoke path and what "merge once" does instead; the create saves it and answers the same with the grant; `POST grants/{id}/{revoke,renew,reconfirm}` `{version?, reason?, lifetimeDays?}` moves one: revoking takes write or an admin, the others write, and a reconfirmation rebinds to the policy its suspension was found under. Writes take the web UI's session from the broker's own `Origin` (`web_only`, `cross_origin`), a body of 16 KiB at most; `409 grant_state` for a move its status refuses |
 | `POST /api/rooms` | `{"dataClass": "public", "repository": "Smana/cloud-native-ref"}` → `201 {"id": "…"}`: a new room owned and driven by the caller, any agents member, on a `repository` they can read (room access). `400` for another data class, a missing or malformed repository, an unknown field or a principal the Room CRD would refuse, `404` for a repository the caller cannot read or the factory App cannot see (missing, or the App not installed), `409` when a Room of the generated id exists, `429` past the caller's action budget (10/s, burst 20, shared with acts), `500` when the Room is refused for any other reason, such as the broker lacking `create` on rooms (logged at WARN), `503` when the API server is unreachable, overloaded or times out, or `access_unverified` when the caller's access cannot be checked. The `SameSite=Strict` cookie and the `Origin` check stop a cross-site post |
 | `GET /.well-known/roomctl` | The same `{url, issuer, clientID, projectID, version, humanMode}` with no sign-in, for `maku configure --url`; none of it is a secret. `humanMode` is `oidc` or `local` (`local`: no IdP, no token, and the `maku` values are empty). The proxy in front must let this path through unauthenticated |
-| `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](../web-ui.md#the-room-list)) |
+| `GET /api/install` | `{"unsafe": [...]}` for any signed-in human: the install's unsafe settings, as the bounded codes `unsafe_allow_runc`, `network_policy_none`, `shared_git_token` and `model_key_in_sandbox` (config `install.unsafe`, which the chart computes), `[]` when none. The web UI shows a banner on the room list and every Settings page while it is non-empty ([web UI](web-ui-settings.md#install-banner-unsafe-codes)) |
 | `GET /api/roomctl` | `{url, issuer, clientID, projectID, version, humanMode}` for the room list's CLI setup view, any agents member: the values of `maku configure`, and the broker's version, whose maku release the view's install block downloads (the latest when it is not a `v*` build). `clientID` is `""` while the broker has no maku client. maku asks for the project's audience scope with `projectID`. `dashboards?` (`[{label, url}]`): the room page's link templates from [`human.dashboards`](../integration.md#the-brokers-configuration), unfilled; the page fills `{room}`, `{run}` and `{task}` per room. Absent when none is configured. They are not secrets, so any member gets them; `/.well-known/roomctl` leaves them out, since `maku configure` has no use for them |
 
 ### `GET /api/rooms/{id}/summary`
@@ -1207,7 +1207,7 @@ The answer is one key, always a closed code and never a sentence: `{"result": "a
 
 Every refusal is a `200` with a code, apart from those four transport ones, so the App never retries
 a refusal and Slack never redelivers one into a loop. Each answer counts in
-`maku_rooms_slack_decisions_total{result, decision}` ([operations](../operations.md)): `result` is the
+`maku_rooms_slack_decisions_total{result, decision}` ([metrics](metrics.md#room-broker-metrics)): `result` is the
 code, `decision` the decision it answered with, and empty when the answer carried none.
 
 What it reads, in order, each step naming the code it refuses with. Nothing comes from the request
@@ -1439,9 +1439,19 @@ caller's GitHub login cannot be resolved. The body is `Cache-Control: no-store`:
 ## Webhooks
 
 The broker sends signed, id-only events to the subscribers declared in its `webhooks` config (see
-[operations](../operations.md#webhooks)). It is off until a subscriber is declared. A payload carries
+[operations](../operations/factory.md#webhooks)). It is off until a subscriber is declared. A payload carries
 ids and closed codes only: never room text, a title or a message — a `branch` is a code shape, on the
 one approval that binds it.
+
+| Key | Meaning |
+|---|---|
+| `name` | A DNS label: the `subscriber` label of the webhook metric series |
+| `network` | `cluster` (`http(s)://<svc>.<ns>.svc.cluster.local:<port>/…`) or `internet` (`https`, a public DNS name, never an address) |
+| `url` | Where the broker posts |
+| `events` | The event types wanted (table below) |
+| `secretFile` | One or two base64 keys of at least 32 bytes, one per line; re-read at each delivery |
+| `repositories` | The repositories whose rooms are sent |
+| `generation` | Bump it to re-enable a disabled subscriber |
 
 | Event | Fires when | Fields beyond `type` and `room` |
 |---|---|---|
@@ -1632,7 +1642,7 @@ never opens a stream or sends a request of its own (agent-router#2715).
 | `413` | A body over 128 KiB, except the harness's `output_push`: a request with `X-Agent-Harness: 1` may be up to 12 MiB, and past 128 KiB only a `tools/call` of `output_push` is accepted |
 | `503` | A call over 15 s |
 
-`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](../web-ui.md#what-each-standing-may-do))
+`tools/list` lists the tools of the run's role. A call needs the role and the permission matrix's action (see [what each standing may do](web-ui-settings.md#what-each-standing-may-do))
 (`read` for `room_read`, `kb_search` and `kb_get`, `chat` for the three writes), then spends the run's one call per second.
 The limit is per broker replica: with two replicas, a run whose calls the gateway
 spreads across both can make two a second. Arguments are strict: an unknown field is refused, and text holds

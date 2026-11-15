@@ -178,7 +178,7 @@ class and it is not `revert`; a `class:` label a maintainer applies to the issue
 **With `publishStarts`.** For an `api` task of an internal principal that declares it, the same label also starts the fix, as
 `factory/ready` would: generation 0, `spec.origin` the investigate task, `spec.predictedClass` the inferred class, `requestedBy`
 the publisher, who is charged. The start skips intake's advisory day check, so the reservation at queueing binds (see
-[security](../security.md#internal-principals-and-publishing)). Nothing starts when any Task exists on the issue, when the
+[security](security-controls.md#internal-principals-and-publishing)). Nothing starts when any Task exists on the issue, when the
 issue is closed, when it was edited since it was filed, or when its text is withheld: the issue stays filed and `factory/ready`
 remains the way to start it. The invariant is one Task and one charge per issue: when `factory/ready` and a publish retry land in the
 same poll, the publish start wins (generation 0, charged to the publisher), and `factory/ready` is answered `task_active` on a later

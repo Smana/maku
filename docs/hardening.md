@@ -75,7 +75,7 @@ flowchart LR
 ### What the factory does
 
 - **Applier and publisher.** On the leader, the applier polls active writer rooms every `applier.interval` (default `2s`, continuing for `applier.answerWait`, default `5m`, after a run ends so unfinished requests hold task completion until answered or logged `outputs_unanswered`). Approved `pr`, `comment` and `labels` outputs are published as `agentsLogin` using a cached token minted from the role table's publisher row (`Agent-Output: <id>` in the PR footer; edits to PRs not opened by the task's applied outputs are refused `output_target`). Approved `issue` outputs are filed by the factory App with `factory/proposed` only.
-- **Tracer and permission gauge.** At run end, the tracer verifies every agents-App PR, comment and label on the task against `output_applied` records. Any unmatched write (or direct edit not attributable solely to a human under `runTokens.perRun`, which logs `human_edit`) is recorded as `output_shadowed` with `untraced_write` and checked as in H1. Pushes remain shadowed until `push` is enforced. Each fence pass exports sandbox and publisher scopes from the role table; rollout and rollback steps are in [Operations](operations.md#hardening-non-code-outputs), and residual blind spots are in [Security](security.md#untrusted-input-hardening).
+- **Tracer and permission gauge.** At run end, the tracer verifies every agents-App PR, comment and label on the task against `output_applied` records. Any unmatched write (or direct edit not attributable solely to a human under `runTokens.perRun`, which logs `human_edit`) is recorded as `output_shadowed` with `untraced_write` and checked as in H1. Pushes remain shadowed until `push` is enforced. Each fence pass exports sandbox and publisher scopes from the role table; rollout and rollback steps are in [Operations](operations/factory.md#hardening-non-code-outputs), and residual blind spots are in [Security](security.md#untrusted-input-hardening).
 
 ## Hardening, push enforced
 
@@ -107,7 +107,7 @@ For each push request in order:
 
 ### The tokens
 
-Enforcing `push` moves `contents: write` from implementer and tester to the publisher in [the role table](reference/config.md#run-tokens-the-role-table). Workflow-file pushes (`.github/workflows/**`) still fail with `output_unavailable` unless the publisher row grants `workflows: write`. Rollout and rollback are in [Operations](operations.md#hardening-push-enforced).
+Enforcing `push` moves `contents: write` from implementer and tester to the publisher in [the role table](reference/config.md#run-tokens-the-role-table). Workflow-file pushes (`.github/workflows/**`) still fail with `output_unavailable` unless the publisher row grants `workflows: write`. Rollout and rollback are in [Operations](operations/factory.md#hardening-push-enforced).
 
 ## Hardening, reads filtered
 
@@ -130,7 +130,7 @@ flowchart LR
 
 ### What the factory records
 
-Each call appends one `input_read` event with target, lowest delivered trust level, and delivered/withheld counts per kind (never bodies). Under `enforce`, `status.inputTrust.mode` is `enforce`, `withheld` sums `input_read` counts, and `min` reflects only delivered items. Because `checksum/config` restarts the factory on config edits, run annotations, `/forge-read`, and readiness's `read_filter_off` check always observe the same mode. Rollout and rollback are in [Operations](operations.md#hardening-reads-filtered).
+Each call appends one `input_read` event with target, lowest delivered trust level, and delivered/withheld counts per kind (never bodies). Under `enforce`, `status.inputTrust.mode` is `enforce`, `withheld` sums `input_read` counts, and `min` reflects only delivered items. Because `checksum/config` restarts the factory on config edits, run annotations, `/forge-read`, and readiness's `read_filter_off` check always observe the same mode. Rollout and rollback are in [Operations](operations/factory.md#hardening-reads-filtered).
 
 ## Hardening, drills
 

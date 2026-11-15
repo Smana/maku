@@ -271,7 +271,7 @@ A policy's `description` says, in one plain sentence, what the policy is for: "F
 the docs, and nothing else." It is optional plain text of at most **280** characters, set on the
 `MergePolicy` (`spec.description`) or on a class of the central config; a binding has none. **The
 gate never reads it**: two policies that differ only in their description decide every pull request
-alike. A policy's [settings page](web-ui.md#settings) shows it.
+alike. A policy's [settings page](reference/web-ui-settings.md#settings) shows it.
 
 ### Shadow and live
 
@@ -848,7 +848,7 @@ repository's pull requests.
 
 With `policyManagement.stage: manage` (factory and broker), `/settings/merge-policies/<owner>/<name>`
 shows a repository's policies and evidence, and `/settings/merge-policies/policies/<name>` shows one
-policy; see [the web UI](web-ui.md#settings) for permissions. **Maku writes nothing**: each page
+policy; see [the web UI](reference/web-ui-settings.md#settings) for permissions. **Maku writes nothing**: each page
 answers with the manifest or file edit to commit.
 
 | Repository | Where its bindings are edited | **Check** answers |
@@ -953,7 +953,7 @@ from a cache; a failed lookup authorizes nothing. The decision record names the 
 
 ### Metrics
 
-Definitions are in [operations](operations.md#factory-metrics); this is what to watch per stage.
+Definitions are in [operations](operations/factory.md#factory-metrics); this is what to watch per stage.
 
 | `stage` | Query | Healthy |
 |---|---|---|

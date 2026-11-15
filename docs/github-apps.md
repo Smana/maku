@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # GitHub Apps
 
 A production factory talks to GitHub through two GitHub Apps, and optionally a third and a fourth.
@@ -178,6 +180,6 @@ grants with the sets above. The factory App's set follows the config's merger op
 includes the merger's permissions when the merger is folded in. For each permission an
 installation lacks, the factory logs a warning once and sets
 `maku_factory_github_app_permission_missing{app, permission}` to 1
-([operations](operations.md)). A permission reads 0 only when every installation could be read.
+([metrics](reference/metrics.md#factory-metrics)). A permission reads 0 only when every installation could be read.
 The gauge is not refreshed until the next leader change. A run whose token asks for a missing
 permission fails to mint with `permission_not_granted` and waits Pending.

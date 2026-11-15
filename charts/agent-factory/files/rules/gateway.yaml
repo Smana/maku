@@ -20,7 +20,7 @@ rules:
     annotations:
       summary: "The model gateway serves model calls the meter's token contract does not see"
       description: "An agentgateway upgrade renamed a token metric or a token type the factory's meter.query reads. The run meter, the budgets and the run page read zero or misprice until meter.query follows. Compare the gateway's /metrics on :15020 with docs/gateway.md, metering the runs."
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-gateway"
   - alert: AgentGateway5xxRatioHigh
     expr: sum(rate(agentgateway_requests_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", status=~"5.."}[10m])) / sum(rate(agentgateway_requests_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__"}[10m])) > 0.05 and sum(increase(agentgateway_requests_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", status=~"5.."}[10m])) > 5
@@ -30,7 +30,7 @@ rules:
     annotations:
       summary: "The model gateway answers {{ $value | humanizePercentage }} of requests with a 5xx"
       description: "Split by route and reason: sum by (route, reason) (rate(agentgateway_requests_total{status=~\"5..\"}[10m])). UpstreamFailure or Timeout is the provider, Internal is the proxy."
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-gateway"
   # agentgateway sets error_type on every failed model call: a ratio, not a cause.
   - alert: AgentGatewayModelErrorRatioHigh
@@ -41,7 +41,7 @@ rules:
     annotations:
       summary: "{{ $value | humanizePercentage }} of model calls through the model gateway fail"
       description: "The provider is failing or refusing. The access log's http.status and error fields name the cause: kubectl logs -n __NAMESPACE__ -l gateway.networking.k8s.io/gateway-name=__GATEWAY_NAME__"
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-gateway"
   - alert: AgentGatewayUnauthorizedBurst
     expr: sum(increase(agentgateway_requests_total{job="__GATEWAY_NAME__", namespace="__NAMESPACE__", reason=~"JwtAuth|Authorization"}[5m])) > 20
@@ -50,7 +50,7 @@ rules:
     annotations:
       summary: "The model gateway refused {{ $value }} requests in 5 minutes"
       description: "Invalid tokens, a wrong audience, or a subject outside the runs namespace: replayed or foreign tokens, or a caller whose token projection broke. kubectl logs -n __NAMESPACE__ -l gateway.networking.k8s.io/gateway-name=__GATEWAY_NAME__ | grep -E 'JwtAuth|Authorization'"
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-gateway"
   # agentgateway prices a response from the catalog (maku-gateway.modelCatalog) and counts the
   # lookup; only Exact adds to the cost counter, so any other status is spend the cross-check cannot
@@ -62,7 +62,7 @@ rules:
     annotations:
       summary: "The model gateway could not price {{ $labels.gen_ai_request_model }} ({{ $labels.status }}) for {{ $labels.ar_agent }}"
       description: "A catalog lookup other than Exact adds nothing to the gateway's cost counter. Missing or Unpriced: the model has no row in the catalog (maku-factory.config.meter.prices, or maku-gateway.modelCatalog.prices). NoCatalog: the catalog is not mounted on the proxy."
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-gateway"
   # The cost cross-check: the ledger's total for a run (maku_factory_run_settled_usd, kept 1 h after
   # the run) against the gateway's own priced counter. A mismatch warns, nothing more: the meter stays
@@ -103,5 +103,5 @@ rules:
     annotations:
       summary: "Run {{ $labels.run }}: the ledger and the gateway disagree on its cost"
       description: "The ledger's total for the run and the gateway's priced counter differ by more than max(1 %, 0.01 USD), or the gateway priced spend the ledger never saw. Neither side is presumed right. Suspects: a double charge, a lost ledger write, a catalog price that differs from meter.prices, an unpriced lookup (AgentGatewayCostUnpriced), a scrape gap."
-      runbook_url: "__DOCS__/operations.md#gateway-alerts"
+      runbook_url: "__DOCS__/operations/failures.md#gateway-alerts"
       dashboard: "/d/agent-run?var-run={{ $labels.run }}"

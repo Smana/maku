@@ -1,3 +1,5 @@
+<!-- page-type: reference -->
+
 # The database
 
 Maku keeps every room's log in a Postgres you run. Bring Postgres 16 or later: the broker refuses an
@@ -113,4 +115,4 @@ maku:
 Both are the operator's: Maku ships no backup job and no replica. Back up the `rooms` database the way
 your Postgres is backed up (CNPG's Barman Cloud plugin, RDS snapshots, Cloud SQL backups), and
 restore it into a server of the same or a later major version. The broker reconnects after a
-failover; [Operations](operations.md#backups-and-rebuilds) has cloud-native-ref's settings.
+failover; [Operations](operations/rooms.md#backups-and-rebuilds) has cloud-native-ref's settings.

@@ -176,7 +176,7 @@ A holdout's workflow file must be a gate path (policy-bot's gate paths cover it)
 | `pod_lost`, `Disrupted`, `PodLost`, `PodFailed` | The sandbox failed or was lost and was not resumed. A sandbox lost to its node is resumed by itself, up to `resume.maxPerTask` times |
 | `resumes_exhausted`, `resume_budget` | The sandbox was lost again, and no resume or no budget is left |
 | `run_unschedulable` | The cluster did not admit the run within `caps.maxPendingMinutes` |
-| `loop_unsupported` | The class has a `loops` row, `search: true` or `checks: true`, but the cluster refused the run claim's `spec.loop` (its AgentRun schema predates the loop policy, `loop.checks` or `loop.search`). No run started and none is retried: roll out crossplane-configuration with `spec.loop` (and `loop.checks`, `loop.search`) first ([operations](../operations.md)) |
+| `loop_unsupported` | The class has a `loops` row, `search: true` or `checks: true`, but the cluster refused the run claim's `spec.loop` (its AgentRun schema predates the loop policy, `loop.checks` or `loop.search`). No run started and none is retried: roll out crossplane-configuration with `spec.loop` (and `loop.checks`, `loop.search`) first ([operations](../operations/rooms.md#upgrades)) |
 | `run_lost`, `deleted` | The run disappeared, or its claim was deleted |
 | `committed_no_pr` | The run finished after committing, but its branch never reached the remote: the commit existed only in the sandbox and is lost. Comment `/factory retry` |
 | `pushed_no_pr` | The run pushed its branch but opened no pull request. Open one from `agent/<task>`, or comment `/factory retry` |

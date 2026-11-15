@@ -1,8 +1,42 @@
+<!-- page-type: reference -->
+
 # Upgrading
 
 What changes in the install steps, release by release. A release that is not listed here upgrades with
 the same `helm upgrade` as before. Until v4.0.0 the chart values may still change in a 0.x minor; each
 such change has a section here. From v4.0.0, a breaking value change happens only in a major version.
+
+## Contents
+
+- [Merge policies removals](#merge-policies-removals)
+- [The gate picks the policy from the diff (v0.52.0)](#the-gate-picks-the-policy-from-the-diff-v0520)
+- [Workflows name what runs](#workflows-name-what-runs)
+- [Workflows: old names warn (v0.51.0)](#workflows-old-names-warn-v0510)
+- [Merge policies: bounds, guardrail defaults and evidence levels (v0.50.0)](#merge-policies-bounds-guardrail-defaults-and-evidence-levels-v0500)
+- [The merge policy catalog (v0.50.0)](#the-merge-policy-catalog-v0500)
+- [The shared ClusterRoles in the CRD chart (v0.48.0)](#the-shared-clusterroles-in-the-crd-chart-v0480)
+- [The demo's model gateway (v0.48.0)](#the-demos-model-gateway-v0480)
+- [From the demo to production](#from-the-demo-to-production)
+- [The Slack App's subchart, the broker's parity keys, the factory's default-deny (v0.48.0)](#the-slack-apps-subchart-the-brokers-parity-keys-the-factorys-default-deny-v0480)
+- [The runs namespace's default-deny, optional (v0.48.0)](#the-runs-namespaces-default-deny-optional-v0480)
+- [The clean-up (v0.48.0)](#the-clean-up-v0480)
+- [The per-repository merge policy removed (v0.48.0)](#the-per-repository-merge-policy-removed-v0480)
+- [One policy-management stage, `merge.maxPerDay`, `factory/hold` (v0.50.0)](#one-policy-management-stage-mergemaxperday-factoryhold-v0500)
+- [Reusable merge policies (v0.48.0)](#reusable-merge-policies-v0480)
+- [Exposure and the web front door (v0.47.0)](#exposure-and-the-web-front-door-v0470)
+- [The preflight (v0.47.0)](#the-preflight-v0470)
+- [Private code (v0.47.0)](#private-code-v0470)
+- [Secrets by name (v0.47.0)](#secrets-by-name-v0470)
+- [The GitHub account link (v0.47.0)](#the-github-account-link-v0470)
+- [RunLore's knowledge base for runs (v0.47.0)](#runlores-knowledge-base-for-runs-v0470)
+- [Run traces (v0.47.0)](#run-traces-v0470)
+- [Scrape objects, alerts and dashboards (v0.47.0)](#scrape-objects-alerts-and-dashboards-v0470)
+- [Runs through the model gateway (v0.46.0)](#runs-through-the-model-gateway-v0460)
+- [Push enforced (v0.46.0)](#push-enforced-v0460)
+- [Two GitHub Apps (v0.46.0)](#two-github-apps-v0460)
+- [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
+- [The run path (v0.46.0)](#the-run-path-v0460)
+- [The chart contract (v0.46.0)](#the-chart-contract-v0460)
 
 ## Merge policies removals
 
@@ -854,13 +888,13 @@ New umbrella keys, all off by default, so a release that sets none of them rende
 | New key | Default | What it does |
 |---|---|---|
 | `monitoring.serviceMonitor` | `enabled: false` | `ServiceMonitor`s for the broker and the factory, `PodMonitor`s for the run-controller, the egress proxy and the model-gateway proxies ([observability](observability.md)). The scraper must be admitted: `maku.networkPolicies.kubernetes.metricsFrom` in maku's mode kubernetes, `monitoring.serviceMonitor.cilium.fromEndpoints` in its mode cilium (the default), `maku-gateway.metrics.allowFrom` with the gateway's policy on |
-| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations.md#gateway-alerts) and the cost cross-check |
+| `monitoring.prometheusRule` | `enabled: false` | The `PrometheusRule` `maku`, a group per component ([alerts](operations/failures.md#alerts)); with `maku-gateway.enabled`, the [gateway group](operations/failures.md#gateway-alerts) and the cost cross-check |
 | `monitoring.dashboards` | `enabled: false` | A ConfigMap per product dashboard, `maku-dashboard-<uid>`, for Grafana's sidecar or a grafana-operator `configMapRef` ([dashboards](observability.md#dashboards)). An install that runs cloud-native-ref's `GrafanaDashboard`s with the same uids removes them first, or Grafana holds two dashboards with one uid |
 | `slack.enabled` | `false` | Until the Slack App's subchart ships, only the `maku-slack` alert group, for an App installed outside the chart |
 
 Both need the prometheus-operator CRDs. An install that runs its own copies of these rules (the
 `VMRule`s cloud-native-ref carries) removes them when it turns `prometheusRule` on, or both fire. Two
-alerts are renamed from what this page's [factory alerts](operations.md#factory-alerts) documented:
+alerts are renamed from what this page's [factory alerts](operations/failures.md#factory-alerts) documented:
 `FactoryRepositoryNotOwned` is `AgentFactoryRepositoryNotOwned`, as cloud-native-ref named it, and
 `AgentFactoryClassPausedLong` watches every class, not a fixed list.
 
@@ -906,7 +940,7 @@ Opt-in per repository; without `push` in an `enforceOutputs` list nothing change
 
 `mode: enforce` is now refused with "enforce arrives with stage H4". The factory and broker
 configs are decoded strictly: upgrade the charts and the images together. The order of the steps
-is in [Operations](operations.md#hardening-push-enforced).
+is in [Operations](operations/factory.md#hardening-push-enforced).
 
 ## Two GitHub Apps (v0.46.0)
 

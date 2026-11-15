@@ -1,3 +1,4 @@
+<!-- page-type: operations -->
 # Injection drills
 
 An injection drill plants prompt injections where the factory's agents read, lets the factory work
