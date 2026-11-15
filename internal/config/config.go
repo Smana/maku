@@ -131,6 +131,9 @@ type HumanConfig struct {
 	// SlackRetry turns on POST /api/slack/retries: a confirmed Slack retry re-queues an escalated task.
 	// Off unless set: the path is then the mux's 404.
 	SlackRetry *SlackDecideConfig `json:"slackRetry,omitempty"`
+	// SlackAnswer turns on POST /api/slack/answers: a confirmed Slack answer writes a decision record
+	// to the issue's ## Decisions section and, for a maintainer, restarts the task. Off unless set.
+	SlackAnswer *SlackDecideConfig `json:"slackAnswer,omitempty"`
 	// SlackIntents serves intent_classify, the Slack App's read-only classification of a thread reply
 	// (natural-language intents, SI3). Off unless set: the tool is then on no list.
 	SlackIntents *SlackIntentsConfig `json:"slackIntents,omitempty"`
@@ -1299,6 +1302,7 @@ func (h HumanConfig) validate(system []string) []error {
 			{"human.slackDecide", h.SlackDecide != nil, "a decision names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackStop", h.SlackStop != nil, "a stop names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackRetry", h.SlackRetry != nil, "a retry names a sponsored principal and a GitHub link, neither of which mode local has"},
+			{"human.slackAnswer", h.SlackAnswer != nil, "an answer names a sponsored principal and a GitHub link, neither of which mode local has"},
 			{"human.slackIntents", h.SlackIntents != nil, "a classification names a sponsored principal and a Slack link, neither of which mode local has"},
 		} {
 			if f.refused {
@@ -1448,6 +1452,7 @@ func (h HumanConfig) validate(system []string) []error {
 		{"human.slackDecide", h.SlackDecide, "a decision is the linked human's room standing and repository write"},
 		{"human.slackStop", h.SlackStop, "a stop requires the linked human's repository write"},
 		{"human.slackRetry", h.SlackRetry, "a retry requires the linked human's repository write"},
+		{"human.slackAnswer", h.SlackAnswer, "an answer resolves the linked human's GitHub login"},
 	} {
 		if sr.cfg == nil {
 			continue

@@ -76,9 +76,10 @@ type BrokerAPI interface {
 	// since task/v1 carries no coordination view.
 	Task(ctx context.Context, room string) (TaskResult, error)
 	Inbox(ctx context.Context, room string) ([]summary.Need, error)
-	// Stop and Retry record one confirmed stop or retry press on the broker's stop and retry routes.
+	// Stop, Retry and Answer record one confirmed press on the broker's stop, retry and answer routes.
 	Stop(ctx context.Context, a Act) (ActResult, error)
 	Retry(ctx context.Context, a Act) (ActResult, error)
+	Answer(ctx context.Context, a Answer) (ActResult, error)
 	RoomSummary(ctx context.Context, room string) (summary.Summary, error)
 	// IntentClassify is tier 1's one read-only classification of a reply tier 0 does not know
 	// (natural-language intents): a label, never an action. ErrUnknownTool is a broker without it.
@@ -734,6 +735,11 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 				}
 				return a.actConfirm(ctx, Thread{Channel: ev.Channel, TS: ev.ThreadTS}, string(q), room, ev.User)
 			}
+			if q == QuestionUnknown && ch.actsOn(actAnswer) && roomRE.MatchString(room) {
+				if hasOpenQuestion(a.taskSummary(ctx, room)) {
+					return a.answerConfirm(ctx, Thread{Channel: ev.Channel, TS: ev.ThreadTS}, room, ev.User, ev.Text)
+				}
+			}
 			line := a.answer(ctx, ev, room)
 			if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, line, nil); err != nil {
 				a.log().Warn("slack post failed", "channel", ev.Channel, "err", err)
@@ -1131,14 +1137,7 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 		return "posted"
 	case "room.waiting_for_human":
 		sum := a.taskSummary(ctx, e.Room)
-		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room
-		head := "Needs you (" + webhook.Clip("reason", e.Reason) + ")"
-		if sum.Status.Policy != nil {
-			if gp := gatePart(sum.Status.Policy.Decision); gp != "" {
-				head += " · " + gp
-			}
-		}
-		text := head + ": answer it on the room page, " + url + ". Nothing posted here reaches the run."
+		text := waitingLine(e, sum, a.RoomsURL)
 		if blocks := actLineBlocks(e, ch, text); len(blocks) > 0 {
 			if _, err := a.Slack.PostCard(ctx, th.Channel, th.TS, text, blocks, nil); err != nil {
 				a.log().Warn("slack post card failed", "room", e.Room, "err", err)

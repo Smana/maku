@@ -57,19 +57,29 @@ var refusalCodes = []string{"kill_switch", "bad_json", "idempotency_key_required
 	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "access_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "bad_text", "tasks_unavailable",
 	"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "idempotency_conflict"}
 
-var actResults = []string{"stopped", "retried", "not_linked", "not_maintainer", "not_running", "not_escalated", "unknown_task"}
+var actResults = []string{
+	"stopped", "retried",
+	"answered_restarted", "answered",
+	"not_linked", "not_maintainer", "not_allowed",
+	"not_running", "not_escalated", "no_question", "unknown_task",
+}
 
 // StopTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/stops with accessToken.
 func (f Factory) StopTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error) {
-	return f.actTask(ctx, "stops", task, onBehalfOf, accessToken)
+	return f.actTask(ctx, "stops", task, onBehalfOf, "", accessToken)
 }
 
 // RetryTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/retries with accessToken.
 func (f Factory) RetryTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error) {
-	return f.actTask(ctx, "retries", task, onBehalfOf, accessToken)
+	return f.actTask(ctx, "retries", task, onBehalfOf, "", accessToken)
 }
 
-func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, accessToken string) (string, error) {
+// AnswerTask posts onBehalfOf and text to the factory's POST /v1/tasks/{task}/answers with accessToken.
+func (f Factory) AnswerTask(ctx context.Context, task, onBehalfOf, text, accessToken string) (string, error) {
+	return f.actTask(ctx, "answers", task, onBehalfOf, text, accessToken)
+}
+
+func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, text, accessToken string) (string, error) {
 	if accessToken == "" {
 		return "", ErrForbidden
 	}
@@ -78,7 +88,8 @@ func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, accessT
 	}
 	body, err := json.Marshal(struct {
 		OnBehalfOf string `json:"onBehalfOf"`
-	}{OnBehalfOf: onBehalfOf})
+		Text       string `json:"text,omitempty"`
+	}{OnBehalfOf: onBehalfOf, Text: text})
 	if err != nil {
 		return "", fmt.Errorf("runrequest: %w", err)
 	}

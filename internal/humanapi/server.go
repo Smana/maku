@@ -185,10 +185,12 @@ type Server struct {
 	// SlackDecide is human.slackDecide: the App's one route that records a decision, for forge.push
 	// only (v3.x Slack push approval D2, D13). Nil serves nothing: the path is the mux's 404.
 	SlackDecide *SlackDecider
-	// SlackStop and SlackRetry are human.slackStop and human.slackRetry: POST /api/slack/stops and
-	// POST /api/slack/retries for the Slack App (SI6, SI23). Nil serves nothing: each path is a 404.
-	SlackStop  *SlackActor
-	SlackRetry *SlackActor
+	// SlackStop, SlackRetry and SlackAnswer are human.slackStop, human.slackRetry and
+	// human.slackAnswer: POST /api/slack/stops, /retries and /answers for the Slack App (SI6, SI23).
+	// Nil serves nothing: each path is a 404.
+	SlackStop   *SlackActor
+	SlackRetry  *SlackActor
+	SlackAnswer *SlackActor
 	// Intake is the governed planner (human.intake.plan). Nil is the switch off: neither intake_plan
 	// nor plan_check exists on any /mcp list, so the list a deployment sees is the list it has.
 	Intake *Intake
@@ -314,6 +316,9 @@ func (s *Server) Routes() http.Handler {
 	}
 	if s.SlackRetry != nil {
 		mux.HandleFunc("POST "+slackRetryPath, s.slackRetry)
+	}
+	if s.SlackAnswer != nil {
+		mux.HandleFunc("POST "+slackAnswerPath, s.slackAnswer)
 	}
 	if s.MCP {
 		mux.HandleFunc("POST /mcp", s.mcp)

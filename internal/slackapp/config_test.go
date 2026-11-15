@@ -234,7 +234,7 @@ func TestLoadIntents(t *testing.T) {
 		{name: "collecting with no switch", line: "    collectReplies: true\n", errHas: []string{"collectReplies needs intents"}},
 		{name: "collecting under off", line: "    intents: off\n    collectReplies: true\n", errHas: []string{"collectReplies needs intents"}},
 		{name: "the four actions", line: "    intents: \"on\"\n    intentActions: [stop, retry, steer, amend]\n", intent: "on"},
-		{name: "stop and retry without intents on", line: "    intents: off\n    intentActions: [stop, retry]\n", intent: "off"},
+		{name: "stop, retry and answer without intents on", line: "    intents: off\n    intentActions: [stop, retry, answer]\n", intent: "off"},
 		{name: "a read intent is no action", line: "    intentActions: [status]\n", errHas: []string{`intentActions "status"`}},
 		{name: "an action twice", line: "    intentActions: [stop, stop]\n", errHas: []string{"more than once"}},
 	} {

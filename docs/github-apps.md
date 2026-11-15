@@ -73,7 +73,8 @@ permissions.
 
 ## The factory App
 
-The factory App reads and writes issues, applies labels, opens no code, and with the merger folded
+The factory App reads and writes issues (including appending a decision record to `## Decisions`
+when a question is answered from Slack), applies labels, opens no code, and with the merger folded
 in, arms and merges pull requests and posts `maku/merge-gate`. Its required set depends on the
 merger.
 

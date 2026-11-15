@@ -42,10 +42,11 @@ var slackActFactoryResults = []string{
 	"unknown_task",
 }
 
-// TaskActor reaches the factory's stop and retry routes on behalf of a linked Slack user.
+// TaskActor reaches the factory's stop, retry and answer routes on behalf of a linked Slack user.
 type TaskActor interface {
 	StopTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error)
 	RetryTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error)
+	AnswerTask(ctx context.Context, task, onBehalfOf, text, accessToken string) (string, error)
 }
 
 // SlackAct is the POST /api/slack/stops and POST /api/slack/retries body (SI6).
