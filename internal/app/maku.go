@@ -88,7 +88,7 @@ const makuUsage = `usage: maku <command>
                                   add the outside checks (each exposed host, from this machine), print one
                                   table by seam and its summary; exit 1 on a fail (--strict: on a warn too),
                                   2 when the release has no preflight
-  repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory NAME] [--namespace NS]
+  repo add <owner/name> --out DIR --factory-app SLUG --agents-app SLUG [--factory-app-id ID] [--factory NAME] [--namespace NS]
            [--maintainer LOGIN]... [--check NAME]... [--leak-scan-check NAME] [--acknowledge-private-code]
            [--merge-defaults=false] [--force]
                                   read the default branch, its required checks and visibility with your gh

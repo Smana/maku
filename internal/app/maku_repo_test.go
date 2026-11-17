@@ -218,3 +218,49 @@ func TestRepoAddUsage(t *testing.T) {
 		t.Errorf("without the Apps: %v", err)
 	}
 }
+
+// maku#616: a private App answers GET apps/<slug> with 404, as a missing one does. Without
+// --factory-app-id the error names the flag; with it nothing is looked up and the files match.
+func TestRepoAddPrivateApps(t *testing.T) {
+	gh := fakeGH{rules: ghReply{200, requiredCI}}
+	private := func(ctx context.Context, path string) (int, []byte, error) {
+		if strings.HasPrefix(path, "apps/") {
+			return 404, []byte(`{"message":"Not Found"}`), nil
+		}
+		return gh.api(ctx, path)
+	}
+	run := func(args ...string) (string, error) {
+		var out bytes.Buffer
+		r := Maku{Dir: t.TempDir(), Out: &out, Err: &out, GH: private}
+		err := r.Run(t.Context(), append([]string{"repo", "add", "--factory-app", "acme-factory", "--agents-app", "acme-agents"}, args...))
+		return out.String(), err
+	}
+	if _, err := run("acme/my-service", "--out", filepath.Join(t.TempDir(), "o")); err == nil ||
+		!strings.Contains(err.Error(), "pass --factory-app-id ID") {
+		t.Fatalf("without the ID: got %v", err)
+	}
+	if _, err := run("acme/my-service", "--out", filepath.Join(t.TempDir(), "o"), "--factory-app-id", "-1"); err == nil {
+		t.Fatal("a negative ID was accepted")
+	}
+	dir := filepath.Join(t.TempDir(), "out")
+	out, err := run("acme/my-service", "--out", dir, "--factory-app-id", "123")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, err := install.RepoTree(install.RepoInputs{Repository: "acme/my-service", Factory: "agent-factory", Namespace: "maku",
+		Maintainers: []string{"alice"}, RequiredChecks: []string{"ci"}, LeakScanCheck: "ci", FactoryAppID: "123",
+		FactoryLogin:      "acme-factory[bot]",
+		FactoryInstallURL: "https://github.com/apps/acme-factory/installations/new",
+		AgentsInstallURL:  "https://github.com/apps/acme-agents/installations/new"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range want.Paths() {
+		if got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(p))); err != nil || !bytes.Equal(got, want[p]) {
+			t.Errorf("%s: %v\n%s", p, err, got)
+		}
+	}
+	if !strings.Contains(out, "https://github.com/apps/acme-agents/installations/new") {
+		t.Errorf("the output lacks the agents install link:\n%s", out)
+	}
+}
