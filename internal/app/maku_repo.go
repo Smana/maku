@@ -200,6 +200,7 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 	mergeDefaults := fs.Bool("merge-defaults", true, "the Factory's spec.mergeDefaults carries mergerLogin, verifyFor, revertWindow and breaker, as maku install --print writes it; =false writes them into the Repository")
 	factoryApp := fs.String("factory-app", "", "the factory App's slug")
 	agentsApp := fs.String("agents-app", "", "the agents App's slug")
+	factoryAppID := fs.Int64("factory-app-id", 0, "the factory App's ID, for private Apps: no App is looked up, the install links are derived from the slugs")
 	force := fs.Bool("force", false, "write into a non-empty --out")
 	pos, err := flags(fs, args)
 	if err != nil {
@@ -211,6 +212,9 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 	in.Repository, in.NoMergeDefaults = pos[0], !*mergeDefaults
 	if *factoryApp == "" || *agentsApp == "" {
 		return errors.New("repo add: --factory-app SLUG and --agents-app SLUG name the two Apps (the ruleset bypasses the factory App, the install links are both)")
+	}
+	if *factoryAppID < 0 {
+		return fmt.Errorf("repo add: --factory-app-id %d is not an App ID", *factoryAppID)
 	}
 	if !install.ValidRepository(in.Repository) {
 		return fmt.Errorf("repo add: %q is not owner/name", in.Repository)
@@ -248,14 +252,9 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 		}
 		in.Maintainers = []string{u.Login}
 	}
-	var fa, aa ghApp
-	for _, a := range []struct {
-		slug string
-		dst  *ghApp
-	}{{*factoryApp, &fa}, {*agentsApp, &aa}} {
-		if err := r.ghJSON(ctx, "apps/"+a.slug, a.dst); err != nil {
-			return fmt.Errorf("repo add: the App %s: %w", a.slug, err)
-		}
+	fa, aa, err := r.repoApps(ctx, *factoryApp, *agentsApp, *factoryAppID)
+	if err != nil {
+		return err
 	}
 	in.FactoryAppID, in.FactoryLogin = strconv.FormatInt(fa.ID, 10), fa.Slug+"[bot]"
 	in.FactoryInstallURL, in.AgentsInstallURL = fa.HTMLURL+"/installations/new", aa.HTMLURL+"/installations/new"
@@ -269,4 +268,33 @@ func (r Maku) repoAdd(ctx context.Context, args []string) error {
 	_, err = fmt.Fprintf(r.Out, "wrote %d files under %s; its README.md lists the steps, in order. Nothing was applied.\nInstall both Apps on %s:\n  %s\n  %s\n",
 		len(tree), *out, in.Repository, in.FactoryInstallURL, in.AgentsInstallURL)
 	return err
+}
+
+// repoApps resolves the two Apps. GET apps/<slug> answers only public Apps, so with factoryID set
+// nothing is looked up: the ID is the caller's, the install links github.com's for each slug. Without
+// it a 404 names the flag, since a private App answers exactly as a missing one does (maku#616).
+func (r Maku) repoApps(ctx context.Context, factory, agents string, factoryID int64) (ghApp, ghApp, error) {
+	if factoryID > 0 {
+		at := func(slug string) string { return "https://github.com/apps/" + slug }
+		return ghApp{ID: factoryID, Slug: factory, HTMLURL: at(factory)}, ghApp{Slug: agents, HTMLURL: at(agents)}, nil
+	}
+	var fa, aa ghApp
+	for _, a := range []struct {
+		slug string
+		dst  *ghApp
+	}{{factory, &fa}, {agents, &aa}} {
+		code, body, err := r.gh()(ctx, "apps/"+a.slug)
+		switch {
+		case err != nil:
+			return fa, aa, fmt.Errorf("repo add: the App %s: %w", a.slug, err)
+		case code == 404:
+			return fa, aa, fmt.Errorf("repo add: the App %s: GET apps/%s: HTTP 404: a private App answers as a missing one: pass --factory-app-id ID (the factory App's settings page shows its App ID)", a.slug, a.slug)
+		case code != 200:
+			return fa, aa, fmt.Errorf("repo add: the App %s: GET apps/%s: HTTP %d: %s", a.slug, a.slug, code, ghMessage(body))
+		}
+		if err := json.Unmarshal(body, a.dst); err != nil {
+			return fa, aa, fmt.Errorf("repo add: the App %s: %w", a.slug, err)
+		}
+	}
+	return fa, aa, nil
 }

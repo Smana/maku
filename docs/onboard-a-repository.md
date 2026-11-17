@@ -40,6 +40,8 @@ maku repo add acme/my-service \
   --agents-app acme-agents
 ```
 
+If your Apps are private, add `--factory-app-id ID` with the factory App's ID from its settings page: GitHub answers a private App's public lookup with 404, so `repo add` then looks neither App up and builds the install URLs from the slugs.
+
 `maku repo add` inspects the repository through `gh` (default branch, visibility, required status checks, and your GitHub login as the initial maintainer) and writes five files under `--out` without touching the cluster or opening a pull request:
 
 - `repo/.github/agent-factory.yaml` — the ownership fence for the repository's default branch.
