@@ -21,6 +21,10 @@
   "type": "object",
   "additionalProperties": false,
   "properties": {
+    "config": {
+      "description": "The factory's strict config file, passed through tpl.",
+      "type": "object"
+    },
     "global": {
       "description": "Helm's global values, passed to every subchart.",
       "type": "object"
