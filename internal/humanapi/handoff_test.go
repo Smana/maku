@@ -132,6 +132,9 @@ func TestHandoffBeginStoresPlan(t *testing.T) {
 	if !regexp.MustCompile(`^[a-z2-7]{26}$`).MatchString(res.ID) {
 		t.Fatalf("id = %q, does not match ^[a-z2-7]{26}$", res.ID)
 	}
+	if !strings.Contains(res.Text, "Handoff "+res.ID+"\n") {
+		t.Fatalf("rendered plan does not show the handoff id: %q", res.Text)
+	}
 	if res.Text == "" || res.Text != got.text {
 		t.Fatalf("text mismatch: structured=%q tool=%q", res.Text, got.text)
 	}
