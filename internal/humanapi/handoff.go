@@ -385,6 +385,7 @@ func (s *Server) handoffAnswer(ctx context.Context, p authn.Principal, onBehalfO
 	if err != nil {
 		return viewResult{}, err
 	}
+	text = "Handoff " + id + "\n" + text
 	var q *handoffQuestion
 	if len(plan.Gaps) > 0 {
 		plan = intake.WithGaps(plan, plan.Gaps)
