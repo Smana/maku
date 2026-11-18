@@ -65,7 +65,7 @@ describe("settings routes", () => {
 
 describe("evidence", () => {
   it("writes MP7's numbers as a track record in words, and blockers as actions", () => {
-    expect(trackRecord(ev()).textContent).toBe("20 of 20 clean merges · 0 bad · 2 awaiting outcome · 1 awaiting a verdict · worst-case bad rate ≤ 14 % · rollback drill passed");
+    expect(trackRecord(ev()).textContent).toBe("20 clean merges (20 needed) · 0 bad · 2 awaiting outcome · 1 awaiting a verdict · worst-case bad rate ≤ 14 % · rollback drill passed");
     expect(blockerActions(ev({ clean: 19, bad: 2, blockers: ["below_minimum", "bad_outcome", "no_drill"] })))
       .toEqual(["needs 1 more clean merge", "2 bad merges to explain", "run a rollback drill (factory/drill)"]);
     expect(blockerActions(ev({ blockers: [] }))).toEqual([]);
@@ -83,7 +83,7 @@ describe("the repository page", () => {
     const get = fakeFetch({ "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/policy/promotions": { promotion: { id: "aaaaaaaa" }, proposal } }, calls);
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies/Smana/cloud-native-ref", get);
-    expect(app.textContent).toContain("20 of 20 clean merges");
+    expect(app.textContent).toContain("20 clean merges (20 needed)");
     expect(app.textContent).toContain("glm-5.3 20/21");
     expect(app.textContent).toContain("Live \u00b7 3 clean decisions recorded.");
     expect(app.textContent).not.toContain("not shadow");
@@ -199,7 +199,7 @@ describe("the index and evidence pages", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());
     const rows = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "Repository cloud-native-ref · status unknown", "1 live · 1 shadow", "docs-links 20/20"]);
+    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "Repository cloud-native-ref · status unknown", "1 live · 1 shadow", "docs-links 20 (20 needed)"]);
     expect([...app.querySelectorAll("table.repo-table thead th")].map((th) => th.textContent)[1]).toBe("Served by");
     expect(rows[1][0]).toBe("Smana/broken");
     expect(rows[1][1]).toMatch(/^Not readable: /);
@@ -315,7 +315,7 @@ describe("pending evidence", () => {
     const ready = page();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 of 20 clean merges");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 clean merges (20 needed)");
     expect(app.querySelector(".policy-classes .evidence-age")?.textContent).toMatch(/^Evidence read .+\.$/);
     expect(app.querySelector(".policy-classes .evidence-age time")?.getAttribute("datetime")).toBe("2026-11-08T00:05:00Z");
     expect(app.querySelector("section.binding-editor")).toBe(editor);
@@ -346,6 +346,7 @@ describe("pending evidence", () => {
   });
 
   it("writes a pending class on the evidence page", async () => {
+    poll.times = 0;
     const app = document.createElement("div");
     await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
       "/api/policy/repositories/Smana/cloud-native-ref": pendingPage() }));
@@ -353,6 +354,51 @@ describe("pending evidence", () => {
     const cells = [...app.querySelectorAll("tbody tr")].flatMap((tr) => [tr.children[3], tr.children[4]]);
     expect(cells.map((c) => c.textContent)).toEqual(Array(4).fill("reading GitHub\u2026"));
     expect(cells.every((c) => c.querySelector(".reading"))).toBe(true);
+  });
+});
+
+// #629: a cold pod answers no evidence and starts reading it; the page polled never again.
+describe("the evidence page polls", () => {
+  const was = { ...poll };
+  afterEach(() => Object.assign(poll, was));
+  const cold = (): RepositoryPage => {
+    const p = page();
+    p.report.classes = p.report.classes.map(({ evidence: _, ...c }) => c);
+    delete p.report.evidenceAt;
+    return p;
+  };
+
+  it("fills the rows once the evidence is read, and drops the reading line", async () => {
+    poll.every = 1;
+    poll.times = 5;
+    const routes: Record<string, unknown> = { "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
+      "/api/policy/repositories/Smana/cloud-native-ref": cold() };
+    const app = document.createElement("div");
+    document.body.append(app);
+    try {
+      await mountSettings(app, "/settings/evidence", fakeFetch(routes));
+      expect(app.textContent).toContain(READING);
+      routes["/api/policy/repositories/Smana/cloud-native-ref"] = page();
+      await expect.poll(() => app.querySelector("tbody")?.textContent).toContain("20 clean merges (20 needed)");
+      expect(app.textContent).not.toContain(READING);
+      expect(app.querySelectorAll("tbody .reading")).toHaveLength(0);
+      expect(app.querySelectorAll("table")).toHaveLength(1);
+    } finally { app.remove(); }
+  });
+
+  it("says why a repository's evidence read failed", async () => {
+    poll.times = 0;
+    const p = cold();
+    p.report.evidenceError = "rate_limited";
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/evidence", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref"] },
+      "/api/policy/repositories/Smana/cloud-native-ref": p }));
+    expect(app.querySelector(".evidence-error")?.textContent).toBe("Smana/cloud-native-ref: the last evidence read failed: rate limited.");
+  });
+
+  it("writes clean merges past the minimum as a count, not N of M", () => {
+    expect(trackRecord(ev({ clean: 9, minimum: 5 })).textContent).toMatch(/^9 clean merges \(5 needed\) · /);
+    expect(trackRecord(ev({ clean: 3, minimum: 5 })).textContent).toMatch(/^3 of 5 clean merges · /);
   });
 });
 
@@ -526,7 +572,7 @@ describe("the filter", () => {
     const ready = manyClasses();
     ready.report.evidenceAt = "2026-11-08T00:05:00Z";
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
-    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 of 20 clean merges");
+    await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 clean merges (20 needed)");
     expect(visible()).toEqual(["class-beta"]);
     expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 classes");
   });

@@ -7,7 +7,7 @@
 
 import { SignInRequired } from "./api";
 import { classCard, READING } from "./class-card";
-import { conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
+import { cleanCount, conditionWords, blockerActions, explain, fileLine, LADDER_LEGEND, policyState, post, read, servingStatus, timeText, trackRecord } from "./settings-api";
 import { policyPage, policiesTable, type PolicyReport } from "./policy-page";
 import { bindingEditor } from "./binding-editor";
 import type { PolicyFile } from "./policy-editor";
@@ -309,7 +309,7 @@ async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeCo
       if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
       const r = p.report;
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
-      return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${best.evidence!.clean}/${best.evidence!.minimum}` : "-"];
+      return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${cleanCount(best.evidence!, true)}` : "-"];
     }), "repo-table");
     const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
       items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${(tr.cells[1].textContent ?? "").split(" · ")[0]}` }); // the two names, not the counts
@@ -327,29 +327,50 @@ function loadingCell(): HTMLElement {
 
 async function evidencePage(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Evidence", "/settings/evidence", theme);
+  let repositories: string[];
+  let pages: (RepositoryPage | Error)[];
   try {
-    const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
+    ({ repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get));
+    pages = await readAll(repositories, get);
+  } catch (e) { failed(main, e); return; }
+  const box = el("div", undefined, "evidence-list");
+  main.append(box);
+  const draw = () => {
     const rows: (string | Node)[][] = [];
-    let reading = false;
-    const pages = await readAll(repositories, get);
+    const errors: HTMLElement[] = [];
     for (const [i, r] of repositories.entries()) {
       const page = pages[i];
       if (page instanceof Error) {
         rows.push([link(`/settings/merge-policies/${r}`, r), "-", "-", "Not readable", explain(page.message)]);
         continue;
       }
+      if (page.report.evidenceError) errors.push(el("p", `${r}: the last evidence read failed: ${page.report.evidenceError.replaceAll("_", " ")}.`, "evidence-error"));
       for (const c of page.report.classes) {
         const e = c.evidence;
-        reading ||= !e;
         // A row still being read says so in its own cells, never in the words of data.
         const blocks = !e ? loadingCell() : e.eligible ? "eligible" : blockerActions(e).join(", ") || "no reason given";
         rows.push([link(`/settings/merge-policies/${r}`, r), c.class, c.mode, e ? trackRecord(e) : loadingCell(), blocks]);
       }
     }
     // A row being read says so in its cells; the page says once that the evidence is being read.
-    if (reading) main.append(el("p", READING, "evidence-age"));
-    main.append(el("p", LADDER_LEGEND, "ladder-legend"), table(["Repository", "Class", "Mode", "Track record", "Blocks promotion"], rows));
-  } catch (e) { failed(main, e); }
+    box.replaceChildren(...(cold().length ? [el("p", READING, "evidence-age")] : []), ...errors,
+      el("p", LADDER_LEGEND, "ladder-legend"), table(["Repository", "Class", "Mode", "Track record", "Blocks promotion"], rows));
+  };
+  // cold is the repositories whose classes still lack evidence: a pod that had none cached is
+  // reading it, so they are asked again until it lands, as the repository page does (#629).
+  const cold = () => repositories.filter((_, i) => { const p = pages[i]; return !(p instanceof Error) && pending(p.report); });
+  draw();
+  void (async () => {
+    for (let n = 0; n < poll.times && cold().length; n++) {
+      await new Promise((res) => setTimeout(res, poll.every));
+      if (!app.contains(box)) return; // the page moved on
+      const again = cold();
+      const fresh = await readAll(again, get);
+      if (!app.contains(box)) return;
+      again.forEach((r, j) => { const p = fresh[j]; if (!(p instanceof Error)) pages[repositories.indexOf(r)] = p; });
+      draw();
+    }
+  })();
 }
 
 async function repositoryPage(app: HTMLElement, repository: string, get: typeof fetch, theme?: ThemeController) {

@@ -54,10 +54,17 @@ export const LADDER_LEGEND = "29 / 46 / 61 clean merges in a row prove a bad rat
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
+// cleanCount is the clean merges against the minimum: "3 of 5" below it, and past it the count
+// with what was needed, since "9 of 5" reads as a fraction (#629). short is the table cell's form.
+export function cleanCount(e: Pick<Evidence, "clean" | "minimum">, short = false): string {
+  if (e.clean >= e.minimum) return short ? `${e.clean} (${e.minimum} needed)` : `${e.clean} clean merges (${e.minimum} needed)`;
+  return short ? `${e.clean}/${e.minimum}` : `${e.clean} of ${e.minimum} clean merges`;
+}
+
 // trackRecordParts is a class's evidence in words, each with the explanation shown on hover.
 export function trackRecordParts(e: Evidence): { text: string; title: string }[] {
   const parts = [
-    { text: `${e.clean} of ${e.minimum} clean merges`, title: "Shadow decisions a maintainer merged unchanged, toward the minimum needed to promote." },
+    { text: cleanCount(e), title: "Shadow decisions a maintainer merged unchanged, toward the minimum needed to promote." },
     { text: `${e.bad} bad`, title: "Merges of this class that were reverted, followed up or regressed. One must be explained before promotion." },
   ];
   if (e.immature > 0) parts.push({ text: `${e.immature} awaiting outcome`, title: "Merged, but still inside the monitor window: they neither count nor block yet." });
