@@ -22,8 +22,9 @@ func TestDashboardsConfig(t *testing.T) {
 		"a room template": dashboard("Room metrics", "'https://grafana.example.com/d/agent-room/x?var-room={room}'"),
 		"all three placeholders, a port and a fragment": dashboard("'Run · task'",
 			"'https://grafana.example.com:3000/d/{run}/x?var-run={run}&var-task={task}&r={room}#panel-2'"),
-		"no placeholder at all": dashboard("Overview", "https://grafana.example.com/d/agents"),
-		"eight links":           strings.Repeat(dashboard("Room", "'https://grafana.example.com/?r={room}'"), 8),
+		"the room's lifetime (#630)": dashboard("Room", "'https://grafana.example.com/d/x?var-room={room}&from={created}&to={ended}'"),
+		"no placeholder at all":      dashboard("Overview", "https://grafana.example.com/d/agents"),
+		"eight links":                strings.Repeat(dashboard("Room", "'https://grafana.example.com/?r={room}'"), 8),
 	} {
 		t.Run(name, func(t *testing.T) {
 			c, err := parse(t, "  dashboards:\n"+block)
@@ -47,7 +48,7 @@ func TestDashboardsConfig(t *testing.T) {
 		"userinfo":              {dashboard("Room", "'https://u:p@grafana.example.com/?r={room}'"), "url must be an absolute https:// URL"},
 		"a placeholder in host": {dashboard("Room", "'https://{room}.example.com/'"), "a placeholder only in the path, query or fragment"},
 		"an unknown placeholder": {dashboard("Room", "'https://grafana.example.com/?r={rooms}'"),
-			`human.dashboards[0] "Room": unknown placeholder "{rooms}": only {room}, {run} and {task}`},
+			`human.dashboards[0] "Room": unknown placeholder "{rooms}": only {room}, {run}, {task}, {created} and {ended}`},
 		"a stray brace":                     {dashboard("Room", "'https://grafana.example.com/?r={room'"), "human.dashboards[0] \"Room\": unmatched { or }"},
 		"an all-spaces label":               {dashboard("'   '", "https://grafana.example.com/"), "human.dashboards[0]: label is required"},
 		"a placeholder glued to the host":   {dashboard("Room", "'https://grafana.example.com{room}'"), `human.dashboards[0] "Room": `},

@@ -202,13 +202,21 @@ function group(name: string, items: (HTMLElement | undefined)[]): HTMLElement[] 
   return [g];
 }
 
+// epochMs is an RFC 3339 time as epoch milliseconds, undefined when absent or unreadable.
+function epochMs(at?: string): string | undefined {
+  const ms = at ? Date.parse(at) : NaN;
+  return Number.isFinite(ms) ? String(ms) : undefined;
+}
+
 // dashboardsChip is the "Dashboards:" group, filled with the room's ids: the run is the
-// facts' current or last one, else the history's last, else the state frame's last. A chip
-// in tier 2's links. Undefined when no link shows.
+// facts' current or last one, else the history's last, else the state frame's last; the
+// room's lifetime is the state frame's, ending "now" until the log is sealed. A chip in
+// tier 2's links. Undefined when no link shows.
 function dashboardsChip(i: StripInput): HTMLElement | undefined {
   const s = i.summary;
   const run = s?.status.run?.id || s?.runs?.at(-1)?.id || i.snap?.runs?.at(-1)?.id;
-  const links = expandDashboards(i.dashboards, { room: i.roomId, run, task: s?.status.task });
+  const links = expandDashboards(i.dashboards, { room: i.roomId, run, task: s?.status.task,
+    created: epochMs(i.snap?.createdAt), ended: epochMs(i.snap?.closedAt) ?? "now" });
   if (links.length === 0) return undefined;
   const body: (string | Node)[] = [label("Dashboards:"), " "];
   links.forEach((l, n) => body.push(...(n ? [" · "] : []), safeLink(l.label, l.url)));

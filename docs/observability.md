@@ -99,7 +99,8 @@ spec:
 
 **Links.** The uids are cloud-native-ref's, so the dashboards' links to each other, and the room
 page's [`human.dashboards`](reference/config.md#broker-fields) links, resolve by uid, for
-example `https://grafana.example.com/d/agent-room/rooms?var-room={room}`. A room's links back to the
+example `https://grafana.example.com/d/agent-room/rooms?var-room={room}&from={created}&to={ended}`, which
+opens on the room's own lifetime. A room's links back to the
 room page use `maku.broker.publicURL`.
 
 **The datasource** is the `${datasource}` variable, of type `prometheus`. Every query is PromQL:

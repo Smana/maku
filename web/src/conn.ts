@@ -15,6 +15,8 @@ export interface Snapshot {
   sealed?: boolean;
   approvals?: { approvalId: string; runId: string; callId: string; class: string; action: unknown; expiresAt: string; seq: number; prompters?: string[] }[];
   fourEyes?: boolean;
+  // When the room was created, and when its log was sealed (absent while it runs).
+  createdAt?: string; closedAt?: string;
 }
 export interface Frame { type: string; throughSeq?: number; fromSeq?: number; snapshot?: Snapshot; event?: RoomEvent;
   clientSeq?: number; seq?: number; rejected?: string; result?: unknown }

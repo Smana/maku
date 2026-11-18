@@ -155,7 +155,7 @@ func (s *Server) roomctlSetup(w http.ResponseWriter, r *http.Request) {
 func (s *Server) publicSetup(w http.ResponseWriter, _ *http.Request) { s.writeSetup(w, nil) }
 
 // Dashboard is one link template the room page fills with a room's ids (human.dashboards):
-// {room}, {run} and {task}, each URL-encoded, and a link whose value is missing hidden.
+// {room}, {run}, {task}, {created} and {ended}, each URL-encoded, and a link whose value is missing hidden.
 type Dashboard struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`

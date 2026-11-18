@@ -8,10 +8,11 @@ import { api } from "./api";
 
 export interface Dashboard { label: string; url: string }
 
-// The room's ids a template may name: the room, its current or last run, its task.
-export interface DashboardIds { room: string; run?: string; task?: string }
+// The room's values a template may name: the room, its current or last run, its task, and its
+// lifetime in epoch milliseconds: created, and ended (or "now" while the room runs).
+export interface DashboardIds { room: string; run?: string; task?: string; created?: string; ended?: string }
 
-const placeholder = /\{(room|run|task)\}/g;
+const placeholder = /\{(room|run|task|created|ended)\}/g;
 
 // fill puts each placeholder's value in, encoded; undefined when one has none.
 function fill(tmpl: string, value: (k: keyof DashboardIds) => string | undefined): string | undefined {

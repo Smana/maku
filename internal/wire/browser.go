@@ -90,6 +90,10 @@ type Snapshot struct {
 	Approvals []ApprovalView `json:"approvals"`
 	// FourEyes is the room's rule that nobody who prompted a turn decides its approvals.
 	FourEyes bool `json:"fourEyes"`
+	// CreatedAt is when the room was created, and ClosedAt when its log was sealed (absent while
+	// it runs): the dashboard links' {created} and {ended} (#630).
+	CreatedAt time.Time  `json:"createdAt,omitzero"`
+	ClosedAt  *time.Time `json:"closedAt,omitempty"`
 }
 
 // ServerFrame is a frame from the broker: state, sync, event, ack or transient.

@@ -34,6 +34,7 @@ type RoomState struct {
 	Sealed         bool
 	ClosedAt       *time.Time
 	LastEventAt    time.Time
+	CreatedAt      time.Time // when the row was inserted; it never changes
 }
 
 // insertRoomSQL creates a room's row ($1 id, $2 driver, $3 retention in seconds);
@@ -60,9 +61,9 @@ func (s *Store) EnsureRoom(ctx context.Context, r NewRoom) (bool, error) {
 // Room reads a room's state, or ErrNoRoom.
 func (s *Store) Room(ctx context.Context, id string) (RoomState, error) {
 	st := RoomState{ID: id}
-	err := s.pool.QueryRow(ctx, `SELECT last_seq, driver, driver_epoch, fallback_driver, sealed, closed_at, last_event_at
+	err := s.pool.QueryRow(ctx, `SELECT last_seq, driver, driver_epoch, fallback_driver, sealed, closed_at, last_event_at, created_at
 		FROM rooms WHERE room_id = $1`, id).Scan(&st.LastSeq, &st.Driver, &st.DriverEpoch, &st.FallbackDriver, &st.Sealed,
-		&st.ClosedAt, &st.LastEventAt)
+		&st.ClosedAt, &st.LastEventAt, &st.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return st, ErrNoRoom
 	}

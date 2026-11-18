@@ -128,6 +128,10 @@ func TestLimitSealsTheRoom(t *testing.T) {
 	if err != nil || !st.Sealed || st.LastSeq != 3 || st.ClosedAt == nil {
 		t.Fatalf("want sealed at seq 3 with a limit event, got %+v, %v", st, err)
 	}
+	// #630: the row says when the room was created, so a dashboard link can open on its lifetime.
+	if st.CreatedAt.IsZero() || st.CreatedAt.After(*st.ClosedAt) {
+		t.Fatalf("created %v, closed %v", st.CreatedAt, st.ClosedAt)
+	}
 	// A retry of the append that sealed the room is a duplicate, not a refusal.
 	replay, dup, err := s.Append(context.Background(), draft("agent:x", 2))
 	if err != nil || !dup || replay.Seq != sealing.Seq {

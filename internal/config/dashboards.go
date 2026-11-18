@@ -14,7 +14,9 @@ import (
 
 // DashboardConfig is one link the room page shows in its title strip, such as a Grafana
 // dashboard. URL is a template: the page fills {room}, {run} and {task} with the room's ids,
-// each URL-encoded, and hides a link whose placeholder the room has no value for.
+// {created} with the room's creation time and {ended} with its end time (epoch milliseconds), or
+// "now" while it runs, each URL-encoded, and hides a link whose placeholder the room has no value
+// for. `from={created}&to={ended}` opens a Grafana dashboard on the room's own lifetime (#630).
 type DashboardConfig struct {
 	Label string `json:"label"`
 	URL   string `json:"url"`
@@ -28,7 +30,7 @@ const (
 
 var (
 	placeholderRE = regexp.MustCompile(`\{[^{}]*\}`)
-	placeholders  = map[string]bool{"{room}": true, "{run}": true, "{task}": true}
+	placeholders  = map[string]bool{"{room}": true, "{run}": true, "{task}": true, "{created}": true, "{ended}": true}
 )
 
 // validateDashboards reports every bad entry of human.dashboards.
@@ -60,7 +62,7 @@ func dashboardURL(tmpl string) error {
 	const sample = "placeholder0"
 	for _, p := range placeholderRE.FindAllString(tmpl, -1) {
 		if !placeholders[p] {
-			return fmt.Errorf("unknown placeholder %q: only {room}, {run} and {task}", p)
+			return fmt.Errorf("unknown placeholder %q: only {room}, {run}, {task}, {created} and {ended}", p)
 		}
 	}
 	filled := placeholderRE.ReplaceAllString(tmpl, sample)

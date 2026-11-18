@@ -202,7 +202,12 @@ func (m *memLog) Room(_ context.Context, id string) (store.RoomState, error) {
 		return store.RoomState{}, m.roomErr
 	}
 	m.roomReads++
-	st := store.RoomState{ID: id, LastSeq: int64(len(m.evs)), Driver: "system:factory", DriverEpoch: 3, Sealed: m.sealed}
+	st := store.RoomState{ID: id, LastSeq: int64(len(m.evs)), Driver: "system:factory", DriverEpoch: 3, Sealed: m.sealed,
+		CreatedAt: memCreated}
+	if m.sealed {
+		at := memCreated.Add(time.Hour)
+		st.ClosedAt = &at
+	}
 	if m.driverFrom > 0 && m.roomReads >= m.driverFrom {
 		st.Driver = m.driver
 	}
@@ -1600,6 +1605,24 @@ func (f fourEyesRooms) Get(ctx context.Context, key client.ObjectKey, obj client
 		r.Spec.Approvals.FourEyes = true
 	}
 	return nil
+}
+
+// memCreated is when memLog's room was created.
+var memCreated = time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+
+// #630: the state frame says when the room was created and, once sealed, when it closed, so the
+// dashboard chips can open on the room's own lifetime.
+func TestSnapshotCreatedAndClosed(t *testing.T) {
+	s := read(t, dial(t, setup(t), "dev", hello(nil, 0))).Snapshot
+	if !s.CreatedAt.Equal(memCreated) || s.ClosedAt != nil {
+		t.Fatalf("created %v closed %v", s.CreatedAt, s.ClosedAt)
+	}
+	e := setup(t)
+	e.log.sealed = true
+	s = read(t, dial(t, e, "dev", hello(nil, 0))).Snapshot
+	if s.ClosedAt == nil || !s.ClosedAt.Equal(memCreated.Add(time.Hour)) {
+		t.Fatalf("closed %v", s.ClosedAt)
+	}
 }
 
 // The state frame says whether the room is four-eyes, so the card can say who may decide.
