@@ -803,6 +803,11 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	nextRev := rev
 	if prev != nil {
 		nextRev = prev.Rev + 1 // the live proposal's next revision, whatever the caller passed
+	} else if _, aq, ok := a.threadAsked(msgs); ok {
+		nextRev = min(aq.Rev+1, maxProposalRevisions) // the thread's open question's next revision
+	}
+	if res.Asked != nil {
+		return a.ask(ctx, ev.Channel, thread, latest, AskedPayload{ID: res.ID, Author: ev.User, Rev: nextRev}, *res.Asked)
 	}
 	prop, err := newProposal(res.Plan, res.Hash, ev.User, nextRev)
 	if err != nil {
@@ -908,6 +913,11 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 	case code == "daily_plans_reached":
 		return code, "Not proposed: you have used today's plans; mention me again after 00:00 UTC, " +
 			"or hand it off from your coding agent.", false
+	case code == intake.ReasonUnresolvedMarker:
+		// The planner asked its question and the thread asks it (ask); this line is a marker no
+		// question came with, said in plain words rather than as the reason code.
+		return code, "Not proposed: the plan needs one answer first, and the planner did not say which; " +
+			"mention me again with more detail.", false
 	case code == "repository_unverified":
 		return code, "Not proposed: GitHub could not confirm the repository, so the planner will not guess; " +
 			"mention me again in a minute.", true
@@ -1057,6 +1067,9 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	if code := a.planFailed(ctx, ev.Channel, thread, ev.User, ch.Repositories, err); code != "" {
 		return code
 	}
+	if res.Asked != nil {
+		return a.ask(ctx, ev.Channel, thread, latest, AskedPayload{ID: res.ID, Author: p.Author, Rev: p.Rev + 1}, *res.Asked)
+	}
 	// The reply is the mention's author, so the plan keeps the author it was made for however many
 	// times it is revised: who may file it does not move with who last typed.
 	next, err := newProposal(res.Plan, res.Hash, p.Author, p.Rev+1)
@@ -1123,6 +1136,9 @@ type planOutcome struct {
 	Plan     intake.Plan
 	Hash     string
 	Question *intake.Question
+	// Asked is the planner's one question when the plan still carries a marker (outcome `asked`): the
+	// final check refuses such a plan, so Plan and Hash are empty and the thread asks this instead.
+	Asked    *intake.Question
 	Degraded bool
 	Pins     []string
 	Workflow string
@@ -1144,6 +1160,13 @@ func (a *App) plan(ctx context.Context, channel, thread string, st *planStatus, 
 			return
 		}
 		checked, err := a.Broker.HandoffCheck(ctx, hres.ID, in.OnBehalfOf, nil)
+		if err != nil && hres.Question != nil && isMarkerRefusal(err) {
+			// The planner asked its one question: the plan is not final, so there is nothing to
+			// confirm yet, and the question is what the thread says (Smana/maku#623).
+			q := &intake.Question{Text: hres.Question.Text, Recommended: intake.Answer{Answer: hres.Question.Recommended}}
+			done <- answer{res: planOutcome{ID: hres.ID, Asked: q}}
+			return
+		}
 		if err != nil {
 			done <- answer{err: err}
 			return
@@ -1469,6 +1492,10 @@ func (a *App) threadProposal(msgs []Message) (latest *Message, closed bool) {
 		}
 		if _, ok := m.Metadata.proposalPayload(); ok {
 			latest = m
+			continue
+		}
+		if _, ok := m.Metadata.askedPayload(); ok {
+			latest = nil // the planner's question after it: that card's plan is no longer the broker's
 			continue
 		}
 		if _, ok := m.Metadata.markerPayload(); ok {
