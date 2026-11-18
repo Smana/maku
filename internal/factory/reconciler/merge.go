@@ -513,6 +513,54 @@ func (r *Reconciler) approvalReturn(cfg *config.Config, t *v1alpha1.Task, pr for
 	return false
 }
 
+// escalatedReturn is #628: an Escalated task's way back to the merge gate, read on each escalated
+// pass. A maintainer's approval of the pull request's current head returns it as approvalReturn
+// returns an AwaitingHuman task (reentered_approved, uncounted, once per review): an escalation on
+// the budget or on CI leaves a correct pull request a human may still approve. A ci_red escalation
+// returns once the head's required checks are green (reentered_ci_green, counted). Any other one
+// stays with a human, but a maku/merge-gate still at ci_red on a green head is replaced by what is
+// true: a human decides, for the escalation's reason. The current head is the gate's to judge: its
+// push check hands a human's commit off as on any other pass.
+func (r *Reconciler) escalatedReturn(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
+	ref, why, rc := t.Status.PullRequest, t.Status.Reason, r.repo(cfg, t)
+	if ref == nil || pr.State != "OPEN" || pr.HeadSHA == "" || t.Status.PhaseSince == nil || adoptedTask(t) ||
+		gateOf(rc, t.Spec.PredictedClass).Adopted() || !cfg.NeedsMerger() || why == ReasonSplitProposed || why == ReasonNeedsAuthor {
+		return false, nil
+	}
+	if rc.Merge.ApproveToMerge && !byHandReasons[why] {
+		for _, rv := range pr.Reviews {
+			if rv.State == "APPROVED" && rc.IsMaintainer(rv.Author) && rv.Commit == pr.HeadSHA &&
+				rv.At.After(t.Status.PhaseSince.Add(-retrySkew)) && !slices.Contains(t.Status.Handled, -rv.ID) {
+				markHandled(t, -rv.ID)
+				ref.HeadSHA = pr.HeadSHA
+				t.Status.GateReentries-- // backToGate counts one; an approval is uncounted
+				r.backToGate(cfg, t, why, "reentered_approved", pr.HeadSHA)
+				return true, nil
+			}
+		}
+	}
+	if why != "ci_red" && !rc.Merge.PostsGateStatus() {
+		return false, nil // nothing to return and no status to refresh: no checks read
+	}
+	c, err := r.merger(ctx).PullRequestChecks(ctx, pr.Number)
+	if err != nil {
+		return false, err
+	}
+	if CIState(c, requiredFor(rc, t)) != "SUCCESS" {
+		return false, nil
+	}
+	if why == "ci_red" && t.Status.GateReentries < maxGateReentries {
+		ref.HeadSHA = pr.HeadSHA
+		r.backToGate(cfg, t, why, "reentered_ci_green", pr.HeadSHA)
+		return true, nil
+	}
+	if st, _ := c.StatusOf(GateStatusContext); rc.Merge.PostsGateStatus() && strings.EqualFold(st, "failure") &&
+		strings.HasSuffix(c.DescriptionOf(GateStatusContext), ": ci_red") {
+		_ = r.postGateStatus(ctx, t, pr.HeadSHA, c, ArmDecision{Verdict: "human", Reason: why})
+	}
+	return false, nil
+}
+
 // reenter returns a transient hand-off to the merge gate (N1). A hand-off is transient when its
 // reason is one the gate's inputs can clear by themselves, and, with approveToMerge, the day's cap
 // and the class's pause (AM5: auto_merge_cap returns on the next UTC day, class_paused once paused
