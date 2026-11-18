@@ -816,7 +816,10 @@ func TestMakuDoctorReadsTheRepositorySkillDirs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !slices.Contains(dirs, filepath.Join(repo, ".claude", "skills")) || slices.Contains(dirs, filepath.Join(sub, ".claude", "skills")) {
+	has := func(p string) bool {
+		return slices.ContainsFunc(dirs, func(d maku.SkillDir) bool { return d.Path == p })
+	}
+	if !has(filepath.Join(repo, ".claude", "skills")) || has(filepath.Join(sub, ".claude", "skills")) {
 		t.Errorf("dirs %v: want the repository top, not the subdirectory", dirs)
 	}
 	r.Cwd = t.TempDir()
@@ -825,8 +828,8 @@ func TestMakuDoctorReadsTheRepositorySkillDirs(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, d := range dirs {
-		if !strings.HasPrefix(d, home) {
-			t.Errorf("outside a repository the project scope is skipped, got %s", d)
+		if !strings.HasPrefix(d.Path, home) {
+			t.Errorf("outside a repository the project scope is skipped, got %s", d.Path)
 		}
 	}
 }

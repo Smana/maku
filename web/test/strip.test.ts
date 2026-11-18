@@ -750,6 +750,18 @@ describe("the strip's dashboards", () => {
       snap: { ...snap, runs: [{ id: "cccccccc", role: "implementer", phase: "Running" }] } }));
     expect(links(h)[0].href).toBe("https://grafana.example.com/d/agent-run/x?var-run=cccccccc");
   });
+  // #630: a chip can open on the room's own lifetime.
+  it("fills {created} and {ended} in epoch ms, {ended} now while the room runs", () => {
+    const { h, strip } = mount();
+    const life = [{ label: "Life", url: "https://grafana.example.com/d/x?from={created}&to={ended}" }];
+    const createdAt = "2026-11-18T09:00:00Z", closedAt = "2026-11-18T10:00:00Z";
+    strip.update(input({ dashboards: life, snap: { ...snap, createdAt } }));
+    expect(links(h)[0].href).toBe(`https://grafana.example.com/d/x?from=${Date.parse(createdAt)}&to=now`);
+    strip.update(input({ dashboards: life, snap: { ...snap, createdAt, closedAt, sealed: true } }));
+    expect(links(h)[0].href).toBe(`https://grafana.example.com/d/x?from=${Date.parse(createdAt)}&to=${Date.parse(closedAt)}`);
+    strip.update(input({ dashboards: life, snap: { ...snap, createdAt: undefined } }));
+    expect(h.querySelector(".chip-dashboards")).toBeNull(); // a broker that does not say: hidden
+  });
   it("drops a link that does not come out https", () => {
     const { h, strip } = mount();
     strip.update(input({ dashboards: [{ label: "Plain", url: "http://grafana.example.com/?r={room}" }] }));

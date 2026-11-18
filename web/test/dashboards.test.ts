@@ -21,6 +21,12 @@ describe("dashboard links", () => {
     expect(expandDashboards([all], { room: "r1", run: "u1", task: "r1" })[0].url)
       .toBe("https://grafana.example.com/d/u1/x?r=r1&t=r1&r2=r1");
   });
+  it("fill {created} and {ended} (#630)", () => {
+    const life = { label: "Life", url: "https://grafana.example.com/d/x?from={created}&to={ended}" };
+    expect(expandDashboards([life], { room: "r1", created: "1795000000000", ended: "now" })[0].url)
+      .toBe("https://grafana.example.com/d/x?from=1795000000000&to=now");
+    expect(expandDashboards([life], { room: "r1", ended: "now" })).toEqual([]);
+  });
   it("hide a link whose placeholder has no value", () => {
     expect(expandDashboards([room, run, task], { room: "3kq7x2ma" }).map((l) => l.label)).toEqual(["Room metrics"]);
     expect(expandDashboards([room, run, task], { room: "3kq7x2ma", run: "ikely2yk" }).map((l) => l.label)).toEqual(["Room metrics", "Run"]);

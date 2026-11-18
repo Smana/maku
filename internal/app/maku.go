@@ -286,7 +286,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		if _, err := flags(fs, args); err != nil {
 			return err
 		}
-		return r.runDoctor(ctx, cfg, tokPath, client)
+		return r.runDoctor(ctx, cfg, tokPath, client, "")
 	}
 	if cmd == "mcp" {
 		return r.mcp(ctx, cfg, tokPath, args)
@@ -622,7 +622,7 @@ func (r Maku) homeAndCwd() (home, cwd string, err error) {
 
 // skillDirs is where the doctor looks: under home, and under the repository top, as setup writes
 // them. Outside a repository the project scope is skipped.
-func (r Maku) skillDirs(ctx context.Context) ([]string, error) {
+func (r Maku) skillDirs(ctx context.Context) ([]maku.SkillDir, error) {
 	home, cwd, err := r.homeAndCwd()
 	if err != nil {
 		return nil, err
@@ -646,7 +646,9 @@ func repoTop(ctx context.Context, dir string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-func (r Maku) runDoctor(ctx context.Context, cfg maku.Config, tokPath, client string) error {
+// runDoctor runs the checks; setupSkillDir is the skill directory a setup just wrote ("" for a bare
+// doctor), so only that copy can fail it.
+func (r Maku) runDoctor(ctx context.Context, cfg maku.Config, tokPath, client, setupSkillDir string) error {
 	dirs, err := r.skillDirs(ctx)
 	if err != nil {
 		return err
@@ -664,7 +666,7 @@ func (r Maku) runDoctor(ctx context.Context, cfg maku.Config, tokPath, client st
 		hc = httpx.New(makuTimeout, nil)
 	}
 	return maku.Doctor{Config: cfg, HC: hc, TokenPath: tokPath,
-		SkillDirs: dirs, Version: version.Version,
+		SkillDirs: dirs, Version: version.Version, SetupSkillDir: setupSkillDir,
 		OpenCodeConfigs: maku.OpenCodeConfigs(home), ServiceStart: opencodeServiceStart(ctx),
 		LegacyMCP: maku.LegacyEntries(home, top),
 		Caps:      maku.CapsStore{Path: maku.CapsPath(r.Dir)}, Client: client}.Run(ctx, r.Out)
@@ -785,7 +787,7 @@ func (r Maku) setup(ctx context.Context, args []string) error {
 	if err := s.Do(ctx); err != nil {
 		return err
 	}
-	return r.runDoctor(ctx, cfg, tokPath, doctorClient(maku.CapsStore{Path: maku.CapsPath(r.Dir)}, pos[0]))
+	return r.runDoctor(ctx, cfg, tokPath, doctorClient(maku.CapsStore{Path: maku.CapsPath(r.Dir)}, pos[0]), s.SkillPath())
 }
 
 // status prints where a room stands; --json is the broker's body unchanged.

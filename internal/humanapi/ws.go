@@ -581,7 +581,11 @@ func (v *viewer) snapshot(you wire.You, st store.RoomState) (*wire.Snapshot, err
 	}
 	snap := &wire.Snapshot{RoomID: v.id, Phase: v.room.Status.Phase, Driver: st.Driver, DriverEpoch: st.DriverEpoch,
 		DataClass: v.room.Spec.DataClass, You: you, Runs: []wire.RunView{}, Queue: []wire.QueuedView{}, Sealed: st.Sealed,
-		Approvals: []wire.ApprovalView{}, FourEyes: v.room.Spec.Approvals.FourEyes}
+		Approvals: []wire.ApprovalView{}, FourEyes: v.room.Spec.Approvals.FourEyes, CreatedAt: st.CreatedAt.UTC()}
+	if st.ClosedAt != nil {
+		at := st.ClosedAt.UTC()
+		snap.ClosedAt = &at
+	}
 	for _, q := range queued {
 		snap.Queue = append(snap.Queue, wire.QueuedView{Ref: q.Ref, Author: q.Author, Text: q.Text})
 	}
