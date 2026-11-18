@@ -1074,7 +1074,7 @@ func TestAHumanCommitUnderAnApprovalIsHandedOffByHand(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "human_commit_in_pr" || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
 	}
-	if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(c, "bypass rules") || strings.Contains(c, "approve this pull request") {
+	if c := strings.Join(eventCommentBodies(g.f, 12), "\n"); !strings.Contains(c, "bypass rules") || strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off names the bypass: %q", c)
 	}
 	if got = g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "human_commit_in_pr" {
@@ -1094,7 +1094,7 @@ func TestAnApprovalMergesAPatchTooLargeToRead(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "patch_too_large" {
 		t.Fatalf("hand-off: %s %s", got.Status.Phase, got.Status.Reason)
 	}
-	if c := strings.Join(eventCommentBodies(g.f, 7), "\n"); !strings.Contains(c, "approve this pull request") {
+	if c := strings.Join(eventCommentBodies(g.f, 12), "\n"); !strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off says approve: %q", c)
 	}
 	pr, _ := g.f.PullRequest(t.Context(), 12)
@@ -1395,7 +1395,7 @@ func TestAnApprovedHeadNoRunReportedArmsOnceTheRoomReportsIt(t *testing.T) {
 	if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "head_unreported" || len(g.f.Armed()) != 0 {
 		t.Fatalf("%s %s %v", got.Status.Phase, got.Status.Reason, g.f.Armed())
 	}
-	c := strings.Join(eventCommentBodies(g.f, 7), "\n")
+	c := strings.Join(eventCommentBodies(g.f, 12), "\n")
 	if !strings.Contains(c, "never reported") || strings.Contains(c, "older head") || strings.Contains(c, "approve this pull request") {
 		t.Fatalf("the hand-off says what is missing, and that an approval does not merge it: %q", c)
 	}

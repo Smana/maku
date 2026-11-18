@@ -312,7 +312,9 @@ not. Comments from before the head was recorded never count.
 
 **The decision record.** Every non-wait decision the gate's rows reach (arm, shadow, human,
 escalate, and an adopted task's `ci_red` or `ci_cancelled`) also appends one hidden line to its
-comment, with the values each row read, so a tally can replay a cap later. An agent task's `ci_red`
+comment, with the values each row read, so a tally can replay a cap later. That comment is posted on the
+pull request, a hand-off's included (`no_policy_matched` with its `considered=`), where the decision timeline
+and the evidence tally read it. An agent task's `ci_red`
 or `ci_cancelled` starts a fix run or a re-run instead, and posts no record:
 
 ```

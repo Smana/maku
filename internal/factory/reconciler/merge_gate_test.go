@@ -5,6 +5,7 @@ package reconciler
 import (
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -213,5 +214,34 @@ func TestQuickWorkflowPathBoundPolicyNeverArms(t *testing.T) {
 	c := strings.Join(append(g.f.Comments(12), g.f.Comments(7)...), "\n")
 	if !strings.Contains(c, " considered=docs:reviewer_verdict_missing ") {
 		t.Fatalf("missing considered=docs:reviewer_verdict_missing:\n%s", c)
+	}
+}
+
+// #628: a no_policy_matched hand-off writes its decision record on the pull request, where the
+// decision timeline and the evidence tally read it, with each evaluated policy's refusal in
+// considered=, as a matched decision's record is.
+func TestNoPolicyMatchedRecordsOnThePullRequest(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	predict(t, g, "docs")
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true},
+		"docs": {Shadow: true, AllowedFiles: []string{`^.+\.md$`}}, "revert": {}}
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.f.SetFiles(map[string]string{"main.go": "package main\n"}, map[string]string{"main.go": "package main\n\nfunc main() {}\n"})
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Reason != reasonNoPolicy {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+	// The timeline's own pattern (policyview cannot be imported here: it imports this package).
+	record := regexp.MustCompile(`agent-factory-decision head=([^ ]+) class=([^ ]+) decision=([a-z_]+):([a-z_]+) (.*?) -->`)
+	var reasons []string
+	for _, body := range g.f.Comments(12) {
+		if m := record.FindStringSubmatch(body); m != nil {
+			reasons = append(reasons, m[4])
+		}
+	}
+	if len(reasons) != 1 || reasons[0] != reasonNoPolicy {
+		t.Fatalf("the pull request's records: %q\n%q", reasons, g.f.Comments(12))
+	}
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " considered=docs:file_not_allowed,docs-links:class_mismatch ") {
+		t.Fatalf("no considered= on the pull request:\n%s", c)
 	}
 }

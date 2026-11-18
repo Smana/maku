@@ -271,7 +271,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 			// it: no fix run, no re-run of its CI. A maintainer or its author takes it from here.
 			t.Status.PullRequest.HeadSHA = pr.HeadSHA
 			r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-			narrateLater(t, r.withRecord(cfg, narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
+			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WaitingForHuman(t, d.Reason), t, d, pr.HeadSHA))
 			return nil
 		}
 		if d.Verdict == "ci_red" {
@@ -295,7 +295,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		}
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA // what reenter holds the hand-off to
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-		narrateLater(t, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
 	case "shadow": // R32: the decision is recorded and narrated; a maintainer merges or closes
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
@@ -324,7 +324,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		}
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
-		narrateLater(t, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
@@ -348,7 +348,7 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 				r.withdrawGateStatus(ctx, t, pr.HeadSHA, ArmDecision{Verdict: "human", Reason: "not_mergeable", Matched: d.Matched})
 			}
 			r.to(t, v1alpha1.PhaseAwaitingHuman, "not_mergeable")
-			narrateLater(t, r.withRecord(cfg, narrate.WaitingForHuman(t, "not_mergeable"), t, d, pr.HeadSHA))
+			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WaitingForHuman(t, "not_mergeable"), t, d, pr.HeadSHA))
 			return nil
 		default:
 			if armStatus {
