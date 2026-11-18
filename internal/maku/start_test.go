@@ -324,3 +324,41 @@ func TestStartExpiredID(t *testing.T) {
 		t.Fatalf("File=%v Label=%v, want neither called", f.calls, l.calls)
 	}
 }
+
+func TestStartFormUnansweredKeepsThePlan(t *testing.T) {
+	defer func(w time.Duration) { elicitWait = w }(elicitWait)
+	elicitWait = 50 * time.Millisecond
+	p := planFixture(t, "single")
+	hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+		return handoffCheckedResult(t, p, true, []string{"standard"})
+	})
+	f, l := &filing{}, &labeling{}
+	s := handoffSession(t, hb, true, f, l, nil)
+
+	id := "aaaaaaaaaaaaaaaaaaaaaaaaaa"
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": id}}})
+	if ask := s.next(t); ask["method"] != "elicitation/create" {
+		t.Fatalf("expected elicitation/create, got %v", ask)
+	}
+	var res map[string]any // the form is never answered; skip notifications until start's own result
+	for res == nil || fmt.Sprint(res["id"]) != "2" {
+		res = s.next(t)
+	}
+	result := res["result"].(map[string]any)
+	text := fmt.Sprint(result["content"])
+	for _, want := range []string{"needs_confirmation", "The plan is kept", "call start again with the same id (" + id + ")", "gh issue create"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("result lacks %q: %s", want, text)
+		}
+	}
+	if len(f.calls) != 0 || len(l.calls) != 0 {
+		t.Fatalf("File=%v Label=%v, want neither called", f.calls, l.calls)
+	}
+}
+
+func TestDefaultElicitWaitLeavesTimeToRead(t *testing.T) {
+	if defaultElicitWait < 5*time.Minute {
+		t.Fatalf("defaultElicitWait = %v: a developer reading the form loses it under 5 min", defaultElicitWait)
+	}
+}
