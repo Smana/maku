@@ -175,10 +175,17 @@ func (s *Server) handoffTool(ctx context.Context, p authn.Principal, args json.R
 	}
 
 	now := s.handoffNow()
+	surface := intake.SurfaceSession
+	if p.Sponsored {
+		surface = intake.SurfaceSlack
+	}
 	if a.ID == "" {
 		ia := a.toIntakeArgs()
-		plan, degraded, err := s.executeIntakePlan(ctx, p, ia, planRev)
+		plan, degraded, choices, err := s.executeIntakePlan(ctx, p, ia, planRev)
 		if err != nil {
+			return nil, err
+		}
+		if plan, err = s.oneQuestion(ctx, surface, *plan, ia, false, choices); err != nil {
 			return nil, err
 		}
 		id, err := newHandoffID()
@@ -191,10 +198,6 @@ func (s *Server) handoffTool(ctx context.Context, p authn.Principal, args json.R
 		return s.handoffAnswer(ctx, p, ia.OnBehalfOf, id, *plan, degraded)
 	}
 
-	surface := intake.SurfaceSession
-	if p.Sponsored {
-		surface = intake.SurfaceSlack
-	}
 	row, storedArgs, base, err := s.readHandoff(ctx, p, a.ID, a.OnBehalfOf, true, surface)
 	if err != nil {
 		return nil, err
@@ -227,43 +230,91 @@ func (s *Server) handoffTool(ctx context.Context, p authn.Principal, args json.R
 		return nil, toolError("invalid_arguments: answer cannot contain a clarification marker")
 	}
 
+	// Every answer is kept in the handoff's context, so each later re-plan of this id sends the
+	// planner what the person already settled (#625).
+	var revision *intake.Plan
 	if len(base.Gaps) > 0 {
-		cand, err := answerFirstGap(base, cleanAnswer)
-		if err != nil {
-			return nil, s.planCheckRefused(ctx, surface, err)
+		gap := base.Gaps[0]
+		storedArgs = appendHandoffContext(storedArgs, answeredLine(gap, cleanAnswer))
+		if !intake.IsRepositoryGap(gap) && !s.groundedElsewhere(ctx, p, storedArgs, base, cleanAnswer) {
+			cand, err := answerFirstGap(base, cleanAnswer)
+			if err != nil {
+				return nil, s.planCheckRefused(ctx, surface, err)
+			}
+			revision = &cand
 		}
-		ia := storedArgs
-		ia.Plan = &base
-		ia.Hash = row.Hash
-		ia.Candidate = &cand
-		revisedPlan, degraded, err := s.executeIntakePlan(ctx, p, ia, cand.Rev)
-		if err != nil {
-			return nil, err
-		}
-		if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, *revisedPlan, row.CreatedAt, now.Add(handoffTTL)); err != nil {
-			return nil, err
-		}
-		return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, *revisedPlan, degraded)
+		// The repository question, or an answer that points at another repository, re-plans from
+		// the request: a revision keeps the repository its base was planned for.
+	} else {
+		storedArgs = appendHandoffContext(storedArgs, "Reply: "+cleanAnswer)
 	}
-
-	storedArgs = appendHandoffContext(storedArgs, cleanAnswer)
-	replanned, degraded, err := s.executeIntakePlan(ctx, p, storedArgs, base.Rev+1)
+	ia, rev := storedArgs, base.Rev+1
+	if revision != nil {
+		ia.Plan, ia.Hash, ia.Candidate, rev = &base, row.Hash, revision, revision.Rev
+	}
+	replanned, degraded, _, err := s.executeIntakePlan(ctx, p, ia, rev)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, *replanned, row.CreatedAt, now.Add(handoffTTL)); err != nil {
+	// The person has answered once: a re-plan asks nothing more, and assumes what it would re-open.
+	final, err := s.oneQuestion(ctx, surface, *replanned, storedArgs, true, nil)
+	if err != nil {
 		return nil, err
 	}
-	return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, *replanned, degraded)
+	if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, *final, row.CreatedAt, now.Add(handoffTTL)); err != nil {
+		return nil, err
+	}
+	return s.handoffAnswer(ctx, p, storedArgs.OnBehalfOf, row.ID, *final, degraded)
 }
 
-func appendHandoffContext(a intakeArgs, answer string) intakeArgs {
+// answeredLine is the context line that carries an answer to gap into every later re-plan. The
+// repository question's line leaves out the choices it listed, so the answer alone names one.
+func answeredLine(gap intake.Gap, answer string) string {
+	q := gap.Text
+	if intake.IsRepositoryGap(gap) {
+		q = "Which repository should this change go to?"
+	}
+	return "Answered: " + q + " — " + answer
+}
+
+// oneQuestion holds a handoff's plan to at most one question (intake.OneQuestion): the request and
+// the answers so far are what a stated done-when is read from.
+func (s *Server) oneQuestion(ctx context.Context, surface intake.Surface, plan intake.Plan, a intakeArgs, answered bool, choices []string) (*intake.Plan, error) {
+	out, err := intake.OneQuestion(plan, a.Text+"\n"+a.Context, answered, choices)
+	if err != nil {
+		return nil, s.planCheckRefused(ctx, surface, err)
+	}
+	return &out, nil
+}
+
+// groundedElsewhere is whether an answer names a repository, or quotes a path held only by
+// repositories, other than the one base was planned for (#626).
+func (s *Server) groundedElsewhere(ctx context.Context, p authn.Principal, a intakeArgs, base intake.Plan, answer string) bool {
+	known := s.knownRepositories(ctx, p, a, nil)
+	if named, ref := intake.CheckNamed(answer, known, known); ref == nil && !slices.Equal(named, known) &&
+		!slices.ContainsFunc(named, func(r string) bool { return strings.EqualFold(r, base.Repository) }) {
+		return true
+	}
+	pool := a.asked()
+	if len(pool) == 0 {
+		served, err := s.planRepositories(ctx, p)
+		if err != nil {
+			return false
+		}
+		pool = served
+	}
+	holding, found := s.groundPaths(ctx, answer, pool)
+	return found && !slices.ContainsFunc(holding, func(r string) bool { return strings.EqualFold(r, base.Repository) })
+}
+
+// appendHandoffContext adds line to the handoff's context, dropping the oldest lines first when the
+// context would pass its bound.
+func appendHandoffContext(a intakeArgs, line string) intakeArgs {
 	evLen := len(a.evidence())
 	budget := maxPlanContext - evLen
 	if budget <= 0 {
 		return a
 	}
-	line := "Reply: " + answer
 	next := line
 	if strings.TrimSpace(a.Context) != "" {
 		next = a.Context + "\n" + line
@@ -287,28 +338,29 @@ func appendHandoffContext(a intakeArgs, answer string) intakeArgs {
 }
 
 // executeIntakePlan runs intakePlanTool's exact pipeline and extracts the resulting plan.
-func (s *Server) executeIntakePlan(ctx context.Context, p authn.Principal, a intakeArgs, initialRev int) (*intake.Plan, bool, error) {
+// choices are the candidates nothing grounded, when more than one is left.
+func (s *Server) executeIntakePlan(ctx context.Context, p authn.Principal, a intakeArgs, initialRev int) (*intake.Plan, bool, []string, error) {
 	raw, err := json.Marshal(a)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	out, err := s.intakePlanTool(ctx, p, raw)
 	if err != nil {
-		return nil, false, err
+		return nil, false, nil, err
 	}
 	vr, ok := out.(viewResult)
 	if !ok {
-		return nil, false, errors.New("humanapi: unexpected intake_plan result")
+		return nil, false, nil, errors.New("humanapi: unexpected intake_plan result")
 	}
 	pa, ok := vr.data.(planAnswer)
 	if !ok {
-		return nil, false, errors.New("humanapi: unexpected intake_plan data")
+		return nil, false, nil, errors.New("humanapi: unexpected intake_plan data")
 	}
 	plan := pa.Plan
 	if a.Candidate == nil && initialRev > planRev {
 		plan.Rev = initialRev
 	}
-	return &plan, pa.Degraded, nil
+	return &plan, pa.Degraded, pa.choices, nil
 }
 
 func (s *Server) saveHandoff(ctx context.Context, id, principal string, a intakeArgs, plan intake.Plan, createdAt, expiresAt time.Time) error {

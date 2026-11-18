@@ -614,6 +614,7 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
 			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
 		Public:    intakePublicity(vis, accessTTL(cfg.Human)),
+		Paths:     intakePaths(vis),
 		Daily:     plan.DailyPlans,
 		MaxRounds: plan.MaxRounds,
 		Fallback:  plan.Fallback,

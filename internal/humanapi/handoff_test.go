@@ -194,7 +194,7 @@ func TestHandoffAnswerRevisesStoredPlan(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cand, err := answerFirstGap(twoGapBase(t), "https://example.test/install")
+	cand, err := answerFirstGap(storedPlan(t, st, e, r1.ID), "https://example.test/install")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,7 +220,8 @@ func TestHandoffAnswerRevisesStoredPlan(t *testing.T) {
 	if r2.ID != r1.ID {
 		t.Fatalf("id changed: %q -> %q", r1.ID, r2.ID)
 	}
-	if r2.Ready || r2.Question == nil || r2.Question.Text != "Who owns the page?" {
+	// One question per handoff (#625): g2 was assumed when g1 was asked, so the answer readies it.
+	if !r2.Ready || r2.Question != nil {
 		t.Fatalf("second question = %+v, ready = %v", r2.Question, r2.Ready)
 	}
 	if e.intake.calls() != 2 {
@@ -237,7 +238,8 @@ func TestHandoffAnswerRevisesStoredPlan(t *testing.T) {
 	if err := json.Unmarshal(afterRow.Plan, &afterPlan); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(afterPlan.Issues[0].Body, "D1 [g1]: https://example.test/install") {
+	if !strings.Contains(afterPlan.Issues[0].Body, "D2 [g1]: https://example.test/install") ||
+		!strings.Contains(afterPlan.Issues[0].Body, "A1 [g2]: assumed") {
 		t.Fatalf("revised body lacks decision record:\n%s", afterPlan.Issues[0].Body)
 	}
 }
@@ -289,8 +291,8 @@ func TestHandoffAcceptRest(t *testing.T) {
 		t.Fatal(err)
 	}
 	if strings.Contains(finalPlan.Issues[0].Body, "NEEDS CLARIFICATION") ||
-		!strings.Contains(finalPlan.Issues[0].Body, "A1 [g1]: assumed") ||
-		!strings.Contains(finalPlan.Issues[0].Body, "A2 [g2]: assumed") {
+		!strings.Contains(finalPlan.Issues[0].Body, "A1 [g2]: assumed") ||
+		!strings.Contains(finalPlan.Issues[0].Body, "A2 [g1]: assumed") {
 		t.Fatalf("final body = %s", finalPlan.Issues[0].Body)
 	}
 }

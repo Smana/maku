@@ -68,6 +68,25 @@ func accessTTL(h config.HumanConfig) time.Duration {
 	return config.MaxAccessTTL
 }
 
+// gitHubPaths is the planner's path grounding read (#626): whether a repository holds a file.
+// *github.App has it.
+type gitHubPaths interface {
+	PathExists(ctx context.Context, owner, repo, path string) (bool, error)
+}
+
+// intakePaths is the planner's path lookup over the factory App, nil when gh cannot read paths: the
+// planner then grounds no quoted path.
+func intakePaths(gh gitHubVisibilities) func(ctx context.Context, repository, path string) (bool, error) {
+	pr, ok := gh.(gitHubPaths)
+	if !ok {
+		return nil
+	}
+	return func(ctx context.Context, repository, path string) (bool, error) {
+		owner, repo, _ := strings.Cut(repository, "/")
+		return pr.PathExists(ctx, owner, repo, path)
+	}
+}
+
 // intakePublicity is the planner's public-only guard over the GitHub App (CD5, §security): one
 // visibility read per repository per ttl, cached as repoaccess caches a permission, so the delay
 // between a repository going private and the planner refusing it is the one already documented for
