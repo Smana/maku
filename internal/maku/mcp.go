@@ -34,10 +34,11 @@ const (
 	rootsWait   = 5 * time.Second  // how long the relay waits for the client's roots
 )
 
-// defaultElicitWait caps the wait for the developer's answer to issue_file's form. A client may
-// declare elicitation and never render the form (OpenCode, 2026-11-09: two ~5 min hangs on
-// factory_issue_file), so the wait is short and the draft fallback follows.
-const defaultElicitWait = 60 * time.Second
+// defaultElicitWait caps the wait for the developer's answer to start's form. A client may declare
+// elicitation and never render the form (OpenCode, 2026-11-09), so the wait is bounded and the draft
+// fallback follows. It is long enough to read the issue and answer: at 60 s a developer reading the
+// form lost it (aws-0, 2026-11-18). maku setup gives OpenCode a 15 min tool timeout, above it.
+const defaultElicitWait = 5 * time.Minute
 
 // elicitWait is how long issue_file waits for the developer's answer; a var so a test can shorten it.
 var elicitWait = defaultElicitWait

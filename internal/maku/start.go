@@ -283,8 +283,10 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		"requestedSchema": map[string]any{"type": "object", "required": []string{"file"}, "properties": props},
 	})
 	if errors.Is(err, context.DeadlineExceeded) {
-		return mcpwire.ToolError(needsConfirmation + "; the client did not show the confirmation form (no answer within " +
-			elicitWait.String() + "), so show them the issue and let them file it with gh issue create\n" + startFallbackNext(draft))
+		return mcpwire.ToolError(needsConfirmation + "; no answer to the confirmation form within " + elicitWait.String() +
+			". The plan is kept: if the developer saw the form, call start again with the same id (" + a.ID +
+			") and they answer it; only if their client never showed it, show them the issue and let them file it with gh issue create\n" +
+			startFallbackNext(draft))
 	}
 	if err != nil {
 		return mcpwire.ToolError("not_filed: the developer was not asked: " + err.Error() + "\n" + startFallbackNext(draft))
