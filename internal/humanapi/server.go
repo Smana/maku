@@ -239,9 +239,10 @@ type Server struct {
 	sockets sync.WaitGroup // one per tracked connection: the drain waits on it
 	closing bool
 
-	limitMu    sync.Mutex
-	mcpLimits  map[string]*rate.Limiter // /mcp requests per principal, per replica
-	readLimits map[string]*rate.Limiter // room list and summary reads per principal, per replica
+	limitMu      sync.Mutex
+	mcpLimits    map[string]*rate.Limiter // /mcp requests per principal, per replica
+	startRefused startRefusals            // the (caller, repository, reason) a refused start was logged for
+	readLimits   map[string]*rate.Limiter // room list and summary reads per principal, per replica
 
 	folds foldCache // each recently read room's summary fold (audit S-9)
 

@@ -250,7 +250,7 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 			"description": "Also labels it " + readyLabel + " with your gh, which starts the work",
 		}
 		tail = "Keep \"Start now\" on to also label it " + readyLabel + " with your gh, which starts the work."
-	} else if why := OneLine(draft.CanStartWhy); why != "" {
+	} else if why := StartWhy(draft.CanStartWhy); why != "" {
 		tail = "Work cannot be started from here (" + why + "). It gets no label: label it " + readyLabel + " yourself to start the work."
 	}
 
@@ -570,4 +570,21 @@ func (c *capped) Write(p []byte) (int, error) {
 		c.b.Write(p[:min(len(p), room)])
 	}
 	return len(p), nil
+}
+
+// startWhyFixes is the one-line fix for each canStartWhy reason that is the operator's to fix (#621).
+var startWhyFixes = map[string]string{
+	"repository_not_offered": "the broker does not offer start here; serve the repository from the factory catalog or list it in human.intake.plan.repositories, and keep it out of human.mcp.start.except",
+	"access_unwired":         "set human.access and human.githubLink in the broker config so it can check who writes the repository",
+	"sponsored":              "a sponsored caller never starts work; start it from your own session",
+}
+
+// StartWhy is a canStartWhy reason on one line, followed by its fix when there is one: what the
+// start form and maku doctor show. An older broker's reason, such as off, is shown as it is.
+func StartWhy(why string) string {
+	why = OneLine(why)
+	if fix, ok := startWhyFixes[why]; ok {
+		return why + ": " + fix
+	}
+	return why
 }

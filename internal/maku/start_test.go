@@ -362,3 +362,18 @@ func TestDefaultElicitWaitLeavesTimeToRead(t *testing.T) {
 		t.Fatalf("defaultElicitWait = %v: a developer reading the form loses it under 5 min", defaultElicitWait)
 	}
 }
+
+// #621: each reason start is not offered carries its one-line fix in the form text and doctor; an
+// older broker's reason is shown as it is.
+func TestStartWhyNamesTheFix(t *testing.T) {
+	for why, want := range map[string]string{
+		"repository_not_offered": "human.intake.plan.repositories",
+		"access_unwired":         "human.access",
+		"sponsored":              "your own session",
+		"off":                    "off",
+	} {
+		if got := StartWhy(why); !strings.HasPrefix(got, why) || !strings.Contains(got, want) || strings.Contains(got, "\n") {
+			t.Errorf("StartWhy(%q) = %q, want %q on one line", why, got, want)
+		}
+	}
+}

@@ -397,6 +397,12 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	if done, err := r.escalatedSplit(ctx, cfg, t, pr); done || err != nil {
 		return err
 	}
+	// #628: a return the factory cannot read is no return: it never blocks a retry or the expiry.
+	if back, err := r.escalatedReturn(ctx, cfg, t, pr); err != nil {
+		r.log().Warn("merge gate return unreadable", "task.id", t.Name, "reason", t.Status.Reason, "err", err)
+	} else if back {
+		return nil
+	}
 	c, ok, err := r.retryCommand(ctx, cfg, t, pr)
 	if err != nil {
 		return err

@@ -98,8 +98,8 @@ The room page and `maku status` show the reason and the next step below; the fac
 | `ci_rerun` | A cancelled required check was re-run (at most `merge.checkReruns` per head) |
 | `reentered_policy` | Back from a `policy_pending` or `policy_absent` hand-off: policy-bot now passes the head it was handed off at |
 | `reentered_head_reported` | Back from a `head_unreported` hand-off: the room now reports the head as a commit of the task's run |
-| `reentered_ci_green` | Back from a `ci_cancelled` hand-off: the required checks are now green on the same head |
-| `reentered_approved` | Back from a hand-off a human's judgement covers: a maintainer approved the head it was handed off at (`merge.approveToMerge`). Once per review, not counted against the returns limit |
+| `reentered_ci_green` | Back from a `ci_cancelled` hand-off, or a `ci_red` escalation: the required checks are now green on the head |
+| `reentered_approved` | Back from a hand-off a human's judgement covers: a maintainer approved the head it was handed off at (`merge.approveToMerge`), or, for an escalated task (`budget-task`, `ci_red`, ...), the pull request's current head. Once per review, not counted against the returns limit. Any other escalation on a green head replaces a stale `maku/merge-gate` `ci_red` with `a human decides, <reason>` |
 | `reentered_day_turned` | Back from an `auto_merge_cap` hand-off: the UTC day turned, so the cap is counted again. With `merge.approveToMerge` only; counted against the returns limit |
 | `reentered_unpaused` | Back from a `class_paused` hand-off: a clean ledger lifted the pause, so the gate decides it again. With `merge.approveToMerge` only; counted against the returns limit |
 | `head_moved` | A commit landed after the decision; the new head is decided again |

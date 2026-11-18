@@ -106,21 +106,21 @@ func TestCanStart(t *testing.T) {
 		wantWhy string
 	}{
 		{"offered, linked, write", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, []option{offered}, human, "Smana/a", true, ""},
-		{"excepted", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "Smana/b", false, "off"},
-		{"offered, Identity nil", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Identity = nil }}, human, "Smana/a", false, "off"},
+		{"excepted", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "Smana/b", false, startNotOffered},
+		{"offered, Identity nil", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Identity = nil }}, human, "Smana/a", false, startAccessUnwired},
 		{"offered, unlinked", &gitHubWorld{unlinked: map[string]bool{"dev": true}}, []option{offered}, human, "Smana/a", false, "not_linked"},
 		{"offered, read only", &gitHubWorld{}, []option{offered}, human, "Smana/a", false, "no_write"},
 		{"offered, the App cannot see it", &gitHubWorld{unseen: map[string]bool{"Smana/a": true}}, []option{offered}, human, "Smana/a", false, "no_write"},
 		{"offered, the lookup fails", &gitHubWorld{down: true}, []option{offered}, human, "Smana/a", false, "unverified"},
-		{"nil Access", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Access = nil }}, human, "Smana/a", false, "off"},
-		{"StartDefault false", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, nil, human, "Smana/a", false, "off"},
+		{"nil Access", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) { s.Access = nil }}, human, "Smana/a", false, startAccessUnwired},
+		{"StartDefault false", &gitHubWorld{writes: map[string][]string{"Smana/a": {"dev"}}}, nil, human, "Smana/a", false, startNotOffered},
 		{"the write check itself says no repository", &gitHubWorld{}, []option{offered, func(s *Server, _ *fanout.Hub, _ *hubView) {
 			s.Access.Perm = func(context.Context, string, string, string) (string, error) {
 				return "", fmt.Errorf("installation: %w", repoaccess.ErrNoRepository)
 			}
 		}}, human, "Smana/a", false, "no_write"},
-		{"except list is matched case-insensitively", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "SMANA/B", false, "off"},
-		{"a sponsored caller", &gitHubWorld{writes: map[string][]string{"Smana/a": {"slack-app"}}}, []option{offered}, sponsored, "Smana/a", false, "off"},
+		{"except list is matched case-insensitively", &gitHubWorld{writes: map[string][]string{"Smana/b": {"dev"}}}, []option{offered}, human, "SMANA/B", false, startNotOffered},
+		{"a sponsored caller", &gitHubWorld{writes: map[string][]string{"Smana/a": {"slack-app"}}}, []option{offered}, sponsored, "Smana/a", false, startSponsored},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -180,12 +180,12 @@ func TestStartDefaultsOnWithPlanner(t *testing.T) {
 	if ok, why := e.srv.canStart(t.Context(), dev, "Smana/ai-native-ref"); !ok || why != "" {
 		t.Fatalf("planner-served repo: got canStart=%v why=%q, want true", ok, why)
 	}
-	if !e.srv.startOffered("Smana/ai-native-ref") {
-		t.Fatal("startOffered(Smana/ai-native-ref) = false, want true")
+	if why := e.srv.startOffered(t.Context(), dev, "Smana/ai-native-ref"); why != "" {
+		t.Fatalf("startOffered(Smana/ai-native-ref) = %q, want offered", why)
 	}
 
-	if ok, why := e.srv.canStart(t.Context(), dev, "Smana/other"); ok || why != "off" {
-		t.Fatalf("unserved repo: got canStart=%v why=%q, want false/off", ok, why)
+	if ok, why := e.srv.canStart(t.Context(), dev, "Smana/other"); ok || why != startNotOffered {
+		t.Fatalf("unserved repo: got canStart=%v why=%q, want false/%s", ok, why, startNotOffered)
 	}
 }
 
@@ -200,8 +200,8 @@ func TestStartExcept(t *testing.T) {
 		s.StartDefault = true
 		s.StartExcept = map[string]bool{"smana/ai-native-ref": true}
 	})
-	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "dev", Sub: "dev"}, "Smana/ai-native-ref"); ok || why != "off" {
-		t.Fatalf("excepted repo: got canStart=%v why=%q, want false/off", ok, why)
+	if ok, why := e.srv.canStart(t.Context(), authn.Principal{ID: "dev", Sub: "dev"}, "Smana/ai-native-ref"); ok || why != startNotOffered {
+		t.Fatalf("excepted repo: got canStart=%v why=%q, want false/repository_not_offered", ok, why)
 	}
 }
 

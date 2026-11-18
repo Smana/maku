@@ -896,7 +896,7 @@ func TestPlanCheckAnswersWithThePlanItWasGiven(t *testing.T) {
 		t.Fatalf("the answer's hash is not the plan's: %+v", d)
 	}
 	// The start field is issue_draft's: this session names no sessionStart repository, so it is off.
-	if d.CanStart || d.CanStartWhy != startOff {
+	if d.CanStart || d.CanStartWhy != startNotOffered {
 		t.Fatalf("a plan that may not start: %+v", d)
 	}
 	if !strings.Contains(got.text, "Plan") || !strings.Contains(got.text, d.Hash) {

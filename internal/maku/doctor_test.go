@@ -336,6 +336,7 @@ func TestDoctorGitHubLinkIsNeverAssumed(t *testing.T) {
 			[]string{"FAIL github", "no linked GitHub identity"}, []string{"identity is linked"}, true},
 		"linked":               {"ok", room, `{"canStart":true}`, []string{"ok   github", "identity is linked"}, nil, false},
 		"cannot say":           {"ok", room, `{"canStart":false,"canStartWhy":"off"}`, []string{"warn github", "unverified"}, []string{"identity is linked"}, false},
+		"access not wired":     {"ok", room, `{"canStart":false,"canStartWhy":"access_unwired"}`, []string{"warn github", "access_unwired: set human.access"}, []string{"identity is linked"}, false},
 		"no room to ask about": {"", `[]`, `{"canStart":true}`, []string{"warn github", "unverified"}, []string{"identity is linked"}, false},
 	} {
 		t.Run(name, func(t *testing.T) {
