@@ -607,6 +607,9 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 		}
 		return "answered"
 	}
+	if _, q, ok := a.threadAsked(msgs); ok {
+		return a.answerAsked(ctx, ev, ch, ev.ThreadTS, q)
+	}
 	if prop != nil {
 		if p, ok := prop.Metadata.proposalPayload(); ok {
 			return a.replan(ctx, ev, ch, ev.ThreadTS, msgs, prop, p)
@@ -689,6 +692,8 @@ func notFiled(refusal, user, repo string, confirm bool) (code, text string, pass
 		// no longer the one it was asked about, so nothing is filed from it. The same sentence this
 		// family's own hash check says before the broker is called.
 		return code, planChangedLine, false
+	case code == "unresolved_marker":
+		return code, "Not filed: the plan needs one answer first; reply in this thread to answer the planner's question.", false
 	case code == "handoff_expired":
 		return code, "Not filed: this proposal expired; mention me again to plan it.", false
 	case code == "principal_budget_exhausted":

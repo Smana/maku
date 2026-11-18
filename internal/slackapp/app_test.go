@@ -706,6 +706,10 @@ func (b *stubBroker) HandoffCheck(_ context.Context, id, onBehalfOf string, work
 	if b.checkErr != nil {
 		return HandoffChecked{}, b.checkErr
 	}
+	if len(b.storedPlan.Gaps) > 0 { // intake.CheckFinal, as the broker's handoff_check runs it
+		return HandoffChecked{}, Refused("unresolved_marker: the plan still has a clarification to answer; " +
+			"resolve every gap and remove every marker before filing")
+	}
 	if workflow != nil && len(b.storedPlan.Issues) > 0 && b.storedPlan.Issues[0].Profile != *workflow {
 		next := b.storedPlan
 		next.Issues = append([]intake.Issue(nil), b.storedPlan.Issues...)
