@@ -91,6 +91,9 @@ type Intake struct {
 	Model   *intake.Model
 	// Public answers whether GitHub reports a repository public: the guard's public-only read.
 	Public intake.Publicity
+	// Paths answers whether a served repository holds a file at path, through the factory App's
+	// read. Nil grounds no quoted path: the planner then chooses among the candidates (#626).
+	Paths func(ctx context.Context, repository, path string) (bool, error)
 	// Links resolves a Slack user to the account it is linked to. Nil refuses every sponsored plan.
 	Links SlackLinkFinder
 	// Daily is the per-requester cap in a UTC day. Below one, no plan is made: a floor of zero would
@@ -361,6 +364,14 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
+	if revised == nil {
+		// A path the request quotes picks the repositories that hold it (#626); a revision keeps the
+		// repository its base was planned for.
+		candidates, _ = s.groundPaths(ctx, a.Text+"\n"+a.Context, candidates)
+		if a.Repository == "" && len(candidates) > 1 {
+			run.choices = candidates
+		}
+	}
 	if !s.Intake.take(req.Key) {
 		return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonDailyPlansReached))
 	}
@@ -576,6 +587,44 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 	return req, candidates, nil
 }
 
+// maxGroundPaths bounds how many quoted paths one plan looks up in each candidate.
+const maxGroundPaths = 3
+
+// groundPaths narrows candidates to the ones that hold a repository path text quotes (#626): a path
+// that exists in one served repository is the strongest evidence of where the change goes. found is
+// false, and candidates come back unchanged, when text quotes no path, no candidate holds one, or
+// nothing can look one up; a lookup that fails counts as not holding it.
+func (s *Server) groundPaths(ctx context.Context, text string, candidates []string) ([]string, bool) {
+	if s.Intake.Paths == nil || len(candidates) < 2 {
+		return candidates, false
+	}
+	paths := intake.PathsIn(text)
+	if len(paths) == 0 {
+		return candidates, false
+	}
+	paths = paths[:min(len(paths), maxGroundPaths)]
+	ctx, cancel := context.WithTimeout(ctx, accessWait)
+	defer cancel()
+	var holding []string
+	for _, c := range candidates {
+		for _, path := range paths {
+			ok, err := s.Intake.Paths(ctx, c, path)
+			if err != nil {
+				s.log().Warn("intake: path lookup failed", "repository", c, "err", err)
+				continue
+			}
+			if ok {
+				holding = append(holding, c)
+				break
+			}
+		}
+	}
+	if len(holding) == 0 {
+		return candidates, false
+	}
+	return holding, true
+}
+
 // knownRepositories is every repository the broker can tell a request names: the allowlist, the
 // ones the request listed and the candidates.
 func (s *Server) knownRepositories(ctx context.Context, p authn.Principal, a intakeArgs, candidates []string) []string {
@@ -734,6 +783,9 @@ type planRun struct {
 	// cause is why the planner call failed, for the operator's audit line alone: the model's
 	// error names a status, a deadline or a missing key file, never the key itself.
 	cause string
+	// choices are the candidates left when nothing the request said grounded one of them: more
+	// than one is the repository question a handoff asks (#626).
+	choices []string
 }
 
 // maxCause bounds a cause in the log.
@@ -758,6 +810,8 @@ type planAnswer struct {
 	CanStart    bool             `json:"canStart"`
 	CanStartWhy string           `json:"canStartWhy,omitempty"`
 	Degraded    bool             `json:"degraded"`
+	// choices is planRun's, for handoff alone: never on the wire.
+	choices []string
 }
 
 // finishPlan counts a plan attempt, writes its one audit line and answers it: the refusal, the plan
@@ -812,7 +866,7 @@ func (s *Server) finishPlan(ctx context.Context, run planRun, plan *intake.Plan,
 		return nil, err
 	}
 	return viewResult{text: b.String(), data: planAnswer{Plan: *plan, Hash: plan.Hash, Question: plan.Question,
-		CanStart: canStart, CanStartWhy: why, Degraded: degraded}}, nil
+		CanStart: canStart, CanStartWhy: why, Degraded: degraded, choices: run.choices}}, nil
 }
 
 // withWritable is the design's failure contract for the one refusal a person can act on: when no

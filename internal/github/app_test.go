@@ -69,6 +69,8 @@ type fakeGitHub struct {
 	// one the installation's scoped token cannot read. Both are GitHub's 404.
 	repos      map[string]string
 	unreadable map[string]bool
+	// files are the contents paths a HEAD finds, as /repos/<owner>/<name>/contents/<path>.
+	files map[string]bool
 	// hold, when set, runs before a request takes the fake's lock; false means it
 	// answered the request itself.
 	hold func(w http.ResponseWriter, r *http.Request) bool
@@ -180,6 +182,10 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 		default:
 			_ = json.NewEncoder(w).Encode(map[string]any{"permission": perm, "role_name": perm, "user": map[string]string{"login": login}})
+		}
+	case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/contents/") && strings.HasPrefix(auth, "ghs_installation-"):
+		if !f.files[r.URL.Path] {
+			w.WriteHeader(http.StatusNotFound)
 		}
 	case r.Method == http.MethodGet && strings.HasPrefix(auth, "ghs_installation-"):
 		// The repository's own read, and the last case: a path that is not one is no credentials.
@@ -1013,6 +1019,27 @@ func TestRepositoryNeedsItsVisibilityWord(t *testing.T) {
 	for _, c := range [][2]string{{"Smana", ".."}, {"..", "x"}, {"Smana", "a/../../orgs"}, {"", "x"}} {
 		if _, err := a.Repository(t.Context(), c[0], c[1]); !errors.Is(err, ErrNotAPullRequest) {
 			t.Fatalf("%q/%q: %v", c[0], c[1], err)
+		}
+	}
+}
+
+// The planner's path grounding (#626): a HEAD on the contents API, GitHub's 404 is "not here", and
+// a path that could leave contents/ is never sent.
+func TestPathExists(t *testing.T) {
+	a, f, _ := app(t)
+	f.locked(func() {
+		f.repos = map[string]string{"Smana/ai-native-ref": `{"private":false,"visibility":"public"}`}
+		f.files = map[string]bool{"/repos/Smana/ai-native-ref/contents/tooling/aws-0/values.yaml": true}
+	})
+	if ok, err := a.PathExists(t.Context(), "Smana", "ai-native-ref", "tooling/aws-0/values.yaml"); err != nil || !ok {
+		t.Fatalf("held path: %v %v", ok, err)
+	}
+	if ok, err := a.PathExists(t.Context(), "Smana", "ai-native-ref", "docs/missing.md"); err != nil || ok {
+		t.Fatalf("missing path: %v %v", ok, err)
+	}
+	for _, bad := range []string{"../secrets", "a/../../b", "/etc/passwd", "a b", ""} {
+		if _, err := a.PathExists(t.Context(), "Smana", "ai-native-ref", bad); err == nil {
+			t.Errorf("%q was looked up", bad)
 		}
 	}
 }

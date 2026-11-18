@@ -21,3 +21,6 @@ func PublicityEntries(p *CachedPublicity) int {
 	defer p.mu.Unlock()
 	return len(p.cache)
 }
+
+// SystemPrompt is the planner's system prompt, for a test that holds its rules.
+func SystemPrompt() string { return systemPrompt }

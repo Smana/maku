@@ -917,6 +917,18 @@ no model call; with none pending, `answer` is added to the context and the plan 
 result carries the plan with the remaining gaps recomputed and the stored plan's **new hash**, which the
 caller never sees or edits.
 
+**A handoff asks at most one question.** Of a new plan's gaps the broker keeps one: the repository,
+when several candidates are left and nothing in the request grounds one (a named `owner/name`, or a
+quoted path such as `docs/x.md` that only some served repositories hold, looked up through the factory
+App), with the planner's pick as the recommendation; else the highest-ranked gap that is not a
+template one. Template gaps, the acceptance check and the observable behaviour, are never asked: every
+gap not kept is assumed with its recommendation as an `A` record, and an acceptance check the request
+states (`done when …`, `Acceptance: …`) replaces the template's default. Every answer is kept in the
+handoff's context as an `Answered:` line, so each later re-plan of the id sends the planner what was
+settled, and a re-plan after an answer asks nothing: what it would re-open is assumed. An answer to the
+repository question, or one that names another repository or a path only another holds, re-plans from
+the request rather than revising the stored plan.
+
 Intermediate composition and `intake.Check` tolerate clarification markers. A final plan — the one
 `start` and `run_create` re-validate, as factory task creation, hardening issue output and proposal
 publishing do — has no gaps or unresolved markers. An optional `## Decisions` section

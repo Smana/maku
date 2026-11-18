@@ -277,6 +277,9 @@ func (a *App) do(ctx context.Context, api *url.URL, method, path, query, bearer 
 	if resp.StatusCode/100 != 2 {
 		return apiError(resp, path, a.Now())
 	}
+	if out == nil {
+		return nil // a HEAD, or a call that reads only the status
+	}
 	raw, err := httpx.ReadBody(resp.Body, limit)
 	if err != nil {
 		return fmt.Errorf("github %s %s: %w", method, path, err)
@@ -482,6 +485,42 @@ func (a *App) Repository(ctx context.Context, owner, repo string) (Repository, e
 			return Repository{}, errors.New("github: the repository reply has no visibility")
 		}
 		return out, nil
+	})
+}
+
+// repoFilePath is a repository path the planner may look up: slash-separated segments of the
+// characters a quoted path is made of, none of them "." or "..", so it cannot leave contents/.
+var repoFilePath = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$`)
+
+// PathExists is whether owner/repo's default branch holds path, as GitHub's contents API answers a
+// HEAD with owner/repo's installation token. The planner serves public repositories only, whose
+// contents any token reads, so the token's scope is not widened for it (#626). GitHub's 404 is
+// false; any other refusal is an error.
+func (a *App) PathExists(ctx context.Context, owner, repo, path string) (bool, error) {
+	if !validRepo(owner, repo) {
+		return false, ErrNotAPullRequest
+	}
+	if len(path) > 1024 || !repoFilePath.MatchString(path) || strings.Contains(path, "..") {
+		return false, errors.New("github: not a repository path")
+	}
+	api, err := a.api()
+	if err != nil {
+		return false, err
+	}
+	return retry401(a, owner, repo, func() (bool, error) {
+		tok, _, err := a.installation(ctx, api, owner, repo)
+		if err != nil {
+			return false, err
+		}
+		err = a.do(ctx, api, http.MethodHead, "repos/"+owner+"/"+repo+"/contents/"+path, "", tok, nil, nil, 0)
+		var ae *APIError
+		switch {
+		case errors.As(err, &ae) && ae.Status == http.StatusNotFound:
+			return false, nil
+		case err != nil:
+			return false, err
+		}
+		return true, nil
 	})
 }
 

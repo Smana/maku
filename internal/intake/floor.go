@@ -19,6 +19,19 @@ const (
 	floorScopeQuestion      = "Which file, path or component should this change touch?"
 )
 
+// The conservative defaults the floor recommends for its two template questions, and the ones
+// OneQuestion assumes when a template gap carries no recommendation.
+var (
+	floorShouldAnswer = Answer{
+		Answer: "The problem described in What is wrong MUST no longer occur, and the corrected behaviour MUST be visible to the person who reported it.",
+		Why:    "The issue states no observable result; the conservative reading is that the reported problem stops happening.",
+	}
+	floorAcceptanceAnswer = Answer{
+		Answer: "A reviewer repeats the steps in What is wrong and the problem no longer appears, and the repository's own test gate passes.",
+		Why:    "The issue names no command or observation; this is the weakest check that still tells done from not done.",
+	}
+)
+
 var (
 	// observableRE is what "What it should be" must contain at least once: an RFC 2119 keyword
 	// (D12) or a verb of something a person can see. Matching is on whole words.
@@ -73,16 +86,10 @@ func ApplyFloor(p Plan, request string) Plan {
 	for i, is := range p.Issues {
 		should, acceptance := sectionBody(is.Body, "## What it should be"), sectionBody(is.Body, "## Acceptance check")
 		if !hasMarkerIn(is.Body, "what-it-should-be") && !observable(should) {
-			adds = append(adds, addition{i, "what-it-should-be", floorShouldQuestion, Answer{
-				Answer: "The problem described in What is wrong MUST no longer occur, and the corrected behaviour MUST be visible to the person who reported it.",
-				Why:    "The issue states no observable result; the conservative reading is that the reported problem stops happening.",
-			}})
+			adds = append(adds, addition{i, "what-it-should-be", floorShouldQuestion, floorShouldAnswer})
 		}
 		if !hasMarkerIn(is.Body, "acceptance-check") && !acceptable(acceptance) {
-			adds = append(adds, addition{i, "acceptance-check", floorAcceptanceQuestion, Answer{
-				Answer: "A reviewer repeats the steps in What is wrong and the problem no longer appears, and the repository's own test gate passes.",
-				Why:    "The issue names no command or observation; this is the weakest check that still tells done from not done.",
-			}})
+			adds = append(adds, addition{i, "acceptance-check", floorAcceptanceQuestion, floorAcceptanceAnswer})
 		}
 	}
 	if len(adds) == 0 {
