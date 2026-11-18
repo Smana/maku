@@ -5,7 +5,9 @@ package humanapi
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
+	"sync"
 
 	"github.com/Smana/maku/internal/authn"
 	"github.com/Smana/maku/internal/envelope"
@@ -13,43 +15,85 @@ import (
 	"github.com/Smana/maku/internal/repoaccess"
 )
 
-// The reasons given when canStart is false.
+// The reasons given when canStart is false (with startSponsored, intake.go's), each with its fix in
+// the client's form text and maku doctor (internal/maku's StartWhyFix).
 const (
-	startOff        = "off"        // human.mcp.start does not offer start for the repository, or no check is wired
-	startNotLinked  = "not_linked" // the caller has no GitHub link to check
-	startNoWrite    = "no_write"   // the caller cannot write to the repository, or the App cannot see it
-	startUnverified = "unverified" // ZITADEL or GitHub could not answer
+	startNotOffered    = "repository_not_offered" // human.mcp.start, or the planner's served repositories, leave it out
+	startAccessUnwired = "access_unwired"         // no GitHub access check (human.access) is wired
+	startNotLinked     = "not_linked"             // the caller has no GitHub link to check
+	startNoWrite       = "no_write"               // the caller cannot write to the repository, or the App cannot see it
+	startUnverified    = "unverified"             // ZITADEL, GitHub or the factory's catalogue could not answer
 )
 
-// startOffered reports whether the broker offers to start factory work on repo (UX3): false for a
-// repository in StartExcept; else true when StartDefault is true (on planner-served repositories
-// when a planner is configured).
-func (s *Server) startOffered(repo string) bool {
-	r := strings.ToLower(repo)
-	if r == "" || s.StartExcept[r] {
-		return false
+// startOffered reports whether the broker offers to start factory work on repo for p (UX3): false
+// for a repository in StartExcept; else true when StartDefault is true and, when a planner is
+// configured, the planner serves repo for p (planRepositories: the factory's catalogue, narrowed by
+// human.intake.plan.repositories, or that list alone without a factory). The reason is "" when
+// offered, else startNotOffered, or startUnverified when the catalogue could not answer.
+func (s *Server) startOffered(ctx context.Context, p authn.Principal, repo string) string {
+	r := strings.ToLower(strings.TrimSpace(repo))
+	if r == "" || s.StartExcept[r] || !s.StartDefault {
+		return startNotOffered
 	}
-	return s.StartDefault && (s.Intake == nil || s.intakeAllows(r))
+	if s.Intake == nil {
+		return ""
+	}
+	served, err := s.planRepositories(ctx, p)
+	switch {
+	case errors.Is(err, errCatalogueUnavailable) && s.Catalogue == nil:
+		return startNotOffered // no factory and no repositories list: the planner serves nothing
+	case err != nil:
+		return startUnverified
+	case !slices.Contains(served, r):
+		return startNotOffered
+	}
+	return ""
 }
 
-func (s *Server) intakeAllows(repoLower string) bool {
-	if s.Intake.Allow[repoLower] {
-		return true
+// startRefusals remembers which caller, repository and reason the broker has logged, so a refused
+// start is logged once per caller and repository rather than on every task call.
+type startRefusals struct {
+	mu   sync.Mutex
+	seen map[string]bool
+}
+
+// startRefusalCap bounds startRefusals: past it the set starts over, logging each pair once more.
+const startRefusalCap = 4096
+
+func (s *Server) logStartRefused(p authn.Principal, repo, why string) {
+	key := p.ID + "\x00" + strings.ToLower(repo) + "\x00" + why
+	s.startRefused.mu.Lock()
+	if s.startRefused.seen == nil || len(s.startRefused.seen) >= startRefusalCap {
+		s.startRefused.seen = map[string]bool{}
 	}
-	for k, on := range s.Intake.Allow {
-		if on && strings.ToLower(k) == repoLower {
-			return true
-		}
+	already := s.startRefused.seen[key]
+	s.startRefused.seen[key] = true
+	s.startRefused.mu.Unlock()
+	if !already {
+		s.log().Info("start not offered", "principal", p.ID, "repository", repo, "reason", why)
 	}
-	return false
 }
 
 // canStart is true when startOffered(repo) holds and the caller writes to repo on GitHub,
 // following gate's lookup with CanWrite for CanRead. A sponsored caller never starts a session. It
 // fails closed: an answer that cannot be had is false.
 func (s *Server) canStart(ctx context.Context, p authn.Principal, repo string) (bool, string) {
-	if p.Sponsored || !s.startOffered(repo) || s.Identity == nil || s.Access == nil {
-		return false, startOff
+	ok, why := s.canStartFor(ctx, p, repo)
+	if !ok {
+		s.logStartRefused(p, repo, why)
+	}
+	return ok, why
+}
+
+func (s *Server) canStartFor(ctx context.Context, p authn.Principal, repo string) (bool, string) {
+	if p.Sponsored {
+		return false, startSponsored
+	}
+	if why := s.startOffered(ctx, p, repo); why != "" {
+		return false, why
+	}
+	if s.Identity == nil || s.Access == nil {
+		return false, startAccessUnwired
 	}
 	ctx, cancel := context.WithTimeout(ctx, accessWait) // as the gate's lookup is: a hung one is unverified
 	defer cancel()

@@ -540,7 +540,7 @@ func (d Doctor) linkProbe(ctx context.Context, tok string, rows []struct {
 			report(false, "github", d.unlinkedMsg())
 			return
 		}
-		last = "task: " + OneLine(got.CanStartWhy)
+		last = "task: " + StartWhy(got.CanStartWhy)
 	}
 	warn("github", unverified+" ("+last+")")
 }

@@ -301,7 +301,7 @@ func TestTaskCanStart(t *testing.T) {
 			caller:  viaRoomctl("dev"),
 			writes:  map[string][]string{"Smana/other": {"dev"}},
 			want:    false,
-			wantWhy: "off",
+			wantWhy: startNotOffered,
 		},
 	}
 
