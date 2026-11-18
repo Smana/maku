@@ -12,8 +12,8 @@ import (
 	"github.com/Smana/maku/internal/fanout"
 )
 
-// canStartOn calls task on a room on repo and returns canStart and canStartWhy.
-func canStartOn(t *testing.T, e env, repo string) (bool, string) {
+// canStartOn calls task on the rig's room and returns canStart and canStartWhy.
+func canStartOn(t *testing.T, e env) (bool, string) {
 	t.Helper()
 	got := call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID})
 	if got.isError {
@@ -53,7 +53,7 @@ func startEnv(t *testing.T, repo string, catalogued []string, allow map[string]b
 // catalogue's served repositories, which is what the planner plans for.
 func TestCanStartReadsTheCatalogueWhenNoRepositoriesAreSet(t *testing.T) {
 	e := startEnv(t, "Smana/ai-native-ref", []string{"Smana/ai-native-ref"}, nil)
-	if ok, why := canStartOn(t, e, "Smana/ai-native-ref"); !ok {
+	if ok, why := canStartOn(t, e); !ok {
 		t.Fatalf("a writer on a catalogue repository cannot start: why=%q", why)
 	}
 }
@@ -61,7 +61,7 @@ func TestCanStartReadsTheCatalogueWhenNoRepositoriesAreSet(t *testing.T) {
 // An explicit repositories list still narrows the catalogue.
 func TestCanStartRepositoriesNarrowTheCatalogue(t *testing.T) {
 	e := startEnv(t, "Smana/ai-native-ref", []string{"Smana/ai-native-ref", "Smana/other"}, map[string]bool{"Smana/other": true})
-	if ok, why := canStartOn(t, e, "Smana/ai-native-ref"); ok || why != startNotOffered {
+	if ok, why := canStartOn(t, e); ok || why != startNotOffered {
 		t.Fatalf("got %v %q, want false %q", ok, why, startNotOffered)
 	}
 }
@@ -71,7 +71,7 @@ func TestCanStartRepositoriesNarrowTheCatalogue(t *testing.T) {
 func TestCanStartWhyNamesTheCause(t *testing.T) {
 	e := startEnv(t, "Smana/ai-native-ref", []string{"Smana/elsewhere"}, nil)
 	for range 3 {
-		if ok, why := canStartOn(t, e, "Smana/ai-native-ref"); ok || why != startNotOffered {
+		if ok, why := canStartOn(t, e); ok || why != startNotOffered {
 			t.Fatalf("an unserved repository: got %v %q, want %q", ok, why, startNotOffered)
 		}
 	}
