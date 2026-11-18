@@ -15,6 +15,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 var updateGolden = flag.Bool("update-golden", false, "rewrite testdata/setup/*.txt from the current output")
@@ -329,8 +330,8 @@ func TestSetupOpencodeSnippetIsWhatTheCLIWrites(t *testing.T) {
 
 func TestSkillDirsWithoutARepositorySkipsTheProjectScope(t *testing.T) {
 	for _, d := range SkillDirs("/home/dev", "") {
-		if !strings.HasPrefix(d, "/home/dev/") {
-			t.Errorf("%s is not under home", d)
+		if !strings.HasPrefix(d.Path, "/home/dev/") {
+			t.Errorf("%s is not under home", d.Path)
 		}
 	}
 	if len(SkillDirs("/home/dev", "/repo")) <= len(SkillDirs("/home/dev", "")) {
@@ -738,5 +739,51 @@ func TestSetupRefusesNothingButRegistersOnlyMaku(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".claude", "commands", "factory.md")); !os.IsNotExist(err) {
 		t.Errorf("factory.md still installed: %v", err)
+	}
+}
+
+// #627: `opencode mcp add` rewrites the entry on every run, dropping codemode and the timeout, so
+// a second setup wrote opencode.json again, bumped its mtime and re-armed the doctor's "service
+// started before the config changed" warning. A setup that changes nothing writes nothing.
+func TestSetupOpenCodeTwiceLeavesTheConfigUntouched(t *testing.T) {
+	home := t.TempDir()
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	adds := 0
+	add := func(context.Context, []string) error { // what opencode 2.0.22's mcp add does
+		adds++
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(`{"mcp":{"servers":{"maku":{"type":"local","command":["maku","mcp"]}}}}`), 0o644)
+	}
+	var out bytes.Buffer
+	s := Setup{Agent: Agents["opencode"], Home: home, Dir: t.TempDir(), Cmd: "maku", Version: "v1", LookPath: found, Out: &out, Run: add}
+	if err := s.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Now().Add(-time.Hour).Truncate(time.Second)
+	if err := os.Chtimes(path, old, old); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(path)
+	if err := s.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	fi, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	after, _ := os.ReadFile(path)
+	if !fi.ModTime().Equal(old) || !bytes.Equal(before, after) || adds != 1 {
+		t.Fatalf("the second setup rewrote %s (adds %d, mtime %s):\n%s", path, adds, fi.ModTime(), &out)
+	}
+
+	// --advanced changes the command: that one is registered again.
+	s.Advanced = true
+	if err := s.Do(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if adds != 2 {
+		t.Fatalf("a changed command was not registered: adds %d", adds)
 	}
 }

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -158,8 +159,12 @@ type Doctor struct {
 	HC        *http.Client
 	TokenPath string
 	Lookup    func(ctx context.Context, host string) ([]string, error) // nil is the system resolver
-	SkillDirs []string                                                 // where agents read skills from
+	SkillDirs []SkillDir                                               // where agents read skills from
 	Version   string                                                   // this binary's version
+	// SetupSkillDir is the skill directory `maku setup` just wrote, empty for a bare `maku doctor`.
+	// When set, only a stale copy there fails: another client's stale copy is a warning, so setting
+	// up one client never exits 1 over another (#627).
+	SetupSkillDir string
 	// OpenCodeConfigs are the OpenCode config files setup writes, and ServiceStart when its
 	// background service started (false: none runs); nil ServiceStart skips the check.
 	OpenCodeConfigs []string
@@ -188,8 +193,8 @@ func (d Doctor) Run(ctx context.Context, out io.Writer) error {
 	u, err := url.Parse(d.Config.URL)
 	if err != nil || u.Hostname() == "" {
 		report(false, "dns", fmt.Sprintf("%q is not a URL: run maku configure --url https://rooms.<domain>", d.Config.URL))
-		d.skill(report, skip) // neither needs the network
-		d.caps(report, skip)
+		d.skill(report, warn, skip) // neither needs the network
+		d.caps(report, warn, skip)
 		return errors.New("doctor: the configuration is unusable")
 	}
 	lookup := d.Lookup
@@ -249,8 +254,8 @@ func (d Doctor) Run(ctx context.Context, out io.Writer) error {
 	default:
 		d.github(ctx, tok, report, warn)
 	}
-	d.skill(report, skip)
-	d.caps(report, skip)
+	d.skill(report, warn, skip)
+	d.caps(report, warn, skip)
 	d.opencode(report, warn)
 	d.opencodeCodeMode(warn)
 	for _, e := range d.LegacyMCP {
@@ -344,23 +349,30 @@ func hasExecuteDeny(v any) bool {
 }
 
 // skill compares the maku-version each installed maku-handoff skill carries with this binary's:
-// a copy from another release names tools or commands this one lacks.
-func (d Doctor) skill(report func(bool, string, string), skip func(string, string)) {
+// a copy from another release names tools or commands this one lacks. Each fix names the client
+// whose setup rewrites that copy.
+func (d Doctor) skill(report func(bool, string, string), warn, skip func(string, string)) {
 	found := false
 	for _, dir := range d.SkillDirs {
-		v, ok, err := skill.Version(dir)
+		v, ok, err := skill.Version(dir.Path)
 		const skillName = "maku-handoff"
+		fix := firstNonEmpty(dir.Setup, "maku setup <client>")
+		// A copy setup did not just write belongs to another client: say so, do not fail the setup.
+		bad := func(msg string) { report(false, "skill", msg) }
+		if d.SetupSkillDir != "" && dir.Path != d.SetupSkillDir {
+			bad = func(msg string) { warn("skill", msg) }
+		}
 		switch {
 		case err != nil:
 			found = true
-			report(false, "skill", fmt.Sprintf("%v: run maku setup <client> to rewrite it", err))
+			bad(fmt.Sprintf("%v: run %s to rewrite it", err, fix))
 		case !ok:
 		case v != d.Version:
 			found = true
-			report(false, "skill", fmt.Sprintf("%s holds %s %s, this maku is %s: run maku setup <client> (add --project for a repository copy), or delete the directory", filepath.Join(dir, skillName), skillName, v, d.Version))
+			bad(fmt.Sprintf("%s holds %s %s, this maku is %s: run %s, or delete the directory", filepath.Join(dir.Path, skillName), skillName, v, d.Version, fix))
 		default:
 			found = true
-			report(true, "skill", fmt.Sprintf("%s is %s", filepath.Join(dir, skillName), v))
+			report(true, "skill", fmt.Sprintf("%s is %s", filepath.Join(dir.Path, skillName), v))
 		}
 	}
 	if !found {
@@ -380,14 +392,21 @@ const notMeasured = "not measured yet — run a session and ask again"
 // has not met (fast-follow 4): a named client with no entry, an unreadable record and an empty one
 // all read "not measured yet", and no capability is ever filled in from the relay's own behaviour.
 // The record is a file on disk, so the line is printed even when the broker cannot be reached.
-func (d Doctor) caps(report func(bool, string, string), skip func(string, string)) {
+func (d Doctor) caps(report func(bool, string, string), warn, skip func(string, string)) {
+	line := func(c Caps) {
+		if gap, ok := formsGap(c); ok {
+			warn(capsHead(c), gap)
+			return
+		}
+		report(true, capsHead(c), capsBody(c))
+	}
 	if d.Client != "" {
 		c, ok := d.Caps.Get(d.Client)
 		if !ok {
 			skip("factory capabilities ("+capsField(d.Client)+")", notMeasured)
 			return
 		}
-		report(true, capsHead(c), capsBody(c))
+		line(c)
 		return
 	}
 	seen := make([]Caps, 0, maxClients)
@@ -408,11 +427,59 @@ func (d Doctor) caps(report func(bool, string, string), skip func(string, string
 	})
 	shown := seen[:min(len(seen), maxCapsReport)]
 	for _, c := range shown {
-		report(true, capsHead(c), capsBody(c))
+		line(c)
 	}
 	if rest := len(seen) - len(shown); rest > 0 {
 		skip("factory capabilities", fmt.Sprintf("%d more measured: maku doctor --client <name> names one", rest))
 	}
+}
+
+// formsGaps are the client releases known to declare form elicitation and never show the form, so a
+// measured "forms yes" from them would be a lie (#627). Each is the name and version the client
+// gives at initialize, the first release that shows forms, and the fix.
+var formsGaps = []struct{ client, fixedIn, fix string }{
+	// OpenCode before 2.3.0 initializes as "cli" 2.0.x and declares forms it never shows.
+	{client: "cli", fixedIn: "2.3.0", fix: "forms declared, not shown by this OpenCode: update to 2.3.2+"},
+}
+
+// formsGap is the warning for a client that declares forms in a release known not to show them.
+func formsGap(c Caps) (string, bool) {
+	if !c.Forms {
+		return "", false
+	}
+	for _, g := range formsGaps {
+		if c.Client != g.client {
+			continue
+		}
+		if below, ok := versionBelow(c.Version, g.fixedIn); ok && below {
+			return g.fix + " — " + capsBody(c), true
+		}
+	}
+	return "", false
+}
+
+// versionBelow compares two dotted numeric versions (a leading v is dropped); ok is false when v
+// is not one, so a version maku cannot read claims nothing.
+func versionBelow(v, floor string) (below, ok bool) {
+	parse := func(s string) ([3]int, bool) {
+		var n [3]int
+		parts := strings.SplitN(strings.TrimPrefix(s, "v"), ".", 3)
+		for i, p := range parts {
+			p, _, _ = strings.Cut(p, "-") // a pre-release tag
+			x, err := strconv.Atoi(p)
+			if err != nil {
+				return n, false
+			}
+			n[i] = x
+		}
+		return n, true
+	}
+	a, okA := parse(v)
+	b, okB := parse(floor)
+	if !okA || !okB {
+		return false, false
+	}
+	return slices.Compare(a[:], b[:]) < 0, true
 }
 
 // capsHead is the line's subject: the client and the parts of itself it declared — its version and

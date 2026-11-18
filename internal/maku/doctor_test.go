@@ -277,7 +277,7 @@ func TestDoctorSkillDrift(t *testing.T) {
 			r := newDoctorRig(t)
 			d1, d2 := t.TempDir(), t.TempDir()
 			tc.setup(t, d1, d2)
-			r.d.SkillDirs, r.d.Version = []string{d1, d2}, "v0.2.0"
+			r.d.SkillDirs, r.d.Version = []SkillDir{{Path: d1}, {Path: d2}}, "v0.2.0"
 			var out strings.Builder
 			err := r.d.Run(t.Context(), &out)
 			if (err != nil) != tc.wantErr {
@@ -313,7 +313,7 @@ func TestDoctorSkillCheckRunsWithAnUnusableURL(t *testing.T) {
 	if _, err := skill.Install(dir, "v0.1.0"); err != nil {
 		t.Fatal(err)
 	}
-	d := Doctor{Config: Config{URL: "::not a url"}, SkillDirs: []string{dir}, Version: "v0.2.0"}
+	d := Doctor{Config: Config{URL: "::not a url"}, SkillDirs: []SkillDir{{Path: dir}}, Version: "v0.2.0"}
 	var out strings.Builder
 	if err := d.Run(t.Context(), &out); err == nil {
 		t.Fatal("want an error")
@@ -836,5 +836,93 @@ func TestCapsHeadMakesItsValuesOneLine(t *testing.T) {
 	}
 	if got := capsHead(Caps{Client: "gemini"}); got != "factory capabilities (gemini)" {
 		t.Fatalf("%q", got)
+	}
+}
+
+// #627: `maku setup claude` exited 1 over OpenCode's stale copy. The copy setup wrote is the one
+// that can fail; another client's stale copy warns, and each fix names its client.
+func TestDoctorAfterSetupFailsOnlyOnTheCopyItWrote(t *testing.T) {
+	home := t.TempDir()
+	dirs := SkillDirs(home, "")
+	path := func(client string) string { return Setup{Home: home, Agent: Agents[client]}.SkillPath() }
+	if _, err := skill.Install(path("claude"), "v0.2.0"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := skill.Install(path("opencode"), "v0.1.0"); err != nil {
+		t.Fatal(err)
+	}
+	r := newDoctorRig(t)
+	r.d.SkillDirs, r.d.Version, r.d.SetupSkillDir = dirs, "v0.2.0", path("claude")
+	var out strings.Builder
+	if err := r.d.Run(t.Context(), &out); err != nil {
+		t.Fatalf("setup claude fails over another client's copy: %v\n%s", err, &out)
+	}
+	if !strings.Contains(out.String(), "warn skill: "+filepath.Join(path("opencode"), "maku-handoff")) ||
+		!strings.Contains(out.String(), "run maku setup codex (or opencode),") {
+		t.Fatalf("the stale copy is not a warning naming its client:\n%s", &out)
+	}
+
+	// The copy setup wrote, stale, still fails, and names the client too.
+	r.d.SetupSkillDir = path("opencode")
+	out.Reset()
+	if err := r.d.Run(t.Context(), &out); err == nil || !strings.Contains(out.String(), "FAIL skill") {
+		t.Fatalf("err = %v\n%s", err, &out)
+	}
+	// A bare doctor fails on any stale copy, as before.
+	r.d.SetupSkillDir = ""
+	out.Reset()
+	if err := r.d.Run(t.Context(), &out); err == nil || strings.Contains(out.String(), "<client>") {
+		t.Fatalf("err = %v\n%s", err, &out)
+	}
+}
+
+func TestSkillDirsNameTheirSetup(t *testing.T) {
+	got := map[string]string{}
+	for _, d := range SkillDirs("/h", "/r") {
+		got[d.Path] = d.Setup
+	}
+	for p, want := range map[string]string{
+		"/h/.claude/skills": "maku setup claude",
+		"/r/.claude/skills": "maku setup claude --project",
+		"/h/.agents/skills": "maku setup codex (or opencode)",
+		"/r/.agents/skills": "maku setup codex (or opencode) --project",
+	} {
+		if got[p] != want {
+			t.Errorf("%s: %q, want %q", p, got[p], want)
+		}
+	}
+}
+
+// #627: OpenCode before 2.3.0 initializes as "cli" 2.0.x and declares forms it never shows: doctor
+// must not read it as plain "ok … forms yes".
+func TestDoctorWarnsOnAClientThatDeclaresFormsItDoesNotShow(t *testing.T) {
+	for name, tc := range map[string]struct {
+		caps Caps
+		warn bool
+	}{
+		"opencode 2.0.22":         {Caps{Client: "cli", Version: "2.0.22", Forms: true}, true},
+		"opencode 2.3.2":          {Caps{Client: "opencode", Version: "2.3.2", Forms: true}, false},
+		"cli 2.3.0":               {Caps{Client: "cli", Version: "2.3.0", Forms: true}, false},
+		"cli without forms":       {Caps{Client: "cli", Version: "2.0.22"}, false},
+		"cli, unreadable version": {Caps{Client: "cli", Version: "dev", Forms: true}, false},
+	} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			seedCaps(t, dir, tc.caps)
+			r := newDoctorRig(t)
+			r.d.Caps = CapsStore{Path: CapsPath(dir)}
+			var out strings.Builder
+			if err := r.d.Run(t.Context(), &out); err != nil {
+				t.Fatalf("%v\n%s", err, &out)
+			}
+			lines := capabilityLines(&out)
+			if len(lines) != 1 {
+				t.Fatalf("%q", lines)
+			}
+			const want = "forms declared, not shown by this OpenCode: update to 2.3.2+"
+			if got := strings.HasPrefix(lines[0], "warn ") && strings.Contains(lines[0], want); got != tc.warn {
+				t.Fatalf("warn=%v, want %v: %s", got, tc.warn, lines[0])
+			}
+		})
 	}
 }

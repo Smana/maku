@@ -134,20 +134,43 @@ func (a Agent) commandDir(project bool) string {
 	return a.CommandDir
 }
 
+// SkillDir is one directory agents read skills from, and the setup command that rewrites the
+// maku-handoff copy in it: a doctor line names the client, not "<client>" (#627).
+type SkillDir struct {
+	Path  string
+	Setup string // "maku setup opencode", or "maku setup codex (or opencode) --project" for a shared one
+}
+
 // SkillDirs is every directory an agent reads skills from, each once: every agent's SkillDir under
 // home and SkillProjectDir under dir; an empty dir (no repository) has no project scope.
-func SkillDirs(home, dir string) []string {
-	var out []string
+func SkillDirs(home, dir string) []SkillDir {
+	var paths []string
+	clients := map[string][]string{}
+	project := map[string]bool{}
 	for _, k := range slices.Sorted(maps.Keys(Agents)) {
 		for _, p := range []string{Agents[k].SkillDir, Agents[k].SkillProjectDir} {
 			if dir == "" && !strings.HasPrefix(p, "~/") {
 				continue
 			}
 			s := Setup{Home: home, Dir: dir}.resolve(p)
-			if !slices.Contains(out, s) {
-				out = append(out, s)
+			if _, seen := clients[s]; !seen {
+				paths = append(paths, s)
 			}
+			clients[s] = append(clients[s], k)
+			project[s] = !strings.HasPrefix(p, "~/")
 		}
+	}
+	out := make([]SkillDir, 0, len(paths))
+	for _, p := range paths {
+		c := clients[p]
+		cmd := "maku setup " + c[0]
+		if len(c) > 1 {
+			cmd += " (or " + strings.Join(c[1:], ", ") + ")"
+		}
+		if project[p] {
+			cmd += " --project"
+		}
+		out = append(out, SkillDir{Path: p, Setup: cmd})
 	}
 	return out
 }
@@ -189,6 +212,9 @@ type Setup struct {
 	// RestartService restarts OpenCode's background service without asking (--restart-service).
 	RestartService bool
 }
+
+// SkillPath is the directory this setup installs the maku-handoff skill in.
+func (s Setup) SkillPath() string { return s.resolve(s.Agent.skillDir(s.Project)) }
 
 // resolve places a ~/ path under home and any other under dir.
 func (s Setup) resolve(p string) string {
@@ -264,7 +290,11 @@ func (s Setup) Do(ctx context.Context) error {
 	}
 	if len(argv) > 0 {
 		line := "registered the maku MCP server: " + strings.Join(argv, " ")
-		if err := s.Run(ctx, argv); err != nil {
+		if p := s.resolve(path); s.opencodeRegistered(p, argv) {
+			// `opencode mcp add` rewrites the entry every time, dropping codemode and the timeout,
+			// so running it again would rewrite a config that needs no change (#627).
+			line = "the maku MCP server is already registered in " + p
+		} else if err := s.Run(ctx, argv); err != nil {
 			if !alreadyRegistered(err) {
 				return fmt.Errorf("%s: %w", strings.Join(argv, " "), err)
 			}
@@ -482,6 +512,38 @@ func (s Setup) opencodeCodeMode(path string) error {
 	}
 	_, err = fmt.Fprintf(s.Out, "set \"codemode\": false and timeout.execution %d on mcp.servers.maku in %s: its tools stay on OpenCode's native list, and start's form can wait for you\n", opencodeExecutionTimeout, path)
 	return err
+}
+
+// opencodeRegistered is whether OpenCode's config at path already holds mcp.servers.maku running the
+// command argv registers (what follows its "--"), with codemode off and the execution timeout set:
+// then the add would change nothing setup keeps.
+func (s Setup) opencodeRegistered(path string, argv []string) bool {
+	if s.Agent.Name != "opencode" {
+		return false
+	}
+	i := slices.Index(argv, "--")
+	if i < 0 {
+		return false
+	}
+	b, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return false
+	}
+	var cfg map[string]any
+	if json.Unmarshal(b, &cfg) != nil {
+		return false
+	}
+	entry := mapAt(mapAt(mapAt(cfg, "mcp"), "servers"), "maku")
+	cmd, _ := entry["command"].([]any)
+	if entry["type"] != "local" || entry["codemode"] != false || executionTimeout(entry) < opencodeExecutionTimeout || len(cmd) != len(argv)-i-1 {
+		return false
+	}
+	for j, a := range argv[i+1:] {
+		if cmd[j] != a {
+			return false
+		}
+	}
+	return true
 }
 
 // mapAt is m[key] as an object, nil when it is not one.
