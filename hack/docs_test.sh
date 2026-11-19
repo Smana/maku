@@ -3,6 +3,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# Negative greps read the findings without the temporary directory, whose random name can hold any pattern (#637).
+findings() { printf '%s\n' "${out//"$tmp/"/}"; }
 mkdir -p "$tmp/docs/superpowers"
 printf '# A\n\nSee [b](b.md#there) and [gone](nope.md). Status: AP-1. Planned, phase 2.\n' > "$tmp/docs/a.md"
 printf '# B\n\n## There\n' > "$tmp/docs/b.md"
@@ -11,12 +13,12 @@ out=$(hack/docs.sh "$tmp/docs/a.md" "$tmp/docs/b.md" "$tmp/docs/superpowers/spec
 grep -q 'a.md:3: status vocabulary: AP-1' <<<"$out"
 grep -q 'a.md:3: status vocabulary: Planned' <<<"$out"
 grep -q 'a.md:3: dead link: nope.md' <<<"$out"
-if grep -q 'b.md' <<<"$out"; then echo "unexpected match: 'b.md'"; exit 1; fi
-if grep -q 'superpowers' <<<"$out"; then echo "unexpected match: 'superpowers'"; exit 1; fi
+if grep -q 'b.md' <<<"$(findings)"; then echo "unexpected match: 'b.md'"; exit 1; fi
+if grep -q 'superpowers' <<<"$(findings)"; then echo "unexpected match: 'superpowers'"; exit 1; fi
 printf '# C\n\nSee [b](b.md#nowhere). Since v0.7 the broker serves it.\n' > "$tmp/docs/c.md"
 out=$(hack/docs.sh "$tmp/docs/c.md" "$tmp/docs/b.md" 2>&1 || true)
 grep -q 'c.md:3: dead anchor: b.md#nowhere' <<<"$out"
-if grep -q 'status vocabulary' <<<"$out"; then echo "unexpected match: 'status vocabulary'"; exit 1; fi
+if grep -q 'status vocabulary' <<<"$(findings)"; then echo "unexpected match: 'status vocabulary'"; exit 1; fi
 
 # Anchors: backticks and punctuation dropped, duplicates numbered, same-file fragments.
 printf '# T\n\n## The `Room` CRD: v1, (beta)!\n\n## Metrics\n\n## Metrics\n\n```\n## Fenced\n```\n' > "$tmp/docs/t.md"
@@ -27,7 +29,7 @@ out=$(hack/docs.sh "$tmp/docs/e.md" 2>&1 || true)
 grep -q 'e.md:3: dead anchor: t.md#metrics-2' <<<"$out"
 grep -q 'e.md:3: dead anchor: t.md#fenced' <<<"$out"
 grep -q 'e.md:3: dead anchor: #nope' <<<"$out"
-if grep -q 'The-Room' <<<"$out"; then echo "unexpected match: 'The-Room'"; exit 1; fi
+if grep -q 'The-Room' <<<"$(findings)"; then echo "unexpected match: 'The-Room'"; exit 1; fi
 
 # Ignored: fenced code, inline code, absolute URLs, mailto.
 printf '# F\n\n`[x](gone.md)` [u](https://example.com/x.md) [m](mailto:a@b.c)\n\n```md\n[y](gone.md)\n```\n' > "$tmp/docs/f.md"
@@ -51,13 +53,13 @@ for id in D11 AM6 HR13 MP15 OD-8 'rollout step 7'; do
 done
 grep -q "^$tmp/docs/i.md:4: design id: Release N+1\$" <<<"$out" || { echo "missing: design id Release N+1"; exit 1; }
 grep -q "^$tmp/docs/i.md:4: cluster name: aws-0\$" <<<"$out" || { echo "missing: cluster name aws-0"; exit 1; }
-if grep -q 'B1\|D4\|D12\|gcp-0\|contributing' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+if grep -q 'B1\|D4\|D12\|gcp-0\|contributing' <<<"$(findings)"; then echo "unexpected match: $out"; exit 1; fi
 printf '# J\n\nThen step 8 PR F, step 7 PR E1 and step 7 R9 shipped; Live proof 5 and release N, V12, C4, R10, FA3, SI2, GW1.\nNot ids: AM, D-day, MD5, D100, R2D2, aws-01, v4.\n' > "$tmp/docs/j.md"
 out=$(hack/docs.sh "$tmp/docs/j.md" 2>&1 || true)
 for id in 'step 8 PR F' 'step 7 PR E1' 'step 7 R9' 'Live proof 5' 'release N' V12 C4 R10 FA3 SI2 GW1; do
   grep -q "j.md:3: design id: $id\$" <<<"$out" || { echo "missing: design id $id"; exit 1; }
 done
-if grep -q 'j.md:4' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+if grep -q 'j.md:4' <<<"$(findings)"; then echo "unexpected match: $out"; exit 1; fi
 
 # Exit codes: 1 on a hit, 0 clean.
 rc=0; hack/docs.sh "$tmp/docs/h.md" >/dev/null 2>&1 || rc=$?; [ "$rc" = 1 ]
@@ -78,5 +80,5 @@ out=$(hack/docs.sh "$tmp/docs/h.md" "$tmp/docs/r.md" "$tmp/docs/x.md" "$tmp/docs
 grep -q 'h.md: over ceiling: 160[0-9] words, how-to allows 1500' <<<"$out"
 grep -q 'x.md: unknown page-type: essay' <<<"$out"
 grep -q 'm-bad.md: moved stub over 40 words' <<<"$out"
-if grep -q 'r.md\|m-ok.md\|b.md' <<<"$out"; then echo "unexpected match: $out"; exit 1; fi
+if grep -q 'r.md\|m-ok.md\|b.md' <<<"$(findings)"; then echo "unexpected match: $out"; exit 1; fi
 echo ok
