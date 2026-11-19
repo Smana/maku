@@ -212,3 +212,21 @@ func TestApplyFloorKeepsTheBodyBound(t *testing.T) {
 		t.Fatalf("%d gaps, %d bytes", len(got.Gaps), len(got.Issues[0].Body))
 	}
 }
+
+// aws-0, 2026-11-19: a fully stated request planned with the correct values in both sections gets no
+// template gap; the same sections without a stated value still do.
+func TestFloorCountsAStatedValueAsConcrete(t *testing.T) {
+	const request = "the factory configuration reference shows the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10, " +
+		"but tooling/aws-0/agent-factory/helm-values-sponsored.yaml sets dailyUSD 5 and maxCostUSD 2"
+	stated := floorPlan("## What is wrong\nThe reference gives dailyUSD 10.20.\n" +
+		"## What it should be\nThe reference gives dailyUSD 5 and maxCostUSD 2.\n" +
+		"## Acceptance check\nThe reference page gives dailyUSD 5 and maxCostUSD 2.")
+	if got := intake.ApplyFloor(stated, request); len(got.Gaps) != 0 {
+		t.Fatalf("gaps beside a stated fix: %+v", got.Gaps)
+	}
+	vague := floorPlan("## What is wrong\nThe reference gives the wrong budget.\n" +
+		"## What it should be\nThe budget is right.\n## Acceptance check\nIt is right.")
+	if got := intake.ApplyFloor(vague, request); len(got.Gaps) != 2 {
+		t.Fatalf("gaps = %+v, want the two template gaps", got.Gaps)
+	}
+}

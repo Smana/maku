@@ -393,7 +393,7 @@ func TestComposeRefusesWhatTheContractRefuses(t *testing.T) {
 			want:  intake.ReasonPlannerInvalid},
 		{name: "a draft the validator refuses",
 			draft: intake.Draft{Repository: "Smana/ai-native-ref",
-				Issues: []intake.DraftIssue{{Title: "no area prefix", Body: validBody, Class: "docs-links"}}},
+				Issues: []intake.DraftIssue{{Title: "**", Body: validBody, Class: "docs-links"}}},
 			want: intake.ReasonInvalidDraft},
 	} {
 		t.Run(c.name, func(t *testing.T) {

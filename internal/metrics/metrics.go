@@ -613,8 +613,8 @@ func (s *Set) AppendTook(ctx context.Context, d time.Duration) {
 }
 
 // IntakePlan counts one plan attempt: surface is the one it was asked on, outcome planned, asked,
-// degraded or refused, and reason the closed refusal's own when it refused (empty otherwise). The
-// three labels are bounded by their callers: a plan's text, a repository and a hash never label a
+// degraded, refused, or retried (a refused draft sent back to the planner once), and reason the
+// closed refusal's own when it refused or retried (empty otherwise). The three labels are bounded by their callers: a plan's text, a repository and a hash never label a
 // series.
 func (s *Set) IntakePlan(ctx context.Context, surface, outcome, reason string) {
 	attrs := []attribute.KeyValue{attribute.String("surface", surface), attribute.String("outcome", outcome)}

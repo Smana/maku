@@ -172,7 +172,7 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 				return Plan{}, refuse(ReasonPlannerInvalid, "the plan has an invalid clarification marker")
 			}
 			body := p.Issues[i].Body
-			drop := settledTemplate(body, markers, byID, assume, DoneWhen(request))
+			drop := settledTemplate(body, markers, byID, assume, request)
 			var records []string
 			for j := len(markers) - 1; j >= 0; j-- {
 				if drop[markers[j].ID] {
@@ -208,9 +208,11 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 }
 
 // settledTemplate is the assumed template gaps of one body to drop rather than write: its section
-// is already concrete without them, or an earlier marker in the section assumes the same text.
-// A done-when the request states is the person's own check, and is always written.
-func settledTemplate(body string, markers []sanitize.ClarificationMarker, gaps map[string]Gap, assume map[string]Answer, stated string) map[string]bool {
+// is already concrete without them (concreteShould, concreteCheck: a stated value counts), or an
+// earlier marker in the section assumes the same text. A done-when the request states is the
+// person's own check, and is always written.
+func settledTemplate(body string, markers []sanitize.ClarificationMarker, gaps map[string]Gap, assume map[string]Answer, request string) map[string]bool {
+	stated := DoneWhen(request)
 	drop := map[string]bool{}
 	written := map[string]bool{}
 	for _, m := range markers {
@@ -224,11 +226,10 @@ func settledTemplate(body string, markers []sanitize.ClarificationMarker, gaps m
 		switch {
 		case written[key]:
 			drop[m.ID] = true
-		case section == "acceptance-check" && (stated == "" || a.Answer != stated) && acceptable(sectionBody(body, "## Acceptance check")):
+		case section == "acceptance-check" && (stated == "" || a.Answer != stated) && concreteCheck(sectionBody(body, "## Acceptance check"), request):
 			drop[m.ID] = true
 		case section == "what-it-should-be":
-			should := sectionBody(body, "## What it should be")
-			drop[m.ID] = observable(should) || decided(body, should)
+			drop[m.ID] = concreteShould(body, sectionBody(body, "## What it should be"), request)
 		}
 		written[key] = !drop[m.ID]
 	}

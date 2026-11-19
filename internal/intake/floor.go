@@ -85,10 +85,10 @@ func ApplyFloor(p Plan, request string) Plan {
 	}
 	for i, is := range p.Issues {
 		should, acceptance := sectionBody(is.Body, "## What it should be"), sectionBody(is.Body, "## Acceptance check")
-		if !hasMarkerIn(is.Body, "what-it-should-be") && !observable(should) && !decided(is.Body, should) {
+		if !hasMarkerIn(is.Body, "what-it-should-be") && !concreteShould(is.Body, should, request) {
 			adds = append(adds, addition{i, "what-it-should-be", floorShouldQuestion, floorShouldAnswer})
 		}
-		if !hasMarkerIn(is.Body, "acceptance-check") && !acceptable(acceptance) {
+		if !hasMarkerIn(is.Body, "acceptance-check") && !concreteCheck(acceptance, request) {
 			adds = append(adds, addition{i, "acceptance-check", floorAcceptanceQuestion, floorAcceptanceAnswer})
 		}
 	}
@@ -133,6 +133,35 @@ func observable(section string) bool {
 func acceptable(section string) bool {
 	s := stripMarkers(section)
 	return backtickedRE.MatchString(s) || observationRE.MatchString(s) || observableRE.MatchString(s)
+}
+
+// concreteShould is whether a "What it should be" needs no template default: it names an observable
+// behaviour, carries a Decision's text, or states a value the request names (statesValue).
+func concreteShould(body, should, request string) bool {
+	return observable(should) || decided(body, should) || statesValue(should, request)
+}
+
+// concreteCheck is whether an "Acceptance check" needs no template default: it is acceptable, or
+// states a value the request names (statesValue).
+func concreteCheck(acceptance, request string) bool {
+	return acceptable(acceptance) || statesValue(acceptance, request)
+}
+
+// valueRE is a concrete value a section may state: a number, a repository path or file name, a
+// code-font span, or an identifier (CamelCase, camelCase, snake_case).
+var valueRE = regexp.MustCompile("`[^`\n]+`|" + `(?:[\w.-]+/)+[\w.-]+|\b[\w-]+\.(?:go|md|ya?ml|json|toml|tsx?|jsx?|sh|py|tf|html|css|sql|proto|mod|rs)\b|\b\d+(?:\.\d+)?\b|\b[A-Za-z][a-z0-9]*[A-Z][A-Za-z0-9]*\b|\b[a-z][a-z0-9]*_[a-z0-9_]+\b`)
+
+// statesValue is whether section states a concrete value the request also names: a fully stated
+// request ("shows dailyUSD 10.20, but values.yaml sets dailyUSD 5") planned as "the reference gives
+// dailyUSD 5" is a concrete correction, not a behaviour left to state (aws-0, 2026-11-19).
+func statesValue(section, request string) bool {
+	s := stripMarkers(section)
+	for _, v := range valueRE.FindAllString(s, -1) {
+		if containsTerm(request, strings.Trim(v, "`")) {
+			return true
+		}
+	}
+	return false
 }
 
 // decided is whether section carries a Decision's text: the plan settled what the change is with

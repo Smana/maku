@@ -165,11 +165,13 @@ type fakeIntake struct {
 	// the tool derived from the principal rather than the one it was told.
 	surface string
 
-	mu      sync.Mutex
-	n       int // requests answered
-	status  int
-	now     time.Time
-	reply   []byte
+	mu     sync.Mutex
+	n      int // requests answered
+	status int
+	now    time.Time
+	reply  []byte
+	// queue answers the next calls in order, before reply.
+	queue   [][]byte
 	prompts []string
 	// coordReply answers a call made with coordination_plan's system prompt, so one gateway serves
 	// both tools, as the one governed route does; delay makes every answer late.
@@ -195,6 +197,9 @@ func newFakeIntake(t *testing.T, surface string, at time.Time) *fakeIntake {
 		f.n++
 		f.prompts = append(f.prompts, userTurn(raw))
 		status, reply, delay := f.status, f.reply, f.delay
+		if len(f.queue) > 0 {
+			reply, f.queue = f.queue[0], f.queue[1:]
+		}
 		if f.coordReply != nil && strings.Contains(string(raw), "You plan one coherent change") {
 			reply = f.coordReply
 		}
@@ -253,6 +258,13 @@ func (f *fakeIntake) replyWith(body []byte) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.reply = body
+}
+
+// replyInOrder makes the gateway answer bodies, one per call, then the reply set before.
+func (f *fakeIntake) replyInOrder(bodies ...[]byte) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.queue = append(f.queue, bodies...)
 }
 
 // fail makes the gateway answer status instead of 200.

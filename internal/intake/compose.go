@@ -69,6 +69,10 @@ func Compose(d Draft, in ComposeIn) (Plan, error) {
 		return Plan{}, refuse(ReasonPlannerInvalid,
 			fmt.Sprintf("surface %s, the contract's are %s and %s", strconv.Quote(string(in.Surface)), SurfaceSlack, SurfaceSession))
 	}
+	// A title the check would refuse for its form alone is mended first (RepairTitle), on a copy: the
+	// caller's draft is not changed.
+	d.Issues = slices.Clone(d.Issues)
+	d.repairTitles()
 	if detail := d.invalid(); detail != "" {
 		return Plan{}, refuse(ReasonPlannerInvalid, detail)
 	}

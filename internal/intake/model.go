@@ -113,6 +113,9 @@ type DraftRequest struct {
 	// Candidate is the broker-verified revision to re-plan. It is serialized as its own JSON
 	// envelope, separately from Context's 4 KiB bound; settled text and Decisions are data to preserve.
 	Candidate *Plan
+	// Refused is the broker's refusal of the previous reply to this request, on the one retry a
+	// refused draft gets: the model is told what to correct. Empty on a first call.
+	Refused string
 }
 
 // Draft is the model's answer, as it arrives and before config has a say: the repository and the
@@ -175,13 +178,14 @@ type GovernedRequest struct {
 	Classes      []string
 	candidate    *Plan                       // plan revisions only; coordination's typed outputs have no candidate
 	offers       map[string]map[string]Class // the plan's catalogue classes; coordination's have none
+	refused      string                      // the plan's retry only: the refusal of the last reply
 	SystemPrompt string
 }
 
 // Draft is the one call for plan/v1: the governed request, the strict decode, and the three ways it
 // fails. It makes exactly one attempt — no retry, no fallback, no second model — because the daily
 // cap and the per-attempt accounting are the caller's, and a client that retried would spend a budget
-// nobody approved.
+// nobody approved. The caller's one retry of a refused draft (Refused) is a second Draft.
 func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, error) {
 	var d Draft
 	prompt := systemPrompt
@@ -189,10 +193,11 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 		prompt += revisionSystemPrompt
 	}
 	usage, err := m.Generate(ctx, GovernedRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, candidate: req.Candidate, offers: req.Offers, SystemPrompt: prompt}, &d)
+		Classes: req.Classes, candidate: req.Candidate, offers: req.Offers, refused: req.Refused, SystemPrompt: prompt}, &d)
 	if err != nil {
 		return Draft{}, Usage{}, err
 	}
+	d.repairTitles()
 	if detail := d.invalid(); detail != "" {
 		return Draft{}, Usage{}, errPlannerInvalid(detail)
 	}
@@ -208,7 +213,7 @@ func (m *Model) Draft(ctx context.Context, req DraftRequest) (Draft, Usage, erro
 // each caller's own type is its contract; the bounds of its fields are the caller's to hold.
 func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usage, error) {
 	user, err := userMessage(DraftRequest{Text: req.Text, Context: req.Context, Candidates: req.Candidates,
-		Classes: req.Classes, Candidate: req.candidate, Offers: req.offers})
+		Classes: req.Classes, Candidate: req.candidate, Offers: req.offers, Refused: req.refused})
 	if err != nil {
 		return Usage{}, err
 	}
@@ -232,10 +237,7 @@ func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usa
 		return Usage{}, errPlannerUnavailable(fmt.Sprintf("marshal the request: %v", err))
 	}
 
-	deadline := m.Deadline
-	if deadline <= 0 {
-		deadline = defaultDeadline
-	}
+	deadline := m.CallDeadline()
 	ctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 
@@ -268,6 +270,15 @@ func (m *Model) Generate(ctx context.Context, req GovernedRequest, out any) (Usa
 		return Usage{}, errPlannerUnavailable(fmt.Sprintf("read the reply: %v", err))
 	}
 	return decodeReply(body, out)
+}
+
+// CallDeadline is the deadline that bounds one plan: Deadline, or the contract's 20 s. A retry of a
+// refused draft shares it with the first call rather than adding its own.
+func (m *Model) CallDeadline() time.Duration {
+	if m.Deadline > 0 {
+		return m.Deadline
+	}
+	return defaultDeadline
 }
 
 // apiKey reads the planner's key at use and trims it: a file that is not there, or is empty, is a

@@ -34,7 +34,7 @@ The object:
 The rules:
 - repository is exactly one of the repositories you are given, copied as it is written there. Never invent a repository, and never name one that is not in the list.
 - One defect per issue, and at most three issues. Do not split one defect into steps.
-- A title is one line, "<area>: <what is wrong>", at most 256 characters.
+- A title is one line, "<area>: <what is wrong>", at most 256 characters, in plain text. <area> is one lowercase word or path with no spaces, optionally with a scope in parentheses: "docs(reference): the harness reference says a careful task splits into 5 parts", never "Harness reference: ...".
 - A body has the three headings in this order: "## What is wrong", "## What it should be", "## Acceptance check". At most 16 KiB.
 - class is exactly one of the classes you are given, copied as it is written there, and no other: it names the area of the work. Never name roles, a budget or an amount of money: the broker sets those from its own config, and yours would be dropped.
 - suggestion is optional and only for a class listed with profiles: profile is one of that class's profiles, copied as it is written there, or "" to leave the choice to the factory; why is one line of at most 200 characters saying why that profile fits this issue. Never say how the work merges: the broker says that.
@@ -142,6 +142,12 @@ func userMessage(req DraftRequest) (string, error) {
 		b.WriteString("\nVerified candidate plan to revise:\n")
 		b.Write(candidate)
 		b.WriteString("\n")
+	}
+	if r := strings.TrimSpace(req.Refused); r != "" {
+		// The broker's own refusal of the last reply: a field and a bound, never plan text.
+		b.WriteString("\nYour previous reply was refused: ")
+		b.WriteString(oneLine(r))
+		b.WriteString("\nAnswer again with the whole object, corrected.\n")
 	}
 	return b.String(), nil
 }
