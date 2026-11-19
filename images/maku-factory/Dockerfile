@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -ldflags="-s -w -X github.com/Smana/maku/internal/version.Version=${VERSION}" \
       -o /out/maku-factory ./cmd/maku-factory
 
-FROM cgr.dev/chainguard/git:latest@sha256:f5f91faa60ed1b69deab0546d2154d2150f5f9163843793e72d45c51ff27153e
+FROM cgr.dev/chainguard/git:latest@sha256:caa7647e036b43c39a0d47a8fe6730bc0f75627841eff3df2ba60a1fc6357341
 COPY --from=build /out/maku-factory /maku-factory
 USER 65532:65532
 ENTRYPOINT ["/maku-factory"]
