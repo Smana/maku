@@ -187,3 +187,90 @@ func TestOneQuestionDropsATemplateGapBesideAConcreteSection(t *testing.T) {
 		t.Fatalf("not final: %v\n%s", err, b)
 	}
 }
+
+// statedPlan is a plan whose one real gap is question, in What it should be (aws-0, 2026-11-19).
+func statedPlan(question, recommended string) intake.Plan {
+	p := floorPlan("## What is wrong\nThe reference disagrees with the factory.\n## What it should be\nThe reference states the right value: " +
+		"[NEEDS CLARIFICATION: g1 " + question + "]\n## Acceptance check\nThe reference page shows the right value.")
+	return intake.WithGaps(p, []intake.Gap{{ID: "g1", Section: "what-it-should-be", Text: question,
+		Recommended: intake.Answer{Answer: recommended, Why: "the planner's guess"}}})
+}
+
+// A question the request already answers ("says X, but ... is Y") is never asked: the plan is Ready
+// with the value the request states after the contrast, recorded as an assumption.
+func TestOneQuestionNeverAsksWhatTheRequestStates(t *testing.T) {
+	tests := map[string]struct {
+		request, question, recommended, want string
+	}{
+		"the careful task's parts": {
+			request:  "the harness reference says a careful task can split into 5 parts, but the factory caps it at 4",
+			question: "Is the correct maximum number of parts for a careful task 5 or 4?", recommended: "5", want: "4",
+		},
+		"the Slack app budget": {
+			request:  "the Slack app budget on the config reference says dailyUSD 10, but it should be dailyUSD 5, maxCostUSD 2",
+			question: "Should the Slack app's daily budget be 10 or 5?", recommended: "10", want: "5",
+		},
+		"instead of names the wrong one": {
+			request:  "the cheat sheet should name `maku:run` instead of `factory:run`",
+			question: "Which label is right, `factory:run` or `maku:run`?", recommended: "factory:run", want: "maku:run",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := intake.OneQuestion(statedPlan(tc.question, tc.recommended), tc.request, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Gaps) != 0 || got.Question != nil {
+				t.Fatalf("asked %+v for what the request states", got.Gaps)
+			}
+			b := got.Issues[0].Body
+			should := strings.SplitN(strings.SplitN(b, "## What it should be", 2)[1], "## Acceptance check", 2)[0]
+			if !strings.Contains(should, tc.want) {
+				t.Fatalf("What it should be lacks %q:\n%s", tc.want, b)
+			}
+			if !strings.Contains(b, "assumed "+tc.want+", because the request states it") {
+				t.Fatalf("no A record for the stated value:\n%s", b)
+			}
+			if _, err := sanitize.CheckFinalDraft(got.Issues[0].Title, b); err != nil {
+				t.Fatalf("not final: %v\n%s", err, b)
+			}
+		})
+	}
+}
+
+// A real gap, one the request leaves open, is still asked.
+func TestOneQuestionStillAsksARealGap(t *testing.T) {
+	for request, question := range map[string]string{
+		"the Slack app budget on the config reference is wrong":                      "What are the right dailyUSD and maxCostUSD for the Slack app?",
+		"the Slack app budget on the config reference says 10 or 5 and is confusing": "Should the daily budget be 10 or 5?",
+		"the reference says 5 parts, but it is wrong":                                "Is the correct maximum 5 or 4?",
+	} {
+		got, err := intake.OneQuestion(statedPlan(question, "x"), request, false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Gaps) != 1 || got.Question == nil || got.Question.Text != question {
+			t.Errorf("%q: gaps = %+v, want the question asked", request, got.Gaps)
+		}
+	}
+}
+
+// An answer settles the source of truth: the follow-up it would open is not asked (#640).
+func TestOneQuestionAfterTheBudgetAnswerAsksNoSource(t *testing.T) {
+	req := "the Slack app budget on the config reference is wrong\nAnswered: What are the right values? — dailyUSD 5, maxCostUSD 2"
+	got, err := intake.OneQuestion(statedPlan("What is the source of truth for the Slack app budget?", "the config reference"), req, true, nil)
+	if err != nil || len(got.Gaps) != 0 {
+		t.Fatalf("gaps = %+v, %v", got.Gaps, err)
+	}
+}
+
+// The prompt says a request that states both values leaves no gap about them.
+func TestSystemPromptNeverAsksWhatIsStated(t *testing.T) {
+	p := intake.SystemPrompt()
+	for _, want := range []string{"there is no gap about the value", "Never ask the person to confirm something they stated", "caps it at 4"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("system prompt lacks %q", want)
+		}
+	}
+}

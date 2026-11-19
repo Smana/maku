@@ -89,7 +89,8 @@ func templateAnswer(section string) Answer {
 //
 // The question kept is, in order: the repository, when choices holds more than one repository and
 // nothing grounded the choice (the planner's pick is the recommendation); else the highest-ranked
-// gap that is not a template one. answered keeps none: the person has already answered once, and a
+// gap that is not a template one and that the request does not already answer (statedAnswer: that
+// gap is assumed with the value the request states). answered keeps none: the person has already answered once, and a
 // re-plan may not re-open what they settled. An acceptance check the request states (DoneWhen)
 // replaces the template's default. A template gap whose section is already concrete (an acceptance
 // check that names a result, a behaviour that is observable or carries a Decision), or whose
@@ -112,12 +113,20 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 			keep = id
 		}
 	}
+	// A question the request already answers is never asked (statedAnswer): its stated value is
+	// assumed, and the next real gap, if any, is the one kept.
+	stated := map[string]string{}
 	if keep == "" && !answered {
 		for _, g := range gaps {
-			if !IsTemplateGap(g) {
-				keep = g.ID
-				break
+			if IsTemplateGap(g) {
+				continue
 			}
+			if v, ok := statedAnswer(g, request); ok {
+				stated[g.ID] = v
+				continue
+			}
+			keep = g.ID
+			break
 		}
 	}
 	assume := map[string]Answer{}
@@ -130,6 +139,9 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 			continue
 		}
 		a := g.Recommended
+		if v, ok := stated[g.ID]; ok {
+			a = Answer{Answer: v, Why: "the request states it"}
+		}
 		if g.Section == "acceptance-check" {
 			if d := DoneWhen(request); d != "" {
 				a = Answer{Answer: d, Why: "the request states when it is done"}
