@@ -357,20 +357,27 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		// admits a pin only once every gap is answered), so it is checked as plan_check checks it.
 		return s.finishPinned(ctx, run, *revised, candidates, a.OnBehalfOf)
 	}
+	// A path the request quotes picks the repositories that hold it (#626); a revision keeps the
+	// repository its base was planned for.
+	said := a.Text + "\n" + a.Context
+	var grounded []string
+	if revised == nil {
+		if holding, found := s.groundPaths(ctx, said, candidates); found {
+			grounded = holding
+		}
+	}
 	// A request that names a repository is planned for that repository or refused, before a daily
 	// slot or a model call is spent: the planner never picks a different one (#469). The reply that
-	// re-plans carries its words in the context, so it is read the same way.
-	candidates, ref = intake.CheckNamed(a.Text+"\n"+a.Context, s.knownRepositories(ctx, p, a, candidates), candidates)
+	// re-plans carries its words in the context, so it is read the same way. Whether a repository
+	// is served is asked of the whole served set, never of the narrowed candidates: a served one
+	// named in passing beside the anchored candidate is ignored (#635).
+	known := s.knownRepositories(ctx, p, a, candidates)
+	candidates, ref = intake.CheckNamed(said, known, s.servedRepositories(ctx, p, candidates), candidates, grounded)
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
-	if revised == nil {
-		// A path the request quotes picks the repositories that hold it (#626); a revision keeps the
-		// repository its base was planned for.
-		candidates, _ = s.groundPaths(ctx, a.Text+"\n"+a.Context, candidates)
-		if a.Repository == "" && len(candidates) > 1 {
-			run.choices = candidates
-		}
+	if revised == nil && a.Repository == "" && len(candidates) > 1 {
+		run.choices = candidates
 	}
 	if !s.Intake.take(req.Key) {
 		return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonDailyPlansReached))
@@ -593,9 +600,11 @@ const maxGroundPaths = 3
 // groundPaths narrows candidates to the ones that hold a repository path text quotes (#626): a path
 // that exists in one served repository is the strongest evidence of where the change goes. found is
 // false, and candidates come back unchanged, when text quotes no path, no candidate holds one, or
-// nothing can look one up; a lookup that fails counts as not holding it.
+// nothing can look one up; a lookup that fails counts as not holding it. A single candidate is looked
+// up too: the path it holds anchors the request on it, so a served repository named in passing is
+// not taken for the target (#635).
 func (s *Server) groundPaths(ctx context.Context, text string, candidates []string) ([]string, bool) {
-	if s.Intake.Paths == nil || len(candidates) < 2 {
+	if s.Intake.Paths == nil || len(candidates) == 0 {
 		return candidates, false
 	}
 	paths := intake.PathsIn(text)
@@ -623,6 +632,16 @@ func (s *Server) groundPaths(ctx context.Context, text string, candidates []stri
 		return candidates, false
 	}
 	return holding, true
+}
+
+// servedRepositories is every repository served here: the factory's catalogue (or the allowlist)
+// and the candidates. It is what `repository_not_served_here` is decided against (#635).
+func (s *Server) servedRepositories(ctx context.Context, p authn.Principal, candidates []string) []string {
+	served := slices.Clone(candidates)
+	if more, err := s.planRepositories(ctx, p); err == nil {
+		served = append(served, more...)
+	}
+	return served
 }
 
 // knownRepositories is every repository the broker can tell a request names: the allowlist, the

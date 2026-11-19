@@ -214,3 +214,38 @@ func TestHandoffAsksWhichRepository(t *testing.T) {
 		t.Fatalf("the re-plan was not grounded on the answer:\n%s", sent)
 	}
 }
+
+// #635: a request anchored on one served repository by a quoted path, naming another served one in
+// passing, is planned for the first and never refused; a repository nothing serves is still refused.
+func TestHandoffServedRepositoryInPassing(t *testing.T) {
+	holds := map[string]string{"tooling/aws-0/agent-factory/helm-values-sponsored.yaml": "smana/ai-native-ref"}
+	text := "the budget numbers in tooling/aws-0/agent-factory/helm-values-sponsored.yaml are wrong, as runlore-kb v0.20.0 shows"
+	for _, tc := range []struct {
+		name string
+		args map[string]any
+	}{
+		{"no repository asked", map[string]any{"text": text}},
+		{"the grounded repository asked", map[string]any{"text": text, "repository": "Smana/ai-native-ref"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(newMemHandoffStore()), twoServed(t, holds))
+			r := handoffCall(t, e, tc.args)
+			if !r.Ready {
+				t.Fatalf("a grounded repository was asked about: %+v", r)
+			}
+			sent := e.intake.sent()
+			if !strings.Contains(sent, "- smana/ai-native-ref") || strings.Contains(sent, "- smana/runlore-kb") {
+				t.Fatalf("the model was offered the wrong repositories:\n%s", sent)
+			}
+		})
+	}
+
+	t.Run("an unserved repository is refused", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(newMemHandoffStore()), twoServed(t, holds))
+		got := call(t, e, viaRoomctl("dev"), "handoff", map[string]any{
+			"text": "the budget numbers in tooling/aws-0/agent-factory/helm-values-sponsored.yaml are wrong, as Smana/runlore v0.20.0 shows"})
+		if !got.isError || !strings.Contains(got.text, "repository_not_served_here") || !strings.Contains(got.text, "Smana/runlore isn't served here") {
+			t.Fatalf("%s", got.text)
+		}
+	})
+}

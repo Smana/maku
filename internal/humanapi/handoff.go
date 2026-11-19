@@ -291,7 +291,7 @@ func (s *Server) oneQuestion(ctx context.Context, surface intake.Surface, plan i
 // repositories, other than the one base was planned for (#626).
 func (s *Server) groundedElsewhere(ctx context.Context, p authn.Principal, a intakeArgs, base intake.Plan, answer string) bool {
 	known := s.knownRepositories(ctx, p, a, nil)
-	if named, ref := intake.CheckNamed(answer, known, known); ref == nil && !slices.Equal(named, known) &&
+	if named, ref := intake.CheckNamed(answer, known, known, known, nil); ref == nil && !slices.Equal(named, known) &&
 		!slices.ContainsFunc(named, func(r string) bool { return strings.EqualFold(r, base.Repository) }) {
 		return true
 	}

@@ -42,7 +42,54 @@ func TestCheckNamed(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, ref := CheckNamed(tc.text, known, tc.candidates)
+			got, ref := CheckNamed(tc.text, known, tc.candidates, tc.candidates, nil)
+			if tc.refused != "" {
+				if ref == nil || ref.Reason != ReasonRepositoryNotServedHere || !strings.Contains(ref.Sentence, tc.refused) {
+					t.Fatalf("got %+v, want %s containing %q", ref, ReasonRepositoryNotServedHere, tc.refused)
+				}
+				return
+			}
+			if ref != nil {
+				t.Fatalf("refused: %+v", ref)
+			}
+			if !slices.Equal(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// #635: a served repository the request names in passing, beside the candidate it is anchored on by
+// name or by a quoted path, never refuses it; a repository nothing serves still does.
+func TestCheckNamedServedInPassing(t *testing.T) {
+	known := []string{"Smana/runlore-kb", "Smana/runlore", "Smana/ai-native-ref"}
+	served := []string{"smana/runlore-kb", "smana/runlore", "smana/ai-native-ref"}
+	kb := []string{"smana/runlore-kb"}
+	two := []string{"smana/ai-native-ref", "smana/runlore-kb"}
+
+	tests := []struct {
+		name       string
+		text       string
+		served     []string
+		candidates []string
+		grounded   []string // the candidates a quoted path picked
+		want       []string
+		refused    string
+	}{
+		{"the live case: asked kb, named kb and runlore", "in Smana/runlore-kb, README.md is wrong; lore validate-kb pinned at runlore v0.20.0 rejects it",
+			served, kb, nil, kb, ""},
+		{"a quoted path anchors the candidate", "README.md disagrees with runlore v0.20.0", served, kb, kb, kb, ""},
+		{"a path in A, B named in passing", "docs/x.md in this repo, as runlore-kb does", served, two, []string{"smana/ai-native-ref"},
+			[]string{"smana/ai-native-ref"}, ""},
+		{"a path and a name agree", "runlore-kb README.md, unlike ai-native-ref", served, two, kb, kb, ""},
+		{"a served repository alone is still the target", "add mistral support to runlore", served, kb, nil, nil, "runlore isn't served here"},
+		{"an unserved repository in passing is refused", "in Smana/runlore-kb, README.md, see Smana/elsewhere", served, kb, kb, nil,
+			"Smana/elsewhere isn't served here"},
+		{"an unserved repository by bare name is refused", "runlore-kb README.md, as runlore does", kb, kb, kb, nil, "runlore isn't served here"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ref := CheckNamed(tc.text, known, tc.served, tc.candidates, tc.grounded)
 			if tc.refused != "" {
 				if ref == nil || ref.Reason != ReasonRepositoryNotServedHere || !strings.Contains(ref.Sentence, tc.refused) {
 					t.Fatalf("got %+v, want %s containing %q", ref, ReasonRepositoryNotServedHere, tc.refused)

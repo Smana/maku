@@ -21,12 +21,18 @@ var tokenRE = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._/-]*`)
 //   - a bare name that is the name part of a repository in known (the allowlist, the asked set and
 //     the candidates), so `ai` is not `ai-native-ref` and `runlore-kb` is not `runlore`.
 //
-// Any named repository outside candidates refuses the request with `repository_not_served_here`,
+// A named repository outside candidates refuses the request with `repository_not_served_here`,
 // whose sentence names it and the candidates: the requester typed the name and owns the candidate
-// set, so neither is a secret from them. Otherwise the candidates narrow to the ones named, in their
-// order, so a plan can only target a repository the text asked for; with nothing named they are
-// returned unchanged.
-func CheckNamed(text string, known, candidates []string) ([]string, *Refusal) {
+// set, so neither is a secret from them. One exception (#635): a repository in served, named beside
+// a candidate the request is anchored on (one it names, or one grounded holds a quoted path for), is
+// a mention in passing and is ignored. grounded is the candidates a quoted path picked, nil when
+// none did.
+//
+// The candidates then narrow to the ones named, in their order, so a plan can only target a
+// repository the text asked for. A quoted path is the stronger evidence: the named candidates
+// grounded also holds, or grounded alone when it holds none of them. With nothing named, grounded
+// (or, without it, candidates) comes back.
+func CheckNamed(text string, known, served, candidates, grounded []string) ([]string, *Refusal) {
 	spelling := map[string]string{} // lower case -> the first spelling seen
 	owners := map[string]bool{}
 	byName := map[string][]string{} // bare name -> repositories (lower case)
@@ -80,11 +86,16 @@ func CheckNamed(text string, known, candidates []string) ([]string, *Refusal) {
 		}
 	}
 	if len(named) == 0 {
+		if grounded != nil {
+			return grounded, nil
+		}
 		return candidates, nil
 	}
 
+	anchored := len(grounded) > 0 || slices.ContainsFunc(named, func(key string) bool { return isCandidate(candidates, key) })
 	for _, key := range named {
-		if !isCandidate(candidates, key) {
+		inPassing := anchored && isCandidate(served, key)
+		if !isCandidate(candidates, key) && !inPassing {
 			served := make([]string, 0, len(candidates))
 			for _, c := range candidates {
 				if s, ok := spelling[strings.ToLower(c)]; ok {
@@ -96,11 +107,18 @@ func CheckNamed(text string, known, candidates []string) ([]string, *Refusal) {
 				spelling[key]+" isn't served here (served: "+strings.Join(served, ", ")+")")
 		}
 	}
+	pool := candidates
+	if len(grounded) > 0 {
+		pool = grounded
+	}
 	narrowed := make([]string, 0, len(named))
-	for _, c := range candidates {
+	for _, c := range pool {
 		if slices.Contains(named, strings.ToLower(c)) {
 			narrowed = append(narrowed, c)
 		}
+	}
+	if len(narrowed) == 0 {
+		return pool, nil // only served repositories in passing, or names grounded holds none of
 	}
 	return narrowed, nil
 }
