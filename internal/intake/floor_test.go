@@ -226,7 +226,7 @@ func TestFloorCountsAStatedValueAsConcrete(t *testing.T) {
 	}
 	vague := floorPlan("## What is wrong\nThe reference gives the wrong budget.\n" +
 		"## What it should be\nThe budget is right.\n## Acceptance check\nIt is right.")
-	if got := intake.ApplyFloor(vague, request); len(got.Gaps) != 2 {
+	if got := intake.ApplyFloor(vague, "the factory configuration reference shows the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10 in tooling/aws-0/README.md"); len(got.Gaps) != 2 {
 		t.Fatalf("gaps = %+v, want the two template gaps", got.Gaps)
 	}
 }
