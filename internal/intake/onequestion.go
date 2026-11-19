@@ -125,6 +125,10 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 				stated[g.ID] = v
 				continue
 			}
+			if v, ok := correctionAnswer(g, request); ok {
+				stated[g.ID] = v
+				continue
+			}
 			keep = g.ID
 			break
 		}
@@ -145,6 +149,8 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 		if g.Section == "acceptance-check" {
 			if d := DoneWhen(request); d != "" {
 				a = Answer{Answer: d, Why: "the request states when it is done"}
+			} else if c, ok := StatedCorrection(request); ok {
+				a = Answer{Answer: correctionCheck(c), Why: "the request states the right value"}
 			}
 		}
 		if strings.TrimSpace(a.Answer) == "" {

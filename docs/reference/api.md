@@ -969,6 +969,12 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 | `daily_plans_reached` | you have used today's plans; the cap resets at 00:00 UTC |
 | `plan_too_large` | the plan is longer than a bound the contract sets; nothing was truncated |
 
+A request that states the wrong value and the right one, as "<doc> says X, but <source> sets Y" or
+"… but it should be Y", asks nothing about them: a question about which value is right or which
+source is authoritative is assumed from Y or `<source>` with an `A<n>` record, no scope question is
+added, and an acceptance check with no concrete line becomes "The page states Y." A request with
+no contrast, or whose "but" clause holds only a verdict ("but it is wrong"), still gets its question.
+
 Before a draft is checked, the broker mends a title that is off the template only in form: it trims
 it, joins its lines, strips markdown emphasis and wrapping quotes, and prefixes a missing `<area>:`
 (`docs` for a docs class, else the first segment of the first path the body names, else `chore`).

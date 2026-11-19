@@ -274,3 +274,100 @@ func TestSystemPromptNeverAsksWhatIsStated(t *testing.T) {
 		}
 	}
 }
+
+// The eval round on aws-0 (v0.53.9, glm-5.3, 2026-11-19): a request that names the wrong value
+// ("<doc> says/shows X") and the right one or its source ("but <source> sets/caps it at Y") asked a
+// question that offers a source, or no values at all. Each is settled by the request: Ready, with an
+// A record, and the acceptance check states Y.
+func TestOneQuestionSettlesAStatedCorrection(t *testing.T) {
+	tests := map[string]struct {
+		request, question, recommended, want string
+	}{
+		"(a) the source of truth": {
+			request: "the factory configuration reference shows the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10, " +
+				"but tooling/aws-0/agent-factory/helm-values-sponsored.yaml sets dailyUSD 5 and maxCostUSD 2",
+			question:    "Which file is the source of truth for the Slack app budget?",
+			recommended: "Treat tooling/aws-0/agent-factory/helm-values-sponsored.yaml as the source of truth and correct the reference.",
+			want:        "tooling/aws-0/agent-factory/helm-values-sponsored.yaml, which sets dailyUSD 5 and maxCostUSD 2",
+		},
+		"(b) no value offered": {
+			request:     "the harness reference says the reviewer runs on Kimi, but the factory config sets no reviewer model",
+			question:    "What is the correct reviewer model for the harness reference to state?",
+			recommended: "Kimi",
+			want:        "no reviewer model",
+		},
+		"(b) a yes/no source question": {
+			request:     "the harness reference says the reviewer runs on Kimi, but the factory config sets no reviewer model",
+			question:    "Is the factory config authoritative for the reviewer model?",
+			recommended: "Yes",
+			want:        "the factory config, which sets no reviewer model",
+		},
+		"(c) the right maximum": {
+			request:     "the harness reference says a careful task can split into 5 parts, but the factory caps it at 4",
+			question:    "What is the correct maximum number of parts a careful task can split into?",
+			recommended: "5",
+			want:        "4",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			got, err := intake.OneQuestion(statedPlan(tc.question, tc.recommended), tc.request, false, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Gaps) != 0 || got.Question != nil {
+				t.Fatalf("asked %+v for what the request states", got.Gaps)
+			}
+			b := got.Issues[0].Body
+			if !strings.Contains(b, "assumed "+tc.want+", because the request states it") {
+				t.Fatalf("no A record for the stated correction:\n%s", b)
+			}
+			if _, err := sanitize.CheckFinalDraft(got.Issues[0].Title, b); err != nil {
+				t.Fatalf("not final: %v\n%s", err, b)
+			}
+		})
+	}
+}
+
+// Conservative: no contrast, a judgement in place of a value, or a question about something else is
+// still asked.
+func TestOneQuestionStatedCorrectionStaysNarrow(t *testing.T) {
+	for _, tc := range []struct{ request, question string }{
+		{"the harness reference is wrong about the reviewer model", "What is the correct reviewer model?"},
+		{"the harness reference says the reviewer runs on Kimi, but it is wrong", "What is the correct reviewer model?"},
+		{"the harness reference says the reviewer runs on Kimi, but the factory config sets no reviewer model",
+			"Should the change also update the chart's README?"},
+		{"the harness reference says the reviewer runs on Kimi", "Which source is authoritative for the reviewer model?"},
+	} {
+		got, err := intake.OneQuestion(statedPlan(tc.question, "x"), tc.request, false, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got.Gaps) != 1 || got.Question == nil || got.Question.Text != tc.question {
+			t.Errorf("%q / %q: gaps = %+v, want the question asked", tc.request, tc.question, got.Gaps)
+		}
+	}
+}
+
+// The floor: a stated correction makes the acceptance check "The page states Y.", with no template
+// gap; a request without one keeps the template gap.
+func TestFloorWritesTheStatedCorrectionsCheck(t *testing.T) {
+	const request = "the harness reference says a careful task can split into 5 parts, but the factory caps it at 4"
+	p := floorPlan("## What is wrong\nThe harness reference gives the wrong split.\n" +
+		"## What it should be\nThe harness reference gives the factory's cap.\n## Acceptance check\nIt is right.")
+	got := intake.ApplyFloor(p, request)
+	if len(got.Gaps) != 0 {
+		t.Fatalf("template gaps beside a stated correction: %+v", got.Gaps)
+	}
+	if !strings.Contains(got.Issues[0].Body, "The page states 4.") {
+		t.Fatalf("the acceptance check does not state the value:\n%s", got.Issues[0].Body)
+	}
+	plain := intake.ApplyFloor(p, "the harness reference gives the wrong split")
+	sections := map[string]bool{}
+	for _, g := range plain.Gaps {
+		sections[g.Section] = true
+	}
+	if !sections["what-it-should-be"] || !sections["acceptance-check"] {
+		t.Fatalf("gaps = %+v, want both template gaps", plain.Gaps)
+	}
+}

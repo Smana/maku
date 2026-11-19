@@ -412,3 +412,71 @@ func TestHandoffStatedFixGetsNoFloorText(t *testing.T) {
 		t.Fatalf("the floor's default was written beside a stated fix:\n%s", got.text)
 	}
 }
+
+// The eval round on aws-0 (v0.53.9, glm-5.3, 2026-11-19): each request states the wrong value and
+// the right one or its source, and the planner still asked. Each handoff is Ready on the first call,
+// with the stated correction recorded and no template default.
+func TestHandoffAStatedCorrectionAsksNothing(t *testing.T) {
+	for name, tc := range map[string]struct{ request, question, recommended string }{
+		"(a)": {
+			request: "the factory configuration reference shows the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10, " +
+				"but tooling/aws-0/agent-factory/helm-values-sponsored.yaml sets dailyUSD 5 and maxCostUSD 2",
+			question:    "Which is the source of truth for the Slack app budget?",
+			recommended: "Treat tooling/aws-0/agent-factory/helm-values-sponsored.yaml as the source of truth and correct the reference.",
+		},
+		"(b)": {
+			request:     "the harness reference says the reviewer runs on Kimi, but the factory config sets no reviewer model",
+			question:    "Should the harness reference say the reviewer has no model set?",
+			recommended: "Yes",
+		},
+		"(c)": {
+			request:     "the harness reference says a careful task can split into 5 parts, but the factory caps it at 4",
+			question:    "What is the correct maximum number of parts for a careful task?",
+			recommended: "4",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			st := newMemHandoffStore()
+			e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st))
+			p := planFixture(t, "single")
+			p.Issues[0].Body = "## What is wrong\nThe reference disagrees with the factory.\n\n" +
+				"## What it should be\nThe reference states the factory's value: [NEEDS CLARIFICATION: g1 " + tc.question + "]\n\n" +
+				"## Acceptance check\nIt is right."
+			e.intake.replyWith(modelReplyFor(t, p, []intake.Gap{{ID: "g1", Section: "what-it-should-be", Text: tc.question,
+				Recommended: intake.Answer{Answer: tc.recommended, Why: "the planner's reading"}}}))
+
+			r := handoffCall(t, e, map[string]any{"text": tc.request})
+			if !r.Ready || r.Question != nil {
+				t.Fatalf("asked for what the request states: %+v", r)
+			}
+			b := storedPlan(t, st, e, r.ID).Issues[0].Body
+			if !strings.Contains(b, "because the request states it") || !strings.Contains(b, "The page states ") {
+				t.Fatalf("the stated correction is not the plan's:\n%s", b)
+			}
+			if strings.Contains(b, "MUST no longer occur") || strings.Contains(b, "repeats the steps") {
+				t.Fatalf("a template default beside a stated correction:\n%s", b)
+			}
+		})
+	}
+}
+
+// A request that states no value, or no contrast, still gets its one question.
+func TestHandoffWithoutAStatedCorrectionAsks(t *testing.T) {
+	for _, request := range []string{
+		"the harness reference is wrong about the reviewer model",
+		"the harness reference says the reviewer runs on Kimi, but it is wrong",
+	} {
+		st := newMemHandoffStore()
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st))
+		p := planFixture(t, "single")
+		const q = "What is the correct reviewer model?"
+		p.Issues[0].Body = "## What is wrong\nThe reference names the wrong reviewer model.\n\n" +
+			"## What it should be\nThe reference names the right model: [NEEDS CLARIFICATION: g1 " + q + "]\n\n" +
+			"## Acceptance check\nThe reference page shows the right model."
+		e.intake.replyWith(modelReplyFor(t, p, []intake.Gap{{ID: "g1", Section: "what-it-should-be", Text: q,
+			Recommended: intake.Answer{Answer: "Kimi", Why: "the planner's reading"}}}))
+		if r := handoffCall(t, e, map[string]any{"text": request}); r.Ready || r.Question == nil || r.Question.Text != q {
+			t.Errorf("%q: %+v, want the question asked", request, r)
+		}
+	}
+}

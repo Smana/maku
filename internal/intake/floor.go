@@ -5,6 +5,7 @@ package intake
 import (
 	"fmt"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -76,7 +77,10 @@ func ApplyFloor(p Plan, request string) Plan {
 		answer   Answer
 	}
 	var adds []addition
-	if len(p.Issues) > 0 && !namesComponent(request) && !hasMarkerIn(p.Issues[0].Body, "scope") {
+	// A stated correction ("<doc> says X, but <source> sets Y") names the document and the value:
+	// no scope question, and its check is that the page states Y.
+	correction, corrected := StatedCorrection(request)
+	if len(p.Issues) > 0 && !corrected && !namesComponent(request) && !hasMarkerIn(p.Issues[0].Body, "scope") {
 		area := titleArea(p.Issues[0].Title)
 		adds = append(adds, addition{0, "scope", floorScopeQuestion, Answer{
 			Answer: fmt.Sprintf("Limit the change to the %s area named in the title, and name the files it touches in the pull request.", area),
@@ -89,6 +93,14 @@ func ApplyFloor(p Plan, request string) Plan {
 			adds = append(adds, addition{i, "what-it-should-be", floorShouldQuestion, floorShouldAnswer})
 		}
 		if !hasMarkerIn(is.Body, "acceptance-check") && !concreteCheck(acceptance, request) {
+			if corrected {
+				if b := insertLine(is.Body, "## Acceptance check", correctionCheck(correction)); len(b) <= maxBodyBytes {
+					p.Issues = slices.Clone(p.Issues)
+					p.Issues[i].Body = b
+					p.Hash = Hash(p)
+				}
+				continue
+			}
 			adds = append(adds, addition{i, "acceptance-check", floorAcceptanceQuestion, floorAcceptanceAnswer})
 		}
 	}
@@ -138,7 +150,16 @@ func acceptable(section string) bool {
 // concreteShould is whether a "What it should be" needs no template default: it names an observable
 // behaviour, carries a Decision's text, or states a value the request names (statesValue).
 func concreteShould(body, should, request string) bool {
+	if _, corrected := StatedCorrection(request); corrected && strings.TrimSpace(stripMarkers(should)) != "" {
+		// The request states the right value: whatever the plan wrote is that correction.
+		return true
+	}
 	return observable(should) || decided(body, should) || statesValue(should, request)
+}
+
+// correctionCheck is the acceptance check a stated correction gives: the page states the right value.
+func correctionCheck(c Correction) string {
+	return "The page states " + c.Right + "."
 }
 
 // concreteCheck is whether an "Acceptance check" needs no template default: it is acceptable, or
@@ -256,6 +277,11 @@ func insertMarker(body, section, id, question string) string {
 	if section == "acceptance-check" {
 		heading = "## Acceptance check"
 	}
+	return insertLine(body, heading, marker)
+}
+
+// insertLine adds line at the end of heading's section, above the next heading.
+func insertLine(body, heading, marker string) string {
 	lines := strings.Split(body, "\n")
 	in, at := false, len(lines)
 	for i, line := range lines {
