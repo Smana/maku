@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/intake"
 )
@@ -248,4 +249,74 @@ func TestHandoffServedRepositoryInPassing(t *testing.T) {
 			t.Fatalf("%s", got.text)
 		}
 	})
+}
+
+// The live aws-0 handoff of 2026-11-19: the planner asks for the values and also asks the template's
+// acceptance question beside a concrete check; the developer answers with mixed-case keys. The
+// answer stays as typed, the plan keeps its one concrete acceptance check, and no template default
+// or its A record is added on top of a concrete correction.
+func TestHandoffKeepsTheAnswerAndOneAcceptanceCheck(t *testing.T) {
+	const answer = "dailyUSD 5, maxCostUSD 2"
+	st := newMemHandoffStore()
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st),
+		intakeOption(t, func(_ *fakeIntake, in *Intake) { in.MaxRounds = 3 }))
+	p := planFixture(t, "single")
+	p.Issues[0].Title = "docs: the Slack app budget on the config reference is wrong"
+	p.Issues[0].Body = "## What is wrong\nThe config reference page shows the wrong Slack app budget.\n\n" +
+		"## What it should be\nLocate the config reference page in the repository, find the Slack app budget entry, " +
+		"and correct it to the right value: [NEEDS CLARIFICATION: g1 What are the right Slack app budget values?]\n\n" +
+		"## Acceptance check\nThe config reference page shows the correct Slack app budget value, and no other content on the page changes.\n" +
+		"[NEEDS CLARIFICATION: g2 Which command or observation proves the change is done?]"
+	e.intake.replyWith(modelReplyFor(t, p, []intake.Gap{
+		{ID: "g1", Section: "what-it-should-be", Text: "What are the right Slack app budget values?",
+			Recommended: intake.Answer{Answer: "the values in the Slack app's Helm values", Why: "they are what the app runs with"}},
+		{ID: "g2", Section: "acceptance-check", Text: "Which command or observation proves the change is done?",
+			Recommended: intake.Answer{Answer: "A reviewer repeats the steps in What is wrong and the problem no longer appears, and the repository's own test gate passes.",
+				Why: "The issue names no command or observation; this is the weakest check that still tells done from not done."}},
+	}))
+	r1 := handoffCall(t, e, map[string]any{"text": "in Smana/ai-native-ref, the Slack app budget on the config reference is wrong"})
+	if r1.Question == nil || r1.Question.Text != "What are the right Slack app budget values?" {
+		t.Fatalf("begin = %+v", r1)
+	}
+
+	cand, err := answerFirstGap(storedPlan(t, st, e, r1.ID), answer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.intake.replyWith(modelReplyFor(t, cand, nil))
+	r2 := handoffCall(t, e, map[string]any{"id": r1.ID, "answer": answer})
+	if !r2.Ready || r2.Question != nil {
+		t.Fatalf("after the answer: %+v", r2)
+	}
+
+	got := call(t, e, viaRoomctl("dev"), "handoff_check", map[string]any{"id": r1.ID})
+	if got.isError {
+		t.Fatalf("handoff_check: %s", got.text)
+	}
+	var draft struct {
+		Title string `json:"title"`
+		Body  string `json:"body"`
+	}
+	if err := json.Unmarshal(got.structured, &draft); err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("issue body:\n%s", draft.Body)
+	b := draft.Body
+	if strings.Count(b, answer) != 2 || !strings.Contains(b, "]: "+answer) {
+		t.Errorf("the answer is not kept as typed in the body and its D record:\n%s", b)
+	}
+	if strings.Contains(b, "MUST no longer occur") || strings.Contains(b, "repeats the steps") {
+		t.Errorf("a template default was added beside a concrete plan:\n%s", b)
+	}
+	if n := strings.Count(b, "assumed"); n != 0 {
+		t.Errorf("%d template assumptions recorded beside a concrete plan:\n%s", n, b)
+	}
+	for line := range strings.SplitSeq(b, "\n") {
+		if strings.TrimSpace(line) != "" && strings.Count(b, line+"\n") > 1 {
+			t.Errorf("line repeated: %q", line)
+		}
+	}
+	if _, err := sanitize.CheckFinalDraft(draft.Title, b); err != nil {
+		t.Errorf("the rendered body is not a final draft: %v", err)
+	}
 }

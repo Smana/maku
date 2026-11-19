@@ -53,7 +53,7 @@ func handoffText(what string) string {
 	return "Call `" + mcpwire.Handoff + "` with the developer's own words, " + orElse(what, "the side task we just discussed") +
 		", and the context you have: the repository you are in and the paths you read. Show its text as it is. " +
 		"When it asks one question, ask the developer that question with its recommendation and why, and offer \"accept the rest\"; " +
-		"call `" + mcpwire.Handoff + "` with its id and their answer, or with acceptRest: true, and show each plan as it is. " +
+		"call `" + mcpwire.Handoff + "` with its id and their answer exactly as they typed it, never reworded or recased, or with acceptRest: true, and show each plan as it is. " +
 		"When the plan is ready, call `" + mcpwire.Start + "` with the id: its form is the developer's, and only their answer files " +
 		"the plan's first issue and starts the work, so with a longer plan say the others are not filed. " +
 		"Once the work started, run `" + mcpwire.Wait + "` on the task in a background task where the client can. " +

@@ -39,8 +39,9 @@ OpenCode also get a short command from `maku setup`: `/maku handoff <what>`, `/m
    paths you read. Never write the plan yourself, and show what `handoff` returns as it is.
 2. When it returns a question, ask the developer that question with its recommendation and why,
    and offer "accept the rest". Do not answer it yourself, and do not add questions of your own.
-   Call `handoff` with its id and their answer, or with `acceptRest: true`. An id lives 24 hours
-   and belongs to the person who asked: when it is refused, start a new handoff.
+   Call `handoff` with its id and their answer exactly as they typed it, or with
+   `acceptRest: true`. An id lives 24 hours and belongs to the person who asked: when it is
+   refused, start a new handoff.
 3. When the plan is ready, call `start` at once with the id. The form is the developer's
    confirmation: never ask "do you want me to start it?" first. Only their answer files the plan's
    first issue and starts the work, so with a longer plan say plainly that the others are not filed.

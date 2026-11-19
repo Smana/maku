@@ -138,3 +138,52 @@ func TestSystemPromptPrefersCorrectingAWrongValue(t *testing.T) {
 		}
 	}
 }
+
+// Two equivalent template gaps in one Acceptance check (the planner's and the floor's) write their
+// default once, with one A record.
+func TestOneQuestionWritesAnEquivalentTemplateGapOnce(t *testing.T) {
+	p := floorPlan(body("Better.", "Fine.\n[NEEDS CLARIFICATION: g1 How do we check it?]"))
+	p = intake.WithGaps(p, []intake.Gap{{ID: "g1", Section: "acceptance-check", Text: "How do we check it?",
+		Recommended: intake.Answer{Answer: "A reviewer repeats the steps in What is wrong and the problem no longer appears, and the repository's own test gate passes.", Why: "w"}}})
+	p.Issues[0].Body = strings.Replace(p.Issues[0].Body, "Fine.\n", "Fine.\n[NEEDS CLARIFICATION: g2 Which command or observation proves the change is done?]\n", 1)
+	p = intake.WithGaps(p, append(p.Gaps, intake.Gap{ID: "g2", Section: "acceptance-check", Text: "Which command or observation proves the change is done?"}))
+	got, err := intake.OneQuestion(p, named, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := got.Issues[0].Body
+	if n := strings.Count(b, "repeats the steps"); n != 2 { // the check, and its one A record
+		t.Fatalf("default written %d times, want once plus its record:\n%s", n, b)
+	}
+	if strings.Count(b, "assumed") != 1 {
+		t.Fatalf("records:\n%s", b)
+	}
+	if _, err := sanitize.CheckFinalDraft(got.Issues[0].Title, b); err != nil {
+		t.Fatalf("not final: %v\n%s", err, b)
+	}
+}
+
+// A template gap beside a concrete section is dropped with no record: a concrete Acceptance check,
+// or a What it should be that carries the person's answer.
+func TestOneQuestionDropsATemplateGapBesideAConcreteSection(t *testing.T) {
+	const answer = "dailyUSD 5, maxCostUSD 2"
+	p := floorPlan("## What is wrong\nThe budget is wrong.\n## What it should be\nCorrect it to the right value: " + answer + "\n" +
+		"[NEEDS CLARIFICATION: g2 What observable behaviour MUST the change produce? Name what a user or reviewer sees.]\n" +
+		"## Acceptance check\nThe config reference page shows the corrected budget.\n" +
+		"[NEEDS CLARIFICATION: g3 Which command or observation proves the change is done?]\n\n## Decisions\nD1 [g1]: " + answer)
+	p = intake.WithGaps(p, []intake.Gap{
+		{ID: "g2", Section: "what-it-should-be", Text: "What observable behaviour MUST the change produce? Name what a user or reviewer sees."},
+		{ID: "g3", Section: "acceptance-check", Text: "Which command or observation proves the change is done?"},
+	})
+	got, err := intake.OneQuestion(p, named, true, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := got.Issues[0].Body
+	if strings.Contains(b, "assumed") || strings.Contains(b, "MUST no longer occur") || strings.Contains(b, "repeats the steps") || strings.Contains(b, "\n\n\n") {
+		t.Fatalf("a template default beside a concrete section:\n%s", b)
+	}
+	if _, err := sanitize.CheckFinalDraft(got.Issues[0].Title, b); err != nil {
+		t.Fatalf("not final: %v\n%s", err, b)
+	}
+}

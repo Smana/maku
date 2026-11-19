@@ -56,9 +56,9 @@ var (
 //
 // An element is missing when:
 //   - "What it should be" names no observable behaviour (no RFC 2119 keyword, no verb of a visible
-//     result), or is empty or only a "not stated" placeholder;
-//   - "Acceptance check" is missing, or has neither a code-font command nor a MUST/SHOULD
-//     observation;
+//     result) and carries no Decision's text, or is empty or only a "not stated" placeholder;
+//   - "Acceptance check" is missing, or has neither a code-font command, nor a MUST/SHOULD
+//     observation, nor a line naming a visible result;
 //   - request (the person's words and context) names no file, path or component. Only the request
 //     counts, never the plan's own citations: the broker reads no repository on this path, so a
 //     file the plan cites is the model's claim and the live failure this floor exists for.
@@ -85,7 +85,7 @@ func ApplyFloor(p Plan, request string) Plan {
 	}
 	for i, is := range p.Issues {
 		should, acceptance := sectionBody(is.Body, "## What it should be"), sectionBody(is.Body, "## Acceptance check")
-		if !hasMarkerIn(is.Body, "what-it-should-be") && !observable(should) {
+		if !hasMarkerIn(is.Body, "what-it-should-be") && !observable(should) && !decided(is.Body, should) {
 			adds = append(adds, addition{i, "what-it-should-be", floorShouldQuestion, floorShouldAnswer})
 		}
 		if !hasMarkerIn(is.Body, "acceptance-check") && !acceptable(acceptance) {
@@ -127,10 +127,27 @@ func observable(section string) bool {
 	return observableRE.MatchString(stripMarkers(section))
 }
 
-// acceptable is whether an "Acceptance check" holds a command or an observation.
+// acceptable is whether an "Acceptance check" holds a command, an observation, or a line naming a
+// result a person can see ("The page shows the corrected value"): a concrete check needs no
+// template default beside it.
 func acceptable(section string) bool {
 	s := stripMarkers(section)
-	return backtickedRE.MatchString(s) || observationRE.MatchString(s)
+	return backtickedRE.MatchString(s) || observationRE.MatchString(s) || observableRE.MatchString(s)
+}
+
+// decided is whether section carries a Decision's text: the plan settled what the change is with
+// the person's answer, so it is a concrete correction, not a behaviour left to state.
+func decided(body, section string) bool {
+	recs, err := sanitize.DecisionRecords(body)
+	if err != nil {
+		return false
+	}
+	for _, r := range recs {
+		if t := strings.TrimSpace(r.Text); r.Kind == "D" && t != "" && strings.Contains(section, t) {
+			return true
+		}
+	}
+	return false
 }
 
 // stripMarkers removes live markers: a question is not an answer, and a placeholder is not either.

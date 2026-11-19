@@ -242,3 +242,13 @@ func TestTheHandoffRulesAreSaidPlainly(t *testing.T) {
 		}
 	}
 }
+
+// The live aws-0 handoff of 2026-11-19: the client relayed "dailyUSD 5, maxCostUSD 2" as "dailyusd 5
+// and maxcostusd 2". The skill and the command pass the developer's answer as typed.
+func TestTheAnswerIsPassedAsTyped(t *testing.T) {
+	for name, b := range map[string]string{"maku-handoff/SKILL.md": SkillText(t), "commands/maku.md": string(makuCommand)} {
+		if !strings.Contains(strings.Join(strings.Fields(b), " "), "their answer exactly as they typed it") {
+			t.Errorf("%s does not pass the answer as typed", name)
+		}
+	}
+}
