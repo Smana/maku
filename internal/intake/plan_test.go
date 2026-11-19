@@ -354,7 +354,7 @@ func TestNoRefusalSentenceEmitsAPlaceholder(t *testing.T) {
 		intake.ReasonPrivateRepository, intake.ReasonRepositoryNotAllowed, intake.ReasonNoWrite,
 		intake.ReasonInvalidDraft, intake.ReasonPlannerInvalid, intake.ReasonPlannerUnavailable,
 		intake.ReasonPlannerTimeout, intake.ReasonPlanChanged, intake.ReasonRepositoryUnverified,
-		intake.ReasonRepositoryNotInCandidates, intake.ReasonRepositoryNotServedHere, intake.ReasonInvalidClass, intake.ReasonNotLinked,
+		intake.ReasonRepositoryNotInCandidates, intake.ReasonRepositoryNotServedHere, intake.ReasonRepositoryServedElsewhere, intake.ReasonInvalidClass, intake.ReasonNotLinked,
 		intake.ReasonDailyPlansReached, intake.ReasonPlanTooLarge,
 		intake.ReasonUnresolvedMarker, intake.ReasonInvalidDecisions,
 	}

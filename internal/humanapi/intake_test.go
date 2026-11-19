@@ -1105,8 +1105,8 @@ func TestIntakePlanVagueRequestGetsTheFloor(t *testing.T) {
 	}
 }
 
-// #469: a request that names a repository this surface does not serve is refused before any model
-// call, on both surfaces, and never planned for a different repository.
+// #469: a request that names a repository outside this surface's candidates is refused before any
+// model call, on both surfaces, and never planned for a different repository.
 func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
 	withAllow := intakeOption(t, func(_ *fakeIntake, in *Intake) {
 		in.Allow = map[string]bool{"Smana/ai-native-ref": true, "Smana/runlore": true, "Smana/runlore-kb": true}
@@ -1136,8 +1136,11 @@ func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
 			e := setup(t, opts...)
 			got := callEngine(t, e, who, "intake_plan", tc.args)
 			if tc.refused {
-				if !got.isError || !strings.Contains(got.text, "repository_not_served_here") ||
-					!strings.Contains(got.text, "runlore isn't served here") || !strings.Contains(got.text, "ai-native-ref") {
+				// runlore is in the allowlist, so it is served, only not from these candidates: the
+				// refusal says so and how to get there, never that an operator must add it.
+				if !got.isError || !strings.Contains(got.text, "repository_served_elsewhere") ||
+					!strings.Contains(got.text, "runlore is served, but not from here") || !strings.Contains(got.text, "ai-native-ref") ||
+					!strings.Contains(got.text, "hand it off from that repository, or name it as the target") {
 					t.Fatalf("%s", got.text)
 				}
 				if e.intake.calls() != 0 {

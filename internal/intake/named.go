@@ -21,8 +21,8 @@ var tokenRE = regexp.MustCompile(`[A-Za-z0-9][A-Za-z0-9._/-]*`)
 //   - a bare name that is the name part of a repository in known (the allowlist, the asked set and
 //     the candidates), so `ai` is not `ai-native-ref` and `runlore-kb` is not `runlore`.
 //
-// A named repository outside candidates refuses the request with `repository_not_served_here`,
-// whose sentence names it and the candidates: the requester typed the name and owns the candidate
+// A named repository outside candidates refuses the request with `repository_not_served_here`, or
+// `repository_served_elsewhere` when served holds it, whose sentence names it and the candidates: the requester typed the name and owns the candidate
 // set, so neither is a secret from them. One exception (#635): a repository in served, named beside
 // a candidate the request is anchored on (one it names, or one grounded holds a quoted path for), is
 // a mention in passing and is ignored. grounded is the candidates a quoted path picked, nil when
@@ -96,15 +96,19 @@ func CheckNamed(text string, known, served, candidates, grounded []string) ([]st
 	for _, key := range named {
 		inPassing := anchored && isCandidate(served, key)
 		if !isCandidate(candidates, key) && !inPassing {
-			served := make([]string, 0, len(candidates))
+			spelled := make([]string, 0, len(candidates))
 			for _, c := range candidates {
 				if s, ok := spelling[strings.ToLower(c)]; ok {
 					c = s
 				}
-				served = append(served, c)
+				spelled = append(spelled, c)
 			}
-			return nil, refuse(ReasonRepositoryNotServedHere,
-				spelling[key]+" isn't served here (served: "+strings.Join(served, ", ")+")")
+			here := strings.Join(spelled, ", ")
+			if isCandidate(served, key) {
+				return nil, refuse(ReasonRepositoryServedElsewhere,
+					spelling[key]+" is served, but not from here (here: "+here+")")
+			}
+			return nil, refuse(ReasonRepositoryNotServedHere, spelling[key]+" isn't served here (served: "+here+")")
 		}
 	}
 	pool := candidates
