@@ -952,7 +952,7 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 |---|---|
 | `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the issue on GitHub yourself, or wait for the internal route |
 | `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
-| `repository_not_served_here` | the request names a repository outside the candidate set, checked before any model call: `<repo> isn't served here (served: …); an operator adds it to the repositories served here`. Names are `owner/name`, a github.com URL, or a bare name of a repository the broker knows, in the text or the context |
+| `repository_not_served_here` | the request names a repository outside the candidate set, checked before any model call: `<repo> isn't served here (served: …); an operator adds it to the repositories served here`. Names are `owner/name`, a github.com URL, or a bare name of a repository the broker knows, in the text or the context. A served repository named in passing, beside a candidate the request names or quotes a path from, is ignored rather than refused |
 | `no_write` | you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it |
 | `invalid_draft` | the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order |
 | `unresolved_marker` | a final plan still has a ranked gap or a live/malformed clarification marker; answer it with `handoff` |
