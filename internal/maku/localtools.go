@@ -316,33 +316,51 @@ func (r *Relay) progress(token json.RawMessage, done, total float64, msg string)
 // working directory (a client without roots, one that does not answer in time, or a root that is
 // not a file).
 func (r *Relay) workspace(ctx context.Context) (string, error) {
+	roots, err := r.rootPaths(ctx)
+	if err != nil {
+		return "", err
+	}
+	if len(roots) > 0 {
+		return roots[0], nil
+	}
+	return os.Getwd()
+}
+
+// rootPaths is the client's roots that are files, in its order, up to the first that is not: none
+// from a client without roots or one that does not answer within RootsWait. Only ctx's own end is
+// an error.
+func (r *Relay) rootPaths(ctx context.Context) ([]string, error) {
 	r.mu.Lock()
 	roots := r.roots
 	r.mu.Unlock()
-	if roots {
-		wait := r.RootsWait
-		if wait <= 0 {
-			wait = rootsWait
-		}
-		actx, cancel := context.WithTimeout(ctx, wait)
-		ans, err := r.ask(actx, "roots/list", map[string]any{})
-		cancel()
-		if err == nil {
-			var res struct {
-				Roots []struct {
-					URI string `json:"uri"`
-				} `json:"roots"`
-			}
-			if json.Unmarshal(ans.Result, &res) == nil && len(res.Roots) > 0 {
-				if u, err := url.Parse(res.Roots[0].URI); err == nil && u.Scheme == "file" && u.Path != "" {
-					return u.Path, nil
-				}
-			}
-		} else if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
+	if !roots {
+		return nil, nil
 	}
-	return os.Getwd()
+	wait := r.RootsWait
+	if wait <= 0 {
+		wait = rootsWait
+	}
+	actx, cancel := context.WithTimeout(ctx, wait)
+	ans, err := r.ask(actx, "roots/list", map[string]any{})
+	cancel()
+	if err != nil {
+		return nil, ctx.Err()
+	}
+	var res struct {
+		Roots []struct {
+			URI string `json:"uri"`
+		} `json:"roots"`
+	}
+	_ = json.Unmarshal(ans.Result, &res)
+	var out []string
+	for _, root := range res.Roots {
+		u, err := url.Parse(root.URI)
+		if err != nil || u.Scheme != "file" || u.Path == "" {
+			break
+		}
+		out = append(out, u.Path)
+	}
+	return out, nil
 }
 
 // viewed gives rooms_list and room_summary results the Markdown view an older broker (FA14) did

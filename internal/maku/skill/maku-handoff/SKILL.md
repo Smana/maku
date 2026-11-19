@@ -34,18 +34,19 @@ OpenCode also get a short command from `maku setup`: `/maku handoff <what>`, `/m
 
 ## Hand work over
 
-Call `handoff` with the developer's own words and the context you have: the repository you are in
-and the paths you read. The plan is Maku's, not yours: never write the plan yourself, and never
-retype, shorten or merge what it returned. Show it as it is.
-
-When it asks one question, ask the developer that question with its recommendation and why, and
-offer "accept the rest". Call `handoff` with its id and their answer, or with `acceptRest: true`.
-An id lives 24 hours and belongs to the person who asked: when it is refused, start a new handoff.
-
-When the plan is ready, call `start` with the id. Its form is the developer's: only their answer
-files the plan's first issue and starts the work, so with a longer plan say plainly that the others
-are not filed. If the client cannot show forms, or nobody answers within about a minute, show the
-`gh issue create` command `start` returns and let the developer file it.
+1. Call `handoff` with the developer's words word for word as `text`: never reword or shorten
+   them. Pass `repository` (owner/name, from `git remote get-url origin`) and, in `context`, the
+   paths you read. Never write the plan yourself, and show what `handoff` returns as it is.
+2. When it returns a question, ask the developer that question with its recommendation and why,
+   and offer "accept the rest". Do not answer it yourself, and do not add questions of your own.
+   Call `handoff` with its id and their answer, or with `acceptRest: true`. An id lives 24 hours
+   and belongs to the person who asked: when it is refused, start a new handoff.
+3. When the plan is ready, call `start` at once with the id. The form is the developer's
+   confirmation: never ask "do you want me to start it?" first. Only their answer files the plan's
+   first issue and starts the work, so with a longer plan say plainly that the others are not filed.
+4. When `start` says the form was not answered or not confirmed, the plan is kept: offer to call
+   `start` again with the same id. If the client cannot show forms, show the `gh issue create`
+   command `start` returns and let the developer file it.
 
 With planning off, `handoff` answers one line: show it, and offer the issue template in
 [references/issue-template.md](references/issue-template.md) for the developer to file on GitHub.
