@@ -91,7 +91,10 @@ func templateAnswer(section string) Answer {
 // nothing grounded the choice (the planner's pick is the recommendation); else the highest-ranked
 // gap that is not a template one. answered keeps none: the person has already answered once, and a
 // re-plan may not re-open what they settled. An acceptance check the request states (DoneWhen)
-// replaces the template's default.
+// replaces the template's default. A template gap whose section is already concrete (an acceptance
+// check that names a result, a behaviour that is observable or carries a Decision), or whose
+// assumption a gap before it in the same section already wrote, is dropped with no A record: the
+// issue says it once.
 func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan, error) {
 	p = cloneRevision(p)
 	gaps := append([]Gap(nil), p.Gaps...)
@@ -118,8 +121,10 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 		}
 	}
 	assume := map[string]Answer{}
+	byID := map[string]Gap{}
 	var kept []Gap
 	for _, g := range gaps {
+		byID[g.ID] = g
 		if g.ID == keep {
 			kept = append(kept, g)
 			continue
@@ -155,15 +160,18 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 				return Plan{}, refuse(ReasonPlannerInvalid, "the plan has an invalid clarification marker")
 			}
 			body := p.Issues[i].Body
+			drop := settledTemplate(body, markers, byID, assume, DoneWhen(request))
 			var records []string
 			for j := len(markers) - 1; j >= 0; j-- {
-				if a, ok := assume[markers[j].ID]; ok {
+				if drop[markers[j].ID] {
+					body = dropMarker(body, markers[j])
+				} else if a, ok := assume[markers[j].ID]; ok {
 					body = body[:markers[j].Start] + a.Answer + body[markers[j].End:]
 				}
 			}
 			for _, m := range markers {
 				a, ok := assume[m.ID]
-				if !ok {
+				if !ok || drop[m.ID] {
 					continue
 				}
 				last++
@@ -185,6 +193,54 @@ func OneQuestion(p Plan, request string, answered bool, choices []string) (Plan,
 	p = WithGaps(p, kept)
 	p.Hash = Hash(p)
 	return p, nil
+}
+
+// settledTemplate is the assumed template gaps of one body to drop rather than write: its section
+// is already concrete without them, or an earlier marker in the section assumes the same text.
+// A done-when the request states is the person's own check, and is always written.
+func settledTemplate(body string, markers []sanitize.ClarificationMarker, gaps map[string]Gap, assume map[string]Answer, stated string) map[string]bool {
+	drop := map[string]bool{}
+	written := map[string]bool{}
+	for _, m := range markers {
+		a, ok := assume[m.ID]
+		g := gaps[m.ID]
+		if !ok || !IsTemplateGap(g) {
+			continue
+		}
+		section := sectionAt(body, m.Start)
+		key := section + "\x00" + a.Answer
+		switch {
+		case written[key]:
+			drop[m.ID] = true
+		case section == "acceptance-check" && (stated == "" || a.Answer != stated) && acceptable(sectionBody(body, "## Acceptance check")):
+			drop[m.ID] = true
+		case section == "what-it-should-be":
+			should := sectionBody(body, "## What it should be")
+			drop[m.ID] = observable(should) || decided(body, should)
+		}
+		written[key] = !drop[m.ID]
+	}
+	return drop
+}
+
+// dropMarker removes m from body, and its line when the marker was all the line held.
+func dropMarker(body string, m sanitize.ClarificationMarker) string {
+	start, end := m.Start, m.End
+	lineStart := strings.LastIndexByte(body[:start], '\n') + 1
+	lineEnd := len(body)
+	if i := strings.IndexByte(body[end:], '\n'); i >= 0 {
+		lineEnd = end + i
+	}
+	if strings.TrimSpace(body[lineStart:start]+body[end:lineEnd]) != "" {
+		return body[:start] + body[end:]
+	}
+	switch {
+	case lineEnd < len(body):
+		return body[:lineStart] + body[lineEnd+1:]
+	case lineStart > 0:
+		return body[:lineStart-1]
+	}
+	return ""
 }
 
 // repositoryQuestion is the one line asking which repository, naming the first choices.
