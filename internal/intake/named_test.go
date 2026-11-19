@@ -82,7 +82,8 @@ func TestCheckNamedServedInPassing(t *testing.T) {
 		{"a path in A, B named in passing", "docs/x.md in this repo, as runlore-kb does", served, two, []string{"smana/ai-native-ref"},
 			[]string{"smana/ai-native-ref"}, ""},
 		{"a path and a name agree", "runlore-kb README.md, unlike ai-native-ref", served, two, kb, kb, ""},
-		{"a served repository alone is still the target", "add mistral support to runlore", served, kb, nil, nil, "runlore isn't served here"},
+		{"a served repository alone is still the target", "add mistral support to runlore", served, kb, nil, nil,
+			"Smana/runlore is served, but not from here (here: Smana/runlore-kb); hand it off from that repository, or name it as the target"},
 		{"an unserved repository in passing is refused", "in Smana/runlore-kb, README.md, see Smana/elsewhere", served, kb, kb, nil,
 			"Smana/elsewhere isn't served here"},
 		{"an unserved repository by bare name is refused", "runlore-kb README.md, as runlore does", kb, kb, kb, nil, "runlore isn't served here"},
@@ -91,8 +92,16 @@ func TestCheckNamedServedInPassing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got, ref := CheckNamed(tc.text, known, tc.served, tc.candidates, tc.grounded)
 			if tc.refused != "" {
-				if ref == nil || ref.Reason != ReasonRepositoryNotServedHere || !strings.Contains(ref.Sentence, tc.refused) {
-					t.Fatalf("got %+v, want %s containing %q", ref, ReasonRepositoryNotServedHere, tc.refused)
+				// A repository the factory serves elsewhere is not an operator's fix: it says where to go.
+				reason := ReasonRepositoryNotServedHere
+				if strings.Contains(tc.refused, "is served, but not from here") {
+					reason = ReasonRepositoryServedElsewhere
+				}
+				if ref == nil || ref.Reason != reason || !strings.Contains(ref.Sentence, tc.refused) {
+					t.Fatalf("got %+v, want %s containing %q", ref, reason, tc.refused)
+				}
+				if reason == ReasonRepositoryServedElsewhere && strings.Contains(ref.Sentence, "operator") {
+					t.Fatalf("a served repository needs no operator: %q", ref.Sentence)
 				}
 				return
 			}

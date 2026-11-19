@@ -300,7 +300,9 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	}
 	file, _ := formBool(res.Content["file"])
 	if res.Action != "accept" || !file {
-		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "why": "the developer did not confirm (" + res.Action + ")"})
+		// The plan is kept: a new handoff would plan again, start with the same id asks again.
+		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "why": "the developer did not confirm (" + res.Action + ")",
+			"next": "nothing was filed and the plan is kept: when the developer wants it filed, call start again with the same id (" + a.ID + ")"})
 		return out
 	}
 

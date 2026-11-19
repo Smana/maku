@@ -377,3 +377,37 @@ func TestStartWhyNamesTheFix(t *testing.T) {
 		}
 	}
 }
+
+// A form the developer cancels, declines or accepts without "File this issue" files nothing, and the
+// plan is kept: the next step is start again with the same id, never a new handoff.
+func TestStartNotConfirmedNamesStartAgain(t *testing.T) {
+	for _, answer := range []map[string]any{
+		{"action": "cancel"},
+		{"action": "decline"},
+		{"action": "accept", "content": map[string]any{"file": false}},
+	} {
+		t.Run(fmt.Sprint(answer["action"], answer["content"]), func(t *testing.T) {
+			p := planFixture(t, "single")
+			hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+				return handoffCheckedResult(t, p, true, []string{"standard"})
+			})
+			f := &filing{}
+			s := handoffSession(t, hb, true, f, &labeling{}, nil)
+
+			s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+				"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa"}}})
+			ask := s.next(t)
+			s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": answer})
+			res := s.next(t)
+			if len(f.calls) != 0 {
+				t.Fatalf("File calls = %d, want 0", len(f.calls))
+			}
+			sc := res["result"].(map[string]any)["structuredContent"].(map[string]any)
+			next, _ := sc["next"].(string)
+			if sc["filed"] != false || !strings.Contains(next, "call start again with the same id (aaaaaaaaaaaaaaaaaaaaaaaaaa)") ||
+				strings.Contains(next, "handoff") {
+				t.Fatalf("structuredContent = %v", sc)
+			}
+		})
+	}
+}
