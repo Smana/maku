@@ -90,8 +90,8 @@ func TestMakuMCPAgainstTheBroker(t *testing.T) {
 	for _, tl := range ask(2, "tools/list", nil)["result"].(map[string]any)["tools"].([]any) {
 		names = append(names, tl.(map[string]any)["name"].(string))
 	}
-	if strings.Join(names, ",") != "handoff,start,inbox,task,wait,answer" {
-		t.Fatalf("the default list is the six in order: %v", names)
+	if strings.Join(names, ",") != "handoff,start,inbox,task,wait,answer,cancel" {
+		t.Fatalf("the default list is the six, then cancel, in order: %v", names)
 	}
 
 	send(map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": map[string]any{"name": "answer", "arguments": map[string]any{"task": roomID, "text": "use v2"}}})
