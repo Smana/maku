@@ -361,7 +361,7 @@ func TestSetupInstallsTheMakuCommand(t *testing.T) {
 					t.Fatal(err)
 				}
 				for _, w := range []string{"description:", "$ARGUMENTS", "handoff", "task", "inbox", "start", "wait", "never apply a label", "accept the rest"} {
-					if !strings.Contains(string(makuMD), w) {
+					if !strings.Contains(strings.ToLower(string(makuMD)), strings.ToLower(w)) {
 						t.Errorf("maku.md lacks %q:\n%s", w, makuMD)
 					}
 				}

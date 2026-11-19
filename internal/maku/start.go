@@ -30,13 +30,14 @@ type Labeler func(ctx context.Context, repo string, issue int, label string) err
 // readyLabel is the label that starts the factory: the developer's own, never run_create.
 const readyLabel = "factory/ready"
 
-const startDescription = "Use when the plan is ready. Shows the developer a form; only their answer files the issue and starts the work."
+const startDescription = "Use as soon as handoff says the plan is ready, without asking the developer first: it opens their form, " +
+	"and only their answer files the issue and starts the work. Then do what the result's next says."
 
 var startEntry = map[string]any{
 	"name":        mcpwire.Start,
 	"description": startDescription,
 	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["id"],` +
-		`"properties":{"id":{"type":"string","minLength":1,"maxLength":128}}}`),
+		`"properties":{"id":{"type":"string","minLength":1,"maxLength":128,"description":"The handoff id of the ready plan."}}}`),
 }
 
 type startArgs struct {
@@ -181,7 +182,7 @@ func (r *Relay) checkHandoff(ctx context.Context, id, workflow string) (*handoff
 		return nil, mcpwire.ToolError(explainRelay(err))
 	}
 	if isErr {
-		return nil, mcpwire.ToolError(text)
+		return nil, mcpwire.ToolError(text + "\nnext: " + startRefusalNext(text, id))
 	}
 	var h handoffCheckShape
 	if json.Unmarshal(sc, &h) != nil || !present(h.Plan) || h.Hash == "" {
@@ -302,7 +303,7 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	if res.Action != "accept" || !file {
 		// The plan is kept: a new handoff would plan again, start with the same id asks again.
 		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "why": "the developer did not confirm (" + res.Action + ")",
-			"next": "nothing was filed and the plan is kept: when the developer wants it filed, call start again with the same id (" + a.ID + ")"})
+			"next": "tell the developer nothing was filed and the plan is kept. Only when they ask to file it, call start again with the same id (" + a.ID + "); never plan it again"})
 		return out
 	}
 
@@ -327,7 +328,7 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		return mcpwire.ToolError("not_filed: " + err.Error())
 	}
 	if !offer || !startNow {
-		next := "label it " + readyLabel + " to start the work: your decision"
+		next := "show the developer the issue link and stop: they label it " + readyLabel + " to start the work, their decision. Never add the label yourself"
 		if offer && !chosen {
 			next = "start was not chosen (the form came back without it), so the work is not started: ask the developer whether to start it, and label it " + readyLabel + " only on their yes"
 		}
@@ -415,18 +416,22 @@ func (r *Relay) startFromHandoff(ctx context.Context, repo, url string, labels [
 	id := r.awaitRoom(ctx, repo, n)
 	if id == "" {
 		result["why"] = "not started yet: the factory's comment on the issue says why"
+		result["next"] = "show the developer the issue link and stop; call " + mcpwire.Task + " with the issue (#<number>) when they ask where it stands"
 		out, _ := mcpwire.ToolResult(result)
 		return out
 	}
 	result["task"] = id
 	result["room"] = id
+	next := "call " + mcpwire.Wait + " with {\"task\":\"" + id + "\"} in a background task now, without asking, and tell the developer you are following it. " +
+		"Without background tasks, show them the task and stop"
+	result["next"] = next
 	out, _ := mcpwire.ToolResult(result)
 	if text, sc, isErr, err := r.callBroker(ctx, mcpwire.Task, map[string]string{"task": id}); err == nil && !isErr && text != "" {
 		var meta struct {
 			APIVersion string `json:"apiVersion"`
 		}
 		if json.Unmarshal(sc, &meta) == nil && meta.APIVersion == "task/v1" {
-			out["content"] = []map[string]string{{"type": "text", "text": "Filed " + url + " · task " + id + "\n\n" + text}}
+			out["content"] = []map[string]string{{"type": "text", "text": "Filed " + url + " · task " + id + "\n\n" + text}, {"type": "text", "text": "next: " + next}}
 		}
 	}
 	return out

@@ -103,6 +103,8 @@ type Relay struct {
 	local   map[string]*localEntry          // the local tool calls in flight, by request id (idKey)
 	waiting map[string]chan json.RawMessage // the relay's own requests to the client, by id
 	nextID  int
+	// handoffFails counts the handoff refusals in a row that a second try can pass (handoffFailed).
+	handoffFails int
 }
 
 // log is the relay's logger, discarding when none was injected.
@@ -253,6 +255,9 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 		if err == nil {
 			res = viewed(name, res, r.URL, time.Now())
 		}
+		if name == mcpwire.Handoff && err == nil {
+			res = r.guideHandoff(res)
+		}
 		r.reply(m, res, err)
 	case "tasks/result":
 		res, err := r.taskResult(ctx, m, raw)
@@ -314,7 +319,7 @@ func explainRelay(err error) string {
 	case errors.As(err, &refused):
 		return refused.Error()
 	}
-	return "unavailable: " + err.Error()
+	return "unavailable: " + err.Error() + "\nnext: " + nextDoctor
 }
 
 // mcpNeedsMaku is the broker's 403 for a token that is not maku's; mcpNeedsRoomctl is its

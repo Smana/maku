@@ -230,16 +230,45 @@ func TestTheHandoffRulesAreSaidPlainly(t *testing.T) {
 	for name, text := range map[string]string{"SKILL.md": SkillText(t), "maku.md": string(makuCommand)} {
 		flat := strings.Join(strings.Fields(strings.ToLower(text)), " ")
 		for _, want := range []string{
-			"`repository`", "git remote get-url origin", // the repository, and how to read it
+			"call `handoff` at once", "no other argument", // nothing before the first call
+			"read no file", "run no command first, git included", "maku reads the repository from the workspace",
 			"word for word", "never reword or shorten", // the developer's words
 			"do not answer it yourself", "do not add questions of your own", "accept the rest",
-			"call `start` at once", "the form is the developer's confirmation", "never ask", // no "shall I start it?"
-			"call `start` again", // a form left unanswered keeps the plan
+			"two options",                                                                                       // the question tool: no option that can hold no answer
+			"call `start` at once", "in the same turn", "the form is the developer's confirmation", "never ask", // no "shall I start it?"
+			"result's `next` says",                   // the one next call is the result's
+			"nothing was filed and the plan is kept", // a form left unanswered keeps the plan
+			"never reword the request to get past",   // a refusal is not worked around
 		} {
 			if !strings.Contains(flat, want) {
 				t.Errorf("%s lacks %q", name, want)
 			}
 		}
+	}
+}
+
+// aws-0, 2026-11-19: told to pass the repository "from git remote get-url origin", OpenCode ran git
+// outside its workspace and stopped on a permission dialog, and every Claude Code handoff paid a
+// shell call first. The relay reads the workspace (#639), so neither text sends the agent to git or
+// to the files.
+func TestTheHandoffSendsNoOneToGitOrTheFiles(t *testing.T) {
+	for name, text := range map[string]string{"SKILL.md": SkillText(t), "maku.md": string(makuCommand)} {
+		flat := strings.Join(strings.Fields(text), " ")
+		for _, bad := range []string{"git remote", "the paths you read"} {
+			if strings.Contains(flat, bad) {
+				t.Errorf("%s still says %q", name, bad)
+			}
+		}
+	}
+}
+
+// The skill is loaded into every handoff: it stays short.
+func TestTheSkillStaysShort(t *testing.T) {
+	if n := strings.Count(SkillText(t), "\n"); n > 94 {
+		t.Errorf("SKILL.md is %d lines, want at most 94", n)
+	}
+	if n := strings.Count(string(makuCommand), "\n"); n > 30 {
+		t.Errorf("maku.md is %d lines, want at most 30", n)
 	}
 }
 

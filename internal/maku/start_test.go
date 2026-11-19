@@ -317,7 +317,8 @@ func TestStartExpiredID(t *testing.T) {
 	})
 	result := res["result"].(map[string]any)
 	content := result["content"].([]any)[0].(map[string]any)["text"].(string)
-	if result["isError"] != true || content != "handoff_expired: start a new handoff" {
+	if result["isError"] != true || !strings.HasPrefix(content, "handoff_expired: start a new handoff\nnext: ") ||
+		!strings.Contains(content, "call handoff again with {\"text\": the developer's original words}") {
 		t.Fatalf("expired result = %v", res)
 	}
 	if len(f.calls) != 0 || len(l.calls) != 0 {

@@ -180,6 +180,19 @@ repositories come from the factory's served `Repository` objects through its cat
 60 s); `human.intake.plan.repositories` is optional and narrows that list when set, logging a
 warning for any entry the factory does not serve.
 
+`maku mcp` makes the loop the same whatever model drives the client:
+
+| It does | So that |
+|---|---|
+| lists `handoff` with a description and argument descriptions of its own | a model that read no skill calls it at once with your words, and reads no file and runs no git first |
+| fills `repository` from the `origin` of your workspace's checkout when the agent names none | the plan lands in the repository you are in, without a shell call |
+| adds `next` to every `handoff` and `start` result, in `structuredContent` and as a last text block | each result names the one call to make, with the id in it: ask the question, `start`, `wait`, or stop |
+| turns an answer that only says "accept the rest" into `acceptRest: true`, and drops `text`, `repository` and `context` sent again beside an `id` | a continuation is never refused for its shape |
+| tells a planner refusal a second try can pass (`planner_invalid`, `invalid_draft`, `planner_timeout`) from the others | the agent retries once, then stops in one line; it never rewords your request to get past a refusal |
+| ends `unavailable` with `maku doctor` | a broker that cannot be reached is one step for you, not a retry loop |
+
+Source: `internal/maku/handoffnext.go`, `internal/maku/workspacerepo.go`.
+
 The broker still computes and checks the plan's hash across the stored plan and the one `start`
 re-validates, including your chosen workflow. When you change `workflow` in
 `start`'s form, the relay re-validates that workflow on the broker before anything is filed: for a
@@ -290,7 +303,7 @@ tools:
 
 | Type | Does |
 |---|---|
-| `/maku handoff [what]` | calls `handoff` with your words, asks one question at a time (or accepts the rest with `acceptRest: true`), then calls `start` so you can confirm and start the work |
+| `/maku handoff [what]` | calls `handoff` at once with your words and nothing else, then does what each result's `next` says: asks the one question (or accepts the rest with `acceptRest: true`), then calls `start` without asking, so its form is where you confirm and start the work |
 | `/maku task [#issue]` | calls `task` (or `inbox` first when no task is named, then `task` on the first item waiting on you) and shows the result |
 | `/maku inbox` | calls `inbox` once and shows what needs you across your tasks |
 
