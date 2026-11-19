@@ -197,6 +197,16 @@ func endOutcome(e webhook.Event, sum summary.Summary) string {
 	case state == summary.StateDone || sum.Status.Phase == "Done":
 		return "Ended: done"
 	case state == summary.StateStopped || sum.Status.Phase == "Stopped":
+		why := reason
+		if why == "" || why == "other" {
+			why = webhook.Clip("reason", sum.Status.ReasonCode)
+		}
+		switch why { // #644: a cancel, a discard and a deleted issue say which
+		case "cancelled", "discarded":
+			return "Ended: " + why
+		case "issue_deleted":
+			return "Ended: issue deleted"
+		}
 		return "Ended: stopped"
 	case state == summary.StateFailed || sum.Status.Phase == "Escalated":
 		why := reason

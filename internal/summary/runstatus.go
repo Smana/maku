@@ -128,6 +128,9 @@ func StatusLine(in StatusIn) RunStatus {
 	case in.State == StateFailed:
 		return fail()
 	case in.State == StateStopped || in.Phase == "Closed" || in.Phase == "Sealed":
+		if w := stopWords()[in.ReasonCode]; w != "" { // #644: a cancel, a discard, a deleted issue
+			return s(KindStopped, "■", "Stopped — "+w)
+		}
 		return s(KindStopped, "■", "Stopped")
 	case in.Mine == 1:
 		return s(KindWaitingYou, "⏳", "Waiting for you — approve a pending action")
@@ -206,4 +209,9 @@ func StatusOf(s Summary, now time.Time) RunStatus {
 		}
 	}
 	return StatusLine(in)
+}
+
+// stopWords are the stops the status line names (#644); web/src/run-status.ts holds the same.
+func stopWords() map[string]string {
+	return map[string]string{"cancelled": "cancelled", "discarded": "discarded", "issue_deleted": "issue deleted"}
 }

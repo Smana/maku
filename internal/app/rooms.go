@@ -51,6 +51,9 @@ func humanSide(cfg config.Config, humans humanapi.Authenticator, rooms client.Cl
 	if err != nil {
 		return nil, err
 	}
+	if cfg.FactoryURL != "" { // #644: a task's cancel and discard, with the caller's own token
+		actor.Cancels = runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
+	}
 	var links ghidentity.LinkReader
 	if st, ok := roomLog.(githubLinkStore); ok && cfg.Human.GitHubLink != nil {
 		links = storeLinks(st)

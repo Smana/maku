@@ -25,6 +25,10 @@ const rejections: Record<string, string> = {
   four_eyes: "This room needs an approver who did not prompt the turn.",
   access_unverified: "GitHub could not confirm you write to this room's repository, which a protected-path push needs. Retry.",
   too_large: "Forking here copies over 5,000 events or 32 MiB. Fork from an earlier message.",
+  not_maintainer: "Only the task's owner or a maintainer of its repository, with write on it, cancels it.",
+  not_linked: "Your account is not linked to GitHub: link it, then retry.",
+  not_running: "The task has already ended.",
+  unknown_task: "The factory has no task for this room.",
 };
 
 // The element id of an approval's card in the needs-you panel: the broker's
@@ -196,6 +200,10 @@ function hiddenWithin(e: HTMLElement, root: HTMLElement): boolean {
 }
 const confirmFor = 10_000;
 
+// endedPhases are the task phases a cancel answers not_running for (internal/factory/api), and a
+// room's own Closed and Sealed.
+const endedPhases = new Set(["Done", "NoOp", "Rejected", "Reverted", "Stopped", "Closed", "Sealed", "Merged"]);
+
 // runRoles are the roles a human starts a run as: the broker's runRoles
 // (internal/humanapi/startrun.go), which roles.test.ts reads to keep the two equal. The tester
 // is the factory's alone (tester F3).
@@ -320,10 +328,18 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
   inviteForm.append(labelled("Invite", invitee), labelled("as", memberRole), approverLabel, button("invite", "invite", invite));
   inviteForm.onsubmit = (e) => { e.preventDefault(); invite(); };
   const stopSlot = el("div");
+  // Cancel stops the task now, discard also closes its pull request, branch and issue (#644): the
+  // factory decides who may (the task's owner or a maintainer), even when its issue was deleted.
+  const taskBox = el("div", { className: "task-cancel", hidden: true });
+  const canceller = confirmButton("cancel task", "cancel_task", () => send({ kind: "cancel" }));
+  const discarder = confirmButton("discard task", "discard_task", () => send({ kind: "cancel", discard: true }));
+  taskBox.append(canceller, discarder,
+    el("p", { className: "hint", textContent: "Discard also closes the pull request, deletes its agent branch and closes the issue as not planned: a GitHub App cannot delete an issue." }));
+  let taskLive = false;
   // Closing seals the room for good: it asks first.
   const closer = confirmButton("close room", "close", () => send({ kind: "close" }));
-  room.append(memberList, inviteForm, stopSlot, closer);
-  room.addEventListener("toggle", () => { if (!room.open) closer.disarm(); }); // folded away is hidden too
+  room.append(memberList, inviteForm, stopSlot, taskBox, closer);
+  room.addEventListener("toggle", () => { if (!room.open) for (const c of [closer, canceller, discarder]) c.disarm(); }); // folded away is hidden too
 
   // Mounted once: refresh toggles hidden, never re-mounts (R10).
   root.replaceChildren(run, drv, queueBox, room);
@@ -343,6 +359,7 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
       queueBox.hidden = watcher || state.queue().length === 0;
       room.hidden = !isOwner();
       for (const e of [inviteForm, closer]) e.hidden = state.sealed;
+      taskBox.hidden = state.sealed || !taskLive;
       renderDriver();
       renderQueue();
       memberRows(state.members().map((m) => {
@@ -354,12 +371,17 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
         } };
       }));
       // A confirm armed and then hidden (by the token moving, a seal, a role change) asks again.
-      for (const c of [interrupt, take, closer, ...queue.querySelectorAll<Confirm>(".confirm")]) if (hiddenWithin(c, root)) c.disarm();
+      for (const c of [interrupt, take, closer, canceller, discarder, ...queue.querySelectorAll<Confirm>(".confirm")]) if (hiddenWithin(c, root)) c.disarm();
     },
     // result is a start_run ack's rendered AgentRun, before SP3 (ruling P14).
     showResult,
     // setSummary takes each summary: with an issue, the Room group says how to stop the task.
     setSummary(sum: Summary) {
+      // A task still running can be cancelled; one that ended, or a room with no task, cannot.
+      const phase = sum.status?.phase ?? "";
+      taskLive = phase !== "" && !endedPhases.has(phase);
+      taskBox.hidden = state.sealed || !taskLive;
+      if (taskBox.hidden) { canceller.disarm(); discarder.disarm(); }
       const issue = sum.status?.issue;
       if (!issue) return stopSlot.replaceChildren();
       const p = el("p", { className: "stop" });

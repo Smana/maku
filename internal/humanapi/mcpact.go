@@ -43,6 +43,29 @@ func (s *Server) roomQueue(ctx context.Context, p authn.Principal, args json.Raw
 	return map[string]any{"room": a.Room, "queued": ack.Seq}, nil
 }
 
+// cancelArgs are task_cancel's arguments.
+type cancelArgs struct {
+	Room    string `json:"room"`
+	Discard bool   `json:"discard"`
+}
+
+// task_cancel cancels, or discards, the room's task, as maku cancel does: the act the room page's
+// Cancel and Discard send, unlisted, since maku mcp's cancel asks the developer first (#644).
+func (s *Server) taskCancel(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
+	var a cancelArgs
+	if mcpwire.DecodeArgs(args, &a) != nil || a.Room == "" {
+		return nil, toolError("invalid_arguments: room is a room id; discard is true or false")
+	}
+	if _, err := s.mcpAct(ctx, p, a.Room, Action{Kind: "cancel", Discard: a.Discard}); err != nil {
+		return nil, err
+	}
+	result := "cancelled"
+	if a.Discard {
+		result = "discarded"
+	}
+	return map[string]any{"task": a.Room, "result": result}, nil
+}
+
 // room_fork forks the room at a seq into one the caller owns, with an optional first run, as
 // maku fork does.
 func (s *Server) roomFork(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {

@@ -25,6 +25,8 @@ const (
 	Task    = "task"
 	Wait    = "wait"
 	Answer  = "answer"
+	// Cancel is maku mcp's cancel or discard of a task, after its form (#644), listed after the six.
+	Cancel = "cancel"
 
 	RoomCheckout = "room_checkout"
 	// CoordinationCheckout is maku mcp's parent checkout (v4 MR14): every child of a family at its

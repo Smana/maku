@@ -101,6 +101,10 @@ var reasons = map[string]string{
 	"conflict":            "the room changed at the same moment; retry",
 	"log_unavailable":     "the room's log is unavailable right now; retry",
 	"too_large":           "the fork point is past 5,000 events or 32 MiB of the room's log: fork at an earlier seq",
+	"not_maintainer":      "only the task's owner or a maintainer of its repository, with write on it, cancels it",
+	"not_linked":          "your account is not linked to GitHub: link it on the rooms page, then retry",
+	"not_running":         "the task has already ended",
+	"unknown_task":        "the factory has no task of that id",
 }
 
 // Explain is a rejection in words, or the reason itself when it has none.

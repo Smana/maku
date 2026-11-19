@@ -58,6 +58,23 @@ func TestEndLineParts(t *testing.T) {
 			want: "Ended: stopped · $0.04 of $2.00 · 2 min",
 		},
 		{
+			name: "ended cancelled from the room",
+			ev:   webhook.Event{Type: "room.ended", Room: "aaaaaaaa", State: "stopped", Reason: "cancelled"},
+			sum:  func() summary.Summary { var s summary.Summary; s.Status.Phase = "Stopped"; return s }(),
+			want: "Ended: cancelled",
+		},
+		{
+			name: "ended issue deleted, read from the summary",
+			ev:   webhook.Event{Type: "room.ended", Room: "aaaaaaaa", State: "stopped"},
+			sum: func() summary.Summary {
+				var s summary.Summary
+				s.Status.Phase = "Stopped"
+				s.Status.ReasonCode = "issue_deleted"
+				return s
+			}(),
+			want: "Ended: issue deleted",
+		},
+		{
 			name: "ended escalated out of budget",
 			ev:   webhook.Event{Type: "room.ended", Room: "aaaaaaaa", State: "failed", Reason: "budget-task"},
 			sum: func() summary.Summary {

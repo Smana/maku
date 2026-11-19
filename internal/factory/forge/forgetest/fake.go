@@ -107,6 +107,7 @@ type Fake struct {
 	permErr      error
 	edits        map[string][]forge.ContentEdit // ContentEdits' answer by node id; absent is never edited
 	editsCut     map[string]bool                // ContentEdits on the node reports its page cap
+	deleted      map[int]bool                   // issues DeleteIssue removed: IssueGone, and writes refused 404
 }
 
 // SetEdits sets the recorded edits of node's body, newest first, as ContentEdits returns them.
@@ -363,6 +364,9 @@ func (f *Fake) CommentWithID(_ context.Context, n int, body string) (int64, erro
 	now := f.now()
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.deleted[n] {
+		return 0, &forge.PermanentError{Status: 404, Err: fmt.Errorf("issue %d was deleted", n)}
+	}
 	f.nextID++
 	f.comments[n] = append(f.comments[n], forge.Comment{ID: f.nextID, Author: f.author(), Body: body, At: now})
 	return f.nextID, nil
@@ -596,6 +600,50 @@ func (f *Fake) CloseIssue(_ context.Context, n int) error {
 		i.State = "CLOSED"
 		f.issues[n] = i
 	}
+	return nil
+}
+
+// DeleteIssue deletes issue n, as a repository admin does on GitHub: IssueGone answers true for
+// it, and a comment or a close on it is refused for good (404).
+func (f *Fake) DeleteIssue(n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted == nil {
+		f.deleted = map[int]bool{}
+	}
+	f.deleted[n] = true
+	delete(f.issues, n)
+}
+
+// IssueGone implements the forge's IssueGone: true for an issue DeleteIssue removed.
+func (f *Fake) IssueGone(_ context.Context, n int) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.deleted[n], nil
+}
+
+// CloseIssueNotPlanned implements the forge's CloseIssueNotPlanned, recorded in Calls as
+// "close-issue-not-planned <n>"; a deleted issue is refused for good (404).
+func (f *Fake) CloseIssueNotPlanned(_ context.Context, n int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.deleted[n] {
+		return &forge.PermanentError{Status: 404, Err: fmt.Errorf("issue %d was deleted", n)}
+	}
+	f.calls = append(f.calls, fmt.Sprintf("close-issue-not-planned %d", n))
+	if i, ok := f.issues[n]; ok {
+		i.State = "CLOSED"
+		f.issues[n] = i
+	}
+	return nil
+}
+
+// DeleteBranch implements the forge's DeleteBranch, recorded in Calls as "delete-branch <branch>".
+func (f *Fake) DeleteBranch(_ context.Context, branch string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, "delete-branch "+branch)
+	delete(f.branches, branch)
 	return nil
 }
 

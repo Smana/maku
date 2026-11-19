@@ -31,6 +31,9 @@ const FAILURES: Record<string, string> = {
   review_rounds_exhausted: "the review did not settle", no_verdict: "no review verdict",
 };
 
+// The stops the status line names (#644), as internal/summary/runstatus.go's stopWords.
+const STOPS: Record<string, string> = { cancelled: "cancelled", discarded: "discarded", issue_deleted: "issue deleted" };
+
 const ROLE = /^[a-z][a-z0-9-]{0,23}$/;
 
 export function statusLine(i: StatusIn): RunStatus {
@@ -43,7 +46,10 @@ export function statusLine(i: StatusIn): RunStatus {
   const mine = i.mine ?? 0, others = i.others ?? 0, pr = i.pr ?? 0, issue = i.issue ?? 0;
   if (i.state === "done") return s("done", "✓", i.phase === "NoOp" ? "Done — nothing to change" : pr > 0 ? "Done — merged" : "Done");
   if (i.state === "failed") return fail();
-  if (i.state === "stopped" || i.phase === "Closed" || i.phase === "Sealed") return s("stopped", "■", "Stopped");
+  if (i.state === "stopped" || i.phase === "Closed" || i.phase === "Sealed") {
+    const w = i.reasonCode && Object.hasOwn(STOPS, i.reasonCode) ? STOPS[i.reasonCode] : ""; // #644
+    return s("stopped", "■", w ? `Stopped — ${w}` : "Stopped");
+  }
   if (mine === 1) return s("waiting-you", "⏳", "Waiting for you — approve a pending action");
   if (mine > 1) return s("waiting-you", "⏳", `Waiting for you — decide ${mine} approvals`);
   if (others > 0) return s("waiting-other", "⏳", "Waiting for another approver");
