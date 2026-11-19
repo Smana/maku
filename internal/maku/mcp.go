@@ -246,6 +246,9 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 				return
 			}
 		}
+		if name == mcpwire.Handoff {
+			raw = r.withWorkspaceRepository(ctx, m, raw)
+		}
 		res, err := r.relay(ctx, raw)
 		if err == nil {
 			res = viewed(name, res, r.URL, time.Now())

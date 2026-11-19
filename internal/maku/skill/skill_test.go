@@ -222,3 +222,23 @@ func TestVersionReadsBothKeys(t *testing.T) {
 		})
 	}
 }
+
+// #639: the rules a small model follows only when they are said plainly, in the skill and in the
+// /maku command alike. The text is flattened: it is hard-wrapped, and the rule, not the wrapping,
+// is what holds.
+func TestTheHandoffRulesAreSaidPlainly(t *testing.T) {
+	for name, text := range map[string]string{"SKILL.md": SkillText(t), "maku.md": string(makuCommand)} {
+		flat := strings.Join(strings.Fields(strings.ToLower(text)), " ")
+		for _, want := range []string{
+			"`repository`", "git remote get-url origin", // the repository, and how to read it
+			"word for word", "never reword or shorten", // the developer's words
+			"do not answer it yourself", "do not add questions of your own", "accept the rest",
+			"call `start` at once", "the form is the developer's confirmation", "never ask", // no "shall I start it?"
+			"call `start` again", // a form left unanswered keeps the plan
+		} {
+			if !strings.Contains(flat, want) {
+				t.Errorf("%s lacks %q", name, want)
+			}
+		}
+	}
+}
