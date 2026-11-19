@@ -320,3 +320,95 @@ func TestHandoffKeepsTheAnswerAndOneAcceptanceCheck(t *testing.T) {
 		t.Errorf("the rendered body is not a final draft: %v", err)
 	}
 }
+
+// aws-0, v0.53.9, glm-5.3, 2026-11-19: the planner wrote titles the template check refuses (an area
+// with a space, a trailing newline). The broker repairs them and the handoff goes through.
+func TestHandoffRepairsThePlannersTitle(t *testing.T) {
+	st := newMemHandoffStore()
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st))
+	p := planFixture(t, "single")
+	p.Issues[0].Title = "Harness reference: a careful task splits into 5 parts, but the factory caps it at 4\n"
+	e.intake.replyWith(modelReplyFor(t, p, nil))
+
+	r := handoffCall(t, e, map[string]any{"text": "the harness reference says a careful task can split into 5 parts, but the factory caps it at 4"})
+	if r.ID == "" {
+		t.Fatalf("result = %+v", r)
+	}
+	if got := storedPlan(t, st, e, r.ID).Issues[0].Title; got != "docs: Harness reference: a careful task splits into 5 parts, but the factory caps it at 4" {
+		t.Fatalf("title = %q", got)
+	}
+	if n := e.intake.calls(); n != 1 {
+		t.Fatalf("a repaired title re-asked the planner: %d calls", n)
+	}
+}
+
+// A draft the contract refuses is sent back to the planner once, with the refusal, before the
+// person sees a refusal; the retry is counted under its own outcome.
+func TestIntakePlanRetriesARefusedDraftOnce(t *testing.T) {
+	st := newMemHandoffStore()
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st))
+	bad := planFixture(t, "single")
+	bad.Issues[0].Body = "## What is wrong\nThe install link 404s."
+	e.intake.replyInOrder(modelReplyFor(t, bad, nil), modelReplyFor(t, planFixture(t, "single"), nil))
+
+	r := handoffCall(t, e, map[string]any{"text": "the install link in README.md is dead"})
+	if r.ID == "" {
+		t.Fatalf("result = %+v", r)
+	}
+	if n := e.intake.calls(); n != 2 {
+		t.Fatalf("calls = %d, want the draft and one retry", n)
+	}
+	if sent := e.intake.sent(); !strings.Contains(sent, "Your previous reply was refused: invalid_draft: the body needs the template's sections") {
+		t.Fatalf("the retry did not carry the refusal:\n%s", sent)
+	}
+	if body := metricsBody(t, e); !strings.Contains(body, `maku_intake_plan_total{outcome="retried",reason="invalid_draft",surface="session"} 1`) {
+		t.Fatalf("the retry is not counted:\n%s", body)
+	}
+}
+
+// The retry is once: a second refused draft is the person's refusal.
+func TestIntakePlanRetriesOnlyOnce(t *testing.T) {
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}))
+	bad := planFixture(t, "single")
+	bad.Issues[0].Body = "## What is wrong\nThe install link 404s."
+	e.intake.replyWith(modelReplyFor(t, bad, nil))
+
+	got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", planArgs())
+	if !got.isError || !strings.Contains(got.text, "invalid_draft") {
+		t.Fatalf("result = %s", got.text)
+	}
+	if n := e.intake.calls(); n != 2 {
+		t.Fatalf("calls = %d, want 2", n)
+	}
+	if !strings.Contains(e.intake.logged(), `"cause":"invalid_draft: the body needs`) {
+		t.Fatalf("the refusal's cause is not logged:\n%s", e.intake.logged())
+	}
+}
+
+// aws-0, v0.53.9, OpenCode and Haiku, 2026-11-19: a fully stated request, ready on the first call,
+// still carried the floor's "MUST no longer occur" text. A "What it should be" that states the
+// request's correct values is concrete: no template default is written beside it.
+func TestHandoffStatedFixGetsNoFloorText(t *testing.T) {
+	const request = "the factory configuration reference shows the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10, " +
+		"but tooling/aws-0/agent-factory/helm-values-sponsored.yaml sets dailyUSD 5 and maxCostUSD 2"
+	st := newMemHandoffStore()
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st))
+	p := planFixture(t, "single")
+	p.Issues[0].Title = "docs: the Slack app budget on the configuration reference is wrong"
+	p.Issues[0].Body = "## What is wrong\nThe factory configuration reference gives the Slack app budget as dailyUSD 10.20 and maxCostUSD 5.10.\n\n" +
+		"## What it should be\nThe configuration reference gives dailyUSD 5 and maxCostUSD 2, the values helm-values-sponsored.yaml sets.\n\n" +
+		"## Acceptance check\nThe configuration reference page gives dailyUSD 5 and maxCostUSD 2."
+	e.intake.replyWith(modelReplyFor(t, p, nil))
+
+	r := handoffCall(t, e, map[string]any{"text": request})
+	if !r.Ready || r.Question != nil {
+		t.Fatalf("result = %+v", r)
+	}
+	got := call(t, e, viaRoomctl("dev"), "handoff_check", map[string]any{"id": r.ID})
+	if got.isError {
+		t.Fatalf("handoff_check: %s", got.text)
+	}
+	if strings.Contains(got.text, "MUST no longer occur") || strings.Contains(string(got.structured), "MUST no longer occur") {
+		t.Fatalf("the floor's default was written beside a stated fix:\n%s", got.text)
+	}
+}

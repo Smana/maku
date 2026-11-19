@@ -969,6 +969,13 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 | `daily_plans_reached` | you have used today's plans; the cap resets at 00:00 UTC |
 | `plan_too_large` | the plan is longer than a bound the contract sets; nothing was truncated |
 
+Before a draft is checked, the broker mends a title that is off the template only in form: it trims
+it, joins its lines, strips markdown emphasis and wrapping quotes, and prefixes a missing `<area>:`
+(`docs` for a docs class, else the first segment of the first path the body names, else `chore`).
+A draft still refused `invalid_draft` or `planner_invalid` is sent back to the planner once, with the
+refusal, inside the same deadline; the retry counts as `maku_intake_plan_total{outcome="retried"}`
+and spends no daily slot.
+
 The daily cap is `human.intake.plan.dailyPlans` per **effective requester** — a human's GitHub login,
 a Slack user's `slack:<team>/<user>` — per UTC day, counted on this replica. The initial plan and every
 continuation that answers a gap or adds context spend one daily slot, including the one that reaches the

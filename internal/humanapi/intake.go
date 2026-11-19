@@ -51,6 +51,7 @@ const (
 	outcomeAsked    = "asked"    // a plan that carries the one question the broker must ask first
 	outcomeDegraded = "degraded" // the template draft, because the config named the composer
 	outcomeRefused  = "refused"  // no plan, for one reason of the closed list
+	outcomeRetried  = "retried"  // a refused draft sent back to the planner once, with its reason
 )
 
 // startSponsored joins issuedraft.go's reasons (off, not_linked, no_write, unverified): a sponsored
@@ -415,11 +416,45 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		}
 	}
 
-	draft, usage, err := s.Intake.Model.Draft(ctx, intake.DraftRequest{
+	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), Now: s.Intake.now(),
+		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
+		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
+	if revised != nil {
+		compose.Rev, compose.Round, compose.RoundsLeft = revised.Rev, revised.Round, revised.RoundsLeft
+	}
+	dreq := intake.DraftRequest{
 		Text: a.Text, Context: a.modelContext(), Candidates: candidates, Classes: classNames(s.Intake.Classes),
-		Offers: offers, Candidate: revised})
+		Offers: offers, Candidate: revised}
+	// One plan's deadline bounds both the draft and its one retry.
+	deadline := time.Now().Add(s.Intake.Model.CallDeadline())
+	plan, usage, err := s.draftPlan(ctx, dreq, compose)
 	run.usage = usage
+	if ref, ok := retryable(err); ok && time.Until(deadline) > 0 {
+		// A draft the contract refuses is sent back once with the refusal, before the person sees
+		// one: a title or a heading the model can correct is not a reason to end the handoff.
+		if s.Metrics != nil {
+			s.Metrics.IntakePlan(ctx, string(run.surface), outcomeRetried, ref.Reason)
+		}
+		dreq.Refused = ref.Error()
+		rctx, cancel := context.WithDeadline(ctx, deadline)
+		again, more, rerr := s.draftPlan(rctx, dreq, compose)
+		cancel()
+		run.usage.PromptTokens += more.PromptTokens
+		run.usage.CompletionTokens += more.CompletionTokens
+		if more.Model != "" {
+			run.usage.Model = more.Model
+		}
+		// A retry the gateway could not answer in time leaves the first refusal standing: it is
+		// the one that says what was wrong.
+		if _, refusedAgain := retryable(rerr); rerr == nil || refusedAgain {
+			plan, err = again, rerr
+		}
+	}
 	if err != nil {
+		if ref, ok := asRefusal(err); ok {
+			run.cause = causeOf(ref)
+			return s.finishPlan(ctx, run, nil, false, ref)
+		}
 		ref, ok := intake.RefusalOf(err)
 		if !ok {
 			return nil, err // not one of the call's three failures: the tool answers "unavailable"
@@ -431,21 +466,6 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 			if plan, ok := s.degraded(a, candidates, run.surface, ref); ok {
 				return s.finishPlan(ctx, run, plan, true, nil)
 			}
-		}
-		return s.finishPlan(ctx, run, nil, false, ref)
-	}
-
-	compose := intake.ComposeIn{Surface: run.surface, Model: s.Intake.alias(), ServedModel: usage.Model, Now: s.Intake.now(),
-		Rev: planRev, Round: 1, RoundsLeft: s.Intake.MaxRounds - 1,
-		Classes: s.Intake.Classes, Offers: offers, CeilingUSD: a.Ceiling, CeilingSource: ceilingSource, Logger: s.log()}
-	if revised != nil {
-		compose.Rev, compose.Round, compose.RoundsLeft = revised.Rev, revised.Round, revised.RoundsLeft
-	}
-	plan, err := intake.Compose(draft, compose)
-	if err != nil {
-		ref, ok := asRefusal(err)
-		if !ok {
-			return nil, err
 		}
 		return s.finishPlan(ctx, run, nil, false, ref)
 	}
@@ -463,6 +483,33 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		}
 	}
 	return s.finishPlan(ctx, run, &plan, false, nil)
+}
+
+// draftPlan is one planner call and its composition: the plan, what the call cost, and either the
+// model call's error or Compose's refusal.
+func (s *Server) draftPlan(ctx context.Context, req intake.DraftRequest, in intake.ComposeIn) (intake.Plan, intake.Usage, error) {
+	draft, usage, err := s.Intake.Model.Draft(ctx, req)
+	if err != nil {
+		return intake.Plan{}, usage, err
+	}
+	in.ServedModel = usage.Model
+	plan, err := intake.Compose(draft, in)
+	return plan, usage, err
+}
+
+// retryable is err's refusal when it is one a corrected reply could answer: a reply that is not the
+// contract's shape (planner_invalid) or a draft off the issue template (invalid_draft).
+func retryable(err error) (*intake.Refusal, bool) {
+	if err == nil {
+		return nil, false
+	}
+	ref, ok := asRefusal(err)
+	if !ok {
+		if ref, ok = intake.RefusalOf(err); !ok {
+			return nil, false
+		}
+	}
+	return ref, ref.Reason == intake.ReasonPlannerInvalid || ref.Reason == intake.ReasonInvalidDraft
 }
 
 // degraded is the template draft, when the config's fallback names it and the failure is the plan
