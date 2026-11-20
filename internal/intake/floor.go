@@ -181,6 +181,15 @@ func statesValue(section, request string) bool {
 		if containsTerm(request, strings.Trim(v, "`")) {
 			return true
 		}
+		// A code span is matched whole first, then by the values inside it: the planner writes
+		// "`dailyUSD: 5`" where the request said "dailyUSD 5" (aws-0, 2026-11-20).
+		if strings.HasPrefix(v, "`") {
+			for _, inner := range valueRE.FindAllString(strings.Trim(v, "`"), -1) {
+				if containsTerm(request, inner) {
+					return true
+				}
+			}
+		}
 	}
 	return false
 }
