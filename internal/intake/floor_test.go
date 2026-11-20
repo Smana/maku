@@ -230,3 +230,17 @@ func TestFloorCountsAStatedValueAsConcrete(t *testing.T) {
 		t.Fatalf("gaps = %+v, want the two template gaps", got.Gaps)
 	}
 }
+
+// A planner that writes the stated value in code font with its YAML colon ("`dailyUSD: 5`") still
+// states the value the request gave as "dailyUSD 5": the floor adds no behaviour sentence and no
+// A-line (aws-0, OpenCode + Haiku, 2026-11-20).
+func TestStatesValueReadsInsideACodeSpan(t *testing.T) {
+	request := "the config reference has the wrong Slack app budget; fix it to dailyUSD 5, maxCostUSD 2"
+	section := "The Slack app budget should be corrected to `dailyUSD: 5` and `maxCostUSD: 2`."
+	if !intake.StatesValue(section, request) {
+		t.Fatalf("statesValue(%q, %q) = false, want true", section, request)
+	}
+	if intake.StatesValue("The budget should be corrected to `slackBudget: unset`.", request) {
+		t.Fatal("a code span naming nothing the request names must not count")
+	}
+}

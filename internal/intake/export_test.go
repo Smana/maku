@@ -24,3 +24,5 @@ func PublicityEntries(p *CachedPublicity) int {
 
 // SystemPrompt is the planner's system prompt, for a test that holds its rules.
 func SystemPrompt() string { return systemPrompt }
+
+var StatesValue = statesValue
