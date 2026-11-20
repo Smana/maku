@@ -27,6 +27,8 @@
   {"name": "failed with an unknown code says its phase", "in": {"state": "failed", "phase": "Rejected", "reasonCode": "not_a_code"}, "want": {"kind": "failed", "icon": "✗", "words": "Failed — rejected"}},
   {"name": "failed with an unknown reason says no agent text", "in": {"state": "failed", "phase": "Reverted", "reasonCode": "free text from nowhere"}, "want": {"kind": "failed", "icon": "✗", "words": "Failed — the merge was reverted"}},
   {"name": "stopped", "in": {"state": "stopped", "phase": "Stopped"}, "want": {"kind": "stopped", "icon": "■", "words": "Stopped"}},
+  {"name": "cancelled from the room", "in": {"state": "stopped", "phase": "Stopped", "reasonCode": "cancelled"}, "want": {"kind": "stopped", "icon": "■", "words": "Stopped — cancelled"}},
+  {"name": "stopped as its issue was deleted", "in": {"state": "stopped", "phase": "Stopped", "reasonCode": "issue_deleted"}, "want": {"kind": "stopped", "icon": "■", "words": "Stopped — issue deleted"}},
   {"name": "a sealed room without a state", "in": {"phase": "Sealed"}, "want": {"kind": "stopped", "icon": "■", "words": "Stopped"}},
   {"name": "an unknown state says nothing", "in": {"state": "", "phase": "Whatever"}, "want": {"kind": "", "icon": "", "words": ""}}
 ]

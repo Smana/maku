@@ -426,6 +426,29 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		}
 		_, _ = io.WriteString(w, issueJSON)
 	}))
+	// #644: an issue read for its deletion, a branch deleted, an issue closed as not planned.
+	mux.HandleFunc("GET /repos/Smana/demo/issues/{n}", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("n") {
+		case "41":
+			_, _ = io.WriteString(w, `{"number":41,"state":"open"}`)
+		case "42":
+			http.Error(w, `{"message":"This issue was deleted"}`, http.StatusGone)
+		case "43":
+			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+		default:
+			http.Error(w, `{"message":"Server Error"}`, http.StatusInternalServerError)
+		}
+	}))
+	mux.HandleFunc("DELETE /repos/Smana/demo/git/refs/heads/agent/{task}", g.authed(func(w http.ResponseWriter, r *http.Request) {
+		switch r.PathValue("task") {
+		case "live":
+			w.WriteHeader(http.StatusNoContent)
+		case "gone":
+			http.Error(w, `{"message":"Reference does not exist"}`, http.StatusUnprocessableEntity)
+		default:
+			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+		}
+	}))
 	// v2 D4/D5: a login's permission on the repository, and a user id's current login.
 	mux.HandleFunc("GET /repos/Smana/demo/collaborators/{login}/permission", g.authed(func(w http.ResponseWriter, r *http.Request) {
 		switch r.PathValue("login") {
@@ -678,6 +701,14 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 		_ = json.NewDecoder(r.Body).Decode(&in)
 		if r.PathValue("n") == "8" {
 			http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+			return
+		}
+		switch { // #644: a discard closes its issue as not planned; a deleted one answers 410
+		case r.PathValue("n") == "42":
+			http.Error(w, `{"message":"This issue was deleted"}`, http.StatusGone)
+			return
+		case r.PathValue("n") == "41" && in["state"] == "closed" && in["state_reason"] == "not_planned":
+			_, _ = io.WriteString(w, `{"number":41,"state":"closed"}`)
 			return
 		}
 		if r.PathValue("n") != "7" || in["state"] != "closed" || in["state_reason"] != "completed" {
@@ -2672,5 +2703,35 @@ func TestIssuesByAuthorSince(t *testing.T) {
 	}
 	if _, err := r.g.IssuesByAuthorSince(t.Context(), "not a login", since); err == nil {
 		t.Fatal("a malformed login reached the query")
+	}
+}
+
+// #644: a deleted issue reads gone (410 or 404), a branch already gone is no error, and a discard
+// closes its issue as not planned, a deleted one refused for good.
+func TestDiscardCalls(t *testing.T) {
+	r := newRig(t)
+	ctx := t.Context()
+	for n, want := range map[int]bool{41: false, 42: true, 43: true} {
+		if gone, err := r.g.IssueGone(ctx, n); gone != want || err != nil {
+			t.Errorf("issue %d: gone %v %v", n, gone, err)
+		}
+	}
+	if _, err := r.g.IssueGone(ctx, 44); err == nil {
+		t.Error("a 500 is no answer")
+	}
+	for _, b := range []string{"agent/live", "agent/gone"} {
+		if err := r.g.DeleteBranch(ctx, b); err != nil {
+			t.Errorf("%s: %v", b, err)
+		}
+	}
+	if err := r.g.DeleteBranch(ctx, "agent/locked"); err == nil {
+		t.Error("a 403 is an error")
+	}
+	if err := r.g.CloseIssueNotPlanned(ctx, 41); err != nil {
+		t.Error(err)
+	}
+	var pe *PermanentError
+	if err := r.g.CloseIssueNotPlanned(ctx, 42); !errors.As(err, &pe) {
+		t.Errorf("a deleted issue: %v", err)
 	}
 }

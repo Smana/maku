@@ -29,6 +29,7 @@ Two rules cover every tool of the `maku` MCP server:
 | where #N stands, what it needs, what changed | `task` (the task is its id, `#<issue>`, `PR #<n>`, a number or a fragment of its title) |
 | tell me when it needs me, opens a pull request or ends | `wait`, in a background task |
 | answer a task's question, or leave a note for its next run | `answer` |
+| stop a task now, or discard it with its pull request, branch and issue | `cancel` (its form is the confirmation) |
 
 ## Hand work over
 

@@ -742,6 +742,7 @@ close frame. So is a peer that does not take a frame within 10 s (`write_timeout
 | `start_run` | `role` (`implementer`, `reviewer`, `triager`), `prUrl?` (reviewer only, a pull request of the room's repository), `egressProfiles?` (at most 8 names) | Driver, owner. A reviewer's task is its PR, else the one the latest agent handoff or review verdict names; any other role's is the fenced brief of the latest agent handoff and verdict, which consumes the queued messages it quotes. Recorded as `state_changed{run_requested}`, with the reviewer's `taskUrl`. Without a factory requester (`via: manifest`) the ack's `result` is the rendered `AgentRun` for the owner to apply. A replayed `clientSeq` acks the record without it; one retried after a failed record (`log_unavailable`) asks for the same run under the same idempotency key, so it never creates a second one ([integration](../integration.md)) |
 | `invite` | `principal`, `memberRole`, `approver` | Owner. At most 20 members; never demotes the driver-token holder below collaborator (`bad_action`): the holder hands the token over first |
 | `close` | `reason?` | Owner |
+| `cancel` | `discard?` | Owner; the factory then needs the task's owner or a maintainer of its repository, with write on it. Forwarded with the caller's own token to [`POST /v1/tasks/{task}/cancellations`](#post-v1taskstaskcancellations) for the room's task (its id). The ack is accepted, or rejected with the factory's `not_maintainer`, `not_linked`, `not_running`, `unknown_task` or `human_only`; `factory_unavailable` without a `factoryURL` |
 | `decide` | `approvalId`, `decision: approved \| denied`, `reason?` (at most 1 KiB, redacted; the agent reads it) | Approver, owner, from the web UI. The first valid decision wins (`already_decided` for every later one, a supersede included). The deadline is checked on the database clock in the transaction that would record the decision: one past it closes the approval as `expired` and is refused `approval_expired`, whether or not the sweep has run, as is any decision on an expired approval. With `approvals.fourEyes`, nobody who prompted the run decides (`four_eyes`). A replayed `clientSeq` acks the stored decision |
 | `fork` | `seq`, `note?` (at most 1 KiB, redacted), `role?`, `prUrl?`, `egressProfiles?` (as `start_run`'s), `approvals?: attended \| unattended` | Watcher and up; also from `maku`. A sealed room forks only for its owner or an `agents-admin` (`sealed`). A new room owned and driven by the forker, with the source's data class, repository and retention and none of its members. Its approvals ask by default: for the source's owners (owner, owner members, `agents-admin`) `attended`, with the source's `ttl`, `fourEyes` and every override but `allow`, so an unattended factory room does not make a human's own fork run unasked; `approvals: unattended` keeps the source's approvals as they are (an attended source stays attended; `bad_action` for any other value). Anyone else, whatever they ask, gets, class by class, the stricter of the source's and a new room's (`attended`), so an `unattended` or `allow` override never carries over to a watcher: events `1..seq` copied with their `seq`, then `state_changed{forked_from}`. The source's queue as it stood at `seq` comes along: each message queued by then and not yet promoted, removed or consumed by then is queued again in the fork (one consumed through `POST /v1/rooms/{id}/queue/consume` leaves no event to date it, so it comes along only while still queued). With a `role`, the new room's first run, on `agent/<new room>` from the latest agent commit at or before `seq`, on the forker's token and budget. The ack's `seq` is the new room's `forked_from`; its `result` is `{roomId, run?, runError?}`: `run` is the `start_run` claim or `null`, `runError` its rejection. A failed run leaves the fork made. A prefix over 5,000 events or 32 MiB is `too_large`; a principal forks 3 times at once, then once a minute, per replica |
 
@@ -1335,6 +1336,27 @@ task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped,
 answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
 no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
 caller auth, or `503` (`link_unverified`, `tasks_unavailable`).
+
+### `POST /v1/tasks/{task}/cancellations`
+
+Served on the same port whenever the API is, with no switch: the broker forwards a room page's,
+`maku cancel`'s or the `cancel` tool's `cancel` act with the person's own token. A human caller
+only (`403 human_only` for a sponsored, internal or run caller). Body (`application/json`, unknown
+fields refused): `{discard?: bool}`. The factory resolves the caller's GitHub login through their
+link on the task's repository (`not_linked`), and requires a maintainer of that repository or the
+task's requester (its issue's author, or `github:<login>` in its source), with write on GitHub
+(`not_maintainer`). It sets the stop annotation (`cancel` or `discard`), so the next reconcile
+stops every run and ends the task `Stopped`, reason `cancelled` or `discarded`; it needs no issue,
+so a task whose issue was deleted still ends. A discard also comments on and closes the pull
+request, deletes `agent/<task>` and closes the issue as not planned: a GitHub App cannot delete an
+issue. The ending's comment goes to the issue only while it exists. Answers `200 {"result"}` in
+`{cancelled, discarded, not_linked, not_maintainer, not_running, unknown_task}`, `400 bad_json`,
+`401`, `403` (`human_only`, `repository_not_allowed`), or `503` (`kill_switch`,
+`link_unverified`, `access_unverified`, `tasks_unavailable`).
+
+`/stops` above is the Slack App's: while `api.sponsored` declares no principal it is a `404`, and it
+never takes a person's own token. A task whose issue is deleted on GitHub (`404` or `410` on a
+probe at most every 5 minutes) ends on its own, reason `issue_deleted`.
 
 ### `POST /v1/tasks/{task}/verification`
 

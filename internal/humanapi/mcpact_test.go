@@ -56,3 +56,19 @@ func TestMCPRoomFork(t *testing.T) {
 		t.Fatalf("%+v", got)
 	}
 }
+
+// #644: task_cancel is the room page's cancel act through MCP, under the caller's standing.
+func TestMCPTaskCancel(t *testing.T) {
+	l := &actLog{st: store.RoomState{ID: roomID, Driver: "system:factory", DriverEpoch: 3}}
+	fc := &fakeCancels{result: "discarded"}
+	e := setup(t, mcpOn, func(s *Server, _ *fanout.Hub, _ *hubView) {
+		s.Actor = &Actor{Log: l, Runs: s.Runs, Groups: groups, Redactor: testRedactor{}, Cancels: fc}
+	})
+	if got := call(t, e, viaRoomctl("dev"), "task_cancel", map[string]any{"room": roomID}); got.text != "rejected: not_permitted" {
+		t.Fatalf("a watcher cancels nothing: %+v", got)
+	}
+	got := call(t, e, viaRoomctl("own", "X-Test-Token", "tok"), "task_cancel", map[string]any{"room": roomID, "discard": true})
+	if got.isError || !strings.Contains(string(got.structured), `"result":"discarded"`) || len(fc.calls) != 1 || !fc.calls[0].discard {
+		t.Fatalf("%+v %+v", got, fc.calls)
+	}
+}

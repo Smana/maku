@@ -82,6 +82,13 @@ type Action struct {
 	Seq            int64    `json:"seq,omitempty"`        // fork: the last event copied
 	Note           string   `json:"note,omitempty"`       // fork
 	Approvals      string   `json:"approvals,omitempty"`  // fork: attended (the default) | unattended
+	Discard        bool     `json:"discard,omitempty"`    // cancel: also close the PR, the branch and the issue
+}
+
+// TaskCanceller reaches the factory's cancellations route with the caller's own token (#644);
+// runrequest.Factory implements it.
+type TaskCanceller interface {
+	CancelTask(ctx context.Context, task string, discard bool, accessToken string) (string, error)
 }
 
 // Actor serves humans' act frames: every write a human makes to a room. Log,
@@ -94,7 +101,9 @@ type Actor struct {
 	Redactor  Redactor
 	Rooms     client.Client
 	Requester runrequest.Requester
-	OnReject  func(ctx context.Context, reason string)
+	// Cancels is the factory's cancel and discard of the room's task (#644); nil refuses both.
+	Cancels  TaskCanceller
+	OnReject func(ctx context.Context, reason string)
 	// OnDecided observes a human decision's wait since its request
 	// (rooms_approval_decision_seconds).
 	OnDecided func(time.Duration)
@@ -181,7 +190,10 @@ func (a *Actor) allow(limiters *map[string]*rate.Limiter, principal string, r ra
 var kinds = map[string]policy.Action{"remove_queued": policy.RemoveQueued, "promote_queued": policy.PromoteQueued,
 	"interrupt": policy.Interrupt, "driver_request": policy.DriverRequest, "driver_give": policy.DriverGive,
 	"driver_take": policy.DriverTake, "start_run": policy.StartRun, "invite": policy.Invite, "close": policy.Close,
-	"decide": policy.Decide, "fork": policy.Fork}
+	"decide": policy.Decide, "fork": policy.Fork,
+	// #644: stopping closes the task, which is the owner's; the factory then asks for a maintainer
+	// of the repository or the task's requester, with write on it.
+	"cancel": policy.Close}
 
 var deliveries = map[string]policy.Action{"none": policy.Chat, "queued": policy.Queue, "steering": policy.Steer}
 
@@ -261,6 +273,8 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 		ev, ack.Result, why = a.startRun(ctx, p, room, act, d)
 	case "fork":
 		ev, ack.Result, why = a.fork(ctx, p, sub.Role == policy.Owner, room, act, d)
+	case "cancel":
+		why = a.cancel(ctx, p, room, act)
 	default:
 		ev, why = a.dispatch(ctx, p, room, st, act, via, d)
 	}
@@ -272,6 +286,25 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 	}
 	ack.Seq = ev.Seq
 	return ack
+}
+
+// cancel asks the factory to cancel, or discard, the room's task (the same id) as p (#644). The
+// factory decides who may: a refusal is the ack's rejection, by its closed code.
+func (a *Actor) cancel(ctx context.Context, p authn.Principal, room *v1alpha1.Room, act Action) string {
+	if a.Cancels == nil || p.AccessToken == "" {
+		return rejectNoFactory
+	}
+	res, err := a.Cancels.CancelTask(ctx, room.Name, act.Discard, p.AccessToken)
+	var refused runrequest.ErrRefused
+	switch {
+	case errors.As(err, &refused):
+		return refused.Reason
+	case err != nil:
+		return rejectNoFactory
+	case res == "cancelled" || res == "discarded":
+		return ""
+	}
+	return res // not_maintainer, not_linked, not_running, unknown_task
 }
 
 // logAct writes the one line an act leaves, for whoever asks who did what and

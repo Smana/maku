@@ -1,5 +1,5 @@
 ---
-description: "Maku: /maku handoff <what> | task [#issue] | inbox"
+description: "Maku: /maku handoff <what> | task [#issue] | inbox | cancel <task>"
 ---
 
 You were asked: `/maku $ARGUMENTS`. Use the `maku` MCP server's tools. The first word is the
@@ -23,5 +23,6 @@ subcommand; the rest is its argument. Show each tool's text as it is, and never 
 - `task [#issue]`: call `task` with the task as typed (`#<issue>`, `PR #<n>`, a number, a title
   fragment or an id); with none, call `inbox` and take its first task.
 - `inbox`: call `inbox` once and show its text as it is. Empty, say so in one line.
+- `cancel <task> [discard]`: call `cancel` with the task (and `discard: true` if asked); its form is the confirmation.
 
-With no subcommand, or one that is not listed, show these three lines and stop.
+With no subcommand, or one that is not listed, show these four lines and stop.
