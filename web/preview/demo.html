@@ -13,22 +13,8 @@
   <link rel="preload" href="assets/fonts/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="preload" href="assets/fonts/JetBrainsMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="app.css">
-  <style>
-    .demo-run { max-width: 1100px; margin: 0 auto; padding: 32px 16px 24px; }
-    .demo-run h1 { font-size: var(--text-display); line-height: var(--leading-display); margin: 0 0 8px; }
-    .demo-run p { margin: 0 0 16px; color: var(--muted-foreground); max-width: 70ch; }
-    .demo-run video { display: block; width: 100%; height: auto; border-radius: var(--radius-md, 8px); border: 1px solid var(--border); background: #000; }
-  </style>
 </head>
 <body>
-  <section class="demo-run" aria-labelledby="demo-run-title">
-    <h1 id="demo-run-title">A real run, end to end</h1>
-    <p>One line in a coding agent, an issue filed, an implementer and a reviewer at work, a maintainer's approval, a merge: about 12 minutes, shown in 2. Below it, a recorded run replayed in its room.</p>
-    <video controls muted playsinline preload="metadata" poster="media/maku-run.jpg" width="1600" height="996">
-      <source src="media/maku-run.mp4" type="video/mp4">
-      <a href="media/maku-run.mp4">Download the screencast (MP4, 2 min)</a>
-    </video>
-  </section>
   <div id="app"></div>
   <script type="module" src="demo.js"></script>
 </body>
