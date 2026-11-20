@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: Apache-2.0
 
-// screencast.mjs OUT.webp: the README's screencast, recorded from the offline preview's room
+// screencast.mjs OUT.webp: a room-page screencast, recorded from the offline preview's room
 // list and the live demo, in light mode, the run rail as its subject. Needs a Playwright install
 // (not a web/ dependency), and ImageMagick's magick or, on macOS, sips:
 //
 //   PLAYWRIGHT_MODULES=/path/to/node_modules [CHROME_PATH=/usr/bin/chromium] \
-//     node web/scripts/screencast.mjs docs/assets/maku-room.webp
+//     node web/scripts/screencast.mjs maku-room.webp
 //
 // Recorded in a 1100×800 window, the narrowest that keeps the rail beside the conversation (it
 // folds to a labelled strip below 1100 px), at device scale 2. A camera then crops each frame, wide for the

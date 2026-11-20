@@ -16,5 +16,7 @@ cp preview/demo.html "$out/index.html"
 rm -rf "$out/assets"
 cp -R src/assets "$out/assets"
 sed 's#/assets/#assets/#g' src/app.css >"$out/app.css"
+# The recorded run shown above the replay: kept out of src/assets, which the broker embeds.
+cp -R preview/media "$out/media"
 cp test/fixtures/demo-session.jsonl test/fixtures/demo-snapshot.json test/fixtures/demo-summary.json "$out/fixtures/"
 echo "demo site: $out"
