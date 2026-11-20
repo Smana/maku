@@ -10,7 +10,7 @@
 Label a GitHub issue and Maku takes it from there: it picks a workflow and a budget, runs agents in isolated gVisor sandboxes behind a default-deny network policy, and brings back a reviewed pull request. You can watch every step live in a room, steer the agent mid-run, approve what it may not do alone, or stop it. Every control — token and USD caps, network egress, push approvals, and the merge gate — sits outside the sandbox, and every event is recorded in an append-only room log that no agent can rewrite.
 
 <a href="https://blog.ogenki.io/maku/">
-  <img alt="A 33-second screencast of a factory run on the room page: the run rail, human steering, push approval, reviewer verdict, and merge gate." src="docs/assets/maku-room.webp" width="800">
+  <img alt="A 32-second screencast of a real run: a one-line /maku handoff in OpenCode, the form that files the issue, the room as the implementer and the reviewer work, the maintainer's approval on GitHub, the merge, and the run's cost in Grafana." src="docs/assets/maku-run.webp" width="800">
 </a>
 
 **[Try the quickstart →](docs/quickstart.md)** · **[Read the concepts and glossary →](docs/concepts.md)** · **[Browse the documentation →](docs/README.md)** · **[Watch a run in the live demo →](https://blog.ogenki.io/maku/)**
