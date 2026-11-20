@@ -157,7 +157,8 @@ func TestHandoffPrompt(t *testing.T) {
 	text := promptText(t, e, h, "handoff", map[string]string{"what": "fix the dead link"})
 	f := flat(text)
 	for _, want := range []string{"fix the dead link", "`handoff`", "`start`", "one question", "accept the rest",
-		"never write the plan", "never apply a label", "first issue", "`wait`", "their answer exactly as they typed it"} {
+		"never write the plan", "never apply a label", "first issue", "`wait`", "their answer exactly as they typed it",
+		"at once", "no other argument", "run no command first", "result's next says", "in the same turn", "without asking first"} {
 		if !strings.Contains(f, want) {
 			t.Errorf("handoff lacks %q:\n%s", want, text)
 		}

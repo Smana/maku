@@ -19,10 +19,11 @@ var repositoryRE = regexp.MustCompile(`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`)
 // maxHandoffContext is the broker's maxLength for handoff's context.
 const maxHandoffContext = 4096
 
-// withWorkspaceRepository is the handoff call m with the repository of the client's workspace
-// filled in (#639), as if the agent had passed it: only for a new request that names neither a
-// repository nor candidates, and only when one of the client's roots is a git checkout whose
-// origin reads owner/name. Anything else is raw as it came.
+// withWorkspaceRepository is the handoff call m as the broker takes it. A continuation is tidied
+// (tidyHandoffArgs). A new request that names neither a repository nor candidates gets the
+// repository of the client's workspace filled in (#639), as if the agent had passed it: only when
+// one of the client's roots is a git checkout whose origin reads owner/name. Anything else is raw
+// as it came.
 func (r *Relay) withWorkspaceRepository(ctx context.Context, m message, raw []byte) []byte {
 	var p map[string]json.RawMessage
 	if json.Unmarshal(m.Params, &p) != nil {
@@ -32,18 +33,34 @@ func (r *Relay) withWorkspaceRepository(ctx context.Context, m message, raw []by
 	if json.Unmarshal(p["arguments"], &args) != nil || args == nil {
 		return raw
 	}
-	if id, _ := args["id"].(string); id != "" {
+	if !tidyHandoffArgs(args) && !r.fillWorkspaceRepository(ctx, args) {
 		return raw
+	}
+	b, err := json.Marshal(args)
+	if err != nil {
+		return raw
+	}
+	p["arguments"] = b
+	params, _ := json.Marshal(p)
+	out, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "method": m.Method, "params": json.RawMessage(params)})
+	return out
+}
+
+// fillWorkspaceRepository puts the workspace's repository in a new request's args, and says
+// whether it did.
+func (r *Relay) fillWorkspaceRepository(ctx context.Context, args map[string]any) bool {
+	if id, _ := args["id"].(string); id != "" {
+		return false
 	}
 	if repo, _ := args["repository"].(string); repo != "" {
-		return raw
+		return false
 	}
 	if c, _ := args["candidates"].([]any); len(c) > 0 {
-		return raw
+		return false
 	}
 	roots, err := r.rootPaths(ctx)
 	if err != nil {
-		return raw
+		return false
 	}
 	repo := ""
 	for _, root := range roots {
@@ -52,7 +69,7 @@ func (r *Relay) withWorkspaceRepository(ctx context.Context, m message, raw []by
 		}
 	}
 	if repo == "" {
-		return raw
+		return false
 	}
 	args["repository"] = repo
 	line := "Repository: " + repo + " (from the workspace)"
@@ -63,14 +80,7 @@ func (r *Relay) withWorkspaceRepository(ctx context.Context, m message, raw []by
 	if len(line) <= maxHandoffContext {
 		args["context"] = line
 	}
-	b, err := json.Marshal(args)
-	if err != nil {
-		return raw
-	}
-	p["arguments"] = b
-	params, _ := json.Marshal(p)
-	out, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": m.ID, "method": m.Method, "params": json.RawMessage(params)})
-	return out
+	return true
 }
 
 // originRepository is owner/name of the origin remote of the git checkout at dir, read from its

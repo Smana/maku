@@ -54,6 +54,8 @@ type mcpBroker struct {
 	calls []toolCall
 	// card, when set, is room_summary's structuredContent.
 	card map[string]any
+	// handoffFn, when set, answers handoff with the result it returns for the call's arguments.
+	handoffFn func(args map[string]any) map[string]any
 	// tools, when set, is tools/list's tools: the broker's own set, which the relay rewrites for room
 	// references and extends with its local tools. nil serves the two-tool default.
 	tools []any
@@ -121,6 +123,8 @@ func newMCPBroker(t *testing.T) *mcpBroker {
 				return
 			}
 			switch {
+			case c.Name == "handoff" && b.handoffFn != nil:
+				res = b.handoffFn(c.Arguments)
 			case c.Name == "task" && b.card != nil:
 				res = map[string]any{"content": []any{map[string]any{"type": "text", "text": b.roomText}}, "structuredContent": b.card}
 			case c.Name == "rooms_list" && b.roomsFn != nil:

@@ -98,6 +98,9 @@ func withLocalTools(res json.RawMessage, advanced bool) (json.RawMessage, error)
 			tool["inputSchema"] = refSchema(tool["inputSchema"])
 			tool["description"] = fmt.Sprint(tool["description"]) + " " + key + " is " + refHint + "."
 		}
+		if name == mcpwire.Handoff && i < len(tools) {
+			guideHandoffEntry(tool)
+		}
 		byName[name] = tool
 	}
 	order := sixTools
