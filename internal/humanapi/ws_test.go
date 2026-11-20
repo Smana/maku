@@ -291,7 +291,7 @@ func (headerAuth) Authenticate(r *http.Request) (authn.Principal, error) {
 		client = c
 	}
 	return authn.Principal{Kind: kind, ID: "human:" + who, Sub: who, Groups: gs, ClientID: client,
-		Expiry: time.Now().Add(ttl)}, nil
+		Expiry: time.Now().Add(ttl), AccessToken: r.Header.Get("X-Test-Token")}, nil
 }
 
 type env struct {

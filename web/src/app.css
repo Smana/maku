@@ -700,6 +700,7 @@ pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24em; overflow
 .controls .advanced > summary { cursor: pointer; color: var(--muted-foreground); font-size: var(--text-small); }
 .members { margin: 0; padding-left: 18px; } .members li { overflow-wrap: anywhere; }
 .stop { margin: 0; }
+.task-cancel .hint { margin: 4px 0 0; color: var(--muted-foreground); font-size: var(--text-small); }
 .confirm { display: inline-flex; gap: 6px; }
 button.destructive { color: var(--destructive-text); border-color: color-mix(in srgb, var(--destructive) 45%, var(--border)); }
 input, select, textarea {

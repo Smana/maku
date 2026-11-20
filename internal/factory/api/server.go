@@ -214,6 +214,9 @@ func (s *Server) Handler() http.Handler {
 		mux.HandleFunc("POST /v1/tasks/{task}/retries", s.retryTask)
 		mux.HandleFunc("POST /v1/tasks/{task}/answers", s.answerTask)
 	}
+	// #644: a human's cancel or discard, mounted whenever the API is. /stops above is the Slack
+	// App's alone, on behalf of a linked Slack user: a 404 until api.sponsored declares one.
+	mux.HandleFunc(CancelRoute, s.cancelTask)
 	if s.anyVerifies(cfg) { // RA11, D4: a 404 until an internal principal may send verdicts
 		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
 	}

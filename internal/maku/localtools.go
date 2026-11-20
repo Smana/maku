@@ -46,6 +46,7 @@ func buildHandlers() map[string]localTool {
 		mcpwire.Start:    func(ctx context.Context, r *Relay, c localCall) any { return r.startTool(ctx, c.Args) },
 		mcpwire.Wait:     func(ctx context.Context, r *Relay, c localCall) any { return r.roomWait(ctx, c) },
 		mcpwire.Answer:   func(ctx context.Context, r *Relay, c localCall) any { return r.answerTool(ctx, c.Args) },
+		mcpwire.Cancel:   func(ctx context.Context, r *Relay, c localCall) any { return r.cancelTool(ctx, c.Args) },
 		toolRoomCheckout: func(ctx context.Context, r *Relay, c localCall) any { return r.roomCheckout(ctx, c) },
 		toolCoordinationCheckout: func(ctx context.Context, r *Relay, c localCall) any {
 			return r.coordinationCheckout(ctx, c)
@@ -61,13 +62,14 @@ var localEntries = []any{
 	startEntry,
 	waitEntry,
 	answerEntry,
+	cancelEntry,
 	roomCheckoutEntry,
 	coordinationCheckoutEntry,
 	coordinationOpenEntry,
 }
 
-// sixTools are the tools every client lists, in this order (UX1).
-var sixTools = []string{mcpwire.Handoff, mcpwire.Start, mcpwire.Inbox, mcpwire.Task, mcpwire.Wait, mcpwire.Answer}
+// sixTools are the tools every client lists, in this order (UX1), then cancel (#644).
+var sixTools = []string{mcpwire.Handoff, mcpwire.Start, mcpwire.Inbox, mcpwire.Task, mcpwire.Wait, mcpwire.Answer, mcpwire.Cancel}
 
 // advancedTools are the rare tools maku mcp --advanced lists after the six.
 var advancedTools = []string{"room_tail", "room_fork", toolRoomCheckout, toolCoordinationCheckout, toolCoordinationOpen,

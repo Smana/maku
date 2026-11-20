@@ -242,6 +242,32 @@ func TestMakuPostAndFork(t *testing.T) {
 	}
 }
 
+// #644: maku cancel sends the room page's cancel act, with --discard its discard.
+func TestMakuCancel(t *testing.T) {
+	b := newMakuBroker(t)
+	r, out := configured(t, b)
+	for _, args := range [][]string{{"cancel", "3kq7x2ma"}, {"cancel", "3kq7x2ma", "--discard"}} {
+		if err := r.Run(t.Context(), args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	b.mu.Lock()
+	for i, w := range []string{`{"kind":"cancel"}`, `{"discard":true,"kind":"cancel"}`} {
+		if got, _ := json.Marshal(b.acts[i]); string(got) != w {
+			t.Errorf("act %d: %s, want %s", i, got, w)
+		}
+	}
+	b.mu.Unlock()
+	if !strings.Contains(out.String(), "cannot delete an issue") {
+		t.Errorf("a discard says the issue is closed, not deleted:\n%s", out)
+	}
+	for _, bad := range [][]string{{"cancel"}, {"cancel", "a", "b"}, {"cancel", "3kq7x2ma", "--yes"}} {
+		if err := r.Run(t.Context(), bad); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
 // Ruling P18: maku has no command that steers, interrupts, moves the driver
 // token or decides, and what it sends is a chat, a queued message or a fork.
 func TestMakuNeverSteersOrDecides(t *testing.T) {

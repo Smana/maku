@@ -235,7 +235,7 @@ func (r *Relay) handle(ctx context.Context, m message, raw []byte, pre *localEnt
 			return
 		}
 		name := callName(m.Params)
-		if name == "handoff_check" || name == "task_note" {
+		if name == "handoff_check" || name == "task_note" || name == toolTaskCancel { // the relay's own, after their forms
 			r.write(mcpwire.Response(m.ID, nil, &mcpwire.Error{Code: mcpwire.InvalidParams, Message: "unknown tool: " + name}))
 			return
 		}

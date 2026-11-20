@@ -578,6 +578,42 @@ func (g *GitHub) CloseIssue(ctx context.Context, number int) error {
 	return wrap("close an issue", err)
 }
 
+// CloseIssueNotPlanned closes an issue as not planned (#644: a discarded task). A GitHub App
+// cannot delete an issue, so a discard closes it instead. An issue gone is a *PermanentError.
+func (g *GitHub) CloseIssueNotPlanned(ctx context.Context, number int) error {
+	_, _, err := g.rest.Issues.Update(ctx, g.owner, g.name, number,
+		github.UpdateIssueRequest{State: new("closed"), StateReason: new("not_planned")})
+	g.mark(err)
+	return permanent("close an issue as not planned", err)
+}
+
+// IssueGone reports whether GitHub answers 404 or 410 for issue number: it was deleted, or the
+// App can no longer see it (#644). Any other failure is an error, never an answer.
+func (g *GitHub) IssueGone(ctx context.Context, number int) (bool, error) {
+	_, resp, err := g.rest.Issues.Get(ctx, g.owner, g.name, number)
+	if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusGone) {
+		g.mark(nil)
+		return true, nil
+	}
+	g.mark(err)
+	if err != nil {
+		return false, wrap("read an issue", err)
+	}
+	return false, nil
+}
+
+// DeleteBranch deletes branch (#644: a discarded task's agent/<task>). A branch already gone,
+// which GitHub answers 422 "Reference does not exist" or 404, is no error.
+func (g *GitHub) DeleteBranch(ctx context.Context, branch string) error {
+	resp, err := g.rest.Git.DeleteRef(ctx, g.owner, g.name, "heads/"+branch)
+	if resp != nil && (resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusUnprocessableEntity) {
+		g.mark(nil)
+		return nil
+	}
+	g.mark(err)
+	return wrap("delete a branch", err)
+}
+
 // EditIssueBody sets an issue's body, and nothing else (SI24: a Slack answer writes a decision
 // record to ## Decisions).
 func (g *GitHub) EditIssueBody(ctx context.Context, number int, body string) error {

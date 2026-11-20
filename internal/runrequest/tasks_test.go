@@ -89,3 +89,24 @@ func TestCreateTaskValidatesItsAnswer(t *testing.T) {
 		}
 	}
 }
+
+// #644: a cancel posts {discard} to /cancellations with the caller's own token.
+func TestCancelTask(t *testing.T) {
+	var path, auth, raw string
+	answer := `{"result":"discarded"}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, auth = r.URL.Path, r.Header.Get("Authorization")
+		b, _ := io.ReadAll(r.Body)
+		raw = string(b)
+		_, _ = w.Write([]byte(answer))
+	}))
+	defer srv.Close()
+	f := Factory{URL: srv.URL}
+	res, err := f.CancelTask(t.Context(), "abcd2345", true, "tok")
+	if err != nil || res != "discarded" || path != "/v1/tasks/abcd2345/cancellations" || auth != "Bearer tok" || raw != `{"discard":true}` {
+		t.Fatal(res, err, path, auth, raw)
+	}
+	if _, err := f.CancelTask(t.Context(), "abcd2345", false, ""); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("no token: %v", err)
+	}
+}

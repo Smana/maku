@@ -249,8 +249,9 @@ type Reconciler struct {
 	// a writer run's brief gets a canary and the task records its input trust. nil is off.
 	Hardening *HardeningPorts
 
-	oldBroker sync.Once // the broker serves no task route: said once per process
-	notServed onceSet   // tasks whose repository is not served, said once each
+	oldBroker sync.Once  // the broker serves no task route: said once per process
+	notServed onceSet    // tasks whose repository is not served, said once each
+	probes    probeClock // when each task's issue was last probed for a deletion (#644)
 	ledger    mergeLedger
 	mon       monitorCache
 }
@@ -694,7 +695,8 @@ func (r *Reconciler) onRepo(cfg *config.Config, t *v1alpha1.Task, rc *config.Rep
 }
 
 func stopReasons() map[string]string {
-	return map[string]string{"true": "stopped_by_annotation", "label": "stopped_by_label", "slack": "stopped_by_slack", "superseded": "superseded", StopFamilyDropped: "family_dropped"}
+	return map[string]string{"true": "stopped_by_annotation", "label": "stopped_by_label", "slack": "stopped_by_slack", "superseded": "superseded", StopFamilyDropped: "family_dropped",
+		"cancel": StopCancelled, "discard": StopDiscarded}
 }
 
 func (r *Reconciler) stopRequested(ctx context.Context, t *v1alpha1.Task) (bool, string, error) {
@@ -710,6 +712,9 @@ func (r *Reconciler) stopRequested(ctx context.Context, t *v1alpha1.Task) (bool,
 			return true, why, nil
 		}
 		return true, "stopped_by_annotation", nil
+	}
+	if r.issueDeleted(ctx, t) { // #644: nowhere left to narrate, and nobody left to label it
+		return true, StopIssueDeleted, nil
 	}
 	return false, "", nil
 }
@@ -752,7 +757,13 @@ func (r *Reconciler) stop(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 			return err
 		}
 	}
-	if why != "kill_switch" {
+	if why == StopDiscarded { // after the deletes: no run is left to push to the branch
+		if err := r.discard(ctx, t); err != nil {
+			return err
+		}
+	}
+	r.probes.forget(t.Name)
+	if why != "kill_switch" && why != StopIssueDeleted {
 		r.intervention(ctx, cfg, t, "stop")
 	}
 	exit := ""

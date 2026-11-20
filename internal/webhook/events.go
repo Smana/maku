@@ -56,7 +56,8 @@ func Reasons() []string {
 	out := summary.Reasons()
 	out = append(out, "approval", "manual", "revoked", "deleted", "principal_unknown",
 		"budget-run", "budget-principal", "budget-fleet", "budget-person",
-		"foreign_room", "room_log_unreadable", "rooms_crd_outdated")
+		"foreign_room", "room_log_unreadable", "rooms_crd_outdated",
+		"cancelled", "discarded", "issue_deleted") // #644: a stop's end line says which
 	slices.Sort(out)
 	return slices.Compact(out)
 }

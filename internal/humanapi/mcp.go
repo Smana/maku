@@ -291,6 +291,8 @@ func (s *Server) mcpCall(w http.ResponseWriter, r *http.Request, req mcpwire.Req
 		t = mcpTool{name: "handoff_check", call: s.handoffCheckTool}
 	case c.Name == "task_note" && !p.Sponsored:
 		t = mcpTool{name: "task_note", call: s.roomQueue}
+	case c.Name == "task_cancel" && !p.Sponsored: // maku mcp's cancel, after its form (#644)
+		t = mcpTool{name: "task_cancel", call: s.taskCancel}
 	default:
 		mcpwire.Write(w, req.ID, nil, &mcpwire.Error{Code: mcpwire.InvalidParams, Message: "unknown tool: " + c.Name})
 		return

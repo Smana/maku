@@ -55,10 +55,11 @@ func (e ErrRefused) Error() string {
 var refusalCodes = []string{"kill_switch", "bad_json", "idempotency_key_required", "bad_data_class", "bad_ref",
 	"repository_not_allowed", "repository_not_owned", "meter_unpriced", "max_cost_required", "max_cost_over_principal",
 	"max_cost_over_class", "unauthenticated", "not_permitted", "not_linked", "link_unverified", "access_unverified", "not_a_maintainer", "sponsored_only", "invalid_draft", "bad_text", "tasks_unavailable",
-	"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "idempotency_conflict"}
+	"principal_task_cap", "daily_task_cap", "ledger_unavailable", "principal_budget_exhausted", "intake_failed", "idempotency_conflict",
+	"human_only"}
 
 var actResults = []string{
-	"stopped", "retried",
+	"stopped", "retried", "cancelled", "discarded",
 	"answered_restarted", "answered",
 	"not_linked", "not_maintainer", "not_allowed",
 	"not_running", "not_escalated", "no_question", "unknown_task",
@@ -79,17 +80,29 @@ func (f Factory) AnswerTask(ctx context.Context, task, onBehalfOf, text, accessT
 	return f.actTask(ctx, "answers", task, onBehalfOf, text, accessToken)
 }
 
+// CancelTask posts the caller's own cancel, or with discard their discard, to the factory's POST
+// /v1/tasks/{task}/cancellations with accessToken (#644).
+func (f Factory) CancelTask(ctx context.Context, task string, discard bool, accessToken string) (string, error) {
+	return f.postAct(ctx, "cancellations", task, struct {
+		Discard bool `json:"discard"`
+	}{discard}, accessToken)
+}
+
 func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, text, accessToken string) (string, error) {
+	return f.postAct(ctx, subpath, task, struct {
+		OnBehalfOf string `json:"onBehalfOf"`
+		Text       string `json:"text,omitempty"`
+	}{OnBehalfOf: onBehalfOf, Text: text}, accessToken)
+}
+
+func (f Factory) postAct(ctx context.Context, subpath, task string, in any, accessToken string) (string, error) {
 	if accessToken == "" {
 		return "", ErrForbidden
 	}
 	if !envelope.ValidID(task) {
 		return "", fmt.Errorf("runrequest: invalid task id")
 	}
-	body, err := json.Marshal(struct {
-		OnBehalfOf string `json:"onBehalfOf"`
-		Text       string `json:"text,omitempty"`
-	}{OnBehalfOf: onBehalfOf, Text: text})
+	body, err := json.Marshal(in)
 	if err != nil {
 		return "", fmt.Errorf("runrequest: %w", err)
 	}

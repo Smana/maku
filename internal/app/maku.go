@@ -76,6 +76,10 @@ const makuUsage = `usage: maku <command>
                                   All or nothing; it asks (y/N) once before files that run code
   watch <room> [--tail N]         follow a room
   post <room> [--queue] <text>    chat, or queue it for the next run's brief
+  cancel <task> [--discard]       stop the task now: its runs end and its room reads Stopped — cancelled, even when its
+                                  issue was deleted; --discard also closes its pull request, deletes its agent/<task>
+                                  branch and closes its issue as not planned (a GitHub App cannot delete an issue).
+                                  The task's owner or a maintainer of its repository only
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
   install --print --out DIR [--answers FILE] [--force] [--no-wait]
                                   ask the install's questions (or read them from FILE) and write the values,
@@ -252,7 +256,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -344,6 +348,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return c.Watch(ctx, pos[0], *tail, r.Out)
 	case "post":
 		return r.post(ctx, c, args)
+	case "cancel":
+		return r.cancel(ctx, c, args)
 	case "run":
 		return r.quickstartRun(ctx, cfg, c, args)
 	}
@@ -938,6 +944,37 @@ func (r Maku) post(ctx context.Context, c maku.Client, args []string) error {
 		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
 	}
 	_, err = fmt.Fprintln(r.Out, "seq", f.Seq)
+	return err
+}
+
+// cancel stops the task the room is (#644), or with --discard discards it: the room page's Cancel and
+// Discard. The factory decides who may: the task's owner or a maintainer, with write on its repository.
+func (r Maku) cancel(ctx context.Context, c maku.Client, args []string) error {
+	fs := flag.NewFlagSet("cancel", flag.ContinueOnError)
+	discard := fs.Bool("discard", false, "also close the pull request, delete the agent/<task> branch and close the issue as not planned")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) != 1 {
+		return fmt.Errorf("cancel <task> [--discard]: %w", errors.Join(err, errors.New("one task")))
+	}
+	ctx, cancel := context.WithTimeout(ctx, actTimeout)
+	defer cancel()
+	action := map[string]any{"kind": "cancel"}
+	if *discard {
+		action["discard"] = true
+	}
+	f, err := c.Act(ctx, pos[0], action)
+	if err != nil {
+		return err
+	}
+	if f.Rejected != "" {
+		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
+	}
+	out := pos[0] + ": cancelled; its runs stop and its room ends\n"
+	if *discard {
+		out = pos[0] + ": discarded; its runs stop, its pull request closes, its agent/" + pos[0] + " branch is deleted and its issue " +
+			"closed as not planned (a GitHub App cannot delete an issue: a repository admin can)\n"
+	}
+	_, err = io.WriteString(r.Out, maku.SafeText(out))
 	return err
 }
 

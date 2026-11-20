@@ -456,6 +456,34 @@ describe("the control groups", () => {
     expect(c.root.querySelector<HTMLElement>(".group-room")!.hidden).toBe(true);
   });
 
+  it("cancels or discards a running task after a confirmation, owners only, and not once it ended (#644)", () => {
+    const o = setup(you("human:o", "owner"));
+    expect(o.btn("cancel_task")).toBeNull(); // no summary yet: no task to cancel
+    o.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
+    o.btn("cancel_task")!.click();
+    expect(o.sent).toHaveLength(0); // the first click asks
+    expect(o.btn("cancel_task")!.textContent).toBe("confirm: cancel task");
+    o.btn("cancel_task")!.click();
+    o.btn("discard_task")!.click();
+    o.btn("discard_task")!.click();
+    expect(o.acts()).toEqual([{ kind: "cancel" }, { kind: "cancel", discard: true }]);
+    expect(o.root.querySelector(".task-cancel")!.textContent).toContain("cannot delete an issue");
+    o.controls.setSummary({ status: { phase: "Stopped", issue: null } } as never);
+    expect(o.btn("cancel_task")).toBeNull();
+    expect(o.btn("discard_task")).toBeNull();
+    for (const role of ["collaborator", "watcher"]) {
+      const c = setup(you("human:c", role));
+      c.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
+      expect(c.btn("cancel_task")).toBeNull();
+    }
+    const sealed = setup(you("human:o", "owner"));
+    sealed.state.sealed = true;
+    sealed.controls.setSummary({ status: { phase: "Implementing", issue: null } } as never);
+    sealed.controls.refresh();
+    expect(sealed.btn("cancel_task")).toBeNull();
+    expect(rejection("not_maintainer")).toContain("owner or a maintainer");
+  });
+
   it("says how to stop the task, with the issue's link, once the summary names one", () => {
     const o = mountOwner();
     expect(o.root.querySelector(".stop")).toBeNull();
