@@ -1,0 +1,225 @@
+<!doctype html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Maku: live demo</title>
+  <meta name="description" content="A real coding-agent run, end to end: one sentence handed off from OpenCode, an issue planned and filed, an implementer and a reviewer at work, a maintainer's approval and a merge. Then a recorded run to drive yourself.">
+  <link rel="icon" type="image/svg+xml" href="assets/favicon/favicon.svg">
+  <link rel="icon" type="image/png" sizes="32x32" href="assets/favicon/favicon-32.png">
+  <link rel="icon" type="image/png" sizes="16x16" href="assets/favicon/favicon-16.png">
+  <link rel="apple-touch-icon" href="assets/favicon/apple-touch-icon.png">
+  <link rel="preload" href="assets/fonts/SpaceGrotesk-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/Inter-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="assets/fonts/JetBrainsMono-Variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="app.css">
+  <style>
+    /* The landing is always Night: a control room around the screencast. */
+    :root {
+      --ink: #eef0fa; --ink-2: #a9b1d6; --ink-3: #6f78a8;
+      --deep: #070b22; --panel: #10163a; --panel-2: #161c42; --line: #283063;
+      --blue: #5aa9f0; --violet: #a78bfa; --pink: #ff6fb5; --green: #3ddc97; --amber: #ffb547;
+    }
+    html, body { background: var(--deep); color: var(--ink); }
+    body { font-family: var(--font-sans); overflow-x: clip; }
+    [hidden] { display: none !important; }
+    a { color: inherit; }
+
+    .sky { position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background:
+        radial-gradient(60rem 30rem at 85% -10%, rgb(167 139 250 / .22), transparent 60%),
+        radial-gradient(50rem 28rem at -10% 10%, rgb(255 111 181 / .14), transparent 60%),
+        radial-gradient(40rem 30rem at 50% 110%, rgb(90 169 240 / .12), transparent 60%),
+        var(--deep); }
+    .sky::after { content: ""; position: absolute; inset: 0; opacity: .35;
+      background-image: radial-gradient(rgb(169 177 214 / .18) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(to bottom, black, transparent 70%); }
+
+    .wrap { width: min(1240px, 100% - 32px); margin-inline: auto; }
+
+    header.top { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-block: 20px; }
+    .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; font: 700 22px/1 var(--font-display); letter-spacing: -.01em; }
+    .brand img { width: 32px; height: 32px; }
+    nav.links { display: flex; gap: 6px; flex-wrap: wrap; }
+    nav.links a { text-decoration: none; color: var(--ink-2); font-size: 14px; padding: 8px 12px; border-radius: 999px; border: 1px solid transparent; transition: color .15s, border-color .15s, background .15s; }
+    nav.links a:hover { color: var(--ink); border-color: var(--line); background: rgb(255 255 255 / .03); }
+
+    .hero { padding-block: 20px 24px; display: grid; gap: 14px; }
+    .eyebrow { font: 600 12px/1 var(--font-mono); letter-spacing: .16em; text-transform: uppercase; color: var(--green); display: inline-flex; align-items: center; gap: 10px; }
+    .eyebrow::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 4px rgb(61 220 151 / .18); }
+    .hero h1 { margin: 0; font: 700 clamp(32px, 4.2vw, 52px)/1.05 var(--font-display); letter-spacing: -.03em; max-width: 20ch; }
+    .hero h1 em { font-style: normal; background: linear-gradient(90deg, var(--pink), var(--violet)); -webkit-background-clip: text; background-clip: text; color: transparent; }
+    .hero p { margin: 0; color: var(--ink-2); font-size: 17px; line-height: 1.6; max-width: 70ch; }
+    .stats { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+    .stat { display: flex; align-items: baseline; gap: 8px; padding: 10px 14px; border: 1px solid var(--line); border-radius: 12px; background: rgb(16 22 58 / .6); backdrop-filter: blur(6px); }
+    .stat b { font: 700 22px/1 var(--font-display); font-variant-numeric: tabular-nums; }
+    .stat span { color: var(--ink-3); font-size: 13px; }
+
+    .stage { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 20px; align-items: start; padding-bottom: 72px; }
+    .window { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); background: #000;
+      box-shadow: 0 0 0 1px rgb(255 255 255 / .03), 0 30px 80px -20px rgb(0 0 0 / .7), 0 0 120px -40px rgb(167 139 250 / .45); }
+    .chrome { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: var(--panel-2); border-bottom: 1px solid var(--line); }
+    .dots { display: flex; gap: 6px; } .dots i { width: 11px; height: 11px; border-radius: 50%; background: #3a4478; }
+    .dots i:nth-child(1) { background: #ff6fb5; } .dots i:nth-child(2) { background: #ffb547; } .dots i:nth-child(3) { background: #3ddc97; }
+    .chrome .title { font: 500 13px/1 var(--font-mono); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .chrome .speed { margin-left: auto; font: 500 12px/1 var(--font-mono); color: var(--ink-3); white-space: nowrap; }
+    video { display: block; width: 100%; height: auto; aspect-ratio: 1600 / 996; background: #000; }
+    video::cue { font: 500 20px/1.35 var(--font-sans); color: #fff; background: rgb(7 11 34 / .86); }
+
+    /* The chapters, drawn as the room's run rail. */
+    .rail { position: relative; margin: 0; padding: 18px 16px 12px; list-style: none; border: 1px solid var(--line); border-radius: 14px; background: rgb(16 22 58 / .72); backdrop-filter: blur(8px); }
+    .rail h2 { margin: 0 0 10px 4px; font: 600 12px/1 var(--font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3); }
+    .rail ol { margin: 0; padding: 0; list-style: none; position: relative; }
+    .rail ol::before { content: ""; position: absolute; left: 15px; top: 14px; bottom: 14px; width: 2px; background: var(--line); }
+    .rail ol::after { content: ""; position: absolute; left: 15px; top: 14px; width: 2px; height: var(--fill, 0px); background: linear-gradient(var(--pink), var(--violet)); transition: height .3s ease; }
+    .rail button { all: unset; box-sizing: border-box; cursor: pointer; display: grid; grid-template-columns: 32px 1fr auto; align-items: center; gap: 10px; width: 100%; padding: 7px 6px; border-radius: 10px; position: relative; z-index: 1; }
+    .rail button:hover { background: rgb(255 255 255 / .04); }
+    .rail button:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+    .node { justify-self: center; width: 12px; height: 12px; border-radius: 50%; background: var(--deep); border: 2px solid var(--c, var(--blue)); transition: background .2s, box-shadow .2s, transform .2s; }
+    .rail .label { display: grid; gap: 2px; min-width: 0; }
+    .rail .label b { font: 600 14px/1.25 var(--font-sans); }
+    .rail .label small { color: var(--ink-3); font-size: 12.5px; line-height: 1.35; }
+    .rail time { font: 500 12px/1 var(--font-mono); color: var(--ink-3); font-variant-numeric: tabular-nums; }
+    .rail li.done .node { background: var(--c); }
+    .rail li.now .node { background: var(--c); transform: scale(1.25); box-shadow: 0 0 0 5px color-mix(in srgb, var(--c) 25%, transparent); }
+    .rail li.now .label b { color: var(--c); }
+    .rail li.now small { color: var(--ink-2); }
+    .who { font: 600 10.5px/1 var(--font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--c); }
+    .legend { display: flex; flex-wrap: wrap; gap: 12px; margin: 12px 4px 2px; padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-3); font-size: 12px; }
+    .legend span::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; background: var(--c); }
+    .k-you { --c: var(--pink); } .k-agent { --c: var(--blue); } .k-factory { --c: var(--amber); } .k-done { --c: var(--green); }
+
+    .replay { padding-block: 64px 80px; border-top: 1px solid var(--line); background: linear-gradient(rgb(16 22 58 / .5), transparent 40%); }
+    .replay .head { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 22px; }
+    .replay h2 { margin: 0 0 8px; font: 700 clamp(26px, 3.4vw, 40px)/1.1 var(--font-display); letter-spacing: -.02em; }
+    .replay p { margin: 0; color: var(--ink-2); max-width: 64ch; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-weight: 600; font-size: 15px; padding: 11px 16px; border-radius: 10px; background: var(--ink); color: var(--deep); transition: transform .15s, box-shadow .15s; }
+    .btn:hover { transform: translateY(-1px); box-shadow: 0 8px 24px -8px rgb(167 139 250 / .6); }
+    .frame { border-radius: 14px; overflow: hidden; border: 1px solid var(--line); box-shadow: 0 30px 80px -30px rgb(0 0 0 / .8); background: var(--panel); }
+    .frame iframe { display: block; width: 100%; height: clamp(560px, 82vh, 900px); border: 0; }
+
+    footer { padding-block: 28px 40px; color: var(--ink-3); font-size: 14px; display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px; border-top: 1px solid var(--line); }
+    footer a { color: var(--ink-2); }
+
+    @media (max-width: 980px) {
+      .stage { grid-template-columns: 1fr; }
+      .rail ol { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+      .rail ol::before, .rail ol::after { display: none; }
+    }
+    @media (max-width: 560px) {
+      .chrome .speed { display: none; }
+      .hero p { font-size: 16px; }
+      video::cue { font-size: 14px; }
+      .frame iframe { height: 78vh; }
+    }
+    @media (prefers-reduced-motion: no-preference) {
+      .rise { animation: rise .7s cubic-bezier(.2, .7, .2, 1) both; animation-delay: calc(var(--i, 0) * 90ms); }
+      @keyframes rise { from { opacity: 0; transform: translateY(14px); } }
+    }
+  </style>
+</head>
+<body>
+  <div class="sky" aria-hidden="true"></div>
+
+  <header class="top wrap">
+    <a class="brand" href="https://github.com/Smana/maku"><img src="assets/svg/maku-mark-dark.svg" alt="">maku</a>
+    <nav class="links" aria-label="Project">
+      <a href="https://github.com/Smana/maku">GitHub</a>
+      <a href="https://github.com/Smana/maku/blob/main/docs/quickstart.md">Quickstart</a>
+      <a href="https://github.com/Smana/maku/blob/main/docs/README.md">Docs</a>
+    </nav>
+  </header>
+
+  <main>
+    <section class="hero wrap" aria-labelledby="hero-title">
+      <span class="eyebrow rise">Live demo · a real run</span>
+      <h1 id="hero-title" class="rise" style="--i:1">One sentence in.<br><em>A reviewed, merged pull request</em> out.</h1>
+      <p class="rise" style="--i:2">A docs fix handed off from OpenCode on 20 November 2026, on a real cluster: the planner drafts the issue, an implementer and a reviewer work in their sandboxes, a maintainer approves, and the merger merges. Nothing was staged; the waiting is sped up.</p>
+      <div class="stats rise" style="--i:3" aria-label="The run in numbers">
+        <div class="stat"><b>12 min</b><span>sentence to merge</span></div>
+        <div class="stat"><b>2</b><span>agents</span></div>
+        <div class="stat"><b>1</b><span>human click</span></div>
+        <div class="stat"><b>$0.14</b><span>model spend</span></div>
+      </div>
+    </section>
+
+    <section class="stage wrap rise" style="--i:4" aria-label="The screencast">
+      <div class="window">
+        <div class="chrome" aria-hidden="true">
+          <span class="dots"><i></i><i></i><i></i></span>
+          <span class="title">issue #479 → PR #480 · Smana/ai-native-ref</span>
+          <span class="speed">2:06 · agents at 15×</span>
+        </div>
+        <video id="run" controls muted playsinline preload="metadata" poster="media/maku-run.jpg" width="1600" height="996">
+          <source src="media/maku-run.mp4" type="video/mp4">
+          <track kind="captions" src="media/maku-run.en.vtt" srclang="en" label="English" default>
+          <a href="media/maku-run.mp4">Download the screencast (MP4, 2 min)</a>
+        </video>
+      </div>
+
+      <nav class="rail" aria-labelledby="rail-title">
+        <h2 id="rail-title">The run, step by step</h2>
+        <ol id="chapters">
+          <li class="k-you"><button data-t="0"><span class="node"></span><span class="label"><span class="who">you</span><b>Hand it off</b><small>One line in OpenCode</small></span><time>0:00</time></button></li>
+          <li class="k-factory"><button data-t="10"><span class="node"></span><span class="label"><span class="who">planner</span><b>The issue, drafted</b><small>One form files it and starts it</small></span><time>0:10</time></button></li>
+          <li class="k-factory"><button data-t="24"><span class="node"></span><span class="label"><span class="who">factory</span><b>Filed as you</b><small>Issue #479, your gh, your name</small></span><time>0:24</time></button></li>
+          <li class="k-factory"><button data-t="38.4"><span class="node"></span><span class="label"><span class="who">room</span><b>Every step, live</b><small>The room opens on the run</small></span><time>0:38</time></button></li>
+          <li class="k-agent"><button data-t="45.7"><span class="node"></span><span class="label"><span class="who">implementer</span><b>Edit, check, PR</b><small>agent-checks 6/6, PR #480</small></span><time>0:45</time></button></li>
+          <li class="k-agent"><button data-t="60.4"><span class="node"></span><span class="label"><span class="who">reviewer</span><b>Fresh eyes</b><small>Reruns the checks, approves</small></span><time>1:00</time></button></li>
+          <li class="k-you"><button data-t="81.1"><span class="node"></span><span class="label"><span class="who">you</span><b>Needs you</b><small>The merge gate asks a maintainer</small></span><time>1:21</time></button></li>
+          <li class="k-you"><button data-t="89.1"><span class="node"></span><span class="label"><span class="who">you</span><b>Read, approve</b><small>A one-line diff on GitHub</small></span><time>1:29</time></button></li>
+          <li class="k-done"><button data-t="100.6"><span class="node"></span><span class="label"><span class="who">merger</span><b>Merged</b><small>The approved head, nothing else</small></span><time>1:40</time></button></li>
+          <li class="k-done"><button data-t="108.6"><span class="node"></span><span class="label"><span class="who">metrics</span><b>What it cost</b><small>2 runs, $0.14, 366k tokens</small></span><time>1:48</time></button></li>
+        </ol>
+        <div class="legend" aria-hidden="true"><span class="k-you">you</span><span class="k-factory">factory</span><span class="k-agent">agents</span><span class="k-done">done</span></div>
+      </nav>
+    </section>
+
+    <section class="replay" aria-labelledby="replay-title">
+      <div class="wrap">
+        <div class="head">
+          <div>
+            <h2 id="replay-title">Now drive one yourself</h2>
+            <p>Another recorded run, replayed in the room page the factory serves. Pause it, change the speed, read every step. Nothing here reaches a cluster.</p>
+          </div>
+          <a class="btn" href="replay.html">Open full screen <span aria-hidden="true">↗</span></a>
+        </div>
+        <div class="frame"><iframe src="replay.html" title="A recorded run replayed in its room" loading="lazy"></iframe></div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap">
+    <span>Maku runs coding agents on your own Kubernetes cluster without having to trust them.</span>
+    <span><a href="https://github.com/Smana/maku">GitHub</a> · <a href="https://github.com/Smana/maku/blob/main/docs/quickstart.md">Try it on a laptop</a></span>
+  </footer>
+
+  <script>
+    // The rail follows the video: past steps filled, the current one lit; a click seeks.
+    const video = document.getElementById("run");
+    const items = [...document.querySelectorAll("#chapters li")];
+    const starts = items.map((li) => Number(li.querySelector("button").dataset.t));
+    const list = document.getElementById("chapters");
+    items.forEach((li, i) => li.querySelector("button").addEventListener("click", () => {
+      video.currentTime = starts[i] + 0.05;
+      video.play().catch(() => {});
+    }));
+    function sync() {
+      const t = video.currentTime;
+      let now = -1;
+      starts.forEach((s, i) => { if (t >= s) now = i; });
+      items.forEach((li, i) => {
+        li.classList.toggle("done", i < now);
+        li.classList.toggle("now", i === now);
+        li.querySelector("button").toggleAttribute("aria-current", i === now);
+      });
+      const cur = items[Math.max(now, 0)];
+      list.style.setProperty("--fill", now < 0 ? "0px" : `${cur.offsetTop + cur.offsetHeight / 2 - 14}px`);
+    }
+    video.addEventListener("timeupdate", sync);
+    video.addEventListener("seeked", sync);
+    sync();
+  </script>
+</body>
+</html>

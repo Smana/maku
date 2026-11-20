@@ -51,6 +51,7 @@ describe("static assets", () => {
     { file: "preview/full.html", base: "/assets/", title: "Maku: room page preview (offline fixture)", css: "/src/app.css" },
     { file: "preview/list.html", base: "/assets/", title: "Maku: room list preview (offline fixture)", css: "/src/app.css" },
     { file: "preview/demo.html", base: "assets/", title: "Maku: live demo", css: "app.css" },
+    { file: "preview/landing.html", base: "assets/", title: "Maku: live demo", css: "app.css" },
   ];
 
   it("references local favicon and font paths in every HTML entry", () => {
@@ -73,7 +74,8 @@ describe("static assets", () => {
     expect(urls).toEqual(faces.map((f) => `/assets/${f}`));
     for (const { file } of entries) {
       const html = read(web, file).toString();
-      expect(html, file).not.toMatch(/(?:href|src)="(?:https?:)?\/\//);
+      // Only tags that fetch: a plain <a href> to another site is navigation, not a request.
+      expect(html, file).not.toMatch(/<(?:link|script|img|source|track|iframe|video)\b[^>]*\b(?:href|src)="(?:https?:)?\/\//);
       expect(html, file).not.toMatch(/fonts\.(?:googleapis|gstatic)/);
     }
   });
