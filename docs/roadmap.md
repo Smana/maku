@@ -13,6 +13,18 @@ Feature-level direction only. Shipped milestones are recorded per release on the
 | Natural-language intents in Slack rooms | Design, open ([#441](https://github.com/Smana/maku/pull/441)) |
 | A suggested workflow and a workflow override at intake | Design, open ([#443](https://github.com/Smana/maku/pull/443)) |
 
+## Agent Factory v5: proven in the field
+
+v4 lets anyone run the factory; v5 is one development team in a company using it on its own
+repositories ([the platform's v5 goals](https://airef.ogenki.io/docs/status/#v5)).
+
+| Feature | What it takes |
+|---|---|
+| A partner company's proof of concept | A development team runs Maku on its own repositories, in a real environment; it is also the "outside demand" trigger of the platform-agnostic decision below |
+| kagent and Agent Substrate, challenged again | Rerun [ADR-0062](https://airef.ogenki.io/docs/decisions/0062-agent-runtime-remains-agent-sandbox/)'s comparison against their current releases and its triggers; adopt, borrow from, or keep deferring each |
+| OpenCode as the harness | `maku-harness` runs OpenCode instead of OpenHands, once it matches OpenHands on the factory's tasks and checks ([evaluation](https://github.com/Smana/ai-native-ref/pull/404)) |
+| A spec format for issues | The spec an issue carries for spec-driven development: what the planner writes, what the scoper and the judge check against, what the reviewer verifies |
+
 ## Next
 
 | Feature | Trigger or dependency |
