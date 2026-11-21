@@ -15,6 +15,11 @@ Label a GitHub issue and Maku takes it from there: it picks a workflow and a bud
 
 **[Try the quickstart →](docs/quickstart.md)** · **[Read the concepts and glossary →](docs/concepts.md)** · **[Browse the documentation →](docs/README.md)** · **[Watch a run in the live demo →](https://blog.ogenki.io/maku/)**
 
+> [!TIP]
+> **🚀 Agent Factory v4 is out.** Maku runs its own agent pods and model gateway, so the factory no longer needs our cluster's Crossplane, Kueue or octo-sts, and you drive it in plain words from a coding agent or Slack. [Release notes](https://github.com/Smana/ai-native-ref/releases/tag/v4.0.0) · [Watch a real run](https://blog.ogenki.io/maku/)
+>
+> **🤝 Looking for a partner company.** I've spent a lot of time on this project (and quite a few tokens 😅). Next, I want to put it to the test in the field: I'm looking for a partner company ready to try it with its teams, on real use cases. Interested? Get in touch on [LinkedIn](https://www.linkedin.com/in/sma%C3%AFne-kahlouch-44374110/) or [Bluesky](https://bsky.app/profile/smana.dev).
+
 ## Architecture
 
 ```mermaid
