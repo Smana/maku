@@ -6,9 +6,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/Smana/maku/internal/authn"
@@ -98,6 +100,28 @@ func (s *Server) policyCaller(w http.ResponseWriter, r *http.Request) (authn.Pri
 	}
 	if p.Kind != envelope.ActorHuman || p.Sponsored || p.AccessToken == "" {
 		refuseJSON(w, http.StatusForbidden, "human_only")
+		return p, false
+	}
+	return p, true
+}
+
+// policyWriter is the web UI's signed-in human, posting JSON from this broker's origin (P18: a
+// maku or MCP bearer can set any Origin, so only the UI's session mutates promotions or exceptions).
+func (s *Server) policyWriter(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return p, false
+	}
+	if s.WebClient == nil || p.ClientID == "" || p.ClientID != s.WebClient() {
+		refuseJSON(w, http.StatusForbidden, "web_only")
+		return p, false
+	}
+	if want, o := origin(s.PublicURL), r.Header.Get("Origin"); want == "" || o == "" || origin(o) != want {
+		refuseJSON(w, http.StatusForbidden, "cross_origin")
+		return p, false
+	}
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		refuseJSON(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
 		return p, false
 	}
 	return p, true
@@ -243,7 +267,7 @@ type promotionSnapshot struct {
 // hold: the minimum (or an approved exception's), no bad mature outcome, a passed drill. The
 // answer is the recorded request and the one-line proposal; Maku opens no pull request.
 func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.policyCaller(w, r)
+	p, ok := s.policyWriter(w, r)
 	if !ok {
 		return
 	}
@@ -314,7 +338,7 @@ func (s *Server) requestPromotion(w http.ResponseWriter, r *http.Request) {
 // movePromotion is POST /api/policy/promotions/{id} {state, pullRequest?}: a maintainer names the
 // pull request they opened, or ends the request merged or abandoned.
 func (s *Server) movePromotion(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.policyCaller(w, r)
+	p, ok := s.policyWriter(w, r)
 	if !ok {
 		return
 	}
@@ -348,7 +372,7 @@ func (s *Server) movePromotion(w http.ResponseWriter, r *http.Request) {
 // requestException is POST /api/policy/exceptions {repository, class, minimum, justification}: a
 // maintainer asks for a class to be promoted on fewer clean decisions than the minimum (MP7).
 func (s *Server) requestException(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.policyCaller(w, r)
+	p, ok := s.policyWriter(w, r)
 	if !ok {
 		return
 	}
@@ -395,7 +419,7 @@ func (s *Server) requestException(w http.ResponseWriter, r *http.Request) {
 // decideException is POST /api/policy/exceptions/{id} {decision, note}: an operator approves (for
 // ExceptionLifetime) or refuses a requested exception, once.
 func (s *Server) decideException(w http.ResponseWriter, r *http.Request) {
-	p, ok := s.policyCaller(w, r)
+	p, ok := s.policyWriter(w, r)
 	if !ok {
 		return
 	}
@@ -421,6 +445,9 @@ func (s *Server) decideException(w http.ResponseWriter, r *http.Request) {
 		return
 	case !who.Operator:
 		refuseJSON(w, http.StatusForbidden, "not_an_operator")
+		return
+	case in.Decision == store.ExceptionApproved && strings.EqualFold(cur.RequestedBy, who.Login):
+		refuseJSON(w, http.StatusForbidden, "self_approval")
 		return
 	}
 	out, err := s.Policy.Records.DecideException(r.Context(), cur.ID, in.Decision, who.Login, in.Note, s.now().Add(ExceptionLifetime))

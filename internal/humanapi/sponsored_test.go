@@ -412,3 +412,57 @@ func TestSponsoredPrincipalRefusals(t *testing.T) {
 		t.Fatalf("the control: %d", code)
 	}
 }
+
+// SEC-H8: roomRows caches admission per room (not per repository) for sponsored principals, so
+// membership in one room on Smana/a neither leaks another room on Smana/a nor hides a later room.
+func TestSponsoredRoomRowsCachesPerRoomNotPerRepo(t *testing.T) {
+	t.Run("member room first does not leak sibling on same repo", func(t *testing.T) {
+		mine := repoRoom("aaaaaaaa", "Smana/a")
+		mine.Spec.Members = []v1alpha1.Member{{Principal: sponsoredP.ID, Role: "watcher"}}
+		other := repoRoom("bbbbbbbb", "Smana/a")
+		e := setup(t, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.Rooms = roomClient(t, mine, other)
+		})
+		rows, _, err := e.srv.roomRows(t.Context(), sponsoredP, &roomFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].ID != "aaaaaaaa" {
+			t.Fatalf("got %+v, want only aaaaaaaa", rows)
+		}
+	})
+	t.Run("non-member room first does not hide member room on same repo", func(t *testing.T) {
+		other := repoRoom("aaaaaaaa", "Smana/a")
+		mine := repoRoom("bbbbbbbb", "Smana/a")
+		mine.Spec.Members = []v1alpha1.Member{{Principal: sponsoredP.ID, Role: "watcher"}}
+		e := setup(t, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.Rooms = roomClient(t, other, mine)
+		})
+		rows, _, err := e.srv.roomRows(t.Context(), sponsoredP, &roomFilter{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(rows) != 1 || rows[0].ID != "bbbbbbbb" {
+			t.Fatalf("got %+v, want only bbbbbbbb", rows)
+		}
+	})
+}
+
+// SEC-H8: a sponsored member entry with an unknown or empty role does not satisfy gate or read.
+func TestSponsoredGateRequiresWatcherRole(t *testing.T) {
+	for name, role := range map[string]string{"empty": "", "unknown": "guest"} {
+		t.Run(name, func(t *testing.T) {
+			rm := repoRoom(roomID, "Smana/a")
+			rm.Spec.Members = []v1alpha1.Member{{Principal: sponsoredP.ID, Role: role}}
+			e := setup(t, mcpOn, withSponsored(sponsoredP), func(s *Server, _ *fanout.Hub, _ *hubView) {
+				s.Rooms = roomClient(t, rm)
+			})
+			if v, err := e.srv.gate(t.Context(), rm, sponsoredP); err != nil || v != denied {
+				t.Fatalf("gate(%q) = %v, %v; want denied", role, v, err)
+			}
+			if got := call(t, e, bearer("slack-app"), "task", map[string]any{"task": roomID}); !got.isError || !strings.Contains(got.text, noSuchRoom) {
+				t.Fatalf("task admitted role %q: %+v", role, got)
+			}
+		})
+	}
+}

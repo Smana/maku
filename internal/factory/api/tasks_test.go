@@ -88,6 +88,11 @@ func sponsoredCfg() *config.Config {
 			OnBehalfOf: config.OnBehalfOf{Slack: map[string]string{"T01ABC/U02DEF": "smana"}}}}}}
 }
 
+// taskWriters admits Smana on Smana/cloud-native-ref for task creation tests.
+func taskWriters(_ context.Context, repo, login string) (bool, error) {
+	return strings.EqualFold(repo, "Smana/cloud-native-ref") && strings.EqualFold(login, "smana"), nil
+}
+
 // newTaskServer is the intake as p's bearer "t" sees it, the principal's day seeded with spent
 // micro-USD, and its issues filed by one fakeFiler.
 func newTaskServer(t *testing.T, p authn.Principal, spent int64, objs ...client.Object) (*Server, *fakeFiler) {
@@ -95,7 +100,7 @@ func newTaskServer(t *testing.T, p authn.Principal, spent int64, objs ...client.
 	objs = append(objs, ledgerCM(now.UTC().Format(ledger.DayLayout), map[string]int64{"system:slack-app": spent}))
 	c := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(objs...).Build()
 	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
-	s.Auth, s.Cfg, s.Redact = byToken{"t": p}, sponsoredCfg(), testRedactor(t)
+	s.Auth, s.Cfg, s.Redact, s.Writers = byToken{"t": p}, sponsoredCfg(), testRedactor(t), taskWriters
 	f := &fakeFiler{}
 	s.Forges = func(string) IssueFiler { return f }
 	return s, f
@@ -438,7 +443,7 @@ func TestCreateTaskPatchRetries(t *testing.T) {
 		}}).Build()
 	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
 	f := &fakeFiler{}
-	s.Auth, s.Cfg, s.Redact = byToken{"t": slack}, sponsoredCfg(), testRedactor(t)
+	s.Auth, s.Cfg, s.Redact, s.Writers = byToken{"t": slack}, sponsoredCfg(), testRedactor(t), taskWriters
 	s.Forges = func(string) IssueFiler { return f }
 	if rec := postTask(s, draft, "k"); rec.Code != 201 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -485,7 +490,7 @@ func TestCreateTaskRaceConflict(t *testing.T) {
 		}}).Build()
 	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
 	f := &fakeFiler{}
-	s.Auth, s.Cfg, s.Redact = byToken{"t": slack}, sponsoredCfg(), testRedactor(t)
+	s.Auth, s.Cfg, s.Redact, s.Writers = byToken{"t": slack}, sponsoredCfg(), testRedactor(t), taskWriters
 	s.Forges = func(string) IssueFiler { return f }
 	if rec := postTask(s, draft, "k"); rec.Code != 409 || !strings.Contains(rec.Body.String(), "idempotency_conflict") || len(f.got) != 0 {
 		t.Fatalf("%d %s", rec.Code, rec.Body)
@@ -501,9 +506,127 @@ func TestCreateTaskOrphanIsLogged(t *testing.T) {
 	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
 	var logs strings.Builder
 	s.Log = slog.New(slog.NewTextHandler(&logs, nil))
-	s.Auth, s.Cfg, s.Redact = byToken{"t": slack}, sponsoredCfg(), testRedactor(t)
+	s.Auth, s.Cfg, s.Redact, s.Writers = byToken{"t": slack}, sponsoredCfg(), testRedactor(t), taskWriters
 	s.Forges = func(string) IssueFiler { return &fakeFiler{} }
 	if rec := postTask(s, draft, "k"); rec.Code != 503 || !strings.Contains(logs.String(), "issue=42") {
 		t.Fatalf("%d %s\n%s", rec.Code, rec.Body, logs.String())
 	}
+}
+
+type loginWriteAccess struct {
+	writers
+	canLogin func(ctx context.Context, repository, login string) (bool, error)
+}
+
+func (a loginWriteAccess) CanWriteLogin(ctx context.Context, repository, login string) (bool, error) {
+	return a.canLogin(ctx, repository, login)
+}
+
+// SEC-H12: sponsorOf checks live GitHub write permission for the resolved sponsor and fails closed
+// when write access is revoked, unverified, or unwired.
+func TestCreateTaskChecksSponsorLiveWriteAccess(t *testing.T) {
+	t.Run("revoked sponsor refused", func(t *testing.T) {
+		s, f := newTaskServer(t, slack, 0)
+		s.Writers = func(context.Context, string, string) (bool, error) { return false, nil }
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"repository_permission"`) ||
+			len(f.got) != 0 || len(tasks(t, s)) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("write check error fails closed with 503", func(t *testing.T) {
+		s, f := newTaskServer(t, slack, 0)
+		s.Writers = func(context.Context, string, string) (bool, error) { return false, errors.New("github down") }
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"access_unverified"`) ||
+			len(f.got) != 0 || len(tasks(t, s)) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("no live write checker fails closed", func(t *testing.T) {
+		s, f := newTaskServer(t, slack, 0)
+		s.Writers = nil
+		s.Access = nil
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"repository_permission"`) ||
+			len(f.got) != 0 || len(tasks(t, s)) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("Access.CanWriteLogin used when Writers is nil", func(t *testing.T) {
+		s, _ := newTaskServer(t, slack, 0)
+		s.Writers = nil
+		s.Access = loginWriteAccess{canLogin: func(_ context.Context, repo, login string) (bool, error) {
+			return repo == "Smana/cloud-native-ref" && strings.EqualFold(login, "smana"), nil
+		}}
+		if rec := postTask(s, draft, "k"); rec.Code != http.StatusCreated {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+}
+
+// REL-H3: AlreadyExists followed by a cache miss (!found) on Rooms.Get must not panic: it reads
+// through APIReader when set, or returns a retryable 503 intake_failed when unreadable.
+func TestCreateTaskAlreadyExistsCacheLag(t *testing.T) {
+	name := taskid.Name("api:slack-app:k")
+	lagClient := func() client.Client {
+		return fake.NewClientBuilder().WithScheme(scheme()).
+			WithObjects(ledgerCM(now.UTC().Format(ledger.DayLayout), nil)).
+			WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, cl client.WithWatch, k client.ObjectKey, o client.Object, opts ...client.GetOption) error {
+					if _, ok := o.(*factoryv1.Task); ok {
+						return apierrors.NewNotFound(schema.GroupResource{Group: "factory", Resource: "tasks"}, k.Name)
+					}
+					return cl.Get(ctx, k, o, opts...)
+				},
+				Create: func(ctx context.Context, cl client.WithWatch, o client.Object, opts ...client.CreateOption) error {
+					if _, ok := o.(*factoryv1.Task); ok {
+						return apierrors.NewAlreadyExists(schema.GroupResource{Group: "factory", Resource: "tasks"}, o.GetName())
+					}
+					return cl.Create(ctx, o, opts...)
+				},
+			}).Build()
+	}
+	t.Run("cache miss without APIReader returns 503 without panicking", func(t *testing.T) {
+		s := mkServer(t, &store{}, lagClient(), false, false, "7f3cq2xz", 5_000_000)
+		f := &fakeFiler{}
+		s.Auth, s.Cfg, s.Redact = byToken{"t": slack}, sponsoredCfg(), testRedactor(t)
+		s.Writers = func(context.Context, string, string) (bool, error) { return true, nil }
+		s.Forges = func(string) IssueFiler { return f }
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), `"intake_failed"`) || len(f.got) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("cache miss resolved via APIReader returns 200 duplicate", func(t *testing.T) {
+		existing := openTask(name)
+		existing.Spec.Source.Key = "api:slack-app:k"
+		existing.Spec.Issue = 77
+		uncached := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(existing).Build()
+		s := mkServer(t, &store{}, lagClient(), false, false, "7f3cq2xz", 5_000_000)
+		f := &fakeFiler{}
+		s.APIReader = uncached
+		s.Auth, s.Cfg, s.Redact = byToken{"t": slack}, sponsoredCfg(), testRedactor(t)
+		s.Writers = func(context.Context, string, string) (bool, error) { return true, nil }
+		s.Forges = func(string) IssueFiler { return f }
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"duplicate":true`) ||
+			!strings.Contains(rec.Body.String(), `"issue":77`) || len(f.got) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
+	t.Run("cache miss resolved via APIReader detects replay conflict", func(t *testing.T) {
+		squat := openTask(name)
+		squat.Spec.Source.Key = "api:slack-app:elsewhere"
+		uncached := fake.NewClientBuilder().WithScheme(scheme()).WithObjects(squat).Build()
+		s := mkServer(t, &store{}, lagClient(), false, false, "7f3cq2xz", 5_000_000)
+		f := &fakeFiler{}
+		s.APIReader = uncached
+		s.Auth, s.Cfg, s.Redact, s.Writers = byToken{"t": slack}, sponsoredCfg(), testRedactor(t), taskWriters
+		s.Forges = func(string) IssueFiler { return f }
+		rec := postTask(s, draft, "k")
+		if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"idempotency_conflict"`) || len(f.got) != 0 {
+			t.Fatalf("%d %s", rec.Code, rec.Body)
+		}
+	})
 }

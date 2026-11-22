@@ -81,7 +81,10 @@ type Server struct {
 	Runs   RunStore
 	// Rooms is the manager's client: it reads Rooms and Tasks (rights, R35), and R50's
 	// ledger reservation writes ConfigMaps, so a client.Reader would not do.
-	Rooms     client.Client
+	Rooms client.Client
+	// APIReader, when set, reads a Task uncached after an AlreadyExists race (mgr.GetAPIReader()),
+	// avoiding informer cache lag; nil falls back to Rooms.
+	APIReader client.Reader
 	Namespace string
 	Stopped   func(context.Context) bool // the stop object (§6.1); true on doubt
 	NewRunID  func() string

@@ -212,7 +212,7 @@ func policyOn(f *fakePolicyFactory, m *memRecords) option {
 		w := w0()
 		w.writes = map[string][]string{policyRepo: {"maint"}}
 		w.gate(s)
-		s.Humans, s.UI = tokenAuth{}, policyIndex
+		s.Humans, s.PublicURL, s.UI = tokenAuth{}, publicURL, policyIndex
 		n := 0
 		s.Policy = &Policy{Factory: f, Records: m, Operator: func(l string) bool { return l == "ops" },
 			NewID: func() string { n++; return strings.Repeat(string(rune('a'+n)), 8) }}
@@ -296,7 +296,7 @@ func TestPolicyRepositoryReadsForAReader(t *testing.T) {
 
 func promote(t *testing.T, e env, user string, body any) (int, string) {
 	t.Helper()
-	return sendJSON(t, e, http.MethodPost, "/api/policy/promotions", header(user), body)
+	return sendJSON(t, e, http.MethodPost, "/api/policy/promotions", web(user), body)
 }
 
 // MP7 server side: a maintainer's request is recorded on the evidence read again here; anyone
@@ -365,13 +365,13 @@ func TestPromotionRecordsTheEvidenceAndMoves(t *testing.T) {
 		t.Fatalf("%d %s", code, body)
 	}
 	path := "/api/policy/promotions/" + out.Promotion.ID
-	if code, _ := sendJSON(t, e, http.MethodPost, path, header("anyone"), map[string]any{"state": "pr_opened", "pullRequest": 12}); code != http.StatusForbidden {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, web("anyone"), map[string]any{"state": "pr_opened", "pullRequest": 12}); code != http.StatusForbidden {
 		t.Fatalf("a reader moved it: %d", code)
 	}
-	if code, _ := sendJSON(t, e, http.MethodPost, path, header("maint"), map[string]any{"state": "requested"}); code != http.StatusBadRequest {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, web("maint"), map[string]any{"state": "requested"}); code != http.StatusBadRequest {
 		t.Fatalf("back to requested: %d", code)
 	}
-	if code, body := sendJSON(t, e, http.MethodPost, path, header("maint"), map[string]any{"state": "pr_opened", "pullRequest": 12}); code != http.StatusOK ||
+	if code, body := sendJSON(t, e, http.MethodPost, path, web("maint"), map[string]any{"state": "pr_opened", "pullRequest": 12}); code != http.StatusOK ||
 		!strings.Contains(body, `"pullRequest":12`) {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -389,15 +389,15 @@ func TestExceptionIsAnOperatorsDecision(t *testing.T) {
 	f, m := newPolicy(12)
 	e := setup(t, policyOn(f, m))
 	ask := map[string]any{"repository": policyRepo, "class": "docs-links", "minimum": 10, "justification": "a narrow class: ten clean decisions bound it"}
-	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", header("maint"),
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", web("maint"),
 		map[string]any{"repository": policyRepo, "class": "docs-links", "minimum": 20, "justification": ask["justification"]}); code != http.StatusBadRequest ||
 		!strings.Contains(body, "minimum_not_below") {
 		t.Fatalf("%d %s", code, body)
 	}
-	if code, _ := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", header("anyone"), ask); code != http.StatusForbidden {
+	if code, _ := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", web("anyone"), ask); code != http.StatusForbidden {
 		t.Fatalf("a reader asked: %d", code)
 	}
-	code, body := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", header("maint"), ask)
+	code, body := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions", web("maint"), ask)
 	var exc store.Exception
 	if code != http.StatusCreated || json.Unmarshal([]byte(body), &exc) != nil || exc.RequestedBy != "maint" {
 		t.Fatalf("%d %s", code, body)
@@ -407,14 +407,14 @@ func TestExceptionIsAnOperatorsDecision(t *testing.T) {
 		t.Fatalf("a requested exception carried it: %d %s", code, body)
 	}
 	path := "/api/policy/exceptions/" + exc.ID
-	if code, _ := sendJSON(t, e, http.MethodPost, path, header("maint"), map[string]string{"decision": "approved"}); code != http.StatusForbidden {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, web("maint"), map[string]string{"decision": "approved"}); code != http.StatusForbidden {
 		t.Fatalf("a maintainer approved: %d", code)
 	}
-	if code, body := sendJSON(t, e, http.MethodPost, path, header("ops"), map[string]string{"decision": "approved", "note": "ok for the canary"}); code != http.StatusOK ||
+	if code, body := sendJSON(t, e, http.MethodPost, path, web("ops"), map[string]string{"decision": "approved", "note": "ok for the canary"}); code != http.StatusOK ||
 		!strings.Contains(body, `"decidedBy":"ops"`) {
 		t.Fatalf("%d %s", code, body)
 	}
-	if code, _ := sendJSON(t, e, http.MethodPost, path, header("ops"), map[string]string{"decision": "refused"}); code != http.StatusConflict {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, web("ops"), map[string]string{"decision": "refused"}); code != http.StatusConflict {
 		t.Fatalf("decided twice: %d", code)
 	}
 	code, body = promote(t, e, "maint", map[string]string{"repository": policyRepo, "class": "docs-links", "exceptionId": exc.ID})
@@ -455,15 +455,17 @@ func TestPolicyHandlersByRole(t *testing.T) {
 		m["settings"] = 200 // the page loads; every call it makes is refused
 		return m
 	}
+	machine := web("bot")
+	machine.Set("X-Test-Kind", "system")
 	for role, want := range map[string]struct {
 		h     http.Header
 		codes map[string]int
 	}{
-		"reader":     {header("anyone"), ok(403)},
-		"maintainer": {header("maint"), maint},
-		"operator":   {header("ops"), ops},
-		"machine":    {header("bot", "X-Test-Kind", "system"), refused(403)},
-		"anonymous":  {http.Header{}, refused(401)},
+		"reader":     {web("anyone"), ok(403)},
+		"maintainer": {web("maint"), maint},
+		"operator":   {web("ops"), ops},
+		"machine":    {machine, refused(403)},
+		"anonymous":  {http.Header{"Origin": {publicURL}, "Content-Type": {"application/json"}}, refused(401)},
 	} {
 		for name, rt := range routes {
 			t.Run(role+" "+name, func(t *testing.T) {
@@ -557,5 +559,85 @@ func TestPoliciesForwardWithTheCallersToken(t *testing.T) {
 	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("maint"), map[string]any{"kind": "other"}); code != http.StatusBadRequest ||
 		!strings.Contains(body, "kind_unknown") {
 		t.Fatalf("an unknown kind: %d %s", code, body)
+	}
+}
+
+// SEC-H7 (P18): every mutating policy route requires the web UI's session, a matching Origin and
+// application/json Content-Type; a maku CLI bearer, missing/foreign Origin or wrong Content-Type
+// is refused without touching the store.
+func TestPolicyWritesRequireWebSessionOriginJSON(t *testing.T) {
+	type route struct {
+		path string
+		user string
+		body any
+	}
+	routes := map[string]route{
+		"request promotion": {"/api/policy/promotions", "maint", map[string]string{"repository": policyRepo, "class": "docs-links"}},
+		"move promotion":    {"/api/policy/promotions/pppppppp", "maint", map[string]any{"state": "pr_opened", "pullRequest": 12}},
+		"request exception": {"/api/policy/exceptions", "maint", map[string]any{"repository": policyRepo, "class": "docs-links", "minimum": 10, "justification": "a narrow class: ten clean decisions bound it"}},
+		"decide exception":  {"/api/policy/exceptions/xxxxxxxx", "ops", map[string]string{"decision": "approved"}},
+	}
+	for rname, rt := range routes {
+		maku := web(rt.user)
+		maku.Set("X-Test-Client", "maku")
+		noOrigin := web(rt.user)
+		noOrigin.Del("Origin")
+		foreign := web(rt.user)
+		foreign.Set("Origin", "https://evil.test")
+		wrongCT := web(rt.user)
+		wrongCT.Set("Content-Type", "text/plain")
+		noCT := web(rt.user)
+		noCT.Del("Content-Type")
+		charsetCT := web(rt.user)
+		charsetCT.Set("Content-Type", "application/json; charset=utf-8")
+
+		for cname, tc := range map[string]struct {
+			h      http.Header
+			code   int
+			reason string
+		}{
+			"cli token":       {maku, http.StatusForbidden, "web_only"},
+			"missing origin":  {noOrigin, http.StatusForbidden, "cross_origin"},
+			"foreign origin":  {foreign, http.StatusForbidden, "cross_origin"},
+			"wrong ctype":     {wrongCT, http.StatusUnsupportedMediaType, "unsupported_media_type"},
+			"missing ctype":   {noCT, http.StatusUnsupportedMediaType, "unsupported_media_type"},
+			"json with param": {charsetCT, http.StatusOK, ""},
+		} {
+			t.Run(rname+"/"+cname, func(t *testing.T) {
+				f, m := newPolicy(20)
+				m.promotions["pppppppp"] = store.Promotion{ID: "pppppppp", Repository: policyRepo, Class: "revert", State: store.PromotionRequested}
+				m.exceptions["xxxxxxxx"] = store.Exception{ID: "xxxxxxxx", Repository: policyRepo, Class: "docs-links", Minimum: 10, State: store.ExceptionRequested, RequestedBy: "maint"}
+				e := setup(t, policyOn(f, m))
+				code, body := sendJSON(t, e, http.MethodPost, rt.path, tc.h, rt.body)
+				if tc.reason == "" {
+					if code != http.StatusOK && code != http.StatusCreated {
+						t.Fatalf("%d %s, want 200 or 201", code, body)
+					}
+					return
+				}
+				if code != tc.code || !strings.Contains(body, `"`+tc.reason+`"`) {
+					t.Fatalf("%d %s, want %d %s", code, body, tc.code, tc.reason)
+				}
+			})
+		}
+	}
+}
+
+// SEC-H7: an operator who requested an exception cannot approve their own request (case-insensitive).
+func TestDecideExceptionRefusesSelfApproval(t *testing.T) {
+	f, m := newPolicy(12)
+	m.exceptions["selfexc1"] = store.Exception{ID: "selfexc1", Repository: policyRepo, Class: "docs-links", Minimum: 10, State: store.ExceptionRequested, RequestedBy: "Ops"}
+	e := setup(t, policyOn(f, m))
+	code, body := sendJSON(t, e, http.MethodPost, "/api/policy/exceptions/selfexc1", web("ops"), map[string]string{"decision": "approved"})
+	if code != http.StatusForbidden || !strings.Contains(body, `"self_approval"`) {
+		t.Fatalf("self-approval: %d %s, want 403 self_approval", code, body)
+	}
+	if m.exceptions["selfexc1"].State != store.ExceptionRequested {
+		t.Fatalf("exception mutated on self-approval: %+v", m.exceptions["selfexc1"])
+	}
+	// Refusing one's own request is still permitted.
+	code, body = sendJSON(t, e, http.MethodPost, "/api/policy/exceptions/selfexc1", web("ops"), map[string]string{"decision": "refused"})
+	if code != http.StatusOK || m.exceptions["selfexc1"].State != store.ExceptionRefused {
+		t.Fatalf("self-refusal: %d %s", code, body)
 	}
 }

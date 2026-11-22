@@ -479,8 +479,10 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 	if !s.Groups.IsAdmin(p) && (s.Access == nil || s.Identity == nil) {
 		access = accessUnverified
 	}
-	// The gate depends on the repository alone, and a failed check is not cached: once per
-	// repository, so rooms sharing an unreachable one cost one timeout, not one each.
+	// For a login the gate depends on the repository alone, and a failed check is not cached:
+	// once per repository, so rooms sharing an unreachable one cost one timeout, not one each. A
+	// sponsored principal is the exception (R13): its gate is its membership of *this* room, so
+	// two rooms on one repository answer differently and the room is the key.
 	readable := map[string]bool{}
 	out := []roomRow{}
 	var ins []summary.StatusIn   // each row's status line input, out's twin
@@ -488,7 +490,11 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 	for i := range rooms.Items {
 		room := &rooms.Items[i]
 		repo := room.Spec.Repository
-		ok, seen := readable[repo]
+		key := repo
+		if p.Sponsored {
+			key = room.Name
+		}
+		ok, seen := readable[key]
 		if !seen {
 			v, err := s.gate(actx, room, p)
 			switch {
@@ -501,7 +507,7 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 				}
 			}
 			ok = v == admitted
-			readable[repo] = ok
+			readable[key] = ok
 		}
 		if !ok {
 			continue
