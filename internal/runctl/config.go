@@ -176,6 +176,9 @@ type Gateway struct {
 	// run's data class's listener, the path its alias.
 	URL   string       `json:"url,omitempty"`
 	Ports GatewayPorts `json:"ports,omitzero"`
+	// PodLabels selects the model gateway's proxy pods in each run's CiliumNetworkPolicy and
+	// NetworkPolicy. Omitted, LoadConfig defaults it to gateway.networking.k8s.io/gateway-name=<service>.
+	PodLabels map[string]string `json:"podLabels,omitempty"`
 	// AudiencePrefix starts every token audience: <prefix>.<dataClass>.<alias>.
 	AudiencePrefix string `json:"audiencePrefix,omitempty"`
 	// Aliases are the aliases each listener serves (maku-gateway aliases.<class>'s keys): a run whose
@@ -210,6 +213,32 @@ type GatewayAliases struct {
 
 // Gateway reports whether runs call the model gateway.
 func (c Config) Gateway() bool { return c.Model.Mode == ModelModeGateway }
+
+// gatewayServiceName extracts the Service name from an in-cluster gateway URL
+// (http://<service>.<namespace>.svc.<cluster-domain>), or "" when rawURL is not one.
+func gatewayServiceName(rawURL string) string {
+	u, err := url.Parse(rawURL)
+	if err != nil || !brokerHostRE.MatchString(u.Hostname()) {
+		return ""
+	}
+	svc, _, _ := strings.Cut(u.Hostname(), ".")
+	return svc
+}
+
+// modelPodLabels returns the pod labels that confine an in-cluster model egress rule in gateway
+// mode. Secret-mode in-cluster stubs have no configured pod labels.
+func (c Config) modelPodLabels() map[string]string {
+	if !c.Gateway() {
+		return nil
+	}
+	if len(c.Model.Gateway.PodLabels) > 0 {
+		return c.Model.Gateway.PodLabels
+	}
+	if svc := gatewayServiceName(c.Model.Gateway.URL); svc != "" {
+		return map[string]string{"gateway.networking.k8s.io/gateway-name": svc}
+	}
+	return nil
+}
 
 // aliasRE is a gateway alias: a path segment, and an audience's last label.
 var aliasRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?$`)
@@ -253,6 +282,14 @@ func (c Config) model() []error {
 	}
 	if !audiencePrefixRE.MatchString(g.AudiencePrefix) {
 		errs = append(errs, fmt.Errorf("model.gateway.audiencePrefix %q must be dot-separated lowercase labels", g.AudiencePrefix))
+	}
+	for k := range g.PodLabels {
+		if strings.TrimPrefix(k, "k8s:") == "io.kubernetes.pod.namespace" {
+			errs = append(errs, fmt.Errorf("model.gateway.podLabels: %q is not a pod label: the namespace comes from model.gateway.url", k))
+		}
+	}
+	if len(g.PodLabels) == 0 {
+		errs = append(errs, errors.New("model.gateway.podLabels: name the gateway's pods so each run's policy selects only them"))
 	}
 	if g.ServiceAccount.Namespace == "" || g.ServiceAccount.Name == "" {
 		errs = append(errs, errors.New("model.gateway.serviceAccount.namespace and .name are required: the run-controller's own ServiceAccount, for the gateway-token-ttl preflight"))
@@ -352,6 +389,11 @@ func LoadConfig(path string) (Config, error) {
 		g.Ports.Public, g.Ports.Internal = cmp.Or(g.Ports.Public, 8080), cmp.Or(g.Ports.Internal, 8081)
 		g.AudiencePrefix = cmp.Or(g.AudiencePrefix, "maku-gateway")
 		g.LightAlias = cmp.Or(g.LightAlias, "tier-light")
+		if g.PodLabels == nil {
+			if svc := gatewayServiceName(g.URL); svc != "" {
+				g.PodLabels = map[string]string{"gateway.networking.k8s.io/gateway-name": svc}
+			}
+		}
 	}
 	if err := c.validate(); err != nil {
 		return c, fmt.Errorf("config %s: %w", path, err)

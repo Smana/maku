@@ -160,43 +160,85 @@ func TestEnvtestGatewayRunNeedsNoModelSecret(t *testing.T) {
 	}
 }
 
-// GW13: the run's policies admit the gateway's namespace on its class's port, as for any in-cluster model.
+// GW13: the run's policies admit only the gateway's pods in its namespace on its class's port.
 func TestGatewayNetworkPolicies(t *testing.T) {
-	c := gatewayTestConfig(t)
-	for class, port := range map[string]string{"public": "8080", "internal": "8081"} {
-		r := gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass, r.Spec.Loop.JudgeModel = class, "" })
-		m := c.GatewayModel(r)
-		var found bool
-		for _, e := range NetworkPolicy(r, c, m, "abcdefgh").Object["spec"].(map[string]any)["egress"].([]any) {
-			rule := e.(map[string]any)
-			eps, ok := rule["toEndpoints"].([]any)
-			if !ok {
-				continue
+	for _, tc := range []struct {
+		name       string
+		podLabels  map[string]string
+		wantLabels map[string]string
+	}{
+		{
+			name:       "default gateway pod label",
+			wantLabels: map[string]string{"gateway.networking.k8s.io/gateway-name": "model-gateway"},
+		},
+		{
+			name:       "custom gateway pod labels",
+			podLabels:  map[string]string{"app.kubernetes.io/name": "custom-gw", "tier": "llm"},
+			wantLabels: map[string]string{"app.kubernetes.io/name": "custom-gw", "tier": "llm"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := gatewayTestConfig(t)
+			if tc.podLabels != nil {
+				c.Model.Gateway.PodLabels = tc.podLabels
 			}
-			sel := eps[0].(map[string]any)["matchLabels"].(map[string]any)
-			p := rule["toPorts"].([]any)[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["port"]
-			if sel["io.kubernetes.pod.namespace"] == "maku" && p == port {
-				found = true
+			for class, port := range map[string]string{"public": "8080", "internal": "8081"} {
+				r := gatewayRun(func(r *v1alpha1.AgentRun) { r.Spec.DataClass, r.Spec.Loop.JudgeModel = class, "" })
+				m := c.GatewayModel(r)
+				var found bool
+				for _, e := range NetworkPolicy(r, c, m, "abcdefgh").Object["spec"].(map[string]any)["egress"].([]any) {
+					rule := e.(map[string]any)
+					eps, ok := rule["toEndpoints"].([]any)
+					if !ok {
+						continue
+					}
+					sel := eps[0].(map[string]any)["matchLabels"].(map[string]any)
+					p := rule["toPorts"].([]any)[0].(map[string]any)["ports"].([]any)[0].(map[string]any)["port"]
+					if sel["io.kubernetes.pod.namespace"] == "maku" && p == port {
+						if len(sel) != len(tc.wantLabels)+1 {
+							t.Errorf("%s: CNP matchLabels %v, want namespace + %v", class, sel, tc.wantLabels)
+						}
+						for k, v := range tc.wantLabels {
+							if sel[k] != v {
+								t.Errorf("%s: CNP matchLabels[%q] = %v, want %q", class, k, sel[k], v)
+							}
+						}
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("%s: the CNP does not admit gateway pods in namespace maku on %s", class, port)
+				}
+				kc := c
+				kc.NetworkPolicy, kc.EgressProxy = NetworkPolicyKubernetes, EgressProxy{URL: "http://egress-proxy.maku.svc.cluster.local:3128", Namespace: "maku", Labels: map[string]string{"app": "egress-proxy"}}
+				found = false
+				for _, e := range KubeNetworkPolicy(r, kc, m, "abcdefgh").Spec.Egress {
+					if len(e.To) == 1 && e.To[0].NamespaceSelector != nil &&
+						e.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "maku" &&
+						e.Ports[0].Port.String() == port {
+						if e.To[0].PodSelector == nil {
+							t.Errorf("%s: NetworkPolicy gateway rule lacks podSelector", class)
+							continue
+						}
+						if len(e.To[0].PodSelector.MatchLabels) != len(tc.wantLabels) {
+							t.Errorf("%s: NetworkPolicy podSelector %v, want %v", class, e.To[0].PodSelector.MatchLabels, tc.wantLabels)
+						}
+						for k, v := range tc.wantLabels {
+							if e.To[0].PodSelector.MatchLabels[k] != v {
+								t.Errorf("%s: NetworkPolicy podSelector[%q] = %q, want %q", class, k, e.To[0].PodSelector.MatchLabels[k], v)
+							}
+						}
+						found = true
+					}
+				}
+				if !found {
+					t.Errorf("%s: the NetworkPolicy does not admit gateway pods in namespace maku on %s", class, port)
+				}
+				if got := Egress(r, kc, m); strings.Contains(strings.Join(got, ","), "model-gateway") {
+					t.Errorf("%s: the egress proxy's allow-list names the gateway: %v", class, got)
+				}
 			}
-		}
-		if !found {
-			t.Errorf("%s: the CNP does not admit namespace maku on %s", class, port)
-		}
-		kc := c
-		kc.NetworkPolicy, kc.EgressProxy = NetworkPolicyKubernetes, EgressProxy{URL: "http://egress-proxy.maku.svc.cluster.local:3128", Namespace: "maku", Labels: map[string]string{"app": "egress-proxy"}}
-		found = false
-		for _, e := range KubeNetworkPolicy(r, kc, m, "abcdefgh").Spec.Egress {
-			if len(e.To) == 1 && e.To[0].PodSelector == nil && e.To[0].NamespaceSelector.MatchLabels["kubernetes.io/metadata.name"] == "maku" &&
-				e.Ports[0].Port.String() == port {
-				found = true
-			}
-		}
-		if !found {
-			t.Errorf("%s: the NetworkPolicy does not admit namespace maku on %s", class, port)
-		}
-		if got := Egress(r, kc, m); strings.Contains(strings.Join(got, ","), "model-gateway") {
-			t.Errorf("%s: the egress proxy's allow-list names the gateway: %v", class, got)
-		}
+		})
 	}
 }
 

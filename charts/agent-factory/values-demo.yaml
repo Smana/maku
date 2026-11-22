@@ -214,6 +214,11 @@ maku-gateway:
       agent-default: {provider: demo, model: ""}
       tier-light: {provider: demo, model: ""}
 
+# The demo runs with maku.networkPolicies.mode: none, so the factory has no default-deny to join.
+networkPolicies:
+  factory:
+    enabled: false
+
 tls:
   # Validity of the generated CA and broker certificate, in days. Both are kept across upgrades.
   days: 3650

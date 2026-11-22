@@ -364,8 +364,18 @@ and an empty namespace the release's, which is where the umbrella runs it. */}}
 {{- fail (printf "runController.model.gateway.audiencePrefix %q must be dot-separated lowercase labels" $prefix) -}}
 {{- end -}}
 {{- $ports := $g.ports | default dict -}}
+{{- $podLabels := $g.podLabels | default dict -}}
+{{- range $k, $_ := $podLabels -}}
+{{- if eq (trimPrefix "k8s:" $k) "io.kubernetes.pod.namespace" -}}
+{{- fail (printf "runController.model.gateway.podLabels: %q is not a pod label: name the namespace in runController.model.gateway.namespace" $k) -}}
+{{- end -}}
+{{- end -}}
+{{- if not $podLabels -}}
+{{- $podLabels = dict "gateway.networking.k8s.io/gateway-name" $svc -}}
+{{- end -}}
 {{- dict "url" (printf "http://%s.%s.svc.%s" $svc $ns .Values.clusterDomain)
   "ports" (dict "public" ($ports.public | default 8080 | int) "internal" ($ports.internal | default 8081 | int))
+  "podLabels" $podLabels
   "audiencePrefix" $prefix
   "aliases" (dict "public" $aliases.public "internal" ($aliases.internal | default list))
   "lightAlias" ($g.lightAlias | default "") | toJson -}}

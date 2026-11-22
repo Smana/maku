@@ -140,12 +140,24 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 			return ctrl.Result{}, err
 		}
-		setCond(st, "Ready", metav1.ConditionTrue, "Created", "")
-		if r.Cfg.RuntimeClassName == "" {
-			setCond(st, "Unsandboxed", metav1.ConditionTrue, "AllowUnsandboxed", "the pod runs without a RuntimeClass: allowUnsandboxed is set")
-		}
+		markCreated(st, r.Cfg.RuntimeClassName == "")
+	} else if pod != nil {
+		// Re-derive creation conditions if the status write right after pod creation conflicted (409):
+		// without this, Ready=Created and Unsandboxed=True are silently dropped on the next reconcile.
+		markCreated(st, pod.Spec.RuntimeClassName == nil || *pod.Spec.RuntimeClassName == "")
 	}
 	return ctrl.Result{}, r.writeStatus(ctx, run, merge(*st, Observe(run.Status, revoked, pod, gone, now)))
+}
+
+// markCreated records Ready=Created (when Ready is not yet True) and Unsandboxed=True (when
+// unsandboxed and not yet True) without overwriting an already-set Ready=True condition.
+func markCreated(st *v1alpha1.AgentRunStatus, unsandboxed bool) {
+	if !apimeta.IsStatusConditionTrue(st.Conditions, "Ready") {
+		setCond(st, "Ready", metav1.ConditionTrue, "Created", "")
+	}
+	if unsandboxed && !apimeta.IsStatusConditionTrue(st.Conditions, "Unsandboxed") {
+		setCond(st, "Unsandboxed", metav1.ConditionTrue, "AllowUnsandboxed", "the pod runs without a RuntimeClass: allowUnsandboxed is set")
+	}
 }
 
 // waitForGC holds a run whose name is still taken by the objects of a deleted run of the

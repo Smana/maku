@@ -217,13 +217,14 @@ webProxy:
     requests: {cpu: 50m, memory: 64Mi}
     limits: {cpu: 200m, memory: 128Mi}
 
-# The factory's default-deny (D6; v4 step 6, Task 16), off by default. On, in maku.networkPolicies'
-# mode (kubernetes: a NetworkPolicy, cilium: a CNP), the factory admits its run API (:8082) from the
-# broker, its intake (:8080) from intakeFrom alone, and :9090 from the scraper and the kubelet; it
-# reaches DNS, the apiserver, the broker's :8443, GitHub on 443, and what the keys below name.
+# The factory's default-deny (D6; v4 step 6, Task 16), on by default in production (values-demo.yaml
+# turns it off for mode none). On, in maku.networkPolicies' mode (kubernetes: a NetworkPolicy, cilium:
+# a CNP), the factory admits its run API (:8082) from the broker, its intake (:8080) from intakeFrom
+# alone, and :9090 from the scraper and the kubelet; it reaches DNS, the apiserver, the broker's :8443,
+# GitHub on 443, and what the keys below name.
 networkPolicies:
   factory:
-    enabled: false
+    enabled: true
     # RunLore's pods, for POST /intake/runlore (kubernetes: NetworkPolicy peers; cilium: endpoint
     # selectors). Empty: the intake port is closed.
     intakeFrom: []
