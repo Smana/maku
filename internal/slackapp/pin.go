@@ -119,13 +119,13 @@ func (a *App) pinProposal(ctx context.Context, in interaction, thread string, p 
 	if p.Pinned == profile {
 		return a.pressAnswer(ctx, in, thread, pinUnchangedLine, "ignored")
 	}
-	a.editMu.Lock()
+	unlock := a.edits.lock(in.Channel, thread)
 	code, line := a.pinInPlace(ctx, in, thread, p, profile)
-	a.editMu.Unlock()
+	unlock()
 	return a.pressAnswer(ctx, in, thread, line, code)
 }
 
-// pinInPlace is pinProposal's work under a.editMu; it posts nothing.
+// pinInPlace is pinProposal's work under the thread's edit lock; it posts nothing.
 func (a *App) pinInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload, profile string) (code, line string) {
 	msgs, err := a.Slack.Thread(ctx, in.Channel, thread)
 	if err != nil {

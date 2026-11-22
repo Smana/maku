@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Smana/maku/internal/httpx"
@@ -109,35 +110,142 @@ func (m Manifest) Request(_ context.Context, r Request) (Result, error) {
 	return Result{RunID: id, Via: "manifest", Manifest: b}, nil
 }
 
-// Factory is SP3's run API at URL. HC, when set, is the client (tests). Otherwise each call
-// builds the audited egress client, trusting the PEM CA in CAFile, read at that call so a rotated
-// CA needs no restart (S-1), or the system roots when CAFile is empty.
+// Factory is SP3's run API at URL. HC, when set, is the client (tests). Otherwise calls share a
+// cached audited egress transport per CAFile, trusting the PEM CA in CAFile and reloading the pool
+// when CAFile changes so a rotated CA needs no restart (S-1), or the system roots when CAFile is
+// empty.
 type Factory struct {
 	URL    string
 	CAFile string
 	HC     *http.Client
 }
 
+// maxCachedTransports bounds the per-CAFile transport cache so tests creating temporary CA files
+// cannot grow it without bound; production has at most one factoryCAFile.
+const maxCachedTransports = 64
+
+// recentModWindow guards against two distinct writes to the same CAFile within one coarse
+// filesystem mtime tick producing the same (mtime, size): when a file was modified within this
+// window, its SHA-256 hash is checked before reusing the cached transport.
+const recentModWindow = 2 * time.Second
+
+type caStamp struct {
+	mod  time.Time
+	size int64
+}
+
+type cachedClient struct {
+	client *http.Client
+	stamp  caStamp
+	sum    [32]byte
+}
+
+// transportCache caches audited egress clients by cleaned CAFile path, closing idle connections on
+// any superseded transport when a CA rotates or an entry is evicted. Factory is passed by value
+// across callers, so the cache lives at package scope keyed by CAFile.
+type transportCache struct {
+	mu            sync.Mutex
+	defaultClient *http.Client
+	entries       map[string]*cachedClient
+	order         []string
+}
+
+var factoryClients transportCache
+
+func cloneClient(hc *http.Client) *http.Client {
+	cp := *hc
+	return &cp
+}
+
+func (c *transportCache) get(caFile string) (*http.Client, error) {
+	if caFile == "" {
+		c.mu.Lock()
+		if c.defaultClient == nil {
+			c.defaultClient = httpx.New(factoryTimeout, nil)
+		}
+		hc := cloneClient(c.defaultClient)
+		c.mu.Unlock()
+		return hc, nil
+	}
+	clean := filepath.Clean(caFile)
+	fi, err := os.Stat(filepath.Clean(caFile))
+	if err != nil {
+		return nil, fmt.Errorf("runrequest: factoryCAFile: %w", err)
+	}
+	stamp := caStamp{mod: fi.ModTime(), size: fi.Size()}
+	age := time.Since(stamp.mod)
+	recent := age <= recentModWindow && age >= -recentModWindow
+
+	c.mu.Lock()
+	if e, ok := c.entries[clean]; ok && e.stamp == stamp && !recent {
+		hc := cloneClient(e.client)
+		c.mu.Unlock()
+		return hc, nil
+	}
+	raw, err := os.ReadFile(filepath.Clean(caFile))
+	if err != nil {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("runrequest: factoryCAFile: %w", err)
+	}
+	sum := sha256.Sum256(raw)
+	if e, ok := c.entries[clean]; ok && e.sum == sum {
+		e.stamp = stamp
+		hc := cloneClient(e.client)
+		c.mu.Unlock()
+		return hc, nil
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(raw) {
+		c.mu.Unlock()
+		return nil, fmt.Errorf("runrequest: factoryCAFile %s holds no PEM certificate", caFile)
+	}
+	hc := httpx.New(factoryTimeout, roots)
+	var old, evicted *http.Client
+	if e, ok := c.entries[clean]; ok {
+		old = e.client
+	}
+	evicted = c.putLocked(clean, &cachedClient{client: hc, stamp: stamp, sum: sum})
+	out := cloneClient(hc)
+	c.mu.Unlock()
+
+	if old != nil {
+		old.CloseIdleConnections()
+	}
+	if evicted != nil {
+		evicted.CloseIdleConnections()
+	}
+	return out, nil
+}
+
+func (c *transportCache) putLocked(key string, entry *cachedClient) *http.Client {
+	if c.entries == nil {
+		c.entries = make(map[string]*cachedClient)
+	}
+	var evicted *http.Client
+	if _, exists := c.entries[key]; !exists {
+		if len(c.order) >= maxCachedTransports {
+			drop := c.order[0]
+			c.order = c.order[1:]
+			if old, ok := c.entries[drop]; ok {
+				evicted = old.client
+				delete(c.entries, drop)
+			}
+		}
+		c.order = append(c.order, key)
+	}
+	c.entries[key] = entry
+	return evicted
+}
+
 // HTTPClient is f's HTTP client to the factory, trusting factoryCAFile: forge_read posts with it.
 func (f Factory) HTTPClient() (*http.Client, error) { return f.client() }
 
-// client is f's HTTP client for one call.
+// client is f's HTTP client, sharing the cached transport for f.CAFile.
 func (f Factory) client() (*http.Client, error) {
 	if f.HC != nil {
 		return f.HC, nil
 	}
-	if f.CAFile == "" {
-		return httpx.New(factoryTimeout, nil), nil
-	}
-	raw, err := os.ReadFile(filepath.Clean(f.CAFile))
-	if err != nil {
-		return nil, fmt.Errorf("runrequest: factoryCAFile: %w", err)
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(raw) {
-		return nil, fmt.Errorf("runrequest: factoryCAFile %s holds no PEM certificate", f.CAFile)
-	}
-	return httpx.New(factoryTimeout, roots), nil
+	return factoryClients.get(f.CAFile)
 }
 
 // Request posts r to the factory as the human it names, with their own token.
@@ -165,9 +273,6 @@ func (f Factory) Request(ctx context.Context, r Request) (Result, error) {
 	hc, err := f.client()
 	if err != nil {
 		return Result{}, err
-	}
-	if f.HC == nil {
-		defer hc.CloseIdleConnections() // a client per call: its connection goes with it
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

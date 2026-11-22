@@ -116,9 +116,6 @@ func (f Factory) postAct(ctx context.Context, subpath, task string, in any, acce
 	if err != nil {
 		return "", err
 	}
-	if f.HC == nil {
-		defer hc.CloseIdleConnections()
-	}
 	resp, err := hc.Do(req)
 	if err != nil {
 		return "", fmt.Errorf("runrequest: factory: %w", err)
@@ -187,9 +184,6 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 	hc, err := f.client()
 	if err != nil {
 		return TaskResult{}, err
-	}
-	if f.HC == nil {
-		defer hc.CloseIdleConnections() // a client per call: its connection goes with it
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

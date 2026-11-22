@@ -173,7 +173,7 @@ func (a *App) coordinationRoute(ctx context.Context, ev slackEvent, ch Channel, 
 
 // proposeCoordination plans a two-repository mention through coordination_plan, opens the parent's
 // draft for its author, maps the parent room to the thread and posts the one proposal: a link to the
-// parent room, where alone it is confirmed. Held under editMu by the caller.
+// parent room, where alone it is confirmed. Held under the thread's edit lock by the caller.
 func (a *App) proposeCoordination(ctx context.Context, ev slackEvent, thread, text string, repos []string, prev *Message) string {
 	in := CoordinationPlanRequest{Text: text, Primary: repos[0], Candidates: repos, OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User}
 	var cur CoordinationProposal

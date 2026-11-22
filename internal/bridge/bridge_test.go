@@ -899,3 +899,62 @@ func TestAFinalReadRecordsTheLoopEnd(t *testing.T) {
 		t.Fatalf("harness_end recorded %v, want [stalled budget_calls], each once", ends)
 	}
 }
+
+// REL-H4: flush zeroes popped slots so GC reclaims their encoded payloads immediately, and drops
+// the high-water backing array when the buffer empties so the 48 MiB sidecar does not pin it.
+func TestFlushClearsPoppedSlotsAndReleasesBackingArray(t *testing.T) {
+	t.Run("full flush releases backing array and clears popped slots", func(t *testing.T) {
+		fb := &fakeBroker{}
+		r := newRig(t, NewHarness("http://127.0.0.1:1", conv), fb)
+		b := r.b
+		const count = batchItems + 50
+		for i := range count {
+			b.push(t.Context(), wire.Item{Stream: wire.StreamEvents, Seq: int64(i + 1), Type: "chat",
+				Payload: json.RawMessage(`{"text":"payload"}`)})
+		}
+		orig := b.buf[:len(b.buf)]
+		if cap(b.buf) < count {
+			t.Fatalf("unexpected initial cap %d", cap(b.buf))
+		}
+		b.flush(t.Context())
+		if len(b.buf) != 0 || cap(b.buf) != 0 || b.bufBytes != 0 {
+			t.Fatalf("after full flush: len=%d cap=%d bufBytes=%d, want 0/0/0", len(b.buf), cap(b.buf), b.bufBytes)
+		}
+		for i, p := range orig {
+			if p.enc != nil || p.stream != "" || p.typ != "" || p.stub != "" {
+				t.Fatalf("popped slot %d still retains references: %+v", i, p)
+			}
+		}
+	})
+
+	t.Run("partial flush zeroes popped slots and compacts when cap dwarfs len", func(t *testing.T) {
+		fb := &fakeBroker{events: []reply{{code: http.StatusOK}, {code: http.StatusServiceUnavailable}}}
+		r := newRig(t, NewHarness("http://127.0.0.1:1", conv), fb)
+		b := r.b
+		const count = batchItems + 10
+		for i := range count {
+			b.push(t.Context(), wire.Item{Stream: wire.StreamEvents, Seq: int64(i + 1), Type: "chat",
+				Payload: json.RawMessage(`{"text":"payload"}`)})
+		}
+		orig := b.buf[:len(b.buf)]
+		b.flush(t.Context())
+		if len(b.buf) != 10 {
+			t.Fatalf("after partial flush: len=%d, want 10", len(b.buf))
+		}
+		for i := range batchItems {
+			if orig[i].enc != nil {
+				t.Fatalf("popped slot %d still retains enc bytes", i)
+			}
+		}
+		for i, p := range b.buf {
+			if p.seq != int64(batchItems+i+1) || len(p.enc) == 0 {
+				t.Fatalf("remaining slot %d corrupted: %+v", i, p)
+			}
+		}
+		// Flush the rest and confirm backing array is released.
+		b.flush(t.Context())
+		if len(b.buf) != 0 || cap(b.buf) != 0 || b.bufBytes != 0 {
+			t.Fatalf("after draining remainder: len=%d cap=%d bufBytes=%d, want 0/0/0", len(b.buf), cap(b.buf), b.bufBytes)
+		}
+	})
+}
