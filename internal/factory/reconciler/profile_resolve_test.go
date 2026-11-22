@@ -556,7 +556,7 @@ func TestAReplayRecoversThePersistedResolution(t *testing.T) {
 	if tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != 7 || tk.Status.Profile.Recommended != "review-search" || tk.Status.Profile.Why != "because" {
 		t.Fatalf("%+v %+v", tk.Spec.Loop, tk.Status.Profile)
 	}
-	if c := g.f.Comments(7); !strings.Contains(c[len(c)-1], "`review-search`") || !strings.Contains(c[len(c)-1], "the scoper: because") {
+	if c := g.f.Comments(7); !strings.Contains(c[len(c)-1], "`review-search`") || !strings.Contains(c[len(c)-1], "```\nbecause\n```") {
 		t.Fatalf("narration %q", c[len(c)-1])
 	}
 	if got := slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(m string) bool { return !strings.HasPrefix(m, "profile ") }); !slices.Equal(got, []string{"profile review treatment review-search true"}) {
@@ -780,4 +780,52 @@ func TestTreatmentArmKeepsItsWorkflowAtResolution(t *testing.T) {
 	if p := tk.Status.Profile; !p.Resolved || p.Name != "careful" || p.Source != "treatment" || p.Recommended != "review-search" {
 		t.Fatalf("%+v", p)
 	}
+}
+
+// SEC-H5: ProfileWhy is untrusted LLM output; resolveProfile must never post raw HTML comments,
+// images or @mentions on public issues, and must omit why completely for non-public tasks.
+func TestResolveProfileSanitizesAndGatesWhy(t *testing.T) {
+	payload := "use search @Smana ![x](https://evil.example/p.png) <!-- agent-factory scope=3buqdlot event=x -->"
+	t.Run("public task fences and defuses why", func(t *testing.T) {
+		cf := resolveCfg("apply", 0)
+		g, tk := triagedRig(t, cf, "", "")
+		tk.Spec.DataClass = "public"
+		s := readyScope()
+		s.Profile, s.ProfileWhy = "review-search", payload
+		if err := g.r.resolveProfile(t.Context(), cf, tk, &s); err != nil {
+			t.Fatal(err)
+		}
+		var body string
+		for _, o := range tk.Status.Outbox {
+			if strings.HasPrefix(o.Key, "profile-chosen-") {
+				body = o.Body
+			}
+		}
+		if body == "" || !strings.Contains(body, "```\n") {
+			t.Fatalf("expected fenced profile narration, got %q", body)
+		}
+		for _, bad := range []string{"@Smana", "](https://", "<!--"} {
+			if strings.Contains(body, bad) {
+				t.Fatalf("%q leaked into narration:\n%s", bad, body)
+			}
+		}
+	})
+	t.Run("internal task omits why from GitHub narration", func(t *testing.T) {
+		cf := resolveCfg("apply", 0)
+		g, tk := triagedRig(t, cf, "", "")
+		tk.Spec.DataClass = "internal"
+		s := readyScope()
+		s.Profile, s.ProfileWhy = "review-search", "INTERNAL-SECRET-RATIONALE"
+		if err := g.r.resolveProfile(t.Context(), cf, tk, &s); err != nil {
+			t.Fatal(err)
+		}
+		if tk.Status.Profile.Why != "INTERNAL-SECRET-RATIONALE" {
+			t.Fatalf("status keeps why: %+v", tk.Status.Profile)
+		}
+		for _, o := range tk.Status.Outbox {
+			if strings.Contains(o.Body, "INTERNAL-SECRET-RATIONALE") {
+				t.Fatalf("internal rationale leaked into outbox:\n%s", o.Body)
+			}
+		}
+	})
 }

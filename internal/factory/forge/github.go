@@ -683,24 +683,27 @@ func restPR(p *github.PullRequest) PR {
 		state = "MERGED"
 	}
 	return PR{Number: p.GetNumber(), NodeID: p.GetNodeID(), URL: p.GetHTMLURL(), Title: p.GetTitle(), Body: p.GetBody(),
-		State: state, Author: p.GetUser().GetLogin(), HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA()}
+		State: state, Author: p.GetUser().GetLogin(), BaseRef: p.GetBase().GetRef(), HeadRef: p.GetHead().GetRef(), HeadSHA: p.GetHead().GetSHA()}
 }
 
-// PullRequestForBranch is the newest pull request from branch in the repository, 0 when none.
+// PullRequestForBranch is the newest pull request from branch targeting main in the repository, 0
+// when none.
 func (g *GitHub) PullRequestForBranch(ctx context.Context, branch string) (int, error) {
 	if branch == "" {
 		return 0, errors.New("forge: no branch") // an empty head filter would match every pull request
 	}
 	prs, _, err := g.rest.PullRequests.List(ctx, g.owner, g.name, &github.PullRequestListOptions{
-		State: "all", Head: g.owner + ":" + branch, ListOptions: github.ListOptions{PerPage: 10}})
+		State: "all", Base: "main", Head: g.owner + ":" + branch, ListOptions: github.ListOptions{PerPage: 10}})
 	g.mark(err)
 	if err != nil {
 		return 0, wrap("list pull requests", err)
 	}
-	if len(prs) == 0 {
-		return 0, nil
+	for _, pr := range prs {
+		if pr.GetBase().GetRef() == "main" {
+			return pr.GetNumber(), nil // newest first
+		}
 	}
-	return prs[0].GetNumber(), nil // newest first
+	return 0, nil
 }
 
 // AgentPulls are the repository's open pull requests from `agent/` branches (R51's orphan scan),
@@ -1035,6 +1038,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 				Body             string
 				LastEditedAt     *githubv4.DateTime
 				State            string
+				BaseRefName      string
 				HeadRefName      string
 				HeadRefOid       string
 				IsCrossRepo      bool `graphql:"isCrossRepository"`
@@ -1095,7 +1099,7 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 	}
 	p := q.Repository.PullRequest
 	out := PR{Number: p.Number, NodeID: p.ID, URL: p.URL, Title: p.Title, Body: p.Body, State: p.State, Author: p.Author.login(),
-		HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo, ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
+		BaseRef: p.BaseRefName, HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo, ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
 	if p.MergeCommit != nil {
 		out.MergeCommitSHA = p.MergeCommit.Oid
 	}

@@ -161,7 +161,7 @@ func TestAPartClosingItsParentIsNotArmed(t *testing.T) {
 		tk.Spec.Parent = &v1alpha1.Parent{Task: "paarent2", Issue: 5, Index: 1, Of: 2}
 		_ = g.c.Update(t.Context(), &tk)
 		g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-			HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0), Body: "Does a part.\n\n" + kw + " #5\nFixes #7"})
+			BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0), Body: "Does a part.\n\n" + kw + " #5\nFixes #7"})
 		g.f.SetChecks(12, green("SUCCESS"))
 		got := g.reconcile(t, "3buqdlot", 1)
 		if got.Status.Phase != v1alpha1.PhaseAwaitingHuman || got.Status.Reason != "closes_parent" || len(g.f.Armed()) != 0 {
@@ -174,7 +174,7 @@ func TestAPartClosingItsParentIsNotArmed(t *testing.T) {
 	tk.Spec.Parent = &v1alpha1.Parent{Task: "paarent2", Issue: 5, Index: 1, Of: 2}
 	_ = g.c.Update(t.Context(), &tk)
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-		HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0), Body: "Fixes #7, see #5 and #50"})
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0), Body: "Fixes #7, see #5 and #50"})
 	g.f.SetChecks(12, green("SUCCESS"))
 	if got := g.reconcile(t, "3buqdlot", 1); got.Status.Phase != v1alpha1.PhaseAutoMerging {
 		t.Fatalf("%s %s", got.Status.Phase, got.Status.Reason)

@@ -170,12 +170,16 @@ func TestAllowedFilesAnchorsTheWholePattern(t *testing.T) {
 	}
 }
 
-// A rollup read in part may hide a failing run of a holdout's name: fail closed.
+// A rollup read in part may hide a failing run of a holdout's name or a required check: fail closed
+// both at baseChecks (checks_truncated) and in holdoutChecks itself (holdout_red).
 func TestATruncatedRollupRefusesTheHoldout(t *testing.T) {
 	in := gateInputs()
 	in.Checks.Truncated = true
-	if d := DecideArm(in); d.Verdict != "human" || refused(d) != "holdout_red" {
-		t.Fatalf("%+v", d)
+	if reason, wait := holdoutChecks(declaredClass(), in); reason != "holdout_red" || wait {
+		t.Fatalf("holdoutChecks = %q/%v, want holdout_red/false", reason, wait)
+	}
+	if d := DecideArm(in); d.Verdict != "human" || d.Reason != "checks_truncated" {
+		t.Fatalf("DecideArm = %+v, want human/checks_truncated", d)
 	}
 }
 

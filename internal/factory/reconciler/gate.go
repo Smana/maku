@@ -160,7 +160,18 @@ func unreported(in ArmInputs, cl config.Class) []string {
 		}
 	}
 	for _, n := range requiredFor(in.Cfg.RepositoryFor(in.Task.Spec.Repository), in.Task) {
-		if i := slices.IndexFunc(in.Checks.Runs, func(c forge.Check) bool { return c.Name == n }); i < 0 || in.Checks.Runs[i].State != "SUCCESS" {
+		seen, ok := false, true
+		for _, c := range in.Checks.Runs {
+			if c.Name != n || c.App != forge.ActionsApp {
+				continue
+			}
+			seen = true
+			if c.State != "SUCCESS" {
+				ok = false
+				break
+			}
+		}
+		if !seen || !ok {
 			add(n)
 		}
 	}

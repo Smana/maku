@@ -24,7 +24,11 @@ func contractOf() *v1alpha1.ContractStatus {
 // withContractCheck is green with the contract check reporting state.
 func withContractCheck(state string) forge.Checks {
 	c := green("SUCCESS")
-	c.Runs = append(c.Runs, forge.Check{Name: contractCheck, State: state})
+	conclusion := state
+	if state == "PENDING" {
+		conclusion = ""
+	}
+	c.Runs = append(c.Runs, forge.Check{Name: contractCheck, State: state, App: forge.ActionsApp, Conclusion: conclusion})
 	return c
 }
 
@@ -47,6 +51,28 @@ func TestRow2bTheContractCheckIsRequiredOnATaskWithAContract(t *testing.T) {
 		"green":                      {with, withContractCheck("SUCCESS"), "arm", ""},
 		"red, no contract (TF7)":     {without, withContractCheck("FAILURE"), "arm", ""},
 		"missing, no contract (TF7)": {without, missing, "arm", ""},
+		"skipped contract check": {with, func() forge.Checks {
+			c := green("SUCCESS")
+			c.Runs = append(c.Runs, forge.Check{Name: contractCheck, State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SKIPPED"})
+			return c
+		}(), "human", "contract_check_not_run"},
+		"neutral contract check": {with, func() forge.Checks {
+			c := green("SUCCESS")
+			c.Runs = append(c.Runs, forge.Check{Name: contractCheck, State: "SUCCESS", App: forge.ActionsApp, Conclusion: "NEUTRAL"})
+			return c
+		}(), "human", "contract_check_not_run"},
+		"passing then skipped contract check": {with, func() forge.Checks {
+			c := green("SUCCESS")
+			c.Runs = append(c.Runs,
+				forge.Check{Name: contractCheck, State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"},
+				forge.Check{Name: contractCheck, State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SKIPPED"})
+			return c
+		}(), "human", "contract_check_not_run"},
+		"forged app contract check": {with, func() forge.Checks {
+			c := green("SUCCESS")
+			c.Runs = append(c.Runs, forge.Check{Name: contractCheck, State: "SUCCESS", App: 99999, Conclusion: "SUCCESS"})
+			return c
+		}(), "wait", "ci_pending"},
 	} {
 		d := DecideArm(ArmInputs{PR: agentPR(), Checks: c.checks, Task: c.task, Cfg: cfg, ReportedHead: head,
 			Files: changed("[x](old.md)", "[x](new.md)"), Contract: ContractRead{Read: true}})

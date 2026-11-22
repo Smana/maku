@@ -38,7 +38,10 @@ func armCfg() *config.Config {
 }
 
 func green(policy string) forge.Checks {
-	return forge.Checks{Runs: []forge.Check{{Name: "Pre-commit checks", State: "SUCCESS"}, {Name: "Kubernetes validation", State: "SUCCESS"}},
+	return forge.Checks{Runs: []forge.Check{
+		{Name: "Pre-commit checks", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"},
+		{Name: "Kubernetes validation", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"},
+	},
 		Statuses: []forge.Status{{Context: "policy-bot: main", State: policy, Creator: "ogenki-merge-gate[bot]"}}}
 }
 
@@ -55,7 +58,7 @@ func armTask(class, template, verdict string) *v1alpha1.Task {
 var pushedAt = now.Add(-40 * time.Minute)
 
 func agentPR() forge.PR {
-	return forge.PR{Author: "ogenki-agents[bot]", HeadSHA: head, HeadMessage: "docs: fix\n\nAgent-Run: 7f3cq2xz"}
+	return forge.PR{Author: "ogenki-agents[bot]", BaseRef: "main", HeadSHA: head, HeadMessage: "docs: fix\n\nAgent-Run: 7f3cq2xz"}
 }
 
 // changed is the forge.Files read of a diff of one file.
@@ -465,7 +468,7 @@ func TestAnAdoptedPullRequestsApprovalHandsOffWithTheSwitchOn(t *testing.T) {
 	cfg := armCfg()
 	cfg.Repositories[0].Merge.ApproveToMerge = true
 	cfg.Repositories[0].Classes["deps-patch"] = depsPatchClass()
-	pr := forge.PR{Author: bot, HeadRef: "renovate/kyverno-3.x", HeadSHA: head,
+	pr := forge.PR{Author: bot, BaseRef: "main", HeadRef: "renovate/kyverno-3.x", HeadSHA: head,
 		Reviews: []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now}}}
 	d := DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("deps-patch", "solo", ""), Cfg: cfg})
 	if d.Verdict != "human" || d.Reason != "maintainer_approved" || d.Approver != "" {
@@ -613,4 +616,107 @@ func TestAPathBoundPolicyWithoutAReviewerNeverArms(t *testing.T) {
 	if d.Verdict != "human" || d.Reason != reasonNoPolicy || d.Rows.Considered != "docs:reviewer_verdict_missing" {
 		t.Fatalf("%+v, want no_policy_matched with docs:reviewer_verdict_missing", d)
 	}
+}
+
+// SEC-H3: Diff compares against main, so any PR not targeting main (including an empty BaseRef)
+// must fail closed to a human before any class or approval can arm it.
+func TestDecideArmRefusesNonMainBase(t *testing.T) {
+	for name, base := range map[string]string{
+		"release branch": "release-1",
+		"empty baseRef":  "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			cfg := armCfg()
+			pr := agentPR()
+			pr.BaseRef = base
+			d := DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
+				Cfg: cfg, ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+			if d.Verdict != "human" || d.Reason != "base_not_main" {
+				t.Fatalf("base %q: got %+v, want human/base_not_main", base, d)
+			}
+			// Even with approveToMerge and a valid maintainer approval, non-main never arms.
+			cfg.Repositories[0].Merge.ApproveToMerge = true
+			pr.Reviews = []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now}}
+			d = DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
+				Cfg: cfg, ReportedHead: head, HeadPushedAt: pushedAt, Files: changed("[x](old.md)", "[x](new.md)"), DiffRead: true})
+			if d.Verdict != "human" || d.Reason != "base_not_main" {
+				t.Fatalf("approved non-main %q: got %+v, want human/base_not_main", base, d)
+			}
+		})
+	}
+}
+
+// SEC-H4: CIState and baseChecks fail closed on truncated rollups, inspect every check run of a
+// matching name (including LeakScanCheck), and require ActionsApp on required check runs.
+func TestCIStateAndBaseChecksHardening(t *testing.T) {
+	t.Run("truncated checks never pass CIState or arm", func(t *testing.T) {
+		c := green("SUCCESS")
+		c.Truncated = true
+		if got := CIState(c, required); got == "SUCCESS" {
+			t.Fatalf("CIState on truncated rollup = %q, must not be SUCCESS", got)
+		}
+		d := DecideArm(ArmInputs{PR: agentPR(), Checks: c, Task: armTask("docs-links", "solo", ""),
+			Cfg: armCfg(), ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+		if d.Verdict != "human" || d.Reason != "checks_truncated" {
+			t.Fatalf("DecideArm on truncated rollup = %+v, want human/checks_truncated", d)
+		}
+	})
+	t.Run("duplicate check runs inspect all matches", func(t *testing.T) {
+		for name, tc := range map[string]struct {
+			second          forge.Check
+			ci              string
+			verdict, reason string
+		}{
+			"passing then failing":   {forge.Check{Name: required[0], State: "FAILURE", App: forge.ActionsApp, Conclusion: "FAILURE"}, "FAILURE", "ci_red", "ci_red"},
+			"passing then pending":   {forge.Check{Name: required[0], State: "PENDING", App: forge.ActionsApp}, "PENDING", "wait", "ci_pending"},
+			"passing then cancelled": {forge.Check{Name: required[0], State: "CANCELLED", App: forge.ActionsApp, Conclusion: "CANCELLED"}, "CANCELLED", "ci_cancelled", "ci_cancelled"},
+		} {
+			t.Run(name, func(t *testing.T) {
+				c := green("SUCCESS")
+				c.Runs = append(c.Runs, tc.second)
+				if got := CIState(c, required); got != tc.ci {
+					t.Fatalf("CIState = %q, want %q", got, tc.ci)
+				}
+				d := DecideArm(ArmInputs{PR: agentPR(), Checks: c, Task: armTask("docs-links", "solo", ""),
+					Cfg: armCfg(), ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+				if d.Verdict != tc.verdict || d.Reason != tc.reason {
+					t.Fatalf("DecideArm = %+v, want %s/%s", d, tc.verdict, tc.reason)
+				}
+			})
+		}
+	})
+	t.Run("duplicate LeakScanCheck passing first then failing second escalates", func(t *testing.T) {
+		c := green("SUCCESS")
+		c.Runs = append(c.Runs,
+			forge.Check{Name: "Security scanning", State: "SUCCESS", App: forge.ActionsApp, Conclusion: "SUCCESS"},
+			forge.Check{Name: "Security scanning", State: "FAILURE", App: forge.ActionsApp, Conclusion: "FAILURE"})
+		d := DecideArm(ArmInputs{PR: agentPR(), Checks: c, Task: armTask("docs-links", "solo", ""),
+			Cfg: armCfg(), ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+		if d.Verdict != "escalate" || d.Reason != "secret_scan_red" {
+			t.Fatalf("DecideArm = %+v, want escalate/secret_scan_red", d)
+		}
+	})
+	t.Run("forged wrong-App check run cannot satisfy required check", func(t *testing.T) {
+		for name, app := range map[string]int64{"foreign app": 99999, "unknown app 0": 0} {
+			t.Run(name, func(t *testing.T) {
+				c := green("SUCCESS")
+				c.Runs[0].App = app
+				if got := CIState(c, required); got != "PENDING" {
+					t.Fatalf("CIState = %q, want PENDING", got)
+				}
+				d := DecideArm(ArmInputs{PR: agentPR(), Checks: c, Task: armTask("docs-links", "solo", ""),
+					Cfg: armCfg(), ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)")})
+				if d.Verdict != "wait" || d.Reason != "ci_pending" {
+					t.Fatalf("DecideArm = %+v, want wait/ci_pending", d)
+				}
+			})
+		}
+		// Forged passing check before real failing Actions check still reads FAILURE.
+		c := green("SUCCESS")
+		c.Runs = append([]forge.Check{{Name: required[0], State: "SUCCESS", App: 99999, Conclusion: "SUCCESS"}}, c.Runs...)
+		c.Runs[1].State = "FAILURE"
+		if got := CIState(c, required); got != "FAILURE" {
+			t.Fatalf("forged pass + real fail: CIState = %q, want FAILURE", got)
+		}
+	})
 }
