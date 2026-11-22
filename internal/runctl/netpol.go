@@ -3,6 +3,7 @@
 package runctl
 
 import (
+	"maps"
 	"math"
 	"strings"
 
@@ -58,8 +59,12 @@ func KubeNetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *n
 		Ports: tcp(c.EgressProxy.Port()),
 	}}
 	if ns, inCluster := inClusterNamespace(m.Host); inCluster {
+		peer := networkingv1.NetworkPolicyPeer{NamespaceSelector: nsSelector(ns)}
+		if labels := c.modelPodLabels(); len(labels) > 0 {
+			peer.PodSelector = &metav1.LabelSelector{MatchLabels: maps.Clone(labels)}
+		}
 		egress = append(egress, networkingv1.NetworkPolicyEgressRule{
-			To: []networkingv1.NetworkPolicyPeer{{NamespaceSelector: nsSelector(ns)}}, Ports: tcp(m.Port)})
+			To: []networkingv1.NetworkPolicyPeer{peer}, Ports: tcp(m.Port)})
 	}
 	if r.Spec.RoomRef != "" {
 		ports := []int{8443}

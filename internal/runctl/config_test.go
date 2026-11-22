@@ -153,8 +153,17 @@ func TestLoadConfigModelMode(t *testing.T) {
 	}
 	g := gatewayTestConfig(t)
 	if g.Model.Mode != ModelModeGateway || g.Model.Gateway.Ports.Public != 8080 || g.Model.Gateway.Ports.Internal != 8081 ||
-		g.Model.Gateway.AudiencePrefix != "maku-gateway" {
+		g.Model.Gateway.AudiencePrefix != "maku-gateway" ||
+		g.Model.Gateway.PodLabels["gateway.networking.k8s.io/gateway-name"] != "model-gateway" || len(g.Model.Gateway.PodLabels) != 1 {
 		t.Fatalf("gateway defaults: %+v", g.Model)
+	}
+	ext, err := cfgFrom(t, strings.Replace(gatewayConfig, "http://model-gateway.maku.svc.cluster.local", "http://agentgateway.ai.svc.cluster.local", 1))
+	if err != nil || ext.Model.Gateway.PodLabels["gateway.networking.k8s.io/gateway-name"] != "agentgateway" || len(ext.Model.Gateway.PodLabels) != 1 {
+		t.Fatalf("custom gateway service default podLabels: %+v %v", ext.Model.Gateway.PodLabels, err)
+	}
+	custom, err := cfgFrom(t, gatewayConfig+"    podLabels: {app.kubernetes.io/name: custom-gw}\n")
+	if err != nil || custom.Model.Gateway.PodLabels["app.kubernetes.io/name"] != "custom-gw" || len(custom.Model.Gateway.PodLabels) != 1 {
+		t.Fatalf("explicit podLabels: %+v %v", custom.Model.Gateway.PodLabels, err)
 	}
 	for name, tc := range map[string]struct{ body, want string }{
 		"both":         {gatewayConfig + "modelSecret: agent-model\n", "model.mode gateway and modelSecret: choose one (the gateway holds the keys)"},
@@ -169,6 +178,9 @@ func TestLoadConfigModelMode(t *testing.T) {
 		"bad port":     {gatewayConfig + "    ports: {public: 70000}\n", "model.gateway.ports.public"},
 		"no sa":        {strings.Replace(gatewayConfig, "    serviceAccount: {namespace: maku, name: run-controller}\n", "", 1), "model.gateway.serviceAccount"},
 		"bad prefix":   {gatewayConfig + "    audiencePrefix: \"a b\"\n", "model.gateway.audiencePrefix"},
+		"empty labels": {gatewayConfig + "    podLabels: {}\n", "model.gateway.podLabels"},
+		"ns label":     {gatewayConfig + "    podLabels: {app: gw, io.kubernetes.pod.namespace: kube-system}\n", "model.gateway.podLabels"},
+		"k8s ns label": {gatewayConfig + "    podLabels: {app: gw, k8s:io.kubernetes.pod.namespace: kube-system}\n", "model.gateway.podLabels"},
 		"bad mode":     {goodConfig + "model: {mode: direct}\n", "model.mode"},
 		"secret, none": {strings.Replace(goodConfig, "modelSecret: agent-model\n", "", 1), "modelSecret is required"},
 		"secret with gateway": {goodConfig + "model:\n  gateway:\n    url: http://model-gateway.maku.svc.cluster.local\n",

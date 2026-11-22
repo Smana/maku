@@ -69,6 +69,9 @@ func NetworkPolicy(r *v1alpha1.AgentRun, c Config, m Model, runID string) *unstr
 		// backend pod before policy, so the rule would never match. Policy sees the backend port: the model
 		// URL's port must equal the Service's targetPort.
 		sel := map[string]any{"io.kubernetes.pod.namespace": modelNS}
+		for k, v := range c.modelPodLabels() {
+			sel[k] = v
+		}
 		egress = append(egress, map[string]any{"toEndpoints": []any{map[string]any{"matchLabels": sel}}, "toPorts": port(m.Port)})
 	case m.Port != 443:
 		egress = append(egress, map[string]any{"toFQDNs": matchNames([]string{m.Host}), "toPorts": port(m.Port)})

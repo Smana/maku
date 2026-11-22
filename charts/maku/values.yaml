@@ -292,6 +292,9 @@ runController:
       service: ""
       namespace: ""
       ports: {public: 8080, internal: 8081}
+      # Pod labels selecting the gateway's pods in each run's policy. Empty defaults to
+      # {gateway.networking.k8s.io/gateway-name: <service>} (maku-gateway's proxy label).
+      podLabels: {}
       audiencePrefix: maku-gateway
       # The aliases each listener serves: maku-gateway aliases.<class>'s keys. A run whose spec.model
       # or judge alias its listener does not serve is refused before its pod exists; an internal run

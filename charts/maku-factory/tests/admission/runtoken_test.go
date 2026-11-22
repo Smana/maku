@@ -127,6 +127,7 @@ func TestRunTokenPolicy(t *testing.T) {
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: release}},
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: runsNS}},
 		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agent-model", Namespace: runsNS}, Data: map[string][]byte{"api_key": []byte("sk")}},
+		&corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "maku-run-eeeeeeee-git", Namespace: runsNS}, Data: map[string][]byte{"secret": []byte("do-not-leak")}},
 	} {
 		if err := admin.Create(ctx, o); err != nil {
 			t.Fatal(err)
@@ -179,6 +180,27 @@ func TestRunTokenPolicy(t *testing.T) {
 		{"a create of another name", func() error { return apply(tokenSecret("maku-run-abcdefgh-other")) }},
 		{"a delete of agent-model", func() error {
 			return factory.Delete(ctx, &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "agent-model", Namespace: runsNS}})
+		}},
+		{"adopting a pre-existing Secret with matching name via apply", func() error {
+			return apply(tokenSecret("maku-run-eeeeeeee-git"))
+		}},
+		{"adopting a pre-existing Secret with matching name via patch", func() error {
+			s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: "maku-run-eeeeeeee-git", Namespace: runsNS}}
+			err := factory.Patch(ctx, s, client.RawPatch(types.MergePatchType, []byte(
+				`{"metadata":{"labels":{"app.kubernetes.io/managed-by":"maku-factory","maku.ogenki.io/run":"maku-run-eeeeeeee"},"ownerReferences":[{"apiVersion":"maku.ogenki.io/v1alpha1","kind":"AgentRun","name":"maku-run-eeeeeeee","uid":"0b5e2f8c-0000-4000-8000-000000000001"}]}}`)))
+			if len(s.Data) != 0 {
+				t.Fatalf("a denied adoption patch returned Secret data: %v", s.Data)
+			}
+			return err
+		}},
+		{"mutating labels on an existing run token Secret", func() error {
+			s := &corev1.Secret{ObjectMeta: metav1.ObjectMeta{Name: runName + "-git", Namespace: runsNS}}
+			return factory.Patch(ctx, s, client.RawPatch(types.MergePatchType, []byte(`{"metadata":{"labels":{"extra":"1"}}}`)))
+		}},
+		{"mutating ownerReferences on an existing run token Secret", func() error {
+			return apply(tokenSecret(runName+"-git", func(s *corev1.Secret) {
+				s.OwnerReferences[0].UID = "0b5e2f8c-0000-4000-8000-000000000099"
+			}))
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

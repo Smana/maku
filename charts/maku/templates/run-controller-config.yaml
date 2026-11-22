@@ -45,6 +45,7 @@ data:
       gateway:
         url: {{ $gw.url | quote }}
         ports: {public: {{ $gw.ports.public }}, internal: {{ $gw.ports.internal }}}
+        podLabels: {{- toYaml $gw.podLabels | nindent 10 }}
         audiencePrefix: {{ $gw.audiencePrefix | quote }}
         serviceAccount: {namespace: {{ .Release.Namespace | quote }}, name: run-controller}
         aliases:

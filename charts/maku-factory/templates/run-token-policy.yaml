@@ -29,9 +29,10 @@ spec:
     - name: the-factory
       expression: {{ printf "request.userInfo.username == 'system:serviceaccount:%s:agent-factory'" .Release.Namespace | quote }}
   variables:
-    # On DELETE only the old object exists.
+    # On CREATE only object exists; on DELETE only oldObject exists; on UPDATE we validate oldObject
+    # so a pre-existing Secret can never be adopted via PATCH/UPDATE and read back in the response.
     - name: s
-      expression: "request.operation == 'DELETE' ? oldObject : object"
+      expression: "request.operation == 'CREATE' ? object : oldObject"
     - name: run
       expression: "variables.s.metadata.name.endsWith('-git') ? variables.s.metadata.name.substring(0, size(variables.s.metadata.name) - 4) : ''"
     - name: labels
@@ -43,6 +44,12 @@ spec:
       message: "a run token Secret carries the factory's labels"
     - expression: {{ printf "has(variables.s.metadata.ownerReferences) && variables.s.metadata.ownerReferences.exists(r, r.kind == 'AgentRun' && r.apiVersion.startsWith('%s/') && r.name == variables.run)" $runsGroup | quote }}
       message: "a run token Secret is owned by its AgentRun"
+    - expression: >-
+        request.operation != 'UPDATE' ||
+        ((has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}) &&
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences))
+      message: "a run token Secret's labels and ownerReferences are immutable after create"
 ---
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicyBinding

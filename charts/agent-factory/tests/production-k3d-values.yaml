@@ -114,6 +114,16 @@ maku-factory:
       pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
       investigate: {roles: [triager]}
     caps: {activeTasks: 3, concurrentRuns: 2, tasksPerDay: 20, maxTextBytes: 14336, awaitingHumanWIP: 5}
+networkPolicies:
+  factory:
+    idp:
+      to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+      port: 8443
+    meter:
+      to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: monitoring}}}]
+    extraEgress:
+      - to: [{namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: e2e}}, podSelector: {matchLabels: {app.kubernetes.io/name: e2e-stub}}}]
+        ports: [{port: 8443, protocol: TCP}]
 monitoring:
   serviceMonitor: {enabled: true}
   prometheusRule: {enabled: true}

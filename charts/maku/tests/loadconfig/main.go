@@ -134,8 +134,8 @@ func main() {
 			if err != nil {
 				return err
 			}
-			if !c.Gateway() || c.ModelSecret != "" {
-				return fmt.Errorf("model.mode %q modelSecret %q, want gateway and none", c.Model.Mode, c.ModelSecret)
+			if !c.Gateway() || c.ModelSecret != "" || len(c.Model.Gateway.PodLabels) == 0 {
+				return fmt.Errorf("model.mode %q modelSecret %q podLabels %v, want gateway, none and non-empty podLabels", c.Model.Mode, c.ModelSecret, c.Model.Gateway.PodLabels)
 			}
 			return nil
 		}

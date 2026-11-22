@@ -233,6 +233,7 @@ out="$(helm template af . -n maku "${prod[@]}")" || { echo "FAIL: tests/producti
 for d in room-broker run-controller agent-factory; do
   ykind Deployment "select(.metadata.name == \"$d\") | true" "production renders the Deployment $d"
 done
+ykind NetworkPolicy 'select(.metadata.name == "agent-factory") | true' 'production renders the factory default-deny NetworkPolicy by default'
 ynone 'select(.kind == "StatefulSet" or (.kind == "Secret" and (.metadata.name | test("^(room-broker-tls|room-broker-ca|openbao-ca|agent-model|agent-factory-github|rooms-.*-dsn)$"))) or .kind == "NetworkPolicy" and .metadata.name == "rooms-db")' 'production renders a demo object: the bundled Postgres, its policy or a generated Secret'
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | has("install") | not)' 'production with every seam named shows no unsafe setting'
 # Review of #565: production renders no broker TLS of its own (tls.yaml is the demo's), so ExternalSecrets
@@ -248,8 +249,8 @@ out="$(helm template af . -n maku --set maku-factory.enabled=true --set maku-fac
   { echo "FAIL: maku.enabled=false with maku-factory alone does not render" >&2; fail=1; out=''; }
 ykind Deployment 'select(.metadata.name == "agent-factory") | true' 'the factory alone renders its Deployment'
 ynone 'select(.metadata.name | test("^(room-broker|run-controller|egress-proxy)")) | .metadata.name' 'the factory alone renders a maku object'
-# networkPolicies.mode none stays allowed, on the install banner (PR9)
-out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.mode=none)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
+# networkPolicies.mode none stays allowed (with factory policy off), on the install banner (PR9)
+out="$(helm template af . -n maku "${prod[@]}" --set maku.networkPolicies.mode=none --set networkPolicies.factory.enabled=false)" || { echo "FAIL: production in networkPolicies mode none does not render" >&2; fail=1; out=''; }
 ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "network_policy_none"' 'production in mode none lists network_policy_none on the banner (PR9)'
 # v4 step 6, Task 20: values-production.example.yaml renders as shipped, and its configs load; the
 # cloud-native-ref-shaped values (ANR at 1529b3b) render exactly tests/golden/production-cnref-like.yaml,
@@ -882,7 +883,9 @@ bad 'networkPolicy.from is empty' "${skx[@]}"
 helm template af . -n maku "${skx[@]}" --set-json "slack.networkPolicy.from=$exnp" >/dev/null || { echo 'FAIL: the exposed App with its gateway peers does not render' >&2; fail=1; }
 bad 'slack.networkPolicy.mode "none" must equal maku.networkPolicies.mode "kubernetes"' "${slk[@]}" --set maku.networkPolicies.mode=kubernetes --set maku.runController.enabled=true
 
-# v4 step 6 Task 16 (D6): the factory's default-deny, off by default (the golden holds it), per mode.
+# v4 step 6 Task 16 (D6): the factory's default-deny, on by default in production (values-demo.yaml
+# turns it off for mode none, which the demo golden holds), per mode.
+yq -e '.networkPolicies.factory.enabled == true' values.yaml >/dev/null 2>&1 || { echo "FAIL: values.yaml does not default networkPolicies.factory.enabled to true" >&2; fail=1; }
 ynone 'select((.kind == "NetworkPolicy" or .kind == "CiliumNetworkPolicy") and .metadata.name == "agent-factory") | .kind' 'networkPolicies.factory off renders the factory policy'
 # The preflight off here: its rule is asserted with it on below.
 fnp=("${args[@]}" --set networkPolicies.factory.enabled=true --set maku.preflight.enabled=false --set maku-factory.preflight.enabled=false)

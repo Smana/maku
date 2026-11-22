@@ -557,6 +557,8 @@ data:
       gateway:
         url: "http://model-gateway.agent-system.svc.cluster.local"
         ports: {public: 8080, internal: 8081}
+        podLabels:
+          gateway.networking.k8s.io/gateway-name: model-gateway
         audiencePrefix: "maku-gateway"
         serviceAccount: {namespace: "agent-system", name: run-controller}
         aliases:
@@ -1492,7 +1494,7 @@ spec:
         app.kubernetes.io/version: "0.0.0"
       annotations:
         # The controller reads its config once at start: a changed config must roll the pod.
-        checksum/config: 33848be7b18d113063d155a1c45c0146a632cb795c75b247cc7cb42417d6982c
+        checksum/config: 15d798ab4facad1238570cd352d4010e72df6547820e83097870a9cbc6f91956
     spec:
       serviceAccountName: run-controller
       automountServiceAccountToken: true # the apiserver is its only peer
@@ -4819,9 +4821,10 @@ spec:
     - name: the-factory
       expression: "request.userInfo.username == 'system:serviceaccount:agent-system:agent-factory'"
   variables:
-    # On DELETE only the old object exists.
+    # On CREATE only object exists; on DELETE only oldObject exists; on UPDATE we validate oldObject
+    # so a pre-existing Secret can never be adopted via PATCH/UPDATE and read back in the response.
     - name: s
-      expression: "request.operation == 'DELETE' ? oldObject : object"
+      expression: "request.operation == 'CREATE' ? object : oldObject"
     - name: run
       expression: "variables.s.metadata.name.endsWith('-git') ? variables.s.metadata.name.substring(0, size(variables.s.metadata.name) - 4) : ''"
     - name: labels
@@ -4833,6 +4836,9 @@ spec:
       message: "a run token Secret carries the factory's labels"
     - expression: "has(variables.s.metadata.ownerReferences) && variables.s.metadata.ownerReferences.exists(r, r.kind == 'AgentRun' && r.apiVersion.startsWith('maku.ogenki.io/') && r.name == variables.run)"
       message: "a run token Secret is owned by its AgentRun"
+    - expression: >-
+        request.operation != 'UPDATE' || ((has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {}) && has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) && (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences))
+      message: "a run token Secret's labels and ownerReferences are immutable after create"
 ---
 # Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
 # Only the listed users (the factory) create AgentRuns (C3).
