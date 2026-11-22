@@ -469,10 +469,17 @@ func (r *Relay) answered(m message) {
 	}
 	r.mu.Lock()
 	ch, ok := r.waiting[id]
-	r.mu.Unlock()
 	if ok {
-		raw, _ := json.Marshal(m)
-		ch <- raw
+		delete(r.waiting, id)
+	}
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	raw, _ := json.Marshal(m)
+	select {
+	case ch <- raw:
+	default:
 	}
 }
 

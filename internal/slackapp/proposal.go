@@ -728,8 +728,8 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	// one. The lock is held across the planner call, exactly as fileProposal holds it across
 	// run_create — the cost is that a slow plan waits out its predecessor, and the alternative is two
 	// cards binding two hashes.
-	a.editMu.Lock()
-	defer a.editMu.Unlock()
+	unlock := a.edits.lock(ev.Channel, thread)
+	defer unlock()
 	msgs, err := a.Slack.Thread(ctx, ev.Channel, thread)
 	if err != nil {
 		// The App cannot see whether the thread is closed, so it plans anyway rather than leaving the
@@ -739,6 +739,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	}
 	latest, closed := a.threadProposal(msgs)
 	if closed {
+		unlock()
 		if !say(a.proposalClosedLine(a.threadRoom(msgs))) {
 			return "error"
 		}
@@ -1013,7 +1014,7 @@ func parentRequest(msgs []Message, thread, bot string) (string, bool) {
 // carries; when Slack refuses the edit, updateProposal reposts and makes the old card inert, which is
 // Review Focus 1 reached from here.
 //
-// It is called by reply with a.editMu held and with the thread read under it, and it takes no lock of
+// It is called by reply with the thread's edit lock held and with the thread read under it, and it takes no lock of
 // its own: two replies cannot interleave, so the second one's read already holds the first one's reply
 // and the revision it wrote, and the revision it plans is the one the message shows. Everything is
 // read from the messages — the request from the thread's parent, the plan, its hash, its author and
@@ -1603,8 +1604,8 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 		return refuse("issue", "Not filed: this proposal does not carry exactly one issue; mention me again to re-plan it.")
 	}
 
-	a.editMu.Lock() // a re-plan in flight finishes first, so the thread's newest proposal is the one filed
-	defer a.editMu.Unlock()
+	unlock := a.edits.lock(channel, thread) // a re-plan in flight finishes first, so the thread's newest proposal is the one filed
+	defer unlock()
 	msgs, err := a.Slack.Thread(ctx, channel, thread)
 	if err != nil {
 		a.log().Warn("slack thread fetch failed", "channel", channel, "err", err)

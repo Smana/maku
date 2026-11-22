@@ -125,10 +125,10 @@ type App struct {
 	Metrics       Recorder
 	Logger        *slog.Logger
 
-	events, deliveries seen       // event_id and webhook-id
-	answered           seen       // the ✅ refusals said, by draft, user and reason: each is said once
-	retried            throttle   // the ✅ passing failures said, by draft, user and reason: once per retryEvery
-	editMu             sync.Mutex // one draft edit at a time, so two quick replies do not branch the draft
+	events, deliveries seen        // event_id and webhook-id
+	answered           seen        // the ✅ refusals said, by draft, user and reason: each is said once
+	retried            throttle    // the ✅ passing failures said, by draft, user and reason: once per retryEvery
+	edits              threadLocks // one edit per thread at a time, so two quick replies do not branch a proposal
 
 	poolOnce sync.Once
 	poolMu   sync.Mutex  // guards draining and every send on queue
@@ -136,6 +136,57 @@ type App struct {
 	queue    chan func() // eventQueue slots, fed by enqueue, drained by eventWorkers
 	workers  sync.WaitGroup
 	pending  atomic.Int64 // events taken by a worker's queue and not yet finished
+}
+
+// threadLocks serializes proposal edits per (channel, thread) without blocking unrelated threads.
+// Entries are ref-counted and deleted when the last holder or waiter releases, so the map stays
+// bounded to active threads.
+type threadLocks struct {
+	mu    sync.Mutex
+	locks map[string]*threadLockEntry
+}
+
+type threadLockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+// lock acquires the mutex for (channel, thread) and returns an idempotent unlock function.
+func (l *threadLocks) lock(channel, thread string) func() {
+	key := channel + "\x00" + thread
+	l.mu.Lock()
+	if l.locks == nil {
+		l.locks = make(map[string]*threadLockEntry)
+	}
+	e := l.locks[key]
+	if e == nil {
+		e = &threadLockEntry{}
+		l.locks[key] = e
+	}
+	e.refs++
+	l.mu.Unlock()
+
+	e.mu.Lock()
+	unlocked := false
+	return func() {
+		if unlocked {
+			return
+		}
+		unlocked = true
+		e.mu.Unlock()
+		l.mu.Lock()
+		e.refs--
+		if e.refs == 0 {
+			delete(l.locks, key)
+		}
+		l.mu.Unlock()
+	}
+}
+
+func (l *threadLocks) len() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.locks)
 }
 
 // seen is a bounded set of ids: Slack's event_id and a delivery's webhook-id (R26).
@@ -558,10 +609,11 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 	if isCheckMark(ev.Text) {
 		return a.checkMarkReply(ctx, ev)
 	}
-	a.editMu.Lock()
-	defer a.editMu.Unlock()
+	unlock := a.edits.lock(ev.Channel, ev.ThreadTS)
+	defer unlock()
 	msgs, err := a.Slack.Thread(ctx, ev.Channel, ev.ThreadTS)
 	if err != nil {
+		unlock()
 		a.log().Warn("slack thread fetch failed", "channel", ev.Channel, "err", err)
 		if errors.Is(err, ErrThreadTooLong) {
 			if _, perr := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, threadTooLongLine, nil); perr != nil {
@@ -575,10 +627,13 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 		return a.replanCoordination(ctx, ev, ev.ThreadTS, msgs, m, cp)
 	}
 	prop, closed := a.threadProposal(msgs)
-	if closed && a.threadCancelled(msgs) {
-		return "ignored"
-	}
 	if closed {
+		// Once a thread is closed (filed or cancelled), its proposal is never edited again; release
+		// the per-thread lock before read-only broker queries, Slack posts or tier-1 classification.
+		unlock()
+		if a.threadCancelled(msgs) {
+			return "ignored"
+		}
 		room := a.threadRoom(msgs)
 		q := questionOf(ev.Text)
 		if (q == QuestionStop && ch.actsOn(actStop)) || (q == QuestionRetry && ch.actsOn(actRetry)) {

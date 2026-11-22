@@ -19,7 +19,7 @@ import (
 )
 
 // gatedSlack holds every Message call until release closes, signalling each arrival on entered:
-// it pins a worker on an event before the handler takes editMu.
+// it pins a worker on an event before the handler takes the thread's edit lock.
 type gatedSlack struct {
 	*fakeSlack
 	entered chan struct{}

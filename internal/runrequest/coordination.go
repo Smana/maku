@@ -91,9 +91,6 @@ func (f Factory) call(ctx context.Context, method, accessToken, path string, bod
 	if err != nil {
 		return err
 	}
-	if f.HC == nil {
-		defer hc.CloseIdleConnections()
-	}
 	resp, err := hc.Do(req)
 	if err != nil {
 		return fmt.Errorf("runrequest: factory: %w", err)

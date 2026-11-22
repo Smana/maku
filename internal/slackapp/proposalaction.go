@@ -241,13 +241,13 @@ func (a *App) cancelProposal(ctx context.Context, in interaction, thread string,
 	}
 	// The lock is taken and released around the write alone: the answer to the presser is a Slack call
 	// of its own, and holding the App's edits shut while it runs would make one press wait out another.
-	a.editMu.Lock()
+	unlock := a.edits.lock(in.Channel, thread)
 	code, line := a.cancelInPlace(ctx, in, thread, p)
-	a.editMu.Unlock()
+	unlock()
 	return a.pressAnswer(ctx, in, thread, line, code)
 }
 
-// cancelInPlace is cancelProposal's work under a.editMu: the thread read, the check that the pressed
+// cancelInPlace is cancelProposal's work under the thread's edit lock: the thread read, the check that the pressed
 // message is the one the thread shows, and the write that closes it. It posts nothing, so the answer
 // to the presser never holds the App's edits.
 func (a *App) cancelInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload) (code, line string) {

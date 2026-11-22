@@ -768,6 +768,65 @@ func TestRelayAcceptsBothMCPNeedsReasons(t *testing.T) {
 	}
 }
 
+// REL-H2: duplicate responses for the same relay-initiated request id, or a response arriving after
+// ask times out or cancels, must never deadlock the stdin reader goroutine.
+func TestRelayDuplicateAndLateAskResponsesDoNotDeadlock(t *testing.T) {
+	t.Run("duplicate response while waiter has not read yet", func(t *testing.T) {
+		r := &Relay{waiting: map[string]chan json.RawMessage{}}
+		ch := make(chan json.RawMessage, 1)
+		r.waiting["maku-1"] = ch
+
+		done := make(chan struct{})
+		go func() {
+			r.answered(message{ID: json.RawMessage(`"maku-1"`), Result: json.RawMessage(`{"n":1}`)})
+			r.answered(message{ID: json.RawMessage(`"maku-1"`), Result: json.RawMessage(`{"n":2}`)})
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(time.Second):
+			t.Fatal("answered deadlocked on duplicate response id")
+		}
+		raw := <-ch
+		if !strings.Contains(string(raw), `"n":1`) {
+			t.Fatalf("first response lost: %s", raw)
+		}
+	})
+
+	t.Run("duplicate responses and late response over stdio", func(t *testing.T) {
+		s, r := locals(t, newMCPBroker(t))
+		s.request(t, 1, "initialize", map[string]any{"capabilities": map[string]any{"roots": map[string]any{}}})
+
+		got := make(chan string, 1)
+		go func() { p, _ := r.workspace(t.Context()); got <- p }()
+		ask := s.next(t)
+		// Send three duplicate answers for the same ask id before verifying follow-up traffic.
+		for _, uri := range []string{"file:///tmp/first", "file:///tmp/second", "file:///tmp/third"} {
+			s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{"roots": []any{map[string]any{"uri": uri}}}})
+		}
+		if p := <-got; p != "/tmp/first" {
+			t.Fatalf("workspace = %q, want /tmp/first", p)
+		}
+
+		// Now trigger an ask that cancels before the client responds, then send a late response.
+		ctx, cancel := context.WithCancel(t.Context())
+		errCh := make(chan error, 1)
+		go func() { _, err := r.ask(ctx, "roots/list", map[string]any{}); errCh <- err }()
+		ask2 := s.next(t)
+		cancel()
+		if err := <-errCh; !errors.Is(err, context.Canceled) {
+			t.Fatalf("cancelled ask err = %v, want context.Canceled", err)
+		}
+		_ = s.next(t) // notifications/cancelled sent by ask
+		s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask2["id"], "result": map[string]any{"roots": []any{}}})
+
+		// Subsequent requests over stdio must still succeed promptly.
+		if res := s.request(t, 2, "tools/list", nil); res["id"] != 2.0 || res["result"] == nil {
+			t.Fatalf("subsequent request failed after duplicate/late responses: %v", res)
+		}
+	})
+}
+
 // toolListed is whether a broker serving tools lists name: a call to any other is unknown.
 func toolListed(tools []any, name string) bool {
 	for _, t := range tools {

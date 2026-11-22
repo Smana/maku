@@ -685,7 +685,13 @@ func (b *Bridge) flush(ctx context.Context) {
 			for _, p := range b.buf[:n] {
 				b.bufBytes -= len(p.enc)
 			}
+			clear(b.buf[:n])
 			b.buf = b.buf[n:]
+			if len(b.buf) == 0 {
+				b.buf = nil
+			} else if cap(b.buf) > batchItems && len(b.buf)*4 < cap(b.buf) {
+				b.buf = append([]pending(nil), b.buf...)
+			}
 		case n > 0 && (rep.Code == http.StatusRequestEntityTooLarge || rep.Code == http.StatusBadRequest):
 			if n > 1 {
 				limit = n / 2
