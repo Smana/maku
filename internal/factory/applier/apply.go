@@ -8,10 +8,60 @@ import (
 	"fmt"
 	"strings"
 
+	"sigs.k8s.io/controller-runtime/pkg/client"
+
 	"github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/hardening"
 )
+
+// AnnotationOutputIntent records, on the task, the non-push output the applier is about to write:
+// "<output id> <sanitised digest>", written before apply so crash recovery recognises only the
+// applier's own writes (SEC-H1, HR16).
+const AnnotationOutputIntent = "agents.ogenki.io/output-intent"
+
+func (a *Applier) intendedOutput(t *v1alpha1.Task, rs *runState, id, digest string) bool {
+	return t.Annotations[AnnotationOutputIntent] == id+" "+digest && !rs.room.voidedOutputs[id+" "+digest]
+}
+
+func (a *Applier) recordOutputIntent(ctx context.Context, t *v1alpha1.Task, rs *runState, id, digest string) error {
+	key := id + " " + digest
+	delete(rs.room.voidedOutputs, key)
+	if t.Annotations[AnnotationOutputIntent] == key {
+		return nil
+	}
+	orig := t.DeepCopy()
+	if t.Annotations == nil {
+		t.Annotations = map[string]string{}
+	}
+	t.Annotations[AnnotationOutputIntent] = key
+	if a.Tasks == nil {
+		return nil
+	}
+	if err := a.Tasks.Patch(ctx, t, client.MergeFrom(orig)); err != nil {
+		*t = *orig
+		return fmt.Errorf("record the output's intent: %w", err)
+	}
+	return nil
+}
+
+func (a *Applier) clearOutputIntent(ctx context.Context, t *v1alpha1.Task, rs *runState, id, digest string) error {
+	key := id + " " + digest
+	rs.room.voidedOutputs[key] = true
+	if t.Annotations[AnnotationOutputIntent] != key {
+		return nil
+	}
+	orig := t.DeepCopy()
+	delete(t.Annotations, AnnotationOutputIntent)
+	if a.Tasks == nil {
+		return nil
+	}
+	if err := a.Tasks.Patch(ctx, t, client.MergeFrom(orig)); err != nil {
+		*t = *orig
+		return fmt.Errorf("clear the output's intent: %w", err)
+	}
+	return nil
+}
 
 // baseRef is the branch every task's pull request targets: the base every run is cut from
 // (reconciler implementerSpec).
@@ -20,48 +70,65 @@ const baseRef = "main"
 // proposedLabel is the one label a run's follow-up issue gets: never the trigger label (HR11).
 const proposedLabel = "factory/proposed"
 
-// find looks for the request's own write on GitHub by the output id it carries (HR16): the
-// Agent-Output line of the branch's pull request footer, the marker ending one of the agents App's
-// comments on the task's pull request or issue, or one of the factory App's issues since the run
-// started. A labels request carries no id: adding a label twice is a no-op.
-func (a *Applier) find(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, typ hardening.OutputType, id string) (string, bool, error) {
-	if typ == hardening.Issue {
-		return a.findIssue(ctx, t, rec, id)
-	}
-	if typ != hardening.PR && typ != hardening.Comment {
-		return "", false, nil
-	}
-	pub, err := a.Publisher(ctx, t.Spec.Repository)
-	if err != nil {
-		return "", false, fmt.Errorf("connect the publisher: %w", err)
-	}
-	pr, err := branchPR(ctx, t, pub)
-	if err != nil {
-		return "", false, err
-	}
-	if typ == hardening.PR {
-		ok := pr.Number > 0 && footerOutput(pr.Body) == id && sameLogin(pr.Author, a.AgentsLogin)
-		return pr.URL, ok, nil
-	}
-	targets := []struct {
-		n    int
-		kind string
-	}{{pr.Number, "pull"}, {t.Spec.Issue, "issues"}}
-	for _, tg := range targets {
-		if tg.n < 1 {
-			continue
+// find looks for the checked request's own write on GitHub by the output id and sanitised content
+// it carries (HR16, SEC-H1): for a PR, the Agent-Output footer plus normalised title and body; for
+// a comment on the requested target, the marker plus normalised body; for an issue, the factory
+// App's issue since the run started ending with the marker. A labels request carries no id: adding
+// a label twice is a no-op.
+func (a *Applier) find(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, payload any, prov hardening.Provenance) (string, bool, error) {
+	switch o := payload.(type) {
+	case hardening.IssuePayload:
+		return a.findIssue(ctx, t, rec, prov.Output)
+	case hardening.PRPayload:
+		pub, err := a.Publisher(ctx, t.Spec.Repository)
+		if err != nil {
+			return "", false, fmt.Errorf("connect the publisher: %w", err)
 		}
-		recent, err := pub.RecentComments(ctx, tg.n)
+		pr, err := branchPR(ctx, t, pub)
+		if err != nil {
+			return "", false, err
+		}
+		wantBody := hardening.WithFooter(o.Body, prov)
+		ok := pr.Number > 0 &&
+			footerOutput(pr.Body) == prov.Output &&
+			sameLogin(pr.Author, a.AgentsLogin) &&
+			normText(pr.Title) == normText(o.Title) &&
+			normText(pr.Body) == normText(wantBody)
+		return pr.URL, ok, nil
+	case hardening.CommentPayload:
+		pub, err := a.Publisher(ctx, t.Spec.Repository)
+		if err != nil {
+			return "", false, fmt.Errorf("connect the publisher: %w", err)
+		}
+		n, kind := t.Spec.Issue, "issues"
+		if o.Target == hardening.TargetPR {
+			pr, err := branchPR(ctx, t, pub)
+			if err != nil {
+				return "", false, err
+			}
+			n, kind = pr.Number, "pull"
+		}
+		if n < 1 {
+			return "", false, nil
+		}
+		recent, err := pub.RecentComments(ctx, n)
 		if err != nil {
 			return "", false, fmt.Errorf("read recent comments: %w", err)
 		}
+		wantBody := normText(hardening.WithMarker(o.Body, prov.Output))
 		for _, c := range recent {
-			if got, ok := hardening.FindMarker(c.Body); ok && got == id && sameLogin(c.Author, a.AgentsLogin) {
-				return commentURL(t, tg.kind, tg.n, c.ID), true, nil
+			if got, ok := hardening.FindMarker(c.Body); ok && got == prov.Output &&
+				sameLogin(c.Author, a.AgentsLogin) && normText(c.Body) == wantBody {
+				return commentURL(t, kind, n, c.ID), true, nil
 			}
 		}
+		return "", false, nil
 	}
 	return "", false, nil
+}
+
+func normText(s string) string {
+	return strings.TrimRight(strings.ReplaceAll(s, "\r\n", "\n"), " \t\n")
 }
 
 // findIssue is the factory App's issue since the run started that ends with the marker. It reads

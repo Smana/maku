@@ -143,6 +143,9 @@ type roomState struct {
 	// voided are the push intents ("<output id> <head>") this applier cleared after a definitive
 	// refusal: never read as the factory's push, even before the task's record is gone.
 	voided map[string]bool
+	// voidedOutputs are the non-push output intents ("<output id> <digest>") cleared after a
+	// definitive refusal.
+	voidedOutputs map[string]bool
 }
 
 type runState struct {
@@ -280,7 +283,8 @@ func (a *Applier) stopped(ctx context.Context) bool {
 func (a *Applier) room(ctx context.Context, t *v1alpha1.Task, live map[string]window) error {
 	st := a.rooms[t.Status.RoomRef]
 	if st == nil {
-		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{}, voided: map[string]bool{}}
+		st = &roomState{runs: map[string]*runState{}, prs: map[string]bool{}, pushed: map[string]bool{},
+			voided: map[string]bool{}, voidedOutputs: map[string]bool{}}
 		a.rooms[t.Status.RoomRef] = st
 	}
 	last, err := a.Rooms.LastSeq(ctx, t.Status.RoomRef)
@@ -433,12 +437,16 @@ func (a *Applier) refuse(ctx context.Context, t *v1alpha1.Task, runID string, rs
 	return nil
 }
 
-// answer answers one request. Its own earlier write, found by the output id it carries, is answered
-// applied without a second check, so a request never gets both answers. Otherwise it is checked,
-// and applied or refused; the kill switch is read again just before the write. A refusal GitHub
-// makes for good is answered output_unavailable; any other error leaves it pending for the next
-// tick, where the lookup finds a write whose answer was lost (HR16).
+// answer answers one request. Every request is checked through T1-T5 first; only after passing
+// checks does crash recovery look for a matching sanitised write on GitHub (and, when Tasks is
+// configured, persisted write intent) so direct writes can never bypass checks or be laundered
+// (SEC-H1, HR16). The kill switch is read again just before the write. A refusal GitHub makes for
+// good is answered output_unavailable; any other error leaves it pending for the next tick.
 func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.RunRecord, rs *runState, req request, prs map[string]bool) error {
+	typ := hardening.OutputType(req.rec.Type)
+	if !slices.Contains(a.Enforced(t.Spec.Repository), typ) {
+		return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseType, rs.counts) // the gate serves only enforced types: this guards it
+	}
 	if rs.claim == nil {
 		x, found, err := a.Runs.Get(ctx, rec.ID)
 		if err != nil {
@@ -446,26 +454,22 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 		}
 		if !found {
 			a.Log.Warn("output applier: the run's claim is gone, its canary unknown", "task.id", t.Name, "run.id", rec.ID)
+			if rec.Finished != nil {
+				n := maps.Clone(rs.counts)
+				n.Take(typ)
+				if typ == hardening.Push {
+					return a.refusePush(ctx, t, rec.ID, rs, req, hardening.RefuseUnavailable, n)
+				}
+				return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseUnavailable, n)
+			}
+			return fmt.Errorf("read the run's claim: %s not found", rec.ID)
 		}
 		rs.claim = &x
-	}
-	typ := hardening.OutputType(req.rec.Type)
-	if !slices.Contains(a.Enforced(t.Spec.Repository), typ) {
-		return a.refuse(ctx, t, rec.ID, rs, req, hardening.RefuseType, rs.counts) // the gate serves only enforced types: this guards it
 	}
 	if typ == hardening.Push {
 		return a.answerPush(ctx, t, rec, rs, req)
 	}
 	n := maps.Clone(rs.counts) // spent only once the answer is posted
-	obj, found, err := a.find(ctx, t, rec, typ, req.rec.ID)
-	if err != nil {
-		return err
-	}
-	if found {
-		n.Take(typ)
-		return a.applied(ctx, t, rec.ID, rs, req, n, prs, envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type,
-			Digest: req.rec.Digest, Bytes: req.rec.Bytes, Object: obj})
-	}
 	c := a.Checker(t.Spec.Repository)
 	t5 := hardening.ModeOff
 	if c.Layers.Classifier.AtLeast(hardening.ModeAudit) {
@@ -492,12 +496,39 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	if v.Refusal != "" {
 		return a.refuse(ctx, t, rec.ID, rs, req, v.Refusal, n, v.Audit...)
 	}
+	sanitised, err := json.Marshal(v.Payload)
+	if err != nil {
+		return fmt.Errorf("encode the sanitised payload: %w", err)
+	}
+	digest := hardening.Digest(sanitised)
+	prov := hardening.Provenance{Room: t.Status.RoomRef, Run: rec.ID, Role: rec.Role, Task: t.Name, TaskURL: taskURL(t),
+		Model: rs.claim.Model, Output: req.rec.ID}
+	if a.Tasks == nil || a.intendedOutput(t, rs, req.rec.ID, digest) {
+		obj, found, err := a.find(ctx, t, rec, v.Payload, prov)
+		if err != nil {
+			return err
+		}
+		if found {
+			out := envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type, Digest: digest,
+				Bytes: min(len(sanitised), envelope.MaxOutputBytes), Object: obj, Audit: findings(v.Audit)}
+			return a.applied(ctx, t, rec.ID, rs, req, n, prs, out)
+		}
+	}
 	if a.stopped(ctx) {
 		return errStopped
 	}
-	prov := hardening.Provenance{Room: t.Status.RoomRef, Run: rec.ID, Role: rec.Role, Task: t.Name, TaskURL: taskURL(t),
-		Model: rs.claim.Model, Output: req.rec.ID}
+	tracksIntent := typ == hardening.PR || typ == hardening.Comment || typ == hardening.Issue
+	if tracksIntent {
+		if err := a.recordOutputIntent(ctx, t, rs, req.rec.ID, digest); err != nil {
+			return err
+		}
+	}
 	obj, refusal, err := a.apply(ctx, t, v.Payload, prov, prs)
+	if tracksIntent && (forge.Unappliable(err) || refusal != "") {
+		if cerr := a.clearOutputIntent(ctx, t, rs, req.rec.ID, digest); cerr != nil {
+			return cerr
+		}
+	}
 	switch {
 	case forge.Unappliable(err):
 		a.Log.Warn("output applier: GitHub refused an output for good", "task.id", t.Name, "run.id", rec.ID,
@@ -508,11 +539,7 @@ func (a *Applier) answer(ctx context.Context, t *v1alpha1.Task, rec *v1alpha1.Ru
 	case refusal != "":
 		return a.refuse(ctx, t, rec.ID, rs, req, refusal, n, v.Audit...) // T5 read it in Check: its finding stays
 	}
-	sanitised, err := json.Marshal(v.Payload)
-	if err != nil {
-		return fmt.Errorf("encode the sanitised payload: %w", err)
-	}
-	out := envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type, Digest: hardening.Digest(sanitised),
+	out := envelope.OutputRecord{ID: req.rec.ID, Type: req.rec.Type, Digest: digest,
 		Bytes: min(len(sanitised), envelope.MaxOutputBytes), Object: obj}
 	out.Audit = findings(v.Audit)
 	return a.applied(ctx, t, rec.ID, rs, req, n, prs, out)
