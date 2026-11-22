@@ -224,6 +224,13 @@ func TestAllowedSponsoredReadsOnly(t *testing.T) {
 			t.Errorf("driver, %s: %v", a, got)
 		}
 	}
+	// SEC-H8: a sponsored subject with Role None reads nothing, even if Driver is set.
+	none := Subject{Kind: envelope.ActorSystem, ID: "system:slack-app", Role: None, Driver: true, Sponsored: true}
+	for _, a := range all {
+		if got := Allowed(none, a); got {
+			t.Errorf("role none, %s: got true, want false", a)
+		}
+	}
 	if !Allowed(Subject{Kind: envelope.ActorSystem, ID: "system:factory"}, Queue) {
 		t.Fatal("a system subject that is not sponsored is unchanged")
 	}

@@ -58,7 +58,7 @@ func jsonNames[T any]() []string {
 // one spelling (Ruling AI): a message is re-marshalled from its envelope
 // struct, and every other payload is refused if two of its keys fold together
 // or a key folds to a known field without being spelled as it.
-func bridgePayload(t envelope.Type, redacted json.RawMessage) (json.RawMessage, string) {
+func bridgePayload(t envelope.Type, redacted json.RawMessage, runID string) (json.RawMessage, string) {
 	var obj map[string]json.RawMessage
 	if err := json.Unmarshal(redacted, &obj); err != nil || obj == nil {
 		return nil, wire.ReasonBadPayload
@@ -76,9 +76,14 @@ func bridgePayload(t envelope.Type, redacted json.RawMessage) (json.RawMessage, 
 			(m.Delivery != envelope.DeliveryNone && m.Delivery != "") {
 			return nil, wire.ReasonBadItem
 		}
-		// A chat never carries a verdict's fields, whatever the bridge sent.
-		m.Delivery, m.Verdict, m.Commit, m.PullRequest = envelope.DeliveryNone, "", "", ""
-		return envelope.Must(m), ""
+		// Reconstruct a clean chat payload so a bridge can never inject verdict, output, input,
+		// integration, evidence or arbitrary addressing fields. Only the run's own self-addressed
+		// brief (bridge.Map for source=="user") keeps To.
+		var to []string
+		if runID != "" && len(m.To) == 1 && m.To[0] == "agent:"+runID {
+			to = []string{"agent:" + runID}
+		}
+		return envelope.Must(envelope.MessagePayload{Kind: envelope.KindChat, Text: m.Text, To: to, Delivery: envelope.DeliveryNone}), ""
 	case envelope.StateChanged:
 		var kind string
 		if json.Unmarshal(obj["kind"], &kind) != nil || !bridgeKinds[kind] {

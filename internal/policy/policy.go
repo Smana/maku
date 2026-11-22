@@ -92,8 +92,8 @@ func uiOnly(a Action) bool {
 
 // Allowed reports whether s may perform a in the room s was resolved for.
 func Allowed(s Subject, a Action) bool {
-	if s.Sponsored { // R13: a sponsored principal reads, whatever its kind is granted
-		return a == Read
+	if s.Sponsored { // R13: a sponsored principal reads rooms it watches, whatever its kind is granted
+		return a == Read && s.Role >= Watcher
 	}
 	switch s.Kind {
 	case envelope.ActorAgent:

@@ -284,6 +284,14 @@ func (s *Server) sponsorOf(ctx context.Context, cfg *config.Config, sp *config.S
 	if !rc.IsMaintainer(login) {
 		return "", http.StatusForbidden, "not_a_maintainer"
 	}
+	canWrite, err := s.actLoginWrites(ctx, in.Repository, login)
+	if err != nil {
+		s.logLink(ctx, "the sponsor's repository permission is unreadable", err)
+		return "", http.StatusServiceUnavailable, "access_unverified"
+	}
+	if !canWrite {
+		return "", http.StatusForbidden, "repository_permission"
+	}
 	return strings.ToLower(login), 0, ""
 }
 
@@ -359,8 +367,12 @@ func replayOf(t *factoryv1.Task, sp *config.Sponsored, key string) bool {
 }
 
 func (s *Server) existing(ctx context.Context, name string) (*factoryv1.Task, bool, error) {
+	return s.existingFrom(ctx, s.Rooms, name)
+}
+
+func (s *Server) existingFrom(ctx context.Context, r client.Reader, name string) (*factoryv1.Task, bool, error) {
 	var t factoryv1.Task
-	err := s.Rooms.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: name}, &t)
+	err := r.Get(ctx, types.NamespacedName{Namespace: s.Namespace, Name: name}, &t)
 	if apierrors.IsNotFound(err) {
 		return nil, false, nil
 	}
@@ -423,9 +435,16 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login}
 	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
-		got, _, err := s.existing(ctx, name)
-		if err != nil {
-			return 0, nil, err
+		reader := client.Reader(s.Rooms)
+		if s.APIReader != nil {
+			reader = s.APIReader
+		}
+		got, found, rerr := s.existingFrom(ctx, reader, name)
+		if rerr != nil {
+			return 0, nil, rerr
+		}
+		if !found {
+			return 0, nil, fmt.Errorf("api: task %s already exists but could not be read: %w", name, err)
 		}
 		if !replayOf(got, sp, key) {
 			return 0, nil, errReplayConflict

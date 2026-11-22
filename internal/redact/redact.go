@@ -14,7 +14,6 @@ import (
 	"strings"
 
 	"github.com/rs/zerolog"
-	"github.com/zricethezav/gitleaks/v8/config"
 	"github.com/zricethezav/gitleaks/v8/detect"
 	"github.com/zricethezav/gitleaks/v8/logging"
 )
@@ -25,10 +24,10 @@ import (
 var ErrKeyCollision = errors.New("redact: two object keys are the same once redacted")
 
 // Redactor applies gitleaks' default rules to text and JSON payloads.
-type Redactor struct{ cfg config.Config }
+type Redactor struct{ det *detect.Detector }
 
-// New parses gitleaks' default configuration once. It also silences gitleaks'
-// own global logger, which logs each finding's secret at Trace to stderr,
+// New parses gitleaks' default configuration and builds the detector once. It also silences
+// gitleaks' own global logger, which logs each finding's secret at Trace to stderr,
 // outside slog: call it at startup, before any scan runs.
 func New() (*Redactor, error) {
 	logging.Logger = zerolog.Nop()
@@ -36,28 +35,21 @@ func New() (*Redactor, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Redactor{cfg: d.Config}, nil
+	// Honour no allow marker: gitleaks otherwise drops every finding on a line carrying one,
+	// and the text we scan is harness output, which can carry anything.
+	d.IgnoreGitleaksAllow = true
+	return &Redactor{det: d}, nil
 }
 
-// String replaces each finding's secret with [REDACTED:<rule>]. A fresh Detector per
-// call: a Detector accumulates every finding it ever made, which would grow forever
-// in a long-lived broker.
+// String replaces each finding's secret with [REDACTED:<rule>]. DetectString scans into a
+// per-call findings slice without mutating the shared Detector's state (only atomic TotalBytes).
 func (r *Redactor) String(s string) (string, []string) {
 	fired := map[string]bool{}
-	return r.scan(r.detector(), s, fired), keys(fired)
+	return r.scan(s, fired), keys(fired)
 }
 
-// detector makes a Detector that honours no allow marker: gitleaks otherwise
-// drops every finding on a line carrying one, and the text we scan is harness
-// output, which can carry anything.
-func (r *Redactor) detector() *detect.Detector {
-	d := detect.NewDetector(r.cfg)
-	d.IgnoreGitleaksAllow = true
-	return d
-}
-
-func (r *Redactor) scan(d *detect.Detector, s string, fired map[string]bool) string {
-	for _, f := range d.DetectString(s) {
+func (r *Redactor) scan(s string, fired map[string]bool) string {
+	for _, f := range r.det.DetectString(s) {
 		secret := f.Secret
 		if secret == "" {
 			secret = f.Match
@@ -86,9 +78,8 @@ func (r *Redactor) Payload(ctx context.Context, raw json.RawMessage) (json.RawMe
 	if err := dec.Decode(&v); err != nil {
 		return nil, nil, err
 	}
-	d := r.detector()
 	fired := map[string]bool{}
-	v, err := r.walk(ctx, d, v, fired)
+	v, err := r.walk(ctx, v, fired)
 	if err == nil {
 		err = ctx.Err()
 	}
@@ -102,16 +93,16 @@ func (r *Redactor) Payload(ctx context.Context, raw json.RawMessage) (json.RawMe
 	return out, keys(fired), nil
 }
 
-func (r *Redactor) walk(ctx context.Context, d *detect.Detector, v any, fired map[string]bool) (any, error) {
+func (r *Redactor) walk(ctx context.Context, v any, fired map[string]bool) (any, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	switch t := v.(type) {
 	case string:
-		return r.scan(d, strings.ReplaceAll(t, "\x00", ""), fired), nil // jsonb refuses NUL (review I6)
+		return r.scan(strings.ReplaceAll(t, "\x00", ""), fired), nil // jsonb refuses NUL (review I6)
 	case []any:
 		for i := range t {
-			e, err := r.walk(ctx, d, t[i], fired)
+			e, err := r.walk(ctx, t[i], fired)
 			if err != nil {
 				return nil, err
 			}
@@ -122,11 +113,11 @@ func (r *Redactor) walk(ctx context.Context, d *detect.Detector, v any, fired ma
 		out := make(map[string]any, len(t))
 		for k, e := range t {
 			// A key is text like any other: an env dump puts secrets there.
-			key := r.scan(d, strings.ReplaceAll(k, "\x00", ""), fired)
+			key := r.scan(strings.ReplaceAll(k, "\x00", ""), fired)
 			if _, merged := out[key]; merged {
 				return nil, ErrKeyCollision
 			}
-			val, err := r.walk(ctx, d, e, fired)
+			val, err := r.walk(ctx, e, fired)
 			if err != nil {
 				return nil, err
 			}

@@ -11,9 +11,11 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -206,4 +208,77 @@ func TestTheAllowMarkerExemptsNothing(t *testing.T) {
 			t.Fatalf("%s %v", out, rules)
 		}
 	})
+}
+
+// PERF-H1: Redactor shares one compiled gitleaks Detector across calls; concurrent String and
+// Payload scans must be race-free and never leak findings between callers.
+func TestConcurrentScanningIsSafeAndIsolated(t *testing.T) {
+	r, err := New()
+	if err != nil {
+		t.Fatal(err)
+	}
+	const workers = 24
+	const iters = 10
+	type sample struct {
+		text     string
+		secret   string
+		wantRule string
+	}
+	samples := make([]sample, workers)
+	for i := range workers {
+		switch i % 3 {
+		case 0:
+			sec := "ghp_" + alnum(t, 36)
+			samples[i] = sample{text: fmt.Sprintf("w%d token=%s", i, sec), secret: sec, wantRule: "github-pat"}
+		case 1:
+			sec := "ghs_" + alnum(t, 36)
+			samples[i] = sample{text: fmt.Sprintf("w%d app=%s", i, sec), secret: sec, wantRule: "github-app-token"}
+		case 2:
+			samples[i] = sample{text: fmt.Sprintf("w%d clean message number %d", i, i)}
+		}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, workers*iters*2)
+	for i := range workers {
+		s := samples[i]
+		wg.Go(func() {
+			for range iters {
+				out, rules := r.String(s.text)
+				if s.wantRule == "" {
+					if out != s.text || len(rules) != 0 {
+						errs <- fmt.Errorf("String clean text mutated or leaked rules: out=%q rules=%v", out, rules)
+						return
+					}
+				} else {
+					if strings.Contains(out, s.secret) || !slices.Equal(rules, []string{s.wantRule}) {
+						errs <- fmt.Errorf("String(%s): out=%q rules=%v", s.wantRule, out, rules)
+						return
+					}
+				}
+				raw, _ := json.Marshal(map[string]any{"msg": s.text})
+				pout, prules, err := r.Payload(t.Context(), raw)
+				if err != nil {
+					errs <- fmt.Errorf("Payload: %w", err)
+					return
+				}
+				if s.wantRule == "" {
+					if !bytes.Equal(pout, raw) || len(prules) != 0 {
+						errs <- fmt.Errorf("Payload clean mutated or leaked rules: out=%s rules=%v", pout, prules)
+						return
+					}
+				} else {
+					if strings.Contains(string(pout), s.secret) || !slices.Equal(prules, []string{s.wantRule}) {
+						errs <- fmt.Errorf("Payload(%s): out=%s rules=%v", s.wantRule, pout, prules)
+						return
+					}
+				}
+			}
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		t.Fatal(err)
+	}
 }

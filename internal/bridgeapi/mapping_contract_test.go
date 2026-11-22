@@ -78,7 +78,7 @@ func TestTheBridgeMappingPassesTheAcceptRules(t *testing.T) {
 		if m.Type == envelope.StateChanged && bytes.Contains(m.Payload, []byte(`"kind":"interrupted"`)) {
 			interrupted = true
 		}
-		stored, reason := bridgePayload(m.Type, m.Payload)
+		stored, reason := bridgePayload(m.Type, m.Payload, runA)
 		if reason != "" {
 			t.Errorf("%s refused (%s): %.200s", m.Type, reason, m.Payload)
 			continue

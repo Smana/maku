@@ -83,7 +83,9 @@ const maxOutputEvents = 16
 // envelope.ReadOutput, which trusts the stamp, never the payload.
 func (s *Store) OutputEvents(ctx context.Context, room, run, outputID string) ([]envelope.Event, error) {
 	rows, err := s.pool.Query(ctx, `SELECT `+cols+` FROM events WHERE room_id = $1 AND run_id = $2
-		AND type = 'message' AND payload->'output'->>'id' = $3 ORDER BY seq LIMIT $4`, room, run, outputID, maxOutputEvents)
+		AND type = 'message' AND origin = 'client'
+		AND payload->>'kind' IN ('output_requested', 'output_applied', 'output_refused', 'output_waiting')
+		AND payload->'output'->>'id' = $3 ORDER BY seq LIMIT $4`, room, run, outputID, maxOutputEvents)
 	if err != nil {
 		return nil, fmt.Errorf("store: output events of room %s: %w", room, err)
 	}

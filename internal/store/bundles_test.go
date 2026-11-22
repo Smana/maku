@@ -45,6 +45,30 @@ func TestOutputEvents(t *testing.T) {
 	if evs, err := s.OutputEvents(ctx, "abcdefgh", bundleRun, "0123456789abcdef"); err != nil || len(evs) != 0 {
 		t.Fatalf("another room: %d %v", len(evs), err)
 	}
+	// SEC-H9: forged bridge chat messages carrying output.id must not enter OutputEvents or crowd
+	// out real safe-output events past maxOutputEvents.
+	const forgedID = "fedcba9876543210"
+	for i := range maxOutputEvents + 4 {
+		if _, _, err := s.Append(ctx, envelope.Draft{RoomID: room, RunID: bundleRun, Type: envelope.Message,
+			Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + bundleRun}, Origin: envelope.OriginHarness,
+			OriginClient: "agent:" + bundleRun + ":events", OriginSeq: int64(i + 1),
+			Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindChat, Text: "forged", Delivery: envelope.DeliveryNone, Output: rec(forgedID)})}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, _, err := s.Append(ctx, envelope.Draft{RoomID: room, RunID: bundleRun, Type: envelope.Message,
+		Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + bundleRun}, Origin: envelope.OriginClient,
+		OriginClient: "agent:" + bundleRun + ":tools", OriginSeq: 100,
+		Payload: envelope.Must(envelope.MessagePayload{Kind: envelope.KindOutputRequested, Delivery: envelope.DeliveryNone, Output: rec(forgedID)})}); err != nil {
+		t.Fatal(err)
+	}
+	evs, err = s.OutputEvents(ctx, room, bundleRun, forgedID)
+	if err != nil || len(evs) != 1 {
+		t.Fatalf("forged chat crowded OutputEvents: %d events, %v", len(evs), err)
+	}
+	if k, r, ok := envelope.ReadOutput(evs[0], bundleRun); !ok || k != envelope.KindOutputRequested || r.ID != forgedID {
+		t.Fatalf("ReadOutput %q %+v %v", k, r, ok)
+	}
 }
 
 // HR22: a push's bundle is stored once per run and digest, beside the room log.

@@ -10,6 +10,7 @@ import (
 
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/repoaccess"
 )
 
@@ -42,7 +43,9 @@ func (s *Server) admits(ctx context.Context, room *v1alpha1.Room, p authn.Princi
 // gate is admits, saying also when the caller is denied for having no GitHub link.
 func (s *Server) gate(ctx context.Context, room *v1alpha1.Room, p authn.Principal) (verdict, error) {
 	if p.Sponsored { // R13: only the rooms of its own tasks, by membership, never through GitHub
-		if slices.ContainsFunc(room.Spec.Members, func(m v1alpha1.Member) bool { return m.Principal == p.ID }) {
+		if slices.ContainsFunc(room.Spec.Members, func(m v1alpha1.Member) bool {
+			return m.Principal == p.ID && policy.ParseRole(m.Role) >= policy.Watcher
+		}) {
 			return admitted, nil
 		}
 		return denied, nil

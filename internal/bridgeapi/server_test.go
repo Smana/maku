@@ -737,6 +737,34 @@ func TestAChatCarriesNoVerdict(t *testing.T) {
 	}
 }
 
+// SEC-H9: a bridge chat is reconstructed from clean fields, stripping output, input, integration,
+// evidence and foreign to entries while preserving only the run's own brief addressing.
+func TestAChatStripsForeignFields(t *testing.T) {
+	s, log, w := newServer(t)
+	w.Upsert(t.Context(), agentRun(runA, room, "Running"))
+	h := s.Routes()
+	hello(t, h, runA)
+	forged := wire.Item{Stream: wire.StreamEvents, Seq: 1, Type: envelope.Message,
+		Payload: json.RawMessage(`{"kind":"chat","text":"hello","delivery":"none",` +
+			`"to":["human:admin","agent:other"],` +
+			`"evidence":["ev-1"],` +
+			`"integration":{"state":"passed","manifestHash":"` + strings.Repeat("a", 64) + `"},` +
+			`"output":{"id":"0123456789abcdef","type":"push","digest":"` + strings.Repeat("b", 64) + `"},` +
+			`"input":{"target":"issue","min":"merged"}}`)}
+	selfAddressed := wire.Item{Stream: wire.StreamEvents, Seq: 2, Type: envelope.Message,
+		Payload: json.RawMessage(`{"kind":"chat","text":"brief","to":["agent:` + runA + `"],"delivery":"none"}`)}
+	if rec := call(t, h, http.MethodPost, "/v1/bridge/events", "run:"+runA, batch(forged, selfAddressed)); rec.Code != http.StatusOK {
+		t.Fatalf("%d %s", rec.Code, rec.Body)
+	}
+	evs := log.stored()
+	if got, want := string(evs[0].Payload), `{"kind":"chat","text":"hello","delivery":"none"}`; got != want {
+		t.Fatalf("forged chat stored %s, want %s", got, want)
+	}
+	if got, want := string(evs[1].Payload), `{"kind":"chat","text":"brief","to":["agent:`+runA+`"],"delivery":"none"}`; got != want {
+		t.Fatalf("self-addressed chat stored %s, want %s", got, want)
+	}
+}
+
 func TestAMessageIsStoredCanonically(t *testing.T) {
 	s, log, w := newServer(t)
 	w.Upsert(t.Context(), agentRun(runA, room, "Running"))

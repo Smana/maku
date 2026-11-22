@@ -126,7 +126,7 @@ func (s *Server) bridgeDraft(ctx context.Context, p authn.Principal, run runwatc
 	case err != nil:
 		return envelope.Draft{}, refusal(wire.ReasonBadPayload)
 	}
-	payload, reason := bridgePayload(it.Type, redacted)
+	payload, reason := bridgePayload(it.Type, redacted, run.ID)
 	if reason != "" {
 		return envelope.Draft{}, refusal(reason)
 	}
