@@ -56,7 +56,7 @@ func adoptRig(t *testing.T) *rig {
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
 	g.f.SetPR(forge.PR{Number: 30, NodeID: "PR_30", State: "OPEN", Title: "chore(deps): update kyverno to v3.8.4", Author: bot,
-		HeadRef: "renovate/kyverno-3.x", HeadSHA: adoptHead})
+		BaseRef: "main", HeadRef: "renovate/kyverno-3.x", HeadSHA: adoptHead})
 	g.f.SetCommits(30, forge.Commit{SHA: "c1", Author: bot}, forge.Commit{SHA: adoptHead, Author: bot})
 	g.f.SetActivity("renovate/kyverno-3.x", forge.Push{Type: "push", Actor: bot, Before: "c1", After: adoptHead},
 		forge.Push{Type: "branch_creation", Actor: bot, After: "c1"})

@@ -334,7 +334,7 @@ func (f *Fake) CreatePR(_ context.Context, base, head, title, body string, draft
 	}
 	f.calls = append(f.calls, fmt.Sprintf("create-pr %s %s draft=%t", base, head, draft))
 	p := forge.PR{Number: n, NodeID: fmt.Sprintf("PR_%d", n), URL: fmt.Sprintf("https://github.com/owner/repo/pull/%d", n),
-		Title: title, Body: body, State: "OPEN", Author: f.author(), HeadRef: head}
+		Title: title, Body: body, State: "OPEN", Author: f.author(), BaseRef: base, HeadRef: head}
 	f.prs[n], f.branches[head] = p, n
 	return p, nil
 }
@@ -1159,7 +1159,7 @@ func (f *Fake) RevertPR(_ context.Context, of forge.RevertOf) (forge.Revert, err
 	f.reverts = append(f.reverts, of.NodeID+" "+of.Title)
 	n := 900 + len(f.reverts)
 	if _, ok := f.prs[n]; !ok { // the revert is a pull request GitHub reads back, as a replay does
-		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", Title: of.Title}
+		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", BaseRef: "main", Title: of.Title}
 	}
 	return forge.Revert{Number: n, URL: "https://github.com/Smana/cloud-native-ref/pull/901", NodeID: "PR_revert"}, nil
 }

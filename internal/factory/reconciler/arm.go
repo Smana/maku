@@ -118,31 +118,63 @@ type ShadowHold struct {
 	Rows decision.Rows
 }
 
-// CIState over the required checks: FAILURE if one failed or reported a state the rollup's
-// vocabulary does not, CANCELLED if none failed but one was cancelled (not red: #40), PENDING while one is missing or running, SUCCESS when all passed.
-// NEUTRAL and SKIPPED never reach here as words: forge.checkState already maps them to
-// SUCCESS on the read. Fail-closed on the unrecognized: a renamed state is not green.
+// CIState over the required checks: FAILURE if any Actions-backed run of a required check failed
+// or reported a state the rollup's vocabulary does not, PENDING while any required check has no
+// Actions-backed run, is still running, or the rollup is truncated, CANCELLED if none failed or
+// is pending but one was cancelled (not red: #40), SUCCESS only when every required check has at
+// least one Actions-backed run, all matching Actions runs succeeded, and the rollup is not
+// truncated. Non-Actions check runs (App != forge.ActionsApp) never satisfy a required check,
+// matching GitHub branch protection's app_id pinning.
 func CIState(c forge.Checks, required []string) string {
-	state := "SUCCESS"
+	pending := false
 	cancelled := false
 	for _, name := range required {
-		i := slices.IndexFunc(c.Runs, func(x forge.Check) bool { return x.Name == name })
-		switch {
-		case i < 0 || c.Runs[i].State == "PENDING":
-			state = "PENDING"
-		case c.Runs[i].State == "CANCELLED":
-			cancelled = true
-		case c.Runs[i].State != "SUCCESS":
-			return "FAILURE"
+		seen := false
+		for _, run := range c.Runs {
+			if run.Name != name || run.App != forge.ActionsApp {
+				continue
+			}
+			seen = true
+			switch run.State {
+			case "SUCCESS":
+			case "PENDING":
+				pending = true
+			case "CANCELLED":
+				cancelled = true
+			default:
+				return "FAILURE"
+			}
+		}
+		if !seen {
+			pending = true
 		}
 	}
-	if state == "PENDING" {
-		return state // a job is re-run only once its workflow run is complete: GitHub refuses it (403) before
+	if pending || c.Truncated {
+		return "PENDING" // a job is re-run only once its workflow run is complete: GitHub refuses it (403) before
 	}
 	if cancelled {
 		return "CANCELLED" // a failure elsewhere has returned above: it outranks a cancellation
 	}
-	return state
+	return "SUCCESS"
+}
+
+// contractCheckPassed reports whether at least one GitHub Actions check run of name exists and
+// every matching Actions run completed with raw conclusion SUCCESS (never SKIPPED or NEUTRAL).
+func contractCheckPassed(c forge.Checks, name string) bool {
+	if c.Truncated || name == "" {
+		return false
+	}
+	seen := false
+	for _, run := range c.Runs {
+		if run.Name != name || run.App != forge.ActionsApp {
+			continue
+		}
+		seen = true
+		if run.State != "SUCCESS" || run.Conclusion != "SUCCESS" {
+			return false
+		}
+	}
+	return seen
 }
 
 // DecideArm is §5.1's merge-actor rule: a fixed base no class can remove, one author mode, and
@@ -539,14 +571,27 @@ func requiredFor(rc *config.Repository, t *v1alpha1.Task) []string {
 // as it only ever stops a merge, and removing it lets the next pass decide.
 const LabelHold = "factory/hold"
 
-// baseChecks are the base's rows before any class is read: the secret scan, CI, the fence,
-// policy-bot and, last, factory/hold. done is false when all of them hold.
+// baseChecks are the base's rows before any class is read: the secret scan, target branch, check
+// rollup completeness, CI, contract check, the fence, policy-bot and, last, factory/hold. done is
+// false when all of them hold.
 func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 	// R42 (review G6): TruffleHog runs --only-verified, so a red scan is a live credential in the
-	// diff. A fix run would remove it from the head and leave it in a public history.
-	if i := slices.IndexFunc(in.Checks.Runs, func(x forge.Check) bool { return x.Name == rc.Merge.LeakScanCheck }); i >= 0 &&
-		in.Checks.Runs[i].State == "FAILURE" {
+	// diff. A fix run would remove it from the head and leave it in a public history. Inspect
+	// every check run of that name, not only the first.
+	if rc.Merge.LeakScanCheck != "" && slices.ContainsFunc(in.Checks.Runs, func(x forge.Check) bool {
+		return x.Name == rc.Merge.LeakScanCheck && x.State == "FAILURE"
+	}) {
 		return ArmDecision{Verdict: "escalate", Reason: "secret_scan_red"}, true
+	}
+	// Only pull requests targeting main are ever gated or merged: Diff compares against main, so
+	// another base (or an absent BaseRef) would be judged against the wrong tree and could bypass
+	// the gate.
+	if in.PR.BaseRef != "main" {
+		return ArmDecision{Verdict: "human", Reason: "base_not_main"}, true
+	}
+	// A rollup read in part may hide a failing secret scan, required check or policy status: fail closed.
+	if in.Checks.Truncated {
+		return ArmDecision{Verdict: "human", Reason: "checks_truncated"}, true
 	}
 	// A task holding a contract while the repository no longer names merge.contractCheck has nothing that
 	// proves the contract: fail closed to a human, never drop row 2b.
@@ -560,6 +605,11 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 		return ArmDecision{Verdict: "ci_cancelled", Reason: "ci_cancelled"}, true
 	case "PENDING":
 		return ArmDecision{Verdict: "wait", Reason: "ci_pending"}, true
+	}
+	// Row 2b strict conclusion: a skipped or neutral contract check reads State SUCCESS but ran no
+	// contract tests. Every Actions run of contractCheck must carry raw Conclusion SUCCESS.
+	if in.Task.Status.Contract != nil && !contractCheckPassed(in.Checks, rc.Merge.ContractCheck) {
+		return ArmDecision{Verdict: "human", Reason: "contract_check_not_run"}, true
 	}
 	// Row 2c (R21, F3-R9): the tests the tester wrote are the task's contract, and no pull request changes
 	// them. A person decides, never a fix run: it was the implementer's own change (TF8).

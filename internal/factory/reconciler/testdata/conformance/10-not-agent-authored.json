@@ -10,6 +10,7 @@
       "Body": "",
       "State": "",
       "Author": "someone",
+      "BaseRef": "main",
       "HeadRef": "",
       "HeadSHA": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
       "HeadMessage": "docs: fix\n\nAgent-Run: 7f3cq2xz",
@@ -30,15 +31,15 @@
           "ID": 0,
           "Name": "Pre-commit checks",
           "State": "SUCCESS",
-          "App": 0,
-          "Conclusion": ""
+          "App": 15368,
+          "Conclusion": "SUCCESS"
         },
         {
           "ID": 0,
           "Name": "Kubernetes validation",
           "State": "SUCCESS",
-          "App": 0,
-          "Conclusion": ""
+          "App": 15368,
+          "Conclusion": "SUCCESS"
         },
         {
           "ID": 0,

@@ -93,7 +93,7 @@ func (g *rig) implementerOpensThePR(t *testing.T, n int) *v1alpha1.Task {
 	t.Helper()
 	g.f.SetBranch("agent/3buqdlot", 12)
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN", Author: agentsApp,
-		HeadRef: "agent/3buqdlot", HeadSHA: head1, HeadMessage: "feat: dry run\n\nAgent-Run: " + rid(n)})
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: head1, HeadMessage: "feat: dry run\n\nAgent-Run: " + rid(n)})
 	g.f.SetActivity("agent/3buqdlot",
 		forge.Push{Type: "push", Actor: agentsApp, Before: contractSHA, After: head1},
 		forge.Push{Type: "branch_creation", Actor: agentsApp, Before: strings.Repeat("0", 40), After: contractSHA})
@@ -203,7 +203,7 @@ func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
 	}
 	g.f.SetBranch("agent/3buqdlot", 12)
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN", Author: agentsApp,
-		HeadRef: "agent/3buqdlot", HeadSHA: head1, HeadMessage: "feat: dry run\n\nAgent-Run: " + rid(1)})
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: head1, HeadMessage: "feat: dry run\n\nAgent-Run: " + rid(1)})
 	g.log.handoff(rid(1), head1)
 	g.finish(rid(1), "Succeeded", "agent_finished")
 	g.reconcile(t, "3buqdlot", 3)

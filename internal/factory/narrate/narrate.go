@@ -214,6 +214,7 @@ func reasons() map[string]string {
 		"contract_disputed":           "the implementer says the tester's tests are wrong; a maintainer decides",
 		"contract_too_large":          "the tester's contract names more files or test ids than a task records, or one of them is too long",
 		"contract_check_unset":        "the task has a test contract but the repository no longer names merge.contractCheck",
+		"contract_check_not_run":      "the contract check did not run to a passing conclusion (skipped or neutral)",
 		"contract_modified":           "the pull request changes a test the tester wrote as the task's contract",
 		"contract_unread":             "the factory has not yet read which files changed since the test contract",
 		"contract_push_unrecorded":    "GitHub has not yet recorded the tester's push",
@@ -289,6 +290,8 @@ func reasons() map[string]string {
 		"ci_red":                      "CI stayed red after the fix runs",
 		"secret_scan_red":             "the secret scan (Security scanning 🔒, TruffleHog) found a live credential in this pull request: a maintainer revokes it and closes the pull request, and the factory does not retry",
 		"ci_cancelled":                "a required check was cancelled and re-running it did not settle it",
+		"checks_truncated":            "the pull request's check rollup was truncated, so not every check could be read",
+		"base_not_main":               "the pull request does not target main, so the factory does not gate or merge it",
 		"changes_requested":           "a reviewer requested changes, and the factory does not merge over them",
 		"fork_pull_request":           "it comes from a fork, which the factory never adopts",
 		"push_unrecorded":             "GitHub has not recorded the push of its head, so who made it cannot be shown",
@@ -1185,9 +1188,11 @@ func summary(text string, budget int) string {
 	}
 }
 
-// ProfileChosen names the workflow (a harness profile) the task's run-th run starts under, the floor marked
-// as the default, with the scoper's why or the reason it was not applied.
-func ProfileChosen(name, source, reason, why string, run int) Event {
+// ProfileChosen names the workflow (a harness profile) the task's run-th run starts under, the
+// floor marked as the default, with the reason it was not applied. On a public task only, the
+// scoper's why (untrusted model text) is quoted inert via summary (ruling TE, C7); on non-public
+// tasks it stays in the room and Task status.
+func ProfileChosen(t *v1alpha1.Task, name, source, reason, why string, run int) Event {
 	body := fmt.Sprintf("Agent factory: this task runs the workflow `%s`", name)
 	switch source {
 	case "scoper", "escalation":
@@ -1198,17 +1203,15 @@ func ProfileChosen(name, source, reason, why string, run int) Event {
 	default:
 		body += " (default)"
 	}
-	var because []string
 	if reason != "" {
-		because = append(because, reason)
+		body += " — " + reason
 	}
-	if why != "" {
-		because = append(because, "the scoper: "+why)
+	body += "."
+	if why != "" && t != nil && t.Spec.DataClass == "public" {
+		const prefix = "\n\nThe scoper's reason:\n\n"
+		body += prefix + summary(why, maxBody-len(body)-len(prefix))
 	}
-	if len(because) > 0 {
-		body += " — " + strings.Join(because, "; ")
-	}
-	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body + "."}
+	return Event{Key: fmt.Sprintf("profile-chosen-%d", run), Body: body}
 }
 
 // ProfileRefused says a pinned workflow was not applied, in the closed refusal's one sentence (P12):

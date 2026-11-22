@@ -64,7 +64,7 @@ func TestNewHeadResetsTheRerunBudget(t *testing.T) {
 		t.Fatalf("first head: %d", tk.Status.CheckReruns)
 	}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-		HeadRef: "agent/3buqdlot", HeadSHA: "def", HeadMessage: "docs: fix"})
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "def", HeadMessage: "docs: fix"})
 	tk := g.reconcile(t, "3buqdlot", 1)
 	if tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.CheckReruns != 1 || tk.Status.CheckRerunsHead != "def" ||
 		!slices.Equal(g.f.Reruns(), []int64{776, 776}) {

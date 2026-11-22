@@ -57,7 +57,7 @@ func TestRemovingTheHoldReturnsToTheGate(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.f.SetChecks(12, green("SUCCESS"))
 	pr := forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-		HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0),
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0),
 		HeadCommittedAt: now.Add(-time.Hour), Labels: []string{LabelHold}}
 	g.f.SetPR(pr)
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "held" || len(g.f.Armed()) != 0 {

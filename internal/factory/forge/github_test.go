@@ -34,7 +34,7 @@ import (
 
 const prJSON = `{"data":{"repository":{"pullRequest":{
  "id":"PR_kwDO1","number":12,"url":"https://github.com/Smana/demo/pull/12","title":"docs: fix a link","state":"OPEN",
- "headRefName":"agent/3buqdlot","headRefOid":"abc123","isCrossRepository":false,
+ "baseRefName":"main","headRefName":"agent/3buqdlot","headRefOid":"abc123","isCrossRepository":false,
  "author":{"__typename":"Bot","login":"ogenki-agents"},
  "mergedBy":null,"mergeCommit":null,"autoMergeRequest":null,
  "labels":{"nodes":[{"name":"factory/class:docs-links"}]},
@@ -421,6 +421,10 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 				_, _ = io.WriteString(w, strings.Replace(prJSON, `"reviews":{"nodes"`, `"reviews":{"pageInfo":{"hasPreviousPage":true},"nodes"`, 1))
 				return
 			}
+			if strings.Contains(string(b), `"number":16`) { // SEC-H3: a PR targeting a non-main branch
+				_, _ = io.WriteString(w, strings.Replace(prJSON, `"baseRefName":"main"`, `"baseRefName":"release-1"`, 1))
+				return
+			}
 			_, _ = io.WriteString(w, prJSON)
 			return
 		}
@@ -575,11 +579,17 @@ func newFakeGitHub(t *testing.T, pub *rsa.PublicKey, now func() time.Time) *fake
 			_, _ = io.WriteString(w, body)
 			return
 		}
-		if r.URL.Query().Get("head") != "Smana:agent/3buqdlot" {
+		if r.URL.Query().Get("head") == "Smana:agent/release-only" {
+			// Simulate a PR targeting release-1: only returned if caller failed to filter base=main,
+			// or even if returned with base=release-1, client-side check must reject it.
+			_, _ = io.WriteString(w, `[{"number":99,"base":{"ref":"release-1"}}]`)
+			return
+		}
+		if r.URL.Query().Get("head") != "Smana:agent/3buqdlot" || r.URL.Query().Get("base") != "main" {
 			_, _ = io.WriteString(w, `[]`)
 			return
 		}
-		_, _ = io.WriteString(w, `[{"number":12},{"number":3}]`)
+		_, _ = io.WriteString(w, `[{"number":12,"base":{"ref":"main"}},{"number":3,"base":{"ref":"main"}}]`)
 	}))
 	// Issue 15's comments are mutable: the identity and edit test reads back exactly what it wrote.
 	type editableComment struct {
@@ -1158,9 +1168,12 @@ func TestPullRequestSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if pr.Author != "ogenki-agents[bot]" || pr.HeadRef != "agent/3buqdlot" || pr.NodeID != "PR_kwDO1" || pr.HeadSHA != "abc123" ||
+	if pr.Author != "ogenki-agents[bot]" || pr.BaseRef != "main" || pr.HeadRef != "agent/3buqdlot" || pr.NodeID != "PR_kwDO1" || pr.HeadSHA != "abc123" ||
 		pr.State != "OPEN" || pr.AutoMerge || pr.MergedBy != "" || len(pr.Labels) != 1 {
 		t.Fatalf("identity: %+v", pr)
+	}
+	if other, err := r.g.PullRequest(t.Context(), 16); err != nil || other.BaseRef != "release-1" {
+		t.Fatalf("non-main baseRefName: %+v %v", other.BaseRef, err)
 	}
 	if pr.Trailer("Agent-Run") != "7f3cq2xz" || !pr.HeadCommittedAt.Equal(time.Date(2026, 9, 27, 9, 58, 0, 0, time.UTC)) {
 		t.Fatal("the head commit's Agent-Run trailer and date")
@@ -1385,6 +1398,9 @@ func TestIssueAndLabels(t *testing.T) {
 	}
 	if n, err := r.g.PullRequestForBranch(ctx, "agent/3buqdlot"); err != nil || n != 12 {
 		t.Fatalf("the newest PR of the branch: %d %v", n, err)
+	}
+	if n, err := r.g.PullRequestForBranch(ctx, "agent/release-only"); err != nil || n != 0 {
+		t.Fatalf("a PR targeting a non-main branch must not match: %d %v", n, err)
 	}
 	if n, err := r.g.PullRequestForBranch(ctx, "agent/none"); err != nil || n != 0 {
 		t.Fatalf("no PR: %d %v", n, err)

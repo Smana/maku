@@ -193,6 +193,7 @@ type PR struct {
 	BodyEditedAt time.Time
 	State        string // OPEN | CLOSED | MERGED
 	Author       string
+	BaseRef      string
 	HeadRef      string
 	HeadSHA      string
 	HeadMessage  string

@@ -42,7 +42,7 @@ func mergeRig(t *testing.T, phase string, objs ...client.Object) *rig {
 		VerifyFor: config.Duration{Duration: 30 * time.Minute}, RevertWindow: config.Duration{Duration: 168 * time.Hour},
 		Breaker: config.Breaker{Window: 10, MaxReverts: 1}}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-		HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0),
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0),
 		HeadCommittedAt: now.Add(-time.Hour)})
 	g.log.handoff(rid(0), "abc")
 	return g
@@ -98,7 +98,7 @@ func TestAHeadMovedAfterArmingIsDecidedAgain(t *testing.T) {
 		t.Fatalf("%s %s %v %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed(), g.f.Disarmed())
 	}
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: sneak", Author: "ogenki-agents[bot]",
-		HeadSHA: "def", HeadMessage: "docs: sneak\n\nAgent-Run: zzzzzzzz"})
+		BaseRef: "main", HeadSHA: "def", HeadMessage: "docs: sneak\n\nAgent-Run: zzzzzzzz"})
 	g.log.handoff(rid(0), "def") // the room reports the new head: it is decided on its own merits
 	if tk = g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "foreign_trailer" {
 		t.Fatalf("the moved head is decided again: %s %s", tk.Status.Phase, tk.Status.Reason)
@@ -556,7 +556,7 @@ func TestARedSecretScanEscalatesWithoutAFixRun(t *testing.T) {
 // gatePR is mergeRig's pull request at head h, its commit claiming run.
 func gatePR(h, run string) forge.PR {
 	return forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
-		HeadRef: "agent/3buqdlot", HeadSHA: h, HeadMessage: "docs: fix\n\nAgent-Run: " + run,
+		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: h, HeadMessage: "docs: fix\n\nAgent-Run: " + run,
 		HeadCommittedAt: now.Add(-time.Hour)}
 }
 

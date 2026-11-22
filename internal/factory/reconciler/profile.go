@@ -53,7 +53,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 		d.restore(&q)
 	}
 	*t.Status.Profile = q
-	narrateLater(t, narrate.ProfileChosen(q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
+	narrateLater(t, narrate.ProfileChosen(t, q.Name, q.Source, q.Reason, q.Why, len(t.Status.Runs)))
 	if offered {
 		class, cohort, rec, applied := t.Spec.PredictedClass, q.Cohort, r.recommendedLabel(cfg, t), q.Source == "scoper"
 		record(ctx, func(ctx context.Context) { r.Metrics.ProfileRecommendation(ctx, class, cohort, rec, applied) })
@@ -225,5 +225,5 @@ func resolveUnscoped(t *v1alpha1.Task) {
 	}
 	p := t.Status.Profile
 	p.Resolved = true
-	narrateLater(t, narrate.ProfileChosen(p.Name, p.Source, p.Reason, "", len(t.Status.Runs)))
+	narrateLater(t, narrate.ProfileChosen(t, p.Name, p.Source, p.Reason, "", len(t.Status.Runs)))
 }

@@ -463,7 +463,8 @@ const maxGateReentries = 3
 // the same way after any approval, so only a human's merge takes it (final review I1).
 // head_unreported is the tenth: row 3 refuses every approval of a head no implementer run reported,
 // so an approval cannot return it; the room's report does (reenter), or a human's merge.
-var byHandReasons = map[string]bool{"not_agent_authored": true, "gate_path": true, "contract_modified": true, "not_owned": true,
+var byHandReasons = map[string]bool{"not_agent_authored": true, "gate_path": true, "contract_modified": true,
+	"contract_check_not_run": true, "checks_truncated": true, "base_not_main": true, "not_owned": true,
 	"steering_path": true, "foreign_trailer": true, "not_mergeable": true, "changes_requested": true, "human_commit_in_pr": true,
 	"head_unreported": true}
 
@@ -1024,7 +1025,7 @@ func verifiers(t *v1alpha1.Task) []v1alpha1.RunRecord {
 func failing(c forge.Checks, required []string) []string {
 	var out []string
 	for _, x := range c.Runs {
-		if x.State == "FAILURE" && slices.Contains(required, x.Name) {
+		if x.App == forge.ActionsApp && x.State == "FAILURE" && slices.Contains(required, x.Name) && !slices.Contains(out, x.Name) {
 			out = append(out, x.Name)
 		}
 	}
@@ -1038,7 +1039,7 @@ func failing(c forge.Checks, required []string) []string {
 func (r *Reconciler) rerunCancelled(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR, c forge.Checks) error {
 	var ids []int64
 	for _, x := range c.Runs {
-		if x.State == "CANCELLED" && slices.Contains(requiredFor(r.repo(cfg, t), t), x.Name) {
+		if x.App == forge.ActionsApp && x.State == "CANCELLED" && slices.Contains(requiredFor(r.repo(cfg, t), t), x.Name) {
 			ids = append(ids, x.ID)
 		}
 	}

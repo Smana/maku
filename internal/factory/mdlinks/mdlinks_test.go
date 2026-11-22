@@ -20,6 +20,10 @@ func TestFencesOf(t *testing.T) {
 		"indented blocks":       {"- a\n  ```\n  x\n  ```\n- b\n\t```\n\t```", [][2]int{{4, 19}, {24, 33}}},
 		"unclosed at EOF":       {"a\n```\nb", [][2]int{{2, 7}}},
 		"closed, then unclosed": {"```\n```\nt\n```\nu", [][2]int{{0, 7}, {10, 15}}},
+		"tilde fence":           {"~~~\nx\n~~~\ntext\n", [][2]int{{0, 9}}},
+		"four-backtick outer":   {"````md\n```\nx\n```\n````\ntext\n", [][2]int{{0, 21}}},
+		"closer with info":      {"```\nx\n```sh\ny\n```\n", [][2]int{{0, 17}}},
+		"inline triple tick":    {"```code```\n[a](x.md)\n", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if got := fencesOf(c.s); !slices.Equal(got, c.want) {
@@ -57,6 +61,28 @@ func TestLinksOnly(t *testing.T) {
 		"a retarget after a list's block":    {"- step:\n  ```sh\n  ls\n  ```\n[a](old.md)", "- step:\n  ```sh\n  ls\n  ```\n[a](new.md)", true},
 		"a retarget in a list's block":       {"- step:\n  ```\n  [a](old.md)\n  ```\n", "- step:\n  ```\n  [a](new.md)\n  ```\n", false},
 		"a retarget after an unclosed fence": {"```\nx\n[a](old.md)", "```\nx\n[a](new.md)", false},
+		// SEC-H10: browser URL-normalisation host jumps and userinfo smuggling.
+		"backslash protocol-relative jump":        {"[a](docs/x.md)", `[a](/\evil.com/x)`, false},
+		"double-backslash protocol-relative jump": {"[a](docs/x.md)", `[a](\\evil.com/x)`, false},
+		"triple-slash protocol-relative jump":     {"[a](docs/x.md)", "[a](///evil.com/x)", false},
+		"angle-bracketed backslash jump":          {"[a](docs/x.md)", `[a](</\evil.com/x>)`, false},
+		"angle-bracketed leading-space jump":      {"[a](docs/x.md)", "[a](< //evil.com/x>)", false},
+		"angle-bracketed tab-smuggled jump":       {"[a](docs/x.md)", "[a](</\t/evil.com/x>)", false},
+		"https userinfo on same host":             {"[a](https://example.com/old)", "[a](https://user@example.com/new)", false},
+		"https userinfo host confusion":           {"[a](https://example.com/old)", "[a](https://example.com@evil.com/new)", false},
+		"https userinfo on archive":               {"[a](https://example.com/gone)", "[a](https://user@web.archive.org/web/2020/https://example.com/gone)", false},
+		"https opaque backslash":                  {"[a](https://example.com/old)", `[a](https:\evil.com/new)`, false},
+		// SEC-H10: non-triple-backtick code constructs must not be treated as link targets.
+		"a tilde-fenced retarget":              {"~~~\n[a](old.md)\n~~~", "~~~\n[a](new.md)\n~~~", false},
+		"a retarget after a tilde fence":       {"~~~\nx\n~~~\n[a](old.md)", "~~~\nx\n~~~\n[a](new.md)", true},
+		"a four-backtick fenced retarget":      {"````md\n```\nx\n```\n[a](old.md)\n````", "````md\n```\nx\n```\n[a](new.md)\n````", false},
+		"a retarget after a four-backtick box": {"````md\n```\nx\n```\n````\n[a](old.md)", "````md\n```\nx\n```\n````\n[a](new.md)", true},
+		"a closer with info string stays open": {"```\nx\n```sh\n[a](old.md)\n```", "```\nx\n```sh\n[a](new.md)\n```", false},
+		"a four-space indented code mutation":  {"text\n\n    arr[0](old)\n", "text\n\n    arr[0](new)\n", false},
+		"a tab indented code mutation":         {"text\n\n\tarr[0](old)\n", "text\n\n\tarr[0](new)\n", false},
+		"an inline code span mutation":         {"run `[a](old.md)` now", "run `[a](new.md)` now", false},
+		"a double-backtick inline code change": {"run ``[a](old.md)`` now", "run ``[a](new.md)`` now", false},
+		"a link with inline code in its label": {"see [`code`](docs/old.md).", "see [`code`](docs/new.md).", true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			ok, why := LinksOnly(one(c.base), one(c.headText))

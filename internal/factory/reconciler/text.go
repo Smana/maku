@@ -578,7 +578,8 @@ func queuedBlock(queued []rooms.Queued, fence, nonce string, room int) (string, 
 }
 
 // overlapEvidenceBlock carries an evaluation's classification and citations into implementation
-// briefs. Every value is factory-generated or a bounded ID; candidate goal and room text stay out.
+// briefs. Every value is factory-generated or a bounded ID; candidate goal, room text and free-text
+// scoper notes (o.Note) stay out of the trusted preamble.
 func overlapEvidenceBlock(o *v1alpha1.OverlapStatus) string {
 	if o == nil {
 		return ""
@@ -590,9 +591,6 @@ func overlapEvidenceBlock(o *v1alpha1.OverlapStatus) string {
 		classification = "pending"
 	}
 	fmt.Fprintf(&b, "Classification: `%s`. Checked sources: `%s`.\n", classification, strings.Join(o.Sources, ", "))
-	if o.Note != "" {
-		fmt.Fprintf(&b, "%s\n", o.Note)
-	}
 	for _, match := range o.Matches {
 		fmt.Fprintf(&b, "- `%s` match", match.Relation)
 		if match.Task != "" {
