@@ -5,6 +5,7 @@ package hardening
 import (
 	"strings"
 	"testing"
+	"time"
 )
 
 // The floor (UH10, protected paths table) holds with no repository extension. A pattern without a
@@ -105,5 +106,60 @@ func TestExtensionRefusals(t *testing.T) {
 	}
 	if _, err := NewProtectedPaths(many); err == nil || !strings.Contains(err.Error(), "at most") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestDoubleStarLinearTimeAndEquivalence(t *testing.T) {
+	// Multiple ** segments against a deep non-matching path must not backtrack exponentially.
+	altPat := strings.Repeat("**/a/", 12) + "z"
+	dupPat := strings.Repeat("**/", 20) + "z"
+	p, err := NewProtectedPaths([]PathRule{
+		{Pattern: altPat, On: OnBlocked},
+		{Pattern: dupPat, On: OnBlocked},
+		{Pattern: "**/**"},
+		{Pattern: "a/**/**/b/**/c", On: OnBlocked},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deep := strings.Repeat("a/", 24) + "b"
+	start := time.Now()
+	on, ok := p.Match(deep)
+	elapsed := time.Since(start)
+	if elapsed > 10*time.Millisecond {
+		t.Fatalf("Match(%q) took %v, want <10ms", deep, elapsed)
+	}
+	// Matches "**/**" (OnApproval), NOT the blocked patterns ending in "z".
+	if !ok || on != OnApproval {
+		t.Fatalf("Match(%q) = %q %v, want approval", deep, on, ok)
+	}
+
+	// Verify matching cases with multiple and collapsed ** segments.
+	p2, err := NewProtectedPaths([]PathRule{
+		{Pattern: altPat, On: OnBlocked},
+		{Pattern: dupPat, On: OnBlocked},
+		{Pattern: "a/**/**/b/**/c", On: OnBlocked},
+		{Pattern: "**/x/**/y", On: OnBlocked},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for file, want := range map[string]bool{
+		strings.Repeat("a/", 12) + "z":        true,
+		"x/" + strings.Repeat("a/", 12) + "z": true,
+		"q/r/s/z":                             true, // matches dupPat
+		"z":                                   true, // matches dupPat
+		"a/b/c":                               true, // ** matches zero segments
+		"a/1/2/b/3/4/c":                       true,
+		"a/1/2/b/3/4/d":                       false,
+		"x/y":                                 true,
+		"p/x/q/r/y":                           true,
+		"p/x/q/r/y/extra":                     false,
+	} {
+		on, ok := p2.Match(file)
+		got := ok && on == OnBlocked
+		if got != want {
+			t.Errorf("Match(%q) blocked=%v (%q), want %v", file, got, on, want)
+		}
 	}
 }

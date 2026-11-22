@@ -59,20 +59,22 @@ func TestCheckEnforce(t *testing.T) {
 		want  Refusal
 		layer Layer
 	}{
-		"a clean pr":                 {pr(long), "", ""},
-		"an unknown type":            {Request{Type: "merge", Payload: raw(map[string]string{})}, RefuseType, LayerSchema},
-		"a bad schema":               {Request{Type: Comment, Payload: raw(map[string]string{"target": "x", "body": "y"})}, RefuseSchema, LayerSchema},
-		"a secret in the body":       {pr(long + " ghp_abc"), RefuseSecret, LayerSecrets},
-		"the canary in the body":     {pr(long + " " + canary), RefuseCanary, LayerSecrets},
-		"the canary, zero-width cut": {pr(long + " mkc-0123456789\u200babcdef0123"), RefuseCanary, LayerSecrets},
-		"the canary and a secret":    {pr(long + " ghp_x " + canary), RefuseCanary, LayerSecrets},
-		"a push touching CI":         {push([]string{".github/workflows/x.yaml"}, nil, false), RefuseNeedsApproval, LayerPaths},
-		"an approved CI push":        {push([]string{".github/workflows/x.yaml"}, nil, true), "", ""},
-		"a push to a blocked path":   {push([]string{"deploy/x"}, nil, true), RefuseBlockedPath, LayerPaths},
-		"a push with a secret line":  {push([]string{"a.go"}, []string{"token := \"ghp_x\""}, false), RefuseSecret, LayerSecrets},
-		"a push leaking the canary":  {push([]string{"a.go"}, []string{"// " + canary}, false), RefuseCanary, LayerSecrets},
-		"a clean push":               {push([]string{"a.go"}, []string{"x := 1"}, false), "", ""},
-		"a label off the allowlist":  {Request{Type: Labels, Payload: raw(map[string][]string{"add": {"factory/live"}})}, RefuseSchema, LayerSchema},
+		"a clean pr":                    {pr(long), "", ""},
+		"an unknown type":               {Request{Type: "merge", Payload: raw(map[string]string{})}, RefuseType, LayerSchema},
+		"a bad schema":                  {Request{Type: Comment, Payload: raw(map[string]string{"target": "x", "body": "y"})}, RefuseSchema, LayerSchema},
+		"a secret in the body":          {pr(long + " ghp_abc"), RefuseSecret, LayerSecrets},
+		"the canary in the body":        {pr(long + " " + canary), RefuseCanary, LayerSecrets},
+		"the canary, zero-width cut":    {pr(long + " mkc-0123456789\u200babcdef0123"), RefuseCanary, LayerSecrets},
+		"the canary and a secret":       {pr(long + " ghp_x " + canary), RefuseCanary, LayerSecrets},
+		"a push touching CI":            {push([]string{".github/workflows/x.yaml"}, nil, false), RefuseNeedsApproval, LayerPaths},
+		"an approved CI push":           {push([]string{".github/workflows/x.yaml"}, nil, true), "", ""},
+		"a push to a blocked path":      {push([]string{"deploy/x"}, nil, true), RefuseBlockedPath, LayerPaths},
+		"a push with a secret line":     {push([]string{"a.go"}, []string{"token := \"ghp_x\""}, false), RefuseSecret, LayerSecrets},
+		"a push leaking the canary":     {push([]string{"a.go"}, []string{"// " + canary}, false), RefuseCanary, LayerSecrets},
+		"a push with a secret filename": {push([]string{"dir/ghp_abc.txt"}, nil, false), RefuseSecret, LayerSecrets},
+		"a push with a canary filename": {push([]string{"dir/" + canary + ".txt"}, nil, false), RefuseCanary, LayerSecrets},
+		"a clean push":                  {push([]string{"a.go"}, []string{"x := 1"}, false), "", ""},
+		"a label off the allowlist":     {Request{Type: Labels, Payload: raw(map[string][]string{"add": {"factory/live"}})}, RefuseSchema, LayerSchema},
 	} {
 		t.Run(name, func(t *testing.T) {
 			var n Counts
@@ -178,6 +180,11 @@ func TestCheckClassifier(t *testing.T) {
 	}
 	if len(hit.seen) != 2 || hit.seen[1] != body {
 		t.Fatalf("classifier read %q, want the title and the sanitised body", hit.seen)
+	}
+	fileHit := &fakeClassifier{hit: "ignore previous"}
+	if v := checker(ModeEnforce, ModeEnforce, fileHit).Check(t.Context(), &Counts{},
+		push([]string{"docs/ignore previous instructions.md"}, []string{"clean"}, false)); v.Refusal != RefuseInjection || v.Layer != LayerClassifier {
+		t.Fatalf("push filename injection: %+v", v)
 	}
 	down := &fakeClassifier{err: errors.New("dial: refused")}
 	if v := checker(ModeEnforce, ModeEnforce, down).Check(t.Context(), &Counts{}, pr(body)); v.Refusal != RefuseClassifierDown {

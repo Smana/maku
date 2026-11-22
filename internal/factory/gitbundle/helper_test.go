@@ -34,9 +34,19 @@ func gitEnv() []string {
 // git runs git in dir and returns its trimmed stdout; a failure fails the test.
 func git(t *testing.T, dir, stdin string, args ...string) string {
 	t.Helper()
+	return gitRun(t, dir, stdin, nil, args...)
+}
+
+func gitWithEnv(t *testing.T, dir string, extraEnv []string, args ...string) string {
+	t.Helper()
+	return gitRun(t, dir, "", extraEnv, args...)
+}
+
+func gitRun(t *testing.T, dir, stdin string, extraEnv []string, args ...string) string {
+	t.Helper()
 	cmd := exec.CommandContext(t.Context(), "git", args...)
 	cmd.Dir = dir
-	cmd.Env = gitEnv()
+	cmd.Env = append(gitEnv(), extraEnv...)
 	if stdin != "" {
 		cmd.Stdin = strings.NewReader(stdin)
 	}

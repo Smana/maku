@@ -270,8 +270,8 @@ func refuseIf(b bool, r Refusal) Refusal {
 	return ""
 }
 
-// published is the text an output puts on GitHub: its sanitised fields, or a push's added lines
-// and commit messages.
+// published is the text an output puts on GitHub: its sanitised fields, or a push's changed
+// paths, added lines, commit messages and commit headers.
 func published(p any, req Request) []string {
 	switch o := p.(type) {
 	case PRPayload:
@@ -283,7 +283,10 @@ func published(p any, req Request) []string {
 	case IssuePayload:
 		return []string{o.Title, o.Body}
 	}
-	return req.Added
+	out := make([]string, 0, len(req.Files)+len(req.Added))
+	out = append(out, req.Files...)
+	out = append(out, req.Added...)
+	return out
 }
 
 // secrets is T3: the canary first, since it is an alert, then the gitleaks rules. The canary is

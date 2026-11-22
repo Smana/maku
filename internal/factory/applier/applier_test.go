@@ -693,23 +693,190 @@ func TestApplierRefusesUnappliable(t *testing.T) {
 	}
 }
 
-// A request whose own write is already on GitHub is answered applied without being checked again,
-// so it can never get both answers.
+// SEC-H1: a pre-existing write on GitHub never bypasses Checker.Check (T1-T5). With no secret
+// scanner, T3 fails closed even when a matching marker already sits on GitHub.
 func TestApplierFoundWriteIsApplied(t *testing.T) {
 	r := newRig(t, 7, func(a *Applier) {
-		a.Checker = func(string) hardening.Checker { return hardening.Checker{} } // no scanner: T3 would refuse everything
+		a.Checker = func(string) hardening.Checker { return hardening.Checker{} } // no scanner: T3 refuses everything
 	})
 	id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
 	if _, err := r.pub.CommentWithID(t.Context(), 7, "done\n\n"+hardening.Marker(id)); err != nil {
 		t.Fatal(err)
 	}
 	r.tick(t)
-	if a := r.only(t, id); a.kind != envelope.KindOutputApplied || !strings.Contains(a.rec.Object, "#issuecomment-") {
-		t.Fatalf("answer %+v", a)
+	if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseSecret) {
+		t.Fatalf("answer %+v, want refused secret_found", a)
 	}
 	if len(r.pub.Comments(7)) != 1 {
 		t.Errorf("written again: %q", r.pub.Comments(7))
 	}
+}
+
+// SEC-H1: direct writes carrying a matching Agent-Output footer or maku-output marker are never
+// laundered into output_applied when their content differs, is unsafe, or lacks write intent.
+func TestApplierRejectsForgedDirectWrites(t *testing.T) {
+	t.Run("direct-written PR with differing secret body is not laundered", func(t *testing.T) {
+		r := newRig(t, 7)
+		id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+		r.pub.SetPR(forge.PR{
+			Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			URL:   "https://github.com/owner/repo/pull/40",
+			Title: "docs: fix a link",
+			Body:  "secret AKIAIOSFODNN7EXAMPLE\n\n---\nAgent-Output: " + id + "\n",
+		})
+		r.pub.SetBranch("agent/"+taskID, 40)
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseTarget) {
+			t.Fatalf("answer %+v, want refused output_target", a)
+		}
+		if calls := strings.Join(r.pub.Calls(), ";"); strings.Contains(calls, "-pr ") {
+			t.Errorf("forged PR was edited or replaced: %s", calls)
+		}
+	})
+
+	t.Run("direct-written PR with differing title is not laundered", func(t *testing.T) {
+		r := newRig(t, 7)
+		id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+		prov := hardening.Provenance{Room: room, Run: runID, Role: "implementer", Task: taskID,
+			TaskURL: "https://github.com/owner/repo/issues/7", Model: "agent-default", Output: id}
+		r.pub.SetPR(forge.PR{
+			Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			URL:   "https://github.com/owner/repo/pull/40",
+			Title: "evil forged title",
+			Body:  hardening.WithFooter("Fixes the broken link in the guide.", prov),
+		})
+		r.pub.SetBranch("agent/"+taskID, 40)
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseTarget) {
+			t.Fatalf("answer %+v, want refused output_target", a)
+		}
+	})
+
+	t.Run("direct-written PR with canary in request payload is refused at T3", func(t *testing.T) {
+		r := newRig(t, 7)
+		id := r.request(t, runID, hardening.PR, hardening.PRPayload{Title: "docs: x", Body: "body containing " + canary + " for padding"})
+		r.pub.SetPR(forge.PR{
+			Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			URL:   "https://github.com/owner/repo/pull/40",
+			Title: "docs: x",
+			Body:  "body containing " + canary + " for padding\n\n---\nAgent-Output: " + id + "\n",
+		})
+		r.pub.SetBranch("agent/"+taskID, 40)
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseCanary) {
+			t.Fatalf("answer %+v, want refused canary_leaked", a)
+		}
+	})
+
+	t.Run("direct-written comment with differing secret body is not laundered", func(t *testing.T) {
+		r := newRig(t, 7)
+		id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "done"})
+		forgedID, err := r.pub.CommentWithID(t.Context(), 7, "secret AKIAIOSFODNN7EXAMPLE\n\n"+hardening.Marker(id))
+		if err != nil {
+			t.Fatal(err)
+		}
+		forgedURL := fmt.Sprintf("https://github.com/owner/repo/issues/7#issuecomment-%d", forgedID)
+		r.tick(t)
+		a := r.only(t, id)
+		if a.kind != envelope.KindOutputApplied {
+			t.Fatalf("answer %+v, want applied for the benign sanitized comment", a)
+		}
+		if a.rec.Object == forgedURL {
+			t.Fatalf("forged comment %s was laundered as output_applied", forgedURL)
+		}
+		if len(r.pub.Comments(7)) != 2 {
+			t.Fatalf("comments = %q, want forged plus applier's own benign comment", r.pub.Comments(7))
+		}
+	})
+
+	t.Run("direct-written comment with canary in request payload is refused at T3", func(t *testing.T) {
+		r := newRig(t, 7)
+		id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "leak " + canary})
+		if _, err := r.pub.CommentWithID(t.Context(), 7, "leak "+canary+"\n\n"+hardening.Marker(id)); err != nil {
+			t.Fatal(err)
+		}
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseCanary) {
+			t.Fatalf("answer %+v, want refused canary_leaked", a)
+		}
+	})
+
+	t.Run("direct-written PR with identical benign body is rejected without persisted write intent", func(t *testing.T) {
+		r := newRig(t, 7, func(a *Applier) { a.Tasks = nil })
+		r.a.Tasks = r.c
+		id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+		prov := hardening.Provenance{Room: room, Run: runID, Role: "implementer", Task: taskID,
+			TaskURL: "https://github.com/owner/repo/issues/7", Model: "agent-default", Output: id}
+		r.pub.SetPR(forge.PR{
+			Number: 40, State: "OPEN", Author: agents, HeadRef: "agent/" + taskID,
+			URL:   "https://github.com/owner/repo/pull/40",
+			Title: "docs: fix a link",
+			Body:  hardening.WithFooter("Fixes the broken link in the guide.", prov),
+		})
+		r.pub.SetBranch("agent/"+taskID, 40)
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseTarget) {
+			t.Fatalf("answer %+v, want refused output_target when no write intent was recorded", a)
+		}
+	})
+
+	t.Run("crash recovery succeeds with persisted write intent", func(t *testing.T) {
+		r := newRig(t, 7)
+		r.a.Tasks = r.c
+		id := r.request(t, runID, hardening.PR, prPayload("docs: fix a link"))
+		r.rooms.failOut = 1
+		if err := r.a.Tick(t.Context()); err == nil {
+			t.Fatal("expected lost-answer tick error")
+		}
+		restarted := *r.a
+		restarted.rooms = nil
+		if err := restarted.Tick(t.Context()); err != nil {
+			t.Fatalf("recovery tick: %v", err)
+		}
+		if a := r.only(t, id); a.kind != envelope.KindOutputApplied {
+			t.Fatalf("answer %+v, want applied", a)
+		}
+		if got := strings.Count(strings.Join(r.pub.Calls(), ";"), "-pr "); got != 1 {
+			t.Fatalf("PR written %d times, want 1", got)
+		}
+	})
+}
+
+// SEC-H2: a missing run claim is never cached as an empty claim; a live run retries until the claim
+// is readable (preserving canary enforcement), and a finished run whose claim is gone fails closed.
+func TestApplierMissingRunClaimFailsClosed(t *testing.T) {
+	t.Run("live run retries without caching empty claim and later catches canary", func(t *testing.T) {
+		claims := fakeRuns{}
+		r := newRig(t, 7, func(a *Applier) { a.Runs = claims })
+		id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "leak " + canary})
+		if err := r.a.Tick(t.Context()); err == nil {
+			t.Fatal("missing claim on live run must return an error so the next tick retries")
+		}
+		if len(r.rooms.got()) != 0 || len(r.pub.Comments(7)) != 0 {
+			t.Fatalf("applied or answered while claim was missing: answers=%+v comments=%q", r.rooms.got(), r.pub.Comments(7))
+		}
+		claims[runID] = runs.Run{ID: runID, Canary: canary, Model: "agent-default"}
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseCanary) {
+			t.Fatalf("answer %+v, want refused canary_leaked once claim appears", a)
+		}
+		if len(r.pub.Comments(7)) != 0 {
+			t.Fatalf("canary comment was published: %q", r.pub.Comments(7))
+		}
+	})
+
+	t.Run("finished run with gone claim refuses output_unavailable", func(t *testing.T) {
+		r := newRig(t, 7, func(a *Applier) { a.Runs = fakeRuns{} })
+		r.finish(t, time.Minute)
+		id := r.request(t, runID, hardening.Comment, hardening.CommentPayload{Target: hardening.TargetIssue, Body: "leak " + canary})
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseUnavailable) {
+			t.Fatalf("answer %+v, want refused output_unavailable", a)
+		}
+		if len(r.pub.Comments(7)) != 0 {
+			t.Fatalf("comment was published without claim: %q", r.pub.Comments(7))
+		}
+	})
 }
 
 // One open and five edits per run: a closed pull request on the branch is not replaced, and a

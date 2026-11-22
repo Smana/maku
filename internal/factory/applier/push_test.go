@@ -404,8 +404,14 @@ func TestPushRefusals(t *testing.T) {
 		"too many lines": {func(p *fakePusher) { p.in.Cumulative.Lines = 101 }, hardening.RefusePushSize, false},
 		"the canary in an added line": {func(p *fakePusher) { p.in.Added = append(p.in.Added, "token "+canary) },
 			hardening.RefuseCanary, true},
+		"the canary in a filename": {func(p *fakePusher) {
+			p.in.Files = append(p.in.Files, gitbundle.File{Path: "docs/" + canary + ".md", Status: "A", Mode: "100644"})
+		}, hardening.RefuseCanary, true},
 		"an AWS key in a commit message": {func(p *fakePusher) { p.in.Added = append(p.in.Added, "AKIAIOSFODNN7EXAMPLE") },
 			hardening.RefuseSecret, false},
+		"an AWS key in a filename": {func(p *fakePusher) {
+			p.in.Files = append(p.in.Files, gitbundle.File{Path: "docs/AKIAIOSFODNN7EXAMPLE.txt", Status: "A", Mode: "100644"})
+		}, hardening.RefuseSecret, false},
 		"a blocked path": {func(p *fakePusher) {
 			p.in.Files = append(p.in.Files, gitbundle.File{Path: "secrets/prod.env", Status: "A", Mode: "100644"},
 				gitbundle.File{Path: "go.mod", Status: "M", Mode: "100644"})
@@ -449,6 +455,16 @@ func TestPushRefusals(t *testing.T) {
 		r.tick(t)
 		if a := r.only(t, id); a.rec.Reason != string(hardening.RefuseType) {
 			t.Fatalf("answer %+v", a)
+		}
+	})
+	t.Run("finished run with missing claim refuses output_unavailable", func(t *testing.T) {
+		r, p, pr, _ := pushRig(t)
+		r.a.Runs = fakeRuns{}
+		r.finish(t, time.Minute)
+		id := r.pushRequest(t, pr, "bundle-1")
+		r.tick(t)
+		if a := r.only(t, id); a.kind != envelope.KindOutputRefused || a.rec.Reason != string(hardening.RefuseUnavailable) || len(p.pushed) != 0 {
+			t.Fatalf("answer %+v, pushed %d", a, len(p.pushed))
 		}
 	})
 }

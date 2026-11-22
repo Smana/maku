@@ -100,6 +100,7 @@ func compile(e PathRule) (rule, error) {
 		return rule{}, errors.New("a pattern is relative to the repository root")
 	}
 	segs := strings.Split(e.Pattern, "/")
+	collapsed := make([]string, 0, len(segs))
 	for _, s := range segs {
 		switch {
 		case s == "":
@@ -112,8 +113,12 @@ func compile(e PathRule) (rule, error) {
 		if _, err := path.Match(s, ""); err != nil {
 			return rule{}, fmt.Errorf("an invalid glob: %w", err)
 		}
+		if s == "**" && len(collapsed) > 0 && collapsed[len(collapsed)-1] == "**" {
+			continue
+		}
+		collapsed = append(collapsed, s)
 	}
-	return rule{segs: segs, anywhere: len(segs) == 1 && segs[0] != "**", on: on}, nil
+	return rule{segs: collapsed, anywhere: len(collapsed) == 1 && collapsed[0] != "**", on: on}, nil
 }
 
 // Match reports the strictest action of the rules file matches.
@@ -146,20 +151,32 @@ func (p ProtectedPaths) Worst(files []string) PathAction {
 }
 
 func matchSegs(pat, segs []string) bool {
-	if len(pat) == 0 {
-		return len(segs) == 0
-	}
-	if pat[0] == "**" {
-		for i := 0; i <= len(segs); i++ {
-			if matchSegs(pat[1:], segs[i:]) {
-				return true
+	p, s := 0, 0
+	starP, starS := -1, 0
+	for s < len(segs) {
+		if p < len(pat) && pat[p] == "**" {
+			starP = p
+			starS = s
+			p++
+			continue
+		}
+		if p < len(pat) {
+			if ok, _ := path.Match(pat[p], segs[s]); ok {
+				p++
+				s++
+				continue
 			}
+		}
+		if starP >= 0 {
+			starS++
+			s = starS
+			p = starP + 1
+			continue
 		}
 		return false
 	}
-	if len(segs) == 0 {
-		return false
+	for p < len(pat) && pat[p] == "**" {
+		p++
 	}
-	ok, _ := path.Match(pat[0], segs[0])
-	return ok && matchSegs(pat[1:], segs[1:])
+	return p == len(pat)
 }

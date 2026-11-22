@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -46,10 +47,11 @@ type Inspection struct {
 	OldHead  string // the branch's head on the remote when read, "" when absent: the lease
 	BaseHead string // the base branch's head on the remote when read
 	Kind     Kind
-	// Files is OldHead..Head for FastForward, merge-base(BaseHead, Head)..Head for Rebase,
-	// deletions included.
+	// Files is the union of OldHead..Head (FastForward) or merge-base(BaseHead, Head)..Head
+	// (Rebase) and every intermediate commit in that range, deletions included.
 	Files []File
-	// Added is the added lines of Files' diff (no "+" prefix), then each new commit's message.
+	// Added is every commit's added lines in Files' range (no "+" prefix), then each new commit's
+	// author/committer headers and message.
 	Added []string
 	// Cumulative is merge-base(BaseHead, Head)..Head, always.
 	Cumulative Stats
@@ -257,19 +259,29 @@ func (m *Mirror) inspectFetched(ctx context.Context, tok, ref, outRef, head, old
 		from = mergeBase
 	}
 
-	// Every blob either range changes is sized by its header before any diff reads one (a highly
-	// compressible blob never inflates), and no range may change a binary file: T3 and the caps read
-	// text only.
-	for _, r := range [][2]string{{from, head}, {mergeBase, head}} {
-		if err := m.checkBlobs(ctx, tok, r[0], r[1]); err != nil {
+	// Every newly introduced blob across all commits in either range is sized by its header before
+	// any diff reads one (a highly compressible blob never inflates, even if added then deleted in
+	// a later commit), and no commit may change a binary file: T3 and the caps read text only.
+	if err := m.checkBlobs(ctx, tok, from, head); err != nil {
+		return Inspection{}, err
+	}
+	if mergeBase != from {
+		if err := m.checkBlobs(ctx, tok, mergeBase, head); err != nil {
 			return Inspection{}, err
 		}
 	}
 	if in.Files, err = m.files(ctx, tok, from, head, head); err != nil {
 		return Inspection{}, err
 	}
-	if _, err := m.stats(ctx, tok, from, head); err != nil { // the incremental range's binaries
-		return Inspection{}, err
+	if from != head {
+		extra, err := m.commitFiles(ctx, tok, from, head)
+		if err != nil {
+			return Inspection{}, err
+		}
+		in.Files = unionFiles(in.Files, extra)
+		if err := m.checkCommitBinaries(ctx, tok, from, head); err != nil {
+			return Inspection{}, err
+		}
 	}
 	if in.Added, err = m.added(ctx, tok, from, head); err != nil {
 		return Inspection{}, err
@@ -393,26 +405,27 @@ func (m *Mirror) readChange(ctx context.Context, tok string, args ...string) ([]
 	return out, err
 }
 
-// checkBlobs refuses a change from..to with a new-side blob over MaxBlob (push_size), sized by
-// cat-file --batch-check from its header: never inflated. Only the new side is sized, and with lazy
-// fetching off: the bundle carries every new blob it changes, so sizing one never reaches the
-// remote. A new-side blob the bundle leaves out (content the remote holds already, a revert) and
-// every old-side blob are the remote's own: core.bigFileThreshold and the binary refusal bound
-// them when the diff reads them, in one batched fetch rather than one per file (#505's review).
+// checkBlobs refuses any object reachable in from..to with a blob over MaxBlob (push_size), sized
+// by cat-file --batch-check from its header: never inflated. Enumerating via rev-list --objects
+// catches oversized blobs introduced in intermediate commits even when a later commit deletes them.
+// Lazy fetching stays off: every new blob the bundle carries is already in the mirror, while
+// missing promisor objects are the remote's own.
 func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
-	out, err := m.readChange(ctx, tok, "diff", "--raw", "-z", "--no-renames", "--no-abbrev", from, to, "--")
+	if from == to {
+		return nil
+	}
+	out, err := m.run(ctx, "", []string{"GIT_NO_LAZY_FETCH=1"}, "rev-list", "--objects", "--no-object-names",
+		"--missing=allow-promisor", from+".."+to)
+	if errors.Is(err, errOutputCap) {
+		return refuse(hardening.RefusePushSize, "change too large to read")
+	}
 	if err != nil {
 		return err
 	}
 	var shas []string
-	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
-	for i := 0; i+1 < len(fields); i += 2 {
-		parts := strings.Fields(strings.TrimPrefix(fields[i], ":"))
-		if len(parts) != 5 {
-			return fmt.Errorf("gitbundle: diff --raw: unexpected entry")
-		}
-		if sha, mode := parts[3], parts[1]; isSHA(sha) && strings.Trim(sha, "0") != "" && mode != "160000" && mode != "040000" {
-			shas = append(shas, sha)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if isSHA(line) {
+			shas = append(shas, line)
 		}
 	}
 	if len(shas) == 0 {
@@ -427,9 +440,15 @@ func (m *Mirror) checkBlobs(ctx context.Context, tok, from, to string) error {
 		return err
 	}
 	for _, line := range strings.Split(strings.TrimSpace(string(sizes)), "\n") {
+		if line == "" {
+			continue
+		}
 		typ, size, _ := strings.Cut(line, " ")
 		if isSHA(typ) && size == "missing" {
 			continue // not in the bundle: the remote's own object
+		}
+		if typ == "commit" || typ == "tree" || typ == "tag" {
+			continue
 		}
 		n, err := strconv.ParseInt(size, 10, 64)
 		if typ != "blob" || err != nil {
@@ -453,33 +472,112 @@ func (m *Mirror) files(ctx context.Context, tok, from, to, tree string) ([]File,
 	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
 	var files []File
 	for i := 0; i+1 < len(fields); i += 2 {
-		meta, p := fields[i], fields[i+1]
-		parts := strings.Fields(strings.TrimPrefix(meta, ":"))
-		if len(parts) != 5 {
-			return nil, fmt.Errorf("gitbundle: diff --raw: unexpected entry")
+		f, err := m.checkRawEntry(ctx, tok, tree, fields[i], fields[i+1])
+		if err != nil {
+			return nil, err
 		}
-		oldMode, newMode, newSHA, status := parts[0], parts[1], parts[3], parts[4]
-		if oldMode == "160000" || newMode == "160000" {
-			return nil, refuse(hardening.RefusePushTree, "submodule "+p)
-		}
-		if hasDotGit(p) {
-			return nil, refuse(hardening.RefusePushTree, "path "+p)
-		}
-		mode := newMode
-		if status == "D" {
-			mode = oldMode
-		} else if newMode == "120000" {
-			if err := m.checkSymlink(ctx, tok, tree, p, newSHA); err != nil {
-				return nil, err
-			}
-		}
-		files = append(files, File{Path: p, Status: status, Mode: mode})
+		files = append(files, f)
 	}
 	return files, nil
 }
 
-// checkSymlink refuses a symlink at p whose target is absolute, has a ".." component, resolves
-// outside the root or into .git, or names another symlink in tree: no chain can lead out.
+// commitFiles inspects every commit in from..to against its parent(s) (refusing any submodule,
+// .git path, or bad symlink introduced in an intermediate commit) and returns all touched files.
+func (m *Mirror) commitFiles(ctx context.Context, tok, from, to string) ([]File, error) {
+	out, err := m.readChange(ctx, tok, "log", "--reverse", "-m", "--root", "--raw", "-z",
+		"--no-renames", "--no-abbrev", "--no-ext-diff", "--no-textconv", "--format=%H", from+".."+to, "--")
+	if err != nil {
+		return nil, err
+	}
+	fields := strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00")
+	var (
+		files []File
+		tree  string
+	)
+	for i := 0; i < len(fields); {
+		tokStr := fields[i]
+		if tokStr == "" {
+			i++
+			continue
+		}
+		if isSHA(tokStr) {
+			tree = tokStr
+			i++
+			continue
+		}
+		if tree == "" || i+1 >= len(fields) {
+			return nil, fmt.Errorf("gitbundle: log --raw: unexpected entry")
+		}
+		meta := strings.TrimPrefix(tokStr, "\n")
+		f, err := m.checkRawEntry(ctx, tok, tree, meta, fields[i+1])
+		if err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+		i += 2
+	}
+	return files, nil
+}
+
+func (m *Mirror) checkRawEntry(ctx context.Context, tok, tree, meta, p string) (File, error) {
+	rest, ok := strings.CutPrefix(meta, ":")
+	parts := strings.Fields(rest)
+	if !ok || len(parts) != 5 {
+		return File{}, fmt.Errorf("gitbundle: diff --raw: unexpected entry")
+	}
+	oldMode, newMode, newSHA, status := parts[0], parts[1], parts[3], parts[4]
+	if oldMode == "160000" || newMode == "160000" {
+		return File{}, refuse(hardening.RefusePushTree, "submodule "+p)
+	}
+	if hasDotGit(p) {
+		return File{}, refuse(hardening.RefusePushTree, "path "+p)
+	}
+	mode := newMode
+	if status == "D" {
+		mode = oldMode
+	} else if newMode == "120000" {
+		if err := m.checkSymlink(ctx, tok, tree, p, newSHA); err != nil {
+			return File{}, err
+		}
+	}
+	return File{Path: p, Status: status, Mode: mode}, nil
+}
+
+// unionFiles adds any intermediate-commit files not already present in base, keeping paths unique
+// and sorted when intermediate paths are added.
+func unionFiles(base, extra []File) []File {
+	seen := make(map[string]bool, len(base))
+	for _, f := range base {
+		seen[f.Path] = true
+	}
+	added := false
+	for _, f := range extra {
+		if !seen[f.Path] {
+			seen[f.Path] = true
+			base = append(base, f)
+			added = true
+		}
+	}
+	if added {
+		slices.SortFunc(base, func(a, b File) int { return strings.Compare(a.Path, b.Path) })
+	}
+	return base
+}
+
+// checkCommitBinaries refuses any commit in from..to that touches a binary file.
+func (m *Mirror) checkCommitBinaries(ctx context.Context, tok, from, to string) error {
+	out, err := m.readChange(ctx, tok, "log", "--reverse", "-m", "--root", "--numstat", "-z",
+		"--no-renames", "--no-ext-diff", "--no-textconv", "--format=", from+".."+to, "--")
+	if err != nil {
+		return err
+	}
+	_, err = parseNumstat(out)
+	return err
+}
+
+// checkSymlink refuses a symlink at p whose target is absolute, has a ".." component or backslash,
+// resolves to "." or outside the root or into .git, or traverses or names another symlink in tree:
+// no chain can lead out.
 func (m *Mirror) checkSymlink(ctx context.Context, tok, tree, p, sha string) error {
 	if !isSHA(sha) {
 		return fmt.Errorf("gitbundle: diff --raw: not a sha")
@@ -492,7 +590,7 @@ func (m *Mirror) checkSymlink(ctx context.Context, tok, tree, p, sha string) err
 		return err
 	}
 	target := string(out)
-	if target == "" || strings.HasPrefix(target, "/") || strings.ContainsRune(target, 0) {
+	if target == "" || strings.HasPrefix(target, "/") || strings.ContainsRune(target, 0) || strings.Contains(target, "\\") {
 		return refuse(hardening.RefusePushTree, "symlink "+p)
 	}
 	for _, seg := range strings.Split(target, "/") {
@@ -500,16 +598,33 @@ func (m *Mirror) checkSymlink(ctx context.Context, tok, tree, p, sha string) err
 			return refuse(hardening.RefusePushTree, "symlink "+p)
 		}
 	}
-	resolved := path.Clean(path.Join(path.Dir(p), target))
-	if resolved == ".." || strings.HasPrefix(resolved, "../") || hasDotGit(resolved) {
+	if path.Clean(target) == "." {
 		return refuse(hardening.RefusePushTree, "symlink "+p)
 	}
-	entry, err := m.run(ctx, "", nil, "ls-tree", "--full-tree", "-z", tree, "--", resolved)
-	if err != nil {
-		return err
+	resolved := path.Clean(path.Join(path.Dir(p), target))
+	if resolved == "." || resolved == ".." || strings.HasPrefix(resolved, "../") || hasDotGit(resolved) {
+		return refuse(hardening.RefusePushTree, "symlink "+p)
 	}
-	if strings.HasPrefix(string(entry), "120000 ") {
-		return refuse(hardening.RefusePushTree, "symlink "+p+" to a symlink")
+	seen := map[string]bool{}
+	for _, full := range []string{resolved, path.Dir(p)} {
+		if full == "." || full == "" {
+			continue
+		}
+		parts := strings.Split(full, "/")
+		for i := 1; i <= len(parts); i++ {
+			prefix := strings.Join(parts[:i], "/")
+			if seen[prefix] {
+				continue
+			}
+			seen[prefix] = true
+			entry, err := m.run(ctx, "", []string{"GIT_LITERAL_PATHSPECS=1"}, "ls-tree", "--full-tree", "-z", tree, "--", prefix)
+			if err != nil {
+				return err
+			}
+			if strings.HasPrefix(string(entry), "120000 ") {
+				return refuse(hardening.RefusePushTree, "symlink "+p+" to a symlink")
+			}
+		}
 	}
 	return nil
 }
@@ -524,13 +639,25 @@ func hasDotGit(p string) bool {
 	return false
 }
 
-// added is the added lines of the diff from..to, then each new commit's message.
+// added is every commit's added lines in from..to, then each commit's author/committer headers and
+// message.
 func (m *Mirror) added(ctx context.Context, tok, from, to string) ([]string, error) {
-	out, err := m.readChange(ctx, tok, "diff", "-U0", "--no-color", "--no-ext-diff", "--no-textconv", from, to, "--")
+	if from == to {
+		return nil, nil
+	}
+	out, err := m.readChange(ctx, tok, "log", "--reverse", "-m", "--root", "-p", "-U0",
+		"--no-color", "--no-ext-diff", "--no-textconv", "--format=", from+".."+to, "--")
 	if err != nil {
 		return nil, err
 	}
 	var added []string
+	seen := map[string]bool{}
+	appendUnique := func(s string) {
+		if !seen[s] {
+			seen[s] = true
+			added = append(added, s)
+		}
+	}
 	inHunk := false
 	for _, line := range strings.Split(string(out), "\n") {
 		switch {
@@ -539,19 +666,17 @@ func (m *Mirror) added(ctx context.Context, tok, from, to string) ([]string, err
 		case strings.HasPrefix(line, "@@"):
 			inHunk = true
 		case inHunk && strings.HasPrefix(line, "+"):
-			added = append(added, line[1:])
+			appendUnique(line[1:])
 		}
 	}
-	if from == to {
-		return added, nil
-	}
-	logOut, err := m.readChange(ctx, tok, "log", "--no-color", "-z", "--format=%B", from+".."+to, "--")
+	logOut, err := m.readChange(ctx, tok, "log", "--no-color", "-z",
+		"--format=%an%x00%ae%x00%cn%x00%ce%x00%B", from+".."+to, "--")
 	if err != nil {
 		return nil, err
 	}
-	for _, msg := range bytes.Split(logOut, []byte{0}) {
-		if s := strings.TrimSpace(string(msg)); s != "" {
-			added = append(added, s)
+	for _, field := range bytes.Split(logOut, []byte{0}) {
+		if s := strings.TrimSpace(string(field)); s != "" {
+			appendUnique(s)
 		}
 	}
 	return added, nil
@@ -563,6 +688,10 @@ func (m *Mirror) stats(ctx context.Context, tok, from, to string) (Stats, error)
 	if err != nil {
 		return Stats{}, err
 	}
+	return parseNumstat(out)
+}
+
+func parseNumstat(out []byte) (Stats, error) {
 	var st Stats
 	for _, rec := range strings.Split(strings.TrimSuffix(string(out), "\x00"), "\x00") {
 		if rec == "" {

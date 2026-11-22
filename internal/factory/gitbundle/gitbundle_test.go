@@ -300,6 +300,110 @@ func TestInspectRefusals(t *testing.T) {
 		},
 		want: hardening.RefusePushTree,
 	}, {
+		name: "a symlink chain through a parent directory symlink",
+		build: func(t *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"sub/file": "ok\n"}, "add sub/file")
+			if err := os.Symlink("sub", filepath.Join(f.work, "a")); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("a/file", filepath.Join(f.work, "b")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "chained dir symlink")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a symlink chain introduced across commits",
+		build: func(t *testing.T, f *fixture) []byte {
+			f.commit(map[string]string{"sub/file": "ok\n"}, "add sub/file")
+			if err := os.Symlink("a/file", filepath.Join(f.work, "b")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "dangling b first")
+			if err := os.Symlink("sub", filepath.Join(f.work, "a")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "then a -> sub")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a symlink with a backslash target",
+		build: func(t *testing.T, f *fixture) []byte {
+			if err := os.Symlink(`sub\file`, filepath.Join(f.work, "win")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "backslash link")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a symlink pointing to dot",
+		build: func(t *testing.T, f *fixture) []byte {
+			if err := os.Symlink(".", filepath.Join(f.work, "self")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "dot link")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a symlink in a subdirectory pointing to dot",
+		build: func(t *testing.T, f *fixture) []byte {
+			if err := os.MkdirAll(filepath.Join(f.work, "d"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(".", filepath.Join(f.work, "d", "self")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "sub dot link")
+			return f.bundle("^main", "agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a binary file added then deleted in history",
+		build: func(_ *testing.T, f *fixture) []byte {
+			old := f.remoteHead("refs/heads/agent/t-1")
+			f.commit(map[string]string{"x.bin": "head\x00" + canaryLike + "\x00tail\n"}, "add bin")
+			f.commit(map[string]string{"x.bin": ""}, "delete bin")
+			return f.bundle(old + "..agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "a gitlink added then deleted in history",
+		build: func(t *testing.T, f *fixture) []byte {
+			old := f.remoteHead("refs/heads/agent/t-1")
+			sha := git(t, f.work, "", "rev-parse", "main")
+			git(t, f.work, "", "update-index", "--add", "--cacheinfo", "160000,"+sha+",sub")
+			git(t, f.work, "", "commit", "--quiet", "-m", "add submodule")
+			git(t, f.work, "", "rm", "--quiet", "--cached", "sub")
+			git(t, f.work, "", "commit", "--quiet", "-m", "remove submodule")
+			return f.bundle(old + "..agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "an escaping symlink added then deleted in history",
+		build: func(t *testing.T, f *fixture) []byte {
+			old := f.remoteHead("refs/heads/agent/t-1")
+			if err := os.Symlink("/etc/passwd", filepath.Join(f.work, "pw")); err != nil {
+				t.Fatal(err)
+			}
+			f.commit(nil, "add symlink")
+			f.commit(map[string]string{"pw": ""}, "delete symlink")
+			return f.bundle(old + "..agent/t-1")
+		},
+		want: hardening.RefusePushTree,
+	}, {
+		name: "an oversized blob added then deleted in history",
+		build: func(_ *testing.T, f *fixture) []byte {
+			old := f.remoteHead("refs/heads/agent/t-1")
+			f.commit(map[string]string{"bomb.txt": strings.Repeat("a", 64<<20)}, "add bomb")
+			f.commit(map[string]string{"bomb.txt": ""}, "delete bomb")
+			return f.bundle(old + "..agent/t-1")
+		},
+		want: hardening.RefusePushSize,
+	}, {
 		name: "the one ref at a tree",
 		build: func(t *testing.T, f *fixture) []byte {
 			f.commit(map[string]string{"c.txt": "c\n"}, "two")
@@ -753,5 +857,88 @@ func TestReadAfterPush(t *testing.T) {
 	}
 	if refs := outRefs(t, m); refs != "" {
 		t.Errorf("a read left its objects' ref: %q", refs)
+	}
+}
+
+// SEC-C1: an add-then-delete multi-commit push still surfaces every intermediate commit's touched
+// paths, added lines, and author/committer headers in both Inspect and Read.
+func TestInspectMultiCommitHistoryAndMetadata(t *testing.T) {
+	ctx := context.Background()
+	f := newFixture(t)
+	old := f.remoteHead("refs/heads/agent/t-1")
+
+	// Commit 1 adds a protected file with a canary line and smuggles metadata in author/committer headers.
+	p := filepath.Join(f.work, ".github", "workflows", "evil.yml")
+	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(p, []byte("secret: "+canaryLike+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	git(t, f.work, "", "add", "-A")
+	gitWithEnv(t, f.work, []string{
+		"GIT_AUTHOR_NAME=author-" + canaryLike,
+		"GIT_AUTHOR_EMAIL=a-" + canaryLike + "@example.com",
+		"GIT_COMMITTER_NAME=committer-" + canaryLike,
+		"GIT_COMMITTER_EMAIL=c-" + canaryLike + "@example.com",
+	}, "commit", "--quiet", "-m", "c1 add")
+
+	// Commit 2 deletes the file so the net diff old..head is empty.
+	f.commit(map[string]string{".github/workflows/evil.yml": ""}, "c2 delete")
+
+	bundle := f.bundle(old + "..agent/t-1")
+	m := f.cache.Mirror("owner/repo")
+
+	check := func(t *testing.T, in Inspection) {
+		t.Helper()
+		var paths []string
+		for _, file := range in.Files {
+			paths = append(paths, file.Path)
+		}
+		if !slices.Contains(paths, ".github/workflows/evil.yml") {
+			t.Errorf("Files = %q, missing intermediate path .github/workflows/evil.yml", paths)
+		}
+		for _, want := range []string{
+			"secret: " + canaryLike,
+			"author-" + canaryLike,
+			"a-" + canaryLike + "@example.com",
+			"committer-" + canaryLike,
+			"c-" + canaryLike + "@example.com",
+			"c1 add",
+			"c2 delete",
+		} {
+			if !slices.Contains(in.Added, want) {
+				t.Errorf("Added = %q, missing %q", in.Added, want)
+			}
+		}
+	}
+
+	in, err := m.Inspect(ctx, bundle, "agent/t-1", "main")
+	if err != nil {
+		t.Fatalf("Inspect: %v", err)
+	}
+	check(t, in)
+
+	read, err := m.Read(ctx, bundle, "agent/t-1", "main")
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	check(t, read)
+}
+
+func TestInspectAllowsSafeRelativeSymlink(t *testing.T) {
+	f := newFixture(t)
+	old := f.remoteHead("refs/heads/agent/t-1")
+	if err := os.Symlink("b.txt", filepath.Join(f.work, "link")); err != nil {
+		t.Fatal(err)
+	}
+	f.commit(nil, "safe relative symlink")
+	in, err := f.cache.Mirror("owner/repo").Inspect(context.Background(), f.bundle(old+"..agent/t-1"), "agent/t-1", "main")
+	if err != nil {
+		t.Fatalf("Inspect of safe relative symlink: %v", err)
+	}
+	want := []File{{Path: "link", Status: "A", Mode: "120000"}}
+	if !reflect.DeepEqual(in.Files, want) {
+		t.Fatalf("Files = %+v, want %+v", in.Files, want)
 	}
 }
