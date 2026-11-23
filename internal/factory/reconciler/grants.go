@@ -30,21 +30,49 @@ func (r *Reconciler) grantsOn(cfg *config.Config) bool {
 	return cfg.PolicyManagement.Manages() && r.Grants != nil
 }
 
-// needsGrants is whether deciding in under the snapshot could consult a grant: a valid policy whose
-// class is live with a requiresApproval subset, the diff read. Nothing else is looked up.
+// needsGrants is whether deciding in under the snapshot could consult a grant: a valid policy with
+// a live class carrying a requiresApproval subset (the task's class, or any diff candidate when
+// chosen by diff), the diff read. Nothing else is looked up.
 func needsGrants(in ArmInputs, snap mergepolicy.Snapshot, ok bool) bool {
-	r, has := snap.Classes[in.Task.Spec.PredictedClass]
-	return ok && snap.Err == nil && has && len(r.Approval) > 0 && in.DiffRead && r.Class.Live
+	if !ok || snap.Err != nil || !in.DiffRead {
+		return false
+	}
+	cs := snapClasses(snap.Classes)
+	if selectsOne(cs, in.Task) {
+		r, has := snap.Classes[in.Task.Spec.PredictedClass]
+		return has && len(r.Approval) > 0 && r.Class.Live
+	}
+	for _, name := range candidates(cs, in.Task) {
+		if r := snap.Classes[name]; r.Class.Live && len(r.Approval) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // needsGrantsUnder is needsGrants for the policy that decides: the repository's snapshot when it
-// is authoritative, else the central class, live with a requiresApproval subset, the diff read.
+// is authoritative, else the central class(es), live with a requiresApproval subset, the diff read.
 func needsGrantsUnder(in ArmInputs, cfg *config.Config, p gatePolicy) bool {
 	if p.on {
 		return p.err == nil && needsGrants(in, p.snap, true)
 	}
-	cl, ok := cfg.RepositoryFor(in.Task.Spec.Repository).Class(in.Task.Spec.PredictedClass)
-	return ok && cl.Live && len(cl.RequiresApproval) > 0 && in.DiffRead
+	if !in.DiffRead {
+		return false
+	}
+	rc := cfg.RepositoryFor(in.Task.Spec.Repository)
+	if rc == nil {
+		return false
+	}
+	if selectsOne(rc.Classes, in.Task) {
+		cl, ok := rc.Class(in.Task.Spec.PredictedClass)
+		return ok && cl.Live && len(cl.RequiresApproval) > 0
+	}
+	for _, name := range candidates(rc.Classes, in.Task) {
+		if cl := rc.Classes[name]; cl.Live && len(cl.RequiresApproval) > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // snapshotHash is a repository policy's class as a grant binds to it (B13): its resolved hash, the requiresApproval leaves included as written, as config.ResolvedHash reads a
@@ -84,11 +112,11 @@ func (r *Reconciler) grantHash(cfg *config.Config, t *v1alpha1.Task, p gatePolic
 	return config.ResolvedHash(cl), true
 }
 
-// grantRead looks the task's class's grants up immediately before a decision, never from a cache
+// grantRead looks class's grants up immediately before a decision, never from a cache
 // (MP13): a failed lookup is a read that authorizes nothing. It records the active count and the
 // events the broker made on the way.
-func (r *Reconciler) grantRead(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, policyHash string) GrantRead {
-	repository, class := strings.ToLower(t.Spec.Repository), t.Spec.PredictedClass
+func (r *Reconciler) grantRead(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, class, policyHash string) GrantRead {
+	repository := strings.ToLower(t.Spec.Repository)
 	gs, events, err := r.Grants.LookupGrants(ctx, repository, class, policyHash, cfg.MergeGuardrails.GrantLifetime())
 	if err != nil {
 		r.log().Warn("approval grants unread: none authorizes", "task.id", t.Name, "class", class, "err", err)
@@ -101,6 +129,48 @@ func (r *Reconciler) grantRead(ctx context.Context, cfg *config.Config, t *v1alp
 		}
 	})
 	return GrantRead{Read: true, List: gs, PolicyHash: policyHash, At: r.Now()}
+}
+
+// readGrantsUnder populates in.Grants (single-class) or in.GrantsByClass (diff-chosen, MR1) for
+// the policy in force, immediately before the decision.
+func (r *Reconciler) readGrantsUnder(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, in *ArmInputs, p gatePolicy) {
+	if p.on {
+		if p.err != nil {
+			return
+		}
+		r.readGrantsSnap(ctx, cfg, t, in, p.snap)
+		return
+	}
+	rc := r.repo(cfg, t)
+	if selectsOne(rc.Classes, t) {
+		if hash, ok := r.grantHash(cfg, t, p); ok {
+			in.Grants = r.grantRead(ctx, cfg, t, t.Spec.PredictedClass, hash)
+		}
+		return
+	}
+	in.GrantsByClass = map[string]GrantRead{}
+	for _, name := range candidates(rc.Classes, t) {
+		if cl := rc.Classes[name]; cl.Live && len(cl.RequiresApproval) > 0 {
+			in.GrantsByClass[name] = r.grantRead(ctx, cfg, t, name, config.ResolvedHash(cl))
+		}
+	}
+}
+
+// readGrantsSnap populates in.Grants or in.GrantsByClass from a repository policy snapshot.
+func (r *Reconciler) readGrantsSnap(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, in *ArmInputs, snap mergepolicy.Snapshot) {
+	cs := snapClasses(snap.Classes)
+	if selectsOne(cs, t) {
+		if res, ok := snap.Classes[t.Spec.PredictedClass]; ok && res.Class.Live && len(res.Approval) > 0 {
+			in.Grants = r.grantRead(ctx, cfg, t, t.Spec.PredictedClass, snapshotHash(res))
+		}
+		return
+	}
+	in.GrantsByClass = map[string]GrantRead{}
+	for _, name := range candidates(cs, t) {
+		if res := snap.Classes[name]; res.Class.Live && len(res.Approval) > 0 {
+			in.GrantsByClass[name] = r.grantRead(ctx, cfg, t, name, snapshotHash(res))
+		}
+	}
 }
 
 // grantRef splits a decision's grant, "<id>:<version>".
@@ -125,7 +195,7 @@ func (r *Reconciler) grantHolds(ctx context.Context, cfg *config.Config, t *v1al
 	if !ok {
 		return false
 	}
-	gr := r.grantRead(ctx, cfg, t, hash)
+	gr := r.grantRead(ctx, cfg, t, classOf(t), hash)
 	return gr.Read && slices.ContainsFunc(gr.List, func(g grant.Grant) bool {
 		return g.ID == id && g.Version == version && g.Status == grant.StatusActive && g.BoundTo(hash) && gr.At.Before(g.ExpiresAt)
 	})
@@ -146,7 +216,7 @@ func (r *Reconciler) grantUsed(ctx context.Context, cfg *config.Config, t *v1alp
 		r.log().Error("record a grant's use", "task.id", t.Name, "grant", d.Rows.Grant, "err", err)
 		return
 	}
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.ApprovalGrantEvent(ctx, t.Spec.Repository, class, grant.EventUsed)
 	})
@@ -175,7 +245,7 @@ func (r *Reconciler) disableGrant(ctx context.Context, cfg *config.Config, t *v1
 	case err != nil:
 		return err
 	}
-	class := t.Spec.PredictedClass
+	class := classOf(t)
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.ApprovalGrantEvent(ctx, t.Spec.Repository, class, grant.EventDisabled)
 	})

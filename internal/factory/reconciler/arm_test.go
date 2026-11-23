@@ -720,3 +720,15 @@ func TestCIStateAndBaseChecksHardening(t *testing.T) {
 		}
 	})
 }
+
+// SEC-M2: when GitHub truncated the pull request's label list, factory/hold may be unseen; fail
+// closed to a human.
+func TestDecideArmFailsClosedWhenLabelsTruncated(t *testing.T) {
+	pr := agentPR()
+	pr.LabelsTruncated = true
+	d := DecideArm(ArmInputs{PR: pr, Checks: green("SUCCESS"), Task: armTask("docs-links", "solo", ""),
+		Cfg: armCfg(), ReportedHead: head, Files: changed("[x](old.md)", "[x](new.md)"), DiffRead: true})
+	if d.Verdict != "human" || d.Reason != "labels_truncated" {
+		t.Fatalf("DecideArm = %+v, want human/labels_truncated", d)
+	}
+}

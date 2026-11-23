@@ -59,7 +59,8 @@ func withApproval(d ArmDecision, in ArmInputs, approval []string) ArmDecision {
 // path matching one of its patterns and its diff shape, when it names one, holding. A lookup that
 // failed is no grant: it never authorizes (MP13). Of several, the lowest id, so a decision replays.
 func grantFor(in ArmInputs, class string, approval []string) (grant.Grant, bool) {
-	if !in.Grants.Read {
+	gr := in.grantsOf(class)
+	if !gr.Read {
 		return grant.Grant{}, false
 	}
 	res := filefence.Compile(approval, false)
@@ -69,11 +70,11 @@ func grantFor(in ArmInputs, class string, approval []string) (grant.Grant, bool)
 			caught = append(caught, p)
 		}
 	}
-	gs := slices.SortedFunc(slices.Values(in.Grants.List), func(a, b grant.Grant) int { return strings.Compare(a.ID, b.ID) })
+	gs := slices.SortedFunc(slices.Values(gr.List), func(a, b grant.Grant) int { return strings.Compare(a.ID, b.ID) })
 	for _, g := range gs {
 		if g.Status != grant.StatusActive || !strings.EqualFold(g.Repository, in.Task.Spec.Repository) ||
-			g.Class != class || !in.Grants.At.Before(g.ExpiresAt) ||
-			!g.BoundTo(in.Grants.PolicyHash) || !g.Covers(caught) {
+			g.Class != class || !gr.At.Before(g.ExpiresAt) ||
+			!g.BoundTo(gr.PolicyHash) || !g.Covers(caught) {
 			continue
 		}
 		if reason, _ := diffShape(config.Class{DiffShape: g.DiffShape}, in); g.DiffShape != "" && reason != "" {

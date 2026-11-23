@@ -173,7 +173,7 @@ func TestAGreenRevertIsMergedAtItsHead(t *testing.T) {
 	g.f.SetCommitChecks("m1", red.Runs...)
 	got := g.reconcile(t, "3buqdlot", 1)
 	rv := got.Status.PullRequest.RevertNumber
-	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", HeadSHA: "r1"})
+	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "r1"})
 	g.f.SetChecks(rv, green("SUCCESS"))
 	got = g.reconcile(t, "3buqdlot", 1)
 	if a := g.f.Armed(); !slices.Contains(a, "PR_revert r1") || !slices.Contains(got.Status.Narrated, "revert-end-merged") || len(g.f.Disarmed()) != 0 {
@@ -1263,7 +1263,7 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 		tk.Status.PullRequest.MergeCommitSHA, tk.Status.PullRequest.MergedAt = "m1", &merged
 		tk.Status.PullRequest.MergedHow, tk.Status.PullRequest.ApprovedBy = "approved", "Smana"
 	})
-	g.f.SetPR(forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Title: "Revert", Author: "ogenki-agent-merger[bot]"})
+	g.f.SetPR(forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Title: "Revert", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "revhead"})
 	raced := false
 	g.r.Merger = racingMerger{Merger: g.f, g: g, race: func(op string) {
 		if op == "arm" && !raced {
@@ -1602,5 +1602,166 @@ func TestABoundDecisionRecordsBothGenerations(t *testing.T) {
 	resolved := config.ShortHash(config.ResolvedHash(g.r.Cfg.Current().RepositoryFor(tk.Spec.Repository).Classes["docs-links"]))
 	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, " policygen=4 repogen=7 resolved="+resolved+" reviewer=") {
 		t.Fatalf("%q", c)
+	}
+}
+
+type cancelOnMergeMerger struct {
+	forge.Merger
+	cancel   context.CancelFunc
+	statuses []struct {
+		sha, state, desc string
+		ctxErr           error
+	}
+}
+
+func (m *cancelOnMergeMerger) Merge(ctx context.Context, _, _ string) error {
+	m.cancel()
+	return ctx.Err()
+}
+
+func (m *cancelOnMergeMerger) SetStatus(ctx context.Context, sha, state, statusCtx, desc string) error {
+	m.statuses = append(m.statuses, struct {
+		sha, state, desc string
+		ctxErr           error
+	}{sha: sha, state: state, desc: desc, ctxErr: ctx.Err()})
+	return m.Merger.SetStatus(ctx, sha, state, statusCtx, desc)
+}
+
+// SEC-M1: when ctx is cancelled during Merge, withdrawGateStatus (and mergeGreenRevert's rollback)
+// still posts the withdrawal status using a detached, bounded context.
+func TestWithdrawGateStatusUsesDetachedContextOnMergeCancel(t *testing.T) {
+	t.Run("awaitingCI", func(t *testing.T) {
+		g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
+		g.f.SetChecks(12, green("SUCCESS"))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		cm := &cancelOnMergeMerger{Merger: g.f, cancel: cancel}
+		g.r.Merger = cm
+		var tk v1alpha1.Task
+		_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+		err := g.r.awaitingCI(ctx, g.r.Cfg.Current(), &tk)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected context.Canceled, got %v", err)
+		}
+		if len(cm.statuses) != 2 || cm.statuses[0].state != "success" || cm.statuses[1].state != "pending" || cm.statuses[1].ctxErr != nil {
+			t.Fatalf("expected success followed by live-ctx pending withdrawal, got %+v", cm.statuses)
+		}
+	})
+	t.Run("mergeGreenRevert", func(t *testing.T) {
+		g := mergeRig(t, v1alpha1.PhaseReverted)
+		g.r.Cfg.Current().Repositories[0].Merge.GateStatus = new(true)
+		rvPR := forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "r1"}
+		g.f.SetPR(rvPR)
+		g.f.SetChecks(901, green("SUCCESS"))
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		cm := &cancelOnMergeMerger{Merger: g.f, cancel: cancel}
+		g.r.Merger = cm
+		var tk v1alpha1.Task
+		_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+		merged, err := g.r.mergeGreenRevert(ctx, g.r.Cfg.Current(), &tk, rvPR)
+		if merged || !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected (false, context.Canceled), got (%v, %v)", merged, err)
+		}
+		if len(cm.statuses) != 2 || cm.statuses[0].state != "success" || cm.statuses[1].state != "pending" || cm.statuses[1].ctxErr != nil {
+			t.Fatalf("expected success followed by live-ctx pending withdrawal, got %+v", cm.statuses)
+		}
+	})
+}
+
+type recordingAutoMergeMerger struct {
+	forge.Merger
+	heads []string
+}
+
+func (m *recordingAutoMergeMerger) EnableAutoMerge(ctx context.Context, nodeID, expectedHeadSHA string) error {
+	m.heads = append(m.heads, expectedHeadSHA)
+	return m.Merger.EnableAutoMerge(ctx, nodeID, expectedHeadSHA)
+}
+
+// SEC-M4: revert passes expectedHeadSHA to EnableAutoMerge, and mergeGreenRevert / revert replay
+// refuse to arm or merge a revert PR with wrong author, cross-repo fork, non-main base, or foreign push.
+func TestRevertAndMergeGreenRevertVerifyProvenance(t *testing.T) {
+	t.Run("revert passes expectedHeadSHA to EnableAutoMerge", func(t *testing.T) {
+		g := mergeRig(t, v1alpha1.PhaseVerifying)
+		rm := &recordingAutoMergeMerger{Merger: g.f}
+		g.r.Merger = rm
+		var tk v1alpha1.Task
+		_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+		merged := metav1.NewTime(now)
+		tk.Status.PullRequest.MergeCommitSHA, tk.Status.PullRequest.AutoMerged, tk.Status.PullRequest.MergedAt = "m1", true, &merged
+		_ = g.c.Status().Update(t.Context(), &tk)
+		red := green("SUCCESS")
+		red.Runs[0].State = "FAILURE"
+		g.f.SetCommitChecks("m1", red.Runs...)
+		g.reconcile(t, "3buqdlot", 1)
+		if !slices.Equal(rm.heads, []string{"revhead"}) {
+			t.Fatalf("EnableAutoMerge expectedHeadSHA = %q, want [revhead]", rm.heads)
+		}
+	})
+
+	for name, tc := range map[string]struct {
+		mutate   func(*forge.PR)
+		activity []forge.Push
+	}{
+		"wrong author": {
+			mutate: func(p *forge.PR) { p.Author = "attacker" },
+		},
+		"cross-repo fork": {
+			mutate: func(p *forge.PR) { p.CrossRepository = true },
+		},
+		"non-main base": {
+			mutate: func(p *forge.PR) { p.BaseRef = "release" },
+		},
+		"foreign push": {
+			activity: []forge.Push{
+				{Type: "push", Actor: "attacker", Before: "r0", After: "r1"},
+				{Type: "branch_creation", Actor: "ogenki-agent-merger[bot]", After: "r0"},
+			},
+		},
+	} {
+		t.Run("mergeGreenRevert refuses "+name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseReverted)
+			pr := forge.PR{
+				Number: 901, NodeID: "PR_revert", State: "OPEN",
+				Author: "ogenki-agent-merger[bot]", BaseRef: "main",
+				HeadRef: "revert-12-head", HeadSHA: "r1",
+			}
+			if tc.mutate != nil {
+				tc.mutate(&pr)
+			}
+			g.f.SetPR(pr)
+			if tc.activity != nil {
+				g.f.SetActivity(pr.HeadRef, tc.activity...)
+			}
+			g.f.SetChecks(901, green("SUCCESS"))
+			var tk v1alpha1.Task
+			_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+			merged, err := g.r.mergeGreenRevert(t.Context(), g.r.Cfg.Current(), &tk, pr)
+			if err != nil || merged {
+				t.Fatalf("expected (false, nil), got (%v, %v)", merged, err)
+			}
+			if len(g.f.Armed()) != 0 {
+				t.Fatalf("untrusted revert was merged: %q", g.f.Armed())
+			}
+		})
+	}
+}
+
+// PERF-M10: closesParent matches closing keywords for the parent issue using the hoisted regex.
+func TestClosesParentHoistedRegex(t *testing.T) {
+	tk := &v1alpha1.Task{Spec: v1alpha1.TaskSpec{Parent: &v1alpha1.Parent{Issue: 42}}}
+	for body, want := range map[string]bool{
+		"Closes #42":              true,
+		"fixes: #42":              true,
+		"resolved #10, #42":       false,
+		"Fixes #420":              false,
+		"Refs #42":                false,
+		"Resolves #99\nFixes #42": true,
+	} {
+		if got := closesParent(tk, body); got != want {
+			t.Errorf("closesParent(%q) = %v, want %v", body, got, want)
+		}
 	}
 }

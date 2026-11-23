@@ -188,11 +188,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		default:
 			in.Files.Base, in.Files.Head, in.Stats, in.DiffRead = diff.Base, diff.Head, diff.Files, true
 			if r.grantsOn(cfg) && needsGrantsUnder(in, cfg, policy) {
-				// Stages 4 and 5, and B13 under central authority: the grants of the class that
-				// decides are read here, immediately before the decision, under its resolved hash.
-				if hash, ok := r.grantHash(cfg, t, policy); ok {
-					in.Grants = r.grantRead(ctx, cfg, t, hash)
-				}
+				// Stages 4 and 5, and B13 under central authority: the grants of the deciding
+				// class(es) are read here, immediately before the decision, under their resolved hashes.
+				r.readGrantsUnder(ctx, cfg, t, &in, policy)
 			}
 			d = decideUnder(in, policy)
 			evaluated = d
@@ -1282,7 +1280,16 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 		if err != nil {
 			return err
 		}
-		rv, armable = forge.Revert{Number: p.Number, NodeID: p.NodeID}, p.State == "OPEN"
+		rv = forge.Revert{Number: p.Number, NodeID: p.NodeID, HeadSHA: p.HeadSHA}
+		if p.State != "OPEN" {
+			armable = false
+		} else {
+			trusted, err := r.revertTrusted(ctx, r.repo(cfg, t), p)
+			if err != nil {
+				return err
+			}
+			armable = trusted
+		}
 	} else {
 		pr, err := r.gh(ctx).PullRequest(ctx, ref.Number)
 		if err != nil {
@@ -1319,7 +1326,7 @@ func (r *Reconciler) revert(ctx context.Context, cfg *config.Config, t *v1alpha1
 		}
 	}
 	if r.repo(cfg, t).Classes["revert"].Live && armable { // not live (R32): the revert PR opens and a maintainer merges it
-		if err := r.merger(ctx).EnableAutoMerge(ctx, rv.NodeID, ""); err != nil { // the merger's own revert-* branch
+		if err := r.merger(ctx).EnableAutoMerge(ctx, rv.NodeID, rv.HeadSHA); err != nil { // the merger's own revert-* branch
 			return err
 		}
 	}
@@ -1374,6 +1381,19 @@ func (r *Reconciler) revertWatch(ctx context.Context, cfg *config.Config, t *v1a
 	return r.narrator(ctx, cfg).Post(ctx, t, ref.Number, narrate.RevertStalled(t, ref.RevertNumber))
 }
 
+// revertTrusted reports whether pr is a merger-authored, same-repository revert targeting main
+// whose branch history is wholly the merger App's up to pr.HeadSHA.
+func (r *Reconciler) revertTrusted(ctx context.Context, rc *config.Repository, pr forge.PR) (bool, error) {
+	if !forge.SameLogin(pr.Author, rc.Merge.MergerLogin) || pr.CrossRepository || pr.BaseRef != "main" || pr.HeadRef == "" || pr.HeadSHA == "" {
+		return false, nil
+	}
+	pushed, err := r.pushedBy(ctx, pr.HeadRef, []string{rc.Merge.MergerLogin}, pr.HeadSHA)
+	if err != nil {
+		return false, err
+	}
+	return pushed == pushFactory, nil
+}
+
 // mergeGreenRevert merges a green revert at its head, as the decision path merges (R02). Native
 // auto-merge alone never fires where agent-merge restricts updates to main: GitHub reads the PR as
 // BLOCKED for every actor, so it would stay armed until the watch disarms it.
@@ -1381,6 +1401,10 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 	rc := r.repo(cfg, t)
 	if !rc.Classes["revert"].Live {
 		return false, nil
+	}
+	trusted, err := r.revertTrusted(ctx, rc, pr)
+	if err != nil || !trusted {
+		return false, err
 	}
 	checks, err := r.merger(ctx).PullRequestChecks(ctx, pr.Number)
 	if err != nil || CIState(checks, requiredFor(rc, t)) != "SUCCESS" {
@@ -1399,12 +1423,12 @@ func (r *Reconciler) mergeGreenRevert(ctx context.Context, cfg *config.Config, t
 		return true, nil
 	case errors.Is(err, forge.ErrHeadMoved), errors.Is(err, forge.ErrNotMergeable):
 		if rc.Merge.PostsGateStatus() {
-			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
+			r.withdrawStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "human", Reason: "not_mergeable"})
 		}
 		return false, nil // the stall clock still runs: a revert GitHub refuses goes to a maintainer
 	default:
 		if rc.Merge.PostsGateStatus() {
-			_ = r.postStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
+			r.withdrawStatusAs(ctx, t, pr.HeadSHA, "revert", ArmDecision{Verdict: "wait", Reason: "merge_failed"})
 		}
 		return false, err
 	}
@@ -1541,12 +1565,19 @@ func (r *Reconciler) armedTodayOf(ctx context.Context, cfg *config.Config, rc *c
 	return n, nil
 }
 
+var closingRefRE = regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[: ]+#(\d+)\b`)
+
 // closesParent: a part's pull request body carries a closing keyword for its parent's issue, which
 // GitHub would close when the part merges, whatever the brief asked.
 func closesParent(t *v1alpha1.Task, body string) bool {
 	if t.Spec.Parent == nil {
 		return false
 	}
-	re := regexp.MustCompile(`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[: ]+#` + strconv.Itoa(t.Spec.Parent.Issue) + `\b`)
-	return re.MatchString(body)
+	want := strconv.Itoa(t.Spec.Parent.Issue)
+	for _, m := range closingRefRE.FindAllStringSubmatch(body, -1) {
+		if m[1] == want {
+			return true
+		}
+	}
+	return false
 }

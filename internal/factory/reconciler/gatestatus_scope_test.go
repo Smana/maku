@@ -57,7 +57,7 @@ func TestAGreenRevertCarriesTheMergersSuccess(t *testing.T) {
 	g.f.SetCommitChecks("m1", red.Runs...)
 	got := g.reconcile(t, "3buqdlot", 1)
 	rv := got.Status.PullRequest.RevertNumber
-	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", HeadSHA: "r1"})
+	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "r1"})
 	g.f.SetChecks(rv, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
 	seq := g.f.GateSequence()

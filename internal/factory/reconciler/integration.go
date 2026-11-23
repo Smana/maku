@@ -213,7 +213,7 @@ func (r *Reconciler) integrationRunning(ctx context.Context, cfg *config.Config,
 	if !found {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, reasonIntegrationPending)
 	}
-	if err := r.boundPending(ctx, cfg, t, run); err != nil {
+	if ended, err := r.boundPending(ctx, cfg, t, run); err != nil || ended {
 		return err
 	}
 	if !runs.Terminal(run.Phase) {

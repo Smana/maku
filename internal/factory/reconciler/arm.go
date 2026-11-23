@@ -67,6 +67,16 @@ type ArmInputs struct {
 	// before the decision (merge policy stage 5): withApproval consults them in a live class only.
 	// Never part of a fixture: a replay reads the subset as a human's, as the gate did without them.
 	Grants GrantRead `json:"-"`
+	// GrantsByClass holds per-class grant lookups when the policy is chosen from the diff (MR1).
+	GrantsByClass map[string]GrantRead `json:"-"`
+}
+
+// grantsOf returns the grant read for class: GrantsByClass[class] when present, else Grants.
+func (in ArmInputs) grantsOf(class string) GrantRead {
+	if gr, ok := in.GrantsByClass[class]; ok {
+		return gr
+	}
+	return in.Grants
 }
 
 // GrantRead is one lookup of a repository's grants: Read is false when it failed or was not made,
@@ -643,7 +653,11 @@ func baseChecks(in ArmInputs, rc *config.Repository) (ArmDecision, bool) {
 
 // holdLabelled is the last base check (MR10): factory/hold hands the pull request to a human before any
 // class or approval is read, so nothing merges and no shadow would-merge is counted under it.
+// A truncated label list may hide factory/hold, so it fails closed to a human.
 func holdLabelled(in ArmInputs) (ArmDecision, bool) {
+	if in.PR.LabelsTruncated {
+		return ArmDecision{Verdict: "human", Reason: "labels_truncated"}, true
+	}
 	if slices.Contains(in.PR.Labels, LabelHold) {
 		return ArmDecision{Verdict: "human", Reason: "held"}, true
 	}
