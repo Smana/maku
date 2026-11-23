@@ -15,6 +15,7 @@ Reference for the broker, bridge, factory, CLI and web UI. See the [status page]
 | Page | Answers |
 |---|---|
 | [Quickstart](quickstart.md) | One-command laptop demo (`task demo`) and what production adds |
+| [Tier-1 Pilot](pilot.md) | Zero-external-DB pilot on private repositories: bundled Postgres with TLS 1.3, mandatory gVisor, graduation to Tier-2 and the open-source collaboration model |
 | [Team evaluation](team-evaluation.md) | Adding approved workflows to the demo and comparing `apply` vs `observe` |
 
 ## Use it
