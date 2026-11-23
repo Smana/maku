@@ -24,7 +24,7 @@ key and its doc ([from the demo to production](upgrading.md#from-the-demo-to-pro
 |---|---|---|---|---|
 | Kubernetes 1.30 or later, with a CNI that enforces NetworkPolicy | yes | the cluster | `maku.networkPolicies.mode: cilium`; `kubernetes` for any other CNI | the run-controller's preflight refuses runs |
 | A sandbox RuntimeClass | yes | gVisor or Kata on the nodes ([sandbox nodes](sandbox-nodes.md)) | `gvisor` | the preflight refuses runs |
-| Postgres 16 or later | yes | a database, its three roles and one DSN Secret each ([the database](database.md)) | none: the bundled Postgres is the demo's | the render fails |
+| Postgres 16 or later | yes | Tier-1 Pilot: bundled single-replica Postgres (`database.mode: bundled` or `values-pilot.example.yaml`); Tier-2: your own Postgres (`maku db bootstrap` or `database.mode: cnpg`) ([the database](database.md)) | `postgres.enabled: false` (Tier-2 external) | the render fails |
 | An OIDC issuer | yes | the issuer, a web client, a CLI client and a groups claim ([identity](identity.md)) | `preset: generic`, `tokenUse: id` | nobody can sign in |
 | Two GitHub Apps | yes | created by `maku install --print` ([GitHub Apps](github-apps.md)) | the merger folded into the factory App | no work starts |
 | Model provider keys | yes | one Secret per provider, read only by the model gateway ([model gateway](gateway.md)) | `model.mode: gateway` | runs fail at the gateway |

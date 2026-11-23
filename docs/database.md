@@ -66,6 +66,27 @@ v0.49.0 this was a warning, the gauge `maku_rooms_schema_unverified` and the ale
 
 ## Bootstrap
 
+### Automated bootstrap (`maku db bootstrap`)
+
+On an existing PostgreSQL 16 or later server (managed RDS, Cloud SQL, Azure Flexible Server or
+self-hosted), `maku db bootstrap` creates the three fixed roles with random 32-character passwords,
+creates the `rooms` database owned by `rooms_owner` (automatically granting `rooms_owner` to
+`CURRENT_USER` when the admin role is not a superuser), grants `CREATE, USAGE` on schema `public` to
+`rooms_owner`, verifies that none of the roles bypasses row-level security, and writes the three
+Kubernetes `Secret` manifests to a mode `0600` file. Pass the admin DSN through `MAKU_DB_ADMIN_URL`
+(never as a CLI flag):
+
+```bash
+export MAKU_DB_ADMIN_URL='postgresql://<admin>:<password>@<host>:5432/postgres?sslmode=require'
+maku db bootstrap --out secrets/database.yaml --namespace maku --ca-secret rooms-db-ca
+kubectl apply -n maku -f secrets/database.yaml
+```
+
+If the three roles already exist, `maku db bootstrap` refuses to overwrite live credentials unless
+you pass `--rotate-passwords`. Pass `--out -` to write the manifests to stdout.
+
+### Manual SQL
+
 Run once, as a role that may create roles and databases, then put each role's password in its DSN
 Secret. None of the three roles needs `SUPERUSER`, `CREATEROLE`, `CREATEDB` or `BYPASSRLS`, and none
 may have them.

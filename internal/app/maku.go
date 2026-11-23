@@ -31,6 +31,7 @@ import (
 	"github.com/Smana/maku/internal/maku"
 	"github.com/Smana/maku/internal/maku/skill"
 	"github.com/Smana/maku/internal/roomview"
+	"github.com/Smana/maku/internal/store"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/version"
 )
@@ -86,6 +87,11 @@ const makuUsage = `usage: maku <command>
                                   the Secrets, the factory objects, the ruleset and the GitOps files to DIR;
                                   it may create the two GitHub Apps, and applies nothing. --out - prints
                                   values.yaml alone
+  db bootstrap --out FILE [--namespace NS] [--admin-dsn-env MAKU_DB_ADMIN_URL] [--host HOST] [--port PORT]
+               [--database rooms] [--sslmode verify-full] [--ca-secret NAME] [--rotate-passwords] [--force]
+                                  bootstrap Maku's three roles and database on an external Postgres 16+ server
+                                  using an admin DSN from the environment, verify T12 invariants, and write
+                                  the three DSN Secret manifests to FILE (0600; - for stdout)
   preflight [--namespace NS] [--release NAME] [--kubeconfig FILE] [--context NAME] [--strict] [--json]
             [--keep] [--no-outside] [--timeout D]
                                   run the release's install preflight (D24) as a Job from its CronJob,
@@ -183,6 +189,10 @@ type Maku struct {
 	// RepoCluster is repo check's cluster from a kubeconfig and context (nil: client-go's loading
 	// rules and a port-forward to the factory), with the context's namespace. Tests stand in for it.
 	RepoCluster func(kubeconfig, kubecontext string) (repoCluster, string, error)
+
+	// DBBootstrap prepares an external Postgres 16+ server for `maku db bootstrap` (nil: store.Bootstrap).
+	// Tests stand in for the database.
+	DBBootstrap func(ctx context.Context, adminURL string, opts store.BootstrapOptions) (store.BootstrapResult, error)
 }
 
 // RunMaku runs one maku command (SP2 §8): its files under maku.Dir; a pre-v0.30.0 CLI's directory
@@ -247,6 +257,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.demo(ctx, args)
 	case "install":
 		return r.install(ctx, args)
+	case "db":
+		return r.db(ctx, args)
 	case "preflight":
 		return r.preflight(ctx, args)
 	case "drill":

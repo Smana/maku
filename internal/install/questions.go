@@ -406,16 +406,29 @@ func questionTable() []Question {
 				return "", nil
 			}},
 
-		// Database (IN7: Database).
-		{ID: "database.brokerSecret", Prompt: "The broker's DSN Secret (role rooms_broker)", Kind: KindString, Default: fixed("rooms-broker-dsn"),
+		// Database (IN7: Database; v5 DB5).
+		{ID: "database.mode", Prompt: "The database: external (bring your own Postgres 16+), bundled (Tier-1 Pilot single-replica Postgres in the chart), or cnpg (CloudNativePG manifest)", Kind: KindString,
+			Default: fixed("external"), Check: oneOf("the database mode", "external", "bundled", "cnpg")},
+		{ID: "database.brokerSecret", Prompt: "The broker's DSN Secret (role rooms_broker)", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"), Default: fixed("rooms-broker-dsn"),
 			Keys: []string{"maku.broker.database.brokerSecret"}, Values: at("maku.broker.database.brokerSecret"), Check: dnsSubdomain("the Secret name")},
-		{ID: "database.ownerSecret", Prompt: "The migrations' DSN Secret (role rooms_owner)", Kind: KindString, Default: fixed("rooms-owner-dsn"),
+		{ID: "database.ownerSecret", Prompt: "The migrations' DSN Secret (role rooms_owner)", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"), Default: fixed("rooms-owner-dsn"),
 			Keys: []string{"maku.broker.database.ownerSecret"}, Values: at("maku.broker.database.ownerSecret"), Check: dnsSubdomain("the Secret name")},
-		{ID: "database.retentionSecret", Prompt: "The retention job's DSN Secret (role rooms_retention)", Kind: KindString, Default: fixed("rooms-retention-dsn"),
+		{ID: "database.retentionSecret", Prompt: "The retention job's DSN Secret (role rooms_retention)", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"), Default: fixed("rooms-retention-dsn"),
 			Keys: []string{"maku.broker.database.retentionSecret"}, Values: at("maku.broker.database.retentionSecret"), Check: dnsSubdomain("the Secret name")},
-		{ID: "database.key", Prompt: "The key holding the DSN in each of them", Kind: KindString, Default: fixed("uri"),
+		{ID: "database.key", Prompt: "The key holding the DSN in each of them", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"), Default: fixed("uri"),
 			Keys: []string{"maku.broker.database.secretKey"}, Values: at("maku.broker.database.secretKey"), Check: nonEmpty("the key")},
-		{ID: "database.caSecret", Prompt: "The database's CA Secret, key ca.crt (empty: none)", Kind: KindString, Default: fixed(""),
+		{ID: "database.caSecret", Prompt: "The database's CA Secret, key ca.crt (empty: none)", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"),
+			Default: func(a Answers) any {
+				if a.String("database.mode") == "cnpg" {
+					return cnpgCASecret
+				}
+				return ""
+			},
 			Keys: []string{"maku.broker.database.caSecret"},
 			Values: func(v any, _ Answers) map[string]any {
 				if str(v) == "" {
@@ -424,6 +437,7 @@ func questionTable() []Question {
 				return map[string]any{"maku.broker.database.caSecret": str(v)}
 			}},
 		{ID: "database.sslmode", Prompt: "The DSNs' sslmode", Kind: KindString,
+			When: is("database.mode", "external", "cnpg"),
 			Default: func(a Answers) any {
 				if a.String("database.caSecret") != "" {
 					return "verify-full"
@@ -431,7 +445,7 @@ func questionTable() []Question {
 				return "require"
 			}, Check: oneOf("sslmode", "disable", "require", "verify-ca", "verify-full")},
 		{ID: "database.cidrs", Prompt: "A database outside the cluster: its CIDRs (empty: CNPG pods in the release namespace)", Kind: KindList,
-			Default: fixed([]string{}), Keys: []string{"maku.broker.database.egress.cidrs"},
+			When: is("database.mode", "external"), Default: fixed([]string{}), Keys: []string{"maku.broker.database.egress.cidrs"},
 			Values: func(v any, _ Answers) map[string]any {
 				if len(list(v)) == 0 {
 					return nil

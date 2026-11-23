@@ -96,24 +96,31 @@ func secretFiles(in Inputs) map[string][]byte {
 	if a.String("secrets.mode") == "eso" {
 		return out
 	}
-	sslmode := defaultStr(a, "database.sslmode", "require")
-	dsn := func(role, name string) secretManifest {
-		query := "sslmode=" + sslmode
-		if a.String("database.caSecret") != "" {
-			query += "&sslrootcert=/etc/room-broker/db-ca/ca.crt"
+	dbMode := defaultStr(a, "database.mode", "external")
+	if dbMode != "bundled" {
+		sslmode := defaultStr(a, "database.sslmode", "require")
+		dbHost := "<host>"
+		if dbMode == "cnpg" {
+			dbHost = cnpgClusterName + "-rw." + ns + ".svc"
 		}
-		return secretManifest{name: name, comment: fmt.Sprintf("Role %s (docs/database.md): postgresql://%s:<password>@<host>:5432/rooms?%s", role, role, query),
-			keys: []kv{{defaultStr(a, "database.key", "uri"), ""}}}
+		dsn := func(role, name string) secretManifest {
+			query := "sslmode=" + sslmode
+			if a.String("database.caSecret") != "" {
+				query += "&sslrootcert=/etc/room-broker/db-ca/ca.crt"
+			}
+			return secretManifest{name: name, comment: fmt.Sprintf("Role %s (docs/database.md): postgresql://%s:<password>@%s:5432/rooms?%s", role, role, dbHost, query),
+				keys: []kv{{defaultStr(a, "database.key", "uri"), ""}}}
+		}
+		db := []secretManifest{
+			dsn("rooms_broker", defaultStr(a, "database.brokerSecret", "rooms-broker-dsn")),
+			dsn("rooms_owner", defaultStr(a, "database.ownerSecret", "rooms-owner-dsn")),
+			dsn("rooms_retention", defaultStr(a, "database.retentionSecret", "rooms-retention-dsn")),
+		}
+		if ca := a.String("database.caSecret"); ca != "" && (dbMode != "cnpg" || ca != cnpgCASecret) {
+			db = append(db, secretManifest{name: ca, comment: "The database's CA.", keys: []kv{{"ca.crt", ""}}})
+		}
+		out["templates/database.yaml"] = join(ns, db...)
 	}
-	db := []secretManifest{
-		dsn("rooms_broker", defaultStr(a, "database.brokerSecret", "rooms-broker-dsn")),
-		dsn("rooms_owner", defaultStr(a, "database.ownerSecret", "rooms-owner-dsn")),
-		dsn("rooms_retention", defaultStr(a, "database.retentionSecret", "rooms-retention-dsn")),
-	}
-	if ca := a.String("database.caSecret"); ca != "" {
-		db = append(db, secretManifest{name: ca, comment: "The database's CA.", keys: []kv{{"ca.crt", ""}}})
-	}
-	out["templates/database.yaml"] = join(ns, db...)
 	out["templates/model-provider.yaml"] = join(ns, secretManifest{name: defaultStr(a, "models.secret", "model-provider"),
 		comment: "The " + defaultStr(a, "models.provider", "anthropic") + " API key the model gateway sends (D7): never a run's.",
 		keys:    []kv{{defaultStr(a, "models.key", "apiKey"), ""}}})
@@ -160,8 +167,11 @@ func OutDashSecrets(a Answers) []string {
 		names = append(names, secretSponsored, secretSlackWebhook)
 	}
 	if a.String("secrets.mode") != "eso" {
-		names = append(names, defaultStr(a, "database.brokerSecret", "rooms-broker-dsn"), defaultStr(a, "database.ownerSecret", "rooms-owner-dsn"),
-			defaultStr(a, "database.retentionSecret", "rooms-retention-dsn"), defaultStr(a, "models.secret", "model-provider"))
+		if defaultStr(a, "database.mode", "external") != "bundled" {
+			names = append(names, defaultStr(a, "database.brokerSecret", "rooms-broker-dsn"), defaultStr(a, "database.ownerSecret", "rooms-owner-dsn"),
+				defaultStr(a, "database.retentionSecret", "rooms-retention-dsn"))
+		}
+		names = append(names, defaultStr(a, "models.secret", "model-provider"))
 	}
 	return names
 }
