@@ -21,5 +21,8 @@ cp -R src/assets "$out/assets"
 sed 's#/assets/#assets/#g' src/app.css >"$out/app.css"
 # The landing's screencast, captions and poster: kept out of src/assets, which the broker embeds.
 cp -R preview/media "$out/media"
-cp test/fixtures/demo-session.jsonl test/fixtures/demo-snapshot.json test/fixtures/demo-summary.json "$out/fixtures/"
+cp test/fixtures/demo-session.jsonl test/fixtures/demo-snapshot.json test/fixtures/demo-summary.json \
+  test/fixtures/demo-automerge-session.jsonl test/fixtures/demo-automerge-snapshot.json test/fixtures/demo-automerge-summary.json \
+  test/fixtures/demo-guarded-session.jsonl test/fixtures/demo-guarded-snapshot.json test/fixtures/demo-guarded-summary.json \
+  "$out/fixtures/"
 echo "demo site: $out"

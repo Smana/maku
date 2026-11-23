@@ -1,8 +1,12 @@
 name: demo
-# The live demo (web/preview/demo.ts) on GitHub Pages, rebuilt for each release so it shows the
-# released room page. Never on a pull request: a PR's code does not reach the public page.
+# The static Room Replay (web/preview/demo.ts) on GitHub Pages, rebuilt when web/ changes on main
+# or on a release tag. Never on a pull request: a PR's code does not reach the public page.
 on:
   push:
+    branches: [main]
+    paths:
+      - web/**
+      - .github/workflows/demo.yaml
     tags: ["v*"]
   workflow_dispatch:
 permissions: {}

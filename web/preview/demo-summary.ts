@@ -9,13 +9,14 @@ import type { RoomEvent } from "../src/conn";
 import { ghostsAfter } from "../src/flow";
 import type { Flow, FlowNode, Summary } from "../src/summary";
 
-const plan = ["implementer", "reviewer"];
+const defaultPlan = ["implementer", "reviewer"];
 // The phases a task passes after the review, in order: the final phase brings the ones before it.
 const afterReview = ["AwaitingHuman", "Done"];
 
 // flowAt is the rail's path from the events shown: a node per run as it joins, ended when it
 // leaves; the milestones only once the replay is done.
 function flowAt(final: Summary, shown: RoomEvent[], done: boolean): Flow {
+  const plan = final.flow?.plan?.length ? final.flow.plan : defaultPlan;
   const nodes = new Map<string, FlowNode>();
   const roles = new Map<string, string>();
   const outcomes = new Map<string, string>();
@@ -38,6 +39,7 @@ function flowAt(final: Summary, shown: RoomEvent[], done: boolean): Flow {
     if (e.type === "participant" && p.change === "left") { n.endedAt = e.ts; n.toSeq = e.seq; n.outcome = outcomes.get(n.run); }
     if (e.type === "tool_result") n.tools[p.status === "ok" ? "ok" : "failed"]++;
     if (e.type === "message" && p.kind === "review_verdict") n.verdict = p.verdict;
+    if (e.type === "message" && p.kind === "judge_verdict") n.judge = { count: (n.judge?.count ?? 0) + 1, last: String(p.verdict ?? "") };
   }
   const served = new Map(final.runs?.map((r) => [r.id, r.provenance?.servedModels]));
   for (const n of nodes.values()) {
@@ -53,7 +55,9 @@ function flowAt(final: Summary, shown: RoomEvent[], done: boolean): Flow {
   const last = shown[shown.length - 1];
   if (done && last) {
     const upTo = afterReview.indexOf(final.status.phase);
-    flow.milestones = afterReview.slice(0, Math.max(upTo, 0) + 1).map((phase) => ({ phase, at: last.ts, seq: last.seq }));
+    flow.milestones = upTo >= 0
+      ? afterReview.slice(0, upTo + 1).map((phase) => ({ phase, at: last.ts, seq: last.seq }))
+      : [{ phase: final.status.phase, at: last.ts, seq: last.seq }];
   }
   return flow;
 }
@@ -66,7 +70,7 @@ export function summaryAt(final: Summary, shown: RoomEvent[], total: number, don
 
   const roles = new Map<string, string>();
   let run = null as Summary["status"]["run"];
-  let handedOff = false;
+  let handedOffTo = "";
   let verdict: Summary["status"]["lastVerdict"] = null;
   let pr: Summary["status"]["pr"] = null;
   for (const e of shown) {
@@ -74,14 +78,20 @@ export function summaryAt(final: Summary, shown: RoomEvent[], total: number, don
     if (e.type === "state_changed" && p.kind === "run_requested") roles.set(p.runId, p.role);
     if (e.type === "state_changed" && p.kind === "run_phase" && e.runId)
       run = p.phase === "Running" ? { id: e.runId, role: roles.get(e.runId) ?? "" } : run?.id === e.runId ? null : run;
-    if (e.type === "handoff") handedOff = true;
+    if (e.type === "handoff") handedOffTo = String(p.toRole ?? "reviewer");
     if (e.type === "message" && p.kind === "review_verdict") verdict = { by: e.actor.id, verdict: p.verdict, at: e.ts };
     if (e.type === "tool_result" && final.status.pr && String(p.output).includes(final.status.pr.url)) pr = final.status.pr;
   }
-  const budget = final.status.budget && { ...final.status.budget, usedTokens: Math.round(final.status.budget.usedTokens * shown.length / total) };
+  const ratio = total > 0 ? shown.length / total : 0;
+  const budget = final.status.budget && { ...final.status.budget, usedTokens: Math.round(final.status.budget.usedTokens * ratio) };
+  const spend = final.status.spend && { ...final.status.spend, usedMicroUSD: Math.round(final.status.spend.usedMicroUSD * ratio) };
+  const policy = final.status.policy && (verdict
+    ? final.status.policy
+    : { ...final.status.policy, decision: undefined, mergedHow: undefined });
+  const phase = verdict ? final.status.phase : handedOffTo === "reviewer" ? "Reviewing" : run?.role === "scoper" ? "Scoping" : "Implementing";
   return {
     ...final,
-    status: { ...final.status, phase: verdict ? final.status.phase : handedOff ? "Reviewing" : "Implementing", run, budget, pr, lastVerdict: verdict,
+    status: { ...final.status, phase, state: undefined, run, budget, spend, spendFinal: undefined, policy, pr, lastVerdict: verdict,
       reason: verdict ? final.status.reason : undefined, next: verdict ? final.status.next : undefined },
     needsYou: verdict ? final.needsYou : [],
     notes,
