@@ -15,15 +15,22 @@ Feature-level direction only. Shipped milestones are recorded per release on the
 
 ## Agent Factory v5: proven in the field
 
-v4 lets anyone run the factory; v5 is one development team in a company using it on its own
-repositories ([the platform's v5 goals](https://airef.ogenki.io/docs/status/#v5)).
+v4 lets anyone run the factory; v5 proves Maku with one external GitHub and Kubernetes engineering
+team on its own private repositories as an Apache-2.0 open-source collaboration ([the platform's v5
+goals](https://airef.ogenki.io/docs/status/#v5), [v5 roadmap
+spec](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-22-v5-roadmap-design.md),
+[v5 challenge specs](https://github.com/Smana/ai-native-ref/pull/488)).
 
 | Feature | What it takes |
 |---|---|
-| A partner company's proof of concept | A development team runs Maku on its own repositories, in a real environment; it is also the "outside demand" trigger of the platform-agnostic decision below |
-| kagent and Agent Substrate, challenged again | Rerun [ADR-0062](https://airef.ogenki.io/docs/decisions/0062-agent-runtime-remains-agent-sandbox/)'s comparison against their current releases and its triggers; adopt, borrow from, or keep deferring each |
-| OpenCode as the harness | `maku-harness` runs OpenCode instead of OpenHands, once it matches OpenHands on the factory's tasks and checks ([evaluation](https://github.com/Smana/ai-native-ref/pull/404)) |
-| A spec format for issues | The spec an issue carries for spec-driven development: what the planner writes, what the scoper and the judge check against, what the reviewer verifies |
+| Pre-pitch readiness and Tier-1 database adoption | Private-repository planning, Tier-1 hardened bundled PostgreSQL (PVC, TLS, automatic three-role bootstrap, optional S3/GCS backups) plus a one-step Tier-2 CNPG or external-database bootstrapper, one recorded generic Kubernetes Helm install, outside-user laptop quickstart checks ([Quickstart](quickstart.md)), a standalone front door, a two-minute real-run video, and a static room replay |
+| External team pilot on private repositories | One GitHub and Kubernetes team runs a Tier-1 Pilot (one GitHub App, shadow merge gate, bundled PostgreSQL, standard OIDC/Ingress or Slack Socket Mode, mandatory gVisor) and lands at least ten merged pull requests; hardening (H1–H5), team RBAC (`write` access and GitHub Teams), and per-repository runtime images land alongside the team's stack; also satisfies the "outside demand" trigger of the platform-agnostic decision below |
+| Pluggable three-tier harnesses, OpenCode default | Turn `AgentRun.spec.harness` into a three-tier contract: OpenCode as the slim default once parity passes ([evaluation](https://github.com/Smana/ai-native-ref/pull/404)), OpenHands as the proven fallback, and best-effort bring-your-own Claude Code |
+| Harness visual verification (screenshots) | Opt-in `maku-browser` sidecar inside gVisor pods (`implementer` and `tester`, per-repository opt-in, loopback-only `127.0.0.1` Playwright MCP) for in-loop agent visual checks without bloating the default image or widening egress; human-visible pull-request and room screenshots follow separately |
+| Slack security model and Socket Mode | Hybrid personal-bound principals over one workspace bot (no personal Slack user tokens): direct-message intake with dynamic per-user repository access and per-person USD budgets, strict author-only thread isolation, Socket Mode as the zero-public-ingress default (unsigned `forge.push` buttons off by default), and broker-verified `X-Slack-Signature` closing the Slack deputy residual in Events API mode while keeping live steering on the room page |
+| Spec-driven development intake | Ingest open markdown specs (GitHub Spec Kit, OpenSpec, or EARS sections in issues or `specs/`) natively when present, falling back to a minimal compatible Maku spec written by the planner and scoper |
+| Outcome analytics and live merge proof | Join merge rate, revert rate, human wait time, and USD cost per merged pull request into one view by repository, policy, model, and workflow; prove at least one engineering class beyond `docs-links` (`deps-patch` or `docs`) live with a revert drill and a second-family reviewer |
+| Time-boxed `kagent` and Agent Substrate check | After the first external team pilot ships, spend at most two days rerunning [ADR-0062](https://airef.ogenki.io/docs/decisions/0062-agent-runtime-remains-agent-sandbox/)'s comparison against current releases and its triggers, then adopt, borrow from, or keep deferring each |
 
 ## Next
 
