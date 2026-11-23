@@ -168,7 +168,9 @@ func gatedServer(t *testing.T, ann map[string]any) (*Server, *memLog) {
 	w := runwatch.New(runwatch.DefaultKind)
 	w.Upsert(t.Context(), claim("7f3cq2xz", "implementer", "3kq7x2ma", "Running", ann))
 	log := &memLog{}
-	s, _ := testServer(w, newClock())
+	c := newClock()
+	s, _ := testServer(w, c)
+	s.Now = func() time.Time { c.add(time.Second); return c.now() }
 	s.Tools = append(RoomTools(log, fakeRedactor{}, time.Now), OutputTools(log, fakeRedactor{}, time.Now, OutputConfig{})...)
 	return s, log
 }
@@ -357,7 +359,9 @@ func harnessServerFor(t *testing.T, outputs string, answers OutputAnswers, push 
 	c.Object["spec"].(map[string]any)["repository"] = "Smana/demo"
 	w.Upsert(t.Context(), c)
 	log, bundles := &memLog{}, &memBundles{}
-	s, _ := testServer(w, newClock())
+	clk := newClock()
+	s, _ := testServer(w, clk)
+	s.Now = func() time.Time { clk.add(time.Second); return clk.now() }
 	s.Tools = append(RoomTools(log, fakeRedactor{}, time.Now),
 		OutputTools(log, fakeRedactor{}, time.Now, OutputConfig{Bundles: bundles, Answers: answers, PushRepositories: push})...)
 	return s, log, bundles

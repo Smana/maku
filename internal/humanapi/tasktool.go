@@ -99,7 +99,10 @@ func (s *Server) readTask(ctx context.Context, id string, p authn.Principal, sin
 		return taskEnvelope{}, err
 	}
 	now := s.now()
-	sum := s.summaryFromFold(ctx, id, room, fold, sub, p, now)
+	// Compute standing and coordination once per readTask call (PERF-M8).
+	standing := s.standing(ctx, room, p)
+	coord := s.coordinationOnce(ctx, id, p)
+	sum := s.summaryFromFold(ctx, id, room, fold, sub, p, standing, coord, now)
 
 	scope, err := s.lastScope(ctx, room, row)
 	if err != nil {
@@ -118,11 +121,10 @@ func (s *Server) readTask(ctx context.Context, id string, p authn.Principal, sin
 		return taskEnvelope{}, err
 	}
 
-	coord := s.coordinationOnce(ctx, id, p)
 	web := sub
 	web.WebUI = true
 	live, _ := s.liveApprovals(ctx, room, web)
-	needs, _ := s.needsFor(ctx, room, p, sub, false, needsRead{facts: s.taskFacts(ctx, room), live: live, coord: coord})
+	needs, _ := s.needsFor(ctx, room, p, sub, false, needsRead{facts: s.taskFacts(ctx, room), live: live, coord: coord, standing: &standing})
 	if len(needs) == 0 && len(sum.NeedsYou) > 0 {
 		needs = sum.NeedsYou
 	}
@@ -173,8 +175,7 @@ func (s *Server) readTask(ctx context.Context, id string, p authn.Principal, sin
 	}, nil
 }
 
-func (s *Server) summaryFromFold(ctx context.Context, id string, room *v1alpha1.Room, fold summary.State, sub policy.Subject, p authn.Principal, now time.Time) summary.Summary {
-	standing := s.standing(ctx, room, p)
+func (s *Server) summaryFromFold(ctx context.Context, id string, room *v1alpha1.Room, fold summary.State, sub policy.Subject, p authn.Principal, standing summary.GitHubStanding, coord coordFn, now time.Time) summary.Summary {
 	view := summary.View(fold, id, s.PublicURL+"/r/"+id, sub, standing, 0, now)
 	if fold.Sealed == "" {
 		if q, err := s.Log.Queue(ctx, id); err != nil {
@@ -200,7 +201,7 @@ func (s *Server) summaryFromFold(ctx context.Context, id string, room *v1alpha1.
 		web.WebUI = true
 		view.Status.Approvals = fold.CountApprovals(web, room.Spec.Approvals.FourEyes, now)
 	}
-	if v, ok := s.coordinationFor(ctx, id, p); ok {
+	if v, ok := coord(); ok {
 		coordinationview.Attach(&view, v)
 		if fold.Sealed == "" {
 			in := summary.NeedsIn{

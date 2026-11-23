@@ -24,6 +24,7 @@ type Watcher struct {
 	kind    Kind // the runs it reads: claims of any other kind are not runs to it
 	mu      sync.RWMutex
 	runs    map[string]Run
+	byRoom  map[string]map[string]Run
 	gone    []func(context.Context, Run)
 	changed []func(context.Context, Run)
 	removed []func(context.Context, Run)
@@ -33,7 +34,9 @@ type Watcher struct {
 }
 
 // New returns an empty Watcher of k's runs.
-func New(k Kind) *Watcher { return &Watcher{kind: k, runs: map[string]Run{}} }
+func New(k Kind) *Watcher {
+	return &Watcher{kind: k, runs: map[string]Run{}, byRoom: map[string]map[string]Run{}}
+}
 
 // OnGone registers f for a run that stops being live (terminal, revoked or
 // deleted). It fires once per run.
@@ -95,6 +98,25 @@ func (w *Watcher) Upsert(ctx context.Context, u *unstructured.Unstructured) {
 	w.mu.Lock()
 	old, had := w.runs[cur.ID]
 	w.runs[cur.ID] = cur
+	if had && old.Room != "" && old.Room != cur.Room {
+		if m := w.byRoom[old.Room]; m != nil {
+			delete(m, cur.ID)
+			if len(m) == 0 {
+				delete(w.byRoom, old.Room)
+			}
+		}
+	}
+	if cur.Room != "" {
+		if w.byRoom == nil {
+			w.byRoom = map[string]map[string]Run{}
+		}
+		m := w.byRoom[cur.Room]
+		if m == nil {
+			m = map[string]Run{}
+			w.byRoom[cur.Room] = m
+		}
+		m[cur.ID] = cur
+	}
 	gone, changed, live := slices.Clone(w.gone), slices.Clone(w.changed), slices.Clone(w.live)
 	w.mu.Unlock()
 	notifyLive(ctx, live, had && counted(old), counted(cur))
@@ -119,6 +141,14 @@ func (w *Watcher) Remove(ctx context.Context, u *unstructured.Unstructured) {
 	w.mu.Lock()
 	old, had := w.runs[r.ID]
 	delete(w.runs, r.ID)
+	if had && old.Room != "" {
+		if m := w.byRoom[old.Room]; m != nil {
+			delete(m, old.ID)
+			if len(m) == 0 {
+				delete(w.byRoom, old.Room)
+			}
+		}
+	}
 	gone, removed, live := slices.Clone(w.gone), slices.Clone(w.removed), slices.Clone(w.live)
 	w.mu.Unlock()
 	if !had {
@@ -169,11 +199,13 @@ func (w *Watcher) Live(id string) (run Run, live, known bool) {
 func (w *Watcher) InRoom(room string) []Run {
 	w.mu.RLock()
 	defer w.mu.RUnlock()
-	var out []Run
-	for _, r := range w.runs {
-		if r.Room == room {
-			out = append(out, r)
-		}
+	m := w.byRoom[room]
+	if len(m) == 0 {
+		return nil
+	}
+	out := make([]Run, 0, len(m))
+	for _, r := range m {
+		out = append(out, r)
 	}
 	return out
 }

@@ -619,3 +619,118 @@ func (l *rangedLog) Range(ctx context.Context, room string, after int64, limit i
 	}
 	return evs, err
 }
+
+// PERF-M5: a room with many pages of backlog yields after maxPagesPerTurn so another dirty room is
+// served in the same round, and still drains every event on subsequent turns via re-enqueue.
+func TestFetchYieldsAfterMaxPagesPerTurn(t *testing.T) {
+	const busyRoom = "busyroom"
+	const quietRoom = "quietroo"
+	var mu sync.Mutex
+	var order []string
+	var hadDeadline bool
+	totalBusy := maxPagesPerTurn*pageSize + 10
+	initDone := make(chan string, 4)
+	var ready atomic.Bool
+	log := &multiRoomLog{
+		rooms: map[string]int{},
+		onRange: func(ctx context.Context, room string, _ int64) {
+			if !ready.Load() {
+				initDone <- room
+				return
+			}
+			mu.Lock()
+			if _, ok := ctx.Deadline(); ok {
+				hadDeadline = true
+			}
+			order = append(order, room)
+			mu.Unlock()
+		},
+	}
+	b := newBus()
+	h := New(log, b, discard)
+	h.Budget = 1 << 30
+	ctx := run(t, h)
+	waitOpened(t, b)
+	subBusy, err := h.Subscribe(ctx, busyRoom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subQuiet, err := h.Subscribe(ctx, quietRoom)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Wait for both initial Subscribe reads (at seq 0) to complete before seeding events.
+	seenInit := map[string]bool{}
+	for len(seenInit) < 2 {
+		select {
+		case rm := <-initDone:
+			seenInit[rm] = true
+		case <-time.After(2 * time.Second):
+			t.Fatalf("timed out waiting for initial subscribe reads: %v", seenInit)
+		}
+	}
+	log.setCount(busyRoom, totalBusy)
+	log.setCount(quietRoom, 1)
+	ready.Store(true)
+	// Mark both dirty at once before waking work.
+	h.mu.Lock()
+	h.rooms[busyRoom].dirty = true
+	h.rooms[quietRoom].dirty = true
+	h.mu.Unlock()
+	h.kick()
+
+	// Both rooms must eventually receive all their events.
+	drain(t, subQuiet, 1, 1)
+	drain(t, subBusy, 1, totalBusy)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if !hadDeadline {
+		t.Fatal("Range called without per-query timeout deadline")
+	}
+	// Busy room must not run more than maxPagesPerTurn consecutive Range calls before yielding
+	// while quietRoom is still waiting (when busyRoom was picked first).
+	consec := 0
+	seenQuiet := false
+	for _, rm := range order {
+		if rm == quietRoom {
+			seenQuiet = true
+			consec = 0
+			continue
+		}
+		consec++
+		if !seenQuiet && consec > maxPagesPerTurn {
+			t.Fatalf("busy room ran %d consecutive pages before yielding to quiet room: %v", consec, order)
+		}
+	}
+}
+
+type multiRoomLog struct {
+	mu      sync.Mutex
+	rooms   map[string]int
+	onRange func(ctx context.Context, room string, after int64)
+}
+
+func (l *multiRoomLog) setCount(room string, n int) {
+	l.mu.Lock()
+	l.rooms[room] = n
+	l.mu.Unlock()
+}
+
+func (l *multiRoomLog) Room(_ context.Context, id string) (store.RoomState, error) {
+	return store.RoomState{ID: id, LastSeq: 0}, nil
+}
+
+func (l *multiRoomLog) Range(ctx context.Context, room string, after int64, limit int) ([]envelope.Event, error) {
+	if l.onRange != nil {
+		l.onRange(ctx, room, after)
+	}
+	l.mu.Lock()
+	total := l.rooms[room]
+	l.mu.Unlock()
+	var out []envelope.Event
+	for seq := after + 1; seq <= int64(total) && len(out) < limit; seq++ {
+		out = append(out, envelope.Event{RoomID: room, Seq: seq, Payload: []byte(`{}`)})
+	}
+	return out, nil
+}

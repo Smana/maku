@@ -257,6 +257,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// Rate-limit before reading r.Body so a run cannot allocate up to maxHarnessBody (12 MiB)
+	// repeatedly across any JSON-RPC method (SEC-M11).
+	if !s.allow(run.ID) {
+		s.reject(r.Context(), "rate_limited")
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Retry-After", "1")
+		w.WriteHeader(http.StatusTooManyRequests)
+		mcpwire.Write(w, nil, nil, &mcpwire.Error{Code: mcpwire.InvalidRequest, Message: "rate_limited: one room MCP request per second"})
+		return
+	}
 	harness := r.Header.Get(HarnessHeader) == "1"
 	limit := int64(maxBody)
 	if harness {
@@ -345,11 +355,6 @@ func (s *Server) call(ctx context.Context, w http.ResponseWriter, req mcpwire.Re
 		mcpwire.Write(w, req.ID, mcpwire.ToolError("not_permitted: this tool is not one of the "+run.Role+" role's"), nil)
 		return
 	}
-	if !s.allow(run.ID) {
-		s.reject(ctx, "rate_limited")
-		mcpwire.Write(w, req.ID, mcpwire.ToolError("rate_limited: one room tool call per second"), nil)
-		return
-	}
 	t := s.Tools[i]
 	out, err := t.Call(ctx, Caller{Run: run}, p.Arguments)
 	if err != nil {
@@ -380,6 +385,11 @@ func (s *Server) failure(ctx context.Context, tool string, run runwatch.Run, err
 	case errors.As(err, &slow):
 		s.reject(ctx, "rate_limited")
 		return "rate_limited: " + slow.Error()
+	case errors.Is(err, ErrReadFilterOff):
+		return ErrReadFilterOff.Error()
+	case errors.Is(err, store.ErrBundleQuota):
+		s.reject(ctx, "bundle_quota")
+		return "bundle_quota: this run or room has reached its push bundle limit"
 	case errors.Is(err, store.ErrSealed):
 		return "room_sealed: the room is closed to new events"
 	case errors.Is(err, store.ErrNoRoom):

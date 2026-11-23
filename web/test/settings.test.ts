@@ -161,7 +161,7 @@ describe("the repository page", () => {
 
 describe("the index and evidence pages", () => {
   const two = () => fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/cloud-native-ref", "Smana/broken"] },
-    "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/approval-memory": { grants: [{}, {}] } });
+    "/api/policy/repositories/Smana/cloud-native-ref": page(), "/api/approval-memory/grants": { grants: [{}, {}] } });
 
   it("opens settings on one card per section, each the link, with its counts", async () => {
     const app = document.createElement("div");

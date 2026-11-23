@@ -16,7 +16,7 @@ import (
 // room as a missing one.
 func (s *Server) roomEvents(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowed(w, r, p) {
 		return
 	}
 	var after int64

@@ -317,6 +317,11 @@ const (
 // revokes the token; it records them on the state and renders the confirmation. It links nothing.
 func (s *Server) githubCallback(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
+	if !s.callbackAllowed(r) {
+		s.rejected(ctx, rejectRateLimited)
+		http.Error(w, rejectRateLimited, http.StatusTooManyRequests)
+		return
+	}
 	q := r.URL.Query()
 	state := q.Get("state")
 	if !stateRE.MatchString(state) {

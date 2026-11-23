@@ -97,14 +97,15 @@ func Plan(w io.Writer, p intake.Plan, label string, o Options) error {
 	}
 
 	for _, is := range p.Issues {
-		if strings.TrimSpace(is.Body) == "" {
+		body := cleanBlock(is.Body)
+		if strings.TrimSpace(body) == "" {
 			continue
 		}
 		b.WriteString("\nIssue " + strconv.Itoa(is.Index) + "\n")
 		if md {
-			b.WriteString(block(is.Body) + "\n")
+			b.WriteString(block(body) + "\n")
 		} else {
-			b.WriteString(is.Body + "\n")
+			b.WriteString(body + "\n")
 		}
 	}
 

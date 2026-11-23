@@ -178,15 +178,7 @@ func slackDecisionShaped(in SlackDecision) bool {
 func (d *SlackDecider) allow(key string) bool {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.limits == nil {
-		d.limits = map[string]*rate.Limiter{}
-	}
-	l, ok := d.limits[key]
-	if !ok {
-		l = rate.NewLimiter(rate.Every(6*time.Second), 5)
-		d.limits[key] = l
-	}
-	return l.Allow()
+	return takeBounded(&d.limits, key, rate.Every(6*time.Second), 5, time.Now())
 }
 
 // answer writes §1's one-key body with the status its code carries: 400 for a body or a decision

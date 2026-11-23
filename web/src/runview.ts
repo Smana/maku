@@ -70,6 +70,7 @@ export function mountRunView(roomMain: HTMLElement, o: {
     if (n.fromSeq > 0 && !(n.toSeq > 0 && e.seq > n.toSeq) && e.seq > through && !capped()) put(e);
   };
   const close = () => {
+    view?.views.destroy?.();
     view?.el.remove();
     view = undefined;
     for (const c of roomMain.children) (c as HTMLElement).hidden = false;

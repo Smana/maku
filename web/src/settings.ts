@@ -261,7 +261,7 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
     if (e instanceof SignInRequired) { failed(main, e); return; }
     repos = undefined; // the card says the counts are unavailable
   }
-  try { grants = (await read<{ grants: unknown[] }>("/api/approval-memory", get)).grants.length; } catch { /* counts unknown */ }
+  try { grants = (await read<{ grants: unknown[] }>("/api/approval-memory/grants", get)).grants.length; } catch { /* counts unknown */ }
   const ok = pages.filter((p): p is RepositoryPage => !(p instanceof Error));
   const modes: Record<string, number> = {};
   for (const p of ok) for (const [m, n] of Object.entries(modeCounts(p.report))) modes[m] = (modes[m] ?? 0) + n;

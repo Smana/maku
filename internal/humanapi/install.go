@@ -4,6 +4,7 @@ package humanapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"sync"
@@ -21,7 +22,7 @@ var (
 )
 
 // installCache is the factory's codes as last read, failures included (as none): one read per
-// installTTL, whoever views the page. Safe for concurrent use; the lock is held over the read.
+// installTTL, whoever views the page. Safe for concurrent use; mu is never held across I/O (REL-M14).
 type installCache struct {
 	mu    sync.Mutex
 	at    time.Time
@@ -32,19 +33,28 @@ type installCache struct {
 func (s *Server) factoryCodes(ctx context.Context, token string) []string {
 	c := &s.installCodes
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	now := s.now()
 	if !c.at.IsZero() && now.Sub(c.at) < installTTL {
-		return c.codes
+		codes := c.codes
+		c.mu.Unlock()
+		return codes
 	}
-	ctx, cancel := context.WithTimeout(ctx, installTimeout)
+	c.mu.Unlock()
+
+	reqCtx, cancel := context.WithTimeout(ctx, installTimeout)
 	defer cancel()
-	codes, err := s.FactoryInstall(ctx, token)
+	codes, err := s.FactoryInstall(reqCtx, token)
 	if err != nil {
+		// Caller cancellation must not poison the shared cache for installTTL (REL-M14).
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return nil
+		}
 		s.log().Warn("install: the factory's codes are unreadable", "err", err)
 		codes = nil
 	}
-	c.at, c.codes = now, codes
+	c.mu.Lock()
+	c.at, c.codes = s.now(), codes
+	c.mu.Unlock()
 	return codes
 }
 

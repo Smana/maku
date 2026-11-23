@@ -25,6 +25,7 @@ configMapGenerator:
       - ./20261113140000_drill_reports.sql
       - ./20261120120000_github_links.sql
       - ./20261121120000_handoffs.sql
+      - ./20261123120000_query_indexes.sql
       - atlas.sum
     options:
       disableNameSuffixHash: true

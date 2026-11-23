@@ -116,6 +116,42 @@ func TestPutBundle(t *testing.T) {
 	})
 }
 
+func TestPutBundleQuota(t *testing.T) {
+	ctx := t.Context()
+	s, _, _, _ := open(t)
+	// Fill up to MaxBundlesPerRun distinct small bundles for one run.
+	var last []byte
+	for i := range MaxBundlesPerRun {
+		b := []byte("bundle-" + string(rune('a'+i)))
+		last = b
+		if err := s.PutBundle(ctx, room, bundleRun, digestOf(b), b); err != nil {
+			t.Fatalf("put %d: %v", i, err)
+		}
+	}
+	// Re-putting an existing (run, digest) remains an idempotent no-op even at the quota.
+	if err := s.PutBundle(ctx, room, bundleRun, digestOf(last), last); err != nil {
+		t.Fatalf("idempotent re-put at quota: %v", err)
+	}
+	// One more distinct bundle for the same run hits ErrBundleQuota.
+	over := []byte("bundle-over-count")
+	if err := s.PutBundle(ctx, room, bundleRun, digestOf(over), over); !errors.Is(err, ErrBundleQuota) {
+		t.Fatalf("over count quota: err = %v, want ErrBundleQuota", err)
+	}
+	// Another run in the same room can still store bundles, up to MaxBundleBytesPerRun.
+	const otherRun = "22222222"
+	chunk := bytes.Repeat([]byte("a"), MaxBundle)
+	for i := range MaxBundleBytesPerRun / MaxBundle {
+		b := append([]byte{byte(i)}, chunk[1:]...)
+		if err := s.PutBundle(ctx, room, otherRun, digestOf(b), b); err != nil {
+			t.Fatalf("byte quota fill %d: %v", i, err)
+		}
+	}
+	overBytes := []byte("one-more-byte")
+	if err := s.PutBundle(ctx, room, otherRun, digestOf(overBytes), overBytes); !errors.Is(err, ErrBundleQuota) {
+		t.Fatalf("over byte quota: err = %v, want ErrBundleQuota", err)
+	}
+}
+
 // A bundle is read back by its room, run and digest only.
 func TestBundle(t *testing.T) {
 	ctx := t.Context()

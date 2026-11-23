@@ -53,3 +53,19 @@ func TestAReviewFailureIsWarnedOnceAMinuteAndABadTokenIsNot(t *testing.T) {
 		t.Fatalf("a bad credential must not warn:\n%s", buf.String())
 	}
 }
+
+func TestReviewWarnedKeysByTypeAndStaysBounded(t *testing.T) {
+	var buf bytes.Buffer
+	now := time.Unix(1_800_000_000, 0)
+	s := &Server{Logger: slog.New(slog.NewTextHandler(&buf, nil)), Now: func() time.Time { return now }}
+	// Distinct messages wrapping the same sentinel collapse to one key and warn once per window.
+	for i := range 20 {
+		s.warnReview(fmt.Errorf("%w: connection %d refused", authn.ErrReviewUnavailable, i))
+	}
+	if n := strings.Count(buf.String(), "level=WARN"); n != 1 {
+		t.Fatalf("%d warnings for distinct messages of same sentinel, want 1", n)
+	}
+	if len(s.reviewWarned) != 1 {
+		t.Fatalf("reviewWarned has %d entries, want 1", len(s.reviewWarned))
+	}
+}

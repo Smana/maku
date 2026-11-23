@@ -748,3 +748,41 @@ func TestAProviderRefusalEndsTheRunAsModelUnavailable(t *testing.T) {
 		})
 	}
 }
+
+func TestWatcherInRoomIndexMaintainedAcrossUpsertMoveAndRemove(t *testing.T) {
+	ctx := t.Context()
+	w := New(DefaultKind)
+	w.Upsert(ctx, claim("run-aaaaaaaa", "room1111", "Running", ""))
+	w.Upsert(ctx, claim("run-bbbbbbbb", "room1111", "Running", ""))
+	w.Upsert(ctx, claim("run-cccccccc", "room2222", "Running", ""))
+	if got := len(w.InRoom("room1111")); got != 2 {
+		t.Fatalf("room1111 has %d runs, want 2", got)
+	}
+	if got := len(w.InRoom("room2222")); got != 1 {
+		t.Fatalf("room2222 has %d runs, want 1", got)
+	}
+	// Update phase in place: still 2 runs in room1111, updated phase reflected.
+	w.Upsert(ctx, claim("run-aaaaaaaa", "room1111", "Succeeded", ""))
+	var found bool
+	for _, r := range w.InRoom("room1111") {
+		if r.ID == "aaaaaaaa" && r.Phase == "Succeeded" {
+			found = true
+		}
+	}
+	if !found || len(w.InRoom("room1111")) != 2 {
+		t.Fatalf("in-place update not reflected in byRoom: %+v", w.InRoom("room1111"))
+	}
+	// Move run to another room: old room drops it, new room gains it.
+	w.Upsert(ctx, claim("run-bbbbbbbb", "room2222", "Running", ""))
+	if len(w.InRoom("room1111")) != 1 || len(w.InRoom("room2222")) != 2 {
+		t.Fatalf("move failed: r1=%d r2=%d", len(w.InRoom("room1111")), len(w.InRoom("room2222")))
+	}
+	// Remove runs: empty room bucket cleaned up.
+	w.Remove(ctx, claim("run-aaaaaaaa", "room1111", "Succeeded", ""))
+	if got := w.InRoom("room1111"); len(got) != 0 {
+		t.Fatalf("removed run still in room1111: %+v", got)
+	}
+	if _, exists := w.byRoom["room1111"]; exists {
+		t.Fatal("empty byRoom bucket was not deleted")
+	}
+}

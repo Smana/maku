@@ -87,8 +87,13 @@ func (s *Server) readRoom(ctx context.Context, id string, p authn.Principal) (*v
 	return room, st, sub, nil
 }
 
-// closedPage is how many events closedRoom reads per call while it looks for the factory's facts.
-const closedPage = 100
+// closedPage is how many events closedRoom reads per call while it looks for the factory's facts,
+// and closedMaxScan caps the forward prefix scan so a non-factory sealed room never reads its whole
+// log (PERF-M4).
+const (
+	closedPage    = 100
+	closedMaxScan = 500
+)
 
 // closedRoom stands in for a Room the factory deleted when its task ended (roomclose.go): the log
 // is sealed and retained, and the issue may still send its maintainer to read it. It carries only the
@@ -110,7 +115,8 @@ func (s *Server) closedRoom(ctx context.Context, id string) (*v1alpha1.Room, err
 	if !st.Sealed {
 		return nil, nil
 	}
-	for after := int64(0); ; {
+	var after int64
+	for scanned := 0; scanned < closedMaxScan; {
 		evs, err := s.Log.Range(ctx, id, after, closedPage)
 		if err != nil {
 			return nil, err
@@ -122,10 +128,26 @@ func (s *Server) closedRoom(ctx context.Context, id string) (*v1alpha1.Room, err
 					Spec: v1alpha1.RoomSpec{Repository: repo}}, nil
 			}
 		}
+		scanned += len(evs)
 		if len(evs) < closedPage {
 			return nil, nil
 		}
 	}
+	// If the prefix scan reached its cap on a long log, check the final tail page where the
+	// factory records its closing task facts before sealing.
+	if tailStart := max(after, st.LastSeq-closedPage); tailStart < st.LastSeq {
+		evs, err := s.Log.Range(ctx, id, tailStart, closedPage)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range evs {
+			if repo := s.factoryRepo(ev); repo != "" {
+				return &v1alpha1.Room{ObjectMeta: metav1.ObjectMeta{Name: id, Namespace: s.Namespace},
+					Spec: v1alpha1.RoomSpec{Repository: repo}}, nil
+			}
+		}
+	}
+	return nil, nil
 }
 
 // factoryRepo is the repository ev's task facts name, when the factory wrote them.

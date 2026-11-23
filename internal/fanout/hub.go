@@ -26,6 +26,13 @@ import (
 // pageSize bounds one log read.
 const pageSize = 500
 
+// fetchTimeout bounds a single Range query so a wedged DB read cannot stall the fanout worker.
+const fetchTimeout = 5 * time.Second
+
+// maxPagesPerTurn caps how many pages fetch drains for one room before yielding to other dirty
+// rooms (PERF-M5). When more events remain, the room is re-marked dirty and kicked.
+const maxPagesPerTurn = 2
+
 // subChan is a viewer's channel capacity: two of fetch's pages. A full channel
 // drops the viewer, so it must hold a page burst from a consumer that is still
 // draining; Budget, not this, is the bound on pending bytes.
@@ -301,7 +308,7 @@ func (h *Hub) takeDirty() []string {
 // when it was taken, and one subscribing after that reads the page's events from
 // the log, since it reads its mark after Subscribe returns (§4 Replay).
 func (h *Hub) fetch(ctx context.Context, id string) {
-	for {
+	for page := 0; page < maxPagesPerTurn; page++ {
 		h.mu.Lock()
 		rm, ok := h.rooms[id]
 		var after int64
@@ -312,7 +319,9 @@ func (h *Hub) fetch(ctx context.Context, id string) {
 		if !ok {
 			return
 		}
-		evs, err := h.r.Range(ctx, id, after, pageSize)
+		qctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+		evs, err := h.r.Range(qctx, id, after, pageSize)
+		cancel()
 		if err != nil && ctx.Err() == nil {
 			h.log.Warn("fan-out read failed; the next poll retries", "room", id, "afterSeq", after, "error", err)
 		}
@@ -350,6 +359,13 @@ func (h *Hub) fetch(ctx context.Context, id string) {
 			return
 		}
 	}
+	// Full pages drained up to maxPagesPerTurn: yield to other dirty rooms and continue next turn.
+	h.mu.Lock()
+	if rm, ok := h.rooms[id]; ok {
+		rm.dirty = true
+	}
+	h.mu.Unlock()
+	h.kick()
 }
 
 // jitter is a uniform duration in [0, upTo).

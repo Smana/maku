@@ -7,8 +7,6 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-
 	"github.com/Smana/maku/internal/envelope"
 )
 
@@ -34,7 +32,7 @@ func (s *Store) UnpostedVerdicts(ctx context.Context, since time.Time, limit int
 	if exclude == nil {
 		exclude = []string{} // NULL would make ANY unknown and hide every row
 	}
-	return s.verdicts(ctx, "unposted verdicts", `SELECT e.room_id, e.seq`+agentVerdicts+`
+	return s.verdicts(ctx, "unposted verdicts", `SELECT e.room_id, `+verdictCols+agentVerdicts+`
 		  AND e.ts > $2 AND NOT (e.id = ANY($3))
 		ORDER BY e.ts, e.room_id, e.seq LIMIT $4`, VerdictsClient, since, exclude, limit)
 }
@@ -42,35 +40,33 @@ func (s *Store) UnpostedVerdicts(ctx context.Context, since time.Time, limit int
 // ExpiredVerdicts are the verdicts UnpostedVerdicts no longer returns: stamped
 // at or before before, oldest first, with no outcome yet (review 3.5 m2b).
 func (s *Store) ExpiredVerdicts(ctx context.Context, before time.Time, limit int) ([]envelope.Event, error) {
-	return s.verdicts(ctx, "expired verdicts", `SELECT e.room_id, e.seq`+agentVerdicts+`
+	return s.verdicts(ctx, "expired verdicts", `SELECT e.room_id, `+verdictCols+agentVerdicts+`
 		  AND e.ts <= $2
 		ORDER BY e.ts, e.room_id, e.seq LIMIT $3`, VerdictsClient, before, limit)
 }
 
-// verdicts runs a query of (room_id, seq) keys and returns their events.
+const verdictCols = `e.seq, e.id, coalesce(e.run_id, ''), e.actor_kind, e.actor_id, coalesce(e.actor_role, ''), e.type,
+	e.caused_by, e.origin, e.ts, e.redactions, e.payload`
+
+// verdicts runs one SELECT returning full event rows (PERF-M8, replacing the N+1 Range loop).
 func (s *Store) verdicts(ctx context.Context, what, query string, args ...any) ([]envelope.Event, error) {
 	rows, err := s.pool.Query(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("store: %s: %w", what, err)
 	}
-	type key struct {
-		room string
-		seq  int64
-	}
-	keys, err := pgx.CollectRows(rows, func(r pgx.CollectableRow) (key, error) {
-		var k key
-		return k, r.Scan(&k.room, &k.seq)
-	})
-	if err != nil {
-		return nil, fmt.Errorf("store: %s: %w", what, err)
-	}
-	out := make([]envelope.Event, 0, len(keys))
-	for _, k := range keys {
-		evs, err := s.Range(ctx, k.room, k.seq-1, 1)
+	defer rows.Close()
+	var out []envelope.Event
+	for rows.Next() {
+		var roomID string
+		ev, err := scan(withRoom{rows, &roomID}, "")
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("store: %s: %w", what, err)
 		}
-		out = append(out, evs...)
+		ev.RoomID = roomID
+		out = append(out, ev)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("store: %s: %w", what, err)
 	}
 	return out, nil
 }

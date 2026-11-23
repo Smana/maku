@@ -28,6 +28,18 @@ func strip(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }
 
+// cleanBlock strips control, zero-width and bidi runes from multi-line untrusted text while
+// preserving newlines and tabs (normalizing CRLF to LF and dropping bare CR).
+func cleanBlock(s string) string {
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	return strings.Map(func(r rune) rune {
+		if envelope.Control(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
 // clean is untrusted text made safe to put on one line: strip, then at most maxText runes. Only
 // untrusted text is cut; the broker's own sentences go through strip.
 func clean(s string) string {

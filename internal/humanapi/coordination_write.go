@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"mime"
 	"net/http"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
@@ -62,6 +63,14 @@ func (s *Server) coordinationConfirmRoute(w http.ResponseWriter, r *http.Request
 		refuseJSON(w, http.StatusForbidden, "web_only")
 		return
 	}
+	if want, o := origin(s.PublicURL), r.Header.Get("Origin"); want == "" || o == "" || origin(o) != want {
+		refuseJSON(w, http.StatusForbidden, "cross_origin")
+		return
+	}
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		refuseJSON(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
+		return
+	}
 	var in coordination.CoordinationConfirmation
 	if !decodeCoordination(w, r, &in) {
 		return
@@ -86,6 +95,14 @@ func (s *Server) coordinationRecoverRoute(w http.ResponseWriter, r *http.Request
 		refuseJSON(w, http.StatusForbidden, "web_only")
 		return
 	}
+	if want, o := origin(s.PublicURL), r.Header.Get("Origin"); want == "" || o == "" || origin(o) != want {
+		refuseJSON(w, http.StatusForbidden, "cross_origin")
+		return
+	}
+	if mt, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mt != "application/json" {
+		refuseJSON(w, http.StatusUnsupportedMediaType, "unsupported_media_type")
+		return
+	}
 	var in struct {
 		Code        string `json:"code"`
 		PlanVersion int32  `json:"planVersion"`
@@ -108,7 +125,7 @@ func (s *Server) coordinationRecoverRoute(w http.ResponseWriter, r *http.Request
 // coordinationWriter is a human caller with a token, admitted to the {task} parent's room.
 func (s *Server) coordinationWriter(w http.ResponseWriter, r *http.Request) (p authn.Principal, task string, ok bool) {
 	p, ok = s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowedJSON(w, r, p) {
 		return p, "", false
 	}
 	task = r.PathValue("task")

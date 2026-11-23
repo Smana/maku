@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -220,11 +221,13 @@ func TestToolsFollowTheRunsRoleNotAHeader(t *testing.T) {
 	if l := list("stranger"); l != `{"tools":[]}` {
 		t.Fatalf("a role with no tools lists an empty array: %s", l)
 	}
-	s, rejected := testServer(watcher(t, "implementer"), newClock())
+	c := newClock()
+	s, rejected := testServer(watcher(t, "implementer"), c)
 	res, text := call(t, s, sub, "room_verdict")
 	if res["isError"] != true || !strings.HasPrefix(text, "not_permitted") {
 		t.Fatalf("calling a tool the role lacks: %v", res)
 	}
+	c.add(time.Second)
 	if res, _ := call(t, s, sub, "room_nothing"); res["isError"] != true {
 		t.Fatalf("calling an unknown tool: %v", res)
 	}
@@ -244,7 +247,8 @@ func TestAToolWithoutAnActionIsRefused(t *testing.T) {
 
 // Agent Router 1.1.0 authorizes tools/* only: anything else must not exist here (§3).
 func TestNoResourcesNoPrompts(t *testing.T) {
-	s := server(t, "reviewer")
+	c := newClock()
+	s, _ := testServer(watcher(t, "reviewer"), c)
 	init := rpc(t, s, "k", sub, "initialize", map[string]any{"protocolVersion": "2025-06-18", "capabilities": map[string]any{}})
 	result, _ := init.out["result"].(map[string]any)
 	caps, _ := result["capabilities"].(map[string]any)
@@ -258,6 +262,7 @@ func TestNoResourcesNoPrompts(t *testing.T) {
 		t.Fatal("prompts advertised")
 	}
 	for _, m := range []string{"resources/list", "resources/read", "prompts/list", "prompts/get", "sampling/createMessage"} {
+		c.add(time.Second)
 		out := rpc(t, s, "k", sub, m, nil)
 		if e, _ := out.out["error"].(map[string]any); e["code"] != float64(-32601) {
 			t.Errorf("%s: %s", m, out.body)
@@ -266,20 +271,24 @@ func TestNoResourcesNoPrompts(t *testing.T) {
 }
 
 func TestProtocolVersion(t *testing.T) {
-	s := server(t, "reviewer")
+	c := newClock()
+	s, _ := testServer(watcher(t, "reviewer"), c)
 	for asked, want := range map[string]string{"2025-06-18": "2025-06-18", "2025-11-25": "2025-11-25", "1999-01-01": "2026-07-28", "": "2026-07-28"} {
+		c.add(time.Second)
 		out := rpc(t, s, "k", sub, "initialize", map[string]any{"protocolVersion": asked})
 		if got := out.out["result"].(map[string]any)["protocolVersion"]; got != want {
 			t.Errorf("asked %q, got %v, want %s", asked, got, want)
 		}
 	}
+	c.add(time.Second)
 	if out := rpc(t, s, "k", sub, "ping", nil); out.out["result"] == nil {
 		t.Fatalf("ping: %s", out.body)
 	}
 }
 
 func TestJSONRPCFraming(t *testing.T) {
-	s := server(t, "reviewer")
+	c := newClock()
+	s, _ := testServer(watcher(t, "reviewer"), c)
 	for _, tc := range []struct {
 		name   string
 		body   string
@@ -294,6 +303,7 @@ func TestJSONRPCFraming(t *testing.T) {
 		{"tools/call without params", `{"jsonrpc":"2.0","id":1,"method":"tools/call"}`, http.StatusOK, -32602},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			c.add(time.Second)
 			got := post(t, s, "k", sub, []byte(tc.body))
 			if got.status != tc.status {
 				t.Fatalf("status = %d, want %d", got.status, tc.status)
@@ -325,8 +335,9 @@ func TestOneCallPerSecondPerRun(t *testing.T) {
 	w.Upsert(t.Context(), claim("otherrun", "reviewer", "3kq7x2ma", "Running", nil))
 	s, rejected := testServer(w, c)
 	ok := func(identity string) bool {
-		res, _ := call(t, s, identity, "room_read")
-		return res["isError"] != true
+		resp := rpc(t, s, "k", identity, "tools/call", map[string]any{"name": "room_read", "arguments": map[string]any{}})
+		res, _ := resp.out["result"].(map[string]any)
+		return resp.status == http.StatusOK && res != nil && res["isError"] != true
 	}
 	if !ok(sub) {
 		t.Fatal("the first call is served")
@@ -345,15 +356,56 @@ func TestOneCallPerSecondPerRun(t *testing.T) {
 	if !ok(sub) {
 		t.Fatal("a second later the run may call again")
 	}
-	if strings.Join(*rejected, ",") != "rate_limited,rate_limited" {
+	// SEC-M11: all JSON-RPC methods (including tools/list and ping) share the per-run rate limit,
+	// and rate limiting fires before reading the request body.
+	if out := rpc(t, s, "k", sub, "tools/list", nil); out.status != http.StatusTooManyRequests {
+		t.Fatalf("tools/list within the second: status = %d, want 429 (%s)", out.status, out.body)
+	}
+	if out := rpc(t, s, "k", sub, "ping", nil); out.status != http.StatusTooManyRequests {
+		t.Fatalf("ping within the second: status = %d, want 429 (%s)", out.status, out.body)
+	}
+	if strings.Join(*rejected, ",") != "rate_limited,rate_limited,rate_limited,rate_limited" {
 		t.Fatalf("rejected = %v", *rejected)
 	}
-	// tools/list is not a tool call and never spends the budget.
-	if out := rpc(t, s, "k", sub, "tools/list", nil); out.out["result"] == nil {
-		t.Fatalf("%s", out.body)
+	c.add(time.Second)
+	if out := rpc(t, s, "k", sub, "tools/list", nil); out.status != http.StatusOK || out.out["result"] == nil {
+		t.Fatalf("tools/list after a second: %d %s", out.status, out.body)
 	}
-	if !func() bool { c.add(time.Second); return ok(sub) }() {
-		t.Fatal("listing spent the budget")
+	// Rate-limited harness upload must be rejected with 429 before reading the body.
+	var bodyRead bool
+	r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", &spyReader{onRead: func() { bodyRead = true }})
+	r.Header.Set(KeyHeader, "k")
+	r.Header.Set(IdentityHeader, sub)
+	r.Header.Set(HarnessHeader, "1")
+	rec := httptest.NewRecorder()
+	s.ServeHTTP(rec, r)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("rate-limited harness request: status = %d, want 429", rec.Code)
+	}
+	if bodyRead {
+		t.Fatal("rate-limited request read r.Body before rejecting")
+	}
+}
+
+type spyReader struct{ onRead func() }
+
+func (r *spyReader) Read([]byte) (int, error) {
+	r.onRead()
+	return 0, errors.New("unexpected read")
+}
+
+func TestFailureMapsReadFilterOffAndBundleQuota(t *testing.T) {
+	c := newClock()
+	s, rejected := testServer(watcher(t, "reviewer"), c)
+	run := runwatch.Run{ID: "7f3cq2xz", Room: "3kq7x2ma", Role: "reviewer"}
+	if got := s.failure(t.Context(), "forge_read", run, fmt.Errorf("wrap: %w", ErrReadFilterOff)); got != ErrReadFilterOff.Error() {
+		t.Fatalf("ErrReadFilterOff = %q, want %q", got, ErrReadFilterOff.Error())
+	}
+	if got := s.failure(t.Context(), "output_push", run, fmt.Errorf("store: %w", store.ErrBundleQuota)); !strings.HasPrefix(got, "bundle_quota:") {
+		t.Fatalf("ErrBundleQuota = %q, want bundle_quota prefix", got)
+	}
+	if !slices.Contains(*rejected, "bundle_quota") {
+		t.Fatalf("rejected = %v, want bundle_quota", *rejected)
 	}
 }
 
@@ -531,8 +583,10 @@ func TestTheLogCarriesIdsAndSQLStateOnly(t *testing.T) {
 // to post one: a HarnessOnly tool is neither listed nor callable without the harness's header, which
 // only the harness's own client sets (the model's MCP client is configured without it).
 func TestAHarnessOnlyToolIsNeverTheModels(t *testing.T) {
-	s, rejected := testServer(watcher(t, "implementer"), newClock())
+	c := newClock()
+	s, rejected := testServer(watcher(t, "implementer"), c)
 	withHeader := func(method string, params any) response {
+		c.add(time.Second)
 		body, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
 		r := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewReader(body))
 		r.Header.Set(KeyHeader, "k")
@@ -547,6 +601,7 @@ func TestAHarnessOnlyToolIsNeverTheModels(t *testing.T) {
 	if l := rpc(t, s, "k", sub, "tools/list", nil); strings.Contains(string(l.body), "room_judge") || !strings.Contains(string(l.body), "room_read") {
 		t.Fatalf("the model's tool list: %s", l.body)
 	}
+	c.add(time.Second)
 	if res, text := call(t, s, sub, "room_judge"); res["isError"] != true || !strings.HasPrefix(text, "not_permitted") {
 		t.Fatalf("the model called room_judge: %v", res)
 	}

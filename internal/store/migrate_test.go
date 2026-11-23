@@ -212,8 +212,9 @@ func TestTxModeNoneIndexOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"approvals_pending", "events_acks", "events_agent_verdicts", "events_brief",
-		"events_decision_acks", "events_decisions", "events_deliveries", "events_task_facts", "events_tool_results"}
+	want := []string{"approvals_pending", "drill_reports_latest", "events_acks", "events_agent_verdicts", "events_brief",
+		"events_decision_acks", "events_decisions", "events_deliveries", "events_harness_state", "events_output_events",
+		"events_task_facts", "events_tool_results"}
 	if got := txModeNoneIndexNames(files); !slices.Equal(got, want) {
 		t.Fatalf("owned indexes = %q, want %q", got, want)
 	}

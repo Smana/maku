@@ -18,6 +18,14 @@ import (
 // MaxBundle is a push bundle's cap, the design's 8 MiB (hardening.MaxBundle).
 const MaxBundle = 8 << 20
 
+// Per-run and per-room bundle storage quotas (SEC-M11).
+const (
+	MaxBundlesPerRun      = 16
+	MaxBundleBytesPerRun  = 32 << 20
+	MaxBundlesPerRoom     = 64
+	MaxBundleBytesPerRoom = 128 << 20
+)
+
 // BundleRetention is how long a bundle is kept once stored, unless a pending approval binds it.
 const BundleRetention = 14 * 24 * time.Hour
 
@@ -26,6 +34,8 @@ var (
 	ErrDigestMismatch = errors.New("the bundle's sha256 is not its digest")
 	// ErrBundleTooLarge is an empty bundle or one over MaxBundle.
 	ErrBundleTooLarge = errors.New("a bundle is 1 byte to 8 MiB")
+	// ErrBundleQuota is a run or room that has reached its bundle count or byte quota.
+	ErrBundleQuota = errors.New("bundle storage quota exceeded")
 	// ErrNoBundle is a bundle the store does not hold for that room, run and digest.
 	ErrNoBundle = errors.New("no such bundle")
 )
@@ -50,6 +60,25 @@ func (s *Store) PutBundle(ctx context.Context, room, run, digest string, b []byt
 		return fmt.Errorf("store: put bundle in room %s: %w", room, err)
 	case sealed:
 		return fmt.Errorf("store: put bundle in room %s: %w", room, ErrSealed)
+	}
+	var exists bool
+	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM output_bundles WHERE run_id = $1 AND digest = $2)`,
+		run, digest).Scan(&exists); err != nil {
+		return fmt.Errorf("store: put bundle in room %s: %w", room, err)
+	}
+	if exists {
+		return nil
+	}
+	var roomCount, roomBytes, runCount, runBytes int64
+	if err := tx.QueryRow(ctx, `SELECT count(*), COALESCE(sum(size), 0),
+		count(*) FILTER (WHERE run_id = $2), COALESCE(sum(size) FILTER (WHERE run_id = $2), 0)
+		FROM output_bundles WHERE room_id = $1`, room, run).Scan(&roomCount, &roomBytes, &runCount, &runBytes); err != nil {
+		return fmt.Errorf("store: put bundle in room %s: %w", room, err)
+	}
+	size := int64(len(b))
+	if runCount >= MaxBundlesPerRun || runBytes+size > MaxBundleBytesPerRun ||
+		roomCount >= MaxBundlesPerRoom || roomBytes+size > MaxBundleBytesPerRoom {
+		return fmt.Errorf("store: put bundle in room %s: %w", room, ErrBundleQuota)
 	}
 	if _, err := tx.Exec(ctx, `INSERT INTO output_bundles (room_id, run_id, digest, size, bundle)
 		VALUES ($1, $2, $3, $4, $5) ON CONFLICT (run_id, digest) DO NOTHING`, room, run, digest, len(b), b); err != nil {
