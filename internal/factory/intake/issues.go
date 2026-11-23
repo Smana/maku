@@ -620,10 +620,14 @@ func (p *IssuePoller) revert(ctx context.Context, cfg *config.Config, n int, all
 	}
 	actor := evs[len(evs)-1].Actor
 	if !p.repo(cfg).IsMaintainer(actor) {
-		return nil // labels are intent, and only a maintainer's counts
+		return p.Forge.RemoveLabel(ctx, n, LabelRevert) // remove so unauthorised labels cannot fill Labeled's page
 	}
-	if w, err := p.writer(ctx, actor); err != nil || !w {
-		return nil // a revert opens a pull request: a write, so D5's check holds it too
+	w, err := p.writer(ctx, actor)
+	if err != nil {
+		return nil // transient write-check error: wait for the next poll
+	}
+	if !w {
+		return p.Forge.RemoveLabel(ctx, n, LabelRevert) // a revert opens a pull request: a write, so D5's check holds it too
 	}
 	ann := map[string]string{v1alpha1.AnnotationRevert: "label"}
 	drill, err := p.drill(ctx, cfg, n)
@@ -659,6 +663,9 @@ func (p *IssuePoller) drill(ctx context.Context, cfg *config.Config, n int) (boo
 		return false, nil
 	}
 	if err != nil || len(evs) == 0 || !p.repo(cfg).IsMaintainer(evs[len(evs)-1].Actor) {
+		return false, err
+	}
+	if w, err := p.writer(ctx, evs[len(evs)-1].Actor); err != nil || !w {
 		return false, err
 	}
 	pr, err := p.Forge.PullRequest(ctx, n)

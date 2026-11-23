@@ -17,13 +17,17 @@ func TestFloor(t *testing.T) {
 	}
 	for _, f := range []string{
 		".github/workflows/ci.yaml", ".github/CODEOWNERS", ".github/chainguard/agent-implementer.sts.yaml",
-		".github/agent-factory.yaml", ".gitlab-ci.yml", "Taskfile.yml", "taskfile.yaml", "Makefile",
-		".pre-commit-config.yaml",
+		".github/agent-factory.yaml", ".gitlab-ci.yml", "Taskfile.yml", "taskfile.yaml", "taskfile.dist.yml",
+		"taskfile.dist.yaml", "sub/taskfile.dist.yml", "Makefile", "GNUmakefile", "sub/GNUmakefile",
+		"makefile", "sub/makefile", ".pre-commit-config.yaml",
 		"AGENTS.md", "docs/AGENTS.md", "a/b/CLAUDE.md", "GEMINI.md", ".agents/skills/x/SKILL.md",
 		".claude/settings.json", ".codex/config.toml", ".cursor/rules/a.mdc",
 		"go.mod", "tools/go.sum", "package.json", "web/package-lock.json", "pnpm-lock.yaml", "yarn.lock",
 		"requirements.txt", "requirements-dev.txt", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock",
-		"Gemfile", "Gemfile.lock", "pom.xml", "build.gradle", "build.gradle.kts", "mise.toml", ".tool-versions",
+		"Gemfile", "Gemfile.lock", "pom.xml", "build.gradle", "build.gradle.kts",
+		"mise.toml", ".mise.toml", "sub/.mise.toml", "mise.local.toml", ".mise.local.toml",
+		".mise/config.toml", ".mise/tasks/build", ".config/mise.toml", ".config/mise/config.toml",
+		".config/mise/tasks/test", ".tool-versions",
 		".envrc", "sub/.envrc", ".gitattributes", ".gitmodules", ".husky/pre-commit", ".git-hooks/pre-push",
 	} {
 		if on, ok := p.Match(f); !ok || on != OnApproval {

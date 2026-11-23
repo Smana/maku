@@ -406,3 +406,102 @@ func TestRunTokensEnsure(t *testing.T) {
 		t.Fatalf("the tick re-minted what Ensure applied: %q", r.mint.mints)
 	}
 }
+
+type barrierMint struct {
+	mu      sync.Mutex
+	entered chan struct{}
+	release chan struct{}
+	mints   int
+}
+
+func (b *barrierMint) Mint(ctx context.Context, _, _ string, _ []hardening.OutputType) (forge.Token, error) {
+	if b.entered != nil {
+		b.entered <- struct{}{}
+	}
+	if b.release != nil {
+		select {
+		case <-b.release:
+		case <-ctx.Done():
+			return forge.Token{}, ctx.Err()
+		}
+	}
+	b.mu.Lock()
+	b.mints++
+	n := b.mints
+	b.mu.Unlock()
+	return forge.Token{Value: "ghs_" + string(rune('a'+n)), ExpiresAt: t0.Add(time.Hour)}, nil
+}
+
+func (b *barrierMint) Revoke(context.Context, string) error { return nil }
+
+// REL-M5: different UIDs mint concurrently while same-UID calls serialize and lock entries are
+// cleaned up once refcount drops to 0.
+func TestRunTokensPerUIDLockConcurrency(t *testing.T) {
+	c1 := claim("aaaaaaaa")
+	c2 := claim("bbbbbbbb")
+	r := newRig(t, c1, c2)
+
+	bm := &barrierMint{
+		entered: make(chan struct{}, 2),
+		release: make(chan struct{}),
+	}
+	r.rt.Minter = bm
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); r.rt.Ensure(t.Context(), c1) }()
+	go func() { defer wg.Done(); r.rt.Ensure(t.Context(), c2) }()
+
+	// Both different UIDs must reach Mint concurrently before either is released.
+	for i := range 2 {
+		select {
+		case <-bm.entered:
+		case <-time.After(2 * time.Second):
+			t.Fatalf("only %d of 2 distinct UIDs entered Mint concurrently (serialized by global lock)", i)
+		}
+	}
+	close(bm.release)
+	wg.Wait()
+
+	if _, ok := r.secret("aaaaaaaa"); !ok {
+		t.Fatal("missing secret for aaaaaaaa")
+	}
+	if _, ok := r.secret("bbbbbbbb"); !ok {
+		t.Fatal("missing secret for bbbbbbbb")
+	}
+
+	// Same UID called concurrently must serialize cleanly and mint only once.
+	c3 := claim("cccccccc")
+	bm2 := &barrierMint{entered: make(chan struct{}, 4), release: make(chan struct{})}
+	r.rt.Minter = bm2
+	wg.Add(2)
+	go func() { defer wg.Done(); r.rt.Ensure(t.Context(), c3) }()
+	go func() { defer wg.Done(); r.rt.Ensure(t.Context(), c3) }()
+
+	select {
+	case <-bm2.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first same-UID caller did not enter Mint")
+	}
+	select {
+	case <-bm2.entered:
+		t.Fatal("second same-UID caller entered Mint concurrently")
+	case <-time.After(30 * time.Millisecond):
+	}
+	close(bm2.release)
+	wg.Wait()
+
+	bm2.mu.Lock()
+	sameMints := bm2.mints
+	bm2.mu.Unlock()
+	if sameMints != 1 {
+		t.Fatalf("same UID minted %d times, want 1", sameMints)
+	}
+
+	r.rt.mu.Lock()
+	remaining := len(r.rt.locks)
+	r.rt.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("locks map leaked %d entries after unlock", remaining)
+	}
+}

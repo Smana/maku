@@ -217,6 +217,7 @@ type Service struct {
 
 	mu    sync.Mutex
 	repos map[string]*entry
+	wg    sync.WaitGroup
 }
 
 // head is what the page needs at once: the policy file and the default branch.
@@ -321,7 +322,11 @@ func (s *Service) Report(ctx context.Context, repository string) (Report, error)
 	s.mu.Unlock()
 	if start {
 		// The request's values, never its cancellation: the read outlives the page load.
-		go func() { _ = s.read(context.WithoutCancel(ctx), cfg, rc, src) }()
+		s.wg.Add(1)
+		go func() {
+			defer s.wg.Done()
+			_ = s.read(context.WithoutCancel(ctx), cfg, rc, src)
+		}()
 	}
 	return s.build(ctx, cfg, rc, h, classes, at, reason)
 }
@@ -409,6 +414,17 @@ func (h head) parse() (*mergepolicy.File, string) {
 // read is one read of rc's policy and evidence, the caller having claimed the entry's done: it
 // runs under the Service's deadline, its classes Parallel at a time, and releases the claim.
 func (s *Service) read(ctx context.Context, cfg *config.Config, rc *config.Repository, src Source) error {
+	released := false
+	defer func() {
+		if !released {
+			s.mu.Lock()
+			if e := s.entry(rc.Name); e.done != nil {
+				close(e.done)
+				e.done = nil
+			}
+			s.mu.Unlock()
+		}
+	}()
 	ctx, cancel := context.WithTimeout(ctx, cmp.Or(s.Deadline, DefaultDeadline))
 	defer cancel()
 	start := s.Now()
@@ -417,7 +433,11 @@ func (s *Service) read(ctx context.Context, cfg *config.Config, rc *config.Repos
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e := s.entry(rc.Name)
-	defer func() { close(e.done); e.done = nil }()
+	defer func() {
+		close(e.done)
+		e.done = nil
+		released = true
+	}()
 	if err != nil {
 		e.reason = Reason(err)
 		if e.reason == ReasonRateLimited {
@@ -455,12 +475,13 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
 	cs := s.classes(cfg, rc, file)
 	out := make([]Evidence, len(cs))
+	fc := &followUpCache{hits: map[int]bool{}}
 	// Each class reads serially, so Parallel classes at once is Parallel searches at once.
 	g, gctx := errgroup.WithContext(ctx)
 	g.SetLimit(cmp.Or(s.Parallel, DefaultParallel))
 	for i, c := range cs {
 		g.Go(func() error {
-			e, err := collect(gctx, src, c, reverts, rc.Name, drilled, l, now, since)
+			e, err := collect(gctx, src, c, reverts, rc.Name, drilled, l, now, since, fc)
 			out[i] = e
 			return err
 		})
@@ -758,8 +779,76 @@ func searchLogin(l string) string {
 	return l
 }
 
+// followUpBatchSize caps the comma-separated label OR list in one AnyMerged search so the full
+// GitHub search query stays well under 256 characters.
+const followUpBatchSize = 6
+
+// followUpCache deduplicates follow-up lookups across classes within one collectAll pass.
+type followUpCache struct {
+	mu   sync.Mutex
+	hits map[int]bool
+}
+
+func (c *followUpCache) get(n int) (bool, bool) {
+	if c == nil {
+		return false, false
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	hit, ok := c.hits[n]
+	return hit, ok
+}
+
+func (c *followUpCache) set(n int, hit bool) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	c.hits[n] = hit
+	c.mu.Unlock()
+}
+
+func followUpFilter(nums []int) string {
+	if len(nums) == 1 {
+		return fmt.Sprintf(`label:"factory/follow-up-of:#%d"`, nums[0])
+	}
+	var b strings.Builder
+	b.WriteString("label:")
+	for i, n := range nums {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		fmt.Fprintf(&b, `"factory/follow-up-of:#%d"`, n)
+	}
+	return b.String()
+}
+
+// resolveFollowUps populates followed for nums using batched OR-label queries, bisecting only when
+// a batch has at least one follow-up PR.
+func resolveFollowUps(ctx context.Context, src Source, nums []int, followed map[int]bool, cache *followUpCache) error {
+	if len(nums) == 0 {
+		return nil
+	}
+	hit, err := src.AnyMerged(ctx, followUpFilter(nums))
+	if err != nil {
+		return err
+	}
+	if !hit || len(nums) == 1 {
+		for _, n := range nums {
+			followed[n] = hit
+			cache.set(n, hit)
+		}
+		return nil
+	}
+	mid := len(nums) / 2
+	if err := resolveFollowUps(ctx, src, nums[:mid], followed, cache); err != nil {
+		return err
+	}
+	return resolveFollowUps(ctx, src, nums[mid:], followed, cache)
+}
+
 // collect reads one class: the script's two modes, then MP7, with the repository's drill.
-func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string) (Evidence, error) {
+func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string, cache *followUpCache) (Evidence, error) {
 	var judged []PR
 	for _, a := range c.authors {
 		prs, err := src.MergedRecords(ctx, fmt.Sprintf("author:%s merged:>=%s", a, since))
@@ -777,15 +866,25 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 		merges = append(merges, prs...)
 	}
 	followed := map[int]bool{}
+	cutoff := now.Add(-c.window)
+	seen := map[int]bool{}
+	var pending []int
 	for _, p := range merges {
-		if _, seen := followed[p.Number]; seen {
+		if seen[p.Number] || p.MergedAt.After(cutoff) {
 			continue
 		}
-		hit, err := src.AnyMerged(ctx, fmt.Sprintf(`label:"factory/follow-up-of:#%d"`, p.Number))
-		if err != nil {
+		seen[p.Number] = true
+		if hit, ok := cache.get(p.Number); ok {
+			followed[p.Number] = hit
+			continue
+		}
+		pending = append(pending, p.Number)
+	}
+	for i := 0; i < len(pending); i += followUpBatchSize {
+		end := min(i+followUpBatchSize, len(pending))
+		if err := resolveFollowUps(ctx, src, pending[i:end], followed, cache); err != nil {
 			return Evidence{}, fmt.Errorf("evidence: %s: %w", c.name, err)
 		}
-		followed[p.Number] = hit
 	}
 	sh := Shadow(judged, reverts, c.name, repo, l)
 	out := Outcomes(merges, reverts, followed, repo, l, now, c.window)

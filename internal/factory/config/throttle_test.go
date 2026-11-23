@@ -54,3 +54,37 @@ func TestMeterThrottleSource(t *testing.T) {
 		})
 	}
 }
+
+// REL-M12: meter.logsURL must be a valid http:// or https:// URL with a non-empty host and no credentials.
+func TestMeterLogsURLValidation(t *testing.T) {
+	const orig = "logsURL: http://victoria-logs-victoria-logs-single-server.observability.svc:9428"
+	for name, tc := range map[string]struct {
+		url  string
+		want string
+	}{
+		"https":       {"https://logs.example:9428", ""},
+		"http":        {"http://logs.example:9428", ""},
+		"bad scheme":  {"ftp://logs.example:9428", "meter.logsURL"},
+		"no scheme":   {"logs.example:9428", "meter.logsURL"},
+		"empty host":  {"https:///select", "meter.logsURL"},
+		"credentials": {"https://user:pass@logs.example:9428", "meter.logsURL"},
+		"malformed":   {"http://[::1", "meter.logsURL"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(good, orig, "logsURL: "+tc.url, 1)
+			if raw == good {
+				t.Fatal("the edit changed nothing")
+			}
+			_, err := Parse([]byte(raw))
+			if tc.want == "" {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}

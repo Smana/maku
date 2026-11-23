@@ -223,3 +223,53 @@ func TestAFailedCreateDoesNotSaveTheRunPair(t *testing.T) {
 		t.Fatalf("the next tick retries and creates the task: %v", err)
 	}
 }
+
+// REL-M15: an open dead-links task for one repository does not block another repository's
+// dead-links probe even when both share the same schedule name.
+func TestDeadLinksProbeChecksRepositoryMatch(t *testing.T) {
+	cl := linksClass()
+	cl.Shadow = true
+	s := runtime.NewScheme()
+	_ = v1alpha1.AddToScheme(s)
+	openRepoA := v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "aaaaaaaa", Namespace: "agent-system"},
+		Spec: v1alpha1.TaskSpec{
+			Repository: "org/repo-a",
+			Source:     v1alpha1.Source{Kind: "schedule", Ref: "dead-links"},
+		},
+		Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseAwaitingHuman},
+	}
+	c := fake.NewClientBuilder().WithScheme(s).WithObjects(&openRepoA)
+	now := time.Date(2026, 10, 22, 5, 0, 0, 0, time.UTC)
+	art := []byte(`[{"file":"docs/a.md","line":1,"url":"https://example.com/gone","status":"404","archive":"https://web.archive.org/web/1/https://example.com/gone"}]`)
+	f := forgetest.NewFake()
+	f.SetRuns([]forge.WorkflowRun{{ID: 2, Event: "schedule", Branch: "main", Conclusion: "success"},
+		{ID: 1, Event: "schedule", Branch: "main", Conclusion: "success"}}, map[int64][]byte{1: art, 2: art})
+	f.SetMainFiles(map[string]string{"docs/a.md": "[a](https://example.com/gone)"})
+	cfg := &config.Config{
+		Repositories: []config.Repository{
+			{Name: "org/repo-a", Maintainers: []string{"Smana"}, Classes: map[string]config.Class{"dead-links": cl},
+				Schedules: []config.Schedule{{Name: "dead-links", Cron: "0 5 * * *", Class: "dead-links", Text: "Fix dead links.", Probe: "dead-links"}}},
+			{Name: "org/repo-b", Maintainers: []string{"Smana"}, Classes: map[string]config.Class{"dead-links": cl},
+				Schedules: []config.Schedule{{Name: "dead-links", Cron: "0 5 * * *", Class: "dead-links", Text: "Fix dead links.", Probe: "dead-links"}}},
+		},
+		Defaults: config.Defaults{DataClass: "public"},
+	}
+	sch := scheduler(f, c, func(context.Context) bool { return false }, now, cfg)
+	if err := sch.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ts := scheduledTasks(t, sch)
+	if len(ts) != 2 {
+		t.Fatalf("want repo-b task created alongside repo-a's open task, got %d tasks: %+v", len(ts), ts)
+	}
+	var gotB bool
+	for _, tk := range ts {
+		if tk.Spec.Repository == "org/repo-b" {
+			gotB = true
+		}
+	}
+	if !gotB {
+		t.Fatalf("expected new task for org/repo-b, got %+v", ts)
+	}
+}

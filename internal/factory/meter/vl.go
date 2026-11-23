@@ -8,11 +8,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 
 	"github.com/Smana/maku/internal/runwatch"
 )
+
+// maxVLBody bounds a VictoriaLogs query response (REL-M12): a stats query is small, so capping at
+// 1 MiB protects against a misconfigured query or runaway response.
+const maxVLBody = 1 << 20
 
 // Throttled names the runs a gateway answered with a rate-limit 429 lately; VL implements it
 // against VictoriaLogs. A lookup failure costs only the fleet mapping for that tick: budget-run
@@ -54,11 +59,12 @@ func (v VL) RecentlyThrottled(ctx context.Context) (map[string]bool, error) {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxVLBody))
 		return nil, fmt.Errorf("victorialogs: %s", resp.Status)
 	}
 	out := map[string]bool{}
-	sc := bufio.NewScanner(resp.Body) // the stream is already bounded: the query is a stats one
-	for sc.Scan() {                   // one JSON object per line
+	sc := bufio.NewScanner(io.LimitReader(resp.Body, maxVLBody))
+	for sc.Scan() { // one JSON object per line
 		var row map[string]string
 		if json.Unmarshal(sc.Bytes(), &row) != nil {
 			continue

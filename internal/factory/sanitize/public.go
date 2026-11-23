@@ -101,8 +101,10 @@ func holdsLink(s string) bool {
 	return found
 }
 
+var gfmParser = goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser()
+
 func parseGFM(s string) ast.Node {
-	return goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser().Parse(gmtext.NewReader([]byte(s)))
+	return gfmParser.Parse(gmtext.NewReader([]byte(s)))
 }
 
 // piece is a stretch of the source a pass rewrites; what lies between pieces is copied as it is:

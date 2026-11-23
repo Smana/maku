@@ -692,3 +692,38 @@ func TestClassifierEnforceNeedsTheLayer(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// SEC-M3: Hardening.Repositories lookups are case-insensitive (matching RepositoryFor), so a
+// mixed-case repository name never silently downgrades per-repository hardening.
+func TestHardeningRepositoriesCaseInsensitive(t *testing.T) {
+	h := Hardening{
+		Mode:           hardening.ModeAudit,
+		EnforceOutputs: []hardening.OutputType{hardening.Comment},
+		AgentGuard:     AgentGuard{URL: "http://guard:8080"},
+		Layers:         HardeningLayers{Classifier: hardening.ModeAudit, ClassifierEnforce: []hardening.OutputType{hardening.PR}},
+		Repositories: map[string]HardeningRepository{
+			"Org/Repo": {
+				Mode:           hardening.ModeEnforce,
+				EnforceOutputs: []hardening.OutputType{hardening.Comment, hardening.PR},
+			},
+		},
+	}
+	for _, name := range []string{"Org/Repo", "org/repo", "ORG/REPO"} {
+		t.Run(name, func(t *testing.T) {
+			if got := h.ModeFor(name); got != hardening.ModeEnforce {
+				t.Fatalf("ModeFor(%q) = %q, want enforce", name, got)
+			}
+			wantEnforced := []hardening.OutputType{hardening.Comment, hardening.PR}
+			if got := h.EnforcedFor(name); !slices.Equal(got, wantEnforced) {
+				t.Fatalf("EnforcedFor(%q) = %v, want %v", name, got, wantEnforced)
+			}
+			wantClassifier := []hardening.OutputType{hardening.PR}
+			if got := h.ClassifierEnforceFor(name); !slices.Equal(got, wantClassifier) {
+				t.Fatalf("ClassifierEnforceFor(%q) = %v, want %v", name, got, wantClassifier)
+			}
+		})
+	}
+	if got := h.ModeFor("org/other"); got != hardening.ModeAudit {
+		t.Fatalf("ModeFor(org/other) = %q, want audit", got)
+	}
+}

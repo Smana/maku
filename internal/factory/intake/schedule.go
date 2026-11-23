@@ -245,7 +245,9 @@ func (s *Scheduler) deadLinksProbe(ctx context.Context, cfg *config.Config, rc *
 		return false, "", nil, err
 	}
 	if slices.ContainsFunc(l.Items, func(t v1alpha1.Task) bool {
-		return t.Spec.Source.Kind == "schedule" && t.Spec.Source.Ref == e.Name && !v1alpha1.TerminalPhase(t.Status.Phase)
+		return t.Spec.Source.Kind == "schedule" && t.Spec.Source.Ref == e.Name &&
+			(strings.EqualFold(t.Spec.Repository, rc.Name) || (t.Spec.Repository == "" && len(cfg.Repos()) == 1)) &&
+			!v1alpha1.TerminalPhase(t.Status.Phase)
 	}) {
 		return false, "", nil, nil
 	}

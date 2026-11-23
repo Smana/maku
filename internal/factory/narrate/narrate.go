@@ -684,9 +684,11 @@ func NoContract(t *v1alpha1.Task, end string) Event {
 	return Event{Key: "contract", Body: fmt.Sprintf("Agent factory task `%s`. The tester left no contract (%s): the implementer works without one.", t.Name, oneWord(end))}
 }
 
+var oneWordRE = regexp.MustCompile(`^[a-z_]{1,40}$`)
+
 // oneWord is an end's category when it is the word it should be, "unreported" otherwise.
 func oneWord(s string) string {
-	if regexp.MustCompile(`^[a-z_]{1,40}$`).MatchString(s) {
+	if oneWordRE.MatchString(s) {
 		return s
 	}
 	return "unreported"

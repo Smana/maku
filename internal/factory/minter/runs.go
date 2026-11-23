@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -95,6 +97,39 @@ type RunTokens struct {
 
 	mu    sync.Mutex
 	state map[types.UID]*runToken
+	locks map[types.UID]*uidLock
+}
+
+// uidLock serializes operations on a single run UID so slow network I/O for one run never blocks
+// other runs. Entries are ref-counted and removed from RunTokens.locks once refs drops to 0.
+type uidLock struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (t *RunTokens) lockUID(uid types.UID) func() {
+	t.mu.Lock()
+	if t.locks == nil {
+		t.locks = map[types.UID]*uidLock{}
+	}
+	lk := t.locks[uid]
+	if lk == nil {
+		lk = &uidLock{}
+		t.locks[uid] = lk
+	}
+	lk.refs++
+	t.mu.Unlock()
+
+	lk.mu.Lock()
+	return func() {
+		lk.mu.Unlock()
+		t.mu.Lock()
+		lk.refs--
+		if lk.refs == 0 {
+			delete(t.locks, uid)
+		}
+		t.mu.Unlock()
+	}
 }
 
 // runToken is what the factory keeps of one run's token, in memory only: a new leader keeps
@@ -169,20 +204,34 @@ func (t *RunTokens) Tick(ctx context.Context) error {
 		every = defaultTick
 	}
 	t.mu.Lock()
+	uids := slices.Collect(maps.Keys(t.state))
+	t.mu.Unlock()
+
 	var gone []string
-	for uid, s := range t.state {
+	for _, uid := range uids {
+		unlock := t.lockUID(uid)
+		t.mu.Lock()
+		s := t.state[uid]
+		t.mu.Unlock()
+		if s == nil {
+			unlock()
+			continue
+		}
 		if seen[uid] {
 			s.listed = true
+			unlock()
 			continue
 		}
 		if s.listed || t.now().Sub(s.since) > 2*every {
 			if s.value != "" {
 				gone = append(gone, s.value)
 			}
+			t.mu.Lock()
 			delete(t.state, uid)
+			t.mu.Unlock()
 		}
+		unlock()
 	}
-	t.mu.Unlock()
 	for _, v := range gone {
 		_ = t.Minter.Revoke(ctx, v) // best effort; the minter counts and never names the token
 	}
@@ -201,16 +250,20 @@ func (t *RunTokens) Ensure(ctx context.Context, claim *unstructured.Unstructured
 	if !ok {
 		return
 	}
+	uid := claim.GetUID()
+	unlock := t.lockUID(uid)
+	defer unlock()
+
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	if t.state == nil {
 		t.state = map[types.UID]*runToken{}
 	}
-	s := t.state[claim.GetUID()]
+	s := t.state[uid]
 	if s == nil {
 		s = &runToken{since: t.now()}
-		t.state[claim.GetUID()] = s
+		t.state[uid] = s
 	}
+	t.mu.Unlock()
 	switch {
 	case runs.Terminal(run.Phase) || run.Deleting:
 		t.end(ctx, claim, s)

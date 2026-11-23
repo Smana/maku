@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"strings"
+	"sync"
 )
 
 // PathAction is what T4 does with a push touching a protected path (UH9).
@@ -35,15 +36,33 @@ type PathRule struct {
 // AGENTS.md steers a build or a run as much as the root one.
 var floor = []string{
 	// CI and automation
-	".github/**", ".gitlab-ci.yml", "Taskfile*", "taskfile.y*ml", "Makefile", ".pre-commit-config.yaml",
+	".github/**", ".gitlab-ci.yml", "Taskfile*", "taskfile.y*ml", "taskfile.dist.y*ml",
+	"Makefile", "GNUmakefile", "makefile", ".pre-commit-config.yaml",
 	// Agent instructions
 	"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".agents/**", ".claude/**", ".codex/**", ".cursor/**",
 	// Dependency manifests and lock files
 	"go.mod", "go.sum", "package.json", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml",
 	"yarn.lock", "requirements*.txt", "pyproject.toml", "uv.lock", "Cargo.toml", "Cargo.lock", "Gemfile*",
-	"pom.xml", "build.gradle*", "mise.toml", ".tool-versions",
+	"pom.xml", "build.gradle*", "mise.toml", ".mise.toml", "mise.local.toml", ".mise.local.toml",
+	".mise/**", ".config/mise.toml", ".config/mise/**", ".tool-versions",
 	// Execution hooks
 	".envrc", ".gitattributes", ".gitmodules", ".husky/**", ".git-hooks/**",
+}
+
+var compiledFloor = sync.OnceValue(func() []rule {
+	rules := make([]rule, 0, len(floor))
+	for _, f := range floor {
+		r, err := compile(PathRule{Pattern: f, On: OnApproval})
+		if err != nil {
+			panic(fmt.Sprintf("hardening: floor %q: %v", f, err)) // a bug in this file
+		}
+		rules = append(rules, r)
+	}
+	return rules
+})
+
+func floorPaths() ProtectedPaths {
+	return ProtectedPaths{rules: compiledFloor()}
 }
 
 // FloorPatterns is a copy of the platform floor.
@@ -64,22 +83,20 @@ func NewProtectedPaths(extra []PathRule) (ProtectedPaths, error) {
 	if len(extra) > MaxExtraPaths {
 		return ProtectedPaths{}, fmt.Errorf("protectedPaths: at most %d entries", MaxExtraPaths)
 	}
-	var p ProtectedPaths
-	for _, f := range floor {
-		r, err := compile(PathRule{Pattern: f, On: OnApproval})
-		if err != nil {
-			return ProtectedPaths{}, fmt.Errorf("floor %q: %w", f, err) // a bug in this file
-		}
-		p.rules = append(p.rules, r)
+	base := compiledFloor()
+	if len(extra) == 0 {
+		return ProtectedPaths{rules: base}, nil
 	}
+	rules := make([]rule, len(base), len(base)+len(extra))
+	copy(rules, base)
 	for _, e := range extra {
 		r, err := compile(e)
 		if err != nil {
 			return ProtectedPaths{}, fmt.Errorf("protectedPaths %q: %w", e.Pattern, err)
 		}
-		p.rules = append(p.rules, r)
+		rules = append(rules, r)
 	}
-	return p, nil
+	return ProtectedPaths{rules: rules}, nil
 }
 
 func compile(e PathRule) (rule, error) {

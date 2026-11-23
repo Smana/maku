@@ -336,9 +336,13 @@ func analyzeRevisionBody(baseBody, candidateBody string) (revisionBodyEdit, erro
 		start = firstNewline
 		end = min(end, start+maxRevisionSeparatorAttempts)
 	}
+	re, captures, err := compileRevisionCore(baseCore, baseMarkers, candidateByID)
+	if err != nil {
+		return edit, err
+	}
 	var lastErr error
 	for coreEnd := start; coreEnd < end; coreEnd++ {
-		replacements, err := matchRevisionCore(baseCore, candidateCore[:coreEnd], baseMarkers, candidateByID)
+		replacements, err := matchRevisionCore(re, captures, candidateCore[:coreEnd], baseMarkers, candidateByID)
 		if err == nil {
 			edit.replacements = replacements
 			return edit, nil
@@ -348,11 +352,9 @@ func analyzeRevisionBody(baseBody, candidateBody string) (revisionBodyEdit, erro
 	return edit, lastErr
 }
 
-// matchRevisionCore matches candidateCore against a pattern made only of base literals, unchanged
-// markers and one non-empty capture per resolved marker. Candidate's parsed marker set decides which
-// alternative applies; unknown or reordered markers cannot be hidden inside a capture.
-func matchRevisionCore(baseCore, candidateCore string, baseMarkers []sanitize.ClarificationMarker,
-	candidateMarkers map[string]sanitize.ClarificationMarker) (map[string]string, error) {
+// compileRevisionCore builds the protected body comparison regex once for all separator attempts.
+func compileRevisionCore(baseCore string, baseMarkers []sanitize.ClarificationMarker,
+	candidateMarkers map[string]sanitize.ClarificationMarker) (*regexp.Regexp, int, error) {
 	var pattern strings.Builder
 	pattern.WriteString(`(?s)^`)
 	position, captures := 0, 0
@@ -370,8 +372,15 @@ func matchRevisionCore(baseCore, candidateCore string, baseMarkers []sanitize.Cl
 	pattern.WriteString(`\z`)
 	re, err := regexp.Compile(pattern.String())
 	if err != nil {
-		return nil, fmt.Errorf("compile the protected body comparison: %w", err)
+		return nil, 0, fmt.Errorf("compile the protected body comparison: %w", err)
 	}
+	return re, captures, nil
+}
+
+// matchRevisionCore matches candidateCore against the precompiled pattern made only of base
+// literals, unchanged markers and one non-empty capture per resolved marker.
+func matchRevisionCore(re *regexp.Regexp, captures int, candidateCore string, baseMarkers []sanitize.ClarificationMarker,
+	candidateMarkers map[string]sanitize.ClarificationMarker) (map[string]string, error) {
 	matches := re.FindStringSubmatchIndex(candidateCore)
 	if matches == nil {
 		return nil, fmt.Errorf("candidate changed text outside an existing marker")

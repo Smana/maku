@@ -124,3 +124,24 @@ func TestRepositoryPoliciesReportOnce(t *testing.T) {
 		t.Fatal("a new read is a new report")
 	}
 }
+
+func TestRepositoryPoliciesForReusesCompiledPaths(t *testing.T) {
+	var c RepositoryPolicies
+	c.Observe(t.Context(), "Smana/Repo", []byte("factory: gcp-0\nhardening:\n  protectedPaths: [{path: scripts/ci/**, on: blocked}]\n  minAuthorTrust: approved\n"))
+	p1, err := c.For("Smana/Repo", Unapproved)
+	if err != nil || p1.MinTrust != Approved {
+		t.Fatalf("For(Unapproved) = %+v, %v", p1, err)
+	}
+	p2, err := c.For("Smana/Repo", Approved)
+	if err != nil || p2.MinTrust != Approved {
+		t.Fatalf("For(Approved) = %+v, %v", p2, err)
+	}
+	if len(p1.Paths.rules) == 0 || &p1.Paths.rules[0] != &p2.Paths.rules[0] {
+		t.Fatal("For recompiled ProtectedPaths instead of reusing Observe's compiled rules")
+	}
+	// Raising central above the observed minAuthorTrust still fails closed.
+	p3, err := c.For("Smana/Repo", Merged)
+	if err == nil || p3.MinTrust != Merged {
+		t.Fatalf("For(Merged) = %+v, %v; want error and Merged", p3, err)
+	}
+}

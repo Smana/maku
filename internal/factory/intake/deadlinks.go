@@ -91,14 +91,51 @@ func Agreed(newest, previous []LinkFinding) []LinkFinding {
 
 var archiveRE = regexp.MustCompile(`^https://web\.archive\.org/web/[0-9]{1,14}/https://[^\s<>()]+$`)
 
+type pathMatcher struct {
+	allowed     []*regexp.Regexp
+	hasNarrowed bool
+	narrowed    []*regexp.Regexp
+	protected   []*regexp.Regexp
+}
+
+func compilePatterns(pats []string) []*regexp.Regexp {
+	if len(pats) == 0 {
+		return nil
+	}
+	out := make([]*regexp.Regexp, 0, len(pats))
+	for _, s := range pats {
+		if re, err := regexp.Compile(s); err == nil {
+			out = append(out, re)
+		}
+	}
+	return out
+}
+
+func compilePathMatcher(cl config.Class) pathMatcher {
+	return pathMatcher{
+		allowed:     compilePatterns(cl.AllowedFiles),
+		hasNarrowed: len(cl.NarrowedFiles) > 0,
+		narrowed:    compilePatterns(cl.NarrowedFiles),
+		protected:   compilePatterns(cl.ProtectedFiles),
+	}
+}
+
+func matchesCompiled(res []*regexp.Regexp, p string) bool {
+	return slices.ContainsFunc(res, func(re *regexp.Regexp) bool { return re.MatchString(p) })
+}
+
 // keepable decides one agreed finding. keep is false for what is simply no finding of this class:
 // not a gone status, not a clean relative path the class allows and does not protect, not an
 // https target (R52 cannot retarget http). A finding whose URL or archive breaks the Task CRD's
 // shape is an error: the run is not trusted (ErrFindingsRefused).
 func keepable(f LinkFinding, cl config.Class) (_ LinkFinding, drop string, err error) {
+	return keepableWith(f, compilePathMatcher(cl))
+}
+
+func keepableWith(f LinkFinding, pm pathMatcher) (_ LinkFinding, drop string, err error) {
 	if path.Clean(f.File) != f.File || strings.HasPrefix(f.File, "/") || strings.HasPrefix(f.File, "..") ||
-		len(f.File) > 512 || !matches(cl.AllowedFiles, f.File) || len(cl.NarrowedFiles) > 0 && !matches(cl.NarrowedFiles, f.File) ||
-		matches(cl.ProtectedFiles, f.File) {
+		len(f.File) > 512 || !matchesCompiled(pm.allowed, f.File) || pm.hasNarrowed && !matchesCompiled(pm.narrowed, f.File) ||
+		matchesCompiled(pm.protected, f.File) {
 		return f, "path_not_allowed", nil
 	}
 	u, perr := url.Parse(f.URL)
@@ -115,13 +152,6 @@ func keepable(f LinkFinding, cl config.Class) (_ LinkFinding, drop string, err e
 		return f, "", fmt.Errorf("%w: %q is no Wayback snapshot of %q", ErrFindingsRefused, f.Archive, f.URL)
 	}
 	return f, "", nil
-}
-
-func matches(pats []string, p string) bool {
-	return slices.ContainsFunc(pats, func(s string) bool {
-		re, err := regexp.Compile(s)
-		return err == nil && re.MatchString(p)
-	})
 }
 
 // DeadLinksMerger is what the dead-links probe reads through the merger App: the detector's runs
@@ -189,9 +219,10 @@ func evaluateRuns(ctx context.Context, m DeadLinksMerger, two []forge.WorkflowRu
 	}
 	agreed := Agreed(sets[0], sets[1])
 	drops["unagreed"] = len(sets[0]) - drops["status"] - len(agreed)
+	pm := compilePathMatcher(cl)
 	for _, f := range agreed {
 		// Shape checks run on every agreed finding: a malformed one refuses the run wherever it sorts.
-		k, why, err := keepable(f, cl)
+		k, why, err := keepableWith(f, pm)
 		if err != nil {
 			return nil, err
 		}

@@ -36,6 +36,7 @@ import (
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/redact"
 )
 
 const actRepo = "Smana/cloud-native-ref"
@@ -229,6 +230,10 @@ func newActEnv(t *testing.T, objs ...client.Object) *actEnv {
 	rs := newActRuns()
 	rl := &actRoomLog{}
 
+	red, err := redact.New()
+	if err != nil {
+		t.Fatal(err)
+	}
 	srv := &api.Server{
 		Auth: actTokens{
 			"slack":    {Kind: envelope.ActorSystem, ID: "system:slack-app", Sponsored: true, AccessToken: "slack"},
@@ -238,6 +243,7 @@ func newActEnv(t *testing.T, objs ...client.Object) *actEnv {
 		Cfg:       cfg,
 		Runs:      rs,
 		Rooms:     cl,
+		Redact:    red,
 		Namespace: "agent-system",
 		Stopped:   func(context.Context) bool { return false },
 		Now:       func() time.Time { return actNow },

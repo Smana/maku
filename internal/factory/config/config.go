@@ -1916,6 +1916,9 @@ func (c *Config) Validate() error {
 	if u, err := url.Parse(c.Broker.URL); c.Broker.URL != "" && (err != nil || u.Host == "" || u.Scheme != "https") {
 		bad("broker.url %q must be an https:// URL", c.Broker.URL)
 	}
+	if u, err := url.Parse(c.Meter.LogsURL); c.Meter.LogsURL != "" && (err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil) {
+		bad("meter.logsURL %q must be an http:// or https:// URL without credentials", c.Meter.LogsURL)
+	}
 	c.validateDemoMeter(bad)
 	// Narration posts roomsURL on public issues as the watch link: the rooms UI's origin over TLS,
 	// with nothing a reader could be sent elsewhere by, and nothing that could break the markdown.

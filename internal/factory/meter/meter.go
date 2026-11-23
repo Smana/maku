@@ -846,10 +846,10 @@ func (m *Meter) Tick(ctx context.Context) error {
 	if m.Costs != nil {
 		m.Costs.Put(costs, m.now())
 	}
-	var spent map[string]int64
+	var spent, late map[string]int64
 	settleErr := learnErr
 	if settleErr == nil {
-		spent, settleErr = m.settle(ctx, day, delta, inc, keys) // budget-principal reads the ledger, not the live runs (R07)
+		spent, late, settleErr = m.settle(ctx, day, delta, inc, keys) // budget-principal reads the ledger, not the live runs (R07)
 	}
 	var errs []error
 	if settleErr != nil {
@@ -860,8 +860,11 @@ func (m *Meter) Tick(ctx context.Context) error {
 	} else {
 		for id, n := range inc { // in the day's ledger: those runs are settled up
 			a := m.accounts[id]
-			charge := n - a.lift // the lift reaches the run's settled entry, never spent
-			a.settled += n
+			// REL-M15: when a prior leader's late write landed more than this tick's increment
+			// (g > n), advance a.settled by max(n, g) so the next tick does not double-charge g - n.
+			adv := max(n, late[id])
+			charge := max(0, adv-a.lift) // the lift reaches the run's settled entry, never spent
+			a.settled += adv
 			a.lift = 0
 			m.accounts[id] = a
 			m.charge(ctx, a, charge)
@@ -958,7 +961,7 @@ func (m *Meter) readSpent(ctx context.Context, day string) map[string]int64 {
 // once. The write's own Update carries the resourceVersion of the read, so a late write that
 // commits after it conflicts and never lands. A write that failed on another day than this one is
 // fenced first (fence): no Update of that day's ledger from before the fence can land after it.
-func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]int64, keys map[string][]string) (map[string]int64, error) {
+func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]int64, keys map[string][]string) (map[string]int64, map[string]int64, error) {
 	if m.Ledger == nil {
 		if m.memDay != day { // the memory is one day wide: midnight starts it fresh
 			m.mem, m.memDay = map[string]int64{}, day
@@ -966,12 +969,12 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		for p, n := range delta {
 			m.mem[p] += n
 		}
-		return m.mem, nil
+		return m.mem, nil, nil
 	}
 	key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + day}
 	fenced, err := m.fence(ctx, day, inc)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	for range ledger.Attempts {
 		cm := &corev1.ConfigMap{}
@@ -981,15 +984,15 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 			cm = &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: key.Name, Namespace: key.Namespace}}
 			existed = false
 		} else if err != nil {
-			return nil, fmt.Errorf("meter: read the %s ledger: %w", day, err)
+			return nil, nil, fmt.Errorf("meter: read the %s ledger: %w", day, err)
 		}
 		spent, err := ledger.SpentColumn(cm)
 		if err != nil {
-			return nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
+			return nil, nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
 		}
 		was, err := ledger.SettledColumn(cm)
 		if err != nil {
-			return nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
+			return nil, nil, fmt.Errorf("meter: the %s ledger: %w", day, err)
 		}
 		for id := range inc {
 			m.noteOf(day, was, id)
@@ -1003,7 +1006,7 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 		add, addInc := m.net(delta, inc, keys, late)
 		if len(add) == 0 && len(addInc) == 0 { // a quiet tick reads, never creates a ledger of nothing
 			m.settledUp(inc)
-			return spent, nil
+			return spent, late, nil
 		}
 		if spent == nil {
 			spent = map[string]int64{}
@@ -1012,10 +1015,10 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 			spent[p] += n
 		}
 		if err := ledger.SetSpentColumn(cm, spent); err != nil {
-			return nil, fmt.Errorf("meter: %w", err)
+			return nil, nil, fmt.Errorf("meter: %w", err)
 		}
 		if err := ledger.AddSettled(cm, addInc); err != nil {
-			return nil, fmt.Errorf("meter: %w", err)
+			return nil, nil, fmt.Errorf("meter: %w", err)
 		}
 		if existed {
 			err = m.Ledger.Update(ctx, cm)
@@ -1032,7 +1035,7 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 				}
 			}
 			m.settledUp(inc)
-			return spent, nil
+			return spent, late, nil
 		case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
 			continue // re-read and re-append (R50)
 		default:
@@ -1048,10 +1051,10 @@ func (m *Meter) settle(ctx context.Context, day string, delta, inc map[string]in
 				a.learned, a.guarded = nil, true
 				m.accounts[id] = a
 			}
-			return nil, fmt.Errorf("meter: write the %s ledger: %w", day, err)
+			return nil, nil, fmt.Errorf("meter: write the %s ledger: %w", day, err)
 		}
 	}
-	return nil, fmt.Errorf("meter: the %s ledger stayed busy", day)
+	return nil, nil, fmt.Errorf("meter: the %s ledger stayed busy", day)
 }
 
 // note records a run's settled entry n on a day as a ledger object showed it; a run with no
@@ -1540,19 +1543,31 @@ func (m *Meter) dropReservations(ctx context.Context, all []runs.Run) error {
 	return errors.Join(errs...)
 }
 
-// releaseOrphans releases today's reservations that no listed claim has held for orphanGrace.
-// Only today's ledger: admission reads no other. The grace lives in this meter's memory, so a
-// new leader starts it again — later, never sooner.
+// releaseOrphans releases today's and yesterday's reservations that no listed claim has held for
+// orphanGrace (REL-M8: admission checks yesterday's ledger across 00:00 UTC, so a reservation made
+// just before midnight must not linger orphaned for ledgerRetention). The grace lives in this
+// meter's memory, so a new leader starts it again — later, never sooner.
 func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 	now := m.now()
-	key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout)}
-	cm := &corev1.ConfigMap{}
-	if err := m.Ledger.Get(ctx, key, cm); err != nil {
-		if apierrors.IsNotFound(err) {
-			m.orphans = nil
-			return nil
+	type dayLedger struct {
+		day time.Time
+		cm  *corev1.ConfigMap
+	}
+	var ledgers []dayLedger
+	for _, d := range []time.Time{now, now.Add(-24 * time.Hour)} {
+		key := types.NamespacedName{Namespace: m.Namespace, Name: ledger.Prefix + d.UTC().Format(ledger.DayLayout)}
+		cm := &corev1.ConfigMap{}
+		if err := m.Ledger.Get(ctx, key, cm); err != nil {
+			if apierrors.IsNotFound(err) {
+				continue
+			}
+			return fmt.Errorf("meter: read the %s ledger: %w", key.Name, err)
 		}
-		return fmt.Errorf("meter: read the %s ledger: %w", key.Name, err)
+		ledgers = append(ledgers, dayLedger{day: d, cm: cm})
+	}
+	if len(ledgers) == 0 {
+		m.orphans = nil
+		return nil
 	}
 	claimed := make(map[string]bool, len(all))
 	for _, r := range all {
@@ -1573,33 +1588,39 @@ func (m *Meter) releaseOrphans(ctx context.Context, all []runs.Run) error {
 		}
 	}
 	unclaimed := map[string]time.Time{}
-	var due []string
-	for k := range cm.Data {
-		id, ok := strings.CutPrefix(k, ledger.Reserved)
-		if !ok || claimed[id] {
-			continue
-		}
-		since, seen := m.orphans[id]
-		if !seen {
-			since = now
-		}
-		unclaimed[id] = since
-		if now.Sub(since) >= orphanGrace {
-			due = append(due, id)
+	dueByDay := make([][]string, len(ledgers))
+	for i, dl := range ledgers {
+		for k := range dl.cm.Data {
+			id, ok := strings.CutPrefix(k, ledger.Reserved)
+			if !ok || claimed[id] {
+				continue
+			}
+			since, seen := m.orphans[id]
+			if !seen {
+				since = now
+			}
+			unclaimed[id] = since
+			if now.Sub(since) >= orphanGrace {
+				dueByDay[i] = append(dueByDay[i], id)
+			}
 		}
 	}
 	m.orphans = unclaimed
-	if len(due) == 0 {
-		return nil
+	var errs []error
+	for i, due := range dueByDay {
+		if len(due) == 0 {
+			continue
+		}
+		if err := ledger.Release(ctx, m.Ledger, m.Namespace, ledgers[i].day, due...); err != nil {
+			errs = append(errs, fmt.Errorf("meter: release unclaimed reservations: %w", err))
+			continue
+		}
+		m.log().Info("unclaimed reservations released", "runs", due)
+		for _, id := range due {
+			delete(m.orphans, id)
+		}
 	}
-	if err := ledger.Release(ctx, m.Ledger, m.Namespace, now, due...); err != nil {
-		return fmt.Errorf("meter: release unclaimed reservations: %w", err)
-	}
-	m.log().Info("unclaimed reservations released", "runs", due)
-	for _, id := range due {
-		delete(m.orphans, id)
-	}
-	return nil
+	return errors.Join(errs...)
 }
 
 func sameDay(a, b time.Time) bool {

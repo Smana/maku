@@ -289,3 +289,38 @@ func TestAnUnstampedTickIsNoSuccess(t *testing.T) {
 		t.Fatalf("stamped: %v %d", err, succeeded)
 	}
 }
+
+// REL-M8: a reservation made just before 00:00 UTC whose claim never appeared is swept from
+// yesterday's ledger after midnight once orphanGrace elapses, even when today's ledger does not
+// exist yet.
+func TestReleaseOrphansSweepsYesterdaysLedgerAcrossMidnight(t *testing.T) {
+	beforeMidnight := time.Date(2026, 9, 27, 23, 59, 0, 0, time.UTC)
+	clock := beforeMidnight
+	c := fake.NewClientBuilder().WithScheme(cmScheme()).WithObjects(
+		ledgerDay(t, "20260927", nil, map[string]string{
+			"orphan01": `{"principal":"system:factory","room":"room-1","maxMicroUSD":1}`,
+			"claimed1": `{"principal":"system:factory","room":"room-2","maxMicroUSD":1}`,
+		}),
+	).Build()
+	rs := &store{
+		patches: map[string]map[string]string{},
+		runs:    []runs.Run{{ID: "claimed1", Principal: runs.PrincipalFactory, Phase: "Running", Created: beforeMidnight}},
+	}
+	m := &Meter{Runs: rs, Source: source{}, Ledger: c, Namespace: "agent-system", Now: func() time.Time { return clock }}
+	// First tick at 23:59 UTC records orphan01 as unclaimed.
+	if err := m.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if ids := reservedIDs(t, c, "20260927"); !ids["orphan01"] || !ids["claimed1"] {
+		t.Fatalf("before grace, both kept: %v", ids)
+	}
+	// Cross 00:00 UTC past orphanGrace with no 20260928 ledger ConfigMap yet: orphan01 is released.
+	clock = beforeMidnight.Add(orphanGrace)
+	if err := m.Tick(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	ids := reservedIDs(t, c, "20260927")
+	if ids["orphan01"] || !ids["claimed1"] {
+		t.Fatalf("yesterday's orphan must be released after midnight, claimed kept: %v", ids)
+	}
+}
