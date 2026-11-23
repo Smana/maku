@@ -37,7 +37,7 @@ const (
 	brokerUser = "system:serviceaccount:" + release + ":room-broker"
 	runName    = "run-abcdefgh"
 	usageKey   = "agents.ogenki.io/usage-tokens" // the meter's: the broker must never write it
-	digest     = "v0.0.0@sha256:0000"
+	digest     = "v0.0.0@sha256:0000000000000000000000000000000000000000000000000000000000000000"
 )
 
 func TestTheBrokerMayChangeOnlyTheSuspendAnnotations(t *testing.T) {

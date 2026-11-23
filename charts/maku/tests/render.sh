@@ -478,6 +478,8 @@ out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runCon
        --set 'agentRunPolicies.namespaces={agents,agents-2}')"
 ykind ValidatingAdmissionPolicyBinding 'select(.metadata.name | test("agentrun-(creators|factory-patch-limit)$")) | (.spec.matchResources.namespaceSelector.matchExpressions[0] | (.key == "kubernetes.io/metadata.name" and .operator == "In" and (.values | join(",")) == "agents,agents-2"))' 'agentRunPolicies.namespaces narrows both bindings'
 bad 'does not match pattern' --set agentRunPolicies.factoryServiceAccount=Agent_Factory
+bad 'agentRunPolicies.factoryServiceAccount:' --skip-schema-validation --set agentRunPolicies.factoryServiceAccount=Agent_Factory
+bad 'agentRunPolicies.factoryServiceAccount:' --skip-schema-validation --set-json 'agentRunPolicies.factoryServiceAccount="x'"'"' || true || '"'"'"'
 bad 'does not match pattern' --set-json 'agentRunPolicies.creators=["system:serviceaccount:x:y'"'"' || true || '"'"'"]'
 bad 'cannot go into the run-pod policy' --set-json 'runController.images.harness.repository="ghcr.io/x'"'"']+['"'"'y"'
 
@@ -609,7 +611,8 @@ for r in "$q" "$nonp"; do
   out="$r"
   ynone 'select(.metadata.name=="run-controller-token")' 'secret mode: no token Role'
   ynone 'select(.kind=="Deployment" and .metadata.name=="run-controller") | .spec.template.spec.containers[0].env[] | select(.name == "POD_NAME")' 'secret mode: the controller Deployment is unchanged'
-  ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("ServiceAccount tokens|never reads the model Secret"))' 'secret mode: the run-pod policy is unchanged'
+  ykind ValidatingAdmissionPolicy '.spec.validations[] | select(.message | test("projected ServiceAccount tokens")) | .expression | (test("room-broker") and test("room-tools") and (test("startsWith") | not))' 'secret mode: the run-pod policy holds token audiences to room-broker and room-tools only'
+  ynone 'select(.kind=="ValidatingAdmissionPolicy") | .spec.validations[] | select(.message | test("never reads the model Secret"))' 'secret mode: the run-pod policy allows the model Secret'
 done
 bad 'runController.model.gateway.aliases.public is required' --set runController.model.mode=gateway
 

@@ -64,6 +64,8 @@ spec:
         !(has(object.spec.hostNetwork) && object.spec.hostNetwork) && !(has(object.spec.hostPID) && object.spec.hostPID) &&
         !(has(object.spec.hostIPC) && object.spec.hostIPC)
       message: "a run pod shares no host namespace: no hostNetwork, hostPID or hostIPC"
+    - expression: "!(has(object.spec.shareProcessNamespace) && object.spec.shareProcessNamespace)"
+      message: "a run pod sets no shareProcessNamespace: containers do not share a PID namespace"
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
       message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
@@ -88,6 +90,14 @@ spec:
         variables.containers.all(c, (!has(c.env) || c.env.all(e, !has(e.valueFrom) || !has(e.valueFrom.secretKeyRef) || e.valueFrom.secretKeyRef.name != '{{ $s }}')) &&
         (!has(c.envFrom) || c.envFrom.all(f, !has(f.secretRef) || f.secretRef.name != '{{ $s }}')))
       message: {{ printf "model.mode gateway: a run pod never reads the model Secret %s (volume, projected source, env or envFrom); the gateway holds the keys" $s | quote }}
+    {{- else }}
+    # model.mode secret: a run holds ServiceAccount tokens for the broker and its room tools only,
+    # never one the apiserver or another service accepts.
+    - expression: >-
+        !has(object.spec.volumes) || object.spec.volumes.all(v, !has(v.projected) || !has(v.projected.sources) ||
+        v.projected.sources.all(s, !has(s.serviceAccountToken) || (has(s.serviceAccountToken.audience) &&
+        s.serviceAccountToken.audience in ['room-broker', 'room-tools'])))
+      message: "a run pod's projected ServiceAccount tokens are for room-broker or room-tools only"
     {{- end }}
     - expression: "!has(object.spec.ephemeralContainers)"
       message: "a run pod takes no ephemeral container: no kubectl debug into a run"
@@ -125,7 +135,7 @@ spec:
         variables.containers.all(c, (c.image.split('@')[0].lastIndexOf(':') > c.image.split('@')[0].lastIndexOf('/') ?
         c.image.split('@')[0].substring(0, c.image.split('@')[0].lastIndexOf(':')) : c.image.split('@')[0]) in variables.images)
       message: {{ printf "a run pod's images come from %s (runController.images, runController.image, runPodPolicy.extraImages)" (join ", " $images) | quote }}
-    - expression: "!variables.pinned || variables.containers.all(c, c.image.contains('@sha256:'))"
+    - expression: "!variables.pinned || variables.containers.all(c, c.image.matches('^[^@]+@sha256:[0-9a-f]{64}$'))"
       message: "a run pod's images are pinned by digest (@sha256:)"
 ---
 apiVersion: admissionregistration.k8s.io/v1

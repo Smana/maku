@@ -48,12 +48,13 @@ spec:
 {{ include "ap.agentRunBinding" (dict "root" $ "name" $name "namespaces" $p.namespaces) }}
 {{- end }}
 {{- with $p.factoryServiceAccount }}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .) }}{{ fail (printf "agentRunPolicies.factoryServiceAccount: %q must match ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .) }}{{ end }}
 {{- $name := printf "maku-%s-agentrun-factory-patch-limit" $.Release.Namespace }}
 {{- if $p.creators }}
 ---
 {{- end }}
 # The factory's updates of an AgentRun touch three annotations only: the meter's usage-tokens, the
-# pull request and the revoke. Never the spec, never the labels.
+# pull request and the revoke. Never the spec, labels, finalizers or ownerReferences.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -82,6 +83,14 @@ spec:
       message: "the factory never changes an AgentRun's spec"
     - expression: "(has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {})"
       message: "the factory never changes an AgentRun's labels"
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: "the factory never changes an AgentRun's finalizers"
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: "the factory never changes an AgentRun's owners"
     - expression: >-
         variables.new.all(k, k in variables.allowed || (k in variables.old && variables.old[k] == variables.new[k])) &&
         variables.old.all(k, k in variables.allowed || k in variables.new)

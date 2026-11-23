@@ -92,6 +92,8 @@ func TestAgentRunPolicies(t *testing.T) {
 	}{
 		{"the factory changes the spec", factory, spec, false},
 		{"the factory relabels the run", factory, map[string]any{"metadata": map[string]any{"labels": map[string]any{"agents.ogenki.io/task": "other"}}}, false},
+		{"the factory adds a finalizer", factory, map[string]any{"metadata": map[string]any{"finalizers": []string{"example.com/hold"}}}, false},
+		{"the factory adds an ownerReference", factory, map[string]any{"metadata": map[string]any{"ownerReferences": []map[string]any{{"apiVersion": "v1", "kind": "ConfigMap", "name": "x", "uid": "12345"}}}}, false},
 		{"the factory sets another annotation", factory, ann(map[string]any{"example.com/x": "y"}), false},
 		{"the factory suspends the run", factory, ann(map[string]any{runwatch.OperatingModeAnnotation: "Suspended"}), false},
 		{"the factory meters the run", factory, ann(map[string]any{usageKey: "20"}), true},
