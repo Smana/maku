@@ -731,7 +731,25 @@ spec:
   containers:
     - name: psql
       image: $BUNDLED_PG_IMAGE
-      command: ["sh", "-c", "echo plain-probe-started; psql \"postgresql://rooms_broker:\$PW@rooms-db.$NS.svc:5432/rooms?sslmode=disable\" -c 'SELECT 1'"]
+      command:
+        - sh
+        - -c
+        - |
+          echo plain-probe-started
+          # Retry while kube-router syncs the new pod's room-broker label into the rooms-db NetworkPolicy ipset.
+          rc=1
+          out=""
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            rc=0
+            out=\$(psql "postgresql://rooms_broker:\$PW@rooms-db.$NS.svc:5432/rooms?sslmode=disable" -c 'SELECT 1' 2>&1) || rc=\$?
+            if [ "\$rc" -eq 0 ] || ! printf '%s\n' "\$out" | grep -qE 'Connection refused|timeout expired'; then
+              printf '%s\n' "\$out"
+              exit "\$rc"
+            fi
+            sleep 2
+          done
+          printf '%s\n' "\$out"
+          exit "\$rc"
       env: [{name: PW, value: "$broker_pw"}]
       resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 128Mi}}
       securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
@@ -756,7 +774,8 @@ EOF
     kubectl -n "$NS" port-forward deploy/room-broker 18080:8080 >/dev/null 2>&1 &
     pf=$!
     for _ in $(seq 20); do
-      out=$(curl -fsS http://127.0.0.1:18080/api/install 2>/dev/null) && break
+      # human.mode=local gates every route on LoopbackOrigins(publicURL), which defaults to http://localhost:8080.
+      out=$(curl -fsS -H 'Host: localhost:8080' -H 'Origin: http://localhost:8080' http://127.0.0.1:18080/api/install 2>/dev/null) && break
       sleep 1
     done
     kill "$pf" 2>/dev/null || true
