@@ -179,6 +179,8 @@ func Values(in Inputs) (map[string]any, error) {
 	put("webProxy.enabled", true)
 	put("webProxy.existingSecret", secretWebProxy)
 
+	databaseValues(in, put)
+
 	if a.Bool("slack.enabled") {
 		slackValues(in, put)
 	}
@@ -188,6 +190,33 @@ func Values(in Inputs) (map[string]any, error) {
 		put("externalSecrets.secrets", externalSecrets(in))
 	}
 	return v, nil
+}
+
+// databaseValues wires Tier-1 Pilot bundled Postgres or CNPG pod targeting (v5 DB5).
+// External mode keeps every question's values untouched.
+func databaseValues(in Inputs, put func(string, any)) {
+	a := in.Answers
+	switch defaultStr(a, "database.mode", "external") {
+	case "bundled":
+		put("postgres.enabled", true)
+		put("postgres.acknowledgeSingleReplica", true)
+		put("postgres.storage", "20Gi")
+		tlsCfg := map[string]any{"mode": "helm", "secretName": "rooms-db-tls", "caSecretName": "rooms-db-ca"} //nolint:gosec // Secret names, not credentials
+		if issuer := a.String("tls.issuer"); issuer != "" {
+			tlsCfg["mode"] = "cert-manager"
+			tlsCfg["issuerRef"] = map[string]any{"kind": "ClusterIssuer", "name": issuer}
+		}
+		put("postgres.tls", tlsCfg)
+		put("maku.broker.database.brokerSecret", "rooms-broker-dsn")
+		put("maku.broker.database.ownerSecret", "rooms-owner-dsn")
+		put("maku.broker.database.retentionSecret", "rooms-retention-dsn")
+		put("maku.broker.database.caSecret", "rooms-db-ca")
+		put("maku.broker.database.podLabels", map[string]any{"app.kubernetes.io/name": "rooms-db"})
+		put("maku.broker.database.singleReplica", true)
+		put("maku.broker.database.backupsOff", true)
+	case "cnpg":
+		put("maku.broker.database.podLabels", map[string]any{"cnpg.io/cluster": cnpgClusterName})
+	}
 }
 
 // networkFactory turns on the factory's default-deny (D6) in maku's mode, with its GHES egress.
@@ -235,14 +264,24 @@ func externalSecrets(in Inputs) map[string]any {
 	from := func(name string) map[string]any {
 		return map[string]any{"dataFrom": []any{map[string]any{"extract": map[string]any{"key": "maku/" + name}}}}
 	}
+	dbMode := defaultStr(a, "database.mode", "external")
 	es := map[string]any{
-		"databaseBroker":    from(defaultStr(a, "database.brokerSecret", "rooms-broker-dsn")),
-		"databaseOwner":     from(defaultStr(a, "database.ownerSecret", "rooms-owner-dsn")),
-		"databaseRetention": from(defaultStr(a, "database.retentionSecret", "rooms-retention-dsn")),
 		"gatewayProvider." + providerName(defaultStr(a, "models.provider", "anthropic")): from(defaultStr(a, "models.secret", "model-provider")),
 	}
-	if ca := a.String("database.caSecret"); ca != "" {
-		es["databaseCA"] = from(ca)
+	switch dbMode {
+	case "bundled":
+		// The umbrella generates the three DSN Secrets (and rooms-db-ca in helm TLS mode).
+		// With cert-manager, ESO can still deliver the issuer's rooms-db-ca Secret.
+		if a.String("tls.issuer") != "" {
+			es["databaseCA"] = from("rooms-db-ca")
+		}
+	default:
+		es["databaseBroker"] = from(defaultStr(a, "database.brokerSecret", "rooms-broker-dsn"))
+		es["databaseOwner"] = from(defaultStr(a, "database.ownerSecret", "rooms-owner-dsn"))
+		es["databaseRetention"] = from(defaultStr(a, "database.retentionSecret", "rooms-retention-dsn"))
+		if ca := a.String("database.caSecret"); ca != "" && (dbMode != "cnpg" || ca != cnpgCASecret) {
+			es["databaseCA"] = from(ca)
+		}
 	}
 	if a.Bool("slack.enabled") {
 		es["slackApp"] = from(secretSlackApp)

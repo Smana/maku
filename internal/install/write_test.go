@@ -385,3 +385,151 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		}
 	}
 }
+
+// v5 DB5: database.mode supports bundled (Tier-1 Pilot), cnpg (CloudNativePG manifest) and
+// external (default); every mode's values.yaml renders cleanly through `helm template`.
+func TestDatabaseModes(t *testing.T) {
+	helm, helmErr := exec.LookPath("helm")
+	var chart string
+	if helmErr == nil {
+		charts := t.TempDir()
+		if err := os.CopyFS(charts, os.DirFS(filepath.Join("..", "..", "charts"))); err != nil {
+			t.Fatal(err)
+		}
+		chart = filepath.Join(charts, "agent-factory")
+		if out, err := exec.CommandContext(t.Context(), helm, "dependency", "build", chart).CombinedOutput(); err != nil {
+			t.Fatalf("helm dependency build: %v\n%s", err, out)
+		}
+	}
+
+	renderHelm := func(t *testing.T, name string, tree Tree, rel, ns string) {
+		t.Helper()
+		if helmErr != nil {
+			return
+		}
+		values := filepath.Join(t.TempDir(), "values.yaml")
+		if err := os.WriteFile(values, tree["values.yaml"], 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.CommandContext(t.Context(), helm, "template", rel, chart, "-n", ns, "-f", values).CombinedOutput(); err != nil {
+			t.Errorf("%s: helm template failed: %v\n%s", name, err, out)
+		}
+	}
+
+	t.Run("bundled-cert-manager", func(t *testing.T) {
+		a := readAnswers(t, "generic")
+		delete(a, "database.caSecret")
+		a["database.mode"] = "bundled"
+		r, _, err := Resolve(a)
+		if err != nil {
+			t.Fatalf("Resolve bundled: %v", err)
+		}
+		tree, err := Render(Inputs{Answers: r, Pins: Pins(r), CookieSecret: testCookie, WebhookKey: testWebhook})
+		if err != nil {
+			t.Fatalf("Render bundled: %v", err)
+		}
+		if _, ok := tree["secrets/templates/database.yaml"]; ok {
+			t.Errorf("bundled mode emitted secrets/templates/database.yaml")
+		}
+		if _, ok := tree["database/cnpg-cluster.yaml"]; ok {
+			t.Errorf("bundled mode emitted database/cnpg-cluster.yaml")
+		}
+		if !strings.Contains(string(tree["values.yaml"]), "acknowledgeSingleReplica: true") || !strings.Contains(string(tree["values.yaml"]), "mode: cert-manager") {
+			t.Errorf("bundled values.yaml missing Tier-1 Pilot settings:\n%s", tree["values.yaml"])
+		}
+		if !strings.Contains(string(tree["README.md"]), "rooms-db-ca") {
+			t.Errorf("bundled README with tls.issuer does not name rooms-db-ca")
+		}
+		renderHelm(t, "bundled-cert-manager", tree, r.String("release"), r.String("namespace"))
+	})
+
+	t.Run("bundled-helm-tls-and-eso", func(t *testing.T) {
+		a := readAnswers(t, "generic")
+		delete(a, "database.caSecret")
+		delete(a, "tls.issuer")
+		a["factory.insecure"] = true
+		a["database.mode"] = "bundled"
+		a["secrets.mode"] = "eso"
+		a["secrets.store"] = "cluster-secrets"
+		r, _, err := Resolve(a)
+		if err != nil {
+			t.Fatalf("Resolve bundled helm+eso: %v", err)
+		}
+		tree, err := Render(Inputs{Answers: r, Pins: Pins(r), CookieSecret: testCookie, WebhookKey: testWebhook})
+		if err != nil {
+			t.Fatalf("Render bundled helm+eso: %v", err)
+		}
+		vals := string(tree["values.yaml"])
+		if !strings.Contains(vals, "mode: helm") {
+			t.Errorf("expected postgres.tls.mode helm:\n%s", vals)
+		}
+		for _, forbidden := range []string{"databaseBroker:", "databaseOwner:", "databaseRetention:", "databaseCA:"} {
+			if strings.Contains(vals, forbidden) {
+				t.Errorf("bundled helm+eso emitted conflicting ExternalSecret %s:\n%s", forbidden, vals)
+			}
+		}
+		renderHelm(t, "bundled-helm-tls-and-eso", tree, r.String("release"), r.String("namespace"))
+	})
+
+	t.Run("bundled-refuses-external-db-keys", func(t *testing.T) {
+		a := readAnswers(t, "generic")
+		a["database.mode"] = "bundled"
+		if _, _, err := Resolve(a); err == nil || !strings.Contains(err.Error(), "database.caSecret: answered, but the answers before it leave it out") {
+			t.Fatalf("bundled with database.caSecret = %v, want refused", err)
+		}
+	})
+
+	t.Run("cnpg", func(t *testing.T) {
+		a := readAnswers(t, "generic")
+		delete(a, "database.caSecret")
+		a["database.mode"] = "cnpg"
+		r, _, err := Resolve(a)
+		if err != nil {
+			t.Fatalf("Resolve cnpg: %v", err)
+		}
+		if r.String("database.caSecret") != cnpgCASecret {
+			t.Errorf("cnpg default caSecret = %q, want %q", r.String("database.caSecret"), cnpgCASecret)
+		}
+		if r.String("database.sslmode") != "verify-full" {
+			t.Errorf("cnpg default sslmode = %q, want verify-full", r.String("database.sslmode"))
+		}
+		tree, err := Render(Inputs{Answers: r, Pins: Pins(r), CookieSecret: testCookie, WebhookKey: testWebhook})
+		if err != nil {
+			t.Fatalf("Render cnpg: %v", err)
+		}
+		cnpgRaw, ok := tree["database/cnpg-cluster.yaml"]
+		if !ok {
+			t.Fatalf("cnpg mode did not emit database/cnpg-cluster.yaml")
+		}
+		docs := strings.Split(string(cnpgRaw), "---\n")
+		if len(docs) != 2 {
+			t.Fatalf("expected 2 YAML docs in cnpg-cluster.yaml, got %d", len(docs))
+		}
+		var cluster, db map[string]any
+		if err := yaml.Unmarshal([]byte(docs[0]), &cluster); err != nil {
+			t.Fatalf("parse CNPG Cluster: %v", err)
+		}
+		if err := yaml.Unmarshal([]byte(docs[1]), &db); err != nil {
+			t.Fatalf("parse CNPG Database: %v", err)
+		}
+		if cluster["kind"] != "Cluster" || db["kind"] != "Database" {
+			t.Fatalf("unexpected kinds: %v, %v", cluster["kind"], db["kind"])
+		}
+		if !strings.Contains(string(cnpgRaw), "rooms_owner") || !strings.Contains(string(cnpgRaw), "rooms_broker") || !strings.Contains(string(cnpgRaw), "rooms_retention") {
+			t.Errorf("cnpg-cluster.yaml missing Maku roles:\n%s", cnpgRaw)
+		}
+		if !strings.Contains(string(tree["values.yaml"]), "cnpg.io/cluster: rooms-cnpg") {
+			t.Errorf("cnpg values.yaml missing podLabels:\n%s", tree["values.yaml"])
+		}
+		if strings.Contains(string(tree["secrets/templates/database.yaml"]), "name: rooms-cnpg-ca") {
+			t.Errorf("cnpg secrets/templates/database.yaml should not duplicate CNPG-managed CA Secret")
+		}
+		readmeStr := string(tree["README.md"])
+		iCNPG := strings.Index(readmeStr, "database/cnpg-cluster.yaml")
+		iSecrets := strings.Index(readmeStr, "kubectl apply -n maku -f secrets/")
+		if iCNPG < 0 || iSecrets < 0 || iCNPG > iSecrets {
+			t.Errorf("cnpg README does not apply database/cnpg-cluster.yaml before secrets/:\n%s", readmeStr)
+		}
+		renderHelm(t, "cnpg", tree, r.String("release"), r.String("namespace"))
+	})
+}

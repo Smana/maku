@@ -120,12 +120,23 @@ func readme(in Inputs, t Tree) []byte {
 	b.WriteString("| Path | What it is |\n|---|---|\n")
 	b.WriteString("| `values.yaml` | the umbrella's values (the defaults are production): no secret value |\n")
 	b.WriteString("| `crds/values.yaml` | `agent-factory-crds`' values |\n")
+	dbMode := defaultStr(a, "database.mode", "external")
+	if dbMode == "cnpg" {
+		b.WriteString("| `database/` | the CloudNativePG `Cluster` and `Database` manifests for `rooms` |\n")
+	}
 	b.WriteString("| `factory/` | the `Factory`, one `Repository` per repository, and the classes' `MergePolicy` objects |\n")
 	b.WriteString("| `github/` | the merge gate's ruleset, and the `gh` commands that create it |\n")
 	b.WriteString("| `secrets/` | git-ignored, 0700: what the wizard generated, and Secrets to fill |\n")
 	b.WriteString("| `gitops/` | the same install for Flux and for Argo CD |\n\n")
 	b.WriteString("## Before\n\n")
-	fmt.Fprintf(&b, "- Postgres 16 or later with the three roles of docs/database.md, and the RuntimeClass `%s` on the nodes.\n", defaultStr(a, "sandbox.runtimeClassName", "gvisor"))
+	switch dbMode {
+	case "bundled":
+		fmt.Fprintf(&b, "- The RuntimeClass `%s` on the nodes. The chart bundles a single-replica PostgreSQL 16+ instance with TLS 1.3 (Tier-1 Pilot; graduate to Tier-2 HA Postgres via `pg_dump`/`pg_restore`, docs/database.md).\n", defaultStr(a, "sandbox.runtimeClassName", "gvisor"))
+	case "cnpg":
+		fmt.Fprintf(&b, "- The CloudNativePG operator installed in the cluster, and the RuntimeClass `%s` on the nodes.\n", defaultStr(a, "sandbox.runtimeClassName", "gvisor"))
+	default:
+		fmt.Fprintf(&b, "- Postgres 16 or later with the three roles of docs/database.md, and the RuntimeClass `%s` on the nodes.\n", defaultStr(a, "sandbox.runtimeClassName", "gvisor"))
+	}
 	b.WriteString("- Gateway API's standard CRDs (v1.2 or later)")
 	if a.Bool("monitoring.enabled") {
 		b.WriteString(", and the prometheus-operator CRDs")
@@ -139,15 +150,21 @@ func readme(in Inputs, t Tree) []byte {
 	} else {
 		fmt.Fprintf(&b, "- Install both Apps on the repositories: %s and %s.\n", in.Agents.HTMLURL+"/installations/new", in.Factory.HTMLURL+"/installations/new")
 	}
-	if a.String("tls.issuer") == "" {
+	switch {
+	case a.String("tls.issuer") == "":
 		b.WriteString("- The broker's TLS Secrets `room-broker-tls` and `room-broker-ca`, and the factory's `openbao-ca` (docs/install-secrets.md).\n")
-	} else {
+	case dbMode == "bundled":
+		fmt.Fprintf(&b, "- The CA of the ClusterIssuer `%s`, as key `ca.crt`, in the Secrets `room-broker-ca` (the run-controller's), `openbao-ca` (the factory's, for the broker), `%s` (the broker's, for the factory) and `rooms-db-ca` (the bundled Postgres's): cert-manager writes only the leaf Secrets `room-broker-tls`, `agent-factory-api-tls` and `rooms-db-tls` (trust-manager or an ExternalSecret can fill them; docs/install-secrets.md).\n", a.String("tls.issuer"), secretFactoryCA)
+	default:
 		fmt.Fprintf(&b, "- The CA of the ClusterIssuer `%s`, as key `ca.crt`, in the Secrets `room-broker-ca` (the run-controller's), `openbao-ca` (the factory's, for the broker) and `%s` (the broker's, for the factory): cert-manager writes only the leaf Secrets `room-broker-tls` and `agent-factory-api-tls` (trust-manager or an ExternalSecret can fill them; docs/install-secrets.md).\n", a.String("tls.issuer"), secretFactoryCA)
 	}
 	b.WriteString("\n## Then, in order\n\n```bash\n")
 	fmt.Fprintf(&b, "helm install %s-crds %s/agent-factory-crds --version %s -n %s --create-namespace -f crds/values.yaml\n", rel, chartRegistry, chartVersion(ver), ns)
 	if a.Bool("models.controller") {
 		fmt.Fprintf(&b, "git clone -q --depth 1 --branch %s %s.git maku-%s && kubectl apply --server-side -f maku-%s/config/agentgateway\n", ver, makuRepoURL, ver, ver)
+	}
+	if dbMode == "cnpg" {
+		fmt.Fprintf(&b, "kubectl apply -n %s -f database/cnpg-cluster.yaml\n", ns)
 	}
 	if a.String("secrets.mode") == "eso" {
 		b.WriteString("# the DSNs, the provider key and Slack's come from your store, at maku/<Secret name>\n")

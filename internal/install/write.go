@@ -62,6 +62,11 @@ func Render(in Inputs) (Tree, error) {
 	}
 	t["github/ruleset-merge-gate.json"] = rs
 	t["github/apply-ruleset.sh"] = applyRuleset(in)
+	if defaultStr(in.Answers, "database.mode", "external") == "cnpg" {
+		if t["database/cnpg-cluster.yaml"], err = cnpgFiles(in); err != nil {
+			return nil, err
+		}
+	}
 	for name, data := range secretFiles(in) {
 		t["secrets/"+name] = data
 	}
