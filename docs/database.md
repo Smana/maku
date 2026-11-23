@@ -2,10 +2,21 @@
 
 # The database
 
-Maku keeps every room's log in a Postgres you run. Bring Postgres 16 or later: the broker refuses an
-older server at start. The bundled single-replica Postgres of the `agent-factory` chart
-(`postgres.enabled`) is for the laptop demo only: it has no backup, no high availability and no TLS,
-and any profile but `demo` refuses it.
+Maku keeps every room's log in PostgreSQL 16 or later: the broker refuses an older server at start.
+Two adoption tiers share the exact same schema, migrations and three T12 database roles:
+
+- **Tier-1 Pilot (bundled PostgreSQL):** enable the umbrella chart's hardened single-replica
+  PostgreSQL StatefulSet (`postgres.enabled: true`, `postgres.acknowledgeSingleReplica: true`,
+  `postgres.tls.mode: helm | cert-manager | existing`) for a zero-external-database install with
+  PVC storage, mandatory TLS 1.3 (`sslmode=verify-full`), default-deny network policies, and
+  optional scheduled S3/GCS backups (`charts/agent-factory/values-pilot.example.yaml`). Restarts
+  or node drains briefly interrupt rooms until the pod returns; the install banner shows
+  `db_single_replica` (and `db_backups_off` when backups are off).
+- **Tier-2 Hardened (external HA PostgreSQL):** bring your own CloudNativePG, Amazon RDS, Google
+  Cloud SQL or Azure Flexible Server (`postgres.enabled: false`, the chart's default) for
+  multi-replica high availability and continuous WAL backups.
+- **Laptop demo (`-f values-demo.yaml`):** admits `postgres.enabled: true` with `postgres.tls.mode:
+  disabled` and `1Gi` storage for throwaway local clusters only.
 
 ## Three roles, one DSN Secret each
 
@@ -110,9 +121,39 @@ maku:
 | CloudNativePG | Declare the three roles under `spec.managed.roles` (`login: true`, a `passwordSecret` each, nothing else), and the database with a `Database` resource owned by `rooms_owner`. Build each DSN Secret from the role's password Secret, with an ExternalSecret template or by hand. The cluster's CA Secret (`<cluster>-ca`, key `ca.crt`) is the `caSecret` |
 | A database the Atlas operator migrated (cloud-native-ref's `SQLInstance` with `atlasSchema`) | Give the broker `ownerSecret`. Its first `migrate` adopts the operator's ledger, the table `atlas_schema_revisions` in the schema of the same name, in `public` or in the connection's current schema, when its revisions are exactly the first shipped files with their `atlas.sum` hashes, and logs `adopted <n> revisions from the Atlas operator`. Nothing is applied twice; any other ledger, two of them, or an operator ledger that later runs past `migrate`'s own, is refused with nothing written. `rooms_owner` must be able to read that ledger. Then drop `atlasSchema` from the claim |
 
+## Tier-1 Pilot: hardened bundled PostgreSQL
+
+To run a pilot without provisioning an external database, layer
+`charts/agent-factory/values-pilot.example.yaml` over your values file. The chart generates and
+keeps the database passwords, three DSN Secrets (`rooms-owner-dsn`, `rooms-broker-dsn`,
+`rooms-retention-dsn`) with `sslmode=verify-full`, a `20Gi` PVC, default-deny `NetworkPolicy` or
+`CiliumNetworkPolicy`, and TLS 1.3 (`hostssl` + `scram-sha-256`):
+
+- **`postgres.tls.mode: helm`** generates and keeps `rooms-db-tls` and `rooms-db-ca` across
+  upgrades without requiring cert-manager.
+- **`postgres.tls.mode: cert-manager`** renders a `Certificate` from `postgres.tls.issuerRef`.
+- **`postgres.tls.mode: existing`** uses operator-supplied `postgres.tls.secretName` and
+  `postgres.tls.caSecretName`.
+
+The bundled instance works out of the box on its PVC alone (take CSI `VolumeSnapshot`s if your
+StorageClass supports them). To push daily custom-format `pg_dump` archives to S3 or GCS, enable
+`postgres.backup.enabled: true` with a digest-pinned `postgres.backup.uploader.image`, upload
+`command`, `destination` and egress allowlist; the dump init container holds `rooms-owner-dsn` and
+the upload container mounts only the dump directory read-only.
+
+### Graduating from Tier-1 Pilot to Tier-2 HA PostgreSQL
+
+Both tiers use identical PostgreSQL 16+ schemas and roles:
+
+1. Scale `room-broker` and `agent-factory` to `0`.
+2. Export the database with `pg_dump --format=custom --no-owner` against `rooms-db`.
+3. Bootstrap the Tier-2 target (below) and restore with `pg_restore` as `rooms_owner`.
+4. Switch `postgres.enabled: false`, point `maku.broker.database` at the Tier-2 DSN and CA Secrets,
+   set `singleReplica: false` and `backupsOff: false`, scale back up, and run `maku preflight`.
+
 ## Backups and high availability
 
-Both are the operator's: Maku ships no backup job and no replica. Back up the `rooms` database the way
-your Postgres is backed up (CNPG's Barman Cloud plugin, RDS snapshots, Cloud SQL backups), and
-restore it into a server of the same or a later major version. The broker reconnects after a
-failover; [Operations](operations/rooms.md#backups-and-rebuilds) has cloud-native-ref's settings.
+In Tier-2, both are the operator's: back up the `rooms` database the way your Postgres is backed
+up (CNPG's Barman Cloud plugin, RDS snapshots, Cloud SQL backups), and restore it into a server of
+the same or a later major version. The broker reconnects after a failover;
+[Operations](operations/rooms.md#backups-and-rebuilds) has cloud-native-ref's settings.

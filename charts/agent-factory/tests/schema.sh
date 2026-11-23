@@ -48,7 +48,7 @@ rejects 'a malformed maku.broker.human.mcp.start.except entry' 'does not match p
 # the defaults are production (v4 step 8): the skeleton alone renders, with no component on to check
 # (tests/render.sh names the seams); the demo's values without their marker are refused
 helm template af . -n maku "${img[@]}" >/dev/null || { echo "FAIL: the skeleton with no component on does not render" >&2; fail=1; }
-rejects 'the demo values without demoValues' 'postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone' "${demo[@]}" --set demoValues=false
+rejects 'the demo values without demoValues' 'postgres.enabled: the bundled Postgres is single-replica (D9, v5 DB2)' "${demo[@]}" --set demoValues=false
 
 # the demo renders, and so does a typed override of each key the schema constrains
 helm template af . -n maku "${demo[@]}" >/dev/null || { echo "FAIL: -f values-demo.yaml does not render" >&2; fail=1; }

@@ -888,5 +888,13 @@ go run ./tests/loadconfig broker-parity "$tmp/parity/broker.yaml" || fail=1
 helm template ap . -n x -f values-quickstart.yaml --set e2e.unpinnedImages=true --set broker.image.tag=e2e --set runController.image.tag=e2e \
   --set runController.images.harness.tag=e2e --set runController.images.bridge.tag=e2e \
   | grep -q 'imagePullPolicy: Never' || { echo 'FAIL: e2e.unpinnedImages renders Never' >&2; fail=1; }
+# v5 DB2/DB4: Cilium mode honors broker.database.podLabels, and singleReplica/backupsOff flow into install.unsafe
+out="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set networkPolicies.mode=cilium \
+  --set-json 'broker.database.podLabels={"app.kubernetes.io/name":"rooms-db"}' \
+  --set broker.database.singleReplica=true --set broker.database.backupsOff=true)" || { echo 'FAIL: cilium podLabels + singleReplica does not render' >&2; fail=1; out=''; }
+jkind CiliumNetworkPolicy 'select(.metadata.name=="room-broker") | [.spec.egress[] | select(.toPorts[0].ports[0].port == "5432")] == [{"toEndpoints": [{"matchLabels": {"io.kubernetes.pod.namespace": "agent-system", "app.kubernetes.io/name": "rooms-db"}}], "toPorts": [{"ports": [{"port": "5432", "protocol": "TCP"}]}]}]' 'cilium: broker.database.podLabels selects exact database pod labels'
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "db_single_replica,db_backups_off"' 'singleReplica and backupsOff appear in broker config install.unsafe'
+yq 'select(.metadata.name=="room-broker-config") | .data."config.yaml"' - <<<"$out" >"$tmp/pilot-db.yaml"
+go run ./tests/loadconfig broker "$tmp/pilot-db.yaml" || fail=1
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

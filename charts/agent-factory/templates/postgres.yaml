@@ -1,5 +1,78 @@
 {{- include "afumbrella.gate" . -}}
 {{- if .Values.postgres.enabled }}
+{{- $ns := .Release.Namespace -}}
+{{- $pg := .Values.postgres -}}
+{{- $tls := $pg.tls | default dict -}}
+{{- $tlsMode := $tls.mode | default "disabled" -}}
+{{- $tlsOn := ne $tlsMode "disabled" -}}
+{{- $tlsSecret := $tls.secretName | default "rooms-db-tls" -}}
+{{- $caSecret := $tls.caSecretName | default "rooms-db-ca" -}}
+{{- $backup := $pg.backup | default dict -}}
+{{- $backupOn := dig "enabled" false $backup -}}
+{{- $netMode := dig "networkPolicies" "mode" "kubernetes" (.Values.maku | default dict) -}}
+{{- if eq $tlsMode "helm" }}
+{{- $existingTLS := lookup "v1" "Secret" $ns $tlsSecret -}}
+{{- $existingCA := lookup "v1" "Secret" $ns $caSecret -}}
+{{- $caCrt := "" -}}
+{{- $crt := "" -}}
+{{- $key := "" -}}
+{{- if and $existingTLS $existingCA -}}
+{{- $caCrt = index $existingCA.data "ca.crt" -}}
+{{- $crt = index $existingTLS.data "tls.crt" -}}
+{{- $key = index $existingTLS.data "tls.key" -}}
+{{- else -}}
+{{- $days := int ($tls.days | default 3650) -}}
+{{- $ca := genCA ($tls.caName | default "maku-db-ca") $days -}}
+{{- $sans := list (printf "rooms-db.%s.svc" $ns) (printf "rooms-db.%s.svc.%s" $ns .Values.clusterDomain) -}}
+{{- $cert := genSignedCert "rooms-db" nil $sans $days $ca -}}
+{{- $caCrt = b64enc $ca.Cert -}}
+{{- $crt = b64enc $cert.Cert -}}
+{{- $key = b64enc $cert.Key -}}
+{{- end }}
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $tlsSecret }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: kubernetes.io/tls
+data:
+  tls.crt: {{ $crt }}
+  tls.key: {{ $key }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $caSecret }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+data:
+  ca.crt: {{ $caCrt }}
+---
+{{- else if eq $tlsMode "cert-manager" }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $tlsSecret }}
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $tlsSecret }}
+  duration: 720h
+  renewBefore: 240h
+  dnsNames:
+    - rooms-db.{{ $ns }}.svc
+    - rooms-db.{{ $ns }}.svc.{{ .Values.clusterDomain }}
+  issuerRef:
+    kind: {{ dig "issuerRef" "kind" "ClusterIssuer" $tls }}
+    name: {{ dig "issuerRef" "name" "" $tls }}
+---
+{{- end }}
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -22,6 +95,16 @@ data:
     psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname rooms <<SQL
     GRANT CREATE, USAGE ON SCHEMA public TO rooms_owner;
     SQL
+    {{- if $tlsOn }}
+    # Enforce TLS + scram-sha-256 on all non-loopback connections (v5 DB3).
+    cat >"$PGDATA/pg_hba.conf" <<'HBA'
+    local   all all                 trust
+    host    all postgres 127.0.0.1/32 scram-sha-256
+    host    all postgres ::1/128      scram-sha-256
+    hostssl all all      0.0.0.0/0    scram-sha-256
+    hostssl all all      ::/0         scram-sha-256
+    HBA
+    {{- end }}
 ---
 apiVersion: v1
 kind: Service
@@ -64,9 +147,49 @@ spec:
         fsGroup: 999
         seccompProfile:
           type: RuntimeDefault
+      {{- if $tlsOn }}
+      initContainers:
+        # PostgreSQL refuses a private key with group/world permissions; copy Secret material to a
+        # 0600 file owned by UID 999 on an emptyDir.
+        - name: tls-perms
+          image: {{ .Values.postgres.image }}
+          command:
+            - /bin/sh
+            - -eu
+            - -c
+            - |
+              cp /etc/postgres-tls-src/tls.crt /etc/postgres-tls/tls.crt
+              cp /etc/postgres-tls-src/tls.key /etc/postgres-tls/tls.key
+              chmod 0644 /etc/postgres-tls/tls.crt
+              chmod 0600 /etc/postgres-tls/tls.key
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests: {cpu: 10m, memory: 16Mi}
+            limits: {cpu: 100m, memory: 64Mi}
+          volumeMounts:
+            - {name: tls-src, mountPath: /etc/postgres-tls-src, readOnly: true}
+            - {name: tls, mountPath: /etc/postgres-tls}
+      {{- end }}
       containers:
         - name: postgres
           image: {{ .Values.postgres.image }}
+          {{- if $tlsOn }}
+          args:
+            - -c
+            - ssl=on
+            - -c
+            - ssl_cert_file=/etc/postgres-tls/tls.crt
+            - -c
+            - ssl_key_file=/etc/postgres-tls/tls.key
+            - -c
+            - ssl_min_protocol_version=TLSv1.3
+            - -c
+            - password_encryption=scram-sha-256
+          {{- end }}
           ports:
             - name: postgres
               containerPort: 5432
@@ -105,6 +228,9 @@ spec:
             - {name: data, mountPath: /var/lib/postgresql/data}
             - {name: run, mountPath: /var/run/postgresql}
             - {name: init, mountPath: /docker-entrypoint-initdb.d, readOnly: true}
+            {{- if $tlsOn }}
+            - {name: tls, mountPath: /etc/postgres-tls, readOnly: true}
+            {{- end }}
       volumes:
         - name: run
           emptyDir: {}
@@ -112,6 +238,16 @@ spec:
           configMap:
             name: rooms-db-init
             defaultMode: 0555
+        {{- if $tlsOn }}
+        - name: tls-src
+          secret:
+            secretName: {{ $tlsSecret }}
+            defaultMode: 0400
+        - name: tls
+          emptyDir:
+            medium: Memory
+            sizeLimit: 1Mi
+        {{- end }}
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -124,8 +260,45 @@ spec:
           requests:
             storage: {{ .Values.postgres.storage }}
 ---
+{{- if and (not .Values.demoValues) (eq $netMode "cilium") }}
+# Tier-1 bundled Postgres default-deny CiliumNetworkPolicy: ingress on 5432 from the broker,
+# retention job, and optional backup job only; zero egress.
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rooms-db
+  namespace: {{ .Release.Namespace }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db
+  ingress:
+    - fromEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker
+        {{- if .Values.maku.broker.database.retentionSecret }}
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: room-broker-retention
+        {{- end }}
+        {{- if $backupOn }}
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ .Release.Namespace }}
+            app.kubernetes.io/name: rooms-db-backup
+        {{- end }}
+      toPorts:
+        - ports: [{port: "5432", protocol: TCP}]
+  egress: []
+{{- else }}
+{{- if .Values.demoValues }}
 # The bundled Postgres's own policy (it was networkPolicies.plain's until v4 step 8): ingress only from
 # the broker and its retention CronJob, on a CNI that enforces NetworkPolicy. Egress is not restricted.
+{{- else }}
+# Tier-1 bundled Postgres default-deny NetworkPolicy: ingress on 5432 from the broker, retention
+# job, and optional backup job only; egress is default-denied.
+{{- end }}
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -136,7 +309,12 @@ spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: rooms-db
+  {{- if .Values.demoValues }}
   policyTypes: [Ingress]
+  {{- else }}
+  policyTypes: [Ingress, Egress]
+  egress: []
+  {{- end }}
   ingress:
     - from:
         - podSelector:
@@ -148,6 +326,196 @@ spec:
             matchLabels:
               app.kubernetes.io/name: room-broker-retention
         {{- end }}
+        {{- if $backupOn }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rooms-db-backup
+        {{- end }}
       ports:
         - {protocol: TCP, port: 5432}
+{{- end }}
+{{- if $backupOn }}
+---
+# Optional Tier-1 Pilot scheduled pg_dump CronJob (v5 DB4): initContainer dumps over TLS with
+# rooms-owner-dsn into an emptyDir; upload container mounts only the dump read-only, never the DB DSN.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: rooms-db-backup
+  namespace: {{ $ns }}
+  labels:
+    app.kubernetes.io/name: rooms-db-backup
+    {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  schedule: {{ $backup.schedule | default "15 2 * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 2
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: rooms-db-backup
+            {{- include "afumbrella.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: OnFailure
+          {{- with dig "uploader" "serviceAccountName" "" $backup }}
+          serviceAccountName: {{ . }}
+          {{- else }}
+          automountServiceAccountToken: false
+          {{- end }}
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 999
+            runAsGroup: 999
+            fsGroup: 999
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: dump
+              image: {{ .Values.postgres.image }}
+              command:
+                - /bin/sh
+                - -eu
+                - -c
+                - |
+                  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+                  pg_dump --format=custom --no-owner "$ROOMS_DATABASE_URL" -f "/backup/rooms-${ts}.dump"
+                  printf '%s\n' "rooms-${ts}.dump" > /backup/latest.name
+              env:
+                - name: ROOMS_DATABASE_URL
+                  valueFrom: {secretKeyRef: {name: rooms-owner-dsn, key: {{ dig "broker" "database" "secretKey" "uri" (.Values.maku | default dict) }}}}
+              resources: {{- toYaml $backup.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - {name: backup, mountPath: /backup}
+                - {name: tmp, mountPath: /tmp}
+                {{- if $tlsOn }}
+                - {name: db-ca, mountPath: /etc/room-broker/db-ca, readOnly: true}
+                {{- end }}
+          containers:
+            - name: upload
+              image: {{ dig "uploader" "image" "" $backup }}
+              command: {{- toYaml (dig "uploader" "command" (list) $backup) | nindent 16 }}
+              env:
+                - name: BACKUP_DIR
+                  value: /backup
+                - name: BACKUP_DESTINATION
+                  value: {{ $backup.destination | quote }}
+                {{- with $backup.endpoint }}
+                - name: BACKUP_ENDPOINT
+                  value: {{ . | quote }}
+                {{- end }}
+                {{- with dig "uploader" "env" (list) $backup }}
+                {{- toYaml . | nindent 16 }}
+                {{- end }}
+              {{- with dig "uploader" "envFrom" (list) $backup }}
+              envFrom: {{- toYaml . | nindent 16 }}
+              {{- end }}
+              resources: {{- toYaml $backup.resources | nindent 16 }}
+              securityContext:
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: [ALL]
+              volumeMounts:
+                - {name: backup, mountPath: /backup, readOnly: true}
+                - {name: tmp, mountPath: /tmp}
+          volumes:
+            - name: backup
+              emptyDir: {}
+            - name: tmp
+              emptyDir: {}
+            {{- if $tlsOn }}
+            - name: db-ca
+              secret:
+                secretName: {{ $caSecret }}
+                items: [{key: ca.crt, path: ca.crt}]
+            {{- end }}
+{{- if eq $netMode "cilium" }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: rooms-db-backup
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db-backup
+  ingress: []
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: kube-system
+            k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: "53", protocol: UDP}, {port: "53", protocol: TCP}]
+          rules:
+            dns:
+              - matchPattern: "*"
+    - toEndpoints:
+        - matchLabels:
+            io.kubernetes.pod.namespace: {{ $ns }}
+            app.kubernetes.io/name: rooms-db
+      toPorts:
+        - ports: [{port: "5432", protocol: TCP}]
+    {{- with dig "egress" "toFQDNs" (list) $backup }}
+    - toFQDNs: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    {{- end }}
+    {{- with dig "egress" "cidrs" (list) $backup }}
+    - toCIDR: {{- toYaml . | nindent 8 }}
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}]
+    {{- end }}
+    {{- with dig "egress" "to" (list) $backup }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- else if eq $netMode "kubernetes" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: rooms-db-backup
+  namespace: {{ $ns }}
+  labels: {{- include "afumbrella.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: rooms-db-backup
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: {kubernetes.io/metadata.name: {{ dig "networkPolicies" "kubernetes" "dns" "namespace" "kube-system" (.Values.maku | default dict) }}}
+          podSelector:
+            matchLabels: {{- toYaml (dig "networkPolicies" "kubernetes" "dns" "labels" (dict "k8s-app" "kube-dns") (.Values.maku | default dict)) | nindent 14 }}
+      ports: [{port: 53, protocol: UDP}, {port: 53, protocol: TCP}]
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: rooms-db
+      ports: [{port: 5432, protocol: TCP}]
+    {{- with dig "egress" "cidrs" (list) $backup }}
+    - to:
+        {{- range . }}
+        - ipBlock: {cidr: {{ . | quote }}}
+        {{- end }}
+      ports: [{port: 443, protocol: TCP}]
+    {{- end }}
+    {{- with dig "egress" "to" (list) $backup }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}
+{{- end }}
 {{- end }}

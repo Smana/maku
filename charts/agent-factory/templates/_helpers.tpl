@@ -79,8 +79,60 @@ three Secret names are its schema's (minLength 1). */}}
 {{- define "afumbrella.seamGate" -}}
 {{- $errs := list -}}
 {{- $up := "docs/upgrading.md#from-the-demo-to-production" -}}
-{{- if dig "enabled" false (.Values.postgres | default dict) -}}
-{{- $errs = append $errs "postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone: bring your own and name its DSN Secrets (maku.broker.database, docs/database.md)" -}}
+{{- $pg := .Values.postgres | default dict -}}
+{{- if dig "enabled" false $pg -}}
+{{- if not (dig "acknowledgeSingleReplica" false $pg) -}}
+{{- $errs = append $errs "postgres.enabled: the bundled Postgres is single-replica (D9, v5 DB2); for Tier-1 Pilot set postgres.acknowledgeSingleReplica: true with TLS (postgres.tls.mode), or use values-demo.yaml for the laptop demo, or bring your own HA Postgres (docs/database.md)" -}}
+{{- else -}}
+{{- $tlsMode := dig "tls" "mode" "disabled" $pg -}}
+{{- if eq $tlsMode "disabled" -}}
+{{- $errs = append $errs "postgres.tls.mode: TLS is required for bundled Postgres outside values-demo.yaml (set helm, cert-manager or existing; docs/database.md)" -}}
+{{- end -}}
+{{- if and (eq $tlsMode "cert-manager") (not (dig "tls" "issuerRef" "name" "" $pg)) -}}
+{{- $errs = append $errs "postgres.tls.issuerRef.name: required when postgres.tls.mode is cert-manager" -}}
+{{- end -}}
+{{- $caSecret := dig "tls" "caSecretName" "rooms-db-ca" $pg -}}
+{{- if .Values.maku.enabled -}}
+{{- $db := dig "broker" "database" dict (.Values.maku | default dict) -}}
+{{- if ne ($db.brokerSecret | default "") "rooms-broker-dsn" -}}
+{{- $errs = append $errs (printf "maku.broker.database.brokerSecret: bundled Postgres writes rooms-broker-dsn (got %q)" ($db.brokerSecret | default "")) -}}
+{{- end -}}
+{{- if ne ($db.ownerSecret | default "") "rooms-owner-dsn" -}}
+{{- $errs = append $errs (printf "maku.broker.database.ownerSecret: bundled Postgres writes rooms-owner-dsn (got %q)" ($db.ownerSecret | default "")) -}}
+{{- end -}}
+{{- if ne ($db.retentionSecret | default "") "rooms-retention-dsn" -}}
+{{- $errs = append $errs (printf "maku.broker.database.retentionSecret: bundled Postgres writes rooms-retention-dsn (got %q)" ($db.retentionSecret | default "")) -}}
+{{- end -}}
+{{- if ne ($db.caSecret | default "") $caSecret -}}
+{{- $errs = append $errs (printf "maku.broker.database.caSecret: must match postgres.tls.caSecretName %q for sslmode=verify-full (got %q)" $caSecret ($db.caSecret | default "")) -}}
+{{- end -}}
+{{- if not (dig "singleReplica" false $db) -}}
+{{- $errs = append $errs "maku.broker.database.singleReplica: set true with bundled Postgres outside values-demo.yaml so the install banner shows db_single_replica" -}}
+{{- end -}}
+{{- $backupOn := dig "backup" "enabled" false $pg -}}
+{{- if and (not $backupOn) (not (dig "backupsOff" false $db)) -}}
+{{- $errs = append $errs "maku.broker.database.backupsOff: set true when postgres.backup.enabled is false so the install banner shows db_backups_off" -}}
+{{- end -}}
+{{- if and $backupOn (dig "backupsOff" false $db) -}}
+{{- $errs = append $errs "maku.broker.database.backupsOff: must be false when postgres.backup.enabled is true" -}}
+{{- end -}}
+{{- $netMode := dig "networkPolicies" "mode" "kubernetes" (.Values.maku | default dict) -}}
+{{- if and (ne $netMode "none") (ne (dig "podLabels" "app.kubernetes.io/name" "" $db) "rooms-db") -}}
+{{- $errs = append $errs "maku.broker.database.podLabels: set {app.kubernetes.io/name: rooms-db} so broker and retention policies reach the bundled Postgres" -}}
+{{- end -}}
+{{- end -}}
+{{- if dig "backup" "enabled" false $pg -}}
+{{- if not (dig "backup" "destination" "" $pg) -}}
+{{- $errs = append $errs "postgres.backup.destination: set the S3 or GCS target (e.g. s3://bucket/prefix) when postgres.backup.enabled is true" -}}
+{{- end -}}
+{{- if not (dig "backup" "uploader" "image" "" $pg) -}}
+{{- $errs = append $errs "postgres.backup.uploader.image: required digest-pinned uploader image when postgres.backup.enabled is true" -}}
+{{- end -}}
+{{- if eq (len (dig "backup" "uploader" "command" (list) $pg)) 0 -}}
+{{- $errs = append $errs "postgres.backup.uploader.command: required upload command when postgres.backup.enabled is true" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- end -}}
 {{- $pin := "^[A-Za-z0-9_.-]+@sha256:[0-9a-f]+$" -}}
 {{- $maku := .Values.maku | default dict -}}

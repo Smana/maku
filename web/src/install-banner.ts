@@ -13,6 +13,10 @@ const SAYS: Record<string, string> = {
   private_code_unacknowledged: "A private repository is served without spec.privateCode.acknowledged: true. " +
     "That field states the code is sent to the configured models, which are usually SaaS. " +
     "Set it on the Repository: the next release refuses private code without it.",
+  db_single_replica: "The rooms database runs as a single bundled replica (Tier-1 Pilot): " +
+    "restarts or node drains briefly interrupt rooms until the pod returns.",
+  db_backups_off: "Scheduled backups are off for the bundled rooms database: " +
+    "enable postgres.backup or take CSI VolumeSnapshots.",
 };
 
 // DEMOS_ONLY are the codes that weaken a run's isolation: the banner then says the install is for

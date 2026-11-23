@@ -1,0 +1,34 @@
+# Tier-1 Pilot bundled PostgreSQL overlay (v5 DB1-DB4): layer over your production values file to
+# run Maku with zero external database setup while keeping TLS 1.3 and all three T12 database roles.
+#
+#   helm install agent-factory oci://ghcr.io/smana/charts/agent-factory \
+#     -n maku -f values-production.yaml -f charts/agent-factory/values-pilot.example.yaml
+#
+# Graduate to Tier-2 HA Postgres (CNPG, RDS, Cloud SQL) via pg_dump / pg_restore (docs/database.md).
+
+postgres:
+  enabled: true
+  acknowledgeSingleReplica: true
+  storage: 20Gi
+  tls:
+    # helm generates and keeps rooms-db-tls and rooms-db-ca across upgrades (no cert-manager needed).
+    # With cert-manager, set mode: cert-manager, issuerRef.name: <your-issuer>, and caSecretName to
+    # the Secret holding your issuer's ca.crt (often rooms-db-tls for CA/Vault issuers).
+    mode: helm
+    secretName: rooms-db-tls
+    caSecretName: rooms-db-ca
+  # Optional: enable scheduled pg_dump uploads to S3/GCS, or rely on CSI VolumeSnapshots (docs/database.md).
+  backup:
+    enabled: false
+
+maku:
+  broker:
+    database:
+      brokerSecret: rooms-broker-dsn
+      ownerSecret: rooms-owner-dsn
+      retentionSecret: rooms-retention-dsn
+      caSecret: rooms-db-ca
+      podLabels:
+        app.kubernetes.io/name: rooms-db
+      singleReplica: true
+      backupsOff: true
