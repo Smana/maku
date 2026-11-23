@@ -11,6 +11,7 @@ import type { Dashboard } from "../src/dashboards";
 import { mountFork } from "../src/fork";
 import type { NeedsPage } from "../src/api";
 import { mountNeeds } from "../src/needs";
+import { renderPolicy } from "../src/policy";
 import { mountRailPane } from "../src/railpane";
 import { RoomState } from "../src/room-state";
 import { mountViews } from "../src/roomview";
@@ -21,10 +22,11 @@ import { mountThemeButton, type ThemeController } from "../src/theme";
 
 export interface PreviewPage {
   apply(e: RoomEvent): void;
-  settle(): void; // refresh needs, controls, composer, strip and notes
+  settle(): void; // refresh needs, controls, composer, strip, notes and merge policy
   setSummary(s: Summary): void; // the summary the next settle() shows
   say(text: string): void; // the dock's act notice
   setStatus(text: string): void;
+  dispose(): void;
   header: HTMLElement;
   footer: HTMLElement;
 }
@@ -56,7 +58,8 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   const lead = document.createElement("section");
   lead.className = "summary";
   const blocks = document.createElement("div");
-  lead.append(blocks);
+  const policyBlock = document.createElement("div");
+  lead.append(blocks, policyBlock);
   const main = document.createElement("main");
   const section = document.createElement("section");
   section.className = "controls";
@@ -90,6 +93,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   sandbox.textContent = "Not sandboxed: run ikely2yk runs without gVisor (ALLOW_UNSANDBOXED=1). Use only on a machine you trust.";
   app.replaceChildren(sandbox, header, pane.body, footer);
   // The sticky rail sits between the header and the dock, as room.ts measures them.
+  let ro: ResizeObserver | undefined;
   if (typeof ResizeObserver !== "undefined") {
     const size = () => {
       const banner = sandbox.hidden ? 0 : sandbox.offsetHeight;
@@ -97,7 +101,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
       app.style.setProperty("--header-h", `${banner + header.offsetHeight}px`);
       app.style.setProperty("--dock-h", `${footer.offsetHeight}px`);
     };
-    const ro = new ResizeObserver(size);
+    ro = new ResizeObserver(size);
     ro.observe(header);
     ro.observe(sandbox);
     ro.observe(footer);
@@ -129,7 +133,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
   const fork = mountFork(forkPanel, sender, state);
 
   let applied = 0;
-  setInterval(() => rail.tick(now()), 1000);
+  const ticker = setInterval(() => rail.tick(now()), 1000);
   return {
     apply(e) {
       log.push(e);
@@ -147,6 +151,7 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
       controls.refresh();
       composer.refresh();
       renderNotes(blocks, summary);
+      renderPolicy(policyBlock, summary);
       strip.update({ roomId: summary.room, snap, phase: state.phase, driver: state.driver, sealedBy: state.closed, sealed: state.sealed,
         summary, needs: needs.count(), now: state.latest(), running: state.running(), ran: state.ran(),
         dashboards: o.dashboards });
@@ -156,6 +161,13 @@ export function mountPreviewPage(app: HTMLElement, o: PreviewOptions): PreviewPa
     setSummary(s) { summary = s; },
     say,
     setStatus(text) { status.textContent = text; },
+    dispose() {
+      clearInterval(ticker);
+      ro?.disconnect();
+      scrollIndex.disconnect();
+      rail.dispose();
+      strip.dispose();
+    },
     header,
     footer,
   };

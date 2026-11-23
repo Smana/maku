@@ -9,6 +9,27 @@
       "usedTokens": 412377,
       "limitTokens": 1500000
     },
+    "spend": {
+      "usedMicroUSD": 240000,
+      "limitMicroUSD": 5000000
+    },
+    "spendFinal": true,
+    "policy": {
+      "class": "review",
+      "mode": "shadow",
+      "conditions": {
+        "maxPatchFiles": 10,
+        "maxModifiedLines": 250,
+        "protectedFiles": [".github/workflows/**", "deploy/**"],
+        "requiredLabel": "factory/ready"
+      },
+      "how": "a maintainer merges the pull request (Tier-1 Pilot shadow mode)",
+      "decision": "shadow pass · 2 files (+74/-3), required checks green, reviewer approved",
+      "classes": [
+        { "name": "review", "mode": "shadow" },
+        { "name": "docs-links", "mode": "shadow" }
+      ]
+    },
     "pr": {
       "number": 214,
       "url": "https://github.com/acme/billing-api/pull/214"

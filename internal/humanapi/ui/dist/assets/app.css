@@ -334,8 +334,14 @@ fieldset.delivery > legend { position: absolute; width: 1px; height: 1px; overfl
 }
 /* Not live: under the strip, why and when the page retries. The unsandboxed banner sits above the strip. */
 .banner, .banner-unsandboxed { background: color-mix(in srgb, var(--warning) 18%, var(--card)); color: var(--warning-foreground); padding: 6px 16px; }
-/* The live demo (web/preview/demo.ts): its banner, and the replay bar as the dock's first row. */
+/* The live demo (web/preview/demo.ts): its banner, room switcher, and the replay bar as the dock's first row. */
+.demo-banner { display: flex; flex-direction: column; gap: 6px; }
 .demo-banner a { color: inherit; text-decoration: underline; }
+.demo-switcher { display: flex; flex-wrap: wrap; gap: 6px; }
+.demo-tab { display: inline-flex; flex-wrap: wrap; gap: 6px; align-items: baseline; font-size: var(--text-small); padding: 4px 10px; min-height: 32px; background: var(--card); color: var(--card-foreground); border: 1px solid var(--border); border-radius: var(--radius-control); }
+.demo-tab[aria-pressed="true"] { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.demo-tab-title { font-weight: 500; }
+.demo-tab-meta { font-family: var(--font-mono); font-size: var(--text-small); opacity: 0.85; }
 .replay-bar { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; font-size: var(--text-small); }
 .replay-bar button, .replay-bar select { min-height: 40px; }
 .replay-bar select { font: inherit; background: var(--card); color: var(--card-foreground); border: 1px solid var(--input); border-radius: 6px; padding: 0 8px; }

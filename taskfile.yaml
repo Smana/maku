@@ -326,6 +326,11 @@ tasks:
       - npm ci --no-audit --no-fund
       - npm run build
 
+  ui:demo:build:
+    desc: Build the static read-only Room Replay site into web/.demo-site
+    cmds:
+      - bash web/scripts/demo-site.sh web/.demo-site
+
   ui:test:
     dir: web
     cmds:

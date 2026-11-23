@@ -1,0 +1,83 @@
+{
+  "apiVersion": "summary/v1",
+  "room": "m4v7ct2n",
+  "url": "https://rooms.example/r/m4v7ct2n",
+  "status": {
+    "phase": "Done",
+    "state": "done",
+    "task": "m4v7ct2n",
+    "run": null,
+    "budget": {
+      "usedTokens": 184220,
+      "limitTokens": 600000
+    },
+    "spend": {
+      "usedMicroUSD": 110000,
+      "limitMicroUSD": 1500000
+    },
+    "spendFinal": true,
+    "pr": {
+      "number": 91,
+      "url": "https://github.com/acme/platform-docs/pull/91"
+    },
+    "issue": {
+      "number": 89,
+      "url": "https://github.com/acme/platform-docs/issues/89",
+      "title": "Fix broken relative links after the ingress guide rename"
+    },
+    "lastVerdict": {
+      "by": "agent:r7kx5m2p",
+      "verdict": "approve",
+      "at": "2026-10-18T14:08:12Z"
+    },
+    "policy": {
+      "class": "docs-links",
+      "mode": "live",
+      "mergedHow": "class",
+      "conditions": {
+        "allowedFiles": ["^docs/.+\\.md$"],
+        "protectedFiles": [".github/workflows/**"],
+        "modifyOnly": true,
+        "maxPatchFiles": 5,
+        "maxModifiedLines": 120,
+        "maxPerDay": 5,
+        "requiredLabel": "factory/ready"
+      },
+      "how": "earned auto-merge when checks, reviewer and diff bounds pass (post-merge verify 30m, revert breaker armed)",
+      "decision": "merged by class docs-links · 2 files (+4/-4), link check green, second-family reviewer approved, daily cap 1/5",
+      "classes": [
+        { "name": "docs-links", "mode": "live" },
+        { "name": "review", "mode": "shadow" }
+      ]
+    },
+    "reason": "merged automatically by docs-links and post-merge verification passed",
+    "next": "no action needed; revert breaker stays armed for 168h"
+  },
+  "runs": [
+    { "id": "s3bn4k6t", "role": "scoper", "provenance": { "servedModels": ["gpt-5-mini"] } },
+    { "id": "c8dp2v7q", "role": "implementer", "provenance": { "servedModels": ["glm-5.3", "gpt-5-mini"] } },
+    { "id": "r7kx5m2p", "role": "reviewer", "provenance": { "servedModels": ["claude-sonnet-4.5"] } }
+  ],
+  "needsYou": [],
+  "actions": [],
+  "notes": {
+    "untrusted": true,
+    "items": [
+      {
+        "at": "2026-10-18T14:01:28Z",
+        "run": "s3bn4k6t",
+        "text": "Scoped #89: 4 broken links across docs/networking.md and docs/quickstart.md; strictly modify-only markdown."
+      },
+      {
+        "at": "2026-10-18T14:04:45Z",
+        "run": "c8dp2v7q",
+        "text": "Updated all 4 relative links; docs link checker exits 0; opened PR #91."
+      }
+    ]
+  },
+  "flow": {
+    "plan": ["scoper", "implementer", "reviewer"],
+    "nodes": []
+  },
+  "cursor": "seq:36"
+}

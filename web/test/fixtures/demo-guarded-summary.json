@@ -1,0 +1,71 @@
+{
+  "apiVersion": "summary/v1",
+  "room": "q6r3wn5b",
+  "url": "https://rooms.example/r/q6r3wn5b",
+  "status": {
+    "phase": "Escalated",
+    "state": "stopped",
+    "task": "q6r3wn5b",
+    "run": null,
+    "budget": {
+      "usedTokens": 295410,
+      "limitTokens": 1500000
+    },
+    "spend": {
+      "usedMicroUSD": 190000,
+      "limitMicroUSD": 3000000
+    },
+    "spendFinal": true,
+    "pr": null,
+    "issue": {
+      "number": 407,
+      "url": "https://github.com/acme/payments-ledger/issues/407",
+      "title": "Pin Go 1.24 toolchain in ledger release pipeline"
+    },
+    "lastVerdict": null,
+    "policy": {
+      "class": "review",
+      "mode": "shadow",
+      "conditions": {
+        "maxPatchFiles": 8,
+        "maxModifiedLines": 200,
+        "protectedFiles": [".github/workflows/**", "deploy/**"],
+        "requiredLabel": "factory/ready"
+      },
+      "how": "a maintainer handles protected-file changes directly (agents cannot edit CI workflows)",
+      "decision": "held · protected file .github/workflows/release.yml blocked by policy; escalated to maintainer",
+      "classes": [
+        { "name": "review", "mode": "shadow" }
+      ]
+    },
+    "reason": "the completion judge marked the task impossible under protected-file policy",
+    "next": "a maintainer updates .github/workflows/release.yml directly or re-scopes #407"
+  },
+  "runs": [
+    { "id": "n5tw8j3v", "role": "implementer", "provenance": { "servedModels": ["internal-coder-32b", "internal-judge-8b"] } }
+  ],
+  "needsYou": [
+    {
+      "kind": "recovery",
+      "id": "escalated-407",
+      "what": "Task escalated: #407 requires editing protected file `.github/workflows/release.yml`",
+      "url": "https://github.com/acme/payments-ledger/issues/407"
+    }
+  ],
+  "actions": [],
+  "notes": {
+    "untrusted": true,
+    "items": [
+      {
+        "at": "2026-10-20T11:16:04Z",
+        "run": "n5tw8j3v",
+        "text": "Updated go.mod toolchain; policy blocked editing .github/workflows/release.yml."
+      }
+    ]
+  },
+  "flow": {
+    "plan": ["implementer", "reviewer"],
+    "nodes": []
+  },
+  "cursor": "seq:24"
+}
