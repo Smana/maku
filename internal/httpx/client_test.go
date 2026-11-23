@@ -78,6 +78,17 @@ func TestCloudMetadataAddressesAreRefused(t *testing.T) {
 			}
 		})
 	}
+	for _, addr := range []string{
+		"[fd00:ec2::254%eth0]:80",
+		"[fe80::1%eth0]:80",
+		"[2606:4700::1111%eth0]:443",
+	} {
+		t.Run("zoned_"+addr, func(t *testing.T) {
+			if err := refuseMetadata("tcp6", addr, nil); !errors.Is(err, ErrForbiddenAddress) {
+				t.Fatalf("refuseMetadata(%q) = %v, want ErrForbiddenAddress", addr, err)
+			}
+		})
+	}
 }
 
 func TestRedirects(t *testing.T) {

@@ -101,6 +101,9 @@ func refuseMetadata(_, address string, _ syscall.RawConn) error {
 	if err != nil {
 		return fmt.Errorf("dial %q: %w", address, err)
 	}
+	if ip.Zone() != "" {
+		return fmt.Errorf("%w: %s", ErrForbiddenAddress, ip)
+	}
 	ip = ip.Unmap()
 	if ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
 		return fmt.Errorf("%w: %s", ErrForbiddenAddress, ip)

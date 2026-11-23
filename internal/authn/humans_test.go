@@ -505,3 +505,41 @@ func TestHumansZITADELMalformedGroups(t *testing.T) {
 		t.Fatalf("zitadel admitted a string groups claim: %v", err)
 	}
 }
+
+func TestHumansAuthenticateSingleVerificationPerToken(t *testing.T) {
+	s := newSigner(t)
+	var keyLookups int
+	v := NewVerifierWithKeyfunc(issuer, func(*jwt.Token) (any, error) {
+		keyLookups++
+		return &s.key.PublicKey, nil
+	})
+	h := NewHumansWith(v, HumanOptions{
+		TokenUse: TokenUseAccess,
+		ZITADEL:  true,
+		Audience: func() string { return project },
+		Web:      func() string { return webClient },
+		CLI:      func() string { return cliClient },
+		Origin:   uiOrigin,
+	})
+
+	web := []string{webClient, project}
+	idTok := s.humanToken(t, "2918", web, webClient, []string{"agents-member"}, time.Hour)
+	accessTok := s.accessToken(t, "2918", web, webClient, nil, 30*time.Minute)
+	r := request(t, idTok)
+	r.Header.Set(ForwardedAccessHeader, accessTok)
+	if p, err := h.Authenticate(r); err != nil || p.ClientID != webClient {
+		t.Fatalf("web session: %+v, %v", p, err)
+	}
+	if keyLookups != 2 {
+		t.Fatalf("web session verified JWTs %d times, want 2 (once for ID token, once for access token)", keyLookups)
+	}
+
+	keyLookups = 0
+	cliTok := s.accessToken(t, "2918", []string{cliClient, project}, cliClient, []string{"agents-member"}, time.Hour)
+	if p, err := h.Authenticate(request(t, cliTok)); err != nil || p.ClientID != cliClient {
+		t.Fatalf("maku bearer: %+v, %v", p, err)
+	}
+	if keyLookups != 1 {
+		t.Fatalf("maku bearer verified JWT %d times, want 1", keyLookups)
+	}
+}

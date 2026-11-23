@@ -10,8 +10,6 @@ import (
 	"slices"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-
 	"github.com/Smana/maku/internal/envelope"
 )
 
@@ -110,67 +108,98 @@ func (h *Humans) VerifyHumanAccess(ctx context.Context, raw string) (*Claims, er
 	return c, err
 }
 
-func (h *Humans) verifyID(ctx context.Context, raw string) (*Claims, string, error) {
+func (h *Humans) parseBearer(ctx context.Context, raw string) (*Claims, error) {
 	if h.zitadel {
-		return h.verifyZITADEL(ctx, raw, func(c *Claims) string { return c.AuthorizedParty })
+		return h.v.parse(ctx, raw, h.audience())
 	}
-	c, err := h.v.parseGeneric(ctx, raw)
+	return h.v.parseGeneric(ctx, raw)
+}
+
+func (h *Humans) verifyID(ctx context.Context, raw string) (*Claims, string, error) {
+	c, err := h.parseBearer(ctx, raw)
 	if err != nil {
 		return nil, "", err
 	}
-	cli := c.issuedToGeneric()
-	if cli == "" || !slices.Contains(h.clients(), cli) || !slices.Contains(c.Audience, cli) {
-		return nil, "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
-	}
-	// An RFC 9068 access token is never an ID token, though its aud may be the client (Dex's is).
-	if c.isAccessToken() {
-		return nil, "", fmt.Errorf("%w: an access token is not an ID token", ErrUnauthenticated)
-	}
-	if c.Subject == "" {
-		return nil, "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
+	cli, err := h.checkIDClaims(c)
+	if err != nil {
+		return nil, "", err
 	}
 	return c, cli, nil
 }
 
 func (h *Humans) verifyAccess(ctx context.Context, raw string) (*Claims, string, error) {
-	if h.zitadel {
-		return h.verifyZITADEL(ctx, raw, func(c *Claims) string { return c.ClientID })
+	if !h.zitadel {
+		if h.use != TokenUseAccess {
+			return nil, "", fmt.Errorf("%w: token use id verifies no access token", ErrUnauthenticated)
+		}
+		if h.audience() == "" {
+			return nil, "", fmt.Errorf("%w: no audience to check", ErrUnauthenticated)
+		}
 	}
-	if h.use != TokenUseAccess {
-		return nil, "", fmt.Errorf("%w: token use id verifies no access token", ErrUnauthenticated)
-	}
-	aud := h.audience()
-	if aud == "" {
-		return nil, "", fmt.Errorf("%w: no audience to check", ErrUnauthenticated)
-	}
-	c, err := h.v.parseGeneric(ctx, raw, jwt.WithAudience(aud))
+	c, err := h.parseBearer(ctx, raw)
 	if err != nil {
 		return nil, "", err
 	}
-	cli := c.issuedTo()
-	if cli == "" || !slices.Contains(h.clients(), cli) {
-		return nil, "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
-	}
-	if c.Subject == "" {
-		return nil, "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
+	cli, err := h.checkAccessClaims(c)
+	if err != nil {
+		return nil, "", err
 	}
 	return c, cli, nil
 }
 
-// verifyZITADEL is the zitadel preset's rule: aud holds the project id and the client that client
-// names.
-func (h *Humans) verifyZITADEL(ctx context.Context, raw string, client func(*Claims) string) (*Claims, string, error) {
-	c, err := h.v.parse(ctx, raw, h.audience())
-	if err != nil {
-		return nil, "", err
+func (h *Humans) checkIDClaims(c *Claims) (string, error) {
+	if h.zitadel {
+		return h.checkZITADELClaims(c, func(c *Claims) string { return c.AuthorizedParty })
 	}
-	if cli := client(c); cli == "" || !slices.Contains(h.clients(), cli) || !slices.Contains(c.Audience, cli) {
-		return nil, "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
+	cli := c.issuedToGeneric()
+	if cli == "" || !slices.Contains(h.clients(), cli) || !slices.Contains(c.Audience, cli) {
+		return "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
+	}
+	// An RFC 9068 access token is never an ID token, though its aud may be the client (Dex's is).
+	if c.isAccessToken() {
+		return "", fmt.Errorf("%w: an access token is not an ID token", ErrUnauthenticated)
 	}
 	if c.Subject == "" {
-		return nil, "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
+		return "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
 	}
-	return c, client(c), nil
+	return cli, nil
+}
+
+func (h *Humans) checkAccessClaims(c *Claims) (string, error) {
+	if h.zitadel {
+		return h.checkZITADELClaims(c, func(c *Claims) string { return c.ClientID })
+	}
+	if h.use != TokenUseAccess {
+		return "", fmt.Errorf("%w: token use id verifies no access token", ErrUnauthenticated)
+	}
+	aud := h.audience()
+	if aud == "" {
+		return "", fmt.Errorf("%w: no audience to check", ErrUnauthenticated)
+	}
+	if !slices.Contains(c.Audience, aud) {
+		return "", fmt.Errorf("%w: missing required audience", ErrWrongAudience)
+	}
+	cli := c.issuedTo()
+	if cli == "" || !slices.Contains(h.clients(), cli) {
+		return "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
+	}
+	if c.Subject == "" {
+		return "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
+	}
+	return cli, nil
+}
+
+// checkZITADELClaims is the zitadel preset's rule: aud holds the project id and the client that
+// client names.
+func (h *Humans) checkZITADELClaims(c *Claims, client func(*Claims) string) (string, error) {
+	cli := client(c)
+	if cli == "" || !slices.Contains(h.clients(), cli) || !slices.Contains(c.Audience, cli) {
+		return "", fmt.Errorf("%w: not issued to a rooms client", ErrWrongAudience)
+	}
+	if c.Subject == "" {
+		return "", fmt.Errorf("%w: no subject", ErrUnauthenticated)
+	}
+	return cli, nil
 }
 
 // groups is the token's group names by the roles claim. One that gives none is counted, and the
@@ -207,17 +236,24 @@ func (h *Humans) Authenticate(r *http.Request) (Principal, error) {
 	if h.use == TokenUseID {
 		return h.authenticateID(r, raw)
 	}
-	// maku sends its own access token as the bearer (phase 6). An id equal to
-	// the web UI's would make that bearer a web session (review M5).
-	if cli := h.maku(); cli != "" && cli != h.web() {
-		if ac, client, err := h.verifyAccess(r.Context(), raw); err == nil && client == cli {
-			return h.principal(r.Context(), ac, cli, ac.ExpiresAt.Time, raw), nil
-		}
-	}
-	id, idClient, err := h.verifyID(r.Context(), raw)
+	// Verify the bearer signature and core claims once, then match it as a maku access token or
+	// a web ID token.
+	c, err := h.parseBearer(r.Context(), raw)
 	if err != nil {
 		return Principal{}, err
 	}
+	// maku sends its own access token as the bearer (phase 6). An id equal to
+	// the web UI's would make that bearer a web session (review M5).
+	if cli := h.maku(); cli != "" && cli != h.web() {
+		if client, err := h.checkAccessClaims(c); err == nil && client == cli {
+			return h.principal(r.Context(), c, cli, c.ExpiresAt.Time, raw), nil
+		}
+	}
+	idClient, err := h.checkIDClaims(c)
+	if err != nil {
+		return Principal{}, err
+	}
+	id := c
 	// A web session carries two different tokens. A bearer oauth2-proxy lets
 	// through (skip-jwt-bearer-tokens, phase 6) arrives as both at once, and must
 	// never pass as a web session, which may steer and decide (ruling P18, review M16).

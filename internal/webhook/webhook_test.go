@@ -49,12 +49,24 @@ func TestVerify(t *testing.T) {
 		"a changed body":          {h, []byte(`{"type":"room.ended","room":"bbbbbbbb","state":"done"}`), now},
 		"no signature":            {tamper(func(c http.Header) { c.Del("webhook-signature") }), body, now},
 		"a v0 signature":          {tamper(v0), body, now},
+		"more than 8 signatures": {tamper(func(c http.Header) {
+			valid := Sign([][]byte{k1}, id, now, body).Get("webhook-signature")
+			c.Set("webhook-signature", strings.Repeat("v1,AAAA ", maxVerifySignatures)+valid)
+		}), body, now},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Verify([][]byte{k1}, c.h, c.body, c.at); err == nil {
 				t.Fatal("accepted")
 			}
 		})
+	}
+	// Exactly maxVerifySignatures tokens with the valid one last still verifies.
+	atCap := tamper(func(c http.Header) {
+		valid := Sign([][]byte{k1}, id, now, body).Get("webhook-signature")
+		c.Set("webhook-signature", strings.Repeat("v1,AAAA ", maxVerifySignatures-1)+valid)
+	})
+	if got, err := Verify([][]byte{k1}, atCap, body, now); err != nil || got != id {
+		t.Fatalf("at signature cap: %q %v", got, err)
 	}
 }
 

@@ -3,6 +3,7 @@
 package authn
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -414,5 +415,67 @@ func TestJWKSFromTheKubernetesAPIServer(t *testing.T) {
 	v := newJWKSVerifier(t, s, clock)
 	if _, err := v.Verify(t.Context(), mint(t, clock, jwt.SigningMethodRS256, k.rsa, "r1"), AudienceRun); err != nil {
 		t.Fatalf("a token of the API server's issuer: %v", err)
+	}
+}
+
+func TestParseJWKSAllowsDuplicateEmptyAndNonSigningKids(t *testing.T) {
+	k := newKeyring(t)
+	sig := rsaJWK("r1", &k.rsa.PublicKey)
+	encSameKid := rsaJWK("r1", &k.rsa.PublicKey)
+	encSameKid["use"] = "enc"
+	enc1 := rsaJWK("e1", &k.rsa.PublicKey)
+	enc1["use"] = "enc"
+	noKid1 := rsaJWK("", &k.rsa.PublicKey)
+	noKid2 := rsaJWK("", &k.rsa.PublicKey)
+
+	body, err := json.Marshal(map[string]any{"keys": []any{noKid1, noKid2, enc1, enc1, encSameKid, sig}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := parseJWKS(body)
+	if err != nil {
+		t.Fatalf("parseJWKS rejected valid set with non-signing/empty-kid duplicates: %v", err)
+	}
+	if len(keys) != 1 {
+		t.Fatalf("got %d keys, want 1", len(keys))
+	}
+	if _, ok := keys["r1"]; !ok {
+		t.Fatalf("missing signing key r1: %v", keys)
+	}
+}
+
+func TestStaleKeyRefreshRespectsContextCancellation(t *testing.T) {
+	k := newKeyring(t)
+	s := newIssuerServer(t, rsaJWK("r1", &k.rsa.PublicKey))
+	clock := newClock()
+	v := newJWKSVerifier(t, s, clock)
+	s.drain()
+
+	// Advance past TTL so "r1" is stale but still within maxStale.
+	clock.advance(2 * time.Hour)
+	release := s.stall()
+
+	ctx, cancel := context.WithCancel(t.Context())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := v.Verify(ctx, longLived(t, clock, jwt.SigningMethodRS256, k.rsa, "r1"), AudienceRun)
+		errCh <- err
+	}()
+	<-s.arrived
+	cancel()
+
+	select {
+	case err := <-errCh:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("err = %v, want context.Canceled", err)
+		}
+	case <-time.After(time.Second):
+		release()
+		t.Fatal("stale-key refresh ignored ctx.Done()")
+	}
+	release()
+	// Ensure background refresh finishes cleanly and populates the cache.
+	if err := v.Refresh(t.Context()); err != nil {
+		t.Fatalf("Refresh after release: %v", err)
 	}
 }

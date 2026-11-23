@@ -115,11 +115,25 @@ func (c *jwksCache) get(ctx context.Context, kid string) (publicKey, error) {
 		return k, nil
 	}
 	if known {
-		// Stale but held: refresh only if no fetch is in flight, and never wait.
+		if err := ctx.Err(); err != nil {
+			return publicKey{}, fmt.Errorf("%w: %w", ErrUnauthenticated, err)
+		}
+		// Stale but held: refresh only if no fetch is in flight; stop waiting if ctx ends.
 		select {
 		case c.sem <- struct{}{}:
-			_ = c.refreshHeld(ctx)
-			<-c.sem
+			done := make(chan struct{})
+			go func() {
+				defer func() {
+					<-c.sem
+					close(done)
+				}()
+				_ = c.refreshHeld(ctx)
+			}()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				return publicKey{}, fmt.Errorf("%w: %w", ErrUnauthenticated, ctx.Err())
+			}
 		default:
 		}
 	} else {
@@ -252,6 +266,9 @@ func parseJWKS(body []byte) (map[string]publicKey, error) {
 	keys := make(map[string]publicKey, len(set.Keys))
 	seen := make(map[string]bool, len(set.Keys))
 	for _, r := range set.Keys {
+		if r.Kid == "" || (r.Use != "" && r.Use != "sig") {
+			continue
+		}
 		if seen[r.Kid] {
 			return nil, errors.New("jwks: a kid appears twice")
 		}

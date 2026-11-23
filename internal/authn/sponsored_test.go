@@ -198,3 +198,31 @@ func TestSponsoredClientClaimBounds(t *testing.T) {
 		}
 	}
 }
+
+func TestSponsoredSingleVerification(t *testing.T) {
+	sg := newSigner(t)
+	var keyLookups int
+	v := NewVerifierWithKeyfunc(issuer, func(*jwt.Token) (any, error) {
+		keyLookups++
+		return &sg.key.PublicKey, nil
+	})
+	s := &Sponsored{
+		V:        v,
+		Audience: func() string { return "proj" },
+		Clients: []SponsoredClient{
+			{Name: "c1", ClientID: func() string { return "id-1" }},
+			{Name: "c2", ClientID: func() string { return "id-2" }},
+			{Name: "c3", ClientID: func() string { return "id-3" }},
+			{Name: "c4", ClientID: func() string { return "id-4" }},
+			{Name: "c5", ClientID: func() string { return "id-5" }},
+		},
+	}
+	tok := sg.accessToken(t, "sub-5", []string{"proj"}, "id-5", nil, time.Hour)
+	p, err := s.Authenticate(t.Context(), tok)
+	if err != nil || p.ID != "system:c5" {
+		t.Fatalf("got %+v, %v; want system:c5", p, err)
+	}
+	if keyLookups != 1 {
+		t.Fatalf("JWT verified %d times across 5 clients, want 1", keyLookups)
+	}
+}

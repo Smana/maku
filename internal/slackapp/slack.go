@@ -14,6 +14,7 @@ import (
 	"path"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Smana/maku/internal/httpx"
@@ -185,6 +186,9 @@ type SlackClient struct {
 	Token   func() string
 	HC      *http.Client // httpx.New in production
 	Logger  *slog.Logger // Slack's error code on every failed call; discarded when nil
+
+	defaultHCOnce sync.Once
+	defaultHC     *http.Client
 }
 
 func (c *SlackClient) log() *slog.Logger {
@@ -440,7 +444,10 @@ func (c *SlackClient) do(req *http.Request) (slackAnswer, error) {
 	req.Header.Set("Authorization", "Bearer "+c.Token())
 	hc := c.HC
 	if hc == nil {
-		hc = httpx.New(10*time.Second, nil)
+		c.defaultHCOnce.Do(func() {
+			c.defaultHC = httpx.New(10*time.Second, nil)
+		})
+		hc = c.defaultHC
 	}
 	// The request's URL is c.url(<constant>) and its Authorization is the App's own token; a value
 	// from a request body only ever reaches the JSON body, never the target.

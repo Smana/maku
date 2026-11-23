@@ -28,6 +28,12 @@ func TestGuard(t *testing.T) {
 		"240.0.0.1", "255.255.255.255", // 240.0.0.0/4
 		"64:ff9b::808:808", "64:ff9b::7f00:1", "64:ff9b:1::1", "64:ff9b:1:ffff::1", // NAT64
 		"2002:7f00:1::1", "2002:808:808::1", // 6to4
+		"::10.0.0.1", "::1.1.1.1", // IPv4-compatible (::/96)
+		"::ffff:0:10.0.0.1", "::ffff:0:1.1.1.1", // IPv4-translated (::ffff:0:0:0/96)
+		"2001::1", "2001:0:4136:e378::1", // Teredo (2001::/32)
+		"fec0::1", "feff::1", // deprecated site-local (fec0::/10)
+		"100::1", "100::ffff", // discard (100::/64)
+		"fe80::1%eth0", "2606:4700::1111%eth0", "64:ff9b::7f00:1%lo", // zoned IPv6
 	} {
 		if err := Guard(netip.MustParseAddr(a)); err == nil || !strings.Contains(err.Error(), "webhook: refused address") {
 			t.Errorf("Guard(%s) = %v, want refused", a, err)

@@ -405,3 +405,78 @@ func TestBrokerStopAndRetry(t *testing.T) {
 		t.Fatalf("429 Stop = %+v, %v", res, err)
 	}
 }
+
+type blockingStopBroker struct {
+	BrokerAPI
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func (b *blockingStopBroker) Stop(_ context.Context, _ Act) (ActResult, error) {
+	if b.calls.Add(1) == 1 {
+		close(b.entered)
+		<-b.release
+	}
+	return ActResult{Result: "stopped"}, nil
+}
+
+func TestActPressSerializesDoubleClick(t *testing.T) {
+	rig, _ := actsRig(t, "stop")
+	rig.replySaid("U02DEF", "1729.9001", "stop")
+	confirmTS := rig.lastPost().ts
+
+	bb := &blockingStopBroker{
+		BrokerAPI: rig.app.Broker,
+		entered:   make(chan struct{}),
+		release:   make(chan struct{}),
+	}
+	rig.app.Broker = bb
+
+	in := interaction{
+		Team:      "T01ABC",
+		User:      "U02DEF",
+		Channel:   "C03",
+		MessageTS: confirmTS,
+		ActionID:  actionActConfirm,
+		Value:     actValue(actStop, answerRoom),
+	}
+	outcomes := make([]string, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		outcomes[0] = rig.app.actPress(t.Context(), in)
+	}()
+	<-bb.entered
+	go func() {
+		defer wg.Done()
+		outcomes[1] = rig.app.actPress(t.Context(), in)
+	}()
+	time.Sleep(15 * time.Millisecond)
+	close(bb.release)
+	wg.Wait()
+
+	if bb.calls.Load() != 1 {
+		t.Fatalf("Stop called %d times on double-click, want 1", bb.calls.Load())
+	}
+	if outcomes[0] != "decided" || outcomes[1] != "refused" {
+		t.Fatalf("outcomes = %v, want [decided refused]", outcomes)
+	}
+}
+
+func TestWebhooksNilNow(t *testing.T) {
+	rig, _ := actsRig(t)
+	rig.app.Now = nil
+	body := `{"type":"room.ended","room":"` + answerRoom + `","state":"done"}`
+	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/webhooks", strings.NewReader(body))
+	// Invalid signature is fine: we are verifying Webhooks() does not panic when Now is nil.
+	req.Header.Set("webhook-id", "evt_nil_now")
+	req.Header.Set("webhook-timestamp", strconv.FormatInt(time.Now().Unix(), 10))
+	req.Header.Set("webhook-signature", "v1,AAAA")
+	rr := httptest.NewRecorder()
+	rig.app.Webhooks().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
