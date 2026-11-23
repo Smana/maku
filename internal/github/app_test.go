@@ -53,17 +53,18 @@ type fakeGitHub struct {
 	pages    []string
 	claims   jwt.RegisteredClaims // the last App JWT's
 	scope    map[string]any
-	missing  bool              // the App is not installed on the repository
-	expires  time.Duration     // an installation token's life; an hour by default
-	postCode int               // the comment POST's status; 201 by default
-	postHdr  http.Header       // headers sent with postCode
-	stale    string            // an installation token GitHub now refuses with 401
-	refuse   bool              // GitHub refuses every installation token with 401
-	refused  int               // calls refused with 401
-	current  string            // the last token minted
-	repoOf   map[string]string // the repository each token was minted for
-	perms    map[string]string // a login's permission on cloud-native-ref; absent is GitHub's 404
-	permCode int               // the permission GET's status, when set
+	missing  bool                         // the App is not installed on the repository
+	expires  time.Duration                // an installation token's life; an hour by default
+	postCode int                          // the comment POST's status; 201 by default
+	postHdr  http.Header                  // headers sent with postCode
+	stale    string                       // an installation token GitHub now refuses with 401
+	refuse   bool                         // GitHub refuses every installation token with 401
+	refused  int                          // calls refused with 401
+	current  string                       // the last token minted
+	repoOf   map[string]string            // the repository each token was minted for
+	permsOf  map[string]map[string]string // permissions requested when each token was minted
+	perms    map[string]string            // a login's permission on cloud-native-ref; absent is GitHub's 404
+	permCode int                          // the permission GET's status, when set
 	// repos is GET /repos/<owner>/<name>'s answer, by owner/name, and the repositories the App has
 	// an installation on: an absent key is a repository GitHub does not have for it. unreadable is
 	// one the installation's scoped token cannot read. Both are GitHub's 404.
@@ -114,8 +115,18 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.repoOf == nil {
 			f.repoOf = map[string]string{}
 		}
+		if f.permsOf == nil {
+			f.permsOf = map[string]map[string]string{}
+		}
 		if repos, _ := f.scope["repositories"].([]any); len(repos) == 1 {
 			f.repoOf[f.current], _ = repos[0].(string)
+		}
+		if rawPerms, _ := f.scope["permissions"].(map[string]any); rawPerms != nil {
+			pm := make(map[string]string, len(rawPerms))
+			for k, v := range rawPerms {
+				pm[k], _ = v.(string)
+			}
+			f.permsOf[f.current] = pm
 		}
 		life := f.expires
 		if life == 0 {
@@ -184,6 +195,16 @@ func (f *fakeGitHub) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"permission": perm, "role_name": perm, "user": map[string]string{"login": login}})
 		}
 	case r.Method == http.MethodHead && strings.Contains(r.URL.Path, "/contents/") && strings.HasPrefix(auth, "ghs_installation-"):
+		if auth == f.stale {
+			f.refused++
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		if f.permsOf[auth]["contents"] != "read" {
+			// Private repositories require contents: read on the installation token.
+			http.Error(w, `{"message":"Resource not accessible by integration"}`, http.StatusForbidden)
+			return
+		}
 		if !f.files[r.URL.Path] {
 			w.WriteHeader(http.StatusNotFound)
 		}
@@ -1023,17 +1044,45 @@ func TestRepositoryNeedsItsVisibilityWord(t *testing.T) {
 	}
 }
 
-// The planner's path grounding (#626): a HEAD on the contents API, GitHub's 404 is "not here", and
-// a path that could leave contents/ is never sent.
+// The planner's path grounding (#626, v5 P0-T1): a HEAD on the contents API using a dedicated
+// read-only installation token (contents: read, zero write permissions) so both public and private
+// repositories work without widening or sharing the pull_requests: write token. GitHub's 404 is
+// "not here", and a path that could leave contents/ is never sent.
 func TestPathExists(t *testing.T) {
 	a, f, _ := app(t)
 	f.locked(func() {
-		f.repos = map[string]string{"Smana/ai-native-ref": `{"private":false,"visibility":"public"}`}
-		f.files = map[string]bool{"/repos/Smana/ai-native-ref/contents/tooling/aws-0/values.yaml": true}
+		f.repos = map[string]string{
+			"Smana/ai-native-ref": `{"private":false,"visibility":"public"}`,
+			"Smana/private-app":   `{"private":true,"visibility":"private"}`,
+		}
+		f.files = map[string]bool{
+			"/repos/Smana/ai-native-ref/contents/tooling/aws-0/values.yaml": true,
+			"/repos/Smana/private-app/contents/cmd/api/main.go":             true,
+		}
 	})
 	if ok, err := a.PathExists(t.Context(), "Smana", "ai-native-ref", "tooling/aws-0/values.yaml"); err != nil || !ok {
 		t.Fatalf("held path: %v %v", ok, err)
 	}
+	if ok, err := a.PathExists(t.Context(), "Smana", "private-app", "cmd/api/main.go"); err != nil || !ok {
+		t.Fatalf("private repo held path: %v %v", ok, err)
+	}
+	f.locked(func() {
+		// Verify the token minted for private-app is strictly read-only (contents: read only).
+		pm := f.permsOf[f.current]
+		if len(pm) != 1 || pm["contents"] != "read" {
+			t.Fatalf("read-only token permissions = %v, want {contents: read}", pm)
+		}
+		f.stale = f.current
+	})
+	// A 401 on the read-only token evicts it and retries once.
+	if ok, err := a.PathExists(t.Context(), "Smana", "private-app", "cmd/api/main.go"); err != nil || !ok {
+		t.Fatalf("private repo after 401 retry: %v %v", ok, err)
+	}
+	f.locked(func() {
+		if f.refused != 1 {
+			t.Fatalf("refused = %d, want 1", f.refused)
+		}
+	})
 	if ok, err := a.PathExists(t.Context(), "Smana", "ai-native-ref", "docs/missing.md"); err != nil || ok {
 		t.Fatalf("missing path: %v %v", ok, err)
 	}

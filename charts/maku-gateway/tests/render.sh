@@ -61,6 +61,14 @@ rejects 'a custom provider without its endpoint' 'providers.bare: preset custom 
 rejects 'an endpoint on a preset that sets it' 'providers.zai.host: only preset custom takes an endpoint' \
   "${minimal[@]}" --set providers.zai.preset=zai --set providers.zai.existingSecret=k --set providers.zai.host=x.test
 rejects 'a client without its model' 'clients.planner needs provider and model' "${minimal[@]}" --set clients.planner.enabled=true
+rejects 'plannerInternal on a public-only provider (v5 P0-T1)' 'clients.plannerInternal names provider stub, whose dataClasses ([public]) exclude internal' \
+  "${minimal[@]}" --set clients.plannerInternal.enabled=true --set clients.plannerInternal.provider=stub --set clients.plannerInternal.model=m
+out="$(render "${minimal[@]}" --set 'providers.stub.dataClasses={public,internal}' \
+  --set clients.plannerInternal.enabled=true --set clients.plannerInternal.provider=stub --set clients.plannerInternal.model=internal-m)"
+yeq 'select(.kind == "HTTPRoute" and .metadata.name == "maku-clients-planner-internal") | (.spec.parentRefs[0].sectionName + " " + .spec.rules[0].matches[0].path.value + " " + .spec.rules[0].backendRefs[0].name)' \
+  'clients /clients/planner-internal/v1/chat/completions stub-planner-internal' 'plannerInternal renders its route and backend on clients'
+yeq 'select(.kind == "AgentgatewayPolicy" and .metadata.name == "maku-clients-planner-internal") | .spec.traffic.authorization.policy.matchExpressions[0]' \
+  '"maku-gateway.client.planner-internal" in jwt.aud' 'plannerInternal pins its own audience'
 # golden NAME ARGS...: the render equals tests/golden/NAME.yaml (UPDATE_GOLDEN=1 rewrites it; review the diff).
 golden() {
   local name=$1; shift

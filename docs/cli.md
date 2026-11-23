@@ -253,7 +253,7 @@ The refusals you can meet, with the next step (the full list is [the planner on 
 
 | Reason | Next step |
 |---|---|
-| `private_repository_unsupported` | The planner reads public text only, so a private repository is refused before any call. File on GitHub in the template's three sections, or wait for the internal route |
+| `private_repository_unsupported` | The planner's internal route (`human.intake.plan.internal`) is not configured, so a private repository is refused before any model call. Ask an operator to enable `human.intake.plan.internal` with an `internal`-class gateway provider (and `spec.privateCode.acknowledged: true` on the `Repository`), or file on GitHub |
 | `repository_not_allowed` | Name the repository as `owner/name`, or pick one of the ones the refusal lists: those are the repositories you may file into. A candidate that is private is left out of that list without a word |
 | `no_write` | Your GitHub access to that repository is read-only, and the planner plans only what you may push to. Ask for one you may write in, or show the plan to someone who can file it |
 | `planner_timeout` | The one call outlived its deadline (20 s, under `/mcp`'s 25 s). Ask again, with the same words or a shorter context |

@@ -412,6 +412,16 @@ gwbad 'maku.broker.modelGateway.audiencePrefix "other" must equal maku-gateway.a
 gwbad 'maku.broker.modelGateway.namespace "elsewhere" must be the release namespace "maku"' --set maku.broker.modelGateway.namespace=elsewhere
 gwbad 'maku.broker.human.intake.plan routes through maku-gateway (no url set), but maku-gateway.clients.planner.enabled is false' \
   --set maku-gateway.clients.planner.enabled=false --set maku.broker.human.intake.plan.enabled=true
+gwbad 'maku.broker.human.intake.plan.internal routes through maku-gateway (no url set), but maku-gateway.clients.plannerInternal.enabled is false' \
+  --set maku.broker.human.intake.plan.enabled=true --set maku.broker.human.intake.plan.internal.enabled=true
+helm template af . -n maku "${args[@]}" -f "$tmp/gateway.yaml" \
+  --set 'maku-gateway.providers.anthropic.dataClasses={public,internal}' \
+  --set maku-gateway.clients.plannerInternal.enabled=true \
+  --set maku-gateway.clients.plannerInternal.provider=anthropic \
+  --set maku-gateway.clients.plannerInternal.model=claude-sonnet-4-6 \
+  --set maku.broker.human.intake.plan.enabled=true \
+  --set maku.broker.human.intake.plan.internal.enabled=true >/dev/null 2>&1 ||
+  { echo "FAIL: umbrella with plannerInternal enabled on an internal-class provider does not render" >&2; fail=1; }
 gwbad 'maku.broker.human.slackIntents routes through maku-gateway (no url set), but maku-gateway.clients.classifier.enabled is false' \
   --set maku.broker.human.slackIntents.principal=slack-app
 # a block with its own url and apiKeyFile keeps working beside the gateway (D25)

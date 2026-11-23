@@ -90,7 +90,11 @@ type Intake struct {
 	Classes map[string]intake.Class
 	Allow   map[string]bool
 	Model   *intake.Model
-	// Public answers whether GitHub reports a repository public: the guard's public-only read.
+	// InternalModel is the governed model route for private and internal repositories (v5 P0-T1).
+	// Nil keeps the planner public-only: non-public repositories are refused before any call. When
+	// set, any request whose candidates include a non-public repository routes exclusively here.
+	InternalModel *intake.Model
+	// Public answers whether GitHub reports a repository public: the guard's visibility read.
 	Public intake.Publicity
 	// Paths answers whether a served repository holds a file at path, through the factory App's
 	// read. Nil grounds no quoted path: the planner then chooses among the candidates (#626).
@@ -348,10 +352,19 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		revised = &next
 	}
 
-	req, candidates, ref := s.requester(ctx, p, a)
+	req, candidates, hasPrivate, ref := s.requesterClassified(ctx, p, a, false)
 	run.requester = req
 	if ref != nil {
 		return s.finishPlan(ctx, run, nil, false, ref)
+	}
+	model := s.Intake.Model
+	run.dataClass = "public"
+	if hasPrivate {
+		if s.Intake.InternalModel == nil {
+			return s.finishPlan(ctx, run, nil, false, intake.ReasonRefusal(intake.ReasonPrivateRepository))
+		}
+		model = s.Intake.InternalModel
+		run.dataClass = "internal"
 	}
 	if revised != nil && intake.IsProfileRevision(*a.Plan, *a.Candidate) {
 		// A pin is a revision with no model call and no daily plan: the plan is final (Revise
@@ -426,8 +439,8 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		Text: a.Text, Context: a.modelContext(), Candidates: candidates, Classes: classNames(s.Intake.Classes),
 		Offers: offers, Candidate: revised}
 	// One plan's deadline bounds both the draft and its one retry.
-	deadline := time.Now().Add(s.Intake.Model.CallDeadline())
-	plan, usage, err := s.draftPlan(ctx, dreq, compose)
+	deadline := time.Now().Add(model.CallDeadline())
+	plan, usage, err := s.draftPlan(ctx, model, dreq, compose)
 	run.usage = usage
 	if ref, ok := retryable(err); ok && time.Until(deadline) > 0 {
 		// A draft the contract refuses is sent back once with the refusal, before the person sees
@@ -437,7 +450,7 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 		}
 		dreq.Refused = ref.Error()
 		rctx, cancel := context.WithDeadline(ctx, deadline)
-		again, more, rerr := s.draftPlan(rctx, dreq, compose)
+		again, more, rerr := s.draftPlan(rctx, model, dreq, compose)
 		cancel()
 		run.usage.PromptTokens += more.PromptTokens
 		run.usage.CompletionTokens += more.CompletionTokens
@@ -487,8 +500,8 @@ func (s *Server) intakePlanTool(ctx context.Context, p authn.Principal, args jso
 
 // draftPlan is one planner call and its composition: the plan, what the call cost, and either the
 // model call's error or Compose's refusal.
-func (s *Server) draftPlan(ctx context.Context, req intake.DraftRequest, in intake.ComposeIn) (intake.Plan, intake.Usage, error) {
-	draft, usage, err := s.Intake.Model.Draft(ctx, req)
+func (s *Server) draftPlan(ctx context.Context, model *intake.Model, req intake.DraftRequest, in intake.ComposeIn) (intake.Plan, intake.Usage, error) {
+	draft, usage, err := model.Draft(ctx, req)
 	if err != nil {
 		return intake.Plan{}, usage, err
 	}
@@ -590,11 +603,16 @@ func draftRefusal(err error) error {
 }
 
 // requester resolves steps 2 and 3 of the order — who is asking, and which repositories this plan
-// may name — in one place, so every door that needs them (this tool now, plan_check and run_create
-// later) resolves its caller identically. A sponsored principal's plan is resolved through the link
-// tables to the linked account: never through the App's own identity, which is one string for a whole
-// workspace, and never through a claim the request makes about itself.
+// may name — allowing private repositories whenever s.Intake.InternalModel is configured.
 func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs) (intake.Requester, []string, *intake.Refusal) {
+	req, candidates, _, ref := s.requesterClassified(ctx, p, a, false)
+	return req, candidates, ref
+}
+
+// requesterClassified resolves the effective requester and candidate repositories, and reports
+// whether any candidate is non-public (hasPrivate). When publicOnly is true (multi-repository
+// coordination), private repositories are refused even when InternalModel is configured.
+func (s *Server) requesterClassified(ctx context.Context, p authn.Principal, a intakeArgs, publicOnly bool) (intake.Requester, []string, bool, *intake.Refusal) {
 	var req intake.Requester
 	ctx, cancel := context.WithTimeout(ctx, accessWait) // as the gate's lookup is: a hung one is unverified
 	defer cancel()
@@ -602,43 +620,43 @@ func (s *Server) requester(ctx context.Context, p authn.Principal, a intakeArgs)
 	sub := p.Sub
 	if p.Sponsored {
 		if s.Intake.Links == nil {
-			return req, nil, intake.ReasonRefusal(intake.ReasonNotLinked)
+			return req, nil, false, intake.ReasonRefusal(intake.ReasonNotLinked)
 		}
 		team, user, _ := strings.Cut(strings.TrimPrefix(a.OnBehalfOf, "slack:"), "/")
 		linked, found, err := s.Intake.Links.SlackLink(ctx, team, user)
 		switch {
 		case err != nil:
 			s.log().Warn("intake: slack link unreadable", "err", err)
-			return req, nil, intake.ReasonRefusal(intake.ReasonRepositoryUnverified)
+			return req, nil, false, intake.ReasonRefusal(intake.ReasonRepositoryUnverified)
 		case !found:
-			return req, nil, intake.ReasonRefusal(intake.ReasonNotLinked)
+			return req, nil, false, intake.ReasonRefusal(intake.ReasonNotLinked)
 		}
 		sub, req.Key = linked, "slack:"+team+"/"+user
 	}
 
 	served, err := s.planRepositories(ctx, p)
 	if err != nil {
-		return req, nil, (&intake.ProfileRefusal{Code: intake.CatalogueUnavailable}).Refusal()
+		return req, nil, false, (&intake.ProfileRefusal{Code: intake.CatalogueUnavailable}).Refusal()
 	}
 	probe := s.probe(a, served)
 	if len(probe) == 0 {
 		// Nothing is served: the honest reason is that, not that the caller is unlinked.
-		return req, nil, intake.ReasonRefusal(intake.ReasonRepositoryNotAllowed)
+		return req, nil, false, intake.ReasonRefusal(intake.ReasonRepositoryNotAllowed)
 	}
 	login, ref := s.intakeLogin(ctx, sub, probe)
 	if ref != nil {
-		return req, nil, ref
+		return req, nil, false, ref
 	}
 	if req.Key == "" {
 		req.Key = login // a human's own login is what the cap and the audit line are keyed by
 	}
 	req.Login = login
 
-	candidates, ref := s.intakeGuard(login, allowMap(served)).Candidates(ctx, a.asked())
+	candidates, hasPrivate, ref := s.intakeGuard(login, allowMap(served), publicOnly).CandidatesClassified(ctx, a.asked())
 	if ref != nil {
-		return req, nil, ref
+		return req, nil, false, ref
 	}
-	return req, candidates, nil
+	return req, candidates, hasPrivate, nil
 }
 
 // maxGroundPaths bounds how many quoted paths one plan looks up in each candidate.
@@ -824,13 +842,14 @@ func allowMap(repos []string) map[string]bool {
 	return out
 }
 
-// intakeGuard is the guard for one effective requester: the allowlist, the public-only read, and the
+// intakeGuard is the guard for one effective requester: the allowlist, the visibility read, and the
 // write check closing over the login — the same pair canStart uses (ghidentity.Resolver into
 // repoaccess.Checker), so an intake plan and an issue_draft cannot disagree about who may file. A
 // broker with no write check wired verifies nothing, and the guard then refuses rather than planning
 // on the assumption.
-func (s *Server) intakeGuard(login string, allow map[string]bool) intake.Guard {
+func (s *Server) intakeGuard(login string, allow map[string]bool, publicOnly bool) intake.Guard {
 	return intake.Guard{Allow: allow, Public: s.Intake.Public,
+		AllowPrivate: !publicOnly && s.Intake.InternalModel != nil,
 		MayWrite: func(ctx context.Context, repository string) (bool, error) {
 			if s.Access == nil || login == "" {
 				return false, errors.New("humanapi: no GitHub write check is wired")
@@ -846,6 +865,7 @@ type planRun struct {
 	requester intake.Requester
 	start     time.Time
 	usage     intake.Usage
+	dataClass string // "public" or "internal", recorded on the audit line
 	// cause is why the planner call failed, for the operator's audit line alone: the model's
 	// error names a status, a deadline or a missing key file, never the key itself.
 	cause string
@@ -902,6 +922,9 @@ func (s *Server) finishPlan(ctx context.Context, run planRun, plan *intake.Plan,
 		s.Metrics.IntakePlanTokens(ctx, string(run.surface), "completion", int64(run.usage.CompletionTokens))
 	}
 	line := []any{"surface", string(run.surface), "requester", run.requester.Key, "outcome", outcome, "duration", took}
+	if run.dataClass != "" {
+		line = append(line, "dataClass", run.dataClass)
+	}
 	if plan != nil {
 		line = append(line, "repository", plan.Repository, "hash", plan.Hash, "model", plan.Planner.Model)
 	}
@@ -948,7 +971,7 @@ func (s *Server) withWritable(ctx context.Context, p authn.Principal, req intake
 	if rerr != nil {
 		return ref
 	}
-	served, err := s.intakeGuard(req.Login, allowMap(repos)).Candidates(ctx, nil)
+	served, err := s.intakeGuard(req.Login, allowMap(repos), false).Candidates(ctx, nil)
 	if err != nil || len(served) == 0 {
 		return ref
 	}

@@ -281,6 +281,9 @@ func brokerPreflight(cfg config.Config, db preflightDB) brokerChecks {
 		Knowledge: cfg.Knowledge(), Timeout: cfg.Preflight.Timeout.Duration}
 	if p := cfg.IntakePlan(); p.Enabled {
 		b.Models = append(b.Models, modelClient{Name: "planner", URL: p.URL, KeyFile: p.APIKeyFile, Alias: cmp.Or(p.Model, config.PlanModel)})
+		if p.Internal != nil && p.Internal.Enabled {
+			b.Models = append(b.Models, modelClient{Name: "planner-internal", URL: p.Internal.URL, KeyFile: p.Internal.APIKeyFile, Alias: cmp.Or(p.Model, config.PlanModel)})
+		}
 	}
 	if s, on := cfg.SlackIntents(); on {
 		b.Models = append(b.Models, modelClient{Name: "classifier", URL: s.URL, KeyFile: s.APIKeyFile, Alias: cmp.Or(s.Model, config.ClassifyModel)})

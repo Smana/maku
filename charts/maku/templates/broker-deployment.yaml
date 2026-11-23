@@ -161,6 +161,9 @@ spec:
           projected:
             sources:
               - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.planner, expirationSeconds: 3600, path: planner}
+              {{- if dig "intake" "plan" "internal" "enabled" false $b.human }}
+              - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.planner-internal, expirationSeconds: 3600, path: planner-internal}
+              {{- end }}
               - serviceAccountToken: {audience: {{ $mg.audiencePrefix }}.client.classifier, expirationSeconds: 3600, path: classifier}
         {{- end }}
         {{- with dig "hardening" "forgeRead" "audience" "" $b }}

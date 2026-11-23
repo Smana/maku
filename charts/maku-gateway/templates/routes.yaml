@@ -14,10 +14,13 @@ P6). Each matches the backend's typed paths exactly, so the gateway's key reache
 {{- $routes = append $routes (dict "name" (printf "maku-models-%s-%s" $class $alias) "section" $class "prefix" (printf "/m/%s" $alias) "backend" (printf "%s-%s" $t.provider $alias) "audience" (printf "%s.%s.%s" $v.audiencePrefix $class $alias) "sub" $runSub "paths" $paths) }}
 {{- end }}
 {{- end }}
-{{- range $client := list "planner" "classifier" }}
-{{- $c := index $v.clients $client }}
-{{- if $c.enabled }}
-{{- $routes = append $routes (dict "name" (printf "maku-clients-%s" $client) "section" "clients" "prefix" (printf "/clients/%s" $client) "backend" (printf "%s-%s" $c.provider $client) "audience" (printf "%s.client.%s" $v.audiencePrefix $client) "sub" $brokerSub "paths" (list "/v1/chat/completions")) }}
+{{- range $c := list
+  (dict "key" "planner" "slug" "planner")
+  (dict "key" "plannerInternal" "slug" "planner-internal")
+  (dict "key" "classifier" "slug" "classifier") }}
+{{- $cfg := index $v.clients $c.key | default dict }}
+{{- if $cfg.enabled }}
+{{- $routes = append $routes (dict "name" (printf "maku-clients-%s" $c.slug) "section" "clients" "prefix" (printf "/clients/%s" $c.slug) "backend" (printf "%s-%s" $cfg.provider $c.slug) "audience" (printf "%s.client.%s" $v.audiencePrefix $c.slug) "sub" $brokerSub "paths" (list "/v1/chat/completions")) }}
 {{- end }}
 {{- end }}
 {{- range $r := $routes }}

@@ -902,8 +902,8 @@ func notProposed(refusal, user string, served ...string) (code, text string, pas
 		return code, "Not proposed: <@" + user + "> is not linked to a GitHub account here. Fix: mention me with " +
 			"`@factory link`, open the link I send you, then mention me again.", false
 	case code == "private_repository_unsupported":
-		return code, "Not proposed: the planner reads public repositories only; use your coding agent " +
-			"(`issue_draft` then `issue_file`), or wait for the internal route.", false
+		return code, "Not proposed: the planner's internal route is not configured for private repositories; " +
+			"ask an operator to enable human.intake.plan.internal, or file the issue on GitHub.", false
 	case code == "planner_unavailable":
 		return code, "Not proposed: the plan service is unavailable; mention me again in a minute.", true
 	case code == "planner_timeout":

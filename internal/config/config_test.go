@@ -856,16 +856,19 @@ func TestIntakePlanIsOffByDefault(t *testing.T) {
 func TestIntakePlanRefusesEveryBadValue(t *testing.T) {
 	intake := func(plan string) string { return valid + "\n  intake:\n    plan:\n" + plan }
 	for name, c := range map[string]struct{ body, want string }{
-		"a repository twice":             {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
-		"a route with no scheme":         {intake("      url: gw/v1\n"), "http(s)"},
-		"a route with userinfo":          {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
-		"a route that is not http":       {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
-		"a deadline over the bound":      {intake("      deadline: 21s\n"), "deadline"},
-		"a negative daily cap":           {intake("      dailyPlans: -1\n"), "dailyPlans"},
-		"a negative revision cap":        {intake("      maxRounds: -1\n"), "maxRounds"},
-		"the alias, while switched off":  {intake("      model: glm-5.3\n"), "tier-frontier"},
-		"an unknown reasoning effort":    {intake("      reasoningEffort: max\n"), "reasoningEffort"},
-		"a reasoning effort in capitals": {intake("      reasoningEffort: Low\n"), "reasoningEffort"},
+		"a repository twice":                {intake("      repositories: [Smana/a, smana/A]\n"), "declared twice"},
+		"a route with no scheme":            {intake("      url: gw/v1\n"), "http(s)"},
+		"a route with userinfo":             {intake("      url: http://u:p@gw/v1\n"), "userinfo"},
+		"a route that is not http":          {intake("      url: grpc://gw:8080/v1\n"), "http(s)"},
+		"a deadline over the bound":         {intake("      deadline: 21s\n"), "deadline"},
+		"a negative daily cap":              {intake("      dailyPlans: -1\n"), "dailyPlans"},
+		"a negative revision cap":           {intake("      maxRounds: -1\n"), "maxRounds"},
+		"the alias, while switched off":     {intake("      model: glm-5.3\n"), "tier-frontier"},
+		"an unknown reasoning effort":       {intake("      reasoningEffort: max\n"), "reasoningEffort"},
+		"a reasoning effort in capitals":    {intake("      reasoningEffort: Low\n"), "reasoningEffort"},
+		"internal enabled with no url":      {intake("      internal:\n        enabled: true\n        apiKeyFile: /k\n"), "human.intake.plan.internal.url"},
+		"internal enabled with no key file": {intake("      internal:\n        enabled: true\n        url: http://gw/clients/planner-internal/v1\n"), "human.intake.plan.internal.apiKeyFile"},
+		"internal url with userinfo":        {intake("      internal:\n        url: http://u:p@gw/v1\n"), "human.intake.plan.internal.url"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			if _, err := Load(write(t, c.body)); err == nil || !strings.Contains(err.Error(), c.want) {

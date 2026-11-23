@@ -610,7 +610,7 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 		allow[strings.ToLower(repository)] = true
 	}
 	// A plan's classes are the factory's catalog's (WF13): no config table backs them.
-	return &humanapi.Intake{Allow: allow,
+	in := &humanapi.Intake{Allow: allow,
 		Model: &intake.Model{URL: plan.URL, APIKeyFile: plan.APIKeyFile, Alias: plan.Model,
 			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort},
 		Public:    intakePublicity(vis, accessTTL(cfg.Human)),
@@ -618,7 +618,12 @@ func intakeServer(cfg config.Config, vis gitHubVisibilities, actor *humanapi.Act
 		Daily:     plan.DailyPlans,
 		MaxRounds: plan.MaxRounds,
 		Fallback:  plan.Fallback,
-		Now:       time.Now}, nil
+		Now:       time.Now}
+	if plan.Internal != nil && plan.Internal.Enabled {
+		in.InternalModel = &intake.Model{URL: plan.Internal.URL, APIKeyFile: plan.Internal.APIKeyFile, Alias: plan.Model,
+			HC: httpx.New(plan.Deadline.Duration, nil), Deadline: plan.Deadline.Duration, ReasoningEffort: plan.ReasoningEffort}
+	}
+	return in, nil
 }
 
 // roomRuns is the one watch method roomObserver reads; *runwatch.Watcher has it.

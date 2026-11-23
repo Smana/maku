@@ -140,15 +140,17 @@ type App struct {
 	HC  *http.Client
 	Now func() time.Time
 
-	// mu guards slug and tokens only, never a round trip: a mint holds its
-	// repository's key in minting, so one repository's callers wait for one mint
+	// mu guards slug, tokens and readTokens only, never a round trip: a mint holds its
+	// repository's key in minting/readMinting, so one repository's callers wait for one mint
 	// while another repository's mint runs alongside (B15).
-	mu     sync.Mutex
-	slug   string
-	tokens map[string]token // by owner/repo
+	mu         sync.Mutex
+	slug       string
+	tokens     map[string]token // by owner/repo (pull_requests: write)
+	readTokens map[string]token // by owner/repo (contents: read only; zero write permissions)
 
-	minting keyedLock // by owner/repo, while a mint is held or awaited
-	posting keyedLock // by pull request + marker, while held or awaited
+	minting     keyedLock // by owner/repo, while a write-scoped mint is held or awaited
+	readMinting keyedLock // by owner/repo, while a read-only mint is held or awaited
+	posting     keyedLock // by pull request + marker, while held or awaited
 }
 
 // keyedLock serialises callers per key. An entry lives only while its key is
@@ -363,6 +365,59 @@ func (a *App) installation(ctx context.Context, api *url.URL, owner, repo string
 	return out.Token, slug, nil
 }
 
+// readOnlyInstallation returns a short-lived installation token for one repository scoped strictly
+// to contents: read (plus GitHub's implicit metadata: read) and zero write permissions (v5 P0-T1).
+// Used by the planner's visibility and path-grounding reads so private repositories are read without
+// widening or reusing a pull_requests: write token.
+func (a *App) readOnlyInstallation(ctx context.Context, api *url.URL, owner, repo string) (string, error) {
+	key := owner + "/" + repo
+	unlock, err := a.readMinting.lock(ctx, key)
+	if err != nil {
+		return "", err
+	}
+	defer unlock()
+	a.mu.Lock()
+	t := a.readTokens[key]
+	a.mu.Unlock()
+	if t.value != "" && a.Now().Before(t.exp.Add(-refreshBefore)) {
+		return t.value, nil
+	}
+	appJWT, err := a.appJWT()
+	if err != nil {
+		return "", err
+	}
+	var inst struct {
+		ID int64 `json:"id"`
+	}
+	if err := a.do(ctx, api, http.MethodGet, "repos/"+owner+"/"+repo+"/installation", "", appJWT, nil, &inst, maxReply); err != nil {
+		var ae *APIError
+		if errors.As(err, &ae) && ae.Status == http.StatusNotFound {
+			err = fmt.Errorf("%w: %w", ErrNoInstallation, err)
+		}
+		return "", err
+	}
+	var out struct {
+		Token     string    `json:"token"`
+		ExpiresAt time.Time `json:"expires_at"`
+	}
+	scope := map[string]any{"repositories": []string{repo},
+		"permissions": map[string]string{"contents": "read"}}
+	if err := a.do(ctx, api, http.MethodPost, "app/installations/"+strconv.FormatInt(inst.ID, 10)+"/access_tokens", "",
+		appJWT, scope, &out, maxReply); err != nil {
+		return "", err
+	}
+	if out.Token == "" || !out.ExpiresAt.After(a.Now()) {
+		return "", errors.New("github: the token reply has no live token")
+	}
+	a.mu.Lock()
+	if a.readTokens == nil {
+		a.readTokens = map[string]token{}
+	}
+	a.readTokens[key] = token{out.Token, out.ExpiresAt}
+	a.mu.Unlock()
+	return out.Token, nil
+}
+
 // Comment posts body, then marker, on the pull request, once. The App's own
 // comment that already ends with marker is returned instead: a retry after a
 // crash, or a new leader. Another author's copy of the marker never counts.
@@ -396,6 +451,17 @@ func retry401[T any](a *App, owner, repo string, call func() (T, error)) (T, err
 	var ae *APIError
 	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
 		a.evict(owner + "/" + repo)
+		out, err = call()
+	}
+	return out, err
+}
+
+// retry401Read runs call, and once more after a 401 by evicting only the read-only token cache.
+func retry401Read[T any](a *App, owner, repo string, call func() (T, error)) (T, error) {
+	out, err := call()
+	var ae *APIError
+	if errors.As(err, &ae) && ae.Status == http.StatusUnauthorized {
+		a.evictRead(owner + "/" + repo)
 		out, err = call()
 	}
 	return out, err
@@ -452,9 +518,9 @@ type Repository struct {
 // visibilityWords are the words GitHub's repository API may answer with; any other is not an answer.
 var visibilityWords = []string{"public", "private", "internal"}
 
-// Repository is owner/repo's visibility, read with its installation token, which metadata: read
-// covers. It is the planner's public-only read (CD5, v3.x conversational intake): public text only,
-// decided once per repository by the caller's cache rather than by a model.
+// Repository is owner/repo's visibility, read with a scoped read-only installation token
+// (contents: read + metadata: read). It is the planner's visibility read (CD5, v5 P0-T1): decided
+// once per repository by the caller's cache rather than by a model.
 //
 // A repository GitHub does not show the App — no installation, or a 404 for its scoped token — is
 // ErrNoInstallation, and a reply with no visibility word is an error: neither is an answer, so the
@@ -467,8 +533,8 @@ func (a *App) Repository(ctx context.Context, owner, repo string) (Repository, e
 	if err != nil {
 		return Repository{}, err
 	}
-	return retry401(a, owner, repo, func() (Repository, error) {
-		tok, _, err := a.installation(ctx, api, owner, repo)
+	return retry401Read(a, owner, repo, func() (Repository, error) {
+		tok, err := a.readOnlyInstallation(ctx, api, owner, repo)
 		if err != nil {
 			return Repository{}, err
 		}
@@ -493,9 +559,9 @@ func (a *App) Repository(ctx context.Context, owner, repo string) (Repository, e
 var repoFilePath = regexp.MustCompile(`^[A-Za-z0-9_-][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_-][A-Za-z0-9_.-]*)*$`)
 
 // PathExists is whether owner/repo's default branch holds path, as GitHub's contents API answers a
-// HEAD with owner/repo's installation token. The planner serves public repositories only, whose
-// contents any token reads, so the token's scope is not widened for it (#626). GitHub's 404 is
-// false; any other refusal is an error.
+// HEAD with a short-lived read-only installation token (contents: read, zero write permissions;
+// v5 P0-T1). Works on both public and private repositories. GitHub's 404 is false; any other
+// refusal is an error.
 func (a *App) PathExists(ctx context.Context, owner, repo, path string) (bool, error) {
 	if !validRepo(owner, repo) {
 		return false, ErrNotAPullRequest
@@ -507,8 +573,8 @@ func (a *App) PathExists(ctx context.Context, owner, repo, path string) (bool, e
 	if err != nil {
 		return false, err
 	}
-	return retry401(a, owner, repo, func() (bool, error) {
-		tok, _, err := a.installation(ctx, api, owner, repo)
+	return retry401Read(a, owner, repo, func() (bool, error) {
+		tok, err := a.readOnlyInstallation(ctx, api, owner, repo)
 		if err != nil {
 			return false, err
 		}
@@ -561,10 +627,17 @@ func (a *App) Permission(ctx context.Context, owner, repo, login string) (string
 	})
 }
 
-// evict drops the cached installation token of owner/repo.
+// evict drops the cached write-scoped installation token of owner/repo.
 func (a *App) evict(repo string) {
 	a.mu.Lock()
 	delete(a.tokens, repo)
+	a.mu.Unlock()
+}
+
+// evictRead drops the cached read-only installation token of owner/repo.
+func (a *App) evictRead(repo string) {
+	a.mu.Lock()
+	delete(a.readTokens, repo)
 	a.mu.Unlock()
 }
 

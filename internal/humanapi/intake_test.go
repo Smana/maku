@@ -1166,3 +1166,162 @@ func TestIntakePlanRefusesANamedRepositoryNotServedHere(t *testing.T) {
 		})
 	}
 }
+
+// v5 P0-T1: when InternalModel is configured, private repositories (and mixed candidate sets that
+// include a private repository) route exclusively through InternalModel, never the public Model;
+// public-only requests keep using the public Model; multi-repository coordination stays public-only.
+func TestIntakePlanPrivateRoutesExclusivelyToInternalModel(t *testing.T) {
+	privDraft := `{"repository":"smana/private-app","evidence":[{"kind":"path","text":"cmd/api/main.go"}],` +
+		`"issues":[{"title":"api: fix auth header","body":"## What is wrong\nThe header check in cmd/api/main.go drops tokens.\n` +
+		`## What it should be\nThe header check MUST accept valid bearer tokens.\n## Acceptance check\nOn GET /v1/health with a valid bearer token, the handler MUST return 200.","class":"docs-links"}]}`
+	privContent, err := json.Marshal(privDraft)
+	if err != nil {
+		t.Fatal(err)
+	}
+	privReply := []byte(`{"id":"chatcmpl-priv","object":"chat.completion","created":1762347600,"model":"internal-frontier",` +
+		`"choices":[{"index":0,"finish_reason":"stop","message":{"role":"assistant","content":` + string(privContent) + `}}],` +
+		`"usage":{"prompt_tokens":90,"completion_tokens":210,"total_tokens":300}}`)
+
+	internalFake := newFakeIntake(t, "session", time.Date(2026, 11, 23, 12, 0, 0, 0, time.UTC))
+	internalFake.reply = privReply
+	t.Cleanup(internalFake.server.Close)
+
+	withPrivateWrite := option(func(s *Server, _ *fanout.Hub, _ *hubView) {
+		w := world(nil)
+		w.set(func() {
+			w.writes = map[string][]string{
+				"smana/ai-native-ref": {"dev", "own", "u2", "u3"},
+				"smana/private-app":   {"dev", "own", "u2", "u3"},
+			}
+		})
+		w.gate(s)
+	})
+	withPrivateInternal := intakeOption(t, func(_ *fakeIntake, in *Intake) {
+		in.Allow = map[string]bool{"Smana/ai-native-ref": true, "Smana/private-app": true}
+		in.Public = publicRepos{"smana/ai-native-ref": true, "smana/private-app": false}
+		in.InternalModel = &intake.Model{
+			URL:        internalFake.server.URL,
+			APIKeyFile: internalFake.keyPath,
+			Alias:      "tier-frontier",
+			HC:         internalFake.server.Client(),
+			Deadline:   5 * time.Second,
+		}
+	})
+
+	t.Run("session private repository uses internal model only", func(t *testing.T) {
+		internalFake.mu.Lock()
+		internalFake.n = 0
+		internalFake.mu.Unlock()
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withPrivateInternal, withPrivateWrite)
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+			"text":       "fix the auth header in cmd/api/main.go",
+			"repository": "Smana/private-app",
+		})
+		if got.isError {
+			t.Fatalf("private plan refused: %s", got.text)
+		}
+		if e.intake.calls() != 0 {
+			t.Fatalf("public model received %d calls for a private repo, want 0", e.intake.calls())
+		}
+		if internalFake.calls() != 1 {
+			t.Fatalf("internal model received %d calls, want 1", internalFake.calls())
+		}
+		var out planAnswer
+		if err := json.Unmarshal(got.structured, &out); err != nil {
+			t.Fatal(err)
+		}
+		if out.Plan.Repository != "smana/private-app" {
+			t.Fatalf("plan repository = %q, want smana/private-app", out.Plan.Repository)
+		}
+		if !strings.Contains(e.intake.logs.String(), `"dataClass":"internal"`) {
+			t.Errorf("audit log missing dataClass=internal: %s", e.intake.logs.String())
+		}
+		// plan_check accepts the private plan when InternalModel is wired.
+		chk := callEngine(t, e, viaRoomctl("dev"), "plan_check", map[string]any{"plan": out.Plan, "hash": out.Hash})
+		if chk.isError {
+			t.Fatalf("plan_check refused private plan: %s", chk.text)
+		}
+	})
+
+	t.Run("slack sponsored private repository uses internal model only", func(t *testing.T) {
+		internalFake.mu.Lock()
+		internalFake.n = 0
+		internalFake.mu.Unlock()
+		e := setup(t, mcpOn, withSponsored(sponsoredP), withIntake(t, "slack"), withPrivateInternal, withPrivateWrite)
+		got := callEngine(t, e, bearer("slack-app"), "intake_plan", map[string]any{
+			"text":         "fix the auth header in cmd/api/main.go",
+			"repository":   "Smana/private-app",
+			"on_behalf_of": "slack:T01ABC/U02DEF",
+		})
+		if got.isError {
+			t.Fatalf("slack private plan refused: %s", got.text)
+		}
+		if e.intake.calls() != 0 || internalFake.calls() != 1 {
+			t.Fatalf("public=%d internal=%d, want 0 and 1", e.intake.calls(), internalFake.calls())
+		}
+	})
+
+	t.Run("mixed candidates route to internal model so no private text reaches public", func(t *testing.T) {
+		internalFake.mu.Lock()
+		internalFake.n = 0
+		internalFake.mu.Unlock()
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withPrivateInternal, withPrivateWrite)
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+			"text": "fix the auth header bug",
+		})
+		if got.isError {
+			t.Fatalf("mixed plan refused: %s", got.text)
+		}
+		if e.intake.calls() != 0 || internalFake.calls() != 1 {
+			t.Fatalf("mixed candidates: public=%d internal=%d, want 0 and 1", e.intake.calls(), internalFake.calls())
+		}
+	})
+
+	t.Run("public repository still routes to public model", func(t *testing.T) {
+		internalFake.mu.Lock()
+		internalFake.n = 0
+		internalFake.mu.Unlock()
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withPrivateInternal, withPrivateWrite)
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+			"text":       "the install link in the README 404s",
+			"repository": "Smana/ai-native-ref",
+		})
+		if got.isError {
+			t.Fatalf("public plan refused: %s", got.text)
+		}
+		if e.intake.calls() != 1 || internalFake.calls() != 0 {
+			t.Fatalf("public repo: public=%d internal=%d, want 1 and 0", e.intake.calls(), internalFake.calls())
+		}
+		if !strings.Contains(e.intake.logs.String(), `"dataClass":"public"`) {
+			t.Errorf("audit log missing dataClass=public: %s", e.intake.logs.String())
+		}
+	})
+
+	t.Run("without InternalModel a private repository is refused with zero model calls", func(t *testing.T) {
+		e := setup(t, mcpOn, withIntake(t, "session"), intakeOption(t, func(_ *fakeIntake, in *Intake) {
+			in.Allow = map[string]bool{"Smana/private-app": true}
+			in.Public = publicRepos{"smana/private-app": false}
+		}), withPrivateWrite)
+		got := callEngine(t, e, viaRoomctl("dev"), "intake_plan", map[string]any{
+			"text":       "fix the auth header",
+			"repository": "Smana/private-app",
+		})
+		if !got.isError || !strings.Contains(got.text, intake.ReasonPrivateRepository) {
+			t.Fatalf("expected %s, got: %s", intake.ReasonPrivateRepository, got.text)
+		}
+		if e.intake.calls() != 0 {
+			t.Fatalf("refused private repo made %d model calls", e.intake.calls())
+		}
+	})
+
+	t.Run("multi-repository coordination remains public-only even with InternalModel", func(t *testing.T) {
+		internalFake.mu.Lock()
+		internalFake.n = 0
+		internalFake.mu.Unlock()
+		e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withPrivateInternal, withPrivateWrite)
+		_, _, _, ref := e.srv.requesterClassified(t.Context(), human("dev"), intakeArgs{Repository: "Smana/private-app"}, true)
+		if ref == nil || ref.Reason != intake.ReasonPrivateRepository {
+			t.Fatalf("coordination publicOnly guard = %+v, want %s", ref, intake.ReasonPrivateRepository)
+		}
+	})
+}
