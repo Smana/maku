@@ -40,25 +40,38 @@ type Guard struct {
 	// Public answers whether GitHub reports repository as public, read once per repository and
 	// cached (`CachedPublicity`). A nil Public can verify nothing, so the guard plans nothing.
 	Public Publicity
+	// AllowPrivate permits non-public repositories to enter the candidate set (v5 P0-T1). When
+	// true, visibility is still read via Public (failing closed on errors) so the caller routes any
+	// request touching a non-public repository through the internal model gateway route instead of
+	// the public one.
+	AllowPrivate bool
 }
 
-// Candidates is the set of repositories one plan may name: the allowlist ∩ what was asked ∩ what the
-// requester may write ∩ what GitHub reports public, lowercased, de-duplicated, at most
-// `maxCandidates`, and in the allowlist's order (sorted: a map has no order, and two processes must
-// agree on one).
+// Candidates is CandidatesClassified discarding hasPrivate, for callers that only serve public
+// repositories or only need the validated candidate set.
+func (g Guard) Candidates(ctx context.Context, asked []string) ([]string, *Refusal) {
+	candidates, _, ref := g.CandidatesClassified(ctx, asked)
+	return candidates, ref
+}
+
+// CandidatesClassified is the set of repositories one plan may name: the allowlist ∩ what was asked
+// ∩ what the requester may write ∩ (public, or any visibility when AllowPrivate is true), lowercased,
+// de-duplicated, at most `maxCandidates`, and sorted. hasPrivate is true whenever at least one
+// returned candidate is non-public (private or internal), so the caller routes the model call
+// exclusively over the internal model-gateway route.
 //
-// It answers in the security order — allowlist, asked, write, public — so that no repository
+// It answers in the security order — allowlist, asked, write, visibility — so that no repository
 // reaches the model before every check it can fail has been run.
 //
 // An empty asked list narrows nothing: the request named no repository, so the candidate set is the
-// allowlist ∩ write ∩ public that CD5 describes, and the model picks from it with its evidence.
+// allowlist ∩ write ∩ visibility that CD5 describes, and the model picks from it with its evidence.
 //
 // Refusals, and what each one is allowed to say:
 //   - One distinct repository was asked and the allowlist does not serve it: `repository_not_allowed`,
 //     whose one sentence lists nothing and names nothing.
 //   - It was asked, and the requester cannot write it: `no_write`.
-//   - It was asked, and GitHub reports it private: `private_repository_unsupported`, with the two
-//     ways forward — the requester named it, so refusing it is the whole answer.
+//   - It was asked, AllowPrivate is false, and GitHub reports it private:
+//     `private_repository_unsupported`.
 //   - Write access or visibility errored: `repository_unverified`. Never planned on a guess.
 //
 // With several repositories asked, a candidate that fails the write or public check is dropped
@@ -67,11 +80,11 @@ type Guard struct {
 // nothing, the refusal is `repository_unverified` if any check errored (an outage is the reason, and
 // "not allowed" would send an operator after the wrong problem) and `repository_not_allowed`
 // otherwise.
-func (g Guard) Candidates(ctx context.Context, asked []string) ([]string, *Refusal) {
+func (g Guard) CandidatesClassified(ctx context.Context, asked []string) ([]string, bool, *Refusal) {
 	if g.MayWrite == nil || g.Public == nil {
 		// A guard wired without its checks cannot verify anything: it refuses rather than planning
 		// on a request nobody checked, and rather than panicking inside a tool.
-		return nil, refuse(ReasonRepositoryUnverified, "")
+		return nil, false, refuse(ReasonRepositoryUnverified, "")
 	}
 
 	// The asked set, lowercased and de-duplicated: GitHub's names are case-insensitive, so one
@@ -100,6 +113,7 @@ func (g Guard) Candidates(ctx context.Context, asked []string) ([]string, *Refus
 	sort.Strings(allowed)
 
 	candidates := make([]string, 0, len(allowed))
+	hasPrivate := false
 	unverified := false
 	for _, repository := range allowed {
 		if narrowed && !askedSet[repository] {
@@ -110,30 +124,33 @@ func (g Guard) Candidates(ctx context.Context, asked []string) ([]string, *Refus
 		write, err := g.MayWrite(ctx, repository)
 		if err != nil {
 			if single {
-				return nil, refuse(ReasonRepositoryUnverified, "")
+				return nil, false, refuse(ReasonRepositoryUnverified, "")
 			}
 			unverified = true
 			continue
 		}
 		if !write {
 			if single {
-				return nil, refuse(ReasonNoWrite, "")
+				return nil, false, refuse(ReasonNoWrite, "")
 			}
 			continue
 		}
 		public, err := g.Public.Public(ctx, repository)
 		if err != nil {
 			if single {
-				return nil, refuse(ReasonRepositoryUnverified, "")
+				return nil, false, refuse(ReasonRepositoryUnverified, "")
 			}
 			unverified = true
 			continue
 		}
 		if !public {
-			if single {
-				return nil, refuse(ReasonPrivateRepository, "")
+			if !g.AllowPrivate {
+				if single {
+					return nil, false, refuse(ReasonPrivateRepository, "")
+				}
+				continue
 			}
-			continue
+			hasPrivate = true
 		}
 		candidates = append(candidates, repository)
 		if len(candidates) == maxCandidates {
@@ -143,9 +160,9 @@ func (g Guard) Candidates(ctx context.Context, asked []string) ([]string, *Refus
 
 	if len(candidates) == 0 {
 		if unverified {
-			return nil, refuse(ReasonRepositoryUnverified, "")
+			return nil, false, refuse(ReasonRepositoryUnverified, "")
 		}
-		return nil, refuse(ReasonRepositoryNotAllowed, "")
+		return nil, false, refuse(ReasonRepositoryNotAllowed, "")
 	}
-	return candidates, nil
+	return candidates, hasPrivate, nil
 }

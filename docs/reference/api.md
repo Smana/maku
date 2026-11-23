@@ -951,7 +951,7 @@ Each refusal is a tool error whose text starts with one reason of a closed list:
 
 | Reason | One line |
 |---|---|
-| `private_repository_unsupported` | the planner reads public text only, and this repository is not public; file the issue on GitHub yourself, or wait for the internal route |
+| `private_repository_unsupported` | the planner's internal route is not configured, and this repository is not public; configure `human.intake.plan.internal` to plan private repositories, or file the issue on GitHub |
 | `repository_not_allowed` | no repository the allowlist serves and you may write in matches this request; name one of the repositories listed |
 | `repository_not_served_here` | the request names a repository outside the candidate set, checked before any model call: `<repo> isn't served here (served: …); an operator adds it to the repositories served here`. Names are `owner/name`, a github.com URL, or a bare name of a repository the broker knows, in the text or the context. A served repository named in passing, beside a candidate the request names or quotes a path from, is ignored rather than refused |
 | `repository_served_elsewhere` | the request names, with nothing anchoring it here, a repository the factory serves but that is not a candidate of this request; refused the same way: `<repo> is served, but not from here (here: …); hand it off from that repository, or name it as the target` |

@@ -84,10 +84,13 @@ aliases:
   public: {}
   internal: {}
 
-# The broker's clients on the clients listener: the planner (alias tier-frontier) and the Slack
-# intent classifier (alias tier-light). A classifier never runs on a model that always reasons.
+# The broker's clients on the clients listener: the public planner (alias tier-frontier), the
+# internal planner for private repositories (alias tier-frontier; provider's dataClasses must
+# include internal, v5 P0-T1) and the Slack intent classifier (alias tier-light). A classifier
+# never runs on a model that always reasons.
 clients:
   planner: {enabled: false, provider: "", model: ""}
+  plannerInternal: {enabled: false, provider: "", model: ""}
   classifier: {enabled: false, provider: "", model: ""}
 
 # The price catalog agentgateway prices each response with (the access log's `cost`): the factory's

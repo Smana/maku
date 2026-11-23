@@ -63,10 +63,13 @@ for the planner and tier-light for the classifier).
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- range $client, $alias := dict "planner" "tier-frontier" "classifier" "tier-light" -}}
-{{- $c := index $.Values.clients $client -}}
-{{- if $c.enabled -}}
-{{- $out = append $out (dict "name" (printf "%s-%s" $c.provider $client) "provider" $c.provider "alias" $alias "model" $c.model) -}}
+{{- range $c := list
+  (dict "key" "planner" "slug" "planner" "alias" "tier-frontier")
+  (dict "key" "plannerInternal" "slug" "planner-internal" "alias" "tier-frontier")
+  (dict "key" "classifier" "slug" "classifier" "alias" "tier-light") -}}
+{{- $cfg := index $.Values.clients $c.key | default dict -}}
+{{- if $cfg.enabled -}}
+{{- $out = append $out (dict "name" (printf "%s-%s" $cfg.provider $c.slug) "provider" $cfg.provider "alias" $c.alias "model" $cfg.model) -}}
 {{- end -}}
 {{- end -}}
 {{- toYaml $out -}}
@@ -169,14 +172,20 @@ data:
 {{- end -}}
 {{- end -}}
 {{- end -}}
-{{- range $client := list "planner" "classifier" -}}
-{{- $c := index $v.clients $client -}}
+{{- range $client := list "planner" "plannerInternal" "classifier" -}}
+{{- $c := index $v.clients $client | default dict -}}
 {{- if $c.enabled -}}
 {{- if not (and $c.provider $c.model) -}}
 {{- fail (printf "clients.%s needs provider and model when enabled" $client) -}}
 {{- end -}}
 {{- if not (hasKey $v.providers $c.provider) -}}
 {{- fail (printf "clients.%s names provider %s, which providers does not define" $client $c.provider) -}}
+{{- end -}}
+{{- if eq $client "plannerInternal" -}}
+{{- $classes := include "mgw.dataClasses" (dict "root" $ "name" $c.provider) | fromJsonArray -}}
+{{- if not (has "internal" $classes) -}}
+{{- fail (printf "clients.plannerInternal names provider %s, whose dataClasses ([%s]) exclude internal: add internal to providers.%s.dataClasses, or map clients.plannerInternal to another provider" $c.provider (join ", " $classes) $c.provider) -}}
+{{- end -}}
 {{- end -}}
 {{- $reasons := (index $presets (index $v.providers $c.provider).preset).alwaysReasons -}}
 {{- if and (eq $client "classifier") (or (has "*" $reasons) (has $c.model $reasons)) -}}

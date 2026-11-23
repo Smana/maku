@@ -46,7 +46,7 @@ func TestPrivateOrUnverifiableRepositoriesNeverReachTheModel(t *testing.T) {
 	}
 	// Named explicitly and private: refused with the reason and the two ways forward.
 	if _, r := g.Candidates(t.Context(), []string{"Smana/private"}); r == nil || r.Reason != intake.ReasonPrivateRepository ||
-		!strings.Contains(r.Sentence, "issue_draft") {
+		!strings.Contains(r.Sentence, "human.intake.plan.internal") {
 		t.Fatalf("%+v", r)
 	} else if strings.Contains(r.Sentence, "Smana") {
 		t.Fatalf("the refusal names the repository: %s", r.Sentence)
@@ -215,5 +215,43 @@ func TestAGuardWithoutACheckPlansNothing(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// v5 P0-T1: AllowPrivate admits private repositories while still reading visibility (failing
+// closed on errors) and tagging hasPrivate so the caller routes exclusively through the internal
+// model-gateway route whenever any candidate is non-public.
+func TestGuardAllowPrivateClassifiesCandidates(t *testing.T) {
+	allow := map[string]bool{"acme/public": true, "acme/private": true}
+	writeAll := func(context.Context, string) (bool, error) { return true, nil }
+	pub := pubOf(map[string]bool{"acme/public": true, "acme/private": false})
+
+	g := intake.Guard{Allow: allow, MayWrite: writeAll, Public: pub, AllowPrivate: true}
+
+	cands, hasPrivate, ref := g.CandidatesClassified(t.Context(), []string{"acme/public"})
+	if ref != nil || !slices.Equal(cands, []string{"acme/public"}) || hasPrivate {
+		t.Fatalf("public only: cands=%v hasPrivate=%v ref=%v", cands, hasPrivate, ref)
+	}
+
+	cands, hasPrivate, ref = g.CandidatesClassified(t.Context(), []string{"acme/private"})
+	if ref != nil || !slices.Equal(cands, []string{"acme/private"}) || !hasPrivate {
+		t.Fatalf("private only: cands=%v hasPrivate=%v ref=%v", cands, hasPrivate, ref)
+	}
+
+	// Mixed candidates (no repo named) must mark hasPrivate=true so no prompt text leaks to public.
+	cands, hasPrivate, ref = g.CandidatesClassified(t.Context(), nil)
+	if ref != nil || !slices.Equal(cands, []string{"acme/private", "acme/public"}) || !hasPrivate {
+		t.Fatalf("mixed: cands=%v hasPrivate=%v ref=%v", cands, hasPrivate, ref)
+	}
+
+	// Visibility lookup errors still fail closed even when AllowPrivate is true.
+	errGuard := intake.Guard{
+		Allow:        map[string]bool{"acme/private": true},
+		MayWrite:     writeAll,
+		Public:       pubOf(nil),
+		AllowPrivate: true,
+	}
+	if _, _, ref := errGuard.CandidatesClassified(t.Context(), []string{"acme/private"}); ref == nil || ref.Reason != intake.ReasonRepositoryUnverified {
+		t.Fatalf("visibility error with AllowPrivate: %+v, want repository_unverified", ref)
 	}
 }

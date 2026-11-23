@@ -206,9 +206,10 @@ func (s *Server) coordinationPlanTool(ctx context.Context, p authn.Principal, ar
 		run.surface = intake.SurfaceSlack
 	}
 
-	// Who is asking, and the primary they must write: intake's own resolution and guard, so the two
-	// planners cannot disagree about either.
-	req, primary, ref := s.requester(ctx, p, intakeArgs{Repository: a.Primary, OnBehalfOf: a.OnBehalfOf})
+	// Who is asking, and the primary they must write: multi-repository coordination stays
+	// public-only (docs/install.md), so publicOnly is true even when the single-repo planner has
+	// an internal route configured.
+	req, primary, _, ref := s.requesterClassified(ctx, p, intakeArgs{Repository: a.Primary, OnBehalfOf: a.OnBehalfOf}, true)
 	run.requester = req
 	if ref != nil {
 		return s.finishCoordination(ctx, run, nil, ref)

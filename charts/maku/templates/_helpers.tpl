@@ -330,6 +330,10 @@ key to the gateway.
 {{- $plan := dig "intake" "plan" dict $h -}}
 {{- if $plan.enabled -}}
 {{- include "ap.gatewayPair" (dict "block" $plan "key" "broker.human.intake.plan" "url" (printf "%s/clients/planner/v1" $g.base) "token" (printf "%s/planner" $g.tokens)) -}}
+{{- $pi := $plan.internal | default dict -}}
+{{- if $pi.enabled -}}
+{{- include "ap.gatewayPair" (dict "block" $pi "key" "broker.human.intake.plan.internal" "url" (printf "%s/clients/planner-internal/v1" $g.base) "token" (printf "%s/planner-internal" $g.tokens)) -}}
+{{- end -}}
 {{- end -}}
 {{- with $h.slackIntents -}}
 {{- include "ap.gatewayPair" (dict "block" . "key" "broker.human.slackIntents" "url" (printf "%s/clients/classifier/v1" $g.base) "token" (printf "%s/classifier" $g.tokens)) -}}

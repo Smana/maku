@@ -1426,9 +1426,9 @@ func TestProposalRefusals(t *testing.T) {
 		{
 			name: "a private repository points at the coding agent",
 			setup: func(_ *testing.T, b *stubBroker) {
-				b.handoffErr = Refused("private_repository_unsupported: the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route")
+				b.handoffErr = Refused("private_repository_unsupported: the planner's internal route is not configured, and this repository is not public; configure human.intake.plan.internal to plan private repositories, or file the issue on GitHub")
 			},
-			want:    "Not proposed: the planner reads public repositories only; use your coding agent (`issue_draft` then `issue_file`), or wait for the internal route.",
+			want:    "Not proposed: the planner's internal route is not configured for private repositories; ask an operator to enable human.intake.plan.internal, or file the issue on GitHub.",
 			outcome: "refused",
 		},
 		{

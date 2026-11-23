@@ -394,6 +394,15 @@ mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set
   --set broker.human.intake.plan.url=https://api.openai.com/v1
 mgbad 'broker.human.intake.plan.url and broker.human.intake.plan.apiKeyFile: set both or neither' \
   --set broker.human.intake.plan.apiKeyFile=/etc/planner/key
+mgbad 'broker.human.intake.plan.internal.url and broker.human.intake.plan.internal.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.internal.enabled=true --set broker.human.intake.plan.internal.url=https://api.openai.com/v1
+mgbad 'broker.human.intake.plan.internal.url and broker.human.intake.plan.internal.apiKeyFile: set both or neither' \
+  --set broker.human.intake.plan.internal.enabled=true --set broker.human.intake.plan.internal.apiKeyFile=/etc/planner/internal-key
+mgpi="$(helm template ap . -n agent-system "${imgs[@]}" "${prod[@]}" --set runController.enabled=false "${mgplan[@]}" \
+  --set broker.modelGateway.service=model-gateway --set broker.human.intake.plan.internal.enabled=true)"
+out="$mgpi"
+ykind ConfigMap 'select(.metadata.name=="room-broker-config") | .data."config.yaml" | from_yaml | (.human.intake.plan.internal.url == "http://model-gateway.agent-system.svc.corp.local:8082/clients/planner-internal/v1" and .human.intake.plan.internal.apiKeyFile == "/var/run/secrets/maku/model-gateway/planner-internal")' 'modelGateway: internal planner gets /clients/planner-internal/v1 and its projected token (v5 P0-T1)'
+ykind Deployment 'select(.metadata.name=="room-broker") | .spec.template.spec.volumes[] | select(.name == "model-gateway") | (.projected.sources | map(.serviceAccountToken | .path + "=" + .audience + "@" + (.expirationSeconds | tostring)) | join(",")) == "planner=maku-gateway.client.planner@3600,planner-internal=maku-gateway.client.planner-internal@3600,classifier=maku-gateway.client.classifier@3600"' 'modelGateway: internal planner mounts its own projected token only when enabled'
 mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \
   --set broker.human.slackIntents.url=https://api.openai.com/v1
 mgbad 'broker.human.slackIntents.url and broker.human.slackIntents.apiKeyFile: set both or neither' "${mgsi[@]}" \

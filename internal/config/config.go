@@ -215,8 +215,20 @@ type PlanConfig struct {
 	// planner's candidates come from the factory's catalog; when set, only repositories both lists
 	// name are planned for, and an entry the factory does not serve logs a warning.
 	Repositories []string `json:"repositories,omitempty"`
+	// Internal is the governed model route for private and internal repositories (v5 P0-T1). Off
+	// when nil or Enabled is false: private repositories are then refused before any model call.
+	Internal *PlanInternalConfig `json:"internal,omitempty"`
 	// The class table (classes) was removed (WF13): a plan's roles and ceiling come from the
 	// factory's catalog at factoryURL.
+}
+
+// PlanInternalConfig is human.intake.plan.internal: the governed model route used whenever a plan's
+// candidates include a non-public repository (v5 P0-T1). Both URL and APIKeyFile are required when
+// Enabled is true.
+type PlanInternalConfig struct {
+	Enabled    bool   `json:"enabled,omitempty"`
+	URL        string `json:"url,omitempty"`
+	APIKeyFile string `json:"apiKeyFile,omitempty"`
 }
 
 // IntakePlan is the planner's config with its defaults applied: `tier-frontier`, 20 s, 50 plans a day,
@@ -265,6 +277,21 @@ func (i IntakeConfig) validate() []error {
 	if p.URL != "" {
 		if u, err := url.Parse(p.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
 			errs = append(errs, fmt.Errorf("human.intake.plan.url: %q must be an absolute http(s)://host[:port]/ URL with no userinfo", p.URL))
+		}
+	}
+	if p.Internal != nil {
+		if p.Internal.Enabled {
+			if p.Internal.URL == "" {
+				errs = append(errs, errors.New("human.intake.plan.internal.url: is required when the internal planner route is enabled"))
+			}
+			if p.Internal.APIKeyFile == "" {
+				errs = append(errs, errors.New("human.intake.plan.internal.apiKeyFile: is required when the internal planner route is enabled"))
+			}
+		}
+		if p.Internal.URL != "" {
+			if u, err := url.Parse(p.Internal.URL); err != nil || u.Host == "" || u.User != nil || (u.Scheme != "http" && u.Scheme != "https") {
+				errs = append(errs, fmt.Errorf("human.intake.plan.internal.url: %q must be an absolute http(s)://host[:port]/ URL with no userinfo", p.Internal.URL))
+			}
 		}
 	}
 	if p.Model != PlanModel {

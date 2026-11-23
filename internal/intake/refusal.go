@@ -69,7 +69,7 @@ const (
 // diagnostic — the field and the bound — goes, so it reads beside the diagnosis rather than after
 // the remedy; a sentence without one takes no diagnostic, and refuse() enforces that.
 var sentences = map[string]string{
-	ReasonPrivateRepository:         "the planner reads public text only, and this repository is not public; file the draft with `issue_draft` and `issue_file` using your own model, or wait for the internal route",
+	ReasonPrivateRepository:         "the planner's internal route is not configured, and this repository is not public; configure human.intake.plan.internal to plan private repositories, or file the issue on GitHub",
 	ReasonRepositoryNotAllowed:      "no repository the allowlist serves and you may write in matches this request; name one of the repositories listed",
 	ReasonNoWrite:                   "you cannot write to this repository; ask for one you may write in, or show the draft to someone who can file it",
 	ReasonInvalidDraft:              "the draft is not the issue template `<area>: <what is wrong>`, then the three headings in order",

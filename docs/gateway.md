@@ -340,6 +340,7 @@ client has its own route and its own audience:
 | Client | Route | Token audience | Gateway values |
 |---|---|---|---|
 | planner | `/clients/planner/v1` | `<audiencePrefix>.client.planner` | `clients.planner: {enabled, provider, model}` |
+| plannerInternal | `/clients/planner-internal/v1` | `<audiencePrefix>.client.planner-internal` | `clients.plannerInternal: {enabled, provider, model}` (`providers.<name>.dataClasses` must include `internal`) |
 | classifier | `/clients/classifier/v1` | `<audiencePrefix>.client.classifier` | `clients.classifier: {enabled, provider, model}` |
 
 A token for one client gets 403 on the other client's route. The gateway forces the model to the
@@ -362,7 +363,7 @@ With `service` set, the broker's pod mounts one projected token per client at
 reads it at each call, so the kubelet's rotation needs no restart. The broker's network policy may
 reach the gateway's pods on `port`. The chart then fills two blocks of the broker's config:
 
-- `human.intake.plan`, when it is enabled: `url` becomes `http://<service>.<namespace>.svc.<clusterDomain>:<port>/clients/planner/v1`, and `apiKeyFile` becomes the planner's token;
+- `human.intake.plan`, when it is enabled: `url` becomes `http://<service>.<namespace>.svc.<clusterDomain>:<port>/clients/planner/v1`, and `apiKeyFile` becomes the planner's token; when `human.intake.plan.internal.enabled` is true, its `url` and `apiKeyFile` likewise fill `/clients/planner-internal/v1` and `/var/run/secrets/maku/model-gateway/planner-internal` so plans touching private or internal repositories (whose `Repository` sets `spec.privateCode.acknowledged: true`) route exclusively over an `internal`-class provider and read repository paths with a short-lived `contents: read` GitHub App token;
 - `human.slackIntents`, only when the block exists: the classifier's route and token.
 
 The two keys are filled together, and only when the block sets neither. A block that sets both keeps

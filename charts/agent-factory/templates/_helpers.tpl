@@ -284,7 +284,7 @@ to serve that client: otherwise every plan or classification would answer 404. *
 {{- $human := .Values.maku.broker.human | default dict -}}
 {{- $clients := $gw.clients | default dict -}}
 {{- $served := list -}}
-{{- range $c := list "planner" "classifier" -}}
+{{- range $c := list "planner" "plannerInternal" "classifier" -}}
 {{- if (index $clients $c | default dict).enabled -}}{{- $served = append $served $c -}}{{- end -}}
 {{- end -}}
 {{- if and $served (ne ($mg.service | default "") $gw.name) -}}
@@ -303,6 +303,10 @@ to serve that client: otherwise every plan or classification would answer 404. *
 {{- $plan := dig "intake" "plan" dict $human -}}
 {{- if and $plan.enabled (not $plan.url) (not (has "planner" $served)) -}}
 {{- fail "maku.broker.human.intake.plan routes through maku-gateway (no url set), but maku-gateway.clients.planner.enabled is false: give the planner its provider and model there" -}}
+{{- end -}}
+{{- $pi := $plan.internal | default dict -}}
+{{- if and $plan.enabled $pi.enabled (not $pi.url) (not (has "plannerInternal" $served)) -}}
+{{- fail "maku.broker.human.intake.plan.internal routes through maku-gateway (no url set), but maku-gateway.clients.plannerInternal.enabled is false: give the internal planner an internal-class provider and model there" -}}
 {{- end -}}
 {{- if and $human.slackIntents (not $human.slackIntents.url) (not (has "classifier" $served)) -}}
 {{- fail "maku.broker.human.slackIntents routes through maku-gateway (no url set), but maku-gateway.clients.classifier.enabled is false: give the classifier its provider and model there" -}}
