@@ -10,6 +10,12 @@ Residual: maku.networkPolicies.kubernetes.apiServerCIDRs is empty, so the broker
 {{- else if eq ((.Values.maku.networkPolicies | default dict).mode | default "") "none" }}
 Network policy: mode none: nothing confines the runs' network (the install banner says so); only the bundled Postgres, if on, admits the broker alone. Not for untrusted repositories.
 {{- end }}
+{{- if and .Values.postgres.enabled (not .Values.demoValues) }}
+Database: bundled Tier-1 Pilot PostgreSQL (single replica, TLS 1.3, T12 roles intact).
+{{- if not (dig "backup" "enabled" false .Values.postgres) }}
+Backups: postgres.backup.enabled is false; take CSI VolumeSnapshots or enable scheduled S3/GCS dumps (docs/database.md).
+{{- end }}
+{{- end }}
 {{- if and .Values.monitoring.serviceMonitor.enabled .Values.agentgateway.enabled }}
 Monitoring: the umbrella scrapes the model-gateway proxies (PodMonitor maku-gateway) but not the agentgateway controller. Set agentgateway.monitoring.enabled=true for the controller's ServiceMonitor, with agentgateway.monitoring.proxy.podMonitor.enabled=false so the proxies are not scraped twice.
 {{- end }}

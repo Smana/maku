@@ -196,13 +196,18 @@ broker:
     caSecret: ""
     # Pod label that selects the PostgreSQL pods in the release namespace (CNPG's by default).
     podLabel: cnpg.io/cluster
-    # networkPolicies.mode kubernetes only: exact labels that select the PostgreSQL pods instead of
-    # podLabel's key (e.g. {app.kubernetes.io/name: rooms-db}, the demo's).
+    # Exact labels that select the PostgreSQL pods instead of podLabel's key (in both kubernetes
+    # and cilium networkPolicies modes, e.g. {app.kubernetes.io/name: rooms-db}).
     podLabels: {}
     # A database outside the cluster (a managed service): the broker's and the retention job's
     # egress on 5432 goes to these CIDRs instead of podLabel(s).
     egress:
       cidrs: []
+    # Tier-1 Pilot operational notices (v5 DB2, DB4): set by the umbrella when using the bundled
+    # single-replica Postgres outside demoValues; shown on the install banner without marking the
+    # install demo-only.
+    singleReplica: false
+    backupsOff: false
   # The daily purge of expired rooms, intent samples and push bundles, as rooms_retention (rendered
   # with database.retentionSecret). DELETE-only: its row-level security exposes nothing else.
   retention:

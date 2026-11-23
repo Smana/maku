@@ -894,6 +894,8 @@ const (
 	UnsafeNetworkPolicyNone = "network_policy_none"  // nothing confines a run's network
 	UnsafeSharedGitToken    = "shared_git_token"     // every role shares one write token
 	UnsafeModelKeyInSandbox = "model_key_in_sandbox" // model.mode secret: the provider key is in every run (v4 step 8, R4)
+	UnsafeDBSingleReplica   = "db_single_replica"    // bundled single-replica Postgres (v5 DB2): brief downtime on restart or drain
+	UnsafeDBBackupsOff      = "db_backups_off"       // bundled Postgres has no scheduled backup CronJob (v5 DB4)
 
 	// UnsafePrivateCodeUnacknowledged is the factory's code, never the chart's: a served repository
 	// is private code without spec.privateCode.acknowledged (v4 D3). The broker reads it from the
@@ -912,7 +914,7 @@ type Install struct {
 
 func (i Install) validate() []error {
 	var errs []error
-	known := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken, UnsafeModelKeyInSandbox}
+	known := []string{UnsafeAllowRunc, UnsafeNetworkPolicyNone, UnsafeSharedGitToken, UnsafeModelKeyInSandbox, UnsafeDBSingleReplica, UnsafeDBBackupsOff}
 	for n, code := range i.Unsafe {
 		switch {
 		case !slices.Contains(known, code):

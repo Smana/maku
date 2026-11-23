@@ -40,6 +40,13 @@ describe("the install banner", () => {
     expect(b.textContent).toContain("spec.privateCode.acknowledged");
     expect(b.textContent!.endsWith("Use this install for demos only.")).toBe(true);
   });
+  it("shows Tier-1 bundled database notices without marking the install demo-only (v5 DB2, DB4)", () => {
+    const b = renderInstallBanner(["db_single_replica", "db_backups_off"])!;
+    expect(b.getAttribute("role")).toBe("alert");
+    expect(b.textContent).toContain("single bundled replica (Tier-1 Pilot)");
+    expect(b.textContent).toContain("Scheduled backups are off");
+    expect(b.textContent).not.toContain("Use this install for demos only.");
+  });
   it("is mounted above the page from GET /api/install", async () => {
     document.body.innerHTML = `<div id="app"></div>`;
     const app = document.getElementById("app")!;

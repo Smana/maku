@@ -123,15 +123,68 @@
       }
     },
     "postgres": {
-      "description": "The single-replica rooms database, demo-only (v4 D9).",
+      "description": "The single-replica bundled rooms database (v5 DB1-DB4): demo (values-demo.yaml) or Tier-1 Pilot (acknowledgeSingleReplica + TLS).",
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "enabled": {"description": "The bundled Postgres: demo-only (v4 D9). Off, the broker reads the DSN Secrets maku.broker.database names.", "type": "boolean"},
+        "enabled": {"description": "Enable the bundled Postgres StatefulSet. Off by default: production brings its own HA Postgres.", "type": "boolean"},
+        "acknowledgeSingleReplica": {"description": "Required outside values-demo.yaml to acknowledge single-replica RTO in Tier-1 Pilot.", "type": "boolean"},
         "image": {"type": "string", "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"},
         "storage": {"type": "string", "pattern": "^[0-9]+(Mi|Gi|Ti)$"},
         "storageClassName": {"type": "string"},
-        "resources": {"type": "object"}
+        "resources": {"type": "object"},
+        "tls": {
+          "description": "TLS 1.3 for the bundled Postgres (required outside values-demo.yaml).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "mode": {"type": "string", "enum": ["disabled", "helm", "cert-manager", "existing"]},
+            "issuerRef": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {"type": "string", "enum": ["ClusterIssuer", "Issuer"]},
+                "name": {"type": "string"}
+              }
+            },
+            "secretName": {"type": "string", "minLength": 1},
+            "caSecretName": {"type": "string", "minLength": 1},
+            "days": {"type": "integer", "minimum": 1},
+            "caName": {"type": "string", "minLength": 1}
+          }
+        },
+        "backup": {
+          "description": "Optional scheduled pg_dump CronJob uploading to S3/GCS (v5 DB4).",
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {"type": "boolean"},
+            "schedule": {"type": "string", "minLength": 1},
+            "destination": {"type": "string"},
+            "endpoint": {"type": "string"},
+            "uploader": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "image": {"type": "string", "pattern": "^(|[^@\\s]+@sha256:[0-9a-f]{64})$"},
+                "command": {"type": "array", "items": {"type": "string"}},
+                "env": {"type": "array", "items": {"type": "object"}},
+                "envFrom": {"type": "array", "items": {"type": "object"}},
+                "serviceAccountName": {"type": "string"}
+              }
+            },
+            "egress": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "cidrs": {"type": "array", "items": {"type": "string"}},
+                "toFQDNs": {"type": "array", "items": {"type": "object"}},
+                "to": {"type": "array", "items": {"type": "object"}}
+              }
+            },
+            "resources": {"type": "object"}
+          }
+        }
       }
     },
     "networkPolicies": {

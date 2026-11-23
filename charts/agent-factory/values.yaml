@@ -9,11 +9,51 @@
 # are built from it.
 clusterDomain: cluster.local
 
-# The bundled single-replica Postgres is demo-only (v4 D9): bring your own Postgres 16 or later, create
-# its three roles (docs/database.md), and name their DSN Secrets in maku.broker.database. values-demo.yaml
-# turns it on; without its demoValues, on fails the render.
+# The bundled single-replica Postgres (v5 DB1-DB4): off by default (production brings its own HA
+# Postgres 16+, docs/database.md).
+#   - Demo (-f values-demo.yaml): admits postgres.enabled: true with tls.mode: disabled.
+#   - Tier-1 Pilot: set postgres.enabled: true, postgres.acknowledgeSingleReplica: true, and
+#     postgres.tls.mode (helm, cert-manager or existing) for a zero-external-DB install that keeps
+#     TLS 1.3 and all three T12 database roles.
 postgres:
   enabled: false
+  # Required outside values-demo.yaml: explicitly acknowledges single-replica RTO in Tier-1 Pilot.
+  acknowledgeSingleReplica: false
+  image: docker.io/library/postgres:17@sha256:748a18a54d3842d43bc156f0840d78029b8d349e0feca98c12b9c4ce3404a6b3
+  storage: 20Gi
+  storageClassName: ""
+  resources:
+    requests: {cpu: 250m, memory: 512Mi}
+    limits: {cpu: "2", memory: 2Gi}
+  tls:
+    # disabled (demoValues only) | helm (generated CA + cert, kept across upgrades) |
+    # cert-manager (Certificate from issuerRef) | existing (user-supplied secretName + caSecretName).
+    mode: disabled
+    issuerRef: {kind: ClusterIssuer, name: ""}
+    secretName: rooms-db-tls
+    caSecretName: rooms-db-ca
+    days: 3650
+    caName: maku-db-ca
+  # Optional scheduled pg_dump CronJob for Tier-1 Pilot (DB4). Off by default: PVC-only + CSI
+  # VolumeSnapshots work without an object store; enable to push custom-format dumps to S3/GCS.
+  backup:
+    enabled: false
+    schedule: "15 2 * * *"
+    destination: ""
+    endpoint: ""
+    uploader:
+      image: ""
+      command: []
+      env: []
+      envFrom: []
+      serviceAccountName: ""
+    egress:
+      cidrs: []
+      toFQDNs: []
+      to: []
+    resources:
+      requests: {cpu: 50m, memory: 128Mi}
+      limits: {cpu: 500m, memory: 512Mi}
 
 # Off in the skeleton: only the umbrella's own templates render, each behind the gate, so a missing
 # seam fails with the gate's message rather than a subchart's. values-demo.yaml turns both on.

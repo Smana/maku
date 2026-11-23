@@ -137,6 +137,8 @@
             "retentionSecret": {"$ref": "#/definitions/secretName"},
             "secretKey": {"type": "string", "pattern": "^[-._a-zA-Z0-9]+$"},
             "caSecret": {"$ref": "#/definitions/secretName"},
+            "singleReplica": {"type": "boolean"},
+            "backupsOff": {"type": "boolean"},
             "egress": {
               "type": "object",
               "additionalProperties": false,

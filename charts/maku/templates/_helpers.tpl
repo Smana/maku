@@ -93,6 +93,8 @@ settings count, so an install without it (the XR) lists none and renders as befo
 {{- if (include "ap.gitSecret" . | fromJson).name -}}{{- $codes = append $codes "shared_git_token" -}}{{- end -}}
 {{- if not (include "ap.runModelGateway" . | fromJson) -}}{{- $codes = append $codes "model_key_in_sandbox" -}}{{- end -}}
 {{- end -}}
+{{- if .Values.broker.database.singleReplica -}}{{- $codes = append $codes "db_single_replica" -}}{{- end -}}
+{{- if .Values.broker.database.backupsOff -}}{{- $codes = append $codes "db_backups_off" -}}{{- end -}}
 {{- $codes | toJson -}}
 {{- end -}}
 
@@ -171,8 +173,13 @@ by database.podLabels or podLabel, or database.egress.cidrs for a database outsi
 - toEndpoints:
     - matchLabels:
         io.kubernetes.pod.namespace: {{ $.Release.Namespace }}
+        {{- with $db.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- if not $db.podLabels }}
       matchExpressions:
         - {key: {{ $db.podLabel }}, operator: Exists}
+      {{- end }}
 {{- end }}
   toPorts:
     - ports: [{port: "5432", protocol: TCP}]

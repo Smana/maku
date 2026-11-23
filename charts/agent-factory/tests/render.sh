@@ -186,8 +186,8 @@ pbad() {
   grep -qF -- "$want" <<<"$msg" || { echo "FAIL: production: $* does not fail with \"$want\" (got: $msg)" >&2; fail=1; }
 }
 # each demo-only setting fails without demoValues, naming values-demo.yaml
-pbad 'postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone' "${prod[@]}" --set postgres.enabled=true
-pbad 'postgres.enabled: the bundled Postgres is demo-only (D9), admitted by values-demo.yaml alone' "${img[@]}" --set postgres.enabled=true
+pbad 'postgres.enabled: the bundled Postgres is single-replica (D9, v5 DB2); for Tier-1 Pilot set postgres.acknowledgeSingleReplica: true' "${prod[@]}" --set postgres.enabled=true
+pbad 'postgres.enabled: the bundled Postgres is single-replica (D9, v5 DB2); for Tier-1 Pilot set postgres.acknowledgeSingleReplica: true' "${img[@]}" --set postgres.enabled=true
 pbad 'maku.demoValues: the maku chart'"'"'s demo marker, which admits runController.model.mode secret (the provider key in the sandbox, D7); values-demo.yaml sets it' "${prod[@]}" --set maku.demoValues=true
 pbad 'maku-factory.demo, maku-factory.config.demo: the factory'"'"'s laptop demo mode, admitted by values-demo.yaml alone' "${prod[@]}" --set maku-factory.demo=true
 # model.mode secret puts the provider key in the sandbox (D7): demo-only, so production refuses it
@@ -195,7 +195,7 @@ pbad '  - maku.runController.model.mode: secret is demo-only (D7), admitted by v
 pbad 'maku.sandbox.unsafeAllowRunc: runs on the node'"'"'s own runtime are for the demo and kind only (D18), admitted by values-demo.yaml alone' "${prod[@]}" --set maku.sandbox.unsafeAllowRunc=true --set maku.sandbox.runtimeClassName=
 # values-demo.yaml without its marker is production: every demo-only setting it carries is listed
 msg="$(helm template af . -n maku "${img[@]}" -f values-demo.yaml -f tests/values-demo-secret.yaml "${secrets[@]}" --set demoValues=false 2>&1 >/dev/null || true)"
-for line in 'postgres.enabled: the bundled Postgres is demo-only' 'maku.demoValues: the maku chart'"'"'s demo marker' 'maku.sandbox.unsafeAllowRunc:' 'maku-factory.demo, maku-factory.config.demo:'; do
+for line in 'postgres.enabled: the bundled Postgres is single-replica' 'maku.demoValues: the maku chart'"'"'s demo marker' 'maku.sandbox.unsafeAllowRunc:' 'maku-factory.demo, maku-factory.config.demo:'; do
   grep -qF -- "  - $line" <<<"$msg" || { echo "FAIL: values-demo.yaml without demoValues does not list '$line' (got: $msg)" >&2; fail=1; }
 done
 pbad "removed in v4 step 8: set sandbox.unsafeAllowRunc" "${prod[@]}" --set maku.runController.allowUnsandboxed=true
@@ -939,6 +939,41 @@ ykind MergePolicy '((.metadata.labels."maku.ogenki.io/catalog" == "true") and (.
 [[ $(catalog "${args[@]}" --set-json 'mergePolicies.catalog.exclude=["docs"]') == "deps-patch docs-links revert" ]] || { echo "FAIL: exclude [docs] does not leave three" >&2; fail=1; }
 [[ -z $(catalog "${args[@]}" --set mergePolicies.catalog.enabled=false) ]] || { echo "FAIL: mergePolicies.catalog.enabled=false still renders a catalog policy" >&2; fail=1; }
 [[ -z $(catalog "${img[@]}") ]] || { echo "FAIL: the skeleton, with no factory, renders a catalog policy" >&2; fail=1; }
+
+# Tier-1 Pilot hardened bundled Postgres (v5 DB1-DB4): requires acknowledgeSingleReplica, TLS, matching
+# DSN/CA/podLabels, and singleReplica/backupsOff install-banner notices.
+pilot=("${prod[@]}" -f values-pilot.example.yaml)
+out="$(helm template af . -n maku "${pilot[@]}")" || { echo "FAIL: Tier-1 Pilot bundled Postgres overlay does not render" >&2; fail=1; out=''; }
+ykind StatefulSet 'select(.metadata.name == "rooms-db") | (.spec.replicas == 1 and .spec.volumeClaimTemplates[0].spec.resources.requests.storage == "20Gi" and (.spec.template.spec.initContainers[0].name == "tls-perms") and (.spec.template.spec.containers[0].args | join(" ") | contains("ssl_min_protocol_version=TLSv1.3")))' 'Tier-1 Pilot: rooms-db is 20Gi, runs tls-perms initContainer, and enforces TLS 1.3'
+ykind Secret 'select(.metadata.name == "rooms-broker-dsn") | .stringData.uri | test("^postgresql://rooms_broker:[A-Za-z0-9]{32}@rooms-db[.]maku[.]svc[.]cluster[.]local:5432/rooms[?]sslmode=verify-full&sslrootcert=/etc/room-broker/db-ca/ca[.]crt$")' 'Tier-1 Pilot: rooms-broker-dsn uses sslmode=verify-full with mounted DB CA'
+ykind Secret 'select(.metadata.name == "rooms-db-tls") | (.type == "kubernetes.io/tls" and .metadata.annotations."helm.sh/resource-policy" == "keep")' 'Tier-1 Pilot (tls.mode helm): renders kept rooms-db-tls Secret'
+ykind Secret 'select(.metadata.name == "rooms-db-ca") | (.data."ca.crt" != null and .metadata.annotations."helm.sh/resource-policy" == "keep")' 'Tier-1 Pilot (tls.mode helm): renders kept rooms-db-ca Secret'
+ykind ConfigMap 'select(.metadata.name == "rooms-db-init") | .data."init.sh" | contains("hostssl all all      0.0.0.0/0    scram-sha-256")' 'Tier-1 Pilot: pg_hba.conf enforces hostssl + scram-sha-256'
+ykind NetworkPolicy 'select(.metadata.name == "rooms-db") | ((.spec.policyTypes | join(",")) == "Ingress,Egress" and (.spec.egress | length) == 0)' 'Tier-1 Pilot (kubernetes): rooms-db default-denies egress too'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "db_single_replica,db_backups_off"' 'Tier-1 Pilot: install banner carries db_single_replica and db_backups_off'
+ynone 'select(.kind == "CronJob" and .metadata.name == "rooms-db-backup")' 'Tier-1 Pilot: backup off renders no rooms-db-backup CronJob'
+# cert-manager TLS mode renders a Certificate
+out="$(helm template af . -n maku "${pilot[@]}" --set postgres.tls.mode=cert-manager --set postgres.tls.issuerRef.name=platform-ca)" || { echo "FAIL: Tier-1 Pilot cert-manager TLS does not render" >&2; fail=1; out=''; }
+ykind Certificate 'select(.metadata.name == "rooms-db-tls") | (.spec.issuerRef.name == "platform-ca" and (.spec.dnsNames | join(",")) == "rooms-db.maku.svc,rooms-db.maku.svc.cluster.local")' 'Tier-1 Pilot (cert-manager): renders Certificate rooms-db-tls with cluster SANs'
+ynone 'select(.kind == "Secret" and (.metadata.name == "rooms-db-tls" or .metadata.name == "rooms-db-ca"))' 'Tier-1 Pilot (cert-manager): renders no Helm-generated TLS Secrets'
+# Cilium mode renders CiliumNetworkPolicy for rooms-db and broker egress to rooms-db podLabels
+out="$(helm template af . -n maku "${pilot[@]}" --set maku.networkPolicies.mode=cilium --set networkPolicies.factory.enabled=false)" || { echo "FAIL: Tier-1 Pilot cilium mode does not render" >&2; fail=1; out=''; }
+ykind CiliumNetworkPolicy 'select(.metadata.name == "rooms-db") | ((.spec.egress | length) == 0 and .spec.ingress[0].fromEndpoints[0].matchLabels."app.kubernetes.io/name" == "room-broker")' 'Tier-1 Pilot (cilium): renders default-deny CiliumNetworkPolicy for rooms-db'
+# Optional backup CronJob (DB4)
+out="$(helm template af . -n maku "${pilot[@]}" --set postgres.backup.enabled=true --set maku.broker.database.backupsOff=false \
+  --set postgres.backup.destination=s3://maku-backups/pilot \
+  --set postgres.backup.uploader.image=ghcr.io/example/uploader:v1@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
+  --set-json 'postgres.backup.uploader.command=["/bin/upload"]' \
+  --set-json 'postgres.backup.egress.cidrs=["198.51.100.0/24"]')" || { echo "FAIL: Tier-1 Pilot with backup enabled does not render" >&2; fail=1; out=''; }
+jkind CronJob 'select(.metadata.name == "rooms-db-backup") | (.spec.jobTemplate.spec.template.spec.initContainers[0].name == "dump" and .spec.jobTemplate.spec.template.spec.containers[0].name == "upload" and (.spec.jobTemplate.spec.template.spec.containers[0].env | map(.name) | index("ROOMS_DATABASE_URL")) == null)' 'Tier-1 Pilot backup: separates pg_dump initContainer from credential-less upload container'
+ykind NetworkPolicy 'select(.metadata.name == "rooms-db-backup") | (.spec.policyTypes | join(",") == "Ingress,Egress" and (.spec.ingress | length) == 0)' 'Tier-1 Pilot backup: default-deny NetworkPolicy on rooms-db-backup'
+ykind ConfigMap 'select(.metadata.name == "room-broker-config") | (.data."config.yaml" | from_yaml | .install.unsafe | join(",")) == "db_single_replica"' 'Tier-1 Pilot backup on: clears db_backups_off while keeping db_single_replica'
+# Negative gates for Tier-1 bundled Postgres
+pbad 'postgres.tls.mode: TLS is required for bundled Postgres outside values-demo.yaml' "${pilot[@]}" --set postgres.tls.mode=disabled
+pbad 'postgres.tls.issuerRef.name: required when postgres.tls.mode is cert-manager' "${pilot[@]}" --set postgres.tls.mode=cert-manager
+pbad 'maku.broker.database.singleReplica: set true with bundled Postgres' "${pilot[@]}" --set maku.broker.database.singleReplica=false
+pbad 'maku.broker.database.backupsOff: set true when postgres.backup.enabled is false' "${pilot[@]}" --set maku.broker.database.backupsOff=false
+pbad 'postgres.backup.destination: set the S3 or GCS target' "${pilot[@]}" --set postgres.backup.enabled=true --set maku.broker.database.backupsOff=false
 
 [[ $fail == 0 ]] || exit 1
 echo "agent-factory chart render checks passed"
