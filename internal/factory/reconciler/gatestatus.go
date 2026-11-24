@@ -6,10 +6,15 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/forge"
 )
+
+// gateStatusRollbackTimeout bounds the detached context used to withdraw a posted maku/merge-gate
+// success when the merge call fails on context cancellation or timeout.
+const gateStatusRollbackTimeout = 10 * time.Second
 
 // GateStatusContext is the commit status the gate posts its own verdict as, when
 // merge.gateStatus is on.
@@ -65,9 +70,21 @@ func (r *Reconciler) postGateStatus(ctx context.Context, t *v1alpha1.Task, head 
 // withdrawGateStatus replaces a success this pass posted on head with d's state, once the factory
 // did not merge it after all: no path leaves success on a head the factory did not merge, which a
 // ruleset requiring maku/merge-gate would read as a standing permit. It posts whatever the head
-// carried before the pass, since the success came after that read. A failed post is logged.
+// carried before the pass, since the success came after that read, using a bounded context
+// detached from ctx's cancellation so a cancelled or timed-out Merge still withdraws success.
+// A failed post is logged.
 func (r *Reconciler) withdrawGateStatus(ctx context.Context, t *v1alpha1.Task, head string, d ArmDecision) {
-	_ = r.postGateStatus(ctx, t, head, forge.Checks{}, d)
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gateStatusRollbackTimeout)
+	defer cancel()
+	_ = r.postGateStatus(rollbackCtx, t, head, forge.Checks{}, d)
+}
+
+// withdrawStatusAs is withdrawGateStatus for postStatusAs (e.g. a revert pull request whose
+// Merge failed on cancellation or timeout).
+func (r *Reconciler) withdrawStatusAs(ctx context.Context, t *v1alpha1.Task, head, class string, d ArmDecision) {
+	rollbackCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), gateStatusRollbackTimeout)
+	defer cancel()
+	_ = r.postStatusAs(rollbackCtx, t, head, class, d)
 }
 
 // postStatusAs posts d as maku/merge-gate on head under class's name, unconditionally: the

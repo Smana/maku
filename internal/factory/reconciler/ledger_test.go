@@ -4,6 +4,7 @@ package reconciler
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"log/slog"
 	"regexp"
@@ -373,5 +374,133 @@ func TestATrippedClassRecoversOnCleanMatureMerges(t *testing.T) {
 	}
 	if d, _ := Demoted(three, config.Breaker{Window: 10, MaxReverts: 1}); !d {
 		t.Fatal("recoverAfter 0 keeps today's rule")
+	}
+}
+
+// SEC-M5: githubLedger fails closed with errLedgerTruncated when AutoMergedLabel fills a full page
+// inside the breaker window or today, even when ext == false (no monitor, maxFollowUps == 0).
+func TestGithubLedgerTruncatedFailsClosedWithoutExt(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	rc := g.r.Cfg.Current().Repositories[0]
+	rc.Merge.Breaker = config.Breaker{Window: 10, MaxReverts: 1}
+	for i := 1; i <= ledgerPage; i++ {
+		g.f.SetPR(forge.PR{
+			Number:   100 + i,
+			State:    "MERGED",
+			MergedAt: now.Add(-time.Duration(i) * time.Minute),
+			Labels:   []string{AutoMergedLabel("docs-links")},
+		})
+	}
+	if _, err := g.r.githubLedger(t.Context(), &rc); !errors.Is(err, errLedgerTruncated) {
+		t.Fatalf("githubLedger err = %v, want errLedgerTruncated", err)
+	}
+}
+
+// SEC-M6: factory/drill on a revert PR requires CanWrite in addition to IsMaintainer (when
+// CanWrite is configured); merger login is exempt.
+func TestDrillRequiresCanWriteInAdditionToMaintainer(t *testing.T) {
+	for name, tc := range map[string]struct {
+		actor    string
+		canWrite func(context.Context, string, string) (bool, error)
+		want     bool
+		wantErr  bool
+	}{
+		"maintainer with write": {
+			actor:    "Smana",
+			canWrite: func(context.Context, string, string) (bool, error) { return true, nil },
+			want:     true,
+		},
+		"maintainer without write": {
+			actor:    "Smana",
+			canWrite: func(context.Context, string, string) (bool, error) { return false, nil },
+			want:     false,
+		},
+		"maintainer CanWrite error fails closed": {
+			actor:    "Smana",
+			canWrite: func(context.Context, string, string) (bool, error) { return false, errors.New("github down") },
+			wantErr:  true,
+		},
+		"merger login does not need CanWrite": {
+			actor:    "ogenki-agent-merger[bot]",
+			canWrite: func(context.Context, string, string) (bool, error) { return false, nil },
+			want:     true,
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+			g.r.CanWrite = tc.canWrite
+			g.f.SetEvents(901, forge.LabelEvent{Actor: tc.actor, Label: DrillLabel, At: now})
+			rc := &g.r.Cfg.Current().Repositories[0]
+			got, err := g.r.drill(t.Context(), rc, forge.LabelledPull{Number: 901, Labels: []string{DrillLabel}})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("drill = (%v, %v), want (%v, nil)", got, err, tc.want)
+			}
+		})
+	}
+}
+
+type blockingLedgerMerger struct {
+	forge.Merger
+	started chan struct{}
+	release chan struct{}
+}
+
+func (m *blockingLedgerMerger) PullsWithLabel(ctx context.Context, label string) ([]forge.LabelledPull, error) {
+	if m.started != nil {
+		select {
+		case <-m.started:
+		default:
+			close(m.started)
+		}
+		<-m.release
+	}
+	return m.Merger.PullsWithLabel(ctx, label)
+}
+
+// PERF-M11: githubLedger tracks loaded classes per repo (so newly added classes are fetched without
+// re-reading existing ones) and does not hold r.ledger.mu across GitHub calls.
+func TestGithubLedgerLoadsNewDynamicClassWithoutHoldingLock(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	rc := g.r.Cfg.Current().Repositories[0]
+	rc.Classes = map[string]config.Class{"docs-links": {Live: true}}
+	g.f.SetPR(forge.PR{Number: 101, State: "MERGED", MergedAt: now.Add(-time.Hour), Labels: []string{AutoMergedLabel("docs-links")}})
+	g.f.SetPR(forge.PR{Number: 102, State: "MERGED", MergedAt: now.Add(-time.Hour), Labels: []string{AutoMergedLabel("new-class")}})
+
+	got, err := g.r.githubLedger(t.Context(), &rc)
+	if err != nil || len(got["docs-links"]) != 1 {
+		t.Fatalf("initial load: %+v %v", got, err)
+	}
+	// Add a new dynamic class and verify it is loaded without re-reading docs-links.
+	rc.Classes["new-class"] = config.Class{Live: true}
+	bm := &blockingLedgerMerger{Merger: g.f, started: make(chan struct{}), release: make(chan struct{})}
+	g.r.Merger = bm
+	done := make(chan error, 1)
+	go func() {
+		_, err := g.r.githubLedger(t.Context(), &rc)
+		done <- err
+	}()
+	<-bm.started
+	// While GitHub call is in flight for new-class, r.ledger.mu must NOT be held: reading an
+	// already-loaded subset (docs-links only) must return immediately without blocking.
+	rcOld := rc
+	rcOld.Classes = map[string]config.Class{"docs-links": {Live: true}}
+	cached, err := g.r.githubLedger(t.Context(), &rcOld)
+	if err != nil || len(cached["docs-links"]) != 1 {
+		close(bm.release)
+		t.Fatalf("concurrent cached read blocked or failed: %+v %v", cached, err)
+	}
+	close(bm.release)
+	if err := <-done; err != nil {
+		t.Fatalf("dynamic class load failed: %v", err)
+	}
+	got, err = g.r.githubLedger(t.Context(), &rc)
+	if err != nil || len(got["new-class"]) != 1 || got["new-class"][0].Number != 102 {
+		t.Fatalf("dynamic class missing: %+v %v", got, err)
 	}
 }

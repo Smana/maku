@@ -3,6 +3,7 @@
 package forge
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -2751,3 +2752,208 @@ func TestDiscardCalls(t *testing.T) {
 		t.Errorf("a deleted issue: %v", err)
 	}
 }
+
+// REL-M11: Connect's *tokens implements Invalidate() so a 401 drops the cached token and mints a
+// fresh one on the next call, and repeated 401s also re-discover the installation id.
+func TestTokensInvalidateOn401(t *testing.T) {
+	_, pemKey := newKey(t)
+	dir := t.TempDir()
+	idFile, keyFile := filepath.Join(dir, "app_id"), filepath.Join(dir, "private_key")
+	if err := os.WriteFile(idFile, []byte("42\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(keyFile, pemKey, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 9, 30, 10, 0, 0, 0, time.UTC)
+	var mu sync.Mutex
+	installs, mints := 0, 0
+	var bearers []string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/installation", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		installs++
+		id := 100 + installs
+		mu.Unlock()
+		_, _ = fmt.Fprintf(w, `{"id":%d}`, id)
+	})
+	mux.HandleFunc("POST /app/installations/{id}/access_tokens", func(w http.ResponseWriter, _ *http.Request) {
+		mu.Lock()
+		mints++
+		tok := fmt.Sprintf("ghs_%d", mints)
+		mu.Unlock()
+		_, _ = fmt.Fprintf(w, `{"token":%q,"expires_at":%q}`, tok, now.Add(time.Hour).Format(time.RFC3339))
+	})
+	mux.HandleFunc("GET /rate_limit", func(w http.ResponseWriter, r *http.Request) {
+		auth := r.Header.Get("Authorization")
+		mu.Lock()
+		bearers = append(bearers, auth)
+		mu.Unlock()
+		if auth == "Bearer ghs_1" || auth == "Bearer ghs_2" {
+			http.Error(w, `{"message":"Bad credentials"}`, http.StatusUnauthorized)
+			return
+		}
+		_, _ = io.WriteString(w, `{"resources":{}}`)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	g, err := Connect(t.Context(), Options{
+		Repository: "owner/repo", AppIDFile: idFile, PrivateKeyFile: keyFile,
+		APIURL: srv.URL + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// First 401 invalidates ghs_1 -> next call mints ghs_2 without re-fetching installation.
+	if err := g.Ping(t.Context()); err == nil {
+		t.Fatal("expected 401 on ghs_1")
+	}
+	// Second 401 invalidates ghs_2 and clears installation -> next call re-fetches installation and mints ghs_3.
+	if err := g.Ping(t.Context()); err == nil {
+		t.Fatal("expected 401 on ghs_2")
+	}
+	if err := g.Ping(t.Context()); err != nil {
+		t.Fatalf("expected ghs_3 to succeed: %v", err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if installs != 2 || mints != 3 {
+		t.Fatalf("installs=%d mints=%d, want 2 and 3 (bearers=%q)", installs, mints, bearers)
+	}
+	if !slices.Equal(bearers, []string{"Bearer ghs_1", "Bearer ghs_2", "Bearer ghs_3"}) {
+		t.Fatalf("bearers=%q", bearers)
+	}
+}
+
+// SEC-M2: PullRequest and PullsWithLabel surface labels.pageInfo.hasNextPage as LabelsTruncated.
+func TestPullRequestAndPullsWithLabelReportLabelsTruncated(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Query     string         `json:"query"`
+			Variables map[string]any `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if !strings.Contains(body.Query, "pageInfo") || !strings.Contains(body.Query, "hasNextPage") {
+			t.Errorf("GraphQL query missing labels pageInfo.hasNextPage: %s", body.Query)
+		}
+		if strings.Contains(body.Query, "pullRequests(labels:") {
+			_, _ = io.WriteString(w, `{"data":{"repository":{"pullRequests":{"nodes":[
+				{"number":1,"state":"MERGED","mergedAt":"2026-09-30T09:00:00Z","labels":{"pageInfo":{"hasNextPage":true},"nodes":[{"name":"factory/auto-merged:docs"}]}},
+				{"number":2,"state":"MERGED","mergedAt":"2026-09-30T09:00:00Z","labels":{"pageInfo":{"hasNextPage":false},"nodes":[{"name":"factory/auto-merged:docs"}]}}
+			]}}}}`)
+			return
+		}
+		truncated := body.Variables["number"] == float64(10)
+		_, _ = fmt.Fprintf(w, `{"data":{"repository":{"pullRequest":{
+			"id":"PR_10","number":10,"url":"https://github.com/owner/repo/pull/10","title":"t","body":"b",
+			"state":"OPEN","baseRefName":"main","headRefName":"agent/x","headRefOid":"h1","isCrossRepository":false,
+			"labels":{"pageInfo":{"hasNextPage":%t},"nodes":[{"name":"docs"}]},
+			"reviews":{"pageInfo":{"hasPreviousPage":false},"nodes":[]},
+			"comments":{"nodes":[]},"commits":{"nodes":[]}
+		}}}}`, truncated)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	g, err := ConnectTokens(t.Context(), Options{
+		Repository: "owner/repo", APIURL: srv.URL + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: time.Now,
+	}, staticToken("ghs_ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr10, err := g.PullRequest(t.Context(), 10)
+	if err != nil || !pr10.LabelsTruncated {
+		t.Fatalf("PR #10: truncated=%v err=%v", pr10.LabelsTruncated, err)
+	}
+	pr11, err := g.PullRequest(t.Context(), 11)
+	if err != nil || pr11.LabelsTruncated {
+		t.Fatalf("PR #11: truncated=%v err=%v", pr11.LabelsTruncated, err)
+	}
+	lps, err := g.PullsWithLabel(t.Context(), "factory/auto-merged:docs")
+	if err != nil || len(lps) != 2 || !lps[0].LabelsTruncated || lps[1].LabelsTruncated {
+		t.Fatalf("PullsWithLabel: %+v err=%v", lps, err)
+	}
+}
+
+// SEC-M4: RevertPR returns HeadSHA from the created GraphQL revert and from an adopted open revert,
+// ignoring open reverts whose base is not main.
+func TestRevertPRReturnsHeadSHA(t *testing.T) {
+	var mode string
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/pulls", func(w http.ResponseWriter, _ *http.Request) {
+		if mode == "adopt" {
+			_, _ = io.WriteString(w, `[
+				{"number":50,"node_id":"PR_50","html_url":"https://github.com/owner/repo/pull/50","user":{"login":"merger[bot]"},
+				 "head":{"ref":"revert-12-bad","sha":"badsha","repo":{"full_name":"owner/repo"}},"base":{"ref":"develop","repo":{"full_name":"owner/repo"}}},
+				{"number":51,"node_id":"PR_51","html_url":"https://github.com/owner/repo/pull/51","user":{"login":"merger[bot]"},
+				 "head":{"ref":"revert-12-good","sha":"adoptsha","repo":{"full_name":"owner/repo"}},"base":{"ref":"main","repo":{"full_name":"owner/repo"}}}
+			]`)
+			return
+		}
+		_, _ = io.WriteString(w, `[]`)
+	})
+	mux.HandleFunc("POST /graphql", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"data":{"revertPullRequest":{"revertPullRequest":{"id":"PR_99","number":99,"url":"https://github.com/owner/repo/pull/99","headRefOid":"createdsha"}}}}`)
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	g, err := ConnectTokens(t.Context(), Options{
+		Repository: "owner/repo", APIURL: srv.URL + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: time.Now,
+	}, staticToken("ghs_ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	mode = "create"
+	rv, err := g.RevertPR(t.Context(), RevertOf{Number: 12, NodeID: "PR_12", Title: "Revert", By: "merger[bot]"})
+	if err != nil || rv.Number != 99 || rv.HeadSHA != "createdsha" {
+		t.Fatalf("created revert: %+v err=%v", rv, err)
+	}
+	mode = "adopt"
+	rv, err = g.RevertPR(t.Context(), RevertOf{Number: 12, NodeID: "PR_12", Title: "Revert", By: "merger[bot]"})
+	if err != nil || rv.Number != 51 || rv.HeadSHA != "adoptsha" {
+		t.Fatalf("adopted revert: %+v err=%v", rv, err)
+	}
+}
+
+// REL-M12: AllComments caps pagination at maxCommentPages so a huge thread cannot loop indefinitely.
+func TestAllCommentsCapsPages(t *testing.T) {
+	pages := 0
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /repos/owner/repo/issues/9/comments", func(w http.ResponseWriter, _ *http.Request) {
+		pages++
+		w.Header().Set("Link", fmt.Sprintf(`<%s/repos/owner/repo/issues/9/comments?page=%d>; rel="next"`, srv.URL, pages+1))
+		_, _ = fmt.Fprintf(w, `[{"id":%d,"body":"p%d","user":{"login":"a"},"created_at":"2026-09-30T10:00:00Z","updated_at":"2026-09-30T10:00:00Z"}]`, pages, pages)
+	})
+	srv = httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	roots := x509.NewCertPool()
+	roots.AddCert(srv.Certificate())
+	g, err := ConnectTokens(t.Context(), Options{
+		Repository: "owner/repo", APIURL: srv.URL + "/", UserAgent: "agent-factory/test",
+		HTTP: httpx.New(5*time.Second, roots), Now: time.Now,
+	}, staticToken("ghs_ok"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cs, err := g.AllComments(t.Context(), 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pages != maxCommentPages || len(cs) != maxCommentPages {
+		t.Fatalf("pages=%d len=%d, want %d", pages, len(cs), maxCommentPages)
+	}
+}
+
+type staticToken string
+
+func (s staticToken) Token(context.Context) (string, error) { return string(s), nil }

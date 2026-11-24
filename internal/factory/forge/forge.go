@@ -199,6 +199,8 @@ type PR struct {
 	HeadMessage  string
 	// ReviewsTruncated: GitHub has more reviews than the page read, so one may be unseen.
 	ReviewsTruncated bool
+	// LabelsTruncated: GitHub has more labels than the page read, so one (such as factory/hold) may be unseen.
+	LabelsTruncated bool
 	// CrossRepository: the head is a branch of a fork, not of this repository.
 	CrossRepository bool
 	// The head commit's committer date: set by whoever committed, so a claim like Trailer's.
@@ -391,9 +393,10 @@ type WorkflowRun struct {
 
 // Revert is the pull request RevertPR opened.
 type Revert struct {
-	Number int
-	URL    string
-	NodeID string
+	Number  int
+	URL     string
+	NodeID  string
+	HeadSHA string
 }
 
 // RevertOf is what RevertPR reverts: the merged pull request (GitHub names the revert's branch
@@ -408,10 +411,11 @@ type RevertOf struct {
 // LabelledPull is one pull request carrying a label, as the merge breaker's ledger reads it
 // (v2 D1): its state, once merged when, and its labels (the first 30: a drill revert, AM6).
 type LabelledPull struct {
-	Number   int
-	State    string // OPEN | CLOSED | MERGED
-	MergedAt time.Time
-	Labels   []string
+	Number          int
+	State           string // OPEN | CLOSED | MERGED
+	MergedAt        time.Time
+	Labels          []string
+	LabelsTruncated bool
 }
 
 // MergedPull is one merged pull request, as the merge monitor's follow-up scan reads it: who

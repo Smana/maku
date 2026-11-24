@@ -571,19 +571,20 @@ func pending(phase string) bool { return phase == "" || phase == "Pending" }
 // activeDeadlineSeconds counts from the pod's start, and the runs quota holds a run back forever.
 // A run still Pending past caps.maxPendingMinutes whose record never saw it start (observe) and
 // whose claim carries no usage never ran, so deleting it loses no usage; the task escalates as
-// run_unschedulable, and a maintainer's /factory retry starts a fresh run.
-func (r *Reconciler) boundPending(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, run runs.Run) error {
+// run_unschedulable, and a maintainer's /factory retry starts a fresh run. ended is true when the
+// run was deleted and the task ended, so the caller must return without further work.
+func (r *Reconciler) boundPending(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, run runs.Run) (bool, error) {
 	if !pending(current(t).Phase) || run.Tokens > 0 || run.Created.IsZero() ||
 		r.Now().Sub(run.Created) < time.Duration(cfg.Caps.MaxPendingMinutes)*time.Minute {
-		return nil
+		return false, nil
 	}
 	if err := r.deleteRun(ctx, run.ID); err != nil {
-		return err
+		return false, err
 	}
 	if overlapScoperRun(t) {
-		return r.finishOverlap(ctx, cfg, t, nil, "overlap scoper claim was never scheduled")
+		return true, r.finishOverlap(ctx, cfg, t, nil, "overlap scoper claim was never scheduled")
 	}
-	return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "run_unschedulable")
+	return true, r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "run_unschedulable")
 }
 
 // deleteRun deletes a claim and releases its reservation (#55): a claim deleted while live
@@ -700,7 +701,7 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 		}
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, why)
 	}
-	if err := r.boundPending(ctx, cfg, t, run); err != nil {
+	if ended, err := r.boundPending(ctx, cfg, t, run); err != nil || ended {
 		return err
 	}
 	if t.Status.PullRequest == nil {
@@ -881,8 +882,8 @@ func (r *Reconciler) branchPushed(ctx context.Context, branch string) (bool, err
 	if err != nil && !errors.Is(err, forge.ErrActivityTruncated) {
 		return false, err
 	}
-	for i := len(ps) - 1; i >= 0; i-- {
-		switch ps[i].Type {
+	for _, p := range ps { // newest first, as BranchActivity returns it
+		switch p.Type {
 		case "push", "force_push", "branch_creation":
 			return true, nil
 		case "branch_deletion":

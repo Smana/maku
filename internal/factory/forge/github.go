@@ -291,11 +291,15 @@ func (g *GitHub) RecentComments(ctx context.Context, number int) ([]Comment, err
 	return out, nil
 }
 
-// AllComments are every comment on an issue or pull request, newest first, with no recent-items cap.
+// maxCommentPages bounds AllComments: 2,000 comments on one issue or pull request.
+const maxCommentPages = 20
+
+// AllComments are every comment on an issue or pull request, newest first, up to maxCommentPages
+// pages of 100.
 func (g *GitHub) AllComments(ctx context.Context, number int) ([]Comment, error) {
 	var out []Comment
 	opt := &github.IssueListCommentsOptions{ListOptions: github.ListOptions{PerPage: 100}}
-	for {
+	for range maxCommentPages {
 		cs, resp, err := g.rest.Issues.ListComments(ctx, g.owner, g.name, number, opt)
 		g.mark(err)
 		if err != nil {
@@ -762,7 +766,10 @@ func (g *GitHub) PullsWithLabel(ctx context.Context, label string) ([]LabelledPu
 					Number   int
 					State    string
 					MergedAt *githubv4.DateTime
-					Labels   struct{ Nodes []struct{ Name string } } `graphql:"labels(first: 30)"`
+					Labels   struct {
+						PageInfo struct{ HasNextPage bool }
+						Nodes    []struct{ Name string }
+					} `graphql:"labels(first: 30)"`
 				}
 			} `graphql:"pullRequests(labels: $labels, first: 100, orderBy: {field: CREATED_AT, direction: DESC})"`
 		} `graphql:"repository(owner: $owner, name: $name)"`
@@ -776,7 +783,7 @@ func (g *GitHub) PullsWithLabel(ctx context.Context, label string) ([]LabelledPu
 	}
 	out := make([]LabelledPull, 0, len(q.Repository.PullRequests.Nodes))
 	for _, p := range q.Repository.PullRequests.Nodes {
-		lp := LabelledPull{Number: p.Number, State: p.State}
+		lp := LabelledPull{Number: p.Number, State: p.State, LabelsTruncated: p.Labels.PageInfo.HasNextPage}
 		if p.MergedAt != nil {
 			lp.MergedAt = p.MergedAt.Time
 		}
@@ -1047,8 +1054,11 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 				MergedAt         *githubv4.DateTime
 				MergeCommit      *struct{ Oid string }
 				AutoMergeRequest *struct{ EnabledAt githubv4.DateTime }
-				Labels           struct{ Nodes []struct{ Name string } } `graphql:"labels(first: 30)"`
-				Reviews          struct {
+				Labels           struct {
+					PageInfo struct{ HasNextPage bool }
+					Nodes    []struct{ Name string }
+				} `graphql:"labels(first: 30)"`
+				Reviews struct {
 					PageInfo struct{ HasPreviousPage bool }
 					Nodes    []struct {
 						DatabaseID  int64 `graphql:"databaseId"`
@@ -1099,7 +1109,9 @@ func (g *GitHub) PullRequest(ctx context.Context, number int) (PR, error) {
 	}
 	p := q.Repository.PullRequest
 	out := PR{Number: p.Number, NodeID: p.ID, URL: p.URL, Title: p.Title, Body: p.Body, State: p.State, Author: p.Author.login(),
-		BaseRef: p.BaseRefName, HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo, ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
+		BaseRef: p.BaseRefName, HeadRef: p.HeadRefName, HeadSHA: p.HeadRefOid, CrossRepository: p.IsCrossRepo,
+		ReviewsTruncated: p.Reviews.PageInfo.HasPreviousPage, LabelsTruncated: p.Labels.PageInfo.HasNextPage,
+		MergedBy: p.MergedBy.login(), AutoMerge: p.AutoMergeRequest != nil}
 	if p.MergeCommit != nil {
 		out.MergeCommitSHA = p.MergeCommit.Oid
 	}
@@ -1454,16 +1466,17 @@ func (g *GitHub) RevertPR(ctx context.Context, of RevertOf) (Revert, error) {
 	}
 	branch := fmt.Sprintf("revert-%d-", of.Number)
 	for _, p := range open {
-		if strings.HasPrefix(p.HeadRef, branch) && !p.CrossRepository && SameLogin(p.Author, of.By) {
-			return Revert{Number: p.Number, URL: p.URL, NodeID: p.NodeID}, nil
+		if strings.HasPrefix(p.HeadRef, branch) && !p.CrossRepository && p.BaseRef == "main" && SameLogin(p.Author, of.By) {
+			return Revert{Number: p.Number, URL: p.URL, NodeID: p.NodeID, HeadSHA: p.HeadSHA}, nil
 		}
 	}
 	var m struct {
 		RevertPullRequest struct {
 			RevertPullRequest struct {
-				ID     string
-				Number int
-				URL    string `graphql:"url"`
+				ID         string
+				Number     int
+				URL        string `graphql:"url"`
+				HeadRefOid string
 			}
 		} `graphql:"revertPullRequest(input: $input)"`
 	}
@@ -1471,7 +1484,7 @@ func (g *GitHub) RevertPR(ctx context.Context, of RevertOf) (Revert, error) {
 	err = g.v4.Mutate(ctx, &m, githubv4.RevertPullRequestInput{PullRequestID: githubv4.ID(of.NodeID), Title: &t, Body: &b}, nil)
 	g.mark(err)
 	r := m.RevertPullRequest.RevertPullRequest
-	return Revert{Number: r.Number, URL: r.URL, NodeID: r.ID}, wrap("open a revert", err)
+	return Revert{Number: r.Number, URL: r.URL, NodeID: r.ID, HeadSHA: r.HeadRefOid}, wrap("open a revert", err)
 }
 
 // maxPRCommits is the most commits GitHub lists for a pull request.

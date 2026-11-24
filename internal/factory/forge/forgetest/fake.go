@@ -1159,9 +1159,10 @@ func (f *Fake) RevertPR(_ context.Context, of forge.RevertOf) (forge.Revert, err
 	f.reverts = append(f.reverts, of.NodeID+" "+of.Title)
 	n := 900 + len(f.reverts)
 	if _, ok := f.prs[n]; !ok { // the revert is a pull request GitHub reads back, as a replay does
-		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", BaseRef: "main", Title: of.Title}
+		f.prs[n] = forge.PR{Number: n, NodeID: "PR_revert", State: "OPEN", Author: of.By, BaseRef: "main",
+			HeadRef: fmt.Sprintf("revert-%d-head", of.Number), HeadSHA: "revhead", Title: of.Title}
 	}
-	return forge.Revert{Number: n, URL: "https://github.com/Smana/cloud-native-ref/pull/901", NodeID: "PR_revert"}, nil
+	return forge.Revert{Number: n, URL: "https://github.com/Smana/cloud-native-ref/pull/901", NodeID: "PR_revert", HeadSHA: f.prs[n].HeadSHA}, nil
 }
 
 // FailLabelReads makes PullsWithLabel answer err; nil clears it.
@@ -1196,7 +1197,7 @@ func (f *Fake) PullsWithLabel(_ context.Context, label string) ([]forge.Labelled
 	var out []forge.LabelledPull
 	for _, n := range slices.Sorted(maps.Keys(f.prs)) {
 		if p := f.prs[n]; slices.Contains(p.Labels, label) {
-			out = append(out, forge.LabelledPull{Number: n, State: p.State, MergedAt: p.MergedAt, Labels: slices.Clone(p.Labels)})
+			out = append(out, forge.LabelledPull{Number: n, State: p.State, MergedAt: p.MergedAt, Labels: slices.Clone(p.Labels), LabelsTruncated: p.LabelsTruncated})
 		}
 	}
 	slices.Reverse(out)

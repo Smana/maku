@@ -77,10 +77,28 @@ type tokens struct {
 	// perms is the connection's scope; nil is the factory App's (Options.Permissions).
 	perms map[string]string
 
-	mu           sync.Mutex
-	token        string
-	expires      time.Time
-	installation int64
+	mu            sync.Mutex
+	token         string
+	expires       time.Time
+	installation  int64
+	invalidations int
+}
+
+var _ invalidator = (*tokens)(nil)
+
+// Invalidate drops the cached installation token after GitHub refuses it with 401 so the next
+// call mints a fresh one. On repeated invalidations, it also drops the cached installation id so
+// a reinstalled App is re-discovered.
+func (s *tokens) Invalidate() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.token = ""
+	s.expires = time.Time{}
+	s.invalidations++
+	if s.invalidations >= 2 {
+		s.installation = 0
+		s.invalidations = 0
+	}
 }
 
 // Token returns a token with more than refreshBefore to live, minting one when needed. Holding the
@@ -105,6 +123,9 @@ func (s *tokens) Token(ctx context.Context) (string, error) {
 	}
 	tok, err := app.unchecked(ctx, s.installation, []string{s.name}, perms)
 	if err != nil {
+		if errors.Is(err, ErrNotInstalled) {
+			s.installation = 0
+		}
 		return "", err
 	}
 	s.token, s.expires = tok.Value, tok.ExpiresAt

@@ -96,28 +96,50 @@ type Merge struct {
 	Mature     bool
 }
 
-// mergeLedger is GitHub's labelled merges per class, read once per process: everything the
-// factory merges or reverts after the read is on its Tasks, which the breaker unites with it.
+// repoLedger caches one repository's GitHub-labelled merges per loaded class.
+type repoLedger struct {
+	ext     bool
+	classes map[string][]Merge // presence of key means that class was loaded
+}
+
+// mergeLedger is GitHub's labelled merges per class, read once per class per process: everything
+// the factory merges or reverts after the read is on its Tasks, which the breaker unites with it.
 // An unread ledger is an error, so no decision is made on a breaker that might be tripped.
 type mergeLedger struct {
 	mu     sync.Mutex
-	byRepo map[string]map[string][]Merge // by repository, then class; a repository absent until read
+	byRepo map[string]*repoLedger // by repository; a repository absent until read
 }
 
-// githubLedger reads the ledger at the first decision and keeps it. A class's newest
-// merge.breaker.window merges are each asked for a revert and for a merged follow-up: the window
-// never reaches older ones, since a Task's merge only pushes them further out. The newest 100
-// pull requests of each label are all a read sees: a full page that may hide a merge the ledger
-// counts is errLedgerTruncated, not a short count.
+// githubLedger reads the ledger at the first decision (and for any newly added classes) and keeps
+// it. A class's newest merge.breaker.window merges are each asked for a revert and for a merged
+// follow-up: the window never reaches older ones, since a Task's merge only pushes them further
+// out. The newest 100 pull requests of each label are all a read sees: a full page that may hide a
+// merge the ledger counts is errLedgerTruncated, not a short count.
 func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (map[string][]Merge, error) {
-	r.ledger.mu.Lock()
-	defer r.ledger.mu.Unlock()
-	if byClass, ok := r.ledger.byRepo[rc.Name]; ok {
-		return byClass, nil
-	}
 	// Off by default: without a monitor or maxFollowUps the ledger reads what it always read, the
 	// auto-merged list per class and each merge's revert; nothing below is asked of GitHub.
 	ext := rc.AnyMonitored() || rc.Merge.Breaker.MaxFollowUps > 0
+	want := slices.Sorted(maps.Keys(rc.Classes))
+
+	r.ledger.mu.Lock()
+	rl := r.ledger.byRepo[rc.Name]
+	var missing []string
+	if rl == nil || (ext && !rl.ext) {
+		missing = want
+	} else {
+		for _, class := range want {
+			if _, ok := rl.classes[class]; !ok {
+				missing = append(missing, class)
+			}
+		}
+		if len(missing) == 0 {
+			out := maps.Clone(rl.classes)
+			r.ledger.mu.Unlock()
+			return out, nil
+		}
+	}
+	r.ledger.mu.Unlock()
+
 	var rg []forge.LabelledPull
 	if ext {
 		var err error
@@ -132,18 +154,21 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 			oldestRegressed = p.Number
 		}
 	}
-	byClass := make(map[string][]Merge, len(rc.Classes))
-	for _, class := range slices.Sorted(maps.Keys(rc.Classes)) {
+	fetched := make(map[string][]Merge, len(missing))
+	for _, class := range missing {
 		auto, err := r.merger(ctx).PullsWithLabel(ctx, AutoMergedLabel(class))
 		if err != nil {
 			return nil, fmt.Errorf("read the merge ledger: %w", err)
+		}
+		if r.pageTruncated(auto, rc.Merge.Breaker.Window) {
+			return nil, errLedgerTruncated
 		}
 		var all []forge.LabelledPull
 		if ext {
 			if all, err = r.merger(ctx).PullsWithLabel(ctx, MergedLabel(class)); err != nil {
 				return nil, fmt.Errorf("read the merge ledger: %w", err)
 			}
-			if r.pageTruncated(auto, rc.Merge.Breaker.Window) || r.pageTruncated(all, rc.Merge.Breaker.Window) {
+			if r.pageTruncated(all, rc.Merge.Breaker.Window) {
 				return nil, errLedgerTruncated
 			}
 		}
@@ -192,14 +217,25 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 			ms[i].FollowUp = slices.ContainsFunc(fu, func(p forge.LabelledPull) bool { return p.State == "MERGED" })
 			ms[i].Regression = regressed[ms[i].Number]
 		}
-		byClass[class] = ms
+		fetched[class] = ms
 	}
+	r.ledger.mu.Lock()
 	if r.ledger.byRepo == nil {
-		r.ledger.byRepo = map[string]map[string][]Merge{}
+		r.ledger.byRepo = map[string]*repoLedger{}
 	}
-	r.ledger.byRepo[rc.Name] = byClass
-	r.log().Info("merge ledger read from GitHub", "classes", len(byClass))
-	return byClass, nil
+	rl = r.ledger.byRepo[rc.Name]
+	if rl == nil {
+		rl = &repoLedger{classes: map[string][]Merge{}}
+		r.ledger.byRepo[rc.Name] = rl
+	}
+	if ext {
+		rl.ext = true
+	}
+	maps.Copy(rl.classes, fetched)
+	out := maps.Clone(rl.classes)
+	r.ledger.mu.Unlock()
+	r.log().Info("merge ledger read from GitHub", "classes", len(fetched))
+	return out, nil
 }
 
 // uniteMerges is the Tasks' merges and GitHub's, one per pull request: a revert either side
@@ -257,5 +293,18 @@ func (r *Reconciler) drill(ctx context.Context, rc *config.Repository, p forge.L
 		return false, err
 	}
 	by := evs[len(evs)-1].Actor
-	return forge.SameLogin(by, rc.Merge.MergerLogin) || rc.IsMaintainer(by), nil
+	if forge.SameLogin(by, rc.Merge.MergerLogin) {
+		return true, nil
+	}
+	if !rc.IsMaintainer(by) {
+		return false, nil
+	}
+	if r.CanWrite != nil {
+		ok, err := r.CanWrite(ctx, rc.Name, by)
+		if err != nil {
+			return false, err
+		}
+		return ok, nil
+	}
+	return true, nil
 }

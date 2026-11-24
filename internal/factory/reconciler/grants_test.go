@@ -17,6 +17,7 @@ import (
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
+	"github.com/Smana/maku/internal/factory/forge"
 	"github.com/Smana/maku/internal/factory/grant"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/rooms"
@@ -260,5 +261,53 @@ func TestARevertDisablesTheGrantItsMergeUsed(t *testing.T) {
 				t.Fatalf("%q", f.calls)
 			}
 		})
+	}
+}
+
+// REL-M13: under MR1 diff-chosen policies (byDiff == true), saved approval grants are looked up
+// and re-verified for the diff-matched candidate class even when PredictedClass is different.
+func TestSavedApprovalGrantWorksUnderDiffChosenPolicy(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().PolicyManagement = config.PolicyManagement{Stage: config.StageManage}
+	g.r.Cfg.Current().MergeGuardrails.MaxGrantLifetime = config.Duration{Duration: 30 * 24 * time.Hour}
+	matchedClass := config.Class{
+		Live:             true,
+		DiffShape:        "links-only",
+		RequiresApproval: []config.ApprovalLeaf{{ChangedFiles: []string{"."}}},
+	}
+	// PredictedClass is "other", which has no approval subset and does not match the diff; the
+	// diff matches "docs-links" via byDiff == true.
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"docs-links": matchedClass,
+		"other":      {Live: true, AllowedFiles: []string{"^nonexistent/"}},
+	}
+	predict(t, g, "other")
+	hash := config.ResolvedHash(matchedClass)
+	gr := grant.Grant{
+		ID:         "aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Version:    1,
+		Status:     grant.StatusActive,
+		Repository: "smana/cloud-native-ref",
+		Class:      "docs-links",
+		PolicyHash: config.ShortHash(hash),
+		Files:      []string{".+"},
+		ExpiresAt:  now.Add(24 * time.Hour),
+	}
+	fg := &fakeGrants{list: []grant.Grant{gr}}
+	g.r.Grants = fg
+	files := changed("[x](https://example.com/old)", "[x](https://example.com/new)")
+	g.f.SetFiles(files.Base, files.Head)
+	g.f.SetFileStats(forge.FileStat{Path: testFile, Status: "modified", Additions: 1, Deletions: 1})
+	g.f.SetChecks(12, green("SUCCESS"))
+
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAutoMerging {
+		t.Fatalf("expected AutoMerging under diff-chosen grant, got %s/%s (calls=%q)", tk.Status.Phase, tk.Status.Reason, fg.calls)
+	}
+	if tk.Status.PullRequest.Grant != "aaaaaaaaaaaaaaaaaaaaaaaaaa:1" {
+		t.Fatalf("expected grant recorded on PR ref, got %q", tk.Status.PullRequest.Grant)
+	}
+	if want := "lookup smana/cloud-native-ref docs-links " + hash + " 720h0m0s"; !slices.Contains(fg.calls, want) {
+		t.Fatalf("expected grant lookup for diff-matched class docs-links, calls=%q", fg.calls)
 	}
 }
