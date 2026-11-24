@@ -265,8 +265,15 @@ func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.Tas
 	f.SpendFinal = r.spendIsFinal(cfg, t)
 	f.Policy = policyOf(cfg, r.repo(cfg, t), t)
 	if f.Profile != nil {
-		if wf, ok := cfg.Workflow(f.Profile.Name); ok && wf.Description != "" {
-			f.Profile.Description = wf.Description
+		if wf, ok := cfg.Workflow(f.Profile.Name); ok {
+			if wf.Description != "" {
+				f.Profile.Description = wf.Description
+			}
+			if wf.StepUp != "" && !alreadyStepped(t.Status.Profile) && r.repo(cfg, t).StepUpMode() != "off" {
+				if target, ok := cfg.Workflow(wf.StepUp); ok {
+					f.Profile.StepUpCeilingMicroUSD = dollars(targetCeilingMicroUSD(cfg, t, target))
+				}
+			}
 		}
 	}
 	return f

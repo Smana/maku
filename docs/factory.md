@@ -157,8 +157,8 @@ templates:
   pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
   investigate: {roles: [triager]}
 workflows:
-  quick:    {template: solo, description: "One implementer. For changes a check can verify."}
-  standard: {template: pair, description: "An implementer and a reviewer. The default."}
+  quick:    {template: solo, stepUp: standard, description: "One implementer. For changes a check can verify."}
+  standard: {template: pair, stepUp: careful, description: "An implementer and a reviewer. The default."}
   careful:  {template: pair, tier: frontier, loop: careful,
              description: "Scoped first, judged before review. For wide or unclear tasks."}
   none:     {template: none}
@@ -168,7 +168,7 @@ loops:
             split: {maxChildren: 4, childTier: standard, anyTier: true}}
 ```
 
-`quick` and `standard` end a run that commits nothing in 80 steps; only `careful` runs the completion judge. The shipped `careful` row sets `split.anyTier: true` so the scoper can offer a split without a classifier.
+`quick` and `standard` end a run that commits nothing in 80 steps; only `careful` runs the completion judge. The shipped `careful` row sets `split.anyTier: true` so the scoper can offer a split without a classifier. On a verified failure (`budget-run`, `budget-task`, `stalled`, `not_met`, `review_rounds_exhausted`, `ci_red`), an unpinned task steps up once along `quick` → `standard` → `careful` (`Repository.spec.workflow.stepUp`: `auto`, `ask`, or `off`); pinned tasks, capped tasks, and confirmed plans that did not show the stepped-up figure escalate with an offer instead.
 
 Reviewers run on the opposite tier (`standard` after `frontier`, `frontier` otherwise, unless `reviewerModel` overrides it) and receive fenced acceptance checks plus the PR URL without the implementer's handoff; `investigate` runs a read-only `triager` forced to `internal` data class.
 

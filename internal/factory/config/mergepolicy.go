@@ -59,6 +59,11 @@ type HarnessProfile struct {
 	// Escalation is the workflow a failed run's signal group steps to (WF7, TE7); absent, or an
 	// absent group, goes to a maintainer.
 	Escalation *Escalation `json:"escalation,omitempty"`
+	// StepUp is the workflow a task runs once more under when a run fails in a way a deeper
+	// workflow can help (WR4); empty goes to a maintainer. It is escalation's one-target form: set
+	// one of them.
+	// +kubebuilder:validation:MaxLength=253
+	StepUp string `json:"stepUp,omitempty"`
 	// Effort maps a non-implementer role to low, medium or high (CP9). An absent role keeps the
 	// harness's default, high.
 	// +kubebuilder:validation:MaxProperties=4
@@ -193,10 +198,31 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		if len(p.Description) > MaxDescription {
 			bad("workflows.%s: description is %d bytes at most", name, MaxDescription)
 		}
-		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil || len(p.Effort) > 0 || len(p.Models) > 0) {
+		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil || p.StepUp != "" || len(p.Effort) > 0 || len(p.Models) > 0) {
 			bad("workflows.%s: template none runs nothing, so it takes no other key", name)
 		}
 		c.validateWorkflowTuning(bad, name, p)
+		if p.StepUp != "" && p.Escalation != nil {
+			bad("workflows.%s: set stepUp or escalation, not both", name)
+		}
+		if p.StepUp != "" {
+			switch {
+			case p.StepUp == name:
+				bad("workflows.%s.stepUp: a workflow never steps up to itself", name)
+			case !c.IsWorkflow(p.StepUp):
+				bad("workflows.%s.stepUp %q is not a workflow", name, p.StepUp)
+			default:
+				target := c.HarnessProfiles[p.StepUp]
+				if target.StepUp == name {
+					bad("workflows.%s.stepUp: %s and %s step up to each other", name, name, p.StepUp)
+				} else if c.stepUpHasCycle(name) {
+					bad("workflows.%s.stepUp: cycle in stepUp chain", name)
+				}
+				if c.workflowCeilingLower(p, target) {
+					bad("workflows.%s.stepUp: %s has a lower ceiling than %s", name, p.StepUp, name)
+				}
+			}
+		}
 		if e := p.Escalation; e != nil {
 			for _, g := range []struct{ key, target string }{{"outOfBudget", e.OutOfBudget}, {"notConverged", e.NotConverged}} {
 				if !c.IsWorkflow(g.target) && g.target != "" {

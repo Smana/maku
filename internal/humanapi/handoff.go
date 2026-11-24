@@ -803,6 +803,23 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	if err != nil {
 		return planChecked{}, handoffDraft{}, err
 	}
+	if len(catProfiles) > 0 {
+		activeName := catDefault
+		if len(plan.Issues) > 0 && plan.Issues[0].Profile != "" {
+			activeName = plan.Issues[0].Profile
+		}
+		if pr, ok := catProfiles[activeName]; ok {
+			plan.Budget.StepUpCeilingUSD = pr.StepUpCeilingUSD
+			ac := WorkflowChoice{
+				Name:             activeName,
+				Description:      pr.Description,
+				CeilingUSD:       pr.CeilingUSD,
+				StepUpCeilingUSD: pr.StepUpCeilingUSD,
+				Path:             slices.Clone(pr.Path),
+			}
+			activeChoice = &ac
+		}
+	}
 	if err := s.saveHandoff(ctx, row.ID, row.Principal, storedArgs, plan, row.CreatedAt, row.ExpiresAt); err != nil {
 		return planChecked{}, handoffDraft{}, err
 	}
@@ -820,22 +837,6 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	}
 	if s.choices.first(plan.Hash) {
 		s.countChoices(ctx, plan, surface)
-	}
-	if len(catProfiles) > 0 {
-		activeName := catDefault
-		if len(plan.Issues) > 0 && plan.Issues[0].Profile != "" {
-			activeName = plan.Issues[0].Profile
-		}
-		if pr, ok := catProfiles[activeName]; ok {
-			ac := WorkflowChoice{
-				Name:             activeName,
-				Description:      pr.Description,
-				CeilingUSD:       pr.CeilingUSD,
-				StepUpCeilingUSD: pr.StepUpCeilingUSD,
-				Path:             slices.Clone(pr.Path),
-			}
-			activeChoice = &ac
-		}
 	}
 	draft := handoffDraft{
 		Repository:      plan.Repository,

@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [A task steps up once](#a-task-steps-up-once)
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
 - [Merge policies removals](#merge-policies-removals)
 - [The gate picks the policy from the diff (v0.52.0)](#the-gate-picks-the-policy-from-the-diff-v0520)
@@ -38,6 +39,10 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## A task steps up once
+
+The shipped workflows now carry a one-step ladder (`quick` → `standard` → `careful`) via `Factory.spec.workflows.<name>.stepUp`, and each `Repository` can control step-up with `Repository.spec.workflow.stepUp` (`auto` by default, `ask` to wait with an offer, or `off`). On a verified failure (`budget-run`, `budget-task`, `stalled`, `not_met`, `review_rounds_exhausted`, `ci_red`), an unpinned task steps up at most once within its confirmed cap; pinned tasks, tasks capped below the target ceiling, and confirmed plans that did not show the stepped-up figure escalate with an offer instead. A platform that wrote its own `standard` (or `quick`) workflow entry keeps that entry whole and gets no automatic step-up until it adds `stepUp`; existing `escalation` blocks continue to work as before.
 
 ## The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)
 

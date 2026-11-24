@@ -3,6 +3,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -22,8 +23,8 @@ const (
 // returns fresh maps.
 func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[string]Template, loops map[string]Loop) {
 	profiles = map[string]HarnessProfile{
-		WorkflowQuick:    {Template: "solo", Description: "One implementer. For changes a check can verify."},
-		WorkflowStandard: {Template: "pair", Description: "An implementer and a reviewer. The default."},
+		WorkflowQuick:    {Template: "solo", StepUp: WorkflowStandard, Description: "One implementer. For changes a check can verify."},
+		WorkflowStandard: {Template: "pair", StepUp: WorkflowCareful, Description: "An implementer and a reviewer. The default."},
 		WorkflowCareful: {Template: "pair", Tier: "frontier", Loop: WorkflowCareful,
 			Description: "Scoped first, judged before review. For wide or unclear tasks."},
 		TemplateNone: {Template: TemplateNone},
@@ -100,6 +101,113 @@ type RepositoryWorkflow struct {
 	// TestFirst starts every public task whose workflow's row sets tests with a tester run that
 	// writes the failing tests first (v3 feature 4, TF1); needs merge.contractCheck.
 	TestFirst bool `json:"testFirst,omitempty"`
+	// StepUp is whether a task of the repository steps up without asking: auto (the default), ask
+	// (the task waits with a "run again deeper" offer) or off.
+	// +kubebuilder:validation:Enum=auto;ask;off
+	StepUp string `json:"stepUp,omitempty"`
+}
+
+// StepUpMode is the repository's step-up policy: auto (default), ask, or off.
+func (r *Repository) StepUpMode() string {
+	if r != nil && r.Workflow.StepUp != "" {
+		return r.Workflow.StepUp
+	}
+	return "auto"
+}
+
+// UnmarshalJSON decodes RepositoryWorkflow strictly, reading YAML 1.1's unquoted stepUp: off
+// (boolean false) as "off".
+func (w *RepositoryWorkflow) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Default   string          `json:"default,omitempty"`
+		TestFirst bool            `json:"testFirst,omitempty"`
+		StepUp    json.RawMessage `json:"stepUp,omitempty"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&raw); err != nil {
+		return err
+	}
+	*w = RepositoryWorkflow{Default: raw.Default, TestFirst: raw.TestFirst}
+	switch s := string(raw.StepUp); s {
+	case "", "null":
+	case "false":
+		w.StepUp = "off"
+	default:
+		var v string
+		if err := json.Unmarshal(raw.StepUp, &v); err != nil {
+			return fmt.Errorf("workflow.stepUp is auto, ask or off: %s", s)
+		}
+		w.StepUp = v
+	}
+	return nil
+}
+
+// StepUpFor is the workflow a task running workflow steps up to for reason, or "" when it does not
+// step up. A workflow's stepUp applies to verified failure triggers (budget-run, stalled, not_met,
+// review_rounds_exhausted, ci_red, budget-task); legacy escalation maps its two signal groups.
+func (c *Config) StepUpFor(workflow, reason string) string {
+	p, ok := c.Workflow(workflow)
+	if !ok {
+		return ""
+	}
+	if p.StepUp != "" {
+		switch reason {
+		case "budget-run", "stalled", "not_met", "review_rounds_exhausted", "ci_red", "budget-task":
+			return p.StepUp
+		}
+		return ""
+	}
+	if p.Escalation == nil {
+		return ""
+	}
+	switch reason {
+	case "budget-run", "stalled":
+		return p.Escalation.OutOfBudget
+	case "not_met", "review_rounds_exhausted":
+		return p.Escalation.NotConverged
+	}
+	return ""
+}
+
+func (c *Config) stepUpHasCycle(start string) bool {
+	seen := map[string]bool{start: true}
+	cur := c.HarnessProfiles[start].StepUp
+	for cur != "" {
+		if seen[cur] {
+			return true
+		}
+		seen[cur] = true
+		p, ok := c.HarnessProfiles[cur]
+		if !ok {
+			return false
+		}
+		cur = p.StepUp
+	}
+	return false
+}
+
+func (c *Config) workflowTierIndex(p HarnessProfile) int {
+	t := p.Tier
+	if t == "" {
+		t = "standard"
+	}
+	return slices.Index(tiers(), t)
+}
+
+func (c *Config) workflowCeilingLower(from, to HarnessProfile) bool {
+	fromTier, toTier := from.Tier, to.Tier
+	if fromTier == "" {
+		fromTier = "standard"
+	}
+	if toTier == "" {
+		toTier = "standard"
+	}
+	fromUSD, toUSD := c.Tiers[fromTier].TaskUSD, c.Tiers[toTier].TaskUSD
+	if fromUSD > 0 && toUSD > 0 {
+		return toUSD < fromUSD
+	}
+	return c.workflowTierIndex(to) < c.workflowTierIndex(from)
 }
 
 // DefaultWorkflow is the workflow a task of the repository runs when nothing else names one (WF3):
@@ -139,6 +247,9 @@ func (c *Config) validateWorkflow(r *Repository, bad func(string, ...any)) {
 	}
 	if r.Workflow.TestFirst && r.Merge.ContractCheck == "" {
 		bad("workflow.testFirst needs merge.contractCheck: the tester's red check proves the contract (TF7)")
+	}
+	if m := r.Workflow.StepUp; m != "" && m != "auto" && m != "ask" && m != "off" {
+		bad("workflow.stepUp %q is not one of auto, ask, off", m)
 	}
 	for _, s := range r.Schedules {
 		if s.Workflow != "" && !c.IsWorkflow(s.Workflow) {

@@ -57,6 +57,8 @@ type TaskRequest struct {
 	// Profile is the profile the plan pinned (P5): a pin only when the sponsor's login maintains the
 	// repository, which triage checks again with the rest of the pin rule (P6).
 	Profile string `json:"profile,omitempty"`
+	// StepUpShown is true when the confirmed plan showed the "if it steps up" cost figure (WR4).
+	StepUpShown bool `json:"stepUpShown,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -431,8 +433,8 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
 			Repository: in.Repository, Text: clean, DataClass: in.DataClass, MaxMicroUSD: maxUSD, IssueAuthor: login}}
-	if in.Class != "" || in.Suggested != "" || in.Profile != "" {
-		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login}
+	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown {
+		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown}
 	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
 		reader := client.Reader(s.Rooms)

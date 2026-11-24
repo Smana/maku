@@ -152,8 +152,9 @@ type MergeShown struct {
 // class's `taskUSD`, or the channel's lower `maxCostUSD`. The broker writes both (CD17); the display
 // value is dollars, and Material hashes the same amount as an integer.
 type Budget struct {
-	CeilingUSD float64 `json:"ceilingUSD"`
-	Source     string  `json:"source"`
+	CeilingUSD       float64 `json:"ceilingUSD"`
+	StepUpCeilingUSD float64 `json:"stepUpCeilingUSD,omitempty"`
+	Source           string  `json:"source"`
 }
 
 // Gap is one ranked clarification. ID names its one [NEEDS CLARIFICATION: …] marker in an issue
