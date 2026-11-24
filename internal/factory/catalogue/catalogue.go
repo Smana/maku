@@ -204,7 +204,8 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 	if p.Tier == "frontier" {
 		tier = "frontier"
 	}
-	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
+	tmplName := cfg.TemplateForProfile(name, p)
+	out := Profile{Template: tmplName, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
 		Loop: string(p.Loop), Description: p.Description, CeilingUSD: cfg.Tiers[tier].TaskUSD}
 	if p.StepUp != "" {
 		out.StepUp = p.StepUp
@@ -219,15 +220,15 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 	if e := p.Escalation; e != nil {
 		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}
 	}
-	if t, ok := cfg.Templates[p.Template]; ok && p.Template != "" {
+	if t, ok := cfg.Templates[tmplName]; ok && tmplName != "" {
 		out.Roles = slices.Clone(t.Roles)
 		out.Offered = true
-		row := cfg.RowFor(name, p)
+		st := cfg.StagesFor(rc, name)
 		var path []string
-		if cfg.ScopeFor(row) == config.ScopeScoper {
+		if st.Plan {
 			path = append(path, "scoper")
 		}
-		if out.TestFirst {
+		if st.Tests {
 			path = append(path, "tester")
 		}
 		for _, role := range t.Roles {
@@ -235,7 +236,7 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 				path = append(path, role)
 			}
 		}
-		if len(path) > 0 && !cfg.Investigates(p.Template) {
+		if len(path) > 0 && !cfg.Investigates(tmplName) {
 			path = append(path, "CI", "merge gate")
 		}
 		out.Path = path

@@ -333,6 +333,17 @@ func TestScoperBoundsDefaultAndValidate(t *testing.T) {
 	if _, err := Parse([]byte(good + "scoper: {nudgeAt: 50}\n")); err == nil || !strings.Contains(err.Error(), "scoper") {
 		t.Fatalf("a nudge past the default limit is refused: %v", err)
 	}
+	if c.Scoper.PlanTierOr() != "light" {
+		t.Fatalf("unset planTier = %q, want light", c.Scoper.PlanTierOr())
+	}
+	for _, tier := range []string{"light", "standard", "frontier"} {
+		if c, err = Parse([]byte(good + "scoper: {planTier: " + tier + "}\n")); err != nil || c.Scoper.PlanTier != tier || c.Scoper.PlanTierOr() != tier {
+			t.Fatalf("planTier %s: %+v, %v", tier, c.Scoper, err)
+		}
+	}
+	if _, err := Parse([]byte(good + "scoper: {planTier: huge}\n")); err == nil || !strings.Contains(err.Error(), "scoper.planTier") {
+		t.Fatalf("unknown planTier refused: %v", err)
+	}
 }
 
 // v2 suspend: runs are never made suspendable unless the file says so.

@@ -216,6 +216,11 @@ spec:
                     loops.<class>.scope) joins them as one more key. A row inherits each key it leaves unset from
                     default's row (WF10, rowOf).
                   properties:
+                    ask:
+                      description: |-
+                        Ask checks whether an issue states acceptance before any run starts (WR6); absent inherits
+                        default's, or falls back to the scoper's forced question on legacy rows. Never switches the loop on.
+                      type: boolean
                     continuations:
                       description: 'Continuations is how many not_yet verdicts continue
                         the conversation (L2): 0 to 5, default 2.'
@@ -244,6 +249,16 @@ spec:
                         a tier alias on an internal task (CP10). It never switches the loop on.
                       maxProperties: 32
                       type: object
+                    plan:
+                      description: |-
+                        Plan runs the scoper before the implementer (WR6): plan: true is scope: scoper, plan: false
+                        is scope: off. Contradicting scope on the same row is refused. Never switches the loop on.
+                      type: boolean
+                    review:
+                      description: |-
+                        Review resolves the template for a workflow that names none (pair when true, solo when
+                        false), and must agree with a workflow's explicit template (WR6). Never switches the loop on.
+                      type: boolean
                     scope:
                       description: |-
                         Scope is the class's scope mode (scoper design SC2): off, steering or scoper; unset is off.
@@ -481,12 +496,21 @@ spec:
                   Scoper bounds a scoping run's exploration (harness roles HR2): the harness nudges the scoper to
                   hand off at NudgeAt tool calls and ends the run at MaxToolCalls, as budget_calls. The factory
                   writes both into the scoper brief's first line, which the harness reads. Each is defaulted alone
-                  when omitted.
+                  when omitted. PlanTier picks the tier (model and run caps) the scoper runs at; unset is light.
                 properties:
                   maxToolCalls:
                     type: integer
                   nudgeAt:
                     type: integer
+                  planTier:
+                    description: |-
+                      PlanTier is the tier whose model and run caps the scoper runs at (WR6): light, standard or
+                      frontier; unset is light.
+                    enum:
+                    - light
+                    - standard
+                    - frontier
+                    type: string
                 type: object
               templates:
                 additionalProperties:

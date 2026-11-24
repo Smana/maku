@@ -201,6 +201,21 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil || p.StepUp != "" || len(p.Effort) > 0 || len(p.Models) > 0) {
 			bad("workflows.%s: template none runs nothing, so it takes no other key", name)
 		}
+		if p.Template != "" && p.Template != TemplateNone {
+			if rowName := c.RowFor(name, p); rowName != string(LoopOff) {
+				if own, ok := c.Loops[rowName]; ok && own.Review != nil {
+					if tmpl, exists := c.Templates[p.Template]; exists && !c.Investigates(p.Template) {
+						hasReviewer := slices.Contains(tmpl.Roles, "reviewer")
+						if *own.Review && !hasReviewer {
+							bad("workflows.%s: template %s has no reviewer, contradicting loops.%s.review: true", name, p.Template, rowName)
+						}
+						if !*own.Review && hasReviewer {
+							bad("workflows.%s: template %s has a reviewer, contradicting loops.%s.review: false", name, p.Template, rowName)
+						}
+					}
+				}
+			}
+		}
 		c.validateWorkflowTuning(bad, name, p)
 		if p.StepUp != "" && p.Escalation != nil {
 			bad("workflows.%s: set stepUp or escalation, not both", name)

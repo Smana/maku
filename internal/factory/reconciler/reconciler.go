@@ -1213,8 +1213,8 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 // tier only when above t's, through the same ceiling as triage so a sponsored task's cap holds. An
 // empty name is default's row.
 func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name string, p config.HarnessProfile) {
-	if p.Template != "" {
-		t.Spec.Template = p.Template
+	if tmpl := cfg.TemplateForProfile(name, p); tmpl != "" {
+		t.Spec.Template = tmpl
 	}
 	row := cfg.RowFor(name, p)
 	t.Spec.Loop = nil

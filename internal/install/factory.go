@@ -88,6 +88,7 @@ func factoryConfig(in Inputs) map[string]any {
 			"frontier": map[string]any{"model": "agent-default", "runTokens": 4000000, "taskTokens": 8000000, "runMinutes": 90},
 		},
 		"mergeDefaults": mergeDefaults(factoryLogin),
+		"scoper":        map[string]any{"planTier": "frontier"},
 		"caps":          map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
 		"repositories":  repos,
 	}

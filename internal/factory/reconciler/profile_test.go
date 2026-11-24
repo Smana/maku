@@ -470,3 +470,24 @@ func TestADefaultTaskGetsOneWorkflowComment(t *testing.T) {
 		}
 	}
 }
+
+func TestProfileSpecResolvesTemplateFromReviewRowKey(t *testing.T) {
+	cf := profileCfg(true)
+	reviewOn, reviewOff, planOn := true, false, true
+	cf.Loops["judged-pair"] = config.Loop{Judge: config.DefaultJudge, Review: &reviewOn}
+	cf.Loops["judged-solo"] = config.Loop{Judge: config.DefaultJudge, Review: &reviewOff, Plan: &planOn}
+
+	g := newRig(t)
+	g.r.Cfg = cf
+	tk := issueTask("3buqdlot", 7, "fix it")
+	tk.Spec.Template = "solo"
+	g.r.profileSpec(cf, tk, "judged-pair", config.HarnessProfile{})
+	if tk.Spec.Template != "pair" || tk.Spec.Loop == nil || tk.Spec.Loop.JudgeModel != config.DefaultJudge || tk.Spec.ScopeMode != string(config.ScopeOff) {
+		t.Fatalf("judged-pair: template=%q loop=%+v scope=%q", tk.Spec.Template, tk.Spec.Loop, tk.Spec.ScopeMode)
+	}
+
+	g.r.profileSpec(cf, tk, "judged-solo", config.HarnessProfile{})
+	if tk.Spec.Template != "solo" || tk.Spec.ScopeMode != string(config.ScopeScoper) {
+		t.Fatalf("judged-solo: template=%q scope=%q", tk.Spec.Template, tk.Spec.ScopeMode)
+	}
+}

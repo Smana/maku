@@ -15,14 +15,22 @@ spec:
     predictedClass: review
   loops:
     careful:
+      ask: true
       judge: tier-light
-      scope: scoper
+      plan: true
+      review: true
       search: true
       stallSteps: 80
       tests: true
     default:
+      ask: true
       judge: none
-      scope: "off"
+      review: true
+      stallSteps: 80
+    quick:
+      ask: true
+      judge: none
+      review: false
       stallSteps: 80
   mergeDefaults:
     breaker:
@@ -31,6 +39,8 @@ spec:
     mergerLogin: example-factory[bot]
     revertWindow: 168h
     verifyFor: 30m
+  scoper:
+    planTier: frontier
   templates:
     investigate:
       roles:

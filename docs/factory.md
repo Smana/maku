@@ -164,8 +164,10 @@ workflows:
              description: "Scoped first, judged before review. For wide or unclear tasks."}
   none:     {template: none}
 loops:
-  default: {scope: "off", stallSteps: 80, judge: none}
-  careful: {scope: scoper, stallSteps: 80, judge: tier-light, search: true, tests: true,
+  default: {ask: true, review: true, stallSteps: 80, judge: none}
+  quick:   {ask: true, review: false, stallSteps: 80, judge: none}
+  careful: {ask: true, plan: true, tests: true, search: true, review: true,
+            stallSteps: 80, judge: tier-light,
             split: {maxChildren: 4, childTier: standard, anyTier: true}}
 ```
 
