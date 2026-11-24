@@ -155,7 +155,7 @@ func (r *Reconciler) recordExisting(ctx context.Context, cfg *config.Config, t *
 		started = metav1.NewTime(x.Created) // when the claim really was created, not the replay
 	}
 	r.runWait(ctx, t, x.Role, started.Time)
-	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Trigger: trigger,
+	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Persona: personaOf(t, v1alpha1.RunRecord{Role: x.Role}), Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
 		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
 		Audited: x.Canary != "" && r.auditsRun(cfg, t, x.Role)}) // the claim says whether it started under audit
@@ -331,7 +331,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	}
 	now := metav1.NewTime(r.Now())
 	r.runWait(ctx, t, s.Role, now.Time)
-	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Trigger: trigger,
+	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Persona: s.Persona, Trigger: trigger,
 		Round: t.Status.ReviewRounds, StartSeq: last, HeadSHA: s.Head, Started: &now, ChargedTo: s.ChargedTo,
 		Provenance: v1alpha1.RunProvenance{ModelSource: source}, Audited: r.auditsRun(cfg, t, s.Role)})
 	t.Status.NextTrigger = ""
@@ -778,6 +778,13 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 			end = "finished"
 		}
 		record(ctx, func(ctx context.Context) { r.Metrics.LoopRun(ctx, t.Spec.PredictedClass, end) })
+		if t.Spec.Loop.JudgeModel != "" && r.Rooms != nil {
+			if v, jerr := r.lastJudgeVerdict(ctx, t); jerr == nil && v != "" {
+				if eff := judgeEffect(v, false); eff != "" {
+					r.noteStage(t, "judge", eff)
+				}
+			}
+		}
 	}
 	if scoperRun(t) {
 		return r.scoped(ctx, cfg, t, run.Phase, reason)
@@ -808,6 +815,7 @@ func (r *Reconciler) implementing(ctx context.Context, cfg *config.Config, t *v1
 			return err
 		}
 		if len(evs) > 0 {
+			r.noteStage(t, "tests", testsEffect("", true, false))
 			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "contract_disputed")
 		}
 	}

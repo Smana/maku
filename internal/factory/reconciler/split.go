@@ -81,6 +81,7 @@ func (r *Reconciler) splitHandoff(ctx context.Context, cfg *config.Config, t *v1
 // ignoreSplit records and counts a split the factory will not propose (SL14).
 func (r *Reconciler) ignoreSplit(ctx context.Context, t *v1alpha1.Task, seq int64) {
 	t.Status.Split = &v1alpha1.SplitStatus{State: SplitIgnored, Seq: seq}
+	r.noteStage(t, "split", "not_proposed")
 	class := t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.Split(ctx, class, SplitIgnored) })
 }
@@ -94,6 +95,7 @@ func (r *Reconciler) proposeSplit(ctx context.Context, cfg *config.Config, t *v1
 	r.recommend(cfg, t, t.Status.Profile, sc)
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "ready", Seq: seq}
 	t.Status.Split = &v1alpha1.SplitStatus{State: SplitProposed, Seq: seq, Of: int32(len(sp.Children))} //nolint:gosec // Validate bounds it to 2..5
+	r.noteStage(t, "plan", planEffect(nil, scopeForEffect(sc), false, true))
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
 	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, "ready") })
 	record(ctx, func(ctx context.Context) {
@@ -189,6 +191,12 @@ func (r *Reconciler) leaveSplit(ctx context.Context, t *v1alpha1.Task, state str
 		return
 	}
 	sp.State = state
+	switch state {
+	case SplitApproved:
+		r.noteStage(t, "split", "proposed_accepted")
+	case SplitDeclined, SplitSuperseded, SplitExpired:
+		r.noteStage(t, "split", "proposed_declined")
+	}
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
 	record(ctx, func(ctx context.Context) { r.Metrics.Split(ctx, class, state) })
 	record(ctx, func(ctx context.Context) {

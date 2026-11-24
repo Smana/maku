@@ -123,6 +123,9 @@ func (r *Reconciler) testerEnded(ctx context.Context, cfg *config.Config, t *v1a
 		t.Status.Reason = "contract_push_unrecorded"
 		return nil
 	case end == "contract_invalid" || end == "contract_too_large":
+		if eff := testsEffect(end, false, false); eff != "" {
+			r.noteStage(t, "tests", eff)
+		}
 		record(ctx, func(ctx context.Context) { r.Metrics.ContractEnd(ctx, t.Spec.PredictedClass, end) })
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, end)
 	case c != nil:
@@ -130,6 +133,9 @@ func (r *Reconciler) testerEnded(ctx context.Context, cfg *config.Config, t *v1a
 		end = "ready"
 		narrateLater(t, narrate.ContractReady(t, c))
 	default:
+		if eff := testsEffect(end, false, false); eff != "" {
+			r.noteStage(t, "tests", eff)
+		}
 		narrateLater(t, narrate.NoContract(t, end))
 	}
 	record(ctx, func(ctx context.Context) { r.Metrics.ContractEnd(ctx, t.Spec.PredictedClass, end) })

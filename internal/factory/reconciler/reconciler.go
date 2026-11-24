@@ -120,6 +120,8 @@ type metrics interface {
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
 	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
+	StageCost(ctx context.Context, repository, class, stage string, usd float64)
+	StageEffect(ctx context.Context, repository, class, stage, effect, outcome string)
 	TierFit(ctx context.Context, classifier, tier, fit string, control bool)
 	Revoked(ctx context.Context, reason string)
 	AdmissionRefused(ctx context.Context, reason string)
@@ -1429,6 +1431,7 @@ func taskLimit(t *v1alpha1.Task, role string) string {
 // price, on a task with a USD cap, is said once: the task falls back to TaskTokens.
 func (r *Reconciler) price(ctx context.Context, t *v1alpha1.Task) {
 	if r.Costs == nil {
+		syncStageCosts(t)
 		return
 	}
 	before := unpriced(t)
@@ -1445,6 +1448,7 @@ func (r *Reconciler) price(ctx context.Context, t *v1alpha1.Task) {
 		sum += rec.CostMicroUSD
 	}
 	t.Status.Usage.CostMicroUSD = sum
+	syncStageCosts(t)
 	if why := unpriced(t); why != "" && before == "" && t.Spec.Budget.TaskMicroUSD > 0 {
 		r.log().Warn("task capped in tokens: a run's cost cannot be priced", "task.id", t.Name, "why", why,
 			"cap", t.Spec.Budget.TaskTokens)

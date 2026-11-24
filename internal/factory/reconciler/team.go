@@ -179,6 +179,7 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 			return r.noVerdict(ctx, cfg, t, "verdict_stale")
 		}
 		cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
+		r.noteReviewStage(t, false)
 		if next := r.nextVerifier(cfg, t, cur.Role); next != "" {
 			r.requestVerifier(t, next)
 			return nil
@@ -186,6 +187,7 @@ func (r *Reconciler) reviewing(ctx context.Context, cfg *config.Config, t *v1alp
 		return r.ready(ctx, t)
 	}
 	cur.Verdict, t.Status.Verdict = v.Verdict, v.Verdict
+	r.noteReviewStage(t, false)
 	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
 		return r.roundsExhausted(ctx, cfg, t, v)
 	}
@@ -235,6 +237,7 @@ func (r *Reconciler) verdict(ctx context.Context, t *v1alpha1.Task) (rooms.Verdi
 func (r *Reconciler) noVerdict(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, why string) error {
 	cur := current(t)
 	cur.Verdict, t.Status.Verdict = "none", "none"
+	r.noteReviewStage(t, false)
 	if t.Status.ReviewRounds >= r.maxRounds(cfg, t) {
 		return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "no_verdict")
 	}

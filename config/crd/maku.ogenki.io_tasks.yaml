@@ -2513,6 +2513,11 @@ spec:
                       maxLength: 8
                       pattern: ^[a-z2-7]{8}$
                       type: string
+                    persona:
+                      description: Persona is the run's human-facing role when it
+                        differs from Role (e.g. scoper on a triager run).
+                      maxLength: 32
+                      type: string
                     phase:
                       maxLength: 64
                       type: string
@@ -2706,6 +2711,48 @@ spec:
                 - seq
                 - state
                 type: object
+              stages:
+                description: |-
+                  Stages is what each stage of the task cost and changed (WR5), filled as the task goes and
+                  counted into the metrics once, at its end.
+                items:
+                  description: StageRecord is one stage's runs, spend, and effect
+                    on a Task (WR5).
+                  properties:
+                    counted:
+                      type: boolean
+                    effect:
+                      description: Effect is what the stage changed, a word of the
+                        stage's closed list.
+                      maxLength: 32
+                      type: string
+                    microUSD:
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    runs:
+                      format: int32
+                      minimum: 0
+                      type: integer
+                    stage:
+                      enum:
+                      - ask
+                      - plan
+                      - tests
+                      - implement
+                      - search
+                      - judge
+                      - review
+                      - split
+                      - step_up
+                      type: string
+                  required:
+                  - microUSD
+                  - runs
+                  - stage
+                  type: object
+                maxItems: 16
+                type: array
               statusComment:
                 description: StatusComment is the issue's one live status comment
                   and its last successful remote body.

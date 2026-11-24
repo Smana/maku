@@ -111,6 +111,7 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 			Mode:            "offered",
 			CeilingMicroUSD: ceiling,
 		}
+		r.noteStage(t, "step_up", stepUpEffect("offered", "left"))
 		narrateLater(t, narrate.StepUpOffered(t, p.Name, target, reason, ceiling, why))
 		return false, nil
 	}
@@ -183,6 +184,7 @@ func (r *Reconciler) stepUpBy(ctx context.Context, cfg *config.Config, t *v1alph
 		}
 		return nil
 	}
+	wasOffered := p.StepUp != nil && p.StepUp.Mode == "offered"
 	su := &v1alpha1.StepUpStatus{
 		From:            p.Name,
 		To:              target,
@@ -195,6 +197,9 @@ func (r *Reconciler) stepUpBy(ctx context.Context, cfg *config.Config, t *v1alph
 		Recommended: p.Recommended, Why: p.Why, Offered: len(r.profileChoices(cfg, t)) > 0, StepUp: su}
 	if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 		return err
+	}
+	if wasOffered {
+		r.noteStage(t, "step_up", stepUpEffect("offered", "taken"))
 	}
 	if handledID != 0 {
 		markHandled(t, handledID)
@@ -233,15 +238,33 @@ func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
 	narrateLater(t, narrate.ProfileEscalated(from, d.Name, trigger, ceiling, len(t.Status.Runs), t.Status.Usage.CostMicroUSD))
 }
 
-// lastJudge is the completion judge's newest verdict across t's newest implementer run and the runs
-// it resumed; "" when there is none, or when the room's log could not be read to its end.
+// lastJudge is the completion judge's newest verdict text across t's newest implementer run and
+// the runs it resumed; "" when there is none, or when the room's log could not be read to its end.
 func (r *Reconciler) lastJudge(ctx context.Context, t *v1alpha1.Task) (string, error) {
+	p, ok, err := r.lastJudgeMessage(ctx, t)
+	if err != nil || !ok {
+		return "", err
+	}
+	return p.Text, nil
+}
+
+// lastJudgeVerdict is the completion judge's newest verdict word (met, not_yet, impossible) across
+// t's newest implementer run and the runs it resumed.
+func (r *Reconciler) lastJudgeVerdict(ctx context.Context, t *v1alpha1.Task) (string, error) {
+	p, ok, err := r.lastJudgeMessage(ctx, t)
+	if err != nil || !ok {
+		return "", err
+	}
+	return p.Verdict, nil
+}
+
+func (r *Reconciler) lastJudgeMessage(ctx context.Context, t *v1alpha1.Task) (envelope.MessagePayload, bool, error) {
 	i := len(t.Status.Runs) - 1
 	for i >= 0 && t.Status.Runs[i].Role != "implementer" {
 		i--
 	}
 	if i < 0 {
-		return "", nil
+		return envelope.MessagePayload{}, false, nil
 	}
 	chain := map[string]bool{t.Status.Runs[i].ID: true}
 	for i > 0 && t.Status.Runs[i].Trigger == "resume" {
@@ -253,13 +276,13 @@ func (r *Reconciler) lastJudge(ctx context.Context, t *v1alpha1.Task) (string, e
 			e.Actor.ID == "agent:"+e.RunID && e.Type == envelope.Message
 	})
 	if err != nil || !complete {
-		return "", err
+		return envelope.MessagePayload{}, false, err
 	}
 	for j := len(evs) - 1; j >= 0; j-- {
 		var p envelope.MessagePayload
 		if json.Unmarshal(evs[j].Payload, &p) == nil && p.Kind == envelope.KindJudgeVerdict {
-			return p.Text, nil
+			return p, true, nil
 		}
 	}
-	return "", nil
+	return envelope.MessagePayload{}, false, nil
 }

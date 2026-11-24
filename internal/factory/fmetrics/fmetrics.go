@@ -102,6 +102,22 @@ func apiOutcomes() []string {
 // costRoles are run_cost_usd's role values (harness roles HR6): the four AgentRun roles, and scoper.
 func costRoles() []string { return []string{"implementer", "reviewer", "tester", "triager", "scoper"} }
 
+func stageNames() []string {
+	return []string{"ask", "plan", "tests", "implement", "search", "judge", "review", "split", "step_up"}
+}
+
+func stageEffects() []string {
+	return []string{
+		"not_needed", "asked_answered", "asked_assumed",
+		"ready", "asked", "answer_changed_scope", "failed_open",
+		"proposed_accepted", "proposed_declined", "not_proposed",
+		"contract_held", "contract_disputed", "not_testable", "contract_refused",
+		"changes_committed", "changes_ignored", "approve_agreed", "approve_overruled", "no_verdict",
+		"met_merged", "met_not_merged", "not_yet_merged", "not_yet_not_merged", "impossible_merged", "impossible_not_merged",
+		"finished", "escalated", "offered_taken", "offered_left",
+	}
+}
+
 // handOffReasons is the closed vocabulary of a hand-off's or an escalation's reason (AM9): every
 // reason narrate has prose for (the gate's refusals, the ends and the stops), the event reasons
 // the broker already bounds, the meter's revocations, and the run ends only the reconciler names:
@@ -207,6 +223,8 @@ type Set struct {
 	profileAgreement     metric.Int64Counter
 	taskOutcomes         metric.Int64Counter
 	taskUSD              metric.Float64Counter
+	stageCost            metric.Float64Histogram
+	stageEffects         metric.Int64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
 	revisionDeferred     metric.Int64Counter
@@ -504,6 +522,13 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.taskUSD, err = meter.Float64Counter("agent_factory_task_usd_total",
 		metric.WithDescription("USD of ended tasks, every attempt summed, by class, cohort, profile, source, the profile the scoper recommended and outcome. A task without a profile reads none on the profile labels; its cohort is none."))
+	check(err)
+	s.stageCost, err = meter.Float64Histogram("agent_factory_stage_cost_usd",
+		metric.WithDescription("USD spent in one stage of an ended task, by repository, class and stage (WR5)."),
+		metric.WithExplicitBucketBoundaries(runCostBuckets...))
+	check(err)
+	s.stageEffects, err = meter.Int64Counter("agent_factory_stage_effects_total",
+		metric.WithDescription("What each stage of an ended task changed, by repository, class, stage, effect and task outcome (WR5)."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -955,6 +980,26 @@ func (s *Set) TaskOutcome(ctx context.Context, class, cohort, profile, source, r
 	s.taskUSD.Add(ctx, usd, metric.WithAttributes(attribute.String("class", class), attribute.String("cohort", cohort),
 		attribute.String("profile", profile), attribute.String("source", source), attribute.String("recommended", recommended),
 		attribute.String("outcome", outcome)))
+}
+
+// StageCost records one stage's USD spend when its task ends (WR5).
+func (s *Set) StageCost(ctx context.Context, repository, class, stage string, usd float64) {
+	s.stageCost.Record(ctx, usd, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class),
+		attribute.String("stage", oneOf(stage, stageNames())),
+	))
+}
+
+// StageEffect counts what one stage changed when its task ends (WR5).
+func (s *Set) StageEffect(ctx context.Context, repository, class, stage, effect, outcome string) {
+	s.stageEffects.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class),
+		attribute.String("stage", oneOf(stage, stageNames())),
+		attribute.String("effect", oneOf(effect, stageEffects())),
+		attribute.String("outcome", oneOf(outcome, taskOutcomes())),
+	))
 }
 
 // ClassMismatch counts a task whose predicted class is not the one policy-bot matched.
