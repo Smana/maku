@@ -170,6 +170,18 @@ spec:
                   mergerLogin:
                     maxLength: 253
                     type: string
+                  paused:
+                    description: |-
+                      Paused stops every automatic policy decision with a human-readable reason. A maintainer's
+                      approve-to-merge review still arms; resume by removing this block.
+                    properties:
+                      reason:
+                        description: Reason is the operator's short explanation of
+                          the pause.
+                        maxLength: 200
+                        minLength: 1
+                        type: string
+                    type: object
                   policyBot:
                     description: |-
                       PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step
@@ -605,6 +617,18 @@ spec:
                   mergerLogin:
                     maxLength: 253
                     type: string
+                  paused:
+                    description: |-
+                      Paused stops every automatic policy decision with a human-readable reason. A maintainer's
+                      approve-to-merge review still arms; resume by removing this block.
+                    properties:
+                      reason:
+                        description: Reason is the operator's short explanation of
+                          the pause.
+                        maxLength: 200
+                        minLength: 1
+                        type: string
+                    type: object
                   policyBot:
                     description: |-
                       PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step

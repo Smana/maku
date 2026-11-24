@@ -4,6 +4,7 @@ package app
 
 import (
 	"cmp"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -18,17 +19,23 @@ import (
 	"github.com/Smana/maku/internal/factory/resources"
 )
 
-// policy is `maku policy`: offline, against a factory config file, for the migration's export,
-// for a repository's own CI, and (behind policyManagement.simulation) to simulate a policy on
-// decision fixtures and to tell a tightening from a relaxation.
-func (r Maku) policy(args []string) error {
+// policy is `maku policy`: repository decisions through the broker, and offline migration,
+// validation, simulation and structural diffs against a factory config file.
+func (r Maku) policy(ctx context.Context, args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("policy export, check, simulate or diff\n%s", makuUsage)
+		return fmt.Errorf("policy list, explain, pause, resume, validate, export, check, simulate or diff\n%s", makuUsage)
 	}
 	verb, args := args[0], args[1:]
+	if verb == "list" || verb == "explain" {
+		return r.policyOnline(ctx, verb, args)
+	}
+	if verb == "pause" || verb == "resume" {
+		return r.policyPause(ctx, verb, args)
+	}
 	fs := flag.NewFlagSet("policy "+verb, flag.ContinueOnError)
 	cfgPath := fs.String("config", "", "the factory config file")
 	repository := fs.String("repository", "", "owner/name")
+	output := fs.String("output", "", "json")
 	var manifests manifestList
 	fs.Var(&manifests, "manifests", "a Factory, Repository and MergePolicy manifest file the factory serves, over the config file; repeatable")
 	pos, err := flags(fs, args)
@@ -51,6 +58,12 @@ func (r Maku) policy(args []string) error {
 	if rc == nil {
 		return fmt.Errorf("policy: %s is not listed in %s", *repository, *cfgPath)
 	}
+	if verb == "export" || verb == "check" {
+		_, _ = fmt.Fprintf(r.Err, "maku config migrate %s\n", verb)
+	}
+	if verb == "validate" {
+		verb = "check"
+	}
 	switch verb {
 	case "export":
 		f, err := mergepolicy.Export(rc, cfg)
@@ -70,6 +83,12 @@ func (r Maku) policy(args []string) error {
 		f, rep, err := readPolicy(pos[0], cfg, rc)
 		if err != nil {
 			return err
+		}
+		if *output == "json" {
+			if d := mergepolicy.Compare(rc, f, cfg); len(d) > 0 {
+				return fmt.Errorf("policy: not equivalent to the central config:\n%s", strings.Join(d, "\n"))
+			}
+			return writePolicyJSON(r.Out, map[string]any{"repository": rc.Name, "valid": len(rep.BindingErrors) == 0, "classes": rep.Classes, "bindingErrors": rep.BindingErrors})
 		}
 		if err := r.printReport(f, rep); err != nil {
 			return err

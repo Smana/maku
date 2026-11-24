@@ -458,6 +458,13 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 		d.Rows.Resolved = config.ShortHash(h)
 	}
 	details := narrate.DecisionDetails(d.Rows, classes)
+	if d.Detail != "" {
+		if details == "" {
+			details = "Paused: " + d.Detail
+		} else {
+			details += "; Paused: " + d.Detail
+		}
+	}
 	t.Status.PullRequest.Decision = details
 	if details != "" {
 		ev.Body += "\n\n" + details

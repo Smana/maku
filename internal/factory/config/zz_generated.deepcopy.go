@@ -492,6 +492,11 @@ func (in *Merge) DeepCopyInto(out *Merge) {
 		**out = **in
 	}
 	out.VerifyFor = in.VerifyFor
+	if in.Paused != nil {
+		in, out := &in.Paused, &out.Paused
+		*out = new(MergePause)
+		**out = **in
+	}
 	out.RevertWindow = in.RevertWindow
 	if in.AwaitingCIFor != nil {
 		in, out := &in.AwaitingCIFor, &out.AwaitingCIFor

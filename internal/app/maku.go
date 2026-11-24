@@ -121,10 +121,17 @@ const makuUsage = `usage: maku <command>
                                   check manifests against a config file the way the factory would, offline;
                                   --base prints each changed policy's consumers, a guardrail: line names
                                   each binding over a guardrail, a binding: line each one refused
-  policy export|check|simulate|diff --config FILE [--manifests FILE]... --repository owner/name
+  policy list --repository owner/name [--since DATE]
+                                  list recent per-policy decisions through the broker
+  policy explain owner/name#PR     explain one pull request's decision timeline
+  policy pause --repository owner/name --reason TEXT
+                                  print the merge.paused edit, or open its GitOps PR
+  policy resume --repository owner/name
+                                  print merge.paused: null, or open its GitOps PR
+  policy validate|export|check|simulate|diff --config FILE [--manifests FILE]... --repository owner/name
                                   write, check, simulate or diff a repository's merge policy file, offline;
-                                  export writes a bound repository's bindings (mergePolicies), from the
-                                  manifests; simulate and diff need policyManagement.simulation
+                                  validate accepts --output json; export writes a bound repository's bindings
+                                  (mergePolicies), from the manifests; simulate and diff need policyManagement.simulation
   drill plant --repo owner/name --factory URL --stranger-token-file F --maintainer-token-file F
               --factory-token-file F [--id ID] [--runlore-hook X --tool-result-hook X --room-hook X]
                                   plant an injection drill in the drill repository and hand its manifest to the
@@ -249,9 +256,9 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "skill":
 		return r.skill(args)
 	case "policy":
-		return r.policy(args)
+		return r.policy(ctx, args)
 	case "config":
-		return r.config(args)
+		return r.config(ctx, args)
 	case "setup":
 		return r.setup(ctx, args)
 	case "demo":

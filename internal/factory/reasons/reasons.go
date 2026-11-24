@@ -119,6 +119,7 @@ var table = map[string]Words{
 	"not_owned":                     {Short: "the repository does not name this factory", Long: "this repository's .github/agent-factory.yaml does not name this factory", Next: ""},
 	"oracle_finding_open":           {Short: "an oracle finding is still open", Long: "a link its task was opened to fix is still a link target in the head, or the file holding it was not changed", Next: ""},
 	"oracle_unrequested":            {Short: "changes an unrequested link target", Long: "it moves a link target the task's findings did not ask to move, or moves one anywhere but the exact snapshot its finding gave", Next: ""},
+	"paused":                        {Short: "merge policies are paused", Long: "automatic policy decisions are paused by the repository operator", Next: "a maintainer reads the pause reason, then resumes or merges by hand"},
 	"overlap_active_duplicate":      {Short: "an active task is already pursuing the …", Long: "an active task is already pursuing the same outcome", Next: ""},
 	"parent_missing":                {Short: "the parent task is gone", Long: "its parent task no longer exists", Next: ""},
 	"parent_not_split":              {Short: "the parent is no longer waiting", Long: "its parent task is no longer waiting on its parts", Next: ""},

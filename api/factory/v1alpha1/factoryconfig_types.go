@@ -42,6 +42,23 @@ type FactoryTriage struct {
 	ControlPercent int `json:"controlPercent,omitempty"`
 }
 
+// GitOps is one GitHub repository and manifest file where policy-change pull requests are opened.
+type GitOps struct {
+	// Repository is owner/name on GitHub.
+	// +kubebuilder:validation:MaxLength=140
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$`
+	Repository string `json:"repository"`
+	// Path is the manifest's slash-separated path in that repository.
+	// +kubebuilder:validation:MaxLength=512
+	// +kubebuilder:validation:Pattern=`^[^/].*[^/]$|^[^/]$`
+	Path string `json:"path"`
+	// Branch is the base branch for policy changes, main when omitted.
+	// +kubebuilder:validation:MaxLength=128
+	// +kubebuilder:validation:Pattern=`^[A-Za-z0-9._/-]+$`
+	// +optional
+	Branch string `json:"branch,omitempty"`
+}
+
 // FactorySpec is the factory's catalogue (D3, D12), in today's config keys. prices is today's
 // meter.prices: the meter's URL and queries stay in the values.
 type FactorySpec struct {
@@ -71,6 +88,10 @@ type FactorySpec struct {
 	// MergeDefaults are the merge settings most repositories share (Q8): a Repository's merge
 	// overrides them key by key, each key whole.
 	MergeDefaults *config.Merge `json:"mergeDefaults,omitempty"`
+	// GitOps is the repository and manifest path where the factory opens policy-change pull requests.
+	// The factory never merges those pull requests.
+	// +optional
+	GitOps *GitOps `json:"gitops,omitempty"`
 	// +kubebuilder:validation:MaxProperties=32
 	Prices map[string]config.Price `json:"prices,omitempty"`
 }

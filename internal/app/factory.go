@@ -766,6 +766,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return nil, false
 			}
 			return commentReader(c.gh), true
+		}, RecentReader: func(ctx context.Context, repo, since string) ([]evidence.PR, error) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, evidence.ErrUnknownRepository
+			}
+			return evidenceSource{c.gh}.MergedRecords(ctx, "merged:>="+since)
 		}}}
 	}
 	apiSrv.Redact = redactor
@@ -1318,6 +1324,10 @@ func (e policyEditor) PreviewPolicy(ctx context.Context, name string, spec confi
 
 func (e policyEditor) Timeline(ctx context.Context, repository string, pr int) (any, error) {
 	return e.Service.Timeline(ctx, repository, pr)
+}
+
+func (e policyEditor) Recent(ctx context.Context, repository, since string) (any, error) {
+	return e.Service.Recent(ctx, repository, since)
 }
 
 // runCost hands the meter's cost report to the metric, key by key.

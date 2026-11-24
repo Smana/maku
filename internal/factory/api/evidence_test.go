@@ -38,7 +38,7 @@ func (readAccess) CanRead(_ context.Context, p authn.Principal, repository strin
 	return (p.ID == "human:291" || p.ID == "human:5") && repository == coordPrimary, nil
 }
 
-type fakeEditor struct{ previews, timelines int }
+type fakeEditor struct{ previews, timelines, recents int }
 
 func (f *fakeEditor) Preview(context.Context, string, string) (any, error) {
 	f.previews++
@@ -58,6 +58,11 @@ func (f *fakeEditor) PreviewPolicy(context.Context, string, config.PolicySpec, f
 func (f *fakeEditor) Timeline(_ context.Context, repo string, pr int) (any, error) {
 	f.timelines++
 	return map[string]any{"repository": repo, "pullRequest": pr}, nil
+}
+
+func (f *fakeEditor) Recent(_ context.Context, repo, since string) (any, error) {
+	f.recents++
+	return map[string]any{"repository": repo, "since": since}, nil
 }
 
 // managed is stage manage when on, else read: the stage below promotion.
@@ -230,5 +235,20 @@ func TestPolicyEvidenceAnswersWhileGitHubSearches(t *testing.T) {
 	}
 	if strings.Contains(w.Body.String(), `"evidence":`) {
 		t.Fatalf("a pending class carries evidence: %s", w.Body)
+	}
+}
+
+func TestPolicyRecentDecisions(t *testing.T) {
+	s, _ := evidenceServer(true)
+	w := getAs(s.Handler(), "human", "/v1/policy/decisions?repository="+coordPrimary+"&since=2026-11-01")
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"since":"2026-11-01"`) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if editor := s.Editor.(*fakeEditor); editor.recents != 1 {
+		t.Fatalf("recent reads %d", editor.recents)
+	}
+	w = getAs(s.Handler(), "human", "/v1/policy/decisions?repository="+coordPrimary+"&since=not-a-date")
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("invalid since: %d %s", w.Code, w.Body.String())
 	}
 }
