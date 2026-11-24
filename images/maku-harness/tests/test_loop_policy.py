@@ -23,6 +23,11 @@ class ParseTest(unittest.TestCase):
     def test_judge_none_turns_the_judge_off(self):
         self.assertIsNone(lp.parse('{"judgeModel": "none"}').judge_model)
 
+    def test_a_stall_rule_with_no_judge_sends_no_continuation(self):
+        policy = lp.parse('{"stallSteps": 80, "continuations": 2, "judgeModel": "none"}')
+        self.assertIsNone(policy.judge_model)
+        self.assertEqual(policy.stall_steps, 80)
+
     def test_malformed_values_are_refused(self):
         for raw in ("", "[]", "80", '{"stallStep": 80}', '{"stallSteps": 0}', '{"stallSteps": 501}',
                     '{"stallSteps": true}', '{"stallSteps": "80"}', '{"continuations": -1}', '{"continuations": 6}',

@@ -54,8 +54,8 @@ func TestShippedWorkflowsFillAnEmptyFactory(t *testing.T) {
 	if c.ScopeFor("careful") != ScopeScoper || c.LoopFor("careful") == nil || c.LoopFor("careful").JudgeModel != "tier-light" || !c.SearchFor("careful") {
 		t.Fatal("the careful row is not the shipped one")
 	}
-	if c.ScopeFor("default") != ScopeOff || c.LoopFor("docs") != nil {
-		t.Fatal("the shipped default row switches something on")
+	if c.ScopeFor("default") != ScopeOff || c.LoopFor("docs") == nil || *c.LoopFor("docs") != (LoopPolicy{DefaultStallSteps, DefaultContinuations, ""}) {
+		t.Fatalf("the shipped default row: scope=%s loop=%+v", c.ScopeFor("default"), c.LoopFor("docs"))
 	}
 	for _, p := range c.HarnessProfiles {
 		if len(p.Description) > MaxDescription {
@@ -72,7 +72,7 @@ caps:`, 1))
 	if p := c.HarnessProfiles["standard"]; p.Template != "solo" || !p.Checks || p.Description != "" {
 		t.Fatalf("the platform's standard was touched: %+v", p)
 	}
-	if c.ScopeFor("careful") != ScopeSteering || c.LoopFor("careful") != nil || c.SearchFor("careful") || c.Loops["careful"].Split != nil {
+	if c.ScopeFor("careful") != ScopeSteering || c.Loops["careful"].Judge != "" || c.LoopFor("careful").JudgeModel != "" || c.SearchFor("careful") || c.Loops["careful"].Split != nil {
 		t.Fatal("the platform's careful row was merged with the shipped one")
 	}
 	if got := c.Templates["solo"].Roles; len(got) != 2 {
@@ -216,5 +216,36 @@ func TestWorkflowEscalation(t *testing.T) {
 		if _, err := Parse([]byte(clean + y)); err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("%s: got %v", y, err)
 		}
+	}
+}
+
+func TestTheShippedDefaultRowStopsARunThatCommitsNothing(t *testing.T) {
+	c := mustParse(t, noTemplates)
+	for _, name := range []string{"quick", "standard"} {
+		p, _ := c.Workflow(name)
+		lp := c.LoopFor(c.RowFor(name, p))
+		if lp == nil || lp.StallSteps != DefaultStallSteps || lp.JudgeModel != "" {
+			t.Fatalf("%s: %+v, want the stall rule and no judge", name, lp)
+		}
+	}
+	p, _ := c.Workflow("careful")
+	if lp := c.LoopFor(c.RowFor("careful", p)); lp == nil || lp.JudgeModel != DefaultJudge {
+		t.Fatalf("careful lost its judge: %+v", lp)
+	}
+}
+
+func TestAPlatformsDefaultRowIsKeptWhole(t *testing.T) {
+	c := mustParse(t, good+`loops:
+  default: {scope: "off"}
+`)
+	if lp := c.LoopFor("default"); lp != nil {
+		t.Fatalf("the platform's default row gained a loop: %+v", lp)
+	}
+}
+
+func TestTheShippedCarefulSplitNeedsNoClassifier(t *testing.T) {
+	_, _, loops := ShippedWorkflows()
+	if s := loops[WorkflowCareful].Split; s == nil || !s.AnyTier || s.MaxChildren != 4 {
+		t.Fatalf("split = %+v, want anyTier with four parts", s)
 	}
 }

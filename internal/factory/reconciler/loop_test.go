@@ -70,6 +70,19 @@ func TestALoopEndEscalatesWithItsReason(t *testing.T) {
 	}
 }
 
+func TestAStandardTaskCarriesTheStallRuleAndNoJudge(t *testing.T) {
+	cf := resolveCfg("observe", 0)
+	delete(cf.Loops, "default")
+	cf.HarnessProfiles, cf.Templates, cf.Loops = config.FillShippedWorkflows(cf.HarnessProfiles, cf.Templates, cf.Loops, false)
+	tk := issueTask("3buqdlot", 7, "fix it")
+	g := newRig(t, tk, roomOf("3buqdlot"))
+	p, _ := cf.Workflow("standard")
+	g.r.profileSpec(cf, tk, "standard", p)
+	if l := tk.Spec.Loop; l == nil || l.StallSteps != 80 || l.JudgeModel != "" {
+		t.Fatalf("spec.loop = %+v", l)
+	}
+}
+
 // The loop row reaches implementer claims only, on every run of the task, as triage recorded it.
 func TestALoopRowReachesImplementerClaimsOnly(t *testing.T) {
 	steps := int32(5)

@@ -78,7 +78,11 @@ func (l Loop) over(def Loop) Loop {
 	if out.Continuations == nil {
 		out.Continuations = def.Continuations
 	}
-	out.Judge = cmp.Or(out.Judge, def.Judge)
+	// A row that sets a loop key of its own never inherits default's "no judge": it read the
+	// design's judge before default carried the stall rule, and keeps it.
+	if out.Judge == "" && (def.Judge != NoJudge || (l.StallSteps == nil && l.Continuations == nil)) {
+		out.Judge = def.Judge
+	}
 	out.Scope = cmp.Or(out.Scope, def.Scope)
 	if !out.searchSet && !out.Search { // a row built in Go with search true set it too
 		out.Search = def.Search

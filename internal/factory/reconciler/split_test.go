@@ -120,6 +120,23 @@ func TestSplitAnyTierOffersEveryTier(t *testing.T) {
 	}
 }
 
+func TestAShippedCarefulTaskIsOfferedASplitAtStandard(t *testing.T) {
+	tk := issueTask("3buqdlot", 7, parentText)
+	c := cfg()
+	c.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20, RunUSD: 0.51, TaskUSD: 1.02}
+	for name, usd := range map[string][2]float64{"standard": {2.55, 5.10}, "frontier": {6.80, 13.60}} {
+		tr := c.Tiers[name]
+		tr.RunUSD, tr.TaskUSD = usd[0], usd[1]
+		c.Tiers[name] = tr
+	}
+	c.HarnessProfiles, c.Templates, c.Loops = config.FillShippedWorkflows(nil, nil, nil, true)
+	g := profileRig(t, c, tk, "workflow:careful")
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Spec.Split == nil || got.Spec.Split.MaxChildren != 4 {
+		t.Fatalf("split = %+v, want maxChildren 4", got.Spec.Split)
+	}
+}
+
 // No row, a row without split, a mode other than scoper, or no issue: no split.
 func TestNoSplitOutsideItsRow(t *testing.T) {
 	for name, edit := range map[string]func(*rig){
