@@ -367,3 +367,49 @@ func TestANewLeaderWithAChargeInItsBaselineStillChargesTheRest(t *testing.T) {
 		t.Fatalf("spent %d, settled %d, want 1400000: the 0.7 M learned and the rest charged once", spent, settled["aaaaaaaa"])
 	}
 }
+
+// REL-M15: when a prior leader's late write lands more than this tick's increment (g > n),
+// a.settled advances by max(n, g) so the next tick does not double-charge g - n when the metrics
+// source catches up.
+func TestLateWriteExceedingTickDoesNotDoubleChargeNextTick(t *testing.T) {
+	now := day22
+	c := newLateCommit()
+	run := glmRun("aaaaaaaa", now)
+	// Leader A observes 1M input tokens ($1.40 = 1_400_000 micro-USD) and its write stalls in flight.
+	srcA := typed{"aaaaaaaa": glmUsage(1_000_000)}
+	a := usdLedgerMeter(&store{patches: map[string]map[string]string{}, runs: []runs.Run{run}}, srcA, c, &now)
+	c.failing = true
+	if err := a.Tick(t.Context()); err == nil || c.held == nil {
+		t.Fatalf("leader A should fail with held write: %v", err)
+	}
+	c.failing = false
+	// Leader B takes over while Prometheus lags at 500k tokens ($0.70 = 700_000 micro-USD).
+	// On B's first tick, B learns 0, then A's late write (1_400_000) commits before B settles,
+	// so g = 1_400_000 > n = 700_000.
+	now = now.Add(time.Minute)
+	srcB := typed{"aaaaaaaa": glmUsage(500_000)}
+	b := usdLedgerMeter(&store{patches: map[string]map[string]string{}, runs: []runs.Run{run}}, srcB, c, &now)
+	if err := b.Tick(t.Context()); err != nil {
+		t.Fatalf("leader B first tick: %v", err)
+	}
+	// Next tick: Prometheus catches up to 1M tokens ($1.40 = 1_400_000 micro-USD), which A's late
+	// write already settled. B must not charge the 700_000 difference again.
+	now = now.Add(time.Minute)
+	srcB["aaaaaaaa"] = glmUsage(1_000_000)
+	if err := b.Tick(t.Context()); err != nil {
+		t.Fatalf("leader B second tick: %v", err)
+	}
+	if spent, settled := totals(t, c); spent != 1_400_000 || settled["aaaaaaaa"] != 1_400_000 {
+		t.Fatalf("spent %d, settled %d, want 1400000 (no double-charge of g - n)", spent, settled["aaaaaaaa"])
+	}
+	// Third tick: run spends another 500k tokens (1.5M total = $2.10 = 2_100_000 micro-USD).
+	// Only the new 700_000 is charged.
+	now = now.Add(time.Minute)
+	srcB["aaaaaaaa"] = glmUsage(1_500_000)
+	if err := b.Tick(t.Context()); err != nil {
+		t.Fatalf("leader B third tick: %v", err)
+	}
+	if spent, settled := totals(t, c); spent != 2_100_000 || settled["aaaaaaaa"] != 2_100_000 {
+		t.Fatalf("spent %d, settled %d, want 2100000", spent, settled["aaaaaaaa"])
+	}
+}

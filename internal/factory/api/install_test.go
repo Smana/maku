@@ -24,9 +24,10 @@ func TestInstallRoute(t *testing.T) {
 		}
 		return nil
 	}, Auth: byToken{
-		"dev":   {Kind: envelope.ActorHuman, ID: "human:2", Sub: "2", Groups: []string{"agents"}},
-		"sys":   {Kind: envelope.ActorSystem, ID: "system:broker"},
-		"slack": {Kind: envelope.ActorHuman, ID: "human:3", Sub: "3", Sponsored: true},
+		"dev":    {Kind: envelope.ActorHuman, ID: "human:2", Sub: "2", Groups: []string{"agents"}},
+		"sys":    {Kind: envelope.ActorSystem, ID: "system:broker"},
+		"syssub": {Kind: envelope.ActorSystem, ID: "system:broker", Sub: "system:serviceaccount:agent-system:broker"},
+		"slack":  {Kind: envelope.ActorHuman, ID: "human:3", Sub: "3", Sponsored: true},
 	}, Log: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))}
 	get := func(token string) *httptest.ResponseRecorder {
 		r := httptest.NewRequestWithContext(context.Background(), http.MethodGet, InstallRoute[len("GET "):], nil)
@@ -42,7 +43,12 @@ func TestInstallRoute(t *testing.T) {
 	if w := get("dev"); w.Code != http.StatusOK || w.Body.String() != "{\"unsafe\":[\"private_code_unacknowledged\"]}\n" {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
-	for token, code := range map[string]int{"sys": http.StatusForbidden, "slack": http.StatusForbidden, "nobody": http.StatusUnauthorized} {
+	for token, code := range map[string]int{
+		"sys":    http.StatusForbidden,
+		"syssub": http.StatusForbidden,
+		"slack":  http.StatusForbidden,
+		"nobody": http.StatusUnauthorized,
+	} {
 		if w := get(token); w.Code != code {
 			t.Errorf("%s: %d, want %d", token, w.Code, code)
 		}

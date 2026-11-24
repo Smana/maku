@@ -502,3 +502,84 @@ func TestTheRetryOfAWholeAdmissionAnswers201Again(t *testing.T) {
 		t.Fatalf("the retry dropped the reservation of a live run: %v", cm.Data)
 	}
 }
+
+type liveCfg struct {
+	mu  sync.RWMutex
+	cfg *config.Config
+}
+
+func (l *liveCfg) Current() *config.Config {
+	l.mu.RLock()
+	defer l.mu.RUnlock()
+	return l.cfg
+}
+
+func (l *liveCfg) Set(c *config.Config) {
+	l.mu.Lock()
+	l.cfg = c
+	l.mu.Unlock()
+}
+
+// REL-M6: dropReservation uses a non-cancelled bounded context and the reservation's captured
+// timestamp, so a cancelled request context or UTC midnight rollover cannot strand a reservation.
+func TestDropReservationSucceedsWithCancelledContextAndMidnightRollover(t *testing.T) {
+	c := fake.NewClientBuilder().WithScheme(scheme()).Build()
+	beforeMidnight := time.Date(2026, 9, 27, 23, 59, 59, 0, time.UTC)
+	afterMidnight := time.Date(2026, 9, 28, 0, 0, 1, 0, time.UTC)
+
+	curNow := beforeMidnight
+	s := mkServer(t, &store{}, c, false, false, "7f3cq2xz", 5_000_000)
+	s.Now = func() time.Time { return curNow }
+
+	// Seed a reservation on 2026-09-27.
+	res := ledger.Reservation{Principal: "human:1", MaxMicroUSD: 1_000_000, Repository: "Smana/cloud-native-ref", Role: "implementer"}
+	if _, err := ledger.Reserve(t.Context(), c, "agent-system", beforeMidnight, "7f3cq2xz", res, 5_000_000, 0, false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Simulate UTC midnight rollover and an already-cancelled request context.
+	curNow = afterMidnight
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	s.dropReservation(cancelled, beforeMidnight, "7f3cq2xz")
+
+	var cm corev1.ConfigMap
+	key := types.NamespacedName{Namespace: "agent-system", Name: ledger.Prefix + "20260927"}
+	if err := c.Get(t.Context(), key, &cm); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cm.Data[ledger.Reserved+"7f3cq2xz"]; ok {
+		t.Fatalf("reservation was not dropped after cancelled ctx + midnight rollover: %v", cm.Data)
+	}
+}
+
+// REL-M14: feature-flagged routes evaluate s.Cfg.Current() per request so live config reloads take
+// effect on an already-built Handler without restart.
+func TestFeatureFlaggedRoutesFollowLiveConfigReload(t *testing.T) {
+	s, _ := evidenceServer(false)
+	dyn := &liveCfg{cfg: s.Cfg.(*config.Config)}
+	s.Cfg = dyn
+	h := s.Handler()
+
+	// Promotion starts off: 404.
+	if w := getAs(h, "human", "/v1/policy/evidence?repository="+coordPrimary); w.Code != http.StatusNotFound {
+		t.Fatalf("before reload: %d %s, want 404", w.Code, w.Body)
+	}
+
+	// Enable promotion live without rebuilding Handler(): 200.
+	next := *dyn.Current()
+	next.PolicyManagement = managed(true)
+	dyn.Set(&next)
+	if w := getAs(h, "human", "/v1/policy/evidence?repository="+coordPrimary); w.Code != http.StatusOK {
+		t.Fatalf("after enabling promotion: %d %s, want 200", w.Code, w.Body)
+	}
+
+	// Disable promotion live again: 404.
+	off := *dyn.Current()
+	off.PolicyManagement = managed(false)
+	dyn.Set(&off)
+	if w := getAs(h, "human", "/v1/policy/evidence?repository="+coordPrimary); w.Code != http.StatusNotFound {
+		t.Fatalf("after disabling promotion: %d %s, want 404", w.Code, w.Body)
+	}
+}

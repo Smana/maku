@@ -621,3 +621,104 @@ func TestReportMinimumIsThePolicys(t *testing.T) {
 		t.Fatalf("minimums %v", got)
 	}
 }
+
+type panicOnceSource struct {
+	*fakeSource
+	panicked bool
+}
+
+func (p *panicOnceSource) RevertRecords(ctx context.Context) ([]Revert, error) {
+	if !p.panicked {
+		p.panicked = true
+		panic("boom")
+	}
+	return p.fakeSource.RevertRecords(ctx)
+}
+
+// REL-M14: a panic inside collectAll must still release e.done so the repository is not wedged.
+func TestRefreshPanicReleasesInFlightClaim(t *testing.T) {
+	src := &panicOnceSource{fakeSource: &fakeSource{file: policyFile, found: true}}
+	s := service(src, time.Now)
+
+	func() {
+		defer func() {
+			if r := recover(); r == nil {
+				t.Fatal("expected panic from source")
+			}
+		}()
+		_ = s.Refresh(t.Context(), "Smana/cloud-native-ref")
+	}()
+
+	// A subsequent Refresh must succeed instead of returning ErrInFlight forever.
+	if err := s.Refresh(t.Context(), "Smana/cloud-native-ref"); err != nil {
+		t.Fatalf("subsequent Refresh failed after panic: %v", err)
+	}
+}
+
+// PERF-M3: follow-up checks skip immature merges and batch mature PRs with OR-label queries,
+// bisecting only when a batch hits.
+func TestCollectBatchesFollowUpSearches(t *testing.T) {
+	now := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	matureAt := now.Add(-10 * 24 * time.Hour)
+	immatureAt := now.Add(-2 * time.Hour)
+
+	var merges []PR
+	for i := 1; i <= 12; i++ {
+		merges = append(merges, PR{
+			Number:   i,
+			MergedAt: matureAt,
+			Comments: []Comment{{
+				Author: Actor{Login: "ogenki-agent-factory[bot]"},
+				Body:   "<!-- agent-factory scope=x event=monitor-1 verdict=healthy -->",
+			}},
+		})
+	}
+	// Add 3 immature PRs that must not trigger any follow-up search.
+	for i := 101; i <= 103; i++ {
+		merges = append(merges, PR{Number: i, MergedAt: immatureAt})
+	}
+
+	// Custom source that evaluates comma-separated label OR queries like GitHub Search.
+	src := &batchFollowUpSource{
+		fakeSource: &fakeSource{
+			file:   "factory: aws-0\n",
+			found:  true,
+			merged: map[string][]PR{`label:"factory/merged:docs-links"`: merges},
+		},
+		followedPRs: map[int]bool{9: true},
+	}
+
+	s := service(src, func() time.Time { return now })
+	if err := s.Refresh(t.Context(), "Smana/cloud-native-ref"); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Report(t.Context(), "Smana/cloud-native-ref")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ev := r.Classes[0].Evidence
+	if ev == nil || ev.Outcomes.FollowUp != 1 || ev.Outcomes.Mature != 12 {
+		t.Fatalf("unexpected outcomes: %+v", ev)
+	}
+	// Batch 1 (#1..#6): 1 call (false). Batch 2 (#7..#12): 1 call (true) + bisect (<= 7 calls).
+	// Total AnyMerged calls must be well under 12+3=15.
+	if src.anyMergedCalls >= 10 {
+		t.Fatalf("AnyMerged called %d times for 12 mature + 3 immature PRs, want <10 (batched)", src.anyMergedCalls)
+	}
+}
+
+type batchFollowUpSource struct {
+	*fakeSource
+	followedPRs    map[int]bool
+	anyMergedCalls int
+}
+
+func (b *batchFollowUpSource) AnyMerged(_ context.Context, filter string) (bool, error) {
+	b.anyMergedCalls++
+	for pr := range b.followedPRs {
+		if strings.Contains(filter, fmt.Sprintf(`"factory/follow-up-of:#%d"`, pr)) {
+			return true, nil
+		}
+	}
+	return false, nil
+}

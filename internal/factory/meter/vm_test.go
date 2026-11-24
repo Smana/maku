@@ -263,3 +263,43 @@ func TestVLReadsItsKindsSubjects(t *testing.T) {
 		t.Fatal("a VL without the runs kind must refuse")
 	}
 }
+
+// REL-M12: VL.RecentlyThrottled caps the response body at maxVLBody and drains error bodies so
+// connections stay reusable and runaway responses cannot exhaust memory.
+func TestVLBoundsBodyAndDrainsErrors(t *testing.T) {
+	native := runwatch.Kind{Group: "maku.ogenki.io", Namespace: "runs", NamePrefix: "run-"}
+	t.Run("oversized 200 body is bounded at maxVLBody", func(t *testing.T) {
+		line1 := `{"log.x_ar_agent":"system:serviceaccount:runs:run-aaaaaaaa","hits":"1"}` + "\n"
+		padLine := `{"log.x_ar_agent":"ignore","pad":"` + strings.Repeat("x", 1000) + `"}` + "\n"
+		tailLine := `{"log.x_ar_agent":"system:serviceaccount:runs:run-zzzzzzzz","hits":"1"}` + "\n"
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, line1)
+			for range (maxVLBody / len(padLine)) + 10 {
+				_, _ = io.WriteString(w, padLine)
+			}
+			_, _ = io.WriteString(w, tailLine)
+		}))
+		t.Cleanup(srv.Close)
+		got, err := VL{Kind: native, URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got["aaaaaaaa"] {
+			t.Fatalf("expected first row before cap, got %v", got)
+		}
+		if got["zzzzzzzz"] {
+			t.Fatalf("row past maxVLBody should not be read: %v", got)
+		}
+	})
+	t.Run("non-200 status drains body and returns error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, strings.Repeat("err", 100))
+		}))
+		t.Cleanup(srv.Close)
+		_, err := VL{Kind: native, URL: srv.URL, Query: "q", HC: srv.Client()}.RecentlyThrottled(t.Context())
+		if err == nil || !strings.Contains(err.Error(), "502") {
+			t.Fatalf("got %v, want 502 error", err)
+		}
+	})
+}

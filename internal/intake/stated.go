@@ -78,8 +78,43 @@ func statedAnswer(g Gap, request string) (string, bool) {
 // containsTerm is whether text names term as a whole token, case-insensitively: "5" is not in "15"
 // or "0.5".
 func containsTerm(text, term string) bool {
-	re := regexp.MustCompile(`(?i)(?:^|[^\w.])` + regexp.QuoteMeta(term) + `(?:$|[^\w.]|\.(?:\s|$))`)
-	return re.MatchString(text)
+	lt := strings.ToLower(text)
+	lterm := strings.ToLower(term)
+	for off := 0; off <= len(lt); {
+		idx := strings.Index(lt[off:], lterm)
+		if idx < 0 {
+			return false
+		}
+		pos := off + idx
+		end := pos + len(lterm)
+		if termBoundaryBefore(lt, pos) && termBoundaryAfter(lt, end) {
+			return true
+		}
+		off = pos + 1
+	}
+	return false
+}
+
+func isWordOrDot(b byte) bool {
+	return (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z') || (b >= '0' && b <= '9') || b == '_' || b == '.'
+}
+
+func isASCIISpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\f' || b == '\r'
+}
+
+func termBoundaryBefore(s string, pos int) bool {
+	return pos == 0 || !isWordOrDot(s[pos-1])
+}
+
+func termBoundaryAfter(s string, end int) bool {
+	if end >= len(s) {
+		return true
+	}
+	if !isWordOrDot(s[end]) {
+		return true
+	}
+	return s[end] == '.' && (end+1 >= len(s) || isASCIISpace(s[end+1]))
 }
 
 const (

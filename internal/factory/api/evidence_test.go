@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 )
@@ -72,7 +73,8 @@ func evidenceServer(on bool) (*Server, *fakeEvidence) {
 	return &Server{
 		Auth: byToken{"human": coordHuman, "reader": coordReader, "slack": coordSlack,
 			"flaky":      authn.Principal{Kind: coordHuman.Kind, ID: "human:9", Sub: "9"},
-			"onlyreader": authn.Principal{Kind: coordHuman.Kind, ID: "human:5", Sub: "5"}},
+			"onlyreader": authn.Principal{Kind: coordHuman.Kind, ID: "human:5", Sub: "5"},
+			"system":     authn.Principal{Kind: envelope.ActorSystem, ID: "system:broker", Sub: "system:serviceaccount:agent-system:broker"}},
 		Cfg: &config.Config{PolicyManagement: managed(on),
 			Repositories: []config.Repository{{Name: coordPrimary}, {Name: coordOther}}},
 		Access: readAccess{coordAccess{principals: map[string]bool{"human:291|" + coordPrimary: true}}}, Evidence: f, Editor: &fakeEditor{},
@@ -104,6 +106,7 @@ func TestPolicyEvidenceIsForReadersOnly(t *testing.T) {
 		"not configured":              {true, "human", "?repository=Smana/elsewhere", http.StatusNotFound},
 		"no repository":               {true, "human", "", http.StatusBadRequest},
 		"a sponsored principal":       {true, "slack", "?repository=" + coordPrimary, http.StatusForbidden},
+		"a system principal with sub": {true, "system", "?repository=" + coordPrimary, http.StatusForbidden},
 		"unauthenticated":             {true, "", "?repository=" + coordPrimary, http.StatusUnauthorized},
 		"GitHub cannot say who reads": {true, "flaky", "?repository=" + coordPrimary, http.StatusServiceUnavailable},
 	} {
@@ -162,6 +165,7 @@ func TestPolicyHandlersByRole(t *testing.T) {
 		"onlyreader": {"evidence": 200, "repos": 200, "decisions": 200, "preview": 403},
 		"reader":     {"evidence": 404, "repos": 200, "decisions": 404, "preview": 404},
 		"slack":      {"evidence": 403, "repos": 403, "decisions": 403, "preview": 403},
+		"system":     {"evidence": 403, "repos": 403, "decisions": 403, "preview": 403},
 		"":           {"evidence": 401, "repos": 401, "decisions": 401, "preview": 401},
 	}
 	for role, codes := range want {

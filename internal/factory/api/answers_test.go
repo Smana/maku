@@ -183,3 +183,46 @@ func TestAnswerLoginNeverFromBody(t *testing.T) {
 		t.Fatalf("status = %d (%s), want 400", rec.Code, rec.Body.String())
 	}
 }
+
+// SEC-M9: POST /v1/tasks/{task}/answers fails closed when s.Redact == nil and sanitizes untrusted
+// Markdown via sanitize.Public before editing the issue as the factory App.
+func TestAnswerFailsClosedWithoutRedactorAndSanitizesPublic(t *testing.T) {
+	tk := makeActTask("2buqdlot", factoryv1.PhaseEscalated, "needs_author")
+	tk.Spec.IssueAuthor = "contributor"
+	env := newActEnv(t, tk)
+	initial := makeQuestionIssue("contributor")
+	env.forge.SetIssue(initial)
+
+	// Without a redactor, fail closed with 503 and leave the issue untouched.
+	env.srv.Redact = nil
+	rec := postAct(t, env.srv, "slack", "/v1/tasks/2buqdlot/answers",
+		`{"onBehalfOf":"slack:T01ABC/UCONTRIB","text":"use task check"}`)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("nil redactor: status = %d (%s), want 503", rec.Code, rec.Body.String())
+	}
+	iss, err := env.forge.Issue(t.Context(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if iss.Body != initial.Body {
+		t.Fatalf("issue body changed with nil redactor: %q", iss.Body)
+	}
+
+	// With redactor restored, Markdown links/HTML must be defused by sanitize.Public.
+	tk2 := makeActTask("abuqdlot", factoryv1.PhaseEscalated, "needs_author")
+	tk2.Spec.IssueAuthor = "contributor"
+	env2 := newActEnv(t, tk2)
+	env2.forge.SetIssue(initial)
+	rec = postAct(t, env2.srv, "slack", "/v1/tasks/abuqdlot/answers",
+		`{"onBehalfOf":"slack:T01ABC/UCONTRIB","text":"see [docs](https://evil.example) and <img src=x onerror=alert(1)>"}`)
+	if got := actResult(t, rec); got != api.AnswerWritten {
+		t.Fatalf("result = %q (%d %s), want %q", got, rec.Code, rec.Body.String(), api.AnswerWritten)
+	}
+	iss, err = env2.forge.Issue(t.Context(), 7)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(iss.Body, "[docs](https://evil.example)") || strings.Contains(iss.Body, "<img") {
+		t.Fatalf("unsanitized markdown reached GitHub issue: %q", iss.Body)
+	}
+}

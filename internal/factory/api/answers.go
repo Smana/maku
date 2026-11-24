@@ -102,16 +102,22 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusBadRequest, "bad_json")
 		return
 	}
-	text := cleanAnswerText(in.Text)
+	text, ok := cleanAnswerText(in.Text)
+	if !ok {
+		refuse(w, http.StatusBadRequest, "invalid_draft")
+		return
+	}
 	if text == "" {
 		refuse(w, http.StatusBadRequest, "bad_json")
 		return
 	}
-	if s.Redact != nil {
-		if _, rules := s.Redact.String(text); len(rules) > 0 {
-			refuse(w, http.StatusBadRequest, "invalid_draft")
-			return
-		}
+	if s.Redact == nil {
+		s.failAct(ctx, w, p.ID, "intake_failed", errors.New("api: no redactor"))
+		return
+	}
+	if _, rules := s.Redact.String(text); len(rules) > 0 {
+		refuse(w, http.StatusBadRequest, "invalid_draft")
+		return
 	}
 	taskName := r.PathValue("task")
 	if !envelope.ValidID(taskName) {
@@ -204,9 +210,12 @@ func (s *Server) answerTask(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, ActResult{Result: AnswerRestarted})
 }
 
-func cleanAnswerText(s string) string {
-	clean, _ := sanitize.Hidden(s)
-	return strings.Join(strings.Fields(clean), " ")
+func cleanAnswerText(s string) (string, bool) {
+	clean, rep := sanitize.Public(s)
+	if rep.Withheld {
+		return "", false
+	}
+	return strings.Join(strings.Fields(clean), " "), true
 }
 
 // appendIssueDecision appends one single-line D<n>: record to body's ## Decisions section using the

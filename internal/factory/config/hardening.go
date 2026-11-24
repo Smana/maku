@@ -320,11 +320,24 @@ func (h Hardening) EnforcesPush() bool {
 	return false
 }
 
+// repo looks up repository in h.Repositories case-insensitively, matching RepositoryFor.
+func (h Hardening) repo(repository string) (HardeningRepository, bool) {
+	if r, ok := h.Repositories[repository]; ok {
+		return r, true
+	}
+	for k, r := range h.Repositories {
+		if strings.EqualFold(k, repository) {
+			return r, true
+		}
+	}
+	return HardeningRepository{}, false
+}
+
 // EnforcedFor is repository's effective enforced output types, sorted and once each: its own list
 // when it writes one, else the central one (HR10). Empty means the run writes as today.
 func (h Hardening) EnforcedFor(repository string) []hardening.OutputType {
 	list := h.EnforceOutputs
-	if r, ok := h.Repositories[repository]; ok {
+	if r, ok := h.repo(repository); ok {
 		list = r.EnforceOutputs
 	}
 	out := slices.Clone(list)
@@ -341,7 +354,7 @@ func (h Hardening) Enforcing() bool {
 
 // ModeFor is repository's effective mode: its own when listed, else the central one.
 func (h Hardening) ModeFor(repository string) hardening.Mode {
-	if r, ok := h.Repositories[repository]; ok && r.Mode.AtLeast(h.Mode) {
+	if r, ok := h.repo(repository); ok && r.Mode.AtLeast(h.Mode) {
 		return r.Mode
 	}
 	return h.Mode

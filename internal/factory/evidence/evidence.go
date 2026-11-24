@@ -90,10 +90,22 @@ var (
 // targets are the pull requests r reverts.
 func (r Revert) targets(repo string) []int {
 	var out []int
-	re := regexp.MustCompile(`Reverts ` + regexp.QuoteMeta(repo) + `#([0-9]+)`)
-	for _, m := range re.FindAllStringSubmatch(r.Body, -1) {
-		if n, err := strconv.Atoi(m[1]); err == nil {
-			out = append(out, n)
+	prefix := "Reverts " + repo + "#"
+	for rest := r.Body; ; {
+		i := strings.Index(rest, prefix)
+		if i < 0 {
+			break
+		}
+		rest = rest[i+len(prefix):]
+		end := 0
+		for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
+			end++
+		}
+		if end > 0 {
+			if n, err := strconv.Atoi(rest[:end]); err == nil {
+				out = append(out, n)
+			}
+			rest = rest[end:]
 		}
 	}
 	for _, l := range r.Labels {

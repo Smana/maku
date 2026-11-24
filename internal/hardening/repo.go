@@ -21,14 +21,17 @@ type RepositoryPolicy struct {
 	MinTrust Level
 }
 
-// ParseRepositoryBlock reads the value of a fence file's hardening key, strictly: protectedPaths
-// extends the floor, and minAuthorTrust may raise central, never lower it. An empty block is the
-// floor and central. A block that does not parse answers the floor and Merged with the error, so a
-// typo never loosens a repository.
-func ParseRepositoryBlock(raw []byte, central Level) (RepositoryPolicy, error) {
+// parsedBlock is a hardening block's parsed and compiled fields, independent of the live central
+// trust floor.
+type parsedBlock struct {
+	paths    ProtectedPaths
+	minTrust *Level
+}
+
+func parseBlock(raw []byte) (parsedBlock, error) {
 	j, err := yaml.YAMLToJSON(raw)
 	if err != nil {
-		return closed(errors.New("not YAML"))
+		return parsedBlock{}, errors.New("not YAML")
 	}
 	var f struct {
 		ProtectedPaths []blockPath `json:"protectedPaths"`
@@ -38,34 +41,50 @@ func ParseRepositoryBlock(raw []byte, central Level) (RepositoryPolicy, error) {
 		dec := json.NewDecoder(bytes.NewReader(j))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&f); err != nil {
-			return closed(fmt.Errorf("not {protectedPaths, minAuthorTrust}: %w", err))
+			return parsedBlock{}, fmt.Errorf("not {protectedPaths, minAuthorTrust}: %w", err)
 		}
 	}
-	floor := central
-	if l := f.MinAuthorTrust; l != nil {
-		switch {
-		case *l == Blocked:
-			return closed(errors.New("minAuthorTrust is none of none, unapproved, approved, merged"))
-		case *l < central:
-			return closed(fmt.Errorf("minAuthorTrust %s is below the central %s: a repository may only raise it", *l, central))
-		}
-		floor = *l
+	if f.MinAuthorTrust != nil && *f.MinAuthorTrust == Blocked {
+		return parsedBlock{}, errors.New("minAuthorTrust is none of none, unapproved, approved, merged")
 	}
 	if len(f.ProtectedPaths) > MaxExtraPaths {
-		return closed(fmt.Errorf("protectedPaths: at most %d entries", MaxExtraPaths))
+		return parsedBlock{}, fmt.Errorf("protectedPaths: at most %d entries", MaxExtraPaths)
 	}
 	rules := make([]PathRule, 0, len(f.ProtectedPaths))
 	for _, e := range f.ProtectedPaths {
 		if e.On != "" && e.YAMLOn != "" {
-			return closed(errors.New("protectedPaths: on is written twice"))
+			return parsedBlock{}, errors.New("protectedPaths: on is written twice")
 		}
 		rules = append(rules, PathRule{Pattern: e.Path, On: e.On + e.YAMLOn})
 	}
 	p, err := NewProtectedPaths(rules)
 	if err != nil {
+		return parsedBlock{}, err
+	}
+	return parsedBlock{paths: p, minTrust: f.MinAuthorTrust}, nil
+}
+
+func resolveBlock(pb parsedBlock, central Level) (RepositoryPolicy, error) {
+	minTrust := central
+	if l := pb.minTrust; l != nil {
+		if *l < central {
+			return closed(fmt.Errorf("minAuthorTrust %s is below the central %s: a repository may only raise it", *l, central))
+		}
+		minTrust = *l
+	}
+	return RepositoryPolicy{Paths: pb.paths, MinTrust: minTrust}, nil
+}
+
+// ParseRepositoryBlock reads the value of a fence file's hardening key, strictly: protectedPaths
+// extends the floor, and minAuthorTrust may raise central, never lower it. An empty block is the
+// floor and central. A block that does not parse answers the floor and Merged with the error, so a
+// typo never loosens a repository.
+func ParseRepositoryBlock(raw []byte, central Level) (RepositoryPolicy, error) {
+	pb, err := parseBlock(raw)
+	if err != nil {
 		return closed(err)
 	}
-	return RepositoryPolicy{Paths: p, MinTrust: floor}, nil
+	return resolveBlock(pb, central)
 }
 
 // blockPath is one protectedPaths entry as YAML hands it over. YAML 1.1 reads an unquoted on key
@@ -78,8 +97,7 @@ type blockPath struct {
 
 // closed is the policy a block that does not read answers: the floor and Merged.
 func closed(err error) (RepositoryPolicy, error) {
-	p, _ := NewProtectedPaths(nil) // the floor compiles: TestFloor
-	return RepositoryPolicy{Paths: p, MinTrust: Merged}, fmt.Errorf("hardening block: %w", err)
+	return RepositoryPolicy{Paths: floorPaths(), MinTrust: Merged}, fmt.Errorf("hardening block: %w", err)
 }
 
 // RepositoryPolicies caches the hardening block of each owned repository's fence file, replaced at
@@ -90,8 +108,8 @@ type RepositoryPolicies struct {
 }
 
 type block struct {
-	raw json.RawMessage
-	err error // the fence file itself did not read
+	parsed parsedBlock
+	err    error // the fence file or its hardening block did not read
 	// reported: ReportOnce has answered true since this read.
 	reported bool
 }
@@ -107,8 +125,10 @@ func (c *RepositoryPolicies) Observe(_ context.Context, repository string, body 
 		b.err = errors.New("the fence file is not YAML")
 	} else if err := json.Unmarshal(j, &f); err != nil {
 		b.err = errors.New("the fence file is not a map")
+	} else if pb, err := parseBlock(f.Hardening); err != nil {
+		b.err = err
 	} else {
-		b.raw = f.Hardening
+		b.parsed = pb
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -123,12 +143,15 @@ func (c *RepositoryPolicies) Observe(_ context.Context, repository string, body 
 // is the floor and Merged, with the error (ParseRepositoryBlock).
 func (c *RepositoryPolicies) For(repository string, central Level) (RepositoryPolicy, error) {
 	c.mu.RLock()
-	b := c.blocks[strings.ToLower(repository)]
+	b, ok := c.blocks[strings.ToLower(repository)]
 	c.mu.RUnlock()
+	if !ok {
+		return RepositoryPolicy{Paths: floorPaths(), MinTrust: central}, nil
+	}
 	if b.err != nil {
 		return closed(b.err)
 	}
-	return ParseRepositoryBlock(b.raw, central)
+	return resolveBlock(b.parsed, central)
 }
 
 // ReportOnce reports true the first time it is asked about repository since the fence last handed

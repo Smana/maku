@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/config"
 )
@@ -45,7 +46,7 @@ func (s *Server) catalogueRepositories(w http.ResponseWriter, r *http.Request) {
 			refuse(w, http.StatusForbidden, "human_only")
 			return
 		}
-	case p.Sub == "":
+	case p.Kind != envelope.ActorHuman || p.Sub == "":
 		refuse(w, http.StatusForbidden, "human_only")
 		return
 	}
@@ -55,9 +56,13 @@ func (s *Server) catalogueRepositories(w http.ResponseWriter, r *http.Request) {
 		if s.PrivateRefused != nil && s.PrivateRefused(name) && !cfg.RepositoryFor(name).PrivateCodeAcknowledged() {
 			continue
 		}
-		if sp != nil && !slices.ContainsFunc(sp.Repositories, func(allowed string) bool {
-			return strings.EqualFold(allowed, name)
-		}) {
+		if sp != nil {
+			if !slices.ContainsFunc(sp.Repositories, func(allowed string) bool {
+				return strings.EqualFold(allowed, name)
+			}) {
+				continue
+			}
+		} else if can, err := s.reads(r.Context(), p, name); err != nil || !can {
 			continue
 		}
 		out = append(out, name)
@@ -96,7 +101,7 @@ func (s *Server) catalogue(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		asked = repo
-	case p.Sub == "":
+	case p.Kind != envelope.ActorHuman || p.Sub == "":
 		refuse(w, http.StatusForbidden, "human_only")
 		return
 	default:

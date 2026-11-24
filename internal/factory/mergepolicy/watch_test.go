@@ -5,6 +5,7 @@ package mergepolicy
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/Smana/maku/internal/factory/config"
 )
@@ -72,5 +73,42 @@ func TestObserveIgnoresAnUnlistedRepository(t *testing.T) {
 	}
 	if _, ok := w.Snapshot("o/other"); ok {
 		t.Fatal("no snapshot")
+	}
+}
+
+// REL-M1: an older snapshot must not overwrite a newer concurrent Observe or run demote backwards.
+func TestObserveRejectsStaleCommit(t *testing.T) {
+	w, _ := watchRig()
+	cfg := w.Cfg.(*config.Config)
+	cfg.Repositories[0].ClassAuthority = config.ClassAuthorityRepository
+
+	t1 := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+	t2 := t1.Add(time.Minute)
+
+	// Older policy had a looser maxPatchFiles (10), newer policy tightened it to 3.
+	older := "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, maxPatchFiles: 10}\n  - {name: revert, mode: live}\n"
+	newer := "factory: aws-0\nmergePolicies:\n  - {name: docs-links, mode: live, maxPatchFiles: 3}\n  - {name: revert, mode: live}\n"
+
+	// Commit the newer snapshot first (t2), then an older snapshot arrives late (t1 < t2).
+	w.observe(t.Context(), "o/r", []byte(newer), t2)
+	sBefore, ok := w.Snapshot("o/r")
+	if !ok {
+		t.Fatal("expected newer snapshot")
+	}
+
+	w.observe(t.Context(), "o/r", []byte(older), t1)
+	sAfter, ok := w.Snapshot("o/r")
+	if !ok {
+		t.Fatal("expected snapshot after stale observe")
+	}
+	if sAfter.Hash != sBefore.Hash || !sAfter.Read.Equal(t2) {
+		t.Fatalf("stale observe overwrote state: got hash=%s read=%v, want hash=%s read=%v",
+			sAfter.Hash, sAfter.Read, sBefore.Hash, t2)
+	}
+	w.mu.RLock()
+	demoted := w.demoted["o/r"]
+	w.mu.RUnlock()
+	if len(demoted) != 0 {
+		t.Fatalf("stale observe ran demote backwards: %v", demoted)
 	}
 }

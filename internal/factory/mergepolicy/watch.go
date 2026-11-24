@@ -120,6 +120,10 @@ func (w *Watch) observe(ctx context.Context, repository string, body []byte, rea
 		w.state, w.valid, w.demoted = map[string]Snapshot{}, map[string]Snapshot{}, map[string]map[string][]string{}
 		w.lastBinding = map[string]map[string]Resolved{}
 	}
+	if cur, ok := w.state[key]; ok && read.Before(cur.Read) {
+		w.mu.Unlock()
+		return
+	}
 	w.state[key] = s
 	if s.Err == nil && s.HasClasses {
 		// A binding file is compared again under a new config too: a policy edit changes its classes.

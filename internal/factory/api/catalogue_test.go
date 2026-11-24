@@ -33,13 +33,14 @@ func (flakyLogins) Login(context.Context, string, string) (string, error) {
 func catalogueServer(promotion bool) *Server {
 	s, _ := evidenceServer(promotion)
 	s.Auth = byToken{
-		"human":    coordHuman,
-		"nonmaint": authn.Principal{Kind: envelope.ActorHuman, ID: "human:5", Sub: "5"},
-		"reader":   coordReader,
-		"slack":    coordSlack,
-		"noapp":    authn.Principal{Kind: envelope.ActorSystem, ID: "system:other", Sponsored: true},
-		"internal": authn.Principal{Kind: envelope.ActorSystem, ID: "system:slack-app", Sponsored: true, Internal: true},
-		"machine":  authn.Principal{Kind: envelope.ActorSystem, ID: "system:x"},
+		"human":           coordHuman,
+		"nonmaint":        authn.Principal{Kind: envelope.ActorHuman, ID: "human:5", Sub: "5"},
+		"reader":          coordReader,
+		"slack":           coordSlack,
+		"noapp":           authn.Principal{Kind: envelope.ActorSystem, ID: "system:other", Sponsored: true},
+		"internal":        authn.Principal{Kind: envelope.ActorSystem, ID: "system:slack-app", Sponsored: true, Internal: true},
+		"machine":         authn.Principal{Kind: envelope.ActorSystem, ID: "system:x"},
+		"system-with-sub": authn.Principal{Kind: envelope.ActorSystem, ID: "system:broker", Sub: "system:serviceaccount:agent-system:broker"},
 	}
 	s.Logins = coordLogins{"291": "Smana", "5": "someone"}
 	s.Cfg = &config.Config{
@@ -85,6 +86,7 @@ func TestCatalogueRoute(t *testing.T) {
 		"an internal principal":               {true, "internal", path + "?onBehalfOf=slack:T01ABC/U02DEF", http.StatusForbidden, false, "human_only", false},
 		"a sponsored principal not in config": {true, "noapp", path + "?onBehalfOf=slack:T01ABC/U02DEF", http.StatusForbidden, false, "human_only", false},
 		"a machine without a sub":             {true, "machine", path, http.StatusForbidden, false, "human_only", false},
+		"a system principal with sub":         {true, "system-with-sub", path, http.StatusForbidden, false, "human_only", false},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := getAs(catalogueServer(tc.promotion).Handler(), tc.token, tc.path)
@@ -140,22 +142,21 @@ func TestCatalogueRepositoriesRoute(t *testing.T) {
 	cfg := s.Cfg.(*config.Config)
 	cfg.Repositories = append(cfg.Repositories, config.Repository{Name: "Smana/unacked"})
 
-	wantAll := []string{coordPrimary, coordOther}
-	slices.Sort(wantAll)
-
 	for name, tc := range map[string]struct {
 		token  string
 		code   int
 		reason string
 		want   []string
 	}{
-		"member human":                      {"human", http.StatusOK, "", wantAll},
-		"non-maintainer member human":       {"nonmaint", http.StatusOK, "", wantAll},
+		"member human sees only readable":   {"human", http.StatusOK, "", []string{coordPrimary}},
+		"non-maintainer sees only readable": {"nonmaint", http.StatusOK, "", []string{coordPrimary}},
+		"member without read access":        {"reader", http.StatusOK, "", []string{}},
 		"declared sponsored principal":      {"slack", http.StatusOK, "", []string{coordPrimary}},
 		"unauthenticated":                   {"", http.StatusUnauthorized, "unauthenticated", nil},
 		"internal principal":                {"internal", http.StatusForbidden, "human_only", nil},
 		"sponsored principal not in config": {"noapp", http.StatusForbidden, "human_only", nil},
 		"machine without a sub":             {"machine", http.StatusForbidden, "human_only", nil},
+		"system principal with sub":         {"system-with-sub", http.StatusForbidden, "human_only", nil},
 	} {
 		t.Run(name, func(t *testing.T) {
 			w := getAs(s.Handler(), tc.token, "/v1/catalogue")

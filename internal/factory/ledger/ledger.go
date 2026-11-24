@@ -68,6 +68,9 @@ type Reservation struct {
 	// empty: their Task binds them.
 	Repository string `json:"repository,omitempty"`
 	Role       string `json:"role,omitempty"`
+	// Branch is the resume branch this run holds exclusively on Repository (REL-M7), preventing
+	// concurrent runs across replicas from racing on the same branch.
+	Branch string `json:"branch,omitempty"`
 }
 
 // Reserve's refusals. Any other error is the ledger unread or unwritten.
@@ -78,6 +81,7 @@ var (
 	ErrPersonOverBudget = errors.New("ledger: over the person's daily budget")
 	ErrRunBusy          = errors.New("ledger: the run id holds another reservation")
 	ErrRoomBusy         = errors.New("ledger: a reservation holds the room")
+	ErrBranchBusy       = errors.New("ledger: a reservation holds the branch")
 	ErrBusy             = errors.New("ledger: busy")
 )
 
@@ -103,6 +107,8 @@ func Reserve(ctx context.Context, c client.Client, ns string, now time.Time, id 
 	}
 	name := Prefix + now.UTC().Format(DayLayout)
 	key := types.NamespacedName{Namespace: ns, Name: name}
+	yName := Prefix + now.UTC().Add(-24*time.Hour).Format(DayLayout)
+	yKey := types.NamespacedName{Namespace: ns, Name: yName}
 	for range Attempts {
 		cm := &corev1.ConfigMap{}
 		err := c.Get(ctx, key, cm)
@@ -130,6 +136,26 @@ func Reserve(ctx context.Context, c client.Client, ns string, now time.Time, id 
 			}
 			return "", ErrRunBusy
 		}
+		// REL-M8 / REL-M7: room and branch exclusions span the 00:00 UTC boundary, so also read
+		// yesterday's ledger when checking either.
+		var yesterdayReserved map[string]Reservation
+		if mine.Room != "" || mine.Branch != "" {
+			ycm := &corev1.ConfigMap{}
+			if err := c.Get(ctx, yKey, ycm); err == nil {
+				yesterdayReserved, err = ledgerReservations(ycm)
+				if err != nil {
+					return "", err
+				}
+				if prev, ok := yesterdayReserved[id]; ok {
+					if prev == mine {
+						return "", nil
+					}
+					return "", ErrRunBusy
+				}
+			} else if !apierrors.IsNotFound(err) {
+				return "", fmt.Errorf("ledger %s: %w", yName, err)
+			}
+		}
 		over = ""
 		switch {
 		case mine.Person != "" && OverDaily(dayUsed(spent, reserved, mine.Person), mine.MaxMicroUSD, personLimit):
@@ -143,12 +169,11 @@ func Reserve(ctx context.Context, c client.Client, ns string, now time.Time, id 
 				return over, ErrOverBudget
 			}
 		}
-		if mine.Room != "" {
-			for _, v := range reserved {
-				if v.Room == mine.Room {
-					return over, ErrRoomBusy
-				}
-			}
+		if err := reservationConflict(reserved, mine); err != nil {
+			return over, err
+		}
+		if err := reservationConflict(yesterdayReserved, mine); err != nil {
+			return over, err
 		}
 		if cm.Data == nil {
 			cm.Data = map[string]string{}
@@ -240,6 +265,18 @@ func SetSpentColumn(cm *corev1.ConfigMap, spent map[string]int64) error {
 		cm.Data = map[string]string{}
 	}
 	cm.Data[Spent] = string(b)
+	return nil
+}
+
+func reservationConflict(reserved map[string]Reservation, mine Reservation) error {
+	for _, v := range reserved {
+		if mine.Room != "" && v.Room == mine.Room {
+			return ErrRoomBusy
+		}
+		if mine.Branch != "" && v.Branch == mine.Branch && strings.EqualFold(v.Repository, mine.Repository) {
+			return ErrBranchBusy
+		}
+	}
 	return nil
 }
 

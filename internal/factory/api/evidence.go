@@ -17,6 +17,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/hardening"
@@ -49,7 +50,7 @@ func (s *Server) policyReader(w http.ResponseWriter, r *http.Request) (authn.Pri
 	case err != nil:
 		refuse(w, http.StatusUnauthorized, "unauthenticated")
 		return p, false
-	case p.Sponsored || p.Sub == "":
+	case p.Kind != envelope.ActorHuman || p.Sponsored || p.Internal || p.Sub == "":
 		refuse(w, http.StatusForbidden, "human_only")
 		return p, false
 	}

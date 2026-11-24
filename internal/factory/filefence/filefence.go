@@ -103,17 +103,30 @@ func MaxModifiedLines(cl config.Class, stats []forge.FileStat) string {
 // Refusal is the first of the class's declared file conditions the diff breaks, in the gate's
 // order, "" when it keeps them all.
 func Refusal(cl config.Class, stats []forge.FileStat) string {
-	switch {
-	case len(cl.AllowedFiles) > 0 && AllowedFiles(cl, stats) != "":
-		return AllowedFiles(cl, stats)
-	case len(cl.ProtectedFiles) > 0 && ProtectedFiles(cl, stats) != "":
-		return ProtectedFiles(cl, stats)
-	case cl.ModifyOnly && ModifyOnly(stats) != "":
-		return ModifyOnly(stats)
-	case cl.MaxPatchFiles > 0 && MaxPatchFiles(cl, stats) != "":
-		return MaxPatchFiles(cl, stats)
-	case cl.MaxModifiedLines > 0 && MaxModifiedLines(cl, stats) != "":
-		return MaxModifiedLines(cl, stats)
+	if len(cl.AllowedFiles) > 0 {
+		if r := AllowedFiles(cl, stats); r != "" {
+			return r
+		}
+	}
+	if len(cl.ProtectedFiles) > 0 {
+		if r := ProtectedFiles(cl, stats); r != "" {
+			return r
+		}
+	}
+	if cl.ModifyOnly {
+		if r := ModifyOnly(stats); r != "" {
+			return r
+		}
+	}
+	if cl.MaxPatchFiles > 0 {
+		if r := MaxPatchFiles(cl, stats); r != "" {
+			return r
+		}
+	}
+	if cl.MaxModifiedLines > 0 {
+		if r := MaxModifiedLines(cl, stats); r != "" {
+			return r
+		}
 	}
 	return ""
 }

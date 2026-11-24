@@ -191,12 +191,20 @@ func (s *Server) NeedLeaderElection() bool { return false }
 // Handler is the API's mux: POST /v1/runs, admission in §4's order, POST /v1/tasks while a
 // sponsored principal is declared, and the coordination routes while the switch is on.
 func (s *Server) Handler() http.Handler {
-	cfg := s.Cfg.Current()
 	if s.forgeReads == nil {
 		s.forgeReads = &forgeReadCache{}
 	}
 	if s.readinessCache == nil {
 		s.readinessCache = &readinessCache{}
+	}
+	gate := func(on func(*config.Config) bool, h http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !on(s.Cfg.Current()) {
+				http.NotFound(w, r)
+				return
+			}
+			h(w, r)
+		}
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/runs", s.createRun)
@@ -206,44 +214,40 @@ func (s *Server) Handler() http.Handler {
 	if s.Readiness != nil {
 		mux.HandleFunc(ReadinessRoute, s.hardeningReadiness)
 	}
-	if cfg.DrillsOn() { // HR38: served while the drill runner is on
-		mux.HandleFunc(DrillsRoute, s.postDrill)
-	}
-	if len(cfg.API.Sponsored)+len(cfg.API.InternalPrincipals) > 0 { // F4, D4: off until a principal is declared
-		mux.HandleFunc("POST /v1/tasks", s.createTask)
-	}
-	if len(cfg.API.Sponsored) > 0 {
-		mux.HandleFunc("POST /v1/tasks/{task}/stops", s.stopTask)
-		mux.HandleFunc("POST /v1/tasks/{task}/retries", s.retryTask)
-		mux.HandleFunc("POST /v1/tasks/{task}/answers", s.answerTask)
-	}
+	// HR38: served while the drill runner is on, evaluated per request so live config reloads apply.
+	mux.HandleFunc(DrillsRoute, gate(func(c *config.Config) bool { return c.DrillsOn() }, s.postDrill))
+	// F4, D4: off until a principal is declared.
+	mux.HandleFunc("POST /v1/tasks", gate(func(c *config.Config) bool {
+		return len(c.API.Sponsored)+len(c.API.InternalPrincipals) > 0
+	}, s.createTask))
+	sponsoredOn := func(c *config.Config) bool { return len(c.API.Sponsored) > 0 }
+	mux.HandleFunc("POST /v1/tasks/{task}/stops", gate(sponsoredOn, s.stopTask))
+	mux.HandleFunc("POST /v1/tasks/{task}/retries", gate(sponsoredOn, s.retryTask))
+	mux.HandleFunc("POST /v1/tasks/{task}/answers", gate(sponsoredOn, s.answerTask))
 	// #644: a human's cancel or discard, mounted whenever the API is. /stops above is the Slack
 	// App's alone, on behalf of a linked Slack user: a 404 until api.sponsored declares one.
 	mux.HandleFunc(CancelRoute, s.cancelTask)
-	if s.anyVerifies(cfg) { // RA11, D4: a 404 until an internal principal may send verdicts
-		mux.HandleFunc("POST /v1/tasks/{task}/verification", s.recordVerification)
-	}
-	if s.coordinationOn(cfg) { // MR16: off lists no coordination route, so each is a 404
-		mux.HandleFunc("PUT /v1/coordinations/{task}/draft", s.draftCoordination)
-		mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", s.confirmCoordination)
-		mux.HandleFunc("POST /v1/coordinations/{task}/recovery", s.recoverCoordination)
-	}
+	// RA11, D4: a 404 until an internal principal may send verdicts.
+	mux.HandleFunc("POST /v1/tasks/{task}/verification", gate(s.anyVerifies, s.recordVerification))
+	// MR16: off lists no coordination route, so each is a 404.
+	mux.HandleFunc("PUT /v1/coordinations/{task}/draft", gate(s.coordinationOn, s.draftCoordination))
+	mux.HandleFunc("POST /v1/coordinations/{task}/confirmations", gate(s.coordinationOn, s.confirmCoordination))
+	mux.HandleFunc("POST /v1/coordinations/{task}/recovery", gate(s.coordinationOn, s.recoverCoordination))
 	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
 	mux.HandleFunc(catalogueListRoute, s.catalogueRepositories)
 	mux.HandleFunc(catalogueRoute, s.catalogue)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)
-	if s.promotionOn(cfg) { // stage 6: off lists no policy route, so each is a 404
-		mux.HandleFunc("GET /v1/policy/evidence", s.policyEvidence)
-		mux.HandleFunc("GET /v1/policy/repositories", s.policyRepositories)
-		if s.Policies != nil {
-			mux.HandleFunc("GET /v1/policy/policies", s.policyList)
-			mux.HandleFunc("GET /v1/policy/policies/{name}", s.policyGet)
-		}
-		if s.Editor != nil {
-			mux.HandleFunc("POST /v1/policy/preview", s.policyPreview)
-			mux.HandleFunc("GET /v1/policy/decisions", s.policyDecisions)
-		}
+	// stage 6: off lists no policy route, so each is a 404.
+	mux.HandleFunc("GET /v1/policy/evidence", gate(s.promotionOn, s.policyEvidence))
+	mux.HandleFunc("GET /v1/policy/repositories", gate(s.promotionOn, s.policyRepositories))
+	if s.Policies != nil {
+		mux.HandleFunc("GET /v1/policy/policies", gate(s.promotionOn, s.policyList))
+		mux.HandleFunc("GET /v1/policy/policies/{name}", gate(s.promotionOn, s.policyGet))
+	}
+	if s.Editor != nil {
+		mux.HandleFunc("POST /v1/policy/preview", gate(s.promotionOn, s.policyPreview))
+		mux.HandleFunc("GET /v1/policy/decisions", gate(s.promotionOn, s.policyDecisions))
 	}
 	return mux
 }
@@ -449,7 +453,8 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusServiceUnavailable, "identity_unavailable")
 		return
 	}
-	if code, reason := s.reserve(ctx, cfg, p, person, id, in); code != 0 {
+	now := s.Now()
+	if code, reason := s.reserve(ctx, cfg, now, p, person, id, in); code != 0 {
 		if reason == reasonPersonOver {
 			s.refuseRepository(fmetrics.WithPrincipal(ctx, person), w, code, reason) // the key over, as the shadow names it
 			return
@@ -465,7 +470,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 		// Without this the reservation would eat the principal's day (and room) forever:
 		// the meter drops entries only of runs that reach a terminal phase, and this one
 		// never existed. Best effort — a leaked entry stays bounded by the day's ledger.
-		s.dropReservation(r.Context(), id)
+		s.dropReservation(r.Context(), now, id)
 		refuse(w, http.StatusServiceUnavailable, "create_failed")
 		return
 	}
@@ -705,14 +710,14 @@ func (s *Server) person(ctx context.Context, cfg *config.Config, p authn.Princip
 // reserve is R50's admission on the day's ledger (ledger.Reserve), its refusals said in HTTP. A run
 // charged to a person reserves the fleet and the person in one entry (D2, D3). A run request caps
 // in tokens, so it reserves its maxTokens at the reference rate until F4 brings max_cost (TC7).
-func (s *Server) reserve(ctx context.Context, cfg *config.Config, p authn.Principal, person, id string, in RunRequest) (int, string) {
+func (s *Server) reserve(ctx context.Context, cfg *config.Config, now time.Time, p authn.Principal, person, id string, in RunRequest) (int, string) {
 	b := cfg.Budgets
-	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens),
+	mine := ledger.Reservation{Principal: p.ID, Room: in.RoomRef, Branch: in.ResumeBranch, MaxMicroUSD: config.RefMicroUSD(in.MaxTokens),
 		Repository: in.Repository, Role: in.Role}
 	if person != "" {
 		mine.Principal, mine.Person = runs.PrincipalFactory, person
 	}
-	over, err := ledger.Reserve(ctx, s.Rooms, s.Namespace, s.Now(), id, mine, b.DailyMicroUSD(mine.Principal), b.DailyMicroUSD(person), b.EnforcePrincipal)
+	over, err := ledger.Reserve(ctx, s.Rooms, s.Namespace, now, id, mine, b.DailyMicroUSD(mine.Principal), b.DailyMicroUSD(person), b.EnforcePrincipal)
 	switch {
 	case errors.Is(err, ledger.ErrPersonOverBudget):
 		return http.StatusTooManyRequests, reasonPersonOver
@@ -722,6 +727,8 @@ func (s *Server) reserve(ctx context.Context, cfg *config.Config, p authn.Princi
 		return http.StatusConflict, "run_busy"
 	case errors.Is(err, ledger.ErrRoomBusy):
 		return http.StatusConflict, "room_busy"
+	case errors.Is(err, ledger.ErrBranchBusy):
+		return http.StatusConflict, "branch_busy"
 	case errors.Is(err, ledger.ErrBusy):
 		return http.StatusServiceUnavailable, "ledger_busy"
 	case errors.Is(err, ledger.ErrMeterBlind):
@@ -737,18 +744,22 @@ func (s *Server) reserve(ctx context.Context, cfg *config.Config, p authn.Princi
 
 // dropReservation undoes reserve when the run creation itself failed. Best effort: a leaked
 // entry costs one day of budget, while a delete that fights a concurrent replica could drop
-// another admission's reservation instead.
-func (s *Server) dropReservation(ctx context.Context, id string) {
-	key := types.NamespacedName{Namespace: s.Namespace, Name: ledger.Prefix + s.Now().UTC().Format(ledger.DayLayout)}
+// another admission's reservation instead. It uses the reservation's captured timestamp and a
+// non-cancelled bounded context so neither a UTC midnight rollover nor a cancelled HTTP request
+// strands the reservation.
+func (s *Server) dropReservation(ctx context.Context, now time.Time, id string) {
+	dropCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	key := types.NamespacedName{Namespace: s.Namespace, Name: ledger.Prefix + now.UTC().Format(ledger.DayLayout)}
 	cm := &corev1.ConfigMap{}
-	if err := s.Rooms.Get(ctx, key, cm); err != nil {
+	if err := s.Rooms.Get(dropCtx, key, cm); err != nil {
 		return
 	}
 	if _, ok := cm.Data[ledger.Reserved+id]; !ok {
 		return
 	}
 	delete(cm.Data, ledger.Reserved+id)
-	_ = s.Rooms.Update(ctx, cm)
+	_ = s.Rooms.Update(dropCtx, cm)
 }
 
 // canonicalRepository is the spelling listed holds for asked, whatever its case, or asked itself when

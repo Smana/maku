@@ -619,6 +619,73 @@ func TestDrillLabelMarksTheRevertADrill(t *testing.T) {
 	}
 }
 
+// SEC-M6: unauthorised factory/revert labels are removed so they cannot fill Labeled's page, and
+// factory/drill requires CanWrite in addition to IsMaintainer.
+func TestUnauthorisedRevertRemovedAndDrillRequiresWrite(t *testing.T) {
+	t.Run("non-maintainer revert label is removed without annotating task", func(t *testing.T) {
+		tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot", Namespace: "agent-system"},
+			Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, PullRequest: &v1alpha1.PullRequestRef{Number: 12, AutoMerged: true}}}
+		f := forgetest.NewFake()
+		f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
+		f.SetEvents(12, forge.LabelEvent{Actor: "mallory", Label: LabelRevert, At: t0})
+		p, c := poller(t, f, tk)
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var got v1alpha1.Task
+		_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &got)
+		if got.Annotations[v1alpha1.AnnotationRevert] != "" {
+			t.Fatalf("unexpected revert annotation: %v", got.Annotations)
+		}
+		if !slices.Equal(f.Removed(12), []string{LabelRevert}) {
+			t.Fatalf("unauthorised revert label must be removed, got %v", f.Removed(12))
+		}
+	})
+	t.Run("maintainer without write permission has revert label removed", func(t *testing.T) {
+		tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot", Namespace: "agent-system"},
+			Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, PullRequest: &v1alpha1.PullRequestRef{Number: 12, AutoMerged: true}}}
+		f := forgetest.NewFake()
+		f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
+		f.SetEvents(12, forge.LabelEvent{Actor: "Smana", Label: LabelRevert, At: t0})
+		p, c := poller(t, f, tk)
+		p.CanWrite = func(context.Context, string) (bool, error) { return false, nil }
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var got v1alpha1.Task
+		_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &got)
+		if got.Annotations[v1alpha1.AnnotationRevert] != "" {
+			t.Fatalf("unexpected revert annotation: %v", got.Annotations)
+		}
+		if !slices.Equal(f.Removed(12), []string{LabelRevert}) {
+			t.Fatalf("non-writer revert label must be removed, got %v", f.Removed(12))
+		}
+	})
+	t.Run("drill label requires CanWrite in addition to IsMaintainer", func(t *testing.T) {
+		tk := &v1alpha1.Task{ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot", Namespace: "agent-system"},
+			Status: v1alpha1.TaskStatus{Phase: v1alpha1.PhaseDone, PullRequest: &v1alpha1.PullRequestRef{Number: 12, AutoMerged: true}}}
+		f := forgetest.NewFake()
+		f.SetLabeled(LabelRevert, forge.Item{Number: 12, PullRequest: true})
+		f.SetPR(forge.PR{Number: 12, State: "MERGED", Labels: []string{LabelRevert, LabelDrill}})
+		// Both "Smana" and "former" are listed maintainers, but "former" lost write permission.
+		f.SetEvents(12,
+			forge.LabelEvent{Actor: "former", Label: LabelDrill, At: t0},
+			forge.LabelEvent{Actor: "Smana", Label: LabelRevert, At: t0.Add(time.Minute)},
+		)
+		p, c := poller(t, f, tk)
+		p.Cfg.Current().Repositories[0].Maintainers = []string{"Smana", "former"}
+		p.CanWrite = func(_ context.Context, login string) (bool, error) { return login == "Smana", nil }
+		if err := p.Poll(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var got v1alpha1.Task
+		_ = c.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &got)
+		if got.Annotations[v1alpha1.AnnotationRevert] != "label" || got.Annotations[v1alpha1.AnnotationDrill] != "" {
+			t.Fatalf("drill without write permission must not mark revert as drill: %v", got.Annotations)
+		}
+	})
+}
+
 func TestControlIssue(t *testing.T) {
 	f := forgetest.NewFake()
 	f.SetIssue(forge.Issue{Number: 1, Labels: []string{LabelStop}})
