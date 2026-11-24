@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -439,5 +441,32 @@ func TestPinnedTaskIgnoresTreatment(t *testing.T) {
 	p := (&Reconciler{}).floorProfile(treatmentCfg(0), issueTask("3buqdlot", 7, "fix it"), d)
 	if p == nil || p.Name != "review-floor" || p.Source != "label" || p.Cohort != triage.CohortLabeled {
 		t.Fatalf("got %+v", p)
+	}
+}
+
+// WR3: a default task gets task-card at triage and no duplicate profile-chosen comment unless the
+// workflow actually changes after the card.
+func TestADefaultTaskGetsOneWorkflowComment(t *testing.T) {
+	cf := resolveCfg("observe", 0)
+	g := profileRig(t, cf, issueTask("3buqdlot", 7, "# Fix the link\n\n## Acceptance check\nthe link resolves"), "")
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if !slices.ContainsFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool { return o.Key == "task-card" }) &&
+		!slices.Contains(tk.Status.Narrated, "task-card") {
+		t.Fatalf("expected task-card in outbox/narrated: outbox=%+v narrated=%v", tk.Status.Outbox, tk.Status.Narrated)
+	}
+	for _, o := range tk.Status.Outbox {
+		if strings.HasPrefix(o.Key, "profile-chosen-") {
+			t.Fatalf("unexpected profile-chosen at triage: %+v", tk.Status.Outbox)
+		}
+	}
+	sc := readyScope()
+	sc.Profile = "review-search"
+	if err := g.r.resolveProfile(t.Context(), cf, tk, &sc); err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range tk.Status.Outbox {
+		if strings.HasPrefix(o.Key, "profile-chosen-") {
+			t.Fatalf("observe mode should not post profile-chosen: %+v", tk.Status.Outbox)
+		}
 	}
 }

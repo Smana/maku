@@ -32,6 +32,7 @@ func scoperPlanned(t *v1alpha1.Task) bool {
 func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := r.implementerSpec(cfg, t, text)
 	s.Role = "triager"
+	s.Persona = "scoper"
 	// Offered a split, the scoper also plans every part, and the light tier's run cap is what ended drill
 	// 6ysg5vvt's (budget-run at $0.51 in cache reads, before any handoff): it runs at the task's own tier,
 	// which implementerSpec already set. Otherwise the light tier's caps.

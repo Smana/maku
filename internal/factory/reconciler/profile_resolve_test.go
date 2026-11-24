@@ -112,10 +112,11 @@ func TestResolutionTable(t *testing.T) {
 			if tk.Spec.Template != "pair" || tk.Spec.Loop == nil || tk.Spec.Loop.StallSteps != c.want.steps || tk.Spec.Budget.Tier != tier {
 				t.Fatalf("spec %s %+v %s", tk.Spec.Template, tk.Spec.Loop, tk.Spec.Budget.Tier)
 			}
-			if !slices.ContainsFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool {
+			hasChosen := slices.ContainsFunc(tk.Status.Outbox, func(o v1alpha1.Narration) bool {
 				return o.Key == "profile-chosen-0" && strings.Contains(o.Body, c.want.name)
-			}) {
-				t.Fatalf("outbox %+v", tk.Status.Outbox)
+			})
+			if wantChosen := c.want.source == "scoper"; hasChosen != wantChosen {
+				t.Fatalf("outbox %+v (want profile-chosen=%v)", tk.Status.Outbox, wantChosen)
 			}
 			rec := c.want.recommended
 			switch rec {
@@ -332,7 +333,7 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "missing" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "repository", "scoper_failed", 1)
+		wantResolved(t, tk, "review-floor", "repository", "scoper_failed", 0)
 	})
 	t.Run("assumed, no issue yet", func(t *testing.T) {
 		g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Issue = 0 })
@@ -341,10 +342,7 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "repository", "none", 1) // no issue yet: the announcement waits for the pull request (R31)
-		if o := tk.Status.Outbox[len(tk.Status.Outbox)-1]; o.Number != 0 || !strings.HasPrefix(o.Key, "profile-chosen-") {
-			t.Fatalf("%+v", o)
-		}
+		wantResolved(t, tk, "review-floor", "repository", "none", 0)
 	})
 	t.Run("assumed on retry", func(t *testing.T) {
 		g := harnessedScoper(t, nil)
@@ -358,7 +356,7 @@ func TestEveryRunnableScoperEndResolves(t *testing.T) {
 		if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Scope.State != "assumed" {
 			t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Scope)
 		}
-		wantResolved(t, tk, "review-floor", "repository", "none", 1)
+		wantResolved(t, tk, "review-floor", "repository", "none", 0)
 	})
 }
 
@@ -430,7 +428,7 @@ func TestAnUnscopedTaskResolvesAtAdmission(t *testing.T) {
 	if tk.Spec.ScopeMode != string(config.ScopeOff) {
 		t.Fatalf("scope %s", tk.Spec.ScopeMode)
 	}
-	wantResolved(t, tk, "review-floor", "repository", "", 1)
+	wantResolved(t, tk, "review-floor", "repository", "", 0)
 	if p := tk.Status.Profile; p.Recommended != "" || p.Why != "" || countProfile(g.metrics.recorded) != 0 {
 		t.Fatalf("%+v %v", p, g.metrics.recorded)
 	}
@@ -465,7 +463,7 @@ func TestAnAssumedRetryAppliesNoRecommendation(t *testing.T) {
 	if tk.Status.Scope.State != "assumed" || tk.Status.Profile.Recommended != "" {
 		t.Fatalf("%+v %+v", tk.Status.Scope, tk.Status.Profile)
 	}
-	wantResolved(t, tk, "review-floor", "repository", "none", 1)
+	wantResolved(t, tk, "review-floor", "repository", "none", 0)
 }
 
 // A broker error reading the scope leaves the retry unhandled; the next reconcile replays it once.
@@ -489,7 +487,7 @@ func TestABrokerErrorReplaysTheRetry(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseQueued || tk.Status.Retries != 1 {
 		t.Fatalf("%s %d", tk.Status.Phase, tk.Status.Retries)
 	}
-	wantResolved(t, tk, "review-floor", "repository", "none", 1)
+	wantResolved(t, tk, "review-floor", "repository", "none", 0)
 }
 
 // A refused spec write leaves the profile unresolved, unnarrated and uncounted; the next try applies once.

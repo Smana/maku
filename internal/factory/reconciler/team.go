@@ -57,7 +57,7 @@ func otherTier(tier string) string {
 // startVerifier adds a reviewer's brief (HR4), which needs the room.
 func (r *Reconciler) verifierSpec(cfg *config.Config, t *v1alpha1.Task, role string) runs.Spec {
 	s := r.implementerSpec(cfg, t, "")
-	s.Role, s.TaskText, s.TaskURL, s.BaseRef = role, "", t.Status.PullRequest.URL, "agent/"+t.Name
+	s.Role, s.Persona, s.TaskText, s.TaskURL, s.BaseRef = role, role, "", t.Status.PullRequest.URL, "agent/"+t.Name
 	s.MaxTokens = runCapTokens(t, role) // #475: a reviewer admitted on a partial remainder is capped at it
 	r.withChecks(cfg, &s, t)
 	if role == "reviewer" { // "on a different tier from the implementer where possible" (§3); R47
