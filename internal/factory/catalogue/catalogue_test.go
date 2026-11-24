@@ -273,3 +273,21 @@ func TestRepositoriesServed(t *testing.T) {
 		}
 	})
 }
+
+func TestAProfileCarriesItsCeilingAndPath(t *testing.T) {
+	cfg := live()
+	cfg.Repositories[0].Workflow.TestFirst = false
+	cfg.Loops = map[string]config.Loop{"careful": {Scope: config.ScopeScoper}}
+	c, ok := Build(cfg, "Smana/cloud-native-ref", true)
+	if !ok {
+		t.Fatal("not built")
+	}
+	careful := c.Profiles["careful"]
+	if careful.CeilingUSD != 8 || !slices.Equal(careful.Path, []string{"scoper", "implementer", "reviewer", "CI", "merge gate"}) {
+		t.Fatalf("careful = %+v", careful)
+	}
+	quick := c.Profiles["quick"]
+	if quick.CeilingUSD != 4 || !slices.Equal(quick.Path, []string{"implementer", "CI", "merge gate"}) {
+		t.Fatalf("quick = %+v", quick)
+	}
+}

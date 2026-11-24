@@ -17,6 +17,14 @@ import (
 	summ "github.com/Smana/maku/internal/summary"
 )
 
+// StatusFacts carries the workflow summary and path strip shown on the pinned issue status comment.
+type StatusFacts struct {
+	Workflow        string
+	Reason          string
+	Strip           string
+	CeilingMicroUSD int64
+}
+
 const statusIssueMarker = "<!-- agent-factory issue-status -->"
 
 var (
@@ -26,7 +34,7 @@ var (
 
 // Status renders the factory facts an issue's one live comment carries. It deliberately omits
 // live checks and spend: neither is a truthful, stable fact the factory owns at render time.
-func Status(t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) string {
+func Status(t *v1alpha1.Task, roomsURL string, wf StatusFacts, mergeByApproval ...bool) string {
 	phase := strings.ToLower(t.Status.Phase)
 	if phase == "" {
 		phase = "unknown"
@@ -35,6 +43,19 @@ func Status(t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) string {
 	fmt.Fprintf(&b, "Factory status · %s", phase)
 	if t.Status.PhaseSince != nil {
 		fmt.Fprintf(&b, " · updated %s", t.Status.PhaseSince.UTC().Format("2006-01-02 15:04 UTC"))
+	}
+	if wf.Workflow != "" {
+		fmt.Fprintf(&b, "\nWorkflow: %s", wf.Workflow)
+		if wf.Reason != "" {
+			fmt.Fprintf(&b, " · %s", wf.Reason)
+		}
+		if wf.CeilingMicroUSD > 0 {
+			cents := (wf.CeilingMicroUSD + 5_000) / 10_000
+			fmt.Fprintf(&b, " · up to $%d.%02d", cents/100, cents%100)
+		}
+	}
+	if wf.Strip != "" {
+		fmt.Fprintf(&b, "\nPath: %s", wf.Strip)
 	}
 
 	waiting := "nobody"
@@ -109,14 +130,14 @@ func statusGeneration(t *v1alpha1.Task) int {
 // SyncStatus creates, adopts or edits the issue's one status comment. StatusComment records only
 // remote state known to have succeeded, so a lost Task update or a failed write is safe to retry.
 // A permanent refusal or an ownership stand-down records Inactive without fabricating remote state.
-func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL string, mergeByApproval ...bool) error {
+func (n Narrator) SyncStatus(ctx context.Context, t *v1alpha1.Task, roomsURL string, wf StatusFacts, mergeByApproval ...bool) error {
 	if ledger := t.Status.StatusComment; ledger != nil && ledger.Inactive {
 		return nil
 	}
 	if t.Spec.Issue == 0 {
 		return nil
 	}
-	body := Status(t, roomsURL, mergeByApproval...)
+	body := Status(t, roomsURL, wf, mergeByApproval...)
 	if ledger := t.Status.StatusComment; ledger != nil && ledger.ID != 0 && ledger.Body == body {
 		return nil
 	}

@@ -38,7 +38,7 @@ func TestStatus(t *testing.T) {
 	tk.Status.Usage.Tokens = 900_000
 	tk.Status.Usage.CostMicroUSD = 42_000_000
 
-	got := Status(tk, statusRoomsURL)
+	got := Status(tk, statusRoomsURL, StatusFacts{})
 	for _, want := range []string{
 		"Factory status · awaitinghuman · updated 2026-11-09 14:02 UTC",
 		"Room: [3buqdlot](https://rooms.example/r/3buqdlot)",
@@ -64,15 +64,30 @@ func TestStatus(t *testing.T) {
 	}
 }
 
+func TestTheStatusCommentCarriesTheWorkflowAndThePath(t *testing.T) {
+	body := Status(statusTask(), "https://rooms.example", StatusFacts{
+		Workflow: "standard", Reason: "this repository's default",
+		Strip: "implementer ● · reviewer ○", CeilingMicroUSD: 5_100_000,
+	})
+	for _, want := range []string{"Workflow: standard · this repository's default · up to $5.10", "Path: implementer ● · reviewer ○"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("missing %q in:\n%s", want, body)
+		}
+	}
+	if strings.Contains(body, "spent") {
+		t.Fatal("the status comment carries live spend")
+	}
+}
+
 func TestStatusWaitingGuidance(t *testing.T) {
 	tk := statusTask()
 	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
 	tk.Status.Reason = "class_unarmed"
-	if got := Status(tk, statusRoomsURL); !strings.Contains(got, "next: a maintainer looks at the task's issue") {
+	if got := Status(tk, statusRoomsURL, StatusFacts{}); !strings.Contains(got, "next: a maintainer looks at the task's issue") {
 		t.Fatalf("an issue-only hand-off points at the issue:\n%s", got)
 	}
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
-	if got := Status(tk, statusRoomsURL); !strings.Contains(got, "next: a maintainer reviews and merges or closes the pull request on GitHub") {
+	if got := Status(tk, statusRoomsURL, StatusFacts{}); !strings.Contains(got, "next: a maintainer reviews and merges or closes the pull request on GitHub") {
 		t.Fatalf("a pull request hand-off points at the pull request:\n%s", got)
 	}
 }
@@ -82,7 +97,7 @@ func TestStatusApproveToMergeGuidance(t *testing.T) {
 	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
 	tk.Status.Reason = "class_unarmed"
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
-	got := Status(tk, statusRoomsURL, true)
+	got := Status(tk, statusRoomsURL, StatusFacts{}, true)
 	for _, want := range []string{
 		"waiting on: the factory does not merge this class on its own: it merges once a maintainer approves the current commit",
 		"next: a maintainer reviews, then approves the current commit or closes the pull request on GitHub; the merger App merges that commit",
@@ -97,14 +112,14 @@ func TestSyncStatusNoOp(t *testing.T) {
 	f := &statusForge{Fake: forgetest.NewFake()}
 	n := Narrator{Forge: f, Login: bot}
 	tk := statusTask()
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
-	if tk.Status.StatusComment == nil || tk.Status.StatusComment.ID == 0 || tk.Status.StatusComment.Body != Status(tk, statusRoomsURL) {
+	if tk.Status.StatusComment == nil || tk.Status.StatusComment.ID == 0 || tk.Status.StatusComment.Body != Status(tk, statusRoomsURL, StatusFacts{}) {
 		t.Fatalf("creation was not recorded: %+v", tk.Status.StatusComment)
 	}
 	f.calls = nil
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
 	if len(f.calls) != 0 {
@@ -119,13 +134,13 @@ func TestSyncStatusApproveToMerge(t *testing.T) {
 	tk.Status.Phase = v1alpha1.PhaseAwaitingHuman
 	tk.Status.Reason = "class_unarmed"
 	tk.Status.PullRequest = &v1alpha1.PullRequestRef{Number: 1234, URL: "https://github.com/Smana/repo/pull/1234"}
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, false); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}, false); err != nil {
 		t.Fatal(err)
 	}
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, true); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}, true); err != nil {
 		t.Fatal(err)
 	}
-	want := Status(tk, statusRoomsURL, true)
+	want := Status(tk, statusRoomsURL, StatusFacts{}, true)
 	if tk.Status.StatusComment.Body != want || f.Comments(tk.Spec.Issue)[0] != want || f.count("edit") != 1 {
 		t.Fatalf("sync did not render approve-to-merge guidance: ledger %+v, calls %q", tk.Status.StatusComment, f.calls)
 	}
@@ -134,19 +149,19 @@ func TestSyncStatusApproveToMerge(t *testing.T) {
 func TestSyncStatusRecoversCreatedComment(t *testing.T) {
 	f := &statusForge{Fake: forgetest.NewFake()}
 	tk := statusTask()
-	id, err := f.Fake.CommentWithID(t.Context(), tk.Spec.Issue, Status(tk, statusRoomsURL))
+	id, err := f.Fake.CommentWithID(t.Context(), tk.Spec.Issue, Status(tk, statusRoomsURL, StatusFacts{}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	// The Task status write was lost after GitHub created the comment.
 	tk.Status.StatusComment = nil
-	if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(f.Comments(tk.Spec.Issue)); got != 1 {
 		t.Fatalf("recovery created a duplicate: %d comments", got)
 	}
-	if tk.Status.StatusComment == nil || tk.Status.StatusComment.ID != id || tk.Status.StatusComment.Body != Status(tk, statusRoomsURL) {
+	if tk.Status.StatusComment == nil || tk.Status.StatusComment.ID != id || tk.Status.StatusComment.Body != Status(tk, statusRoomsURL, StatusFacts{}) {
 		t.Fatalf("the created comment was not adopted: %+v", tk.Status.StatusComment)
 	}
 	if f.count("create") != 0 || f.count("edit") != 0 || f.count("all") != 1 {
@@ -157,7 +172,7 @@ func TestSyncStatusRecoversCreatedComment(t *testing.T) {
 func TestSyncStatusRecoversBeyondRecentWindow(t *testing.T) {
 	f := &statusForge{Fake: forgetest.NewFake()}
 	tk := statusTask()
-	id, err := f.Fake.CommentWithID(t.Context(), tk.Spec.Issue, Status(tk, statusRoomsURL))
+	id, err := f.Fake.CommentWithID(t.Context(), tk.Spec.Issue, Status(tk, statusRoomsURL, StatusFacts{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,7 +191,7 @@ func TestSyncStatusRecoversBeyondRecentWindow(t *testing.T) {
 		}
 	}
 	tk.Status.StatusComment = nil
-	if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
 	if got := len(f.Comments(tk.Spec.Issue)); got != 66 {
@@ -200,7 +215,7 @@ func TestSyncStatusRecoversDeletedRecordedComment(t *testing.T) {
 			f := &statusForge{Fake: forgetest.NewFake()}
 			tk := statusTask()
 			tk.Status.StatusComment = &v1alpha1.StatusComment{ID: 999, Body: "the previous successful body"}
-			want := Status(tk, statusRoomsURL)
+			want := Status(tk, statusRoomsURL, StatusFacts{})
 			var existingID int64
 			if recoverMarker {
 				var err error
@@ -209,7 +224,7 @@ func TestSyncStatusRecoversDeletedRecordedComment(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 				t.Fatal(err)
 			}
 			if tk.Status.StatusComment.ID == 999 || tk.Status.StatusComment.Body != want {
@@ -223,7 +238,7 @@ func TestSyncStatusRecoversDeletedRecordedComment(t *testing.T) {
 				t.Fatalf("the deleted comment was not recreated: calls %q", f.calls)
 			}
 			f.calls = nil
-			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 				t.Fatal(err)
 			}
 			if len(f.calls) != 0 {
@@ -237,14 +252,14 @@ func TestSyncStatusRetriesFailedCreate(t *testing.T) {
 	f := &statusForge{Fake: forgetest.NewFake(), createErr: errors.New("502")}
 	n := Narrator{Forge: f, Login: bot}
 	tk := statusTask()
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err == nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err == nil {
 		t.Fatal("the failed create was hidden")
 	}
 	if tk.Status.StatusComment != nil || len(f.Comments(tk.Spec.Issue)) != 0 {
 		t.Fatalf("a failed create was recorded: %+v", tk.Status.StatusComment)
 	}
 	f.createErr = nil
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
 	if tk.Status.StatusComment == nil || len(f.Comments(tk.Spec.Issue)) != 1 || f.count("create") != 2 {
@@ -256,23 +271,23 @@ func TestSyncStatusRetriesFailedEdit(t *testing.T) {
 	f := &statusForge{Fake: forgetest.NewFake()}
 	n := Narrator{Forge: f, Login: bot}
 	tk := statusTask()
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
 	previous := tk.Status.StatusComment.Body
 	tk.Status.Phase = v1alpha1.PhaseReviewing
 	f.editErr = errors.New("502")
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err == nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err == nil {
 		t.Fatal("the failed edit was hidden")
 	}
 	if tk.Status.StatusComment.Body != previous || f.Comments(tk.Spec.Issue)[0] != previous {
 		t.Fatal("a failed edit replaced the last successful body")
 	}
 	f.editErr = nil
-	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+	if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 		t.Fatal(err)
 	}
-	want := Status(tk, statusRoomsURL)
+	want := Status(tk, statusRoomsURL, StatusFacts{})
 	if tk.Status.StatusComment.Body != want || f.Comments(tk.Spec.Issue)[0] != want || f.count("edit") != 2 {
 		t.Fatalf("edit did not retry cleanly: ledger %+v, calls %q", tk.Status.StatusComment, f.calls)
 	}
@@ -292,7 +307,7 @@ func TestSyncStatusPermanentRefusalRetires(t *testing.T) {
 			case "create":
 				f.createErr = refusal
 			case "edit":
-				if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+				if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 					t.Fatal(err)
 				}
 				previous = *tk.Status.StatusComment
@@ -301,7 +316,7 @@ func TestSyncStatusPermanentRefusalRetires(t *testing.T) {
 			}
 
 			f.calls = nil
-			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 				t.Fatalf("a permanent refusal must retire synchronization, not retry: %v", err)
 			}
 			ledger := tk.Status.StatusComment
@@ -317,7 +332,7 @@ func TestSyncStatusPermanentRefusalRetires(t *testing.T) {
 			}
 
 			f.calls = nil
-			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL); err != nil {
+			if err := n.SyncStatus(t.Context(), tk, statusRoomsURL, StatusFacts{}); err != nil {
 				t.Fatal(err)
 			}
 			if len(f.calls) != 0 {
@@ -347,7 +362,7 @@ func TestSyncStatusGenerationOwnership(t *testing.T) {
 			owner := statusTask()
 			owner.Name = "aaaaaaaa"
 			owner.Spec.Source.Key = fmt.Sprintf("Smana/repo#7:gen%d", tc.ownerGen)
-			ownerBody := Status(owner, statusRoomsURL)
+			ownerBody := Status(owner, statusRoomsURL, StatusFacts{})
 			id, err := f.Fake.CommentWithID(t.Context(), owner.Spec.Issue, ownerBody)
 			if err != nil {
 				t.Fatal(err)
@@ -357,12 +372,12 @@ func TestSyncStatusGenerationOwnership(t *testing.T) {
 			current.Name = tc.currentName
 			current.Spec.Source.Key = fmt.Sprintf("Smana/repo#7:gen%d", tc.currentGen)
 			current.Status.Phase = tc.phase
-			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), current, statusRoomsURL); err != nil {
+			if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), current, statusRoomsURL, StatusFacts{}); err != nil {
 				t.Fatal(err)
 			}
 			gotBody := f.Comments(current.Spec.Issue)[0]
 			if tc.wantWrite {
-				want := Status(current, statusRoomsURL)
+				want := Status(current, statusRoomsURL, StatusFacts{})
 				if gotBody != want || current.Status.StatusComment == nil || current.Status.StatusComment.ID != id || current.Status.StatusComment.Body != want {
 					t.Fatalf("current generation did not adopt and edit: ledger %+v\nbody %s", current.Status.StatusComment, gotBody)
 				}
@@ -371,7 +386,7 @@ func TestSyncStatusGenerationOwnership(t *testing.T) {
 			}
 			if !tc.wantWrite {
 				f.calls = nil
-				if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), current, statusRoomsURL); err != nil {
+				if err := (Narrator{Forge: f, Login: bot}).SyncStatus(t.Context(), current, statusRoomsURL, StatusFacts{}); err != nil {
 					t.Fatal(err)
 				}
 				if len(f.calls) != 0 {

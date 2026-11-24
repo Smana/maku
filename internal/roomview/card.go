@@ -256,6 +256,37 @@ func prURL(p *envelope.PRFact) string {
 // facts writes the label/value rows: a table in Markdown, aligned lines on a terminal.
 func (c *card) facts(s summary.Summary) {
 	var rows [][2]string
+	if p := s.Status.Profile; p != nil {
+		tf := &envelope.TaskFacts{
+			Phase:   s.Status.Phase,
+			Spend:   s.Status.Spend,
+			Issue:   s.Status.Issue,
+			PR:      s.Status.PR,
+			Profile: p,
+		}
+		if s.Flow != nil {
+			tf.Plan = s.Flow.Plan
+		}
+		wc := CardOf(tf, "")
+		wfVal := c.text(wc.Workflow, c.md())
+		if wc.Reason != "" {
+			wfVal += " · " + c.text(wc.Reason, c.md())
+		}
+		rows = append(rows, [2]string{"Workflow", wfVal})
+		if len(wc.Path) > 0 {
+			parts := make([]string, len(wc.Path))
+			for i, step := range wc.Path {
+				parts[i] = c.text(step, c.md())
+			}
+			rows = append(rows, [2]string{"Will run", strings.Join(parts, " → ")})
+		}
+		if cost := costLine(wc); cost != "" {
+			rows = append(rows, [2]string{"Cost", cost})
+		}
+		if strip := summary.Strip(s.Flow); strip != "" {
+			rows = append(rows, [2]string{"Path", c.text(strip, c.md())})
+		}
+	}
 	if r := s.Status.Run; r != nil {
 		rows = append(rows, [2]string{"Run", c.runFact(*r, runModel(s, r.ID))})
 	}
@@ -286,8 +317,15 @@ func (c *card) facts(s summary.Summary) {
 		}
 		return
 	}
+	width := 6
 	for _, r := range rows {
-		c.line(r[0] + strings.Repeat(" ", 6-utf8.RuneCountInString(r[0])) + r[1])
+		if n := utf8.RuneCountInString(r[0]); n >= width {
+			width = 11
+		}
+	}
+	for _, r := range rows {
+		pad := max(width-utf8.RuneCountInString(r[0]), 1)
+		c.line(r[0] + strings.Repeat(" ", pad) + r[1])
 	}
 }
 

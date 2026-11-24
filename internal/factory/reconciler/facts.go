@@ -99,8 +99,19 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 		}
 	}
 	if p := t.Status.Profile; p != nil {
-		f.Profile = &envelope.ProfileFact{Name: p.Name, Source: p.Source, Cohort: p.Cohort,
+		pf := &envelope.ProfileFact{Name: p.Name, Source: p.Source, Cohort: p.Cohort,
 			Recommended: p.Recommended, Reason: p.Reason, Why: p.Why, Requested: p.Requested, Refused: p.Refused}
+		if t.Spec.Budget.TaskMicroUSD > 0 {
+			pf.CeilingMicroUSD = dollars(t.Spec.Budget.TaskMicroUSD)
+		}
+		if p.Source == "label" {
+			if t.Spec.Intake != nil && envelope.ValidLogin(t.Spec.Intake.Login) {
+				pf.By = t.Spec.Intake.Login
+			} else if f.Issue != nil && envelope.ValidLogin(f.Issue.LabelledBy) {
+				pf.By = f.Issue.LabelledBy
+			}
+		}
+		f.Profile = pf
 	}
 	return f
 }
@@ -189,6 +200,11 @@ func factsKey(f envelope.TaskFacts) string {
 	ended := v1alpha1.TerminalPhase(f.Phase) || f.Phase == v1alpha1.PhaseEscalated
 	if ended {
 		f.Plan, f.Parent, f.Policy = nil, nil, nil
+		if f.Profile != nil {
+			p := *f.Profile
+			p.Description = ""
+			f.Profile = &p
+		}
 		// An escalated parent still waits on its parts: tellParent can revert one under it, with no
 		// other field moving, and the rail must not keep drawing that part as landed.
 		if f.Phase != v1alpha1.PhaseEscalated {
@@ -248,6 +264,11 @@ func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.Tas
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(cfg, t, t.Status.Reason)
 	f.SpendFinal = r.spendIsFinal(cfg, t)
 	f.Policy = policyOf(cfg, r.repo(cfg, t), t)
+	if f.Profile != nil {
+		if wf, ok := cfg.Workflow(f.Profile.Name); ok && wf.Description != "" {
+			f.Profile.Description = wf.Description
+		}
+	}
 	return f
 }
 
