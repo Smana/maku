@@ -238,9 +238,11 @@ type Reconciler struct {
 	Now     func() time.Time
 	// Decisions remembers each class's latest merge decision for the resources' status; nil: off.
 	Decisions *decision.Recorder
-	Nonce     func() string
-	Log       *slog.Logger
-	Trace     tracing.Sink // nil: tracing off (R46)
+	// CleanDecisions reads cached promotion evidence for a shadow comment; nil: progress is omitted.
+	CleanDecisions func(ctx context.Context, repository, policy string) (clean int, ok bool)
+	Nonce          func() string
+	Log            *slog.Logger
+	Trace          tracing.Sink // nil: tracing off (R46)
 	// Costs is the run meter's per-run USD costs, which a task capped in USD sums (OD-6 (b));
 	// nil: every task is held to TaskTokens.
 	Costs costReader

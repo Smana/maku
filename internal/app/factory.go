@@ -741,6 +741,18 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 				return evidenceSource{c.gh}, true
 			}}
 		apiSrv.Evidence, apiSrv.Policies = ev, ev
+		rec.CleanDecisions = func(ctx context.Context, repository, policy string) (int, bool) {
+			report, err := ev.Report(ctx, repository)
+			if err != nil {
+				return 0, false
+			}
+			for _, class := range report.Classes {
+				if class.Class == policy && class.Evidence != nil {
+					return class.Evidence.Clean, true
+				}
+			}
+			return 0, false
+		}
 		apiSrv.PolicySnapshot = func(repo string) (mergepolicy.Snapshot, bool) {
 			if policyWatch == nil { // policyManagement.read off: no file is read
 				return mergepolicy.Snapshot{}, false

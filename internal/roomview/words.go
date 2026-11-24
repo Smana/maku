@@ -2,7 +2,10 @@
 
 package roomview
 
-import "github.com/Smana/maku/internal/summary"
+import (
+	reasonwords "github.com/Smana/maku/internal/factory/reasons"
+	"github.com/Smana/maku/internal/summary"
+)
 
 // word is the phrase a vocabulary has for v, else v cleaned: a value this broker does not know is
 // still untrusted text.
@@ -39,102 +42,14 @@ var phases = map[string]string{
 // phaseWords is a Task phase in words.
 func phaseWords(phase string) string { return word(phases, phase) }
 
-var reasonPhrases = map[string]string{
-	"adopt_ref_invalid":         "the adopted branch name is invalid",
-	"adopted_head_moved":        "the adopted branch moved",
-	"adoption_unread":           "the adopted pull request is unreadable",
-	"agent_error":               "the agent stopped on an error",
-	"model_unavailable_billing": "the model provider refused: billing",
-	"model_unavailable_auth":    "the model provider refused: auth",
-	"model_unavailable_quota":   "the model provider refused: quota",
-	"scoper_failed":             "the scope was not checked",
-	"agent_stuck":               "the agent said it was stuck",
-	"auto_merge_cap":            "today's auto-merge cap is reached",
-	"held":                      "on hold (factory/hold)",
-	"branch_not_allowed":        "the branch is not allowed",
-	"budget_calls":              "the scoper hit its tool-call limit",
-	"budget-family":             "the task family is out of budget",
-	"budget-task":               "the task is out of budget",
-	"changes_requested":         "changes were requested",
-	"child_dropped":             "a part was dropped",
-	"children_merged":           "every part merged",
-	"ci_cancelled":              "a check was cancelled",
-	"ci_pending":                "CI is running",
-	"ci_red":                    "CI is red",
-	"ci_wait_expired":           "CI took too long",
-	"closes_parent":             "it would close the parent issue",
-	"deadline":                  "the run hit its time limit",
-	"family_dropped":            "the split was dropped",
-	"fork_pull_request":         "the pull request is from a fork",
-	"gate_path":                 "it touches a gate path",
-	"holdout_pending":           "waiting for holdout checks",
-	"human_commit_in_pr":        "a human commit is in the pull request",
-	"head_unreported":           "no run reported the head",
-	"judge_impossible":          "the judge found it cannot be done",
-	"ledger_truncated":          "the merge ledger read is incomplete",
-	"loop_unsupported":          "the cluster lacks loop support",
-	"maintainer_approved":       "a maintainer approved it",
-	"approval_stale":            "the approval is of an older head",
-	"reentered_approved":        "approved, decided again",
-	"reentered_day_turned":      "a new day, decided again",
-	"reentered_unpaused":        "the pause lifted, decided again",
-	"merge_gate_off":            "the merge gate is off",
-	"needs_author":              "the issue's author must answer",
-	"no_pr":                     "the agent opened no pull request",
-	"committed_no_pr":           "committed, never pushed: work lost",
-	"pushed_no_pr":              "pushed, but no pull request opened",
-	"push_refused":              "the factory refused the push",
-	"push_awaiting_approval":    "a push waits for a maintainer",
-	"scope_changed":             "the revision changed the task's scope",
-	"no_verdict":                "the review gave no verdict",
-	"not_adopted_author":        "the pull request's author is not adopted",
-	"not_mergeable":             "the pull request is not mergeable",
-	"not_met":                   "the acceptance checks are unmet",
-	"parent_missing":            "the parent task is gone",
-	"parent_not_split":          "the parent is no longer waiting",
-	"pod_lost":                  "the sandbox was lost",
-	"policy_absent":             "no merge policy applies",
-	"policy_pending":            "the merge policy is not ready",
-	"push_unrecorded":           "GitHub has not recorded the push",
-	"release_age_pending":       "the release is too new",
-	"release_age_red":           "the release age check failed",
-	"label_missing":             "the required label is missing",
-	"label_not_adopted":         "the wrong login applied the label",
-	"resume_budget":             "no budget to resume the task",
-	"review_rounds_exhausted":   "the reviewer still wants changes",
-	"run_unschedulable":         "the cluster never admitted the run",
-	"secret_scan_red":           "the secret scan found a credential",
-	"shadow_would_arm":          "it would merge, the gate is in shadow",
-	"split_proposed":            "a split is proposed",
-	"contract_invalid":          "the tester's branch is not valid",
-	"contract_disputed":         "the tests are disputed",
-	"contract_too_large":        "the contract is too big to record",
-	"contract_check_unset":      "the contract has no check to prove it",
-	"contract_modified":         "the pull request changes the tests",
-	"contract_unread":           "reading the changes to the tests",
-	"contract_push_unrecorded":  "waiting for GitHub to see the tests",
-	"stalled":                   "the run made no commit",
-	"class_unarmed":             "a maintainer merges this class",
-	"no_policy_matched":         "no merge policy holds on this diff",
-	"reviewer_verdict_missing":  "no reviewer read this change",
-	"policy_unavailable":        "waiting to read the merge policy",
-	"policy_invalid":            "the merge policy is invalid",
-	"approval_required":         "a maintainer approves this change",
-	"steering_path":             "it changes a steering note",
-	"stuck":                     "the run showed no activity",
-	"verdict_stale":             "the approval is for an older head",
-	"waiting_active_tasks":      "waiting for other tasks to finish",
-	"waiting_broker_permission": "waiting for the broker's permission",
-	"waiting_daily_budget":      "waiting for tomorrow's budget",
-	"waiting_review_wip":        "waiting for a review slot",
-	"waiting_room_log":          "waiting for the room's log",
-	"waiting_run_slot":          "waiting for a run slot",
-	"waiting_revision_first":    "letting a revision run first",
-}
-
 // reasonWords is a wait reason as a short phrase, at most 40 runes: summary's sentence for it is
 // longer than a table cell wants.
-func reasonWords(reason string) string { return word(reasonPhrases, reason) }
+func reasonWords(reason string) string {
+	if words, ok := reasonwords.Longs(reason)[reason]; ok && words != reason {
+		return reasonwords.For(reason).Short
+	}
+	return clean(reason)
+}
 
 // triggerWords is why a run exists. A human trigger reads "human review", as it is a person's
 // review request that starts it.

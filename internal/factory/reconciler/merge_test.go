@@ -22,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/decision"
 	"github.com/Smana/maku/internal/factory/forge"
+	"github.com/Smana/maku/internal/factory/narrate"
 )
 
 // mergeRig is a docs-links task at its merge gate: PR 12 open at abc, its room having reported
@@ -225,7 +226,7 @@ func TestAGreenRevertIsMergedAtItsHead(t *testing.T) {
 	}
 }
 
-// R32 (owner, 2026-09-27): before the wave the gate narrates what it would do and does nothing.
+// R32: shadow narrates the policy and its measurements, but never arms.
 func TestShadowNarratesAndNeverArms(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}, "revert": {Shadow: true}}
@@ -235,7 +236,8 @@ func TestShadowNarratesAndNeverArms(t *testing.T) {
 		len(g.f.Armed()) != 0 || tk.Status.PullRequest.ArmedAt != nil {
 		t.Fatalf("%s %s %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed())
 	}
-	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "would auto-merge: `docs-links`, checks green, verdict approve") {
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "Policy `docs-links` would have merged this") ||
+		!strings.Contains(c, "1 files, 2 lines") {
 		t.Fatalf("%q", c)
 	}
 	if n, _ := g.r.armedToday(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor("")); n != 0 {
@@ -1370,7 +1372,7 @@ func TestTheGatePostsEachDecisionPath(t *testing.T) {
 		checks      forge.Checks
 		state, desc string
 	}{
-		"human": {green("PENDING"), "pending", "docs-links: a human decides, policy_pending"},
+		"human": {green("PENDING"), "pending", "review: a human decides, policy_pending"},
 		"wait":  {forge.Checks{Runs: green("SUCCESS").Runs[:1]}, "pending", "docs-links: waiting, ci_pending"},
 		"red":   {red, "failure", "docs-links: ci_red"},
 		"arm":   {green("SUCCESS"), "success", "docs-links: merging"},
@@ -1833,5 +1835,43 @@ func TestAutoRevertNeedsNoRevertPolicy(t *testing.T) {
 	merged, err := g.r.mergeGreenRevert(t.Context(), g.r.Cfg.Current(), &tk, pr)
 	if err != nil || !merged || !slices.Contains(g.f.Armed(), "PR_revert r1") {
 		t.Fatalf("merged %v, err %v, calls %q", merged, err, g.f.Armed())
+	}
+}
+
+func TestShadowCommentCarriesEvidenceProgress(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true, Evidence: "low"}, "revert": {Shadow: true}}
+	g.r.CleanDecisions = func(context.Context, string, string) (int, bool) { return 3, true }
+	g.f.SetChecks(12, green("SUCCESS"))
+	g.reconcile(t, "3buqdlot", 1)
+	if c := strings.Join(g.f.Comments(12), "\n"); !strings.Contains(c, "4 of 5 clean decisions toward going live") {
+		t.Fatalf("%q", c)
+	}
+}
+
+func TestArmedCommentNamesTheMatchedPolicyAndMeasurements(t *testing.T) {
+	g := declaredRig(t)
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAutoMerging {
+		t.Fatalf("%s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+	c := strings.Join(g.f.Comments(12), "\n")
+	for _, want := range []string{"Merged automatically by policy `dead-links`", "1 of 3 files, 2 of 20 lines"} {
+		if !strings.Contains(c, want) {
+			t.Errorf("missing %q in:\n%s", want, c)
+		}
+	}
+	if tk.Status.PullRequest.Decision != "1 of 3 files, 2 of 20 lines" {
+		t.Fatalf("the room's policy decision is %q", tk.Status.PullRequest.Decision)
+	}
+}
+
+func TestDecisionDetailsDoNotGoStale(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+	tk := g.task(t)
+	tk.Status.PullRequest.Decision = "131 lines changed, limit 100"
+	g.r.withRecord(g.r.Cfg.Current(), narrate.Event{}, tk, ArmDecision{Verdict: "wait", Reason: "ci_pending"}, "abc")
+	if tk.Status.PullRequest.Decision != "" {
+		t.Fatalf("stale decision %q", tk.Status.PullRequest.Decision)
 	}
 }

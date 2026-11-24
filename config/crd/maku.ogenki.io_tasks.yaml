@@ -2345,6 +2345,11 @@ spec:
                       head (Renovate's automerge of a head the gate refused or never read) is not watched.
                     maxLength: 64
                     type: string
+                  decision:
+                    description: 'Decision is the readable form of the decision record:
+                      measured values and each policy''s refusal.'
+                    maxLength: 2048
+                    type: string
                   drill:
                     description: 'Drill: the revert was a maintainer''s drill (AM6);
                       the breaker does not count it.'

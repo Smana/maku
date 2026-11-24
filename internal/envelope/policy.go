@@ -45,7 +45,9 @@ type PolicyFact struct {
 	MergedHow string `json:"mergedHow,omitempty"`
 	// Name is the merge policy the gate last decided the pull request under, chosen from its diff
 	// (merge policies MR1); "" before a decision named one.
-	Name      string `json:"name,omitempty"`
+	Name string `json:"name,omitempty"`
+	// Decision is the factory's readable decision: measured values and every candidate's refusal.
+	Decision  string `json:"decision,omitempty"`
 	Truncated bool   `json:"truncated,omitempty"`
 }
 
@@ -191,6 +193,8 @@ func (p PolicyFact) validate() error {
 		return errors.New("name is a policy name")
 	case p.MergedHow != "" && p.MergedHow != "class" && p.MergedHow != "approved":
 		return errors.New("mergedHow is class or approved")
+	case utf8.RuneCountInString(p.Decision) > 2048:
+		return errors.New("decision is at most 2048 characters")
 	}
 	for i, c := range p.Classes {
 		if !ValidClassName(c.Name) || !validMode(c.Mode) {

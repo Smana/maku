@@ -1063,6 +1063,10 @@ type PullRequestRef struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Policy string `json:"policy,omitempty"`
+	// Decision is the readable form of the decision record: measured values and each policy's refusal.
+	// +kubebuilder:validation:MaxLength=2048
+	// +optional
+	Decision string `json:"decision,omitempty"`
 	// +optional
 	ArmedAt *metav1.Time `json:"armedAt,omitempty"`
 	// +optional
