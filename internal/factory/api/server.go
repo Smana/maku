@@ -33,6 +33,7 @@ import (
 	"github.com/Smana/maku/internal/factory/ledger"
 	"github.com/Smana/maku/internal/factory/mergepolicy"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/stages"
 	"github.com/Smana/maku/internal/hardening"
 	"github.com/Smana/maku/internal/policy"
 	"github.com/Smana/maku/internal/tlsreload"
@@ -149,6 +150,8 @@ type Server struct {
 	Writers func(ctx context.Context, repository, login string) (bool, error)
 	// InstallUnsafe is the factory's banner codes (GET /v1/install, v4 D3); nil lists none.
 	InstallUnsafe func() []string
+	// StagesCache holds each repository's folded stage report for the catalogue's typical cost (WR5).
+	StagesCache *stages.Cache
 	// forgeReads is forge_read's per-(run, target) answer cache (forgeReadTTL).
 	forgeReads *forgeReadCache
 }
@@ -236,6 +239,8 @@ func (s *Server) Handler() http.Handler {
 	// P17: the catalogue is mounted whenever the API is, not behind policyManagement.promotion.
 	mux.HandleFunc(catalogueListRoute, s.catalogueRepositories)
 	mux.HandleFunc(catalogueRoute, s.catalogue)
+	// WR5: per-stage cost and effect report.
+	mux.HandleFunc(stagesRoute, s.stagesReport)
 	// v4 D3: the banner's factory codes, for any signed-in human.
 	mux.HandleFunc(InstallRoute, s.install)
 	// stage 6: off lists no policy route, so each is a 404.

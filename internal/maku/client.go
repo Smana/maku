@@ -25,6 +25,7 @@ import (
 	"github.com/Smana/maku/internal/coordinationview"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/coordination"
+	"github.com/Smana/maku/internal/factory/stages"
 	"github.com/Smana/maku/internal/httpx"
 	"github.com/Smana/maku/internal/mcpwire"
 	"github.com/Smana/maku/internal/roomview"
@@ -711,3 +712,43 @@ func (c Client) CoordinationDraft(ctx context.Context, parent string, in coordin
 
 // coordCodeRE is a coordination refusal's bounded code; anything else is "refused".
 var coordCodeRE = regexp.MustCompile(`^[a-z][a-z_]{0,47}$`)
+
+// Stages reads GET /api/stages?repository=<owner/name>[&class=<c>][&last=<n>] from the broker (WR5).
+func (c Client) Stages(ctx context.Context, repository, class string, last int) (stages.Report, error) {
+	var out stages.Report
+	h, err := c.header(ctx)
+	if err != nil {
+		return out, err
+	}
+	q := url.Values{}
+	if repository != "" {
+		q.Set("repository", repository)
+	}
+	if class != "" {
+		q.Set("class", class)
+	}
+	if last > 0 {
+		q.Set("last", strconv.Itoa(last))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.URL+"/api/stages"+withQuery(q.Encode()), nil)
+	if err != nil {
+		return out, err
+	}
+	req.Header = h
+	resp, err := c.HC.Do(req)
+	if err != nil {
+		return out, fmt.Errorf("stages: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return out, refusal("stages", resp)
+	}
+	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
+	if err != nil {
+		return out, fmt.Errorf("stages: %w", err)
+	}
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return out, fmt.Errorf("stages: %w", err)
+	}
+	return out, nil
+}

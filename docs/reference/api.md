@@ -1468,6 +1468,49 @@ caller's GitHub login cannot be resolved. The body is `Cache-Control: no-store`:
 - **Classes offered:** every class of the repository except `revert` (the factory's own), adopted
   classes (`author.adopt`: another author's pull requests) and oracle classes (their tasks come from a
   detector). `review` is always offered, from the factory default when the repository omits it.
+  When the factory's 10-minute stage report cache is warm and a class has at least 30 merged tasks,
+  its entry also carries `typicalUSD` (the median cost of merged tasks) and `typicalOf` (how many
+  merged tasks formed it); a cold cache omits both.
+
+### `GET /v1/stages`
+
+Folds the factory's newest ended `Task` objects for a repository into per-class, per-stage costs and
+effects (`Cache-Control: no-store`). Requires a human token with the member role who can read the
+repository on GitHub (`403 not_permitted` with no role, `403 human_only` for non-human callers,
+`400 repository_required` without `repository`, `400 bad_last` for non-positive `last`, `404 not_found`
+for an unserved or unreadable repository).
+
+Query parameters:
+
+- `repository` (required): `owner/name`.
+- `class` (optional): narrow the report to one class.
+- `last` (optional): newest ended tasks to fold (default and cap `500`).
+
+```json
+{
+  "repository": "owner/repo",
+  "tasks": 42,
+  "merged": 31,
+  "classes": [
+    {
+      "class": "docs",
+      "tasks": 30,
+      "merged": 24,
+      "typicalUSD": 0.41,
+      "p90USD": 1.10,
+      "stages": [
+        {"stage": "implement", "tasks": 30, "usd": 9.80, "effects": {}},
+        {"stage": "review", "tasks": 30, "usd": 2.10,
+         "effects": {"changes_committed": 7, "approve_agreed": 19, "approve_overruled": 2, "changes_ignored": 2}},
+        {"stage": "step_up", "tasks": 4, "usd": 6.20, "effects": {"finished": 3, "escalated": 1}}
+      ]
+    }
+  ]
+}
+```
+
+`typicalUSD` and `p90USD` are present only once a class has at least 30 merged tasks in the window.
+The broker proxies this route at `GET /api/stages` for `maku stages`.
 - **`mode`:** `live`, `shadow` or `off`; `unarmed` for every class while the merge gate is off for the
   whole factory. `approveToMerge` is true only with the gate on and `merge.approveToMerge` set.
 - **`ceilingUSD`:** the task cap of the tier the class's floor profile runs at, else of the factory's

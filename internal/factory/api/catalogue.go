@@ -127,6 +127,14 @@ func (s *Server) catalogue(w http.ResponseWriter, r *http.Request) {
 		refuse(w, http.StatusNotFound, "not_found")
 		return
 	}
+	if s.StagesCache != nil {
+		for i := range c.Classes {
+			if usd, of, ok := s.StagesCache.Typical(asked, c.Classes[i].Name); ok {
+				c.Classes[i].TypicalUSD = usd
+				c.Classes[i].TypicalOf = of
+			}
+		}
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	reply(w, http.StatusOK, c)
 }

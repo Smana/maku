@@ -202,6 +202,8 @@ type Server struct {
 	// Catalogue reads what a repository offers at intake from the factory (classes_list and the
 	// settings pages' Profiles row). Nil lists no classes_list and leaves the pages without it.
 	Catalogue *CatalogueCache
+	// Stages forwards GET /api/stages to the factory's GET /v1/stages (WR5). Nil serves 404.
+	Stages StagesSource
 	// Unsafe is the install's unsafe settings (config install.unsafe, v4 D18), which GET /api/install
 	// shows every signed-in human and the web UI turns into a banner on every page.
 	Unsafe []string
@@ -273,6 +275,9 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /assets/{file...}", withCSP(assets))
 	mux.Handle("GET /assets", withCSP(http.NotFoundHandler())) // not the mux's redirect to /assets/
 	mux.HandleFunc("GET /api/rooms", s.listRooms)
+	if s.Stages != nil { // WR5: per-stage cost and effect report forwarded from the factory.
+		mux.HandleFunc("GET /api/stages", s.stagesRoute)
+	}
 	if s.Needs { // needs/v1's human door (CD28; human.needs.enabled). Off, /api/needs is a 404.
 		mux.HandleFunc("GET /api/needs", s.needsRoute)
 	}

@@ -346,6 +346,15 @@ func (m *fakeMetrics) StageCost(_ context.Context, repository, class, stage stri
 func (m *fakeMetrics) StageEffect(_ context.Context, repository, class, stage, effect, outcome string) {
 	m.addStage(fmt.Sprintf("stage_effect %s %s %s %s %s", repository, class, stage, effect, outcome))
 }
+func (m *fakeMetrics) WorkflowChoice(_ context.Context, repository, class, choice string) {
+	m.addStage(fmt.Sprintf("workflow_choice %s %s %s", repository, class, choice))
+}
+func (m *fakeMetrics) CeilingUseRatio(_ context.Context, repository, class string, stageCount int, ratio float64) {
+	m.addStage(fmt.Sprintf("ceiling_ratio %s %s %d %.4f", repository, class, stageCount, ratio))
+}
+func (m *fakeMetrics) StepUp(_ context.Context, repository, class, trigger, mode, outcome string) {
+	m.addStage(fmt.Sprintf("step_up %s %s %s %s %s", repository, class, trigger, mode, outcome))
+}
 func (m *fakeMetrics) TierFit(_ context.Context, classifier, tier, fit string, control bool) {
 	m.add("tier_fit " + classifier + " " + tier + " " + fit + " " + strconv.FormatBool(control))
 }

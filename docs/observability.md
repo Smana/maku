@@ -53,6 +53,29 @@ The factory has no default-deny policy of maku's, so it needs no entry.
 The metric families are listed in [Operations](operations/rooms.md#metrics) and
 [Factory metrics](operations/factory.md#factory-metrics).
 
+### Workflow stages and card health
+
+Each ended task records its per-stage spend and effects once into Prometheus:
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `maku_factory_stage_cost_usd` | `repository`, `class`, `stage` | USD spent in one workflow stage (`ask`, `plan`, `tests`, `implement`, `search`, `judge`, `review`, `split`, `step_up`) |
+| `maku_factory_stage_effects_total` | `repository`, `class`, `stage`, `effect`, `outcome` | What each stage changed on an ended task |
+| `maku_factory_workflow_choices_total` | `repository`, `class`, `choice` | Whether the automatic workflow choice was `kept`, `overridden` by a pin, or `stepped_up` |
+| `maku_factory_ceiling_use_ratio` | `repository`, `class`, `stage_count` | Ended task USD over the workflow card's shown ceiling (buckets 0.05 to 1.5) |
+| `maku_factory_step_ups_total` | `repository`, `class`, `trigger`, `mode`, `outcome` | Each automatic step, manual step, or offer against the task's outcome |
+
+```promql
+# share of automatic choices left unchanged, per class
+sum by (class) (increase(maku_factory_workflow_choices_total{choice="kept"}[30d]))
+  / sum by (class) (increase(maku_factory_workflow_choices_total[30d]))
+# share of escalated tasks one step-up rescued
+sum(increase(maku_factory_step_ups_total{mode=~"auto|manual", outcome=~"accepted|merged_human"}[30d]))
+  / sum(increase(maku_factory_step_ups_total{mode=~"auto|manual"}[30d]))
+```
+
+For the per-repository, per-class breakdown of recent ended tasks (including `typicalUSD` median cost once a class has 30 merged tasks), query [`GET /v1/stages`](reference/api.md#get-v1stages) or run `maku stages --repository <owner/name>`.
+
 ## Alerts
 
 `monitoring.prometheusRule.enabled` renders one `PrometheusRule`, `maku`: a group per enabled

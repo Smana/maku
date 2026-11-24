@@ -61,6 +61,7 @@ import (
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/factory/stages"
 	"github.com/Smana/maku/internal/factory/statuswriter"
 	"github.com/Smana/maku/internal/factory/taskid"
 	"github.com/Smana/maku/internal/factory/tracing"
@@ -699,6 +700,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 	if err := mgr.Add(readinessReporter(live.Current, readiness, m, log)); err != nil {
 		return fmt.Errorf("manager: %w", err)
 	}
+	// WR5: fold ended Tasks once every 10 minutes into StagesCache so the catalogue carries typical costs.
+	stagesCache := stages.NewCache(time.Now)
+	apiSrv.StagesCache = stagesCache
+	if err := mgr.Add(stagesRefresher(live.Current, ledgers, ns, stagesCache, log)); err != nil {
+		return fmt.Errorf("manager: %w", err)
+	}
 	// Each repository's checks and filing go through that repository's own App connection.
 	coord := &coordination.Service{Client: ledgers, Namespace: ns, Cfg: live, Prerequisites: coordinationPrerequisites(live, readiness),
 		Now: time.Now, Metrics: m,
@@ -1313,4 +1320,40 @@ func runCost(m *fmetrics.Set) func(context.Context, meter.CostKey, float64, map[
 	return func(ctx context.Context, k meter.CostKey, usd float64, by map[string]float64) {
 		m.RunCost(ctx, k.Tier, k.Role, k.Cohort, k.Profile, usd, by)
 	}
+}
+
+// stagesRefresher folds ended Tasks once every stages.CacheTTL into cache so GET /v1/catalogue
+// carries each class's typical cost without listing Tasks on every request (WR5).
+func stagesRefresher(cfg func() *config.Config, reader client.Reader, ns string, cache *stages.Cache, log *slog.Logger) manager.Runnable {
+	return manager.RunnableFunc(func(ctx context.Context) error {
+		refresh := func() {
+			c := cfg()
+			if c == nil || reader == nil {
+				return
+			}
+			var list factoryv1.TaskList
+			if err := reader.List(ctx, &list, client.InNamespace(ns)); err != nil {
+				if log != nil {
+					log.WarnContext(ctx, "stage report cache refresh failed", "err", err)
+				}
+				return
+			}
+			var repos []string
+			for _, rc := range c.Repos() {
+				repos = append(repos, rc.Name)
+			}
+			cache.Refresh(ctx, repos, list.Items)
+		}
+		refresh()
+		t := time.NewTicker(stages.CacheTTL)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case <-t.C:
+				refresh()
+			}
+		}
+	})
 }

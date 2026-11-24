@@ -82,6 +82,8 @@ const makuUsage = `usage: maku <command>
                                   branch and closes its issue as not planned (a GitHub App cannot delete an issue).
                                   The task's owner or a maintainer of its repository only
   retry <task> [--deeper]         queue a fresh run of an escalated task; --deeper steps it up once (also on a no-op task)
+  stages [--repository owner/name] [--class c] [--json]
+                                  per-stage cost and effect report for ended tasks of a repository
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
   install --print --out DIR [--answers FILE] [--force] [--no-wait]
                                   ask the install's questions (or read them from FILE) and write the values,
@@ -269,7 +271,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "stages", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -343,6 +345,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return c.Rooms(ctx, r.Out, f)
 	case "needs":
 		return r.needs(ctx, c, filepath.Join(r.Dir, "cursors.json"), args)
+	case "stages":
+		return r.stages(ctx, c, args)
 	case "status":
 		return r.status(ctx, c, args)
 	case "changes":
@@ -1217,6 +1221,78 @@ func (r Maku) coordination(ctx context.Context, c maku.Client, args []string) er
 	}
 	_, err = fmt.Fprintln(r.Out, maku.SafeText(got.ManifestPath))
 	return err
+}
+
+func (r Maku) stages(ctx context.Context, c maku.Client, args []string) error {
+	fs := flag.NewFlagSet("stages", flag.ContinueOnError)
+	var repo, class string
+	var last int
+	var asJSON bool
+	fs.StringVar(&repo, "repository", "", "repository, owner/name")
+	fs.StringVar(&class, "class", "", "only this class")
+	fs.IntVar(&last, "last", 0, "newest ended tasks to fold (default 500, max 500)")
+	fs.BoolVar(&asJSON, "json", false, "print the report JSON as is")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) != 0 {
+		return fmt.Errorf("stages [--repository owner/name] [--class c] [--last N] [--json]: %w", errors.Join(err, errors.New("no arguments")))
+	}
+	if repo == "" {
+		return errors.New("stages: --repository owner/name is required")
+	}
+	ctx, cancel := context.WithTimeout(ctx, makuTimeout)
+	defer cancel()
+	rep, err := c.Stages(ctx, repo, class, last)
+	if err != nil {
+		return err
+	}
+	if asJSON {
+		enc := json.NewEncoder(r.Out)
+		enc.SetIndent("", "  ")
+		return enc.Encode(rep)
+	}
+	if _, err := fmt.Fprintf(r.Out, "%s · %d tasks (%d merged)\n", maku.SafeText(rep.Repository), rep.Tasks, rep.Merged); err != nil {
+		return err
+	}
+	for _, cl := range rep.Classes {
+		typical := "—"
+		if cl.TypicalUSD > 0 {
+			typical = roomview.Dollars(cl.TypicalUSD)
+		}
+		p90 := "—"
+		if cl.P90USD > 0 {
+			p90 = roomview.Dollars(cl.P90USD)
+		}
+		if _, err := fmt.Fprintf(r.Out, "\nclass %s · %d tasks (%d merged) · typical %s · p90 %s\n",
+			maku.SafeText(cl.Class), cl.Tasks, cl.Merged, typical, p90); err != nil {
+			return err
+		}
+		if len(cl.Stages) == 0 {
+			continue
+		}
+		if _, err := fmt.Fprintln(r.Out, "STAGE       TASKS   USD       EFFECTS"); err != nil {
+			return err
+		}
+		for _, st := range cl.Stages {
+			var keys []string
+			for k := range st.Effects {
+				keys = append(keys, k)
+			}
+			slices.Sort(keys)
+			var effs []string
+			for _, k := range keys {
+				effs = append(effs, fmt.Sprintf("%s=%d", maku.SafeText(k), st.Effects[k]))
+			}
+			effStr := strings.Join(effs, ", ")
+			if effStr == "" {
+				effStr = "—"
+			}
+			if _, err := fmt.Fprintf(r.Out, "%-11s %-7d %-9s %s\n",
+				maku.SafeText(st.Stage), st.Tasks, roomview.Dollars(st.USD), effStr); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // opencodeServiceStart is when OpenCode's background service started, read from its process
