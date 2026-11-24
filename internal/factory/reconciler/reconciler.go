@@ -1239,7 +1239,7 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 		cohort = triage.CohortTreatment
 	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
-		Checks: p.Checks, TestFirst: r.repo(cfg, t).TestFirstIn(name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
+		Checks: p.Checks, TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
 }
 
 // pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:
@@ -1247,7 +1247,7 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 // declares no tests paths is refused profile_no_tests_paths, and the task joins the cohorts by hash,
 // as for any refused pin.
 func (r *Reconciler) pinTestsPaths(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d triage.Decision) (triage.Decision, error) {
-	if !d.Pin.Honoured() || d.DataClass != "public" || !r.repo(cfg, t).TestFirstIn(d.Pin.Name) {
+	if !d.Pin.Honoured() || d.DataClass != "public" || !cfg.TestFirstIn(r.repo(cfg, t), d.Pin.Name) {
 		return d, nil
 	}
 	paths, err := r.testPaths(ctx, t)

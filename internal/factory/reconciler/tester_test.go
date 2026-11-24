@@ -50,7 +50,11 @@ func testFirstCareful(c *config.Config) {
 	if c.HarnessProfiles == nil {
 		c.HarnessProfiles = map[string]config.HarnessProfile{}
 	}
+	if c.Loops == nil {
+		c.Loops = map[string]config.Loop{}
+	}
 	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "solo", Checks: true}
+	c.Loops["careful"] = config.Loop{Tests: true}
 	c.Repositories[0].Workflow = config.RepositoryWorkflow{Default: "careful", TestFirst: true}
 }
 
@@ -115,7 +119,7 @@ func TestTestFirstOffOrAnInternalTaskRunsTodaysSequence(t *testing.T) {
 
 func TestTheScoperRunsBeforeTheTester(t *testing.T) {
 	g := testerRigCfg(t, nil, func(c *config.Config) {
-		c.Loops = map[string]config.Loop{"careful": {Scope: config.ScopeScoper}}
+		c.Loops = map[string]config.Loop{"careful": {Scope: config.ScopeScoper, Tests: true}}
 		c.Tiers["light"] = config.Tier{Model: "agent-default", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
 	})
 	if s := g.runs.specs[rid(0)]; s.Role != "triager" {

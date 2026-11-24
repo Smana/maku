@@ -36,7 +36,7 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 	stall := int32(DefaultStallSteps)
 	loops = map[string]Loop{
 		"default": {Scope: ScopeOff, StallSteps: &stall, Judge: NoJudge},
-		WorkflowCareful: {Scope: ScopeScoper, StallSteps: &stall, Judge: DefaultJudge, Search: true,
+		WorkflowCareful: {Scope: ScopeScoper, StallSteps: &stall, Judge: DefaultJudge, Search: true, Tests: true,
 			Split: &SplitPolicy{MaxChildren: 4, ChildTier: DefaultChildTier, AnyTier: true}},
 	}
 	return profiles, templates, loops
@@ -90,14 +90,15 @@ func (c *Config) IsWorkflow(name string) bool {
 }
 
 // RepositoryWorkflow is a repository's say in the workflow (WF3, WF7): the one its tasks run when
-// no label and no source names one, and whether its careful tasks start with the tester.
+// no label and no source names one, and whether tasks whose workflow's row sets tests start with
+// the tester.
 // +kubebuilder:object:generate=true
 type RepositoryWorkflow struct {
 	// Default is the workflow a task runs when nothing else names one; unset is standard.
 	// +kubebuilder:validation:MaxLength=253
 	Default string `json:"default,omitempty"`
-	// TestFirst starts every public careful task with a tester run that writes the failing tests
-	// first (v3 feature 4, TF1); needs merge.contractCheck.
+	// TestFirst starts every public task whose workflow's row sets tests with a tester run that
+	// writes the failing tests first (v3 feature 4, TF1); needs merge.contractCheck.
 	TestFirst bool `json:"testFirst,omitempty"`
 }
 
@@ -110,10 +111,14 @@ func (r *Repository) DefaultWorkflow() string {
 	return WorkflowStandard
 }
 
-// TestFirstIn is whether a public task running workflow starts with the tester: the repository
-// opts in, and the workflow is careful (WF7). A repository not served (nil) runs none.
-func (r *Repository) TestFirstIn(workflow string) bool {
-	return r != nil && r.Workflow.TestFirst && workflow == WorkflowCareful
+// TestFirstIn is whether a public task of r running workflow starts with the tester: the
+// repository opts in, and the workflow's row sets tests. A repository not served (nil) runs none.
+func (c *Config) TestFirstIn(r *Repository, workflow string) bool {
+	if r == nil || !r.Workflow.TestFirst {
+		return false
+	}
+	p, _ := c.Workflow(workflow)
+	return c.rowOf(c.RowFor(workflow, p)).Tests
 }
 
 // WorkflowOr is the workflow the schedule's tasks run: its own, else quick (WF3).

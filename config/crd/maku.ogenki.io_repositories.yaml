@@ -368,8 +368,8 @@ spec:
                     type: string
                   testFirst:
                     description: |-
-                      TestFirst starts every public careful task with a tester run that writes the failing tests
-                      first (v3 feature 4, TF1); needs merge.contractCheck.
+                      TestFirst starts every public task whose workflow's row sets tests with a tester run that
+                      writes the failing tests first (v3 feature 4, TF1); needs merge.contractCheck.
                     type: boolean
                 type: object
             required:

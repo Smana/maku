@@ -286,6 +286,11 @@ spec:
                         steps (L3): 1 to 500, default 80.'
                       format: int32
                       type: integer
+                    tests:
+                      description: |-
+                        Tests starts a public task of the row with the tester when its repository opts in
+                        (Repository.spec.workflow.testFirst); absent is off. It never switches the loop on.
+                      type: boolean
                   type: object
                 maxProperties: 32
                 type: object

@@ -30,9 +30,11 @@ const testsDecl = "tests:\n  paths: [tests/]\n"
 func resolveCfg(mode string, percent int) *config.Config {
 	c := profileCfg(true)
 	steps := int32(7)
+	steps40 := int32(40)
 	c.Loops["review-search"] = config.Loop{StallSteps: &steps, Search: true}
+	c.Loops["careful"] = config.Loop{StallSteps: &steps40, Search: true, Scope: config.ScopeScoper, Tests: true}
 	c.HarnessProfiles["review-search"] = config.HarnessProfile{Loop: "review-search", Description: "search first"}
-	c.HarnessProfiles["careful"] = config.HarnessProfile{Loop: "review-floor", Description: "tests first"} // the repository's tester runs in careful (WF7)
+	c.HarnessProfiles["careful"] = config.HarnessProfile{Loop: "careful", Description: "tests first"} // the repository's tester runs on a row with tests: true (WF7)
 	c.Repositories[0].Workflow.TestFirst = true
 	c.Evaluation = config.Evaluation{Mode: mode, ControlPercent: percent}
 	return c

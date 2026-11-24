@@ -87,6 +87,9 @@ func (l Loop) over(def Loop) Loop {
 	if !out.searchSet && !out.Search { // a row built in Go with search true set it too
 		out.Search = def.Search
 	}
+	if !out.testsSet && !out.Tests { // a row built in Go with tests true set it too
+		out.Tests = def.Tests
+	}
 	if out.Split == nil {
 		out.Split = def.Split
 	}
@@ -106,7 +109,7 @@ func (l Loop) over(def Loop) Loop {
 	return out
 }
 
-// UnmarshalJSON decodes a row strictly, recording whether it writes search (searchSet).
+// UnmarshalJSON decodes a row strictly, recording whether it writes search (searchSet) or tests (testsSet).
 func (l *Loop) UnmarshalJSON(b []byte) error {
 	type plain Loop
 	var row plain
@@ -117,12 +120,14 @@ func (l *Loop) UnmarshalJSON(b []byte) error {
 	}
 	var probe struct {
 		Search *bool `json:"search"`
+		Tests  *bool `json:"tests"`
 	}
 	if err := json.Unmarshal(b, &probe); err != nil {
 		return err
 	}
 	*l = Loop(row)
 	l.searchSet = probe.Search != nil
+	l.testsSet = probe.Tests != nil
 	return nil
 }
 
@@ -139,6 +144,7 @@ func (c *Config) inheritedKeys(name string) []string {
 		{"judge", row.Judge != "", def.Judge != ""},
 		{"scope", row.Scope != "", def.Scope != "" && def.Scope != ScopeOff},
 		{"search", row.searchSet || row.Search, def.Search},
+		{"tests", row.testsSet || row.Tests, def.Tests},
 		{"split", row.Split != nil, def.Split != nil},
 	} {
 		if !k.row && k.given {
