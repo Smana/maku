@@ -33,10 +33,11 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 		"pair":        {Roles: []string{"implementer", "reviewer"}, MaxReviewRounds: 2},
 		"investigate": {Roles: []string{"triager"}},
 	}
+	stall := int32(DefaultStallSteps)
 	loops = map[string]Loop{
-		"default": {Scope: ScopeOff},
-		WorkflowCareful: {Scope: ScopeScoper, Judge: DefaultJudge, Search: true,
-			Split: &SplitPolicy{MaxChildren: 4, ChildTier: DefaultChildTier}},
+		"default": {Scope: ScopeOff, StallSteps: &stall, Judge: NoJudge},
+		WorkflowCareful: {Scope: ScopeScoper, StallSteps: &stall, Judge: DefaultJudge, Search: true,
+			Split: &SplitPolicy{MaxChildren: 4, ChildTier: DefaultChildTier, AnyTier: true}},
 	}
 	return profiles, templates, loops
 }

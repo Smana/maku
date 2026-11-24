@@ -163,10 +163,12 @@ workflows:
              description: "Scoped first, judged before review. For wide or unclear tasks."}
   none:     {template: none}
 loops:
-  default: {scope: "off"}
-  careful: {scope: scoper, judge: tier-light, search: true,
-            split: {maxChildren: 4, childTier: standard}}
+  default: {scope: "off", stallSteps: 80, judge: none}
+  careful: {scope: scoper, stallSteps: 80, judge: tier-light, search: true,
+            split: {maxChildren: 4, childTier: standard, anyTier: true}}
 ```
+
+`quick` and `standard` end a run that commits nothing in 80 steps; only `careful` runs the completion judge. The shipped `careful` row sets `split.anyTier: true` so the scoper can offer a split without a classifier.
 
 Reviewers run on the opposite tier (`standard` after `frontier`, `frontier` otherwise, unless `reviewerModel` overrides it) and receive fenced acceptance checks plus the PR URL without the implementer's handoff; `investigate` runs a read-only `triager` forced to `internal` data class.
 

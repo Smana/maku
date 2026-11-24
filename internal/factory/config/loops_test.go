@@ -41,8 +41,8 @@ func TestLoopFor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := none.LoopFor("standard"); got != nil {
-		t.Errorf("no loops: %+v, want off", got)
+	if got := none.LoopFor("standard"); got == nil || *got != (LoopPolicy{DefaultStallSteps, DefaultContinuations, ""}) {
+		t.Errorf("no loops: %+v, want the shipped stall rule and no judge", got)
 	}
 }
 
@@ -153,5 +153,19 @@ func TestLoopInheritanceWarnsWhenItSwitchesALoopOn(t *testing.T) {
 	}
 	if c.LoopFor("quick") == nil {
 		t.Fatal("quick's loop is off")
+	}
+}
+
+func TestARowThatSwitchesItsOwnLoopOnKeepsItsJudge(t *testing.T) {
+	c := mustParse(t, good+`loops:
+  default: {scope: "off", stallSteps: 80, judge: none}
+  standard: {continuations: 1}
+  careful: {scope: scoper}
+`)
+	if p := c.LoopFor("standard"); p == nil || p.JudgeModel != DefaultJudge || p.Continuations != 1 {
+		t.Fatalf("a row with its own loop key lost the design's judge: %+v", p)
+	}
+	if p := c.LoopFor("careful"); p == nil || p.JudgeModel != "" || p.StallSteps != 80 {
+		t.Fatalf("a row with no loop key must take default's stall rule and no judge: %+v", p)
 	}
 }

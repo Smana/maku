@@ -19,10 +19,14 @@ spec:
       scope: scoper
       search: true
       split:
+        anyTier: true
         childTier: standard
         maxChildren: 4
+      stallSteps: 80
     default:
+      judge: none
       scope: "off"
+      stallSteps: 80
   mergeDefaults:
     breaker:
       maxReverts: 1
