@@ -11,7 +11,6 @@ Feature-level direction only. Shipped milestones are recorded per release on the
 | Merge policies, from shadow to authority | Stage 3's exit: a week of dual decisions with no unexplained disagreement. Then a repository's cutover with central guardrails, a policy-bot rule generated from a class, `maku policy init`, a hold label, and simulation over real pull requests ([UX review](https://github.com/Smana/ai-native-ref/blob/main/docs/superpowers/specs/2026-11-08-merge-policy-ux-review.md#the-proposal-ranked)) |
 | The planner's grounding | It accepted a false premise in a request; a plan must check its claims against the repository |
 | Natural-language intents in Slack rooms | Design, open ([#441](https://github.com/Smana/maku/pull/441)) |
-| A suggested workflow and a workflow override at intake | Design, open ([#443](https://github.com/Smana/maku/pull/443)) |
 
 ## Agent Factory v5: proven in the field
 

@@ -1988,7 +1988,7 @@ func (c *Config) Validate() error {
 	for name, t := range c.Templates {
 		// The reconciler creates Tasks from these names, and the Task CRD's enum refuses any other.
 		if !slices.Contains(templates(), name) {
-			bad("template %s is not one of solo, pair, trio, investigate", name)
+			bad("template %s is not one of solo, pair, investigate", name)
 		}
 		if len(t.Roles) == 0 {
 			bad("template %s has no roles", name)

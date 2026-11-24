@@ -145,7 +145,7 @@ The factory App posts at-least-once event comments from a 16-entry outbox onto t
 
 ## Triage: tiers, templates, classes
 
-Triage runs once in `Received`. If `triage.classifierURL` is set, it picks `light`, `standard` or `frontier` (falling back to `standard` on error/timeout, with `triage.controlPercent` forced to `frontier`); unset, tasks use `standard`. Each tier binds a gateway logical model (`tier-*` / `agent-default`), `runMinutes`, `runTokens`/`taskTokens`, and optional `runUSD`/`taskUSD`. Templates (`solo`, `pair`, `investigate`) list the ordered roles (`implementer`, `reviewer`, `triager`), and workflows supply both template and loop policy.
+Triage runs once in `Received`. Every task is rated `standard`; no classifier is called. `triage.controlPercent` sends that share to `frontier`. Each tier binds a gateway logical model (`tier-*` / `agent-default`), `runMinutes`, `runTokens`/`taskTokens`, and optional `runUSD`/`taskUSD`. Templates (`solo`, `pair`, `investigate`) list the ordered roles (`implementer`, `reviewer`, `triager`), and workflows supply both template and loop policy.
 
 ### The shipped workflows
 
