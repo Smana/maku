@@ -49,7 +49,7 @@ Everything that happens in a room is an event in its log, assigned a gapless seq
 | **Room** | One session's policy (owner, driver, members, approvals, retention, data class) and log (`Room` CR, [reference](reference/room-crd.md)) |
 | **Run** | One sandboxed `AgentRun` pod on one role and branch, with a fixed deadline and budget; one run is `Running` per room at a time |
 | **Sandbox** | Isolated gVisor pod behind default-deny network policy and an explicit egress allow-list |
-| **Run role** | One of five roles, in order: **scoper** (writes acceptance checks or proposes a split), **tester** (writes failing tests first when `testFirst` is set), **implementer** (makes the change), **judge** (checks acceptance criteria before stopping), and **reviewer** (read-only verdict on the PR) |
+| **Run role** | A run's role is one of four: `implementer`, `reviewer`, `tester`, `triager`. The scoper is a `triager` run; the judge is a model call inside the implementer's run, not a run |
 | **Harness** | OpenHands agent-server loop inside the run container on `127.0.0.1:8000` |
 | **Bridge** | `maku-bridge` (sidecar `room-bridge`): pushes harness events to the broker and delivers steering, interrupts and decisions back |
 | **Broker** | `maku-broker` (`room-broker`, see [naming](superpowers/naming.md#technical-names)): authenticates writers, redacts, sequences and stores events, and serves the UI and APIs |
@@ -61,7 +61,7 @@ Everything that happens in a room is an event in its log, assigned a gapless seq
 | **Driver** | Single principal allowed to steer or interrupt the active run, fenced by `driverEpoch` across *give*, *request* and *take* |
 | **Message delivery** | `none` (chat only), `queued` (FIFO into the next run's brief), or `steering` (injected live by the driver) |
 | **Handoff** | Work and commit SHA passed from one run role to the next (`handoff` event), distinct from driver transfer |
-| **Verdict** | Reviewer's or tester's `approve` or `changes` (`message{kind: review_verdict}`), also posted once on the PR |
+| **Verdict** | The reviewer's `approve` or `changes` (`message{kind: review_verdict}`), also posted once on the PR |
 | **Brief** | Bounded, fenced context assembled by the broker for the next run from the latest handoff, verdict and queued messages |
 | **Approval** | Human allow/deny decision on a pending harness action (`approval_requested` / `approval_decided`) |
 | **Fork** | New room copied from events `1..N` (`maku fork`), owned by the forker with `attended` approvals by default |

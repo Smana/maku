@@ -86,19 +86,14 @@ type governed struct {
 	view planView
 }
 
-// planLabels are the labels start applies before factory/ready, in order: class:<c>, then
-// workflow:<p> when the plan pins one (P5, P7, WF9), unless the catalogue says this developer does
-// not maintain the repository. None without a class.
+// planLabels are the labels start applies before factory/ready: workflow:<p> when the plan pins
+// one, unless the catalogue says this developer does not maintain the repository.
 func (g *governed) planLabels() []string {
 	is := g.view.Issues[0]
-	if is.Class == "" || (g.Maintainer != nil && !*g.Maintainer) {
+	if is.Profile == "" || (g.Maintainer != nil && !*g.Maintainer) {
 		return nil
 	}
-	labels := []string{"class:" + is.Class}
-	if is.Profile != "" {
-		labels = append(labels, "workflow:"+is.Profile)
-	}
-	return labels
+	return []string{"workflow:" + is.Profile}
 }
 
 // dollars is a plan's USD ceiling as a person reads it: two decimals, from the cent up.

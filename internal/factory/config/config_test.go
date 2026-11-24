@@ -381,7 +381,7 @@ func TestBadConfigsFail(t *testing.T) {
 		"unknown model":        {"model: agent-default, runTokens: 1500000", "model: gpt-5, runTokens: 1500000", `tier standard: model "gpt-5" is not a C5 logical name`},
 		// Ruling SI: the reconciler creates Tasks from these names, and the Task CRD's enum refuses others.
 		"a template off the CRD enum": {"  solo: {roles: [implementer]}\n", "  solo: {roles: [implementer]}\n  duo: {roles: [implementer]}\n",
-			"template duo is not one of solo, pair, trio, investigate"},
+			"template duo is not one of solo, pair, investigate"},
 		"template without roles": {"solo: {roles: [implementer]}", "solo: {roles: []}", "template solo has no roles"},
 		// R38 (owner default): only a lone triager may go without an implementer.
 		"a reviewer without an implementer": {"investigate: {roles: [triager]}", "investigate: {roles: [reviewer]}",
@@ -878,5 +878,12 @@ func TestAnAppByNameIsNoMaintainer(t *testing.T) {
 				t.Fatalf("err = %v", err)
 			}
 		})
+	}
+}
+
+func TestAnUnknownTemplateNamesTheThreeThatExist(t *testing.T) {
+	_, err := Parse([]byte(strings.Replace(good, "  solo: {roles: [implementer]}", "  duo: {roles: [implementer]}\n  solo: {roles: [implementer]}", 1)))
+	if err == nil || strings.Contains(err.Error(), "trio") || !strings.Contains(err.Error(), "solo, pair, investigate") {
+		t.Fatalf("got %v", err)
 	}
 }

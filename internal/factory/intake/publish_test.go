@@ -95,7 +95,7 @@ func TestPublishFilesTheProposalOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := f.Created(); len(got) != 1 || !strings.HasPrefix(got[0], "docs(alerts): the crash-loop rule fires on a completed Job\n") ||
-		!strings.Contains(got[0], "\n\n---\nPublished by @Smana from agent factory task `3buqdlot`.\nlabels: ") || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot,class:review") {
+		!strings.Contains(got[0], "\n\n---\nPublished by @Smana from agent factory task `3buqdlot`.\nlabels: ") || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot") {
 		t.Fatalf("the draft's title, a footer and only the marker that makes a retry find it, never factory/ready: %q", got)
 	}
 	tk := getTask(t, c, "3buqdlot")
@@ -607,7 +607,7 @@ func TestPublishStarts(t *testing.T) {
 		if err := p.Poll(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot,class:alert-rules") {
+		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot") {
 			t.Fatalf("%q", got)
 		}
 		fix := getTask(t, c, fixName(0))
@@ -636,7 +636,7 @@ func TestPublishStarts(t *testing.T) {
 			t.Fatal(err)
 		}
 		fix := getTask(t, c, fixName(0))
-		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "class:review") || fix.Spec.PredictedClass != "review" {
+		if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot") || fix.Spec.PredictedClass != "review" {
 			t.Fatalf("%q %+v", got, fix.Spec)
 		}
 	})
@@ -676,7 +676,7 @@ func TestPublishStarts(t *testing.T) {
 		fix := getTask(t, c, fixName(0))
 		got := getTask(t, c, "3buqdlot")
 		created := f.Created()
-		if len(created) != 1 || !strings.HasSuffix(created[0], "class:alert-rules") || slices.Contains(f.Added(501), "class:review") ||
+		if len(created) != 1 || !strings.HasSuffix(created[0], "labels: factory/published-from:3buqdlot") || slices.Contains(f.Added(501), "class:review") ||
 			len(tasks(t, c)) != 2 || fix.Spec.PredictedClass != "alert-rules" || got.Status.Published == nil || got.Status.Published.Class != "alert-rules" {
 			t.Fatalf("%q %v %d %+v %+v", created, f.Added(501), len(tasks(t, c)), fix.Spec, got.Status.Published)
 		}
@@ -841,4 +841,14 @@ func TestPublishRetryAnnouncesTheStartThatHappened(t *testing.T) {
 			t.Fatalf("%d tasks, %q", len(tasks(t, c)), cs)
 		}
 	})
+}
+
+func TestPublishFilesMarkerOnly(t *testing.T) {
+	p, f, _ := startsPublishing(t, true, proposalWithFiles, investigated("3buqdlot"))
+	if err := p.Poll(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Created(); len(got) != 1 || !strings.HasSuffix(got[0], "labels: factory/published-from:3buqdlot") || strings.Contains(got[0], "class:") {
+		t.Fatalf("published issue carried a dead class label: %q", got)
+	}
 }
