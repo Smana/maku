@@ -166,6 +166,7 @@ func TestRunPodPolicy(t *testing.T) {
 		{"hostNetwork", "no host namespace", nil, func(p *corev1.Pod) { p.Spec.HostNetwork = true }},
 		{"hostPID", "no host namespace", nil, func(p *corev1.Pod) { p.Spec.HostPID = true }},
 		{"hostIPC", "no host namespace", nil, func(p *corev1.Pod) { p.Spec.HostIPC = true }},
+		{"shareProcessNamespace", "shareProcessNamespace", nil, func(p *corev1.Pod) { p.Spec.ShareProcessNamespace = &yes }},
 		{"a hostPath volume", "no hostPath", nil, func(p *corev1.Pod) {
 			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "host", VolumeSource: corev1.VolumeSource{HostPath: &corev1.HostPathVolumeSource{Path: "/"}}})
 		}},
@@ -205,13 +206,40 @@ func TestRunPodPolicy(t *testing.T) {
 			delete(p.Spec.Containers[0].Resources.Requests, corev1.ResourceMemory)
 		}},
 		{"an image outside the allow-list", "images come from", nil, func(p *corev1.Pod) {
-			p.Spec.Containers[0].Image = "docker.io/library/busybox:1.37@sha256:0000"
+			p.Spec.Containers[0].Image = "docker.io/library/busybox:" + digest
 		}},
 		{"a look-alike repository", "images come from", nil, func(p *corev1.Pod) {
 			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness-evil:" + digest
 		}},
 		{"an allow-listed repository without a digest", "pinned by digest", nil, func(p *corev1.Pod) {
 			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness:v0.0.0"
+		}},
+		{"a short sha256 digest", "pinned by digest", nil, func(p *corev1.Pod) {
+			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness:v0.0.0@sha256:0000"
+		}},
+		{"a non-hex sha256 digest", "pinned by digest", nil, func(p *corev1.Pod) {
+			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness:v0.0.0@sha256:" + strings.Repeat("g", 64)
+		}},
+		{"a digest with trailing characters", "pinned by digest", nil, func(p *corev1.Pod) {
+			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness:" + digest + ":latest"
+		}},
+		{"a digest with an extra @", "pinned by digest", nil, func(p *corev1.Pod) {
+			p.Spec.Containers[0].Image = "ghcr.io/smana/maku-harness@sha256:0000@sha256:" + strings.Repeat("0", 64)
+		}},
+		{"a disallowed projected SA token audience in secret mode", "projected ServiceAccount tokens", nil, func(p *corev1.Pod) {
+			ttl := int64(3600)
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "extra", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "https://kubernetes.default.svc", ExpirationSeconds: &ttl, Path: "t"}}}}}})
+		}},
+		{"an empty projected SA token audience in secret mode", "projected ServiceAccount tokens", nil, func(p *corev1.Pod) {
+			ttl := int64(3600)
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "extra", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "", ExpirationSeconds: &ttl, Path: "t"}}}}}})
+		}},
+		{"a gateway token audience in secret mode", "projected ServiceAccount tokens", nil, func(p *corev1.Pod) {
+			ttl := int64(3600)
+			p.Spec.Volumes = append(p.Spec.Volumes, corev1.Volume{Name: "extra", VolumeSource: corev1.VolumeSource{Projected: &corev1.ProjectedVolumeSource{
+				Sources: []corev1.VolumeProjection{{ServiceAccountToken: &corev1.ServiceAccountTokenProjection{Audience: "maku-gateway.public.tier-light", ExpirationSeconds: &ttl, Path: "t"}}}}}})
 		}},
 		{"a pod created by another user", "only the run-controller", pe.admin, func(*corev1.Pod) {}},
 	} {

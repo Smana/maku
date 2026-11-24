@@ -2805,7 +2805,7 @@ spec:
 ---
 # Source: agent-factory/charts/maku/templates/agentrun-policies.yaml
 # The factory's updates of an AgentRun touch three annotations only: the meter's usage-tokens, the
-# pull request and the revoke. Never the spec, never the labels.
+# pull request and the revoke. Never the spec, labels, finalizers or ownerReferences.
 apiVersion: admissionregistration.k8s.io/v1
 kind: ValidatingAdmissionPolicy
 metadata:
@@ -2837,6 +2837,14 @@ spec:
       message: "the factory never changes an AgentRun's spec"
     - expression: "(has(object.metadata.labels) ? object.metadata.labels : {}) == (has(oldObject.metadata.labels) ? oldObject.metadata.labels : {})"
       message: "the factory never changes an AgentRun's labels"
+    - expression: >-
+        has(object.metadata.finalizers) == has(oldObject.metadata.finalizers) &&
+        (!has(object.metadata.finalizers) || object.metadata.finalizers == oldObject.metadata.finalizers)
+      message: "the factory never changes an AgentRun's finalizers"
+    - expression: >-
+        has(object.metadata.ownerReferences) == has(oldObject.metadata.ownerReferences) &&
+        (!has(object.metadata.ownerReferences) || object.metadata.ownerReferences == oldObject.metadata.ownerReferences)
+      message: "the factory never changes an AgentRun's owners"
     - expression: >-
         variables.new.all(k, k in variables.allowed || (k in variables.old && variables.old[k] == variables.new[k])) &&
         variables.old.all(k, k in variables.allowed || k in variables.new)
@@ -2948,6 +2956,8 @@ spec:
         !(has(object.spec.hostNetwork) && object.spec.hostNetwork) && !(has(object.spec.hostPID) && object.spec.hostPID) &&
         !(has(object.spec.hostIPC) && object.spec.hostIPC)
       message: "a run pod shares no host namespace: no hostNetwork, hostPID or hostIPC"
+    - expression: "!(has(object.spec.shareProcessNamespace) && object.spec.shareProcessNamespace)"
+      message: "a run pod sets no shareProcessNamespace: containers do not share a PID namespace"
     - expression: >-
         !has(object.spec.volumes) || object.spec.volumes.all(v, has(v.emptyDir) || has(v.configMap) || has(v.secret) || has(v.projected))
       message: "a run pod mounts only emptyDir, configMap, secret and projected volumes: no hostPath, no persistentVolumeClaim"
@@ -3002,7 +3012,7 @@ spec:
         variables.containers.all(c, (c.image.split('@')[0].lastIndexOf(':') > c.image.split('@')[0].lastIndexOf('/') ?
         c.image.split('@')[0].substring(0, c.image.split('@')[0].lastIndexOf(':')) : c.image.split('@')[0]) in variables.images)
       message: "a run pod's images come from ghcr.io/smana/maku-harness, ghcr.io/smana/maku-bridge, ghcr.io/smana/maku-run-controller (runController.images, runController.image, runPodPolicy.extraImages)"
-    - expression: "!variables.pinned || variables.containers.all(c, c.image.contains('@sha256:'))"
+    - expression: "!variables.pinned || variables.containers.all(c, c.image.matches('^[^@]+@sha256:[0-9a-f]{64}$'))"
       message: "a run pod's images are pinned by digest (@sha256:)"
 
 ---
