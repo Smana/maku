@@ -185,7 +185,7 @@ func sourceURL(t *v1alpha1.Task) string {
 // implementerSpec: every run of a task writes agent/<taskId> (C3); baseRef main, because the
 // harness resumes origin/<branch> when an earlier run pushed it (SP1 R7).
 func (r *Reconciler) implementerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
-	s := runs.Spec{TaskID: t.Name, Role: "implementer", Repository: t.Spec.Repository, BaseRef: "main",
+	s := runs.Spec{TaskID: t.Name, Role: "implementer", Persona: "implementer", Repository: t.Spec.Repository, BaseRef: "main",
 		Branch: "agent/" + t.Name, TaskText: text, Principal: runs.PrincipalFactory, DataClass: t.Spec.DataClass,
 		Model: t.Spec.Budget.Model, RoomRef: t.Status.RoomRef, SourceURL: sourceURL(t),
 		MaxTokens: t.Spec.Budget.RunTokens, MaxMinutes: t.Spec.Budget.RunMinutes, Traceparent: traceparent(t), Tier: t.Spec.Budget.Tier,

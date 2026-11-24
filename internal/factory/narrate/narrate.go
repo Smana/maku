@@ -373,16 +373,37 @@ func Reason(r string) string {
 	return r
 }
 
-// Started announces a run with what a human needs: its id, branch, budget, where to watch it
-// and how to stop it. roomsURL is config.roomsURL, which the config holds to https://<host>.
+// Started announces a run with what a human needs: its persona, id, branch, budget, where to watch
+// it and how to stop it. roomsURL is config.roomsURL, which the config holds to https://<host>.
 func Started(t *v1alpha1.Task, s runs.Spec, roomsURL string) Event {
-	body := fmt.Sprintf("Agent factory task `%s` started run `%s` (%s) on branch `%s`.\n\n"+
-		"- Budget: %s tokens, %d minutes (tier %s)\n"+
+	persona := s.Persona
+	if persona == "" {
+		persona = s.Role
+	}
+	budget := fmt.Sprintf("%s tokens, %d minutes", Tokens(s.MaxTokens), s.MaxMinutes)
+	runMicro := s.MaxMicroUSD
+	if runMicro == 0 && t != nil {
+		runMicro = t.Spec.Budget.RunMicroUSD
+	}
+	if runMicro > 0 {
+		budget = fmt.Sprintf("up to %s for this run, %d minutes", USD(runMicro), s.MaxMinutes)
+	}
+	body := fmt.Sprintf("Maku task `%s` started the %s's run `%s` on branch `%s`.\n\n"+
+		"- Budget: %s\n"+
 		"- Watch: %s/r/%s (tailnet only)\n"+
 		"- Stop: apply the label `factory/stop`",
-		t.Name, s.RunID, s.Role, s.Branch, Tokens(s.MaxTokens), s.MaxMinutes, t.Spec.Budget.Tier,
+		t.Name, persona, s.RunID, s.Branch, budget,
 		strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
 	return Event{Key: "run-" + s.RunID + "-started", Body: body}
+}
+
+// TaskCard announces the task's workflow, reason, path and ceiling once at triage, before the first
+// run (WR3). cardText is rendered by roomview.WorkflowCardText(Markdown) by the caller so narrate
+// keeps no dependency cycle on roomview.
+func TaskCard(t *v1alpha1.Task, cardText string) Event {
+	body := fmt.Sprintf("Maku task `%s`\n\n%s\n\nTo change it, a maintainer applies the label `workflow:<name>` before `factory/ready`.",
+		t.Name, strings.TrimSpace(cardText))
+	return Event{Key: "task-card", Body: body}
 }
 
 // ProposalReady narrates a finished triage on the task's issue: the proposal stays in the room

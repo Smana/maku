@@ -32,18 +32,46 @@ func task() *v1alpha1.Task {
 		Status: v1alpha1.TaskStatus{RoomRef: "3buqdlot"}}
 }
 
-// Δ6: started carries the run id, the branch, the budget and a watch link.
+// Δ6: started carries the persona, run id, branch, budget and watch link.
 func TestStartedCarriesWhatAHumanNeeds(t *testing.T) {
-	e := Started(task(), runs.Spec{RunID: "7f3cq2xz", Role: "implementer", Branch: "agent/3buqdlot",
+	e := Started(task(), runs.Spec{RunID: "7f3cq2xz", Role: "implementer", Persona: "implementer", Branch: "agent/3buqdlot",
 		MaxTokens: 1_500_000, MaxMinutes: 45}, "https://rooms.priv.aws.ogenki.io/")
-	for _, want := range []string{"7f3cq2xz", "agent/3buqdlot", "1.5 M tokens", "45 minutes", "tier standard",
+	for _, want := range []string{"the implementer's run", "7f3cq2xz", "agent/3buqdlot", "1.5 M tokens", "45 minutes",
 		"https://rooms.priv.aws.ogenki.io/r/3buqdlot", "factory/stop"} {
 		if !strings.Contains(e.Body, want) {
 			t.Errorf("started lacks %q:\n%s", want, e.Body)
 		}
 	}
+	if strings.Contains(e.Body, "tier ") {
+		t.Errorf("started mentions tier:\n%s", e.Body)
+	}
 	if e.Key != "run-7f3cq2xz-started" {
 		t.Errorf("key %q", e.Key)
+	}
+}
+
+func TestTheRunStartNamesThePersonaAndDollars(t *testing.T) {
+	tk := task()
+	tk.Spec.Budget.Tier, tk.Spec.Budget.RunMicroUSD = "standard", 2_550_000
+	ev := Started(tk, runs.Spec{RunID: "r-01", Role: "triager", Persona: "scoper", Branch: "agent/3buqdlot", MaxMinutes: 45}, "https://rooms.example")
+	if !strings.Contains(ev.Body, "the scoper's run") || !strings.Contains(ev.Body, "up to $2.55 for this run") {
+		t.Fatalf("got:\n%s", ev.Body)
+	}
+	for _, bad := range []string{"(triager)", "tier ", "tokens"} {
+		if strings.Contains(ev.Body, bad) {
+			t.Errorf("the run-start comment says %q", bad)
+		}
+	}
+}
+
+func TestTheTaskCardIsPostedBeforeTheFirstRun(t *testing.T) {
+	cardText := "- **Workflow:** standard · this repository's default\n" +
+		"- **Will run:** implementer → reviewer → CI → merge gate\n" +
+		"- **Cost:** up to $5.10\n"
+	ev := TaskCard(task(), cardText)
+	if ev.Key != "task-card" || !strings.Contains(ev.Body, "Workflow:") ||
+		!strings.Contains(ev.Body, "To change it, a maintainer applies the label `workflow:<name>` before `factory/ready`") {
+		t.Fatalf("%s:\n%s", ev.Key, ev.Body)
 	}
 }
 

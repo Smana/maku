@@ -41,6 +41,7 @@ import (
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/tracing"
 	"github.com/Smana/maku/internal/factory/triage"
+	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/runwatch"
 )
 
@@ -1175,6 +1176,15 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
 	r.notePin(ctx, cfg, t, d)
+	if profile != nil {
+		f := r.factsFor(cfg, t)
+		card := roomview.CardOf(&f, "")
+		card.Title, card.Repository = "", ""
+		var b strings.Builder
+		if err := roomview.WorkflowCardText(&b, card, roomview.Options{Format: roomview.Markdown}); err == nil {
+			narrateLater(t, narrate.TaskCard(t, b.String()))
+		}
+	}
 	for i, n := range d.Notes {
 		narrateLater(t, narrate.TriageNote(i, n))
 	}
@@ -1587,6 +1597,7 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 		}
 		s := r.implementerSpec(cfg, t, text)
 		s.Role = "triager"
+		s.Persona = "triager"
 		return r.startRun(ctx, cfg, t, s, nextTrigger(t))
 	}
 	if scoperDue(t) {

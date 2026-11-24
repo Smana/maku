@@ -68,6 +68,7 @@ func testerRun(t *v1alpha1.Task) bool { return len(t.Status.Runs) > 0 && current
 func (r *Reconciler) testerSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := r.implementerSpec(cfg, t, text)
 	s.Role = "tester"
+	s.Persona = "tester"
 	r.withChecks(cfg, &s, t)
 	return s
 }

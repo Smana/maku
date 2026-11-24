@@ -118,10 +118,10 @@ func Scheme(s *runtime.Scheme, k runwatch.Kind) {
 // (R28), and is written as AnnTaskURL whatever the task field holds. StartSeq and Head are the
 // CREATE-only annotations' sources (R48).
 type Spec struct {
-	RunID, TaskID, Role, Repository, BaseRef, Branch, TaskText, TaskURL, Principal, DataClass, Model, RoomRef, Traceparent, Tier string
-	SourceURL, Head, RequestHash, ChargedTo, Cohort, Profile                                                                     string
-	MaxTokens, MaxMinutes, StartSeq, MaxMicroUSD                                                                                 int64
-	EgressProfiles                                                                                                               []string
+	RunID, TaskID, Role, Persona, Repository, BaseRef, Branch, TaskText, TaskURL, Principal, DataClass, Model, RoomRef, Traceparent, Tier string
+	SourceURL, Head, RequestHash, ChargedTo, Cohort, Profile                                                                              string
+	MaxTokens, MaxMinutes, StartSeq, MaxMicroUSD                                                                                          int64
+	EgressProfiles                                                                                                                        []string
 	// Suspendable is spec.suspendable (v2 suspend), written only when true: it is immutable.
 	Suspendable bool
 	// MeteredBy is spec.meteredBy, written only when set: MeteredByGateway when the factory prices

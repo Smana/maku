@@ -131,7 +131,7 @@ func TestALandedPostIsNotRepeated(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 2); tk.Status.Phase != v1alpha1.PhaseImplementing || len(tk.Status.Outbox) != 0 {
 		t.Fatalf("%s %+v", tk.Status.Phase, tk.Status.Outbox)
 	}
-	if c := eventCommentBodies(g.f, 7); len(c) != 1 || !strings.Contains(c[0], "started run") {
+	if c := eventCommentBodies(g.f, 7); len(c) != 1 || !strings.Contains(c[0], "started the implementer's run") {
 		t.Fatalf("%q", c)
 	}
 }
