@@ -266,10 +266,10 @@ func (c *card) proposalIssue(p ProposalView) string {
 	return strings.Join(lines, "\n")
 }
 
-// SuggestionLine is the suggestion in the broker's words: `class docs-links · profile links-solo
-// (implementer) · merges on its own when the gate's conditions hold`, or `profile: the factory's
-// choice` with none. Plain text: each surface makes it inert its own way.
-func SuggestionLine(class, profile string, roles []string, outcome string) string {
+// SuggestionLine is the suggestion in the broker's words: `workflow links-solo (implementer) ·
+// merges on its own when the gate's conditions hold`, or `workflow: the factory's choice` with
+// none. Plain text: each surface makes it inert its own way.
+func SuggestionLine(_, profile string, roles []string, outcome string) string {
 	p := "workflow: the factory's choice"
 	if profile != "" {
 		p = "workflow " + profile
@@ -277,7 +277,7 @@ func SuggestionLine(class, profile string, roles []string, outcome string) strin
 			p += " (" + strings.Join(roles, ", ") + ")"
 		}
 	}
-	return "class " + class + " · " + p + " · " + MergeWords(outcome)
+	return p + " · " + MergeWords(outcome)
 }
 
 // proposalRoles is the roles the broker wrote from config, in their order, and the one bound Slack

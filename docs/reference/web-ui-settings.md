@@ -68,14 +68,14 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 | A maintainer, under `repository` authority | **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification. A not-migrated page keeps the exception requests: they are the broker's records |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
-The **Workflows** row on a class card says which workflow the class runs: the floor, the
-variants a maintainer may pin or the scoper may recommend, where an out-of-budget or not-converged run
-escalates, and each workflow's roles and tier (`Floor review-floor: roles chosen at triage`, `Variant
-review-frontier: roles implementer, tester, reviewer · tier frontier · tests first`). A floor with no
-`template` says its roles are chosen at triage, because the factory picks them from the class and the
-tier. It comes from the factory's [catalogue](api.md#get-v1catalogueownername), so a class the catalogue
-does not offer at intake (`revert`, an adopted or an oracle class) has no row, and a page whose catalogue
-the factory did not answer has none either. The row writes nothing: pinning a workflow is not a setting.
+The **Workflows** row on a class card says which workflow the repository runs by default, the
+other workflows a maintainer may pin, where an out-of-budget or not-converged run escalates, and
+each workflow's roles, description and dollar ceiling (`Default standard: roles implementer,
+reviewer · An implementer and a reviewer. · up to $5.10`). A workflow with no `template` says its
+roles are chosen at triage, because the factory picks them from the class. It comes from the
+factory's [catalogue](api.md#get-v1catalogueownername), so a class the catalogue does not offer at
+intake (`revert`, an adopted or an oracle class) has no row, and a page whose catalogue the factory
+did not answer has none either. The row writes nothing: pinning a workflow is not a setting.
 
 The broker checks each of these on every request; a hidden button is only a convenience.
 

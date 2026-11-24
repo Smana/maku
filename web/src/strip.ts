@@ -228,6 +228,7 @@ function dashboardsChip(i: StripInput): HTMLElement | undefined {
 function chips(i: StripInput, now: number, status: boolean): [HTMLElement[], HTMLElement[]] {
   const st = i.summary?.status;
   const tier1: HTMLElement[] = [], run: HTMLElement[] = [], cost: HTMLElement[] = [], links: HTMLElement[] = [], who: HTMLElement[] = [];
+  if (st?.profile?.name) tier1.push(chip("chip-workflow", st.profile.name));
   const phase = st?.phase || i.phase;
   if (phase && !status) tier1.push(chip("chip-phase", phase));
   // The facts' run outlives it: with no agent present, its age would keep counting.

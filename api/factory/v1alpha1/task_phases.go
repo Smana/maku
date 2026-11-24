@@ -33,6 +33,16 @@ const (
 	PhaseCoordinating = "Coordinating"
 )
 
+// Phases is every Task phase constant defined by this API.
+func Phases() []string {
+	return []string{
+		PhaseReceived, PhaseRejected, PhaseTriaged, PhaseQueued, PhaseImplementing, PhaseNoOp,
+		PhaseReviewing, PhaseAwaitingCI, PhaseAutoMerging, PhaseAwaitingHuman, PhaseMerged,
+		PhaseVerifying, PhaseDone, PhaseReverted, PhaseEscalated, PhaseClosed, PhaseStopped,
+		PhaseSplit, PhaseCoordinating,
+	}
+}
+
 // AnnotationStop asks the factory to stop one task (§6.1): "true" set by hand, "label" set by
 // the poller from factory/stop, "slack" set by the sponsored stop route, "superseded" when a
 // re-label replaces an escalated task (R4), "cancel" or "discard" set by the cancellations route

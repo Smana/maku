@@ -73,3 +73,6 @@ func ResolvePin(cfg *config.Config, repo string, labels []LabelPin, field, login
 func PinRefusal(class string, pin Pin) intake.ProfileRefusal {
 	return intake.ProfileRefusal{Code: pin.Refused, Class: class, Profile: pin.Name}
 }
+
+// Shown maps a pin refusal's API code (profile_*) to the workflow_* spelling shown to a person.
+func Shown(code string) string { return intake.Shown(code) }

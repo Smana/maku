@@ -56,3 +56,17 @@ func TestProfileRefusalSentences(t *testing.T) {
 		_ = intake.ProfileRefusal{Code: "invented"}.Sentence()
 	})
 }
+
+func TestRefusalCodesAreShownAsWorkflow(t *testing.T) {
+	for api, shown := range map[string]string{
+		"profile_unknown":        "workflow_unknown",
+		"profile_conflict":       "workflow_conflict",
+		"profile_no_tests_paths": "workflow_no_tests_paths",
+		"profile_not_offered":    "workflow_not_offered",
+		"not_maintainer":         "not_maintainer",
+	} {
+		if intake.Shown(api) != shown || intake.Accepted(shown) != api {
+			t.Errorf("%s: shown %q, accepted %q", api, intake.Shown(api), intake.Accepted(shown))
+		}
+	}
+}

@@ -28,7 +28,7 @@ func TestProposalSuggestionLines(t *testing.T) {
 			issue = s.Body
 		}
 	}
-	want := "Suggested: class docs-links · workflow links-solo (implementer) · merges on its own when the gate's conditions hold"
+	want := "Suggested: workflow links-solo (implementer) · merges on its own when the gate's conditions hold"
 	if !strings.Contains(issue, want) {
 		t.Fatalf("lacks %q:\n%s", want, issue)
 	}
@@ -47,7 +47,7 @@ func TestProposalSuggestionLines(t *testing.T) {
 // The factory's choice reads as such, with no profile named.
 func TestSuggestionLineFactorysChoice(t *testing.T) {
 	got := SuggestionLine("review", "", nil, "approval")
-	if got != "class review · workflow: the factory's choice · a maintainer's approval merges it" {
+	if got != "workflow: the factory's choice · a maintainer's approval merges it" {
 		t.Fatal(got)
 	}
 }
@@ -64,7 +64,7 @@ func TestPlanShowsTheSuggestion(t *testing.T) {
 	out := b.String()
 	for _, want := range []string{
 		// The broker's line, escaped as every config value in this view is.
-		`suggested: class docs\-links · workflow links\-solo \(implementer\) · merges on its own when the gate's conditions hold`,
+		`suggested: workflow links\-solo \(implementer\) · merges on its own when the gate's conditions hold`,
 		"why (the planner's reading, unverified): `# [click](https://evil.example)`",
 	} {
 		if !strings.Contains(out, want) {

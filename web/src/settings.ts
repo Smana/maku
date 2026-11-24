@@ -93,6 +93,7 @@ export interface CatalogueClass {
 export interface CatalogueProfile {
   template: string; roles: string[] | null; tier: string; checks: boolean; testFirst: boolean; loop: string;
   description: string; offered: boolean; notOffered?: string;
+  ceilingUSD?: number; stepUp?: string; stepUpCeilingUSD?: number; path?: string[];
   escalation?: { outOfBudget?: string; notConverged?: string } | null;
 }
 export interface Catalogue {

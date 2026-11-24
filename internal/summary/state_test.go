@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"testing"
+
+	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 )
 
 func TestCoarse(t *testing.T) {
@@ -63,6 +65,18 @@ func TestTaskPhasesCoverCoarse(t *testing.T) {
 		if Coarse(p, "Open", false) == "" {
 			t.Errorf("phase %q has no coarse state", p)
 		}
+	}
+}
+
+func TestEveryPhaseHasOneStatusWord(t *testing.T) {
+	words := []string{"planning", "working", "checking", "waiting on you", "waiting on a check", "done", "stopped"}
+	for _, phase := range factoryv1.Phases() {
+		if w := StatusWord(phase, ""); !slices.Contains(words, w) {
+			t.Errorf("phase %s reads %q", phase, w)
+		}
+	}
+	if got := StatusWord("Implementing", "scoper"); got != "planning" {
+		t.Errorf("scoper implementing reads %q, want planning", got)
 	}
 }
 
