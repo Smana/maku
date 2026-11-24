@@ -30,16 +30,6 @@
         "followUpWindow": "168h0m0s"
       }
     },
-    "docs": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
-    },
     "docs-links": {
       "shadow": true,
       "protectedFiles": [
@@ -199,16 +189,6 @@
         }
       },
       "releaseAgeCheck": "renovate/stability-days"
-    },
-    "docs": {
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "maxPerDay": 5
     },
     "docs-links": {
       "live": true,

@@ -115,7 +115,7 @@ maxPerDay: 1
 	if got := rc.Classes["dead-links"]; !reflect.DeepEqual(got, want) {
 		t.Fatalf("dead-links:\n got %+v\nwant %+v", got, want)
 	}
-	if len(rc.Classes) != 4 || !rc.Classes["docs-links"].Shadow || rc.Classes["docs"].Live || rc.Classes["docs"].Shadow || !rc.Classes["docs"].ModifyOnly {
+	if len(rc.Classes) != 3 || !rc.Classes["docs-links"].Shadow {
 		t.Fatalf("classes %+v", rc.Classes)
 	}
 	if strings.Join(rc.Bound, " ") != "docs-links revert docs dead-links" || len(rc.Bindings) != 4 || rc.Merge.MergerLogin == "" {
@@ -156,7 +156,7 @@ func TestBindingIsolation(t *testing.T) {
 		t.Fatalf("ai-native-ref's dead-links: %+v", b)
 	}
 	rc := r.Config.RepositoryFor("Smana/ai-native-ref")
-	if _, ok := rc.Classes["dead-links"]; ok || len(rc.Classes) != 3 {
+	if _, ok := rc.Classes["dead-links"]; ok || len(rc.Classes) != 2 {
 		t.Fatalf("the dropped class must be absent, the others served: %v", rc.Classes)
 	}
 	if refused(r, KindRepository, "ai-native-ref") != "" || refused(r, KindMergePolicy, "dead-links") != "" {
@@ -195,7 +195,8 @@ func TestBindingMissingRef(t *testing.T) {
 		"refused": append(specPolicies(t)[:3], bad),
 	} {
 		t.Run(name, func(t *testing.T) {
-			r, err := Assemble(file(t), append(objs, boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 1, anrBindings)))
+			bindings := strings.Replace(anrBindings, "- {name: docs, mode: disabled}", "- {name: docs, mode: shadow}", 1)
+			r, err := Assemble(file(t), append(objs, boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 1, bindings)))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,6 +209,39 @@ func TestBindingMissingRef(t *testing.T) {
 			}
 			if name == "refused" && refused(r, KindMergePolicy, "docs") != v1alpha1.ReasonInvalid {
 				t.Fatalf("the policy is refused alone: %+v", r.Refused)
+			}
+		})
+	}
+}
+
+func TestRefusedBindingNeverOutranksItsWrittenMode(t *testing.T) {
+	last := config.Class{Live: true, AllowedFiles: []string{`^docs/.+\.md$`}, MaxModifiedLines: 20}
+	for name, test := range map[string]struct {
+		binding string
+		objs    []Object
+		mode    string
+	}{
+		"refused shadow": {"- {name: docs, mode: shadow, maxModifiedLines: 30}", specPolicies(t), config.ModeShadow},
+		"disabled":       {"- {name: docs, mode: disabled, maxModifiedLines: 30}", specPolicies(t), config.ModeDisabled},
+		"missing policy": {"- {name: docs, mode: shadow}", specPolicies(t)[:3], config.ModeDisabled},
+	} {
+		t.Run(name, func(t *testing.T) {
+			bindings := strings.Replace(anrBindings, "- {name: docs, mode: disabled}", test.binding, 1)
+			r, err := Assemble(file(t), append(test.objs, boundRepo(t, "ai-native-ref", "Smana/ai-native-ref", 1, bindings)),
+				Options{LastResolved: map[BindingKey]ResolvedClass{{"ai-native-ref", "docs"}: {Class: last, PolicyGeneration: 1}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cl, ok := r.Config.RepositoryFor("Smana/ai-native-ref").Classes["docs"]
+			switch test.mode {
+			case config.ModeShadow:
+				if !ok || !cl.Shadow || cl.Live {
+					t.Fatalf("refused shadow serves %+v, present %v", cl, ok)
+				}
+			case config.ModeDisabled:
+				if ok {
+					t.Fatalf("disabled or missing policy still serves %+v", cl)
+				}
 			}
 		})
 	}
@@ -237,7 +271,7 @@ author: {adopt: {logins: ["`+login+`"], branches: ['`+branch+`']}}
 			b := adopt("deps-b", tc.shapeB, "Renovate[bot]", "^renovate/deps-")
 			bindings := "- {name: docs-links, mode: shadow, holdoutChecks: [validate]}\n- {name: revert, mode: shadow, holdoutChecks: [validate]}\n"
 			for _, n := range strings.Fields(tc.order) {
-				bindings += "- {name: deps-" + n + `, mode: disabled}` + "\n"
+				bindings += "- {name: deps-" + n + `, mode: shadow}` + "\n"
 			}
 			r, err := Assemble(file(t), append(slicesClone(base), a, b, boundRepo(t, "maku", "Smana/maku", 1, bindings)))
 			if err != nil {
@@ -307,8 +341,15 @@ func TestABadPolicyNeverRefusesARepository(t *testing.T) {
 // B9, B14 (review of #522): a last resolved class put back is checked again under the current
 // catalogue and merge. One that no longer holds is dropped, never handed to Parse, where it would
 // refuse the whole Repository.
+func overPolicyRepo(t *testing.T) (Object, []Object) {
+	bindings := strings.Replace(anrBindings, "- {name: docs, mode: disabled}", "- {name: docs, mode: shadow, maxModifiedLines: 30}", 1)
+	policies := specPolicies(t)
+	policies[3] = classPolicy(t, "docs", 1, "maxModifiedLines: 20\n")
+	return boundRepo(t, "maku", "Smana/maku", 1, bindings), policies
+}
+
 func TestPutBackClassIsRechecked(t *testing.T) {
-	// docs is absent: its binding is MissingRef, so its last class is put back.
+	// The docs binding is OverPolicy, so its last class may be put back at shadow.
 	for _, tc := range []struct {
 		name   string
 		file   func(string) string
@@ -319,7 +360,6 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 	}{
 		{name: "live without allowedFiles once policyBot is off", last: config.Class{Live: true, HoldoutChecks: []string{"validate"}},
 			merge: func(m map[string]any) { m["policyBot"] = false; m["gateStatus"] = true }},
-		// MR6: a class put back is bounded like one resolved now.
 		{name: "unbounded in shadow", last: config.Class{Shadow: true}},
 		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2, AllowedFiles: []string{`^docs/.+\.md$`}},
 			file: func(f string) string {
@@ -341,11 +381,11 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 			if tc.file != nil {
 				f = tc.file(f)
 			}
-			r := boundRepo(t, "maku", "Smana/maku", 1, anrBindings)
+			r, policies := overPolicyRepo(t)
 			if tc.merge != nil {
 				tc.merge(r.Spec["merge"].(map[string]any))
 			}
-			res, err := Assemble([]byte(f), append(specPolicies(t)[:3:3], r), Options{LastResolved: map[BindingKey]ResolvedClass{
+			res, err := Assemble([]byte(f), append(policies, r), Options{LastResolved: map[BindingKey]ResolvedClass{
 				{"maku", "docs"}: {Class: tc.last, PolicyGeneration: 1}}})
 			if err != nil {
 				t.Fatal(err, res.Refused)
@@ -355,7 +395,7 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 			}
 			b := binding(res, "maku", "docs")
 			c, ok := res.Config.RepositoryFor("Smana/maku").Classes["docs"]
-			if b.Served != tc.served || ok != tc.served || b.Reason != v1alpha1.ReasonMissingRef {
+			if b.Served != tc.served || ok != tc.served || b.Reason != config.ReasonOverPolicy {
 				t.Fatalf("served %v (class present %v), want %v: %+v", b.Served, ok, tc.served, b)
 			}
 			if !tc.served && !strings.Contains(b.Message, "last resolved class no longer holds") {
@@ -368,15 +408,15 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 	}
 }
 
-// A refused policy's message does not claim nothing was served when a last class is put back.
-func TestRefusedPolicyMessageWithAPutBack(t *testing.T) {
-	bad := classPolicy(t, "docs", 2, "live: true\n")
-	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], bad, boundRepo(t, "maku", "Smana/maku", 1, anrBindings)),
+// A refused binding's message does not claim nothing was served when a last class is put back.
+func TestRefusedBindingMessageWithAPutBack(t *testing.T) {
+	r, policies := overPolicyRepo(t)
+	got, err := Assemble(file(t), append(policies, r),
 		Options{LastResolved: map[BindingKey]ResolvedClass{{"maku", "docs"}: {Class: config.Class{Shadow: true, AllowedFiles: []string{`^docs/.+\.md$`}}, PolicyGeneration: 1}}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if b := binding(r, "maku", "docs"); !b.Served || strings.Contains(b.Message, "none was served") {
+	if b := binding(got, "maku", "docs"); !b.Served || strings.Contains(b.Message, "none was served") {
 		t.Fatalf("outcome %+v", b)
 	}
 }

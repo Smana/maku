@@ -248,6 +248,11 @@ func (f *Fake) LabelEvents(_ context.Context, n int, label string) ([]forge.Labe
 	return out, nil
 }
 
+// LabelHistory implements the forge's LabelHistory. SetEvents stores additions and removals alike.
+func (f *Fake) LabelHistory(ctx context.Context, n int, label string) ([]forge.LabelEvent, error) {
+	return f.LabelEvents(ctx, n, label)
+}
+
 // LabelEventsBy implements the forge's LabelEventsBy: n's stored events by actor at or after
 // since, oldest first, truncated as LabelEvents is.
 func (f *Fake) LabelEventsBy(_ context.Context, n int, actor string, since time.Time) ([]forge.LabelEvent, error) {

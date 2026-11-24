@@ -43,8 +43,8 @@ func TestDualAgreement(t *testing.T) {
 		"an unknown difference": {snapshotOf(map[string]mergepolicy.Resolved{"dead-links": {Class: strict}}, "revert: only in the repository"),
 			true, func(*ArmInputs) {}, "unexplained"},
 		"the class absent": {snapshotOf(map[string]mergepolicy.Resolved{}, "dead-links: only in the central config"), true, func(*ArmInputs) {}, "explained"},
-		"the diff it needs, unread": {snapshotOf(map[string]mergepolicy.Resolved{"dead-links": {Class: holdout}}), true,
-			func(in *ArmInputs) { in.DiffRead, in.Stats = false, nil; in.Checks.Runs[2].State = "FAILURE" }, "unread"},
+		"the holdout it needs, unread": {snapshotOf(map[string]mergepolicy.Resolved{"dead-links": {Class: holdout}}), true,
+			func(in *ArmInputs) { in.DiffRead, in.Stats = false, nil; in.Checks.Runs[2].State = "FAILURE" }, "agree"},
 		"a looser class, the diff read": {snapshotOf(map[string]mergepolicy.Resolved{"dead-links": {Class: loose}}), true,
 			func(in *ArmInputs) { in.Stats[0].Additions = 20 }, "unexplained"},
 	} {

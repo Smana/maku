@@ -51,8 +51,8 @@ func TestHoldLabelStopsEveryPath(t *testing.T) {
 	}
 }
 
-// MR10: removing factory/hold lets the next pass decide: the held hand-off returns to the gate on
-// the head it was handed off at, and arms there.
+// MR10: removing factory/hold lets the next pass decide only when a maintainer removed it. An
+// implementer token can remove the label, but the held hand-off remains with a human.
 func TestRemovingTheHoldReturnsToTheGate(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	g.f.SetChecks(12, green("SUCCESS"))
@@ -63,13 +63,19 @@ func TestRemovingTheHoldReturnsToTheGate(t *testing.T) {
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "held" || len(g.f.Armed()) != 0 {
 		t.Fatalf("held: %s %s %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed())
 	}
-	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman {
-		t.Fatalf("still held: %s %s", tk.Status.Phase, tk.Status.Reason)
-	}
 	pr.Labels = nil
 	g.f.SetPR(pr)
+	g.f.SetEvents(12,
+		forge.LabelEvent{Actor: "Smana", Label: LabelHold, At: now.Add(-2 * time.Minute)},
+		forge.LabelEvent{Actor: "ogenki-agents[bot]", Label: LabelHold, At: now.Add(-time.Minute), Removed: true})
+	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingHuman || tk.Status.Reason != "held" {
+		t.Fatalf("an agent lifted the hold: %s %s", tk.Status.Phase, tk.Status.Reason)
+	}
+	g.f.SetEvents(12,
+		forge.LabelEvent{Actor: "Smana", Label: LabelHold, At: now.Add(-2 * time.Minute)},
+		forge.LabelEvent{Actor: "Smana", Label: LabelHold, At: now.Add(-time.Minute), Removed: true})
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Reason != "reentered_unheld" {
-		t.Fatalf("unheld: %s %s", tk.Status.Phase, tk.Status.Reason)
+		t.Fatalf("maintainer unheld: %s %s", tk.Status.Phase, tk.Status.Reason)
 	}
 	if tk := g.reconcile(t, "3buqdlot", 1); tk.Status.Phase != v1alpha1.PhaseAutoMerging || len(g.f.Armed()) != 1 {
 		t.Fatalf("decided again: %s %s %v", tk.Status.Phase, tk.Status.Reason, g.f.Armed())

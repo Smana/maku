@@ -228,7 +228,7 @@ func TestTheDecisionCommentCarriesItsRecord(t *testing.T) {
 			predict(t, g, "plain") // a shape and no file condition: MR1 reads the diff all the same
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"plain": {Shadow: true, DiffShape: "links-only"}}
 			return g
-		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=0/0 lines=0/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
+		}, "\n\n<!-- agent-factory-decision head=abc class=plain decision=shadow:shadow_would_arm files=1/0 lines=2/0 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false reviewer=none -->"},
 		{"no policy matched: no class, the rows before any policy", func(t *testing.T) *rig {
 			g := greenRig(t)
 			g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {}, "revert": {Live: true, Oracle: &config.Oracle{Probe: "x"}}}

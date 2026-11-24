@@ -118,8 +118,8 @@ func TestRepositoryChecks(t *testing.T) {
 		// Follow-up of #538: a fence in the binding shape is read too (B15).
 		{name: "a fence that binds the class", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
 			cutOver()
-			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2}}
-			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: disabled}\n")
+			checkCfg.Policies = map[string]config.ServedPolicy{"scripts": {Generation: 2, Spec: config.PolicySpec{MergeClass: config.MergeClass{AllowedFiles: []string{`^scripts/.*$`}}}}}
+			f[repoB].SetFile(".github/agent-factory.yaml", fenceOurs+"mergePolicies:\n  - {name: scripts, mode: shadow}\n")
 		}},
 		{name: "a fence that binds other classes only", setup: func(_ *GitHubChecks, f map[string]*forgetest.Fake) {
 			cutOver()

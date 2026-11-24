@@ -44,11 +44,15 @@ func Marshal(f *File) ([]byte, error) { return yaml.Marshal(f) }
 func Compare(rc *config.Repository, f *File, c *config.Config) []string {
 	classes, refused := ResolveBindings(f, rc, c)
 	names := map[string]bool{}
-	for n := range rc.Classes {
-		names[n] = true
+	for n, cl := range rc.Classes {
+		if cl.Live || cl.Shadow {
+			names[n] = true
+		}
 	}
 	for _, b := range f.MergePolicies {
-		names[b.Name] = true
+		if !config.Disabled(b.Mode) {
+			names[b.Name] = true
+		}
 	}
 	if !declares(f, "review") {
 		delete(names, "review")

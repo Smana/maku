@@ -35,10 +35,10 @@ func TestTheOracle(t *testing.T) {
 	}{
 		"to the snapshot given":     {"[a](" + archive + ") and [b](https://other.example/kept).", ""},
 		"within the host":           {"[a](https://example.com/moved) and [b](https://other.example/kept).", "oracle_unrequested"},
-		"the finding left":          {page, "oracle_finding_open"},
+		"the finding left":          {"[a](https://example.com/gone) and [b](https://other.example/new).", "oracle_finding_open"},
 		"another target moved":      {"[a](" + archive + ") and [b](https://other.example/new).", "oracle_unrequested"},
 		"another snapshot":          {"[a](https://web.archive.org/web/2020/https://example.com/gone) and [b](https://other.example/kept).", "oracle_unrequested"},
-		"the finding's file unread": {"", "oracle_finding_open"},
+		"the finding's file unread": {"", "class_mismatch"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			in := oracleInputs(c.head)
@@ -71,10 +71,10 @@ const (
 func TestTheOracleRetargetIsTheSnapshotGiven(t *testing.T) {
 	for name, c := range map[string]struct{ to, reason string }{
 		"the snapshot given":         {orgNew, ""},
-		"another account":            {"https://github.com/attacker/x", "oracle_unrequested"},
+		"another account":            {"https://github.com/attacker/x", "class_mismatch"},
 		"another snapshot":           {"https://web.archive.org/web/2020/https://github.com/org/old", "oracle_unrequested"},
 		"the host in other case":     {"https://GitHub.com/org/new", "oracle_unrequested"},
-		"the snapshot in a case":     {"https://web.archive.org/WEB/2026/https://github.com/org/old", "oracle_unrequested"},
+		"the snapshot in a case":     {"https://web.archive.org/WEB/2026/https://github.com/org/old", "class_mismatch"},
 		"a finding with no snapshot": {"", "oracle_unrequested"},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -93,8 +93,9 @@ func TestTheOracleRetargetIsTheSnapshotGiven(t *testing.T) {
 	}
 }
 
-// A deleted, renamed or added file is refused earlier, by the links-only shape (class_mismatch).
-// A finding counts as fixed only if the base held it and the head does not; every finding does.
+// A deleted, renamed, added or unchanged listed file is refused earlier, by links-only
+// (class_mismatch). A finding counts as fixed only if the base held it and the head does not;
+// every finding does.
 func TestTheOracleEveryFindingMustBeFixed(t *testing.T) {
 	const a, b = "https://example.com/a", "https://example.com/b"
 	arch := func(u string) string { return "https://web.archive.org/web/2026/" + u }
@@ -110,7 +111,8 @@ func TestTheOracleEveryFindingMustBeFixed(t *testing.T) {
 		"a stale finding: not in the base": {[]v1alpha1.Finding{fnd("a.md", a), fnd("a.md", "https://example.com/stale")},
 			map[string]string{"a.md": "[x](" + a + ")"}, map[string]string{"a.md": "[x](" + arch(a) + ")"}, nil, "oracle_finding_open"},
 		"two files, one fixed": {[]v1alpha1.Finding{fnd("a.md", a), fnd("b.md", b)},
-			map[string]string{"a.md": "[x](" + a + ")", "b.md": "[y](" + b + ")"}, map[string]string{"a.md": "[x](" + arch(a) + ")", "b.md": "[y](" + b + ")"}, nil, "oracle_finding_open"},
+			map[string]string{"a.md": "[x](" + a + ")", "b.md": "[y](" + b + ") [z](https://example.com/kept)"},
+			map[string]string{"a.md": "[x](" + arch(a) + ")", "b.md": "[y](" + b + ") [z](https://example.com/moved)"}, nil, "oracle_finding_open"},
 		"a deleted finding file": {[]v1alpha1.Finding{fnd("a.md", a)},
 			map[string]string{"a.md": "[x](" + a + ")"}, map[string]string{}, nil, "class_mismatch"},
 		"a renamed finding file": {[]v1alpha1.Finding{fnd("a.md", a)},

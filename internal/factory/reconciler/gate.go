@@ -71,9 +71,8 @@ func maxModifiedLines(cl config.Class, in ArmInputs) (string, bool) {
 	return filefence.MaxModifiedLines(cl, in.Stats), false
 }
 
-// diffShape: links-only is R52's promise, read on in.Files as it always was, so a diff not read
-// yet passes it vacuously (LinksOnly of two empty trees). The semver shapes are computed from the
-// diff (MC11) and are held by declared until it is read.
+// diffShape checks the declared shape against the diff. All shapes read the diff: declared holds
+// this row until it is read, so an empty first-pass input cannot pass vacuously.
 func diffShape(cl config.Class, in ArmInputs) (string, bool) {
 	switch cl.DiffShape {
 	case "links-only":
@@ -229,11 +228,10 @@ func oracle(_ config.Class, in ArmInputs) (string, bool) {
 // onDiff are the conditions that read the diff, which hold until it is read.
 var onDiff = []string{"allowedFiles", "protectedFiles", "modifyOnly", "maxPatchFiles", "maxModifiedLines", "oracle"}
 
-// onDiffFor is whether the condition reads the diff for this class (L8): diffShape does for the
-// semver shapes, which would refuse two empty trees, and not for links-only (R52's vacuous pass).
-func onDiffFor(c Condition, cl config.Class) bool {
-	return slices.Contains(onDiff, c.Key) ||
-		c.Key == "diffShape" && (cl.DiffShape == "semver-patch" || cl.DiffShape == "semver-minor" || cl.DiffShape == "added-entry")
+// onDiffFor is whether the condition reads the diff for this class (L8). Every diffShape does:
+// links-only refuses an empty file list, just as the other shapes do.
+func onDiffFor(c Condition, _ config.Class) bool {
+	return slices.Contains(onDiff, c.Key) || c.Key == "diffShape" || c.Key == "holdoutChecks"
 }
 
 // rowOf names the decision record's string row a condition fills (AM8); the file conditions

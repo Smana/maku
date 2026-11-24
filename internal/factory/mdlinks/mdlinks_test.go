@@ -40,20 +40,26 @@ func TestLinksOnly(t *testing.T) {
 		base, headText string
 		ok             bool
 	}{
-		"a relative retarget":             {"see [the guide](docs/old.md).", "see [the guide](docs/new.md).", true},
-		"a retarget within the host":      {"[a](https://example.com/old)", "[a](https://example.com/new)", true},
-		"a retarget to the archive":       {"[a](https://example.com/gone)", "[a](https://web.archive.org/web/2020/https://example.com/gone)", true},
-		"a definition retarget":           {"[a]: https://example.com/old\n[a] and text", "[a]: https://example.com/new\n[a] and text", true},
-		"a title unchanged, target moved": {`[a](docs/old.md "The Guide")`, `[a](docs/new.md "The Guide")`, true},
-		"relative to absolute":            {"[a](docs/x.md)", "[a](https://example.com/x)", false},
-		"a protocol-relative jump":        {"[a](docs/x.md)", "[a](//evil.com/x)", false},
-		"a fenced retarget":               {"```\n[a](docs/old.md)\n```", "```\n[a](docs/new.md)\n```", false},
-		"an injected script":              {"plain text.", "plain text <script>alert(1)</script>.", false},
-		"a changed fenced command":        {"```\ncurl https://example.com/old\n```", "```\ncurl https://example.com/new\n```", false},
-		"a reworded sentence":             {"The link is broken.", "The link has rotted.", false},
-		"a new external host":             {"[a](https://example.com/x)", "[a](https://evil.example/x)", false},
-		"a javascript target":             {"[a](https://example.com/x)", "[a](javascript:alert(1))", false},
-		"a link added":                    {"text.", "text. [a](new.md)", false},
+		"a relative retarget":              {"see [the guide](docs/old.md).", "see [the guide](docs/new.md).", true},
+		"a retarget within the host":       {"[a](https://example.com/old)", "[a](https://example.com/new)", true},
+		"a retarget to the archive":        {"[a](https://example.com/gone)", "[a](https://web.archive.org/web/2020/https://example.com/gone)", true},
+		"an archive of another URL":        {"[a](https://example.com/gone)", "[a](https://web.archive.org/web/2020/https://example.com/other)", false},
+		"a GitHub owner jump":              {"[a](https://github.com/org/tool/old)", "[a](https://github.com/evil/tool/new)", false},
+		"a GitLab owner jump":              {"[a](https://gitlab.com/org/tool/old)", "[a](https://gitlab.com/evil/tool/new)", false},
+		"a raw GitHub owner jump":          {"[a](https://raw.githubusercontent.com/org/tool/old)", "[a](https://raw.githubusercontent.com/evil/tool/new)", false},
+		"a Bitbucket owner jump":           {"[a](https://bitbucket.org/org/tool/old)", "[a](https://bitbucket.org/evil/tool/new)", false},
+		"a retarget within a GitHub owner": {"[a](https://github.com/org/tool/old)", "[a](https://github.com/org/other/new)", true},
+		"a definition retarget":            {"[a]: https://example.com/old\n[a] and text", "[a]: https://example.com/new\n[a] and text", true},
+		"a title unchanged, target moved":  {`[a](docs/old.md "The Guide")`, `[a](docs/new.md "The Guide")`, true},
+		"relative to absolute":             {"[a](docs/x.md)", "[a](https://example.com/x)", false},
+		"a protocol-relative jump":         {"[a](docs/x.md)", "[a](//evil.com/x)", false},
+		"a fenced retarget":                {"```\n[a](docs/old.md)\n```", "```\n[a](docs/new.md)\n```", false},
+		"an injected script":               {"plain text.", "plain text <script>alert(1)</script>.", false},
+		"a changed fenced command":         {"```\ncurl https://example.com/old\n```", "```\ncurl https://example.com/new\n```", false},
+		"a reworded sentence":              {"The link is broken.", "The link has rotted.", false},
+		"a new external host":              {"[a](https://example.com/x)", "[a](https://evil.example/x)", false},
+		"a javascript target":              {"[a](https://example.com/x)", "[a](javascript:alert(1))", false},
+		"a link added":                     {"text.", "text. [a](new.md)", false},
 		// cloud-native-ref#2517: a code block above the links must not fence everything after it.
 		"a retarget after a block":           {"```\nx\n```\n[a](docs/old.md)", "```\nx\n```\n[a](docs/new.md)", true},
 		"a retarget between two blocks":      {"```\nx\n```\n[a](old.md)\n```\ny\n```", "```\nx\n```\n[a](new.md)\n```\ny\n```", true},
@@ -96,14 +102,42 @@ func TestLinksOnly(t *testing.T) {
 	}
 	t.Run("files", func(t *testing.T) {
 		if ok, _ := LinksOnly(map[string]string{"a.md": "keep", "b.md": "[x](old.md)"},
-			map[string]string{"a.md": "keep", "b.md": "[x](new.md)"}); !ok {
-			t.Fatal("an unchanged file beside a retarget is links-only")
+			map[string]string{"a.md": "keep", "b.md": "[x](new.md)"}); ok {
+			t.Fatal("an unchanged listed file is not a link retarget")
 		}
 		if ok, _ := LinksOnly(map[string]string{"a.md": "x"}, map[string]string{"a.md": "x", "b.md": "[y](z.md)"}); ok {
 			t.Fatal("an added file is not a link retarget")
 		}
-		if ok, _ := LinksOnly(nil, nil); !ok {
-			t.Fatal("no changed file contradicts nothing")
+		if ok, _ := LinksOnly(nil, nil); ok {
+			t.Fatal("an empty file list is not a link retarget")
+		}
+		for name, path := range map[string]string{
+			"YAML": "config.yaml",
+			"Go":   "main.go",
+			"text": "README.txt",
+		} {
+			t.Run(name, func(t *testing.T) {
+				if ok, _ := LinksOnly(map[string]string{path: "[x](old)"}, map[string]string{path: "[x](new)"}); ok {
+					t.Fatalf("%s is not Markdown", path)
+				}
+			})
+		}
+		for name, test := range map[string]struct {
+			path     string
+			contents [2]string
+		}{
+			"YAML regex group": {"config.yaml", [2]string{`pattern: '^[a-z](-?[a-z0-9])*$'`, `pattern: '^[a-z](.*)*$'`}},
+			"Go call argument": {"main.go", [2]string{`re := compile(patterns[0](old))`, `re := compile(patterns[0](new))`}},
+			"footnote definition": {testFile, [2]string{
+				"See the note.[^1]\n\n[^1]: https://example.com/old",
+				"See the note.[^1]\n\n[^1]: https://example.com/new",
+			}},
+		} {
+			t.Run(name, func(t *testing.T) {
+				if ok, _ := LinksOnly(map[string]string{test.path: test.contents[0]}, map[string]string{test.path: test.contents[1]}); ok {
+					t.Fatal("a non-link construct passed as a link retarget")
+				}
+			})
 		}
 	})
 }

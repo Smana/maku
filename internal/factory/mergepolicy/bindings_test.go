@@ -159,7 +159,7 @@ func TestAnAmbiguousFileBindingIsRefused(t *testing.T) {
 		DiffShape: "semver-patch", ModifyOnly: true, ReleaseAgeCheck: "age"}
 	c.Policies["deps-a"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
 	c.Policies["deps-b"] = config.ServedPolicy{Spec: config.PolicySpec{MergeClass: adopt}}
-	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: disabled}\n  - {name: deps-a, mode: shadow}\n"))
+	f, err := Parse([]byte(bindingFile + "  - {name: deps-b, mode: shadow}\n  - {name: deps-a, mode: shadow}\n"))
 	if err != nil {
 		t.Fatal(err)
 	}

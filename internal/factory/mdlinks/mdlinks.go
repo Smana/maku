@@ -14,12 +14,13 @@ import (
 )
 
 // reLinkTarget matches one link's target: a reference definition's ([label]: target at a line
-// start) or an inline one's (](target), angle-bracketed or bare). Titles, labels and every other
-// byte stay in the compared text, so a change beside a link is visible. Deliberately not a full
-// markdown parser: a diff that hides a change inside what this reads as a link target is refused
-// by the target rule below, and the classes it gates stay shadow until the wave re-reads this
-// against a month of forecasts (task 7.9, R52).
-var reLinkTarget = regexp.MustCompile(`(?m)^ {0,3}\[[^()\]\r\n]+\]:[ \t]*(<[^<>\r\n]*>|\S+)|\]\((<[^<>\r\n]*>|[^\s()<]*)`)
+// start, but not a footnote) or an inline one's ([label](target), angle-bracketed or bare).
+// Titles, labels and every other byte stay in the compared text, so a change beside a link is
+// visible. Deliberately not a full markdown parser: a diff that hides a change inside what this
+// reads as a link target is refused by the target rule below.
+var reLinkTarget = regexp.MustCompile(`(?m)^ {0,3}\[[^^()\]\r\n][^()\]\r\n]*\]:[ \t]*(<[^<>\r\n]*>|\S+)|\[[^\]\r\n]*\]\((<[^<>\r\n]*>|[^\s()<]*)`)
+
+var markdownFile = regexp.MustCompile(`\.mdx?$`)
 
 // linkPlaceholder blanks a target so the rest of the text compares byte for byte. NUL: not in
 // any file a class like this edits, and counted below if one ever appears.
@@ -39,12 +40,12 @@ func Targets(s string) (string, []string) {
 	var b strings.Builder
 	last := 0
 	for _, ix := range m {
-		if overlapsRange(code, ix[0], ix[1]) {
-			continue // code text still gets written: last never jumps over it
-		}
 		start, end := ix[4], ix[5] // the inline alternative
 		if ix[2] >= 0 {
 			start, end = ix[2], ix[3] // the reference-definition alternative
+		}
+		if overlapsRange(code, start, end) {
+			continue // code text still gets written: last never jumps over it
 		}
 		b.WriteString(s[last:start])
 		b.WriteString(linkPlaceholder)
@@ -273,25 +274,60 @@ func targetKind(t string) (scheme, host string) {
 }
 
 // retargetOK is R52's rule for a changed pair: relative to relative — hosts empty on both sides,
-// so a protocol-relative //host is never "relative" — or https staying on its host, or landing
-// on the archive. Never another scheme, never a host jump.
+// so a protocol-relative //host is never "relative" — or https staying on its host without crossing
+// a user-owned path boundary, or an archive of exactly the old target. Never another scheme.
 func retargetOK(from, to string) bool {
 	fs, fh := targetKind(from)
 	ts, th := targetKind(to)
-	switch {
-	case fs == "" && fh == "" && ts == "" && th == "":
+	if fs == "" && fh == "" && ts == "" && th == "" {
 		return true
-	case fs == "https" && ts == "https" && fh != "" && (fh == th || th == "web.archive.org"):
-		return true
-	default:
+	}
+	if fs != "https" || ts != "https" || fh == "" {
 		return false
 	}
+	if th == "web.archive.org" {
+		archived, ok := archiveTarget(to)
+		return ok && archived == from
+	}
+	if fh != th {
+		return false
+	}
+	return sameUserPath(from, to)
+}
+
+var userOwnedHosts = map[string]bool{
+	"github.com": true, "gitlab.com": true, "raw.githubusercontent.com": true, "bitbucket.org": true,
+}
+
+func sameUserPath(from, to string) bool {
+	u, err := url.Parse(from)
+	if err != nil || !userOwnedHosts[strings.ToLower(u.Hostname())] {
+		return true
+	}
+	v, err := url.Parse(to)
+	if err != nil {
+		return false
+	}
+	segment := func(u *url.URL) string {
+		part, _, _ := strings.Cut(strings.TrimPrefix(u.Path, "/"), "/")
+		return part
+	}
+	return segment(u) == segment(v)
+}
+
+func archiveTarget(raw string) (string, bool) {
+	const prefix = "https://web.archive.org/web/"
+	if !strings.HasPrefix(raw, prefix) {
+		return "", false
+	}
+	_, target, ok := strings.Cut(raw[len(prefix):], "/")
+	return target, ok && target != ""
 }
 
 // LinksOnly is R52's promise of the docs-links and revert classes: between two commits of the
-// tree, every changed file changed only its link targets, the counts are equal, and every
-// retarget moves relatively, keeps its host, or lands on web.archive.org. The bool decides;
-// the string is the first violation, named for the shadow forecast's record (task 7.9).
+// tree, every listed file is Markdown, reads differently on the two sides, and changed only its
+// link targets. Every retarget moves relatively, keeps its host and user-owned path boundary, or
+// archives exactly the old URL. The bool decides; the string is the first violation.
 func LinksOnly(base, head map[string]string) (bool, string) {
 	paths := make([]string, 0, len(base)+len(head))
 	for p := range base {
@@ -302,11 +338,17 @@ func LinksOnly(base, head map[string]string) (bool, string) {
 			paths = append(paths, p)
 		}
 	}
+	if len(paths) == 0 {
+		return false, "no changed files"
+	}
 	slices.Sort(paths)
 	for _, p := range paths {
+		if !markdownFile.MatchString(p) {
+			return false, p + ": not a Markdown file"
+		}
 		b, h := base[p], head[p]
 		if b == h {
-			continue
+			return false, p + ": file reads unchanged"
 		}
 		nb, tb := Targets(b)
 		nh, th := Targets(h)

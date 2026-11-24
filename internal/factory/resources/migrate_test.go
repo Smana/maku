@@ -83,7 +83,7 @@ func TestMigrateReadsTheLegacyShape(t *testing.T) {
 	}
 	rs := got.Config.Repos()
 	if len(rs) != 1 || rs[0].Name != "Smana/cloud-native-ref" || !rs[0].IsMaintainer("Smana") || rs[0].TriggerLabel != "factory/ready" ||
-		len(rs[0].Classes) != 3 || rs[0].Merge.MergerLogin != "ogenki-agent-merger[bot]" {
+		len(rs[0].Classes) != 2 || rs[0].Merge.MergerLogin != "ogenki-agent-merger[bot]" {
 		t.Fatalf("repositories %+v", rs)
 	}
 	if c := got.Config.ControlFor(); c != (config.Control{Repository: "Smana/cloud-native-ref", Issue: 7}) {
@@ -214,11 +214,14 @@ func TestNamePartIsADNSLabel(t *testing.T) {
 	}
 }
 
-// classesUnderDefaults is each class as the default guardrails leave it, as Equal compares them.
+// classesUnderDefaults is each evaluated class as the default guardrails leave it, as Equal
+// compares them. Disabled classes no longer serve and do not affect a gate decision.
 func classesUnderDefaults(cs map[string]config.Class) map[string]config.Class {
 	out := make(map[string]config.Class, len(cs))
 	for n, c := range cs {
-		out[n] = underDefaults(n, c)
+		if c.Live || c.Shadow {
+			out[n] = underDefaults(n, c)
+		}
 	}
 	return out
 }

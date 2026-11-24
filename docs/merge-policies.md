@@ -263,7 +263,7 @@ flowchart TD
 | The diff | Conditions on the diff hold until it is read: the first pass decides without it, and only a decision that would arm or shadow reads it and decides again |
 | The approval subset | Applies to a policy's own arm or shadow, never to a maintainer's approval, which is already a human's. It is decided after the caps: a capped pull request says `auto_merge_cap`, not `approval_required` |
 | Deny | `protectedFiles` is the second condition checked, after `allowedFiles`: a file both outside the allow list and protected reports `file_not_allowed`. Either way a human merges |
-| Built-in shape | `docs-links` and `revert` are held to `diffShape: links-only` when they declare none, and may declare no other |
+| Built-in shape | `docs-links` and `revert` are held to `diffShape: links-only` when they declare none, and may declare no other. `links-only` reads `.md` and `.mdx` files only; any other changed path refuses `class_mismatch` even when `allowedFiles` admits it |
 
 ### description
 

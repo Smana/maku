@@ -86,6 +86,9 @@ func ResolveBindings(f *File, rc *config.Repository, c *config.Config) (map[stri
 	classes, refused := map[string]Resolved{}, map[string]config.BindingRefusal{}
 	served := map[string]config.Class{}
 	for _, b := range f.MergePolicies {
+		if config.Disabled(b.Mode) {
+			continue
+		}
 		p, ok := c.Policies[b.Name]
 		if !ok {
 			refused[b.Name] = config.BindingRefusal{Reason: v1alpha1.ReasonMissingRef, Message: fmt.Sprintf("the factory serves no MergePolicy %s", b.Name)}

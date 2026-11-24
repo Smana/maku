@@ -217,9 +217,10 @@ func TestEnvtestATesterThatLeavesNothingRequiresNoContractCheck(t *testing.T) {
 func TestEnvtestRows2bAnd2cDecideBeforeTheHoldouts(t *testing.T) {
 	g, _ := envTesterRig(t, nil, func(c *config.Config) {
 		setDefaultTemplate(c, "solo")
-		c.Repositories[0].Classes["scripts"] = config.Class{Shadow: true, HoldoutChecks: []string{"Holdout 🧪"}}
+		c.Repositories[0].Classes["scripts"] = config.Class{Shadow: true, DiffShape: "links-only", HoldoutChecks: []string{"Holdout 🧪"}}
 	})
 	g.contractAndImplementer(t)
+	g.f.SetFiles(map[string]string{testFile: "[x](https://example.com/old)"}, map[string]string{testFile: "[x](https://example.com/new)"})
 	if tk := g.implementerOpensThePR(t, 1); tk.Status.Phase != v1alpha1.PhaseAwaitingCI {
 		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
 	}

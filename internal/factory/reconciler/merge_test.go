@@ -44,8 +44,51 @@ func mergeRig(t *testing.T, phase string, objs ...client.Object) *rig {
 	g.f.SetPR(forge.PR{Number: 12, NodeID: "PR_12", State: "OPEN", Title: "docs: fix a link", Author: "ogenki-agents[bot]",
 		BaseRef: "main", HeadRef: "agent/3buqdlot", HeadSHA: "abc", HeadMessage: "docs: fix\n\nAgent-Run: " + rid(0),
 		HeadCommittedAt: now.Add(-time.Hour)})
+	g.f.SetFiles(map[string]string{testFile: "[x](https://example.com/old)"}, map[string]string{testFile: "[x](https://example.com/new)"})
 	g.log.handoff(rid(0), "abc")
 	return g
+}
+
+type pullRequestRace struct {
+	TaskForge
+	reads  int
+	mutate func(*forge.PR)
+	store  func(forge.PR)
+}
+
+func (f *pullRequestRace) PullRequest(ctx context.Context, number int) (forge.PR, error) {
+	pr, err := f.TaskForge.PullRequest(ctx, number)
+	f.reads++
+	if err == nil && f.reads == 2 {
+		f.mutate(&pr)
+		f.store(pr)
+	}
+	return pr, err
+}
+
+func TestPreMergeReadCatchesHumanControlChanges(t *testing.T) {
+	for name, test := range map[string]struct {
+		mutate     func(*forge.PR)
+		phase, why string
+	}{
+		"hold added":      {func(pr *forge.PR) { pr.Labels = append(pr.Labels, LabelHold) }, v1alpha1.PhaseAwaitingHuman, "held"},
+		"base retargeted": {func(pr *forge.PR) { pr.BaseRef = "release" }, v1alpha1.PhaseAwaitingHuman, "base_not_main"},
+		"changes requested": {func(pr *forge.PR) {
+			pr.Reviews = append(pr.Reviews, forge.Review{ID: 99, Author: "Smana", State: "CHANGES_REQUESTED", Commit: "abc", At: now})
+		}, v1alpha1.PhaseAwaitingHuman, "changes_requested"},
+		"labels truncated": {func(pr *forge.PR) { pr.LabelsTruncated = true }, v1alpha1.PhaseAwaitingHuman, "labels_truncated"},
+		"head moved":       {func(pr *forge.PR) { pr.HeadSHA = "def" }, v1alpha1.PhaseAwaitingCI, "head_moved"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
+			g.f.SetChecks(12, green("SUCCESS"))
+			g.r.Forge = &pullRequestRace{TaskForge: g.f, mutate: test.mutate, store: g.f.SetPR}
+			tk := g.reconcile(t, "3buqdlot", 1)
+			if tk.Status.Phase != test.phase || tk.Status.Reason != test.why || len(g.f.Armed()) != 0 || slices.Contains(g.f.GateSequence(), "status abc success") {
+				t.Fatalf("%s/%s armed=%v gate=%v, want %s/%s without a green status", tk.Status.Phase, tk.Status.Reason, g.f.Armed(), g.f.GateSequence(), test.phase, test.why)
+			}
+		})
+	}
 }
 
 // handoff is the room event an implementer run ends with, naming the commit it pushed: R02's

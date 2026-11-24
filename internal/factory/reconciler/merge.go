@@ -183,6 +183,8 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		case errors.Is(ferr, forge.ErrDiffTooLarge):
 			// A compare at GitHub's 300-file cap may hide files: hand it off, as the gate does.
 			d = ArmDecision{Verdict: "human", Reason: "patch_too_large", Matched: d.Matched, Rows: d.Rows}
+		case errors.Is(ferr, forge.ErrNotAFile):
+			d = ArmDecision{Verdict: "human", Reason: "diff_unreadable", Matched: d.Matched, Rows: d.Rows}
 		case ferr != nil:
 			return ferr
 		default:
@@ -324,6 +326,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
 		narrateOn(t, pr.Number, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
+	}
+	if held, err := r.preMergeRecheck(ctx, cfg, t, pr, in, &d, gateStatus, adopted); held || err != nil {
+		return err
 	}
 	// The decided head, pinned: GitHub checks it at merge time, so a push that landed since the
 	// read refuses the merge (409) and the new head is decided again — never merged on this
@@ -574,10 +579,28 @@ func (r *Reconciler) escalatedReturn(ctx context.Context, cfg *config.Config, t 
 // re-reviews it itself.
 func (r *Reconciler) reenter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (bool, error) {
 	why := t.Status.Reason
-	if why == "held" { // MR10: the label's removal lets the next pass decide, on the head it held
-		if slices.Contains(pr.Labels, LabelHold) || t.Status.GateReentries >= maxGateReentries ||
+	if why == "held" { // MR10: only a maintainer's removal lets the next pass decide, on the held head
+		if slices.Contains(pr.Labels, LabelHold) || pr.LabelsTruncated || t.Status.GateReentries >= maxGateReentries ||
 			pr.HeadSHA == "" || pr.HeadSHA != t.Status.PullRequest.HeadSHA {
 			return false, nil
+		}
+		evs, err := r.gh(ctx).LabelHistory(ctx, pr.Number, LabelHold)
+		if errors.Is(err, forge.ErrEventsTruncated) {
+			return false, nil
+		}
+		if err != nil || len(evs) == 0 {
+			return false, err
+		}
+		last := evs[len(evs)-1]
+		rc := r.repo(cfg, t)
+		if !last.Removed || !rc.IsMaintainer(last.Actor) {
+			return false, nil
+		}
+		if r.CanWrite != nil {
+			ok, err := r.CanWrite(ctx, rc.Name, last.Actor)
+			if err != nil || !ok {
+				return false, err
+			}
 		}
 		r.backToGate(cfg, t, why, "reentered_unheld", pr.HeadSHA)
 		return true, nil
@@ -1099,6 +1122,60 @@ func (r *Reconciler) fixCI(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	t.Status.NextTrigger = "ci"
 	r.to(t, v1alpha1.PhaseQueued, "")
 	return nil
+}
+
+// preMergeRecheck re-reads the human-controlled pull-request state immediately before the success
+// status. The policy decision is still for pr's head; a hold, base retarget, new maintainer veto or
+// truncated review/label state since that decision keeps the merge with a human.
+func (r *Reconciler) preMergeRecheck(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR,
+	in ArmInputs, d *ArmDecision, gateStatus, adopted bool) (bool, error) {
+	current, err := r.gh(ctx).PullRequest(ctx, pr.Number)
+	if err != nil {
+		return true, err
+	}
+	rc := r.repo(cfg, t)
+	why := ""
+	switch {
+	case current.HeadSHA != pr.HeadSHA:
+		why = "head_moved"
+	case current.LabelsTruncated:
+		why = "labels_truncated"
+	case slices.Contains(current.Labels, LabelHold):
+		why = "held"
+	case current.BaseRef != "main":
+		why = "base_not_main"
+	case current.ReviewsTruncated || slices.ContainsFunc(openChangeRequests(current.Reviews, true), func(rv forge.Review) bool {
+		return rc.IsMaintainer(rv.Author)
+	}):
+		why = "changes_requested"
+	case current.State != "OPEN":
+		why = "not_mergeable"
+	case d.Reason == "maintainer_approved":
+		in.PR = current
+		if _, state := approval(in, rc); state != "approved" {
+			why = "approval_stale"
+		}
+	}
+	if why == "" {
+		return false, nil
+	}
+	*d = ArmDecision{Verdict: "human", Reason: why, Matched: d.Matched, Rows: d.Rows}
+	if why == "head_moved" {
+		d.Verdict = "wait"
+	}
+	if gateStatus {
+		if err := r.postGateStatus(ctx, t, current.HeadSHA, in.Checks, *d); err != nil {
+			return true, err
+		}
+	}
+	t.Status.PullRequest.HeadSHA = current.HeadSHA
+	if why == "head_moved" {
+		r.to(t, v1alpha1.PhaseAwaitingCI, why)
+		return true, nil
+	}
+	r.to(t, v1alpha1.PhaseAwaitingHuman, why)
+	narrateOn(t, current.Number, r.withRecord(cfg, r.handOff(cfg, t, why, adopted), t, *d, current.HeadSHA))
+	return true, nil
 }
 
 // autoMerging watches the merge the decision issued. R52 armed nothing on GitHub — the merge

@@ -11,6 +11,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [A task steps up once](#a-task-steps-up-once)
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
 - [Merge policies removals](#merge-policies-removals)
+- [Merge policy safety tightening (v0.53.x)](#merge-policy-safety-tightening-v053x)
 - [The gate picks the policy from the diff (v0.52.0)](#the-gate-picks-the-policy-from-the-diff-v0520)
 - [Workflows name what runs](#workflows-name-what-runs)
 - [Workflows: old names warn (v0.51.0)](#workflows-old-names-warn-v0510)
@@ -86,6 +87,23 @@ and the command), and remove the two settings named under **What to change befor
 | The Slack draft grammar (`@factory [repo] title`, `Should:`, `Acceptance:`, the draft reply edits and the `factory_draft` message tag) | Plain words in the mention. A reply by the author re-plans the proposal |
 
 **What to change before upgrading.** Delete `human.mcp.sessionStart` from the broker's values (the broker refuses it even when it is empty) and `proposals:` from the Slack App's `config`. `sessionStart` was an allow list and `human.mcp.start` is not: with the planner on, "Start now" is now offered on every repository the planner serves, so list in `human.mcp.start.except` each one where the form must not offer it, or set `default: false` to offer it nowhere. Replace a saved prompt or script that calls a removed tool. The `/factory retry` and `/factory split` comments on a GitHub issue are the factory's own triggers and are unchanged.
+
+## Merge policy safety tightening (v0.53.x)
+
+No configuration key changes. The gate fails closed in cases that previously passed or waited on an
+unrelated check:
+
+- `links-only` reads `.md` and `.mdx` files only. It recognizes real inline and reference links, not
+  footnotes or call-shaped text; refuses unchanged, empty and non-regular files; keeps the first path
+  segment on user-owned Git hosts; and accepts an archive only of the old URL.
+- Only a maintainer's removal of `factory/hold` re-enters the gate. Labels, base branch and reviews
+  are read again immediately before the success status.
+- A live policy's protected path, approval subset or red holdout stops every live candidate. Holdouts
+  are read only after the diff conditions hold; an unreadable file hands off `diff_unreadable`, and a
+  skipped or neutral leak scan is not green.
+- A refused binding never serves above its written mode. `disabled` and a missing `MergePolicy`
+  restore no old class; a refused `shadow` binding can restore only shadow.
+
 ## Merge policies removals
 
 This release removes every field and mode v0.50.0 deprecated. Unknown

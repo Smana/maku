@@ -135,13 +135,18 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 	_ = json.Unmarshal(mustJSON(full), &merge) // a merge that does not decode is Parse's to refuse
 
 	type entry struct {
-		out config.BindingRefusal
-		cl  config.Class
-		gen int64
-		ok  bool
+		out      config.BindingRefusal
+		cl       config.Class
+		gen      int64
+		ok       bool
+		disabled bool
 	}
 	entries := make([]entry, len(bindings))
 	for i, b := range bindings {
+		if config.Disabled(b.Mode) {
+			entries[i].disabled = true
+			continue
+		}
 		p, ok := res.policies[b.Name]
 		switch {
 		case !ok && refusedPolicies[b.Name]:
@@ -157,7 +162,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 			entries[i].cl, entries[i].gen, entries[i].ok = cl, p.Generation, true
 		}
 	}
-	// B6, plan PR9: the later of two ambiguous adopted bindings is refused, whatever its mode.
+	// B6, plan PR9: the later of two evaluated ambiguous adopted bindings is refused.
 	for i := range entries {
 		if !entries[i].ok {
 			continue
@@ -175,7 +180,7 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 
 	classes := map[string]config.Class{}
 	for i, e := range entries {
-		if e.ok {
+		if e.ok && !e.disabled {
 			classes[bindings[i].Name] = e.cl
 		}
 	}
@@ -183,23 +188,28 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 		e := entries[i]
 		k := BindingKey{r.Name, b.Name}
 		o := BindingOutcome{Repository: r.Name, Name: b.Name, Mode: b.Mode}
-		if e.ok {
+		switch {
+		case e.disabled:
+			o.Accepted = true
+		case e.ok:
 			o.Accepted, o.Served, o.PolicyGeneration = true, true, e.gen
 			if res.resolved == nil {
 				res.resolved = map[BindingKey]ResolvedClass{}
 			}
 			res.resolved[k] = ResolvedClass{Class: e.cl, PolicyGeneration: e.gen}
-		} else {
+		default:
 			o.Reason, o.Message = e.out.Reason, e.out.Message
-			// D5: the last resolved class, unless it is the ambiguity refused, or would make one. It is
-			// checked again under today's catalogue and merge (B9, B14): one that no longer holds
-			// would refuse the whole Repository at Parse, so it is dropped.
-			if last, ok := opts.LastResolved[k]; ok && e.out.Reason != config.ReasonAmbiguousAdoption && !config.AmbiguousWithAny(last.Class, classes) {
-				if cl, refusal := config.Recheck(b.Name, last.Class, ctx, merge); refusal != nil {
-					o.Message += "; its last resolved class no longer holds: " + refusal.Message
-				} else {
-					classes[b.Name] = cl
-					o.Served, o.PolicyGeneration = true, last.PolicyGeneration
+			// D5: a last resolved class can serve only at the written mode or stricter, never for a
+			// missing policy or an ambiguous adoption. Recheck it under today's catalogue and merge.
+			if last, ok := opts.LastResolved[k]; ok && e.out.Reason != config.ReasonAmbiguousAdoption &&
+				e.out.Reason != v1alpha1.ReasonMissingRef && !config.AmbiguousWithAny(last.Class, classes) {
+				if limited, modeOK := config.LimitMode(last.Class, b.Mode); modeOK {
+					if cl, refusal := config.Recheck(b.Name, limited, ctx, merge); refusal != nil {
+						o.Message += "; its last resolved class no longer holds: " + refusal.Message
+					} else {
+						classes[b.Name] = cl
+						o.Served, o.PolicyGeneration = true, last.PolicyGeneration
+					}
 				}
 			}
 		}

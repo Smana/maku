@@ -109,11 +109,13 @@ type AgentPull struct {
 	Fork    bool
 }
 
-// LabelEvent is one time a label was added, and by whom (R4: only maintainers' count).
+// LabelEvent is one time a label was added or removed, and by whom (R4: only maintainers' count).
+// Removed is false for an addition and true for a removal.
 type LabelEvent struct {
-	Actor string
-	Label string
-	At    time.Time
+	Actor   string
+	Label   string
+	At      time.Time
+	Removed bool
 }
 
 // Comment is an issue or pull request comment. Edited: its body changed after it was posted,

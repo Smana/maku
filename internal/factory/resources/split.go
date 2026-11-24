@@ -384,11 +384,15 @@ func Equal(before, after *config.Config) []string {
 			out = append(out, fmt.Sprintf("%s merge: %s %s -> %s", n, f, jsonOf(jsonMap(mb)[f]), jsonOf(jsonMap(ma)[f])))
 		}
 		classes := map[string]bool{}
-		for c := range rb.Classes {
-			classes[c] = true
+		for c, cl := range rb.Classes {
+			if cl.Live || cl.Shadow {
+				classes[c] = true
+			}
 		}
-		for c := range ra.Classes {
-			classes[c] = true
+		for c, cl := range ra.Classes {
+			if cl.Live || cl.Shadow {
+				classes[c] = true
+			}
 		}
 		for _, c := range slices.Sorted(maps.Keys(classes)) {
 			cb, inB := rb.Classes[c]

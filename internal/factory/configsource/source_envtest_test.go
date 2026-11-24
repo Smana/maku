@@ -80,17 +80,17 @@ func TestEnvtestSourceFollowsTheObjects(t *testing.T) {
 		}
 	}
 	eventually("the repository is served", func() bool { return served() })
-	if p, r, _ := src.Live.Current().ClassGenerations("Smana/Other", "docs"); r != 1 || p != 1 {
+	if p, r, _ := src.Live.Current().ClassGenerations("Smana/Other", "docs-links"); r != 1 || p != 1 {
 		t.Fatalf("generations %d %d, want the API server's 1 1", r, p)
 	}
 
-	docs := objs[3].(*v1alpha1.MergePolicy)
+	docs := objs[1].(*v1alpha1.MergePolicy)
 	docs.Spec.MaxModifiedLines = 40
 	if err := c.Update(ctx, docs); err != nil {
 		t.Fatal(err)
 	}
 	eventually("the policy's change is served", func() bool {
-		return src.Live.Current().RepositoryFor("Smana/Other").Classes["docs"].MaxModifiedLines == 40
+		return src.Live.Current().RepositoryFor("Smana/Other").Classes["docs-links"].MaxModifiedLines == 40
 	})
 
 	for _, o := range objs {

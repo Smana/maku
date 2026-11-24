@@ -19,6 +19,21 @@ const (
 // Disabled reports whether mode evaluates nothing.
 func Disabled(mode string) bool { return mode == ModeDisabled }
 
+// LimitMode keeps cl's mode at most mode: a refused live edit can keep a previous live or shadow
+// class, while a refused shadow edit can serve only shadow. ok is false for a mode that cannot
+// safely restore anything.
+func LimitMode(cl Class, mode string) (out Class, ok bool) {
+	switch mode {
+	case ModeLive:
+		return cl, true
+	case ModeShadow:
+		cl.Live, cl.Shadow = false, true
+		return cl, true
+	default:
+		return Class{}, false
+	}
+}
+
 // The reasons a binding does not resolve (B9). MissingRef, the reason for a binding to an absent
 // policy, is the resources layer's: Resolve is handed a policy.
 const (
