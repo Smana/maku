@@ -24,29 +24,29 @@ func readCRD(t *testing.T, plural string) (string, *apiextensionsv1.CustomResour
 	return string(raw), &crd
 }
 
-// The CEL messages of reusable merge policies (B1–B3, B8, MP15, MR9).
+// The CEL messages of reusable merge policies.
 const (
 	msgPolicyName    = "a MergePolicy's name is its class name (B1)"
 	msgReviewPolicy  = "review is not a policy"
 	msgWorkflow      = "oracle.workflow is the repository's: set oracleWorkflow on the binding"
-	msgFluxSource    = "the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
+	msgFluxSource    = "the Flux source is the repository's: Repository.spec.merge.fluxSource"
 	msgNarrowed      = "narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy"
 	msgReviewBinding = "review is not a policy"
 	msgFileBindings  = "classAuthority repository: the repository's file holds the bindings (MP15)"
 	msgPrivateCode   = "privateCode.acknowledged is true or absent: false says nothing (D3)"
 )
 
-// Factory resources D3, D7, D10, D11: namespaced, a status subresource, the printer columns, the
-// fixed references. Reusable merge policies: the class shape, and the bindings.
+// Factory resources are namespaced, carry a status subresource and expose the policy columns and
+// fixed references. Reusable merge policies carry the class shape and the bindings.
 func TestFactoryResourceCRDsCarryTheDesignRules(t *testing.T) {
 	for plural, wants := range map[string][]string{
 		"factories": {"kind: Factory", "scope: Namespaced", "subresources:", "name: Accepted", "name: Ready", "name: Repos", "name: Stopped", "mergeDefaults:", "effort:"},
 		"repositories": {"kind: Repository", "scope: Namespaced", "subresources:", "name: Repo", "name: Factory", "name: Accepted", "name: Connected",
 			"spec.factoryRef is fixed once set", "spec.repository is fixed once set", "mergePolicies:", "x-kubernetes-list-type: map",
-			"name: Classes", "name: Live", "policyGeneration:", "mergeDefaulted:",
+			"name: Policies", "name: Live", "name: BindingsValid", "servedMode:", "policyGeneration:", "mergeDefaulted:",
 			msgReviewBinding, msgFileBindings, msgPrivateCode, "privateCode:"},
 		"mergepolicies": {"kind: MergePolicy", "scope: Namespaced", "subresources:", "name: Consumers", "name: Current", "name: Live", "name: Accepted",
-			"servedGeneration:",
+			"name: Description", "servedGeneration:",
 			msgPolicyName, msgReviewPolicy, msgWorkflow, msgFluxSource, msgNarrowed, "evidence:"},
 	} {
 		raw, crd := readCRD(t, plural)

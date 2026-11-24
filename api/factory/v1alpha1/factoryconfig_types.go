@@ -184,7 +184,7 @@ type RepositoryStatus struct {
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +listType=map
 	// +listMapKey=type
-	// +kubebuilder:validation:MaxItems=8
+	// +kubebuilder:validation:MaxItems=10
 	Conditions []metav1.Condition `json:"conditions,omitempty"`
 	// Authority is who declares the classes: central, or the repository's file (MP15).
 	// +kubebuilder:validation:Enum=central;repository
@@ -209,13 +209,16 @@ type RepositoryStatus struct {
 	MergeDefaulted []string `json:"mergeDefaulted,omitempty"`
 }
 
-// BindingStatus is one class of a Repository (B10): the binding's mode, the policy generation it
-// serves, and whether its current generation resolves.
+// BindingStatus is one binding: its written mode, the mode actually served, the policy generation,
+// and whether its current generation resolves.
 type BindingStatus struct {
 	// +kubebuilder:validation:MaxLength=63
 	Name string `json:"name"`
 	// +kubebuilder:validation:Enum=live;shadow;disabled
 	Mode string `json:"mode,omitempty"`
+	// ServedMode is the resolved class's actual mode: live, shadow, or disabled when nothing serves.
+	// +kubebuilder:validation:Enum=live;shadow;disabled
+	ServedMode string `json:"servedMode,omitempty"`
 	// PolicyGeneration is the generation of the MergePolicy the class serves.
 	PolicyGeneration int64 `json:"policyGeneration,omitempty"`
 	// Accepted is always serialized, false included.
@@ -237,8 +240,9 @@ type BindingStatus struct {
 // +kubebuilder:resource:scope=Namespaced
 // +kubebuilder:printcolumn:name=Repo,type=string,JSONPath=`.spec.repository`
 // +kubebuilder:printcolumn:name=Factory,type=string,JSONPath=`.spec.factoryRef`
-// +kubebuilder:printcolumn:name=Classes,type=integer,JSONPath=`.status.classCount`
+// +kubebuilder:printcolumn:name=Policies,type=integer,JSONPath=`.status.classCount`
 // +kubebuilder:printcolumn:name=Live,type=integer,JSONPath=`.status.liveCount`
+// +kubebuilder:printcolumn:name=BindingsValid,type=string,JSONPath=`.status.conditions[?(@.type=="BindingsValid")].status`
 // +kubebuilder:printcolumn:name=Accepted,type=string,JSONPath=`.status.conditions[?(@.type=="Accepted")].status`
 // +kubebuilder:printcolumn:name=Connected,type=string,JSONPath=`.status.conditions[?(@.type=="Connected")].status`
 // +kubebuilder:printcolumn:name=Age,type=date,JSONPath=`.metadata.creationTimestamp`
@@ -258,13 +262,12 @@ type RepositoryList struct {
 	Items           []Repository `json:"items"`
 }
 
-// MergePolicySpec is one reusable class definition, named by the object, that Repositories bind
-// (reusable merge policies B1). The per-repository shape (repositoryRef, classes, merge) was
-// removed in the release after N (B8): the API server prunes those fields on read.
+// MergePolicySpec is one reusable policy definition, named by the object, that Repositories bind.
 //
 // +kubebuilder:validation:XValidation:rule="!has(self.oracle) || !has(self.oracle.workflow)",message="oracle.workflow is the repository's: set oracleWorkflow on the binding"
-// +kubebuilder:validation:XValidation:rule="!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)",message="the Flux source is the repository's: Repository.spec.merge.fluxSource (B2)"
+// +kubebuilder:validation:XValidation:rule="!has(self.monitor) || !has(self.monitor.flux) || !has(self.monitor.flux.source)",message="the Flux source is the repository's: Repository.spec.merge.fluxSource"
 // +kubebuilder:validation:XValidation:rule="!has(self.narrowedFiles)",message="narrowedFiles is set by a binding's allowedFiles: set allowedFiles on the policy"
+// +kubebuilder:validation:XValidation:rule="self.evidence != 'low' || has(self.diffShape) || has(self.oracle)",message="evidence: low needs diffShape or oracle: set one, or use evidence: standard"
 type MergePolicySpec struct {
 	// PolicySpec is the class definition: config.MergeClass.
 	config.PolicySpec `json:",inline"`
@@ -326,6 +329,7 @@ const LabelCatalog = "maku.ogenki.io/catalog"
 // +kubebuilder:printcolumn:name=Consumers,type=integer,JSONPath=`.status.consumerCount`
 // +kubebuilder:printcolumn:name=Current,type=integer,JSONPath=`.status.currentCount`
 // +kubebuilder:printcolumn:name=Live,type=integer,JSONPath=`.status.liveCount`
+// +kubebuilder:printcolumn:name=Description,type=string,JSONPath=`.spec.description`
 // +kubebuilder:printcolumn:name=Accepted,type=string,JSONPath=`.status.conditions[?(@.type=="Accepted")].status`
 // +kubebuilder:printcolumn:name=Age,type=date,JSONPath=`.metadata.creationTimestamp`
 type MergePolicy struct {

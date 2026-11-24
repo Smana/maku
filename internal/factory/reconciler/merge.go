@@ -235,6 +235,12 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		t.Status.PullRequest.Policy = decidedPolicy(t, d)
 		class, verdict, reason := classOf(t), d.Verdict, cmp.Or(d.Reason, "armed")
 		record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, class, verdict, reason) })
+		for _, candidate := range strings.Split(d.Rows.Considered, ",") {
+			name, refusal, ok := strings.Cut(candidate, ":")
+			if ok && name != "" && refusal != "" {
+				record(ctx, func(ctx context.Context) { r.Metrics.PolicyConsidered(ctx, t.Spec.Repository, name, refusal) })
+			}
+		}
 		for _, sh := range d.Shadows { // MR1: each shadow policy that held is a decision of its own
 			name := sh.Name
 			record(ctx, func(ctx context.Context) { r.Metrics.MergeDecision(ctx, name, "shadow", "shadow_would_arm") })

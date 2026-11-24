@@ -44,6 +44,7 @@ const (
 	ConditionRepositoryFileValid = "RepositoryFileValid"
 	ConditionInSync              = "InSync"
 	ConditionReady               = "Ready"
+	ConditionPaused              = "Paused"
 	ConditionDeprecated          = "Deprecated"
 
 	// ReasonPending is Accepted's reason before the factory looked at the object.
@@ -196,6 +197,7 @@ func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
 	g := observed(o, r.Generation)
 	st := v1alpha1.RepositoryStatus{ObservedGeneration: g}
 	d.accepted(&st.Conditions, g, o)
+	d.repositoryReady(&st.Conditions, g, o)
 	name := r.Spec.Repository
 	_, served := d.served[strings.ToLower(name)]
 	switch {
@@ -231,6 +233,25 @@ func (d *desirer) repository(r *v1alpha1.Repository) v1alpha1.RepositoryStatus {
 	return st
 }
 
+// repositoryReady is false on a refused generation or binding, even when a last good class serves.
+func (d *desirer) repositoryReady(cs *[]metav1.Condition, gen int64, o *configsource.Outcome) {
+	if o == nil {
+		d.set(cs, gen, ConditionReady, metav1.ConditionUnknown, ReasonPending, "the factory has not looked at this Repository yet")
+		return
+	}
+	if !o.Accepted {
+		d.set(cs, gen, ConditionReady, metav1.ConditionFalse, o.Reason, o.Message)
+		return
+	}
+	for _, b := range o.Bindings {
+		if !b.Accepted {
+			d.set(cs, gen, ConditionReady, metav1.ConditionFalse, "BindingsRefused", b.Name+": "+b.Message)
+			return
+		}
+	}
+	d.set(cs, gen, ConditionReady, metav1.ConditionTrue, "Ready", "")
+}
+
 // servedRepository fills what a served repository's status says (B10, plan PR14): its classes,
 // each binding's outcome, BindingsValid, the counts, authority, file conditions and resolved merge.
 func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Repository, o *configsource.Outcome, g int64) {
@@ -240,6 +261,11 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 	}
 	m := *rc.Merge.DeepCopy()
 	st.Merge, st.MergeDefaulted = &m, slices.Clone(rc.MergeDefaulted)
+	if rc.Merge.Paused != nil {
+		d.set(&st.Conditions, g, ConditionPaused, metav1.ConditionTrue, "OperatorPaused", rc.Merge.Paused.Reason)
+	} else {
+		d.set(&st.Conditions, g, ConditionPaused, metav1.ConditionFalse, "NotPaused", "")
+	}
 	var last map[string]decision.Last
 	if d.in.Decisions != nil {
 		last = d.in.Decisions(rc.Name)
@@ -254,7 +280,16 @@ func (d *desirer) servedRepository(st *v1alpha1.RepositoryStatus, rc *config.Rep
 	var refused []string
 	if o != nil {
 		for _, b := range o.Bindings {
-			bs := v1alpha1.BindingStatus{Name: b.Name, Mode: b.Mode, Accepted: b.Accepted, Reason: b.Reason, Message: truncate(b.Message, maxBindingMessage)}
+			servedMode := config.ModeDisabled
+			if cl, ok := rc.Classes[b.Name]; ok {
+				switch {
+				case cl.Live:
+					servedMode = config.ModeLive
+				case cl.Shadow:
+					servedMode = config.ModeShadow
+				}
+			}
+			bs := v1alpha1.BindingStatus{Name: b.Name, Mode: b.Mode, ServedMode: servedMode, Accepted: b.Accepted, Reason: b.Reason, Message: truncate(b.Message, maxBindingMessage)}
 			if b.Served {
 				bs.PolicyGeneration = b.PolicyGeneration
 			}

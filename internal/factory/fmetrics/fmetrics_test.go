@@ -128,6 +128,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 	s.Intervention(ctx, "stop", "none", "none", "")
 	s.ClassMismatch(ctx, "docs-links", "review")
 	s.MergeDecision(ctx, "docs-links", "shadow", "shadow_would_arm")
+	s.PolicyConsidered(ctx, "other", "docs", "patch_too_large")
 	s.TierFit(ctx, "static", "standard", "fit", false)
 	s.IntakeError(ctx, "issue")
 	s.LabelEventsTruncated(ctx, "factory/ready")
@@ -162,6 +163,7 @@ func TestEverySection7MetricIsExposed(t *testing.T) {
 		`maku_factory_label_events_truncated_total{label="factory/ready"} 1`,
 		`maku_factory_class_mismatch_total{matched="review",predicted="docs-links"} 1`,
 		`maku_factory_merge_decisions_total{class="docs-links",reason="shadow_would_arm",repository="other",verdict="shadow"} 1`,
+		`maku_factory_policy_considered_total{policy="docs",reason="patch_too_large",repository="other"} 1`,
 		`maku_factory_tier_fit_total{classifier="static",control="false",fit="fit",tier="standard"} 1`,
 		`maku_factory_intake_errors_total{repository="other",source="issue"} 1`,
 		`maku_factory_run_revocations_total{principal="other",reason="budget-run"} 1`,

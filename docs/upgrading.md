@@ -12,6 +12,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
 - [Merge policies removals](#merge-policies-removals)
 - [Merge policy safety tightening (v0.53.x)](#merge-policy-safety-tightening-v053x)
+- [Merge policy usability and GitOps](#merge-policy-usability-and-gitops)
 - [The gate picks the policy from the diff (v0.52.0)](#the-gate-picks-the-policy-from-the-diff-v0520)
 - [Workflows name what runs](#workflows-name-what-runs)
 - [Workflows: old names warn (v0.51.0)](#workflows-old-names-warn-v0510)
@@ -113,6 +114,91 @@ change as described below:
 - Set `merge.autoRevert: true` to keep automatic rollback; an existing live `revert` binding still
   loads, sets that switch and reports a `Deprecated` condition. Revert creation records GitHub's head,
   and the merger merges only that exact head after checks pass, without native auto-merge.
+
+## Repository-file authority
+
+The default merge gate needs no policy-bot integration and no repository-file rollout. The legacy
+integration and stage ladder below apply only to repositories that explicitly use them.
+
+### policy-bot, an optional integration
+
+By default `merge.policyBot` is `false` and `merge.gateStatus` is `true`: Maku posts `maku/merge-gate`
+on the pull request, branch protection requires that status, and no `.policy.yml` file is used.
+Self-modification of `.github/`, `.policy.yml`, `CODEOWNERS` and every holdout check's workflow is
+blocked directly by the gate (`gate_path` and the guardrail `protectedFiles`).
+
+When a repository opts in with `merge.policyBot: true` and `merge.policyBotLogin`, policy-bot reads
+`.policy.yml` from the base branch and posts `policy-bot: main`. The gate then requires that status
+in its fixed base: `success` lets the policy rows run; `error` is `gate_path`; anything else is
+`policy_pending`; a missing status or one from another login is `policy_absent`. Maku neither reads
+nor writes `.policy.yml`: under `merge.policyBot: true`, each policy that should arm needs a
+hand-written `low-risk:` rule in `.policy.yml` approving only pull requests within that policy's
+paths and sizes and excluding `.github/` and `.policy.yml`:
+
+```yaml
+policy:
+  approval:
+    - or:
+        - human-authored
+        - "low-risk: docs-small"
+approval_rules:
+  - name: "low-risk: docs-small"
+    if:
+      has_author_in: {users: ["ogenki-agents[bot]"]}
+      only_has_contributors_in: {users: ["ogenki-agents[bot]"]}
+      from_branch: {pattern: '^agent/[a-z2-7]{8}$'}
+      only_changed_files: {paths: ['^docs/.+\.md$']}
+      no_changed_files: {paths: ['^\.policy\.yml$', '^\.github/', '^CODEOWNERS$']}
+      file_not_added: {paths: ['.*']}
+      file_not_deleted: {paths: ['.*']}
+      modified_lines: {total: "< 41"}
+```
+
+Land `.policy.yml` and `.github/agent-factory.yaml` in one human-merged pull request so policy-bot
+evaluates the rule from the merge on.
+
+## Rollout stages
+
+```mermaid
+flowchart LR
+  s1["read<br/>observe fence file, compare"] --> s2["simulate<br/>maku policy diff | simulate + dual="]
+  s2 --> s3["manage (default)<br/>repository authority, grants, promotion UI"]
+```
+
+`policyManagement.stage` controls how far repository-file management, simulation and the settings UI
+are enabled (`manage` when omitted):
+
+| `stage` | Needs | Does | Merge authority | Exit / verification |
+|---|---|---|---|---|
+| `read` | — | Each fence read parses, validates and resolves `.github/agent-factory.yaml` and compares it with the central policies | Central | `maku_factory_policy_central_divergence == 0` and no `maku_factory_policy_load_errors_total` series |
+| `simulate` | — | Everything in `read`, plus `maku policy diff`, `maku policy simulate`, and live dual evaluation (`policy=` and `dual=` on every decision record) | Central | Simulator matches conformance fixtures; a week with no `agreement="unexplained"` |
+| `manage` | Broker `factoryURL` when set explicitly on the broker; `human.approvalMemory: true` for saved grants | Everything in `simulate`, plus `classAuthority: repository` where a `Repository` sets it, approval-memory lookups, `/v1/policy/evidence` and `/v1/policy/repositories` on the factory, and `/settings/*` and promotions on the broker | Central unless a `Repository` sets `classAuthority: repository` | Promotion pull requests and grant lifecycle verified |
+
+The broker reads its own `policyManagement` block (`stage` and `operators`) with the same validation
+rules (`internal/config/config.go`). A config breaking a rule below fails the rollout:
+
+| Rule | Message |
+|---|---|
+| `stage` is `read`, `simulate` or `manage` | `policyManagement.stage "…" is one of read, simulate, manage` |
+| The six legacy switches were removed | Refused at config load and CRD admission ([upgrading](upgrading.md#merge-policies-removals)) |
+| `classAuthority: repository` needs `stage: manage` | `classAuthority repository needs policyManagement.stage manage` |
+| A cut-over entry declares no central `classes` or `mergePolicies` | `classAuthority repository: classes are declared centrally too, two authoritative sources (MP15): remove them` |
+| Broker `stage: manage`, set explicitly, needs `factoryURL` | `policyManagement.stage manage needs factoryURL: …`. Left unset, a broker without `factoryURL` starts and serves no settings page |
+
+
+## Merge policy usability and GitOps
+
+Recent decisions are available through `maku policy list` and `maku policy explain` and the matching
+broker API. `maku policy pause --repository owner/name --reason "incident freeze"` prints the
+`merge.paused` edit, or opens it as a GitOps pull request when `Factory.spec.gitops` is set; `resume`
+removes it. GitOps changes are always pull requests and Maku never merges them.
+
+`Repository` status adds `servedMode` beside the written mode, a `Ready` condition that is false on a
+refused generation or binding, and a `Paused` condition carrying the operator's reason. `kubectl get`
+now prints `POLICIES`, `LIVE` and `BINDINGSVALID`; `MergePolicy` adds `Description`.
+`maku_factory_policy_considered_total{repository,policy,reason}` counts every refused candidate and
+backs the automatic-merge and waiting panels. A refused binding alerts after 15 minutes, a paused
+repository after 24 hours.
 
 ## Merge policies removals
 
@@ -764,7 +850,7 @@ kubectl get factory,repository,mergepolicy -n agent-system -o json |
 
 | Before | Now | Until the next release |
 |---|---|---|
-| `policyManagement.{read, simulation, dualEvaluation, repositoryAuthority, approvalMemory, promotion}` | `policyManagement.stage`: `read`, `simulate` or `manage` ([the stages](merge-policies.md#rollout-stages)) | The switches load as the highest stage they cover; `stage` and a switch set together fail config load |
+| `policyManagement.{read, simulation, dualEvaluation, repositoryAuthority, approvalMemory, promotion}` | `policyManagement.stage`: `read`, `simulate` or `manage` ([the stages](upgrading.md#repository-file-authority)) | The switches load as the highest stage they cover; `stage` and a switch set together fail config load |
 | Nothing set under `policyManagement` | Stage `manage` | — |
 | `merge.autoMergesPerDay` | `merge.maxPerDay` | Both load; set to different values they refuse the repository. A repository that sets either takes neither from the Factory's `mergeDefaults` |
 

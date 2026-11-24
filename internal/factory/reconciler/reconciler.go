@@ -133,6 +133,7 @@ type metrics interface {
 	TraceExportAbandoned(ctx context.Context)
 	ClassMismatch(ctx context.Context, predicted, matched string)
 	MergeDecision(ctx context.Context, class, verdict, reason string)
+	PolicyConsidered(ctx context.Context, repository, policy, reason string)
 	PolicyDualDecision(ctx context.Context, repository, class, agreement string)
 	ApprovalGrantsActive(ctx context.Context, repository, class string, n int)
 	ApprovalGrantEvent(ctx context.Context, repository, class, event string)
