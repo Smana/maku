@@ -17,7 +17,7 @@ Every control sits outside the sandbox. A run cannot raise its own budget, widen
 egress, touch another repository's token or approve its own merge, however it is prompted.
 
 <a href="https://blog.ogenki.io/maku/">
-  <img alt="A 33-second screencast in light mode, the run rail as its subject: the room list, then a live demo playing a factory run. The camera closes on the rail as the implementer node appears with the reviewer and merge steps still ahead, pulls back for a human steering the agent and for the push held on its approval card, then closes on the rail again as the reviewer node draws with its edge from the pull request. Last, a finished task’s rail up close: scoper, tester and implementer done, the implementer marked steered twice with three chat messages, and its card listing every model that served it" src="docs/assets/maku-room.webp" width="800">
+  <img alt="A 32-second screencast of a real run: a one-line /maku handoff in OpenCode, the form that files the issue, the room as the implementer and the reviewer work, the maintainer's approval on GitHub, the merge, and the run's cost in Grafana." src="docs/assets/maku-run.webp" width="800">
 </a>
 
 **[Try on your laptop (15 min) →](docs/quickstart.md)** · **[Run a Tier-1 Pilot →](docs/pilot.md)** · **[Install on your cluster →](docs/install.md)** · **[Watch a run →](https://blog.ogenki.io/maku/)**
