@@ -513,3 +513,47 @@ func TestAcceptanceFixturesAgreeWithTheHarness(t *testing.T) {
 		}
 	}
 }
+
+func TestTheScoperRunsAtThePlanTier(t *testing.T) {
+	g := scopeRig(t, config.ScopeScoper)
+	cfg := g.r.Cfg.Current()
+	cfg.Scoper.PlanTier = "frontier"
+	cfg.Tiers["frontier"] = config.Tier{Model: "tier-frontier", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	s := g.runs.specs[rid(0)]
+	if s.Role != "triager" || s.Tier != "frontier" || s.Model != "tier-frontier" || s.MaxTokens != 4_000_000 || s.MaxMinutes != 90 {
+		t.Fatalf("scoper claim at planTier=frontier: %+v", s)
+	}
+}
+
+func TestAnUnsetPlanTierIsLight(t *testing.T) {
+	g := scopeRig(t, config.ScopeScoper)
+	cfg := g.r.Cfg.Current()
+	cfg.Scoper.PlanTier = ""
+	cfg.Tiers["light"] = config.Tier{Model: "tier-light", RunTokens: 300_000, TaskTokens: 600_000, RunMinutes: 20}
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	s := g.runs.specs[rid(0)]
+	if s.Role != "triager" || s.Tier != "light" || s.Model != "tier-light" || s.MaxTokens != 300_000 || s.MaxMinutes != 20 {
+		t.Fatalf("scoper claim with unset planTier: %+v", s)
+	}
+}
+
+func TestTheScopersCostCountsTowardTheTask(t *testing.T) {
+	g := scopeRig(t, config.ScopeScoper)
+	cfg := g.r.Cfg.Current()
+	cfg.Scoper.PlanTier = "frontier"
+	cfg.Tiers["frontier"] = config.Tier{Model: "tier-frontier", RunTokens: 4_000_000, TaskTokens: 8_000_000, RunMinutes: 90}
+	g.f.SetFile(".github/agent-factory/steering/review.md", reviewNote)
+	g.reconcile(t, "3buqdlot", 3)
+	g.r.Costs = fakeCosts{rid(0): {MicroUSD: 250_000}}
+	run := g.runs.runs[rid(0)]
+	run.Tokens = 50_000
+	g.runs.runs[rid(0)] = run
+	scopeHandoff(g, 0, readyScope())
+	tk := endScoper(t, g, "Succeeded", "agent_finished")
+	if tk.Status.Usage.CostMicroUSD != 250_000 || tk.Status.Usage.Tokens != 50_000 {
+		t.Fatalf("scoper spend should count toward task usage: %+v", tk.Status.Usage)
+	}
+}

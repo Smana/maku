@@ -35,9 +35,12 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 		"investigate": {Roles: []string{"triager"}},
 	}
 	stall := int32(DefaultStallSteps)
+	askOn, planOn, reviewOn, reviewOff := true, true, true, false
 	loops = map[string]Loop{
-		"default": {Scope: ScopeOff, StallSteps: &stall, Judge: NoJudge},
-		WorkflowCareful: {Scope: ScopeScoper, StallSteps: &stall, Judge: DefaultJudge, Search: true, Tests: true,
+		"default":     {Ask: &askOn, Review: &reviewOn, StallSteps: &stall, Judge: NoJudge},
+		WorkflowQuick: {Ask: &askOn, Review: &reviewOff, StallSteps: &stall, Judge: NoJudge},
+		WorkflowCareful: {Ask: &askOn, Plan: &planOn, Tests: true, Search: true, Review: &reviewOn,
+			StallSteps: &stall, Judge: DefaultJudge,
 			Split: &SplitPolicy{MaxChildren: 4, ChildTier: DefaultChildTier, AnyTier: true}},
 	}
 	return profiles, templates, loops
@@ -50,8 +53,16 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 func FillShippedWorkflows(profiles map[string]HarnessProfile, templates map[string]Template,
 	loops map[string]Loop, split bool) (map[string]HarnessProfile, map[string]Template, map[string]Loop) {
 	sp, st, sl := ShippedWorkflows()
+	_, userHadQuick := profiles[WorkflowQuick]
+	_, userHadDefault := loops["default"]
 	profiles = fill(profiles, sp)
 	templates = fill(templates, st)
+	quickTmpl := templates[profiles[WorkflowQuick].Template]
+	if (userHadQuick && string(profiles[WorkflowQuick].Loop) != WorkflowQuick) ||
+		(userHadDefault && string(profiles[WorkflowQuick].Loop) != WorkflowQuick) ||
+		slices.Contains(quickTmpl.Roles, "reviewer") {
+		delete(sl, WorkflowQuick)
+	}
 	if string(profiles[WorkflowCareful].Loop) != WorkflowCareful {
 		delete(sl, WorkflowCareful)
 	} else if !split {

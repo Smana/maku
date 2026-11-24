@@ -4,7 +4,6 @@ package config
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -72,6 +71,12 @@ func (c *Config) rowOf(name string) Loop {
 // split whole. Neither row is changed.
 func (l Loop) over(def Loop) Loop {
 	out := l
+	if out.Ask == nil {
+		out.Ask = def.Ask
+	}
+	if out.Review == nil {
+		out.Review = def.Review
+	}
 	if out.StallSteps == nil {
 		out.StallSteps = def.StallSteps
 	}
@@ -83,7 +88,10 @@ func (l Loop) over(def Loop) Loop {
 	if out.Judge == "" && (def.Judge != NoJudge || (l.StallSteps == nil && l.Continuations == nil)) {
 		out.Judge = def.Judge
 	}
-	out.Scope = cmp.Or(out.Scope, def.Scope)
+	if out.Scope == "" && out.Plan == nil {
+		out.Scope = def.Scope
+		out.Plan = def.Plan
+	}
 	if !out.searchSet && !out.Search { // a row built in Go with search true set it too
 		out.Search = def.Search
 	}
@@ -139,10 +147,13 @@ func (c *Config) inheritedKeys(name string) []string {
 		key        string
 		row, given bool
 	}{
+		{"ask", row.Ask != nil, def.Ask != nil},
+		{"plan", row.Plan != nil || row.Scope != "", def.Plan != nil},
+		{"review", row.Review != nil, def.Review != nil},
 		{"stallSteps", row.StallSteps != nil, def.StallSteps != nil},
 		{"continuations", row.Continuations != nil, def.Continuations != nil},
 		{"judge", row.Judge != "", def.Judge != ""},
-		{"scope", row.Scope != "", def.Scope != "" && def.Scope != ScopeOff},
+		{"scope", row.Scope != "" || row.Plan != nil, def.Scope != "" && def.Scope != ScopeOff},
 		{"search", row.searchSet || row.Search, def.Search},
 		{"tests", row.testsSet || row.Tests, def.Tests},
 		{"split", row.Split != nil, def.Split != nil},

@@ -935,11 +935,23 @@ type Resume struct {
 // Scoper bounds a scoping run's exploration (harness roles HR2): the harness nudges the scoper to
 // hand off at NudgeAt tool calls and ends the run at MaxToolCalls, as budget_calls. The factory
 // writes both into the scoper brief's first line, which the harness reads. Each is defaulted alone
-// when omitted.
+// when omitted. PlanTier picks the tier (model and run caps) the scoper runs at; unset is light.
 // +kubebuilder:object:generate=true
 type Scoper struct {
 	NudgeAt      int `json:"nudgeAt,omitempty"`
 	MaxToolCalls int `json:"maxToolCalls,omitempty"`
+	// PlanTier is the tier whose model and run caps the scoper runs at (WR6): light, standard or
+	// frontier; unset is light.
+	// +kubebuilder:validation:Enum=light;standard;frontier
+	PlanTier string `json:"planTier,omitempty"`
+}
+
+// PlanTierOr is the tier the scoper runs at: PlanTier when set, else light.
+func (s Scoper) PlanTierOr() string {
+	if s.PlanTier != "" {
+		return s.PlanTier
+	}
+	return "light"
 }
 
 // The scoper's bounds when the config omits them (HR2), and the most a config may ask for.
@@ -2074,6 +2086,9 @@ func (c *Config) Validate() error {
 		bad("scoper: 1 <= nudgeAt < maxToolCalls <= %d, got nudgeAt %d maxToolCalls %d (harness roles HR2)",
 			maxScoperToolCalls, s.NudgeAt, s.MaxToolCalls)
 	}
+	if pt := c.Scoper.PlanTier; pt != "" && !slices.Contains(tiers(), pt) {
+		bad("scoper.planTier %q is light, standard or frontier", pt)
+	}
 	// The run-request API (§4): the factory binary serves it from Task 5.4's wiring, so its
 	// block is as required as the rest of this file. A human caller is verified against the
 	// ZITADEL issuer and one of the rooms client ids; a system caller pairs issuer with JWKS.
@@ -2342,6 +2357,15 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 // default's row (WF10, rowOf).
 // +kubebuilder:object:generate=true
 type Loop struct {
+	// Ask checks whether an issue states acceptance before any run starts (WR6); absent inherits
+	// default's, or falls back to the scoper's forced question on legacy rows. Never switches the loop on.
+	Ask *bool `json:"ask,omitempty"`
+	// Plan runs the scoper before the implementer (WR6): plan: true is scope: scoper, plan: false
+	// is scope: off. Contradicting scope on the same row is refused. Never switches the loop on.
+	Plan *bool `json:"plan,omitempty"`
+	// Review resolves the template for a workflow that names none (pair when true, solo when
+	// false), and must agree with a workflow's explicit template (WR6). Never switches the loop on.
+	Review *bool `json:"review,omitempty"`
 	// StallSteps ends a run with no commit by this many steps (L3): 1 to 500, default 80.
 	StallSteps *int32 `json:"stallSteps,omitempty"`
 	// Continuations is how many not_yet verdicts continue the conversation (L2): 0 to 5, default 2.
@@ -2439,13 +2463,27 @@ func (m *ScopeMode) UnmarshalJSON(b []byte) error {
 	return nil
 }
 
+// scopeMode resolves a row's scope from its Scope and Plan keys; "" when neither is set.
+func (l Loop) scopeMode() ScopeMode {
+	if l.Scope != "" {
+		return l.Scope
+	}
+	if l.Plan != nil {
+		if *l.Plan {
+			return ScopeScoper
+		}
+		return ScopeOff
+	}
+	return ""
+}
+
 // ScopeFor is class's scope mode: its row's, else default's (WF10), off when neither sets one.
 func (c *Config) ScopeFor(class string) ScopeMode {
 	row := c.rowOf(class)
-	if row.Scope == "" {
-		return ScopeOff
+	if m := row.scopeMode(); m != "" {
+		return m
 	}
-	return row.Scope
+	return ScopeOff
 }
 
 // SearchFor reports whether class's implementer runs get the search tool (v3 feature 5, ST9): its
@@ -2459,7 +2497,7 @@ func (c *Config) SearchFor(class string) bool {
 // every pull request, to refuse one that changes a steering note.
 func (c *Config) SteeringOn() bool {
 	for _, row := range c.Loops {
-		if row.Scope != "" && row.Scope != ScopeOff {
+		if m := row.scopeMode(); m != "" && m != ScopeOff {
 			return true
 		}
 	}
@@ -2508,7 +2546,7 @@ func (c *Config) SplitFor(repository, class, row string) *SplitPolicy {
 		return nil
 	}
 	r := c.rowOf(row)
-	if r.Split == nil || r.Scope != ScopeScoper {
+	if r.Split == nil || r.scopeMode() != ScopeScoper {
 		return nil
 	}
 	p := *r.Split
@@ -2617,10 +2655,18 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 		default:
 			bad("loops.%s.scope %q is off, steering or scoper", name, m)
 		}
+		if row.Plan != nil && row.Scope != "" {
+			if *row.Plan && row.Scope != ScopeScoper {
+				bad("loops.%s: plan: true contradicts scope: %s", name, row.Scope)
+			}
+			if !*row.Plan && row.Scope == ScopeScoper {
+				bad("loops.%s: plan: false contradicts scope: scoper", name)
+			}
+		}
 		if s := row.Split; s != nil {
 			tier := cmp.Or(s.ChildTier, DefaultChildTier)
 			switch {
-			case row.Scope != ScopeScoper:
+			case row.scopeMode() != ScopeScoper:
 				bad("loops.%s.split needs scope: scoper on the same row: a split is the scoper's second answer", name)
 			case s.MaxChildren < 2 || s.MaxChildren > 5:
 				bad("loops.%s.split.maxChildren must be 2..5", name)

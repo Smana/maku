@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Independent stage switches and `scoper.planTier`](#independent-stage-switches-and-scoperplantier)
 - [A task steps up once](#a-task-steps-up-once)
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
 - [Merge policies removals](#merge-policies-removals)
@@ -39,6 +40,10 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Independent stage switches and `scoper.planTier`
+
+Each `loops` row now accepts independent stage keys `ask`, `plan`, and `review` beside `tests`, `search`, `judge`, and `split`. `plan: true` is equivalent to `scope: scoper` (`plan: false` to `scope: off`); setting a contradicting `plan` and `scope` on the same row is refused. `review` resolves the template for a workflow that names none (`pair` when `true`, `solo` when `false`) and is refused if it contradicts an explicit template. Existing platform rows that omit `ask`, `plan`, and `review` resolve as before (`plan` from `scope`, `review` from the template, `ask` from the scoper). The shipped presets now include a `quick` row (`review: false`) and set `ask: true` on `default`, `quick`, and `careful`. `Factory.spec.scoper.planTier` (`light`, `standard`, or `frontier`; unset is `light`) chooses the tier the scoper runs at; `maku install --print` writes `frontier`.
 
 ## A task steps up once
 

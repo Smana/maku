@@ -26,19 +26,23 @@ func scoperPlanned(t *v1alpha1.Task) bool {
 	return t.Spec.ScopeMode == string(config.ScopeScoper) && t.Spec.Scope == nil
 }
 
-// scoperSpec is the scoper's claim: a triager run at the light tier's run caps whatever the task's
-// tier (SO2), on the task's model until per-role models exist (SC10). The tier label is what the
-// meter caps the run's USD by. Its spend counts toward the task's caps as every run's does.
+// scoperSpec is the scoper's claim: a triager run at the configured planTier's model and run caps
+// (light when unset, WR6). The tier label is what the meter caps the run's USD by. Its spend
+// counts toward the task's caps as every run's does.
 func (r *Reconciler) scoperSpec(cfg *config.Config, t *v1alpha1.Task, text string) runs.Spec {
 	s := r.implementerSpec(cfg, t, text)
 	s.Role = "triager"
 	s.Persona = "scoper"
+	planTier := cfg.Scoper.PlanTierOr()
 	// Offered a split, the scoper also plans every part, and the light tier's run cap is what ended drill
-	// 6ysg5vvt's (budget-run at $0.51 in cache reads, before any handoff): it runs at the task's own tier,
-	// which implementerSpec already set. Otherwise the light tier's caps.
-	if t.Spec.Split == nil {
-		light := cfg.Tiers["light"]
-		s.Tier, s.MaxTokens, s.MaxMinutes = "light", light.RunTokens, light.RunMinutes
+	// 6ysg5vvt's (budget-run at $0.51 in cache reads, before any handoff): it runs at the higher of the
+	// task's tier and planTier. Without a split, it runs at planTier (light when unset).
+	if t.Spec.Split == nil || (cfg.Scoper.PlanTier != "" && slices.Index(tiers, planTier) > slices.Index(tiers, s.Tier)) {
+		tier := cfg.Tiers[planTier]
+		s.Tier, s.MaxTokens, s.MaxMinutes = planTier, tier.RunTokens, tier.RunMinutes
+		if tier.Model != "" {
+			s.Model = tier.Model
+		}
 	}
 	if t.Spec.Source.Kind == "api" && t.Spec.Budget.RunTokens > 0 { // never above the ceiling-derived run (C4)
 		s.MaxTokens = min(s.MaxTokens, t.Spec.Budget.RunTokens)
