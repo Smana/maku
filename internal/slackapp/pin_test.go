@@ -21,12 +21,12 @@ func TestProposalSelectBlocks(t *testing.T) {
 	if strings.Contains(string(raw), actionProposalProfile) {
 		t.Fatalf("a payload without pins has a select: %s", raw)
 	}
-	p.Pins = []string{"links-solo", "links-pair"}
+	p.Pins = []pinOption{{Name: "links-solo"}, {Name: "links-pair"}}
 	_, raw, err = proposalSections(p, nil, nil, "C03")
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{`"static_select"`, actionProposalProfile, "Workflow: factory's choice",
+	for _, want := range []string{`"static_select"`, actionProposalProfile, "Factory's choice",
 		`"value":"` + profileValue(p.Hash, p.Rev, "links-pair") + `"`, `"value":"` + profileValue(p.Hash, p.Rev, "") + `"`} {
 		if !strings.Contains(string(raw), want) {
 			t.Errorf("blocks lack %q: %s", want, raw)
@@ -34,6 +34,39 @@ func TestProposalSelectBlocks(t *testing.T) {
 	}
 	if strings.Contains(string(raw), `"Profile`) {
 		t.Error("the word is workflow (WF1)")
+	}
+}
+
+func TestThePinSelectDescribesEachWorkflow(t *testing.T) {
+	b := pinBlock("sha256:abc", 1, pinSelect{
+		Workflow:           "standard",
+		DefaultDescription: "An implementer and a reviewer. The default.",
+		DefaultCeilingUSD:  5.10,
+		Options: []pinOption{
+			{Name: "quick", Description: "One implementer. For changes a check can verify.", CeilingUSD: 5.10},
+			{Name: "careful", Description: "Scoped first, judged before review. For wide or unclear tasks.", CeilingUSD: 13.60},
+		},
+	})
+	sel := b.Elements.([]any)[0].(slackSelect)
+	if got := sel.Options[0].Text.Text; got != "Factory's choice: standard" {
+		t.Fatalf("first option %q", got)
+	}
+	if sel.Options[0].Description == nil || !strings.Contains(sel.Options[0].Description.Text, "Up to $5.10") || len([]rune(sel.Options[0].Description.Text)) > 75 {
+		t.Errorf("first option description %+v", sel.Options[0].Description)
+	}
+	for _, o := range sel.Options[1:] {
+		if o.Description == nil || !strings.Contains(o.Description.Text, "Up to $") || len([]rune(o.Description.Text)) > 75 {
+			t.Errorf("option %q: description %+v", o.Text.Text, o.Description)
+		}
+		if strings.HasPrefix(o.Text.Text, "Workflow: ") {
+			t.Errorf("a bare name: %q", o.Text.Text)
+		}
+	}
+}
+
+func TestAnOldOptionValueStillPins(t *testing.T) {
+	if _, p, ok := cutProfileValue(profileValue("sha256:abc", 1, "careful")); !ok || p != "careful" {
+		t.Fatal("the option's value changed shape")
 	}
 }
 
@@ -49,7 +82,7 @@ func pinRig(t *testing.T) (*appRig, ProposalPayload, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p.Pins = []string{"links-solo", "links-pair"}
+	p.Pins = []pinOption{{Name: "links-solo"}, {Name: "links-pair"}}
 	ts := "1729.0002"
 	rig.slack.seed(Message{TS: ts, ThreadTS: proposalThreadTS, User: "U0BOT", Text: "Proposal v1", Metadata: metaOf(t, proposalEventType, p)})
 	return rig, p, ts
@@ -90,8 +123,12 @@ func TestProposalProfileChoice(t *testing.T) {
 		t.Fatalf("edits %+v", edits)
 	}
 	next, ok := edits[0].meta.proposalPayload()
+	var pinNames []string
+	for _, o := range next.Pins {
+		pinNames = append(pinNames, o.Name)
+	}
 	if !ok || next.Rev != 2 || next.Pinned != "links-pair" || next.Hash == p.Hash ||
-		strings.Join(next.Pins, ",") != "links-solo,links-pair" {
+		strings.Join(pinNames, ",") != "links-solo,links-pair" {
 		t.Fatalf("next %+v", next)
 	}
 	if e := rig.slack.whispers(); len(e) != 1 || !strings.Contains(e[0].text, "links-pair") {

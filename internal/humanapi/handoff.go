@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/authn"
+	"github.com/Smana/maku/internal/factory/catalogue"
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/mcpwire"
@@ -101,19 +102,34 @@ type handoffResult struct {
 	Budget     float64          `json:"budget"`
 }
 
+// WorkflowChoice describes one workflow offered by the catalogue for a handoff plan.
+type WorkflowChoice struct {
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	CeilingUSD       float64  `json:"ceilingUSD,omitempty"`
+	StepUpCeilingUSD float64  `json:"stepUpCeilingUSD,omitempty"`
+	Path             []string `json:"path,omitempty"`
+}
+
 type handoffDraft struct {
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Repository string   `json:"repository"`
-	Workflows  []string `json:"workflows,omitempty"`
+	Title           string           `json:"title"`
+	Body            string           `json:"body"`
+	Repository      string           `json:"repository"`
+	Workflows       []string         `json:"workflows,omitempty"`
+	WorkflowChoices []WorkflowChoice `json:"workflowChoices,omitempty"`
+	DefaultChoice   *WorkflowChoice  `json:"defaultChoice,omitempty"`
+	ActiveChoice    *WorkflowChoice  `json:"activeChoice,omitempty"`
 }
 
 type handoffChecked struct {
 	planChecked
-	Workflows  []string `json:"workflows,omitempty"`
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Repository string   `json:"repository"`
+	Workflows       []string         `json:"workflows,omitempty"`
+	WorkflowChoices []WorkflowChoice `json:"workflowChoices,omitempty"`
+	DefaultChoice   *WorkflowChoice  `json:"defaultChoice,omitempty"`
+	ActiveChoice    *WorkflowChoice  `json:"activeChoice,omitempty"`
+	Title           string           `json:"title"`
+	Body            string           `json:"body"`
+	Repository      string           `json:"repository"`
 }
 
 type handoffCheckArgs struct {
@@ -692,11 +708,14 @@ func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args j
 	return viewResult{
 		text: text,
 		data: handoffChecked{
-			planChecked: checked,
-			Workflows:   draft.Workflows,
-			Title:       draft.Title,
-			Body:        draft.Body,
-			Repository:  draft.Repository,
+			planChecked:     checked,
+			Workflows:       draft.Workflows,
+			WorkflowChoices: draft.WorkflowChoices,
+			DefaultChoice:   draft.DefaultChoice,
+			ActiveChoice:    draft.ActiveChoice,
+			Title:           draft.Title,
+			Body:            draft.Body,
+			Repository:      draft.Repository,
 		},
 	}, nil
 }
@@ -718,14 +737,34 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	}
 
 	var workflows []string
+	var workflowChoices []WorkflowChoice
+	var defaultChoice, activeChoice *WorkflowChoice
 	var maintainer *bool
 	defaultNotOffered := ""
+	var catProfiles map[string]catalogue.Profile
+	var catDefault string
 	if s.Catalogue != nil {
 		if cat, err := s.Catalogue.Get(ctx, p, base.Repository, onBehalfOf); err == nil {
 			m := cat.Maintainer
 			maintainer = &m
+			catProfiles = cat.Profiles
+			catDefault = cat.DefaultWorkflow
 			if cat.DefaultWorkflow != "" && !cat.Profiles[cat.DefaultWorkflow].Offered {
 				defaultNotOffered = cat.DefaultWorkflow
+			}
+			choiceOf := func(name string) WorkflowChoice {
+				pr := cat.Profiles[name]
+				return WorkflowChoice{
+					Name:             name,
+					Description:      pr.Description,
+					CeilingUSD:       pr.CeilingUSD,
+					StepUpCeilingUSD: pr.StepUpCeilingUSD,
+					Path:             slices.Clone(pr.Path),
+				}
+			}
+			if cat.DefaultWorkflow != "" {
+				dc := choiceOf(cat.DefaultWorkflow)
+				defaultChoice = &dc
 			}
 			if cat.Maintainer {
 				offered := cat.Workflows()
@@ -734,6 +773,9 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 						workflows = append([]string{cat.DefaultWorkflow}, offered...)
 					} else {
 						workflows = offered
+					}
+					for _, name := range workflows {
+						workflowChoices = append(workflowChoices, choiceOf(name))
 					}
 				}
 			}
@@ -779,9 +821,28 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	if s.choices.first(plan.Hash) {
 		s.countChoices(ctx, plan, surface)
 	}
+	if len(catProfiles) > 0 {
+		activeName := catDefault
+		if len(plan.Issues) > 0 && plan.Issues[0].Profile != "" {
+			activeName = plan.Issues[0].Profile
+		}
+		if pr, ok := catProfiles[activeName]; ok {
+			ac := WorkflowChoice{
+				Name:             activeName,
+				Description:      pr.Description,
+				CeilingUSD:       pr.CeilingUSD,
+				StepUpCeilingUSD: pr.StepUpCeilingUSD,
+				Path:             slices.Clone(pr.Path),
+			}
+			activeChoice = &ac
+		}
+	}
 	draft := handoffDraft{
-		Repository: plan.Repository,
-		Workflows:  workflows,
+		Repository:      plan.Repository,
+		Workflows:       workflows,
+		WorkflowChoices: workflowChoices,
+		DefaultChoice:   defaultChoice,
+		ActiveChoice:    activeChoice,
 	}
 	if len(plan.Issues) > 0 {
 		draft.Title = plan.Issues[0].Title

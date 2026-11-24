@@ -332,6 +332,39 @@ func renderTaskText(in taskTextIn) string {
 		b.WriteString(left + "\n")
 	}
 
+	if p := in.Sum.Status.Profile; p != nil {
+		f := envelope.TaskFacts{
+			Phase:   in.Sum.Status.Phase,
+			Reason:  in.Sum.Status.Reason,
+			Issue:   in.Sum.Status.Issue,
+			PR:      in.Sum.Status.PR,
+			Spend:   in.Sum.Status.Spend,
+			Profile: p,
+		}
+		if in.Sum.Flow != nil {
+			f.Plan = in.Sum.Flow.Plan
+		}
+		card := roomview.CardOf(&f, "")
+		wf := taskClean(card.Workflow)
+		if card.Reason != "" {
+			wf += " · " + taskClean(card.Reason)
+		}
+		row("Workflow", wf)
+		if len(card.Path) > 0 {
+			row("Will run", strings.Join(card.Path, " → "))
+		}
+		if card.CeilingUSD > 0 {
+			cost := "up to " + roomview.Dollars(card.CeilingUSD)
+			if card.StepUpUSD > 0 {
+				cost += " · up to " + roomview.Dollars(card.StepUpUSD) + " if it steps up"
+			}
+			row("Cost", cost)
+		}
+		if strip := summary.Strip(in.Sum.Flow); strip != "" {
+			row("Path", strip)
+		}
+	}
+
 	row("State", taskStateWords(in.Sum))
 	row("Needs you", taskNeedsText(in.Needs))
 	if budget := taskBudgetText(in.Sum); budget != "" {
