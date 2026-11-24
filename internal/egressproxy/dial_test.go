@@ -8,6 +8,7 @@ import (
 	"net"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeResolver map[string][]string
@@ -19,7 +20,8 @@ func (f fakeResolver) LookupIPAddr(_ context.Context, host string) ([]net.IPAddr
 	}
 	out := make([]net.IPAddr, 0, len(ips))
 	for _, s := range ips {
-		out = append(out, net.IPAddr{IP: net.ParseIP(s)})
+		ipStr, zone, _ := strings.Cut(s, "%")
+		out = append(out, net.IPAddr{IP: net.ParseIP(ipStr), Zone: zone})
 	}
 	return out, nil
 }
@@ -30,9 +32,12 @@ func TestDialerRefusesNonPublicAddresses(t *testing.T) {
 		"v6loop.example": {"::1"}, "cgnat.example": {"100.64.1.1"}, "corp.example": {"203.0.113.9"},
 		"mixed.example": {"140.82.112.3", "10.1.2.3"}, "public.example": {"140.82.112.3"},
 		"ula.example": {"fd00::1"}, "zero.example": {"0.0.0.0"},
-		// IPv6 forms that carry an IPv4 address: NAT64, 6to4 and IPv4-compatible
+		// IPv6 forms that carry an IPv4 address or special/zoned ranges
 		"nat64.example": {"64:ff9b::a00:1"}, "sixtofour.example": {"2002:a00:1::1"}, "compat.example": {"::10.0.0.1"},
-		"compatpub.example": {"::140.82.112.3"},
+		"compatpub.example":  {"::140.82.112.3"},
+		"translated.example": {"::ffff:0:10.0.0.1"}, "teredo.example": {"2001::1"},
+		"sitelocal.example": {"fec0::1"}, "discard.example": {"100::1"},
+		"zoned.example": {"2606:4700::1111%eth0"},
 	}
 	var dialled []string
 	d := &Dialer{Resolver: res, Deny: MustCIDRs("203.0.113.0/24"),
@@ -43,7 +48,8 @@ func TestDialerRefusesNonPublicAddresses(t *testing.T) {
 			return c, nil
 		}}
 	for _, h := range []string{"loop.example", "ten.example", "meta.example", "v6loop.example", "cgnat.example", "corp.example", "mixed.example", "ula.example", "zero.example",
-		"nat64.example", "sixtofour.example", "compat.example", "compatpub.example"} {
+		"nat64.example", "sixtofour.example", "compat.example", "compatpub.example",
+		"translated.example", "teredo.example", "sitelocal.example", "discard.example", "zoned.example"} {
 		if _, err := d.DialContext(t.Context(), h+":443"); !errors.Is(err, ErrRefused) {
 			t.Errorf("%s: want ErrRefused, got %v", h, err)
 		}
@@ -61,5 +67,31 @@ func TestDialerRefusesNonPublicAddresses(t *testing.T) {
 	}
 	if _, err := d.DialContext(t.Context(), "nowhere.example:443"); err == nil || errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "no such host") {
 		t.Fatalf("an unresolvable name is an error, not a refusal: %v", err)
+	}
+}
+
+func TestDialerUsesOneOverallDeadlineAcrossIPs(t *testing.T) {
+	res := fakeResolver{"multi.example": {"140.82.112.3", "140.82.112.4", "140.82.112.5"}}
+	var attempts int
+	d := &Dialer{
+		Resolver: res,
+		Timeout:  40 * time.Millisecond,
+		Dial: func(ctx context.Context, _, _ string) (net.Conn, error) {
+			attempts++
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	}
+	start := time.Now()
+	_, err := d.DialContext(t.Context(), "multi.example:443")
+	elapsed := time.Since(start)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("want DeadlineExceeded, got %v", err)
+	}
+	if attempts != 1 {
+		t.Fatalf("attempts = %d, want 1 (overall deadline expired on first IP)", attempts)
+	}
+	if elapsed > 100*time.Millisecond {
+		t.Fatalf("elapsed = %v, expected bounded by single 40ms timeout", elapsed)
 	}
 }

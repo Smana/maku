@@ -195,6 +195,9 @@ func (a *App) actConfirm(ctx context.Context, th Thread, action, room, user stri
 // actPress handles a button press on a thread line's Stop/Retry button or on a stop/retry
 // confirmation's Confirm/Cancel buttons.
 func (a *App) actPress(ctx context.Context, in interaction) string {
+	unlock := a.edits.lock(in.Channel, in.MessageTS)
+	defer unlock()
+
 	msg, err := a.Slack.Message(ctx, in.Channel, in.MessageTS)
 	if err != nil {
 		a.log().Warn("slack message fetch failed", "channel", in.Channel, "ts", in.MessageTS, "err", err)

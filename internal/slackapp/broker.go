@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"golang.org/x/oauth2"
+	"golang.org/x/sync/singleflight"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
@@ -40,27 +41,65 @@ type Tokens struct {
 
 	mu  sync.Mutex
 	tok *oauth2.Token
+	gen uint64
+	sf  singleflight.Group
 }
 
-// Token is the cached access token, fetched when there is none or it expired.
+// Token is the cached access token, fetched when there is none or it expired. Concurrent misses
+// coalesce without holding mu across network I/O.
 func (s *Tokens) Token(ctx context.Context) (string, error) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.tok.Valid() {
-		t, err := s.Fetch(ctx)
+	if s.tok.Valid() {
+		tok := s.tok.AccessToken
+		s.mu.Unlock()
+		return tok, nil
+	}
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return "", fmt.Errorf("slackapp: token: %w", err)
+	}
+
+	ch := s.sf.DoChan("token", func() (any, error) {
+		s.mu.Lock()
+		if s.tok.Valid() {
+			tok := s.tok.AccessToken
+			s.mu.Unlock()
+			return tok, nil
+		}
+		gen := s.gen
+		s.mu.Unlock()
+
+		fctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+		defer cancel()
+		t, err := s.Fetch(fctx)
 		if err != nil {
 			return "", fmt.Errorf("slackapp: token: %w", err)
 		}
-		s.tok = t
+		s.mu.Lock()
+		if s.gen == gen {
+			s.tok = t
+		}
+		s.mu.Unlock()
+		return t.AccessToken, nil
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		return res.Val.(string), nil
+	case <-ctx.Done():
+		return "", fmt.Errorf("slackapp: token: %w", ctx.Err())
 	}
-	return s.tok.AccessToken, nil
 }
 
 // Invalidate drops the cached token after a 401, so the retry fetches a new one.
 func (s *Tokens) Invalidate() {
 	s.mu.Lock()
 	s.tok = nil
+	s.gen++
 	s.mu.Unlock()
+	s.sf.Forget("token")
 }
 
 // Refused is a tool's refusal ("rejected: <code>"), shown in the thread as is.
@@ -556,6 +595,10 @@ func (b Broker) post(ctx context.Context, body []byte) ([]byte, int, error) {
 	return b.send(ctx, "/mcp", body, true)
 }
 
+var defaultBrokerHTTPClient = sync.OnceValue(func() *http.Client {
+	return httpx.New(30*time.Second, nil)
+})
+
 // send is one POST to the broker, as the App's principal: path is the listener's route, mcp adds
 // the tools endpoint's own headers (the decide route takes none).
 func (b Broker) send(ctx context.Context, path string, body []byte, mcp bool) ([]byte, int, error) {
@@ -575,7 +618,7 @@ func (b Broker) send(ctx context.Context, path string, body []byte, mcp bool) ([
 	req.Header.Set("Authorization", "Bearer "+tok)
 	hc := b.HC
 	if hc == nil {
-		hc = httpx.New(30*time.Second, nil)
+		hc = defaultBrokerHTTPClient()
 	}
 	resp, err := hc.Do(req)
 	if err != nil {

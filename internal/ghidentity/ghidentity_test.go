@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -144,5 +146,51 @@ func TestSeveralGitHubLinksFailClosed(t *testing.T) {
 	links = []ghidentity.Link{{IDPID: "gh-idp", UserID: "1"}, {IDPID: "gh-idp", UserID: "1"}}
 	if got, err := r.Login(context.Background(), "u1", "Smana/x"); err != nil || got != "octocat" {
 		t.Fatalf("a repeated identical link is not ambiguous: %q %v", got, err)
+	}
+}
+
+func TestForgetDuringInFlightLoginDoesNotRecache(t *testing.T) {
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	r := &ghidentity.Resolver{
+		IDPID: "gh-idp",
+		TTL:   5 * time.Minute,
+		Now:   time.Now,
+		Links: func(context.Context, string) ([]ghidentity.Link, error) {
+			if calls.Add(1) == 1 {
+				close(inFlight)
+				<-release
+				return []ghidentity.Link{{IDPID: "gh-idp", UserID: "42"}}, nil
+			}
+			// Link was revoked before the second lookup.
+			return nil, nil
+		},
+		LoginOf: func(context.Context, string, int64) (string, error) {
+			return "octocat", nil
+		},
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if got, err := r.Login(context.Background(), "u1", "Smana/x"); err != nil || got != "octocat" {
+			t.Errorf("in-flight Login: %q %v", got, err)
+		}
+	}()
+
+	<-inFlight
+	r.Forget("u1")
+	close(release)
+	wg.Wait()
+
+	// The stale in-flight result must not have been cached; the next lookup sees the revocation.
+	got, err := r.Login(context.Background(), "u1", "Smana/x")
+	if err != nil || got != "" {
+		t.Fatalf("after Forget, Login = %q, %v; want empty (revoked)", got, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("Links calls = %d, want 2", calls.Load())
 	}
 }

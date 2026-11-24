@@ -820,3 +820,20 @@ func TestEmitterSendsTheVerdictOnceAcrossARestart(t *testing.T) {
 		t.Fatalf("%d deliveries with the sealed room, want 3", n)
 	}
 }
+
+func TestEmitterNilMetrics(t *testing.T) {
+	var hits atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+	rig := newEmitterRig(t, srv.URL, []string{"room.ended"})
+	rig.em.Metrics = nil
+	rig.start()
+	rig.log("aaaaaaaa", fact(1, factsPhase("Done")))
+	rig.waitCursor(t, "aaaaaaaa", 1)
+	if hits.Load() != 1 {
+		t.Fatalf("hits = %d, want 1", hits.Load())
+	}
+}

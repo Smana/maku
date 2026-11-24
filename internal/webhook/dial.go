@@ -13,7 +13,8 @@ import (
 )
 
 // refused are the reserved ranges beyond what netip classifies, and the IPv6 forms that embed an
-// IPv4 (NAT64, 6to4), refused outright rather than unwrapped.
+// IPv4 (NAT64, 6to4, Teredo, IPv4-compatible, IPv4-translated), deprecated site-local and discard,
+// refused outright rather than unwrapped.
 var refused = []netip.Prefix{
 	netip.MustParsePrefix("100.64.0.0/10"), // CGNAT, the tailnet
 	netip.MustParsePrefix("0.0.0.0/8"),
@@ -23,11 +24,20 @@ var refused = []netip.Prefix{
 	netip.MustParsePrefix("64:ff9b::/96"),
 	netip.MustParsePrefix("64:ff9b:1::/48"),
 	netip.MustParsePrefix("2002::/16"),
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("::ffff:0:0:0/96"),
+	netip.MustParsePrefix("2001::/32"),
+	netip.MustParsePrefix("fec0::/10"),
+	netip.MustParsePrefix("100::/64"),
 }
 
 // Guard refuses an address an internet subscriber may never resolve to (R20): loopback, private,
-// link-local (cloud metadata included), CGNAT (the tailnet), unique-local and unspecified.
+// link-local (cloud metadata included), CGNAT (the tailnet), unique-local, unspecified and zoned
+// IPv6 addresses.
 func Guard(a netip.Addr) error {
+	if !a.IsValid() || a.Zone() != "" {
+		return errors.New("webhook: refused address")
+	}
 	a = a.Unmap()
 	if a.IsLoopback() || a.IsPrivate() || a.IsLinkLocalUnicast() || a.IsLinkLocalMulticast() || a.IsUnspecified() ||
 		a.IsMulticast() || slices.ContainsFunc(refused, func(p netip.Prefix) bool { return p.Contains(a) }) {

@@ -35,6 +35,7 @@ type Resolver struct {
 
 	mu         sync.Mutex
 	cache      map[string]entry
+	gen        uint64
 	maxEntries int // 0 means defaultMaxEntries
 }
 
@@ -62,13 +63,14 @@ func (r *Resolver) CheckActive(ctx context.Context, sub string) error {
 	now := r.Now()
 	r.mu.Lock()
 	e := r.cache[sub]
+	gen := r.gen
 	r.mu.Unlock()
 	if e.stateAt.IsZero() || now.Sub(e.stateAt) >= r.TTL {
 		active, err := r.Active(ctx, sub)
 		if err != nil {
 			return fmt.Errorf("ghidentity: cannot read %s's state: %w", sub, err)
 		}
-		r.update(sub, func(e *entry) { e.active, e.stateAt = active, now })
+		r.update(sub, gen, func(e *entry) { e.active, e.stateAt = active, now })
 		e.active = active
 	}
 	if !e.active {
@@ -89,6 +91,7 @@ func (r *Resolver) Login(ctx context.Context, sub, repo string) (string, error) 
 	}
 	r.mu.Lock()
 	e := r.cache[sub]
+	gen := r.gen
 	r.mu.Unlock()
 	if !e.at.IsZero() && r.Now().Sub(e.at) < r.TTL {
 		return e.login, nil
@@ -119,14 +122,18 @@ func (r *Resolver) Login(ctx context.Context, sub, repo string) (string, error) 
 		}
 	}
 	at := r.Now()
-	r.update(sub, func(e *entry) { e.login, e.at = login, at })
+	r.update(sub, gen, func(e *entry) { e.login, e.at = login, at })
 	return login, nil
 }
 
-// update applies fn to sub's entry, first dropping the oldest entry if sub would grow a full cache.
-func (r *Resolver) update(sub string, fn func(*entry)) {
+// update applies fn to sub's entry unless Forget ran since gen was read, first dropping the oldest
+// entry if sub would grow a full cache.
+func (r *Resolver) update(sub string, gen uint64, fn func(*entry)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.gen != gen {
+		return
+	}
 	if r.cache == nil {
 		r.cache = map[string]entry{}
 	}
@@ -162,5 +169,6 @@ func (e entry) read() time.Time {
 func (r *Resolver) Forget(sub string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	r.gen++
 	delete(r.cache, sub)
 }

@@ -108,10 +108,16 @@ type Emitter struct {
 
 type subState struct {
 	Subscriber
-	sem      chan struct{}
 	client   *http.Client
 	disabled atomic.Bool
+	notify   chan struct{} // buffered 1: wakes a worker when pending has work
+	pending  []string      // rooms waiting for a worker; guarded by e.mu
 }
+
+type nopRecorder struct{}
+
+func (nopRecorder) WebhookDelivery(context.Context, string, string) {}
+func (nopRecorder) WebhookDisabled(context.Context, string, bool)   {}
 
 // roomInfo is what the log (and, failing that, the Room) says of one room: its repository, how
 // far the log was read for it, and whether the log is sealed. Shared by every subscriber.
@@ -183,6 +189,9 @@ func (e *Emitter) Start(ctx context.Context) error {
 	if e.Logger == nil {
 		e.Logger = slog.New(slog.DiscardHandler)
 	}
+	if e.Metrics == nil {
+		e.Metrics = nopRecorder{}
+	}
 	if e.Now == nil {
 		e.Now = time.Now
 	}
@@ -200,7 +209,7 @@ func (e *Emitter) Start(ctx context.Context) error {
 	e.mismatched = map[workerKey]bool{}
 	e.trackers, e.lru = map[workerKey]*list.Element{}, list.New()
 	for _, s := range e.Subs {
-		st := &subState{Subscriber: s, sem: make(chan struct{}, maxWorkers)}
+		st := &subState{Subscriber: s, notify: make(chan struct{}, 1)}
 		disabled, err := e.register(ctx, s)
 		if err != nil {
 			return nil // ctx ended
@@ -214,6 +223,15 @@ func (e *Emitter) Start(ctx context.Context) error {
 			st.client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 		}
 		e.subs = append(e.subs, st)
+	}
+	for _, st := range e.subs {
+		for range maxWorkers {
+			e.wg.Add(1)
+			go func() {
+				defer e.wg.Done()
+				e.runWorker(ctx, st)
+			}()
+		}
 	}
 	queue := make(chan string, queueSize)
 	e.wg.Add(2)
@@ -376,9 +394,10 @@ func (e *Emitter) sweep(ctx context.Context) {
 	}
 }
 
-// kick runs a worker for (s, room), or asks the one that runs to look again (M7: one worker per
-// subscriber and room, so a dead subscriber's retry waits hold no other subscriber back).
-func (e *Emitter) kick(ctx context.Context, s *subState, room string) {
+// kick enqueues (s, room) on s's fixed worker pool, or asks the active worker to look again
+// (M7: each subscriber owns its own pool of maxWorkers goroutines, so a dead subscriber's retry
+// waits hold no other subscriber back and a burst of dirty rooms spawns no unbounded goroutines).
+func (e *Emitter) kick(_ context.Context, s *subState, room string) {
 	key := workerKey{s.Name, room}
 	e.mu.Lock()
 	if e.running[key] {
@@ -387,36 +406,76 @@ func (e *Emitter) kick(ctx context.Context, s *subState, room string) {
 		return
 	}
 	e.running[key] = true
+	s.pending = append(s.pending, room)
 	e.mu.Unlock()
-	e.wg.Add(1)
-	go func() {
-		defer e.wg.Done()
-		for {
+	select {
+	case s.notify <- struct{}{}:
+	default:
+	}
+}
+
+func (e *Emitter) runWorker(ctx context.Context, s *subState) {
+	for {
+		room, ok := e.nextRoom(s)
+		if !ok {
 			select {
-			case s.sem <- struct{}{}:
 			case <-ctx.Done():
-				e.mu.Lock()
-				delete(e.running, key)
-				delete(e.again, key)
-				e.mu.Unlock()
 				return
+			case <-s.notify:
+				continue
 			}
-			held := e.work(ctx, s, room)
-			<-s.sem
-			e.mu.Lock()
-			if held {
-				e.dirty[key] = true
-			}
-			if !e.again[key] || ctx.Err() != nil {
-				delete(e.running, key)
-				delete(e.again, key)
-				e.mu.Unlock()
-				return
-			}
-			delete(e.again, key)
-			e.mu.Unlock()
 		}
-	}()
+		if ctx.Err() != nil {
+			return
+		}
+		e.signalIfPending(s)
+		key := workerKey{s.Name, room}
+		held := e.work(ctx, s, room)
+		e.mu.Lock()
+		if held {
+			e.dirty[key] = true
+		}
+		if e.again[key] && ctx.Err() == nil {
+			delete(e.again, key)
+			s.pending = append(s.pending, room)
+			e.mu.Unlock()
+			select {
+			case s.notify <- struct{}{}:
+			default:
+			}
+			continue
+		}
+		delete(e.running, key)
+		delete(e.again, key)
+		e.mu.Unlock()
+	}
+}
+
+func (e *Emitter) nextRoom(s *subState) (string, bool) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if len(s.pending) == 0 {
+		return "", false
+	}
+	room := s.pending[0]
+	s.pending[0] = ""
+	s.pending = s.pending[1:]
+	if len(s.pending) == 0 {
+		s.pending = nil
+	}
+	return room, true
+}
+
+func (e *Emitter) signalIfPending(s *subState) {
+	e.mu.Lock()
+	more := len(s.pending) > 0
+	e.mu.Unlock()
+	if more {
+		select {
+		case s.notify <- struct{}{}:
+		default:
+		}
+	}
 }
 
 // work delivers room's pending events to s. held is true when it must be retried later without
@@ -428,6 +487,12 @@ func (e *Emitter) work(ctx context.Context, s *subState, room string) (held bool
 		key := workerKey{s.Name, room}
 		e.mu.Lock()
 		first := !e.mismatched[key]
+		if first && len(e.mismatched) >= maxRooms {
+			for k := range e.mismatched {
+				delete(e.mismatched, k)
+				break
+			}
+		}
 		e.mismatched[key] = true
 		e.mu.Unlock()
 		if first { // once per subscriber and room, not once per sweep

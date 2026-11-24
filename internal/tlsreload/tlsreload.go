@@ -13,18 +13,34 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 )
+
+// retryBackoff bounds how often a failing pair with the same file stamp is re-read, so a broken
+// renewal does not hot-loop disk reads while still recovering if the file is fixed in place.
+const retryBackoff = time.Second
 
 // Config serves the pair at certFile and keyFile, TLS 1.3 minimum. Each handshake compares both
 // files' size and modification time with the last seen, and re-reads the pair once either
 // changes. A pair that fails to load, such as one caught mid-rotation, is logged and the last
 // good one stays in service. It refuses to start without a loadable pair. A nil log discards.
 func Config(certFile, keyFile string, log *slog.Logger) (*tls.Config, error) {
+	kp, err := newKeyPair(certFile, keyFile, log, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	return &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: kp.get}, nil
+}
+
+func newKeyPair(certFile, keyFile string, log *slog.Logger, now func() time.Time) (*keyPair, error) {
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
-	kp := &keyPair{certFile: filepath.Clean(certFile), keyFile: filepath.Clean(keyFile), log: log}
+	if now == nil {
+		now = time.Now
+	}
+	kp := &keyPair{certFile: filepath.Clean(certFile), keyFile: filepath.Clean(keyFile), log: log, now: now}
 	stamp, err := kp.stat()
 	if err != nil {
 		return nil, fmt.Errorf("tlsreload: the key pair: %w", err)
@@ -33,8 +49,9 @@ func Config(certFile, keyFile string, log *slog.Logger) (*tls.Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("tlsreload: the key pair: %w", err)
 	}
-	kp.cert, kp.seen = &cert, stamp
-	return &tls.Config{MinVersion: tls.VersionTLS13, GetCertificate: kp.get}, nil
+	kp.cert.Store(&cert)
+	kp.seen.Store(&stamp)
+	return kp, nil
 }
 
 // fileStamp is what a rewrite of a file changes. A projected Secret volume swaps a symlink;
@@ -47,10 +64,14 @@ type fileStamp struct {
 type keyPair struct {
 	certFile, keyFile string
 	log               *slog.Logger
+	now               func() time.Time
 
-	mu   sync.Mutex
-	cert *tls.Certificate
-	seen [2]fileStamp
+	cert atomic.Pointer[tls.Certificate]
+	seen atomic.Pointer[[2]fileStamp]
+
+	mu       sync.Mutex
+	failedAt time.Time
+	failedSt [2]fileStamp
 }
 
 func (k *keyPair) stat() ([2]fileStamp, error) {
@@ -67,20 +88,27 @@ func (k *keyPair) stat() ([2]fileStamp, error) {
 
 func (k *keyPair) get(*tls.ClientHelloInfo) (*tls.Certificate, error) {
 	stamp, err := k.stat()
+	if err != nil || stamp == *k.seen.Load() {
+		return k.cert.Load(), nil // unchanged or missing mid-rotation: keep the last good pair
+	}
 	k.mu.Lock()
 	defer k.mu.Unlock()
-	if err != nil || stamp == k.seen {
-		return k.cert, nil // a file missing mid-rotation: keep the last good pair
+	if stamp == *k.seen.Load() {
+		return k.cert.Load(), nil
 	}
-	// Remembered even when the load fails: the next attempt waits for the next change instead
-	// of re-reading a broken pair on every handshake.
-	k.seen = stamp
+	now := k.now()
+	if stamp == k.failedSt && now.Sub(k.failedAt) < retryBackoff {
+		return k.cert.Load(), nil
+	}
 	cert, err := tls.LoadX509KeyPair(k.certFile, k.keyFile)
 	if err != nil {
+		k.failedSt, k.failedAt = stamp, now
 		k.log.Error("the renewed key pair does not load; serving the previous one", "cert", k.certFile, "err", err)
-		return k.cert, nil
+		return k.cert.Load(), nil
 	}
-	k.cert = &cert
+	k.seen.Store(&stamp)
+	k.failedSt, k.failedAt = [2]fileStamp{}, time.Time{}
+	k.cert.Store(&cert)
 	k.log.Info("reloaded the key pair", "cert", k.certFile, "notAfter", cert.Leaf.NotAfter)
-	return k.cert, nil
+	return &cert, nil
 }

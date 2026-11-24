@@ -485,3 +485,60 @@ func TestAppCallsOnlyNewTools(t *testing.T) {
 		t.Fatalf("run_create args: %+v", rc)
 	}
 }
+
+func TestTokensSingleflightAndInvalidateDuringFetch(t *testing.T) {
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	var calls atomic.Int32
+	toks := &Tokens{
+		Fetch: func(context.Context) (*oauth2.Token, error) {
+			n := calls.Add(1)
+			if n == 1 {
+				close(entered)
+				<-release
+				return &oauth2.Token{AccessToken: "tok-1", Expiry: time.Now().Add(time.Hour)}, nil
+			}
+			return &oauth2.Token{AccessToken: "tok-2", Expiry: time.Now().Add(time.Hour)}, nil
+		},
+	}
+
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			got, err := toks.Token(t.Context())
+			if err != nil || got != "tok-1" {
+				t.Errorf("concurrent Token: %q, %v", got, err)
+			}
+		})
+	}
+	<-entered
+	time.Sleep(10 * time.Millisecond)
+
+	// Invalidate must not block on the in-flight Fetch (mu is not held across HTTP I/O).
+	invDone := make(chan struct{})
+	go func() {
+		defer close(invDone)
+		toks.Invalidate()
+	}()
+	select {
+	case <-invDone:
+	case <-time.After(time.Second):
+		close(release)
+		t.Fatal("Invalidate blocked while Fetch was in flight")
+	}
+
+	close(release)
+	wg.Wait()
+	if calls.Load() != 1 {
+		t.Fatalf("coalesced Fetch calls = %d, want 1", calls.Load())
+	}
+
+	// Because Invalidate ran while tok-1 was in flight, tok-1 must not have been cached.
+	got, err := toks.Token(t.Context())
+	if err != nil || got != "tok-2" {
+		t.Fatalf("after Invalidate: got %q, %v; want tok-2", got, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("Fetch calls after Invalidate = %d, want 2", calls.Load())
+	}
+}

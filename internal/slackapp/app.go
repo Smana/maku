@@ -785,7 +785,7 @@ func (a *App) Webhooks() http.Handler {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		id, err := webhook.Verify(keys, r.Header, body, a.Now())
+		id, err := webhook.Verify(keys, r.Header, body, a.now())
 		if err != nil {
 			a.count(ctx, "webhooks", "bad_signature")
 			http.Error(w, "unauthorized", http.StatusUnauthorized)

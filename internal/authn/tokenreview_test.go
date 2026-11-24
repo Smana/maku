@@ -294,3 +294,105 @@ func TestTokenReviewSweepsExpired(t *testing.T) {
 		t.Fatalf("cache holds %d entries after the sweep, want 1", n)
 	}
 }
+
+func TestTokenReviewNilClock(t *testing.T) {
+	f := &fakeReviewer{status: ok("system:serviceaccount:agents:run-abcdefgh", AudienceRun)}
+	v := NewTokenReview(f, nil)
+	c, err := v.Verify(t.Context(), jwtWithExp(time.Now().Add(10*time.Minute)), AudienceRun)
+	if err != nil || c.Subject != "system:serviceaccount:agents:run-abcdefgh" {
+		t.Fatalf("nil clock Verify: %+v, %v", c, err)
+	}
+}
+
+func TestTokenReviewFloatExp(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	f := &fakeReviewer{status: ok("system:serviceaccount:agents:run-abcdefgh", AudienceRun)}
+	v := NewTokenReview(f, func() time.Time { return now })
+
+	futureRaw := "e30." + base64.RawURLEncoding.EncodeToString([]byte(`{"exp":1800000120.5}`)) + ".sig"
+	c, err := v.Verify(t.Context(), futureRaw, AudienceRun)
+	if err != nil {
+		t.Fatalf("future float exp: %v", err)
+	}
+	if c.ExpiresAt == nil || c.ExpiresAt.Unix() != 1_800_000_120 {
+		t.Fatalf("ExpiresAt = %v, want 1800000120", c.ExpiresAt)
+	}
+
+	pastRaw := "e30." + base64.RawURLEncoding.EncodeToString([]byte(`{"exp":1799999999.5}`)) + ".sig"
+	if _, err := v.Verify(t.Context(), pastRaw, AudienceRun); !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("past float exp: got %v, want ErrTokenExpired", err)
+	}
+}
+
+func TestTokenReviewCacheCap(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	f := &fakeReviewer{status: ok("system:serviceaccount:agents:run-abcdefgh", AudienceRun)}
+	v := NewTokenReview(f, func() time.Time { return now })
+	v.maxEntries = 10
+	for i := range 25 {
+		tok := jwtWithExp(now.Add(time.Duration(i+1) * time.Minute))
+		if _, err := v.Verify(t.Context(), tok, AudienceRun); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := len(v.cache); n > 10 {
+		t.Fatalf("cache holds %d entries, cap is 10", n)
+	}
+}
+
+type blockingReviewer struct {
+	mu      sync.Mutex
+	calls   int
+	entered chan struct{}
+	release chan struct{}
+	status  authv1.TokenReviewStatus
+}
+
+func (b *blockingReviewer) Create(_ context.Context, tr *authv1.TokenReview, _ metav1.CreateOptions) (*authv1.TokenReview, error) {
+	b.mu.Lock()
+	b.calls++
+	first := b.calls == 1
+	b.mu.Unlock()
+	if first {
+		close(b.entered)
+	}
+	<-b.release
+	out := tr.DeepCopy()
+	out.Status = b.status
+	return out, nil
+}
+
+func TestTokenReviewSingleflight(t *testing.T) {
+	now := time.Unix(1_800_000_000, 0)
+	const sub = "system:serviceaccount:agents:run-7f3cq2xz"
+	b := &blockingReviewer{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		status:  ok(sub, AudienceRun),
+	}
+	v := NewTokenReview(b, func() time.Time { return now })
+	tok := jwtWithExp(now.Add(time.Hour))
+
+	const callers = 16
+	var wg sync.WaitGroup
+	for range callers {
+		wg.Go(func() {
+			c, err := v.Verify(t.Context(), tok, AudienceRun)
+			if err != nil || c.Subject != sub {
+				t.Errorf("Verify: %+v, %v", c, err)
+			}
+		})
+	}
+	<-b.entered
+	// Give other goroutines a moment to join the in-flight singleflight call.
+	time.Sleep(10 * time.Millisecond)
+	close(b.release)
+	wg.Wait()
+
+	b.mu.Lock()
+	calls := b.calls
+	b.mu.Unlock()
+	if calls != 1 {
+		t.Fatalf("apiserver called %d times for %d concurrent misses, want 1", calls, callers)
+	}
+}

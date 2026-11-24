@@ -52,7 +52,10 @@ func ValidClientClaim(claim string) bool { return slices.Contains(clientClaims, 
 // Authenticate maps raw to its sponsored principal, or ErrUnauthenticated.
 func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, error) {
 	refused := fmt.Errorf("%w: not a sponsored principal", ErrUnauthenticated)
-	if s == nil || s.V == nil {
+	if s == nil || s.V == nil || len(s.Clients) == 0 {
+		return Principal{}, refused
+	}
+	if s.ClientClaim != "" && !ValidClientClaim(s.ClientClaim) {
 		return Principal{}, refused
 	}
 	var aud string
@@ -62,9 +65,24 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 	if aud == "" {
 		return Principal{}, refused
 	}
+	parse := s.V.parseWith
+	if s.Generic {
+		parse = s.V.parseGeneric
+	}
+	cl, err := parse(ctx, raw)
+	if err != nil || cl.ExpiresAt == nil || cl.Subject == "" || !slices.Contains(cl.Audience, aud) {
+		return Principal{}, refused
+	}
+	tokClient := s.clientID(cl)
+	if tokClient == "" {
+		return Principal{}, refused
+	}
 	var human []string
 	if s.Exclude != nil {
 		human = s.Exclude()
+	}
+	if slices.Contains(human, tokClient) {
+		return Principal{}, refused
 	}
 	ids := make([]string, len(s.Clients))
 	for i, c := range s.Clients {
@@ -74,15 +92,11 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 	}
 	for i, c := range s.Clients {
 		id := ids[i]
-		if c.Name == "" || id == "" || slices.Contains(human, id) {
+		if c.Name == "" || id != tokClient {
 			continue
 		}
 		if slices.Index(ids, id) != i || slices.Contains(ids[i+1:], id) { // shared: ambiguous, so nobody's
-			continue
-		}
-		cl, err := s.verify(ctx, raw, id)
-		if err != nil || cl.ExpiresAt == nil || cl.Subject == "" || !slices.Contains(cl.Audience, aud) {
-			continue
+			return Principal{}, refused
 		}
 		return Principal{Kind: envelope.ActorSystem, ID: "system:" + c.Name, Sub: cl.Subject, ClientID: id,
 			Expiry: cl.ExpiresAt.Time, AccessToken: raw, Sponsored: true, Internal: c.Internal}, nil
@@ -90,34 +104,22 @@ func (s *Sponsored) Authenticate(ctx context.Context, raw string) (Principal, er
 	return Principal{}, refused
 }
 
-// verify checks raw, a token issued to clientID: by azp or client_id, or by ClientClaim when set.
-func (s *Sponsored) verify(ctx context.Context, raw, clientID string) (*Claims, error) {
+// clientID extracts the client id from verified claims: by azp or client_id (or one-element aud
+// under Generic), or by ClientClaim when set.
+func (s *Sponsored) clientID(c *Claims) string {
 	switch {
 	case s.ClientClaim == "" && s.Generic:
-		return s.V.VerifyClient(ctx, raw, clientID)
+		return c.issuedToGeneric()
 	case s.ClientClaim == "":
-		return s.V.VerifyAuthorizedParty(ctx, raw, clientID)
-	case !ValidClientClaim(s.ClientClaim):
-		return nil, fmt.Errorf("%w: not a client claim", ErrUnauthenticated)
-	}
-	parse := s.V.parseWith
-	if s.Generic {
-		parse = s.V.parseGeneric
-	}
-	c, err := parse(ctx, raw)
-	if err != nil {
-		return nil, err
+		return c.issuedTo()
 	}
 	var got string
-	if v, ok := c.raw[s.ClientClaim]; !ok || json.Unmarshal(v, &got) != nil || got != clientID {
-		return nil, fmt.Errorf("%w: not issued to the client", ErrWrongAudience)
+	if v, ok := c.raw[s.ClientClaim]; !ok || json.Unmarshal(v, &got) != nil || got == "" {
+		return ""
 	}
 	// The configured claim never outvotes azp or client_id naming another client.
-	if c.AuthorizedParty != "" && c.AuthorizedParty != clientID || c.ClientID != "" && c.ClientID != clientID {
-		return nil, fmt.Errorf("%w: not issued to the client", ErrWrongAudience)
+	if c.AuthorizedParty != "" && c.AuthorizedParty != got || c.ClientID != "" && c.ClientID != got {
+		return ""
 	}
-	if c.Subject == "" {
-		return nil, fmt.Errorf("%w: no subject", ErrUnauthenticated)
-	}
-	return c, nil
+	return got
 }

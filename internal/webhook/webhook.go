@@ -96,6 +96,10 @@ func Sign(keys [][]byte, id string, ts time.Time, body []byte) http.Header {
 // ErrInvalid is any delivery that does not verify; its text never says which check failed.
 var ErrInvalid = errors.New("webhook: invalid delivery")
 
+// maxVerifySignatures bounds the number of signature tokens Verify inspects per delivery,
+// preventing HMAC loop amplification from an abusive header.
+const maxVerifySignatures = 8
+
 // Verify checks a delivery against any of keys: the timestamp within Tolerance of now, then one v1
 // signature over id, timestamp and body, compared in constant time. It returns the webhook-id.
 func Verify(keys [][]byte, h http.Header, body []byte, now time.Time) (string, error) {
@@ -107,7 +111,15 @@ func Verify(keys [][]byte, h http.Header, body []byte, now time.Time) (string, e
 	if d := now.Sub(time.Unix(sec, 0)); d > Tolerance || d < -Tolerance {
 		return "", ErrInvalid
 	}
-	for _, sig := range strings.Fields(h.Get("webhook-signature")) {
+	sigs := strings.Fields(h.Get("webhook-signature"))
+	if len(sigs) == 0 || len(sigs) > maxVerifySignatures {
+		return "", ErrInvalid
+	}
+	expected := make([][]byte, len(keys))
+	for i, k := range keys {
+		expected[i] = mac(k, id, ts, body)
+	}
+	for _, sig := range sigs {
 		v, ok := strings.CutPrefix(sig, "v1,")
 		if !ok {
 			continue
@@ -116,8 +128,8 @@ func Verify(keys [][]byte, h http.Header, body []byte, now time.Time) (string, e
 		if err != nil {
 			continue
 		}
-		for _, k := range keys {
-			if hmac.Equal(got, mac(k, id, ts, body)) {
+		for _, want := range expected {
+			if hmac.Equal(got, want) {
 				return id, nil
 			}
 		}
