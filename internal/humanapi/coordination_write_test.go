@@ -59,6 +59,7 @@ func (g *fakeGateway) CoordinationRecover(_ context.Context, token, parent, code
 func writesOn(g *fakeGateway) option {
 	return func(s *Server, h *fanout.Hub, v *hubView) {
 		coordOn(&fakeCoordinations{views: map[string]coordination.CoordinationView{roomID: coordFamily()}}, coordWorld())(s, h, v)
+		s.PublicURL = "https://rooms.example"
 		s.Humans = tokenAuth{}
 		s.CoordinationWrites = g
 	}
@@ -100,6 +101,13 @@ func withClient(h http.Header, client string) http.Header {
 	return h
 }
 
+func webPost(h http.Header, pub string) http.Header {
+	h = h.Clone()
+	h.Set("Origin", pub)
+	h.Set("Content-Type", "application/json")
+	return h
+}
+
 func TestCoordinationDraftForwardsTheCallersToken(t *testing.T) {
 	g := &fakeGateway{}
 	e := setup(t, writesOn(g))
@@ -138,7 +146,7 @@ func TestCoordinationConfirmIsTheWebUIsAlone(t *testing.T) {
 	if len(g.calls) != 0 {
 		t.Fatalf("a non-web client reached the factory: %v", g.calls)
 	}
-	if code, body := sendJSON(t, e, http.MethodPost, path, as("alice", false), confirmation("consumer")); code != http.StatusOK {
+	if code, body := sendJSON(t, e, http.MethodPost, path, webPost(as("alice", false), e.srv.PublicURL), confirmation("consumer")); code != http.StatusOK {
 		t.Fatalf("%d %s", code, body)
 	}
 	if g.calls[0] != "confirm tok-alice "+roomID+" child:consumer" {
@@ -147,7 +155,7 @@ func TestCoordinationConfirmIsTheWebUIsAlone(t *testing.T) {
 	// Another task's plan is refused here, whatever the path says.
 	other := confirmation("")
 	other.Plan.ID = "zzzzzzzz"
-	if code, _ := sendJSON(t, e, http.MethodPost, path, as("alice", false), other); code != http.StatusBadRequest || len(g.calls) != 1 {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, webPost(as("alice", false), e.srv.PublicURL), other); code != http.StatusBadRequest || len(g.calls) != 1 {
 		t.Fatalf("%d %v", code, g.calls)
 	}
 }
@@ -155,7 +163,7 @@ func TestCoordinationConfirmIsTheWebUIsAlone(t *testing.T) {
 func TestCoordinationConfirmationStalePlanRefreshesWithoutWrite(t *testing.T) {
 	g := &fakeGateway{refuse: runrequest.ErrRefused{Status: http.StatusConflict, Reason: "stale_plan"}}
 	e := setup(t, writesOn(g))
-	code, body := sendJSON(t, e, http.MethodPost, "/api/coordinations/"+roomID+"/confirmations", as("alice", false), confirmation(""))
+	code, body := sendJSON(t, e, http.MethodPost, "/api/coordinations/"+roomID+"/confirmations", webPost(as("alice", false), e.srv.PublicURL), confirmation(""))
 	if code != http.StatusConflict || strings.TrimSpace(body) != `{"error":"stale_plan"}` {
 		t.Fatalf("%d %s", code, body)
 	}
@@ -202,17 +210,58 @@ func TestCoordinationRecoverIsTheWebUIsAlone(t *testing.T) {
 	if code, b := sendJSON(t, e, http.MethodPost, path, withClient(as("alice", false), "maku-cli"), body); code != http.StatusForbidden || !strings.Contains(b, "web_only") {
 		t.Fatalf("%d %s", code, b)
 	}
-	if code, b := sendJSON(t, e, http.MethodPost, path, as("alice", false), body); code != http.StatusNoContent {
+	if code, b := sendJSON(t, e, http.MethodPost, path, webPost(as("alice", false), e.srv.PublicURL), body); code != http.StatusNoContent {
 		t.Fatalf("%d %s", code, b)
 	}
 	if len(g.calls) != 1 || g.calls[0] != "recover tok-alice "+roomID+" retry_child v2" {
 		t.Fatalf("%v", g.calls)
 	}
-	if code, _ := sendJSON(t, e, http.MethodPost, path, as("alice", false), `{"code":"retry_child","planVersion":2,"child":"x"}`); code != http.StatusBadRequest || len(g.calls) != 1 {
+	if code, _ := sendJSON(t, e, http.MethodPost, path, webPost(as("alice", false), e.srv.PublicURL), `{"code":"retry_child","planVersion":2,"child":"x"}`); code != http.StatusBadRequest || len(g.calls) != 1 {
 		t.Fatalf("an unknown field reached the factory: %d", code)
 	}
 	g.refuse = runrequest.ErrRefused{Status: http.StatusConflict, Reason: "stale_plan"}
-	if code, b := sendJSON(t, e, http.MethodPost, path, as("alice", false), body); code != http.StatusConflict || !strings.Contains(b, "stale_plan") {
+	if code, b := sendJSON(t, e, http.MethodPost, path, webPost(as("alice", false), e.srv.PublicURL), body); code != http.StatusConflict || !strings.Contains(b, "stale_plan") {
 		t.Fatalf("%d %s", code, b)
+	}
+}
+
+func TestCoordinationConfirmAndRecoverRequireOriginAndJSON(t *testing.T) {
+	g := &fakeGateway{}
+	e := setup(t, writesOn(g))
+	for _, tc := range []struct {
+		name, path, origin, ct string
+		want                   int
+		wantErr                string
+	}{
+		{"confirm missing origin", "/api/coordinations/" + roomID + "/confirmations", "", "application/json", http.StatusForbidden, "cross_origin"},
+		{"confirm wrong origin", "/api/coordinations/" + roomID + "/confirmations", "https://evil.example", "application/json", http.StatusForbidden, "cross_origin"},
+		{"confirm wrong content-type", "/api/coordinations/" + roomID + "/confirmations", e.srv.PublicURL, "text/plain", http.StatusUnsupportedMediaType, "unsupported_media_type"},
+		{"recovery missing origin", "/api/coordinations/" + roomID + "/recovery", "", "application/json", http.StatusForbidden, "cross_origin"},
+		{"recovery wrong origin", "/api/coordinations/" + roomID + "/recovery", "https://evil.example", "application/json", http.StatusForbidden, "cross_origin"},
+		{"recovery wrong content-type", "/api/coordinations/" + roomID + "/recovery", e.srv.PublicURL, "application/x-www-form-urlencoded", http.StatusUnsupportedMediaType, "unsupported_media_type"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, e.ts.URL+tc.path, strings.NewReader(`{}`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header = as("alice", false)
+			if tc.origin != "" {
+				req.Header.Set("Origin", tc.origin)
+			}
+			req.Header.Set("Content-Type", tc.ct)
+			resp, err := e.ts.Client().Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+			body, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tc.want || !strings.Contains(string(body), tc.wantErr) {
+				t.Fatalf("status=%d body=%s, want %d %s", resp.StatusCode, body, tc.want, tc.wantErr)
+			}
+		})
+	}
+	if len(g.calls) != 0 {
+		t.Fatalf("CSRF-rejected calls reached factory: %v", g.calls)
 	}
 }

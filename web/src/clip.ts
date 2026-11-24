@@ -29,6 +29,7 @@ const seqOf = (body: HTMLElement) => Number(body.closest<HTMLElement>("[data-seq
 // Clips holds which messages the reader opened, and measures them all.
 export class Clips {
   private opened = new Set<number>();
+  private bodies = new Map<number, HTMLElement>();
   private observer?: ResizeObserver;
 
   constructor(private over: (body: HTMLElement) => boolean = overflows) {
@@ -45,6 +46,9 @@ export class Clips {
 
   // attach makes bubble's body, the message of seq, foldable; bubble already sits in its row.
   attach(bubble: HTMLElement, body: HTMLElement, seq: number): void {
+    const prev = this.bodies.get(seq);
+    if (prev && prev !== body) this.observer?.unobserve(prev);
+    this.bodies.set(seq, body);
     body.id = `msg-${seq}-body`;
     // A link in the hidden tail can take the focus: the message opens rather than scroll
     // it under the fade. Its own button toggles it, and is not in the body.
@@ -55,8 +59,22 @@ export class Clips {
     else this.decide(body, this.over(body), seq);
   }
 
-  // forget drops a seq that left the page.
-  forget(seq: number): void { this.opened.delete(seq); }
+  // forget drops a seq that left the page and stops observing its body.
+  forget(seq: number): void {
+    this.opened.delete(seq);
+    const body = this.bodies.get(seq);
+    if (body) {
+      this.observer?.unobserve(body);
+      this.bodies.delete(seq);
+    }
+  }
+
+  // destroy disconnects the ResizeObserver when the view is torn down.
+  destroy(): void {
+    this.observer?.disconnect();
+    this.bodies.clear();
+    this.opened.clear();
+  }
 
   // decide writes a measured body's state: short when it fits, else as the reader left it.
   private decide(body: HTMLElement, long: boolean, seq: number) {

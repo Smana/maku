@@ -451,6 +451,9 @@ export class ChatView {
   // rowFor is the row of a call the page still holds, for a link to it.
   rowFor(callId: string): HTMLElement | undefined { return this.rows.get(this.calls.get(callId)?.seq ?? -1); }
 
+  // destroy releases the ResizeObserver held by clips when this view is unmounted.
+  destroy(): void { this.clips.destroy(); }
+
   apply(ev: RoomEvent) {
     const p = ev.payload ?? {};
     const you = this.viewer();
@@ -478,7 +481,9 @@ export class ChatView {
             const list = this.pending.get(callId) ?? [];
             if (!list.some((d) => d.seq === ev.seq)) list.push(ev);
             this.pending.set(callId, list);
-            put(marker(ev));
+            const row = marker(ev);
+            row.dataset.pendingCallId = callId;
+            put(row);
           }
         } else {
           put(marker(ev));
@@ -757,6 +762,14 @@ export class ChatView {
       const s = this.seqs[0];
       const gone = this.rows.get(s)!;
       if (gone.dataset.callId) this.calls.delete(gone.dataset.callId);
+      if (gone.dataset.pendingCallId) {
+        const list = this.pending.get(gone.dataset.pendingCallId);
+        if (list) {
+          const next = list.filter((d) => d.seq !== s);
+          if (next.length) this.pending.set(gone.dataset.pendingCallId, next);
+          else this.pending.delete(gone.dataset.pendingCallId);
+        }
+      }
       this.clips.forget(s);
       this.drop(s);
     }

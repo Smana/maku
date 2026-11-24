@@ -356,7 +356,7 @@ func TestReconcileRunsTheSuspendTrigger(t *testing.T) {
 		{"an open room", store.RoomState{ID: roomID, LastSeq: 3, LastEventAt: last}, nil,
 			[]string{roomID + " 2026-09-29T11:00:00Z [7f3cq2xz]"}, ctrl.Result{RequeueAfter: resync}},
 		{"a sealed room", store.RoomState{ID: roomID, LastSeq: 3, LastEventAt: last, Sealed: true}, nil, nil,
-			ctrl.Result{RequeueAfter: resync}},
+			ctrl.Result{}},
 		{"a conflict", store.RoomState{ID: roomID, LastSeq: 3, LastEventAt: last},
 			apierrors.NewConflict(schema.GroupResource{Group: "maku.ogenki.io", Resource: "agentruns"}, "run-7f3cq2xz", errors.New("moved")),
 			[]string{roomID + " 2026-09-29T11:00:00Z [7f3cq2xz]"}, ctrl.Result{RequeueAfter: conflictRetry}},
@@ -377,8 +377,12 @@ func TestSealedRoomStillReconciles(t *testing.T) {
 	c := build(newRoom())
 	ms := newStore(nil, store.RoomState{ID: roomID, Sealed: true, LastSeq: 100})
 	r := &Reconciler{Kind: runwatch.DefaultKind, Client: c, Store: ms, Runs: runwatch.New(runwatch.DefaultKind), Now: clock(deletedAt)}
-	if _, err := r.Reconcile(t.Context(), request()); err != nil {
+	res, err := r.Reconcile(t.Context(), request())
+	if err != nil {
 		t.Fatalf("a sealed room is not a reconcile error: %v", err)
+	}
+	if res != (ctrl.Result{}) {
+		t.Fatalf("a Closed room must not requeue: got %+v", res)
 	}
 	if got, _ := getRoom(t, c); got.Status.Phase != "Closed" {
 		t.Fatalf("status = %+v", got.Status)

@@ -341,10 +341,16 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 	if r.coord == nil {
 		r.coord = s.coordinationOnce(ctx, room.Name, p)
 	}
+	var standing summary.GitHubStanding
+	if r.standing != nil {
+		standing = *r.standing
+	} else {
+		standing = s.standing(ctx, room, p)
+	}
 	in := summary.NeedsIn{Room: room.Name, URL: s.PublicURL + "/r/" + room.Name, Repository: room.Spec.Repository,
 		Sealed:    room.Status.Phase == "Closed" || room.Status.Phase == "Sealed",
 		FactsRead: true, Facts: r.facts(), FactsAt: s.foldFactsAt(room), Approvals: approvalsOf(r.live), Now: s.now(),
-		GitHub: s.standing(ctx, room, p),
+		GitHub: standing,
 		Caller: summary.Caller{WebUI: web.WebUI, CanDecide: policy.Allowed(web, policy.Decide),
 			CanClose: policy.Allowed(sub, policy.Close), CanRelease: policy.Allowed(sub, policy.StartRun),
 			RoomScoped: roomScoped}}
@@ -358,9 +364,10 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 // approvals once, for the reason, the count, the first need and the status line alike. A nil coord is read
 // by needsFor.
 type needsRead struct {
-	facts factsFn
-	live  []store.Approval
-	coord coordFn
+	facts    factsFn
+	live     []store.Approval
+	coord    coordFn
+	standing *summary.GitHubStanding
 }
 
 // foldFactsAt is when the room's task facts last landed, from the fold this broker already keeps for it: an
@@ -484,6 +491,7 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 	// sponsored principal is the exception (R13): its gate is its membership of *this* room, so
 	// two rooms on one repository answer differently and the room is the key.
 	readable := map[string]bool{}
+	standings := map[string]summary.GitHubStanding{}
 	out := []roomRow{}
 	var ins []summary.StatusIn   // each row's status line input, out's twin
 	failed := map[string]int64{} // the failed rows' fork points: their reason codes are read in one call
@@ -531,7 +539,12 @@ func (s *Server) roomRows(ctx context.Context, p authn.Principal, f *roomFilter)
 		live, expired := s.liveApprovals(ctx, room, web)
 		// false: a login's door (needsFor's roomScoped), so a sponsored caller's row keeps no action need.
 		coord := s.coordinationOnce(ctx, room.Name, p) // one read serves the family and the needs
-		items, read := s.needsFor(ctx, room, p, sub, false, needsRead{facts: facts, live: live, coord: coord})
+		st, seenSt := standings[repo]
+		if !seenSt {
+			st = s.standing(ctx, room, p)
+			standings[repo] = st
+		}
+		items, read := s.needsFor(ctx, room, p, sub, false, needsRead{facts: facts, live: live, coord: coord, standing: &st})
 		if !read && room.Status.Task != nil { // one line for a room whose state could not be read, as PR 3's list says it
 			s.log().Warn("room row: needs without facts", "room", room.Name)
 		}

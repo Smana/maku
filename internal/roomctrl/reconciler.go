@@ -155,6 +155,9 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return requeueOnConflict(err)
 		}
 	}
+	if want.Phase == "Closed" {
+		return ctrl.Result{}, nil
+	}
 	return ctrl.Result{RequeueAfter: resync}, nil
 }
 

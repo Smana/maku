@@ -239,10 +239,11 @@ type Server struct {
 	sockets sync.WaitGroup // one per tracked connection: the drain waits on it
 	closing bool
 
-	limitMu      sync.Mutex
-	mcpLimits    map[string]*rate.Limiter // /mcp requests per principal, per replica
-	startRefused startRefusals            // the (caller, repository, reason) a refused start was logged for
-	readLimits   map[string]*rate.Limiter // room list and summary reads per principal, per replica
+	limitMu        sync.Mutex
+	mcpLimits      map[string]*rate.Limiter // /mcp requests per principal, per replica
+	startRefused   startRefusals            // the (caller, repository, reason) a refused start was logged for
+	readLimits     map[string]*rate.Limiter // room list and summary reads per principal, per replica
+	callbackLimits map[string]*rate.Limiter // unauthenticated /link/github/callback per host, per replica
 
 	folds foldCache // each recently read room's summary fold (audit S-9)
 
@@ -492,6 +493,33 @@ func (s *Server) rejected(ctx context.Context, reason string) {
 	}
 }
 
+// maxLimiterEntries bounds every per-principal / per-key rate-limiter map in humanapi (REL-M14).
+const maxLimiterEntries = 4096
+
+// takeBounded takes one token for key from limits (creating a limiter at r, burst when absent).
+// At cap, idle limiters whose bucket has refilled to full are swept; if still at cap, fail closed.
+func takeBounded(limits *map[string]*rate.Limiter, key string, r rate.Limit, burst int, now time.Time) bool {
+	if *limits == nil {
+		*limits = map[string]*rate.Limiter{}
+	}
+	l, ok := (*limits)[key]
+	if !ok {
+		if len(*limits) >= maxLimiterEntries {
+			for k, lim := range *limits {
+				if lim.TokensAt(now) >= float64(lim.Burst()) {
+					delete(*limits, k)
+				}
+			}
+		}
+		if len(*limits) >= maxLimiterEntries {
+			return false
+		}
+		l = rate.NewLimiter(r, burst)
+		(*limits)[key] = l
+	}
+	return l.AllowN(now, 1)
+}
+
 // readAllowed takes one of p's room reads, GET /api/rooms or a summary: 10 a second, burst 20,
 // per replica (audit S-9). The budget is apart from acts, so a page that refreshes never refuses its
 // viewer's next act. A refusal answers 429 rate_limited and is counted.
@@ -504,19 +532,32 @@ func (s *Server) readAllowed(w http.ResponseWriter, r *http.Request, p authn.Pri
 	return false
 }
 
+// readAllowedJSON is readAllowed for JSON APIs whose callers parse {"error": ...}.
+func (s *Server) readAllowedJSON(w http.ResponseWriter, r *http.Request, p authn.Principal) bool {
+	if s.take(&s.readLimits, p.ID) {
+		return true
+	}
+	s.rejected(r.Context(), rejectRateLimited)
+	refuseJSON(w, http.StatusTooManyRequests, rejectRateLimited)
+	return false
+}
+
+// callbackAllowed rate-limits the unauthenticated GET /link/github/callback per client host (SEC-M12).
+func (s *Server) callbackAllowed(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil || host == "" {
+		host = r.RemoteAddr
+	}
+	s.limitMu.Lock()
+	defer s.limitMu.Unlock()
+	return takeBounded(&s.callbackLimits, host, 10, 20, s.now())
+}
+
 // take takes one request from principal's limiter in limits, made at 10 a second, burst 20.
 func (s *Server) take(limits *map[string]*rate.Limiter, principal string) bool {
 	s.limitMu.Lock()
 	defer s.limitMu.Unlock()
-	if *limits == nil {
-		*limits = map[string]*rate.Limiter{}
-	}
-	l, ok := (*limits)[principal]
-	if !ok {
-		l = rate.NewLimiter(10, 20)
-		(*limits)[principal] = l
-	}
-	return l.Allow()
+	return takeBounded(limits, principal, 10, 20, s.now())
 }
 
 // room reads a Room CR of this namespace; found is false for none.

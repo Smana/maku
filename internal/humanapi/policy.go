@@ -95,7 +95,7 @@ func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
 // policyCaller is a human with a token: a machine reads and records nothing here.
 func (s *Server) policyCaller(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowedJSON(w, r, p) {
 		return p, false
 	}
 	if p.Kind != envelope.ActorHuman || p.Sponsored || p.AccessToken == "" {

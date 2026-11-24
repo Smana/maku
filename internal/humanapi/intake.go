@@ -164,6 +164,16 @@ func (in *Intake) take(requester string) bool {
 	if in.limits.days == nil {
 		in.limits.days = map[string]dailyCount{}
 	}
+	if len(in.limits.days) >= maxLimiterEntries {
+		for k, v := range in.limits.days {
+			if v.day != day {
+				delete(in.limits.days, k)
+			}
+		}
+		if _, exists := in.limits.days[requester]; !exists && len(in.limits.days) >= maxLimiterEntries {
+			return false
+		}
+	}
 	c := in.limits.days[requester]
 	if c.day != day {
 		c = dailyCount{day: day}

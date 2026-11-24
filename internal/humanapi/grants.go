@@ -143,7 +143,7 @@ func (s *Server) repoStanding(ctx context.Context, p authn.Principal, repository
 // and creator. A repository whose access cannot be checked lists nothing and says so.
 func (s *Server) listGrants(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowedJSON(w, r, p) {
 		return
 	}
 	q := r.URL.Query()
@@ -190,43 +190,43 @@ func matches(g store.Grant, q string) bool {
 	return strings.Contains(hay, q)
 }
 
-// readableGrant is the grant {id}, when the caller may read its repository; ok is false once the
-// refusal is written. An unreadable grant is a 404, as one that does not exist.
-func (s *Server) readableGrant(w http.ResponseWriter, r *http.Request) (authn.Principal, store.Grant, bool) {
-	p, ok := s.principal(w, r)
-	if !ok {
-		return p, store.Grant{}, false
-	}
+// readableGrantFor loads grant {id} and checks p's standing on its repository once (PERF-M8).
+// An unreadable grant is a 404, as one that does not exist.
+func (s *Server) readableGrantFor(w http.ResponseWriter, r *http.Request, p authn.Principal) (g store.Grant, write bool, login string, ok bool) {
 	id := r.PathValue("id")
 	if !grant.IDRE.MatchString(id) {
 		refuseJSON(w, http.StatusNotFound, "no_grant")
-		return p, store.Grant{}, false
+		return g, false, "", false
 	}
 	g, err := s.Grants.Grant(r.Context(), id)
 	switch {
 	case errors.Is(err, store.ErrNoGrant):
 		refuseJSON(w, http.StatusNotFound, "no_grant")
-		return p, g, false
+		return g, false, "", false
 	case err != nil:
 		s.log().Warn("approval grant unreadable", "err", err)
 		refuseJSON(w, http.StatusServiceUnavailable, "grants_unavailable")
-		return p, g, false
+		return g, false, "", false
 	}
-	read, _, _, err := s.repoStanding(r.Context(), p, g.Repository)
+	read, write, login, err := s.repoStanding(r.Context(), p, g.Repository)
 	switch {
 	case err != nil:
 		refuseJSON(w, http.StatusServiceUnavailable, reasonAccessUnverified)
-		return p, g, false
+		return g, false, "", false
 	case !read:
 		refuseJSON(w, http.StatusNotFound, "no_grant")
-		return p, g, false
+		return g, false, "", false
 	}
-	return p, g, true
+	return g, write, login, true
 }
 
 // grantDetail: GET /api/approval-memory/grants/{id}, the grant with its usage and outcome history.
 func (s *Server) grantDetail(w http.ResponseWriter, r *http.Request) {
-	_, g, ok := s.readableGrant(w, r)
+	p, ok := s.principal(w, r)
+	if !ok || !s.readAllowedJSON(w, r, p) {
+		return
+	}
+	g, _, _, ok := s.readableGrantFor(w, r, p)
 	if !ok {
 		return
 	}
@@ -252,7 +252,7 @@ func (s *Server) grantDetail(w http.ResponseWriter, r *http.Request) {
 // for review beside the repository's policy.
 func (s *Server) exportGrants(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowedJSON(w, r, p) {
 		return
 	}
 	repo := strings.ToLower(r.URL.Query().Get("repository"))
@@ -292,7 +292,7 @@ func (s *Server) exportGrants(w http.ResponseWriter, r *http.Request) {
 // MCP bearer can set any Origin, so only the UI's session writes a grant).
 func (s *Server) grantWriter(w http.ResponseWriter, r *http.Request) (authn.Principal, bool) {
 	p, ok := s.principal(w, r)
-	if !ok {
+	if !ok || !s.readAllowedJSON(w, r, p) {
 		return p, false
 	}
 	if p.Kind != envelope.ActorHuman || p.Sponsored || s.WebClient == nil || p.ClientID == "" || p.ClientID != s.WebClient() {
@@ -472,16 +472,11 @@ func (s *Server) moveGrant(w http.ResponseWriter, r *http.Request) {
 		refuseJSON(w, http.StatusBadRequest, "bad_json")
 		return
 	}
-	_, g, ok := s.readableGrant(w, r)
+	g, write, login, ok := s.readableGrantFor(w, r, p)
 	if !ok {
 		return
 	}
-	_, write, login, err := s.repoStanding(r.Context(), p, g.Repository)
-	switch {
-	case err != nil:
-		refuseJSON(w, http.StatusServiceUnavailable, reasonAccessUnverified)
-		return
-	case !write && (event != grant.EventRevoked || !s.Groups.IsAdmin(p)):
+	if !write && (event != grant.EventRevoked || !s.Groups.IsAdmin(p)) {
 		refuseJSON(w, http.StatusForbidden, "repository_permission")
 		return
 	}

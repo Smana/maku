@@ -125,15 +125,7 @@ func slackActShaped(in SlackAct) bool {
 func (a *SlackActor) allow(key string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.limits == nil {
-		a.limits = map[string]*rate.Limiter{}
-	}
-	l, ok := a.limits[key]
-	if !ok {
-		l = rate.NewLimiter(rate.Every(6*time.Second), 5)
-		a.limits[key] = l
-	}
-	return l.Allow()
+	return takeBounded(&a.limits, key, rate.Every(6*time.Second), 5, time.Now())
 }
 
 func (a *SlackActor) answer(w http.ResponseWriter, result string) {

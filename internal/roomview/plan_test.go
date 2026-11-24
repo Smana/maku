@@ -172,3 +172,31 @@ func TestPlanLabelsUnverifiedEvidenceAndServedModel(t *testing.T) {
 		}
 	}
 }
+
+func TestPlanStripsControlAndBidiFromIssueBody(t *testing.T) {
+	p := hostilePlan()
+	p.Issues[0].Body = "line1\r\n\x1b[31mred\x1b[0m\t\x1b]8;;https://evil.example\x07click\x1b]8;;\x07\rfake\u202ereversed\u2066iso"
+	for _, tc := range []struct {
+		name   string
+		format Format
+	}{
+		{"text", Text},
+		{"markdown", Markdown},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var b bytes.Buffer
+			if err := Plan(&b, p, "", Options{Format: tc.format}); err != nil {
+				t.Fatal(err)
+			}
+			out := b.String()
+			for _, forbidden := range []string{"\x1b", "\x07", "\r", "\u202e", "\u2066"} {
+				if strings.Contains(out, forbidden) {
+					t.Errorf("output still contains %q:\n%q", forbidden, out)
+				}
+			}
+			if !strings.Contains(out, "line1\n[31mred[0m\t]8;;https://evil.exampleclick]8;;fakereversediso") {
+				t.Errorf("expected sanitized body with preserved newline and tab:\n%q", out)
+			}
+		})
+	}
+}

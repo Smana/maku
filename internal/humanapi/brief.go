@@ -176,17 +176,22 @@ func (s *Server) briefOf(ctx context.Context, id string, p authn.Principal, sinc
 // would not do — the scoper hands off early, and a room resumed after many runs has a long log since.
 func (s *Server) lastScope(ctx context.Context, room *v1alpha1.Room, row store.RoomState) (*envelope.Scope, error) {
 	fork := roomctrl.ForkSeq(room)
-	for window := briefScopePage; ; window *= 4 {
+	end := row.LastSeq
+	for window := briefScopePage; end > fork; window *= 4 {
 		start := max(fork, row.LastSeq-window)
 		var found *envelope.Scope
-		for cursor := start; cursor < row.LastSeq; {
-			n := int(min(int64(pageSize), row.LastSeq-cursor))
+		for cursor := start; cursor < end; {
+			n := int(min(int64(pageSize), end-cursor))
 			page, err := s.Log.Range(ctx, room.Name, cursor, n)
 			if err != nil {
 				s.log().Warn("brief: log unreadable", "room", room.Name, "err", err)
 				return nil, errLogUnreadable
 			}
 			for _, e := range page {
+				if e.Seq > end {
+					cursor = end
+					break
+				}
 				cursor = e.Seq
 				if e.RoomID != room.Name || e.Type != envelope.Handoff {
 					continue
@@ -205,7 +210,10 @@ func (s *Server) lastScope(ctx context.Context, room *v1alpha1.Room, row store.R
 		if found != nil || start <= fork {
 			return found, nil
 		}
+		// Only scan the newly widened prefix (start..prevStart-1] next time (PERF-M4).
+		end = start
 	}
+	return nil, nil
 }
 
 // briefChanges is what changed since `since`: room_changes' scan, so one page covers at most tailScan

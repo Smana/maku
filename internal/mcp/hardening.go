@@ -181,14 +181,13 @@ func requestOutput(ctx context.Context, log Log, red Redactor, now func() time.T
 	}
 	rec := envelope.OutputRecord{ID: id, Type: string(t)}
 	var rules []string
+	var pushBundle []byte
 	if p, ok := v.(hardening.PushPayload); ok {
 		if cfg.Bundles == nil {
 			return nil, argError("output_push is not served yet: push as before")
 		}
 		rec.Digest, rec.Bytes = hardening.Digest(p.Bundle), len(p.Bundle)
-		if err := cfg.Bundles.PutBundle(ctx, c.Run.Room, c.Run.ID, rec.Digest, p.Bundle); err != nil {
-			return nil, fmt.Errorf("store bundle: %w", err)
-		}
+		pushBundle = p.Bundle
 	} else {
 		// Redacted before the digest, so the digest names what is stored and what would be applied.
 		rec.Payload, rules, err = red.Payload(ctx, envelope.Must(v))
@@ -200,6 +199,11 @@ func requestOutput(ctx context.Context, log Log, red Redactor, now func() time.T
 	p := envelope.MessagePayload{Kind: envelope.KindOutputRequested, Delivery: envelope.DeliveryNone, Output: &rec}
 	if len(envelope.Must(p)) > envelope.MaxPayload {
 		return nil, argError("output_schema: the request is over 65536 bytes as stored (< > & count six each): shorten it")
+	}
+	if pushBundle != nil {
+		if err := cfg.Bundles.PutBundle(ctx, c.Run.Room, c.Run.ID, rec.Digest, pushBundle); err != nil {
+			return nil, fmt.Errorf("store bundle: %w", err)
+		}
 	}
 	ev, _, err := log.Append(ctx, envelope.Draft{RoomID: c.Run.Room, RunID: c.Run.ID,
 		Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + c.Run.ID, Role: c.Run.Role},

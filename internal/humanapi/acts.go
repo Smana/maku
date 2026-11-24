@@ -176,15 +176,7 @@ func (a *Actor) forkLimited(principal string) bool {
 func (a *Actor) allow(limiters *map[string]*rate.Limiter, principal string, r rate.Limit, burst int) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if *limiters == nil {
-		*limiters = map[string]*rate.Limiter{}
-	}
-	l, ok := (*limiters)[principal]
-	if !ok {
-		l = rate.NewLimiter(r, burst)
-		(*limiters)[principal] = l
-	}
-	return l.Allow()
+	return takeBounded(limiters, principal, r, burst, a.now())
 }
 
 var kinds = map[string]policy.Action{"remove_queued": policy.RemoveQueued, "promote_queued": policy.PromoteQueued,

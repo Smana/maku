@@ -12,6 +12,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -154,7 +155,8 @@ type Server struct {
 	limitOnce sync.Once
 	limit     *limiter
 
-	reviewWarned sync.Map // cause → time.Time of its last Warn
+	reviewWarnMu sync.Mutex
+	reviewWarned map[string]time.Time // error type/sentinel → time.Time of its last Warn
 }
 
 // Routes is the :8443 handler.
@@ -295,16 +297,51 @@ func authWhy(err error) string {
 // warnEvery spaces the Warn for one unchanged cause: a bridge retries a 401 forever.
 const warnEvery = time.Minute
 
+// maxReviewWarned caps reviewWarned's size so distinct error types never grow unboundedly.
+const maxReviewWarned = 64
+
+// reviewWarnKey collapses err to a bounded sentinel or concrete error type so dynamic strings
+// (IPs, ports, request IDs) in err.Error() cannot create unbounded map keys (REL-M14).
+func reviewWarnKey(err error) string {
+	switch {
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline_exceeded"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	}
+	inner := err
+	for u := errors.Unwrap(inner); u != nil; u = errors.Unwrap(inner) {
+		inner = u
+	}
+	return fmt.Sprintf("%T", inner)
+}
+
 // warnReview logs a TokenReview call that failed, with its cause (never the token), at Warn: it is
-// the broker's RBAC or the apiserver, not a bad credential. Once a minute per distinct cause.
+// the broker's RBAC or the apiserver, not a bad credential. Once a minute per distinct cause type.
 func (s *Server) warnReview(err error) {
-	cause := err.Error()
+	key := reviewWarnKey(err)
 	now := s.now()
-	if last, ok := s.reviewWarned.Load(cause); ok && now.Sub(last.(time.Time)) < warnEvery {
+	s.reviewWarnMu.Lock()
+	if s.reviewWarned == nil {
+		s.reviewWarned = map[string]time.Time{}
+	}
+	if last, ok := s.reviewWarned[key]; ok && now.Sub(last) < warnEvery {
+		s.reviewWarnMu.Unlock()
 		return
 	}
-	s.reviewWarned.Store(cause, now)
-	s.log().Warn("token review failed: check the broker's system:auth-delegator binding and the apiserver", "err", cause)
+	if len(s.reviewWarned) >= maxReviewWarned {
+		for k, t := range s.reviewWarned {
+			if now.Sub(t) >= warnEvery {
+				delete(s.reviewWarned, k)
+			}
+		}
+		if len(s.reviewWarned) >= maxReviewWarned {
+			clear(s.reviewWarned)
+		}
+	}
+	s.reviewWarned[key] = now
+	s.reviewWarnMu.Unlock()
+	s.log().Warn("token review failed: check the broker's system:auth-delegator binding and the apiserver", "err", err.Error())
 }
 
 // bridgeAuth admits a run token for a run that is live and names a room (§1 Admission).
