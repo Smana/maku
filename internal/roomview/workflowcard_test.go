@@ -82,3 +82,27 @@ func TestTheCardShowsSteppedUpFrom(t *testing.T) {
 		t.Fatalf("got:\n%s", b.String())
 	}
 }
+
+func TestTheCardShowsTheTypicalCostOnlyWhenItExists(t *testing.T) {
+	base := WorkflowCard{
+		Workflow: "standard", Reason: "this repository's default",
+		Path: []string{"implementer", "reviewer", "CI", "merge gate"}, CeilingUSD: 5.10,
+	}
+	var without strings.Builder
+	if err := WorkflowCardText(&without, base, Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(without.String(), "Cost       up to $5.10\n") || strings.Contains(without.String(), "typically") {
+		t.Fatalf("without typical:\n%s", without.String())
+	}
+
+	withTypical := base
+	withTypical.TypicalUSD = 0.41
+	var with strings.Builder
+	if err := WorkflowCardText(&with, withTypical, Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(with.String(), "Cost       up to $5.10 · typically $0.41\n") {
+		t.Fatalf("with typical:\n%s", with.String())
+	}
+}

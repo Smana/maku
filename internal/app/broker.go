@@ -536,7 +536,7 @@ func humanServer(cfg config.Config, humans humanapi.Authenticator, rooms client.
 		sponsoredRepos = h.MCP.SponsoredRepositories()
 	}
 	return &humanapi.Server{Humans: humans, Groups: policy.Groups{Admin: groups.Admin, Member: groups.Member},
-		Intake: in, Coordination: coord, Catalogue: catalogueCache(cfg, m), SponsoredRepositories: sponsoredRepos,
+		Intake: in, Coordination: coord, Catalogue: catalogueCache(cfg, m), Stages: factoryStages(cfg), SponsoredRepositories: sponsoredRepos,
 		HumanMode: mode, Origins: origins,
 		WebClient: webClient, PublicURL: cfg.PublicURL, Issuer: h.Issuer, RoomctlClient: roomctlClient,
 		ProjectID: projectID, Audience: audience, Preset: h.EffectivePreset(), TokenUse: h.EffectiveTokenUse(), Scopes: h.Scopes,
@@ -554,6 +554,14 @@ func factoryInstall(cfg config.Config) func(ctx context.Context, accessToken str
 		return nil
 	}
 	return runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}.Install
+}
+
+// factoryStages forwards GET /api/stages to the factory (WR5): nil while no factory is configured.
+func factoryStages(cfg config.Config) humanapi.StagesSource {
+	if cfg.FactoryURL == "" {
+		return nil
+	}
+	return runrequest.Factory{URL: cfg.FactoryURL, CAFile: cfg.FactoryCAFile}
 }
 
 // catalogueCache is the broker's reader of the factory's catalogue (profile choice at intake,

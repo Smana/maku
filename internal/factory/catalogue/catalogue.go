@@ -75,6 +75,8 @@ type Class struct {
 	Description string  `json:"description"`
 	Mode        string  `json:"mode"` // live | shadow | off | unarmed
 	CeilingUSD  float64 `json:"ceilingUSD"`
+	TypicalUSD  float64 `json:"typicalUSD,omitempty"`
+	TypicalOf   int     `json:"typicalOf,omitempty"`
 }
 
 // Escalation is where a workflow's failed run steps to, by signal group; "" goes to a maintainer.

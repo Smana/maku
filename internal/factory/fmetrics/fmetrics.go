@@ -118,6 +118,12 @@ func stageEffects() []string {
 	}
 }
 
+func workflowChoices() []string { return []string{"kept", "overridden", "stepped_up"} }
+func stepUpTriggers() []string {
+	return []string{"budget-run", "budget-task", "stalled", "not_met", "review_rounds_exhausted", "ci_red", "manual"}
+}
+func stepUpModes() []string { return []string{"auto", "manual", "offered"} }
+
 // handOffReasons is the closed vocabulary of a hand-off's or an escalation's reason (AM9): every
 // reason narrate has prose for (the gate's refusals, the ends and the stops), the event reasons
 // the broker already bounds, the meter's revocations, and the run ends only the reconciler names:
@@ -172,6 +178,8 @@ var (
 	spendFinalBuckets = []float64{60, 150, 300, 600, 900, 1800, 3600}
 	// Overlap retrieval ranges from a local exact match to candidate reads and scoped review.
 	overlapEvaluationBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30, 60}
+	// WR5: actual task USD over the workflow card's shown ceiling.
+	ceilingUseRatioBuckets = []float64{0.05, 0.1, 0.2, 0.35, 0.5, 0.75, 1, 1.25, 1.5}
 )
 
 // Set is the factory's instruments. Record through its methods, which fix each label set.
@@ -225,6 +233,9 @@ type Set struct {
 	taskUSD              metric.Float64Counter
 	stageCost            metric.Float64Histogram
 	stageEffects         metric.Int64Counter
+	workflowChoices      metric.Int64Counter
+	ceilingUseRatio      metric.Float64Histogram
+	stepUps              metric.Int64Counter
 	splits               metric.Int64Counter
 	splitChildren        metric.Int64Counter
 	revisionDeferred     metric.Int64Counter
@@ -529,6 +540,16 @@ func New(meter metric.Meter, tasks client.Reader, ns string, leader func() bool)
 	check(err)
 	s.stageEffects, err = meter.Int64Counter("agent_factory_stage_effects_total",
 		metric.WithDescription("What each stage of an ended task changed, by repository, class, stage, effect and task outcome (WR5)."))
+	check(err)
+	s.workflowChoices, err = meter.Int64Counter("agent_factory_workflow_choices_total",
+		metric.WithDescription("Ended tasks by whether the automatic workflow choice was kept, overridden by a pin, or stepped up (WR5)."))
+	check(err)
+	s.ceilingUseRatio, err = meter.Float64Histogram("agent_factory_ceiling_use_ratio",
+		metric.WithDescription("Ended task USD over the workflow card's shown ceiling, by repository, class and stage count (WR5)."),
+		metric.WithExplicitBucketBoundaries(ceilingUseRatioBuckets...))
+	check(err)
+	s.stepUps, err = meter.Int64Counter("agent_factory_step_ups_total",
+		metric.WithDescription("Workflow step-ups and offers on ended tasks, by repository, class, trigger, mode and outcome (WR5)."))
 	check(err)
 	s.scopeBounces, err = meter.Int64Counter("agent_factory_scope_bounces_total",
 		metric.WithDescription("Bounced tasks leaving their wait, by class and exit: relabel, retry or expired (scoper design SC8, SC12)."))
@@ -998,6 +1019,41 @@ func (s *Set) StageEffect(ctx context.Context, repository, class, stage, effect,
 		attribute.String("class", class),
 		attribute.String("stage", oneOf(stage, stageNames())),
 		attribute.String("effect", oneOf(effect, stageEffects())),
+		attribute.String("outcome", oneOf(outcome, taskOutcomes())),
+	))
+}
+
+// WorkflowChoice counts whether an ended task's automatic workflow held, was pinned, or stepped up (WR5).
+func (s *Set) WorkflowChoice(ctx context.Context, repository, class, choice string) {
+	s.workflowChoices.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class),
+		attribute.String("choice", oneOf(choice, workflowChoices())),
+	))
+}
+
+// CeilingUseRatio records an ended task's actual spend over the workflow card's shown ceiling (WR5).
+func (s *Set) CeilingUseRatio(ctx context.Context, repository, class string, stageCount int, ratio float64) {
+	if stageCount < 0 {
+		stageCount = 0
+	}
+	if stageCount > 16 {
+		stageCount = 16
+	}
+	s.ceilingUseRatio.Record(ctx, ratio, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class),
+		attribute.String("stage_count", strconv.Itoa(stageCount)),
+	))
+}
+
+// StepUp counts one step-up or step-up offer against the ended task's outcome (WR5).
+func (s *Set) StepUp(ctx context.Context, repository, class, trigger, mode, outcome string) {
+	s.stepUps.Add(ctx, 1, metric.WithAttributes(
+		attribute.String("repository", s.repository(repository)),
+		attribute.String("class", class),
+		attribute.String("trigger", oneOf(trigger, stepUpTriggers())),
+		attribute.String("mode", oneOf(mode, stepUpModes())),
 		attribute.String("outcome", oneOf(outcome, taskOutcomes())),
 	))
 }

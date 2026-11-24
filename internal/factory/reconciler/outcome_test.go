@@ -652,3 +652,66 @@ func TestATaskWithoutAProfileIsCountedOnce(t *testing.T) {
 		t.Fatalf("counted twice: %v", got)
 	}
 }
+
+func TestACardThatWasLeftAloneCountsAsKept(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "standard"
+		tk.Status.Profile.Source = "repository"
+	})
+	g.r.count(t.Context(), g.r.Cfg.Current(), tk, "accepted", 540_000)
+	g.r.count(t.Context(), g.r.Cfg.Current(), tk, "accepted", 540_000) // once only
+	want := "workflow_choice Smana/cloud-native-ref review kept"
+	n := 0
+	for _, s := range g.metrics.stages {
+		if s == want {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("kept counted %d times; stages=%v", n, g.metrics.stages)
+	}
+}
+
+func TestAPinCountsAsOverridden(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "careful"
+		tk.Status.Profile.Source = "label"
+	})
+	g.r.count(t.Context(), g.r.Cfg.Current(), tk, "accepted", 540_000)
+	want := "workflow_choice Smana/cloud-native-ref review overridden"
+	if !slices.Contains(g.metrics.stages, want) {
+		t.Fatalf("missing %q in %v", want, g.metrics.stages)
+	}
+}
+
+func TestTheCeilingRatioIsSpendOverTheShownCeiling(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "standard"
+		tk.Status.Profile.Source = "repository"
+	})
+	tk.Spec.Budget.TaskMicroUSD = 5_100_000
+	g.r.count(t.Context(), g.r.Cfg.Current(), tk, "accepted", 540_000)
+	want := "ceiling_ratio Smana/cloud-native-ref review 1 0.1059"
+	if !slices.Contains(g.metrics.stages, want) {
+		t.Fatalf("missing %q in %v", want, g.metrics.stages)
+	}
+}
+
+func TestAStepUpCountsInStepUpsMetric(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "careful"
+		tk.Status.Profile.Source = "escalation"
+		tk.Status.Profile.StepUp = &v1alpha1.StepUpStatus{
+			From: "standard", To: "careful", Trigger: "stalled", Mode: "auto", CeilingMicroUSD: 13_600_000,
+		}
+	})
+	g.r.count(t.Context(), g.r.Cfg.Current(), tk, "accepted", 1_200_000)
+	for _, want := range []string{
+		"workflow_choice Smana/cloud-native-ref review stepped_up",
+		"step_up Smana/cloud-native-ref review stalled auto accepted",
+	} {
+		if !slices.Contains(g.metrics.stages, want) {
+			t.Fatalf("missing %q in %v", want, g.metrics.stages)
+		}
+	}
+}

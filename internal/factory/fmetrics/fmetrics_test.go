@@ -679,3 +679,27 @@ func TestStageCostAndEffectMetrics(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkflowHealthMetrics(t *testing.T) {
+	s, read := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return true })
+	s.ListRepositories("Smana/cloud-native-ref")
+	ctx := t.Context()
+	s.WorkflowChoice(ctx, "Smana/cloud-native-ref", "docs", "kept")
+	s.WorkflowChoice(ctx, "Smana/cloud-native-ref", "docs", "overridden")
+	s.WorkflowChoice(ctx, "Smana/cloud-native-ref", "docs", "stepped_up")
+	s.CeilingUseRatio(ctx, "Smana/cloud-native-ref", "docs", 2, 0.106)
+	s.StepUp(ctx, "Smana/cloud-native-ref", "docs", "stalled", "auto", "accepted")
+	got := read()
+	for _, want := range []string{
+		`maku_factory_workflow_choices_total{choice="kept",class="docs",repository="Smana/cloud-native-ref"} 1`,
+		`maku_factory_workflow_choices_total{choice="overridden",class="docs",repository="Smana/cloud-native-ref"} 1`,
+		`maku_factory_workflow_choices_total{choice="stepped_up",class="docs",repository="Smana/cloud-native-ref"} 1`,
+		`maku_factory_ceiling_use_ratio_count{class="docs",repository="Smana/cloud-native-ref",stage_count="2"} 1`,
+		`maku_factory_ceiling_use_ratio_bucket{class="docs",repository="Smana/cloud-native-ref",stage_count="2",le="0.2"} 1`,
+		`maku_factory_step_ups_total{class="docs",mode="auto",outcome="accepted",repository="Smana/cloud-native-ref",trigger="stalled"} 1`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Fatalf("missing %s\n%s", want, got)
+		}
+	}
+}

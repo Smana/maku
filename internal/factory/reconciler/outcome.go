@@ -226,6 +226,42 @@ func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.
 		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, outcome, usd)
 	})
 	r.countStages(ctx, cfg, t, outcome)
+	r.countCardHealth(ctx, t, outcome, micro)
+}
+
+// countCardHealth records the workflow card's health metrics once at task end (WR5): whether the
+// automatic choice held, spend over the shown ceiling, and any step-up or offer against outcome.
+func (r *Reconciler) countCardHealth(ctx context.Context, t *v1alpha1.Task, outcome string, micro int64) {
+	repo, class := t.Spec.Repository, classOf(t)
+	if p := t.Status.Profile; p != nil {
+		choice := "kept"
+		switch {
+		case alreadyStepped(p):
+			choice = "stepped_up"
+		case p.Source == "label":
+			choice = "overridden"
+		}
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.WorkflowChoice(ctx, repo, class, choice)
+		})
+		if p.StepUp != nil {
+			trigger, mode := p.StepUp.Trigger, p.StepUp.Mode
+			record(ctx, func(ctx context.Context) {
+				r.Metrics.StepUp(ctx, repo, class, trigger, mode, outcome)
+			})
+		}
+	}
+	ceiling := t.Spec.Budget.TaskMicroUSD
+	if ceiling <= 0 && t.Status.Profile != nil && t.Status.Profile.StepUp != nil {
+		ceiling = t.Status.Profile.StepUp.CeilingMicroUSD
+	}
+	if ceiling > 0 {
+		ratio := float64(micro) / float64(ceiling)
+		stageCount := len(t.Status.Stages)
+		record(ctx, func(ctx context.Context) {
+			r.Metrics.CeilingUseRatio(ctx, repo, class, stageCount, ratio)
+		})
+	}
 }
 
 // familyBound is how long past its own settle window an approved split's parent waits for its

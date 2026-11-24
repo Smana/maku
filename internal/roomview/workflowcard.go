@@ -159,7 +159,7 @@ func costLine(c WorkflowCard) string {
 		s += " · up to " + Dollars(c.StepUpUSD) + " if it steps up"
 	}
 	if c.TypicalUSD > 0 {
-		s += " · typical " + Dollars(c.TypicalUSD)
+		s += " · typically " + Dollars(c.TypicalUSD)
 	}
 	return s
 }
