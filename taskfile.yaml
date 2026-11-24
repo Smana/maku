@@ -203,6 +203,11 @@ tasks:
     cmds:
       - EXTERNAL_DB=1 bash charts/agent-factory/tests/install.sh k3d
 
+  chart:install:k3d:pilot-db:
+    desc: Tier-1 Pilot bundled Postgres on k3d (TLS 1.3, hostssl, NetworkPolicy, preflight, backup/restore drill; v5 AC1/AC3/AC4)
+    cmds:
+      - PILOT_DB=1 NETPOL=kubernetes PREFLIGHT=1 bash charts/agent-factory/tests/install.sh k3d
+
   chart:install:k3d:netpol:
     desc: The demo on k3d in networkPolicies.mode kubernetes, enforced (the preflight passes) and unenforced (it refuses runs)
     cmds:

@@ -33,6 +33,12 @@
 # postgres:16 in namespace external-db, outside the chart, bootstrapped with docs/database.md's SQL block
 # as written, its three DSN Secrets created by hand, and postgres.enabled=false. The broker migrates it
 # from empty and serves, and every leg's manual run of the retention CronJob purges as rooms_retention.
+# PILOT_DB=1 (k3d only, with NETPOL=kubernetes and PREFLIGHT=1; task chart:install:k3d:pilot-db) layers
+# charts/agent-factory/values-pilot.example.yaml on the install (v5 AC1, AC3, AC4): bundled Postgres with
+# TLS 1.3 (postgres.tls.mode=helm), hostssl + scram-sha-256, sslmode=verify-full, operational banner
+# notices (db_single_replica, db_backups_off) on GET /api/install, negative-control NetworkPolicy checks
+# from agents and an untrusted pod in the release namespace, and a CronJob/rooms-db-backup dump + restore
+# drill into a fresh Postgres instance.
 # TRACING=1 (with GATEWAY=1; task chart:tracing:k3d) adds the run traces proof (plan v4 step 6, Task 2):
 # the e2e stub (hack/e2e-stub) runs as an OTLP/HTTP sink in namespace e2e, maku.runController.tracing
 # names it, and the gateway leg's run, annotated with a traceparent as the factory stamps it, exports its
@@ -59,8 +65,15 @@ METERING="${METERING:-}"
 EXTERNAL_DB="${EXTERNAL_DB:-}"
 [[ -z $EXTERNAL_DB || ($CLUSTER_KIND == k3d && $NETPOL == none && -z $GATEWAY && -z ${ADOPT:-}) ]] ||
   { echo "FAIL: EXTERNAL_DB=1 runs on k3d alone, without NETPOL, GATEWAY or ADOPT" >&2; exit 2; }
+PILOT_DB="${PILOT_DB:-}"
+[[ -z $PILOT_DB || ($CLUSTER_KIND == k3d && $NETPOL == kubernetes && -z $EXTERNAL_DB && -z $GATEWAY && -z ${ADOPT:-}) ]] ||
+  { echo "FAIL: PILOT_DB=1 runs on k3d with NETPOL=kubernetes alone, without EXTERNAL_DB, GATEWAY or ADOPT" >&2; exit 2; }
 # The external database's image: postgres:16, the support floor (D26), by digest.
 EXTERNAL_PG_IMAGE=docker.io/library/postgres:16-alpine@sha256:f377d590e5474681d4d7838635031a2b50647923b7abfa803ce9b5ff35d5c663
+# Bundled Postgres image from charts/agent-factory/values.yaml, reused for the PILOT_DB restore target so
+# pg_restore matches the pg_dump major version and reuses the image already pulled by rooms-db.
+BUNDLED_PG_IMAGE=$(sed -nE '/^postgres:/,/^[a-z]/s/^  image: *([^ ]+)$/\1/p' charts/agent-factory/values.yaml | head -1)
+[[ -z $PILOT_DB || -n $BUNDLED_PG_IMAGE ]] || { echo "FAIL: could not read postgres.image from charts/agent-factory/values.yaml" >&2; exit 2; }
 TRACING="${TRACING:-}"
 PREFLIGHT="${PREFLIGHT:-}"
 [[ -z $TRACING || -n $GATEWAY ]] || { echo "FAIL: TRACING=1 needs GATEWAY=1" >&2; exit 2; }
@@ -73,6 +86,7 @@ NAME="maku-chart-$CLUSTER_KIND"
 [[ -z $GATEWAY ]] || NAME="$NAME-gw"
 [[ -z $METERING ]] || NAME="$NAME-mt"
 [[ -z $EXTERNAL_DB ]] || NAME="$NAME-xdb"
+[[ -z $PILOT_DB ]] || NAME="maku-$CLUSTER_KIND-pilot-db"
 [[ -z $TRACING ]] || NAME="maku-$CLUSTER_KIND-tracing-$NETPOL"
 K3S_IMAGE="${K3S_IMAGE:-rancher/k3s:v1.35.0-k3s1}"
 # TAG: the local images' tag; parallel runs on one Docker host set their own, or one build replaces the other's.
@@ -223,6 +237,7 @@ values=(-f charts/agent-factory/values-demo.yaml
   --set "maku.runPodPolicy.extraImages={${PROBE_IMAGE%%[:@]*}}")
 [[ $NETPOL == none ]] || values+=(--set maku.networkPolicies.mode=kubernetes)
 [[ -z $EXTERNAL_DB ]] || values+=(--set postgres.enabled=false)
+[[ -z $PILOT_DB ]] || values+=(-f charts/agent-factory/values-pilot.example.yaml --set postgres.storage=1Gi)
 issuer="$(kubectl get --raw /.well-known/openid-configuration | jq -r .issuer)"
 # The demo's gateway with the probe's echo as its provider: the umbrella
 # renders the provider's key Secret demo-model from demo.model.apiKey ("Bearer not-a-key", 16
@@ -604,6 +619,12 @@ if probe agents agents.ogenki.io/run-id=np-probe,agents.ogenki.io/role=implement
 else
   echo "ok: a run-labelled pod in agents cannot reach rooms-db:5432 ($CLUSTER_KIND enforces NetworkPolicy)"
 fi
+if [[ -n $PILOT_DB ]]; then
+  if probe "$NS" app.kubernetes.io/name=untrusted-neighbor; then
+    die "an untrusted pod in $NS reached rooms-db:5432 although the policy admits only the broker, retention and backup jobs"
+  fi
+  echo "ok: an untrusted pod in $NS cannot reach rooms-db:5432 (AC3)"
+fi
 kubectl get pods -A -o name | grep -F np-probe- && die "a probe pod was left behind"
 fi
 
@@ -675,6 +696,278 @@ if [[ -n $PREFLIGHT ]]; then
   ! grep -qE 'postgres(ql)?://|password=|Bearer ' "$work/preflight.jsonl" || die "the preflight output holds a credential"
   [[ $(pf cli exposure) == skip ]] || die "maku preflight --no-outside did not skip the outside checks"
   echo "ok: maku preflight collects the cluster, the broker (database: pass) and the run-controller (run-path: $want)"
+fi
+
+if [[ -n $PILOT_DB ]]; then
+  step "Tier-1 Pilot bundled Postgres (v5 AC1): TLS 1.3, hostssl, verify-full DSNs and operational notices"
+  for s in rooms-db-ca rooms-db-tls; do
+    kubectl -n "$NS" get secret "$s" >/dev/null || die "missing Tier-1 Pilot TLS Secret $s"
+  done
+  for s in rooms-broker-dsn rooms-owner-dsn rooms-retention-dsn; do
+    dsn=$(kubectl -n "$NS" get secret "$s" -o jsonpath='{.data.uri}' | base64 -d)
+    grep -qF 'sslmode=verify-full&sslrootcert=/etc/room-broker/db-ca/ca.crt' <<<"$dsn" ||
+      die "$s does not enforce sslmode=verify-full with the database CA"
+  done
+  for guc in "ssl=on" "ssl_min_protocol_version=TLSv1.3" "password_encryption=scram-sha-256"; do
+    k=${guc%%=*} want=${guc#*=}
+    got=$(kubectl -n "$NS" exec sts/rooms-db -- psql -U postgres -d rooms -tAc "SHOW $k;" | tr -d '\r')
+    [[ $got == "$want" ]] || die "rooms-db GUC $k is '$got', want '$want'"
+  done
+  echo "ok: rooms-db enforces ssl=on, TLSv1.3, scram-sha-256 and verify-full DSNs"
+
+  # Negative control for hostssl: a broker-labelled pod passes NetworkPolicy, but pg_hba.conf must
+  # refuse a plaintext connection (sslmode=disable) over the cluster network.
+  broker_pw=$(kubectl -n "$NS" get secret rooms-db-passwords -o jsonpath='{.data.rooms_broker}' | base64 -d)
+  kubectl -n "$NS" apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pg-plain-probe
+  labels: {app.kubernetes.io/name: room-broker}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: psql
+      image: $BUNDLED_PG_IMAGE
+      command:
+        - sh
+        - -c
+        - |
+          echo plain-probe-started
+          # Retry while kube-router syncs the new pod's room-broker label into the rooms-db NetworkPolicy ipset.
+          rc=1
+          out=""
+          for _ in 1 2 3 4 5 6 7 8 9 10; do
+            rc=0
+            out=\$(psql "postgresql://rooms_broker:\$PW@rooms-db.$NS.svc:5432/rooms?sslmode=disable" -c 'SELECT 1' 2>&1) || rc=\$?
+            if [ "\$rc" -eq 0 ] || ! printf '%s\n' "\$out" | grep -qE 'Connection refused|timeout expired'; then
+              printf '%s\n' "\$out"
+              exit "\$rc"
+            fi
+            sleep 2
+          done
+          printf '%s\n' "\$out"
+          exit "\$rc"
+      env: [{name: PW, value: "$broker_pw"}]
+      resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 128Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+EOF
+  plain_phase=""
+  for _ in $(seq 60); do
+    plain_phase=$(kubectl -n "$NS" get pod pg-plain-probe -o jsonpath='{.status.phase}') || plain_phase=""
+    [[ $plain_phase == Succeeded || $plain_phase == Failed ]] && break
+    sleep 2
+  done
+  plain_out=$(kubectl -n "$NS" logs pg-plain-probe 2>&1) || plain_out=""
+  kubectl -n "$NS" delete pod pg-plain-probe --now --wait=false >/dev/null 2>&1 || true
+  grep -qF plain-probe-started <<<"$plain_out" || die "plain TLS probe did not run (phase '$plain_phase'): $plain_out"
+  [[ $plain_phase == Failed ]] || die "plaintext connection to rooms-db succeeded despite hostssl: $plain_out"
+  grep -qE 'no pg_hba\.conf entry|no encryption' <<<"$plain_out" ||
+    die "plaintext connection failed, but not because of hostssl: $plain_out"
+  echo "ok: hostssl rejects plaintext connections from a broker-labelled pod"
+
+  # Operational banner notices: GET /api/install must surface db_single_replica and db_backups_off.
+  fetch_install_unsafe() {
+    local pf out=""
+    kubectl -n "$NS" port-forward deploy/room-broker 18080:8080 >/dev/null 2>&1 &
+    pf=$!
+    for _ in $(seq 20); do
+      # human.mode=local gates every route on LoopbackOrigins(publicURL), which defaults to http://localhost:8080.
+      out=$(curl -fsS -H 'Host: localhost:8080' -H 'Origin: http://localhost:8080' http://127.0.0.1:18080/api/install 2>/dev/null) && break
+      sleep 1
+    done
+    kill "$pf" 2>/dev/null || true
+    wait "$pf" 2>/dev/null || true
+    [[ -n $out ]] || die "GET /api/install returned nothing"
+    printf '%s\n' "$out"
+  }
+  install_json=$(fetch_install_unsafe)
+  jq -e '(.unsafe | index("db_single_replica") != null) and (.unsafe | index("db_backups_off") != null)' <<<"$install_json" >/dev/null ||
+    die "GET /api/install missing db_single_replica or db_backups_off: $install_json"
+  echo "ok: GET /api/install surfaces db_single_replica and db_backups_off"
+
+  step "Tier-1 Pilot backup & restore drill (v5 AC4): CronJob/rooms-db-backup -> fresh Postgres -> maku-broker migrate"
+  src_revs=$(kubectl -n "$NS" exec sts/rooms-db -- psql -U postgres -d rooms -tAc 'SELECT count(*) FROM room_broker_revisions;' | tr -d '[:space:]')
+  src_rls=$(kubectl -n "$NS" exec sts/rooms-db -- psql -U postgres -d rooms -tAc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relrowsecurity;" | tr -d '[:space:]')
+  [[ $src_revs =~ ^[0-9]+$ && $src_revs -ge 16 ]] || die "expected >= 16 room_broker_revisions in rooms-db, got '$src_revs'"
+  [[ $src_rls =~ ^[0-9]+$ && $src_rls -gt 0 ]] || die "expected RLS-enabled tables in rooms-db, got '$src_rls'"
+
+  kubectl create namespace backup-sink >/dev/null
+  kubectl -n backup-sink apply -f - >/dev/null <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: backup-sink}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: backup-sink}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: backup-sink}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 65534, runAsGroup: 65534, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: sink
+          image: $ECHO_IMAGE
+          command:
+            - python3
+            - -u
+            - -c
+            - |
+              import http.server, os
+              class H(http.server.BaseHTTPRequestHandler):
+                  def do_PUT(self):
+                      n = int(self.headers.get("Content-Length", "0"))
+                      data = self.rfile.read(n)
+                      with open("/tmp/rooms.dump", "wb") as f:
+                          f.write(data)
+                      self.send_response(200); self.end_headers(); self.wfile.write(b"ok\n")
+                  def do_GET(self):
+                      if self.path == "/healthz":
+                          self.send_response(200); self.end_headers(); self.wfile.write(b"ok\n"); return
+                      if not os.path.exists("/tmp/rooms.dump"):
+                          self.send_response(404); self.end_headers(); return
+                      data = open("/tmp/rooms.dump", "rb").read()
+                      self.send_response(200); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+              http.server.HTTPServer(("0.0.0.0", 8080), H).serve_forever()
+          ports: [{name: http, containerPort: 8080}]
+          readinessProbe: {httpGet: {path: /healthz, port: http}}
+          resources: {requests: {cpu: 10m, memory: 32Mi}, limits: {cpu: 200m, memory: 64Mi}}
+          securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: tmp, mountPath: /tmp}]
+      volumes: [{name: tmp, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: backup-sink}
+spec:
+  selector: {app.kubernetes.io/name: backup-sink}
+  ports: [{name: http, port: 8080, targetPort: http}]
+EOF
+  kubectl -n backup-sink rollout status deploy/backup-sink --timeout=120s >/dev/null
+
+  cat >"$work/pilot-backup.yaml" <<EOF
+postgres:
+  backup:
+    enabled: true
+    destination: http://backup-sink.backup-sink.svc.cluster.local:8080/rooms.dump
+    uploader:
+      image: $ECHO_IMAGE
+      command:
+        - python3
+        - -c
+        - |
+          import os, urllib.request
+          name = open("/backup/latest.name").read().strip()
+          data = open("/backup/" + name, "rb").read()
+          req = urllib.request.Request(os.environ["BACKUP_DESTINATION"], data=data, method="PUT")
+          with urllib.request.urlopen(req, timeout=30) as r:
+              print("uploaded", name, len(data), r.status)
+    egress:
+      to:
+        - to:
+            - namespaceSelector: {matchLabels: {kubernetes.io/metadata.name: backup-sink}}
+              podSelector: {matchLabels: {app.kubernetes.io/name: backup-sink}}
+          ports: [{protocol: TCP, port: 8080}]
+maku:
+  broker:
+    database:
+      backupsOff: false
+EOF
+  values+=(-f "$work/pilot-backup.yaml")
+  helm upgrade af charts/agent-factory -n "$NS" "${values[@]}" --timeout 5m >/dev/null
+  kubectl -n "$NS" rollout status deploy/room-broker --timeout=180s >/dev/null
+  kubectl -n "$NS" get networkpolicy rooms-db-backup >/dev/null || die "missing NetworkPolicy rooms-db-backup"
+  install_json_after=$(fetch_install_unsafe)
+  jq -e '(.unsafe | index("db_single_replica") != null) and (.unsafe | index("db_backups_off") == null)' <<<"$install_json_after" >/dev/null ||
+    die "enabling backup did not clear db_backups_off while keeping db_single_replica: $install_json_after"
+  echo "ok: enabling backup cleared db_backups_off and kept db_single_replica"
+
+  kubectl -n "$NS" create job --from=cronjob/rooms-db-backup backup-drill >/dev/null || die "missing CronJob rooms-db-backup"
+  kubectl -n "$NS" wait --for=condition=Complete job/backup-drill --timeout=180s ||
+    { kubectl -n "$NS" logs job/backup-drill --all-containers >&2 || true; die "backup-drill job did not complete"; }
+  kubectl -n "$NS" logs job/backup-drill -c upload | grep -F 'uploaded rooms-' || die "backup-drill did not upload dump"
+  kubectl -n "$NS" delete job backup-drill --wait=false >/dev/null
+  kubectl get --raw /api/v1/namespaces/backup-sink/services/http:backup-sink:8080/proxy/rooms.dump >"$work/rooms.dump"
+  [[ -s $work/rooms.dump && $(head -c 5 "$work/rooms.dump") == "PGDMP" ]] || die "uploaded backup is not a custom-format PostgreSQL dump"
+  echo "ok: CronJob/rooms-db-backup dumped over TLS verify-full and uploaded $(wc -c <"$work/rooms.dump" | tr -d ' ') bytes"
+
+  # Restore into a fresh Postgres instance bootstrapped from docs/database.md and verify with maku-broker migrate.
+  kubectl create namespace restore-db >/dev/null
+  kubectl -n restore-db apply -f - >/dev/null <<EOF
+apiVersion: apps/v1
+kind: Deployment
+metadata: {name: pg-restore}
+spec:
+  replicas: 1
+  selector: {matchLabels: {app.kubernetes.io/name: pg-restore}}
+  template:
+    metadata: {labels: {app.kubernetes.io/name: pg-restore}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext: {runAsNonRoot: true, runAsUser: 999, runAsGroup: 999, fsGroup: 999, seccompProfile: {type: RuntimeDefault}}
+      containers:
+        - name: postgres
+          image: $BUNDLED_PG_IMAGE
+          env:
+            - {name: POSTGRES_PASSWORD, value: e2e-restore-only}
+            - {name: PGDATA, value: /var/lib/postgresql/data/pgdata}
+          ports: [{name: postgres, containerPort: 5432}]
+          readinessProbe: {exec: {command: [pg_isready, -h, 127.0.0.1, -U, postgres]}, periodSeconds: 3}
+          resources: {requests: {cpu: 100m, memory: 128Mi}, limits: {cpu: "1", memory: 512Mi}}
+          securityContext: {allowPrivilegeEscalation: false, capabilities: {drop: [ALL]}}
+          volumeMounts: [{name: data, mountPath: /var/lib/postgresql/data}, {name: run, mountPath: /var/run/postgresql}]
+      volumes: [{name: data, emptyDir: {}}, {name: run, emptyDir: {}}]
+---
+apiVersion: v1
+kind: Service
+metadata: {name: pg-restore}
+spec:
+  selector: {app.kubernetes.io/name: pg-restore}
+  ports: [{name: postgres, port: 5432, targetPort: postgres}]
+EOF
+  kubectl -n restore-db rollout status deploy/pg-restore --timeout=180s >/dev/null
+  awk '/^```sql$/ {on=1; next} on && /^```$/ {exit} on' docs/database.md >"$work/restore-bootstrap.sql"
+  kubectl -n restore-db exec -i deploy/pg-restore -- psql -v ON_ERROR_STOP=1 -U postgres -d postgres <"$work/restore-bootstrap.sql" >/dev/null
+  owner_pw=$(sed -nE "s/^CREATE ROLE rooms_owner LOGIN PASSWORD '([^']+)';$/\1/p" "$work/restore-bootstrap.sql")
+  [[ -n $owner_pw ]] || die "no password for rooms_owner in docs/database.md"
+  kubectl -n restore-db exec -i deploy/pg-restore -- \
+    pg_restore --no-owner --exit-on-error --dbname="postgresql://rooms_owner:$owner_pw@127.0.0.1:5432/rooms" <"$work/rooms.dump"
+  dst_revs=$(kubectl -n restore-db exec deploy/pg-restore -- psql -U postgres -d rooms -tAc 'SELECT count(*) FROM room_broker_revisions;' | tr -d '[:space:]')
+  dst_rls=$(kubectl -n restore-db exec deploy/pg-restore -- psql -U postgres -d rooms -tAc "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = 'public' AND c.relrowsecurity;" | tr -d '[:space:]')
+  [[ $dst_revs == "$src_revs" ]] || die "restored room_broker_revisions count is '$dst_revs', want '$src_revs'"
+  [[ $dst_rls == "$src_rls" ]] || die "restored RLS table count is '$dst_rls', want '$src_rls'"
+
+  kubectl -n restore-db apply -f - >/dev/null <<EOF
+apiVersion: v1
+kind: Pod
+metadata: {name: migrate-verify}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext: {runAsNonRoot: true, runAsUser: 65532, runAsGroup: 65532, seccompProfile: {type: RuntimeDefault}}
+  containers:
+    - name: migrate
+      image: ghcr.io/smana/maku-broker:$TAG
+      imagePullPolicy: Never
+      args: [migrate]
+      env:
+        - {name: ROOMS_MIGRATION_DATABASE_URL, value: "postgresql://rooms_owner:$owner_pw@pg-restore.restore-db.svc:5432/rooms?sslmode=disable"}
+      resources: {requests: {cpu: 50m, memory: 64Mi}, limits: {cpu: 200m, memory: 128Mi}}
+      securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: [ALL]}}
+EOF
+  mig_phase=""
+  for _ in $(seq 60); do
+    mig_phase=$(kubectl -n restore-db get pod migrate-verify -o jsonpath='{.status.phase}') || mig_phase=""
+    [[ $mig_phase == Succeeded || $mig_phase == Failed ]] && break
+    sleep 2
+  done
+  mig_out=$(kubectl -n restore-db logs migrate-verify 2>&1) || mig_out=""
+  if [[ $mig_phase != Succeeded ]] || ! grep -qF 'schema up to date' <<<"$mig_out"; then
+    die "maku-broker migrate verification on restored DB failed (phase '$mig_phase'): $mig_out"
+  fi
+  echo "ok: restored into fresh Postgres ($dst_revs revisions, $dst_rls RLS tables) and maku-broker migrate reported schema up to date (AC4)"
 fi
 
 step "the runs namespace: its ResourceQuota, and the run-pod policy refuses a pod nobody but the run-controller made"
@@ -886,7 +1179,9 @@ fi
 
 step "a second helm upgrade with the same values keeps the CA, the certificate and both DSNs"
 snap() {
-  for s in room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn; do
+  local secrets=(room-broker-ca room-broker-tls rooms-broker-dsn rooms-owner-dsn)
+  [[ -z $PILOT_DB ]] || secrets+=(rooms-db-ca rooms-db-tls)
+  for s in "${secrets[@]}"; do
     local d
     d=$(kubectl -n "$NS" get secret "$s" -o jsonpath='{.data}') || die "kubectl get secret $s failed"
     printf '%s %s\n' "$s" "$(sha256sum <<<"$d" | cut -d' ' -f1)"
@@ -901,4 +1196,4 @@ if [[ ${ADOPT:-} == 1 ]]; then
   [[ $(kubectl -n "$NS" get room adoptab2 -o jsonpath='{.metadata.uid}') == "$uid" ]] || die "the adopted Room did not survive the umbrella's upgrade"
   echo "ok: the adopted Room survived the umbrella's upgrade"
 fi
-echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}${GATEWAY:+ (gateway)}${METERING:+ (metering)}"
+echo "install OK on $CLUSTER_KIND${ADOPT:+ (ADOPT)}${GATEWAY:+ (gateway)}${METERING:+ (metering)}${PILOT_DB:+ (pilot-db)}"

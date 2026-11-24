@@ -12,8 +12,12 @@
 #            with METERING=1, its tokens reach a test-only VictoriaMetrics under agentgateway's names and
 #            the meter prices them (plan v4 step 4, Task 17). A fifth, external-db (install.sh's
 #            EXTERNAL_DB=1), brings its own postgres:16 outside the chart, bootstrapped with
-#            docs/database.md's SQL, with postgres.enabled=false (v4 D9).
-#            The kubernetes and unenforced legs also run the install's preflight (PREFLIGHT=1, v4 D24).
+#            docs/database.md's SQL, with postgres.enabled=false (v4 D9). A sixth, pilot-db (install.sh's
+#            PILOT_DB=1, NETPOL=kubernetes, PREFLIGHT=1), layers values-pilot.example.yaml to prove
+#            Tier-1 Pilot bundled Postgres: TLS 1.3 + hostssl + verify-full, operational banner notices,
+#            default-deny NetworkPolicy negative controls, and CronJob/rooms-db-backup dump + restore
+#            into a fresh Postgres instance (v5 AC1, AC3, AC4).
+#            The kubernetes, unenforced and pilot-db legs also run the install's preflight (PREFLIGHT=1, v4 D24).
 #   usd:     on the nightly schedule, `task chart:usd:k3d`: the factory-level USD proof, a gateway-mode
 #            run that must settle in the factory's ledger at agentgateway's own cost for it. No secret.
 #   install-upgrade: on the nightly schedule, `task install:upgrade` (v4 step 7, PR G; D23, IN11): the
@@ -137,18 +141,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        netpol: [none, kubernetes, unenforced, gateway, external-db]
+        netpol: [none, kubernetes, unenforced, gateway, external-db, pilot-db]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
       contents: read
     env:
       GH_TOKEN: ${{ github.token }} # install.sh asks the API for the latest release
-      NETPOL: ${{ matrix.netpol == 'external-db' && 'none' || matrix.netpol == 'gateway' && 'kubernetes' || matrix.netpol }}
+      NETPOL: ${{ matrix.netpol == 'external-db' && 'none' || (matrix.netpol == 'gateway' || matrix.netpol == 'pilot-db') && 'kubernetes' || matrix.netpol }}
       GATEWAY: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       METERING: ${{ matrix.netpol == 'gateway' && '1' || '' }}
       EXTERNAL_DB: ${{ matrix.netpol == 'external-db' && '1' || '' }}
-      PREFLIGHT: ${{ (matrix.netpol == 'kubernetes' || matrix.netpol == 'unenforced') && '1' || '' }}
+      PILOT_DB: ${{ matrix.netpol == 'pilot-db' && '1' || '' }}
+      PREFLIGHT: ${{ (matrix.netpol == 'kubernetes' || matrix.netpol == 'unenforced' || matrix.netpol == 'pilot-db') && '1' || '' }}
       PREBUILT: "1"
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
