@@ -384,3 +384,31 @@ func TestPrivateCode(t *testing.T) {
 	st := Desired(Inputs{Config: cfg(config.Repository{Name: repo})}, nil, []v1alpha1.Repository{repoObj("app", repo, 1)}, nil, now).Repositories["app"]
 	want(t, st.Conditions, v1alpha1.ConditionPrivateCode, metav1.ConditionUnknown, "NotChecked")
 }
+
+func TestRepositoryServedModeAndReady(t *testing.T) {
+	in := repoIn(cfg(config.Repository{Name: repo, Classes: map[string]config.Class{"docs": {Live: true}}}))
+	in.Outcomes[0].Bindings[0].Mode = config.ModeShadow
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	if len(got.Classes) != 1 || got.Classes[0].Mode != config.ModeShadow || got.Classes[0].ServedMode != config.ModeLive {
+		t.Fatalf("written/served mode %+v", got.Classes)
+	}
+	want(t, got.Conditions, ConditionReady, metav1.ConditionTrue, "Ready")
+
+	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message = false, v1alpha1.ReasonInvalid, "bad generation"
+	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	want(t, got.Conditions, ConditionReady, metav1.ConditionFalse, v1alpha1.ReasonInvalid)
+
+	in.Outcomes[0].Accepted, in.Outcomes[0].Reason, in.Outcomes[0].Message = true, "", ""
+	in.Outcomes[0].Bindings[0].Accepted = false
+	got = Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	want(t, got.Conditions, ConditionReady, metav1.ConditionFalse, "BindingsRefused")
+}
+
+func TestRepositoryPausedCondition(t *testing.T) {
+	in := repoIn(cfg(config.Repository{Name: repo, Merge: config.Merge{Paused: &config.MergePause{Reason: "Incident freeze"}}}))
+	got := Desired(in, nil, []v1alpha1.Repository{repoObj("r", repo, 4)}, nil, now).Repositories["r"]
+	condition := want(t, got.Conditions, ConditionPaused, metav1.ConditionTrue, "OperatorPaused")
+	if condition.Message != "Incident freeze" {
+		t.Fatalf("pause message %q", condition.Message)
+	}
+}

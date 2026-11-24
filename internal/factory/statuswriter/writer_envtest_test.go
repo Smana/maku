@@ -283,8 +283,8 @@ func TestWriterBindings(t *testing.T) {
 	if got := cells("mergepolicies", "dead-links"); got["Consumers"] != 2.0 || got["Current"] != 1.0 || got["Live"] != 0.0 || got["Accepted"] != "True" {
 		t.Fatalf("mergepolicy/dead-links %v, want Consumers 2, Current 1, Live 0, Accepted True", got)
 	}
-	if got := cells("repositories", "cloud-native-ref"); got["Classes"] != 2.0 || got["Live"] != 1.0 {
-		t.Fatalf("repository/cloud-native-ref %v, want Classes 2, Live 1", got)
+	if got := cells("repositories", "cloud-native-ref"); got["Policies"] != 2.0 || got["Live"] != 1.0 {
+		t.Fatalf("repository/cloud-native-ref %v, want Policies 2, Live 1", got)
 	}
 
 	// A second pass writes nothing: the stored status round-trips, on both kinds.

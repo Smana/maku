@@ -214,8 +214,8 @@ func TestLegacyMergePolicyReadsBackEmptyAfterTheUpgrade(t *testing.T) {
 			t.Fatal(err)
 		}
 		spec, _, _ := unstructured.NestedMap(u.Object, "spec")
-		if len(spec) != 0 {
-			t.Errorf("MergePolicy %s reads back with spec %v, want it empty", name, spec)
+		if len(spec) != 1 || spec["evidence"] != "standard" {
+			t.Errorf("MergePolicy %s reads back with spec %v, want only the default evidence level", name, spec)
 		}
 	}
 }
@@ -243,16 +243,17 @@ func TestRepositoryAdmission(t *testing.T) {
 		many = append(many, fmt.Sprintf("{name: c%d, mode: disabled}", i))
 	}
 	for name, tc := range map[string]struct{ bindings, extra, want string }{
-		"a name twice":    {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: docs, mode: disabled}, {name: docs, mode: shadow}]`, want: "Duplicate value"},
-		"mode on":         {bindings: `[{name: docs-links, mode: 'on'}, {name: revert, mode: disabled}]`, want: `Unsupported value: "on"`},
-		"mode off":        {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: disabled}]`, want: `Unsupported value: "off"`},
-		"no mode":         {bindings: `[{name: docs-links}, {name: revert, mode: disabled}]`, want: "Required value"},
-		"review shadow":   {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: shadow}]`, want: msgReviewBinding},
-		"review disabled": {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: disabled}]`, want: msgReviewBinding},
-		"file authority":  {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}]`, extra: "repository", want: msgFileBindings},
-		"33 bindings":     {bindings: "[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
-		"a negative cap":  {bindings: `[{name: docs-links, mode: disabled, maxPerDay: -1}, {name: revert, mode: disabled}]`, want: "should be greater than or equal to 0"},
-		"a bad name":      {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: Docs, mode: disabled}]`, want: "should match"},
+		"a name twice":     {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: docs, mode: disabled}, {name: docs, mode: shadow}]`, want: "Duplicate value"},
+		"mode on":          {bindings: `[{name: docs-links, mode: 'on'}, {name: revert, mode: disabled}]`, want: `Unsupported value: "on"`},
+		"mode off":         {bindings: `[{name: docs-links, mode: "off"}, {name: revert, mode: disabled}]`, want: `Unsupported value: "off"`},
+		"no mode":          {bindings: `[{name: docs-links}, {name: revert, mode: disabled}]`, want: "Required value"},
+		"review shadow":    {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: shadow}]`, want: msgReviewBinding},
+		"review disabled":  {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: review, mode: disabled}]`, want: msgReviewBinding},
+		"file authority":   {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}]`, extra: "repository", want: msgFileBindings},
+		"33 bindings":      {bindings: "[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, " + strings.Join(many, ", ") + "]", want: "must have at most 32 items"},
+		"a negative cap":   {bindings: `[{name: docs-links, mode: disabled, maxPerDay: -1}, {name: revert, mode: disabled}]`, want: "should be greater than or equal to 0"},
+		"unanchored files": {bindings: `[{name: docs-links, mode: disabled, allowedFiles: ['docs/.+']}, {name: revert, mode: disabled}]`, want: "should match"},
+		"a bad name":       {bindings: `[{name: docs-links, mode: disabled}, {name: revert, mode: disabled}, {name: Docs, mode: disabled}]`, want: "should match"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			set := map[string]string{"spec.mergePolicies": tc.bindings}
@@ -411,5 +412,38 @@ func TestTheLiveANRObjectsAreAdmitted(t *testing.T) {
 	}
 	if kinds["Factory"] != 1 || kinds["Repository"] != 4 || kinds["MergePolicy"] != 8 {
 		t.Fatalf("objects %v, want 1 Factory, 4 Repositories, 8 MergePolicies", kinds)
+	}
+}
+
+func TestMergePolicyFieldAdmission(t *testing.T) {
+	a := startAdmission(t)
+	for name, tc := range map[string]struct {
+		set  map[string]string
+		want string
+	}{
+		"diffShape nonsense": {set: map[string]string{"spec.diffShape": "nonsense"}, want: "Unsupported value"},
+		"negative cap":       {set: map[string]string{"spec.maxPerDay": "-1"}, want: "should be greater than or equal to 0"},
+		"unanchored files":   {set: map[string]string{"spec.allowedFiles": `["docs/.+"]`}, want: "should match"},
+		"low without proof":  {set: map[string]string{"spec.evidence": "low"}, want: "evidence: low needs diffShape or oracle"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := edit(t, docsLinksPolicy, strings.ReplaceAll(name, " ", "-"), tc.set)
+			if err := a.create(t, m); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+	if err := a.create(t, docsLinksPolicy); err != nil {
+		t.Fatalf("a policy with no evidence level refused: %v", err)
+	}
+	got := &unstructured.Unstructured{}
+	got.SetAPIVersion(GroupVersion.String())
+	got.SetKind("MergePolicy")
+	if err := a.c.Get(t.Context(), client.ObjectKey{Namespace: a.ns, Name: "docs-links"}, got); err != nil {
+		t.Fatal(err)
+	}
+	evidence, _, _ := unstructured.NestedString(got.Object, "spec", "evidence")
+	if evidence != "standard" {
+		t.Fatalf("evidence = %q, want standard", evidence)
 	}
 }

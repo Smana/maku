@@ -83,6 +83,9 @@ component, every rule in PromQL with `runbook_url` and `dashboard` annotations. 
 namespace, `maku.runs.namespace`, `maku.broker.human.issuer` and `monitoring.prometheusRule.docsURL`
 are substituted into it, so the schema refuses a double quote or a backslash in them.
 [Operations](operations/failures.md#alerts) lists each alert and the values that shape the rule.
+`AgentFactoryBindingRefused` fires after `BindingsValid` stays false for 15 minutes; the Repository's
+message names the binding and fix. `AgentFactoryPolicyPausedLong` fires after `spec.merge.paused`
+stays set for 24 hours; read its reason and resume by removing the block.
 
 ## Dashboards
 
@@ -101,7 +104,7 @@ monitoring:
 | uid | Title | Rendered with |
 |---|---|---|
 | `agents-overview` | The fleet at a glance: health, spend, runs in flight, pull requests, firing alerts | always |
-| `agent-factory` | Tasks, pull request outcomes, budgets, merge decisions, the ledger against the gateway | always |
+| `agent-factory` | Tasks, pull request outcomes, budgets, automatic merges by policy and why other candidates waited, the ledger against the gateway | always |
 | `agent-room` | One room (`var-room`): its runs, spend, approvals, events | always |
 | `agent-run` | One run (`var-run`): phase, duration, models, tokens and cost, the ledger against the gateway | always |
 | `agent-identity` | Spend per identity (`var-principal`): one principal at a time, never ranked | always |

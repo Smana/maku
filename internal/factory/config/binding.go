@@ -47,9 +47,7 @@ const (
 	ReasonInvalid   = "Invalid"
 )
 
-// Binding is one repository's use of a MergePolicy (B3, B4): the policy's name, which is the class
-// name (B1), the mode, and the parameters this repository supplies. A binding tightens or fills;
-// it never widens what the policy says.
+// Binding is one repository's use of a MergePolicy: the policy's name, mode, and parameters. A binding tightens or fills; it never widens what the policy says.
 // +kubebuilder:object:generate=true
 type Binding struct {
 	// Name is the MergePolicy's, so the class's (B1).
@@ -64,6 +62,7 @@ type Binding struct {
 	// never both. AllowedFiles fills the policy's when it has none, and narrows it when it has (MR3).
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
+	// +kubebuilder:validation:items:Pattern=`^\^.*\$$`
 	AllowedFiles []string `json:"allowedFiles,omitempty"`
 	// +kubebuilder:validation:MaxItems=64
 	// +kubebuilder:validation:items:MaxLength=512
@@ -91,8 +90,7 @@ type Binding struct {
 	MaxPerDay int `json:"maxPerDay,omitempty"`
 }
 
-// PolicySpec is a MergePolicy's class definition (B7, D16, MR9): MergeClass, without mode,
-// workflow fields or requires.
+// PolicySpec is a MergePolicy's class definition: MergeClass, without mode, workflow fields or requires.
 // +kubebuilder:object:generate=true
 type PolicySpec struct {
 	MergeClass `json:",inline"`

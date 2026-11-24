@@ -442,13 +442,73 @@
       ]
     },
     {
+      "id": 23,
+      "type": "table",
+      "title": "Merged with no human, by policy",
+      "description": "Automatic merges in 7 days, by policy (the metric keeps its class label for compatibility).",
+      "gridPos": {
+        "x": 0,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (class) (increase(maku_factory_merge_decisions_total{verdict=\"arm\",reason=\"armed\"}[7d])) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "table",
+      "title": "Why the rest waited",
+      "description": "Candidate policies that refused in 7 days, by policy and reason.",
+      "gridPos": {
+        "x": 12,
+        "y": 40,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (policy, reason) (increase(maku_factory_policy_considered_total[7d])) > 0",
+          "format": "table",
+          "instant": true
+        }
+      ]
+    },
+    {
       "id": 13,
       "type": "timeseries",
       "title": "Spend per UTC day: ledger vs gateway",
       "description": "Each day's spend in the factory's ledger (maku_factory_run_settled_usd, each run's day maximum, summed over runs: a run is charged once, where the per-principal spent figures overlap) against agentgateway's priced counter over the same day, one point per UTC day. The day's cross-check holds within max(1 %, 0.10 USD). A run that crosses midnight counts on both days, whole. The gateway side counts a run's first priced call: a run born that day reads its whole counter.",
       "gridPos": {
         "x": 0,
-        "y": 40,
+        "y": 56,
         "w": 16,
         "h": 8
       },
@@ -488,7 +548,7 @@
       "collapsed": false,
       "gridPos": {
         "x": 0,
-        "y": 48,
+        "y": 64,
         "w": 24,
         "h": 1
       },
@@ -501,7 +561,7 @@
       "description": "Median time from the hand-off to a human to the merge, by reason, over 7 days: how long a pull request waits once the factory is done.",
       "gridPos": {
         "x": 0,
-        "y": 49,
+        "y": 65,
         "w": 12,
         "h": 8
       },
@@ -531,7 +591,7 @@
       "description": "Seconds the factory's tasks spent waiting on a human in 7 days, by reason and class.",
       "gridPos": {
         "x": 12,
-        "y": 49,
+        "y": 65,
         "w": 8,
         "h": 8
       },
@@ -562,7 +622,7 @@
       "description": "How many classes the breaker holds right now (the AgentFactoryClassPausedLong selector: every named class of every repository). Red from 1: nobody merges for a paused class until it is lifted. The gauge can be absent for a paused class with no decision and no watched merge: 0 here means not reported, not not paused.",
       "gridPos": {
         "x": 20,
-        "y": 49,
+        "y": 65,
         "w": 4,
         "h": 8
       },
@@ -618,7 +678,7 @@
       "description": "USD per role over the window, from maku_factory_run_cost_usd (harness roles HR6): the first per-role number the factory reports. The role label (implementer, reviewer, tester, triager; scoper for a scoping run) arrives with Maku v0.32.0: runs from older factories show one series with no role label, their total.",
       "gridPos": {
         "x": 0,
-        "y": 57,
+        "y": 73,
         "w": 12,
         "h": 8
       },
@@ -648,7 +708,7 @@
       "description": "USD each workflow (profile) spent over the range, divided by the pull requests merged over it (maku_factory_task_outcomes_total with outcome accepted or merged_human). The denominator is merged pull requests: a failed task's spend is in the numerator, not the denominator, so a red class reads higher, not lower. Failed tasks' spend included above the line.",
       "gridPos": {
         "x": 0,
-        "y": 65,
+        "y": 81,
         "w": 8,
         "h": 8
       },
@@ -678,7 +738,7 @@
       "description": "USD each role (harness roles HR6) spent over the range, divided by the same single denominator: the pull requests merged over the range, every workflow counted once (maku_factory_task_outcomes_total with outcome accepted or merged_human). The roles of one merged pull request sum to its cost per merged pull request. Failed tasks' spend included above the line.",
       "gridPos": {
         "x": 8,
-        "y": 65,
+        "y": 81,
         "w": 8,
         "h": 8
       },
@@ -708,7 +768,7 @@
       "description": "The share of inter-run waits over 5 minutes, by the waiting run's role, from maku_factory_run_wait_seconds (CP1): one minus the 300-second bucket's increase over the range. The number that sizes a longer prompt-cache TTL: the runs paying a full cold-start cache miss.",
       "gridPos": {
         "x": 16,
-        "y": 65,
+        "y": 81,
         "w": 8,
         "h": 8
       },
