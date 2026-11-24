@@ -85,7 +85,7 @@ func TestClassifyRequestShape(t *testing.T) {
 		t.Errorf("model/temperature/max_tokens = %v/%v/%v", req["model"], req["temperature"], req["max_tokens"])
 	}
 	rf, _ := json.Marshal(req["response_format"])
-	for _, want := range []string{`"json_schema"`, `"additionalProperties":false`, `"status","needs","changes","pr","steer","amend","stop","retry","unknown"`} {
+	for _, want := range []string{`"json_schema"`, `"additionalProperties":false`, `"status","needs","changes","pr","steer","amend","stop","retry","retry_deeper","unknown"`} {
 		if !strings.Contains(string(rf), want) {
 			t.Errorf("response_format lacks %s: %s", want, rf)
 		}

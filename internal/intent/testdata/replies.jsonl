@@ -68,3 +68,8 @@
 {"reply": "use the SMANA/ai-native-ref fixtures for the next run", "label": "steer", "text": "use the SMANA/ai-native-ref fixtures"}
 {"reply": "show me where things stand", "label": "status", "text": ""}
 {"reply": "yes", "label": "unknown", "text": ""}
+{"reply":"run it again deeper","label":"retry_deeper","text":""}
+{"reply":"retry with careful","label":"retry_deeper","text":""}
+{"reply":"please run this again deeper","label":"retry_deeper","text":""}
+{"reply":"try again with a deeper workflow","label":"retry_deeper","text":""}
+{"reply":"step it up and retry","label":"retry_deeper","text":""}

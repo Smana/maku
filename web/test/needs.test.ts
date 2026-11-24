@@ -5,7 +5,7 @@ import type { NeedItem, NeedsPage } from "../src/api";
 import type { Snapshot } from "../src/conn";
 import { RULES } from "../src/approval-help";
 import { approvalCard } from "../src/controls";
-import { mountNeeds, type NeedHands } from "../src/needs";
+import { mountNeeds, needCard, type NeedHands } from "../src/needs";
 import { NEED_FIXTURES } from "../preview/needs-fixtures";
 import { RoomState } from "../src/room-state";
 import type { Summary } from "../src/summary";
@@ -464,11 +464,38 @@ describe("a need's one action", () => {
     const went: string[] = [];
     const { act } = await draw({ hands: { openSession: (to) => went.push(to), focusCoordination: () => went.push("coordination") } });
     act(7).querySelector<HTMLButtonElement>("button")!.click();
-    act(6).querySelector<HTMLButtonElement>("button")!.click();
+    act(6).querySelector<HTMLButtonElement>('button[data-act="need-close"]')!.click();
     act(1).querySelector<HTMLButtonElement>("button")!.click();
     expect(went).toEqual(["driver", "close", "coordination"]);
-    expect(act(6).querySelector("a.need-go")?.textContent).toBe("Retry: comment /factory retry on issue #3 ↗");
+    expect(act(6).querySelector("a.need-go")).toBeNull();
     expect(act(1).querySelector("button")?.textContent).toBe("Confirm");
+  });
+  it("a maintainer's recovery card offers both retries on the page behind confirm, and drops the GitHub comment link", () => {
+    const retries: boolean[] = [];
+    const li = needCard(
+      { kind: "recovery", id: "budget-run", what: "the run's budget was spent", issue: 12,
+        url: "https://github.com/o/r/issues/12",
+        deeper: { workflow: "careful", ceilingMicroUSD: 13_600_000 } },
+      { hands: { retry: (deeper) => retries.push(deeper) } },
+    );
+    expect(li.querySelector(".need-title")?.textContent).toBe("Retry the task, or run it again deeper");
+    const labels = [...li.querySelectorAll("button")].map((b) => b.textContent);
+    expect(labels).toContain("Retry");
+    expect(labels).toContain("Run again deeper (careful, up to $13.60)");
+    expect(li.querySelector("a.need-go")).toBeNull();
+    const deeperBtn = li.querySelector<HTMLButtonElement>('button[data-act="need-retry-deeper"]')!;
+    deeperBtn.click(); // first click asks to confirm
+    expect(retries).toEqual([]);
+    expect(deeperBtn.textContent).toContain("confirm:");
+    deeperBtn.click(); // second click sends the deeper retry
+    expect(retries).toEqual([true]);
+
+    const readOnly = needCard(
+      { kind: "recovery", id: "budget-run", what: "the run's budget was spent", issue: 12,
+        deeper: { workflow: "careful", ceilingMicroUSD: 13_600_000 } },
+      { hands: {} },
+    );
+    expect(readOnly.querySelector("button")).toBeNull();
   });
   it("never links a need back to the room page it sits on", async () => {
     const { root } = await draw({ hands: { openSession: () => {}, focusCoordination: () => {} } });

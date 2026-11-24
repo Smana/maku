@@ -31,6 +31,8 @@ const (
 	QuestionStop Question = "stop"
 	// QuestionRetry is how to retry an escalated task, or behind intentActions a retry confirmation.
 	QuestionRetry Question = "retry"
+	// QuestionRetryDeeper asks to run the task again deeper under the next workflow (WR4).
+	QuestionRetryDeeper Question = "retry_deeper"
 	// QuestionUnknown is every phrase outside the vocabulary: answered with where things happen.
 	QuestionUnknown Question = "unknown"
 )
@@ -69,23 +71,26 @@ const (
 // might reasonably type for each question, and nothing else. A phrase outside it is not a command and
 // not a guess; it is QuestionUnknown, which says where things happen.
 var questionPhrases = map[string]Question{
-	"status":            QuestionStatus,
-	"how is it going":   QuestionStatus,
-	"how's it going":    QuestionStatus,
-	"where is it":       QuestionStatus,
-	"what's the status": QuestionStatus,
-	"needs me":          QuestionNeeds,
-	"what needs me":     QuestionNeeds,
-	"what changed":      QuestionChanges,
-	"what has changed":  QuestionChanges,
-	"the pull request":  QuestionPR,
-	"pr":                QuestionPR,
-	"the pr":            QuestionPR,
-	"stop":              QuestionStop,
-	"stop it":           QuestionStop,
-	"how do i stop it":  QuestionStop,
-	"retry":             QuestionRetry,
-	"try again":         QuestionRetry,
+	"status":              QuestionStatus,
+	"how is it going":     QuestionStatus,
+	"how's it going":      QuestionStatus,
+	"where is it":         QuestionStatus,
+	"what's the status":   QuestionStatus,
+	"needs me":            QuestionNeeds,
+	"what needs me":       QuestionNeeds,
+	"what changed":        QuestionChanges,
+	"what has changed":    QuestionChanges,
+	"the pull request":    QuestionPR,
+	"pr":                  QuestionPR,
+	"the pr":              QuestionPR,
+	"stop":                QuestionStop,
+	"stop it":             QuestionStop,
+	"how do i stop it":    QuestionStop,
+	"retry":               QuestionRetry,
+	"try again":           QuestionRetry,
+	"run it again deeper": QuestionRetryDeeper,
+	"retry deeper":        QuestionRetryDeeper,
+	"retry with careful":  QuestionRetryDeeper,
 }
 
 // questionOf reads a reply as one of the five questions (CD25). It lowercases, strips the punctuation a

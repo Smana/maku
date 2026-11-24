@@ -13,7 +13,7 @@ import type { NeedItem, NeedsPage } from "./api";
 import { decideStatus, deadlineText, expiredAt, expiredText, ruleFor } from "./approval-help";
 import { focusRow } from "./chat";
 import type { Snapshot } from "./conn";
-import { act, approvalAnchor, approvalCard, button, el, keyed, named, type Sender } from "./controls";
+import { act, approvalAnchor, approvalCard, button, confirmButton, el, keyed, named, type Sender } from "./controls";
 import type { RoomState } from "./room-state";
 import { inlineCode, needsItems, type Summary } from "./summary";
 
@@ -27,6 +27,7 @@ const routeEvery = 5000;
 export interface NeedHands {
   openSession?(to: "driver" | "close"): void;
   focusCoordination?(): void;
+  retry?(deeper: boolean): void;
 }
 
 // What each kind asks, in a heading's words; the item's own sentence follows it.
@@ -36,7 +37,7 @@ const NEED_TITLE: Record<string, string> = {
   merge: "Merge the pull request",
   review: "Review the pull request",
   failed_check: "A check needs a re-run",
-  recovery: "Retry the task, or close the room",
+  recovery: "Retry the task, or run it again deeper",
   hold: "The task is on hold",
 };
 
@@ -69,7 +70,7 @@ const githubLine = (n: NeedItem) => n.kind === "merge" && n.approve
   ? "Approve the pull request on GitHub: the merge gate reads the approval there."
   : GITHUB_LINE[n.kind] ?? "This happens on GitHub.";
 
-function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }): HTMLLIElement {
+export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }): HTMLLIElement {
   const li = el("li", { className: "need" });
   li.dataset.kind = n.kind;
   const title = n.kind === "merge" && n.approve ? "Approve the pull request" : NEED_TITLE[n.kind] ?? cap(n.kind.replace(/_/g, " "));
@@ -91,9 +92,17 @@ function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }):
     const go = cap(label.replace(/ in the parent room$/, ""));
     bar.append(ctx.hands.focusCoordination ? primary(button(go, "need-coordination", () => ctx.hands.focusCoordination!())) : where(`${go}, in the coordination panel.`));
   } else if (n.kind === "recovery") {
-    // A retry is a comment on the issue; closing is the room's.
-    if (isHttps(n.url) && n.url !== a?.url) bar.append(outLink(n.issue ? `retry: comment /factory retry on issue #${n.issue}` : "retry on the issue", n.url!));
-    bar.append(ctx.hands.openSession ? button("Close the room…", "need-close", () => ctx.hands.openSession!("close")) : where("Close the room under Session › Room."));
+    if (ctx.hands.retry) {
+      bar.append(confirmButton("Retry", "need-retry", () => ctx.hands.retry!(false)));
+      if (n.deeper?.workflow) {
+        const ceil = n.deeper.ceilingMicroUSD && n.deeper.ceilingMicroUSD > 0
+          ? `, up to $${(n.deeper.ceilingMicroUSD / 1e6).toFixed(2)}`
+          : "";
+        bar.append(confirmButton(`Run again deeper (${n.deeper.workflow}${ceil})`, "need-retry-deeper", () => ctx.hands.retry!(true)));
+      }
+    }
+    if (ctx.hands.openSession) bar.append(button("Close the room…", "need-close", () => ctx.hands.openSession!("close")));
+    else if (!ctx.hands.retry) bar.append(where("Only a maintainer can retry this task."));
   } else {
     const url = a?.url || n.url;
     bar.append(url ? outLink(label, url) : where(cap(label)));
@@ -155,8 +164,16 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   let reading: Promise<void> | undefined; // one read at a time
   let readAt = 0; // when the last read started, for routeEvery
   // A hold's one press: the driver hands the token back to the factory, as Session › Driver's give does.
-  const ctx = () => ({ hands: opts.hands ?? {},
-    release: you()?.driver ? () => { act(conn, state, { kind: "driver_give", to: "system:factory" }); } : undefined });
+  const ctx = () => {
+    const viewer = you();
+    const retry = opts.hands?.retry ?? (!state.sealed && (viewer?.role === "owner" || viewer?.role === "collaborator")
+      ? (deeper: boolean) => { act(conn, state, deeper ? { kind: "retry", deeper: true } : { kind: "retry" }); }
+      : undefined);
+    return {
+      hands: { ...(opts.hands ?? {}), retry },
+      release: viewer?.driver ? () => { act(conn, state, { kind: "driver_give", to: "system:factory" }); } : undefined,
+    };
+  };
   let listedItems: NeedItem[] | undefined;
   let summarisedItems: NeedItem[] = [];
   const cards = new Map<string, HTMLLIElement>();

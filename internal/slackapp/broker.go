@@ -203,6 +203,7 @@ const (
 // take it: the ids Slack signed on the click and the room the confirmation's metadata bound.
 type Act struct {
 	Team, User, Channel, MessageTS, Room string
+	Deeper                               bool
 }
 
 // Answer is one confirmed answer press, as POST /api/slack/answers takes it: the ids Slack signed
@@ -227,20 +228,24 @@ func (b Broker) Retry(ctx context.Context, a Act) (ActResult, error) {
 
 // Answer posts one confirmed answer press to the broker's human listener as the App's principal.
 func (b Broker) Answer(ctx context.Context, a Answer) (ActResult, error) {
-	return b.actMap(ctx, answerPath, map[string]string{
+	return b.actMap(ctx, answerPath, map[string]any{
 		"team": a.Team, "user": a.User, "channel": a.Channel,
 		"messageTS": a.MessageTS, "room": a.Room, "text": a.Text,
 	})
 }
 
 func (b Broker) act(ctx context.Context, path string, a Act) (ActResult, error) {
-	return b.actMap(ctx, path, map[string]string{
+	payload := map[string]any{
 		"team": a.Team, "user": a.User, "channel": a.Channel,
 		"messageTS": a.MessageTS, "room": a.Room,
-	})
+	}
+	if a.Deeper {
+		payload["deeper"] = true
+	}
+	return b.actMap(ctx, path, payload)
 }
 
-func (b Broker) actMap(ctx context.Context, path string, payload map[string]string) (ActResult, error) {
+func (b Broker) actMap(ctx context.Context, path string, payload map[string]any) (ActResult, error) {
 	body, err := json.Marshal(payload)
 	if err != nil {
 		return ActResult{}, err

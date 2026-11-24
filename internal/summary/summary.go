@@ -180,8 +180,17 @@ type Need struct {
 	// Approve marks a merge need a maintainer's approval settles (TaskFacts.MergeByApproval): the
 	// views say approve, not bypass. Absent for every other need.
 	Approve bool `json:"approve,omitempty"`
+	// Deeper carries the offered step-up target on a recovery need when automatic step-up was held
+	// back (WR4): absent when no deeper workflow is offered.
+	Deeper *DeeperOffer `json:"deeper,omitempty"`
 	// Source is where the item was derived from: for the tests, never in the object a surface renders.
 	Source NeedSource `json:"-"`
+}
+
+// DeeperOffer is the deeper workflow a recovery need offers to run again under (WR4).
+type DeeperOffer struct {
+	Workflow        string `json:"workflow"`
+	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
 }
 
 // Action is something the viewer can do now.

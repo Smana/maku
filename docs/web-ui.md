@@ -105,4 +105,4 @@ A refused action shows its reason code in the dock:
 - **`stale_epoch` / `no_running_run` / `room_busy`**: refresh who holds the driver token, queue your message for the next run if the agent already finished, or wait for a requested run to join.
 - **Page and room-creation errors**: `404` means no such room or no read access on GitHub; creating a room returns `400` for an invalid data class or repository, `404` when you cannot read the repository, and `503` when GitHub access cannot be verified.
 
-Every dock refusal code and recovery action is listed in [Action refusal reasons](reference/web-ui-settings.md#action-refusal-reasons).
+Every dock refusal code and recovery action (including **Retry** and **Run again deeper** on escalated cards) is listed in [Action refusal reasons](reference/web-ui-settings.md#action-refusal-reasons).
