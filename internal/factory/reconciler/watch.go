@@ -287,8 +287,11 @@ func markHandled(t *v1alpha1.Task, id int64) {
 // factory's reckoning still counts; one already acted on is in Status.Handled and never counts twice.
 const retrySkew = time.Minute
 
-// cmdRetry asks for a fresh run of an escalated task (§6.3).
-const cmdRetry = "/factory retry"
+// cmdRetry asks for a fresh run of an escalated task (§6.3); cmdRetryDeeper steps it up once (WR4).
+const (
+	cmdRetry       = "/factory retry"
+	cmdRetryDeeper = "/factory retry deeper"
+)
 
 // command is the newest maintainer comment carrying verb alone on a line, on the task's issue or
 // on pr (the zero PR when the task has none), posted since the task entered its phase and not yet
@@ -326,34 +329,59 @@ func (r *Reconciler) command(ctx context.Context, cfg *config.Config, t *v1alpha
 	return found, w, nil
 }
 
-// retryCommand reads a sponsored retry annotation (SI23) first, then a /factory retry comment,
-// holding both to the same maintainer and GitHub write checks.
-func (r *Reconciler) retryCommand(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (forge.Comment, bool, error) {
-	if c, ok, err := r.retryAnnotation(ctx, cfg, t); err != nil || ok {
-		return c, ok, err
+// retryCommand reads a sponsored or human retry annotation (SI23, WR4) first, then a
+// `/factory retry` or `/factory retry deeper` comment, holding all to the same maintainer and
+// GitHub write checks.
+func (r *Reconciler) retryCommand(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, pr forge.PR) (forge.Comment, bool, bool, error) {
+	if c, deeper, ok, err := r.retryAnnotation(ctx, cfg, t); err != nil || ok {
+		return c, deeper, ok, err
 	}
-	return r.command(ctx, cfg, t, pr, cmdRetry)
+	cd, okD, err := r.command(ctx, cfg, t, pr, cmdRetryDeeper)
+	if err != nil {
+		return forge.Comment{}, false, false, err
+	}
+	cp, okP, err := r.command(ctx, cfg, t, pr, cmdRetry)
+	if err != nil {
+		return forge.Comment{}, false, false, err
+	}
+	switch {
+	case okD && okP:
+		if cd.At.After(cp.At) {
+			return cd, true, true, nil
+		}
+		return cp, false, true, nil
+	case okD:
+		return cd, true, true, nil
+	case okP:
+		return cp, false, true, nil
+	}
+	return forge.Comment{}, false, false, nil
 }
 
-func (r *Reconciler) retryAnnotation(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (forge.Comment, bool, error) {
+func (r *Reconciler) retryAnnotation(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (forge.Comment, bool, bool, error) {
 	raw := t.Annotations[v1alpha1.AnnotationRetry]
 	if raw == "" {
-		return forge.Comment{}, false, nil
+		return forge.Comment{}, false, false, nil
 	}
-	genStr, login, ok := strings.Cut(raw, ":")
+	genStr, rest, ok := strings.Cut(raw, ":")
 	gen, err := strconv.ParseInt(genStr, 10, 32)
-	if !ok || err != nil || int32(gen) != t.Status.Retries || login == "" {
-		return forge.Comment{}, false, nil
+	if !ok || err != nil || int32(gen) != t.Status.Retries || rest == "" {
+		return forge.Comment{}, false, false, nil
+	}
+	login, extra, hasExtra := strings.Cut(rest, ":")
+	deeper := hasExtra && extra == "deeper"
+	if login == "" || (hasExtra && !deeper) {
+		return forge.Comment{}, false, false, nil
 	}
 	id := retryAnnotationID(raw)
 	if slices.Contains(t.Status.Handled, id) || !r.repo(cfg, t).IsMaintainer(login) || r.CanWrite == nil {
-		return forge.Comment{}, false, nil
+		return forge.Comment{}, false, false, nil
 	}
 	w, err := r.CanWrite(ctx, t.Spec.Repository, login)
 	if err != nil {
-		return forge.Comment{}, false, fmt.Errorf("write check of %s: %w", login, err)
+		return forge.Comment{}, false, false, fmt.Errorf("write check of %s: %w", login, err)
 	}
-	return forge.Comment{ID: id, Author: login}, w, nil
+	return forge.Comment{ID: id, Author: login}, deeper, w, nil
 }
 
 func retryAnnotationID(raw string) int64 {
@@ -403,12 +431,15 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	} else if back {
 		return nil
 	}
-	c, ok, err := r.retryCommand(ctx, cfg, t, pr)
+	c, deeper, ok, err := r.retryCommand(ctx, cfg, t, pr)
 	if err != nil {
 		return err
 	}
 	if !ok {
 		return r.expireEscalation(ctx, cfg, t)
+	}
+	if deeper {
+		return r.stepUpBy(ctx, cfg, t, c.Author, c.ID)
 	}
 	if t.Status.Reason == "budget-task" && !runFits(t) && (cfg.Budgets.EnforceTask || t.Sponsored() != "") {
 		// F-4: Queued would only escalate it again. The command is answered and handled; the
@@ -438,6 +469,16 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	r.to(t, next, "")
 	narrateLater(t, narrate.Retrying(t, c.Author, after))
 	return nil
+}
+
+// noop handles a maintainer's `/factory retry deeper` (or deeper retry annotation) on a NoOp task,
+// stepping it up once and queueing a fresh implementer run on the same room and branch (WR4).
+func (r *Reconciler) noop(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	c, deeper, ok, err := r.retryCommand(ctx, cfg, t, forge.PR{})
+	if err != nil || !ok || !deeper {
+		return err
+	}
+	return r.stepUpBy(ctx, cfg, t, c.Author, c.ID)
 }
 
 // expireEscalation stops a task that has waited Escalated past caps.escalatedHours (#61), unless

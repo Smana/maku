@@ -563,6 +563,73 @@ func TestNeverAStepOnImpossibleOrAQuestion(t *testing.T) {
 	}
 }
 
+func TestRetryDeeperStepsAPinnedTaskOnAMaintainersWord(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name, tk.Status.Profile.Source, tk.Status.Profile.Cohort = "standard", "label", "labeled"
+	})
+	tk = g.fail(t, tk, "budget-run") // offered, not stepped
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Profile.StepUp == nil || tk.Status.Profile.StepUp.Mode != "offered" {
+		t.Fatalf("expected offered escalation: %s %+v", tk.Status.Phase, tk.Status.Profile)
+	}
+	c := retryBy(88, "Smana", 0)
+	c.At = now.Add(time.Minute)
+	c.Body = "/factory retry deeper"
+	g.f.SetComments(7, c)
+	got := g.reconcile(t, "3buqdlot", 1)
+	s := got.Status.Profile.StepUp
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "careful" || s == nil || s.Mode != "manual" || s.By != "Smana" {
+		t.Fatalf("%s %+v %+v", got.Status.Phase, got.Status.Profile, s)
+	}
+	if got.Status.RoomRef != tk.Status.RoomRef || got.Name != tk.Name {
+		t.Fatal("a deeper retry made a new task or room")
+	}
+}
+
+func TestRetryDeeperIsAMaintainersOnly(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name, tk.Status.Profile.Source = "standard", "label"
+	})
+	_ = g.fail(t, tk, "budget-run")
+	c := retryBy(89, "bob", 0)
+	c.At = now.Add(time.Minute)
+	c.Body = "/factory retry deeper"
+	g.f.SetComments(7, c)
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Profile.Name != "standard" {
+		t.Fatalf("non-maintainer moved task: %s %+v", got.Status.Phase, got.Status.Profile)
+	}
+}
+
+func TestRetryDeeperOnANoOpTask(t *testing.T) {
+	g, _ := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Phase = v1alpha1.PhaseNoOp
+		tk.Status.Reason = "no_pr"
+		tk.Status.Profile.Name = "standard"
+	})
+	c := retryBy(90, "Smana", time.Minute)
+	c.Body = "/factory retry deeper"
+	g.f.SetComments(7, c)
+	got := g.reconcile(t, "3buqdlot", 1)
+	s := got.Status.Profile.StepUp
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "careful" || s == nil || s.Mode != "manual" || s.By != "Smana" {
+		t.Fatalf("%s %+v %+v", got.Status.Phase, got.Status.Profile, s)
+	}
+}
+
+func TestAPlainRetryKeepsTheWorkflow(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name, tk.Status.Profile.Source = "standard", "label"
+	})
+	_ = g.fail(t, tk, "agent_error")
+	c := retryBy(91, "Smana", 0)
+	c.At = now.Add(time.Minute)
+	g.f.SetComments(7, c)
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "standard" || got.Status.Profile.StepUp != nil {
+		t.Fatalf("plain retry changed workflow: %s %+v", got.Status.Phase, got.Status.Profile)
+	}
+}
+
 // R37: the stepped run continues the task's work: the same branch, the same pull request, and the
 // revision brief, not a first brief.
 func TestAStepKeepsTheBranchAndThePullRequest(t *testing.T) {

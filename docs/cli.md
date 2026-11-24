@@ -128,6 +128,8 @@ The agents' text is quoted; an approval is a link to its card on the room page, 
 Room links print only under the broker's own address: the card takes it from the summary's URL
 (the broker's `PublicURL`), and falls back to the URL `maku` is configured with when the summary
 carries none. A broker reached by another name (a port-forward) therefore still shows its links.
+- `maku retry <task> [--deeper]` — queues a fresh run of an escalated task; with `--deeper`, steps an escalated or no-op task up once on its workflow ladder (within its cap) on the same room, branch and pull request (maintainers with write only).
+
 Source: `internal/roomview/card.go`.
 
 The head above the card is the first six section lines of the room's

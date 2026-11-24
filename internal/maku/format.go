@@ -105,6 +105,9 @@ var reasons = map[string]string{
 	"not_maintainer":      "only the task's owner or a maintainer of its repository, with write on it, cancels it",
 	"not_linked":          "your account is not linked to GitHub: link it on the rooms page, then retry",
 	"not_running":         "the task has already ended",
+	"not_escalated":       "the task is not waiting for a retry",
+	"no_deeper_workflow":  "this task has no deeper workflow to step up to (or has already stepped up once)",
+	"deeper_over_cap":     "stepping up exceeds this task's budget cap",
 	"unknown_task":        "the factory has no task of that id",
 }
 

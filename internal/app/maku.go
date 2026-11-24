@@ -81,6 +81,7 @@ const makuUsage = `usage: maku <command>
                                   issue was deleted; --discard also closes its pull request, deletes its agent/<task>
                                   branch and closes its issue as not planned (a GitHub App cannot delete an issue).
                                   The task's owner or a maintainer of its repository only
+  retry <task> [--deeper]         queue a fresh run of an escalated task; --deeper steps it up once (also on a no-op task)
   skill install [--dir .agents/skills]   write the factory-handoff Agent Skill for local coding agents
   install --print --out DIR [--answers FILE] [--force] [--no-wait]
                                   ask the install's questions (or read them from FILE) and write the values,
@@ -268,7 +269,7 @@ func (r Maku) run(ctx context.Context, args []string) error {
 	case "help", "-h", "--help":
 		_, err := fmt.Fprintln(r.Out, makuUsage)
 		return err
-	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "fork", "run", "doctor", "mcp":
+	case "login", "token", "rooms", "needs", "status", "changes", "checkout", "coordination", "watch", "post", "cancel", "retry", "fork", "run", "doctor", "mcp":
 	default:
 		return fmt.Errorf("unknown command %q\n%s", cmd, makuUsage)
 	}
@@ -362,6 +363,8 @@ func (r Maku) run(ctx context.Context, args []string) error {
 		return r.post(ctx, c, args)
 	case "cancel":
 		return r.cancel(ctx, c, args)
+	case "retry":
+		return r.retry(ctx, c, args)
 	case "run":
 		return r.quickstartRun(ctx, cfg, c, args)
 	}
@@ -987,6 +990,52 @@ func (r Maku) cancel(ctx context.Context, c maku.Client, args []string) error {
 			"closed as not planned (a GitHub App cannot delete an issue: a repository admin can)\n"
 	}
 	_, err = io.WriteString(r.Out, maku.SafeText(out))
+	return err
+}
+
+// retry queues a fresh run of an escalated task, or with --deeper steps it up once (WR4).
+func (r Maku) retry(ctx context.Context, c maku.Client, args []string) error {
+	fs := flag.NewFlagSet("retry", flag.ContinueOnError)
+	deeper := fs.Bool("deeper", false, "step the task up once to the next workflow on its ladder")
+	pos, err := flags(fs, args)
+	if err != nil || len(pos) != 1 {
+		return fmt.Errorf("retry <task> [--deeper]: %w", errors.Join(err, errors.New("one task")))
+	}
+	ctx, cancel := context.WithTimeout(ctx, actTimeout)
+	defer cancel()
+	action := map[string]any{"kind": "retry"}
+	if *deeper {
+		action["deeper"] = true
+	}
+	f, err := c.Act(ctx, pos[0], action)
+	if err != nil {
+		return err
+	}
+	if f.Rejected != "" {
+		return fmt.Errorf("rejected: %s", maku.Explain(f.Rejected))
+	}
+	if *deeper {
+		var res struct {
+			Workflow        string `json:"workflow"`
+			CeilingMicroUSD int64  `json:"ceilingMicroUSD"`
+		}
+		if len(f.Result) > 0 {
+			_ = json.Unmarshal(f.Result, &res)
+		}
+		line := pos[0] + ": running again deeper, on the same branch and pull request\n"
+		if res.Workflow != "" {
+			if res.CeilingMicroUSD > 0 {
+				line = fmt.Sprintf("%s: running again under %s (up to %s), on the same branch and pull request\n",
+					pos[0], res.Workflow, roomview.Dollars(float64(res.CeilingMicroUSD)/1e6))
+			} else {
+				line = fmt.Sprintf("%s: running again under %s, on the same branch and pull request\n",
+					pos[0], res.Workflow)
+			}
+		}
+		_, err = io.WriteString(r.Out, maku.SafeText(line))
+		return err
+	}
+	_, err = io.WriteString(r.Out, maku.SafeText(pos[0]+": queued for another run\n"))
 	return err
 }
 

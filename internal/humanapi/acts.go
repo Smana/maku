@@ -83,12 +83,19 @@ type Action struct {
 	Note           string   `json:"note,omitempty"`       // fork
 	Approvals      string   `json:"approvals,omitempty"`  // fork: attended (the default) | unattended
 	Discard        bool     `json:"discard,omitempty"`    // cancel: also close the PR, the branch and the issue
+	Deeper         bool     `json:"deeper,omitempty"`     // retry: step up once to the next workflow (WR4)
 }
 
 // TaskCanceller reaches the factory's cancellations route with the caller's own token (#644);
 // runrequest.Factory implements it.
 type TaskCanceller interface {
 	CancelTask(ctx context.Context, task string, discard bool, accessToken string) (string, error)
+}
+
+// TaskRetrier reaches the factory's retries route with the caller's own token (WR4);
+// runrequest.Factory implements it.
+type TaskRetrier interface {
+	RetryTaskHuman(ctx context.Context, task string, deeper bool, accessToken string) (runrequest.RetryResult, error)
 }
 
 // Actor serves humans' act frames: every write a human makes to a room. Log,
@@ -102,7 +109,9 @@ type Actor struct {
 	Rooms     client.Client
 	Requester runrequest.Requester
 	// Cancels is the factory's cancel and discard of the room's task (#644); nil refuses both.
-	Cancels  TaskCanceller
+	Cancels TaskCanceller
+	// Retries is the factory's retry (plain or deeper) of the room's task (WR4); nil refuses both.
+	Retries  TaskRetrier
 	OnReject func(ctx context.Context, reason string)
 	// OnDecided observes a human decision's wait since its request
 	// (rooms_approval_decision_seconds).
@@ -185,7 +194,9 @@ var kinds = map[string]policy.Action{"remove_queued": policy.RemoveQueued, "prom
 	"decide": policy.Decide, "fork": policy.Fork,
 	// #644: stopping closes the task, which is the owner's; the factory then asks for a maintainer
 	// of the repository or the task's requester, with write on it.
-	"cancel": policy.Close}
+	"cancel": policy.Close,
+	// WR4: retrying is authorized by the factory (maintainer with write on the task's repository).
+	"retry": policy.Read}
 
 var deliveries = map[string]policy.Action{"none": policy.Chat, "queued": policy.Queue, "steering": policy.Steer}
 
@@ -246,7 +257,7 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 	// Every other action writes this room, and an invite must not change the Room
 	// first (review 4.2 M2). A fork writes only the new room, but a sealed room
 	// forks only for its owners, agents-admin included (ruling M3).
-	if st.Sealed && (act.Kind != "fork" || sub.Role < policy.Owner) {
+	if st.Sealed && act.Kind != "retry" && (act.Kind != "fork" || sub.Role < policy.Owner) {
 		return reject(rejectSealed)
 	}
 	if fenced[fenceKey] && (f.DriverEpoch == nil || *f.DriverEpoch != st.DriverEpoch) {
@@ -267,6 +278,8 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 		ev, ack.Result, why = a.fork(ctx, p, sub.Role == policy.Owner, room, act, d)
 	case "cancel":
 		why = a.cancel(ctx, p, room, act)
+	case "retry":
+		ack.Result, why = a.retry(ctx, p, room, act)
 	default:
 		ev, why = a.dispatch(ctx, p, room, st, act, via, d)
 	}
@@ -278,6 +291,36 @@ func (a *Actor) HandleVia(ctx context.Context, p authn.Principal, via, session s
 	}
 	ack.Seq = ev.Seq
 	return ack
+}
+
+// retry asks the factory to retry the room's task, or with deeper to step it up once (WR4). The
+// factory decides maintainer standing and task phase: a refusal is the ack's rejection code.
+func (a *Actor) retry(ctx context.Context, p authn.Principal, room *v1alpha1.Room, act Action) (json.RawMessage, string) {
+	retrier := a.Retries
+	if retrier == nil {
+		retrier, _ = a.Cancels.(TaskRetrier)
+	}
+	if retrier == nil || p.AccessToken == "" {
+		return nil, rejectNoFactory
+	}
+	res, err := retrier.RetryTaskHuman(ctx, room.Name, act.Deeper, p.AccessToken)
+	var refused runrequest.ErrRefused
+	switch {
+	case errors.As(err, &refused):
+		return nil, refused.Reason
+	case err != nil:
+		return nil, rejectNoFactory
+	case res.Result == "retried" || res.Result == "stepped_up":
+		out := map[string]any{"result": res.Result}
+		if res.Workflow != "" {
+			out["workflow"] = res.Workflow
+		}
+		if res.CeilingMicroUSD > 0 {
+			out["ceilingMicroUSD"] = res.CeilingMicroUSD
+		}
+		return envelope.Must(out), ""
+	}
+	return nil, res.Result
 }
 
 // cancel asks the factory to cancel, or discard, the room's task (the same id) as p (#644). The

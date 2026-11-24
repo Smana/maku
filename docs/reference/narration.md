@@ -11,13 +11,14 @@
 
 The factory App comments on the task's issue, or on its pull request when it has none: at triage, before the first run, `task-card` states the workflow, why it was chosen, what will run, its dollar ceiling and how a maintainer can pin another workflow (`workflow:<name>`); each run's start names the persona (for example, `scoper`, `implementer`, `reviewer`), run id, branch, dollar budget (or tokens when unpriced), room link and stop label; then the pull request, CI fix and resume, each hand-off with its reason and the merge command, and the end with the tokens used. `profile_chosen` (`profile-chosen-<runs>`) is posted only when the workflow changes after the card (for example, when the scoper picks another workflow under `evaluation.mode: apply`), so a default task gets one workflow comment, not two. On a task with no issue, `profile_chosen` and `profile_escalated` wait for the pull request, and are dropped if the task ends without one.
 
-A workflow with `escalation` steps a task up once before a maintainer is asked, then narrates `profile_escalated` (`profile-escalated-<runs>`) and queues a run with trigger `escalation` and the review rounds reset:
+A workflow with `stepUp` (or legacy `escalation`) steps a task up once before a maintainer is asked, narrates `profile_escalated` (`profile-escalated-<runs>`) with what changed, why, the new task ceiling (and settled spend so far) and how to stop it, and queues a run with trigger `escalation` and the review rounds reset. When automatic step-up is held back (pinned workflow, capped below the target ceiling, `workflow.stepUp: ask`, or a confirmed plan that did not show the stepped-up figure), the factory narrates `step-up-offered` naming why and offering `/factory retry deeper`:
 
-| Escalated reason | Group | Step to |
+| Escalated reason | Legacy group | Step to |
 |---|---|---|
-| `budget-run`, `stalled` | `out_of_budget` | `escalation.outOfBudget` |
-| `not_met`, `review_rounds_exhausted` | `not_converged` | `escalation.notConverged` |
-| any other (`ci_red`, `judge_impossible`, `needs_author`, `budget-task`, …) | — | the maintainer |
+| `budget-run`, `stalled`, `budget-task` | `out_of_budget` | `stepUp` (or `escalation.outOfBudget` for `budget-run`, `stalled`) |
+| `not_met`, `review_rounds_exhausted` | `not_converged` | `stepUp` (or `escalation.notConverged`) |
+| `ci_red` | — | `stepUp` |
+| `judge_impossible`, `needs_author`, `split_proposed`, `manual` | — | the maintainer |
 
 `budget-run`, `stalled` and `not_met` step only when the implementer's run ended so (the in-run judge's `not_met` included); a tester's or reviewer's own end goes to the maintainer. `review_rounds_exhausted`, the review loop's verdict on the implementer's work after a verifier's run, steps too. There is no step for a task with an unresolved workflow, a control-cohort task, a group the workflow's `escalation` does not map, a task that has already stepped (`/factory retry` keeps it stepped), or a target whose tier leaves less than one run in the task cap (a sponsor's ceiling still caps it), or a target that is the workflow the task already runs, pinned or scoper-applied alike: the same workflow again rarely converges, so a maintainer is asked straight away. The step reads the workflow's `escalation` alone, not `evaluation.mode`: a workflow that declares it steps under `observe` too. A step raises the tier, never lowers it; it never turns on `testFirst`, since the tester branches from main. The stepped run gets the revision brief with the completion judge's last verdict fenced in it, on the same branch and pull request. The step renews the task's usual limits once: the review rounds and the CI fix runs count from it (`status.fixRunsBeforeStep`), so a stepped task gets `merge.fixRuns` repairs of its own. The escalated task's end comment names the workflow already tried.
 

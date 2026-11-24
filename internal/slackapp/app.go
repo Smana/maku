@@ -126,6 +126,7 @@ type App struct {
 	Logger        *slog.Logger
 
 	events, deliveries seen        // event_id and webhook-id
+	stepped            seen        // rooms whose step-up line was already posted (WR4)
 	answered           seen        // the ✅ refusals said, by draft, user and reason: each is said once
 	retried            throttle    // the ✅ passing failures said, by draft, user and reason: once per retryEvery
 	edits              threadLocks // one edit per thread at a time, so two quick replies do not branch a proposal
@@ -909,6 +910,16 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 			return "error"
 		}
 		return "posted"
+	case "room.stepped_up":
+		if !a.stepped.add(e.Room) {
+			return "duplicate"
+		}
+		text := stepUpLine(e)
+		if _, err := a.Slack.Post(ctx, th.Channel, th.TS, text, nil); err != nil {
+			a.log().Warn("slack post failed", "room", e.Room, "err", err)
+			return "error"
+		}
+		return "posted"
 	case "room.waiting_for_human":
 		sum := a.taskSummary(ctx, e.Room)
 		text := waitingLine(e, sum, a.RoomsURL)
@@ -990,6 +1001,8 @@ func (a *App) line(e webhook.Event) (string, bool) {
 		return fmt.Sprintf("#%d reverted.", e.PR), true
 	case "room.budget_reached":
 		return fmt.Sprintf("A budget was reached (%s).", limit), true
+	case "room.stepped_up":
+		return stepUpLine(e), true
 	case "room.ended":
 		return fmt.Sprintf("Ended: %s. Room: %s", state, url), true
 	case "room.approval_closed":

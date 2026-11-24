@@ -1248,10 +1248,83 @@ func TriageNote(i int, note string) Event {
 	return Event{Key: fmt.Sprintf("triage-note-%d", i), Body: "Agent factory: " + note}
 }
 
-// ProfileEscalated says the task runs once more under a richer workflow before a maintainer is
-// asked; run is the count of runs so far, as ProfileChosen keys it.
-func ProfileEscalated(from, to, group string, run int) Event {
-	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: fmt.Sprintf(
-		"Agent factory: this task stopped (%s) under the workflow `%s`; it runs once more under the workflow `%s` before a maintainer is asked.",
-		group, from, to)}
+func stepUpTriggerPhrase(trigger string) string {
+	switch trigger {
+	case "stalled":
+		return "a run that committed nothing"
+	case "budget-run":
+		return "the run's budget was spent"
+	case "budget-task":
+		return "the task's budget was spent"
+	case "out_of_budget":
+		return "the run spent its budget"
+	case "not_met":
+		return "acceptance checks were not met"
+	case "review_rounds_exhausted":
+		return "review rounds were exhausted"
+	case "not_converged":
+		return "the change did not converge"
+	case "ci_red":
+		return "required checks stayed red"
+	default:
+		return "a failed run"
+	}
+}
+
+func formatMicroUSD(micro int64) string {
+	if micro < 0 {
+		micro = 0
+	}
+	cents := (micro + 5_000) / 10_000
+	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
+}
+
+// ProfileEscalated announces that Maku stepped a task up once to a deeper workflow, naming what
+// changed, why, the new ceiling (and settled spend when known), and how to stop it (WR4).
+func ProfileEscalated(from, to, trigger string, ceilingMicroUSD int64, run int, spentMicroUSD ...int64) Event {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Maku stepped this task up from `%s` to `%s`: %s.\n", from, to, stepUpTriggerPhrase(trigger))
+	if to == "careful" {
+		b.WriteString("It runs once more, scoped first and judged before review, on the same branch and pull request.\n")
+	} else {
+		b.WriteString("It runs once more on the same branch and pull request.\n")
+	}
+	if ceilingMicroUSD > 0 {
+		fmt.Fprintf(&b, "New ceiling: %s for the task", formatMicroUSD(ceilingMicroUSD))
+		if len(spentMicroUSD) > 0 && spentMicroUSD[0] > 0 {
+			fmt.Fprintf(&b, " (%s spent so far)", formatMicroUSD(spentMicroUSD[0]))
+		}
+		b.WriteString(". ")
+	}
+	b.WriteString("To stop it, apply the label `factory/stop`.")
+	return Event{Key: fmt.Sprintf("profile-escalated-%d", run), Body: b.String()}
+}
+
+// StepUpOffered tells a maintainer why Maku did not step a failed task up automatically and how to
+// run it again deeper by hand (WR4).
+func StepUpOffered(_ *v1alpha1.Task, from, to, trigger string, ceilingMicroUSD int64, why string) Event {
+	var because string
+	switch why {
+	case "pinned":
+		because = "a maintainer pinned its workflow"
+	case "capped":
+		if ceilingMicroUSD > 0 {
+			because = "its budget is capped below " + formatMicroUSD(ceilingMicroUSD)
+		} else {
+			because = "its budget is capped below the stepped-up ceiling"
+		}
+	case "ask":
+		because = "this repository asks first"
+	case "not_shown":
+		because = "the plan you confirmed did not show the stepped-up cost"
+	default:
+		because = "automatic step-up is held back"
+	}
+	ceil := ""
+	if ceilingMicroUSD > 0 {
+		ceil = fmt.Sprintf(" (up to %s)", formatMicroUSD(ceilingMicroUSD))
+	}
+	body := fmt.Sprintf("This task stopped under `%s`: %s. Maku did not step it up because %s. A maintainer can run it again deeper under `%s`%s: comment `/factory retry deeper`.",
+		from, stepUpTriggerPhrase(trigger), because, to, ceil)
+	return Event{Key: "step-up-offered", Body: body}
 }

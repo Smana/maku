@@ -1316,23 +1316,27 @@ everything a sponsored one's does beyond its own keys.
 
 ### `POST /v1/tasks/{task}/stops`, `POST /v1/tasks/{task}/retries` and `POST /v1/tasks/{task}/answers`
 
-Served on the same port while `api.sponsored` is non-empty, for a sponsored principal's bearer token
-alone (`403 sponsored_only` for a human, internal or run caller). `{task}` is the task's name or
+`/stops` and `/answers` are served while `api.sponsored` is non-empty, for a sponsored principal's bearer token
+alone (`403 sponsored_only` for a human, internal or run caller). `/retries` is served whenever the API is,
+for either a sponsored caller (`{onBehalfOf, deeper?}`) or a human caller with their own token (`{deeper?}`,
+forwarded by the broker's `retry` room act and `maku retry`). `{task}` is the task's name or
 8-character room id. Body (`application/json`, at most 4 KiB on `/stops` and `/retries`, 8 KiB on
-`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>"}` (plus `answer` on
+`/answers`, unknown fields refused): `{onBehalfOf: "slack:<team>/<user>", deeper?: bool}` (plus `answer` on
 `/answers`, 1..4 000 bytes with no control characters). The factory re-resolves the GitHub login
-from `onBehalfOf` (config map, else `slack_links`, never from a body field) and checks that the
-principal lists the task's repository. `/stops` and `/retries` require maintainer write permission on
-GitHub (`not_maintainer`) and apply the exact transition of the `factory/stop` label (`Queued` or
-`Running` → `Stopped`, else `not_running`) or the `/factory retry` comment (`Escalated` → `Queued`,
+from `onBehalfOf` (or the human caller's link) and checks maintainer write permission on
+GitHub (`not_maintainer`). `/stops` applies the exact transition of the `factory/stop` label (`Queued` or
+`Running` → `Stopped`, else `not_running`). Plain `/retries` applies `/factory retry` (`Escalated` → `Queued`,
 proceeding on the scoper's first assumption when the escalation was a question; a `Queued` task held
-by a model hold answers `not_escalated`). `/answers` requires an open scoper question on the task
+by a model hold answers `not_escalated`). With `deeper: true`, `/retries` applies `/factory retry deeper`
+on `Escalated` or `NoOp`, stepping the task up once within its cap (`stepped_up` with `{workflow, ceilingMicroUSD}`,
+else `no_deeper_workflow` or `deeper_over_cap`). `/answers` requires an open scoper question on the task
 (`Escalated` or `AwaitingHuman` with `scope.question` or `needs_author`, else `no_question`); when
 the resolved login is a maintainer of the repository (`admin`, `maintain`, `write`) or the issue's
 author (`not_permitted` for anyone else), the factory appends a decision record to `## Decisions` in
 the issue body on GitHub and, for a maintainer, clears the question and restarts the task (`Queued`
 at `scope` with `ScopeAttempts` decremented), while for a non-maintainer issue author it leaves the
-task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, answered,
+task waiting for a maintainer to restart. Answers `200 {"result"}` in `{stopped, retried, stepped_up,
+no_deeper_workflow, deeper_over_cap, answered,
 answered_awaiting_maintainer, not_linked, not_maintainer, not_permitted, not_running, not_escalated,
 no_question, unknown_task}`, `400 bad_json` / `bad_on_behalf_of` / `bad_answer`, `401` / `403` for
 caller auth, or `503` (`link_unverified`, `tasks_unavailable`).

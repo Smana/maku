@@ -458,6 +458,46 @@ func TestRetryOnlyEscalated(t *testing.T) {
 	}
 }
 
+func TestRetryDeeperAnswersItsOwnCodes(t *testing.T) {
+	tk := makeActTask("3buqdlot", factoryv1.PhaseEscalated, "budget-run")
+	tk.Status.Profile = &factoryv1.ProfileStatus{Name: "standard", Source: "label", Cohort: "labeled", Resolved: true}
+	capped := makeActTask("4buqdlot", factoryv1.PhaseEscalated, "budget-run")
+	capped.Spec.MaxMicroUSD = 1_000_000
+	capped.Status.Profile = &factoryv1.ProfileStatus{Name: "standard", Source: "label", Cohort: "labeled", Resolved: true}
+	noop := makeActTask("5buqdlot", factoryv1.PhaseNoOp, "no_pr")
+	noop.Status.Profile = &factoryv1.ProfileStatus{Name: "standard", Source: "repository", Cohort: "treatment", Resolved: true}
+	env := newActEnv(t, tk, capped, noop)
+	cfg := env.srv.Cfg.Current()
+	if cfg.HarnessProfiles == nil {
+		cfg.HarnessProfiles = map[string]config.HarnessProfile{}
+	}
+	cfg.HarnessProfiles["standard"] = config.HarnessProfile{Template: "pair", StepUp: "careful"}
+	cfg.HarnessProfiles["careful"] = config.HarnessProfile{Template: "pair", Tier: "frontier"}
+	cfg.Tiers["frontier"] = config.Tier{Model: "tier-frontier", TaskUSD: 13.60, RunUSD: 6.80}
+
+	// First deeper call steps up and returns workflow + ceiling.
+	rec := postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT","deeper":true}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first deeper: %d %s", rec.Code, rec.Body.String())
+	}
+	var res api.ActResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &res); err != nil || res.Result != api.ActSteppedUp || res.Workflow != "careful" || res.CeilingMicroUSD != 13_600_000 {
+		t.Fatalf("first deeper: %+v err=%v", res, err)
+	}
+	// Second deeper call sees the deeper annotation and returns no_deeper_workflow.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT","deeper":true}`)); got != api.ActNoDeeperWorkflow {
+		t.Fatalf("second deeper: got %q, want %q", got, api.ActNoDeeperWorkflow)
+	}
+	// Capped task answers deeper_over_cap.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/4buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT","deeper":true}`)); got != api.ActDeeperOverCap {
+		t.Fatalf("capped deeper: got %q, want %q", got, api.ActDeeperOverCap)
+	}
+	// NoOp task accepts deeper retry.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/5buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT","deeper":true}`)); got != api.ActSteppedUp {
+		t.Fatalf("noop deeper: got %q, want %q", got, api.ActSteppedUp)
+	}
+}
+
 func TestRetryMeansFactoryRetryComment(t *testing.T) {
 	// Drive a scoper task into Escalated(needs_author) with a first assumption, then retry through
 	// POST /v1/tasks/{task}/retries and verify it proceeds identically to a /factory retry comment.

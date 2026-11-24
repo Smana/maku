@@ -2299,3 +2299,19 @@ func TestMetadataShapes(t *testing.T) {
 		}
 	}
 }
+
+func TestTheThreadSaysAStepUpOnce(t *testing.T) {
+	ch := Channel{Repositories: []string{"Smana/ai-native-ref"}, MaxCostUSD: 5}
+	rig := newAppRig(t, ch)
+	rig.threads.put("aaaaaaaa", Thread{Channel: "C03", TS: "1700.1"})
+	body := `{"type":"room.stepped_up","room":"aaaaaaaa","from":"standard","to":"careful","reason":"stalled","ceilingMicroUSD":13600000}`
+	rig.webhook(body)
+	rig.webhook(body) // second delivery (different webhook-id) posts nothing
+	posts := rig.posts()
+	if len(posts) != 1 {
+		t.Fatalf("got %d posts, want 1: %+v", len(posts), posts)
+	}
+	if strings.Contains(posts[0].text, "<@") || !strings.Contains(posts[0].text, "from standard to careful") || !strings.Contains(posts[0].text, "$13.60") {
+		t.Fatalf("post = %q", posts[0].text)
+	}
+}

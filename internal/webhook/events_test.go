@@ -95,7 +95,7 @@ func TestEvents(t *testing.T) {
 	}
 	wantTypes := []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 		"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-		"room.budget_reached", "room.ended", "room.approval_closed"}
+		"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed"}
 	if !slices.Equal(Types(), wantTypes) {
 		t.Fatalf("Types() = %v, want %v", Types(), wantTypes)
 	}

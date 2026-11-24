@@ -68,6 +68,17 @@ type ProfileFact struct {
 	CeilingMicroUSD       int64  `json:"ceilingMicroUSD,omitempty"`
 	StepUpCeilingMicroUSD int64  `json:"stepUpCeilingMicroUSD,omitempty"`
 	Description           string `json:"description,omitempty"`
+	// StepUp is the one step-up taken or offered on the task (WR4).
+	StepUp *StepUpFact `json:"stepUp,omitempty"`
+}
+
+// StepUpFact is the task's recorded or offered step-up projected into room facts (WR4).
+type StepUpFact struct {
+	From            string `json:"from,omitempty"`
+	To              string `json:"to,omitempty"`
+	Trigger         string `json:"trigger,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
 }
 
 // ProfileSources are where a task's workflow came from (WF3, WF4): the Task CRD's
@@ -108,6 +119,18 @@ func (p ProfileFact) validate() error {
 		return errors.New("stepUpCeilingMicroUSD is out of range")
 	case utf8.RuneCountInString(p.Description) > 120:
 		return errors.New("description is at most 120 characters")
+	}
+	if s := p.StepUp; s != nil {
+		switch {
+		case utf8.RuneCountInString(s.From) > 63 || utf8.RuneCountInString(s.To) > 63:
+			return errors.New("stepUp workflow is at most 63 characters")
+		case utf8.RuneCountInString(s.Trigger) > 32:
+			return errors.New("stepUp trigger is at most 32 characters")
+		case s.Mode != "" && !slices.Contains([]string{"auto", "manual", "offered"}, s.Mode):
+			return errors.New("stepUp mode is auto, manual or offered")
+		case s.CeilingMicroUSD < 0 || s.CeilingMicroUSD > MaxMicroUSD:
+			return errors.New("stepUp ceilingMicroUSD is out of range")
+		}
 	}
 	return nil
 }
