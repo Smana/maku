@@ -23,19 +23,20 @@ type Intent string
 
 // The closed vocabulary. A model answer outside it is Unknown with OutcomeInvalidOutput.
 const (
-	Status  Intent = "status"
-	Needs   Intent = "needs"
-	Changes Intent = "changes"
-	PR      Intent = "pr"
-	Steer   Intent = "steer"
-	Amend   Intent = "amend"
-	Stop    Intent = "stop"
-	Retry   Intent = "retry"
-	Unknown Intent = "unknown"
+	Status      Intent = "status"
+	Needs       Intent = "needs"
+	Changes     Intent = "changes"
+	PR          Intent = "pr"
+	Steer       Intent = "steer"
+	Amend       Intent = "amend"
+	Stop        Intent = "stop"
+	Retry       Intent = "retry"
+	RetryDeeper Intent = "retry_deeper"
+	Unknown     Intent = "unknown"
 )
 
-// All is the nine, in the order the schema lists them.
-var All = []Intent{Status, Needs, Changes, PR, Steer, Amend, Stop, Retry, Unknown}
+// All is the ten intents, in the order the schema lists them.
+var All = []Intent{Status, Needs, Changes, PR, Steer, Amend, Stop, Retry, RetryDeeper, Unknown}
 
 // Valid reports whether i is one of the nine.
 func (i Intent) Valid() bool {
@@ -51,7 +52,7 @@ func (i Intent) Valid() bool {
 // rest are reads or nothing.
 func (i Intent) Write() bool {
 	switch i {
-	case Steer, Amend, Stop, Retry:
+	case Steer, Amend, Stop, Retry, RetryDeeper:
 		return true
 	}
 	return false

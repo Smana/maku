@@ -326,7 +326,8 @@ func TestRetryOnlyOnEscalated(t *testing.T) {
 		t.Fatalf("escalated end post blocks = %+v, want section + actions", blocks)
 	}
 	btns := blocks[1].buttons(t)
-	if len(btns) != 1 || btns[0].Text.Text != "Retry" || btns[0].ActionID != actionActRetry || btns[0].Value != "v1|act|retry|"+answerRoom {
+	if len(btns) != 2 || btns[0].Text.Text != "Retry" || btns[0].ActionID != actionActRetry || btns[0].Value != "v1|act|retry|"+answerRoom ||
+		btns[1].Text.Text != "Run again deeper" || btns[1].ActionID != actionActRetryDeeper || btns[1].Value != "v1|act|retry_deeper|"+answerRoom {
 		t.Fatalf("escalated end buttons = %+v", btns)
 	}
 
@@ -342,6 +343,13 @@ func TestRetryOnlyOnEscalated(t *testing.T) {
 		if len(p.blocks) != 0 {
 			t.Fatalf("%s carried blocks %s, want no button", ev, p.blocks)
 		}
+	}
+}
+
+func TestTheDeeperConfirmNamesTheCeiling(t *testing.T) {
+	line := deeperConfirm("U123", 12, "careful", 13.60)
+	if line != "<@U123>: run task #12 again under careful? It may spend up to $13.60 in all." {
+		t.Fatalf("got %q", line)
 	}
 }
 

@@ -28,10 +28,11 @@ const (
 	actionApprove = "factory_approval_approve"
 	actionDeny    = "factory_approval_deny"
 	// The stop and retry thread buttons and the two controls on the confirmation they post.
-	actionActConfirm = "factory_act_confirm"
-	actionActCancel  = "factory_act_cancel"
-	actionActStop    = "factory_act_stop"
-	actionActRetry   = "factory_act_retry"
+	actionActConfirm     = "factory_act_confirm"
+	actionActCancel      = "factory_act_cancel"
+	actionActStop        = "factory_act_stop"
+	actionActRetry       = "factory_act_retry"
+	actionActRetryDeeper = "factory_act_retry_deeper"
 )
 
 // The value's version prefix: the one part of a button's value the dispatcher reads, because both
@@ -146,7 +147,7 @@ func (a *App) interaction(ctx context.Context, body []byte) string {
 		return a.approvalAction(ctx, in)
 	case actionProposalConfirm, actionProposalCancel, actionProposalProfile:
 		return a.proposalAction(ctx, in) // CD7's controls: a different family, the same door
-	case actionActConfirm, actionActCancel, actionActStop, actionActRetry:
+	case actionActConfirm, actionActCancel, actionActStop, actionActRetry, actionActRetryDeeper:
 		return a.actAction(ctx, in)
 	}
 	return "ignored"
@@ -332,7 +333,7 @@ func parseInteraction(body []byte) (interaction, bool) {
 func knownAction(actionID string) bool {
 	switch actionID {
 	case actionApprove, actionDeny, actionProposalConfirm, actionProposalCancel, actionProposalProfile,
-		actionActConfirm, actionActCancel, actionActStop, actionActRetry:
+		actionActConfirm, actionActCancel, actionActStop, actionActRetry, actionActRetryDeeper:
 		return true
 	}
 	return false

@@ -144,8 +144,8 @@ func factsNeed(in NeedsIn) (Need, bool) {
 	case failedChecks()[f.Reason] && (in.GitHub.MayWrite || in.Caller.RoomScoped):
 		return failedCheckNeed(in, f), true
 	// recovery: the run spent what it had, or the sandbox was lost as often as the factory resumes a
-	// task, so nothing runs on alone: a maintainer decides whether to retry (policy's Close).
-	case recoveries()[f.Reason] && (in.Caller.CanClose || in.Caller.RoomScoped):
+	// task, or an escalated task offers a deeper step-up, so a maintainer decides whether to retry.
+	case (recoveries()[f.Reason] || offeredStepUp(f) != nil) && (in.Caller.CanClose || in.Caller.RoomScoped):
 		return recoveryNeed(in, f), true
 	// hold: summary.Hold's two Queued reasons, for a caller the policy's StartRun lets release them.
 	case f.Phase == "Queued" && holds()[f.Reason] != "" && in.Caller.CanRelease:
@@ -222,11 +222,22 @@ func failedCheckNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 	return stamp(n, in, NeedSource{Kind: "facts", Reason: f.Reason})
 }
 
+func offeredStepUp(f *envelope.TaskFacts) *DeeperOffer {
+	if f == nil || f.Phase != "Escalated" || f.Profile == nil || f.Profile.StepUp == nil {
+		return nil
+	}
+	su := f.Profile.StepUp
+	if su.Mode != "offered" || su.To == "" {
+		return nil
+	}
+	return &DeeperOffer{Workflow: su.To, CeilingMicroUSD: su.CeilingMicroUSD}
+}
+
 // recoveryNeed is a task nothing runs on any more (its budget is spent, or the sandbox was lost as
 // often as the factory resumes one): a maintainer decides whether to retry it or to close it.
 func recoveryNeed(in NeedsIn, f *envelope.TaskFacts) Need {
 	n := Need{Kind: NeedRecovery, ID: f.Reason, Issue: issueNumber(f), PR: prNumber(f),
-		Why: whyOf(f.Reason), URL: firstURL(issueURL(in, f), in.URL)}
+		Why: whyOf(f.Reason), URL: firstURL(issueURL(in, f), in.URL), Deeper: offeredStepUp(f)}
 	n.What = clipWhat("a maintainer decides whether the task is retried or closed: a retry is `/factory retry` on the issue")
 	if n.Issue > 0 {
 		n.What = clipWhat(fmt.Sprintf("a maintainer comments `/factory retry` on issue #%d to run it again, or closes the room", n.Issue))

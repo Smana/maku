@@ -14,9 +14,10 @@ import (
 )
 
 const (
-	actStop   = "stop"
-	actRetry  = "retry"
-	actAnswer = "answer"
+	actStop        = "stop"
+	actRetry       = "retry"
+	actRetryDeeper = "retry_deeper"
+	actAnswer      = "answer"
 
 	actConfirmTTL = 10 * time.Minute
 
@@ -25,11 +26,13 @@ const (
 	actRetryPrompt        = "<@%s>: retry task #%d? It runs again from where it stopped."
 	actRetryPromptNoIssue = "<@%s>: retry this task? It runs again from where it stopped."
 
-	actConfirmStopLabel  = "Stop the task"
-	actConfirmRetryLabel = "Retry the task"
-	actCancelLabel       = "Cancel"
-	actLineStopLabel     = "Stop"
-	actLineRetryLabel    = "Retry"
+	actConfirmStopLabel        = "Stop the task"
+	actConfirmRetryLabel       = "Retry the task"
+	actConfirmRetryDeeperLabel = "Run again deeper"
+	actCancelLabel             = "Cancel"
+	actLineStopLabel           = "Stop"
+	actLineRetryLabel          = "Retry"
+	actLineRetryDeeperLabel    = "Run again deeper"
 
 	actOnlyPresserLine   = "Only <@%s> confirms this."
 	actExpiredLine       = "This confirmation expired."
@@ -41,6 +44,9 @@ const (
 
 	actStoppedLine            = "Stopped."
 	actRetriedLine            = "Retried."
+	actSteppedUpLine          = "Stepped up and queued."
+	actNoDeeperLine           = "This task has no deeper workflow to step up to."
+	actDeeperOverCapLine      = "Stepping up exceeds this task's budget cap."
 	actStopNotMaintainerLine  = "Only a maintainer of this repository can stop a task."
 	actRetryNotMaintainerLine = "Only a maintainer of this repository can retry a task."
 	actNotRunningLine         = "This task is not running."
@@ -51,6 +57,19 @@ const (
 	actUnavailableLine        = "The factory could not be reached just now; try again in a minute."
 )
 
+// deeperConfirm formats the confirmation line for a deeper retry, naming the target workflow and
+// total ceiling in dollars (WR4).
+func deeperConfirm(user string, issue int, workflow string, ceilingUSD float64) string {
+	target := "this task"
+	if issue > 0 {
+		target = fmt.Sprintf("task #%d", issue)
+	}
+	if ceilingUSD > 0 {
+		return fmt.Sprintf("<@%s>: run %s again under %s? It may spend up to $%.2f in all.", user, target, workflow, ceilingUSD)
+	}
+	return fmt.Sprintf("<@%s>: run %s again under %s?", user, target, workflow)
+}
+
 func actValue(action, room string) string {
 	return pressVersion + "|act|" + action + "|" + room
 }
@@ -58,34 +77,51 @@ func actValue(action, room string) string {
 func parseActValue(v string) (action, room string, ok bool) {
 	parts := strings.Split(v, "|")
 	if len(parts) != 4 || parts[0] != pressVersion || parts[1] != "act" ||
-		(parts[2] != actStop && parts[2] != actRetry && parts[2] != actAnswer) || !roomRE.MatchString(parts[3]) {
+		(parts[2] != actStop && parts[2] != actRetry && parts[2] != actRetryDeeper && parts[2] != actAnswer) || !roomRE.MatchString(parts[3]) {
 		return "", "", false
 	}
 	return parts[2], parts[3], true
 }
 
 // actLineBlocks attaches the Stop button to a waiting-for-human thread line when stop is turned on
-// in ch, and the Retry button to an escalated end line when retry is turned on in ch.
-func actLineBlocks(e webhook.Event, ch Channel, line string) json.RawMessage {
-	var action, actionID, label string
+// in ch, and the Retry and Run again deeper buttons to an escalated end line when retry is turned
+// on in ch.
+func actLineBlocks(e webhook.Event, ch Channel, line string, sums ...summary.Summary) json.RawMessage {
+	var buttons []slackButton
 	switch {
 	case e.Type == "room.waiting_for_human" && ch.actsOn(actStop):
-		action, actionID, label = actStop, actionActStop, actLineStopLabel
+		buttons = []slackButton{{
+			Type:     "button",
+			Text:     &slackBlockText{Type: "plain_text", Text: actLineStopLabel},
+			ActionID: actionActStop,
+			Value:    actValue(actStop, e.Room),
+		}}
 	case e.Type == "room.ended" && isEscalatedEnd(e.State) && ch.actsOn(actRetry):
-		action, actionID, label = actRetry, actionActRetry, actLineRetryLabel
+		buttons = []slackButton{{
+			Type:     "button",
+			Text:     &slackBlockText{Type: "plain_text", Text: actLineRetryLabel},
+			ActionID: actionActRetry,
+			Value:    actValue(actRetry, e.Room),
+		}}
+		alreadyStepped := len(sums) > 0 && sums[0].Status.Profile != nil &&
+			(sums[0].Status.Profile.Source == "escalation" ||
+				(sums[0].Status.Profile.StepUp != nil && (sums[0].Status.Profile.StepUp.Mode == "auto" || sums[0].Status.Profile.StepUp.Mode == "manual")))
+		if !alreadyStepped {
+			buttons = append(buttons, slackButton{
+				Type:     "button",
+				Text:     &slackBlockText{Type: "plain_text", Text: actLineRetryDeeperLabel},
+				ActionID: actionActRetryDeeper,
+				Value:    actValue(actRetryDeeper, e.Room),
+			})
+		}
 	default:
 		return nil
 	}
 	blocks := []slackBlock{
 		sectionBlock(line),
 		{
-			Type: "actions",
-			Elements: []slackButton{{
-				Type:     "button",
-				Text:     &slackBlockText{Type: "plain_text", Text: label},
-				ActionID: actionID,
-				Value:    actValue(action, e.Room),
-			}},
+			Type:     "actions",
+			Elements: buttons,
 		},
 	}
 	raw, err := json.Marshal(blocks)
@@ -120,23 +156,37 @@ func (a *App) actAction(ctx context.Context, in interaction) string {
 // the task in room. One sponsored task read supplies the issue number when available, and no
 // classifier call is made.
 func (a *App) actConfirm(ctx context.Context, th Thread, action, room, user string) string {
-	if (action != actStop && action != actRetry) || !roomRE.MatchString(room) || !userRE.MatchString(user) {
+	if (action != actStop && action != actRetry && action != actRetryDeeper) || !roomRE.MatchString(room) || !userRE.MatchString(user) {
 		return "ignored"
 	}
+	sum := a.taskSummary(ctx, room)
 	issue := 0
-	if sum := a.taskSummary(ctx, room); sum.Status.Issue != nil {
+	if sum.Status.Issue != nil {
 		issue = sum.Status.Issue.Number
 	}
 
 	var text, confirmLabel, style string
-	if action == actStop {
+	switch action {
+	case actStop:
 		confirmLabel, style = actConfirmStopLabel, "danger"
 		if issue > 0 {
 			text = fmt.Sprintf(actStopPrompt, user, issue)
 		} else {
 			text = fmt.Sprintf(actStopPromptNoIssue, user)
 		}
-	} else {
+	case actRetryDeeper:
+		confirmLabel, style = actConfirmRetryDeeperLabel, "primary"
+		wf, ceilUSD := "a deeper workflow", 0.0
+		if p := sum.Status.Profile; p != nil {
+			if p.StepUp != nil && p.StepUp.To != "" {
+				wf = p.StepUp.To
+				ceilUSD = float64(p.StepUp.CeilingMicroUSD) / 1e6
+			} else if p.StepUpCeilingMicroUSD > 0 {
+				ceilUSD = float64(p.StepUpCeilingMicroUSD) / 1e6
+			}
+		}
+		text = deeperConfirm(user, issue, wf, ceilUSD)
+	default:
 		confirmLabel, style = actConfirmRetryLabel, "primary"
 		if issue > 0 {
 			text = fmt.Sprintf(actRetryPrompt, user, issue)
@@ -212,12 +262,18 @@ func (a *App) actPress(ctx context.Context, in interaction) string {
 	}
 
 	switch in.ActionID {
-	case actionActStop, actionActRetry:
+	case actionActStop, actionActRetry, actionActRetryDeeper:
 		action, room, ok := parseActValue(in.Value)
-		if !ok || (in.ActionID == actionActStop && action != actStop) || (in.ActionID == actionActRetry && action != actRetry) {
+		if !ok || (in.ActionID == actionActStop && action != actStop) ||
+			(in.ActionID == actionActRetry && action != actRetry) ||
+			(in.ActionID == actionActRetryDeeper && action != actRetryDeeper) {
 			return a.pressAnswer(ctx, in, thread, actGoneLine, "refused")
 		}
-		if !a.Channels[in.Channel].actsOn(action) {
+		gate := action
+		if gate == actRetryDeeper {
+			gate = actRetry
+		}
+		if !a.Channels[in.Channel].actsOn(gate) {
 			return a.pressAnswer(ctx, in, thread, actDisabledLine(action), "not_enabled")
 		}
 		return a.actConfirm(ctx, Thread{Channel: in.Channel, TS: thread}, action, room, in.User)
@@ -241,7 +297,11 @@ func (a *App) actPress(ctx context.Context, in interaction) string {
 			}
 			return a.pressAnswer(ctx, in, thread, actExpiredLine, "refused")
 		}
-		if !a.Channels[in.Channel].actsOn(p.Action) {
+		gate := p.Action
+		if gate == actRetryDeeper {
+			gate = actRetry
+		}
+		if !a.Channels[in.Channel].actsOn(gate) {
 			return a.pressAnswer(ctx, in, thread, actDisabledLine(p.Action), "not_enabled")
 		}
 		if in.ActionID == actionActCancel {
@@ -265,6 +325,9 @@ func (a *App) actPress(ctx context.Context, in interaction) string {
 		case actStop:
 			res, err = a.Broker.Stop(ctx, req)
 		case actRetry:
+			res, err = a.Broker.Retry(ctx, req)
+		case actRetryDeeper:
+			req.Deeper = true
 			res, err = a.Broker.Retry(ctx, req)
 		case actAnswer:
 			res, err = a.Broker.Answer(ctx, Answer{
@@ -300,7 +363,7 @@ func (a *App) closeActMessage(ctx context.Context, channel, ts, line string) err
 
 func actDisabledLine(action string) string {
 	switch action {
-	case actRetry:
+	case actRetry, actRetryDeeper:
 		return actRetryDisabledLine
 	case actAnswer:
 		return actAnswerDisabledLine
@@ -315,6 +378,12 @@ func actResultLine(action, code, user string) (outcome, line string) {
 		return "decided", actStoppedLine
 	case "retried":
 		return "decided", actRetriedLine
+	case "stepped_up":
+		return "decided", actSteppedUpLine
+	case "no_deeper_workflow":
+		return "refused", actNoDeeperLine
+	case "deeper_over_cap":
+		return "refused", actDeeperOverCapLine
 	case "answered_restarted":
 		return "decided", actAnsweredRestartedLine
 	case "answered":
@@ -325,7 +394,7 @@ func actResultLine(action, code, user string) (outcome, line string) {
 		return "refused", actNoQuestionLine
 	case "not_maintainer", "not_permitted", "repository_permission":
 		switch action {
-		case actRetry:
+		case actRetry, actRetryDeeper:
 			return "refused", actRetryNotMaintainerLine
 		case actAnswer:
 			return "refused", actAnswerNotAllowedLine

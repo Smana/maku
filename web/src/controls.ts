@@ -28,6 +28,9 @@ const rejections: Record<string, string> = {
   not_maintainer: "Only the task's owner or a maintainer of its repository, with write on it, cancels it.",
   not_linked: "Your account is not linked to GitHub: link it, then retry.",
   not_running: "The task has already ended.",
+  not_escalated: "The task is not waiting for a retry.",
+  no_deeper_workflow: "This task has no deeper workflow to step up to.",
+  deeper_over_cap: "Stepping up exceeds this task's budget cap.",
   unknown_task: "The factory has no task for this room.",
 };
 

@@ -637,7 +637,7 @@ func (a *App) reply(ctx context.Context, ev slackEvent) string {
 		}
 		room := a.threadRoom(msgs)
 		q := questionOf(ev.Text)
-		if (q == QuestionStop && ch.actsOn(actStop)) || (q == QuestionRetry && ch.actsOn(actRetry)) {
+		if (q == QuestionStop && ch.actsOn(actStop)) || ((q == QuestionRetry || q == QuestionRetryDeeper) && ch.actsOn(actRetry)) {
 			a.answerCount(ctx, q)
 			if !roomRE.MatchString(room) {
 				if _, err := a.Slack.Post(ctx, ev.Channel, ev.ThreadTS, unknownRoomLine, nil); err != nil {
@@ -896,8 +896,9 @@ func (a *App) deliver(ctx context.Context, body []byte) string {
 	}
 	switch e.Type {
 	case "room.ended":
-		text := endLine(e, a.taskSummary(ctx, e.Room))
-		return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text))
+		sum := a.taskSummary(ctx, e.Room)
+		text := endLine(e, sum)
+		return a.upsertEndLine(ctx, e.Room, th, text, actLineBlocks(e, ch, text, sum))
 	case "room.task_triaged":
 		sum := a.taskSummary(ctx, e.Room)
 		url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + e.Room

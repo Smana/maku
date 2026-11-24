@@ -66,7 +66,7 @@ func TestLowConfidenceIsUnknown(t *testing.T) {
 }
 
 func TestReadIntentsCarryNoText(t *testing.T) {
-	for _, i := range []Intent{Status, Needs, Changes, PR, Stop, Retry} {
+	for _, i := range []Intent{Status, Needs, Changes, PR, Stop, Retry, RetryDeeper} {
 		raw := `{"intent":"` + string(i) + `","text":"whatever it quoted","confidence":0.9}`
 		res, out := Parse([]byte(raw), "whatever it quoted", 0.7)
 		if out != OutcomeOK || res.Intent != i || res.Text != "" {
@@ -80,7 +80,7 @@ func TestReadIntentsCarryNoText(t *testing.T) {
 }
 
 func TestWriteIntents(t *testing.T) {
-	want := map[Intent]bool{Steer: true, Amend: true, Stop: true, Retry: true}
+	want := map[Intent]bool{Steer: true, Amend: true, Stop: true, Retry: true, RetryDeeper: true}
 	for _, i := range All {
 		if i.Write() != want[i] {
 			t.Errorf("%s.Write() = %v", i, i.Write())

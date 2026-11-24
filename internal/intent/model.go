@@ -79,6 +79,7 @@ Answer with one JSON object {"intent": ..., "text": ..., "confidence": ...} and 
 - "amend": corrects or extends what the task was asked to do.
 - "stop": asks to stop or cancel the task.
 - "retry": asks to try the task again.
+- "retry_deeper": asks to run the task again deeper or with a richer workflow (for example, "run it again deeper" or "retry with careful").
 - "unknown": anything else, including questions about workflow or merge policy, thanks and chit-chat.
 "text" is, for "steer" and "amend" only, the words of the reply that carry the guidance or the
 correction, copied exactly as written and never paraphrased; otherwise it is "".

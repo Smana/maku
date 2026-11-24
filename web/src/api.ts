@@ -52,6 +52,7 @@ export interface NeedItem {
   at?: string;
   author?: string;
   approve?: boolean;
+  deeper?: { workflow: string; ceilingMicroUSD?: number };
   action?: { kind: string; label: string; url?: string };
   source?: { kind: string; seq?: number; reason?: string };
 }
