@@ -9,6 +9,7 @@ import (
 	"unicode"
 
 	"github.com/Smana/maku/internal/envelope"
+	"github.com/Smana/maku/internal/intake"
 )
 
 // maxText bounds the text a line quotes, in runes.
@@ -109,8 +110,9 @@ var reasons = map[string]string{
 
 // Explain is a rejection in words, or the reason itself when it has none.
 func Explain(reason string) string {
+	shown := intake.Shown(reason)
 	if why, ok := reasons[reason]; ok {
-		return reason + ": " + why
+		return shown + ": " + why
 	}
-	return printable(reason)
+	return printable(shown)
 }

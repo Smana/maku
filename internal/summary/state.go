@@ -66,3 +66,31 @@ func Coarse(task, room string, nextRun bool) string {
 	}
 	return ""
 }
+
+// StatusWord maps any Task or Room phase (with optional reason/persona hint) to the seven-word
+// human status vocabulary (WR3 / WR-O4).
+func StatusWord(phase, reason string) string {
+	switch phase {
+	case "Received", "Triaged", "Split", "Coordinating":
+		return "planning"
+	case "Implementing":
+		if reason == "scoper" {
+			return "planning"
+		}
+		return "working"
+	case "Queued", "AutoMerging":
+		return "working"
+	case "Reviewing", "Verifying":
+		return "checking"
+	case "Escalated", "AwaitingHuman":
+		return "waiting on you"
+	case "AwaitingCI":
+		return "waiting on a check"
+	case "Merged", "Done", "NoOp":
+		return "done"
+	case "Stopped", "Rejected", "Closed", "Sealed", "Reverted":
+		return "stopped"
+	default:
+		return "working"
+	}
+}

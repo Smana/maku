@@ -15,10 +15,10 @@ const catalogue = (): Catalogue => ({
     { name: "review", description: "Anything else", mode: "off", ceilingUSD: 8 },
   ],
   profiles: {
-    "links-solo": { template: "solo", roles: ["implementer"], tier: "light", checks: false, testFirst: false, loop: "", description: "One file of links", offered: true },
-    "review-floor": { template: "", roles: null, tier: "", checks: true, testFirst: false, loop: "", description: "The default", offered: false, notOffered: "no_template",
+    "links-solo": { template: "solo", roles: ["implementer"], tier: "light", checks: false, testFirst: false, loop: "", description: "One file of links", ceilingUSD: 5.10, offered: true },
+    "review-floor": { template: "", roles: null, tier: "", checks: true, testFirst: false, loop: "", description: "The default", ceilingUSD: 5.10, offered: false, notOffered: "no_template",
       escalation: { outOfBudget: "review-frontier", notConverged: "review-frontier" } },
-    "review-frontier": { template: "pair", roles: ["implementer", "reviewer"], tier: "frontier", checks: true, testFirst: true, loop: "", description: "Several files", offered: true },
+    "review-frontier": { template: "pair", roles: ["implementer", "reviewer"], tier: "frontier", checks: true, testFirst: true, loop: "", description: "Several files", ceilingUSD: 13.60, offered: true },
   },
 });
 const page = (cat: Catalogue | null | undefined = catalogue()): RepositoryPage => ({
@@ -30,14 +30,15 @@ const ctx = (p: RepositoryPage) => ({ page: p, get: fetch, say: document.createE
 const card = (p: RepositoryPage, i: number) => classCard(p.report.classes[i], ctx(p));
 
 describe("a class card's Workflows row", () => {
-  it("shows the repository's default, then every other workflow, with roles, tier and escalation", () => {
+  it("shows the repository's default, then every other workflow, with roles, description, ceiling and escalation", () => {
     const row = card(page(), 1).querySelector(".class-profiles")!;
     expect(row.querySelector("h4")?.textContent).toBe("Workflows");
     expect([...row.querySelectorAll("li")].map((li) => li.textContent)).toEqual([
-      "Default review-floor: roles chosen at triage · out of budget goes to review-frontier; not converged goes to review-frontier",
-      "links-solo: roles implementer · tier light",
-      "review-frontier: roles implementer, reviewer · tier frontier · tests first",
+      "Default review-floor: roles chosen at triage · The default · up to $5.10 · out of budget goes to review-frontier; not converged goes to review-frontier",
+      "links-solo: roles implementer · One file of links · up to $5.10",
+      "review-frontier: roles implementer, reviewer · Several files · up to $13.60 · tests first",
     ]);
+    expect(row.textContent).not.toContain("tier ");
   });
   it("is the same on every class (WF4)", () => {
     const live = card(page(), 0).querySelector(".class-profiles")!;
@@ -53,7 +54,7 @@ describe("a class card's Workflows row", () => {
   });
   it("sets a maintainer's text as text, never as markup", () => {
     const cat = catalogue();
-    cat.profiles["review-frontier"].tier = "<img src=x onerror=alert(1)>";
+    cat.profiles["review-frontier"].description = "<img src=x onerror=alert(1)>";
     const row = card(page(cat), 1).querySelector(".class-profiles")!;
     expect(row.querySelector("img")).toBeNull();
     expect(row.textContent).toContain("<img src=x onerror=alert(1)>");

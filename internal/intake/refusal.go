@@ -352,3 +352,35 @@ func (r ProfileRefusal) Sentence() string {
 
 // Refusal is r as a plan_check refusal: its code and its one sentence.
 func (r ProfileRefusal) Refusal() *Refusal { return &Refusal{Reason: r.Code, Sentence: r.Sentence()} }
+
+// Shown translates an API/metric profile_* refusal code into the workflow_* spelling shown to a
+// person (WR-O4); any other code is returned unchanged.
+func Shown(code string) string {
+	switch code {
+	case ProfileUnknown:
+		return "workflow_unknown"
+	case ProfileConflict:
+		return "workflow_conflict"
+	case ProfileNoTestsPaths:
+		return "workflow_no_tests_paths"
+	case ProfileNotOffered:
+		return "workflow_not_offered"
+	}
+	return code
+}
+
+// Accepted translates a shown workflow_* code back into the API's profile_* constant so callers
+// may send either spelling.
+func Accepted(code string) string {
+	switch code {
+	case "workflow_unknown":
+		return ProfileUnknown
+	case "workflow_conflict":
+		return ProfileConflict
+	case "workflow_no_tests_paths":
+		return ProfileNoTestsPaths
+	case "workflow_not_offered":
+		return ProfileNotOffered
+	}
+	return code
+}

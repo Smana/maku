@@ -140,13 +140,14 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
-// profileLine is one profile in words: its roles (or that they are chosen at triage) and its tier.
+// profileLine is one workflow in words: its roles, description, ceiling and tests-first flag (no tier).
 // The text is set as text, never as markup: a description is a maintainer's.
 function profileLine(cat: Catalogue, name: string): string {
   const p = cat.profiles[name];
   if (!p) return `${name}: not in the factory's list of workflows`;
   const parts = [p.offered && p.roles?.length ? `roles ${p.roles.join(", ")}` : "roles chosen at triage"];
-  if (p.tier) parts.push(`tier ${p.tier}`);
+  if (p.description) parts.push(p.description);
+  if (p.ceilingUSD && p.ceilingUSD > 0) parts.push(`up to $${p.ceilingUSD.toFixed(2)}`);
   if (p.testFirst) parts.push("tests first");
   return `${name}: ${parts.join(" \u00b7 ")}`;
 }

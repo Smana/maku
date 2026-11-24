@@ -1155,7 +1155,7 @@ func TestProposalShowsTheSuggestion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Suggested: class docs-links · workflow links-solo (implementer)", "why (the planner's reading): one file"} {
+	for _, want := range []string{"Suggested: workflow links-solo (implementer)", "why (the planner's reading): one file"} {
 		if !strings.Contains(string(raw), want) && !strings.Contains(text, want) {
 			t.Errorf("the message lacks %q: %s", want, raw)
 		}

@@ -1420,12 +1420,13 @@ receives the subset in its `repositories` list, and an internal principal or mac
 
 ### `GET /v1/catalogue/{owner}/{name}`
 
-What a repository offers at intake: its classes, the harness profile each runs, the roles that
-profile's template runs and how the class merges. It answers from the factory's accepted config
-snapshot (the `Factory`, `Repository` and `MergePolicy` objects, and the repository file under
-`classAuthority: repository`) and reads nothing on GitHub but the caller's own access. The broker
-reads it with the caller's token and keeps each answer for 60 seconds per repository and caller, in
-at most 256 entries, because the answer carries the caller's `maintainer` flag.
+What a repository offers at intake: its classes, the workflows (under their API key `profiles`),
+each workflow's roles, path, dollar ceiling and description, and how each class merges. It answers
+from the factory's accepted config snapshot (the `Factory`, `Repository` and `MergePolicy` objects,
+and the repository file under `classAuthority: repository`) and reads nothing on GitHub but the
+caller's own access. The broker reads it with the caller's token and keeps each answer for 60
+seconds per repository and caller, in at most 256 entries, because the answer carries the caller's
+`maintainer` flag.
 
 The route is on the same port as the policy routes but is **not** behind `policyManagement.promotion`:
 it is mounted whenever the API is. Callers:

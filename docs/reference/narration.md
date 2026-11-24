@@ -36,7 +36,7 @@ The task's room gets the issue snapshot as its first `task_state` message, then 
 
 ## Workflow pin refusals
 
-When a maintainer's workflow pin ([Pinning a workflow](../factory.md#pinning-a-workflow)) is refused at intake or triage, the task runs as if unpinned and the factory narrates one `profile_refused` line with the code recorded in `status.profile.refused` (alongside `status.profile.requested` in the `profile` task fact and `summary/v1`):
+When a maintainer's workflow pin ([Pinning a workflow](../factory.md#pinning-a-workflow)) is refused at intake or triage, the task runs as if unpinned and the factory narrates one `profile_refused` line with the API code recorded in `status.profile.refused` (alongside `status.profile.requested` in the `profile` task fact and `summary/v1`). Human-facing surfaces display the `workflow_*` spelling (`workflow_unknown`, `workflow_conflict`, `workflow_no_tests_paths`, `workflow_not_offered`) while the API, `status.profile.refused`, and metrics keep emitting `profile_*`:
 
 | Code | Where | Sentence |
 |---|---|---|

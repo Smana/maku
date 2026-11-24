@@ -68,9 +68,9 @@ by URL alone and end with `maku run` instead of a sign-in.
 
 Work a room from top to bottom ([component reference](reference/web-ui-settings.md#room-page-components)):
 
-- **Read the title strip**: Tier 1 shows the status line, the active run's persona and age, and a `Needs you · N` button; Tier 2 shows token and dollar spend, PR and issue links, last verdict, data class, current driver and optional Grafana links (`Dashboards: Room · Run · Task`), followed by a `Next` box while waiting and the `Now` line for the latest call.
+- **Read the title strip and workflow card**: Tier 1 shows the workflow chip, status line, active run's persona and age, and `Needs you · N`; Tier 2 shows spend, PR/issue links, last verdict, data class, driver and `Dashboards`, followed by `Next` and `Now`. Below the strip, the open **Workflow** card shows `Workflow`, `Will run`, `Cost` and any refused pin (`How it was chosen` holds raw details).
 - **Clear `Needs you`**: decide pending approvals in place, or follow direct links for GitHub merges, reviews and scoper questions.
-- **Inspect runs and context**: expand `Notes`, `Workflow`, `Merge policy` and `Raw events` folds as needed, or click any run node on the right-hand **Rail** (`#run=<id>`) to filter events to that run.
+- **Inspect runs and context**: expand `Notes`, `How it was chosen`, `Merge policy` and `Raw events` folds as needed, or click any run node on the right-hand **Rail** (`#run=<id>`) to filter events to that run.
 - **Steer, queue or run**: use **Controls** (`Run`, `Driver`, `Queued for the next run`, `Room`) according to [what each standing may do](reference/web-ui-settings.md#what-each-standing-may-do), or pick **fork here** on any message or handoff ([forks](reference/web-ui-settings.md#forks)).
 - **Send from the dock**: choose `Deliver to` (post to the room, queue for the next run's brief, or steer the running agent — driver only), toggle the [theme](reference/web-ui-settings.md#theme), and watch connection notices. Destructive acts (**interrupt**, **take**, **steer now**, **cancel task**, **discard task**, **close room**) require a second `confirm: …` click within 10 s.
 
