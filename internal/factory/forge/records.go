@@ -23,13 +23,15 @@ const recordPages = 10
 
 type recordNode struct {
 	PullRequest struct {
-		Number     int
-		HeadRefOid string
-		State      string
-		Body       string
-		MergedAt   *githubv4.DateTime
-		MergedBy   *actor
-		Labels     struct {
+		Number      int
+		HeadRefOid  string
+		BaseRefName string
+		MergeCommit *struct{ Oid githubv4.GitObjectID }
+		State       string
+		Body        string
+		MergedAt    *githubv4.DateTime
+		MergedBy    *actor
+		Labels      struct {
 			Nodes    []struct{ Name string }
 			PageInfo struct{ HasNextPage bool }
 		} `graphql:"labels(first: 50)"`
@@ -95,7 +97,10 @@ func (g *GitHub) MergedRecords(ctx context.Context, filter string) ([]evidence.P
 	out := make([]evidence.PR, 0, len(nodes))
 	for _, n := range nodes {
 		p := n.PullRequest
-		pr := evidence.PR{Number: p.Number, HeadRefOid: p.HeadRefOid, Labels: labels(n)}
+		pr := evidence.PR{Number: p.Number, HeadRefOid: p.HeadRefOid, BaseRefName: p.BaseRefName, Labels: labels(n)}
+		if p.MergeCommit != nil {
+			pr.MergeCommitOid = string(p.MergeCommit.Oid)
+		}
 		if p.MergedAt != nil {
 			pr.MergedAt = p.MergedAt.Time
 		}

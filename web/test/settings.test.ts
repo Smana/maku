@@ -195,18 +195,19 @@ describe("the index and evidence pages", () => {
     expect(cards[1].textContent).not.toContain("unavailable");
   });
 
-  it("lists each repository with what serves it and its classes by mode", async () => {
+  it("lists each repository's decisions and closest policy to going live", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());
     const rows = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => [...tr.children].map((td) => td.textContent));
-    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "Repository cloud-native-ref · status unknown", "1 live · 1 shadow", "docs-links 20 (20 needed)"]);
-    expect([...app.querySelectorAll("table.repo-table thead th")].map((th) => th.textContent)[1]).toBe("Served by");
+    expect(rows[0]).toEqual(["Smana/cloud-native-ref", "-", "-", "-", "docs-links 20 (20 needed)"]);
+    expect([...app.querySelectorAll("table.repo-table thead th")].map((th) => th.textContent)).toEqual(
+      ["Repository", "Merged on its own", "Would have merged", "Waited (7 days)", "Closest to going live"]);
     expect(rows[1][0]).toBe("Smana/broken");
     expect(rows[1][1]).toMatch(/^Not readable: /);
     expect(app.querySelector('table.repo-table a[href="/settings/merge-policies/Smana/cloud-native-ref"]')).not.toBeNull();
   });
 
-  it("names the Repository with its Accepted, BindingsValid and InSync words, or says the repository is not migrated", async () => {
+  it("shows no health note for a repository without a refused binding", async () => {
     const synced = page();
     synced.report.repositoryStatus = { namespace: "agent-system", generation: 3, status: { authority: "central", conditions: [
       { type: "Accepted", status: "True" }, { type: "RepositoryFileValid", status: "True" },
@@ -215,22 +216,20 @@ describe("the index and evidence pages", () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/synced", "Smana/legacy"] },
       "/api/policy/repositories/Smana/synced": synced, "/api/policy/repositories/Smana/legacy": legacy }));
-    const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
-    expect(from).toEqual(["Repository cloud-native-ref · Accepted · Not in sync: 2 differences", "Not migrated"]);
+    expect(app.querySelectorAll(".repository-health")).toHaveLength(0);
   });
 
   it("labels each cell with its column, for the stacked phone table, and scopes its styles to the settings header", async () => {
     const app = document.createElement("div");
     await mountSettings(app, "/settings/merge-policies", two());
     expect([...app.querySelectorAll("table.repo-table tbody tr")[0].children].map((td) => td.getAttribute("data-label")))
-      .toEqual(["Repository", "Served by", "Classes", "Closest to promotion"]);
+      .toEqual(["Repository", "Merged on its own", "Would have merged", "Waited (7 days)", "Closest to going live"]);
     const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
-    expect(css).toMatch(/td:nth-child\(n \+ 3\)\[data-label\]::before \{ content: attr\(data-label\) ": "; \}/);
-    // The room page's p.policy-conditions is not the header's chip row.
+    expect(css).toMatch(/td:nth-child\(n \+ 2\)\[data-label\]::before \{ content: attr\(data-label\) ": "; \}/);
     expect(css).not.toMatch(/(^|\n)\.policy-conditions\s*\{/);
   });
 
-  it("says a Repository's status is unknown when it has no Accepted, BindingsValid or InSync condition", async () => {
+  it("uses dashes for decisions an older factory cannot provide", async () => {
     const bare = page();
     bare.report.repositoryStatus = { namespace: "agent-system", generation: 1, status: { conditions: [{ type: "RepositoryFileValid", status: "True" }] } };
     const none = page();
@@ -238,7 +237,7 @@ describe("the index and evidence pages", () => {
     await mountSettings(app, "/settings/merge-policies", fakeFetch({ "/api/policy/repositories": { repositories: ["Smana/bare", "Smana/none"] },
       "/api/policy/repositories/Smana/bare": bare, "/api/policy/repositories/Smana/none": none }));
     const from = [...app.querySelectorAll("table.repo-table tbody tr")].map((tr) => tr.children[1].textContent);
-    expect(from).toEqual(["Repository cloud-native-ref · status unknown", "Repository cloud-native-ref · status unknown"]);
+    expect(from).toEqual(["-", "-"]);
   });
 
   it("counts a report's classes by mode", () => {
@@ -432,23 +431,23 @@ describe("a bound repository's header, and a repository not migrated", () => {
     p.report.repositoryStatus!.status.conditions = [{ type: "RepositoryFileValid", status: "False", message: "line 3" }];
     const app = await mountWith(p);
     expect(app.querySelector(".policy-editor")).toBeNull();
-    expect(app.textContent).toContain("The bindings are in .github/agent-factory.yaml, which decides the classes: edit them there, by pull request.");
+    expect(app.textContent).toContain("The bindings are in .github/agent-factory.yaml, which decides the policies: edit them there, by pull request.");
     expect(app.querySelector(".policy-header")?.textContent).toContain("repository");
-    expect(app.querySelector(".policy-authority")?.textContent).toBe("The repository's .github/agent-factory.yaml decides the classes; the Repository defers to it.");
+    expect(app.querySelector(".policy-authority")?.textContent).toBe("The repository's .github/agent-factory.yaml decides the policies; the Repository defers to it.");
     const fl = app.querySelector(".file-line")!;
     expect(fl.getAttribute("data-prominent")).toBe("true");
     expect(fl.textContent).toContain("auto-merge is paused");
   });
 
-  it("heads the page with the Repository once: name, namespace, authority, generation, conditions, and the mode legend", async () => {
+  it("shows only the unhealthy condition and the mode legend", async () => {
     const app = await mountWith(differs());
     const headers = app.querySelectorAll("header.policy-header");
     expect(headers).toHaveLength(1);
     const h = headers[0];
     const dl = [...h.querySelectorAll("dt")].map((dt) => [dt.textContent, dt.nextElementSibling?.textContent]);
-    expect(dl).toEqual([["Repository", "cloud-native-ref"], ["Namespace", "agent-system"], ["Authority", "central"], ["Generation", "3"]]);
+    expect(dl).toEqual([["Repository", "cloud-native-ref"], ["Namespace", "agent-system"], ["Authority", "central"]]);
     const chips = [...h.querySelectorAll(".policy-condition")].map((c) => [c.textContent, c.getAttribute("data-tone")]);
-    expect(chips).toEqual([["Accepted", "ok"], ["Repository file valid", "ok"], ["Not in sync: 2 differences", "warn"]]);
+    expect(chips).toEqual([["Not in sync: 2 differences", "warn"]]);
     expect([...app.querySelectorAll(".mode-legend .mode-badge")].map((b) => b.textContent)).toEqual(["Live", "Shadow", "Off"]);
     expect(app.querySelector(".mode-legend")?.textContent).toContain("records what it would do, merges nothing");
     expect(app.querySelector(".class-source")).toBeNull();
@@ -467,19 +466,13 @@ describe("a bound repository's header, and a repository not migrated", () => {
     expect(h.querySelector(".policy-condition-message")?.textContent).toBe("Refused: spec.mergePolicies[0]: unknown key");
   });
 
-  it("says the status's generation only when it lags the spec, and when the policy was read as a <time>", async () => {
+  it("keeps generation out of the page and shows when the policy was read", async () => {
     const p = page();
-    const st = p.report.repositoryStatus!;
-    const gen = async () => {
-      const h = (await mountWith(p)).querySelector("header.policy-header")!;
-      return [...h.querySelectorAll("dt")].find((dt) => dt.textContent === "Generation")?.nextElementSibling?.textContent;
-    };
-    st.generation = 4;
-    st.status.observedGeneration = 3;
-    expect(await gen()).toBe("4 (status from generation 3)");
-    st.status.observedGeneration = 4;
-    expect(await gen()).toBe("4");
-    const read = (await mountWith(p)).querySelector(".policy-read time");
+    p.report.repositoryStatus!.generation = 4;
+    p.report.repositoryStatus!.status.observedGeneration = 3;
+    const header = (await mountWith(p)).querySelector("header.policy-header")!;
+    expect([...header.querySelectorAll("dt")].some((dt) => dt.textContent === "Generation")).toBe(false);
+    const read = header.querySelector(".policy-read time");
     expect(read?.getAttribute("datetime")).toBe(p.report.readAt);
   });
 
@@ -501,7 +494,7 @@ describe("a bound repository's header, and a repository not migrated", () => {
     expect(app.querySelector(".policy-header")).toBeNull();
     expect(app.querySelector(".policy-editor")).toBeNull();
     expect(app.querySelectorAll(".class-card")).toHaveLength(2);
-    expect(app.querySelector(".class-summary")?.textContent).toBe("This class's conditions are set in the factory's config and are not shown here.");
+    expect(app.querySelector(".policy-sentence")?.textContent).toBe("No extra policy restriction");
   });
 });
 
@@ -574,6 +567,6 @@ describe("the filter", () => {
     routes["/api/policy/repositories/Smana/cloud-native-ref"] = ready;
     await expect.poll(() => app.querySelector(".policy-classes")?.textContent).toContain("20 clean merges (20 needed)");
     expect(visible()).toEqual(["class-beta"]);
-    expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 classes");
+    expect(app.querySelector(".filter-count")?.textContent).toBe("1 of 4 policies");
   });
 });

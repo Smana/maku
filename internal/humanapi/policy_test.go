@@ -82,6 +82,16 @@ func (f *fakePolicyFactory) PolicyRecentDecisions(_ context.Context, token, repo
 	return policyview.Recent{Repository: policyRepo, Since: since, Decisions: []policyview.RecentDecision{}}, nil
 }
 
+func (f *fakePolicyFactory) PolicyBacktest(_ context.Context, token, repository string, request policyview.BacktestRequest, since string) (policyview.Backtest, error) {
+	f.tokens = append(f.tokens, token)
+	if !strings.EqualFold(repository, policyRepo) {
+		return policyview.Backtest{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
+	}
+	return policyview.Backtest{Valid: true, Repository: repository, Since: since,
+		Counts: policyview.BacktestCounts{Considered: 1, Changed: 1},
+		Rows:   []policyview.BacktestRow{{PullRequest: 42, Policy: request.Policy, Change: "changed"}}}, nil
+}
+
 func (f *fakePolicyFactory) PolicyList(_ context.Context, token string) ([]evidence.PolicyReport, error) {
 	f.tokens = append(f.tokens, token)
 	return []evidence.PolicyReport{{Name: "dead-links", Generation: 4}}, nil
@@ -249,7 +259,8 @@ var policyPaths = []struct{ method, path string }{
 	{http.MethodGet, "/settings"}, {http.MethodGet, "/settings/merge-policies"},
 	{http.MethodGet, "/settings/merge-policies/Smana/maku"}, {http.MethodGet, "/settings/evidence"},
 	{http.MethodGet, "/settings/merge-policies/Smana/maku/decisions/12"}, {http.MethodGet, "/settings/merge-policies/policies/dead-links"},
-	{http.MethodPost, "/api/policy/repositories/Smana/maku/preview"}, {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12"},
+	{http.MethodPost, "/api/policy/repositories/Smana/maku/preview"}, {http.MethodPost, "/api/policy/repositories/Smana/maku/backtest"},
+	{http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12"},
 	{http.MethodGet, "/api/policy/repositories/Smana/maku/decisions?since=2026-11-01"},
 	{http.MethodGet, "/api/policy/repositories"}, {http.MethodGet, "/api/policy/repositories/Smana/maku"},
 	{http.MethodPost, "/api/policy/promotions"}, {http.MethodPost, "/api/policy/promotions/bbbbbbbb"},
@@ -564,6 +575,11 @@ func TestPoliciesForwardWithTheCallersToken(t *testing.T) {
 	}
 	if code, _ := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("anyone"), bindings); code != http.StatusForbidden {
 		t.Fatalf("a reader previews a binding edit: %d", code)
+	}
+	backtest := map[string]any{"kind": "policy", "policy": "docs-links", "spec": map[string]any{"maxPerDay": 2}, "since": "2026-11-01"}
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/backtest", header("maint"), backtest); code != http.StatusOK ||
+		!strings.Contains(body, `"pullRequest":42`) || !strings.Contains(body, `"since":"2026-11-01"`) || f.tokens[len(f.tokens)-1] != "tok-maint" {
+		t.Fatalf("policy backtest: %d %s", code, body)
 	}
 	// Review of #546: an unknown kind is refused here, as the factory refuses it.
 	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/preview", header("maint"), map[string]any{"kind": "other"}); code != http.StatusBadRequest ||

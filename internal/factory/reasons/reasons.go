@@ -69,6 +69,7 @@ var table = map[string]Words{
 	"deadline":                      {Short: "the run hit its time limit", Long: "the run hit its wall-clock limit", Next: ""},
 	"deleted":                       {Short: "the run's claim was deleted", Long: "the run's claim was deleted", Next: ""},
 	"diff_unreadable":               {Short: "a changed file could not be read, so th…", Long: "a changed file could not be read, so the gate cannot prove the diff", Next: "a maintainer inspects the unreadable file and merges by hand"},
+	"diff_unrecorded":               {Short: "the recorded diff is unavailable", Long: "the pull request's immutable diff or original oracle findings were not recorded, so a backtest cannot re-decide it", Next: "inspect the pull request directly; unknown is not unchanged"},
 	"discarded":                     {Short: "its owner or a maintainer discarded it …", Long: "its owner or a maintainer discarded it from its room: its pull request is closed, its branch deleted, and this issue closed as not planned (a GitHub App cannot delete an issue; a repository admin can)", Next: ""},
 	"edited_after_label":            {Short: "the issue was edited after it was label…", Long: "the issue was edited after it was labelled", Next: ""},
 	"escalation_expired":            {Short: "it waited past the escalation time limi…", Long: "it waited past the escalation time limit for a maintainer", Next: ""},

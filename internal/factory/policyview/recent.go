@@ -42,15 +42,16 @@ type RecentDecision struct {
 
 // Recent is a repository's recorded decisions, newest first.
 type Recent struct {
-	Repository string           `json:"repository"`
-	Since      string           `json:"since"`
-	Decisions  []RecentDecision `json:"decisions"`
+	Repository   string           `json:"repository"`
+	Since        string           `json:"since"`
+	Decisions    []RecentDecision `json:"decisions"`
+	pullRequests []evidence.PR
 }
 
 // ReadRecent reads every per-policy decision line in merged pull requests since a date accepted by
 // GitHub's merged:>= search. Only the configured factory's own comments count.
 func ReadRecent(repository, since, factory string, prs []evidence.PR) Recent {
-	out := Recent{Repository: repository, Since: since, Decisions: []RecentDecision{}}
+	out := Recent{Repository: repository, Since: since, Decisions: []RecentDecision{}, pullRequests: prs}
 	for _, pr := range prs {
 		for _, comment := range pr.Comments {
 			if !sameFactory(comment.Author.Login, factory) {

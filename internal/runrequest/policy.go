@@ -86,6 +86,22 @@ func (f Factory) PolicyPreviewPolicy(ctx context.Context, accessToken, name stri
 	return out, err
 }
 
+// PolicyBacktest replays an edited policy over a repository's recorded diffs.
+func (f Factory) PolicyBacktest(ctx context.Context, accessToken, repository string, request policyview.BacktestRequest, since string) (policyview.Backtest, error) {
+	body, err := json.Marshal(struct {
+		policyview.BacktestRequest
+		Repository string `json:"repository"`
+		Backtest   bool   `json:"backtest"`
+		Since      string `json:"since,omitempty"`
+	}{BacktestRequest: request, Repository: repository, Backtest: true, Since: since})
+	if err != nil {
+		return policyview.Backtest{}, err
+	}
+	var out policyview.Backtest
+	err = f.call(ctx, http.MethodPost, accessToken, "/v1/policy/preview", bytes.NewReader(body), &out)
+	return out, err
+}
+
 // PolicyRecentDecisions is GET /v1/policy/decisions with no pr: a repository's recent per-policy
 // decisions, for a reader of it.
 func (f Factory) PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error) {

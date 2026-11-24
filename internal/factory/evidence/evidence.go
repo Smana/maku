@@ -42,12 +42,14 @@ type Comment struct {
 // PR is a merged pull request in `gh pr list --json number,headRefOid,mergedBy,mergedAt,labels,comments`
 // shape, the script's input.
 type PR struct {
-	Number     int       `json:"number"`
-	HeadRefOid string    `json:"headRefOid"`
-	MergedBy   *Actor    `json:"mergedBy"`
-	MergedAt   time.Time `json:"mergedAt"`
-	Labels     []Label   `json:"labels"`
-	Comments   []Comment `json:"comments"`
+	Number         int       `json:"number"`
+	HeadRefOid     string    `json:"headRefOid"`
+	BaseRefName    string    `json:"baseRefName,omitempty"`
+	MergeCommitOid string    `json:"mergeCommitOid,omitempty"`
+	MergedBy       *Actor    `json:"mergedBy"`
+	MergedAt       time.Time `json:"mergedAt"`
+	Labels         []Label   `json:"labels"`
+	Comments       []Comment `json:"comments"`
 }
 
 // Revert is a pull request titled "Revert", any state: GitHub's revert body or the merger's

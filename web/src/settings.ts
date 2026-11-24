@@ -13,6 +13,7 @@ import { bindingEditor } from "./binding-editor";
 import type { PolicyFile } from "./policy-editor";
 import { describeGuardrails, modeMeaning } from "./policy-describe";
 import { filterField } from "./filter";
+import { decisionCounts, recentDecisions, type Recent } from "./decisions";
 import { mountBrand } from "./brand";
 import { mountThemeButton, type ThemeController } from "./theme";
 
@@ -104,6 +105,9 @@ export interface RepositoryPage {
   report: Report; promotions: Promotion[]; exceptions: Exception[];
   you: { login: string; maintainer: boolean; operator: boolean };
   catalogue?: Catalogue | null;
+  policySpecs?: Record<string, Record<string, unknown>>;
+  recent?: Recent;
+  recentUnavailable?: boolean;
 }
 
 // The routes this module answers, as the broker serves them.
@@ -226,8 +230,14 @@ export async function readAll(repos: string[], get: typeof fetch, limit = 4): Pr
   const worker = async () => {
     while (next < repos.length) {
       const i = next++;
-      try { out[i] = await read<RepositoryPage>(`/api/policy/repositories/${repos[i]}`, get); }
-      catch (e) { out[i] = e instanceof Error ? e : new Error(String(e)); }
+      try {
+        const page = await read<RepositoryPage>(`/api/policy/repositories/${repos[i]}`, get);
+        page.recent = await read<Recent>(`/api/policy/repositories/${repos[i]}/decisions`, get).catch(() => {
+          page.recentUnavailable = true;
+          return undefined;
+        });
+        out[i] = page;
+      } catch (e) { out[i] = e instanceof Error ? e : new Error(String(e)); }
     }
   };
   await Promise.all(Array.from({ length: Math.min(limit, repos.length) }, worker));
@@ -280,40 +290,44 @@ async function home(app: HTMLElement, get: typeof fetch, theme?: ThemeController
       grants === undefined ? unknown : plural(grants, "saved grant")));
 }
 
-// mergePolicyCell is what serves a repository in the list: its Repository object and whether it
-// was accepted, its bindings valid and in sync, or that the repository is not migrated.
-function mergePolicyCell(r: Report): string {
-  if (r.repositoryObject) {
-    const st = r.repositoryStatus;
-    const kept = st && { ...st, status: { ...st.status, conditions: st.status.conditions?.filter((c) => ["Accepted", "BindingsValid", "InSync"].includes(c.type)) } };
-    const words = conditionWords(kept).map((c) => c.word);
-    return [`Repository ${r.repositoryObject}`, ...(words.length ? words : ["status unknown"])].join(" · ");
-  }
-  return "Not migrated";
+function bindingHealth(r: Report): string | undefined {
+  const refused = (r.bindings ?? []).filter((b) => !b.accepted);
+  if (!refused.length) return undefined;
+  return refused.map((b) => {
+    const st = r.repositoryStatus?.status.classes?.find((x) => x.name === b.name);
+    const detail = st?.message || b.reason || st?.reason || "no reason given";
+    return `Refused binding ${b.name}: ${detail}. Fix the named field in the Repository or its binding, then check it again.`;
+  }).join(" ");
 }
 
 async function repositories(app: HTMLElement, get: typeof fetch, theme?: ThemeController) {
   const main = settingsFrame(app, "Merge policies", "/settings/merge-policies", theme);
   try {
     const { repositories } = await read<{ repositories: string[] }>("/api/policy/repositories", get);
-    // The policies the reader sees a consumer of (B16), below the repositories; none when unread.
     const policies = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get).then((x) => x.policies, () => undefined);
-    const tail = () => { if (policies?.length) main.append(el("h2", "Policies"), policiesTable(policies)); };
+    const tail = () => { if (policies?.length) main.append(el("h2", "Policy catalog"), policiesTable(policies)); };
     if (repositories.length === 0) {
       main.append(el("p", "No repository you can read is configured."));
       tail();
       return;
     }
     const pages = await readAll(repositories, get);
-    const repoTable = table(["Repository", "Served by", "Classes", "Closest to promotion"], repositories.map((repo, i) => {
+    const repoTable = table(["Repository", "Merged on its own", "Would have merged", "Waited (7 days)", "Closest to going live"], repositories.map((repo, i) => {
       const p = pages[i];
-      if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-"];
+      if (p instanceof Error) return [repo, `Not readable: ${explain(p.message)}`, "-", "-", "-"];
       const r = p.report;
+      const name = el("div");
+      name.append(link(`/settings/merge-policies/${repo}`, repo));
+      const health = bindingHealth(r);
+      if (health) name.append(el("p", health, "repository-health"));
+      const counts = p.recent ? decisionCounts(p.recent) : undefined;
       const best = r.classes.filter((c) => c.mode === "shadow" && c.evidence).sort((x, y) => y.evidence!.clean - x.evidence!.clean)[0];
-      return [link(`/settings/merge-policies/${repo}`, repo), mergePolicyCell(r), countsText(modeCounts(r)), best ? `${best.class} ${cleanCount(best.evidence!, true)}` : "-"];
+      return [name, counts ? String(counts.automatic) : "-", counts ? String(counts.wouldMerge) : "-", counts ? String(counts.waited) : "-",
+        best ? `${best.class} ${cleanCount(best.evidence!, true)}` : "-"];
     }), "repo-table");
+    pages.forEach((p, i) => { if (!(p instanceof Error)) repoTable.tBodies[0].rows[i].dataset.object = p.report.repositoryObject ?? ""; });
     const { box } = filterField({ label: "Filter repositories", noun: ["repository", "repositories"],
-      items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${(tr.cells[1].textContent ?? "").split(" · ")[0]}` }); // the two names, not the counts
+      items: () => [...repoTable.tBodies[0].rows], text: (tr) => `${tr.cells[0].textContent} ${tr.dataset.object ?? ""}` });
     main.append(box, repoTable);
     tail();
   } catch (e) { failed(main, e); }
@@ -378,12 +392,20 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
   const main = settingsFrame(app, repository, "/settings/merge-policies", theme);
   let page: RepositoryPage;
   try {
-    page = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get);
+    const pages = await readAll([repository], get);
+    if (pages[0] instanceof Error) throw pages[0];
+    page = pages[0];
+    page.policySpecs = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
+      .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
   } catch (e) { failed(main, e); return; }
   const reload = () => void repositoryPage(app, repository, get, theme);
   const say = el("p", "", "notice");
   const r = page.report;
   const state = policyState(r);
+  main.append(el("h2", "Recent decisions"));
+  if (page.recent?.decisions.length) main.append(recentDecisions(page.recent));
+  else if (page.recentUnavailable) main.append(el("p", "Recent decisions are not available from this factory. The policies below still work.", "notice"));
+  else main.append(el("p", "No decision was recorded in this window."));
   main.append(policyHeader(r), modeLegend(), say);
   const file = fileLine(r);
   const fl = el("p", file.text, "file-line");
@@ -395,28 +417,32 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
     h.dataset.hardened = String(r.hardening.hardened);
     main.append(h);
   }
-  main.append(el("h2", "Classes"));
+  main.append(el("h2", "Policies"));
+  const guardrails = el("details", undefined, "factory-guardrails");
+  guardrails.append(el("summary", "Factory guardrails"));
   const guard = el("ul", undefined, "guardrails");
   for (const g of describeGuardrails(r.guardrails)) guard.append(el("li", g));
-  main.append(el("p", "The factory's guardrails, which every class inherits:", "guardrails-lead"), guard);
+  guardrails.append(guard);
+  main.append(guardrails);
   const classes = el("section", undefined, "policy-classes");
   main.append(classes);
-  // A binding's conditions are its policy's, on the policy's page: the card links there.
   const age = (p: RepositoryPage) => { const e = el("p", undefined, "evidence-age"); e.append(...evidenceAge(p.report)); return e; };
   const draw = (p: RepositoryPage) => classes.replaceChildren(age(p),
     ...p.report.classes.map((c) => classCard(c, { page: p, get, say, reload, main })));
   draw(page);
-  const filter = filterField({ label: "Filter classes", noun: ["class", "classes"],
+  const filter = filterField({ label: "Filter policies", noun: ["policy", "policies"],
     items: () => [...classes.querySelectorAll<HTMLElement>("article.class-card")],
     text: (c) => ["h3", ".mode-badge"].map((q) => c.querySelector(q)?.textContent ?? "").join(" ") });
   classes.before(filter.box);
-  // Pending evidence fills in place: the editor below is never rebuilt, so no edit is lost.
   void (async () => {
     let cur = page;
     for (let n = 0; n < poll.times && pending(cur.report); n++) {
       await new Promise((res) => setTimeout(res, poll.every));
-      if (!app.contains(classes)) return; // the page moved on
-      try { cur = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get); } catch { continue; }
+      if (!app.contains(classes)) return;
+      try {
+        cur = await read<RepositoryPage>(`/api/policy/repositories/${repository}`, get);
+        cur.policySpecs = page.policySpecs;
+      } catch { continue; }
       if (app.contains(classes)) { draw(cur); filter.apply(); }
     }
   })();
@@ -439,18 +465,13 @@ async function repositoryPage(app: HTMLElement, repository: string, get: typeof 
 
   if (state === "not-migrated") return;
   if (state === "repository") {
-    // Cut over (stage 4): the file holds the bindings, so no Repository manifest edits them.
-    main.append(el("h2", "Bindings"), el("p", "The bindings are in .github/agent-factory.yaml, which decides the classes: edit them there, by pull request.", "editor-footer"));
+    main.append(el("h2", "Bindings"), el("p", "The bindings are in .github/agent-factory.yaml, which decides the policies: edit them there, by pull request.", "editor-footer"));
     return;
   }
-  // B16: a bound repository edits its bindings; a policy is edited on its own page.
-  const meaning = await read<{ policies: PolicyReport[] }>("/api/policy/policies", get)
-    .then((x) => Object.fromEntries(x.policies.map((p) => [p.name, p.spec])), () => ({}));
-  main.append(el("h2", "Bindings editor"), bindingEditor(r, meaning, page.you.maintainer, get));
+  main.append(el("h2", "Bindings editor"), bindingEditor(r, page.policySpecs ?? {}, page.you.maintainer, get));
 }
 
-// policyHeader says once what serves the page's classes: the Repository, its authority and
-// generation, and each of its conditions as words with a tone. Nothing below repeats it.
+// policyHeader keeps health out of the way unless it needs an operator's action.
 function policyHeader(r: Report): HTMLElement {
   if (policyState(r) === "not-migrated") {
     const box = el("p", "Not migrated yet: ", "not-migrated");
@@ -465,20 +486,20 @@ function policyHeader(r: Report): HTMLElement {
   row("Repository", r.repositoryObject!);
   if (st) row("Namespace", st.namespace);
   row("Authority", st?.status.authority ?? state);
-  // A status that lags the spec describes an older generation: say which, only then.
-  const seen = st?.status.observedGeneration;
-  if (st) row("Generation", String(st.generation) + (seen !== undefined && seen < st.generation ? ` (status from generation ${seen})` : ""));
   head.append(dl);
-  const chips = el("ul", undefined, "policy-conditions");
-  for (const c of conditionWords(st)) {
-    const li = el("li", c.word, "policy-condition");
-    li.dataset.tone = c.tone;
-    if (c.message) li.title = c.message;
-    chips.append(li);
+  const health = bindingHealth(r);
+  if (health) head.append(el("p", health, "repository-health"));
+  const problems = conditionWords(st).filter((c) => c.tone !== "ok" && !(health && c.word === "Bindings refused"));
+  if (problems.length) {
+    const chips = el("ul", undefined, "policy-conditions");
+    for (const c of problems) {
+      const li = el("li", c.word, "policy-condition");
+      li.dataset.tone = c.tone;
+      chips.append(li);
+    }
+    head.append(chips);
   }
-  head.append(chips);
-  // Each condition's message, visible: a title alone never shows on touch or to the keyboard.
-  for (const c of conditionWords(st)) {
+  for (const c of problems) {
     if (!c.message) continue;
     const parts = c.message.split(";").map((x) => x.trim()).filter(Boolean);
     if (c.word.startsWith("Not in sync:") && parts.length > 1) {
@@ -489,7 +510,7 @@ function policyHeader(r: Report): HTMLElement {
       head.append(d);
     } else head.append(el("p", `${c.word}: ${c.message}`, "policy-condition-message"));
   }
-  if (state === "repository") head.append(el("p", `The repository's .github/agent-factory.yaml decides the classes; the Repository defers to it.`, "policy-authority"));
+  if (state === "repository") head.append(el("p", `The repository's .github/agent-factory.yaml decides the policies; the Repository defers to it.`, "policy-authority"));
   const merge = mergeView(r);
   if (merge) head.append(merge);
   const read = el("p", "Policy read ", "policy-read");

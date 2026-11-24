@@ -1206,25 +1206,29 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .file-line[data-prominent="true"] { padding: 8px 12px; border: 1px solid var(--warning-border); border-radius: var(--radius-row);
   background: color-mix(in srgb, var(--warning) 12%, var(--card)); color: var(--warning-foreground); font-weight: 500; }
 
-/* A class: name, mode in words, the class as sentences, its evidence. */
+/* A policy: its plain sentence, mode, evidence, and the raw expression only on demand. */
 .policy-classes { display: grid; gap: 12px; }
 .class-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
-/* Selected: the class a link points at (#class-<name>) adds the 1 px primary border. */
 .class-card:target { border-color: var(--primary); }
 .class-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between; }
 .mode-badge { padding: 2px 10px; border-radius: 999px; font-size: var(--text-small); border: 1px solid var(--border); }
 .mode-badge[data-mode="live"] { border-color: var(--success); color: var(--success-text); }
 .mode-badge[data-mode="shadow"] { border-color: var(--primary); color: var(--link); }
-.mode-badge[data-mode="off"] { color: var(--muted-foreground); }
+.mode-badge[data-mode="off"], .mode-badge[data-mode="disabled"] { color: var(--muted-foreground); }
 .class-source, .evidence-detail, .class-empty { color: var(--muted-foreground); font-size: var(--text-small); }
-.settings .class-card .class-summary { max-width: 88ch; margin: 6px 0; font: var(--text-small)/var(--leading-small) var(--font-mono); color: var(--muted-foreground); overflow-wrap: anywhere; }
+.settings .class-card .policy-sentence, .settings > .policy-sentence { max-width: 64ch; margin: 6px 0; }
+.raw-patterns { margin: 4px 0 8px; font-size: var(--text-small); }
+.raw-pattern { font-family: var(--font-mono); overflow-wrap: anywhere; }
+.repository-health, .backtest-warning { color: var(--warning-foreground); overflow-wrap: anywhere; }
 .class-card .class-last { margin: 4px 0; font-size: var(--text-small); color: var(--muted-foreground); }
-/* A binding (B16): its policy line, its refusal in the bad tone, what it supplies, small. */
-.class-card .binding-policy, .class-card .binding-serving, .class-card .evidence-generations, .class-card .promote-where { margin: 4px 0; font-size: var(--text-small); color: var(--muted-foreground); }
-.class-card .binding-refused { margin: 4px 0; color: var(--destructive-text); }
-.class-card .binding-parameters { margin: 2px 0 6px; padding-left: 18px; font-size: var(--text-small); font-family: var(--font-mono); overflow-wrap: anywhere; }
-.binding-editor .binding-form { margin: 0 0 12px; }
-.binding-editor .binding-meaning, .policy-definition { font-size: var(--text-small); overflow-x: auto; }
+.class-card .binding-policy, .class-card .evidence-generations, .class-card .promote-where { margin: 4px 0; font-size: var(--text-small); color: var(--muted-foreground); }
+.binding-editor .binding-form { min-width: 0; margin: 0 0 12px; }
+.binding-editor .binding-meaning, .policy-definition { font-size: var(--text-small); overflow-wrap: anywhere; }
+.mode-ladder, .editor-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+.mode-choice { display: inline-flex; align-items: center; gap: 4px; min-height: var(--hit); padding: 0 8px; border: 1px solid var(--input); border-radius: var(--radius-control); }
+.mode-choice:has(input:checked) { border-color: var(--primary); color: var(--link); }
+.editor-actions .backtest-repository { display: inline-flex; align-items: center; gap: 8px; }
+.editor-actions select, .editor-field input, .editor-field textarea, .editor-field select { min-width: 0; max-width: 100%; box-sizing: border-box; }
 /* A time inside a settings sentence reads as part of it, not as the log's mono timestamp. */
 .settings p time { font: inherit; font-variant-numeric: tabular-nums; }
 .class-profiles { margin-top: 8px; }
@@ -1258,16 +1262,22 @@ main.settings.approval-memory > h1:first-child { display: none; }
 @media (max-width: 720px) {
   .settings .editor-field { grid-template-columns: minmax(0, 1fr); }
   .settings .settings-table { display: block; overflow-x: auto; }
-  /* The repository table stacks on a phone: each row a block, name and what serves it first, the
-     counts below them; the column heads stay for a screen reader. */
-  .settings .repo-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-  .settings .repo-table tbody, .settings .repo-table tr { display: block; }
+  .settings .repo-table, .settings .decisions-table, .settings .backtest-table { overflow-x: visible; }
+  .settings .repo-table thead, .settings .decisions-table thead, .settings .backtest-table thead {
+    position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .settings .repo-table tbody, .settings .repo-table tr, .settings .decisions-table tbody, .settings .decisions-table tr,
+  .settings .backtest-table tbody, .settings .backtest-table tr { display: block; }
   .settings .repo-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 12px; padding: 10px 12px; }
-  .settings .repo-table tr + tr { border-top: 1px solid var(--border); }
-  .settings .repo-table td { display: block; padding: 0; border: 0; overflow-wrap: anywhere; }
-  .settings .repo-table td:nth-child(-n + 2) { grid-column: 1 / -1; }
-  .settings .repo-table td:nth-child(n + 3) { font-size: var(--text-small); color: var(--muted-foreground); }
-  .settings .repo-table td:nth-child(n + 3)[data-label]::before { content: attr(data-label) ": "; }
+  .settings .decisions-table tr, .settings .backtest-table tr { padding: 10px 12px; }
+  .settings .repo-table tr + tr, .settings .decisions-table tr + tr, .settings .backtest-table tr + tr { border-top: 1px solid var(--border); }
+  .settings .repo-table td, .settings .decisions-table td, .settings .backtest-table td { padding: 0; border: 0; overflow-wrap: anywhere; }
+  .settings .repo-table td { display: block; }
+  .settings .repo-table td:first-child { grid-column: 1 / -1; }
+  .settings .repo-table td:nth-child(n + 2) { font-size: var(--text-small); color: var(--muted-foreground); }
+  .settings .repo-table td:nth-child(n + 2)[data-label]::before { content: attr(data-label) ": "; }
+  .settings .decisions-table td, .settings .backtest-table td { display: grid; grid-template-columns: minmax(7em, auto) minmax(0, 1fr); gap: 8px; font-size: var(--text-small); }
+  .settings .decisions-table td[data-label]::before, .settings .backtest-table td[data-label]::before { content: attr(data-label); color: var(--muted-foreground); }
+  .settings .decisions-table td:first-child, .settings .backtest-table td:first-child { font-size: var(--text-body); }
 }
 .settings .proposal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: var(--text-small); }

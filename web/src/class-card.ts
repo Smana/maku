@@ -7,6 +7,7 @@
 // imports this module.
 
 import { modeMeaning } from "./policy-describe";
+import { patternDetails, policyWords } from "./policy-words";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
 import type { Binding, Catalogue, CatalogueClass, CatalogueProfile, ClassReport, Evidence, Promotion, Proposal, RepositoryPage } from "./settings";
 
@@ -61,58 +62,17 @@ export function generationLine(e: Evidence): string {
   }).join(" \u00b7 ");
 }
 
-// parameterWords are what a binding supplies, one per line, as "key: value".
-function parameterWords(b: Binding): string[] {
-  const out: string[] = [];
-  for (const [k, v] of Object.entries(b)) {
-    if (k === "name" || k === "mode" || v === undefined) continue;
-    if (k === "requiresApproval") out.push(`requiresApproval: ${(v as { changedFiles: string[] }[]).map((a) => a.changedFiles.join(", ")).join("; ")}`);
-    else out.push(`${k}: ${Array.isArray(v) ? v.join(", ") : String(v)}`);
-  }
-  return out;
-}
-
-// bindingRows are a bound class's binding (B16): its policy, linked, the generation it serves, the
-// parameters this repository supplies, and why it is refused when it is.
+// bindingRows links the reusable definition; the repository page reports a refusal once.
 function bindingRows(card: HTMLElement, c: ClassReport, ctx: CardContext) {
   const r = ctx.page.report;
-  const b = r.bindings?.find((x) => x.name === c.class);
-  if (!b) {
-    // Under repository authority the binding is the file's (B15): its policy and what it supplies.
-    const f = policyState(r) === "repository" ? r.policy?.mergePolicies?.find((x) => x.name === c.class) : undefined;
-    if (!f) return;
-    const line = el("p", "Policy ", "binding-policy");
-    const a = el("a", c.class);
-    a.href = `/settings/merge-policies/policies/${encodeURIComponent(c.class)}`;
-    line.append(a, " \u00b7 Bound in .github/agent-factory.yaml");
-    card.append(line);
-    const params = parameterWords(f);
-    if (params.length) {
-      const ul = el("ul", undefined, "binding-parameters");
-      for (const p of params) ul.append(el("li", p));
-      card.append(el("p", "This repository supplies:", "binding-parameters-lead"), ul);
-    }
-    return;
-  }
-  const st = r.repositoryStatus?.status.classes?.find((x) => x.name === c.class);
-  const line = el("p", "Policy ", "binding-policy");
+  const bound = r.bindings?.some((x) => x.name === c.class) ||
+    (policyState(r) === "repository" && r.policy?.mergePolicies?.some((x) => x.name === c.class));
+  if (!bound) return;
+  const line = el("p", "Definition: ", "binding-policy");
   const a = el("a", c.class);
   a.href = `/settings/merge-policies/policies/${encodeURIComponent(c.class)}`;
   line.append(a);
-  const gen = st?.policyGeneration ?? b.policyGeneration;
-  if (b.accepted && gen) line.append(` \u00b7 Policy generation ${gen}`);
   card.append(line);
-  if (!b.accepted) {
-    const why = [b.reason ?? st?.reason, st?.message].filter(Boolean).join(": ");
-    card.append(el("p", `Refused: ${why || "no reason given"}`, "binding-refused"),
-      el("p", gen ? `Serving generation ${gen}` : "Not serving: the class falls back to review", "binding-serving"));
-  }
-  const params = parameterWords(b.parameters);
-  if (params.length) {
-    const ul = el("ul", undefined, "binding-parameters");
-    for (const p of params) ul.append(el("li", p));
-    card.append(el("p", "This repository supplies:", "binding-parameters-lead"), ul);
-  }
 }
 
 // detail is a class's track record as one line of words.
@@ -193,11 +153,11 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   card.append(head);
 
   const r = ctx.page.report;
-  if (r.repositoryObject) {
-    card.append(el("p", "This class's conditions are its MergePolicy's: open the policy's page.", "class-summary"));
-  } else {
-    card.append(el("p", "This class's conditions are set in the factory's config and are not shown here.", "class-summary"));
-  }
+  const binding = r.bindings?.find((x) => x.name === c.class)?.parameters;
+  const spec = ctx.page.policySpecs?.[c.class] ?? {};
+  card.append(el("p", policyWords(spec, binding), "policy-sentence"));
+  const patterns = binding?.allowedFiles?.length ? binding.allowedFiles : (Array.isArray(spec.allowedFiles) ? spec.allowedFiles as string[] : []);
+  if (patterns.length) card.append(patternDetails(patterns));
   bindingRows(card, c, ctx);
   const last = r.repositoryStatus?.status.classes?.find((x) => x.name === c.class);
   if (last?.lastDecision) {
@@ -208,35 +168,36 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
 
   const e = c.evidence;
   const act = el("div", undefined, "class-actions");
-  // A live class has been promoted and an off one decides nothing: neither is moving toward
-  // promotion, so neither shows the bar, the ladder or a promotion button, nor says it cannot.
+  const certainty = (e: Evidence, extras: Node[] = []) => {
+    const fold = el("details", undefined, "policy-certainty");
+    fold.append(el("summary", "How sure is this?"), ladder(e), detail(e), ...extras);
+    return fold;
+  };
   const words = (code: string) => unproposedWords[code] ?? code.replaceAll("_", " ");
   const notPromotable = () => {
     if (c.mode !== "shadow" || !c.unproposed) return;
     act.textContent = `Not promotable here: ${words(c.unproposed)}.`;
   };
   if (!e) {
-    // The page says once that evidence is being read; a card speaks only for a class added since
-    // the last read, when the rest of the page already has its evidence.
     if (r.evidenceAt) card.append(el("p", "Evidence for this class is still being read.", "evidence-reading"));
     notPromotable();
   } else if (c.mode === "live") {
-    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), detail(e));
-  } else if (c.mode === "off") {
-    card.append(e.clean === 0 ? el("p", "Off: no decisions recorded.", "evidence-detail") : detail(e));
+    card.append(el("p", `Live \u00b7 ${e.clean} clean decisions recorded.`, "evidence-live"), certainty(e));
+  } else if (c.mode === "off" || c.mode === "disabled") {
+    card.append(e.clean === 0 ? el("p", "Off: no decisions recorded.", "evidence-detail") : certainty(e));
   } else {
     const exc = ctx.page.exceptions.find((x) => x.class === c.class && x.state === "approved" && Date.parse(x.expiresAt ?? "") > Date.now());
     const eligible = e.eligible || (!!exc && e.clean >= exc.minimum && e.bad === 0 && e.drill === "passed");
-    card.append(evidenceBar(e, eligible), ladder(e), detail(e));
+    const extras: Node[] = [];
     const gens = generationLine(e);
-    if (gens) card.append(el("p", gens, "evidence-generations"));
+    if (gens) extras.push(el("p", gens, "evidence-generations"));
+    const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
+    if (reviewers) extras.push(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
+    card.append(evidenceBar(e, eligible), certainty(e, extras));
     if (r.repositoryObject) {
-      // B16: where a binding's promotion is made, by authority.
       const where = policyState(r) === "repository" ? ".github/agent-factory.yaml" : r.repositoryManifestPath ?? "the Repository manifest";
       card.append(el("p", `To promote, set mode: live on the binding in ${where} and merge the change.`, "promote-where"));
     }
-    const reviewers = (e.shadow.reviewers ?? []).map((x) => `${x.model} ${x.mergedUnchanged}/${x.mergedUnchanged + x.changed}`).join(", ");
-    if (reviewers) card.append(el("p", `Reviewers: ${reviewers}`, "evidence-reviewers"));
     card.append(el("p", eligible
       ? (e.eligible ? "Eligible to promote: enough clean decisions, no bad outcome, drill passed." : `Eligible to promote under exception ${exc!.id} (${exc!.minimum} clean decisions required).`)
       : `Blocks promotion: ${blockerActions(e).join(", ") || "no reason given"}.`, "evidence-eligibility"));

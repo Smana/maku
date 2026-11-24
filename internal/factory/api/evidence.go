@@ -139,6 +139,7 @@ type PolicyEditor interface {
 	PreviewPolicy(ctx context.Context, name string, spec config.PolicySpec, readable func(repository string) bool) (any, error)
 	Timeline(ctx context.Context, repository string, pr int) (any, error)
 	Recent(ctx context.Context, repository, since string) (any, error)
+	Backtest(ctx context.Context, repository, kind, file string, bindings []config.Binding, policy string, spec *config.PolicySpec, since string) (any, error)
 }
 
 // PolicySource is the class-shape MergePolicies the factory serves (B16); *evidence.Service
@@ -275,11 +276,38 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 		Bindings   []config.Binding   `json:"bindings"`
 		Policy     string             `json:"policy"`
 		Spec       *config.PolicySpec `json:"spec"`
+		Backtest   bool               `json:"backtest"`
+		Since      string             `json:"since"`
 	}
 	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxPreviewBody))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&in); err != nil {
 		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if in.Backtest {
+		if in.Kind != "" && in.Kind != "file" && in.Kind != "binding" && in.Kind != "policy" {
+			refuse(w, http.StatusBadRequest, "kind_unknown")
+			return
+		}
+		repo := s.readable(cfg, w, r, p, in.Repository)
+		if repo == "" {
+			return
+		}
+		switch can, err := s.Access.CanWrite(r.Context(), p, repo); {
+		case err != nil:
+			refuse(w, http.StatusServiceUnavailable, reasonLinkUnverified)
+			return
+		case !can:
+			refuse(w, http.StatusForbidden, "not_a_maintainer")
+			return
+		}
+		pv, err := s.Editor.Backtest(r.Context(), repo, in.Kind, in.File, in.Bindings, in.Policy, in.Spec, s.policySince(in.Since))
+		if err != nil {
+			refuse(w, http.StatusServiceUnavailable, "evidence_unavailable")
+			return
+		}
+		reply(w, http.StatusOK, pv)
 		return
 	}
 	switch in.Kind {
@@ -342,10 +370,7 @@ func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.URL.Query().Get("pr") == "" {
-		since := r.URL.Query().Get("since")
-		if since == "" {
-			since = s.Now().AddDate(0, 0, -30).UTC().Format(time.DateOnly)
-		}
+		since := s.policySince(r.URL.Query().Get("since"))
 		if _, err := time.Parse(time.RFC3339, since); err != nil {
 			if _, dateErr := time.Parse(time.DateOnly, since); dateErr != nil {
 				refuse(w, http.StatusBadRequest, "since_invalid")

@@ -22,12 +22,11 @@ describe("the binding editor (B4, B16)", () => {
     const p = boundPage();
     const box = bindingEditor(p.report, { "dead-links": { diffShape: "links-only", requires: ["allowedFiles"] } }, true, get);
     // The policy's diffShape is shown, and no field edits it.
-    expect(box.textContent).toContain("diffShape: links-only (the policy's)");
+    expect(box.textContent).toContain("diffShape: links-only");
     expect(box.querySelector('[data-key="diffShape"]')).toBeNull();
     expect(box.querySelector('[data-key="allowedFiles"]')).not.toBeNull();
-    const mode = box.querySelector<HTMLSelectElement>('select[aria-label="docs-links mode"]')!;
-    mode.value = "live";
-    mode.dispatchEvent(new Event("change"));
+    const mode = box.querySelector<HTMLInputElement>('input[aria-label="docs-links mode"], [role="radiogroup"][aria-label="docs-links mode"] input[value="live"]')!;
+    mode.click();
     box.querySelector<HTMLButtonElement>("button.primary")!.click();
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.at(-1)).toContain(`"kind":"binding"`);

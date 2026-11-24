@@ -8,6 +8,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -59,6 +60,22 @@ func (r Maku) policyOnline(ctx context.Context, verb string, args []string) erro
 			return writePolicyJSON(r.Out, timeline)
 		}
 		return printTimeline(r.Out, timeline)
+	case "backtest":
+		if *repository == "" || len(pos) != 1 {
+			return errors.New("policy backtest takes a policy file and --repository owner/name")
+		}
+		raw, err := os.ReadFile(filepath.Clean(pos[0]))
+		if err != nil {
+			return err
+		}
+		bt, err := client.PolicyBacktest(ctx, *repository, string(raw), *since)
+		if err != nil {
+			return err
+		}
+		if *output == "json" {
+			return writePolicyJSON(r.Out, bt)
+		}
+		return printBacktest(r.Out, bt)
 	}
 	return fmt.Errorf("policy: unknown online verb %q", verb)
 }
@@ -118,4 +135,23 @@ func printTimeline(out interface{ Write([]byte) (int, error) }, timeline policyv
 		}
 	}
 	return w.Flush()
+}
+
+func printBacktest(out interface{ Write([]byte) (int, error) }, bt policyview.Backtest) error {
+	if !bt.Valid {
+		return fmt.Errorf("policy backtest: %s", strings.Join(bt.Errors, "; "))
+	}
+	w := tabwriter.NewWriter(out, 0, 4, 2, ' ', 0)
+	_, _ = fmt.Fprintln(w, "PR\tPOLICY\tBEFORE\tAFTER\tCHANGE")
+	for _, row := range bt.Rows {
+		_, _ = fmt.Fprintf(w, "#%d\t%s\t%s\t%s\t%s\n", row.PullRequest, row.Policy, show(row.Before), show(row.After), row.Change)
+	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+	if bt.Counts.Matched == 0 && bt.Counts.Considered > 0 {
+		_, _ = fmt.Fprintln(out, "warning: the edited rule matched none of these pull requests")
+	}
+	_, err := fmt.Fprintf(out, "%d considered: %d changed, %d unchanged, %d unknown\n", bt.Counts.Considered, bt.Counts.Changed, bt.Counts.Unchanged, bt.Counts.Unknown)
+	return err
 }

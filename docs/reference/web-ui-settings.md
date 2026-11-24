@@ -55,16 +55,23 @@ With `policyManagement.promotion` on, `/settings` opens the merge-policy pages; 
 | Page | Shows |
 |---|---|
 | `/settings` | Section cards (merge policies, evidence, approval memory) with live counts; the merge policies card also reads the factory's team evaluation: `evaluation: observe · control 20 %` |
-| `/settings/merge-policies` | One row per repository: its `Repository` with its Accepted and BindingsValid conditions in words (or "Not migrated" when its classes are the config file's, or "status unknown" before the factory reports them), its classes by mode, the class closest to promotion. Below, the **Policies** table: each policy you read a consumer of, its generation and its counts |
-| `/settings/merge-policies/<owner>/<name>` | A header saying once what serves the classes: the `Repository`, its namespace, authority and generation, its resolved merge settings (each key the `Factory`'s `mergeDefaults` filled marked "from the Factory"), its conditions as words on their colour, and a legend for the three modes; one line on `.github/agent-factory.yaml` (a notice only when an invalid file pauses auto-merge). Then one card per binding: its name and mode word, its policy (open the policy's page for what the class means), the generation it serves, the parameters this repository supplies, why it is refused when it is (`Refused: MissingParameter: …`, `Serving generation 3`), its last decision, its track record toward the [promotion](../factory.md#promotion) in words (each part with a hover explanation) with the 29 / 46 / 61 steps and split by policy generation (`gen 4: 3 clean · gen 3: 17 clean, 1 changed · before the binding: 12 clean`; promotion counts them all), what blocks it as actions (`needs 16 more clean merges`, `1 bad merge to explain`, `run a rollback drill (factory/drill)`), a read-only **Workflows** row (below), its promotion and exception. The **Bindings editor** edits each binding's mode and parameters (`requiresApproval` one block of patterns per rule, a blank line between), the policy's meaning shown read-only, checked by the factory into the Repository manifest it shows and you copy. Under repository authority the bindings are the file's: each card shows its file binding, and the page has no editor, only where to edit them, by pull request. A repository whose classes are the config file's says "Not migrated yet: `maku config migrate` prints its Repository." and has no editor; its cards say their conditions are in the factory's config |
+| `/settings/merge-policies` | One row per repository: pull requests merged automatically, shadow decisions that would have merged, decisions that waited in the last seven days, and the policy closest to going live. A health note appears only for a refused binding. The policy catalog below links each reusable policy by what it allows and how many repositories use it |
+| `/settings/merge-policies/<owner>/<name>` | **Recent decisions** first: pull request, outcome, policy, deciding criterion with measured files and lines, and age. A refused binding gets one note with its field and fix; a healthy repository has no status chips. Policy cards then say what the policy allows in plain words, with raw patterns behind **Show raw file patterns** and detailed statistics under **How sure is this?**. The bindings editor uses an **Off / Shadow / Live** radio group (Off writes `disabled`), opens essential fields, and folds valid optional fields into **Shape and checks** and **Expert**. **Backtest the last 30 days** links each changed or unknown pull request with before and after. Under repository authority the file holds the bindings and no Repository editor appears |
 | `/settings/merge-policies/<owner>/<name>/decisions/<pr>` | The pull request's decision timeline |
-| `/settings/merge-policies/policies/<name>` | One [`MergePolicy`](../merge-policies.md), a class definition its repositories bind: its counts (`2 consumers · 1 current`, over the repositories you read), its description, what each binding must supply (`requires`), its definition, and its consumers (repository, mode, served generation, accepted, reason). Its editor checks a changed spec: the `mergepolicy-<name>.yaml` to copy, and each consumer's change, live consumers first. This route is matched before `<owner>/<name>`, so a repository whose owner is literally `policies` is reached from the Evidence page's link only |
+| `/settings/merge-policies/policies/<name>` | One reusable policy in plain words, the repositories using it, and an editor starting from shipped presets. Each preset offers **Show the YAML**. Essential fields stay open; valid shape, check and expert fields fold. A repository selector runs the same backtest as the bindings editor. This route is matched before `<owner>/<name>` |
+
 | `/settings/evidence` | Every class of every repository you read, in one table: Repository, Class, Mode, Track record (`4 of 20 clean merges · 1 bad · 2 awaiting outcome · worst-case bad rate ≤ 75 % · no rollback drill yet`, each part explained on hover) and Blocks promotion (the actions above, or `eligible`). One line above the table says what the 29 / 46 / 61 ladder proves. A row the factory is still reading shows `reading GitHub…` in its cells, never data-like words |
+
+The repository page is readable at 390 px without horizontal scrolling: decision and backtest tables
+become labelled rows. Example captures: [desktop, light](../assets/web-ui/merge-policies-1280-light.png),
+[phone, light](../assets/web-ui/merge-policies-390-light.png),
+[desktop, dark](../assets/web-ui/merge-policies-1280-dark.png), and
+[phone, dark](../assets/web-ui/merge-policies-390-dark.png).
 
 | Who | May |
 |---|---|
 | A reader of the repository | Read everything above |
-| A maintainer (write on GitHub), under `central` authority | **Check** bindings in the Bindings editor: each binding resolved or refused, and the `repository-<name>.yaml` manifest to copy and commit where the platform's GitOps applies it. **Promote to live** an eligible shadow class: the page shows the manifest with that binding's `mode` changed. Ask an operator for an exception below the minimum, with a justification |
+| A maintainer (write on GitHub), under `central` authority | **Check** bindings and backtest edits: each binding resolved or refused, the `repository-<name>.yaml` manifest to copy and commit, and the pull requests whose decisions change. **Promote to live** an eligible shadow class. Ask an operator for an exception below the minimum, with a justification |
 | A maintainer, under `repository` authority | **Promote to live** an eligible shadow class: the page shows the file with that one line changed and the GitHub edit link, and you open the pull request yourself. Record its number, then merged or abandoned. Ask an operator for an exception below the minimum, with a justification. A not-migrated page keeps the exception requests: they are the broker's records |
 | An operator (`policyManagement.operators`) | Approve or refuse a requested exception, once |
 
@@ -79,12 +86,11 @@ did not answer has none either. The row writes nothing: pinning a workflow is no
 
 The broker checks each of these on every request; a hidden button is only a convenience.
 
-With four items or more, the repository table and a repository page's class cards have a filter
-above them. It matches, case-insensitive, every word typed against the repository and
-**Served by** columns (table: `Repository X · …` or `Not migrated`) or a class's name and mode (cards), shows "3 of 9
-repositories", and names the query with a **Clear** button when nothing matches. The query is kept
-in `?q=`, so a filtered page can be shared; `/` focuses the field, except while you type in another
-one, and Escape clears it.
+With four items or more, the repository table and a repository page's policy cards have a filter
+above them. It matches, case-insensitive, every word typed against the repository and Repository
+object names, or a policy's name and mode, shows "3 of 9 repositories", and names the query with a
+**Clear** button when nothing matches. The query is kept in `?q=`, so a filtered page can be shared;
+`/` focuses the field, except while you type in another one, and Escape clears it.
 
 ## Theme
 
