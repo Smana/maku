@@ -100,10 +100,14 @@ type ProposalPayload struct {
 	// Pins are the workflows the select offers beside the factory's choice: set only when the author
 	// maintains the repository (P5, spec "Slack plan"). Display, like Degraded: the broker checks
 	// every pin.
-	Pins     []string    `json:"pins,omitempty"`
-	Pinned   string      `json:"pinned,omitempty"`
-	Workflow string      `json:"workflow,omitempty"`
-	Plan     intake.Plan `json:"-"`
+	Pins               []pinOption `json:"pins,omitempty"`
+	Pinned             string      `json:"pinned,omitempty"`
+	Workflow           string      `json:"workflow,omitempty"`
+	DefaultDescription string      `json:"defaultDescription,omitempty"`
+	DefaultCeilingUSD  float64     `json:"defaultCeilingUSD,omitempty"`
+	Path               []string    `json:"path,omitempty"`
+	StepUpUSD          float64     `json:"stepUpUSD,omitempty"`
+	Plan               intake.Plan `json:"-"`
 }
 
 // errProposalHash and errProposalRev are a caller's mistake, not a refusal the thread shows: a
@@ -402,33 +406,78 @@ func proposalWorkflowName(p ProposalPayload) string {
 	return ""
 }
 
-// adaptProposalSections applies UX11 and UX14 to roomview's sections: Roles becomes Workflow, Ceiling
-// becomes Budget ("Budget    up to $X"), and no merge outcome is named before a pull request exists.
+// adaptProposalSections replaces the Roles and Ceiling sections with one WorkflowCard section (WR3)
+// and strips merge outcomes before a pull request exists (UX14).
 func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSection) []roomview.ProposalSection {
 	wf := proposalWorkflowName(p)
-	var mergeSuffix string
-	if len(p.Plan.Issues) > 0 && p.Plan.Issues[0].Suggestion != nil {
-		mergeSuffix = " · " + slackText(roomview.MergeWords(p.Plan.Issues[0].Suggestion.Merge.Outcome))
+	if wf == "" {
+		wf = "standard"
 	}
-	out := slices.Clone(sections)
-	for i := range out {
-		switch out[i].Key {
+	var mergeSuffix, suggested string
+	var roles []string
+	if len(p.Plan.Issues) > 0 {
+		is := p.Plan.Issues[0]
+		roles = is.Roles
+		if is.Suggestion != nil {
+			mergeSuffix = " · " + slackText(roomview.MergeWords(is.Suggestion.Merge.Outcome))
+			if is.Suggestion.Profile != "" && is.Suggestion.Profile != wf {
+				suggested = is.Suggestion.Profile
+			}
+		}
+	}
+	source := "repository"
+	if p.Pinned != "" || (len(p.Plan.Issues) > 0 && p.Plan.Issues[0].Profile != "") {
+		source = "label"
+	}
+	path := slices.Clone(p.Path)
+	if len(path) == 0 && len(roles) > 0 {
+		path = append(slices.Clone(roles), "CI", "merge gate")
+	}
+	ceiling := p.Plan.Budget.CeilingUSD
+	if ceiling == 0 {
+		ceiling = p.DefaultCeilingUSD
+	}
+	card := roomview.WorkflowCard{
+		Workflow:   wf,
+		Reason:     roomview.Reason(source, "", suggested, "", nil),
+		Path:       path,
+		CeilingUSD: ceiling,
+		StepUpUSD:  p.StepUpUSD,
+	}
+	var cardBuf strings.Builder
+	_ = roomview.WorkflowCardText(&cardBuf, card, roomview.Options{Format: roomview.Slack})
+	cardBody := strings.TrimSpace(cardBuf.String())
+
+	cardChanged := false
+	for _, s := range sections {
+		if (s.Key == proposalKeyRoles || s.Key == proposalKeyBudget) && s.Changed {
+			cardChanged = true
+		}
+	}
+
+	out := make([]roomview.ProposalSection, 0, len(sections))
+	for _, s := range sections {
+		switch s.Key {
 		case proposalKeyIssue:
 			if mergeSuffix != "" {
-				out[i].Body = strings.Replace(out[i].Body, mergeSuffix, "", 1)
+				s.Body = strings.Replace(s.Body, mergeSuffix, "", 1)
 			}
+			out = append(out, s)
 		case proposalKeyRoles:
-			out[i].Heading = strings.Replace(out[i].Heading, "Roles", "Workflow", 1)
-			if wf != "" {
-				if rolesPart, rest, ok := strings.Cut(out[i].Body, " · "); ok {
-					out[i].Body = slackText(wf) + " (" + rolesPart + ") · " + rest
-				} else {
-					out[i].Body = slackText(wf) + " · " + out[i].Body
-				}
+			body := cardBody
+			if cardChanged {
+				body = "*Workflow ‹changed›*\n" + body
 			}
+			out = append(out, roomview.ProposalSection{
+				Key:     proposalKeyRoles,
+				Body:    body,
+				Changed: cardChanged,
+			})
 		case proposalKeyBudget:
-			out[i].Heading = strings.Replace(out[i].Heading, "Ceiling", "Budget", 1)
-			out[i].Body = "Budget    up to " + out[i].Body
+			// Folded into the WorkflowCard section above (WR3).
+			continue
+		default:
+			out = append(out, s)
 		}
 	}
 	return out
@@ -451,7 +500,11 @@ func proposalText(sections []roomview.ProposalSection) string {
 			lines = append(lines, s.Heading)
 		}
 		if s.Body != "" {
-			lines = append(lines, s.Body)
+			body := s.Body
+			if s.Key == proposalKeyRoles {
+				body = strings.ReplaceAll(body, "*", "")
+			}
+			lines = append(lines, body)
 		}
 	}
 	return strings.Join(lines, "\n")
@@ -501,7 +554,7 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 		if s.Key == proposalKeyHeader {
 			blocks = append(blocks, slackBlock{
 				Type: "header",
-				Text: &slackBlockText{Type: "plain_text", Text: "Proposal v" + strconv.Itoa(rev)},
+				Text: &slackBlockText{Type: "plain_text", Text: "Plan v" + strconv.Itoa(rev)},
 			})
 			for _, chunk := range splitSlackText(proposalHeaderRest(s.Body, rev), slackSectionLimit) {
 				blocks = append(blocks, sectionBlock(chunk))
@@ -818,6 +871,8 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	prop.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
 	prop.Pins = res.Pins
 	prop.Workflow = res.Workflow
+	prop.DefaultDescription, prop.DefaultCeilingUSD = res.DefaultDescription, res.DefaultCeilingUSD
+	prop.Path, prop.StepUpUSD = res.Path, res.StepUpUSD
 	if prev != nil {
 		// One proposal per thread: the live message becomes this revision in place, or is reposted and
 		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
@@ -1081,6 +1136,8 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	next.Degraded = res.Degraded // display, and the one field newProposal does not take (CD18)
 	next.Pins = res.Pins
 	next.Workflow = res.Workflow
+	next.DefaultDescription, next.DefaultCeilingUSD = res.DefaultDescription, res.DefaultCeilingUSD
+	next.Path, next.StepUpUSD = res.Path, res.StepUpUSD
 	// Slack files one issue and a re-plan is never a trimmed plan (CD19): the reply path meets the
 	// same refusal the mention's post does, in the same words.
 	if n := len(next.Plan.Issues); n > 1 {
@@ -1139,10 +1196,14 @@ type planOutcome struct {
 	Question *intake.Question
 	// Asked is the planner's one question when the plan still carries a marker (outcome `asked`): the
 	// final check refuses such a plan, so Plan and Hash are empty and the thread asks this instead.
-	Asked    *intake.Question
-	Degraded bool
-	Pins     []string
-	Workflow string
+	Asked              *intake.Question
+	Degraded           bool
+	Pins               []pinOption
+	Workflow           string
+	DefaultDescription string
+	DefaultCeilingUSD  float64
+	Path               []string
+	StepUpUSD          float64
 }
 
 // plan calls handoff followed by handoff_check and, when the planner has not answered within
@@ -1179,15 +1240,22 @@ func (a *App) plan(ctx context.Context, channel, thread string, st *planStatus, 
 		if q == nil && hres.Question != nil {
 			q = &intake.Question{Text: hres.Question.Text, Recommended: intake.Answer{Answer: hres.Question.Recommended}}
 		}
-		done <- answer{res: planOutcome{
+		out := planOutcome{
 			ID:       hres.ID,
 			Plan:     checked.Plan,
 			Hash:     checked.Hash,
 			Question: q,
 			Degraded: strings.Contains(hres.Text, intake.TemplateLabel),
-			Pins:     checked.Workflows,
+			Pins:     checked.pinOptions(),
 			Workflow: hres.Workflow,
-		}}
+		}
+		if checked.DefaultChoice != nil {
+			out.DefaultDescription, out.DefaultCeilingUSD = checked.DefaultChoice.Description, checked.DefaultChoice.CeilingUSD
+		}
+		if checked.ActiveChoice != nil {
+			out.Path, out.StepUpUSD = checked.ActiveChoice.Path, checked.ActiveChoice.StepUpCeilingUSD
+		}
+		done <- answer{res: out}
 	}()
 	after := a.PlanningAfter
 	if after == 0 {
@@ -1371,6 +1439,8 @@ func (a *App) postProposalIn(ctx context.Context, channel, thread string, st *pl
 	prop.Degraded = p.Degraded // display, and the one field newProposal does not take (CD18)
 	prop.Pins = p.Pins
 	prop.Workflow = p.Workflow
+	prop.DefaultDescription, prop.DefaultCeilingUSD = p.DefaultDescription, p.DefaultCeilingUSD
+	prop.Path, prop.StepUpUSD = p.Path, p.StepUpUSD
 	if p.Pinned != "" {
 		prop.Pinned = p.Pinned
 	}
@@ -1435,6 +1505,8 @@ func (a *App) updateProposal(ctx context.Context, channel, ts string, prev, next
 		prop.Repo = next.Repo
 	}
 	prop.Degraded, prop.Pins, prop.Workflow = next.Degraded, next.Pins, next.Workflow
+	prop.DefaultDescription, prop.DefaultCeilingUSD = next.DefaultDescription, next.DefaultCeilingUSD
+	prop.Path, prop.StepUpUSD = next.Path, next.StepUpUSD
 	if next.Pinned != "" {
 		prop.Pinned = next.Pinned
 	}

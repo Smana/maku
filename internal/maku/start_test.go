@@ -153,7 +153,7 @@ func TestStartFormShowsIssueWorkflowBudget(t *testing.T) {
 	if !strings.Contains(msg, p.Issues[0].Title) || !strings.Contains(msg, p.Issues[0].Body) {
 		t.Fatalf("form message missing title or body:\n%s", msg)
 	}
-	hasWorkflow, hasBudget := false, false
+	hasWorkflow, hasCost := false, false
 	for line := range strings.SplitSeq(msg, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if strings.HasPrefix(trimmed, "Merge") || strings.HasPrefix(strings.ToLower(trimmed), "merge ") {
@@ -162,12 +162,12 @@ func TestStartFormShowsIssueWorkflowBudget(t *testing.T) {
 		if strings.HasPrefix(trimmed, "Workflow ") {
 			hasWorkflow = true
 		}
-		if strings.HasPrefix(trimmed, "Budget ") {
-			hasBudget = true
+		if strings.HasPrefix(trimmed, "Cost ") {
+			hasCost = true
 		}
 	}
-	if !hasWorkflow || !hasBudget {
-		t.Fatalf("form message missing Workflow (%v) or Budget (%v) line:\n%s", hasWorkflow, hasBudget, msg)
+	if !hasWorkflow || !hasCost {
+		t.Fatalf("form message missing Workflow (%v) or Cost (%v) line:\n%s", hasWorkflow, hasCost, msg)
 	}
 	props := params["requestedSchema"].(map[string]any)["properties"].(map[string]any)
 	if _, hasWF := props["workflow"]; hasWF {
@@ -436,5 +436,92 @@ func TestStartAppliesNoClassLabel(t *testing.T) {
 				t.Fatalf("labels = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestTheStartFormDescribesEachWorkflow(t *testing.T) {
+	p := planFixture(t, "single")
+	p.Budget.CeilingUSD = 5.10
+	choices := []workflowChoice{
+		{Name: "standard", Description: "An implementer and a reviewer. The default.", CeilingUSD: 5.10, Path: []string{"implementer", "reviewer", "CI", "merge gate"}},
+		{Name: "quick", Description: "One implementer. For changes a check can verify.", CeilingUSD: 5.10},
+		{Name: "careful", Description: "Scoped first, judged before review. For wide or unclear tasks.", CeilingUSD: 13.60},
+	}
+	hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+		res := handoffCheckedResult(t, p, true, []string{"standard", "quick", "careful"})
+		sc := res["structuredContent"].(map[string]any)
+		sc["workflowChoices"] = choices
+		sc["defaultChoice"] = choices[0]
+		sc["activeChoice"] = choices[0]
+		return res
+	})
+	f, l := &filing{}, &labeling{}
+	s := handoffSession(t, hb, true, f, l, nil)
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa"}}})
+	ask := s.next(t)
+	params := ask["params"].(map[string]any)
+	msg := params["message"].(string)
+	for _, want := range []string{
+		"Workflow   standard · this repository's default",
+		"Will run   implementer → reviewer → CI → merge gate",
+		"Cost       up to $5.10",
+		"careful   Scoped first, judged before review. For wide or unclear tasks. Up to $13.60",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("missing %q in:\n%s", want, msg)
+		}
+	}
+	wf := params["requestedSchema"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
+	enumAny := wf["enum"].([]any)
+	enumNamesAny := wf["enumNames"].([]any)
+	if len(enumAny) != 3 || enumAny[0] != "standard" || enumAny[1] != "quick" || enumAny[2] != "careful" ||
+		len(enumNamesAny) != 3 || !strings.Contains(enumNamesAny[2].(string), "up to $13.60") {
+		t.Fatalf("workflow field: %+v", wf)
+	}
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{"action": "cancel"}})
+	s.next(t)
+}
+
+func TestStartsWorkflowArgumentPreselectsTheField(t *testing.T) {
+	p := planFixture(t, "single")
+	p.Budget.CeilingUSD = 5.10
+	choices := []workflowChoice{
+		{Name: "standard", CeilingUSD: 5.10},
+		{Name: "careful", CeilingUSD: 13.60},
+	}
+	hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+		res := handoffCheckedResult(t, p, true, []string{"standard", "careful"})
+		sc := res["structuredContent"].(map[string]any)
+		sc["workflowChoices"] = choices
+		return res
+	})
+	f, l := &filing{}, &labeling{}
+	s := handoffSession(t, hb, true, f, l, nil)
+
+	// Offered workflow preselects the field default.
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa", "workflow": "careful"}}})
+	ask := s.next(t)
+	wf := ask["params"].(map[string]any)["requestedSchema"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
+	if wf["default"] != "careful" {
+		t.Fatalf("default = %v, want careful", wf["default"])
+	}
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{"action": "cancel"}})
+	s.next(t)
+
+	// Unoffered workflow leaves default alone and returns workflow_ignored.
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 3, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa", "workflow": "nope"}}})
+	ask = s.next(t)
+	wf = ask["params"].(map[string]any)["requestedSchema"].(map[string]any)["properties"].(map[string]any)["workflow"].(map[string]any)
+	if wf["default"] != "standard" {
+		t.Fatalf("default = %v, want standard", wf["default"])
+	}
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{"action": "cancel"}})
+	res := s.next(t)
+	sc := res["result"].(map[string]any)["structuredContent"].(map[string]any)
+	if sc["workflow_ignored"] != "nope is not offered here" {
+		t.Fatalf("structuredContent = %v", sc)
 	}
 }

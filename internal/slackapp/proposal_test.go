@@ -399,7 +399,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 
 	// The header block is Slack's header type: plain text, the revision alone. What it cannot carry
 	// follows in the section right under it.
-	if b := blocks[0]; b.Type != "header" || b.Text == nil || b.Text.Type != "plain_text" || b.Text.Text != "Proposal v1" {
+	if b := blocks[0]; b.Type != "header" || b.Text == nil || b.Text.Type != "plain_text" || b.Text.Text != "Plan v1" {
 		t.Errorf("the header block is %+v", blocks[0])
 	}
 	if b := blocks[1]; b.Type != "section" || b.Text == nil || b.Text.Type != "mrkdwn" ||
@@ -407,22 +407,20 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 		t.Errorf("the block under the header is %+v", blocks[1])
 	}
 
-	// One section block per remaining section: its heading in bold, its body under it, and every
-	// body also in the fallback text.
-	headings := []string{"Repository", "Issue", "Workflow", "Budget", "Editing"}
+	// One section block per remaining section: Repository, Issue, the WorkflowCard, and Editing.
 	sections := blocks[2 : len(blocks)-2]
-	if len(sections) != len(headings) {
-		t.Fatalf("%d section blocks, want %d: %+v", len(sections), len(headings), sections)
+	if len(sections) != 4 {
+		t.Fatalf("%d section blocks, want 4: %+v", len(sections), sections)
 	}
-	for i, b := range sections {
+	for i, wantHead := range []string{"*Repository*\n", "*Issue*\n", "*Workflow* ", "*Editing*\n"} {
+		b := sections[i]
 		if b.Type != "section" || b.Text == nil || b.Text.Type != "mrkdwn" {
 			t.Fatalf("section %d is %+v", i, b)
 		}
-		head := "*" + headings[i] + "*\n"
-		if !strings.HasPrefix(b.Text.Text, head) {
-			t.Errorf("section %d starts %q, want %q", i, b.Text.Text, head)
+		if !strings.HasPrefix(b.Text.Text, wantHead) {
+			t.Errorf("section %d starts %q, want %q", i, b.Text.Text, wantHead)
 		}
-		if body := strings.TrimPrefix(b.Text.Text, head); body == "" || !strings.Contains(text, body) {
+		if body := strings.TrimPrefix(b.Text.Text, wantHead); body == "" || !strings.Contains(text, strings.ReplaceAll(body, "*", "")) {
 			t.Errorf("section %d's body is not in the fallback text: %q", i, body)
 		}
 	}
@@ -496,7 +494,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 	if !strings.HasPrefix(text, "Proposal v1 · "+p.Hash+" · by <@U07JY4EQNDN>") {
 		t.Errorf("the text starts %q", text)
 	}
-	for _, want := range []string{"\nRepository\n", "\nIssue\n", "\nWorkflow\n", "\nBudget\n", "\nEditing\n", "$1.50 (channel:C1.maxCostUSD)"} {
+	for _, want := range []string{"\nRepository\n", "\nIssue\n", "\nWorkflow ", "\nWill run ", "\nCost up to $1.50", "\nEditing\n"} {
 		if !strings.Contains(text, want) {
 			t.Errorf("the text is missing %q:\n%s", want, text)
 		}
@@ -518,7 +516,7 @@ func TestProposalSectionsAndBlocks(t *testing.T) {
 		}
 		if strings.Contains(b.Text.Text, "‹changed›") {
 			marks++
-			if !strings.HasPrefix(b.Text.Text, "*Budget ‹changed›*") {
+			if !strings.HasPrefix(b.Text.Text, "*Workflow ‹changed›*") {
 				t.Errorf("a marked block reads %q", b.Text.Text)
 			}
 		}
@@ -1161,5 +1159,39 @@ func TestProposalShowsTheSuggestion(t *testing.T) {
 		if !strings.Contains(string(raw), want) && !strings.Contains(text, want) {
 			t.Errorf("the message lacks %q: %s", want, raw)
 		}
+	}
+}
+
+func TestTheProposalShowsTheCard(t *testing.T) {
+	p := proposalFixture(t)
+	p.Workflow = "standard"
+	p.Plan.Budget.CeilingUSD = 5.10
+	p.Path = []string{"implementer", "reviewer", "CI", "merge gate"}
+	_, raw, err := proposalSections(p, nil, nil, "C03")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocks := blocksOf(t, raw)
+	if blocks[0].Type != "header" || blocks[0].Text.Text != "Plan v1" {
+		t.Fatalf("header = %+v", blocks[0])
+	}
+	foundCard := false
+	for _, b := range blocks {
+		if b.Text == nil {
+			continue
+		}
+		for _, bad := range []string{"Roles", "Ceiling", "tier"} {
+			if strings.Contains(b.Text.Text, bad) {
+				t.Errorf("block contains %q: %s", bad, b.Text.Text)
+			}
+		}
+		if strings.Contains(b.Text.Text, "*Workflow* standard · this repository's default") &&
+			strings.Contains(b.Text.Text, "*Will run* implementer → reviewer → CI → merge gate") &&
+			strings.Contains(b.Text.Text, "*Cost* up to $5.10") {
+			foundCard = true
+		}
+	}
+	if !foundCard {
+		t.Fatalf("no single section carries the workflow card:\n%s", raw)
 	}
 }

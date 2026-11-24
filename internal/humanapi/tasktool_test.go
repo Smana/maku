@@ -481,3 +481,45 @@ func TestTaskMergeRowNamesPolicy(t *testing.T) {
 		}
 	})
 }
+
+func TestTheTaskToolLeadsWithTheCard(t *testing.T) {
+	const roomID = "k3f7q2cd"
+	at := time.Date(2026, 6, 15, 11, 12, 0, 0, time.UTC)
+	sys := envelope.Actor{Kind: envelope.ActorSystem, ID: "system:factory"}
+	e := setup(t, mcpOn, func(s *Server, _ *fanout.Hub, v *hubView) {
+		s.PublicURL = "https://rooms.example"
+		s.Now = func() time.Time { return at }
+		s.Rooms = roomClient(t, taskFixtureRoom(roomID, "Smana/ai-native-ref", "Active", 1))
+		v.mu.Lock()
+		v.evs = []envelope.Event{{
+			V: 1, Seq: 1, RoomID: roomID, Type: envelope.StateChanged, Actor: sys,
+			TS: at.Add(-2 * time.Minute),
+			Payload: envelope.TaskStatePayload(envelope.TaskFacts{
+				Phase: "Implementing",
+				Plan:  []string{"implementer", "reviewer"},
+				Runs: []envelope.RunFact{{
+					ID: "r1", Role: "implementer", Persona: "implementer", Trigger: "initial",
+					StartedAt: at.Add(-2 * time.Minute),
+				}},
+				Profile: &envelope.ProfileFact{
+					Name: "standard", Source: "repository", CeilingMicroUSD: 5_100_000,
+				},
+			}),
+		}}
+		v.mu.Unlock()
+	})
+	got := call(t, e, viaRoomctl("dev"), "task", map[string]any{"task": roomID})
+	if got.isError {
+		t.Fatalf("unexpected error: %s", got.text)
+	}
+	for _, want := range []string{
+		"Workflow  standard · this repository's default",
+		"Will run  implementer → reviewer → CI → merge gate",
+		"Cost      up to $5.10",
+		"Path      implementer ● · reviewer ○",
+	} {
+		if !strings.Contains(got.text, want) {
+			t.Errorf("missing %q in:\n%s", want, got.text)
+		}
+	}
+}

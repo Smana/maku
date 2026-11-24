@@ -382,11 +382,28 @@ func (b Broker) Handoff(ctx context.Context, in HandoffRequest) (HandoffResult, 
 // validate it, the hash it is stored under, the workflows the Slack user may choose (none unless
 // they maintain the repository) and the issue it files.
 type HandoffChecked struct {
-	Plan       intake.Plan `json:"plan"`
-	Hash       string      `json:"hash"`
-	Workflows  []string    `json:"workflows"`
-	Repository string      `json:"repository"`
-	Title      string      `json:"title"`
+	Plan            intake.Plan `json:"plan"`
+	Hash            string      `json:"hash"`
+	Workflows       []string    `json:"workflows"`
+	WorkflowChoices []pinOption `json:"workflowChoices,omitempty"`
+	DefaultChoice   *pinOption  `json:"defaultChoice,omitempty"`
+	ActiveChoice    *pinOption  `json:"activeChoice,omitempty"`
+	Repository      string      `json:"repository"`
+	Title           string      `json:"title"`
+}
+
+func (h HandoffChecked) pinOptions() []pinOption {
+	if len(h.WorkflowChoices) > 0 {
+		return h.WorkflowChoices
+	}
+	if len(h.Workflows) == 0 {
+		return nil
+	}
+	out := make([]pinOption, len(h.Workflows))
+	for i, name := range h.Workflows {
+		out[i] = pinOption{Name: name}
+	}
+	return out
 }
 
 // handoffCheckTool is the unlisted broker tool the workflow select and the start form share.
