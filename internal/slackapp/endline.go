@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/Smana/maku/internal/envelope"
+	reasonwords "github.com/Smana/maku/internal/factory/reasons"
 	"github.com/Smana/maku/internal/summary"
 	"github.com/Smana/maku/internal/webhook"
 )
@@ -30,65 +31,6 @@ func slackPercent(used, limit int64) int64 {
 
 // gateHoldReasons maps a closed TaskFacts wait/hold reason code onto the phrase Slack shows on a
 // merge hold. Unknown codes are omitted so free text never reaches a thread line.
-var gateHoldReasons = map[string]string{
-	"adopt_ref_invalid":        "the adopted branch name is invalid",
-	"adopted_head_moved":       "the adopted branch moved",
-	"adoption_unread":          "the adopted pull request is unreadable",
-	"approval_required":        "a maintainer approves this change",
-	"approval_stale":           "the approval is of an older head",
-	"auto_merge_cap":           "today's auto-merge cap is reached",
-	"branch_not_allowed":       "the branch is not allowed",
-	"changes_requested":        "changes were requested",
-	"ci_cancelled":             "a check was cancelled",
-	"ci_red":                   "CI is red",
-	"ci_wait_expired":          "CI took too long",
-	"class_mismatch":           "does not match the policy's diff shape",
-	"class_unarmed":            "a maintainer merges this policy",
-	"closes_parent":            "it would close the parent issue",
-	"contract_check_unset":     "the contract has no check to prove it",
-	"contract_modified":        "the pull request changes the tests",
-	"file_added_or_deleted":    "adds, deletes or renames a file",
-	"file_not_allowed":         "changes a file outside the allowed files",
-	"file_protected":           "touches a protected file",
-	"foreign_trailer":          "its head commit comes from another task's run",
-	"fork_pull_request":        "the pull request is from a fork",
-	"gate_path":                "touches a gate path",
-	"head_unreported":          "no run reported the head",
-	"held":                     "on hold (factory/hold)",
-	"holdout_pending":          "waiting for holdout checks",
-	"holdout_red":              "a holdout check failed",
-	"human_commit_in_pr":       "a human commit is in the pull request",
-	"label_missing":            "the required label is missing",
-	"label_not_adopted":        "the wrong login applied the label",
-	"ledger_truncated":         "the merge ledger read is incomplete",
-	"maintainer_approved":      "a maintainer approved it",
-	"merge_gate_off":           "the merge gate is off",
-	"no_approving_verdict":     "the reviewer did not approve it",
-	"no_policy_matched":        "no merge policy holds on this diff",
-	"not_adopted_author":       "the pull request's author is not adopted",
-	"not_agent_authored":       "it is not the agents' pull request",
-	"not_mergeable":            "the pull request is not mergeable",
-	"not_owned":                "the repository does not name this factory",
-	"oracle_finding_open":      "an oracle finding is still open",
-	"oracle_unrequested":       "changes an unrequested link target",
-	"patch_too_large":          "exceeds the file or line limit",
-	"policy_absent":            "no merge policy evaluation reported",
-	"policy_invalid":           "the merge policy is invalid",
-	"policy_pending":           "the merge policy is not ready",
-	"policy_unavailable":       "waiting to read the merge policy",
-	"push_unrecorded":          "GitHub has not recorded the push",
-	"reentered_approved":       "approved, decided again",
-	"reentered_day_turned":     "a new day, decided again",
-	"reentered_unpaused":       "the pause lifted, decided again",
-	"release_age_pending":      "the release is too new",
-	"release_age_red":          "the release age check failed",
-	"reviewer_verdict_missing": "no reviewer read this change",
-	"scope_changed":            "the revision changed the task's scope",
-	"secret_scan_red":          "the secret scan found a credential",
-	"steering_path":            "changes a steering note",
-	"verdict_stale":            "the review verdict is for an older head",
-}
-
 func gatePolicyName(p *summary.PolicyView) string {
 	if p == nil {
 		return ""
@@ -114,7 +56,10 @@ func gateHoldReason(code, policy string) string {
 		}
 		return "the merge policy is paused"
 	}
-	return gateHoldReasons[code]
+	if _, known := reasonwords.Longs(code)[code]; !known {
+		return ""
+	}
+	return reasonwords.For(code).Short
 }
 
 // gatePart builds the one Slack gate sentence from the summary's closed policy name, merge mode,

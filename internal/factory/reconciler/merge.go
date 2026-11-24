@@ -298,16 +298,17 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		narrateOn(t, pr.Number, r.withRecord(cfg, r.handOff(cfg, t, d.Reason, adopted), t, d, pr.HeadSHA))
 		return nil
 	case "shadow": // R32: the decision is recorded and narrated; a maintainer merges or closes
+		d.Rows = r.shadowProgress(ctx, cfg, t, d)
 		r.to(t, v1alpha1.PhaseAwaitingHuman, d.Reason)
 		// The head judged is the head an approval must be of to return the task (AM2); for an adopted
 		// task (R46), the head awaitingHuman compares with Renovate's next push.
 		t.Status.PullRequest.HeadSHA = pr.HeadSHA
 		if adoptedTask(t) {
 			t.Status.PullRequest.DecidedHeadSHA = pr.HeadSHA
-			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArmAdopted(t, cl, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
+			narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArmAdopted(t, cl, d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
 			return nil
 		}
-		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped), t, d, pr.HeadSHA))
+		narrateOn(t, pr.Number, r.withRecord(cfg, narrate.WouldArm(t, d.Matched, pr.HeadSHA, d.Paused, d.Capped, d.Rows.Clean, d.Rows.Minimum), t, d, pr.HeadSHA))
 		return nil
 	}
 	if held, err := r.integrationRecheck(ctx, t, pr.HeadSHA, &d); held || err != nil { // MR9: the decision-to-call race
@@ -374,9 +375,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		r.grantUsed(ctx, cfg, t, ref, d, pr.HeadSHA)
 	}
 	r.to(t, v1alpha1.PhaseAutoMerging, "")
-	ev := r.withRecord(cfg, narrate.Armed(t), t, d, pr.HeadSHA)
+	ev := r.withRecord(cfg, narrate.Armed(t, d.Matched), t, d, pr.HeadSHA)
 	if ref.MergedHow == "approved" {
-		ev = r.withRecord(cfg, narrate.ArmedByApproval(t, d.Approver), t, d, pr.HeadSHA)
+		ev = r.withRecord(cfg, narrate.ArmedByApproval(t, d.Approver, r.repo(cfg, t).Merge.UsesPolicyBot()), t, d, pr.HeadSHA)
 	}
 	// A failed patch leaves the pass's own write to carry the decision: the narration rides with it.
 	err = r.decidedWrite(ctx, t, base)
@@ -413,13 +414,31 @@ func (r *Reconciler) decidedWrite(ctx context.Context, t, base *v1alpha1.Task) e
 	return nil
 }
 
+// shadowProgress adds the policy's promotion minimum and, when cached evidence is available, the
+// clean count this pull request would reach if a maintainer merges it unchanged.
+func (r *Reconciler) shadowProgress(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, d ArmDecision) decision.Rows {
+	rows := d.Rows
+	rows.Minimum = r.repo(cfg, t).Classes[d.Matched].MinClean(d.Matched)
+	if r.CleanDecisions != nil {
+		if clean, ok := r.CleanDecisions(ctx, t.Spec.Repository, d.Matched); ok {
+			rows.Clean = clean + 1
+		}
+	}
+	return rows
+}
+
 // withRecord (with the MergePolicy generation of cfg, D5) appends the decision's record (AM8) to the comment that narrates it: the hand-off,
 // the would-arm or the arm. It is a marker line of its own (R-m11), so the event's marker, and the
 // tally that reads it, are unchanged.
 func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha1.Task, d ArmDecision, head string) narrate.Event {
 	class := recordClass(r.repo(cfg, t), t, d)
 	gen, repo, bound := cfg.ClassGenerations(t.Spec.Repository, class)
+	classes := r.repo(cfg, t).Classes
 	if p := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository); p.on {
+		classes = make(map[string]config.Class, len(p.snap.Classes))
+		for name, resolved := range p.snap.Classes {
+			classes[name] = resolved.Class
+		}
 		// Repository authority: the class that decided is the file's, so are its generations: the
 		// policy its binding resolved against (a last resolved one's included), none for a class
 		// the file defines itself. Never the central config's for the class.
@@ -437,6 +456,11 @@ func (r *Reconciler) withRecord(cfg *config.Config, ev narrate.Event, t *v1alpha
 	// record holds: the central class's, or a cut-over repository's snapshot class's.
 	if h, ok := r.decidingHash(cfg, t); ok && class != "" {
 		d.Rows.Resolved = config.ShortHash(h)
+	}
+	details := narrate.DecisionDetails(d.Rows, classes)
+	t.Status.PullRequest.Decision = details
+	if details != "" {
+		ev.Body += "\n\n" + details
 	}
 	reason := cmp.Or(d.Reason, "armed")
 	ev.Body += "\n\n" + decision.Marker(head, class, d.Verdict, reason, d.Rows)
@@ -478,7 +502,7 @@ func (r *Reconciler) handOff(cfg *config.Config, t *v1alpha1.Task, reason string
 	if !adopted && r.approvalReturns(cfg, t, reason) {
 		return narrate.WaitingForApproval(t, reason)
 	}
-	return narrate.WaitingForHuman(t, reason)
+	return narrate.WaitingForHuman(t, reason, r.repo(cfg, t).Merge.UsesPolicyBot())
 }
 
 // approvalReturns is whether a maintainer's approval returns t's hand-off for reason to the gate
@@ -689,7 +713,7 @@ func (r *Reconciler) backToGate(cfg *config.Config, t *v1alpha1.Task, why, reaso
 		next, t.Status.NextRole = v1alpha1.PhaseQueued, r.nextVerifier(cfg, t, "implementer")
 	}
 	r.to(t, next, reason)
-	narrateLater(t, narrate.BackToGate(t, reason, t.Status.GateReentries))
+	narrateLater(t, narrate.BackToGate(t, reason, t.Status.GateReentries, r.repo(cfg, t).Merge.UsesPolicyBot()))
 	r.log().Info("transient hand-off returns to the merge gate", "task.id", t.Name, "handoff", why, "reason", reason,
 		"head", head, "reentries", t.Status.GateReentries)
 }

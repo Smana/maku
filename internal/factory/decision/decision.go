@@ -40,6 +40,9 @@ type Rows struct {
 	// class's hash. 0 and "" print nothing.
 	RepoGeneration int64
 	Resolved       string
+	// Clean and Minimum are promotion progress for a shadow comment, not fields of the hidden record.
+	// Clean includes this pull request when a maintainer merges it unchanged.
+	Clean, Minimum int
 	// Considered is each candidate policy that did not hold on the diff, "<policy>:<reason>"
 	// joined with "," (MR1); "" when none, and then it does not print.
 	Considered string

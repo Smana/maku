@@ -8,6 +8,7 @@ import (
 	"slices"
 
 	"github.com/Smana/maku/internal/envelope"
+	reasonwords "github.com/Smana/maku/internal/factory/reasons"
 	"github.com/Smana/maku/internal/policy"
 )
 
@@ -130,100 +131,99 @@ func Answer(f *envelope.TaskFacts, sub policy.Subject) (Need, bool) {
 	return QuestionNeed(f)
 }
 
-// reasons is the prose of the wait reasons a task shows, repeated from the factory's narration
-// (internal/factory/narrate) like stopLabel: this package stays free of the factory's imports.
-func reasons() map[string]string {
-	return map[string]string{
-		"waiting_run_slot":          "the factory runs its tasks one at a time and another one has the slot",
-		"waiting_revision_first":    "a revision of another task runs before new intake",
-		"waiting_active_tasks":      "the factory's cap on active tasks is reached",
-		"waiting_review_wip":        "the reviewers are at their limit of pull requests in review",
-		"waiting_daily_budget":      "the factory's daily budget in dollars is spent",
-		"waiting_room_log":          "the room's log is not open on the broker yet",
-		"waiting_broker_permission": "the broker does not let the factory write to rooms yet",
-		"ci_pending":                "CI has not finished",
-		"changes_requested":         "a reviewer requested changes, and the factory does not merge over them",
-		"fork_pull_request":         "it comes from a fork, which the factory never adopts",
-		"push_unrecorded":           "GitHub has not recorded the push of its head",
-		"adopted_head_moved":        "its author pushed a new head after the shadow decision, so it is decided again",
-		"adopt_ref_invalid":         "the adopted pull request's reference could not be read, so it was not adopted",
-		"adoption_unread":           "who authored its commits and pushed its branch could not be read",
-		"not_adopted_author":        "it is not authored by a login the class adopts",
-		"branch_not_allowed":        "its branch is not one the class adopts",
-		"label_missing":             "it does not carry the label its class requires",
-		"label_not_adopted":         "its required label was not applied by a login the class adopts",
-		"release_age_pending":       "the release age check has not passed yet",
-		"release_age_red":           "the release age check failed, or was not posted by the adopted login",
-		"holdout_pending":           "a holdout check has not passed yet",
-		"ci_wait_expired":           "a check it waits on never reported within merge.awaitingCIFor",
-		"merge_gate_off":            "no merge class is live, so the factory does not gate this pull request",
-		"policy_pending":            "the policy needs a maintainer's approval",
-		"policy_absent":             "policy-bot has not evaluated the pull request",
-		"maintainer_approved":       "a maintainer approved it",
-		"approval_stale":            "a maintainer's approval is of an older head: approve the current one",
-		"reentered_approved":        "a maintainer approved the head it was handed off at, so the gate decides it again",
-		"reentered_day_turned":      "the UTC day turned, so the cap is counted again",
-		"reentered_unpaused":        "the class's pause lifted, so the gate decides it again",
-		"not_mergeable":             "GitHub does not allow merging it as it stands",
-		"gate_path":                 "it touches a gate path, so an agent can never merge it",
-		"class_unarmed":             "the factory does not merge this class: a maintainer reviews and merges it",
-		"no_policy_matched":         "no merge policy of the repository holds on this diff: a maintainer reviews and merges it",
-		"reviewer_verdict_missing":  "no reviewer read this change, and its policy has no shape to check it",
-		"policy_unavailable":        "the repository's merge policy could not be read recently, so auto-merge waits",
-		"policy_invalid":            "the repository's merge policy is invalid, so auto-merge is paused",
-		"approval_required":         "it changes a file its class asks a maintainer to approve",
-		"steering_path":             "it changes a steering note, which only a maintainer on the default branch may do",
-		"verdict_stale":             "the reviewer's approval was not for the pull request's current head",
-		"human_commit_in_pr":        "it holds a commit no run of the task reported",
-		"head_unreported":           "the task's implementer never reported its current head in the room: no handoff of its runs names that commit",
-		"closes_parent":             "it would close the parent issue, which only the last part may",
-		"shadow_would_arm":          "it would auto-merge, and the merge gate is in shadow",
-		"auto_merge_cap":            "today's auto-merge cap is reached",
-		"held":                      "a maintainer put this pull request on hold (factory/hold)",
-		"ledger_truncated":          "the merge ledger read is incomplete (a full page of 100 labelled pull requests), so the factory does not arm",
-		"stuck":                     "the run showed no activity for 10 minutes",
-		"ci_red":                    "CI stayed red after the fix runs",
-		"ci_cancelled":              "a required check was cancelled and re-running it did not settle it",
-		"secret_scan_red":           "the secret scan found a live credential in the pull request",
-		"review_rounds_exhausted":   "the reviewer still asked for changes after the last review round",
-		"no_verdict":                "the last review ended without a verdict the factory can act on",
-		"budget-task":               "the task's token budget has no room left for another run",
-		"resume_budget":             "the sandbox was lost and the task's token budget cannot cover another run",
-		"run_unschedulable":         "the cluster never admitted the task's run in time",
-		"pod_lost":                  "the sandbox was lost (spot reclaim or eviction)",
-		"deadline":                  "the run hit its wall-clock limit",
-		"agent_error":               "the agent stopped on an error",
-		"model_unavailable_billing": "the model provider refused: billing (insufficient balance or no resource package)",
-		"model_unavailable_auth":    "the model provider refused: authentication (the API key was rejected)",
-		"model_unavailable_quota":   "the model provider refused: quota or rate limit",
-		"scoper_failed":             "the scoper failed before it checked the scope (scope not checked), so the implementer was not started",
-		"agent_stuck":               "the agent reported that it was stuck",
-		"judge_impossible":          "the completion judge found the task cannot be done as asked",
-		"stalled":                   "the run made no commit within its step limit, a judge continuation added none within its time box, or two continuations in a row added none",
-		"not_met":                   "the completion judge still found the acceptance checks unmet after the last continuation, or a continuation did not finish within its time box",
-		"needs_author":              "the scoper needs an answer from the issue's author before any code is written",
-		"contract_invalid":          "the tester's branch was not the tester's alone, or its contract commit was malformed",
-		"contract_disputed":         "the implementer says the tester's tests are wrong; a maintainer decides",
-		"contract_too_large":        "the tester's contract names more files or test ids than a task records, or one of them is too long",
-		"contract_check_unset":      "the task has a test contract but the repository no longer names merge.contractCheck",
-		"contract_modified":         "the pull request changes a test the tester wrote as the task's contract",
-		"contract_unread":           "the factory has not yet read which files changed since the test contract",
-		"contract_push_unrecorded":  "GitHub has not yet recorded the tester's push",
-		"split_proposed":            "the scoper proposes to split the task into parts, and a maintainer decides",
-		"budget-family":             "the cap of the task and its parts has no room left for another part's run",
-		"children_merged":           "every part of the split merged",
-		"child_dropped":             "a part of the split was closed without merging, or its merge was reverted",
-		"family_dropped":            "the split's family was dropped because another part was dropped or reverted",
-		"parent_not_split":          "its parent task is no longer waiting on its parts",
-		"parent_missing":            "its parent task no longer exists",
-		"no_pr":                     "the agent opened no pull request",
-		"committed_no_pr":           "the agent committed but never pushed, so its work was lost with the sandbox and no pull request was opened",
-		"pushed_no_pr":              "the agent pushed its branch but opened no pull request",
-		"push_refused":              "the factory refused the agent's push, so its work never reached the branch and no pull request was opened",
-		"push_awaiting_approval":    "the agent's push changes a protected path and waits for a maintainer's approval in the room or in Slack",
-		"scope_changed":             "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
-		"loop_unsupported":          "the cluster does not support the loop policy or repository checks yet, so no run started",
-	}
+// reasons projects this summary's wait-reason subset of the shared table.
+func reasons() map[string]string { return reasonwords.Longs(summaryReasonCodes...) }
+
+var summaryReasonCodes = []string{
+	"waiting_run_slot",
+	"waiting_revision_first",
+	"waiting_active_tasks",
+	"waiting_review_wip",
+	"waiting_daily_budget",
+	"waiting_room_log",
+	"waiting_broker_permission",
+	"ci_pending",
+	"changes_requested",
+	"fork_pull_request",
+	"push_unrecorded",
+	"adopted_head_moved",
+	"adopt_ref_invalid",
+	"adoption_unread",
+	"not_adopted_author",
+	"branch_not_allowed",
+	"label_missing",
+	"label_not_adopted",
+	"release_age_pending",
+	"release_age_red",
+	"holdout_pending",
+	"ci_wait_expired",
+	"merge_gate_off",
+	"policy_pending",
+	"policy_absent",
+	"maintainer_approved",
+	"approval_stale",
+	"reentered_approved",
+	"reentered_day_turned",
+	"reentered_unpaused",
+	"not_mergeable",
+	"gate_path",
+	"class_unarmed",
+	"no_policy_matched",
+	"reviewer_verdict_missing",
+	"policy_unavailable",
+	"policy_invalid",
+	"approval_required",
+	"steering_path",
+	"verdict_stale",
+	"human_commit_in_pr",
+	"head_unreported",
+	"closes_parent",
+	"shadow_would_arm",
+	"auto_merge_cap",
+	"held",
+	"ledger_truncated",
+	"stuck",
+	"ci_red",
+	"ci_cancelled",
+	"secret_scan_red",
+	"review_rounds_exhausted",
+	"no_verdict",
+	"budget-task",
+	"resume_budget",
+	"run_unschedulable",
+	"pod_lost",
+	"deadline",
+	"agent_error",
+	"model_unavailable_billing",
+	"model_unavailable_auth",
+	"model_unavailable_quota",
+	"scoper_failed",
+	"agent_stuck",
+	"judge_impossible",
+	"stalled",
+	"not_met",
+	"needs_author",
+	"contract_invalid",
+	"contract_disputed",
+	"contract_too_large",
+	"contract_check_unset",
+	"contract_modified",
+	"contract_unread",
+	"contract_push_unrecorded",
+	"split_proposed",
+	"budget-family",
+	"children_merged",
+	"child_dropped",
+	"family_dropped",
+	"parent_not_split",
+	"parent_missing",
+	"no_pr",
+	"committed_no_pr",
+	"pushed_no_pr",
+	"push_refused",
+	"push_awaiting_approval",
+	"scope_changed",
+	"loop_unsupported",
 }
 
 // approvalReasons is the prose of the reasons whose words differ when a maintainer's approval
@@ -318,7 +318,8 @@ func nextStep(reason string, byApproval bool) string {
 	case "needs_author":
 		return "the issue's author edits the issue to answer and a maintainer re-applies `factory/ready`, or a maintainer comments `/factory retry` to proceed on the scoper's assumption"
 	}
-	return ""
+	next, _ := reasonwords.Next(reason)
+	return next
 }
 
 // ApprovalLine is the maintainer's approval the factory shows with merge.approveToMerge off
@@ -354,10 +355,22 @@ const shortCommit = 7
 // does (narrate reads it): a maintainer who reads GitHub and the room about one hand-off must not be
 // told two things (CD21, fast-follow 1).
 func Waiting(f *envelope.TaskFacts) (reason, next string) {
+	return waiting(f, false)
+}
+
+// WaitingWithPolicyBot is Waiting with legacy policy-bot wording enabled.
+func WaitingWithPolicyBot(f *envelope.TaskFacts, policyBot bool) (reason, next string) {
+	return waiting(f, policyBot)
+}
+
+func waiting(f *envelope.TaskFacts, policyBot bool) (reason, next string) {
 	if f == nil {
 		return "", ""
 	}
-	why := reasons()[f.Reason]
+	why, known := reasonwords.Longs(f.Reason)[f.Reason]
+	if known {
+		why = reasonwords.For(f.Reason, policyBot).Long
+	}
 	if s := ApprovalReason(f.Reason); s != "" && f.MergeByApproval {
 		why = s
 	}

@@ -185,7 +185,7 @@ func TestNoVerdictRetriesThenEscalates(t *testing.T) {
 	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "no_verdict" || tk.Status.Verdict != "none" || len(g.runs.specs) != 4 {
 		t.Fatalf("%s %s %d runs", tk.Status.Phase, tk.Status.Reason, len(g.runs.specs))
 	}
-	if issue := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(issue, "no review round left") {
+	if issue := strings.Join(g.f.Comments(7), "\n"); !strings.Contains(issue, "the last review ended without a verdict") {
 		t.Fatalf("%s", issue)
 	}
 }

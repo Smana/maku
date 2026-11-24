@@ -3,6 +3,7 @@
 package reconciler
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
@@ -56,7 +57,7 @@ func statusFor(d ArmDecision, class string) (state, description string) {
 // A failed post is logged and returned: the arm's caller aborts the pass on it, so nothing merges
 // that a required maku/merge-gate would not show (D11); every other caller goes on.
 func (r *Reconciler) postGateStatus(ctx context.Context, t *v1alpha1.Task, head string, checks forge.Checks, d ArmDecision) error {
-	state, description := statusFor(d, t.Spec.PredictedClass)
+	state, description := statusFor(d, cmp.Or(d.Matched, t.Spec.PredictedClass))
 	if have, _ := checks.StatusOf(GateStatusContext); strings.EqualFold(have, state) && checks.DescriptionOf(GateStatusContext) == description {
 		return nil
 	}

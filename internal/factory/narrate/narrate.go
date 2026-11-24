@@ -11,7 +11,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"regexp"
 	"slices"
 	"strconv"
@@ -23,6 +22,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/finding"
 	"github.com/Smana/maku/internal/factory/forge"
+	reasonwords "github.com/Smana/maku/internal/factory/reasons"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
 	"github.com/Smana/maku/internal/factory/sanitize"
@@ -185,193 +185,13 @@ func Tokens(n int64) string {
 
 // Reasons lists the end, stop and refusal reasons narrate has prose for, sorted: the factory's
 // closed reason codes, which fmetrics bounds the human path's reason label to (AM9).
-func Reasons() []string {
-	return slices.Sorted(maps.Keys(reasons()))
-}
+func Reasons() []string { return reasonwords.Codes() }
 
-// reasons reads the end, stop and refusal reasons of the factory, SP1 and SP2 (P15) as prose.
-func reasons() map[string]string {
-	return map[string]string{
-		"agent_finished":              "the agent finished its work",
-		"coordination_parent":         "this is a coordination parent's issue: it coordinates its children and never becomes a work task",
-		"coordination_scope_changed":  "this coordination child's issue no longer matches its confirmed plan: a change comes through a plan revision its maintainer authorizes again",
-		"cross_repository_lineage":    "this coordination child's task, room, issue and plan do not name one repository",
-		"coordination_lineage":        "this coordination child carries another lineage than its plan's",
-		"coordination_parent_missing": "this coordination child's parent is not a filed coordination",
-		"agent_error":                 "the agent stopped on an error",
-		"model_unavailable_billing":   "the model provider refused: billing (insufficient balance or no resource package)",
-		"model_unavailable_auth":      "the model provider refused: authentication (the API key was rejected)",
-		"model_unavailable_quota":     "the model provider refused: quota or rate limit",
-		"scoper_failed":               "the scoper failed before it checked the scope (scope not checked), so the implementer was not started",
-		"agent_stuck":                 "the agent reported that it was stuck",
-		"judge_impossible":            "the completion judge found the task cannot be done as asked",
-		"loop_unsupported":            "the cluster does not support the loop policy or repository checks yet (the run claim was refused), so no run started",
-		"stalled":                     "the run made no commit within its step limit, a judge continuation added none within its time box, or two continuations in a row added none",
-		"not_met":                     "the completion judge still found the acceptance checks unmet after the last continuation, or a continuation did not finish within its time box",
-		"budget_calls":                "the scoper reached its tool-call limit before handing off",
-		"needs_author":                "the scoper needs an answer from the issue's author before any code is written",
-		"contract_invalid":            "the tester's branch was not the tester's alone, or its contract commit was malformed",
-		"contract_disputed":           "the implementer says the tester's tests are wrong; a maintainer decides",
-		"contract_too_large":          "the tester's contract names more files or test ids than a task records, or one of them is too long",
-		"contract_check_unset":        "the task has a test contract but the repository no longer names merge.contractCheck",
-		"contract_check_not_run":      "the contract check did not run to a passing conclusion (skipped or neutral)",
-		"contract_modified":           "the pull request changes a test the tester wrote as the task's contract",
-		"contract_unread":             "the factory has not yet read which files changed since the test contract",
-		"contract_push_unrecorded":    "GitHub has not yet recorded the tester's push",
-		"split_proposed":              "the scoper proposes to split the task into parts, and a maintainer decides",
-		"budget-family":               "the cap of the task and its parts has no room left for another part's run",
-		"children_merged":             "every part of the split merged",
-		"child_dropped":               "a part of the split was closed without merging, or its merge was reverted",
-		"parent_not_split":            "its parent task is no longer waiting on its parts",
-		"parent_missing":              "its parent task no longer exists",
-		"escalation_expired":          "it waited past the escalation time limit for a maintainer",
-		"stuck":                       "the run showed no activity for 10 minutes",
-		"deadline":                    "the run hit its wall-clock limit",
-		"pod_lost":                    "the sandbox was lost (spot reclaim or eviction)",
-		"Disrupted":                   "the sandbox's node was reclaimed or drained",
-		"PodLost":                     "the sandbox was lost (deleted, or its node disappeared)",
-		"PodFailed":                   "the sandbox failed on its own",
-		"resumes_exhausted":           "the sandbox was lost again and the automatic resumes are used up",
-		"resume_budget":               "the sandbox was lost and the task's token budget cannot cover another run",
-		"revoked":                     "the run was stopped by hand",
-		"deleted":                     "the run's claim was deleted",
-		"budget-run":                  "the run spent its token budget",
-		"budget-principal":            "the factory's daily budget in dollars is spent",
-		"budget-person":               "the daily budget in dollars of the person its next run is charged to is spent",
-		"principal_unknown":           "the API principal that requested it is no longer in the factory's configuration",
-		"rooms_crd_outdated":          "the cluster's Rooms CRD is older than the factory and refuses a system: member; an operator must refresh the CRD",
-		"budget-fleet":                "the agent fleet's daily token budget is spent",
-		"budget-task":                 "the task's token budget has no room left for another full run",
-		"run_lost":                    "the run disappeared",
-		"no_pr":                       "the agent opened no pull request",
-		"committed_no_pr":             "the agent committed but never pushed, so its work was lost with the sandbox and no pull request was opened",
-		"pushed_no_pr":                "the agent pushed its branch but opened no pull request",
-		"push_refused":                "the factory refused the agent's push, so its work never reached the branch and no pull request was opened",
-		"push_awaiting_approval":      "the agent's push changes a protected path and waits for a maintainer's approval in the room or in Slack",
-		"scope_changed":               "the revision took a path the task names out of the pull request: a maintainer must confirm the scope change",
-		"no_action":                   "the triager found nothing to change",
-		"no_proposal":                 "the triager's run made no proposal to publish",
-		"task_not_ended":              "the task is still running, and its proposal is final only once it ends",
-		"invalid_draft":               "the proposal does not follow the issue template (a title `<area>: <what is wrong>`, then the sections What is wrong, What it should be and Acceptance check)",
-		"redacted":                    "the proposal holds something that looks like a secret, so it stays in the room",
-		"live_reference":              "the proposal holds a link, a mention or a reference the factory cannot make inert, so it stays in the room; a multi-line code span, a table row with more cells than its header or an unclosed code fence is the usual cause",
-		"proposal_ready":              "the triager proposed a change for a maintainer to publish (factory/publish)",
-		"merged":                      "the pull request was merged",
-		"pr_closed":                   "the pull request was closed",
-		"text_too_long":               "the issue text is longer than the factory accepts (14 KiB)",
-		"daily_task_cap":              "the factory has reached its daily task cap",
-		"overlap_active_duplicate":    "an active task is already pursuing the same outcome",
-		"kill_switch":                 "the factory's kill switch is engaged",
-		"stopped_by_label":            "a maintainer applied factory/stop",
-		"stopped_by_slack":            "a maintainer stopped it from Slack",
-		"stopped_by_annotation":       "an operator stopped it",
-		"cancelled":                   "its owner or a maintainer cancelled it from its room",
-		"discarded":                   "its owner or a maintainer discarded it from its room: its pull request is closed, its branch deleted, and this issue closed as not planned (a GitHub App cannot delete an issue; a repository admin can)",
-		"issue_deleted":               "its issue was deleted on GitHub",
-		"superseded":                  "a new factory/ready replaced it",
-		"family_dropped":              "the family was dropped because another part was dropped or reverted",
-		"private_repository":          "This factory runs as a demo, which serves public repositories only: in the demo, an agent can read the model key and the GitHub token",
-		"private_code_unacknowledged": "this repository is private code. " + config.PrivateCodeSentence + " A maintainer of the factory sets it on the Repository, then labels the issue again",
-		"unauthorised_labeller":       "only a maintainer's factory/ready starts a task",
-		"edited_after_label":          "the issue was edited after it was labelled",
-		"task_active":                 "a task for this issue is still running",
-		"unsanitisable":               "the issue text could not be made safe for an agent to read; simplify its markup",
-		"unauthorised_stopper":        "only a maintainer's factory/stop stops a task",
-		"foreign_room":                "a room of the task's name exists and is not the factory's",
-		"stale":                       "the pull request had no maintainer activity (a review, a comment or a push) for 14 days",
-		"review_rounds_exhausted":     "the reviewer still asked for changes after the last review round",
-		"no_verdict":                  "the last review ended without a verdict the factory can act on, with no review round left",
-		"verdict_missing":             "it recorded no verdict",
-		"merge_gate_off":              "no merge class is live or in shadow, so the factory does not gate this pull request",
-		"verdict_stale":               "its approval was not for the pull request's current head",
-		"room_log_too_long":           "the room's log was too long to read to its end",
-		"room_log_unreadable":         "the room's log, which holds the review verdict, could not be read",
-		"run_unschedulable":           "the cluster never admitted the task's run within its bound",
-		"ci_red":                      "CI stayed red after the fix runs",
-		"secret_scan_red":             "the secret scan (Security scanning 🔒, TruffleHog) found a live credential in this pull request: a maintainer revokes it and closes the pull request, and the factory does not retry",
-		"ci_cancelled":                "a required check was cancelled and re-running it did not settle it",
-		"checks_truncated":            "the pull request's check rollup was truncated, so not every check could be read",
-		"base_not_main":               "the pull request does not target main, so the factory does not gate or merge it",
-		"changes_requested":           "a reviewer requested changes, and the factory does not merge over them",
-		"fork_pull_request":           "it comes from a fork, which the factory never adopts",
-		"push_unrecorded":             "GitHub has not recorded the push of its head, so who made it cannot be shown",
-		"adoption_unread":             "who authored its commits and pushed its branch could not be read",
-		"reentered_new_head":          "its author pushed a new head, which is decided from the start",
-		"adopted_head_moved":          "its author pushed a new head after the shadow decision, so it is decided again",
-		"adopt_ref_invalid":           "the adopted pull request's reference could not be read, so it was not adopted",
-		"not_adopted_author":          "it is not authored by a login this class adopts",
-		"branch_not_allowed":          "its branch is not one this class adopts",
-		"label_missing":               "it does not carry the label its class requires",
-		"label_not_adopted":           "its required label was not applied by a login the class adopts",
-		"release_age_pending":         "the release age check has not passed yet",
-		"release_age_red":             "the release age check failed, or was not posted by the login this class adopts",
-		"ci_pending":                  "CI has not finished",
-		"main_red":                    "main's CI went red after the merge",
-		"revert_requested":            "a maintainer asked for a revert",
-		"merged_verified":             "merged, and main stayed green for 30 minutes",
-		"merged_unverified":           "merged, and main's CI on the merge commit gave no result within twice merge.verifyFor (a check was cancelled or never finished)",
-		"gate_path":                   "it touches a gate path, so an agent can never merge it; a human must re-author the change",
-		"steering_path":               "it changes a steering note, which only a maintainer on the default branch may do",
-		"class_mismatch":              "the diff is not the class the triage predicted",
-		"class_unarmed":               "the factory does not merge this class: a maintainer reviews and merges it",
-		"no_policy_matched":           "no merge policy of the repository holds on this diff: a maintainer reviews and merges it",
-		"reviewer_verdict_missing":    "no reviewer read this change, and its policy has no shape to check it",
-		"policy_unavailable":          "the repository's merge policy could not be read recently, so auto-merge waits for the next read",
-		"policy_invalid":              "the repository's merge policy on its default branch is invalid, so auto-merge is paused: a maintainer fixes .github/agent-factory.yaml or merges it",
-		"approval_required":           "it changes a file its class asks a maintainer to approve",
-		"file_not_allowed":            "it changes a file outside its class's allowed files",
-		"file_protected":              "it changes a file its class protects",
-		"file_added_or_deleted":       "it changes a file in a way other than editing its content (an add, delete, rename, copy or mode change), which its class does not allow",
-		"patch_too_large":             "it changes more files or lines than its class allows",
-		"holdout_red":                 "a holdout check its class requires did not succeed (failed, cancelled, neutral, skipped, or not posted by GitHub Actions), or its checks could not all be read",
-		"oracle_finding_open":         "a link its task was opened to fix is still a link target in the head, or the file holding it was not changed",
-		"oracle_unrequested":          "it moves a link target the task's findings did not ask to move, or moves one anywhere but the exact snapshot its finding gave",
-		"holdout_pending":             "a holdout check its class requires has not passed yet",
-		"ci_wait_expired":             "a check it waits on never reported within merge.awaitingCIFor",
-		"foreign_trailer":             "its head commit comes from another task's run",
-		"class_paused":                "auto-merge of this class is paused after a revert, a follow-up fix or a regression in its recent merges",
-		"ledger_truncated":            "the merge ledger read is incomplete (a full page of 100 labelled pull requests), so the factory does not arm",
-		"head_unreported":             "the task's implementer never reported its current head in the room: no handoff of its runs names that commit",
-		"auto_merge_cap":              "today's auto-merge cap is reached",
-		"held":                        "a maintainer put this pull request on hold (factory/hold)",
-		"not_owned":                   "this repository's .github/agent-factory.yaml does not name this factory",
-		"policy_pending":              "the policy needs a maintainer's approval",
-		"policy_absent":               "policy-bot has not evaluated it",
-		"maintainer_approved":         "a maintainer approved it",
-		"no_approving_verdict":        "the reviewer did not approve it",
-		"not_agent_authored":          "it is not the agents' pull request",
-		"not_mergeable":               "GitHub does not allow merging it as it stands",
-		"head_moved":                  "a new commit landed since the decision, so the merge was refused and it is decided again",
-		"shadow_would_arm":            "it would auto-merge, and the merge gate is in shadow until the merge wave",
-		"human_commit_in_pr":          "it holds a commit no run of the task reported, so the factory neither fixes nor merges on top of it",
-		"closes_parent":               "its description closes the parent issue (Fixes, Closes or Resolves), which closes only with the last part: edit the description, then merge it yourself",
-		"approval_stale":              "a maintainer's approval is of an older head: approve the current one",
-		"reentered_approved":          "a maintainer approved the head it was handed off at, so the gate decides it again",
-		"reentered_day_turned":        "the UTC day turned, so the cap is counted again",
-		"reentered_unpaused":          "the class's pause lifted, so the gate decides it again",
-		"reentered_unheld":            "a maintainer removed factory/hold, so the gate decides it again",
-		"reentered_policy":            "policy-bot now passes the head it was handed off at",
-		"reentered_head_reported":     "the room now reports its head as a commit of the task's run",
-		"rereview_verdict_stale":      "the factory moved its head after the approval, so it is reviewed again",
-		"waiting_human_driver":        "a person drives its room; the hold ends when they hand the driver back or their lease lapses",
-		"waiting_room_busy":           "another run in its room is still going; the hold ends when that run ends",
-		"waiting_run_slot":            "the factory runs its tasks one at a time and another one has the slot",
-		"waiting_revision_first":      "a revision of another task runs before new intake",
-		"waiting_active_tasks":        "the factory's cap on active tasks is reached",
-		"waiting_review_wip":          "the reviewers are at their limit of pull requests in review",
-		"waiting_daily_budget":        "the factory's daily budget in dollars is spent",
-		"waiting_room_log":            "the room's log is not open on the broker yet",
-		"waiting_broker_permission":   "the broker does not let the factory write to rooms yet",
-	}
-}
+// reasons reads the shared table for tests and metric vocabulary checks.
+func reasons() map[string]string { return reasonwords.Longs(reasonwords.Codes()...) }
 
 // Reason is r as prose; a reason without one is shown as it is.
-func Reason(r string) string {
-	if s, ok := reasons()[r]; ok {
-		return s
-	}
-	return r
-}
+func Reason(r string, policyBot ...bool) string { return reasonwords.For(r, policyBot...).Long }
 
 // Started announces a run with what a human needs: its persona, id, branch, budget, where to watch
 // it and how to stop it. roomsURL is config.roomsURL, which the config holds to https://<host>.
@@ -720,31 +540,33 @@ func PROpened(t *v1alpha1.Task, number int, url, runID string) Event {
 	return Event{Key: "pr-opened", Body: fmt.Sprintf("Run `%s` of task `%s` opened #%d: %s", runID, t.Name, number, url)}
 }
 
-// Armed announces the merge the gate issued on the decision (§5.1). R52 merged it at the decided
-// head, where GitHub checks that head at merge time; the key keeps the word "armed" — the status
-// records the same arming.
-func Armed(t *v1alpha1.Task) Event {
-	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: CI is green and policy-bot "+
-		"matched the live class `%s`, so it is merged now, at the decided head: GitHub re-checks that head at merge time and refuses "+
-		"a moved one. main's CI is watched after the merge.", t.Name, t.Spec.PredictedClass)}
+// Armed announces the merge the gate issued on the decision (§5.1), naming the policy the diff
+// matched rather than the task's predicted class.
+func Armed(t *v1alpha1.Task, matched ...string) Event {
+	policy := cmp.Or(append(matched, t.Spec.PredictedClass)[0], t.Spec.PredictedClass)
+	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: Merged automatically by policy `%s`, "+
+		"at the decided head: GitHub re-checks that head at merge time and refuses a moved one. main's CI is watched after the merge.", t.Name, policy)}
 }
 
-// WouldArm is the shadow gate's record (R32): the same decision as Armed, and nothing armed. Its
-// key, and so its marker, carries the head it judged (v2 D2): a maintainer's later merge at that
-// head is a merge of what the gate would have merged, and a new head is a new decision. It also
-// says whether the breaker had paused the class and whether the day's count had capped it (AM4).
-func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool) Event {
-	return Event{Key: fmt.Sprintf("would-arm-%d head=%s paused=%t capped=%t", len(t.Status.Runs), head, paused, capped), Body: fmt.Sprintf("Agent factory task `%s`: "+
-		"would auto-merge: `%s`, checks green, verdict approve. The merge gate is in shadow until the "+
-		"merge wave, so nothing is armed: a maintainer merges or closes this pull request.", t.Name, class)}
+// WouldArm is the shadow gate's record (R32): the same decision as Armed, without arming. Its key
+// carries the judged head (v2 D2). Optional progress is clean, minimum: a merge unchanged by a
+// maintainer earns the next clean decision toward promotion.
+func WouldArm(t *v1alpha1.Task, class, head string, paused, capped bool, progress ...int) Event {
+	body := fmt.Sprintf("Agent factory task `%s`: Policy `%s` would have merged this. It is in shadow here. Merge it unchanged if you agree", t.Name, class)
+	if len(progress) == 2 && progress[0] > 0 && progress[1] > 0 {
+		body += fmt.Sprintf(": that makes %d of %d clean decisions toward going live.", progress[0], progress[1])
+	} else {
+		body += "."
+	}
+	return Event{Key: fmt.Sprintf("would-arm-%d head=%s paused=%t capped=%t", len(t.Status.Runs), head, paused, capped), Body: body}
 }
 
 // WouldArmAdopted is WouldArm for an adopted pull request (R46): the same key, so the same marker
 // the shadow tally reads, and no claim of a verdict, since no agent reviewed Renovate's change. It
 // names a file fence, sizes and a release age only when the class declares them, and the added-entry
 // shape by what it checks rather than as a semver bump.
-func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paused, capped bool) Event {
-	e := WouldArm(t, class, head, paused, capped)
+func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paused, capped bool, progress ...int) Event {
+	e := WouldArm(t, class, head, paused, capped, progress...)
 	what := "the diff a semver bump"
 	if cl.DiffShape == "added-entry" {
 		// What the shape checks, not a bump: one added entry, additions only to the companions, and the label.
@@ -765,8 +587,8 @@ func WouldArmAdopted(t *v1alpha1.Task, cl config.Class, class, head string, paus
 }
 
 // WaitingForHuman says the gate stopped deciding and a maintainer's review is what remains.
-func WaitingForHuman(t *v1alpha1.Task, reason string) Event {
-	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason))
+func WaitingForHuman(t *v1alpha1.Task, reason string, policyBot ...bool) Event {
+	body := fmt.Sprintf("Agent factory task `%s` waits for a maintainer's review: %s.", t.Name, Reason(reason, policyBot...))
 	if pr := t.Status.PullRequest; pr != nil && pr.Number > 0 {
 		body += "\n\nTo merge: " + howAMaintainerMerges(t, reason, pr.Number) + "."
 	}
@@ -803,10 +625,13 @@ func WaitingForApproval(t *v1alpha1.Task, reason string) Event {
 }
 
 // ArmedByApproval is Armed for a merge a maintainer's approval decided (AM1).
-func ArmedByApproval(t *v1alpha1.Task, login string) Event {
-	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: CI is green, policy-bot "+
-		"passed and @%s approved this head, so it is merged now, at the approved head: GitHub re-checks that head at merge time and refuses "+
-		"a moved one. It counts as a human merge: no automatic revert, the monitor watches it.", t.Name, login)}
+func ArmedByApproval(t *v1alpha1.Task, login string, policyBot ...bool) Event {
+	checked := "CI is green"
+	if len(policyBot) > 0 && policyBot[0] {
+		checked += ", policy-bot passed"
+	}
+	return Event{Key: "armed-" + fmt.Sprint(len(t.Status.Runs)), Body: fmt.Sprintf("Agent factory task `%s`: %s and @%s approved this head, so it is merged now, at the approved head: GitHub re-checks that head at merge time and refuses "+
+		"a moved one. It counts as a human merge: no automatic revert, the monitor watches it.", t.Name, checked, login)}
 }
 
 // ApprovalShown says a maintainer's review approved the pull request, with merge.approveToMerge off
@@ -850,9 +675,9 @@ func ChecksNeverReported(t *v1alpha1.Task, waited time.Duration, missing []strin
 
 // BackToGate says a transient hand-off returned to the merge gate (N1), and why. n is the task's
 // count of returns, so each one is posted once.
-func BackToGate(t *v1alpha1.Task, reason string, n int32) Event {
+func BackToGate(t *v1alpha1.Task, reason string, n int32, policyBot ...bool) Event {
 	return Event{Key: fmt.Sprintf("gate-%s-%d", reason, n),
-		Body: fmt.Sprintf("Agent factory task `%s` goes back to the merge gate: %s.", t.Name, Reason(reason))}
+		Body: fmt.Sprintf("Agent factory task `%s` goes back to the merge gate: %s.", t.Name, Reason(reason, policyBot...))}
 }
 
 // Held says the task's room is held — a person drives it, or another run is live in it — so its
