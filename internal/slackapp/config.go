@@ -84,7 +84,7 @@ type Channel struct {
 
 // defaultNotify are the four transitions a channel with no notify list posts (UX8). room.merged and
 // room.reverted edit the thread's one end line rather than posting a separate line by default.
-var defaultNotify = []string{"room.task_triaged", "room.waiting_for_human", "room.pr_opened", "room.ended"}
+var defaultNotify = []string{"room.task_triaged", "room.waiting_for_human", "room.pr_opened", "room.stepped_up", "room.ended"}
 
 // The values of a channel's intents switch (SI20).
 const (

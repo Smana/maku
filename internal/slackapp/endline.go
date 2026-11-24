@@ -146,6 +146,53 @@ func gatePart(sum summary.Summary) string {
 	return ""
 }
 
+// stepUpLine renders the one thread line posted when Maku steps a task up (WR4), with no mention
+// and only closed/validated fields.
+func stepUpLine(e webhook.Event) string {
+	from, to := e.From, e.To
+	if !envelope.ValidClassName(from) {
+		from = ""
+	}
+	if !envelope.ValidClassName(to) {
+		to = ""
+	}
+	var line string
+	switch {
+	case from != "" && to != "":
+		line = fmt.Sprintf("Stepped up from %s to %s", from, to)
+	case to != "":
+		line = fmt.Sprintf("Stepped up to %s", to)
+	default:
+		line = "Stepped up to a deeper workflow"
+	}
+	if r := webhook.Clip("reason", e.Reason); r != "" && r != "other" {
+		line += " (" + stepUpReasonWords(r) + ")"
+	}
+	if e.CeilingMicroUSD > 0 {
+		line += " · new ceiling " + slackDollars(e.CeilingMicroUSD)
+	}
+	return line + "."
+}
+
+func stepUpReasonWords(reason string) string {
+	switch reason {
+	case "stalled":
+		return "a run that committed nothing"
+	case "budget-run":
+		return "the run's budget was spent"
+	case "budget-task":
+		return "the task's budget was spent"
+	case "not_met":
+		return "acceptance checks were not met"
+	case "review_rounds_exhausted":
+		return "review rounds were exhausted"
+	case "ci_red":
+		return "required checks stayed red"
+	default:
+		return reason
+	}
+}
+
 // endLine renders the thread's one end line (UX7): outcome, spend against budget, duration from the
 // first run's start to the last run's end, and the merge gate's decision. Every event field is clipped
 // to the closed vocabulary first.

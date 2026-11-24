@@ -17,7 +17,7 @@ import (
 // design's order.
 var types = []string{"room.task_received", "room.task_triaged", "room.run_started", "room.run_ended",
 	"room.waiting_for_human", "room.pr_opened", "room.verdict_posted", "room.merged", "room.reverted", "room.monitor_verdict",
-	"room.budget_reached", "room.ended", "room.approval_closed"}
+	"room.budget_reached", "room.stepped_up", "room.ended", "room.approval_closed"}
 
 // Types lists the events a subscriber may ask for.
 func Types() []string { return slices.Clone(types) }
@@ -128,6 +128,7 @@ type Tracker struct {
 	pr          int    // the last pull request number seen, for merged, reverted and verdict_posted
 	prSent      bool
 	mergedSent  bool // room.merged goes out once: a human merge reaches it through reason, not phase
+	steppedSent bool // room.stepped_up goes out once per room (WR4)
 	ended       bool
 	monitorSent bool   // room.monitor_verdict goes out once: a verdict is final once set (MC7)
 	origin      string // the last origin the task facts named: every event after it repeats it (RA10)
@@ -228,6 +229,19 @@ func (t *Tracker) task(room, repo string, f envelope.TaskFacts) []Event {
 	if f.Monitor != "" && t.origin != "" && !t.monitorSent {
 		t.monitorSent = true // final once set (MC7): a later rewrite of the facts repeats it
 		out = append(out, Event{Type: "room.monitor_verdict", Room: room, Repo: repo, PR: t.pr, Verdict: Clip("verdict", f.Monitor)})
+	}
+	if !t.steppedSent && f.Profile != nil && f.Profile.StepUp != nil && (f.Profile.StepUp.Mode == "auto" || f.Profile.StepUp.Mode == "manual") {
+		t.steppedSent = true
+		su := f.Profile.StepUp
+		out = append(out, Event{
+			Type:            "room.stepped_up",
+			Room:            room,
+			Repo:            repo,
+			From:            su.From,
+			To:              su.To,
+			Reason:          Clip("reason", su.Trigger),
+			CeilingMicroUSD: su.CeilingMicroUSD,
+		})
 	}
 	if f.Phase == t.phase {
 		return out // the factory rewrites a phase's facts (budget, run, PR): no new event

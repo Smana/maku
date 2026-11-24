@@ -5,6 +5,8 @@ package roomview
 import (
 	"strings"
 	"testing"
+
+	"github.com/Smana/maku/internal/envelope"
 )
 
 func TestTheReasonIsBuiltFromFactsOnly(t *testing.T) {
@@ -51,6 +53,32 @@ func TestTheCardNamesTheStepUpCeiling(t *testing.T) {
 	}
 	want := "Cost       up to $5.10 · up to $13.60 if it steps up\n"
 	if !strings.Contains(b.String(), want) {
+		t.Fatalf("got:\n%s", b.String())
+	}
+}
+
+func TestTheCardShowsSteppedUpFrom(t *testing.T) {
+	card := CardOf(&envelope.TaskFacts{
+		Profile: &envelope.ProfileFact{
+			Name:            "careful",
+			Source:          "escalation",
+			Cohort:          "treatment",
+			Reason:          "out_of_budget",
+			CeilingMicroUSD: 13_600_000,
+			StepUp: &envelope.StepUpFact{
+				From:            "standard",
+				To:              "careful",
+				Trigger:         "stalled",
+				Mode:            "auto",
+				CeilingMicroUSD: 13_600_000,
+			},
+		},
+	}, "Fix the link checker")
+	var b strings.Builder
+	if err := WorkflowCardText(&b, card, Options{Format: Text}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(b.String(), "Cost       up to $13.60 · stepped up from standard\n") {
 		t.Fatalf("got:\n%s", b.String())
 	}
 }

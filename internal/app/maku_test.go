@@ -145,6 +145,9 @@ func newMakuBroker(t *testing.T) *makuBroker {
 			if act["kind"] == "fork" {
 				ack.Result = json.RawMessage(`{"roomId":"abcdefgh","run":{"kind":"AgentRun"},"runError":"over_budget"}`)
 			}
+			if act["kind"] == "retry" && act["deeper"] == true {
+				ack.Result = json.RawMessage(`{"result":"stepped_up","workflow":"careful","ceilingMicroUSD":13600000}`)
+			}
 			_ = wsjson.Write(r.Context(), c, ack)
 		}
 	}))
@@ -262,6 +265,31 @@ func TestMakuCancel(t *testing.T) {
 		t.Errorf("a discard says the issue is closed, not deleted:\n%s", out)
 	}
 	for _, bad := range [][]string{{"cancel"}, {"cancel", "a", "b"}, {"cancel", "3kq7x2ma", "--yes"}} {
+		if err := r.Run(t.Context(), bad); err == nil {
+			t.Errorf("%v: accepted", bad)
+		}
+	}
+}
+
+func TestRetryCommandSendsTheAct(t *testing.T) {
+	b := newMakuBroker(t)
+	r, out := configured(t, b)
+	for _, args := range [][]string{{"retry", "3buqdlot"}, {"retry", "3buqdlot", "--deeper"}} {
+		if err := r.Run(t.Context(), args); err != nil {
+			t.Fatalf("%v: %v", args, err)
+		}
+	}
+	b.mu.Lock()
+	for i, w := range []string{`{"kind":"retry"}`, `{"deeper":true,"kind":"retry"}`} {
+		if got, _ := json.Marshal(b.acts[i]); string(got) != w {
+			t.Errorf("act %d: %s, want %s", i, got, w)
+		}
+	}
+	b.mu.Unlock()
+	if !strings.Contains(out.String(), "3buqdlot: running again under careful (up to $13.60), on the same branch and pull request") {
+		t.Errorf("output:\n%s", out)
+	}
+	for _, bad := range [][]string{{"retry"}, {"retry", "a", "b"}} {
 		if err := r.Run(t.Context(), bad); err == nil {
 			t.Errorf("%v: accepted", bad)
 		}

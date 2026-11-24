@@ -308,7 +308,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// leaving a terminal task alone (§6.4, MC7): the factory owes the revert its watch, a
 	// maintainer's factory/revert its action, and a monitored merge its verdict, even after the
 	// task itself has ended.
-	watchWait := r.revertable(cfg, &t) || r.revertPending(&t) || r.monitorDue(cfg, &t)
+	watchWait := r.revertable(cfg, &t) || r.revertPending(&t) || r.monitorDue(cfg, &t) || r.noopRetryable(&t)
 	var closeDue bool
 	var closeWait time.Duration
 	if ended {
@@ -507,6 +507,8 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 		return r.awaitingHuman(ctx, cfg, t)
 	case v1alpha1.PhaseEscalated:
 		return r.escalated(ctx, cfg, t)
+	case v1alpha1.PhaseNoOp:
+		return r.noop(ctx, cfg, t)
 	case v1alpha1.PhaseAwaitingCI:
 		return r.awaitingCI(ctx, cfg, t)
 	case v1alpha1.PhaseAutoMerging:
@@ -522,6 +524,14 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 		return r.monitor(ctx, cfg, t) // reached only when monitorDue
 	}
 	return nil
+}
+
+// noopRetryable reports whether a NoOp task can still be stepped up via a maintainer's deeper retry.
+func (r *Reconciler) noopRetryable(t *v1alpha1.Task) bool {
+	if t.Status.Phase != v1alpha1.PhaseNoOp || alreadyStepped(t.Status.Profile) {
+		return false
+	}
+	return t.Annotations[v1alpha1.AnnotationRetry] != "" || t.Spec.Issue > 0
 }
 
 // effects are what a step records outside the Task: metrics, run once the status that caused them

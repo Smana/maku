@@ -21,6 +21,7 @@ var notify = map[string]bool{
 	"room.merged":            true,
 	"room.reverted":          true,
 	"room.budget_reached":    true,
+	"room.stepped_up":        true,
 	"room.ended":             true,
 	"room.task_received":     false,
 	"room.run_ended":         false,

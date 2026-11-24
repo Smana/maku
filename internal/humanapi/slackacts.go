@@ -35,6 +35,9 @@ const (
 var slackActFactoryResults = []string{
 	"stopped",
 	"retried",
+	"stepped_up",
+	"no_deeper_workflow",
+	"deeper_over_cap",
 	slackNotLinked,
 	slackNotMaintainer,
 	"not_running",
@@ -49,13 +52,14 @@ type TaskActor interface {
 	AnswerTask(ctx context.Context, task, onBehalfOf, text, accessToken string) (string, error)
 }
 
-// SlackAct is the POST /api/slack/stops and POST /api/slack/retries body (SI6).
+// SlackAct is the POST /api/slack/stops and POST /api/slack/retries body (SI6, WR4).
 type SlackAct struct {
 	Team      string `json:"team"`
 	User      string `json:"user"`
 	Channel   string `json:"channel"`
 	MessageTS string `json:"messageTS"`
 	Room      string `json:"room"`
+	Deeper    bool   `json:"deeper,omitempty"`
 }
 
 // SlackActor is human.slackStop or human.slackRetry: modelled on SlackDecider (SI6).
@@ -154,7 +158,7 @@ func (a *SlackActor) log() *slog.Logger {
 
 func (a *SlackActor) logged(ctx context.Context, action string, in SlackAct, result string) {
 	level := slog.LevelWarn
-	if result == "stopped" || result == "retried" {
+	if result == "stopped" || result == "retried" || result == "stepped_up" {
 		level = slog.LevelInfo
 	}
 	a.log().Log(ctx, level, "slack "+action, "team", in.Team, "user", in.User, "room", in.Room, "result", result)
@@ -231,7 +235,19 @@ func (a *SlackActor) resolve(ctx context.Context, s *Server, p authn.Principal, 
 	onBehalfOf := "slack:" + in.Team + "/" + in.User
 	var res string
 	if action == "retry" {
-		res, err = a.Tasks.RetryTask(ctx, in.Room, onBehalfOf, p.AccessToken)
+		if in.Deeper {
+			if dr, ok := a.Tasks.(interface {
+				RetryTaskDeeper(ctx context.Context, task, onBehalfOf string, deeper bool, accessToken string) (runrequest.RetryResult, error)
+			}); ok {
+				var r runrequest.RetryResult
+				r, err = dr.RetryTaskDeeper(ctx, in.Room, onBehalfOf, true, p.AccessToken)
+				res = r.Result
+			} else {
+				res, err = a.Tasks.RetryTask(ctx, in.Room, onBehalfOf, p.AccessToken)
+			}
+		} else {
+			res, err = a.Tasks.RetryTask(ctx, in.Room, onBehalfOf, p.AccessToken)
+		}
 	} else {
 		res, err = a.Tasks.StopTask(ctx, in.Room, onBehalfOf, p.AccessToken)
 	}

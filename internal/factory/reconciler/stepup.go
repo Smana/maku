@@ -103,7 +103,7 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 	trial := t.DeepCopy()
 	r.profileSpec(cfg, trial, target, v)
 
-	offer := func() (bool, error) {
+	offer := func(why string) (bool, error) {
 		p.StepUp = &v1alpha1.StepUpStatus{
 			From:            p.Name,
 			To:              target,
@@ -111,13 +111,20 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 			Mode:            "offered",
 			CeilingMicroUSD: ceiling,
 		}
+		narrateLater(t, narrate.StepUpOffered(t, p.Name, target, reason, ceiling, why))
 		return false, nil
 	}
 	if !runFits(trial) || (t.Spec.MaxMicroUSD > 0 && ceiling > t.Spec.MaxMicroUSD) {
-		return offer()
+		return offer("capped")
 	}
-	if p.Source == "label" || mode == "ask" || (t.Spec.Intake != nil && !t.Spec.Intake.StepUpShown) {
-		return offer()
+	if p.Source == "label" {
+		return offer("pinned")
+	}
+	if mode == "ask" {
+		return offer("ask")
+	}
+	if t.Spec.Intake != nil && !t.Spec.Intake.StepUpShown {
+		return offer("not_shown")
 	}
 	// TestFirst stays: the tester branches from main, which an implementer run has already left.
 	su := &v1alpha1.StepUpStatus{
@@ -137,6 +144,73 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 	return true, nil
 }
 
+// stepUpBy runs t once more under the next workflow on its ladder on a maintainer's explicit
+// request (`/factory retry deeper`, API `deeper: true`, or `maku retry --deeper`). It uses the
+// task's one step, skips the automatic "ask" guards (pinned, ask mode, unshown plan), and still
+// enforces the target ceiling and remaining budget (WR4).
+func (r *Reconciler) stepUpBy(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, by string, handledID int64) error {
+	p := t.Status.Profile
+	if p == nil || !p.Resolved || alreadyStepped(p) {
+		if handledID != 0 {
+			markHandled(t, handledID)
+		}
+		return nil
+	}
+	target := cfg.StepUpFor(p.Name, "stalled")
+	if target == "" && p.StepUp != nil && p.StepUp.Mode == "offered" {
+		target = p.StepUp.To
+	}
+	if target == "" || target == p.Name {
+		if handledID != 0 {
+			markHandled(t, handledID)
+		}
+		return nil
+	}
+	v, ok := cfg.Workflow(target)
+	if !ok {
+		if handledID != 0 {
+			markHandled(t, handledID)
+		}
+		return nil
+	}
+	ceiling := targetCeilingMicroUSD(cfg, t, v)
+	trial := t.DeepCopy()
+	r.profileSpec(cfg, trial, target, v)
+	if !runFits(trial) || (t.Spec.MaxMicroUSD > 0 && ceiling > t.Spec.MaxMicroUSD) {
+		if handledID != 0 {
+			markHandled(t, handledID)
+			narrateLater(t, narrate.TaskCapHolds(t, handledID))
+		}
+		return nil
+	}
+	su := &v1alpha1.StepUpStatus{
+		From:            p.Name,
+		To:              target,
+		Trigger:         "manual",
+		Mode:            "manual",
+		By:              by,
+		CeilingMicroUSD: ceiling,
+	}
+	d := profileDecision{Name: target, Source: "escalation", Reason: "manual", Checks: p.Checks || v.Checks, TestFirst: p.TestFirst,
+		Recommended: p.Recommended, Why: p.Why, Offered: len(r.profileChoices(cfg, t)) > 0, StepUp: su}
+	if err := r.applyProfile(ctx, cfg, t, d); err != nil {
+		return err
+	}
+	if handledID != 0 {
+		markHandled(t, handledID)
+	}
+	r.leaveSplit(ctx, t, SplitDeclined)
+	if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {
+		r.leaveBounce(ctx, t, "retry")
+		t.Status.Scope.State = "assumed"
+	}
+	t.Status.Retries++
+	t.Status.RetriedBy = v1alpha1.Person(by)
+	r.intervention(ctx, cfg, t, "retry")
+	r.stepped(t, d)
+	return nil
+}
+
 // stepped is the status half of a step whose spec is written: the profile, a fresh review loop, a
 // fresh CI-repair allowance (R33) and the queued run.
 func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
@@ -146,7 +220,17 @@ func (r *Reconciler) stepped(t *v1alpha1.Task, d profileDecision) {
 	t.Status.ReviewRounds, t.Status.FixRunsBeforeStep = 0, t.Status.FixRuns
 	t.Status.NextTrigger = TriggerEscalation
 	r.to(t, v1alpha1.PhaseQueued, "")
-	narrateLater(t, narrate.ProfileEscalated(from, d.Name, d.Reason, len(t.Status.Runs)))
+	trigger := d.Reason
+	ceiling := t.Spec.Budget.TaskMicroUSD
+	if d.StepUp != nil {
+		if d.StepUp.Trigger != "" {
+			trigger = d.StepUp.Trigger
+		}
+		if d.StepUp.CeilingMicroUSD > 0 {
+			ceiling = d.StepUp.CeilingMicroUSD
+		}
+	}
+	narrateLater(t, narrate.ProfileEscalated(from, d.Name, trigger, ceiling, len(t.Status.Runs), t.Status.Usage.CostMicroUSD))
 }
 
 // lastJudge is the completion judge's newest verdict across t's newest implementer run and the runs

@@ -759,13 +759,31 @@ func TestProfileChosen(t *testing.T) {
 }
 
 func TestProfileEscalated(t *testing.T) {
-	e := ProfileEscalated("review-floor", "review-frontier", "out_of_budget", 3)
-	if e.Key != "profile-escalated-3" {
-		t.Fatalf("key %q", e.Key)
+	ev := ProfileEscalated("standard", "careful", "stalled", 13_600_000, 2)
+	for _, want := range []string{"from `standard` to `careful`", "a run that committed nothing", "New ceiling: $13.60", "`factory/stop`"} {
+		if !strings.Contains(ev.Body, want) {
+			t.Errorf("missing %q in:\n%s", want, ev.Body)
+		}
 	}
-	for _, w := range []string{"under the workflow `review-floor`", "under the workflow `review-frontier`", "out_of_budget"} {
-		if !strings.Contains(e.Body, w) {
-			t.Errorf("body lacks %q: %s", w, e.Body)
+	if ev.Key != "profile-escalated-2" {
+		t.Fatalf("key %q", ev.Key)
+	}
+	withSpent := ProfileEscalated("standard", "careful", "stalled", 13_600_000, 2, 1_840_000)
+	if !strings.Contains(withSpent.Body, "$1.84 spent so far") {
+		t.Errorf("missing spent so far in:\n%s", withSpent.Body)
+	}
+}
+
+func TestAnOfferSaysWhyItDidNotStep(t *testing.T) {
+	for why, want := range map[string]string{
+		"pinned":    "a maintainer pinned its workflow",
+		"capped":    "its budget is capped below $13.60",
+		"ask":       "this repository asks first",
+		"not_shown": "the plan you confirmed did not show the stepped-up cost",
+	} {
+		ev := StepUpOffered(task(), "standard", "careful", "budget-run", 13_600_000, why)
+		if ev.Key != "step-up-offered" || !strings.Contains(ev.Body, want) || !strings.Contains(ev.Body, "`/factory retry deeper`") {
+			t.Errorf("%s: got key=%q body:\n%s", why, ev.Key, ev.Body)
 		}
 	}
 }

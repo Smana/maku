@@ -20,6 +20,7 @@ type WorkflowCard struct {
 	Path              []string // implementer, reviewer, CI, merge gate
 	CeilingUSD        float64
 	StepUpUSD         float64 // 0: no step-up line
+	SteppedFrom       string  // non-empty after a step-up
 	TypicalUSD        float64 // 0 until phase D has data for the class
 }
 
@@ -96,8 +97,15 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		rec = p.Recommended
 	}
 	trigger := ""
+	steppedFrom := ""
 	if p.Source == "escalation" {
 		trigger = p.Reason
+	}
+	if p.StepUp != nil && (p.StepUp.Mode == "auto" || p.StepUp.Mode == "manual") {
+		steppedFrom = p.StepUp.From
+		if p.StepUp.Trigger != "" {
+			trigger = p.StepUp.Trigger
+		}
 	}
 	var path []string
 	if len(f.Plan) > 0 {
@@ -111,13 +119,14 @@ func CardOf(f *envelope.TaskFacts, title string) WorkflowCard {
 		ceiling = f.Spend.LimitMicroUSD
 	}
 	return WorkflowCard{
-		Title:      title,
-		Repository: repoOf(urlOf(f.Issue), prURL(f.PR)),
-		Workflow:   p.Name,
-		Reason:     Reason(p.Source, p.By, rec, trigger, nil),
-		Path:       path,
-		CeilingUSD: float64(ceiling) / 1e6,
-		StepUpUSD:  float64(p.StepUpCeilingMicroUSD) / 1e6,
+		Title:       title,
+		Repository:  repoOf(urlOf(f.Issue), prURL(f.PR)),
+		Workflow:    p.Name,
+		Reason:      Reason(p.Source, p.By, rec, trigger, nil),
+		Path:        path,
+		CeilingUSD:  float64(ceiling) / 1e6,
+		StepUpUSD:   float64(p.StepUpCeilingMicroUSD) / 1e6,
+		SteppedFrom: steppedFrom,
 	}
 }
 
@@ -144,7 +153,9 @@ func costLine(c WorkflowCard) string {
 		return ""
 	}
 	s := "up to " + Dollars(c.CeilingUSD)
-	if c.StepUpUSD > 0 {
+	if c.SteppedFrom != "" {
+		s += " · stepped up from " + c.SteppedFrom
+	} else if c.StepUpUSD > 0 {
 		s += " · up to " + Dollars(c.StepUpUSD) + " if it steps up"
 	}
 	if c.TypicalUSD > 0 {

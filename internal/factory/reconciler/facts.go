@@ -111,6 +111,15 @@ func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
 				pf.By = f.Issue.LabelledBy
 			}
 		}
+		if p.StepUp != nil {
+			pf.StepUp = &envelope.StepUpFact{
+				From:            p.StepUp.From,
+				To:              p.StepUp.To,
+				Trigger:         p.StepUp.Trigger,
+				Mode:            p.StepUp.Mode,
+				CeilingMicroUSD: dollars(p.StepUp.CeilingMicroUSD),
+			}
+		}
 		f.Profile = pf
 	}
 	return f

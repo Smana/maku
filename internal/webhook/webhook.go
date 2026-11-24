@@ -62,6 +62,10 @@ type Event struct {
 	// Decision is how the approval closed, on room.approval_closed: approved, denied, expired
 	// or superseded, never free text.
 	Decision string `json:"decision,omitempty"`
+	// From, To and CeilingMicroUSD describe a workflow step-up on room.stepped_up (WR4).
+	From            string `json:"from,omitempty"`
+	To              string `json:"to,omitempty"`
+	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
 }
 
 // ID is a delivery's webhook-id: the same for every retry and every leader, distinct per

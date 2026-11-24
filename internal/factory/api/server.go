@@ -222,7 +222,7 @@ func (s *Server) Handler() http.Handler {
 	}, s.createTask))
 	sponsoredOn := func(c *config.Config) bool { return len(c.API.Sponsored) > 0 }
 	mux.HandleFunc("POST /v1/tasks/{task}/stops", gate(sponsoredOn, s.stopTask))
-	mux.HandleFunc("POST /v1/tasks/{task}/retries", gate(sponsoredOn, s.retryTask))
+	mux.HandleFunc("POST /v1/tasks/{task}/retries", s.retryTask)
 	mux.HandleFunc("POST /v1/tasks/{task}/answers", gate(sponsoredOn, s.answerTask))
 	// #644: a human's cancel or discard, mounted whenever the API is. /stops above is the Slack
 	// App's alone, on behalf of a linked Slack user: a 404 until api.sponsored declares one.

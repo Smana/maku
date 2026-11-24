@@ -61,10 +61,18 @@ var refusalCodes = []string{"kill_switch", "bad_json", "idempotency_key_required
 	"human_only"}
 
 var actResults = []string{
-	"stopped", "retried", "cancelled", "discarded",
+	"stopped", "retried", "stepped_up", "cancelled", "discarded",
 	"answered_restarted", "answered",
 	"not_linked", "not_maintainer", "not_allowed",
 	"not_running", "not_escalated", "no_question", "unknown_task",
+	"no_deeper_workflow", "deeper_over_cap",
+}
+
+// RetryResult is the factory's answer to POST /v1/tasks/{task}/retries (WR4).
+type RetryResult struct {
+	Result          string `json:"result"`
+	Workflow        string `json:"workflow,omitempty"`
+	CeilingMicroUSD int64  `json:"ceilingMicroUSD,omitempty"`
 }
 
 // StopTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/stops with accessToken.
@@ -74,7 +82,23 @@ func (f Factory) StopTask(ctx context.Context, task, onBehalfOf, accessToken str
 
 // RetryTask posts onBehalfOf to the factory's POST /v1/tasks/{task}/retries with accessToken.
 func (f Factory) RetryTask(ctx context.Context, task, onBehalfOf, accessToken string) (string, error) {
-	return f.actTask(ctx, "retries", task, onBehalfOf, "", accessToken)
+	res, err := f.RetryTaskDeeper(ctx, task, onBehalfOf, false, accessToken)
+	return res.Result, err
+}
+
+// RetryTaskDeeper posts a sponsored retry (optionally deeper) to POST /v1/tasks/{task}/retries.
+func (f Factory) RetryTaskDeeper(ctx context.Context, task, onBehalfOf string, deeper bool, accessToken string) (RetryResult, error) {
+	return f.postRetry(ctx, task, struct {
+		OnBehalfOf string `json:"onBehalfOf"`
+		Deeper     bool   `json:"deeper,omitempty"`
+	}{OnBehalfOf: onBehalfOf, Deeper: deeper}, accessToken)
+}
+
+// RetryTaskHuman posts a human's own retry (optionally deeper) to POST /v1/tasks/{task}/retries.
+func (f Factory) RetryTaskHuman(ctx context.Context, task string, deeper bool, accessToken string) (RetryResult, error) {
+	return f.postRetry(ctx, task, struct {
+		Deeper bool `json:"deeper,omitempty"`
+	}{Deeper: deeper}, accessToken)
 }
 
 // AnswerTask posts onBehalfOf and text to the factory's POST /v1/tasks/{task}/answers with accessToken.
@@ -98,46 +122,53 @@ func (f Factory) actTask(ctx context.Context, subpath, task, onBehalfOf, text, a
 }
 
 func (f Factory) postAct(ctx context.Context, subpath, task string, in any, accessToken string) (string, error) {
+	res, err := f.postActResult(ctx, subpath, task, in, accessToken)
+	return res.Result, err
+}
+
+func (f Factory) postRetry(ctx context.Context, task string, in any, accessToken string) (RetryResult, error) {
+	return f.postActResult(ctx, "retries", task, in, accessToken)
+}
+
+func (f Factory) postActResult(ctx context.Context, subpath, task string, in any, accessToken string) (RetryResult, error) {
 	if accessToken == "" {
-		return "", ErrForbidden
+		return RetryResult{}, ErrForbidden
 	}
 	if !envelope.ValidID(task) {
-		return "", fmt.Errorf("runrequest: invalid task id")
+		return RetryResult{}, fmt.Errorf("runrequest: invalid task id")
 	}
 	body, err := json.Marshal(in)
 	if err != nil {
-		return "", fmt.Errorf("runrequest: %w", err)
+		return RetryResult{}, fmt.Errorf("runrequest: %w", err)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.URL+"/v1/tasks/"+task+"/"+subpath, bytes.NewReader(body))
 	if err != nil {
-		return "", fmt.Errorf("runrequest: %w", err)
+		return RetryResult{}, fmt.Errorf("runrequest: %w", err)
 	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Content-Type", "application/json")
 	hc, err := f.client()
 	if err != nil {
-		return "", err
+		return RetryResult{}, err
 	}
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("runrequest: factory: %w", err)
+		return RetryResult{}, fmt.Errorf("runrequest: factory: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := httpx.ReadBody(resp.Body, maxResponse)
 	if err != nil {
-		return "", fmt.Errorf("runrequest: factory: %w", err)
+		return RetryResult{}, fmt.Errorf("runrequest: factory: %w", err)
 	}
 	if resp.StatusCode == http.StatusOK {
-		var out struct {
-			Result string `json:"result"`
-		}
+		var out RetryResult
 		if err := json.Unmarshal(raw, &out); err != nil {
-			return "", fmt.Errorf("runrequest: factory answer: %w", err)
+			return RetryResult{}, fmt.Errorf("runrequest: factory answer: %w", err)
 		}
 		if !slices.Contains(actResults, out.Result) {
-			return "", fmt.Errorf("runrequest: factory answer: unknown result %q", out.Result)
+			return RetryResult{}, fmt.Errorf("runrequest: factory answer: unknown result %q", out.Result)
 		}
-		return out.Result, nil
+		return out, nil
 	}
 	if resp.StatusCode >= 400 {
 		var out struct {
@@ -148,9 +179,9 @@ func (f Factory) postAct(ctx context.Context, subpath, task string, in any, acce
 		if slices.Contains(refusalCodes, out.Error) {
 			reason = out.Error
 		}
-		return "", ErrRefused{Status: resp.StatusCode, Reason: reason}
+		return RetryResult{}, ErrRefused{Status: resp.StatusCode, Reason: reason}
 	}
-	return "", fmt.Errorf("runrequest: factory: %s", resp.Status)
+	return RetryResult{}, fmt.Errorf("runrequest: factory: %s", resp.Status)
 }
 
 // CreateTask posts r to the factory's POST /v1/tasks with the caller's own token, as Request does.
