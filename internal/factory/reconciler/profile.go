@@ -45,7 +45,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 			break
 		}
 		v, _ := cfg.Workflow(name)
-		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || r.repo(cfg, t).TestFirstIn(name),
+		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || cfg.TestFirstIn(r.repo(cfg, t), name),
 			Recommended: q.Recommended, Why: q.Why, Offered: offered}
 		if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 			return err
@@ -160,7 +160,7 @@ func (r *Reconciler) variantFor(ctx context.Context, cfg *config.Config, t *v1al
 	if !cfg.Applies() {
 		return "", "observe", nil
 	}
-	if r.repo(cfg, t).TestFirstIn(name) && t.Spec.DataClass == "public" {
+	if cfg.TestFirstIn(r.repo(cfg, t), name) && t.Spec.DataClass == "public" {
 		paths, err := r.testPaths(ctx, t)
 		if err != nil {
 			return "", "", err

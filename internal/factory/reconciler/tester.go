@@ -58,7 +58,7 @@ func (r *Reconciler) testFirstOn(cfg *config.Config, t *v1alpha1.Task) bool {
 		return t.Status.Profile.TestFirst
 	}
 	rc := r.repo(cfg, t)
-	return rc.TestFirstIn(rc.DefaultWorkflow())
+	return cfg.TestFirstIn(rc, rc.DefaultWorkflow())
 }
 
 // testerRun: the task's current run is its tester's.

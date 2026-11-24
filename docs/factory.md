@@ -110,7 +110,7 @@ Before triage or room creation, the factory hashes `lowercase(repository) + NUL 
 
 ### The tester stage
 
-On a repository with `workflow.testFirst: true`, every public `careful` task runs a **tester** on `agent/<task>` after the scoper and before the implementer (never on internal tasks or via human/run APIs, which refuse `tester_is_factory_only`). The tester writes failing tests only; the harness verifies they fail on base and pushes a single commit (`test: the test contract`) carrying `Agent-Contract`, `Agent-Run`, `Agent-Contract-File` and `Agent-Contract-Id` trailers.
+On a repository with `workflow.testFirst: true`, every public task whose workflow's `loops` row sets `tests: true` (including the shipped `careful` row) runs a **tester** on `agent/<task>` after the scoper and before the implementer (never on internal tasks or via human/run APIs, which refuse `tester_is_factory_only`). The tester writes failing tests only; the harness verifies they fail on base and pushes a single commit (`test: the test contract`) carrying `Agent-Contract`, `Agent-Run`, `Agent-Contract-File` and `Agent-Contract-Id` trailers.
 
 ```mermaid
 flowchart LR
@@ -164,7 +164,7 @@ workflows:
   none:     {template: none}
 loops:
   default: {scope: "off", stallSteps: 80, judge: none}
-  careful: {scope: scoper, stallSteps: 80, judge: tier-light, search: true,
+  careful: {scope: scoper, stallSteps: 80, judge: tier-light, search: true, tests: true,
             split: {maxChildren: 4, childTier: standard, anyTier: true}}
 ```
 

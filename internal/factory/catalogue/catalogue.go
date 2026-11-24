@@ -191,7 +191,7 @@ func ceilingOf(cfg *config.Config, rc *config.Repository) float64 {
 }
 
 func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.HarnessProfile) Profile {
-	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: rc.TestFirstIn(name),
+	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
 		Loop: string(p.Loop), Description: p.Description}
 	if e := p.Escalation; e != nil {
 		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}

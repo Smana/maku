@@ -331,6 +331,7 @@ func TestRunsReadTheFrozenProfile(t *testing.T) {
 			repo.Workflow = config.RepositoryWorkflow{Default: config.WorkflowCareful, TestFirst: tc.live}
 			cfg.Repositories = []config.Repository{repo}
 			cfg.HarnessProfiles = map[string]config.HarnessProfile{config.WorkflowCareful: {Checks: tc.live}}
+			cfg.Loops = map[string]config.Loop{config.WorkflowCareful: {Tests: true}}
 			cfg.Templates["solo"] = config.Template{Roles: []string{"implementer"}}
 			tk := issueTask("3buqdlot", 7, "fix")
 			tk.Spec.PredictedClass, tk.Spec.DataClass, tk.Spec.Template = "docs", "public", "solo"
@@ -348,7 +349,7 @@ func TestRunsReadTheFrozenProfile(t *testing.T) {
 func treatmentCfg(percent int) *config.Config {
 	c := profileCfg(true)
 	c.HarnessProfiles["careful"] = config.HarnessProfile{Template: "pair", Tier: "frontier", Loop: "careful"}
-	c.Loops["careful"] = config.Loop{Scope: config.ScopeScoper, Judge: "tier-light", Search: true}
+	c.Loops["careful"] = config.Loop{Scope: config.ScopeScoper, Judge: "tier-light", Search: true, Tests: true}
 	c.Evaluation.ControlPercent, c.Evaluation.Treatment = percent, "careful"
 	return c
 }

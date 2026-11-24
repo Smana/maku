@@ -1734,7 +1734,15 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 		}
 	}
 	inherits := c.inheritanceWarnings() // the file's rows, before the shipped ones join them
-	c.applyShippedWorkflows()           // WF2: before Validate, so a profile may name a shipped template or row
+	// A platform's own careful row that sets no tests key keeps the tester in the release that
+	// adds the key, with a warning (WF13); the next minor reads tests by key only.
+	var carefulTestsWarn string
+	if row, ok := c.Loops[WorkflowCareful]; ok && !row.testsSet && !row.Tests {
+		row.Tests = true
+		c.Loops[WorkflowCareful] = row
+		carefulTestsWarn = "loops.careful: set tests: true to keep the tester; read by key from the next minor"
+	}
+	c.applyShippedWorkflows() // WF2: before Validate, so a profile may name a shipped template or row
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -1753,6 +1761,9 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 		}
 	}
 	c.Warnings = append(c.Warnings, inherits...)
+	if carefulTestsWarn != "" {
+		c.Warnings = append(c.Warnings, carefulTestsWarn)
+	}
 	for _, r := range c.Repos() {
 		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
@@ -2348,6 +2359,12 @@ type Loop struct {
 	// searchSet is whether the row writes search, false included: an absent key inherits
 	// default's (WF10), and search: false does not. UnmarshalJSON sets it.
 	searchSet bool `json:"-"`
+	// Tests starts a public task of the row with the tester when its repository opts in
+	// (Repository.spec.workflow.testFirst); absent is off. It never switches the loop on.
+	Tests bool `json:"tests,omitempty"`
+	// testsSet is whether the row writes tests, false included: an absent key inherits
+	// default's (WF10), and tests: false does not. UnmarshalJSON sets it.
+	testsSet bool `json:"-"`
 	// Split offers the scoper a split of the class's hard tasks (splitter design SL3): absent, off.
 	// It needs scope: scoper on the same row, and never switches the loop on.
 	Split *SplitPolicy `json:"split,omitempty"`

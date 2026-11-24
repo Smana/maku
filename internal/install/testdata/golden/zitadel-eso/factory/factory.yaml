@@ -23,6 +23,7 @@ spec:
         childTier: standard
         maxChildren: 4
       stallSteps: 80
+      tests: true
     default:
       judge: none
       scope: "off"

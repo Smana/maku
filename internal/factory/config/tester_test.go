@@ -22,8 +22,8 @@ func TestTestFirstIsTheRepositorysAndNeedsTheContractCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := c.RepositoryFor("Smana/cloud-native-ref")
-	if !r.TestFirstIn("careful") || r.TestFirstIn("standard") || r.TestFirstIn("quick") || r.Merge.ContractCheck != "Test contract 🧪" {
-		t.Fatalf("careful %v, standard %v, contractCheck %q", r.TestFirstIn("careful"), r.TestFirstIn("standard"), r.Merge.ContractCheck)
+	if !c.TestFirstIn(r, "careful") || c.TestFirstIn(r, "standard") || c.TestFirstIn(r, "quick") || r.Merge.ContractCheck != "Test contract 🧪" {
+		t.Fatalf("careful %v, standard %v, contractCheck %q", c.TestFirstIn(r, "careful"), c.TestFirstIn(r, "standard"), r.Merge.ContractCheck)
 	}
 	for _, tc := range []struct{ name, from, to, want string }{
 		{"no contract check", "      contractCheck: \"Test contract 🧪\"\n", "", "workflow.testFirst needs merge.contractCheck"},
@@ -70,5 +70,43 @@ func TestALiveClassWithoutHoldoutsWarns(t *testing.T) {
 		return strings.Contains(w, "class docs-links of Smana/cloud-native-ref is live without holdoutChecks")
 	}) {
 		t.Fatalf("warnings %v", c.Warnings)
+	}
+}
+
+func TestTheTesterFollowsTheRowKey(t *testing.T) {
+	c := mustParse(t, good+`workflows:
+  thorough: {template: pair, loop: thorough}
+loops:
+  thorough: {tests: true}
+`)
+	r := &Repository{Workflow: RepositoryWorkflow{TestFirst: true}}
+	if !c.TestFirstIn(r, "thorough") {
+		t.Fatal("a custom workflow whose row sets tests runs no tester")
+	}
+	if c.TestFirstIn(r, "standard") {
+		t.Fatal("standard runs the tester")
+	}
+	if c.TestFirstIn(&Repository{}, "thorough") {
+		t.Fatal("the repository did not opt in")
+	}
+}
+
+func TestTheShippedCarefulRowSetsTests(t *testing.T) {
+	c := mustParse(t, noTemplates)
+	if !c.TestFirstIn(&Repository{Workflow: RepositoryWorkflow{TestFirst: true}}, "careful") {
+		t.Fatal("careful lost its tester")
+	}
+}
+
+func TestACarefulRowWithoutTheKeyKeepsTheTesterAndWarns(t *testing.T) {
+	c := mustParse(t, good+`loops:
+  careful: {scope: scoper}
+`)
+	if !c.TestFirstIn(&Repository{Workflow: RepositoryWorkflow{TestFirst: true}}, "careful") {
+		t.Fatal("a platform's careful row lost the tester in the release that adds the key")
+	}
+	want := "loops.careful: set tests: true to keep the tester; read by key from the next minor"
+	if !slices.ContainsFunc(c.Warnings, func(w string) bool { return strings.Contains(w, want) }) {
+		t.Fatalf("no warning; got %v", c.Warnings)
 	}
 }

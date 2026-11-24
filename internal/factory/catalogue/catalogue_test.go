@@ -27,6 +27,7 @@ func live() *config.Config {
 				Escalation: &config.Escalation{NotConverged: "standard"}},
 			"none": {Template: config.TemplateNone},
 		},
+		Loops:      map[string]config.Loop{"careful": {Tests: true}},
 		Evaluation: config.Evaluation{Mode: "observe", ControlPercent: 20, Treatment: "careful"},
 		Repositories: []config.Repository{{
 			Name:        "Smana/cloud-native-ref",
