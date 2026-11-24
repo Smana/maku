@@ -62,7 +62,7 @@ func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
 		t.Fatalf("%d evaluations under one config, want 1", w.evaluations)
 	}
 	next := central()
-	delete(next.Policies, "revert")
+	delete(next.Policies, "docs-links")
 	next.Hash = "two"
 	next.Repositories = first.Repositories
 	src.c = next
@@ -70,7 +70,7 @@ func TestObserveReevaluatesAnUnchangedFileUnderANewConfig(t *testing.T) {
 	if w.evaluations != 2 {
 		t.Fatalf("%d evaluations after a new config, want 2", w.evaluations)
 	}
-	if s, _ := w.Snapshot("o/r"); s.Refused["revert"].Reason == "" {
-		t.Fatalf("the file binds revert, which the new config no longer serves: %+v", s)
+	if s, _ := w.Snapshot("o/r"); s.Refused["docs-links"].Reason == "" {
+		t.Fatalf("the file binds docs-links, which the new config no longer serves: %+v", s)
 	}
 }

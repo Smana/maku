@@ -46,7 +46,7 @@ set -euo pipefail
 
 class="" outcomes="" since="" replay="" strictness="" window="168h" budget="0.10" repo="${GH_REPO:-Smana/cloud-native-ref}" limit=500
 usage() { echo "usage: $0 --class <class> [--repo owner/name] [--limit n] [--author login] [--replay lines=N|files=N] [--strictness] [--outcomes --since <date> [--window 168h] [--budget 0.10]]" >&2; }
-author="app/ogenki-agents" factory="ogenki-agent-factory" merger="ogenki-agent-merger"
+author="app/ogenki-agents" factory="${TALLY_FACTORY:-ogenki-agent-factory[bot]}" merger="ogenki-agent-merger"
 while [ $# -gt 0 ]; do
   case "$1" in
     --class) class="$2"; shift 2 ;;
@@ -107,7 +107,7 @@ if [ -n "$outcomes" ]; then
     --argjson reverts "$(reverts_of)" --argjson followed "$followed" "$revert_defs"'
     (($now | fromdateiso8601) - ($window | tonumber) * 3600) as $cutoff
     | [ .[] | . as $pr
-        | ([.comments[] | select((.author.login | login) == $factory)
+        | ([.comments[] | select(if ($factory | endswith("[bot]")) then .author.login == $factory else ((.author.login | login) == $factory) end)
             | select(.body | test("event=monitor-[0-9]+ verdict=[a-z]+"))] | sort_by(.createdAt) | last) as $c
         | (if $c == null then "none" else ($c.body | capture("event=monitor-[0-9]+ verdict=(?<v>[a-z]+)").v) end) as $verdict
         | [ (select($reverted | index($pr.number)) | "reverted"),
@@ -146,15 +146,15 @@ jq -r --arg class "$class" --arg repo "$repo" --arg factory "$factory" --arg mer
   # A would-merge of --class: a would-arm comment naming it, or its shadow line beside another
   # policy'"'"'s decision (MR1).
   def wouldarm: (test("event=would-arm-[0-9]+ head=[0-9a-f]+") and contains("would auto-merge: `\($class)`"))
-    or ([records[] | select(.class == $class and .v == "shadow")] | length > 0);
+    or ([records[] | select(.class == $class and .v == "shadow" and .r == "shadow_would_arm")] | length > 0);
   def judgedhead: ([capture("event=would-arm-[0-9]+ head=(?<h>[0-9a-f]+)")] | first | .h)
-    // ([records[] | select(.class == $class and .v == "shadow")] | first | .head);
+    // ([records[] | select(.class == $class and .v == "shadow" and .r == "shadow_would_arm")] | first | .head);
   # The class rows whose refusal --strictness counts.
   ["patch_too_large", "file_not_allowed", "file_protected", "file_added_or_deleted", "class_mismatch",
    "holdout_red", "oracle_finding_open", "oracle_unrequested", "release_age_red"] as $rows
   | [ .[]
       | . as $pr
-      | [ .comments[] | select((.author.login | login) == $factory) ] as $own
+      | [ .comments[] | select(if ($factory | endswith("[bot]")) then .author.login == $factory else ((.author.login | login) == $factory) end) ] as $own
       | ([ $own[] | select(.body | wouldarm) ] | sort_by(.createdAt) | last) as $last
       | ([ $own[] | select(.body | record != null) ] | sort_by(.createdAt) | last) as $dc
       | { n: .number,

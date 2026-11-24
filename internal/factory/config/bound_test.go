@@ -33,7 +33,7 @@ func listShape(t *testing.T, base string, edit func(top, entry map[string]any)) 
 	return b
 }
 
-// PR7: the repository rules that name classes read the bound names, so a binding that did not
+// PR7: repository rules that name classes read the bound names, so a binding that did not
 // resolve (its class absent) never refuses the repository.
 func TestBoundNamesHoldTheRepositoryRules(t *testing.T) {
 	bound := func(names ...string) func(top, e map[string]any) {
@@ -53,16 +53,10 @@ func TestBoundNamesHoldTheRepositoryRules(t *testing.T) {
 	if r := c.Repos()[0]; !slices.Equal(r.Bound, []string{"docs-links", "revert", "dead-links"}) {
 		t.Fatalf("bound %v", r.Bound)
 	}
-	for _, tc := range []struct {
-		names []string
-		want  string
-	}{
-		{[]string{"docs-links", "dead-links"}, "class revert is required (OD-8)"},
-		{[]string{"docs-links", "revert"}, `schedule dead-links-weekly: class "dead-links" is not a declared policy`},
-	} {
-		if _, err := ParseAssembled(listShape(t, good, bound(tc.names...))); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("bound %v: %v, want %q", tc.names, err, tc.want)
-		}
+	names := []string{"docs-links", "revert"}
+	want := `schedule dead-links-weekly: class "dead-links" is not a declared policy`
+	if _, err := ParseAssembled(listShape(t, good, bound(names...))); err == nil || !strings.Contains(err.Error(), want) {
+		t.Errorf("bound %v: %v, want %q", names, err, want)
 	}
 }
 

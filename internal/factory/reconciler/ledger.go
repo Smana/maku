@@ -141,9 +141,14 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 	r.ledger.mu.Unlock()
 
 	var rg []forge.LabelledPull
+	regressionPageFull := false
 	if ext {
 		var err error
 		if rg, err = r.merger(ctx).PullsWithLabel(ctx, RegressionLabel); err != nil {
+			return nil, fmt.Errorf("read the merge ledger: %w", err)
+		}
+		regressionPageFull = len(rg) >= ledgerPage
+		if rg, err = r.trustedLabels(ctx, rc, rg, RegressionLabel); err != nil {
 			return nil, fmt.Errorf("read the merge ledger: %w", err)
 		}
 	}
@@ -156,20 +161,28 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 	}
 	fetched := make(map[string][]Merge, len(missing))
 	for _, class := range missing {
-		auto, err := r.merger(ctx).PullsWithLabel(ctx, AutoMergedLabel(class))
+		autoLabel := AutoMergedLabel(class)
+		auto, err := r.merger(ctx).PullsWithLabel(ctx, autoLabel)
 		if err != nil {
 			return nil, fmt.Errorf("read the merge ledger: %w", err)
 		}
 		if r.pageTruncated(auto, rc.Merge.Breaker.Window) {
 			return nil, errLedgerTruncated
 		}
+		if auto, err = r.trustedLabels(ctx, rc, auto, autoLabel); err != nil {
+			return nil, fmt.Errorf("read the merge ledger: %w", err)
+		}
 		var all []forge.LabelledPull
 		if ext {
-			if all, err = r.merger(ctx).PullsWithLabel(ctx, MergedLabel(class)); err != nil {
+			mergedLabel := MergedLabel(class)
+			if all, err = r.merger(ctx).PullsWithLabel(ctx, mergedLabel); err != nil {
 				return nil, fmt.Errorf("read the merge ledger: %w", err)
 			}
 			if r.pageTruncated(all, rc.Merge.Breaker.Window) {
 				return nil, errLedgerTruncated
+			}
+			if all, err = r.trustedLabels(ctx, rc, all, mergedLabel); err != nil {
+				return nil, fmt.Errorf("read the merge ledger: %w", err)
 			}
 		}
 		var ms []Merge
@@ -190,13 +203,17 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 		}
 		newestFirst(ms)
 		for i := range ms[:min(len(ms), rc.Merge.Breaker.Window)] {
-			if ext && len(rg) >= ledgerPage && ms[i].Number < oldestRegressed {
+			if ext && regressionPageFull && ms[i].Number < oldestRegressed {
 				return nil, errLedgerTruncated // its regression label may be past the page
 			}
 			// A revert PR counts, as a Task counts from the revert's opening: a rebuild must not
 			// change the breaker's verdict. A drill's does not (AM6).
-			rv, err := r.merger(ctx).PullsWithLabel(ctx, RevertOfLabel(ms[i].Number))
+			revertLabel := RevertOfLabel(ms[i].Number)
+			rv, err := r.merger(ctx).PullsWithLabel(ctx, revertLabel)
 			if err != nil {
+				return nil, fmt.Errorf("read the merge ledger: %w", err)
+			}
+			if rv, err = r.trustedLabels(ctx, rc, rv, revertLabel); err != nil {
 				return nil, fmt.Errorf("read the merge ledger: %w", err)
 			}
 			for _, p := range rv {
@@ -210,8 +227,12 @@ func (r *Reconciler) githubLedger(ctx context.Context, rc *config.Repository) (m
 				continue
 			}
 			// A fix in review is not yet a fix: only a merged follow-up counts.
-			fu, err := r.merger(ctx).PullsWithLabel(ctx, FollowUpOfLabel(ms[i].Number))
+			followUpLabel := FollowUpOfLabel(ms[i].Number)
+			fu, err := r.merger(ctx).PullsWithLabel(ctx, followUpLabel)
 			if err != nil {
+				return nil, fmt.Errorf("read the merge ledger: %w", err)
+			}
+			if fu, err = r.trustedLabels(ctx, rc, fu, followUpLabel); err != nil {
 				return nil, fmt.Errorf("read the merge ledger: %w", err)
 			}
 			ms[i].FollowUp = slices.ContainsFunc(fu, func(p forge.LabelledPull) bool { return p.State == "MERGED" })
@@ -277,15 +298,13 @@ func (r *Reconciler) label(ctx context.Context, pr forge.PR, l string) {
 	}
 }
 
-// drill reports whether a revert PR is a drill (AM6): it carries factory/drill, and the newest
-// label event adding it is the merger's (which copies only a maintainer's) or a maintainer's,
-// verified as factory/revert is. Anyone else's label, or truncated events, make no drill: the
-// revert counts.
-func (r *Reconciler) drill(ctx context.Context, rc *config.Repository, p forge.LabelledPull) (bool, error) {
-	if !slices.Contains(p.Labels, DrillLabel) {
+// trustedLabel reports whether the newest event adding label was by the merger or a maintainer.
+// Missing or truncated history, and a maintainer whose write access cannot be verified, fail closed.
+func (r *Reconciler) trustedLabel(ctx context.Context, rc *config.Repository, p forge.LabelledPull, label string) (bool, error) {
+	if !slices.Contains(p.Labels, label) {
 		return false, nil
 	}
-	evs, err := r.gh(ctx).LabelEvents(ctx, p.Number, DrillLabel)
+	evs, err := r.gh(ctx).LabelEvents(ctx, p.Number, label)
 	if errors.Is(err, forge.ErrEventsTruncated) {
 		return false, nil
 	}
@@ -307,4 +326,23 @@ func (r *Reconciler) drill(ctx context.Context, rc *config.Repository, p forge.L
 		return ok, nil
 	}
 	return true, nil
+}
+
+func (r *Reconciler) trustedLabels(ctx context.Context, rc *config.Repository, pulls []forge.LabelledPull, label string) ([]forge.LabelledPull, error) {
+	out := make([]forge.LabelledPull, 0, len(pulls))
+	for _, p := range pulls {
+		ok, err := r.trustedLabel(ctx, rc, p, label)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+// drill reports whether a revert PR is a maintainer-authorized drill (AM6).
+func (r *Reconciler) drill(ctx context.Context, rc *config.Repository, p forge.LabelledPull) (bool, error) {
+	return r.trustedLabel(ctx, rc, p, DrillLabel)
 }

@@ -293,6 +293,24 @@ author: {adopt: {logins: ["`+login+`"], branches: ['`+branch+`']}}
 
 func slicesClone(o []Object) []Object { return append([]Object(nil), o...) }
 
+func TestCatalogCutoverSkipsImpliedBindings(t *testing.T) {
+	r := boundRepo(t, "cutover", "Smana/cutover", 1, "")
+	r.Spec["classAuthority"] = config.ClassAuthorityRepository
+	delete(r.Spec, "mergePolicies")
+	objs := []Object{r,
+		{Kind: KindMergePolicy, Name: "docs-links", Catalog: true, Spec: map[string]any{}},
+		{Kind: KindMergePolicy, Name: "revert", Catalog: true, Spec: map[string]any{}},
+	}
+	got, err := Assemble(file(t), objs)
+	if err != nil {
+		t.Fatalf("cutover with the catalog on: %v; refused %+v", err, got.Refused)
+	}
+	rc := got.Config.RepositoryFor("Smana/cutover")
+	if rc == nil || len(rc.Classes) != 0 || len(got.Bindings) != 0 {
+		t.Fatalf("repository %+v, implied outcomes %+v", rc, got.Bindings)
+	}
+}
+
 // B14: the guardrails cap every binding.
 func TestBindingGuardrails(t *testing.T) {
 	f := strings.Replace(string(file(t)), "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
@@ -305,9 +323,6 @@ func TestBindingGuardrails(t *testing.T) {
 	}
 	if b := binding(r, "maku", "docs-links"); b.Reason != config.ReasonGuardrailMismatch {
 		t.Fatalf("docs-links: %+v", b)
-	}
-	if c := r.Config.RepositoryFor("Smana/maku").Classes["revert"]; c.MaxPerDay != 1 {
-		t.Fatalf("an unset cap inherits the guardrail's: %d", c.MaxPerDay)
 	}
 }
 
@@ -361,9 +376,14 @@ func TestPutBackClassIsRechecked(t *testing.T) {
 		{name: "live without allowedFiles once policyBot is off", last: config.Class{Live: true, HoldoutChecks: []string{"validate"}},
 			merge: func(m map[string]any) { m["policyBot"] = false; m["gateStatus"] = true }},
 		{name: "unbounded in shadow", last: config.Class{Shadow: true}},
-		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2, AllowedFiles: []string{`^docs/.+\.md$`}},
+		{name: "a cap over a tightened guardrail", last: config.Class{Shadow: true, MaxPerDay: 2, AllowedFiles: []string{`^docs/.+\.md$`}}, served: true,
 			file: func(f string) string {
 				return strings.Replace(f, "evaluation:", "mergeGuardrails: {maxPerDay: 1}\nevaluation:", 1)
+			},
+			check: func(t *testing.T, c config.Class) {
+				if c.MaxPerDay != 1 {
+					t.Fatalf("maxPerDay %d, want the clamped guardrail's 1", c.MaxPerDay)
+				}
 			}},
 		{name: "an unset cap inherits the guardrail", last: config.Class{Shadow: true, AllowedFiles: []string{`^docs/.+\.md$`}}, served: true,
 			file: func(f string) string {
@@ -446,9 +466,8 @@ func TestAPolicyWithRemovedWorkflowFieldsIsRefused(t *testing.T) {
 	}
 }
 
-// Review focus 1, MR7: a policy above a default guardrail, with no guardrail set, does not
-// vanish silently: its binding is GuardrailMismatch and the message names the cap and the default.
-func TestPolicyAboveDefaultGuardrailIsNamed(t *testing.T) {
+// MR7 and MT1: a policy above a default guardrail stays bound with its cap clamped to the default.
+func TestPolicyAboveDefaultGuardrailIsClamped(t *testing.T) {
 	big := classPolicy(t, "docs", 2, "allowedFiles: ['^.+\\.md$']\nmaxModifiedLines: 400\n")
 	r, err := Assemble(file(t), append(specPolicies(t)[:3:3], big, boundRepo(t, "maku", "Smana/maku", 1, `
 - {name: docs-links, mode: shadow, holdoutChecks: [validate]}
@@ -462,12 +481,26 @@ func TestPolicyAboveDefaultGuardrailIsNamed(t *testing.T) {
 		t.Fatalf("the policy alone was refused: %+v", r.Refused)
 	}
 	b := binding(r, "maku", "docs")
-	if b == nil || b.Reason != config.ReasonGuardrailMismatch || !strings.Contains(b.Message, "maxModifiedLines 400") || !strings.Contains(b.Message, "300") {
+	if b == nil || !b.Accepted || !b.Served {
 		t.Fatalf("docs: %+v", b)
 	}
-	// The default caps and paths reach every other bound class.
-	c := r.Config.RepositoryFor("Smana/maku").Classes["revert"]
+	// The policy's 400-line cap clamps to 300; the other defaults reach the class too.
+	c := r.Config.RepositoryFor("Smana/maku").Classes["docs"]
 	if c.MaxModifiedLines != 300 || c.MaxPatchFiles != 10 || c.MaxPerDay != 5 || !slices.Contains(c.ProtectedFiles, `^CODEOWNERS$`) {
-		t.Fatalf("revert under the defaults: %+v", c)
+		t.Fatalf("docs under the defaults: %+v", c)
+	}
+}
+
+func TestLegacyLiveRevertBindingSetsAutoRevert(t *testing.T) {
+	r, err := Assemble(file(t), append(specPolicies(t), boundRepo(t, "maku", "Smana/maku", 1, `
+- {name: docs-links, mode: shadow, holdoutChecks: [validate]}
+- {name: revert, mode: live, holdoutChecks: [validate]}
+`)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rc := r.Config.RepositoryFor("Smana/maku")
+	if rc == nil || !rc.Merge.AutoRevert || !rc.Classes["revert"].Live {
+		t.Fatalf("%+v", rc)
 	}
 }

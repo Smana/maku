@@ -1,5 +1,5 @@
 {{- /*
-The merge policy catalog (merge policies review MR2, MR6): four MergePolicy objects in the factory's
+The merge policy catalog (merge policies review MR2, MR6): three MergePolicy objects in the factory's
 namespace, labelled maku.ogenki.io/catalog. Every Repository the factory serves evaluates each one it
 does not bind, in shadow; a binding with mode disabled switches one off for its repository. Each policy
 carries its own bound (allowedFiles or a diffShape), since no binding supplies one. mergePolicies.catalog.exclude
@@ -11,11 +11,10 @@ catalog's fails the render (afumbrella.catalogOwner) rather than the apply.
 {{- if and $mf.enabled $cat.enabled -}}
 {{- $specs := dict
   "docs-links" (dict "description" "Link targets in Markdown, nothing else." "diffShape" "links-only" "modifyOnly" true "maxModifiedLines" 20 "evidence" "low")
-  "revert" (dict "description" "A revert whose diff changes link targets only." "diffShape" "links-only" "modifyOnly" true "maxModifiedLines" 20 "evidence" "low")
   "deps-patch" (dict "description" "Renovate patch updates, after their release age." "author" (dict "adopt" (dict "logins" (list "renovate[bot]") "branches" (list "^renovate/"))) "diffShape" "semver-patch" "modifyOnly" true "maxPatchFiles" 3 "maxModifiedLines" 10 "releaseAgeCheck" "renovate/stability-days" "maxPerDay" 2 "evidence" "low")
   "docs" (dict "description" "Prose in Markdown files, small changes." "allowedFiles" (list "^.+\\.mdx?$") "maxPatchFiles" 5 "maxModifiedLines" 100 "maxPerDay" 2 "evidence" "standard")
 -}}
-{{- range $name := list "docs-links" "revert" "deps-patch" "docs" }}
+{{- range $name := list "docs-links" "deps-patch" "docs" }}
 {{- if not (has $name ($cat.exclude | default list)) }}
 {{- include "afumbrella.catalogOwner" (dict "namespace" $.Release.Namespace "name" $name) }}
 ---

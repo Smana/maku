@@ -19,17 +19,16 @@ func central() *config.Config {
 	}, Policies: map[string]config.ServedPolicy{"docs-links": {Generation: 1}, "revert": {Generation: 1}}}
 }
 
-// OD-8 on a binding file, and the unarmed line the error gives; a binding that does not resolve
-// never invalidates the file (B9).
+// A file may bind one policy without mandatory companions; an unserved binding never invalidates
+// the file (B9).
 func TestValidate(t *testing.T) {
 	head := "factory: aws-0\nmergePolicies:\n"
 	required := "  - {name: docs-links, mode: live}\n  - {name: revert, mode: live}\n"
 	for name, tc := range map[string]struct{ raw, want string }{
-		"fine":           {head + required, ""},
-		"fence only":     {"factory: aws-0\n", ""},
-		"no revert":      {head + "  - {name: docs-links, mode: live}\n", "revert"},
-		"no revert, how": {head + "  - {name: docs-links, mode: live}\n", `"- {name: revert, mode: disabled}"`},
-		"unserved":       {head + required + "  - {name: docs, mode: shadow}\n", ""},
+		"fine":          {head + required, ""},
+		"fence only":    {"factory: aws-0\n", ""},
+		"single policy": {head + "  - {name: docs-links, mode: live}\n", ""},
+		"unserved":      {head + required + "  - {name: docs, mode: shadow}\n", ""},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f, err := Parse([]byte(tc.raw))

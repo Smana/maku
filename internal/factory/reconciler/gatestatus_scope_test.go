@@ -57,15 +57,16 @@ func TestAGreenRevertCarriesTheMergersSuccess(t *testing.T) {
 	g.f.SetCommitChecks("m1", red.Runs...)
 	got := g.reconcile(t, "3buqdlot", 1)
 	rv := got.Status.PullRequest.RevertNumber
-	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "r1"})
+	head := got.Status.PullRequest.RevertHeadSHA
+	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: head})
 	g.f.SetChecks(rv, green("SUCCESS"))
 	g.reconcile(t, "3buqdlot", 1)
 	seq := g.f.GateSequence()
-	i, j := slices.Index(seq, "status r1 success"), slices.Index(seq, "merge PR_revert r1")
+	i, j := slices.Index(seq, "status "+head+" success"), slices.Index(seq, "merge PR_revert "+head)
 	if i < 0 || j < 0 || i > j {
 		t.Fatalf("success before the revert's merge: %q", seq)
 	}
-	if s := g.f.Statuses("r1"); s[len(s)-1].Description != "revert: merging" {
+	if s := g.f.Statuses(head); s[len(s)-1].Description != "revert: merging" {
 		t.Fatalf("%+v", s)
 	}
 }

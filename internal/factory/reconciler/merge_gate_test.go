@@ -156,7 +156,10 @@ func TestShadowRecordedForEachHoldingPolicy(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseAwaitingCI)
 	predict(t, g, "review") // the label names neither policy: the diff picks both
 	g.r.Decisions = &decision.Recorder{}
-	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Live: true}, "revert": {Shadow: true}}
+	g.r.Cfg.Current().Repositories[0].Classes = map[string]config.Class{
+		"docs-links": {Live: true},
+		"docs":       {Shadow: true, AllowedFiles: []string{`^.+\.md$`}, DiffShape: "links-only"},
+	}
 	g.f.SetChecks(12, green("SUCCESS"))
 	g.f.SetFiles(map[string]string{testFile: "[x](https://example.com/old)"}, map[string]string{testFile: "[x](https://example.com/new)"})
 	tk := g.reconcile(t, "3buqdlot", 1)
@@ -165,12 +168,12 @@ func TestShadowRecordedForEachHoldingPolicy(t *testing.T) {
 	}
 	c := strings.Join(g.f.Comments(12), "\n")
 	primary := strings.Index(c, "class=docs-links decision=arm:armed ")
-	shadow := strings.Index(c, "class=revert decision=shadow:shadow_would_arm ")
+	shadow := strings.Index(c, "class=docs decision=shadow:shadow_would_arm ")
 	if primary < 0 || shadow < primary {
 		t.Fatalf("two marker lines, the decision's first:\n%s", c)
 	}
 	latest := g.r.Decisions.Latest(tk.Spec.Repository)
-	if latest["docs-links"].Verdict != "arm" || latest["revert"].Verdict != "shadow" {
+	if latest["docs-links"].Verdict != "arm" || latest["docs"].Verdict != "shadow" {
 		t.Fatalf("%+v", latest)
 	}
 }

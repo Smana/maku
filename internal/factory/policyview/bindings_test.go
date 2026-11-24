@@ -68,8 +68,8 @@ func TestPolicyPreviewListsItsConsumers(t *testing.T) {
 	}
 }
 
-// B16: a binding edit gives the Repository manifest and each binding's resolution; dropping
-// revert is refused (OD-8).
+// B16: a binding edit gives the Repository manifest and each binding's resolution, including
+// dropping an optional policy.
 func TestBindingPreview(t *testing.T) {
 	cfg := boundRig(t)
 	rc := &cfg.Repositories[0]
@@ -94,8 +94,8 @@ func TestBindingPreview(t *testing.T) {
 	}
 
 	dropped := []config.Binding{rc.Bindings[0], rc.Bindings[2]}
-	if pv := CheckBindings(cfg, rc, rep, dropped); pv.Valid || !strings.Contains(strings.Join(pv.Errors, " "), "OD-8") {
-		t.Fatalf("revert dropped: %+v", pv)
+	if pv := CheckBindings(cfg, rc, rep, dropped); !pv.Valid || len(pv.Errors) != 0 {
+		t.Fatalf("an optional policy can be dropped: %+v", pv)
 	}
 	unknown := slices.Concat(rc.Bindings, []config.Binding{{Name: "nope", Mode: "disabled"}})
 	if pv := CheckBindings(cfg, rc, rep, unknown); !pv.Valid || pv.Bindings[3].Resolves || pv.Bindings[3].Reason != "MissingRef" {

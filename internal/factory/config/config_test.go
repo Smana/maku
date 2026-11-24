@@ -71,6 +71,18 @@ repositories:
       breaker: {window: 10, maxReverts: 1}
 `
 
+func TestMergeMaxPerDayDefaultsToTheGuardrail(t *testing.T) {
+	raw := strings.Replace(good, "      maxPerDay: 10\n", "", 1)
+	raw = strings.Replace(raw, "repositories:", "mergeGuardrails: {maxPerDay: 2}\nrepositories:", 1)
+	c, err := Parse([]byte(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Repositories[0].Merge.PerDay(); got != 2 {
+		t.Fatalf("merge.maxPerDay = %d, want the guardrail's 2", got)
+	}
+}
+
 func TestGoodConfigParses(t *testing.T) {
 	c, err := Parse([]byte(good))
 	if err != nil {
@@ -390,11 +402,9 @@ func TestBadConfigsFail(t *testing.T) {
 			"template investigate: only an implementer writes"},
 		"unknown data class": {"dataClass: public", "dataClass: secret", "defaults.dataClass is public or internal"},
 		"no predicted class": {", predictedClass: review}", "}", "defaults.predictedClass is required"},
-		// §5.2: C7's endpoint, the OD-14 share, and the two entry classes are required.
+		// §5.2: C7's endpoint and the OD-14 share are required.
 		"control percent above 100":  {"controlPercent: 10", "controlPercent: 101", "triage.controlPercent must be 0..100"},
 		"control percent negative":   {"controlPercent: 10", "controlPercent: -1", "triage.controlPercent must be 0..100"},
-		"no docs-links class":        {"classes: {docs-links: {shadow: true}, revert: {shadow: true}", "classes: {revert: {shadow: true}", "class docs-links is required (OD-8)"},
-		"no revert class":            {"classes: {docs-links: {shadow: true}, revert: {shadow: true}, ", "classes: {docs-links: {shadow: true}, ", "class revert is required (OD-8)"},
 		"review declared as a class": {"classes: {docs-links:", "classes: {review: {live: true}, docs-links:", "class review: review is not a policy"},
 		// R32: a class is decided live or held in shadow, never both.
 		"live and shadow": {"docs-links: {shadow: true}", "docs-links: {live: true, shadow: true}", "class docs-links: live and shadow never together"},

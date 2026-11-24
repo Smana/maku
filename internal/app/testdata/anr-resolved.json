@@ -45,18 +45,7 @@
       "maxPerDay": 5
     },
     "revert": {
-      "shadow": true,
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "holdoutChecks": [
-        "validate"
-      ],
-      "maxPerDay": 5
+      "shadow": true
     }
   },
   "Smana/cloud-native-ref": {
@@ -205,18 +194,7 @@
       "maxPerDay": 5
     },
     "revert": {
-      "live": true,
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "holdoutChecks": [
-        "Check the documentation links 🔗"
-      ],
-      "maxPerDay": 5
+      "live": true
     }
   },
   "Smana/runlore": {
@@ -235,18 +213,7 @@
       "maxPerDay": 5
     },
     "revert": {
-      "shadow": true,
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "holdoutChecks": [
-        "build"
-      ],
-      "maxPerDay": 5
+      "shadow": true
     }
   },
   "Smana/runlore-kb": {
@@ -298,18 +265,7 @@
       "requiredLabel": "ready-to-merge"
     },
     "revert": {
-      "shadow": true,
-      "protectedFiles": [
-        "^\\.github/",
-        "^\\.policy\\.yml$",
-        "^CODEOWNERS$"
-      ],
-      "maxPatchFiles": 10,
-      "maxModifiedLines": 300,
-      "holdoutChecks": [
-        "validate"
-      ],
-      "maxPerDay": 5
+      "shadow": true
     }
   }
 }

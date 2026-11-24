@@ -261,7 +261,7 @@ func TestEqualNamesWhatTheGuardrailsChange(t *testing.T) {
 	}
 	d := strings.Join(Equal(legacyServed(t), after.Config), "\n")
 	for _, want := range []string{
-		"Smana/runlore-kb kb-entries: served before only",      // 5 a day, over the guardrail: refused
+		"Smana/runlore-kb kb-entries: maxPerDay 5 -> 2",        // over the guardrail: clamped
 		"Smana/cloud-native-ref alert-rules: maxPerDay 5 -> 2", // no cap: the default's, then the guardrail's
 	} {
 		if !strings.Contains(d, want) {

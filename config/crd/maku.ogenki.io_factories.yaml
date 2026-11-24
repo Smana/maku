@@ -304,6 +304,11 @@ spec:
                       ApproveToMerge: a maintainer's APPROVED review of the current head arms the merger on an
                       agents pull request (human path AM1). Off, the approval hands off to a human merge.
                     type: boolean
+                  autoRevert:
+                    description: |-
+                      AutoRevert merges the factory's own revert pull request at the original head GitHub created.
+                      It replaces the deprecated live `revert` policy binding; unset is false.
+                    type: boolean
                   awaitingCIFor:
                     description: |-
                       AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,

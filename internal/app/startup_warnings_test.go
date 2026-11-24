@@ -17,7 +17,7 @@ import (
 )
 
 // Offline proof 4, startup: the deployed config lists the tester in `pair` and two live classes without
-// holdoutChecks. It loads without the tester, the warnings are logged and the gauge reads 1.
+// holdoutChecks. It loads without the tester; TO5 is gone, while the diagnostic gauge still reads 1.
 func TestStartupWithATesterTemplateAndALiveClassWithoutHoldouts(t *testing.T) {
 	raw := strings.Replace(factoryCfg, "classes: {docs-links: {shadow: true}, revert: {shadow: true}",
 		"classes: {docs-links: {live: true}, revert: {live: true}", 1)
@@ -40,10 +40,13 @@ func TestStartupWithATesterTemplateAndALiveClassWithoutHoldouts(t *testing.T) {
 	m.ListRepositories("Smana/cloud-native-ref")
 	var logs bytes.Buffer
 	warnConfig(slog.New(slog.NewTextHandler(&logs, nil)), cfg, m)
-	for _, want := range []string{"template pair: tester is the test writer", "class docs-links of Smana/cloud-native-ref is live without holdoutChecks",
+	if !strings.Contains(logs.String(), "template pair: tester is the test writer") {
+		t.Errorf("no tester warning:\n%s", logs.String())
+	}
+	for _, unwanted := range []string{"class docs-links of Smana/cloud-native-ref is live without holdoutChecks",
 		"class revert of Smana/cloud-native-ref is live without holdoutChecks"} {
-		if !strings.Contains(logs.String(), want) {
-			t.Errorf("no warning %q:\n%s", want, logs.String())
+		if strings.Contains(logs.String(), unwanted) {
+			t.Errorf("removed TO5 warning %q:\n%s", unwanted, logs.String())
 		}
 	}
 	rec := httptest.NewRecorder()

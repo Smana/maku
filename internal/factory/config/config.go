@@ -688,6 +688,10 @@ type Merge struct {
 	CheckReruns int32 `json:"checkReruns"`
 	// +optional
 	VerifyFor Duration `json:"verifyFor"` // 30m of main's CI after an auto-merge
+	// AutoRevert merges the factory's own revert pull request at the original head GitHub created.
+	// It replaces the deprecated live `revert` policy binding; unset is false.
+	// +optional
+	AutoRevert bool `json:"autoRevert,omitempty"`
 	// +optional
 	RevertWindow Duration `json:"revertWindow"` // 7 days for a maintainer's factory/revert
 	// AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
@@ -1743,6 +1747,12 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 		carefulTestsWarn = "loops.careful: set tests: true to keep the tester; read by key from the next minor"
 	}
 	c.applyShippedWorkflows() // WF2: before Validate, so a profile may name a shipped template or row
+	perDay := c.MergeGuardrails.WithDefaults().MaxPerDay
+	for i := range c.Repositories {
+		if c.Repositories[i].Merge.MaxPerDay == 0 {
+			c.Repositories[i].Merge.MaxPerDay = perDay
+		}
+	}
 	if err := c.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -1763,13 +1773,6 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	c.Warnings = append(c.Warnings, inherits...)
 	if carefulTestsWarn != "" {
 		c.Warnings = append(c.Warnings, carefulTestsWarn)
-	}
-	for _, r := range c.Repos() {
-		for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
-			if cl := r.Classes[name]; cl.Live && len(cl.HoldoutChecks) == 0 {
-				c.Warnings = append(c.Warnings, fmt.Sprintf("class %s of %s is live without holdoutChecks: refused from the next minor (TO5)", name, r.Name))
-			}
-		}
 	}
 	if !c.Meter.ByReplica() && (!c.Demo || c.Meter.Query != "") {
 		c.Warnings = append(c.Warnings, "meter.query sums the gateway replicas into one series: the meter keeps its per-run reading, so a stale replica's return charges "+
@@ -2203,11 +2206,6 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		bad("privateCode.acknowledged: false says nothing: set it to true, or remove privateCode (D3)")
 	}
 	cutOver := r.ClassAuthority == ClassAuthorityRepository // its file declares the classes, read at run time
-	for _, name := range []string{"docs-links", "revert"} {
-		if !r.declares(name) && !cutOver {
-			bad("class %s is required (OD-8)", name)
-		}
-	}
 	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
 		validateClass(name, r.Classes[name], bad)
 	}
@@ -2285,7 +2283,7 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 	// MR6 on a class the config file declares; a bound class met it in finish, which drops the
 	// binding rather than the repository.
 	for _, name := range slices.Sorted(maps.Keys(r.Classes)) {
-		if cl := r.Classes[name]; (cl.Live || cl.Shadow) && !cl.Bounded(name) {
+		if cl := r.Classes[name]; name != "revert" && (cl.Live || cl.Shadow) && !cl.Bounded(name) {
 			bad("class %s: an evaluated policy needs allowedFiles or a diffShape (MR6)", name)
 		}
 	}

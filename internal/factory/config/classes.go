@@ -328,7 +328,7 @@ func DiffShapes() []string {
 // BuiltInShape is the diff shape the gate holds a class to when its config names none: R52's
 // promise of the two entry classes (MC1: their conditions become built-in defaults at parity).
 func BuiltInShape(name string) string {
-	if name == "docs-links" || name == "revert" {
+	if name == "docs-links" {
 		return "links-only"
 	}
 	return ""

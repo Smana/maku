@@ -10,6 +10,8 @@ import (
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/Smana/maku/internal/factory/config"
 )
 
 // The fixtures are scripts/shadow-merge-tally_test.sh's: the Go count must agree with the script
@@ -272,5 +274,75 @@ func TestEvidenceCountsBothEras(t *testing.T) {
 	}
 	if e := Evaluate(sh, OutcomeTally{}, nil, repo, 10, true); e.Clean != 10 || !e.Eligible {
 		t.Fatalf("Evaluate = %+v, want Clean=10 and Eligible=true", e)
+	}
+}
+
+func decisionPR(n int, mergedBy, author, resolvedHash, reason string, companion string) PR {
+	head := fmt.Sprintf("c%03x", n)
+	marker := func(class, decision string) string {
+		return "<!-- agent-factory-decision head=" + head + " class=" + class + " decision=" + decision +
+			" files=1/3 lines=2/40 shape=ok holdout=n/a oracle=n/a age=n/a evidence=ok paused=false capped=false resolved=" +
+			resolvedHash + " reviewer=glm-5.3 -->"
+	}
+	body := marker("docs-links", "human:auto_merge_cap") + "\n" + marker("docs", "shadow:"+reason)
+	if companion != "" {
+		body += "\n" + companion
+	}
+	return PR{Number: n, HeadRefOid: head, MergedBy: &Actor{Login: mergedBy}, Comments: []Comment{{
+		Author: Actor{Login: author}, CreatedAt: time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC), Body: body}}}
+}
+
+func TestShadowReadsEveryPolicyRecord(t *testing.T) {
+	current := config.Class{Shadow: true, AllowedFiles: []string{`^docs/`}, MaxModifiedLines: 40}
+	h := config.ShortHash(config.ResolvedHash(current))
+	l := Logins{Factory: "ogenki-agent-factory[bot]", Merger: "ogenki-agent-merger[bot]", Maintainers: []string{"Smana"}}
+	pr := decisionPR(1, "Smana", l.Factory, h, "shadow_would_arm", "")
+	if got := ShadowUnder([]PR{pr}, nil, "docs", repo, current, nil, l); got.MergedUnchanged != 1 {
+		t.Fatalf("the companion policy's shadow record did not count: %+v", got)
+	}
+	pr = decisionPR(2, "Smana", l.Factory, h, "shadow_would_require_approval", "")
+	if got := ShadowUnder([]PR{pr}, nil, "docs", repo, current, nil, l); got.MergedUnchanged != 0 || len(got.Judged) != 0 {
+		t.Fatalf("an approval wait is not clean evidence: %+v", got)
+	}
+	pr = decisionPR(3, "Smana", "app/ogenki-agent-factory", h, "shadow_would_arm", "")
+	if got := ShadowUnder([]PR{pr}, nil, "docs", repo, current, nil, l); got.MergedUnchanged != 0 {
+		t.Fatalf("a slug-only impersonation counted: %+v", got)
+	}
+}
+
+func TestShadowUnderRequiresAMaintainerAndATightEnoughPolicy(t *testing.T) {
+	old := config.Class{Shadow: true, AllowedFiles: []string{`^docs/`}, MaxModifiedLines: 40}
+	h := config.ShortHash(config.ResolvedHash(old))
+	l := Logins{Factory: "ogenki-agent-factory[bot]", Merger: "ogenki-agent-merger[bot]", Maintainers: []string{"Smana"}}
+	var prs []PR
+	for i := range 20 {
+		prs = append(prs, decisionPR(i+1, "Smana", l.Factory, h, "shadow_would_arm", ""))
+	}
+	looser := config.Class{Shadow: true, AllowedFiles: []string{`^.+$`}, MaxModifiedLines: 300}
+	known := map[string]config.Class{h: old}
+	if got := ShadowUnder(prs, nil, "docs", repo, looser, known, l); got.MergedUnchanged != 0 {
+		t.Fatalf("a loosened policy inherited old trust: %+v", got)
+	}
+	tighter := old
+	tighter.MaxModifiedLines = 20
+	if got := ShadowUnder(prs, nil, "docs", repo, tighter, known, l); got.MergedUnchanged != 20 {
+		t.Fatalf("a tightening lost old trust: %+v", got)
+	}
+	if got := ShadowUnder(prs, nil, "docs", repo, tighter, nil, l); got.MergedUnchanged != 0 {
+		t.Fatalf("an unknown old generation counted: %+v", got)
+	}
+	bot := decisionPR(100, "some-other-bot[bot]", l.Factory, h, "shadow_would_arm", "")
+	if got := ShadowUnder([]PR{bot}, nil, "docs", repo, old, known, l); got.MergedUnchanged != 0 {
+		t.Fatalf("a bot's merge is not clean evidence: %+v", got)
+	}
+}
+
+func TestShadowAgreesWithTheTallyOnTwoPoliciesInOneComment(t *testing.T) {
+	prs := fixture[[]PR](t, "prs-two-policies.json")
+	l := Logins{Factory: "ogenki-agent-factory[bot]", Merger: "ogenki-agent-merger[bot]", Maintainers: []string{"Smana"}}
+	for _, class := range []string{"docs-links", "docs"} {
+		if got := Shadow(prs, nil, class, repo, l); got.MergedUnchanged != 1 || len(got.Judged) != 1 {
+			t.Fatalf("%s: %+v, want one clean decision and no approval wait", class, got)
+		}
 	}
 }

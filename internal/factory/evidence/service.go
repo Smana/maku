@@ -232,11 +232,14 @@ type head struct {
 type entry struct {
 	head    head
 	classes map[string]Evidence
-	at      time.Time // the last good read of classes
-	reason  string    // the newest read's failure, "" after a success
-	retry   time.Time // no read before
-	backoff time.Duration
-	done    chan struct{} // open while a read runs
+	// resolved remembers each policy generation observed by this process, by its short hash. It lets
+	// a later read compare old evidence structurally; unknown generations never count.
+	resolved map[string]map[string]config.Class
+	at       time.Time // the last good read of classes
+	reason   string    // the newest read's failure, "" after a success
+	retry    time.Time // no read before
+	backoff  time.Duration
+	done     chan struct{} // open while a read runs
 }
 
 var closed = func() chan struct{} { c := make(chan struct{}); close(c); return c }()
@@ -383,6 +386,7 @@ type class struct {
 	manifest bool
 	authors  []string
 	window   time.Duration
+	resolved config.Class
 	// minimum is the clean decisions its promotion needs: its policy's evidence level (MR4).
 	minimum int
 }
@@ -471,9 +475,15 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 		return head{}, nil, fmt.Errorf("evidence: %w", err)
 	}
 	drilled := RepoDrilled(reverts, rc.Name)
-	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin}
+	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin, Maintainers: append([]string{}, rc.Maintainers...)}
 	since := now.Add(-Lookback).UTC().Format("2006-01-02")
 	cs := s.classes(cfg, rc, file)
+	known := make(map[string]map[string]config.Class, len(cs))
+	s.mu.Lock()
+	for _, c := range cs {
+		known[c.name] = maps.Clone(s.entry(rc.Name).resolved[c.name])
+	}
+	s.mu.Unlock()
 	out := make([]Evidence, len(cs))
 	fc := &followUpCache{hits: map[int]bool{}}
 	// Each class reads serially, so Parallel classes at once is Parallel searches at once.
@@ -481,7 +491,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	g.SetLimit(cmp.Or(s.Parallel, DefaultParallel))
 	for i, c := range cs {
 		g.Go(func() error {
-			e, err := collect(gctx, src, c, reverts, rc.Name, drilled, l, now, since, fc)
+			e, err := collect(gctx, src, c, reverts, rc.Name, drilled, l, now, since, fc, known[c.name])
 			out[i] = e
 			return err
 		})
@@ -490,8 +500,18 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 		return head{}, nil, err
 	}
 	m := make(map[string]Evidence, len(cs))
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e := s.entry(rc.Name)
+	if e.resolved == nil {
+		e.resolved = map[string]map[string]config.Class{}
+	}
 	for i, c := range cs {
 		m[c.name] = out[i]
+		if e.resolved[c.name] == nil {
+			e.resolved[c.name] = map[string]config.Class{}
+		}
+		e.resolved[c.name][config.ShortHash(config.ResolvedHash(c.resolved))] = c.resolved
 	}
 	return h, m, nil
 }
@@ -702,6 +722,7 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 	agents := []string{searchLogin(cfg.AgentsLogin)}
 	var out []class
 	policy := func(c *class) {
+		c.resolved = rc.Classes[c.name]
 		if p, ok := cfg.Policies[c.name]; ok {
 			if p.Spec.Adopted() {
 				c.authors = adopters(p.Spec.Author.Adopt.Logins)
@@ -751,7 +772,7 @@ func (s *Service) classes(cfg *config.Config, rc *config.Repository, f *mergepol
 		case cl.Shadow:
 			mode = string(mergepolicy.ModeShadow)
 		}
-		c := class{name: name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, minimum: cl.MinClean(name)}
+		c := class{name: name, source: sourceCentral, mode: mode, authors: agents, window: defaultWindow, resolved: cl, minimum: cl.MinClean(name)}
 		if cl.Adopted() {
 			c.authors = adopters(cl.Author.Adopt.Logins)
 		}
@@ -848,7 +869,7 @@ func resolveFollowUps(ctx context.Context, src Source, nums []int, followed map[
 }
 
 // collect reads one class: the script's two modes, then MP7, with the repository's drill.
-func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string, cache *followUpCache) (Evidence, error) {
+func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string, cache *followUpCache, known map[string]config.Class) (Evidence, error) {
 	var judged []PR
 	for _, a := range c.authors {
 		prs, err := src.MergedRecords(ctx, fmt.Sprintf("author:%s merged:>=%s", a, since))
@@ -886,7 +907,7 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 			return Evidence{}, fmt.Errorf("evidence: %s: %w", c.name, err)
 		}
 	}
-	sh := Shadow(judged, reverts, c.name, repo, l)
+	sh := ShadowUnder(judged, reverts, c.name, repo, c.resolved, known, l)
 	out := Outcomes(merges, reverts, followed, repo, l, now, c.window)
 	return Evaluate(sh, out, reverts, repo, c.minimum, drilled), nil
 }

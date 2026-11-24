@@ -3,7 +3,6 @@
 package mergepolicy
 
 import (
-	"errors"
 	"fmt"
 	"slices"
 
@@ -47,25 +46,17 @@ type Report struct {
 }
 
 // ValidateFile is the whole file against the central config and the repository it is read for:
-// a file with no policy has none and passes. One that binds policies binds docs-links and revert
-// (OD-8), and passes whatever its bindings resolve to: each goes through config.Resolve against
-// the policy the factory serves, the guardrails and rc's merge (nil: none), and one that does not
-// resolve is reported in BindingErrors. review is bound off with no parameter (Parse's shape): its
-// merge authority stays implicit, in the repository's merge block.
+// a file with no policy has none and passes. Each binding goes through config.Resolve against the
+// policy the factory serves, the guardrails and rc's merge; one that does not resolve is reported
+// in BindingErrors. review is bound off with no parameter (Parse's shape): its merge authority
+// stays implicit, in the repository's merge block.
 func ValidateFile(f *File, rc *config.Repository, c *config.Config) (Report, error) {
 	var rep Report
 	if !f.Declares() {
 		return rep, nil
 	}
-	var errs []error
-	for _, name := range []string{"docs-links", "revert"} {
-		if !declares(f, name) {
-			errs = append(errs, fmt.Errorf("class %s is required in a file that declares classes (OD-8): add it, "+
-				"%s keeps it unarmed", name, fmt.Sprintf(`"- {name: %s, mode: disabled}"`, name)))
-		}
-	}
 	rep.Classes, rep.BindingErrors = ResolveBindings(f, rc, c)
-	return rep, errors.Join(errs...)
+	return rep, nil
 }
 
 // declares reports whether the file binds name.
@@ -83,9 +74,16 @@ func ResolveBindings(f *File, rc *config.Repository, c *config.Config) (map[stri
 		merge = rc.Merge
 	}
 	ctx := policyContext(c, rc)
+	if merge.MaxPerDay == 0 {
+		merge.MaxPerDay = ctx.Guardrails.MaxPerDay
+	}
 	classes, refused := map[string]Resolved{}, map[string]config.BindingRefusal{}
 	served := map[string]config.Class{}
 	for _, b := range f.MergePolicies {
+		if b.Name == "revert" {
+			classes[b.Name] = Resolved{Class: config.Class{Live: b.Mode == config.ModeLive, Shadow: b.Mode == config.ModeShadow}}
+			continue // deprecated rollback switch: mergeGreenRevert reads it for compatibility
+		}
 		if config.Disabled(b.Mode) {
 			continue
 		}
@@ -140,7 +138,7 @@ func resolvedOf(cl config.Class) Resolved {
 // Repository bindings, as written when the config file declares them, so the two compare alike.
 func policyContext(c *config.Config, rc *config.Repository) config.PolicyContext {
 	g := c.MergeGuardrails
-	if rc != nil && rc.Bound != nil {
+	if rc != nil && (rc.Bound != nil || rc.ClassAuthority == config.ClassAuthorityRepository || len(rc.Classes) == 0) {
 		g = g.WithDefaults()
 	}
 	return config.PolicyContext{HarnessProfiles: c.HarnessProfiles, Guardrails: g, Templates: c.Templates, Loops: c.Loops}

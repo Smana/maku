@@ -44,6 +44,9 @@ func candidates(classes map[string]config.Class, t *v1alpha1.Task) []string {
 	}
 	var out []string
 	for _, name := range slices.Sorted(maps.Keys(classes)) {
+		if name == "revert" {
+			continue // rollback is merge.autoRevert, not a diff-chosen merge policy
+		}
 		if cl := classes[name]; (cl.Live || cl.Shadow) && !cl.Adopted() && cl.Oracle == nil {
 			out = append(out, name)
 		}

@@ -236,21 +236,24 @@ func resolve(name string, p PolicySpec, b Binding, ctx PolicyContext, m Merge) (
 		}
 	}
 
-	// Caps: the lower; a binding above the policy is refused.
+	// Caps: the lower; a binding above the policy or the guardrail is refused. A policy's own cap
+	// above the guardrail is clamped later by ApplyGuardrails.
 	for _, f := range []struct {
-		key    string
-		value  *int
-		policy int
-		bind   int
+		key          string
+		value        *int
+		policy, bind int
+		guard        int
 	}{
-		{"maxPatchFiles", &cl.MaxPatchFiles, p.MaxPatchFiles, b.MaxPatchFiles},
-		{"maxModifiedLines", &cl.MaxModifiedLines, p.MaxModifiedLines, b.MaxModifiedLines},
-		{"maxPerDay", &cl.MaxPerDay, p.MaxPerDay, b.MaxPerDay},
+		{"maxPatchFiles", &cl.MaxPatchFiles, p.MaxPatchFiles, b.MaxPatchFiles, ctx.Guardrails.MaxPatchFiles},
+		{"maxModifiedLines", &cl.MaxModifiedLines, p.MaxModifiedLines, b.MaxModifiedLines, ctx.Guardrails.MaxModifiedLines},
+		{"maxPerDay", &cl.MaxPerDay, p.MaxPerDay, b.MaxPerDay, ctx.Guardrails.MaxPerDay},
 	} {
 		switch {
 		case f.bind == 0:
 		case f.policy > 0 && f.bind > f.policy:
 			return refuse(ReasonOverPolicy, "%s %d is over MergePolicy %s's %d", f.key, f.bind, name, f.policy)
+		case f.guard > 0 && f.bind > f.guard:
+			return refuse(ReasonGuardrailMismatch, "%s %d is over the guardrail's %d", f.key, f.bind, f.guard)
 		default:
 			*f.value = f.bind
 		}
@@ -314,7 +317,7 @@ func finish(name string, cl Class, ctx PolicyContext, m Merge) (Class, string, [
 
 	// MR6: a class the gate evaluates, live or shadow, is bounded by paths or a shape, with or
 	// without policy-bot: nothing else keeps a gate path from merging.
-	if (cl.Live || cl.Shadow) && !cl.Bounded(name) {
+	if (cl.Live || cl.Shadow) && name != "revert" && !cl.Bounded(name) {
 		return refuse(ReasonUnbounded, "class %s: an evaluated policy needs allowedFiles or a diffShape", name)
 	}
 
@@ -339,8 +342,8 @@ func union(a, b []string) []string {
 }
 
 // ApplyGuardrails caps one class under the guardrails (merge policies MP6, B14): their protected
-// paths and mandatory checks are added, an unset cap inherits theirs, and a cap above theirs is
-// reported, as "maxPerDay 3 is over the guardrail's 2". Empty when the class is within them.
+// paths and mandatory checks are added, an unset cap inherits theirs, and a higher policy cap is
+// clamped. Resolve rejects an explicit binding raise before this clamp.
 func ApplyGuardrails(cl *Class, g MergeGuardrails) string {
 	for _, pf := range g.ProtectedFiles {
 		if !slices.Contains(cl.ProtectedFiles, pf) {
@@ -353,16 +356,13 @@ func ApplyGuardrails(cl *Class, g MergeGuardrails) string {
 		}
 	}
 	for _, f := range []struct {
-		key   string
 		value *int
 		limit int
-	}{{"maxPatchFiles", &cl.MaxPatchFiles, g.MaxPatchFiles}, {"maxModifiedLines", &cl.MaxModifiedLines, g.MaxModifiedLines}, {"maxPerDay", &cl.MaxPerDay, g.MaxPerDay}} {
+	}{{&cl.MaxPatchFiles, g.MaxPatchFiles}, {&cl.MaxModifiedLines, g.MaxModifiedLines}, {&cl.MaxPerDay, g.MaxPerDay}} {
 		switch {
 		case f.limit == 0:
-		case *f.value == 0:
+		case *f.value == 0 || *f.value > f.limit:
 			*f.value = f.limit
-		case *f.value > f.limit:
-			return fmt.Sprintf("%s %d is over the guardrail's %d", f.key, *f.value, f.limit)
 		}
 	}
 	return ""

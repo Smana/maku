@@ -230,8 +230,8 @@ func TestValidatePolicy(t *testing.T) {
 	}
 }
 
-// ApplyGuardrails is mergepolicy's guard, moved: protected paths and mandatory checks added once,
-// an unset cap inherited, a cap above refused.
+// ApplyGuardrails adds protected paths and mandatory checks once, inherits unset caps and clamps
+// a policy cap above the guardrail. Resolve still refuses a binding's explicit raise.
 func TestApplyGuardrails(t *testing.T) {
 	g := MergeGuardrails{ProtectedFiles: []string{"^a/"}, MandatoryChecks: []string{"c"}, MaxPerDay: 2}
 	cl := Class{ProtectedFiles: []string{"^a/"}, MaxPerDay: 0}
@@ -242,8 +242,8 @@ func TestApplyGuardrails(t *testing.T) {
 		t.Fatalf("%+v", cl)
 	}
 	cl = Class{MaxPerDay: 3}
-	if over := ApplyGuardrails(&cl, g); over != "maxPerDay 3 is over the guardrail's 2" {
-		t.Fatalf("got %q", over)
+	if over := ApplyGuardrails(&cl, g); over != "" || cl.MaxPerDay != 2 {
+		t.Fatalf("over %q, class %+v; want the cap clamped to 2", over, cl)
 	}
 }
 

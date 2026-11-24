@@ -105,7 +105,6 @@ func TestBadRepositoriesFail(t *testing.T) {
 		"an entry unnamed": {strings.Replace(twoRepos(t), "name: Smana/ai-native-ref", "name: ''", 1), `repository "" is not owner/name`},
 		"no maintainers":   {strings.Replace(twoRepos(t), "maintainers: [Other]", "maintainers: []", 1), "Smana/ai-native-ref: maintainers is empty"},
 		"no trigger label": {strings.Replace(twoRepos(t), "classes: {docs-links: {}, revert: {}}", "classes: {docs-links: {}, revert: {}}\n    triggerLabel: ''", 1), "Smana/ai-native-ref: triggerLabel is required"},
-		"no revert class":  {strings.Replace(twoRepos(t), "classes: {docs-links: {}, revert: {}}", "classes: {docs-links: {}}", 1), "Smana/ai-native-ref: class revert is required"},
 		"merge left empty": {twoRepos(t) + "  - {name: Smana/z, maintainers: [Smana], triggerLabel: x, classes: {docs-links: {}, revert: {}}}\n", "Smana/z: merge.requiredChecks is empty"},
 		"an empty list":    {emptyList, "repositories is empty"},
 		"api.repositories with the list": {strings.Replace(good, "  listen: \":8443\"", "  listen: \":8443\"\n  repositories: [Smana/cloud-native-ref]", 1),

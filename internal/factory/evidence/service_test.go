@@ -83,19 +83,20 @@ func (f *fakeSource) searches() int {
 
 func cleanPRs(n int) []PR {
 	var out []PR
+	resolved := config.ShortHash(config.ResolvedHash(serviceCfg().Repositories[0].Classes["docs-links"]))
 	for i := range n {
 		head := fmt.Sprintf("%040x", i)
 		out = append(out, PR{Number: 100 + i, HeadRefOid: head, MergedBy: &Actor{Login: "Smana"}, Comments: []Comment{{
 			Author: Actor{Login: "ogenki-agent-factory[bot]"},
 			Body: "would auto-merge: `docs-links` <!-- agent-factory scope=x event=would-arm-1 head=" + head + " -->\n\n" +
-				"<!-- agent-factory-decision head=" + head + " class=docs-links decision=shadow:shadow_would_arm files=1/3 lines=2/20 paused=false capped=false reviewer=glm-5.3 -->"}}})
+				"<!-- agent-factory-decision head=" + head + " class=docs-links decision=shadow:shadow_would_arm files=1/3 lines=2/20 paused=false capped=false resolved=" + resolved + " reviewer=glm-5.3 -->"}}})
 	}
 	return out
 }
 
 func serviceCfg() *config.Config {
 	return &config.Config{FactoryLogin: "ogenki-agent-factory[bot]", AgentsLogin: "ogenki-agents[bot]",
-		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Merge: config.Merge{MergerLogin: "ogenki-agent-merger[bot]"},
+		Repositories: []config.Repository{{Name: "Smana/cloud-native-ref", Maintainers: []string{"Smana"}, Merge: config.Merge{MergerLogin: "ogenki-agent-merger[bot]"},
 			Classes: map[string]config.Class{"docs-links": {Shadow: true}}}}}
 }
 

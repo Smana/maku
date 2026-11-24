@@ -123,13 +123,20 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 		}
 	}
 	var implied []config.Binding
-	for _, name := range res.catalog {
-		if !slices.ContainsFunc(bindings, func(b config.Binding) bool { return b.Name == name }) {
-			implied = append(implied, config.Binding{Name: name, Mode: config.ModeShadow})
+	if r.Spec["classAuthority"] != config.ClassAuthorityRepository {
+		for _, name := range res.catalog {
+			if !slices.ContainsFunc(bindings, func(b config.Binding) bool { return b.Name == name }) {
+				implied = append(implied, config.Binding{Name: name, Mode: config.ModeShadow})
+			}
 		}
 	}
 	bindings = append(bindings, implied...)
 	rm, _ := r.Spec["merge"].(map[string]any)
+	for _, b := range bindings {
+		if b.Name == "revert" && b.Mode == config.ModeLive && rm != nil {
+			rm["autoRevert"] = true // deprecated binding: keep its rollback behavior under the new key
+		}
+	}
 	full, _ := config.ApplyMergeDefaults(mergeDefaults, rm)
 	var merge config.Merge
 	_ = json.Unmarshal(mustJSON(full), &merge) // a merge that does not decode is Parse's to refuse
@@ -143,6 +150,11 @@ func resolveBindings(r Object, mergeDefaults map[string]any, ctx config.PolicyCo
 	}
 	entries := make([]entry, len(bindings))
 	for i, b := range bindings {
+		if b.Name == "revert" {
+			entries[i].cl = config.Class{Live: b.Mode == config.ModeLive, Shadow: b.Mode == config.ModeShadow}
+			entries[i].ok = true // deprecated rollback switch: never a diff candidate, no policy required
+			continue
+		}
 		if config.Disabled(b.Mode) {
 			entries[i].disabled = true
 			continue

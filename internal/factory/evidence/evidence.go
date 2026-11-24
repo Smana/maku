@@ -17,6 +17,9 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/Smana/maku/internal/factory/config"
+	"github.com/Smana/maku/internal/factory/mergepolicy"
 )
 
 // Actor is a GitHub login as gh prints it: {"login": ...}.
@@ -55,9 +58,12 @@ type Revert struct {
 	State  string  `json:"state"`
 }
 
-// Logins are the factory App's comment author and the merger App's merge actor.
+// Logins are the factory App's full comment author, the merger App's merge actor, and the
+// repository's maintainers. A nil Maintainers keeps the legacy replay's actor rule; a non-nil
+// list admits only those maintainers' merges as clean evidence.
 type Logins struct {
 	Factory, Merger string
+	Maintainers     []string
 }
 
 // login is the script's: lowercased, without app/ or [bot].
@@ -134,16 +140,54 @@ func reverted(reverts []Revert, repo string, drill bool) map[int]bool {
 	return out
 }
 
-// own are the factory's comments of p matching re, oldest first; the newest is the last.
+// own are the factory's comments of p matching re, oldest first; the newest is the last. A full
+// configured bot login is compared exactly. The bare login accepted by legacy replay fixtures keeps
+// the old normalized comparison; production configuration always supplies the full bot login.
 func own(p PR, factory string, re *regexp.Regexp) []Comment {
 	var out []Comment
 	for _, c := range p.Comments {
-		if login(c.Author.Login) == login(factory) && re.MatchString(c.Body) {
+		same := strings.EqualFold(c.Author.Login, factory)
+		if !strings.HasSuffix(factory, "[bot]") {
+			same = login(c.Author.Login) == login(factory)
+		}
+		if same && re.MatchString(c.Body) {
 			out = append(out, c)
 		}
 	}
 	sort.SliceStable(out, func(i, j int) bool { return out[i].CreatedAt.Before(out[j].CreatedAt) })
 	return out
+}
+
+type classRecord struct {
+	comment Comment
+	marker  string
+	match   []string
+}
+
+// newestRecord is the newest record for class, wherever it sits in a comment's per-policy lines.
+func newestRecord(p PR, class, factory string) *classRecord {
+	comments := own(p, factory, record)
+	for i := len(comments) - 1; i >= 0; i-- {
+		for _, m := range record.FindAllStringSubmatch(comments[i].Body, -1) {
+			if m[2] == class {
+				return &classRecord{comment: comments[i], marker: m[0], match: m}
+			}
+		}
+	}
+	return nil
+}
+
+var resolved = regexp.MustCompile(` resolved=([0-9a-f]+)`)
+
+func (r *classRecord) resolvedHash() string {
+	if r == nil {
+		return ""
+	}
+	m := resolved.FindStringSubmatch(r.marker)
+	if m == nil {
+		return ""
+	}
+	return m[1]
 }
 
 // Reviewer is one reviewer model's share of the judged pull requests (AM10).
@@ -204,35 +248,90 @@ func generationOf(body string) GenerationCount {
 	return GenerationCount{Generation: n}
 }
 
-// Shadow counts prs as `shadow-merge-tally.sh --class class` does.
+// Shadow counts prs as the legacy tally does, without a resolved-policy comparison.
 func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTally {
+	return shadow(prs, reverts, class, repo, l, policyVersion{})
+}
+
+// ShadowUnder counts only evidence earned under current or a tighter policy. known maps previously
+// observed resolved hashes to their classes; an unknown hash fails closed.
+func ShadowUnder(prs []PR, reverts []Revert, class, repo string, current config.Class, known map[string]config.Class, l Logins) ShadowTally {
+	return shadow(prs, reverts, class, repo, l, policyVersion{current: current, known: known, check: true})
+}
+
+type policyVersion struct {
+	current config.Class
+	known   map[string]config.Class
+	check   bool
+}
+
+func (v policyVersion) allows(r *classRecord) bool {
+	if !v.check {
+		return true
+	}
+	h := r.resolvedHash()
+	if h == "" {
+		return false
+	}
+	if h == config.ShortHash(config.ResolvedHash(v.current)) {
+		return true
+	}
+	old, ok := v.known[h]
+	return ok && mergepolicy.ClassChange(old, v.current).Kind != mergepolicy.KindRelaxation
+}
+
+func maintainerMerge(p PR, l Logins) bool {
+	if p.MergedBy == nil {
+		return false
+	}
+	return slices.ContainsFunc(l.Maintainers, func(m string) bool { return strings.EqualFold(p.MergedBy.Login, m) })
+}
+
+func shadow(prs []PR, reverts []Revert, class, repo string, l Logins, version policyVersion) ShadowTally {
 	rev, drilled := reverted(reverts, repo, false), reverted(reverts, repo, true)
 	var t ShadowTally
 	models := map[string]*Reviewer{}
 	gens := map[GenerationCount]*GenerationCount{}
 	for _, p := range prs {
 		t.strictness(p, class, l)
-		mine := own(p, l.Factory, wouldArm)
-		if len(mine) == 0 {
-			continue
+		rec := newestRecord(p, class, l.Factory)
+		var last Comment
+		var head, model, marker string
+		if rec != nil {
+			if rec.match[3] != "shadow" || rec.match[4] != "shadow_would_arm" || !version.allows(rec) {
+				continue
+			}
+			last, head, model, marker = rec.comment, rec.match[1], rec.match[9], rec.marker
+		} else {
+			if version.check {
+				continue
+			}
+			mine := own(p, l.Factory, wouldArm)
+			if len(mine) == 0 {
+				continue
+			}
+			last = mine[len(mine)-1]
+			if !strings.Contains(last.Body, "would auto-merge: `"+class+"`") {
+				continue
+			}
+			head, marker = wouldArm.FindStringSubmatch(last.Body)[1], last.Body
+			model = "-"
+			if m := record.FindStringSubmatch(last.Body); m != nil {
+				model = m[9]
+			}
 		}
-		last := mine[len(mine)-1]
-		if !strings.Contains(last.Body, "would auto-merge: `"+class+"`") {
-			continue
-		}
-		head := wouldArm.FindStringSubmatch(last.Body)[1]
 		by := ""
 		if p.MergedBy != nil {
 			by = login(p.MergedBy.Login)
+		}
+		auto := by == login(l.Merger)
+		if !auto && l.Maintainers != nil && !maintainerMerge(p, l) {
+			continue
 		}
 		t.Judged = append(t.Judged, p.Number)
 		if drilled[p.Number] {
 			t.Drill++
 			t.Drilled = append(t.Drilled, p.Number)
-		}
-		model := "-"
-		if m := record.FindStringSubmatch(last.Body); m != nil {
-			model = m[9]
 		}
 		r := models[model]
 		if r == nil {
@@ -240,18 +339,18 @@ func Shadow(prs []PR, reverts []Revert, class, repo string, l Logins) ShadowTall
 			models[model] = r
 		}
 		switch {
-		case by == login(l.Merger):
+		case auto:
 			t.AutoMerged++
 		case rev[p.Number]:
 			t.Reverted++
 		case p.HeadRefOid == head:
 			t.MergedUnchanged++
 			r.MergedUnchanged++
-			bucket(gens, last.Body).MergedUnchanged++
+			bucket(gens, marker).MergedUnchanged++
 		default:
 			t.Changed++
 			r.Changed++
-			bucket(gens, last.Body).Changed++
+			bucket(gens, marker).Changed++
 		}
 	}
 	for _, g := range gens {
@@ -292,18 +391,16 @@ var handOff = regexp.MustCompile(`event=human-([a-z_]+)-[0-9]+`)
 // strictness counts p as --strictness does: its newest factory decision record, when it is
 // class's, refused by a class row (a hand-off takes the reason its event names).
 func (t *ShadowTally) strictness(p PR, class string, l Logins) {
-	rs := own(p, l.Factory, record)
-	if len(rs) == 0 {
+	r := newestRecord(p, class, l.Factory)
+	if r == nil {
 		return
 	}
-	body := rs[len(rs)-1].Body
-	m := record.FindStringSubmatch(body)
-	if m[2] != class {
-		return
-	}
+	m := r.match
 	verdict, reason := m[3], m[4]
-	if h := handOff.FindStringSubmatch(body); h != nil {
-		verdict, reason = "human", h[1]
+	if first := record.FindStringSubmatch(r.comment.Body); first != nil && first[2] == class {
+		if h := handOff.FindStringSubmatch(r.comment.Body); h != nil {
+			verdict, reason = "human", h[1]
+		}
 	}
 	if verdict != "human" || !slices.Contains(strictRows, reason) {
 		return

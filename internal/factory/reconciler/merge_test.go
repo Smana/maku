@@ -216,10 +216,11 @@ func TestAGreenRevertIsMergedAtItsHead(t *testing.T) {
 	g.f.SetCommitChecks("m1", red.Runs...)
 	got := g.reconcile(t, "3buqdlot", 1)
 	rv := got.Status.PullRequest.RevertNumber
-	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "r1"})
+	head := got.Status.PullRequest.RevertHeadSHA
+	g.f.SetPR(forge.PR{Number: rv, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: head})
 	g.f.SetChecks(rv, green("SUCCESS"))
 	got = g.reconcile(t, "3buqdlot", 1)
-	if a := g.f.Armed(); !slices.Contains(a, "PR_revert r1") || !slices.Contains(got.Status.Narrated, "revert-end-merged") || len(g.f.Disarmed()) != 0 {
+	if a := g.f.Armed(); !slices.Contains(a, "PR_revert "+head) || !slices.Contains(got.Status.Narrated, "revert-end-merged") || len(g.f.Disarmed()) != 0 {
 		t.Fatalf("%v %v %v", a, got.Status.Narrated, g.f.Disarmed())
 	}
 }
@@ -291,7 +292,8 @@ func TestMainRedRevertsAndPausesTheClass(t *testing.T) {
 	g.f.SetCommitChecks("m1", red.Runs...)
 	got := g.reconcile(t, "3buqdlot", 1)
 	if got.Status.Phase != v1alpha1.PhaseReverted || got.Status.Reason != "main_red" || len(g.f.Reverts()) != 1 ||
-		!strings.HasPrefix(strings.SplitN(g.f.Reverts()[0], " ", 2)[1], `Revert "`) || len(g.f.Armed()) != 1 {
+		!strings.HasPrefix(strings.SplitN(g.f.Reverts()[0], " ", 2)[1], `Revert "`) || len(g.f.Armed()) != 0 ||
+		got.Status.PullRequest.RevertHeadSHA != "revhead" {
 		t.Fatalf("%s %s %v %v", got.Status.Phase, got.Status.Reason, g.f.Reverts(), g.f.Armed())
 	}
 	paused, err := g.r.paused(t.Context(), g.r.Cfg.Current(), g.r.Cfg.Current().RepositoryFor(""), "docs-links")
@@ -1294,9 +1296,8 @@ func TestARevertSurvivesAConflictingWrite(t *testing.T) {
 	}
 }
 
-// N6 review: the conflict lands after the revert is written (here, while the revert is armed), so
-// the task stays Done with its revert open. revertable steps it again, and revert finishes it from
-// the revert it has: armed, Reverted, counted and narrated once, never a second revert.
+// N6 review: a task whose revert number and original head were written but whose end was lost
+// finishes from that revert. It opens and arms nothing, and records the outcome once.
 func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 	g := mergeRig(t, v1alpha1.PhaseDone)
 	merged := metav1.NewTime(now)
@@ -1305,28 +1306,16 @@ func TestARevertWrittenButNotEndedIsFinished(t *testing.T) {
 		tk.Status.Reason = "merged"
 		tk.Status.PullRequest.MergeCommitSHA, tk.Status.PullRequest.MergedAt = "m1", &merged
 		tk.Status.PullRequest.MergedHow, tk.Status.PullRequest.ApprovedBy = "approved", "Smana"
+		tk.Status.PullRequest.RevertNumber, tk.Status.PullRequest.RevertHeadSHA = 901, "revhead"
+		tk.Status.Narrated = append(tk.Status.Narrated, "concurrent-write")
 	})
 	g.f.SetPR(forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Title: "Revert", Author: "ogenki-agent-merger[bot]", BaseRef: "main", HeadRef: "revert-12-head", HeadSHA: "revhead"})
-	raced := false
-	g.r.Merger = racingMerger{Merger: g.f, g: g, race: func(op string) {
-		if op == "arm" && !raced {
-			raced = true
-			g.patch(t, func(tk *v1alpha1.Task) { tk.Status.Narrated = append(tk.Status.Narrated, "concurrent-write") })
-		}
-	}}
-	key := types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}
-	if res, err := g.r.Reconcile(t.Context(), ctrl.Request{NamespacedName: key}); err != nil || res.RequeueAfter == 0 {
-		t.Fatal("the pass's own write conflicts")
-	}
-	if got := g.reconcile(t, "3buqdlot", 0); got.Status.Phase != v1alpha1.PhaseDone || got.Status.PullRequest.RevertNumber != 901 {
-		t.Fatalf("the revert is written, the end is not: %s %+v", got.Status.Phase, got.Status.PullRequest)
-	}
-	got := g.reconcile(t, "3buqdlot", 2)
-	if got.Status.Phase != v1alpha1.PhaseReverted || len(g.f.Reverts()) != 1 || !slices.Contains(got.Status.Narrated, "concurrent-write") {
+	got := g.reconcile(t, "3buqdlot", 1)
+	if got.Status.Phase != v1alpha1.PhaseReverted || len(g.f.Reverts()) != 0 || !slices.Contains(got.Status.Narrated, "concurrent-write") {
 		t.Fatalf("%s %s reverts %q %q", got.Status.Phase, got.Status.Reason, g.f.Reverts(), got.Status.Narrated)
 	}
-	if a := g.f.Armed(); !slices.Contains(a, "PR_revert") {
-		t.Fatalf("the revert is armed: %q", a)
+	if a := g.f.Armed(); len(a) != 0 {
+		t.Fatalf("the replay enabled native auto-merge: %q", a)
 	}
 	if n := len(slices.DeleteFunc(slices.Clone(g.metrics.recorded), func(s string) bool { return s != "pr docs-links reverted" })); n != 1 {
 		t.Fatalf("reverted counted %d times: %q", n, g.metrics.recorded)
@@ -1703,6 +1692,7 @@ func TestWithdrawGateStatusUsesDetachedContextOnMergeCancel(t *testing.T) {
 		g.r.Merger = cm
 		var tk v1alpha1.Task
 		_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+		tk.Status.PullRequest.RevertNumber, tk.Status.PullRequest.RevertHeadSHA = 901, "r1"
 		merged, err := g.r.mergeGreenRevert(ctx, g.r.Cfg.Current(), &tk, rvPR)
 		if merged || !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected (false, context.Canceled), got (%v, %v)", merged, err)
@@ -1723,10 +1713,11 @@ func (m *recordingAutoMergeMerger) EnableAutoMerge(ctx context.Context, nodeID, 
 	return m.Merger.EnableAutoMerge(ctx, nodeID, expectedHeadSHA)
 }
 
-// SEC-M4: revert passes expectedHeadSHA to EnableAutoMerge, and mergeGreenRevert / revert replay
-// refuse to arm or merge a revert PR with wrong author, cross-repo fork, non-main base, or foreign push.
+// SEC-M4: revert records the head GitHub created without enabling native auto-merge.
+// mergeGreenRevert / revert replay refuse wrong author, cross-repo fork, non-main base, foreign
+// push, or any head later than the recorded one.
 func TestRevertAndMergeGreenRevertVerifyProvenance(t *testing.T) {
-	t.Run("revert passes expectedHeadSHA to EnableAutoMerge", func(t *testing.T) {
+	t.Run("revert records the original head without native auto-merge", func(t *testing.T) {
 		g := mergeRig(t, v1alpha1.PhaseVerifying)
 		rm := &recordingAutoMergeMerger{Merger: g.f}
 		g.r.Merger = rm
@@ -1738,9 +1729,27 @@ func TestRevertAndMergeGreenRevertVerifyProvenance(t *testing.T) {
 		red := green("SUCCESS")
 		red.Runs[0].State = "FAILURE"
 		g.f.SetCommitChecks("m1", red.Runs...)
-		g.reconcile(t, "3buqdlot", 1)
-		if !slices.Equal(rm.heads, []string{"revhead"}) {
-			t.Fatalf("EnableAutoMerge expectedHeadSHA = %q, want [revhead]", rm.heads)
+		got := g.reconcile(t, "3buqdlot", 1)
+		if got.Status.PullRequest.RevertHeadSHA != "revhead" || len(rm.heads) != 0 {
+			t.Fatalf("revert head %q, native auto-merge calls %q", got.Status.PullRequest.RevertHeadSHA, rm.heads)
+		}
+	})
+
+	t.Run("a later merger push is not the created head", func(t *testing.T) {
+		g := mergeRig(t, v1alpha1.PhaseReverted)
+		pr := forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main",
+			HeadRef: "revert-12-head", HeadSHA: "r2"}
+		g.f.SetPR(pr)
+		g.f.SetActivity(pr.HeadRef,
+			forge.Push{Type: "push", Actor: "ogenki-agent-merger[bot]", Before: "r1", After: "r2"},
+			forge.Push{Type: "branch_creation", Actor: "ogenki-agent-merger[bot]", After: "r1"})
+		g.f.SetChecks(901, green("SUCCESS"))
+		var tk v1alpha1.Task
+		_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+		tk.Status.PullRequest.RevertNumber, tk.Status.PullRequest.RevertHeadSHA = 901, "r1"
+		merged, err := g.r.mergeGreenRevert(t.Context(), g.r.Cfg.Current(), &tk, pr)
+		if err != nil || merged || len(g.f.Armed()) != 0 {
+			t.Fatalf("merged %v, err %v, calls %q", merged, err, g.f.Armed())
 		}
 	})
 
@@ -1781,6 +1790,7 @@ func TestRevertAndMergeGreenRevertVerifyProvenance(t *testing.T) {
 			g.f.SetChecks(901, green("SUCCESS"))
 			var tk v1alpha1.Task
 			_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+			tk.Status.PullRequest.RevertNumber, tk.Status.PullRequest.RevertHeadSHA = 901, "r1"
 			merged, err := g.r.mergeGreenRevert(t.Context(), g.r.Cfg.Current(), &tk, pr)
 			if err != nil || merged {
 				t.Fatalf("expected (false, nil), got (%v, %v)", merged, err)
@@ -1806,5 +1816,22 @@ func TestClosesParentHoistedRegex(t *testing.T) {
 		if got := closesParent(tk, body); got != want {
 			t.Errorf("closesParent(%q) = %v, want %v", body, got, want)
 		}
+	}
+}
+
+func TestAutoRevertNeedsNoRevertPolicy(t *testing.T) {
+	g := mergeRig(t, v1alpha1.PhaseReverted)
+	g.r.Cfg.Current().Repositories[0].Classes["revert"] = config.Class{}
+	g.r.Cfg.Current().Repositories[0].Merge.AutoRevert = true
+	pr := forge.PR{Number: 901, NodeID: "PR_revert", State: "OPEN", Author: "ogenki-agent-merger[bot]", BaseRef: "main",
+		HeadRef: "revert-12-head", HeadSHA: "r1"}
+	g.f.SetPR(pr)
+	g.f.SetChecks(901, green("SUCCESS"))
+	var tk v1alpha1.Task
+	_ = g.c.Get(t.Context(), keyFor("3buqdlot"), &tk)
+	tk.Status.PullRequest.RevertNumber, tk.Status.PullRequest.RevertHeadSHA = 901, "r1"
+	merged, err := g.r.mergeGreenRevert(t.Context(), g.r.Cfg.Current(), &tk, pr)
+	if err != nil || !merged || !slices.Contains(g.f.Armed(), "PR_revert r1") {
+		t.Fatalf("merged %v, err %v, calls %q", merged, err, g.f.Armed())
 	}
 }

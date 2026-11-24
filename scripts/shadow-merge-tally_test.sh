@@ -5,6 +5,8 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
+# The checked-in fixtures predate full bot logins; production and the shared fixture below use them.
+export TALLY_FACTORY=ogenki-agent-factory
 # shellcheck disable=SC2016 # the backticks are the comment's markdown
 wa() { printf '{"author":{"login":"%s"},"createdAt":"%s","body":"would auto-merge: `%s` <!-- agent-factory scope=x event=would-arm-1 head=%s -->"}' "$1" "$2" "$3" "$4"; }
 cat > "$tmp/prs.json" <<JSON
@@ -166,4 +168,15 @@ expect "$(GH="$tmp/gh-two" scripts/shadow-merge-tally.sh --class docs-links | pa
   "merged_unchanged=0 changed=0 reverted=0 auto_merged=0 drill=0" "the decision's own class is not a would-merge"
 expect "$(GH="$tmp/gh-two" scripts/shadow-merge-tally.sh --class revert --replay lines=10 | tail -1)" \
   "replay lines=10: would_arm=1 would_refuse=0 unreplayable=0" "the replay reads the class's own line"
+# S8/S12/S13: Go reads this same fixture. Both shadow records count once for their own policy;
+# shadow_would_require_approval does not count, and the full factory bot login is required.
+cat > "$tmp/gh-shared" <<EOF6
+#!/usr/bin/env bash
+case "\$*" in *"Revert in:title"*) echo '[]' ;; *) cat scripts/testdata/tally/prs-two-policies.json ;; esac
+EOF6
+chmod +x "$tmp/gh-shared"
+for policy in docs-links docs; do
+  expect "$(TALLY_FACTORY='ogenki-agent-factory[bot]' GH="$tmp/gh-shared" scripts/shadow-merge-tally.sh --class "$policy" | head -2 | paste -sd' ')" \
+    "#40 merged_unchanged merged_unchanged=1 changed=0 reverted=0 auto_merged=0 drill=0" "shared two-policy fixture: $policy"
+done
 echo ok
