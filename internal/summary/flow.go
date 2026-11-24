@@ -394,6 +394,78 @@ func flowView(st State) *Flow {
 	return fl
 }
 
+// Strip renders a flow as a one-line path strip: done (✓), running (●), failed/stopped (✗), and
+// planned (○), by persona. Multiple review rounds fold to the latest round. Empty when there is
+// neither a node nor a plan.
+func Strip(f *Flow) string {
+	if f == nil || (len(f.Nodes) == 0 && len(f.Ghosts) == 0 && len(f.Plan) == 0) {
+		return ""
+	}
+	ghosts := f.Ghosts
+	if ghosts == nil && len(f.Plan) > 0 && !flowStripEnded(f) {
+		cursor := 0
+		for _, n := range f.Nodes {
+			p := cmp.Or(n.Persona, n.Role)
+			if k := slices.Index(f.Plan[min(cursor, len(f.Plan)):], p); k >= 0 {
+				cursor += k + 1
+			}
+		}
+		if cursor < len(f.Plan) {
+			ghosts = f.Plan[cursor:]
+		}
+	}
+	maxRound := 1
+	for _, n := range f.Nodes {
+		if n.Round > maxRound {
+			maxRound = n.Round
+		}
+	}
+	nodeToken := func(n FlowNode) string {
+		name := cmp.Or(n.Persona, n.Role)
+		mark := "✗"
+		switch {
+		case n.Outcome == "" && n.EndedAt.IsZero():
+			mark = "●"
+		case n.Outcome == envelope.OutcomeSucceeded:
+			mark = "✓"
+		}
+		return name + " " + mark
+	}
+	if maxRound > 1 {
+		var roundParts []string
+		for _, n := range f.Nodes {
+			if n.Round == maxRound {
+				roundParts = append(roundParts, nodeToken(n))
+			}
+		}
+		parts := []string{fmt.Sprintf("round %d", maxRound), strings.Join(roundParts, " → ")}
+		for _, g := range ghosts {
+			parts = append(parts, g+" ○")
+		}
+		return strings.Join(parts, " · ")
+	}
+	parts := make([]string, 0, len(f.Nodes)+len(ghosts))
+	for _, n := range f.Nodes {
+		parts = append(parts, nodeToken(n))
+	}
+	for _, g := range ghosts {
+		parts = append(parts, g+" ○")
+	}
+	return strings.Join(parts, " · ")
+}
+
+func flowStripEnded(f *Flow) bool {
+	if f.Split != nil {
+		return true
+	}
+	for _, m := range f.Milestones {
+		if terminalPhase(m.Phase) || m.Phase == "Verifying" {
+			return true
+		}
+	}
+	return false
+}
+
 // joinRun is one node from a run's facts, its log, or both. Everything taken from the log is
 // bounded here: it is rendered as text.
 func joinRun(human *flowState, rf *envelope.RunFact, r *flowRun) flowJoin {

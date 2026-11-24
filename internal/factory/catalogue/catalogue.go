@@ -127,6 +127,13 @@ type Profile struct {
 	// the roles shown are exact (P15). NotOffered says why not.
 	Offered    bool   `json:"offered"`
 	NotOffered string `json:"notOffered,omitempty"`
+	// CeilingUSD is the task ceiling of the tier the workflow resolves to (WR3).
+	CeilingUSD float64 `json:"ceilingUSD"`
+	// StepUp and StepUpCeilingUSD name the workflow and ceiling this workflow steps up to (phase C).
+	StepUp           string  `json:"stepUp,omitempty"`
+	StepUpCeilingUSD float64 `json:"stepUpCeilingUSD,omitempty"`
+	// Path is the roles in run order with CI and merge gate appended for PR workflows (WR3).
+	Path []string `json:"path,omitempty"`
 }
 
 // Build is repository's catalogue for a caller who is, or is not, one of its maintainers; false
@@ -191,14 +198,35 @@ func ceilingOf(cfg *config.Config, rc *config.Repository) float64 {
 }
 
 func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.HarnessProfile) Profile {
+	tier := "standard"
+	if p.Tier == "frontier" {
+		tier = "frontier"
+	}
 	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
-		Loop: string(p.Loop), Description: p.Description}
+		Loop: string(p.Loop), Description: p.Description, CeilingUSD: cfg.Tiers[tier].TaskUSD}
 	if e := p.Escalation; e != nil {
 		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}
 	}
 	if t, ok := cfg.Templates[p.Template]; ok && p.Template != "" {
 		out.Roles = slices.Clone(t.Roles)
 		out.Offered = true
+		row := cfg.RowFor(name, p)
+		var path []string
+		if cfg.ScopeFor(row) == config.ScopeScoper {
+			path = append(path, "scoper")
+		}
+		if out.TestFirst {
+			path = append(path, "tester")
+		}
+		for _, role := range t.Roles {
+			if !slices.Contains(path, role) {
+				path = append(path, role)
+			}
+		}
+		if len(path) > 0 && !cfg.Investigates(p.Template) {
+			path = append(path, "CI", "merge gate")
+		}
+		out.Path = path
 	} else {
 		out.NotOffered = NoTemplate
 	}

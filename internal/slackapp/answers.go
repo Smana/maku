@@ -208,6 +208,9 @@ func statusAnswer(sum summary.Summary, page string) string {
 		lines = append(lines, "Merge: "+gp)
 	}
 	lines = append(lines, "Room: "+page)
+	if strip := summary.Strip(sum.Flow); strip != "" {
+		lines = append(lines, "Path: "+answerText(strip))
+	}
 	return capLines(lines)
 }
 

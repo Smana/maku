@@ -80,6 +80,29 @@ func TestCardGolden(t *testing.T) {
 	}
 }
 
+func TestTheStatusCardLeadsWithTheWorkflow(t *testing.T) {
+	s := summary.Summary{
+		Room: "26zfnuxm",
+		Flow: &summary.Flow{
+			Plan:  []string{"implementer", "reviewer"},
+			Nodes: []summary.FlowNode{{Persona: "implementer"}},
+		},
+	}
+	s.Status.Phase = "Implementing"
+	s.Status.Issue = &envelope.IssueFact{Number: 42, Title: "Fix the link checker", URL: "https://github.com/owner/repo/issues/42"}
+	s.Status.Run = &envelope.RunFact{ID: "r1", Role: "implementer", Trigger: "first"}
+	s.Status.Profile = &envelope.ProfileFact{Name: "standard", Source: "repository", Cohort: "treatment", CeilingMicroUSD: 5_100_000}
+	got := card1(t, s, Options{Format: Text, Rooms: rooms})
+	wfIdx := strings.Index(got, "Workflow   standard · this repository's default")
+	willIdx := strings.Index(got, "Will run   implementer → reviewer → CI → merge gate")
+	costIdx := strings.Index(got, "Cost       up to $5.10")
+	pathIdx := strings.Index(got, "Path       implementer ● · reviewer ○")
+	runIdx := strings.Index(got, "Run        ")
+	if wfIdx < 0 || willIdx < 0 || costIdx < 0 || pathIdx < 0 || runIdx < 0 || wfIdx >= willIdx || willIdx >= costIdx || costIdx >= runIdx {
+		t.Fatalf("unexpected card:\n%s", got)
+	}
+}
+
 func TestCardMatchesTheSpec(t *testing.T) {
 	s, n := foldGolden(t, "runs_and_spend")
 	md := card1(t, s, Options{Format: Markdown, Now: n, Rooms: rooms})

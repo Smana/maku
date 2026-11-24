@@ -44,6 +44,23 @@ func personas(fl *Flow) []string {
 	return out
 }
 
+func TestTheStripNamesDoneRunningAndPlanned(t *testing.T) {
+	f := &Flow{Plan: []string{"scoper", "implementer", "reviewer"}, Nodes: []FlowNode{
+		{Persona: "scoper", Outcome: "succeeded"},
+		{Persona: "implementer"},
+	}}
+	if got, want := Strip(f), "scoper ✓ · implementer ● · reviewer ○"; got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+func TestTheStripUsesThePersonaNotTheRole(t *testing.T) {
+	f := &Flow{Nodes: []FlowNode{{Persona: "scoper", Role: "triager", Outcome: "succeeded"}}}
+	if got := Strip(f); strings.Contains(got, "triager") || got != "scoper ✓" {
+		t.Fatalf("got %q", got)
+	}
+}
+
 func TestFlowView(t *testing.T) {
 	plan := []string{"scoper", "tester", "implementer", "reviewer"}
 	many := make([]envelope.Event, 0, 22)

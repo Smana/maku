@@ -62,6 +62,12 @@ type ProfileFact struct {
 	// ProfileRefusalCodes, empty when honoured.
 	Requested string `json:"requested,omitempty"`
 	Refused   string `json:"refused,omitempty"`
+	// By is the login of a pin's applier when Source is "label".
+	By string `json:"by,omitempty"`
+	// CeilingMicroUSD and StepUpCeilingMicroUSD are the task's budget ceilings in micro-USD.
+	CeilingMicroUSD       int64  `json:"ceilingMicroUSD,omitempty"`
+	StepUpCeilingMicroUSD int64  `json:"stepUpCeilingMicroUSD,omitempty"`
+	Description           string `json:"description,omitempty"`
 }
 
 // ProfileSources are where a task's workflow came from (WF3, WF4): the Task CRD's
@@ -94,6 +100,14 @@ func (p ProfileFact) validate() error {
 		return errors.New("requested is at most 63 characters")
 	case p.Refused != "" && (p.Requested == "" || !slices.Contains(ProfileRefusalCodes, p.Refused)):
 		return errors.New("refused is a code of the closed profile refusals, beside the profile requested")
+	case p.By != "" && !ValidLogin(p.By):
+		return errors.New("by is a GitHub login")
+	case p.CeilingMicroUSD < 0 || p.CeilingMicroUSD > MaxMicroUSD:
+		return errors.New("ceilingMicroUSD is out of range")
+	case p.StepUpCeilingMicroUSD < 0 || p.StepUpCeilingMicroUSD > MaxMicroUSD:
+		return errors.New("stepUpCeilingMicroUSD is out of range")
+	case utf8.RuneCountInString(p.Description) > 120:
+		return errors.New("description is at most 120 characters")
 	}
 	return nil
 }

@@ -9,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"os/exec"
 	"regexp"
 	"slices"
@@ -18,6 +17,7 @@ import (
 	"time"
 
 	"github.com/Smana/maku/internal/mcpwire"
+	"github.com/Smana/maku/internal/roomview"
 )
 
 // IssueFiler files a confirmed draft as the developer and returns the issue's URL. GH is the one
@@ -97,10 +97,7 @@ func (g *governed) planLabels() []string {
 }
 
 // dollars is a plan's USD ceiling as a person reads it: two decimals, from the cent up.
-func dollars(usd float64) string {
-	cents := int64(math.Round(usd * 100))
-	return fmt.Sprintf("$%d.%02d", cents/100, cents%100)
-}
+func dollars(usd float64) string { return roomview.Dollars(usd) }
 
 // draftShape is the issue the form shows and start files as it stands.
 type draftShape struct {
