@@ -145,5 +145,7 @@ func (a *App) answerAsked(ctx context.Context, ev slackEvent, ch Channel, thread
 	prop.Degraded = res.Degraded
 	prop.Pins = res.Pins
 	prop.Workflow = res.Workflow
+	prop.DefaultDescription, prop.DefaultCeilingUSD = res.DefaultDescription, res.DefaultCeilingUSD
+	prop.Path, prop.StepUpUSD = res.Path, res.StepUpUSD
 	return a.postProposalIn(ctx, ev.Channel, thread, st, prop, res.Question)
 }

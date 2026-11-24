@@ -37,11 +37,13 @@ var startEntry = map[string]any{
 	"name":        mcpwire.Start,
 	"description": startDescription,
 	"inputSchema": json.RawMessage(`{"type":"object","additionalProperties":false,"required":["id"],` +
-		`"properties":{"id":{"type":"string","minLength":1,"maxLength":128,"description":"The handoff id of the ready plan."}}}`),
+		`"properties":{"id":{"type":"string","minLength":1,"maxLength":128,"description":"The handoff id of the ready plan."},` +
+		`"workflow":{"type":"string","maxLength":63,"description":"Optional workflow name to preselect in the confirmation form."}}}`),
 }
 
 type startArgs struct {
-	ID string `json:"id"`
+	ID       string `json:"id"`
+	Workflow string `json:"workflow,omitempty"`
 }
 
 // planShape is handoff_check's validated plan envelope: the plan the broker re-validated, the hash
@@ -116,14 +118,76 @@ var (
 
 const needsConfirmation = "needs_confirmation"
 
+type workflowChoice struct {
+	Name             string   `json:"name"`
+	Description      string   `json:"description,omitempty"`
+	CeilingUSD       float64  `json:"ceilingUSD,omitempty"`
+	StepUpCeilingUSD float64  `json:"stepUpCeilingUSD,omitempty"`
+	Path             []string `json:"path,omitempty"`
+}
+
+func (c *workflowChoice) UnmarshalJSON(b []byte) error {
+	if len(b) > 0 && b[0] == '"' {
+		var name string
+		if err := json.Unmarshal(b, &name); err != nil {
+			return err
+		}
+		*c = workflowChoice{Name: name}
+		return nil
+	}
+	type plain workflowChoice
+	var p plain
+	if err := json.Unmarshal(b, &p); err != nil {
+		return err
+	}
+	*c = workflowChoice(p)
+	return nil
+}
+
 type handoffCheckShape struct {
 	planShape
-	Workflows  []string `json:"workflows"`
-	Title      string   `json:"title"`
-	Body       string   `json:"body"`
-	Repository string   `json:"repository"`
-	view       planView
-	workflow   string
+	Workflows       []workflowChoice `json:"workflows"`
+	WorkflowChoices []workflowChoice `json:"workflowChoices,omitempty"`
+	DefaultChoice   *workflowChoice  `json:"defaultChoice,omitempty"`
+	ActiveChoice    *workflowChoice  `json:"activeChoice,omitempty"`
+	Title           string           `json:"title"`
+	Body            string           `json:"body"`
+	Repository      string           `json:"repository"`
+	view            planView
+	workflow        string
+}
+
+func (h *handoffCheckShape) choices() []workflowChoice {
+	if len(h.WorkflowChoices) > 0 {
+		return h.WorkflowChoices
+	}
+	return h.Workflows
+}
+
+func (h *handoffCheckShape) choiceNames() []string {
+	cs := h.choices()
+	out := make([]string, 0, len(cs))
+	for _, c := range cs {
+		if c.Name != "" {
+			out = append(out, c.Name)
+		}
+	}
+	return out
+}
+
+func (h *handoffCheckShape) findChoice(name string) (workflowChoice, bool) {
+	if h.ActiveChoice != nil && h.ActiveChoice.Name == name {
+		return *h.ActiveChoice, true
+	}
+	if h.DefaultChoice != nil && h.DefaultChoice.Name == name {
+		return *h.DefaultChoice, true
+	}
+	for _, c := range h.choices() {
+		if c.Name == name {
+			return c, true
+		}
+	}
+	return workflowChoice{}, false
 }
 
 func (h *handoffCheckShape) governed() *governed {
@@ -194,8 +258,8 @@ func (r *Relay) checkHandoff(ctx context.Context, id, workflow string) (*handoff
 		h.workflow = parseRenderedWorkflow(text)
 	case h.view.Issues[0].Suggestion != nil && h.view.Issues[0].Suggestion.Profile != "":
 		h.workflow = h.view.Issues[0].Suggestion.Profile
-	case len(h.Workflows) > 0:
-		h.workflow = h.Workflows[0]
+	case len(h.choices()) > 0:
+		h.workflow = h.choices()[0].Name
 	default:
 		h.workflow = "default"
 	}
@@ -208,7 +272,7 @@ func (r *Relay) checkHandoff(ctx context.Context, id, workflow string) (*handoff
 func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	var a startArgs
 	if mcpwire.DecodeArgs(args, &a) != nil || strings.TrimSpace(a.ID) == "" || len(a.ID) > 128 {
-		return mcpwire.ToolError("invalid_arguments: id is required, and no field outside {id} is taken")
+		return mcpwire.ToolError("invalid_arguments: id is required, and only {id, workflow?} are taken")
 	}
 	r.mu.Lock()
 	elicit := r.forms
@@ -248,25 +312,54 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	}
 
 	defaultWF := OneLine(checked.workflow)
-	if len(checked.Workflows) > 1 {
-		choices := make([]string, 0, len(checked.Workflows)+1)
-		if defaultWF != "" && !slices.Contains(checked.Workflows, defaultWF) {
-			choices = append(choices, defaultWF)
+	offered := checked.choices()
+	offeredNames := checked.choiceNames()
+	allChoices := make([]workflowChoice, 0, len(offered)+1)
+	if defaultWF != "" && !slices.Contains(offeredNames, defaultWF) {
+		defChoice, ok := checked.findChoice(defaultWF)
+		if !ok {
+			defChoice = workflowChoice{Name: defaultWF, CeilingUSD: checked.view.Budget.CeilingUSD}
+		} else if defChoice.CeilingUSD == 0 {
+			defChoice.CeilingUSD = checked.view.Budget.CeilingUSD
 		}
-		choices = append(choices, checked.Workflows...)
-		props["workflow"] = map[string]any{
-			"type":    "string",
-			"title":   "Workflow",
-			"enum":    choices,
-			"default": defaultWF,
+		allChoices = append(allChoices, defChoice)
+	}
+	allChoices = append(allChoices, offered...)
+
+	selectedWF := defaultWF
+	workflowIgnored := ""
+	if want := strings.TrimSpace(a.Workflow); want != "" {
+		found := false
+		for _, c := range allChoices {
+			if c.Name == want {
+				found = true
+				break
+			}
+		}
+		if found {
+			selectedWF = want
+		} else {
+			workflowIgnored = want + " is not offered here"
 		}
 	}
 
-	budgetLine := "Budget none"
-	if checked.view.Budget.CeilingUSD > 0 {
-		budgetLine = "Budget up to " + dollars(checked.view.Budget.CeilingUSD)
+	if len(allChoices) > 1 {
+		enum := make([]string, 0, len(allChoices))
+		enumNames := make([]string, 0, len(allChoices))
+		for _, c := range allChoices {
+			enum = append(enum, c.Name)
+			enumNames = append(enumNames, workflowChoiceLabel(c, c.Name == defaultWF))
+		}
+		props["workflow"] = map[string]any{
+			"type":      "string",
+			"title":     "Workflow",
+			"enum":      enum,
+			"enumNames": enumNames,
+			"default":   selectedWF,
+		}
 	}
-	meta := fmt.Sprintf("Workflow %s\n%s\n\n", defaultWF, budgetLine)
+
+	meta := renderStartCard(checked, defaultWF, allChoices)
 	if n := len(checked.view.Issues); n > 1 {
 		meta += fmt.Sprintf("The plan holds %d issues: this files the first.\n\n", n)
 	}
@@ -294,12 +387,16 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 	file, _ := formBool(res.Content["file"])
 	if res.Action != "accept" || !file {
 		// The plan is kept: a new handoff would plan again, start with the same id asks again.
-		out, _ := mcpwire.ToolResult(map[string]any{"filed": false, "why": "the developer did not confirm (" + res.Action + ")",
-			"next": "tell the developer nothing was filed and the plan is kept. Only when they ask to file it, call start again with the same id (" + a.ID + "); never plan it again"})
+		m := map[string]any{"filed": false, "why": "the developer did not confirm (" + res.Action + ")",
+			"next": "tell the developer nothing was filed and the plan is kept. Only when they ask to file it, call start again with the same id (" + a.ID + "); never plan it again"}
+		if workflowIgnored != "" {
+			m["workflow_ignored"] = workflowIgnored
+		}
+		out, _ := mcpwire.ToolResult(m)
 		return out
 	}
 
-	if len(checked.Workflows) > 1 {
+	if len(allChoices) > 1 {
 		if chosenWF := formString(res.Content["workflow"]); chosenWF != "" && chosenWF != defaultWF {
 			rechecked, ref := r.checkHandoff(ctx, a.ID, chosenWF)
 			if ref != nil {
@@ -324,10 +421,99 @@ func (r *Relay) startTool(ctx context.Context, args json.RawMessage) any {
 		if offer && !chosen {
 			next = "start was not chosen (the form came back without it), so the work is not started: ask the developer whether to start it, and label it " + readyLabel + " only on their yes"
 		}
-		out, _ := mcpwire.ToolResult(map[string]any{"filed": true, "url": url, "started": false, "next": next})
+		m := map[string]any{"filed": true, "url": url, "started": false, "next": next}
+		if workflowIgnored != "" {
+			m["workflow_ignored"] = workflowIgnored
+		}
+		out, _ := mcpwire.ToolResult(m)
 		return out
 	}
-	return r.startFromHandoff(ctx, draft.Repo, url, checked.governed().planLabels())
+	return r.startFromHandoff(ctx, draft.Repo, url, checked.governed().planLabels(), workflowIgnored)
+}
+
+func workflowChoiceLabel(c workflowChoice, isDefault bool) string {
+	var parts []string
+	if isDefault {
+		parts = append(parts, "default")
+	}
+	if d := OneLine(c.Description); d != "" {
+		parts = append(parts, d)
+	}
+	if c.CeilingUSD > 0 {
+		parts = append(parts, "up to "+dollars(c.CeilingUSD))
+	}
+	if len(parts) == 0 {
+		return c.Name
+	}
+	return c.Name + " (" + strings.Join(parts, ", ") + ")"
+}
+
+func renderStartCard(checked *handoffCheckShape, defaultWF string, allChoices []workflowChoice) string {
+	source := "repository"
+	suggested := ""
+	var roles []string
+	if len(checked.view.Issues) > 0 {
+		is := checked.view.Issues[0]
+		if is.Profile != "" {
+			source = "label"
+		}
+		if is.Suggestion != nil {
+			roles = is.Suggestion.Roles
+			if is.Suggestion.Profile != "" && is.Suggestion.Profile != defaultWF {
+				suggested = is.Suggestion.Profile
+			}
+		}
+	}
+	var path []string
+	var stepUpUSD float64
+	ceiling := checked.view.Budget.CeilingUSD
+	if c, ok := checked.findChoice(defaultWF); ok {
+		path = slices.Clone(c.Path)
+		stepUpUSD = c.StepUpCeilingUSD
+		if ceiling == 0 {
+			ceiling = c.CeilingUSD
+		}
+	}
+	if len(path) == 0 && len(roles) > 0 {
+		path = append(slices.Clone(roles), "CI", "merge gate")
+	}
+	card := roomview.WorkflowCard{
+		Workflow:   defaultWF,
+		Reason:     roomview.Reason(source, "", suggested, "", nil),
+		Path:       path,
+		CeilingUSD: ceiling,
+		StepUpUSD:  stepUpUSD,
+	}
+	var b strings.Builder
+	_ = roomview.WorkflowCardText(&b, card, roomview.Options{Format: roomview.Text})
+	var others []workflowChoice
+	for _, c := range allChoices {
+		if c.Name != defaultWF {
+			others = append(others, c)
+		}
+	}
+	if len(others) > 0 {
+		b.WriteString("\nOther workflows a maintainer may choose below:\n")
+		maxName := 0
+		for _, c := range others {
+			maxName = max(maxName, len(c.Name))
+		}
+		for _, c := range others {
+			pad := max(maxName-len(c.Name)+3, 3)
+			line := "  " + c.Name + strings.Repeat(" ", pad)
+			if d := OneLine(c.Description); d != "" {
+				line += d
+				if c.CeilingUSD > 0 {
+					line += " Up to " + dollars(c.CeilingUSD)
+				}
+			} else if c.CeilingUSD > 0 {
+				line += "Up to " + dollars(c.CeilingUSD)
+			}
+			b.WriteString(strings.TrimRight(line, " ") + "\n")
+		}
+	}
+	b.WriteString("\n")
+	return b.String()
 }
 
 // fallbackCommand is one shell command that files the draft with gh and nothing else. Every value is
@@ -382,8 +568,11 @@ func startFallbackNext(d draftShape) string {
 		"Never add a label yourself: " + start + ":\n" + fallbackCommand(d)
 }
 
-func (r *Relay) startFromHandoff(ctx context.Context, repo, url string, labels []string) any {
+func (r *Relay) startFromHandoff(ctx context.Context, repo, url string, labels []string, workflowIgnored string) any {
 	result := map[string]any{"filed": true, "url": url, "started": false}
+	if workflowIgnored != "" {
+		result["workflow_ignored"] = workflowIgnored
+	}
 	n, err := issueNumber(url, repo)
 	for _, label := range labels {
 		if err != nil || r.ClassLabel == nil {

@@ -97,9 +97,13 @@ Next: approve it on the room page → https://rooms.example/r/26zfnuxm#01M4A
 #42 docs: chart version is wrong · 26zfnuxm
 needs you · an agent is coding · Smana/cloud-native-ref · open the room (https://rooms.example/r/26zfnuxm)
 
-Run   implementer cf4ato2x (human review) · started 19:11 UTC, 18 min ago
-Spend $0.31 of $1.50 (21 %) · 189 k tokens
-PR    #2239 (https://github.com/Smana/cloud-native-ref/pull/2239) · reviewer approved at 18:49 UTC
+Workflow   standard · this repository's default
+Will run   implementer → reviewer → CI → merge gate
+Cost       up to $5.10
+Path       implementer ● · reviewer ○
+Run        implementer cf4ato2x (human review) · started 19:11 UTC, 18 min ago
+Spend      $0.31 of $1.50 (21 %) · 189 k tokens
+PR         #2239 (https://github.com/Smana/cloud-native-ref/pull/2239) · reviewer approved at 18:49 UTC
 
 Needs you
 1. approve "git push to agent/26zfnuxm" by 19:45 UTC → https://rooms.example/r/26zfnuxm#01M4A
@@ -109,7 +113,7 @@ Runs implementer (first run) succeeded · 40 min · $0.18 → reviewer approved 
 Agents' notes, their claims, not checked
 - 19:12 UTC cf4ato2x "found both versions on line 12-13, fixing"
 
-You can queue a note for the next run · steer the running agent · stop it with the label factory/stop
+You can cancel it with maku cancel 26zfnuxm · stop it with the label factory/stop
 cursor: seq:7
 ```
 
@@ -148,14 +152,14 @@ claude mcp add --scope user maku -- maku mcp    # Claude Code; any agent that ru
 | Tool | Where | Input | What it does |
 |---|---|---|---|
 | `handoff` | broker | `{text, repository?, candidates?, context?, evidence?}` to begin; `{id, answer}` or `{id, acceptRest: true}` to continue | Plans the work you described, holds the plan on the broker for 24 hours bound to you, and returns the plan text as it is plus at most one question with its recommendation and why ([below](#the-plan)). With planning off, returns `Planning is not available here; file on GitHub.` |
-| `start` | local | `{id}` | Re-validates the stored plan on the broker, then shows a confirmation form with the issue, `workflow` and `budget`. Only your answer files the issue and starts the work |
+| `start` | local | `{id, workflow?}` | Re-validates the stored plan on the broker, then shows a confirmation form with the workflow card (`Workflow`, `Will run`, `Cost`), described workflow options and the issue. An optional `workflow` preselects the form field when offered; only your answer files the issue and starts the work |
 | `inbox` | broker | `{repo?}` | What needs you across your tasks (or your recent tasks when nothing is waiting or `needs` is off) |
-| `task` | broker | `{task, since?}` | Where one task stands (`State`), `Needs you`, `Budget`, `Merge` (once the merge gate has evaluated a pull request), what was asked, `Next` and the milestones since `since`, with one cursor |
+| `task` | broker | `{task, since?}` | Where one task stands (the workflow card and `Path` when set, `State`, `Needs you`, `Budget`, `Merge` once the merge gate has evaluated a pull request), what was asked, `Next` and the milestones since `since`, with one cursor |
 | `wait` | local | `{task, timeout?}` | Polls from your machine until a task needs you, opens a pull request or ends (300 s by default, at most 1800 s), and returns the task view. Run it in a background task |
 | `answer` | local | `{task, text?}` | Replies to an open question on the task's issue (and restarts the task when you may start work there) or leaves a note for its next run, behind a confirmation form |
 | `cancel` | local | `{task, discard?}` | Stops the task, or discards it (its pull request, its `agent/<task>` branch and its issue closed as not planned), behind a confirmation form; without a form it stops nothing. Listed after the six |
 
-- **`start {id}` and its form.** `start` asks the broker to re-validate the stored plan, then builds a confirmation form (MCP elicitation). The form shows the issue, the `workflow` (pre-filled with the default; when several workflows are offered, changing it re-validates the plan on the broker) and the `budget` — no policy or merge line is shown before a pull request exists. `"File this issue"` (`file`) defaults to no. `"Start now"` (`start`) appears and defaults to yes when `human.mcp.start {default, except}` allows starting work on that repository (`human.mcp.sessionStart` was removed: the broker refuses a config that sets it) and your linked GitHub account has write access. On yes, your own `gh` creates the issue and applies any pinned `workflow:<name>` label (when you maintain the repository; skipped and noted otherwise) and `factory/ready`. A failed workflow label starts nothing. A client without forms or an unanswered form writes nothing and returns a `gh issue create` fallback command for you to run. It is a form field, never a tool argument: your agent can call `start` but cannot answer the form.
+- **`start {id, workflow?}` and its form.** `start` asks the broker to re-validate the stored plan, then builds a confirmation form (MCP elicitation). The form leads with the workflow card (`Workflow`, `Will run`, `Cost`), lists the other offered workflows with their descriptions and ceilings, and shows the issue — no policy or merge line is shown before a pull request exists. The optional `workflow` tool argument preselects the form's `workflow` field when the name is offered (an unoffered name leaves the default and returns `workflow_ignored`); nothing is pinned without the form's answer. When several workflows are offered, changing `workflow` in the form re-validates the plan on the broker. `"File this issue"` (`file`) defaults to no. `"Start now"` (`start`) appears and defaults to yes when `human.mcp.start {default, except}` allows starting work on that repository (`human.mcp.sessionStart` was removed: the broker refuses a config that sets it) and your linked GitHub account has write access. On yes, your own `gh` creates the issue and applies any pinned `workflow:<name>` label (when you maintain the repository; skipped and noted otherwise) and `factory/ready`. A failed workflow label starts nothing. A client without forms or an unanswered form writes nothing and returns a `gh issue create` fallback command for you to run. It is a form field, never a tool argument: your agent can call `start` but cannot answer the form.
 - **`answer {task, text?}` and its form.** `answer` reads the task first (`task`, falling back on `needs_author` to the newest public bounce comment from the configured `factoryLogin`).
   - **When a question is open**, the form shows the question, the recommendation and the full body diff (`## Acceptance check` plus `D<n>: Acceptance check: <answer>` for the acceptance question, or `D<n>` under `## Decisions` otherwise), takes a one-line `answer` (blank accepts the recommendation), and defaults `send` to no. When `canStart` is true, `"Restart the task"` (`restart`) appears and defaults to yes: after verifying the issue's body, labels and `updatedAt` are unchanged and writing the body edit with `gh issue edit --body-file=-`, yes re-applies `factory/ready` with your `gh` so the task is scoped again with the answer. Without `canStart`, the answer is written and `next` says a maintainer must restart the task.
   - **When no question is open**, `answer {task, text}` asks to confirm (`send` default no) and queues `text` as a [machine-sent](reference/api.md#machine-sent-text) note for the task's next run.
@@ -211,8 +215,9 @@ What a plan shows, as `handoff` answers and your agent shows it back:
 
 ````text
 **Plan** · Smana/maku · `h_9f3k2m7q`
-Workflow standard (implementer, reviewer)
-Budget up to $2.00
+Workflow   standard · this repository's default
+Will run   implementer → reviewer → CI → merge gate
+Cost       up to $2.00
 
 1. `docs: the install link in the coding-agent guide 404s`
 

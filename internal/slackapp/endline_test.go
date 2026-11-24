@@ -488,14 +488,14 @@ func TestProposalSaysWorkflowAndBudget(t *testing.T) {
 		Why:     "docs change",
 	}
 	p.Workflow = "standard"
-	p.Pins = []string{"standard", "links-solo"}
+	p.Pins = []pinOption{{Name: "standard"}, {Name: "links-solo"}}
 
 	text, raw, err := proposalSections(p, nil, nil, "C03")
 	if err != nil {
 		t.Fatal(err)
 	}
 	blocksStr := string(raw)
-	for _, want := range []string{"Workflow", "Budget    up to $2.00"} {
+	for _, want := range []string{"*Workflow* standard", "*Cost* up to $2.00"} {
 		if !strings.Contains(text, want) && !strings.Contains(blocksStr, want) {
 			t.Errorf("proposal missing %q:\ntext:\n%s\nblocks:\n%s", want, text, blocksStr)
 		}
