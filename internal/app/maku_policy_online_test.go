@@ -28,6 +28,12 @@ func policyOnlineApp(t *testing.T) (Maku, *strings.Builder, *strings.Builder) {
 			_, _ = w.Write([]byte(`{"repository":"Smana/a","since":"2026-11-01","decisions":[{"at":"2026-11-24T12:00:00Z","pullRequest":42,"head":"abc","outcome":"human","policy":"docs","reason":"patch_too_large","rows":{"counted":true,"files":2,"maxFiles":5,"lines":131,"maxLines":100},"commentURL":"https://github.com/Smana/a/pull/42"}]}`))
 		case "/api/policy/repositories/Smana/a/decisions/42":
 			_, _ = w.Write([]byte(`{"repository":"Smana/a","pullRequest":42,"decisions":[{"at":"2026-11-24T12:00:00Z","head":"abc","class":"docs","verdict":"human","reason":"patch_too_large","steps":[{"row":"condition: modified lines","status":"refused","detail":"131/100"}],"commentURL":"https://github.com/Smana/a/pull/42"}]}`))
+		case "/api/policy/repositories/Smana/a/backtest":
+			_, _ = w.Write([]byte(`{"valid":true,"repository":"Smana/a","since":"2026-10-25","counts":{"considered":1,"changed":1,"unchanged":0,"unknown":0,"matched":0},"rows":[{"pullRequest":42,"url":"https://github.com/Smana/a/pull/42","policy":"docs","before":{"verdict":"shadow","reason":"shadow_would_arm"},"after":{"verdict":"human","reason":"patch_too_large"},"change":"changed"}]}`))
+		case "/api/policy/promotions":
+			_, _ = w.Write([]byte(`{"proposal":{"path":"repository-a.yaml","line":6,"file":"kind: Repository\n"},"command":"gh pr create --repo Smana/a","pullRequest":91,"pullRequestURL":"https://github.com/Smana/a/pull/91","branch":"factory/promote-Smana-a-docs"}`))
+		case "/api/policy/repositories/Smana/a/drill":
+			_, _ = w.Write([]byte(`{"number":42,"url":"https://github.com/Smana/a/pull/42"}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -122,5 +128,35 @@ func TestPolicyPRValidation(t *testing.T) {
 	}
 	if repo, pr, err := policyPR("owner/name#42"); err != nil || repo != "owner/name" || pr != 42 {
 		t.Fatalf("%s %d %v", repo, pr, err)
+	}
+}
+
+func TestPolicyBacktestPromoteAndDrill(t *testing.T) {
+	m, out, _ := policyOnlineApp(t)
+	file := filepath.Join(t.TempDir(), "agent-factory.yaml")
+	if err := os.WriteFile(file, []byte("factory: aws-0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.run(t.Context(), []string{"policy", "backtest", file, "--repository", "Smana/a", "--since", "30d"}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"#42", "shadow:shadow_would_arm", "human:patch_too_large", "1 considered: 1 changed, 0 unchanged, 0 unknown", "matched none"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("backtest lacks %q in %s", want, out.String())
+		}
+	}
+	out.Reset()
+	if err := m.run(t.Context(), []string{"policy", "promote", "docs", "--repository", "Smana/a"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "https://github.com/Smana/a/pull/91") {
+		t.Fatalf("promotion: %s", out.String())
+	}
+	out.Reset()
+	if err := m.run(t.Context(), []string{"policy", "drill", "Smana/a#41"}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), "https://github.com/Smana/a/pull/42") {
+		t.Fatalf("drill: %s", out.String())
 	}
 }

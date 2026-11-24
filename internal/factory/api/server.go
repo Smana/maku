@@ -253,6 +253,9 @@ func (s *Server) Handler() http.Handler {
 	}
 	if s.Editor != nil {
 		mux.HandleFunc("POST /v1/policy/preview", gate(s.promotionOn, s.policyPreview))
+		mux.HandleFunc("POST /v1/policy/promote", gate(s.promotionOn, s.policyPromote))
+		mux.HandleFunc("POST /v1/policy/drill", gate(s.promotionOn, s.policyDrill))
+		mux.HandleFunc("GET /v1/policy/promotion", gate(s.promotionOn, s.policyPromotionStatus))
 		mux.HandleFunc("GET /v1/policy/decisions", gate(s.promotionOn, s.policyDecisions))
 	}
 	return mux

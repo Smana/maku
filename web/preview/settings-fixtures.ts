@@ -80,7 +80,7 @@ export const cnrPage: RepositoryPage = {
     ],
   },
   promotions: [{ id: "p1", repository: "Smana/cloud-native-ref", class: "docs-links", threshold: 20, requestedBy: "Smana",
-    requestedAt: "2026-11-09T10:00:00Z", state: "pr_opened", pullRequest: 512 }],
+    requestedAt: "2026-11-09T10:00:00Z", state: "pr_opened", pullRequest: 512, pullRequestURL: "https://github.com/Smana/cloud-native-ref/pull/512" }],
   exceptions: [{ id: "e1", repository: "Smana/cloud-native-ref", class: "docs", minimum: 12, justification: "Docs-only class, reverted twice in a year, low blast radius.",
     requestedBy: "Smana", requestedAt: "2026-11-08T09:00:00Z", state: "approved", decidedBy: "ops-lead", expiresAt: "2026-12-08T09:00:00Z" }],
   you,

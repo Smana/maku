@@ -156,6 +156,22 @@ counted as `agent_merged` (`maku_factory_pr_outcomes_total`, alert `FactoryAgent
 error level, and otherwise ends as a human merge does: it is not reverted. H3 closes it, where
 those tokens lose `contents: write`.
 
+## Policy-change pull requests
+
+The factory App has one additional write: with `Factory.spec.gitops`, it creates the branch
+`factory/promote-<repository>-<policy>`, updates only the configured manifest's `mode: shadow` line
+to `mode: live`, and opens a pull request with the supporting decisions. The optimistic blob SHA
+prevents an unrelated concurrent edit from being overwritten. A drill opens a revert labelled
+`factory/drill`. These are the only policy-change repository writes; previews, backtests and the
+editors write nothing.
+
+The broker and factory both re-check the human's maintainer access before either write. The
+`promote` package contains no merge call, auto-merge is not enabled, and a maintainer still reviews
+and merges. An audit record closes `merged` only when the served binding is live, or `abandoned`
+when the pull request closes unmerged; it is never closed by a button. Without `gitops`, the API
+returns a command instead and the maintainer opens the PR. The branch prefix and the no-merge rule
+are also tested offline; no live GitHub write is claimed by those tests.
+
 ## Authorization
 
 Room roles (`watcher`, `collaborator`, `owner`) are cumulative, the `approver` flag is independent, and the `driver` is one token; the broker enforces the full [authorization matrix](reference/security-controls.md#authorization-matrix) (`internal/policy`) on every request:

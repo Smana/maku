@@ -76,6 +76,40 @@ func (r Maku) policyOnline(ctx context.Context, verb string, args []string) erro
 			return writePolicyJSON(r.Out, bt)
 		}
 		return printBacktest(r.Out, bt)
+	case "promote":
+		if *repository == "" || len(pos) != 1 {
+			return errors.New("policy promote takes a policy name and --repository owner/name")
+		}
+		result, err := client.PolicyPromote(ctx, *repository, pos[0])
+		if err != nil {
+			return err
+		}
+		if *output == "json" {
+			return writePolicyJSON(r.Out, result)
+		}
+		if result.PullRequestURL != "" {
+			_, err = fmt.Fprintln(r.Out, result.PullRequestURL)
+		} else {
+			_, err = fmt.Fprintln(r.Out, result.Command)
+		}
+		return err
+	case "drill":
+		if *repository != "" || len(pos) != 1 {
+			return errors.New("policy drill takes owner/name#PR")
+		}
+		repo, pr, err := policyPR(pos[0])
+		if err != nil {
+			return err
+		}
+		result, err := client.PolicyDrill(ctx, repo, pr)
+		if err != nil {
+			return err
+		}
+		if *output == "json" {
+			return writePolicyJSON(r.Out, result)
+		}
+		_, err = fmt.Fprintln(r.Out, result.URL)
+		return err
 	}
 	return fmt.Errorf("policy: unknown online verb %q", verb)
 }

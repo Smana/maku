@@ -12,7 +12,9 @@ import (
 	"strings"
 
 	"github.com/Smana/maku/internal/factory/policyview"
+	"github.com/Smana/maku/internal/factory/promote"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/runrequest"
 )
 
 // PolicyRecent lists a repository's recent per-policy decisions through the broker.
@@ -37,6 +39,27 @@ func (c Client) PolicyBacktest(ctx context.Context, repository, file, since stri
 	var out policyview.Backtest
 	path := "/api/policy/repositories/" + policyRepositoryPath(repository) + "/backtest"
 	body, err := json.Marshal(map[string]any{"kind": "file", "file": file, "since": since})
+	if err != nil {
+		return out, err
+	}
+	return out, c.policyPost(ctx, path, body, &out)
+}
+
+// PolicyPromote opens a policy's promotion pull request through the broker.
+func (c Client) PolicyPromote(ctx context.Context, repository, class string) (promote.Result, error) {
+	var out promote.Result
+	body, err := json.Marshal(map[string]string{"repository": repository, "class": class})
+	if err != nil {
+		return out, err
+	}
+	return out, c.policyPost(ctx, "/api/policy/promotions", body, &out)
+}
+
+// PolicyDrill opens a labelled rollback-drill revert through the broker.
+func (c Client) PolicyDrill(ctx context.Context, repository string, number int) (runrequest.PolicyDrillResult, error) {
+	var out runrequest.PolicyDrillResult
+	path := "/api/policy/repositories/" + policyRepositoryPath(repository) + "/drill"
+	body, err := json.Marshal(map[string]any{"pullRequest": number})
 	if err != nil {
 		return out, err
 	}

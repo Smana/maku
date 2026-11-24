@@ -70,6 +70,18 @@ func (f *fakeEditor) Backtest(_ context.Context, repo, _, _ string, _ []config.B
 	return map[string]any{"valid": true, "repository": repo, "since": since}, nil
 }
 
+func (f *fakeEditor) Promote(_ context.Context, repo, class string, _ int) (any, error) {
+	return map[string]any{"repository": repo, "class": class, "pullRequest": 42, "pullRequestURL": "https://github.com/example/repo/pull/42"}, nil
+}
+
+func (f *fakeEditor) PromotionStatus(_ context.Context, _, _ string, _ int) (any, error) {
+	return map[string]any{"pullRequestState": "CLOSED", "servedMode": "shadow"}, nil
+}
+
+func (f *fakeEditor) Drill(_ context.Context, repo string, number int) (any, error) {
+	return map[string]any{"repository": repo, "pullRequest": number, "url": "https://github.com/example/repo/pull/43"}, nil
+}
+
 // managed is stage manage when on, else read: the stage below promotion.
 func managed(on bool) config.PolicyManagement {
 	if on {

@@ -58,6 +58,7 @@ import (
 	"github.com/Smana/maku/internal/factory/meter"
 	"github.com/Smana/maku/internal/factory/minter"
 	"github.com/Smana/maku/internal/factory/policyview"
+	"github.com/Smana/maku/internal/factory/promote"
 	"github.com/Smana/maku/internal/factory/reconciler"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
@@ -767,7 +768,7 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			return policyWatch.Snapshot(repo)
 		}
 		evidenceRefresh = &evidence.Refresher{Service: ev, Owned: fenced.Owned, OnAge: m.PolicyEvidenceAge}
-		apiSrv.Editor = policyEditor{&policyview.Service{Cfg: live, Reports: ev, Namespace: ns, Comments: func(repo string) (policyview.CommentReader, bool) {
+		apiSrv.Editor = policyEditor{Service: &policyview.Service{Cfg: live, Reports: ev, Namespace: ns, Comments: func(repo string) (policyview.CommentReader, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
@@ -780,6 +781,12 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 			}
 			return evidenceSource{c.gh}.MergedRecords(ctx, "merged:>="+since)
 		}, BacktestReader: func(repo string) (policyview.BacktestSource, bool) {
+			c, ok := conns.get(repo)
+			if !ok || c.gh == nil {
+				return nil, false
+			}
+			return c.gh, true
+		}}, Promotions: &promote.Service{Cfg: live, Reports: ev, Git: func(repo string) (promote.Git, bool) {
 			c, ok := conns.get(repo)
 			if !ok || c.gh == nil {
 				return nil, false
@@ -1321,7 +1328,10 @@ func commentReader(gh *forge.GitHub) policyview.CommentReader {
 }
 
 // policyEditor is the policy view as the API serves it, documents as any (api.PolicyEditor).
-type policyEditor struct{ *policyview.Service }
+type policyEditor struct {
+	*policyview.Service
+	Promotions *promote.Service
+}
 
 func (e policyEditor) Preview(ctx context.Context, repository, file string) (any, error) {
 	return e.Service.Preview(ctx, repository, file)
@@ -1345,6 +1355,18 @@ func (e policyEditor) Recent(ctx context.Context, repository, since string) (any
 
 func (e policyEditor) Backtest(ctx context.Context, repository, kind, file string, bindings []config.Binding, policy string, spec *config.PolicySpec, since string) (any, error) {
 	return e.Service.Backtest(ctx, repository, policyview.BacktestRequest{Kind: kind, File: file, Bindings: bindings, Policy: policy, Spec: spec}, since)
+}
+
+func (e policyEditor) Promote(ctx context.Context, repository, class string, minimum int) (any, error) {
+	return e.Promotions.Open(ctx, repository, class, minimum)
+}
+
+func (e policyEditor) PromotionStatus(ctx context.Context, repository, class string, number int) (any, error) {
+	return e.Promotions.Status(ctx, repository, class, number)
+}
+
+func (e policyEditor) Drill(ctx context.Context, repository string, number int) (any, error) {
+	return e.Promotions.Drill(ctx, repository, number)
 }
 
 // runCost hands the meter's cost report to the metric, key by key.

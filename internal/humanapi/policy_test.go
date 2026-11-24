@@ -19,6 +19,7 @@ import (
 	"github.com/Smana/maku/internal/factory/config"
 	"github.com/Smana/maku/internal/factory/evidence"
 	"github.com/Smana/maku/internal/factory/policyview"
+	promotepkg "github.com/Smana/maku/internal/factory/promote"
 	"github.com/Smana/maku/internal/fanout"
 	"github.com/Smana/maku/internal/runrequest"
 	"github.com/Smana/maku/internal/store"
@@ -34,6 +35,7 @@ type fakePolicyFactory struct {
 	tokens []string
 	// minimum is the class's own (MR4); 0 is standard's 20.
 	minimum int
+	status  promotepkg.Status
 }
 
 func (f *fakePolicyFactory) PolicyEvidence(_ context.Context, token, repository string) (evidence.Report, error) {
@@ -92,6 +94,24 @@ func (f *fakePolicyFactory) PolicyBacktest(_ context.Context, token, repository 
 		Rows:   []policyview.BacktestRow{{PullRequest: 42, Policy: request.Policy, Change: "changed"}}}, nil
 }
 
+func (f *fakePolicyFactory) PolicyPromote(_ context.Context, token, _, class string, _ int) (promotepkg.Result, error) {
+	f.tokens = append(f.tokens, token)
+	return promotepkg.Result{Proposal: evidence.Proposal{Path: evidence.PolicyPath, Line: 6, File: "factory: aws-0\n"},
+		PullRequest: 91, PullRequestURL: "https://github.com/Smana/maku/pull/91", Branch: "factory/promote-Smana-maku-" + class}, nil
+}
+
+func (f *fakePolicyFactory) PolicyPromotionStatus(_ context.Context, _, _, _ string, _ int) (promotepkg.Status, error) {
+	if f.status.PullRequestState != "" {
+		return f.status, nil
+	}
+	return promotepkg.Status{PullRequestState: "OPEN", ServedMode: "shadow"}, nil
+}
+
+func (f *fakePolicyFactory) PolicyDrill(_ context.Context, token, _ string, number int) (runrequest.PolicyDrillResult, error) {
+	f.tokens = append(f.tokens, token)
+	return runrequest.PolicyDrillResult{Number: number + 1, URL: "https://github.com/Smana/maku/pull/92"}, nil
+}
+
 func (f *fakePolicyFactory) PolicyList(_ context.Context, token string) ([]evidence.PolicyReport, error) {
 	f.tokens = append(f.tokens, token)
 	return []evidence.PolicyReport{{Name: "dead-links", Generation: 4}}, nil
@@ -137,6 +157,18 @@ func (m *memRecords) RecordPromotion(_ context.Context, p store.Promotion) (stor
 	}
 	p.State, p.RequestedAt = store.PromotionRequested, time.Now()
 	m.promotions[p.ID] = p
+	return p, nil
+}
+
+func (m *memRecords) OpenPromotion(_ context.Context, id string, number int, url, branch string) (store.Promotion, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	p, ok := m.promotions[id]
+	if !ok {
+		return p, store.ErrNoPolicyRecord
+	}
+	p.State, p.PullRequest, p.PullRequestURL, p.Branch = store.PromotionPROpened, number, url, branch
+	m.promotions[id] = p
 	return p, nil
 }
 
@@ -396,8 +428,8 @@ func TestPromotionRecordsTheEvidenceAndMoves(t *testing.T) {
 		t.Fatalf("%d %s", code, body)
 	}
 	scraped := scrape(t, e)
-	for _, change := range []string{"promotion_requested", "promotion_pr_opened"} {
-		if !strings.Contains(scraped, `maku_rooms_policy_changes_total{change="`+change+`",class="docs-links",repository="Smana/maku"} 1`) {
+	for _, change := range []string{"promotion_pr_opened"} {
+		if !strings.Contains(scraped, `maku_rooms_policy_changes_total{change="`+change+`",class="docs-links",repository="Smana/maku"} 2`) {
 			t.Errorf("%s uncounted", change)
 		}
 	}
@@ -629,6 +661,9 @@ func TestPolicyWritesRequireWebSessionOriginJSON(t *testing.T) {
 			"missing ctype":   {noCT, http.StatusUnsupportedMediaType, "unsupported_media_type"},
 			"json with param": {charsetCT, http.StatusOK, ""},
 		} {
+			if rname == "request promotion" && cname == "cli token" {
+				tc.code, tc.reason = http.StatusOK, ""
+			}
 			t.Run(rname+"/"+cname, func(t *testing.T) {
 				f, m := newPolicy(20)
 				m.promotions["pppppppp"] = store.Promotion{ID: "pppppppp", Repository: policyRepo, Class: "revert", State: store.PromotionRequested}
@@ -665,5 +700,40 @@ func TestDecideExceptionRefusesSelfApproval(t *testing.T) {
 	code, body = sendJSON(t, e, http.MethodPost, "/api/policy/exceptions/selfexc1", web("ops"), map[string]string{"decision": "refused"})
 	if code != http.StatusOK || m.exceptions["selfexc1"].State != store.ExceptionRefused {
 		t.Fatalf("self-refusal: %d %s", code, body)
+	}
+}
+
+func TestPromotionRecordsCloseFromFactoryState(t *testing.T) {
+	f, m := newPolicy(20)
+	m.promotions["pppppppp"] = store.Promotion{ID: "pppppppp", Repository: policyRepo, Class: "docs-links", State: store.PromotionPROpened, PullRequest: 91}
+	f.status = promotepkg.Status{PullRequestState: "CLOSED", ServedMode: "shadow"}
+	e := setup(t, policyOn(f, m))
+	if code, body := getPolicy(t, e, "/api/policy/repositories/Smana/maku", header("anyone")); code != http.StatusOK {
+		t.Fatalf("%d %s", code, body)
+	}
+	if got := m.promotions["pppppppp"]; got.State != store.PromotionAbandoned {
+		t.Fatalf("an unmerged close did not abandon: %+v", got)
+	}
+	m.promotions["qqqqqqqq"] = store.Promotion{ID: "qqqqqqqq", Repository: policyRepo, Class: "docs-links", State: store.PromotionPROpened, PullRequest: 92}
+	f.status = promotepkg.Status{PullRequestState: "MERGED", ServedMode: "live"}
+	if code, body := getPolicy(t, e, "/api/policy/repositories/Smana/maku", header("anyone")); code != http.StatusOK {
+		t.Fatalf("%d %s", code, body)
+	}
+	if got := m.promotions["qqqqqqqq"]; got.State != store.PromotionMerged {
+		t.Fatalf("a served live binding did not close merged: %+v", got)
+	}
+}
+
+func TestPolicyDrillAndRefusalCounts(t *testing.T) {
+	f, m := newPolicy(20)
+	e := setup(t, policyOn(f, m))
+	if code, body := sendJSON(t, e, http.MethodPost, "/api/policy/repositories/Smana/maku/drill", header("maint"), map[string]any{"pullRequest": 41}); code != http.StatusOK ||
+		!strings.Contains(body, `"number":42`) || !strings.Contains(body, `"url":"https://github.com/Smana/maku/pull/92"`) {
+		t.Fatalf("drill: %d %s", code, body)
+	}
+	f.clean = 12
+	if code, body := promote(t, e, "maint", map[string]string{"repository": policyRepo, "class": "docs-links"}); code != http.StatusConflict ||
+		!strings.Contains(body, `"blockers":["below_minimum"]`) || !strings.Contains(body, `"clean":12`) || !strings.Contains(body, `"minimum":20`) || !strings.Contains(body, `"bad":0`) {
+		t.Fatalf("refusal counts: %d %s", code, body)
 	}
 }

@@ -79,7 +79,7 @@ export interface Decision {
 export interface Timeline { repository: string; pullRequest: number; decisions: Decision[] }
 export interface Promotion {
   id: string; repository: string; class: string; threshold: number; exceptionId?: string;
-  requestedBy: string; requestedAt: string; state: string; pullRequest?: number; closedBy?: string;
+  requestedBy: string; requestedAt: string; state: string; pullRequest?: number; pullRequestURL?: string; branch?: string; closedBy?: string;
 }
 export interface Exception {
   id: string; repository: string; class: string; minimum: number; justification: string;

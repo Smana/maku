@@ -56,25 +56,27 @@ type Exception struct {
 
 // Promotion is one request to promote a class to live, on the evidence it was granted on.
 type Promotion struct {
-	ID          string          `json:"id"`
-	Repository  string          `json:"repository"`
-	Class       string          `json:"class"`
-	Threshold   int             `json:"threshold"`
-	Evidence    json.RawMessage `json:"evidence"`
-	ExceptionID string          `json:"exceptionId,omitempty"`
-	RequestedBy string          `json:"requestedBy"`
-	RequestedAt time.Time       `json:"requestedAt"`
-	State       string          `json:"state"`
-	PullRequest int             `json:"pullRequest,omitempty"`
-	ClosedBy    string          `json:"closedBy,omitempty"`
-	ClosedAt    *time.Time      `json:"closedAt,omitempty"`
+	ID             string          `json:"id"`
+	Repository     string          `json:"repository"`
+	Class          string          `json:"class"`
+	Threshold      int             `json:"threshold"`
+	Evidence       json.RawMessage `json:"evidence"`
+	ExceptionID    string          `json:"exceptionId,omitempty"`
+	RequestedBy    string          `json:"requestedBy"`
+	RequestedAt    time.Time       `json:"requestedAt"`
+	State          string          `json:"state"`
+	PullRequest    int             `json:"pullRequest,omitempty"`
+	PullRequestURL string          `json:"pullRequestURL,omitempty"`
+	Branch         string          `json:"branch,omitempty"`
+	ClosedBy       string          `json:"closedBy,omitempty"`
+	ClosedAt       *time.Time      `json:"closedAt,omitempty"`
 }
 
 const (
 	exceptionCols = `exception_id, repository, class, minimum, justification, requested_by, requested_at, state,
 		coalesce(decided_by, ''), decided_at, coalesce(note, ''), expires_at`
 	promotionCols = `promotion_id, repository, class, threshold, evidence, coalesce(exception_id, ''), requested_by,
-		requested_at, state, coalesce(pull_request, 0), coalesce(closed_by, ''), closed_at`
+		requested_at, state, coalesce(pull_request, 0), coalesce(pull_request_url, ''), coalesce(branch, ''), coalesce(closed_by, ''), closed_at`
 )
 
 func scanException(row pgx.Row) (Exception, error) {
@@ -87,7 +89,7 @@ func scanException(row pgx.Row) (Exception, error) {
 func scanPromotion(row pgx.Row) (Promotion, error) {
 	var p Promotion
 	err := row.Scan(&p.ID, &p.Repository, &p.Class, &p.Threshold, &p.Evidence, &p.ExceptionID, &p.RequestedBy,
-		&p.RequestedAt, &p.State, &p.PullRequest, &p.ClosedBy, &p.ClosedAt)
+		&p.RequestedAt, &p.State, &p.PullRequest, &p.PullRequestURL, &p.Branch, &p.ClosedBy, &p.ClosedAt)
 	return p, err
 }
 
@@ -147,6 +149,14 @@ func (s *Store) RecordPromotion(ctx context.Context, p Promotion) (Promotion, er
 		p.ID, p.Repository, p.Class, p.Threshold, p.Evidence, exc, p.RequestedBy)
 	out, err := scanPromotion(row)
 	return out, policyErr(err, ErrExceptionUnusable)
+}
+
+// OpenPromotion records the factory-opened pull request without closing the request.
+func (s *Store) OpenPromotion(ctx context.Context, id string, number int, url, branch string) (Promotion, error) {
+	row := s.pool.QueryRow(ctx, `UPDATE policy_promotions SET state = 'pr_opened', pull_request = $2,
+		pull_request_url = $3, branch = $4 WHERE promotion_id = $1 RETURNING `+promotionCols, id, number, url, branch)
+	out, err := scanPromotion(row)
+	return out, policyErr(err, ErrPolicyMoved)
 }
 
 // MovePromotion moves a promotion to state, naming its pull request (0 keeps the one it names).

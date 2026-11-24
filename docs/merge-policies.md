@@ -799,8 +799,9 @@ their original finding snapshots are not in the decision record. The replay writ
 
 With `policyManagement.stage: manage` (factory and broker), `/settings/merge-policies/<owner>/<name>`
 shows a repository's policies and evidence, and `/settings/merge-policies/policies/<name>` shows one
-policy; see [the web UI](reference/web-ui-settings.md#settings) for permissions. **Maku writes nothing**: each page
-answers with the manifest or file edit to commit.
+policy; see [the web UI](reference/web-ui-settings.md#settings) for permissions. Editors write
+nothing: each answers with the manifest or file edit to commit. Promotion is the one exception,
+below, and opens a pull request without merging it.
 
 | Repository | Where its bindings are edited | **Check** answers |
 |---|---|---|
@@ -817,7 +818,7 @@ consumer's change, live consumers first.
 ```mermaid
 sequenceDiagram
   participant M as Maintainer
-  participant UI as /settings
+  participant UI as /settings or maku
   participant B as Broker
   participant F as Factory
   participant GH as GitHub
@@ -827,9 +828,12 @@ sequenceDiagram
   F->>GH: 180 days of the policy's pull requests
   F-->>B: clean, bad, drill, proposal
   B->>B: eligible? record in policy_promotions
-  B-->>UI: manifest or file with mode: live + edit link
-  M->>GH: opens the pull request
-  M->>UI: record its number, then merged or abandoned
+  B->>F: POST /v1/policy/promote
+  F->>GH: open factory/promote-<repository>-<policy>, one mode line
+  F-->>UI: pull request URL
+  M->>GH: review and merge it
+  B->>F: read served mode and PR state
+  F-->>B: close merged when live, abandoned when closed unmerged
 ```
 
 A policy is eligible when all three hold (`evidence.Evaluate`):
@@ -842,11 +846,18 @@ A policy is eligible when all three hold (`evidence.Evaluate`):
 
 Shadow evidence is keyed by `class=<policy>` in the gate's decision marker, so clean shadow merges
 recorded under earlier label-chosen decisions and under diff-chosen decisions count together with no
-migration. Only a served `shadow` policy is promotable (`not_in_repository_policy` or `not_shadow`
-otherwise). The proposal sets `mode: live` in `repository-<name>.yaml` under `central` authority or
-`.github/agent-factory.yaml` under `repository` authority. Evidence is cached 10 minutes per
-repository and replica. The 29/46/61 widening ladder and the Clopper-Pearson bound are shown for
-visibility, never acted on.
+migration. Only a served `shadow` policy is promotable. The factory re-reads the GitOps file and
+changes only its `mode: shadow` line to `mode: live`; the pull request body carries the clean, bad
+and drill counts and the supporting pull requests. `Factory.spec.gitops` names the repository, path
+and base branch. A `requested` record resumes after a failed open; a second request is refused once
+the PR is open. There are no **Merged** or **Abandon** buttons: served live closes the record
+`merged`, and an unmerged close closes it `abandoned`, allowing another request.
+
+With `gitops` unset, the response instead carries the one-line proposal and its `gh pr create`
+command; the maintainer opens the PR manually. `maku policy promote POLICY --repository owner/name`
+uses the same flow. For the first rollback drill, choose a merged PR of the repository and run
+`maku policy drill owner/name#PR`: the factory opens a revert labelled `factory/drill`, and a
+maintainer reviews and merges that too.
 
 Below the minimum, a maintainer may request an exception (a lower minimum and a justification of 20
 to 2,000 characters); one of `policyManagement.operators` approves or refuses it once. An approved
@@ -913,7 +924,7 @@ Definitions are in [operations](operations/factory.md#factory-metrics); this is 
 | `simulate`, `manage` | `sum by (repository, agreement) (increase(maku_factory_policy_dual_decisions_total[1d]))` | No `unexplained`; `explained` only while divergence > 0; no `no_policy` once the file is read |
 | `manage` (`repository` authority) | `sum by (repository, class, change) (increase(maku_factory_policy_changes_total[1d]))` | `relaxation` only with a pull request you meant |
 | `manage` (grants) | `maku_factory_approval_grants_active`, `increase(maku_factory_approval_grant_events_total{event="disabled"}[1d])` | `disabled` `0` |
-| `manage` (promotions) | `increase(maku_rooms_policy_changes_total[7d])` | Each `promotion_requested` followed by `promotion_pr_opened` |
+| `manage` (promotions) | `increase(maku_rooms_policy_changes_total[7d])` | Each eligible automatic promotion reaches `promotion_pr_opened`, then `promotion_merged` when served live or `promotion_abandoned` when closed unmerged; a no-GitOps request begins at `promotion_requested` |
 | All | `sum by (class, reason) (increase(maku_factory_merge_decisions_total{reason=~"policy_.*\|approval_required"}[1h]))` | `policy_*` `0` |
 
 Maku ships no alert on these series; add the host's rules for an invalid or unreadable policy and a
