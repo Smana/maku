@@ -73,8 +73,8 @@ type Relay struct {
 	// Advanced lists the rare tools after the six, then every other tool the broker lists (maku mcp
 	// --advanced). Without it only the six are listed; an unlisted tool is still relayed when called.
 	Advanced bool
-	// ClassLabel puts a planned issue's class:<c> label, then its workflow:<p> pin, on it before Label
-	// starts the factory (P5, P7); nil starts without them, and the factory then decides both itself.
+	// ClassLabel puts a planned issue's workflow:<p> pin on it before Label starts the factory
+	// (P5, P7); nil starts without it, and the factory then decides itself.
 	ClassLabel Labeler
 	// Dir is the directory maku keeps its files in: what the client declares at initialize is
 	// recorded beside config.json there. Empty records nothing, so a relay built as a probe (maku

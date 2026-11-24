@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -408,6 +409,31 @@ func TestStartNotConfirmedNamesStartAgain(t *testing.T) {
 			if sc["filed"] != false || !strings.Contains(next, "call start again with the same id (aaaaaaaaaaaaaaaaaaaaaaaaaa)") ||
 				strings.Contains(next, "handoff") {
 				t.Fatalf("structuredContent = %v", sc)
+			}
+		})
+	}
+}
+
+func TestStartAppliesNoClassLabel(t *testing.T) {
+	yes := true
+	for name, tc := range map[string]struct {
+		profile string
+		want    []string
+	}{
+		"the factory's choice": {"", nil},
+		"a pinned workflow":    {"careful", []string{"workflow:careful"}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			g := governed{planShape: planShape{Maintainer: &yes}}
+			raw, err := json.Marshal(map[string]any{"issues": []map[string]any{{"class": "docs", "profile": tc.profile}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := json.Unmarshal(raw, &g.view); err != nil {
+				t.Fatal(err)
+			}
+			if got := g.planLabels(); !slices.Equal(got, tc.want) {
+				t.Fatalf("labels = %v, want %v", got, tc.want)
 			}
 		})
 	}

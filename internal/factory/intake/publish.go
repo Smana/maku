@@ -139,7 +139,7 @@ func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int,
 		class = filefence.Infer(p.repo(cfg).Classes, ProposalPaths(body))
 		// No factory/ready: the maintainer reads the issue and starts it.
 		filed, err = p.Forge.CreateIssue(ctx, title,
-			body+fmt.Sprintf("\n\n---\nPublished by @%s from agent factory task `%s`.", last.Actor, t.Name), []string{marker, "class:" + class})
+			body+fmt.Sprintf("\n\n---\nPublished by @%s from agent factory task `%s`.", last.Actor, t.Name), []string{marker})
 		if err != nil {
 			return fmt.Errorf("create the issue: %w", err)
 		}
@@ -148,11 +148,6 @@ func (p *IssuePoller) publishOne(ctx context.Context, cfg *config.Config, n int,
 	if !filedNow {
 		// K14: a retry reads the filed body, whose footer ends the file list.
 		class = filefence.Infer(p.repo(cfg).Classes, ProposalPaths(filed.Body))
-		if label := "class:" + class; !slices.Contains(filed.Labels, label) {
-			if err := p.Forge.AddLabels(ctx, filed.Number, label); err != nil {
-				return fmt.Errorf("label the issue: %w", err)
-			}
-		}
 	}
 	iss := filed
 	started := ""
