@@ -118,6 +118,12 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 		}
 	}
 	if !v1alpha1.TerminalPhase(t.Status.Phase) {
+		if t.Status.Phase == v1alpha1.PhaseEscalated {
+			syncStageCosts(t)
+			if p := t.Status.Profile; p != nil && p.StepUp != nil && (p.StepUp.Mode == "auto" || p.StepUp.Mode == "manual") {
+				r.noteStage(t, "step_up", stepUpEffect(p.StepUp.Mode, "escalated"))
+			}
+		}
 		return
 	}
 	if t.Status.EndedAt == nil { // the first end is the one counted (R34): a later Reverted revises nothing
@@ -127,6 +133,7 @@ func (r *Reconciler) outcome(ctx context.Context, cfg *config.Config, t *v1alpha
 		}
 		t.Status.EndedAt, t.Status.Outcome = &at, taskOutcome(t)
 	}
+	r.finalizeStages(ctx, cfg, t, t.Status.Outcome)
 	if !r.settling(t) { // never ran: nothing settles, and nothing waits (R34)
 		outcome, micro, _, err := r.tally(ctx, cfg, t)
 		if err != nil { // a family read: a task that never ran has none
@@ -218,6 +225,7 @@ func (r *Reconciler) count(ctx context.Context, cfg *config.Config, t *v1alpha1.
 	record(ctx, func(ctx context.Context) {
 		r.Metrics.TaskOutcome(ctx, class, cohort, profile, source, rec, outcome, usd)
 	})
+	r.countStages(ctx, cfg, t, outcome)
 }
 
 // familyBound is how long past its own settle window an approved split's parent waits for its

@@ -659,3 +659,23 @@ func TestTaskOutcomeCountsTheNoneProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestStageCostAndEffectMetrics(t *testing.T) {
+	s, read := rig(t, fake.NewClientBuilder().WithScheme(scheme()).Build(), func() bool { return true })
+	s.ListRepositories("Smana/cloud-native-ref")
+	ctx := t.Context()
+	s.StageCost(ctx, "Smana/cloud-native-ref", "docs", "review", 0.09)
+	s.StageEffect(ctx, "Smana/cloud-native-ref", "docs", "review", "changes_committed", "accepted")
+	s.StageEffect(ctx, "unknown/repo", "docs", "bogus", "bogus", "bogus")
+	got := read()
+	for _, want := range []string{
+		`maku_factory_stage_cost_usd_count{class="docs",repository="Smana/cloud-native-ref",stage="review"} 1`,
+		`maku_factory_stage_cost_usd_sum{class="docs",repository="Smana/cloud-native-ref",stage="review"} 0.09`,
+		`maku_factory_stage_effects_total{class="docs",effect="changes_committed",outcome="accepted",repository="Smana/cloud-native-ref",stage="review"} 1`,
+		`maku_factory_stage_effects_total{class="docs",effect="other",outcome="other",repository="other",stage="other"} 1`,
+	} {
+		if !strings.Contains(got, want+"\n") {
+			t.Fatalf("missing %s\n%s", want, got)
+		}
+	}
+}

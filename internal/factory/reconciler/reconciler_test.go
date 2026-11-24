@@ -293,12 +293,19 @@ type fakeMetrics struct {
 	mu       sync.Mutex
 	recorded []string
 	bound    []string // the series that name a payer: "<series> <the payer ctx binds>" (spend per identity SI4)
+	stages   []string // stage_cost and stage_effect series (WR5)
 }
 
 func (m *fakeMetrics) add(s string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.recorded = append(m.recorded, s)
+}
+
+func (m *fakeMetrics) addStage(s string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stages = append(m.stages, s)
 }
 
 func (m *fakeMetrics) who(ctx context.Context, s string) {
@@ -332,6 +339,12 @@ func (m *fakeMetrics) Intervention(_ context.Context, kind, cohort, profile, rec
 }
 func (m *fakeMetrics) TaskOutcome(_ context.Context, class, cohort, profile, source, recommended, outcome string, usd float64) {
 	m.add(fmt.Sprintf("task_outcome %s %s %s %s %s %s %v", class, cohort, profile, source, recommended, outcome, usd))
+}
+func (m *fakeMetrics) StageCost(_ context.Context, repository, class, stage string, usd float64) {
+	m.addStage(fmt.Sprintf("stage_cost %s %s %s %v", repository, class, stage, usd))
+}
+func (m *fakeMetrics) StageEffect(_ context.Context, repository, class, stage, effect, outcome string) {
+	m.addStage(fmt.Sprintf("stage_effect %s %s %s %s %s", repository, class, stage, effect, outcome))
 }
 func (m *fakeMetrics) TierFit(_ context.Context, classifier, tier, fit string, control bool) {
 	m.add("tier_fit " + classifier + " " + tier + " " + fit + " " + strconv.FormatBool(control))

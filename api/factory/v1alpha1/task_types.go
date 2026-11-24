@@ -645,6 +645,27 @@ type TaskStatus struct {
 	// Result is an integration Task's outcome (MR10).
 	// +optional
 	Result *IntegrationResult `json:"result,omitempty"`
+	// Stages is what each stage of the task cost and changed (WR5), filled as the task goes and
+	// counted into the metrics once, at its end.
+	// +kubebuilder:validation:MaxItems=16
+	// +optional
+	Stages []StageRecord `json:"stages,omitempty"`
+}
+
+// StageRecord is one stage's runs, spend, and effect on a Task (WR5).
+type StageRecord struct {
+	// +kubebuilder:validation:Enum=ask;plan;tests;implement;search;judge;review;split;step_up
+	Stage string `json:"stage"`
+	// +kubebuilder:validation:Minimum=0
+	Runs int32 `json:"runs"`
+	// +kubebuilder:validation:Minimum=0
+	MicroUSD int64 `json:"microUSD"`
+	// Effect is what the stage changed, a word of the stage's closed list.
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Effect string `json:"effect,omitempty"`
+	// +optional
+	Counted bool `json:"counted,omitempty"`
 }
 
 // StatusComment is the durable identity, last successful body and activity of a task's issue status comment.
@@ -779,6 +800,10 @@ type RunRecord struct {
 	ID string `json:"id"`
 	// +kubebuilder:validation:Enum=implementer;reviewer;tester;triager
 	Role string `json:"role"`
+	// Persona is the run's human-facing role when it differs from Role (e.g. scoper on a triager run).
+	// +kubebuilder:validation:MaxLength=32
+	// +optional
+	Persona string `json:"persona,omitempty"`
 	// Why the run exists.
 	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation
 	Trigger string `json:"trigger"`

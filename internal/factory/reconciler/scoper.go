@@ -84,10 +84,14 @@ func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if t.Spec.Split != nil && split == nil && sc != nil && sc.State == envelope.ScopeReady && mentionsSplit(summary) {
 		r.unstatedSplit(ctx, t)
 	}
-	if sc != nil && sc.State == envelope.ScopeReady && t.Spec.Issue > 0 && t.Spec.Parent == nil && !statesAcceptance(t.Spec.Text) {
-		// The owner's rule (2026-10-27, drill B): the scoper asks when the issue states no
-		// acceptance check, and never infers one. The model's own ready is not trusted for it.
-		sc = askForAcceptance(sc)
+	if sc != nil && sc.State == envelope.ScopeReady && t.Spec.Issue > 0 && t.Spec.Parent == nil {
+		if !statesAcceptance(t.Spec.Text) {
+			// The owner's rule (2026-10-27, drill B): the scoper asks when the issue states no
+			// acceptance check, and never infers one. The model's own ready is not trusted for it.
+			sc = askForAcceptance(sc)
+		} else {
+			r.noteStage(t, "ask", "not_needed")
+		}
 	}
 	if split != nil && sc != nil && sc.State != envelope.ScopeReady {
 		r.ignoreSplit(ctx, t, seq) // a question bounces alone (splitter design SL2)
@@ -250,6 +254,13 @@ func (r *Reconciler) scopeEndAs(ctx context.Context, cfg *config.Config, t *v1al
 		return err
 	}
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: state, Seq: seq}
+	r.noteStage(t, "plan", planEffect(nil, scopeForEffect(sc), false, sc != nil))
+	if state == "assumed" {
+		r.noteStage(t, "ask", "asked_assumed")
+	}
+	if t.Spec.Split != nil && t.Status.Split == nil {
+		r.noteStage(t, "split", "not_proposed")
+	}
 	class := t.Spec.PredictedClass
 	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, outcome) })
 	t.Status.NextTrigger = "initial" // the scoper's run was no attempt at the work
@@ -261,6 +272,7 @@ func (r *Reconciler) scopeEndAs(ctx context.Context, cfg *config.Config, t *v1al
 // would be a second one, and a question says nothing of the tier.
 func (r *Reconciler) bounce(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sc *envelope.Scope, seq int64) error {
 	t.Status.Scope = &v1alpha1.ScopeStatus{State: "question", Seq: seq}
+	r.noteStage(t, "plan", planEffect(nil, nil, true, true))
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
 	record(ctx, func(ctx context.Context) { r.Metrics.ScoperRun(ctx, class, "question") })
 	record(ctx, func(ctx context.Context) {
@@ -314,6 +326,12 @@ func (r *Reconciler) taskScope(ctx context.Context, t *v1alpha1.Task) (*Scoped, 
 func (r *Reconciler) leaveBounce(ctx context.Context, t *v1alpha1.Task, exit string) {
 	if t.Status.Phase != v1alpha1.PhaseEscalated || t.Status.Reason != ReasonNeedsAuthor {
 		return
+	}
+	switch exit {
+	case "retry":
+		r.noteStage(t, "ask", "asked_assumed")
+	case "relabel":
+		r.noteStage(t, "ask", "asked_answered")
 	}
 	class, n, name := t.Spec.PredictedClass, t.Spec.Issue, t.Name
 	if exit != "" {
