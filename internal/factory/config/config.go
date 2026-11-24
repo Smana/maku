@@ -638,6 +638,14 @@ type Triage struct {
 	ControlPercent int `json:"controlPercent"`
 }
 
+// MergePause stops automatic policy decisions with a maintainer-visible reason.
+type MergePause struct {
+	// Reason is the operator's short explanation of the pause.
+	// +kubebuilder:validation:MinLength=1
+	// +kubebuilder:validation:MaxLength=200
+	Reason string `json:"reason"`
+}
+
 // Merge is §5.1's merge actor and §6.4's rollback.
 // +kubebuilder:object:generate=true
 type Merge struct {
@@ -692,6 +700,10 @@ type Merge struct {
 	// It replaces the deprecated live `revert` policy binding; unset is false.
 	// +optional
 	AutoRevert bool `json:"autoRevert,omitempty"`
+	// Paused stops every automatic policy decision with a human-readable reason. A maintainer's
+	// approve-to-merge review still arms; resume by removing this block.
+	// +optional
+	Paused *MergePause `json:"paused,omitempty"`
 	// +optional
 	RevertWindow Duration `json:"revertWindow"` // 7 days for a maintainer's factory/revert
 	// AwaitingCIFor bounds a pull request's stay in AwaitingCI on a wait verdict (#182): past it,
@@ -2321,6 +2333,11 @@ func (c *Config) validateRepository(r *Repository, seenSchedule map[string]bool,
 		bad("merge.fluxSource %q is not namespace/name", s)
 	}
 	r.Merge.validatePerDay(bad)
+	if p := r.Merge.Paused; p != nil {
+		if n := len([]rune(p.Reason)); n == 0 || n > 200 || strings.ContainsAny(p.Reason, "\r\n\x00") {
+			bad("merge.paused.reason must be one printable line of 1..200 characters")
+		}
+	}
 	if r.Merge.FixRuns < 0 {
 		bad("merge.fixRuns must be 0 or more")
 	}

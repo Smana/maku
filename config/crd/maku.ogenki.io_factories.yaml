@@ -207,6 +207,32 @@ spec:
                       about money, and a room that read it needs the release that writes it.
                     type: boolean
                 type: object
+              gitops:
+                description: |-
+                  GitOps is the repository and manifest path where the factory opens policy-change pull requests.
+                  The factory never merges those pull requests.
+                properties:
+                  branch:
+                    description: Branch is the base branch for policy changes, main
+                      when omitted.
+                    maxLength: 128
+                    pattern: ^[A-Za-z0-9._/-]+$
+                    type: string
+                  path:
+                    description: Path is the manifest's slash-separated path in that
+                      repository.
+                    maxLength: 512
+                    pattern: ^[^/].*[^/]$|^[^/]$
+                    type: string
+                  repository:
+                    description: Repository is owner/name on GitHub.
+                    maxLength: 140
+                    pattern: ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$
+                    type: string
+                required:
+                - path
+                - repository
+                type: object
               loops:
                 additionalProperties:
                   description: |-
@@ -390,6 +416,18 @@ spec:
                   mergerLogin:
                     maxLength: 253
                     type: string
+                  paused:
+                    description: |-
+                      Paused stops every automatic policy decision with a human-readable reason. A maintainer's
+                      approve-to-merge review still arms; resume by removing this block.
+                    properties:
+                      reason:
+                        description: Reason is the operator's short explanation of
+                          the pause.
+                        maxLength: 200
+                        minLength: 1
+                        type: string
+                    type: object
                   policyBot:
                     description: |-
                       PolicyBot true routes the gate through policy-bot, an opt-in (D11); nil means false (v4 step

@@ -74,6 +74,14 @@ func (f *fakePolicyFactory) PolicyDecisions(_ context.Context, token, repository
 	return policyview.Timeline{Repository: policyRepo, PullRequest: pr, Decisions: []policyview.Decision{}}, nil
 }
 
+func (f *fakePolicyFactory) PolicyRecentDecisions(_ context.Context, token, repository, since string) (policyview.Recent, error) {
+	f.tokens = append(f.tokens, token)
+	if !strings.EqualFold(repository, policyRepo) {
+		return policyview.Recent{}, runrequest.ErrRefused{Status: http.StatusNotFound, Reason: "not_found"}
+	}
+	return policyview.Recent{Repository: policyRepo, Since: since, Decisions: []policyview.RecentDecision{}}, nil
+}
+
 func (f *fakePolicyFactory) PolicyList(_ context.Context, token string) ([]evidence.PolicyReport, error) {
 	f.tokens = append(f.tokens, token)
 	return []evidence.PolicyReport{{Name: "dead-links", Generation: 4}}, nil
@@ -242,6 +250,7 @@ var policyPaths = []struct{ method, path string }{
 	{http.MethodGet, "/settings/merge-policies/Smana/maku"}, {http.MethodGet, "/settings/evidence"},
 	{http.MethodGet, "/settings/merge-policies/Smana/maku/decisions/12"}, {http.MethodGet, "/settings/merge-policies/policies/dead-links"},
 	{http.MethodPost, "/api/policy/repositories/Smana/maku/preview"}, {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12"},
+	{http.MethodGet, "/api/policy/repositories/Smana/maku/decisions?since=2026-11-01"},
 	{http.MethodGet, "/api/policy/repositories"}, {http.MethodGet, "/api/policy/repositories/Smana/maku"},
 	{http.MethodPost, "/api/policy/promotions"}, {http.MethodPost, "/api/policy/promotions/bbbbbbbb"},
 	{http.MethodPost, "/api/policy/exceptions"}, {http.MethodPost, "/api/policy/exceptions/bbbbbbbb"},
@@ -432,6 +441,7 @@ func TestPolicyHandlersByRole(t *testing.T) {
 		"repositories":     {http.MethodGet, "/api/policy/repositories", ""},
 		"repository":       {http.MethodGet, "/api/policy/repositories/Smana/maku", ""},
 		"decisions":        {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions/12", ""},
+		"recent decisions": {http.MethodGet, "/api/policy/repositories/Smana/maku/decisions?since=2026-11-01", ""},
 		"settings":         {http.MethodGet, "/settings/merge-policies/Smana/maku", ""},
 		"preview":          {http.MethodPost, "/api/policy/repositories/Smana/maku/preview", `{"file":"factory: aws-0\n"}`},
 		"promote":          {http.MethodPost, "/api/policy/promotions", `{"repository":"Smana/maku","class":"docs-links"}`},
@@ -440,7 +450,7 @@ func TestPolicyHandlersByRole(t *testing.T) {
 		"decide exception": {http.MethodPost, "/api/policy/exceptions/xxxxxxxx", `{"decision":"approved"}`},
 	}
 	ok := func(code int) map[string]int {
-		return map[string]int{"repositories": 200, "repository": 200, "decisions": 200, "settings": 200, "preview": code,
+		return map[string]int{"repositories": 200, "repository": 200, "decisions": 200, "recent decisions": 200, "settings": 200, "preview": code,
 			"promote": code, "move": code, "ask exception": code, "decide exception": 403}
 	}
 	maint := ok(200)

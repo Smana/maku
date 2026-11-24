@@ -629,6 +629,7 @@ unknown fields refused (`400 bad_json`).
 | `GET /api/policy/policies` | Any member | `{policies}`: each [`MergePolicy`](../merge-policies.md#factory-resources) the caller reads a consumer of, with its `generation`, `spec`, `manifest`, `manifestPath` and `status`. Its consumers, and the counts, cover only the repositories the caller reads |
 | `GET /api/policy/policies/{name}` | A reader of one of its consumers | One policy as above. `404` for an unknown policy and for one the caller reads no consumer of, alike |
 | `POST /api/policy/policies/{name}/preview` | Any member | `{spec}` → `{valid, errors?, consumers: [{repository, mode, change, why?, resolves, reason?}], manifest, manifestPath}`: the `mergepolicy-<name>.yaml` to commit and each consumer's change, for the consumers the caller reads, live ones first. Nothing is written |
+| `GET /api/policy/repositories/{owner}/{name}/decisions` | A reader of it | `?since=YYYY-MM-DD` (or RFC3339): the repository's recent per-policy decisions, newest first, each `{at, pullRequest, head, outcome, policy, reason, rows, considered?, commentURL}`. `rows` has `counted`, `files`, `maxFiles`, `lines`, `maxLines`, `shape`, `holdout`, `oracle`, `age` and `reviewer`; `counted: false` means the diff was not read, not zero |
 | `GET /api/policy/repositories/{owner}/{name}/decisions/{pr}` | A reader of it | The pull request's [decision timeline](../factory.md#promotion): each record's stages, conditions, verdict and revisions, with the comment and policy links |
 | `POST /api/policy/promotions` | A maintainer (write) | `{repository, class, exceptionId?}` → `201 {promotion, proposal}`. `409 not_promotable` (not a shadow class of the repository's file), `evidence_pending` (the factory is still reading it), `not_eligible`, `promotion_open`, `exception_unusable`; `404 no_such_class` |
 | `POST /api/policy/promotions/{id}` | A maintainer | `{state: pr_opened \| merged \| abandoned, pullRequest?}`: `pr_opened` names the pull request; `409 already_moved` |
@@ -1401,7 +1402,8 @@ conformance fixtures. The same route takes `kind`: `binding` with `{repository, 
 bound repository's `spec.mergePolicies` (a maintainer's, as above), and `policy` with `{policy,
 spec}` checks a `MergePolicy` against every consumer the caller reads; any other kind is
 `400 kind_unknown`. `GET /v1/policy/decisions?repository=&pr=` answers the pull request's
-decision timeline from the factory's own comments, for a reader. `GET /v1/policy/policies` and `GET
+decision timeline from the factory's own comments, for a reader. With no `pr`, `since=<date>` returns
+that repository's recent per-policy decisions in the broker's shape, newest first. `GET /v1/policy/policies` and `GET
 /v1/policy/policies/{name}` answer the `MergePolicy` objects the caller reads a consumer
 of (`404 not_found` otherwise, alike), each cut to those consumers. For a repository served from its
 `Repository`'s bindings, the evidence report adds `repositoryObject`, `repositoryManifest`,

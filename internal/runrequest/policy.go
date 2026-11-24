@@ -86,6 +86,18 @@ func (f Factory) PolicyPreviewPolicy(ctx context.Context, accessToken, name stri
 	return out, err
 }
 
+// PolicyRecentDecisions is GET /v1/policy/decisions with no pr: a repository's recent per-policy
+// decisions, for a reader of it.
+func (f Factory) PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error) {
+	var out policyview.Recent
+	q := url.Values{"repository": {repository}}
+	if since != "" {
+		q.Set("since", since)
+	}
+	err := f.call(ctx, http.MethodGet, accessToken, "/v1/policy/decisions?"+q.Encode(), http.NoBody, &out)
+	return out, err
+}
+
 // PolicyDecisions is GET /v1/policy/decisions with the caller's own token: a pull request's
 // decision timeline, for a reader of the repository.
 func (f Factory) PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error) {

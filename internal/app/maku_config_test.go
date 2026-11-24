@@ -468,8 +468,8 @@ func TestMigratedOutputSimulatesUnchanged(t *testing.T) {
 	}
 	split := splitANR(t, nil)
 	args := []string{"--config", residual, "--manifests", split, "--repository", "Smana/ai-native-ref"}
-	var out bytes.Buffer
-	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	var out, errOut bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &errOut}
 	if err := m.run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}

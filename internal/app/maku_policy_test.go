@@ -52,8 +52,8 @@ func boundManifests(t *testing.T) []string {
 // equivalent to the bindings the factory serves.
 func TestPolicyExportThenCheck(t *testing.T) {
 	args := boundManifests(t)
-	var out bytes.Buffer
-	m := Maku{Dir: t.TempDir(), Out: &out, Err: &out}
+	var out, errOut bytes.Buffer
+	m := Maku{Dir: t.TempDir(), Out: &out, Err: &errOut}
 	if err := m.run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}

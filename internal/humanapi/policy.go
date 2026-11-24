@@ -31,6 +31,7 @@ type PolicyGateway interface {
 	PolicyRepositories(ctx context.Context, accessToken string) ([]string, error)
 	PolicyPreview(ctx context.Context, accessToken, repository, file string) (policyview.Preview, error)
 	PolicyDecisions(ctx context.Context, accessToken, repository string, pr int) (policyview.Timeline, error)
+	PolicyRecentDecisions(ctx context.Context, accessToken, repository, since string) (policyview.Recent, error)
 	// PolicyList, Policy and the two previews are the MergePolicies' pages (B16).
 	PolicyList(ctx context.Context, accessToken string) ([]evidence.PolicyReport, error)
 	Policy(ctx context.Context, accessToken, name string) (evidence.PolicyReport, error)
@@ -82,6 +83,7 @@ func (s *Server) policyRoutes(mux *http.ServeMux, index http.Handler) {
 	mux.HandleFunc("GET /api/policy/repositories", s.policyRepositories)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}", s.policyRepository)
 	mux.HandleFunc("POST /api/policy/repositories/{owner}/{name}/preview", s.policyPreview)
+	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions", s.policyRecentDecisions)
 	mux.HandleFunc("GET /api/policy/repositories/{owner}/{name}/decisions/{pr}", s.policyDecisions)
 	mux.HandleFunc("GET /api/policy/policies", s.policyList)
 	mux.HandleFunc("GET /api/policy/policies/{name}", s.policyGet)
@@ -553,6 +555,21 @@ func (s *Server) policyPolicyPreview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, pv)
+}
+
+// policyRecentDecisions is GET /api/policy/repositories/{owner}/{name}/decisions?since=<date>:
+// the repository's recent per-policy decisions, for a reader of it.
+func (s *Server) policyRecentDecisions(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.policyCaller(w, r)
+	if !ok {
+		return
+	}
+	recent, err := s.Policy.Factory.PolicyRecentDecisions(r.Context(), p.AccessToken,
+		r.PathValue("owner")+"/"+r.PathValue("name"), r.URL.Query().Get("since"))
+	if !s.forwarded(w, err) {
+		return
+	}
+	writeJSON(w, recent)
 }
 
 // policyDecisions is GET /api/policy/repositories/{owner}/{name}/decisions/{pr}: a pull request's

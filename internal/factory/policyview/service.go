@@ -25,6 +25,8 @@ type Service struct {
 	Cfg      config.Source
 	Reports  Reports
 	Comments func(repository string) (CommentReader, bool)
+	// RecentReader lists a repository's merged pull requests and their comments, newest first.
+	RecentReader func(ctx context.Context, repository, since string) ([]evidence.PR, error)
 	// Namespace is the MergePolicy objects' namespace, for a policy edit's manifest.
 	Namespace string
 }
@@ -88,4 +90,21 @@ func (s *Service) Timeline(ctx context.Context, repository string, pr int) (Time
 		return Timeline{}, fmt.Errorf("policyview: %w", err)
 	}
 	return Decisions(rc.Name, pr, cfg.FactoryLogin, cs), nil
+}
+
+// Recent is a repository's per-policy decisions since a GitHub merged:>= date.
+func (s *Service) Recent(ctx context.Context, repository, since string) (Recent, error) {
+	cfg := s.Cfg.Current()
+	rc, err := s.repository(cfg, repository)
+	if err != nil {
+		return Recent{}, err
+	}
+	if s.RecentReader == nil {
+		return Recent{}, evidence.ErrUnknownRepository
+	}
+	prs, err := s.RecentReader(ctx, rc.Name, since)
+	if err != nil {
+		return Recent{}, fmt.Errorf("policyview: %w", err)
+	}
+	return ReadRecent(rc.Name, since, cfg.FactoryLogin, prs), nil
 }
