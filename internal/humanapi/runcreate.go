@@ -218,7 +218,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 			return runrequest.TaskResult{}, toolError(err.Error())
 		}
 	}
-	planned := s.plannedIssue(ctx, p, a)
+	planned, stepUpShown := s.plannedIssue(ctx, p, a)
 	if a.Title != "" {
 		d, err := s.checkFinalDraft(ctx, a.Title, a.Text)
 		if err != nil {
@@ -239,7 +239,7 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{Repository: a.Repo, Title: a.Title, Text: a.Text,
 		DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
 		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key,
-		Class: planned.Class, Suggested: planned.suggested(), Profile: planned.Profile})
+		Class: planned.Class, Suggested: planned.suggested(), Profile: planned.Profile, StepUpShown: stepUpShown})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
 		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
@@ -325,13 +325,13 @@ func (s *Server) runCreated(r runrequest.TaskResult) map[string]any {
 // plan's hash; its suggestion is display and the client's copy, so it is rebuilt from the plan
 // repository's catalogue first (review B2): a profile the class does not offer, or any on the config
 // fallback, is never stored. The zero issue without a plan.
-func (s *Server) plannedIssue(ctx context.Context, p authn.Principal, a runCreateArgs) plannedTask {
+func (s *Server) plannedIssue(ctx context.Context, p authn.Principal, a runCreateArgs) (plannedTask, bool) {
 	var plan intake.Plan
 	if !planPresent(a.Plan) || json.Unmarshal(a.Plan, &plan) != nil || len(plan.Issues) != slackFiles {
-		return plannedTask{}
+		return plannedTask{}, false
 	}
 	plan = intake.Resuggest(plan, s.planClasses(ctx, p, a.OnBehalfOf, plan.Repository))
-	return plannedTask(plan.Issues[0])
+	return plannedTask(plan.Issues[0]), plan.Budget.StepUpCeilingUSD > 0
 }
 
 // plannedTask is a planned issue as run_create passes it on.

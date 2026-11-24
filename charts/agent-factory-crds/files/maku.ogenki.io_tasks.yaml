@@ -245,6 +245,10 @@ spec:
                     maxLength: 63
                     pattern: ^[a-z0-9][a-z0-9-]{0,62}$
                     type: string
+                  stepUpShown:
+                    description: StepUpShown is true when the confirmed plan carried
+                      the "if it steps up" cost figure (WR4).
+                    type: boolean
                   suggested:
                     maxLength: 63
                     pattern: ^[a-z0-9][a-z0-9-]{0,62}$
@@ -2215,6 +2219,39 @@ spec:
                     - scoper
                     - escalation
                     type: string
+                  stepUp:
+                    description: StepUp records the one step this task took or was
+                      offered (WR4).
+                    properties:
+                      by:
+                        maxLength: 64
+                        type: string
+                      ceilingMicroUSD:
+                        format: int64
+                        minimum: 0
+                        type: integer
+                      from:
+                        maxLength: 63
+                        type: string
+                      mode:
+                        enum:
+                        - auto
+                        - manual
+                        - offered
+                        type: string
+                      to:
+                        maxLength: 63
+                        type: string
+                      trigger:
+                        maxLength: 32
+                        type: string
+                    required:
+                    - ceilingMicroUSD
+                    - from
+                    - mode
+                    - to
+                    - trigger
+                    type: object
                   testFirst:
                     type: boolean
                   why:

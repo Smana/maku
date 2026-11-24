@@ -126,6 +126,22 @@ func TestProfileOffered(t *testing.T) {
 	if got := c.Workflows(); !slices.Equal(got, []string{"careful", "quick"}) {
 		t.Fatalf("Workflows = %v: an unoffered default is left out, the rest by name", got)
 	}
+
+	t.Run("step-up target and ceiling", func(t *testing.T) {
+		cfg := live()
+		cfg.HarnessProfiles["standard"] = config.HarnessProfile{Template: "pair", StepUp: "careful"}
+		cfg.HarnessProfiles["quick"] = config.HarnessProfile{Template: "solo", Tier: "light", StepUp: "standard"}
+		c, _ := Build(cfg, "Smana/cloud-native-ref", false)
+		if p := c.Profiles["standard"]; p.StepUp != "careful" || p.StepUpCeilingUSD != 8 {
+			t.Fatalf("standard = %+v, want stepUp careful ($8)", p)
+		}
+		if p := c.Profiles["quick"]; p.StepUp != "standard" || p.StepUpCeilingUSD != 4 {
+			t.Fatalf("quick = %+v, want stepUp standard ($4)", p)
+		}
+		if p := c.Profiles["careful"]; p.StepUp != "" || p.StepUpCeilingUSD != 0 {
+			t.Fatalf("careful = %+v, want no stepUp", p)
+		}
+	})
 }
 
 func TestModeOf(t *testing.T) {

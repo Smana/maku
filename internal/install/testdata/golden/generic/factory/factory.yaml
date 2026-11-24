@@ -69,7 +69,9 @@ spec:
       template: none
     quick:
       description: One implementer. For changes a check can verify.
+      stepUp: standard
       template: solo
     standard:
       description: An implementer and a reviewer. The default.
+      stepUp: careful
       template: pair

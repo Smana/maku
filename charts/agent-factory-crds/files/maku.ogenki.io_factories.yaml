@@ -601,6 +601,13 @@ spec:
                         tier-light, tier-standard and tier-frontier aliases; provider aliases are public only.
                       maxProperties: 4
                       type: object
+                    stepUp:
+                      description: |-
+                        StepUp is the workflow a task runs once more under when a run fails in a way a deeper
+                        workflow can help (WR4); empty goes to a maintainer. It is escalation's one-target form: set
+                        one of them.
+                      maxLength: 253
+                      type: string
                     template:
                       maxLength: 253
                       type: string

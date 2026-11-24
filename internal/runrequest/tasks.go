@@ -24,6 +24,8 @@ type TaskRequest struct {
 	// Class and Suggested are a planned task's class and suggested profile (P7), and Profile the
 	// profile its plan pinned (P5); empty otherwise.
 	Class, Suggested, Profile string
+	// StepUpShown is true when the confirmed plan showed the "if it steps up" cost figure (WR4).
+	StepUpShown bool
 }
 
 // TaskResult is the factory's answer: the task and its room (the same id), the issue filed (0
@@ -160,17 +162,18 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 		return TaskResult{}, ErrNoKey
 	}
 	body, err := json.Marshal(struct {
-		Repository string  `json:"repository"`
-		Title      string  `json:"title,omitempty"`
-		Text       string  `json:"text"`
-		DataClass  string  `json:"dataClass"`
-		MaxCostUSD float64 `json:"maxCostUSD"`
-		OnBehalfOf string  `json:"onBehalfOf,omitempty"`
-		Ref        string  `json:"ref,omitempty"`
-		Class      string  `json:"class,omitempty"`
-		Suggested  string  `json:"suggested,omitempty"`
-		Profile    string  `json:"profile,omitempty"`
-	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile})
+		Repository  string  `json:"repository"`
+		Title       string  `json:"title,omitempty"`
+		Text        string  `json:"text"`
+		DataClass   string  `json:"dataClass"`
+		MaxCostUSD  float64 `json:"maxCostUSD"`
+		OnBehalfOf  string  `json:"onBehalfOf,omitempty"`
+		Ref         string  `json:"ref,omitempty"`
+		Class       string  `json:"class,omitempty"`
+		Suggested   string  `json:"suggested,omitempty"`
+		Profile     string  `json:"profile,omitempty"`
+		StepUpShown bool    `json:"stepUpShown,omitempty"`
+	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile, r.StepUpShown})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("runrequest: %w", err)
 	}

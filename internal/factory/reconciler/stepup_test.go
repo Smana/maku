@@ -33,6 +33,24 @@ func stepCfg() *config.Config {
 	return c
 }
 
+// ladderCfg is resolveCfg("observe", 0) with the shipped workflow ladder (quick -> standard -> careful).
+func ladderCfg() *config.Config {
+	c := resolveCfg("observe", 0)
+	wfs, tmpls, loops := config.ShippedWorkflows()
+	for k, v := range tmpls {
+		if _, ok := c.Templates[k]; !ok {
+			c.Templates[k] = v
+		}
+	}
+	for k, v := range wfs {
+		c.HarnessProfiles[k] = v
+	}
+	for k, v := range loops {
+		c.Loops[k] = v
+	}
+	return c
+}
+
 // escalate sets the review-floor workflow's escalation to e.
 func escalate(c *config.Config, e *config.Escalation) {
 	p := c.HarnessProfiles["review-floor"]
@@ -60,8 +78,9 @@ func stepRig(t *testing.T, cf *config.Config, edit func(*v1alpha1.Task)) (*rig, 
 	st := tk.Status
 	tk = g.get(t)
 	tk.Status = st
-	p, _ := cf.Workflow("review-floor")
-	g.r.profileSpec(g.r.Cfg.Current(), tk, "review-floor", p)
+	wfName := tk.Status.Profile.Name
+	p, _ := cf.Workflow(wfName)
+	g.r.profileSpec(g.r.Cfg.Current(), tk, wfName, p)
 	tk.Spec.ScopeMode = string(config.ScopeOff)
 	tk.Spec.Budget.Tier = "standard"
 	if err := g.c.Update(t.Context(), tk); err != nil {
@@ -203,12 +222,14 @@ func TestNoStepWithoutReserve(t *testing.T) {
 	}
 }
 
-func TestAStepRespectsTheSponsorCeiling(t *testing.T) {
-	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) { tk.Spec.MaxMicroUSD = 3_000_000 })
+func TestACappedTaskAsksBeforeItStepsUp(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "standard"
+		tk.Spec.MaxMicroUSD = 2_000_000 // a Slack request capped at $2.00
+	})
 	got := g.fail(t, tk, "stalled")
-	wantStepped(t, got, "review-frontier", "out_of_budget")
-	if got.Spec.Budget.TaskMicroUSD != 3_000_000 {
-		t.Fatalf("%+v", got.Spec.Budget)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Profile.StepUp == nil || got.Status.Profile.StepUp.Mode != "offered" {
+		t.Fatalf("a capped task stepped up: %+v", got.Status.Profile)
 	}
 }
 
@@ -452,17 +473,93 @@ func TestAReviewEndedStepBriefCarriesTheImplementersJudge(t *testing.T) {
 	}
 }
 
-// R37: a labeled task (since P8, a pinned profile) is not in the control cohort, so its class's
-// escalation steps it as any treatment task.
-func TestALabelledTaskSteps(t *testing.T) {
-	g, tk := stepRig(t, stepCfg(), func(tk *v1alpha1.Task) {
-		tk.Status.Profile.Source, tk.Status.Profile.Cohort = "label", "labeled"
+// WR4: a pinned workflow (label source) asks the maintainer instead of stepping up automatically.
+func TestAPinnedTaskAsksInsteadOfStepping(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name, tk.Status.Profile.Source, tk.Status.Profile.Cohort = "standard", "label", "labeled"
 	})
 	got := g.fail(t, tk, "budget-run")
-	p := got.Status.Profile
-	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.NextTrigger != TriggerEscalation || p.Name != "review-frontier" ||
-		p.Source != "escalation" || p.Reason != "out_of_budget" || p.Cohort != "labeled" || !outboxHas(got, "profile-escalated-") {
-		t.Fatalf("%s %+v %+v", got.Status.Phase, p, got.Status.Outbox)
+	if got.Status.Phase != v1alpha1.PhaseEscalated || got.Status.Profile.Name != "standard" ||
+		got.Status.Profile.StepUp == nil || got.Status.Profile.StepUp.Mode != "offered" || got.Status.Profile.StepUp.To != "careful" {
+		t.Fatalf("%s %+v %+v", got.Status.Phase, got.Status.Profile, got.Status.Profile.StepUp)
+	}
+}
+
+func TestAStandardTaskStepsUpToCarefulOnce(t *testing.T) {
+	g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) { tk.Status.Profile.Name = "standard" })
+	got := g.fail(t, tk, "stalled")
+	s := got.Status.Profile.StepUp
+	if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "careful" || s == nil ||
+		s.From != "standard" || s.To != "careful" || s.Trigger != "stalled" || s.Mode != "auto" {
+		t.Fatalf("%s %+v %+v", got.Status.Phase, got.Status.Profile, s)
+	}
+	again := g.fail(t, got, "stalled")
+	if again.Status.Phase != v1alpha1.PhaseEscalated || again.Status.Reason != "stalled" || again.Status.Profile.Name != "careful" {
+		t.Fatalf("second failure did not escalate: %s %q %+v", again.Status.Phase, again.Status.Reason, again.Status.Profile)
+	}
+}
+
+func TestLadderTriggersIncludeCIRedAndBudgetTask(t *testing.T) {
+	for _, reason := range []string{"budget-run", "budget-task", "stalled", "not_met", "review_rounds_exhausted", "ci_red"} {
+		t.Run(reason, func(t *testing.T) {
+			g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+				tk.Status.Profile.Name = "standard"
+				if reason == "review_rounds_exhausted" {
+					tk.Status.Runs = append(tk.Status.Runs, v1alpha1.RunRecord{ID: rid(1), Role: "reviewer", Trigger: "review", StartSeq: 4})
+				}
+			})
+			got := g.fail(t, tk, reason)
+			s := got.Status.Profile.StepUp
+			if got.Status.Phase != v1alpha1.PhaseQueued || got.Status.Profile.Name != "careful" || s == nil || s.Trigger != reason || s.Mode != "auto" {
+				t.Fatalf("%s: %s %+v %+v", reason, got.Status.Phase, got.Status.Profile, s)
+			}
+		})
+	}
+}
+
+func TestAConfirmedPlanStepsOnlyWhenTheFigureWasShown(t *testing.T) {
+	for shown, phase := range map[bool]string{true: v1alpha1.PhaseQueued, false: v1alpha1.PhaseEscalated} {
+		g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) {
+			tk.Status.Profile.Name = "standard"
+			tk.Spec.Intake = &v1alpha1.TaskIntake{StepUpShown: shown}
+		})
+		got := g.fail(t, tk, "stalled")
+		if got.Status.Phase != phase {
+			t.Errorf("stepUpShown=%v: phase %s, want %s", shown, got.Status.Phase, phase)
+		}
+		if !shown && (got.Status.Profile.StepUp == nil || got.Status.Profile.StepUp.Mode != "offered") {
+			t.Errorf("stepUpShown=false: want offered stepUp, got %+v", got.Status.Profile.StepUp)
+		}
+	}
+}
+
+func TestARepositoryMaySwitchTheStepOffOrToAsk(t *testing.T) {
+	t.Run("off", func(t *testing.T) {
+		cf := ladderCfg()
+		cf.Repositories[0].Workflow.StepUp = "off"
+		g, tk := stepRig(t, cf, func(tk *v1alpha1.Task) { tk.Status.Profile.Name = "standard" })
+		got := g.fail(t, tk, "stalled")
+		wantEscalated(t, got, "stalled")
+		if got.Status.Profile.StepUp != nil {
+			t.Fatalf("off recorded StepUp: %+v", got.Status.Profile.StepUp)
+		}
+	})
+	t.Run("ask", func(t *testing.T) {
+		cf := ladderCfg()
+		cf.Repositories[0].Workflow.StepUp = "ask"
+		g, tk := stepRig(t, cf, func(tk *v1alpha1.Task) { tk.Status.Profile.Name = "standard" })
+		got := g.fail(t, tk, "stalled")
+		wantEscalated(t, got, "stalled")
+		if got.Status.Profile.StepUp == nil || got.Status.Profile.StepUp.Mode != "offered" || got.Status.Profile.StepUp.To != "careful" {
+			t.Fatalf("ask: StepUp = %+v", got.Status.Profile.StepUp)
+		}
+	})
+}
+
+func TestNeverAStepOnImpossibleOrAQuestion(t *testing.T) {
+	for _, reason := range []string{"judge_impossible", "needs_author", "split_proposed", "manual"} {
+		g, tk := stepRig(t, ladderCfg(), func(tk *v1alpha1.Task) { tk.Status.Profile.Name = "standard" })
+		wantEscalated(t, g.fail(t, tk, reason), reason)
 	}
 }
 

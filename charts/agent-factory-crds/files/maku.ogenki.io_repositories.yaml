@@ -366,6 +366,15 @@ spec:
                       else names one; unset is standard.
                     maxLength: 253
                     type: string
+                  stepUp:
+                    description: |-
+                      StepUp is whether a task of the repository steps up without asking: auto (the default), ask
+                      (the task waits with a "run again deeper" offer) or off.
+                    enum:
+                    - auto
+                    - ask
+                    - "off"
+                    type: string
                   testFirst:
                     description: |-
                       TestFirst starts every public task whose workflow's row sets tests with a tester run that

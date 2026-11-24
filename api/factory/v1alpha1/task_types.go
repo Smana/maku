@@ -440,6 +440,26 @@ type ProfileStatus struct {
 	// +kubebuilder:validation:MaxLength=32
 	// +optional
 	Refused string `json:"refused,omitempty"`
+	// StepUp records the one step this task took or was offered (WR4).
+	// +optional
+	StepUp *StepUpStatus `json:"stepUp,omitempty"`
+}
+
+// StepUpStatus records the one workflow step-up a task took or was offered (WR4).
+type StepUpStatus struct {
+	// +kubebuilder:validation:MaxLength=63
+	From string `json:"from"`
+	// +kubebuilder:validation:MaxLength=63
+	To string `json:"to"`
+	// +kubebuilder:validation:MaxLength=32
+	Trigger string `json:"trigger"`
+	// +kubebuilder:validation:Enum=auto;manual;offered
+	Mode string `json:"mode"`
+	// +kubebuilder:validation:MaxLength=64
+	// +optional
+	By string `json:"by,omitempty"`
+	// +kubebuilder:validation:Minimum=0
+	CeilingMicroUSD int64 `json:"ceilingMicroUSD"`
 }
 
 // TaskStatus is the task's audit record: the whole §4 record, including the fields later
@@ -1123,4 +1143,7 @@ type TaskIntake struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	Login string `json:"login,omitempty"`
+	// StepUpShown is true when the confirmed plan carried the "if it steps up" cost figure (WR4).
+	// +optional
+	StepUpShown bool `json:"stepUpShown,omitempty"`
 }

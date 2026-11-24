@@ -204,6 +204,16 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 	}
 	out := Profile{Template: p.Template, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
 		Loop: string(p.Loop), Description: p.Description, CeilingUSD: cfg.Tiers[tier].TaskUSD}
+	if p.StepUp != "" {
+		out.StepUp = p.StepUp
+		if target, ok := cfg.Workflow(p.StepUp); ok {
+			tTier := tier
+			if target.Tier == "frontier" {
+				tTier = "frontier"
+			}
+			out.StepUpCeilingUSD = cfg.Tiers[tTier].TaskUSD
+		}
+	}
 	if e := p.Escalation; e != nil {
 		out.Escalation = &Escalation{OutOfBudget: e.OutOfBudget, NotConverged: e.NotConverged}
 	}

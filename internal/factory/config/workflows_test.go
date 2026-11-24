@@ -249,3 +249,50 @@ func TestTheShippedCarefulSplitNeedsNoClassifier(t *testing.T) {
 		t.Fatalf("split = %+v, want anyTier with four parts", s)
 	}
 }
+
+func TestTheShippedLadder(t *testing.T) {
+	c := mustParse(t, noTemplates)
+	for from, to := range map[string]string{"quick": "standard", "standard": "careful", "careful": ""} {
+		if got := c.StepUpFor(from, "stalled"); got != to {
+			t.Errorf("%s steps to %q, want %q", from, got, to)
+		}
+	}
+	if got := (&Repository{}).StepUpMode(); got != "auto" {
+		t.Fatalf("default StepUpMode = %q, want auto", got)
+	}
+	for _, mode := range []string{"auto", "ask", "off"} {
+		c := mustParse(t, repoWith("workflow: {stepUp: "+mode+"}"))
+		if got := c.Repos()[0].StepUpMode(); got != mode {
+			t.Errorf("mode %q: got %q", mode, got)
+		}
+	}
+	if _, err := Parse([]byte(repoWith("workflow: {stepUp: maybe}"))); err == nil || !strings.Contains(err.Error(), `workflow.stepUp "maybe"`) {
+		t.Fatalf("invalid repository stepUp: got %v", err)
+	}
+}
+
+func TestStepUpValidation(t *testing.T) {
+	for name, tc := range map[string]struct{ yaml, want string }{
+		"itself":  {`workflows: {mine: {template: pair, stepUp: mine}}`, "workflows.mine.stepUp: a workflow never steps up to itself"},
+		"unknown": {`workflows: {mine: {template: pair, stepUp: nope}}`, `workflows.mine.stepUp "nope" is not a workflow`},
+		"none":    {`workflows: {mine: {template: pair, stepUp: none}}`, `workflows.mine.stepUp "none" is not a workflow`},
+		"both":    {`workflows: {mine: {template: pair, stepUp: careful, escalation: {outOfBudget: careful}}}`, "workflows.mine: set stepUp or escalation, not both"},
+		"a cycle": {`workflows: {a: {template: pair, stepUp: b}, b: {template: pair, stepUp: a}}`, "workflows.a.stepUp: a and b step up to each other"},
+		"cheaper": {`workflows: {mine: {template: pair, tier: frontier, stepUp: quick}}`, "workflows.mine.stepUp: quick has a lower ceiling than mine"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := Parse([]byte(good + tc.yaml + "\n")); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestAPlatformsWorkflowKeepsItsEscalation(t *testing.T) {
+	c := mustParse(t, good+`workflows:
+  floor: {template: pair, escalation: {outOfBudget: careful}}
+`)
+	if c.StepUpFor("floor", "budget-run") != "careful" || c.StepUpFor("floor", "not_met") != "" {
+		t.Fatal("escalation's groups are no longer read")
+	}
+}

@@ -113,19 +113,24 @@ func (r *Reconciler) recommendedLabel(cfg *config.Config, t *v1alpha1.Task) stri
 // reading a config that may have changed since: the frozen booleans, the scoper's recommendation
 // and whether the class offered a choice, which the recommendation count hangs on.
 type profileDecision struct {
-	Name        string `json:"name"`
-	Source      string `json:"source"`
-	Reason      string `json:"reason,omitempty"`
-	Checks      bool   `json:"checks,omitempty"`
-	TestFirst   bool   `json:"testFirst,omitempty"`
-	Recommended string `json:"recommended,omitempty"`
-	Why         string `json:"why,omitempty"`
-	Offered     bool   `json:"offered,omitempty"`
+	Name        string                 `json:"name"`
+	Source      string                 `json:"source"`
+	Reason      string                 `json:"reason,omitempty"`
+	Checks      bool                   `json:"checks,omitempty"`
+	TestFirst   bool                   `json:"testFirst,omitempty"`
+	Recommended string                 `json:"recommended,omitempty"`
+	Why         string                 `json:"why,omitempty"`
+	Offered     bool                   `json:"offered,omitempty"`
+	StepUp      *v1alpha1.StepUpStatus `json:"stepUp,omitempty"`
 }
 
 func (d profileDecision) restore(p *v1alpha1.ProfileStatus) {
 	p.Name, p.Source, p.Reason, p.Checks, p.TestFirst = d.Name, d.Source, d.Reason, d.Checks, d.TestFirst
 	p.Recommended, p.Why = d.Recommended, d.Why
+	if d.StepUp != nil {
+		s := *d.StepUp
+		p.StepUp = &s
+	}
 }
 
 // decided is the decision t's spec carries, if any.
