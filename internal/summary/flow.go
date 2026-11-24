@@ -444,7 +444,7 @@ func Strip(f *Flow) string {
 		}
 		return strings.Join(parts, " · ")
 	}
-	parts := make([]string, 0, len(f.Nodes)+len(ghosts))
+	var parts []string
 	for _, n := range f.Nodes {
 		parts = append(parts, nodeToken(n))
 	}
