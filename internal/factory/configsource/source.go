@@ -82,6 +82,9 @@ type Source struct {
 	Reader    client.Reader // uncached (mgr.GetAPIReader() or a plain client): works before the cache starts
 	Namespace string
 	File      []byte
+	// ConfigDir is the directory containing the factory's config file, used to read custom role
+	// briefs (WR11).
+	ConfigDir string
 	// Live is nil until the first successful Sync, which creates it. That first Sync must complete
 	// before Live is shared: the field itself is not synchronized, only what Live serves.
 	Live   *config.Live
@@ -236,7 +239,7 @@ func (s *Source) sync(ctx context.Context) error {
 	}
 	listed := slices.Clone(objs)
 
-	opts := resources.Options{LastResolved: s.lastResolved}
+	opts := resources.Options{LastResolved: s.lastResolved, ConfigDir: s.ConfigDir}
 	r, aerr := resources.Assemble(s.File, objs, opts)
 
 	// D5: put each refused object's last good version back and assemble again.

@@ -155,7 +155,7 @@ func (r *Reconciler) recordExisting(ctx context.Context, cfg *config.Config, t *
 		started = metav1.NewTime(x.Created) // when the claim really was created, not the replay
 	}
 	r.runWait(ctx, t, x.Role, started.Time)
-	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Persona: personaOf(t, v1alpha1.RunRecord{Role: x.Role}), Trigger: trigger,
+	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Persona: cmp.Or(x.Persona, personaOf(t, v1alpha1.RunRecord{Role: x.Role})), Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
 		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
 		Audited: x.Canary != "" && r.auditsRun(cfg, t, x.Role)}) // the claim says whether it started under audit
@@ -212,7 +212,7 @@ func (r *Reconciler) checksOn(cfg *config.Config, t *v1alpha1.Task) bool {
 		return t.Status.Profile.Checks
 	}
 	w, _ := cfg.Workflow(r.repo(cfg, t).DefaultWorkflow())
-	return w.Checks
+	return w.EffectiveChecks()
 }
 
 // reserveFactoryDay is §6.2's "SP3 at admission" for the factory's own principal (R34), admitted
@@ -294,7 +294,12 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	// keys only when its loop is on.
 	s.Search = t.Spec.Search && s.Role == "implementer"
 	source := r.pinModel(cfg, t, &s)
-	s.Effort = cfg.EffortFor(r.workflow(cfg, t), s.Role)
+	wf := r.workflow(cfg, t)
+	if eff := cfg.EffortFor(wf, cmp.Or(s.Persona, s.Role)); eff != "" {
+		s.Effort = eff
+	} else if s.Effort == "" {
+		s.Effort = cfg.EffortFor(wf, s.Role)
+	}
 	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
 	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
 	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)
@@ -493,6 +498,15 @@ func (r *Reconciler) workflow(cfg *config.Config, t *v1alpha1.Task) string {
 // An internal run accepts only a tier alias; with no override it keeps its tier's model, or the
 // template's reviewerModel.
 func (r *Reconciler) pinModel(cfg *config.Config, t *v1alpha1.Task, s *runs.Spec) string {
+	if s.Persona != "" && s.Persona != s.Role {
+		if _, custom := cfg.Roles[s.Persona]; custom {
+			if m := cfg.ModelFor(r.workflow(cfg, t), s.DataClass, s.Persona, s.Tier); m != "" {
+				s.Model = m
+				return v1alpha1.ModelSourceClassModels
+			}
+			return v1alpha1.ModelSourceTier
+		}
+	}
 	if m := cfg.ModelFor(r.workflow(cfg, t), s.DataClass, s.Role, s.Tier); m != "" {
 		s.Model = m
 		return v1alpha1.ModelSourceClassModels

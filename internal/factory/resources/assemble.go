@@ -71,7 +71,7 @@ type Result struct {
 }
 
 // CatalogueKeys are the top-level file keys a Factory replaces (D12), in the file's spelling.
-var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "workflows", "outcomes", "mergeGuardrails", "evaluation", "mergeDefaults"}
+var CatalogueKeys = []string{"control", "defaults", "tiers", "templates", "caps", "budgets", "facts", "brief", "resume", "scoper", "loops", "workflows", "roles", "outcomes", "mergeGuardrails", "evaluation", "mergeDefaults"}
 
 // candidate is one element of the candidate set: a Factory, or a Repository with its merge and
 // bindings.
@@ -339,7 +339,7 @@ func assemble(base map[string]any, set []candidate, policies []Object, opts Opti
 	if err != nil {
 		return nil, nil, rs, err
 	}
-	c, err := parseMap(m)
+	c, err := parseMap(m, opts.ConfigDir)
 	return c, warnings, rs, err
 }
 
@@ -498,12 +498,12 @@ func cloneMap(m map[string]any) (map[string]any, error) {
 	return out, nil
 }
 
-func parseMap(m map[string]any) (*config.Config, error) {
+func parseMap(m map[string]any, configDir string) (*config.Config, error) {
 	b, err := yaml.Marshal(m)
 	if err != nil {
 		return nil, err
 	}
-	return config.ParseAssembled(b)
+	return config.ParseAssembledInDir(b, configDir)
 }
 
 func str(m map[string]any, k string) string {

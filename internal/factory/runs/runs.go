@@ -74,6 +74,9 @@ const (
 	// AnnForgeAPI, "deny", marks every run of a repository in hardening mode enforce (HR36): the
 	// run-controller gives it no api.github.com egress and the broker serves it forge_read. CREATE only.
 	AnnForgeAPI = runwatch.ForgeAPIAnnotation
+	// AnnPersona records the run's persona (e.g. scoper, security-reviewer) when it differs from
+	// spec.role (WR11): spec.role stays one of the four run roles. CREATE only.
+	AnnPersona = "agents.ogenki.io/persona"
 )
 
 // safeOutputTypes are the types a claim may name as safe outputs: H2's four, and push from stage H3.
@@ -207,6 +210,9 @@ func (s Spec) Validate() error {
 	if s.Effort != "" && !slices.Contains([]string{"low", "medium", "high"}, s.Effort) {
 		errs = append(errs, fmt.Errorf("effort %q is low, medium, high or empty", s.Effort))
 	}
+	if s.Persona != "" && !envelope.ValidPersona(s.Persona) {
+		errs = append(errs, fmt.Errorf("persona %q is not a valid persona name", s.Persona))
+	}
 	// v3 F15, F4: Moonshot processes in China and Mistral in the EU. Every claim, the factory's and
 	// the API's, passes here, so no internal run names a provider alias, as its model or its judge's.
 	judge := ""
@@ -333,6 +339,9 @@ func Build(k runwatch.Kind, s Spec) *unstructured.Unstructured {
 	if s.ForgeAPIDeny {
 		ann[AnnForgeAPI] = runwatch.ForgeAPIDeny
 	}
+	if s.Persona != "" && s.Persona != s.Role {
+		ann[AnnPersona] = s.Persona
+	}
 	if len(s.SafeOutputs) > 0 {
 		types := slices.Clone(s.SafeOutputs)
 		slices.Sort(types)
@@ -359,8 +368,8 @@ func Terminal(phase string) bool { return runwatch.Terminal(phase) }
 
 // Run is the part of a claim the factory reads back.
 type Run struct {
-	ID, TaskID, Role, Principal, Phase, Reason, PullRequest, Revoked, Branch, RoomRef, Repository string
-	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile, Canary                  string
+	ID, TaskID, Role, Persona, Principal, Phase, Reason, PullRequest, Revoked, Branch, RoomRef, Repository string
+	Head, TaskText, RequestHash, Tier, Model, ChargedTo, Cohort, Profile, Canary                           string
 	// What the run ran on (R10): the factory build that created the claim, the
 	// CompositionRevision Crossplane bound it to, and the harness image the composition read
 	// from its pod. Empty until known.
@@ -381,7 +390,7 @@ func FromUnstructured(k runwatch.Kind, u *unstructured.Unstructured) (Run, bool)
 	}
 	str := func(path ...string) string { v, _, _ := unstructured.NestedString(u.Object, path...); return v }
 	r := Run{ID: id, TaskID: u.GetLabels()[LabelTask], Created: u.GetCreationTimestamp().Time, Deleting: u.GetDeletionTimestamp() != nil,
-		Role: str("spec", "role"), Principal: str("spec", "principal"), Branch: str("spec", "branch"),
+		Role: str("spec", "role"), Persona: u.GetAnnotations()[AnnPersona], Principal: str("spec", "principal"), Branch: str("spec", "branch"),
 		RoomRef: str("spec", "roomRef"), Repository: str("spec", "repository"), Phase: str("status", "phase"), Reason: str("status", "reason"),
 		PullRequest: str("status", "pullRequest"), Revoked: u.GetAnnotations()[AnnRevoked], Head: u.GetAnnotations()[AnnHead],
 		RequestHash: u.GetAnnotations()[AnnRequestHash], Tier: u.GetLabels()[LabelTier], Model: str("spec", "model"),
@@ -564,7 +573,7 @@ func (c Client) Annotate(ctx context.Context, id string, kv map[string]string) e
 		return err
 	}
 	for _, k := range []string{AnnTaskURL, AnnTraceparent, AnnStartSeq, AnnHead, AnnRequestHash, AnnChargedTo, AnnFactoryVersion, AnnMaxMicroUSD,
-		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
+		AnnCohort, AnnProfile, AnnCanary, AnnSafeOutputs, AnnLabelAllowlist, AnnForgeAPI, AnnPersona, AnnCoordinationArtifacts, AnnCoordinationArtifactsHash, AnnCoordinationManifest, AnnCoordinationManifestHash} {
 		if _, ok := kv[k]; ok {
 			return fmt.Errorf("annotate run %s: %s is set at CREATE only", id, k)
 		}

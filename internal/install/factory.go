@@ -92,10 +92,11 @@ func factoryConfig(in Inputs) map[string]any {
 		"caps":          map[string]any{"activeTasks": 3, "concurrentRuns": 2, "tasksPerDay": 20, "maxTextBytes": 14336, "awaitingHumanWIP": 5},
 		"repositories":  repos,
 	}
-	// The three workflows, written out (workflows WF2): a platform reads and edits what it runs. The
-	// careful row splits only where the meter prices the runs (validateLoops).
-	profiles, templates, loops := config.FillShippedWorkflows(nil, nil, nil, len(a.List("models.prices")) > 0)
-	cfg["workflows"], cfg["templates"], cfg["loops"] = plain(profiles), plain(templates), plain(loops)
+	// The three workflows, written out in the readable list form (WR11): a platform reads and edits
+	// what it runs without templates or loops rows. The careful workflow splits only where the meter
+	// prices the runs (validateWorkflowStages).
+	profiles, _, _ := config.FillShippedWorkflows(nil, nil, nil, len(a.List("models.prices")) > 0)
+	cfg["workflows"] = plain(profiles)
 	return cfg
 }
 

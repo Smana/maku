@@ -4,11 +4,13 @@ package config
 
 import "slices"
 
-// Stages is what a task of a workflow runs, every switch resolved (WR6).
+// Stages is what a task of a workflow runs, every switch resolved (WR6, WR11).
 type Stages struct {
 	Ask, Plan, Tests, Search, Review bool
+	Checks, Stall                    bool
 	Judge                            string       // "" is no judge
 	Split                            *SplitPolicy // nil is no split
+	Gate                             string       // "" | "plan-first" | "always"
 }
 
 // Names lists the active stages in run order: ask, plan, tests, search, judge, review, split.
@@ -38,9 +40,16 @@ func (s Stages) Names() []string {
 	return out
 }
 
-// TemplateForProfile resolves the template for workflow p (called name): its explicit template when
+// TemplateForProfile resolves the template for workflow p (called name): when p uses the list form
+// (stages), pair when a reviewer stage is present else solo; otherwise its explicit template when
 // set, else pair when its row sets review: true, solo when review: false, else "".
 func (c *Config) TemplateForProfile(name string, p HarnessProfile) string {
+	if len(p.Stages) > 0 {
+		if _, hasReviewer := stageByRole(p, "reviewer"); hasReviewer {
+			return "pair"
+		}
+		return "solo"
+	}
 	if p.Template != "" {
 		return p.Template
 	}
@@ -63,14 +72,31 @@ func (c *Config) TemplateFor(workflow string) string {
 	return c.TemplateForProfile(workflow, p)
 }
 
-// StagesFor resolves every stage switch of workflow on repository r and merge class (WR6). A row
-// that omits ask, plan and review resolves as before: plan from scope: scoper, review from the
-// workflow's template, and ask from the scoper's forced question. Any stage in class's requires is
-// added and never removed; tests is added only when the repository sets merge.contractCheck.
+// StagesFor resolves every stage switch of workflow on repository r and merge class (WR6, WR11).
+// A workflow in the list form compiles directly from its stages; a legacy row that omits ask, plan
+// and review resolves as before: plan from scope: scoper, review from the workflow's template, and
+// ask from the scoper's forced question. Any stage in class's requires is added and never removed;
+// tests is added only when the repository sets merge.contractCheck.
 func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 	p, ok := c.Workflow(workflow)
 	if !ok {
 		return Stages{}
+	}
+	if len(p.Stages) > 0 {
+		st, _, err := c.compile(workflow, p)
+		if err != nil {
+			return Stages{}
+		}
+		if ts, hasTester := stageByRole(p, "tester"); hasTester && ts.When == TestWhenRepositoryTestFirst {
+			st.Tests = r != nil && r.Workflow.TestFirst
+		}
+		c.applyClassRequires(r, class, &st)
+		if st.Split != nil && st.Split.FamilyUSD == 0 {
+			sp := *st.Split
+			sp.FamilyUSD = 4 * c.Tiers[sp.ChildTier].TaskUSD
+			st.Split = &sp
+		}
+		return st
 	}
 	rowName := c.RowFor(workflow, p)
 	row := c.rowOf(rowName)
@@ -84,8 +110,10 @@ func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 	}
 	tests := !inv && row.Tests && r != nil && r.Workflow.TestFirst
 	var judge string
+	var stall bool
 	if lp := c.LoopFor(rowName); lp != nil {
 		judge = lp.JudgeModel
+		stall = lp.StallSteps > 0
 	}
 	var review bool
 	if !inv {
@@ -96,28 +124,20 @@ func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 			review = *row.Review
 		}
 	}
-	if !inv && r != nil && class != "" {
-		if cl, ok := r.Class(class); ok && len(cl.Requires) > 0 {
-			for _, req := range cl.Requires {
-				switch req {
-				case "plan":
-					plan = true
-				case "tests":
-					if r.Merge.ContractCheck != "" {
-						tests = true
-					}
-				case "judge":
-					if judge == "" {
-						judge = DefaultJudge
-					}
-				case "review":
-					review = true
-				}
-			}
-		}
+	st := Stages{
+		Ask:    ask,
+		Plan:   plan,
+		Tests:  tests,
+		Search: row.Search,
+		Checks: p.Checks,
+		Stall:  stall,
+		Judge:  judge,
+		Review: review,
 	}
-	var split *SplitPolicy
-	if plan && row.Split != nil {
+	if !inv {
+		c.applyClassRequires(r, class, &st)
+	}
+	if st.Plan && row.Split != nil {
 		sp := *row.Split
 		if sp.ChildTier == "" {
 			sp.ChildTier = DefaultChildTier
@@ -125,16 +145,35 @@ func (c *Config) StagesFor(r *Repository, workflow, class string) Stages {
 		if sp.FamilyUSD == 0 {
 			sp.FamilyUSD = 4 * c.Tiers[sp.ChildTier].TaskUSD
 		}
-		split = &sp
+		st.Split = &sp
 	}
-	return Stages{
-		Ask:    ask,
-		Plan:   plan,
-		Tests:  tests,
-		Search: row.Search,
-		Judge:  judge,
-		Review: review,
-		Split:  split,
+	return st
+}
+
+// applyClassRequires adds any stage required by class on repository r to st; it never removes one.
+func (c *Config) applyClassRequires(r *Repository, class string, st *Stages) {
+	if r == nil || class == "" {
+		return
+	}
+	cl, ok := r.Class(class)
+	if !ok || len(cl.Requires) == 0 {
+		return
+	}
+	for _, req := range cl.Requires {
+		switch req {
+		case "plan":
+			st.Plan = true
+		case "tests":
+			if r.Merge.ContractCheck != "" {
+				st.Tests = true
+			}
+		case "judge":
+			if st.Judge == "" {
+				st.Judge = DefaultJudge
+			}
+		case "review":
+			st.Review = true
+		}
 	}
 }
 

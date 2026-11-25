@@ -161,6 +161,9 @@ type Config struct {
 	HarnessProfiles map[string]HarnessProfile `json:"-"`
 	// Workflows is the file's workflows: Parse moves it into HarnessProfiles.
 	Workflows map[string]HarnessProfile `json:"workflows,omitempty"`
+	// Roles are custom roles declared by the platform (WR11), each bound to a closed capability
+	// profile and a brief file under the factory's configuration directory.
+	Roles map[string]RoleDef `json:"roles,omitempty"`
 	// Outcomes are the task outcomes this factory offers (phase F): change by default.
 	Outcomes         []string         `json:"outcomes,omitempty"`
 	MergeGuardrails  MergeGuardrails  `json:"mergeGuardrails,omitzero"`
@@ -190,6 +193,10 @@ type Config struct {
 	classSource func(repository string) (map[string]Class, bool)
 	// privateRefused reports a private repository whose acknowledgement is absent (SetPrivateRefused).
 	privateRefused func(repository string) bool
+	// configDir is the directory containing the config file (for loading role briefs, WR11).
+	configDir string
+	// roleBriefs holds each declared custom role's brief text, loaded at Parse/Load time (WR11).
+	roleBriefs map[string]string
 }
 
 // The coordination modes (v4 MR16): off serves nothing, plan drafts and confirms only, and
@@ -1485,8 +1492,23 @@ var (
 	factoryRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
-// The vocabularies the config is checked against: SP1's XRD roles and C5's logical model names.
-func roles() []string { return []string{"implementer", "reviewer", "tester", "triager"} }
+// templateRoles are the AgentRun run roles accepted in legacy templates.<name>.roles.
+func templateRoles() []string { return []string{"implementer", "reviewer", "tester", "triager"} }
+
+// roles returns the built-in five roles (implementer, reviewer, tester, triager, scoper) plus any
+// custom roles declared under Roles, sorted (WR11).
+func (c *Config) roles() []string {
+	out := []string{"implementer", "reviewer", "tester", "triager", "scoper"}
+	if c == nil || len(c.Roles) == 0 {
+		return out
+	}
+	for _, name := range slices.Sorted(maps.Keys(c.Roles)) {
+		if !slices.Contains(out, name) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
 
 // Investigates reports whether template is R38's investigate path: its team starts with the
 // triager, which only proposes. A missing template is no team, so it is not one.
@@ -1655,13 +1677,14 @@ func (c *Config) OffersOutcome(outcome string) bool {
 	return slices.Contains(c.OutcomesOr(), o)
 }
 
-// Load reads and parses the file at path.
+// Load reads and parses the file at path, resolving relative role briefs under path's directory.
 func Load(path string) (*Config, error) {
-	raw, err := os.ReadFile(filepath.Clean(path))
+	clean := filepath.Clean(path)
+	raw, err := os.ReadFile(clean)
 	if err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	return Parse(raw)
+	return parse(raw, false, filepath.Dir(clean))
 }
 
 // CheckBlocks refuses a switch block (coordination, hardening, intake overlap), or a key inside
@@ -1706,13 +1729,19 @@ func CheckShape(raw []byte) error {
 }
 
 // Parse decodes raw strictly, refusing unknown keys, then validates it and stamps its hash.
-func Parse(raw []byte) (*Config, error) { return parse(raw, false) }
+func Parse(raw []byte) (*Config, error) { return parse(raw, false, "") }
+
+// ParseInDir is Parse with dir as the configuration directory for loading custom role briefs.
+func ParseInDir(raw []byte, dir string) (*Config, error) { return parse(raw, false, dir) }
 
 // ParseAssembled is Parse for resources.Assemble alone: a repository entry may carry the bound
 // names and the bindings of its Repository object, which a config file never sets.
-func ParseAssembled(raw []byte) (*Config, error) { return parse(raw, true) }
+func ParseAssembled(raw []byte) (*Config, error) { return parse(raw, true, "") }
 
-func parse(raw []byte, assembled bool) (*Config, error) {
+// ParseAssembledInDir is ParseAssembled with dir as the configuration directory for role briefs.
+func ParseAssembledInDir(raw []byte, dir string) (*Config, error) { return parse(raw, true, dir) }
+
+func parse(raw []byte, assembled bool, configDir string) (*Config, error) {
 	if err := CheckBlocks(raw); err != nil {
 		return nil, err
 	}
@@ -1808,6 +1837,8 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 			}
 		}
 	}
+	c.configDir = configDir
+	hadUserTemplates := len(c.Templates) > 0
 	inherits := c.inheritanceWarnings() // the file's rows, before the shipped ones join them
 	// A platform's own careful row that sets no tests key keeps the tester in the release that
 	// adds the key, with a warning (WF13); the next minor reads tests by key only.
@@ -1832,6 +1863,9 @@ func parse(raw []byte, assembled bool) (*Config, error) {
 	}
 	for _, ip := range c.API.InternalPrincipals {
 		c.Budgets.addSponsoredDay(ip.Sponsored)
+	}
+	if hadUserTemplates {
+		c.Warnings = append(c.Warnings, "templates is deprecated: define each workflow with workflows.<name>.stages instead; refused from the next minor (WR11)")
 	}
 	for _, name := range slices.Sorted(maps.Keys(c.Templates)) {
 		t := c.Templates[name]
@@ -2088,7 +2122,7 @@ func (c *Config) Validate() error {
 			bad("template %s has no roles", name)
 		}
 		for _, r := range t.Roles {
-			if !slices.Contains(roles(), r) {
+			if !slices.Contains(templateRoles(), r) {
 				bad("template %s: unknown role %q", name, r)
 			}
 		}
@@ -2258,6 +2292,7 @@ func (c *Config) Validate() error {
 	if c.Tracing.OTLPEndpoint != "" && !hostPortRE.MatchString(c.Tracing.OTLPEndpoint) {
 		bad("tracing.otlpEndpoint %q is not host:port", c.Tracing.OTLPEndpoint)
 	}
+	c.validateRoles(bad)
 	c.validateLoops(bad)
 	c.validateMergePolicy(bad)
 	c.validateEvaluation(bad)
@@ -2548,8 +2583,12 @@ func (l Loop) scopeMode() ScopeMode {
 	return ""
 }
 
-// ScopeFor is class's scope mode: its row's, else default's (WF10), off when neither sets one.
+// ScopeFor is class's scope mode: its compiled stages' when class names a list-form workflow,
+// else its row's, else default's (WF10), off when neither sets one.
 func (c *Config) ScopeFor(class string) ScopeMode {
+	if p, ok := c.HarnessProfiles[class]; ok && len(p.Stages) > 0 {
+		return compiledScope(p)
+	}
 	row := c.rowOf(class)
 	if m := row.scopeMode(); m != "" {
 		return m
@@ -2558,8 +2597,12 @@ func (c *Config) ScopeFor(class string) ScopeMode {
 }
 
 // SearchFor reports whether class's implementer runs get the search tool (v3 feature 5, ST9): its
-// row's search, else default's (WF10): a row's search: false is its own.
+// compiled stages' when class names a list-form workflow, else its row's search, else default's
+// (WF10): a row's search: false is its own.
 func (c *Config) SearchFor(class string) bool {
+	if p, ok := c.HarnessProfiles[class]; ok && len(p.Stages) > 0 {
+		return compiledSearch(p)
+	}
 	row := c.rowOf(class)
 	return row.Search
 }
@@ -2569,6 +2612,11 @@ func (c *Config) SearchFor(class string) bool {
 func (c *Config) SteeringOn() bool {
 	for _, row := range c.Loops {
 		if m := row.scopeMode(); m != "" && m != ScopeOff {
+			return true
+		}
+	}
+	for _, p := range c.HarnessProfiles {
+		if len(p.Stages) > 0 && compiledScope(p) != ScopeOff {
 			return true
 		}
 	}
@@ -2610,11 +2658,15 @@ func (c *Config) neverSplit(class string) bool {
 }
 
 // SplitFor is the split offered to a task of class on repository that reads loops row row (RowFor),
-// every value resolved, nil when none is offered: the row's, else default's (WF10), each split
-// taken whole, only beside scope: scoper, and never for a class whose tasks are never split.
+// every value resolved, nil when none is offered: the compiled stages' when row names a list-form
+// workflow, else the row's, else default's (WF10), each split taken whole, only beside
+// scope: scoper, and never for a class whose tasks are never split.
 func (c *Config) SplitFor(repository, class, row string) *SplitPolicy {
 	if cl, _ := c.RepositoryFor(repository).Class(class); c.neverSplit(class) || cl.Oracle != nil {
 		return nil
+	}
+	if p, ok := c.HarnessProfiles[row]; ok && len(p.Stages) > 0 {
+		return c.compiledSplit(p)
 	}
 	r := c.rowOf(row)
 	if r.Split == nil || r.scopeMode() != ScopeScoper {
@@ -2650,8 +2702,12 @@ type LoopPolicy struct {
 	JudgeModel                string
 }
 
-// LoopFor is class's loop policy, nil when its loop is off: its row over default's (WF10).
+// LoopFor is class's loop policy, nil when its loop is off: its compiled stages' when class names
+// a list-form workflow, else its row over default's (WF10).
 func (c *Config) LoopFor(class string) *LoopPolicy {
+	if p, ok := c.HarnessProfiles[class]; ok && len(p.Stages) > 0 {
+		return compiledLoop(p)
+	}
 	row := c.rowOf(class)
 	if !row.On() {
 		return nil
@@ -2673,11 +2729,12 @@ func (c *Config) LoopFor(class string) *LoopPolicy {
 	return p
 }
 
-// validateModels: each role is SP1's, each tier is one of the three, and each alias is a provider
-// alias of that very tier (F2), priced while meter.prices is set (F3).
+// validateModels: each role is SP1's (or a declared custom role), each tier is one of the three,
+// and each alias is a provider alias of that very tier (F2), priced while meter.prices is set (F3).
 func (c *Config) validateModels(bad func(string, ...any), name string, byRole map[string]ModelAliases) {
+	allRoles := c.roles()
 	for _, role := range slices.Sorted(maps.Keys(byRole)) {
-		if !slices.Contains(roles(), role) {
+		if !slices.Contains(allRoles, role) {
 			bad("loops.%s.models: unknown role %q", name, role)
 			continue
 		}

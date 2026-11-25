@@ -45,7 +45,7 @@ func (r *Reconciler) resolveProfile(ctx context.Context, cfg *config.Config, t *
 			break
 		}
 		v, _ := cfg.Workflow(name)
-		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.Checks, TestFirst: q.TestFirst || cfg.TestFirstIn(r.repo(cfg, t), name),
+		d := profileDecision{Name: name, Source: "scoper", Checks: q.Checks || v.EffectiveChecks(), TestFirst: q.TestFirst || cfg.TestFirstIn(r.repo(cfg, t), name),
 			Recommended: q.Recommended, Why: q.Why, Offered: offered}
 		if err := r.applyProfile(ctx, cfg, t, d); err != nil {
 			return err

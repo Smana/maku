@@ -301,5 +301,15 @@ ykind Deployment '(.spec.template.spec.containers[0].env | map(select(.name == "
 out=$(helm template agent-factory . --namespace agent-system --set image.tag=e2e --set e2e.unpinnedImages=true)
 ykind Deployment "$ctr.image == \"ghcr.io/smana/maku-factory:e2e\"" "e2e.unpinnedImages: a bare tag renders"
 ykind Deployment "$ctr.imagePullPolicy == \"Never\"" "e2e.unpinnedImages: imagePullPolicy Never"
+# WR11: custom role briefs render a ConfigMap projected under /etc/agent-factory/config/roles/, and
+# leave the default configMap volume untouched when roleBriefs is empty.
+out="$base"
+ynone 'select(.kind == "ConfigMap" and .metadata.name == "agent-factory-role-briefs")' "no role briefs ConfigMap by default"
+ykind Deployment "$(vol config).configMap.name == \"agent-factory-config\"" "default config volume stays plain configMap"
+out=$(helm template agent-factory . --namespace agent-system --set image.tag="$digest" --set config.repository=Smana/cloud-native-ref \
+  --set-string 'roleBriefs.security-reviewer\.md=Check auth boundaries.')
+ykind ConfigMap 'select(.metadata.name == "agent-factory-role-briefs") | .data."security-reviewer.md" == "Check auth boundaries.\n"' "roleBriefs renders agent-factory-role-briefs ConfigMap"
+ykind Deployment "$(vol config).projected.sources[1].configMap.name == \"agent-factory-role-briefs\"" "roleBriefs projects into the config volume"
+ykind Deployment "$(vol config).projected.sources[1].configMap.items[0].path == \"roles/security-reviewer.md\"" "roleBriefs projects under roles/"
 [ "$fail" -eq 0 ] && echo PASS
 exit "$fail"

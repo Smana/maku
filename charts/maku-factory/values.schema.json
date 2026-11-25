@@ -56,6 +56,11 @@
         "perRun": {"type": "boolean"}
       }
     },
+    "roleBriefs": {
+      "description": "Custom role briefs (filename -> markdown brief text), projected under /etc/agent-factory/config/roles/.",
+      "type": "object",
+      "additionalProperties": {"type": "string"}
+    },
     "hardening": {
       "type": "object",
       "additionalProperties": false,

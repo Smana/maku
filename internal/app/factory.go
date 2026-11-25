@@ -979,7 +979,7 @@ func firstSync(ctx context.Context, log *slog.Logger, cfgPath, ns string, gate *
 	if err != nil {
 		return nil, nil, fmt.Errorf("config client: %w", err)
 	}
-	src = &configsource.Source{Reader: plain, Namespace: ns, File: raw, Log: log}
+	src = &configsource.Source{Reader: plain, Namespace: ns, File: raw, ConfigDir: filepath.Dir(filepath.Clean(cfgPath)), Log: log}
 	if err := waitServable(ctx, log, gate, src.Sync, waitStateOf(src), servableFirst, servableMax, servableLogEvery); err != nil {
 		return nil, nil, forbiddenHint(err, ns)
 	}

@@ -42,17 +42,63 @@ func (l *LoopRef) UnmarshalJSON(b []byte) error {
 // +kubebuilder:validation:MaxLength=6
 type Effort string
 
-// HarnessProfile is one workflow (WF1, WF7): the template it runs, the tier it raises a task to,
-// whether its runs run the repository's checks, its loops row, and where a failed run steps to.
-// Empty keeps what the factory selects today. A Factory spells the map workflows.
+// StageDef is one stage in a workflow's ordered list (WR11).
+// +kubebuilder:object:generate=true
+type StageDef struct {
+	// +kubebuilder:validation:MaxLength=63
+	Role string `json:"role"`
+	// When is an optional condition on the stage (e.g. repository.testFirst).
+	// +kubebuilder:validation:MaxLength=63
+	When   string `json:"when,omitempty"`
+	Checks bool   `json:"checks,omitempty"`
+	Search bool   `json:"search,omitempty"`
+	Stall  bool   `json:"stall,omitempty"`
+	// Judge is evidence (the default completion judge) or a model alias.
+	// +kubebuilder:validation:MaxLength=253
+	Judge string `json:"judge,omitempty"`
+	// MaxRounds is the stage's one bounded loop.
+	// +kubebuilder:validation:Minimum=0
+	MaxRounds int32     `json:"maxRounds,omitempty"`
+	Split     *SplitDef `json:"split,omitempty"`
+	Gate      *GateDef  `json:"gate,omitempty"`
+}
+
+// SplitDef configures task splitting on a scoper stage (WR11).
+// +kubebuilder:object:generate=true
+type SplitDef struct {
+	// MaxParts is the most parts a split may hold: 2 to 5.
+	// +kubebuilder:validation:Minimum=2
+	// +kubebuilder:validation:Maximum=5
+	MaxParts int32 `json:"maxParts"`
+}
+
+// GateDef configures an approval gate on a stage (WR11).
+// +kubebuilder:object:generate=true
+type GateDef struct {
+	// When is plan-first or always.
+	// +kubebuilder:validation:Enum=plan-first;always
+	// +kubebuilder:validation:MaxLength=16
+	When string `json:"when"`
+}
+
+// HarnessProfile is one workflow (WF1, WF7, WR11): either the readable list form (budget and
+// stages) or the legacy bundle (template, tier, checks and loop), plus description, step-up and
+// per-role tuning. A Factory spells the map workflows.
 // +kubebuilder:object:generate=true
 type HarnessProfile struct {
 	// +kubebuilder:validation:MaxLength=253
 	Template string `json:"template,omitempty"`
 	// +kubebuilder:validation:MaxLength=253
-	Tier   string  `json:"tier,omitempty"`
-	Checks bool    `json:"checks,omitempty"`
-	Loop   LoopRef `json:"loop,omitempty"`
+	Tier string `json:"tier,omitempty"`
+	// Budget is the tier under the name a person reads (WR11): light, standard or frontier.
+	// +kubebuilder:validation:Enum=light;standard;frontier
+	// +kubebuilder:validation:MaxLength=8
+	Budget string `json:"budget,omitempty"`
+	// Stages is the workflow's ordered stage list (WR11): mutually exclusive with template, tier and loop.
+	// +kubebuilder:validation:MaxItems=8
+	Stages []StageDef `json:"stages,omitempty"`
+	Checks bool       `json:"checks,omitempty"`
+	Loop   LoopRef    `json:"loop,omitempty"`
 	// Description is the line the scoper's brief shows: when to choose the workflow.
 	// +kubebuilder:validation:MaxLength=120
 	Description string `json:"description,omitempty"`
@@ -72,6 +118,27 @@ type HarnessProfile struct {
 	// tier-light, tier-standard and tier-frontier aliases; provider aliases are public only.
 	// +kubebuilder:validation:MaxProperties=4
 	Models map[string]ModelAlias `json:"models,omitempty"`
+}
+
+// EffectiveTier is the workflow's tier: Budget when set, else Tier.
+func (p HarnessProfile) EffectiveTier() string {
+	if p.Budget != "" {
+		return p.Budget
+	}
+	return p.Tier
+}
+
+// EffectiveChecks reports whether the workflow runs repository checks.
+func (p HarnessProfile) EffectiveChecks() bool {
+	if len(p.Stages) > 0 {
+		for _, s := range p.Stages {
+			if s.Role == "implementer" {
+				return s.Checks
+			}
+		}
+		return false
+	}
+	return p.Checks
 }
 
 // Escalation maps a signal group to a workflow; an absent group goes to the human.
@@ -192,14 +259,23 @@ func (c *Config) validateMergePolicy(bad func(string, ...any)) {
 		if p.Tier != "" && !slices.Contains(tiers(), p.Tier) {
 			bad("workflows.%s: tier %q is not one of %v", name, p.Tier, tiers())
 		}
+		if p.Budget != "" && !slices.Contains(tiers(), p.Budget) {
+			bad("workflows.%s: budget %q is not one of %v", name, p.Budget, tiers())
+		}
+		if p.Budget != "" && p.Tier != "" && len(p.Stages) == 0 {
+			bad("workflows.%s: set budget or tier, not both", name)
+		}
 		if _, ok := c.Loops[string(p.Loop)]; p.Loop != "" && p.Loop != LoopOff && !ok {
 			bad("workflows.%s: loop %q is off or a row of loops", name, p.Loop)
 		}
 		if len(p.Description) > MaxDescription {
 			bad("workflows.%s: description is %d bytes at most", name, MaxDescription)
 		}
-		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Loop != "" || p.Escalation != nil || p.StepUp != "" || len(p.Effort) > 0 || len(p.Models) > 0) {
+		if p.Template == TemplateNone && (p.Checks || p.Tier != "" || p.Budget != "" || len(p.Stages) > 0 || p.Loop != "" || p.Escalation != nil || p.StepUp != "" || len(p.Effort) > 0 || len(p.Models) > 0) {
 			bad("workflows.%s: template none runs nothing, so it takes no other key", name)
+		}
+		if len(p.Stages) > 0 {
+			c.validateWorkflowStages(bad, name, p)
 		}
 		if p.Template != "" && p.Template != TemplateNone {
 			if rowName := c.RowFor(name, p); rowName != string(LoopOff) {

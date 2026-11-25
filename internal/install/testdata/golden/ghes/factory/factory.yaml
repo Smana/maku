@@ -13,25 +13,6 @@ spec:
   defaults:
     dataClass: public
     predictedClass: review
-  loops:
-    careful:
-      ask: true
-      judge: tier-light
-      plan: true
-      review: true
-      search: true
-      stallSteps: 80
-      tests: true
-    default:
-      ask: true
-      judge: none
-      review: true
-      stallSteps: 80
-    quick:
-      ask: true
-      judge: none
-      review: false
-      stallSteps: 80
   mergeDefaults:
     breaker:
       maxReverts: 1
@@ -41,18 +22,6 @@ spec:
     verifyFor: 30m
   scoper:
     planTier: frontier
-  templates:
-    investigate:
-      roles:
-      - triager
-    pair:
-      maxReviewRounds: 2
-      roles:
-      - implementer
-      - reviewer
-    solo:
-      roles:
-      - implementer
   tiers:
     frontier:
       model: agent-default
@@ -71,17 +40,35 @@ spec:
       taskTokens: 3000000
   workflows:
     careful:
+      budget: frontier
       description: Scoped first, judged before review. For wide or unclear tasks.
-      loop: careful
-      template: pair
-      tier: frontier
+      stages:
+      - gate:
+          when: plan-first
+        role: scoper
+      - role: tester
+        when: repository.testFirst
+      - judge: evidence
+        role: implementer
+        search: true
+        stall: true
+      - maxRounds: 2
+        role: reviewer
     none:
       template: none
     quick:
+      budget: standard
       description: One implementer. For changes a check can verify.
+      stages:
+      - role: implementer
+        stall: true
       stepUp: standard
-      template: solo
     standard:
+      budget: standard
       description: An implementer and a reviewer. The default.
+      stages:
+      - role: implementer
+        stall: true
+      - maxRounds: 2
+        role: reviewer
       stepUp: careful
-      template: pair

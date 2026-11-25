@@ -150,28 +150,36 @@ Triage runs once in `Received`. Every task is rated `standard`; no classifier is
 
 ### The shipped workflows
 
-A **workflow** names which agents work on a task (`workflows` in [config](reference/config.md); legacy profile keys are refused: [upgrading](upgrading.md#workflows-name-what-runs)). Omitted entries default to:
+A **workflow** names which stages work on a task (`workflows` in [config](reference/config.md); legacy profile keys are refused: [upgrading](upgrading.md#workflows-name-what-runs)). Omitted entries default to the list form:
 
 ```yaml
-templates:
-  solo: {roles: [implementer]}
-  pair: {roles: [implementer, reviewer], maxReviewRounds: 2}
-  investigate: {roles: [triager]}
 workflows:
-  quick:    {template: solo, stepUp: standard, description: "One implementer. For changes a check can verify."}
-  standard: {template: pair, stepUp: careful, description: "An implementer and a reviewer. The default."}
-  careful:  {template: pair, tier: frontier, loop: careful,
-             description: "Scoped first, judged before review. For wide or unclear tasks."}
-  none:     {template: none}
-loops:
-  default: {ask: true, review: true, stallSteps: 80, judge: none}
-  quick:   {ask: true, review: false, stallSteps: 80, judge: none}
-  careful: {ask: true, plan: true, tests: true, search: true, review: true,
-            stallSteps: 80, judge: tier-light,
-            split: {maxChildren: 4, childTier: standard, anyTier: true}}
+  quick:
+    description: "One implementer. For changes a check can verify."
+    budget: standard
+    stepUp: standard
+    stages:
+      - {role: implementer, stall: true}
+  standard:
+    description: "An implementer and a reviewer. The default."
+    budget: standard
+    stepUp: careful
+    stages:
+      - {role: implementer, stall: true}
+      - {role: reviewer, maxRounds: 2}
+  careful:
+    description: "Scoped first, judged before review. For wide or unclear tasks."
+    budget: frontier
+    stages:
+      - {role: scoper, split: {maxParts: 4}, gate: {when: plan-first}}
+      - {role: tester, when: repository.testFirst}
+      - {role: implementer, search: true, stall: true, judge: evidence}
+      - {role: reviewer, maxRounds: 2}
+  none:
+    template: none
 ```
 
-`quick` and `standard` end a run that commits nothing in 80 steps; only `careful` runs the completion judge. The shipped `careful` row sets `split.anyTier: true` so the scoper can offer a split without a classifier. On a verified failure (`budget-run`, `budget-task`, `stalled`, `not_met`, `review_rounds_exhausted`, `ci_red`), an unpinned task steps up once along `quick` → `standard` → `careful` (`Repository.spec.workflow.stepUp`: `auto`, `ask`, or `off`); pinned tasks, capped tasks, and confirmed plans that did not show the stepped-up figure escalate with an offer instead.
+`quick` and `standard` end a run that commits nothing in 80 steps; only `careful` runs the completion judge (`judge: evidence`, which compiles to `tier-light`). The shipped `careful` workflow splits tasks into up to 4 parts whenever the factory meters USD costs (`meter.prices` and `runs.gatewayIdentity`). Existing workflows written with `template`, `tier` and `loops` rows continue to load, and `maku install --print` writes the list form directly. On a verified failure (`budget-run`, `budget-task`, `stalled`, `not_met`, `review_rounds_exhausted`, `ci_red`), an unpinned task steps up once along `quick` → `standard` → `careful` (`Repository.spec.workflow.stepUp`: `auto`, `ask`, or `off`); pinned tasks, capped tasks, and confirmed plans that did not show the stepped-up figure escalate with an offer instead.
 
 Reviewers run on the opposite tier (`standard` after `frontier`, `frontier` otherwise, unless `reviewerModel` overrides it) and receive fenced acceptance checks plus the PR URL without the implementer's handoff. The reviewer brief asks for correctness defects against the diff and acceptance checks only (style, naming, and unasked scope are not findings), and an `approve` verdict with no comment is a complete answer; `investigate` runs a read-only `triager` forced to `internal` data class.
 

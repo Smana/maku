@@ -593,7 +593,7 @@ func TestVerdictRequiredWithoutShape(t *testing.T) {
 		{config.WorkflowStandard, "reject", "dead-links", "no_approving_verdict"},
 	} {
 		t.Run(c.workflow+"/"+c.policy, func(t *testing.T) {
-			in := ArmInputs{PR: agentPR(), Task: armTask(c.policy, workflows[c.workflow].Template, c.verdict), ReportedHead: head}
+			in := ArmInputs{PR: agentPR(), Task: armTask(c.policy, cfg.TemplateForProfile(c.workflow, workflows[c.workflow]), c.verdict), ReportedHead: head}
 			cl := withShape(policies[c.policy], c.policy)
 			if got := agentEvidence(in, cfg, cl); got != c.want {
 				t.Fatalf("got %q, want %q", got, c.want)
@@ -608,7 +608,7 @@ func TestAPathBoundPolicyWithoutAReviewerNeverArms(t *testing.T) {
 	workflows, templates, _ := config.ShippedWorkflows()
 	in := selectInputs()
 	in.Cfg.Templates = templates
-	in.Task = armTask("review", workflows[config.WorkflowQuick].Template, "")
+	in.Task = armTask("review", in.Cfg.TemplateForProfile(config.WorkflowQuick, workflows[config.WorkflowQuick]), "")
 	in.Verifiers = nil
 	d := DecideArm(in)
 	if d.Verdict != "arm" || d.Matched != "docs-links" {

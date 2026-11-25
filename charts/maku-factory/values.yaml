@@ -94,6 +94,11 @@ hardening:
 # and split are accepted. Not defaulted: the runs carry the identity only in gateway mode.
 config: {}
 
+# Custom role briefs: map of filename (e.g. security-reviewer.md) to markdown brief text, rendered
+# into ConfigMap agent-factory-role-briefs and projected at /etc/agent-factory/config/roles/<file>
+# alongside config.yaml. Each custom role in Factory.spec.roles names its brief as roles/<file>.
+roleBriefs: {}
+
 # CI only: images loaded into the node have no registry digest. Accepts a bare tag and never pulls.
 e2e:
   unpinnedImages: false
