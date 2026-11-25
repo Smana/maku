@@ -116,6 +116,13 @@ type Issue struct {
 	// Profile is the pinned harness profile, "" for the factory's choice. Accepting a suggestion
 	// pins nothing (P4): only a revision a person makes writes it.
 	Profile string `json:"profile"`
+	// Outcome is what this issue's task produces (phase F): change (or "" for change), plan-first,
+	// review, or report. Material to the plan's hash.
+	Outcome string `json:"outcome,omitempty"`
+	// OutcomeInferred is display-only: true when Outcome was inferred rather than explicit or default.
+	OutcomeInferred bool `json:"outcomeInferred,omitempty"`
+	// OutcomeNote is display-only: one line when an inferred outcome was not offered and fell back to change.
+	OutcomeNote string `json:"outcomeNote,omitempty"`
 	// Roles are the class's template, written by the broker from config. A role the model named is
 	// dropped and logged (CD17).
 	Roles []string `json:"roles"`
@@ -226,6 +233,7 @@ type materialIssue struct {
 	Body      string   `json:"body"`
 	Class     string   `json:"class"`
 	Profile   *string  `json:"profile,omitempty"`
+	Outcome   string   `json:"outcome,omitempty"`
 	Roles     []string `json:"roles"`
 	DependsOn []int    `json:"dependsOn"`
 }
@@ -262,6 +270,9 @@ func Material(p Plan) ([]byte, error) {
 		}
 		if p.APIVersion != APIVersionV1 {
 			mi.Profile = &is.Profile // "" is hashed too: the factory's choice is a promise
+		}
+		if o := NormalizeOutcome(is.Outcome); o != OutcomeChange {
+			mi.Outcome = o
 		}
 		m.Issues = append(m.Issues, mi)
 	}

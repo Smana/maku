@@ -135,6 +135,7 @@ type handoffChecked struct {
 type handoffCheckArgs struct {
 	ID         string  `json:"id"`
 	Workflow   *string `json:"workflow,omitempty"`
+	Outcome    *string `json:"outcome,omitempty"`
 	OnBehalfOf string  `json:"on_behalf_of"`
 }
 
@@ -672,13 +673,13 @@ func (s *Server) handoffCheck(ctx context.Context, p authn.Principal, id, workfl
 	if workflow != "" {
 		wf = &workflow
 	}
-	return s.handoffCheckFor(ctx, p, id, wf, "")
+	return s.handoffCheckFor(ctx, p, id, wf, nil, "")
 }
 
 func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args json.RawMessage) (any, error) {
 	var a handoffCheckArgs
 	if mcpwire.DecodeArgs(args, &a) != nil || strings.TrimSpace(a.ID) == "" || len(a.ID) > 128 {
-		return nil, toolError("invalid_arguments: id is required, and no field outside {id, workflow, on_behalf_of} is taken")
+		return nil, toolError("invalid_arguments: id is required, and no field outside {id, workflow, outcome, on_behalf_of} is taken")
 	}
 	if err := claims(p, a.OnBehalfOf, 0); err != nil {
 		return nil, err
@@ -688,14 +689,14 @@ func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args j
 		draft   handoffDraft
 		err     error
 	)
-	if a.OnBehalfOf == "" && (a.Workflow == nil || *a.Workflow != "") {
+	if a.OnBehalfOf == "" && a.Outcome == nil && (a.Workflow == nil || *a.Workflow != "") {
 		wf := ""
 		if a.Workflow != nil {
 			wf = *a.Workflow
 		}
 		checked, draft, err = s.handoffCheck(ctx, p, a.ID, wf)
 	} else {
-		checked, draft, err = s.handoffCheckFor(ctx, p, a.ID, a.Workflow, a.OnBehalfOf)
+		checked, draft, err = s.handoffCheckFor(ctx, p, a.ID, a.Workflow, a.Outcome, a.OnBehalfOf)
 	}
 	if err != nil {
 		return nil, err
@@ -720,7 +721,7 @@ func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args j
 	}, nil
 }
 
-func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id string, workflow *string, onBehalfOf string) (planChecked, handoffDraft, error) {
+func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id string, workflow, outcome *string, onBehalfOf string) (planChecked, handoffDraft, error) {
 	if s.Intake == nil {
 		return planChecked{}, handoffDraft{}, toolError(noPlannerLine)
 	}
@@ -802,6 +803,22 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	plan, err := s.validateStoredPlan(ctx, p, onBehalfOf, base, row.Hash, cand, profileRev, surface)
 	if err != nil {
 		return planChecked{}, handoffDraft{}, err
+	}
+	if outcome != nil && len(plan.Issues) > 0 {
+		want := intake.NormalizeOutcome(strings.TrimSpace(*outcome))
+		if !intake.ValidOutcome(want) {
+			return planChecked{}, handoffDraft{}, toolError("invalid_arguments: outcome is change, plan-first, review or report")
+		}
+		if intake.NormalizeOutcome(plan.Issues[0].Outcome) != want {
+			edited := clonePlanForEdit(plan)
+			for i := range edited.Issues {
+				edited.Issues[i].Outcome = want
+			}
+			plan, err = s.validateStoredPlan(ctx, p, onBehalfOf, plan, plan.Hash, &edited, false, surface)
+			if err != nil {
+				return planChecked{}, handoffDraft{}, err
+			}
+		}
 	}
 	if len(catProfiles) > 0 {
 		activeName := catDefault

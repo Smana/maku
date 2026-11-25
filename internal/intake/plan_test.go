@@ -55,6 +55,7 @@ func TestPlanHashCoversTheMaterialSetOnly(t *testing.T) {
 			p.Issues[0].Body = strings.Replace(p.Issues[0].Body, "## Acceptance check", "## Acceptance check\n- one", 1)
 		},
 		"class":     func(p *intake.Plan) { p.Issues[0].Class = "docs" },
+		"outcome":   func(p *intake.Plan) { p.Issues[0].Outcome = intake.OutcomePlanFirst },
 		"roles":     func(p *intake.Plan) { p.Issues[0].Roles = []string{"implementer", "reviewer"} },
 		"dependsOn": func(p *intake.Plan) { p.Issues[0].DependsOn = []int{1} },
 	} {
@@ -460,5 +461,91 @@ func TestCheckTakesAPinShapedLikeAName(t *testing.T) {
 		if (r == nil && want != "") || (r != nil && r.Reason != want) {
 			t.Fatalf("%q: %+v, want %q", profile, r, want)
 		}
+	}
+}
+
+func TestTheOutcomeIsInferredFromTheRequest(t *testing.T) {
+	offered := intake.AllOutcomes()
+	for _, tc := range []struct {
+		name        string
+		text        string
+		modelChoice string
+		want        string
+		inferred    bool
+	}{
+		{"investigate lead", "Investigate why the broker memory grows overnight", "", intake.OutcomeReport, true},
+		{"why question", "Why does the reconciler requeue every minute?", "", intake.OutcomeReport, true},
+		{"find out", "Can you find out what broke the nightly link check?", "", intake.OutcomeReport, true},
+		{"please investigate", "Please investigate the flaky e2e test in k3d", "", intake.OutcomeReport, true},
+		{"pr url with review", "Please review https://github.com/Smana/maku/pull/42 before we merge", "", intake.OutcomeReview, true},
+		{"review pr url", "Review this PR: https://github.com/Smana/ai-native-ref/pull/108", "", intake.OutcomeReview, true},
+		{"plan first", "Plan first: split the reconciler into two packages", "", intake.OutcomePlanFirst, true},
+		{"show me the plan", "Refactor the storage layer, show me the plan before editing", "", intake.OutcomePlanFirst, true},
+		{"ordinary fix", "Fix the broken link in docs/factory.md", "", intake.OutcomeChange, false},
+		{"fix mentioning investigate", "Update the investigate template docs to mention timeouts", "", intake.OutcomeChange, false},
+		{"pr url without review", "Fix the typo mentioned in https://github.com/Smana/maku/pull/42", "", intake.OutcomeChange, false},
+		{"model choice applies when offered", "Look closely at the Helm chart values for memory limits", intake.OutcomeReport, intake.OutcomeReport, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, inferred, note := intake.ResolveOutcome(tc.text, tc.modelChoice, offered)
+			if got != tc.want || inferred != tc.inferred || note != "" {
+				t.Fatalf("ResolveOutcome(%q, %q) = (%q, %v, %q), want (%q, %v, \"\")",
+					tc.text, tc.modelChoice, got, inferred, note, tc.want, tc.inferred)
+			}
+		})
+	}
+}
+
+func TestAnOutcomeNotOfferedFallsBackToChange(t *testing.T) {
+	d := intake.Draft{
+		Repository: "Smana/ai-native-ref",
+		Issues:     []intake.DraftIssue{{Title: "docs: investigate broken link", Body: validBody, Class: "docs-links", Outcome: intake.OutcomeReport}},
+	}
+	in := composeIn()
+	in.Text = "Investigate why the install link 404s"
+	in.Outcomes = []string{intake.OutcomeChange}
+	p, err := intake.Compose(d, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intake.NormalizeOutcome(p.Issues[0].Outcome) != intake.OutcomeChange {
+		t.Fatalf("Outcome = %q, want change", p.Issues[0].Outcome)
+	}
+	if p.Issues[0].OutcomeNote == "" {
+		t.Fatalf("expected fallback OutcomeNote when report is not offered")
+	}
+	// When report is offered, it is kept and marked inferred with no fallback note.
+	in.Outcomes = []string{intake.OutcomeChange, intake.OutcomeReport}
+	p, err = intake.Compose(d, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Issues[0].Outcome != intake.OutcomeReport || !p.Issues[0].OutcomeInferred || p.Issues[0].OutcomeNote != "" {
+		t.Fatalf("offered report: outcome=%q inferred=%v note=%q", p.Issues[0].Outcome, p.Issues[0].OutcomeInferred, p.Issues[0].OutcomeNote)
+	}
+}
+
+func TestTheOutcomeChangesThePlansHash(t *testing.T) {
+	base := planFixture(t, "single")
+	hDefault := intake.Hash(base)
+
+	// Unset and explicit "change" represent the same outcome and hash identically.
+	asChange := base
+	asChange.Issues = slices.Clone(base.Issues)
+	asChange.Issues[0].Outcome = intake.OutcomeChange
+	if got := intake.Hash(asChange); got != hDefault {
+		t.Fatalf("explicit change hash %s != unset hash %s", got, hDefault)
+	}
+
+	seen := map[string]string{hDefault: "change"}
+	for _, outcome := range []string{intake.OutcomePlanFirst, intake.OutcomeReview, intake.OutcomeReport} {
+		p := base
+		p.Issues = slices.Clone(base.Issues)
+		p.Issues[0].Outcome = outcome
+		h := intake.Hash(p)
+		if prev, dup := seen[h]; dup {
+			t.Fatalf("outcome %q collided with %q (%s)", outcome, prev, h)
+		}
+		seen[h] = outcome
 	}
 }

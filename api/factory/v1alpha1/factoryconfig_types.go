@@ -81,8 +81,15 @@ type FactorySpec struct {
 	// shipped, and an entry here replaces the shipped one of its name whole. harnessProfiles, its
 	// old name, was removed (WF9, WF13).
 	// +kubebuilder:validation:MaxProperties=16
-	Workflows       map[string]config.HarnessProfile `json:"workflows,omitempty"`
-	MergeGuardrails config.MergeGuardrails           `json:"mergeGuardrails,omitzero"`
+	Workflows map[string]config.HarnessProfile `json:"workflows,omitempty"`
+	// Outcomes are the task outcomes this factory offers (phase F): change by default.
+	// An outcome not listed here falls back to change.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Enum=change;plan-first;review;report
+	// +kubebuilder:validation:items:MaxLength=16
+	// +optional
+	Outcomes        []string               `json:"outcomes,omitempty"`
+	MergeGuardrails config.MergeGuardrails `json:"mergeGuardrails,omitzero"`
 	// Evaluation is the team evaluation's cohort share and mode, read per decision.
 	Evaluation config.Evaluation `json:"evaluation,omitzero"`
 	// MergeDefaults are the merge settings most repositories share (Q8): a Repository's merge

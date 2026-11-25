@@ -238,6 +238,16 @@ spec:
                   login:
                     maxLength: 64
                     type: string
+                  outcome:
+                    description: Outcome is the outcome the confirmed plan carried
+                      (phase F); unset is change.
+                    enum:
+                    - change
+                    - plan-first
+                    - review
+                    - report
+                    maxLength: 16
+                    type: string
                   profile:
                     description: |-
                       Profile is the profile the plan pinned (P5): a pin only when Login maintains the repository at
@@ -375,6 +385,16 @@ spec:
                 x-kubernetes-validations:
                 - message: origin never changes
                   rule: self == oldSelf
+              outcome:
+                description: 'Outcome is what the task produces (phase F): unset is
+                  change (a pull request).'
+                enum:
+                - change
+                - plan-first
+                - review
+                - report
+                maxLength: 16
+                type: string
               parent:
                 description: The parent this task is a part of (SL5), fixed at creation;
                   unset for any other task.

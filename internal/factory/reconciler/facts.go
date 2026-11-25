@@ -25,7 +25,7 @@ import (
 
 // factsOf is what the room's summary shows of a task: phase, current run, budget, issue, PR.
 func factsOf(t *v1alpha1.Task) envelope.TaskFacts {
-	f := envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason, Origin: t.Spec.Origin}
+	f := envelope.TaskFacts{Phase: t.Status.Phase, Reason: t.Status.Reason, Origin: t.Spec.Origin, Outcome: t.Spec.Outcome}
 	if m := t.Status.Monitor; t.Spec.Origin != "" && m != nil {
 		f.Monitor = m.Verdict
 	}

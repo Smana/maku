@@ -10,6 +10,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/roomview"
 )
 
@@ -231,7 +232,7 @@ func (a *App) pinProposal(ctx context.Context, in interaction, thread string, p 
 func (a *App) pinInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload, profile string) (code, line string) {
 	msgs, err := a.Slack.Thread(ctx, in.Channel, thread)
 	if err != nil {
-		a.log().Warn("slack thread fetch failed", "channel", in.Channel, "err", err)
+		a.log().Warn("slack thread fetch failed", "err", err)
 		return "error", proposalUnreadableLine
 	}
 	if code, line := a.threadPress(in, msgs); code != "" {
@@ -289,4 +290,85 @@ func (a *App) pinInPlace(ctx context.Context, in interaction, thread string, p P
 		return "pinned", unpinnedLine
 	}
 	return "pinned", strings.Replace(pinnedLine, "%s", profile, 1)
+}
+
+type outcomeChecker interface {
+	HandoffCheckOutcome(ctx context.Context, id, onBehalfOf, outcome string) (HandoffChecked, error)
+}
+
+const (
+	planFirstSetLine         = "Outcome set to plan-first; the proposal shows the new revision: check it and confirm."
+	planFirstUnchangedLine   = "This proposal already runs plan-first."
+	planFirstUnavailableLine = "Outcome not changed: the planner could not be reached; try again in a minute."
+)
+
+func (a *App) planFirstProposal(ctx context.Context, in interaction, thread string, p ProposalPayload) string {
+	if !proposalHashHolds(p) {
+		return a.pressAnswer(ctx, in, thread, proposalGoneLine, "refused")
+	}
+	unlock := a.edits.lock(in.Channel, thread)
+	code, line := a.planFirstInPlace(ctx, in, thread, p)
+	unlock()
+	return a.pressAnswer(ctx, in, thread, line, code)
+}
+
+func (a *App) planFirstInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload) (code, line string) {
+	msgs, err := a.Slack.Thread(ctx, in.Channel, thread)
+	if err != nil {
+		a.log().Warn("slack thread fetch failed", "err", err)
+		return "error", proposalUnreadableLine
+	}
+	if code, line := a.threadPress(in, msgs); code != "" {
+		return code, line
+	}
+	latest, _ := a.threadProposal(msgs)
+	if latest == nil {
+		return "refused", proposalStaleLine
+	}
+	current, ok := latest.Metadata.proposalPayload()
+	if !ok || current.Hash != p.Hash || current.ID != p.ID {
+		return "refused", planChangedLine
+	}
+	checker, ok := a.Broker.(outcomeChecker)
+	if !ok {
+		return "error", planFirstUnavailableLine
+	}
+	checked, err := checker.HandoffCheckOutcome(ctx, p.ID, "slack:"+a.TeamID+"/"+in.User, intake.OutcomePlanFirst)
+	var r Refused
+	switch {
+	case errors.As(err, &r):
+		return "refused", "Outcome not changed: " + shown(string(r))
+	case err != nil:
+		a.log().Warn("handoff_check outcome failed", "err", err)
+		return "error", planFirstUnavailableLine
+	}
+	if checked.Hash == p.Hash {
+		return "ignored", planFirstUnchangedLine
+	}
+	next, err := newProposal(checked.Plan, checked.Hash, p.Author, p.Rev+1)
+	if err != nil {
+		a.log().Warn("plan-first proposal not built", "err", err)
+		return "error", planFirstUnavailableLine
+	}
+	next.ID = p.ID
+	next.Degraded = p.Degraded
+	next.Pins = p.Pins
+	if opts := checked.pinOptions(); len(opts) > 0 {
+		next.Pins = opts
+	}
+	next.DefaultDescription, next.DefaultCeilingUSD = p.DefaultDescription, p.DefaultCeilingUSD
+	if checked.DefaultChoice != nil {
+		next.DefaultDescription, next.DefaultCeilingUSD = checked.DefaultChoice.Description, checked.DefaultChoice.CeilingUSD
+	}
+	next.Path, next.StepUpUSD = p.Path, p.StepUpUSD
+	if checked.ActiveChoice != nil {
+		next.Path, next.StepUpUSD = checked.ActiveChoice.Path, checked.ActiveChoice.StepUpCeilingUSD
+	}
+	next.Workflow = p.Workflow
+	prev := p
+	prev.Plan = checked.Plan
+	if code := a.updateProposal(ctx, in.Channel, in.MessageTS, prev, next, checked.Plan.Question); code == "error" {
+		return "error", proposalUnreadableLine
+	}
+	return "pinned", planFirstSetLine
 }

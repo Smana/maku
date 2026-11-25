@@ -50,6 +50,8 @@ type Catalogue struct {
 	DefaultWorkflow string `json:"defaultWorkflow"`
 	// Profiles are the factory's workflows by name, none excepted (WF1).
 	Profiles map[string]Profile `json:"profiles"`
+	// Outcomes are the task outcomes this factory offers (phase F): change by default.
+	Outcomes []string `json:"outcomes,omitempty"`
 }
 
 // Generations are the object generations the catalogue was built from: the Factory's, the
@@ -160,6 +162,7 @@ func Build(cfg *config.Config, repository string, maintainer bool) (Catalogue, b
 		Classes:         []Class{},
 		DefaultWorkflow: rc.DefaultWorkflow(),
 		Profiles:        map[string]Profile{},
+		Outcomes:        cfg.OutcomesOr(),
 	}
 	for name, p := range cfg.HarnessProfiles {
 		if cfg.IsWorkflow(name) {

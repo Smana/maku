@@ -150,6 +150,8 @@ func (a *App) proposalPress(ctx context.Context, in interaction) string {
 		// answers, and the outcome word says what came of it (CD7).
 		a.proposalUpdate(ctx, countConfirm)
 		return a.confirmProposal(ctx, in, thread, p)
+	case actionProposalPlanFirst:
+		return a.planFirstProposal(ctx, in, thread, p)
 	case actionProposalCancel:
 		a.proposalUpdate(ctx, countCancel)
 		return a.cancelProposal(ctx, in, thread, p)

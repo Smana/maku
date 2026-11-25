@@ -612,6 +612,11 @@ func (in *FactorySpec) DeepCopyInto(out *FactorySpec) {
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
+	if in.Outcomes != nil {
+		in, out := &in.Outcomes, &out.Outcomes
+		*out = make([]string, len(*in))
+		copy(*out, *in)
+	}
 	in.MergeGuardrails.DeepCopyInto(&out.MergeGuardrails)
 	out.Evaluation = in.Evaluation
 	if in.MergeDefaults != nil {

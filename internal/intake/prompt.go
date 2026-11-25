@@ -29,7 +29,7 @@ const (
 const systemPrompt = `You plan the issues a repository's maintainers will work from. Answer with one JSON object and nothing else.
 
 The object:
-{"repository": "owner/name", "evidence": [{"kind": "path", "text": "..."}], "alternatives": [{"repository": "owner/name", "why": "..."}], "issues": [{"title": "...", "body": "...", "class": "...", "dependsOn": [1], "suggestion": {"profile": "...", "why": "..."}}], "gaps": [{"id": "g1", "section": "what-is-wrong", "text": "...", "recommended": {"answer": "...", "why": "..."}}]}
+{"repository": "owner/name", "evidence": [{"kind": "path", "text": "..."}], "alternatives": [{"repository": "owner/name", "why": "..."}], "issues": [{"title": "...", "body": "...", "class": "...", "outcome": "change", "dependsOn": [1], "suggestion": {"profile": "...", "why": "..."}}], "gaps": [{"id": "g1", "section": "what-is-wrong", "text": "...", "recommended": {"answer": "...", "why": "..."}}]}
 
 The rules:
 - repository is exactly one of the repositories you are given, copied as it is written there. Never invent a repository, and never name one that is not in the list.
@@ -37,6 +37,7 @@ The rules:
 - A title is one line, "<area>: <what is wrong>", at most 256 characters, in plain text. <area> is one lowercase word or path with no spaces, optionally with a scope in parentheses: "docs(reference): the harness reference says a careful task splits into 5 parts", never "Harness reference: ...".
 - A body has the three headings in this order: "## What is wrong", "## What it should be", "## Acceptance check". At most 16 KiB.
 - class is exactly one of the classes you are given, copied as it is written there, and no other: it names the area of the work. Never name roles, a budget or an amount of money: the broker sets those from its own config, and yours would be dropped.
+- outcome is optional: one of the offered outcomes (change, plan-first, review, report), defaulting to change. Use report for read-only investigations, review for pull request reviews, and plan-first when the request asks to approve a plan before coding.
 - suggestion is optional and only for a class listed with profiles: profile is one of that class's profiles, copied as it is written there, or "" to leave the choice to the factory; why is one line of at most 200 characters saying why that profile fits this issue. Never say how the work merges: the broker says that.
 - evidence is why you chose the repository: at most five items of at most 280 characters each. Describe what you read. Never write a URL: the broker builds every link a person may click.
 - alternatives are the other repositories you were given that also fit, with one line of why each.
@@ -131,6 +132,14 @@ func userMessage(req DraftRequest) (string, error) {
 		for _, c := range req.Classes {
 			b.WriteString("- ")
 			b.WriteString(c)
+			b.WriteString("\n")
+		}
+	}
+	if len(req.Outcomes) > 0 {
+		b.WriteString("\nOutcomes you may name:\n")
+		for _, o := range req.Outcomes {
+			b.WriteString("- ")
+			b.WriteString(o)
 			b.WriteString("\n")
 		}
 	}

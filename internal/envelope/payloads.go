@@ -279,6 +279,8 @@ type TaskFacts struct {
 	Policy *PolicyFact `json:"policy,omitempty"`
 	// Profile is the harness profile and evaluation cohort the task runs under.
 	Profile *ProfileFact `json:"profile,omitempty"`
+	// Outcome is what the task produces (phase F): empty or change for a pull request.
+	Outcome string `json:"outcome,omitempty"`
 }
 
 // MaxPlan bounds TaskFacts.Plan.
@@ -520,6 +522,8 @@ func (f TaskFacts) Validate() error {
 		return errors.New("task facts: the origin is a room id")
 	case f.Monitor != "" && !slices.Contains(MonitorVerdicts(), f.Monitor):
 		return errors.New("task facts: the monitor verdict is healthy, regression or inconclusive")
+	case f.Outcome != "" && !slices.Contains([]string{"change", "plan-first", "review", "report"}, f.Outcome):
+		return errors.New("task facts: outcome is change, plan-first, review or report")
 	case len(f.Plan) > MaxPlan:
 		return fmt.Errorf("task facts: plan is at most %d, got %d", MaxPlan, len(f.Plan))
 	}

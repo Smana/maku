@@ -239,7 +239,8 @@ func (s *Server) createTask(ctx context.Context, p authn.Principal, args json.Ra
 	res, err := s.Tasks.CreateTask(ctx, runrequest.TaskRequest{Repository: a.Repo, Title: a.Title, Text: a.Text,
 		DataClass: a.DataClass, MaxCostUSD: a.MaxCost, OnBehalfOf: a.OnBehalfOf, Ref: a.Ref,
 		AccessToken: p.AccessToken, IdempotencyKey: p.ID + ":" + key,
-		Class: planned.Class, Suggested: planned.suggested(), Profile: planned.Profile, StepUpShown: stepUpShown})
+		Class: planned.Class, Suggested: planned.suggested(), Profile: planned.Profile, StepUpShown: stepUpShown,
+		Outcome: planned.Outcome})
 	var refused runrequest.ErrRefused
 	if errors.As(err, &refused) {
 		return runrequest.TaskResult{}, toolError("rejected: " + refused.Reason)
@@ -270,7 +271,7 @@ func (s *Server) fromHandoff(ctx context.Context, p authn.Principal, a *runCreat
 	case a.PlanHash != "" && !hashRE.MatchString(a.PlanHash):
 		return toolError("invalid_arguments: plan_hash is the sha256: value the plan was shown with")
 	}
-	checked, _, err := s.handoffCheckFor(ctx, p, a.Handoff, nil, a.OnBehalfOf)
+	checked, _, err := s.handoffCheckFor(ctx, p, a.Handoff, nil, nil, a.OnBehalfOf)
 	if err != nil {
 		return err
 	}

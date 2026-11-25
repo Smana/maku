@@ -54,3 +54,32 @@ func TestPinnedIsLabeled(t *testing.T) {
 		}
 	}
 }
+
+func TestAnOutcomeNotOfferedFallsBackToChange(t *testing.T) {
+	c := cfg()
+	// Default Factory.spec.outcomes is [change] only.
+	d, err := Static{}.Triage(t.Context(), c, &v1alpha1.Task{
+		Spec: v1alpha1.TaskSpec{Outcome: config.OutcomeReport},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != config.OutcomeChange {
+		t.Fatalf("Outcome = %q, want %q", d.Outcome, config.OutcomeChange)
+	}
+	if len(d.Notes) == 0 {
+		t.Fatalf("expected fallback note when report is not offered")
+	}
+
+	// Once offered, triage preserves the outcome with no fallback note.
+	c.Outcomes = []string{config.OutcomeChange, config.OutcomeReport, config.OutcomePlanFirst}
+	d, err = Static{}.Triage(t.Context(), c, &v1alpha1.Task{
+		Spec: v1alpha1.TaskSpec{Outcome: config.OutcomeReport},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Outcome != config.OutcomeReport || len(d.Notes) != 0 {
+		t.Fatalf("offered outcome: got %q notes=%v", d.Outcome, d.Notes)
+	}
+}

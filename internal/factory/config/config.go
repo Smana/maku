@@ -160,9 +160,11 @@ type Config struct {
 	// reader reads; Parse fills it from workflows, the file's only spelling (WF9, WF13).
 	HarnessProfiles map[string]HarnessProfile `json:"-"`
 	// Workflows is the file's workflows: Parse moves it into HarnessProfiles.
-	Workflows        map[string]HarnessProfile `json:"workflows,omitempty"`
-	MergeGuardrails  MergeGuardrails           `json:"mergeGuardrails,omitzero"`
-	PolicyManagement PolicyManagement          `json:"policyManagement,omitzero"`
+	Workflows map[string]HarnessProfile `json:"workflows,omitempty"`
+	// Outcomes are the task outcomes this factory offers (phase F): change by default.
+	Outcomes         []string         `json:"outcomes,omitempty"`
+	MergeGuardrails  MergeGuardrails  `json:"mergeGuardrails,omitzero"`
+	PolicyManagement PolicyManagement `json:"policyManagement,omitzero"`
 	// Evaluation is the team evaluation's cohort and mode: observe unless set.
 	Evaluation Evaluation `json:"evaluation,omitzero"`
 	// MergeDefaults are the merge settings a repository omits, key by key (Q8): each top-level key
@@ -1608,6 +1610,49 @@ func tiers() []string { return []string{"light", "standard", "frontier"} }
 // templates is the Task CRD's template enum (api/factory/v1alpha1).
 func templates() []string { return []string{"solo", "pair", "investigate"} }
 
+// The task outcomes a factory may offer (phase F). Unset is change.
+const (
+	OutcomeChange    = "change"
+	OutcomePlanFirst = "plan-first"
+	OutcomeReview    = "review"
+	OutcomeReport    = "report"
+)
+
+// AllOutcomes returns the closed list of task outcomes.
+func AllOutcomes() []string {
+	return []string{OutcomeChange, OutcomePlanFirst, OutcomeReview, OutcomeReport}
+}
+
+// ValidOutcome reports whether s is a valid outcome name.
+func ValidOutcome(s string) bool {
+	return slices.Contains(AllOutcomes(), s)
+}
+
+// NormalizeOutcome maps an empty outcome to change.
+func NormalizeOutcome(s string) string {
+	if s == "" {
+		return OutcomeChange
+	}
+	return s
+}
+
+// OutcomesOr returns the outcomes this factory offers, defaulting to [change].
+func (c *Config) OutcomesOr() []string {
+	if c == nil || len(c.Outcomes) == 0 {
+		return []string{OutcomeChange}
+	}
+	return slices.Clone(c.Outcomes)
+}
+
+// OffersOutcome reports whether this factory offers outcome (empty is change).
+func (c *Config) OffersOutcome(outcome string) bool {
+	o := NormalizeOutcome(outcome)
+	if o == OutcomeChange {
+		return true
+	}
+	return slices.Contains(c.OutcomesOr(), o)
+}
+
 // Load reads and parses the file at path.
 func Load(path string) (*Config, error) {
 	raw, err := os.ReadFile(filepath.Clean(path))
@@ -2022,6 +2067,15 @@ func (c *Config) Validate() error {
 	}
 	if len(c.Tiers) != len(tiers()) {
 		bad("tiers are exactly light, standard and frontier")
+	}
+	seenOutcome := map[string]bool{}
+	for _, o := range c.Outcomes {
+		if !ValidOutcome(o) {
+			bad("outcomes: %q is not one of change, plan-first, review, report", o)
+		} else if seenOutcome[o] {
+			bad("outcomes: %q is listed more than once", o)
+		}
+		seenOutcome[o] = true
 	}
 	for name, t := range c.Templates {
 		// The reconciler creates Tasks from these names, and the Task CRD's enum refuses any other.

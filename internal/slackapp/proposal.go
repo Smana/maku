@@ -31,10 +31,10 @@ const (
 	// maxProposalRevisions bounds the revisions one proposal reaches in a thread; past it the thread
 	// says to confirm or to start a new mention. The broker's dailyPlans is the second bound.
 	maxProposalRevisions = 40
-	// actionProposalConfirm and actionProposalCancel are the two buttons' ids: the dispatcher's
-	// common checks know them, and each family decodes its own value.
-	actionProposalConfirm = "factory_proposal_confirm"
-	actionProposalCancel  = "factory_proposal_cancel"
+	// actionProposalConfirm, actionProposalPlanFirst and actionProposalCancel are the proposal buttons' ids.
+	actionProposalConfirm   = "factory_proposal_confirm"
+	actionProposalPlanFirst = "factory_proposal_plan_first"
+	actionProposalCancel    = "factory_proposal_cancel"
 	// actionProposalProfile is the workflow select (P5): it binds the hash and revision the message shows.
 	actionProposalProfile = "factory_proposal_profile"
 	// defaultHandoffID is the shaped handoff id a pure render or unit-test fixture uses when no broker
@@ -203,6 +203,7 @@ type proposalMaterial struct {
 		Title     string   `json:"title"`
 		Body      string   `json:"body"`
 		Class     string   `json:"class"`
+		Outcome   string   `json:"outcome,omitempty"`
 		Roles     []string `json:"roles"`
 		DependsOn []int    `json:"dependsOn"`
 	} `json:"issues"`
@@ -262,7 +263,8 @@ func sameIssues(a, b proposalMaterial) bool {
 		if a.Issues[i].Index != b.Issues[i].Index ||
 			a.Issues[i].Title != b.Issues[i].Title ||
 			a.Issues[i].Body != b.Issues[i].Body ||
-			a.Issues[i].Class != b.Issues[i].Class {
+			a.Issues[i].Class != b.Issues[i].Class ||
+			a.Issues[i].Outcome != b.Issues[i].Outcome {
 			return false
 		}
 	}
@@ -413,11 +415,17 @@ func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSectio
 	if wf == "" {
 		wf = "standard"
 	}
-	var mergeSuffix, suggested string
+	var mergeSuffix, suggested, outcome, outcomeNote string
+	var outcomeInferred bool
+	var reviewPR int
 	var roles []string
 	if len(p.Plan.Issues) > 0 {
 		is := p.Plan.Issues[0]
 		roles = is.Roles
+		outcome, outcomeInferred, outcomeNote = is.Outcome, is.OutcomeInferred, is.OutcomeNote
+		if outcome == intake.OutcomeReview {
+			reviewPR = intake.ReviewPRNumber(is.Body)
+		}
 		if is.Suggestion != nil {
 			mergeSuffix = " · " + slackText(roomview.MergeWords(is.Suggestion.Merge.Outcome))
 			if is.Suggestion.Profile != "" && is.Suggestion.Profile != wf {
@@ -438,14 +446,20 @@ func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSectio
 		ceiling = p.DefaultCeilingUSD
 	}
 	card := roomview.WorkflowCard{
-		Workflow:   wf,
-		Reason:     roomview.Reason(source, "", suggested, "", nil),
-		Path:       path,
-		CeilingUSD: ceiling,
-		StepUpUSD:  p.StepUpUSD,
+		Outcome:         outcome,
+		OutcomeInferred: outcomeInferred,
+		ReviewPR:        reviewPR,
+		Workflow:        wf,
+		Reason:          roomview.Reason(source, "", suggested, "", nil),
+		Path:            path,
+		CeilingUSD:      ceiling,
+		StepUpUSD:       p.StepUpUSD,
 	}
 	var cardBuf strings.Builder
 	_ = roomview.WorkflowCardText(&cardBuf, card, roomview.Options{Format: roomview.Slack})
+	if outcomeNote != "" {
+		cardBuf.WriteString(slackText(outcomeNote) + "\n")
+	}
 	cardBody := strings.TrimSpace(cardBuf.String())
 
 	cardChanged := false
@@ -584,12 +598,14 @@ func proposalBlocks(sections []roomview.ProposalSection, hash string, rev int, c
 	return raw, nil
 }
 
-// actionsBlock is the two controls: Confirm and Cancel, both carrying the value the message showed, so
-// a click binds the revision it read.
+// actionsBlock is the proposal controls: Confirm, Plan first and Cancel, each carrying the value
+// the message showed, so a click binds the revision it read.
 func actionsBlock(value string) slackBlock {
 	return slackBlock{Type: "actions", Elements: []slackButton{
 		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Confirm"},
 			ActionID: actionProposalConfirm, Value: value, Style: "primary"},
+		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Plan first"},
+			ActionID: actionProposalPlanFirst, Value: value},
 		{Type: "button", Text: &slackBlockText{Type: "plain_text", Text: "Cancel"},
 			ActionID: actionProposalCancel, Value: value, Style: "danger"},
 	}}

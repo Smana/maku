@@ -6,16 +6,17 @@ package triage
 
 import (
 	"context"
+	"fmt"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
 )
 
-// Decision is what triage fixes on a task: its template, predicted class, data class and budget.
+// Decision is what triage fixes on a task: its template, predicted class, data class, outcome and budget.
 type Decision struct {
-	Template, PredictedClass, DataClass string
-	Budget                              v1alpha1.Budget
-	Classification                      v1alpha1.Classification
+	Template, PredictedClass, DataClass, Outcome string
+	Budget                                       v1alpha1.Budget
+	Classification                               v1alpha1.Classification
 	// Declared is a class a maintainer, a schedule or a maintainer's intake named: informational
 	// (the policy fact computes its own), and never the cohort (P8). Pinned is an honoured profile
 	// pin (Pin.Honoured), the one thing that makes a task labeled. Cohort is the evaluation's group.
@@ -64,6 +65,20 @@ type Static struct {
 	Template string
 }
 
+// ResolveOutcome decides a task's outcome against Factory.spec.outcomes (phase F). An outcome not
+// offered by cfg falls back to change with one explanatory note.
+func ResolveOutcome(cfg *config.Config, t *v1alpha1.Task) (outcome, note string) {
+	want := t.Spec.Outcome
+	if want == "" && t.Spec.Intake != nil {
+		want = t.Spec.Intake.Outcome
+	}
+	want = config.NormalizeOutcome(want)
+	if !config.ValidOutcome(want) || !cfg.OffersOutcome(want) {
+		return config.OutcomeChange, fmt.Sprintf("outcome %q is not offered by this factory; running as change.", want)
+	}
+	return want, ""
+}
+
 // Triage returns the defaults; a task's own data class wins over the default one.
 func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) (Decision, error) {
 	d := cfg.Defaults
@@ -75,11 +90,16 @@ func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) 
 	if template == "" {
 		template = cfg.DefaultTemplate(cfg.RepositoryFor(t.Spec.Repository))
 	}
+	outcome, outcomeNote := ResolveOutcome(cfg, t)
+	var notes []string
+	if outcomeNote != "" {
+		notes = []string{outcomeNote}
+	}
 	const tier = "standard"
-	return Decision{Template: template, PredictedClass: d.PredictedClass, DataClass: dataClass,
+	return Decision{Template: template, PredictedClass: d.PredictedClass, DataClass: dataClass, Outcome: outcome,
 		Budget:         BudgetFor(cfg, tier),
 		Classification: v1alpha1.Classification{Tier: tier, Classifier: "static", Fallback: "static"},
-		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent)}, nil
+		Cohort:         CohortOf(t.Name, false, cfg.Evaluation.ControlPercent), Notes: notes}, nil
 }
 
 // sponsoredRuns is how many whole runs a ceiling holds: implementer, tester and reviewer. runFits
