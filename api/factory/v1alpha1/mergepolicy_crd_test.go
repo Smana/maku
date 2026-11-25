@@ -336,7 +336,6 @@ func TestRemovedFieldsAreRefused(t *testing.T) {
 		{"escalation", "{notConverged: careful}"},
 		{"testFirst", "true"},
 		{"checks", "true"},
-		{"requires", "[allowedFiles]"},
 		{"live", "true"},
 		{"shadow", "true"},
 	} {
@@ -349,6 +348,12 @@ func TestRemovedFieldsAreRefused(t *testing.T) {
 			}
 		})
 	}
+	t.Run("MergePolicy.requires.legacy", func(t *testing.T) {
+		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: p-requires}\nspec: {requires: [allowedFiles]}\n")
+		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), `Unsupported value: "allowedFiles"`) {
+			t.Fatalf("MergePolicy with legacy requires: got %v", err)
+		}
+	})
 	t.Run("MergePolicy.review", func(t *testing.T) {
 		u := a.object(t, "apiVersion: maku.ogenki.io/v1alpha1\nkind: MergePolicy\nmetadata: {name: review}\nspec: {}\n")
 		if err := a.c.Create(t.Context(), u, client.FieldValidation("Strict")); err == nil || !strings.Contains(err.Error(), "review is not a policy") {
