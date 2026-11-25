@@ -506,6 +506,9 @@ type TaskStatus struct {
 	Reason string `json:"reason,omitempty"`
 	// +optional
 	PhaseSince *metav1.Time `json:"phaseSince,omitempty"`
+	// The scoper's outcome (scoper design SC8): set when the scoper ends, cleared on a plan revision.
+	// +optional
+	Plan *PlanGateStatus `json:"plan,omitempty"`
 	// The C7 answer, recorded as-is (§2).
 	// +optional
 	Classification *Classification `json:"classification,omitempty"`
@@ -719,6 +722,25 @@ type ScopeStatus struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Seq int64 `json:"seq,omitempty"`
+}
+
+// PlanGateStatus tracks the plan gate on a plan-first task (phase F3).
+type PlanGateStatus struct {
+	// +kubebuilder:validation:Enum=proposed;approved;revised;split;escalated
+	// +optional
+	State string `json:"state,omitempty"`
+	// Revisions counts how many times the plan was revised via /factory plan revise (at most 1).
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=4
+	// +optional
+	Revisions int32 `json:"revisions,omitempty"`
+	// Parked is true once the plan waited past workflow.planGateHours without an answer.
+	// +optional
+	Parked bool `json:"parked,omitempty"`
+	// RevisionNote is the one note passed to the scoper on a revision run.
+	// +kubebuilder:validation:MaxLength=1024
+	// +optional
+	RevisionNote string `json:"revisionNote,omitempty"`
 }
 
 // SplitStatus is a split as its parent keeps it (SL14).

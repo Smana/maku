@@ -97,6 +97,11 @@ func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1
 		return r.scopeNotChecked(ctx, cfg, t, "the scoper finished without handing off a scope", "missing", "missing")
 	case sc == nil:
 		return r.scoperFailed(ctx, cfg, t, reason)
+	case sc.State == envelope.ScopeReady && planGateApplies(t):
+		if r.repo(cfg, t).PlanGateMode() == "auto" {
+			return r.autoApprovePlanGate(ctx, cfg, t, sc, split, seq)
+		}
+		return r.enterPlanGate(ctx, cfg, t, sc, split, seq)
 	case sc.State == envelope.ScopeReady && split != nil:
 		return r.splitHandoff(ctx, cfg, t, sc, split, seq)
 	case sc.State == envelope.ScopeReady:

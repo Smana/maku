@@ -31,6 +31,10 @@ func (r *Reconciler) statusFacts(cfg *config.Config, t *v1alpha1.Task) narrate.S
 		fl.Ghosts = []string{}
 	}
 	sf.Strip = summary.Strip(fl)
+	if t.Status.Phase == v1alpha1.PhaseAwaitingHuman && t.Status.Reason == ReasonPlanReview &&
+		t.Status.Plan != nil && t.Status.Plan.Parked {
+		sf.PlanParkedHours = r.repo(cfg, t).PlanGateHoursOr()
+	}
 	return sf
 }
 

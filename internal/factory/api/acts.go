@@ -47,9 +47,206 @@ const (
 	ActNotRunning       = "not_running"
 	ActNotEscalated     = "not_escalated"
 	ActUnknownTask      = "unknown_task"
+	ActNoPlan           = "no_plan"
+	ActNotAllowed       = "not_allowed"
+	ActPlanApproved     = "plan_approved"
+	ActPlanRevised      = "plan_revised"
+	ActPlanSplit        = "plan_split"
 
-	maxActBody = 4 << 10
+	maxActBody  = 4 << 10
+	maxPlanNote = 1024
 )
+
+// PlanRequest is the POST /v1/tasks/{task}/plans body (phase F3): approve, revise (with a
+// one-line note), or split.
+type PlanRequest struct {
+	OnBehalfOf string `json:"onBehalfOf,omitempty"`
+	Decision   string `json:"decision"`
+	Note       string `json:"note,omitempty"`
+}
+
+func (s *Server) planTask(w http.ResponseWriter, r *http.Request) {
+	cfg := s.Cfg.Current()
+	p, err := s.Auth.Authenticate(r)
+	switch {
+	case errors.Is(err, authn.ErrForbidden):
+		refuse(w, http.StatusForbidden, "not_permitted")
+		return
+	case err != nil:
+		refuse(w, http.StatusUnauthorized, "unauthenticated")
+		return
+	}
+	sp := cfg.SponsoredBy(p.ID)
+	humanPlan := !p.Sponsored && !p.Internal && p.Kind == envelope.ActorHuman
+	if !humanPlan && (!p.Sponsored || p.Internal || sp == nil) {
+		refuse(w, http.StatusForbidden, reasonSponsoredOnly)
+		return
+	}
+	ctx := r.Context()
+	if s.Stopped != nil && s.Stopped(ctx) {
+		refuse(w, http.StatusServiceUnavailable, "kill_switch")
+		return
+	}
+	var in PlanRequest
+	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxActBody))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || dec.More() {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	if humanPlan {
+		if in.OnBehalfOf != "" {
+			refuse(w, http.StatusForbidden, reasonSponsoredOnly)
+			return
+		}
+	} else if in.OnBehalfOf == "" {
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	var note string
+	switch in.Decision {
+	case "approve", "split":
+		if strings.TrimSpace(in.Note) != "" {
+			refuse(w, http.StatusBadRequest, "bad_json")
+			return
+		}
+	case "revise":
+		if len(in.Note) > maxPlanNote {
+			refuse(w, http.StatusBadRequest, "bad_json")
+			return
+		}
+		var ok bool
+		note, ok = cleanAnswerText(in.Note)
+		if !ok {
+			refuse(w, http.StatusBadRequest, "invalid_draft")
+			return
+		}
+		if note == "" {
+			refuse(w, http.StatusBadRequest, "bad_json")
+			return
+		}
+		if s.Redact != nil {
+			if _, rules := s.Redact.String(note); len(rules) > 0 {
+				refuse(w, http.StatusBadRequest, "invalid_draft")
+				return
+			}
+		}
+	default:
+		refuse(w, http.StatusBadRequest, "bad_json")
+		return
+	}
+	taskName := r.PathValue("task")
+	if !envelope.ValidID(taskName) {
+		reply(w, http.StatusOK, ActResult{Result: ActUnknownTask})
+		return
+	}
+
+	var resolvedLogin string
+	for attempt := 1; ; attempt++ {
+		t, found, err := s.existing(ctx, taskName)
+		if err != nil {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+		if !found {
+			reply(w, http.StatusOK, ActResult{Result: ActUnknownTask})
+			return
+		}
+		if attempt == 1 {
+			var repo string
+			var rc *config.Repository
+			var login string
+			var code int
+			var reason string
+			if humanPlan {
+				repo = t.Spec.Repository
+				rc = cfg.RepositoryFor(repo)
+				if rc == nil {
+					refuse(w, http.StatusForbidden, "repository_not_allowed")
+					return
+				}
+				login, code, reason = s.linkedLogin(ctx, p, repo)
+			} else {
+				repo = canonicalRepository(sp.Repositories, t.Spec.Repository)
+				rc = cfg.RepositoryFor(repo)
+				if !slices.Contains(sp.Repositories, repo) || rc == nil {
+					refuse(w, http.StatusForbidden, "repository_not_allowed")
+					return
+				}
+				id, ok := strings.CutPrefix(in.OnBehalfOf, "slack:")
+				team, user, slash := strings.Cut(id, "/")
+				if !ok || !slash || team == "" || user == "" {
+					reply(w, http.StatusOK, ActResult{Result: ActNotLinked})
+					return
+				}
+				login, code, reason = s.onBehalfLogin(ctx, sp, in.OnBehalfOf, repo)
+			}
+			switch reason {
+			case "":
+			case "not_linked":
+				reply(w, http.StatusOK, ActResult{Result: ActNotLinked})
+				return
+			default:
+				refuse(w, code, reason)
+				return
+			}
+			isAuthor := t.Spec.IssueAuthor != "" && strings.EqualFold(t.Spec.IssueAuthor, login)
+			isMaintainer := false
+			if !isAuthor && rc.IsMaintainer(login) {
+				canWrite, err := s.actLoginWrites(ctx, repo, login)
+				if err != nil {
+					s.failAct(ctx, w, p.ID, "access_unverified", err)
+					return
+				}
+				isMaintainer = canWrite
+			}
+			if !isAuthor && !isMaintainer {
+				reply(w, http.StatusOK, ActResult{Result: ActNotAllowed})
+				return
+			}
+			resolvedLogin = strings.ToLower(login)
+		}
+		if t.Status.Phase != factoryv1.PhaseAwaitingHuman || t.Status.Reason != "plan_review" {
+			reply(w, http.StatusOK, ActResult{Result: ActNoPlan})
+			return
+		}
+		var round int32
+		if t.Status.Plan != nil {
+			round = t.Status.Plan.Revisions
+		}
+		payload, err := json.Marshal(struct {
+			Decision string `json:"decision"`
+			Note     string `json:"note,omitempty"`
+			By       string `json:"by"`
+			Round    int32  `json:"round"`
+		}{Decision: in.Decision, Note: note, By: resolvedLogin, Round: round})
+		if err != nil {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+		base := t.DeepCopy()
+		if t.Annotations == nil {
+			t.Annotations = map[string]string{}
+		}
+		t.Annotations[factoryv1.AnnotationPlanDecision] = string(payload)
+		err = s.Rooms.Patch(ctx, t, client.MergeFromWithOptions(base, client.MergeFromWithOptimisticLock{}))
+		if err == nil {
+			resCode := ActPlanApproved
+			switch in.Decision {
+			case "revise":
+				resCode = ActPlanRevised
+			case "split":
+				resCode = ActPlanSplit
+			}
+			reply(w, http.StatusOK, ActResult{Result: resCode})
+			return
+		}
+		if !apierrors.IsConflict(err) || attempt == 3 {
+			s.failAct(ctx, w, p.ID, "tasks_unavailable", err)
+			return
+		}
+	}
+}
 
 func (s *Server) stopTask(w http.ResponseWriter, r *http.Request) {
 	s.actTask(w, r, false)

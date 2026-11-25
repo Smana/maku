@@ -609,3 +609,69 @@ func TestRetryMeansFactoryRetryComment(t *testing.T) {
 		t.Fatalf("expected retry narration, got %q", say)
 	}
 }
+
+func TestPlanRouteApproveReviseSplit(t *testing.T) {
+	waiting := &factoryv1.Task{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "3buqdlot",
+			Namespace: "agent-system",
+		},
+		Spec: factoryv1.TaskSpec{
+			Source: factoryv1.Source{
+				Kind: "issue", Ref: actRepo + "#7", Key: "k-3buqdlot",
+				RequestedBy: "github:Smana", Trust: "untrusted", ContentSHA256: strings.Repeat("b", 64),
+			},
+			Repository:  actRepo,
+			Issue:       7,
+			IssueAuthor: "alice",
+			Text:        "# Refactor storage",
+			DataClass:   "public",
+			Outcome:     config.OutcomePlanFirst,
+		},
+		Status: factoryv1.TaskStatus{
+			Phase:  factoryv1.PhaseAwaitingHuman,
+			Reason: "plan_review",
+			Plan:   &factoryv1.PlanGateStatus{State: "proposed"},
+		},
+	}
+	other := waiting.DeepCopy()
+	other.Name = "4buqdlot"
+	other.Status.Phase = factoryv1.PhaseImplementing
+	other.Status.Reason = ""
+
+	env := newActEnv(t, waiting, other)
+
+	// Non-plan-review task returns no_plan.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/4buqdlot/plans", `{"onBehalfOf":"slack:T01ABC/UMAINT","decision":"approve"}`)); got != api.ActNoPlan {
+		t.Fatalf("non-plan task: got %q, want %q", got, api.ActNoPlan)
+	}
+	// Non-maintainer non-author returns not_allowed.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/plans", `{"onBehalfOf":"slack:T01ABC/UNOWRITE","decision":"approve"}`)); got != api.ActNotAllowed {
+		t.Fatalf("outsider: got %q, want %q", got, api.ActNotAllowed)
+	}
+	// Revise without note is refused with 400 bad_json.
+	if rec := postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/plans", `{"onBehalfOf":"slack:T01ABC/UMAINT","decision":"revise"}`); rec.Code != http.StatusBadRequest {
+		t.Fatalf("revise without note: got %d, want 400", rec.Code)
+	}
+	// Maintainer approves via /plans and writes the plan-decision annotation.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/plans", `{"onBehalfOf":"slack:T01ABC/UMAINT","decision":"approve"}`)); got != api.ActPlanApproved {
+		t.Fatalf("maintainer approve: got %q, want %q", got, api.ActPlanApproved)
+	}
+	var updated factoryv1.Task
+	if err := env.client.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Annotations[factoryv1.AnnotationPlanDecision], `"decision":"approve"`) {
+		t.Fatalf("annotation = %q", updated.Annotations[factoryv1.AnnotationPlanDecision])
+	}
+	// Revise with note succeeds and writes the note.
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/plans", `{"onBehalfOf":"slack:T01ABC/UMAINT","decision":"revise","note":"keep cache untouched"}`)); got != api.ActPlanRevised {
+		t.Fatalf("maintainer revise: got %q, want %q", got, api.ActPlanRevised)
+	}
+	if err := env.client.Get(t.Context(), types.NamespacedName{Namespace: "agent-system", Name: "3buqdlot"}, &updated); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(updated.Annotations[factoryv1.AnnotationPlanDecision], `"note":"keep cache untouched"`) {
+		t.Fatalf("annotation = %q", updated.Annotations[factoryv1.AnnotationPlanDecision])
+	}
+}

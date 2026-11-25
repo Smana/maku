@@ -23,6 +23,7 @@ type StatusFacts struct {
 	Reason          string
 	Strip           string
 	CeilingMicroUSD int64
+	PlanParkedHours int
 }
 
 const statusIssueMarker = "<!-- agent-factory issue-status -->"
@@ -65,7 +66,9 @@ func Status(t *v1alpha1.Task, roomsURL string, wf StatusFacts, mergeByApproval .
 		facts.PR = &envelope.PRFact{Number: pr.Number, URL: pr.URL}
 	}
 	reason, next := summ.Waiting(facts)
-	if reason != "" {
+	if wf.PlanParkedHours > 0 {
+		waiting = fmt.Sprintf("parked: the plan was not answered in %d hours; any of the three answers resumes it", wf.PlanParkedHours)
+	} else if reason != "" {
 		waiting = reason
 		if next != "" {
 			waiting += "; next: " + next

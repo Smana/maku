@@ -8,6 +8,14 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"time"
+)
+
+// DefaultPlanGateHours is the default wait before an unanswered plan gate marks itself parked (phase F3).
+const (
+	DefaultPlanGateHours = 72
+	minPlanGateHours     = 1
+	maxPlanGateHours     = 720
 )
 
 // The shipped workflows' names (workflows WF2): a Factory that names none of them still offers all
@@ -116,6 +124,15 @@ type RepositoryWorkflow struct {
 	// (the task waits with a "run again deeper" offer) or off.
 	// +kubebuilder:validation:Enum=auto;ask;off
 	StepUp string `json:"stepUp,omitempty"`
+	// PlanGate controls whether plan-first tasks wait for approval after scoping: ask (default)
+	// or auto (approves at once and says so in the room).
+	// +kubebuilder:validation:Enum=ask;auto
+	PlanGate string `json:"planGate,omitempty"`
+	// PlanGateHours is how long an unanswered plan waits before its status comment says it is
+	// parked (default 72, 1 to 720). It never expires into a run or a stop on its own.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=720
+	PlanGateHours int `json:"planGateHours,omitempty"`
 }
 
 // StepUpMode is the repository's step-up policy: auto (default), ask, or off.
@@ -126,20 +143,48 @@ func (r *Repository) StepUpMode() string {
 	return "auto"
 }
 
+// PlanGateMode is the repository's plan-gate policy: ask (default) or auto.
+func (r *Repository) PlanGateMode() string {
+	if r != nil && r.Workflow.PlanGate == "auto" {
+		return "auto"
+	}
+	return "ask"
+}
+
+// PlanGateHoursOr returns the configured plan-gate wait in hours, defaulting to DefaultPlanGateHours.
+func (r *Repository) PlanGateHoursOr() int {
+	if r != nil && r.Workflow.PlanGateHours > 0 {
+		return r.Workflow.PlanGateHours
+	}
+	return DefaultPlanGateHours
+}
+
+// PlanGateWait returns the configured plan-gate wait duration.
+func (r *Repository) PlanGateWait() time.Duration {
+	return time.Duration(r.PlanGateHoursOr()) * time.Hour
+}
+
 // UnmarshalJSON decodes RepositoryWorkflow strictly, reading YAML 1.1's unquoted stepUp: off
 // (boolean false) as "off".
 func (w *RepositoryWorkflow) UnmarshalJSON(b []byte) error {
 	var raw struct {
-		Default   string          `json:"default,omitempty"`
-		TestFirst bool            `json:"testFirst,omitempty"`
-		StepUp    json.RawMessage `json:"stepUp,omitempty"`
+		Default       string          `json:"default,omitempty"`
+		TestFirst     bool            `json:"testFirst,omitempty"`
+		StepUp        json.RawMessage `json:"stepUp,omitempty"`
+		PlanGate      string          `json:"planGate,omitempty"`
+		PlanGateHours int             `json:"planGateHours,omitempty"`
 	}
 	dec := json.NewDecoder(bytes.NewReader(b))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&raw); err != nil {
 		return err
 	}
-	*w = RepositoryWorkflow{Default: raw.Default, TestFirst: raw.TestFirst}
+	*w = RepositoryWorkflow{
+		Default:       raw.Default,
+		TestFirst:     raw.TestFirst,
+		PlanGate:      raw.PlanGate,
+		PlanGateHours: raw.PlanGateHours,
+	}
 	switch s := string(raw.StepUp); s {
 	case "", "null":
 	case "false":
@@ -261,6 +306,12 @@ func (c *Config) validateWorkflow(r *Repository, bad func(string, ...any)) {
 	}
 	if m := r.Workflow.StepUp; m != "" && m != "auto" && m != "ask" && m != "off" {
 		bad("workflow.stepUp %q is not one of auto, ask, off", m)
+	}
+	if pg := r.Workflow.PlanGate; pg != "" && pg != "ask" && pg != "auto" {
+		bad("workflow.planGate %q is not one of ask, auto", pg)
+	}
+	if h := r.Workflow.PlanGateHours; h != 0 && (h < minPlanGateHours || h > maxPlanGateHours) {
+		bad("workflow.planGateHours %d must be %d..%d", h, minPlanGateHours, maxPlanGateHours)
 	}
 	for _, s := range r.Schedules {
 		if s.Workflow != "" && !c.IsWorkflow(s.Workflow) {

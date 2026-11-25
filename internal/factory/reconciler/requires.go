@@ -109,6 +109,7 @@ func (r *Reconciler) applyClassRequires(ctx context.Context, cfg *config.Config,
 		switch req {
 		case "plan":
 			t.Spec.ScopeMode = string(config.ScopeScoper)
+			t.Spec.Outcome = config.OutcomePlanFirst
 		case "review":
 			if !slices.Contains(cfg.Templates[t.Spec.Template].Roles, "reviewer") {
 				t.Spec.Template = "pair"

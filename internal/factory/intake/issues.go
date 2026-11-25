@@ -387,6 +387,9 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 		}
 	}
 	t := p.issueTask(cfg, n, key, "github:"+last.Actor, iss, text, sum)
+	if slices.Contains(iss.Labels, "plan-first") {
+		t.Spec.Outcome = config.OutcomePlanFirst
+	}
 	parent, err := p.childOf(ctx, cfg, n, iss)
 	if err != nil {
 		return err

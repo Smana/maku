@@ -343,6 +343,78 @@ func SplitProposed(t *v1alpha1.Task, why string, parts, maintainers []string, ro
 	return Event{Key: fmt.Sprintf("split-proposed-%d", len(t.Status.Runs)), Body: b.String()}
 }
 
+// PlanProposed is the plan gate's comment on the issue (phase F3): the bounded task, expected
+// touches, acceptance checks, parts if it would split, and the three answers.
+func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, roomsURL string) Event {
+	room := fmt.Sprintf("%s/r/%s", strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Agent factory task `%s` proposed a plan and waits for approval before any code is written.", t.Name)
+	if t.Spec.DataClass != "public" {
+		fmt.Fprintf(&b, " The plan stays in [the room](%s): the task's data class is not public.", room)
+	} else if sc != nil {
+		b.WriteString("\n\n**Bounded task:**\n\n")
+		b.WriteString(summary(sc.Task, maxBody/3))
+		if len(sc.Touches) > 0 {
+			b.WriteString("\n\n**Expected files to touch:**\n")
+			for _, p := range sc.Touches {
+				fmt.Fprintf(&b, "- `%s`\n", strings.ReplaceAll(p, "`", ""))
+			}
+		}
+		if len(sc.Acceptance) > 0 {
+			b.WriteString("\n**Acceptance checks:**\n")
+			for _, a := range sc.Acceptance {
+				fmt.Fprintf(&b, "- %s\n", summary(a.Check+" — "+a.Proves, 240))
+			}
+		}
+		if sp != nil && len(sp.Children) > 0 {
+			fmt.Fprintf(&b, "\n**Proposed split (%d parts):**\n", len(sp.Children))
+			for i, c := range sp.Children {
+				fmt.Fprintf(&b, "- Part %d: %s\n", i+1, summary(c.Task, 240))
+			}
+		}
+	}
+	fmt.Fprintf(&b, "\n\n**Answer on this issue** (the issue author or a maintainer):\n"+
+		"- `/factory plan approve` — run this task as a pull request on the approved scope\n"+
+		"- `/factory plan revise <comment>` — run the scoper once more with your note\n"+
+		"- `/factory plan split` — approve the proposed split into parts\n\n"+
+		"Room: [the room](%s).", room)
+	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Body: b.String()}
+}
+
+// PlanParked is the one needs-you notification posted when a plan waits past planGateHours.
+func PlanParked(t *v1alpha1.Task, hours int, maintainers []string, roomsURL string) Event {
+	room := fmt.Sprintf("%s/r/%s", strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Agent factory task `%s` is parked: the plan was not answered in %d hours; any of the three answers (`/factory plan approve`, `/factory plan revise <comment>`, or `/factory plan split`) resumes it. Room: [the room](%s).",
+		t.Name, hours, room)
+	var mentions []string
+	if t.Spec.IssueAuthor != "" {
+		mentions = append(mentions, "@"+t.Spec.IssueAuthor)
+	}
+	for _, m := range maintainers {
+		tag := "@" + m
+		if !slices.Contains(mentions, tag) {
+			mentions = append(mentions, tag)
+		}
+	}
+	if len(mentions) > 0 {
+		b.WriteString("\n\n" + strings.Join(mentions, " ") + ": this plan needs you.")
+	}
+	return Event{Key: fmt.Sprintf("plan-parked-%d", len(t.Status.Runs)), Body: b.String()}
+}
+
+// PlanRevisionLimit narrates that a second /factory plan revise escalated the task to a maintainer.
+func PlanRevisionLimit(t *v1alpha1.Task, actor string, maintainers []string, roomsURL string) Event {
+	room := fmt.Sprintf("%s/r/%s", strings.TrimSuffix(roomsURL, "/"), t.Status.RoomRef)
+	var b strings.Builder
+	fmt.Fprintf(&b, "Agent factory task `%s`: @%s asked to revise the plan a second time. Each task allows one plan revision, so a maintainer decides next (room: [the room](%s)).",
+		t.Name, actor, room)
+	if len(maintainers) > 0 {
+		b.WriteString("\n\n@" + strings.Join(maintainers, " @") + ": this plan waits on a maintainer.")
+	}
+	return Event{Key: fmt.Sprintf("plan-revision-limit-%d", len(t.Status.Runs)), Body: b.String()}
+}
+
 // Revising says a maintainer's review sent the task back for another run (Δ5), once per round.
 func Revising(t *v1alpha1.Task, reviewer string) Event {
 	return Event{Key: fmt.Sprintf("revise-%d", len(t.Status.Runs)),
