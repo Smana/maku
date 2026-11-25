@@ -56,10 +56,16 @@ const (
 	// maxHarnessBody bounds a request with HarnessHeader (HR22): an 8 MiB bundle is 11.2 MiB of
 	// base64. Past maxBody, only output_push is accepted.
 	maxHarnessBody = 12 << 20
-	// callEvery is §4's room_* rate: one tool call a second per run.
+	// callEvery is §4's room_* rate: one request a second per run, sustained.
 	callEvery = time.Second
-	// maxLimited bounds the limiter's memory. A run's last call over callEvery
-	// ago is the same as none, so reaching the cap sweeps those.
+	// callBurst is how many requests a run may make at once before callEvery applies. An MCP
+	// client's start is initialize, notifications/initialized and tools/list back to back; at a
+	// burst of one, the second was refused (429) and the harness dropped the whole server, so a
+	// reviewer ran without its verdict tool (gcp-0, 2026-11-25). The body bound of SEC-M11 holds:
+	// a run still allocates at most callBurst bodies, then one a second.
+	callBurst = 10
+	// maxLimited bounds the limiter's memory. A run whose bucket has refilled is the same as
+	// none, so reaching the cap sweeps those.
 	maxLimited = 4096
 )
 
@@ -117,8 +123,20 @@ type Server struct {
 	Logger      *slog.Logger
 	Now         func() time.Time
 
-	mu       sync.Mutex
-	lastCall map[string]time.Time
+	mu      sync.Mutex
+	buckets map[string]bucket
+}
+
+// bucket is one run's request budget: tokens left at the instant at.
+type bucket struct {
+	tokens float64
+	at     time.Time
+}
+
+// refilled is b's tokens at now: one more each callEvery, up to callBurst.
+func (b bucket) refilled(now time.Time) float64 {
+	t := b.tokens + float64(now.Sub(b.at))/float64(callEvery)
+	return min(t, callBurst)
 }
 
 // argError is a tool's refusal of its arguments, shown to the model as is.
@@ -151,28 +169,35 @@ func (s *Server) now() time.Time {
 	return time.Now()
 }
 
-// allow spends runID's call for this second, if it has one.
+// allow spends one of runID's requests: callBurst at once, then one each callEvery.
 func (s *Server) allow(runID string) bool {
 	now := s.now()
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.lastCall == nil {
-		s.lastCall = map[string]time.Time{}
+	if s.buckets == nil {
+		s.buckets = map[string]bucket{}
 	}
-	if last, ok := s.lastCall[runID]; ok && now.Sub(last) < callEvery {
-		return false
-	}
-	if len(s.lastCall) >= maxLimited {
-		for id, last := range s.lastCall {
-			if now.Sub(last) >= callEvery {
-				delete(s.lastCall, id)
+	b, ok := s.buckets[runID]
+	if !ok {
+		if len(s.buckets) >= maxLimited {
+			for id, o := range s.buckets {
+				if o.refilled(now) >= callBurst {
+					delete(s.buckets, id)
+				}
 			}
 		}
+		if len(s.buckets) >= maxLimited {
+			return false // maxLimited runs each still spending their burst: fail closed
+		}
+		b = bucket{tokens: callBurst, at: now}
 	}
-	if len(s.lastCall) >= maxLimited {
-		return false // maxLimited runs each called within the second: fail closed
+	b = bucket{tokens: b.refilled(now), at: now}
+	if b.tokens < 1 {
+		s.buckets[runID] = b
+		return false
 	}
-	s.lastCall[runID] = now
+	b.tokens--
+	s.buckets[runID] = b
 	return true
 }
 
@@ -264,7 +289,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Header().Set("Retry-After", "1")
 		w.WriteHeader(http.StatusTooManyRequests)
-		mcpwire.Write(w, nil, nil, &mcpwire.Error{Code: mcpwire.InvalidRequest, Message: "rate_limited: one room MCP request per second"})
+		mcpwire.Write(w, nil, nil, &mcpwire.Error{Code: mcpwire.InvalidRequest, Message: "rate_limited: room MCP requests are limited to one a second after a burst"})
 		return
 	}
 	harness := r.Header.Get(HarnessHeader) == "1"

@@ -329,7 +329,7 @@ func TestABodyOverTheCapIsRefused(t *testing.T) {
 	}
 }
 
-func TestOneCallPerSecondPerRun(t *testing.T) {
+func TestABurstThenOneCallPerSecondPerRun(t *testing.T) {
 	c := newClock()
 	w := watcher(t, "reviewer")
 	w.Upsert(t.Context(), claim("otherrun", "reviewer", "3kq7x2ma", "Running", nil))
@@ -339,11 +339,13 @@ func TestOneCallPerSecondPerRun(t *testing.T) {
 		res, _ := resp.out["result"].(map[string]any)
 		return resp.status == http.StatusOK && res != nil && res["isError"] != true
 	}
-	if !ok(sub) {
-		t.Fatal("the first call is served")
+	for i := range callBurst {
+		if !ok(sub) {
+			t.Fatalf("call %d of the burst refused", i+1)
+		}
 	}
 	if ok(sub) {
-		t.Fatal("the second call within a second must be refused")
+		t.Fatal("the call after the burst, within the second, must be refused")
 	}
 	if !ok("system:serviceaccount:agents:run-otherrun") {
 		t.Fatal("another run has its own budget")
@@ -387,6 +389,25 @@ func TestOneCallPerSecondPerRun(t *testing.T) {
 	}
 }
 
+// An MCP client starts with initialize, notifications/initialized and tools/list at once: all
+// three are served, or the harness drops the server and the run loses its tools (gcp-0, 2026-11-25).
+func TestAClientsStartIsServedAtOnce(t *testing.T) {
+	c := newClock()
+	s, rejected := testServer(watcher(t, "reviewer"), c)
+	for _, m := range []string{"initialize", "notifications/initialized", "tools/list", "tools/call"} {
+		var params map[string]any
+		if m == "tools/call" {
+			params = map[string]any{"name": "room_read", "arguments": map[string]any{}}
+		}
+		if out := rpc(t, s, "k", sub, m, params); out.status == http.StatusTooManyRequests {
+			t.Fatalf("%s at the client's start: 429 (%s)", m, out.body)
+		}
+	}
+	if len(*rejected) != 0 {
+		t.Fatalf("rejected = %v", *rejected)
+	}
+}
+
 type spyReader struct{ onRead func() }
 
 func (r *spyReader) Read([]byte) (int, error) {
@@ -420,12 +441,12 @@ func TestTheLimiterStaysBounded(t *testing.T) {
 		}
 		c.add(time.Millisecond)
 	}
-	if n := len(s.lastCall); n > maxLimited {
+	if n := len(s.buckets); n > maxLimited {
 		t.Fatalf("%d entries kept, cap %d", n, maxLimited)
 	}
 	c.add(time.Second)
 	s.allow("fresh")
-	if n := len(s.lastCall); n > maxLimited {
+	if n := len(s.buckets); n > maxLimited {
 		t.Fatalf("%d entries kept after a sweep", n)
 	}
 }
@@ -527,14 +548,14 @@ func TestEveryIssuersPattern(t *testing.T) {
 	}
 }
 
-// A sweep drops only entries over a second old: a run that called within the
-// second is still refused after it, and a full map of this second's callers
-// refuses a new run rather than grow or forget one of them.
-func TestTheSweepKeepsThisSecondsCallers(t *testing.T) {
+// A sweep drops only runs whose bucket has refilled: a run still spending its burst is kept
+// (its budget is not reset by forgetting it), and a full map of such runs refuses a new run
+// rather than grow or forget one of them.
+func TestTheSweepKeepsRunsStillSpending(t *testing.T) {
 	c := newClock()
 	s := &Server{Now: c.now}
 	s.allow("old00000")
-	c.add(2 * time.Second)
+	c.add(2 * callBurst * time.Second)
 	for i := range maxLimited - 1 {
 		s.allow(fmt.Sprintf("run%05d", i))
 	}
@@ -542,17 +563,17 @@ func TestTheSweepKeepsThisSecondsCallers(t *testing.T) {
 	if !s.allow("fresh000") { // sweeps "old00000" and keeps every other
 		t.Fatal("a sweep freed no room")
 	}
-	if s.allow("run00000") {
-		t.Fatal("the sweep evicted a run that called within the second")
+	if _, kept := s.buckets["old00000"]; kept {
+		t.Fatal("the sweep kept a refilled bucket")
 	}
-	if _, kept := s.lastCall["old00000"]; kept {
-		t.Fatal("the sweep kept an entry over a second old")
+	if b, kept := s.buckets["run00000"]; !kept || b.tokens >= callBurst {
+		t.Fatalf("the sweep evicted or refilled a run still spending its burst: %+v %v", b, kept)
 	}
 	if s.allow("newcomer") {
-		t.Fatal("a full map of this second's callers must refuse a new run")
+		t.Fatal("a full map of runs still spending must refuse a new run")
 	}
-	if len(s.lastCall) > maxLimited {
-		t.Fatalf("%d entries, cap %d", len(s.lastCall), maxLimited)
+	if len(s.buckets) > maxLimited {
+		t.Fatalf("%d entries, cap %d", len(s.buckets), maxLimited)
 	}
 }
 
