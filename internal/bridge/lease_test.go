@@ -243,11 +243,14 @@ func TestAHeartbeatThatFindsTheLeaseGoneStops(t *testing.T) {
 	r.log.holder, r.log.seenAt = leaseRunB, r.clock.now().Add(time.Hour) // B holds a fresh lease
 	r.log.mu.Unlock()
 	r.quiet(t, 30*time.Second)
-	r.quiet(t, time.Second) // past the backoff the 409 set
+	eventually(r.ctx, t, "the heartbeat's 409 was handled as a lost lease", func() bool {
+		return strings.Contains(r.logs.String(), wire.ReasonLeaseLost)
+	})
 	eventually(r.ctx, t, "the bridge says hello again", func() bool {
+		// Advance the fake clock on each poll so a 409 whose backoff was
+		// stamped concurrently with a single clock jump can never strand sendAt
+		// ahead of a frozen clock.
+		r.clock.add(time.Second)
 		return r.log.read(func(l *leaseLog) int { return l.claims[leaseRunA] }) >= 2
 	})
-	if !strings.Contains(r.logs.String(), wire.ReasonLeaseLost) {
-		t.Fatalf("the heartbeat's 409 was not handled as a lost lease:\n%s", r.logs.String())
-	}
 }
