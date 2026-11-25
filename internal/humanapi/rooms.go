@@ -360,8 +360,10 @@ func (s *Server) needsFor(ctx context.Context, room *v1alpha1.Room, p authn.Prin
 	} else {
 		standing = s.standing(ctx, room, p)
 	}
+	ended := room.Status.Phase == "Closed" || room.Status.Phase == "Sealed" ||
+		(room.Status.Task != nil && summary.IsTerminalPhase(room.Status.Task.Phase))
 	in := summary.NeedsIn{Room: room.Name, URL: s.PublicURL + "/r/" + room.Name, Repository: room.Spec.Repository,
-		Sealed:    room.Status.Phase == "Closed" || room.Status.Phase == "Sealed",
+		Sealed:    ended,
 		FactsRead: true, Facts: r.facts(), FactsAt: s.foldFactsAt(room), Approvals: approvalsOf(r.live), Now: s.now(),
 		GitHub: standing,
 		Caller: summary.Caller{WebUI: web.WebUI, CanDecide: policy.Allowed(web, policy.Decide),

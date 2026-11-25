@@ -348,8 +348,22 @@ func TestAnswerLineCap(t *testing.T) {
 		needs[i] = summary.Need{Kind: "review", Action: summary.NeedAction{Label: "need " + strconv.Itoa(i+1)}}
 	}
 	lines := strings.Split(needsAnswer(needs), "\n")
-	if len(lines) != maxAnswerCut+1 || lines[maxAnswerCut] != "…" || lines[9] != "- need 10" {
+	if len(lines) != maxAnswerCut+1 || lines[maxAnswerCut] != "…" || lines[9] != "- review: need 10" {
 		t.Fatalf("thirteen needs answered %q, want ten and an ellipsis", lines)
+	}
+}
+
+// Phase G5: needsAnswer orders by the five inbox types and keeps one entry per task.
+func TestNeedsAnswerOrdersByFiveTypesAndDeduplicatesPerTask(t *testing.T) {
+	needs := []summary.Need{
+		{Room: "r1111111", Kind: summary.NeedRecovery, Action: summary.NeedAction{Label: "retry task"}},
+		{Room: "r1111111", Kind: summary.NeedQuestion, Action: summary.NeedAction{Label: "answer question"}},
+		{Room: "r2222222", Kind: summary.NeedMerge, Action: summary.NeedAction{Label: "merge PR #7"}},
+	}
+	lines := strings.Split(needsAnswer(needs), "\n")
+	want := []string{"- question: answer question", "- review: merge PR #7"}
+	if len(lines) != len(want) || lines[0] != want[0] || lines[1] != want[1] {
+		t.Fatalf("needsAnswer = %q, want %q", lines, want)
 	}
 }
 

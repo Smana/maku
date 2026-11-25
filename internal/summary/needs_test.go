@@ -148,7 +148,8 @@ func TestNeedsCases(t *testing.T) {
 	}
 }
 
-// CD21's kind order is the only ordering: a deadline first, then the kind, then the room (offline proof 6).
+// Phase G5 order: the five inbox types (question, plan, review, blocked, failed), then deadline
+// ascending (none last), then kind within type, then room.
 func TestNeedsOrder(t *testing.T) {
 	in := []summary.Need{
 		{Room: "bbbbbbbb", Kind: "hold", ID: "x"},
@@ -160,9 +161,161 @@ func TestNeedsOrder(t *testing.T) {
 	for _, n := range summary.Ordered(in) {
 		got = append(got, n.Key())
 	}
-	want := []string{"aaaaaaaa/approval/01", "aaaaaaaa/merge/12", "cccccccc/merge/13", "bbbbbbbb/hold/x"}
+	want := []string{"aaaaaaaa/merge/12", "cccccccc/merge/13", "aaaaaaaa/approval/01", "bbbbbbbb/hold/x"}
 	if !slices.Equal(got, want) {
-		t.Fatalf("%v", got)
+		t.Fatalf("%v, want %v", got, want)
+	}
+}
+
+// Every needs/v1 kind folds into one of the five closed inbox types, and the four room-act kinds
+// declare the broker act they accept on the page (phase G2, G5).
+func TestEveryNeedKindHasAType(t *testing.T) {
+	closed := summary.NeedTypes()
+	wantTypes := []string{summary.TypeQuestion, summary.TypePlan, summary.TypeReview, summary.TypeBlocked, summary.TypeFailed}
+	if !slices.Equal(closed, wantTypes) {
+		t.Fatalf("NeedTypes() = %v, want %v", closed, wantTypes)
+	}
+	wantMap := map[string]string{
+		summary.NeedQuestion:         summary.TypeQuestion,
+		summary.NeedPlanConfirmation: summary.TypePlan,
+		summary.NeedPlanReview:       summary.TypePlan,
+		summary.NeedMerge:            summary.TypeReview,
+		summary.NeedReview:           summary.TypeReview,
+		summary.NeedHold:             summary.TypeBlocked,
+		summary.NeedFailedCheck:      summary.TypeBlocked,
+		summary.NeedApproval:         summary.TypeBlocked,
+		summary.NeedRecovery:         summary.TypeFailed,
+	}
+	for _, kind := range summary.NeedKinds() {
+		got := summary.NeedType(kind)
+		if !slices.Contains(closed, got) {
+			t.Errorf("NeedType(%q) = %q, not in closed set %v", kind, got, closed)
+		}
+		if want, ok := wantMap[kind]; !ok || got != want {
+			t.Errorf("NeedType(%q) = %q, want %q", kind, got, want)
+		}
+	}
+	if len(summary.NeedKinds()) != len(wantMap) {
+		t.Fatalf("NeedKinds() has %d entries, want %d", len(summary.NeedKinds()), len(wantMap))
+	}
+
+	// Verify plan_review derivation and each interactive card's Act.
+	prIn := summary.NeedsIn{
+		Room: "p1a2b3c4", URL: "https://rooms.example/r/p1a2b3c4", Repository: "Smana/maku",
+		FactsRead: true,
+		Facts: &envelope.TaskFacts{
+			Phase: "AwaitingHuman", Reason: "plan_review",
+			Issue: &envelope.IssueFact{Number: 55, URL: "https://github.com/Smana/maku/issues/55", Author: "alice"},
+		},
+		GitHub: summary.GitHubStanding{Login: "alice"},
+	}
+	gotPlan := summary.Items(prIn)
+	if len(gotPlan) != 1 || gotPlan[0].Kind != summary.NeedPlanReview || gotPlan[0].Type != summary.TypePlan || gotPlan[0].Act != "plan" {
+		t.Fatalf("plan_review = %+v", gotPlan)
+	}
+	splitIn := prIn
+	splitIn.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "split_proposed", Issue: prIn.Facts.Issue}
+	splitIn.Caller.CanClose = true
+	if got := summary.Items(splitIn); len(got) != 1 || got[0].Act != "split" || got[0].Type != summary.TypePlan {
+		t.Fatalf("split_proposed = %+v", got)
+	}
+	qIn := splitIn
+	qIn.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author", Issue: prIn.Facts.Issue}
+	if got := summary.Items(qIn); len(got) != 1 || got[0].Act != "answer" || got[0].Type != summary.TypeQuestion {
+		t.Fatalf("question = %+v", got)
+	}
+	recIn := splitIn
+	recIn.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "budget_reached", Issue: prIn.Facts.Issue}
+	if got := summary.Items(recIn); len(got) != 1 || got[0].Act != "retry" || got[0].Type != summary.TypeFailed {
+		t.Fatalf("recovery = %+v", got)
+	}
+}
+
+// Phase G5: one entry per task (its most urgent type), ordered question, plan, review, blocked, failed.
+func TestOneEntryPerTask(t *testing.T) {
+	items := []summary.Need{
+		{Room: "r1111111", Kind: summary.NeedRecovery, ID: "budget_reached"},
+		{Room: "r1111111", Kind: summary.NeedApproval, ID: "ap1"},
+		{Room: "r1111111", Kind: summary.NeedQuestion, ID: "10"},
+		{Room: "r2222222", Kind: summary.NeedHold, ID: "waiting_human_driver"},
+		{Room: "r2222222", Kind: summary.NeedPlanReview, ID: "20"},
+		{Room: "r3333333", Kind: summary.NeedMerge, ID: "30"},
+		{Room: "r4444444", Kind: summary.NeedFailedCheck, ID: "ci_wait_expired"},
+		{Room: "r5555555", Kind: summary.NeedRecovery, ID: "resume_budget"},
+	}
+	got := summary.Inbox(items)
+	var keys, types []string
+	for _, n := range got {
+		keys = append(keys, n.Key())
+		types = append(types, n.Type)
+	}
+	wantKeys := []string{
+		"r1111111/question/10",
+		"r2222222/plan_review/20",
+		"r3333333/merge/30",
+		"r4444444/failed_check/ci_wait_expired",
+		"r5555555/recovery/resume_budget",
+	}
+	wantTypes := []string{summary.TypeQuestion, summary.TypePlan, summary.TypeReview, summary.TypeBlocked, summary.TypeFailed}
+	if !slices.Equal(keys, wantKeys) || !slices.Equal(types, wantTypes) {
+		t.Fatalf("Inbox() keys=%v types=%v, want keys=%v types=%v", keys, types, wantKeys, wantTypes)
+	}
+}
+
+// Phase G5: stale needs are dropped when the task ended, its pull request merged or closed, or its
+// question was answered elsewhere.
+func TestAStaleNeedIsDropped(t *testing.T) {
+	pr := &envelope.PRFact{Number: 77, URL: "https://github.com/Smana/maku/pull/77"}
+	issue := &envelope.IssueFact{Number: 12, URL: "https://github.com/Smana/maku/issues/12", Author: "alice"}
+	base := summary.NeedsIn{
+		Room: "r1111111", URL: "https://rooms.example/r/r1111111", Repository: "Smana/maku",
+		FactsRead: true,
+		Approvals: []summary.Approval{{ID: "ap1", What: "push"}},
+		GitHub:    summary.GitHubStanding{Login: "bob", MayWrite: true, Reviewers: []string{"bob"}},
+		Caller:    summary.Caller{WebUI: true, CanDecide: true, CanClose: true, CanRelease: true},
+	}
+
+	// 1. Task ended (terminal phases): drops facts needs AND lingering approvals.
+	for _, phase := range []string{"Done", "NoOp", "Stopped", "Closed", "Rejected", "Reverted"} {
+		in := base
+		in.Facts = &envelope.TaskFacts{Phase: phase, Reason: "budget_reached", PR: pr, Issue: issue}
+		if got := summary.Items(in); len(got) != 0 {
+			t.Errorf("terminal phase %s kept stale needs: %+v", phase, got)
+		}
+	}
+
+	// 2. Pull request merged or closed: drops review, merge, and PR failed_check needs.
+	for _, tc := range []struct {
+		name     string
+		facts    *envelope.TaskFacts
+		prClosed bool
+	}{
+		{"merged phase", &envelope.TaskFacts{Phase: "Merged", Reason: "ci_wait_expired", PR: pr}, false},
+		{"closed PR on AwaitingHuman", &envelope.TaskFacts{Phase: "AwaitingHuman", PR: pr}, true},
+		{"closed PR on failed_check", &envelope.TaskFacts{Phase: "AwaitingCI", Reason: "ci_wait_expired", PR: pr}, true},
+	} {
+		in := base
+		in.Approvals = nil
+		in.Facts = tc.facts
+		in.PRClosed = tc.prClosed
+		if got := summary.Items(in); len(got) != 0 {
+			t.Errorf("%s kept stale PR need: %+v", tc.name, got)
+		}
+	}
+
+	// 3. Question answered elsewhere: drops question need.
+	qAnswered := base
+	qAnswered.Approvals = nil
+	qAnswered.Facts = &envelope.TaskFacts{Phase: "Escalated", Reason: "needs_author", Issue: issue}
+	qAnswered.QuestionAnswered = true
+	if got := summary.Items(qAnswered); len(got) != 0 {
+		t.Errorf("answered question kept stale need: %+v", got)
+	}
+	qMoved := base
+	qMoved.Approvals = nil
+	qMoved.Facts = &envelope.TaskFacts{Phase: "Implementing", Reason: "needs_author", Issue: issue}
+	if got := summary.Items(qMoved); len(got) != 0 {
+		t.Errorf("restarted task kept stale question need: %+v", got)
 	}
 }
 

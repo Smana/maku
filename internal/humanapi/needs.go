@@ -122,9 +122,9 @@ func (s *Server) needsScan(ctx context.Context, p authn.Principal, f needsFilter
 		}
 		items = append(items, need...)
 	}
-	// The one order, over the whole list: each room's items arrive ordered among themselves, and only the
-	// combined sort puts an approval in a later room before an earlier room's plan confirmation (CD21).
-	return summary.Ordered(items), unread, access, nil
+	// The one inbox order, over the whole list: five closed types (question, plan, review, blocked,
+	// failed) with at most one entry per task (phase G5).
+	return summary.Inbox(items), unread, access, nil
 }
 
 // needsRoute is GET /api/needs: the human door onto needs/v1 (CD28), for the browser and the CLI. The

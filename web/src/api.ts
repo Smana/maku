@@ -40,7 +40,9 @@ export async function fetchEvents(id: string, after: number, limit: number, get:
 // for the broker's tests, never rendered. Every string is the broker's or an agent's, so the panel
 // writes all of it as text.
 export interface NeedItem {
-  kind: string; // plan_confirmation | approval | question | merge | review | failed_check | recovery | hold
+  kind: string; // plan_confirmation | plan_review | approval | question | merge | review | failed_check | recovery | hold
+  type?: string; // question | plan | review | blocked | failed
+  act?: string; // answer | split | plan | retry
   id: string;
   room?: string;
   what: string;

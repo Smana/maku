@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expandDashboards, fetchDashboards } from "../src/dashboards";
+import { expandDashboards, fetchDashboards, fetchRoomActs } from "../src/dashboards";
 
 const room = { label: "Room metrics", url: "https://grafana.example.com/d/agent-room/x?var-room={room}" };
 const run = { label: "Run", url: "https://grafana.example.com/d/agent-run/x?var-run={run}" };
@@ -54,5 +54,7 @@ describe("dashboard links", () => {
     expect(await fetchDashboards(answer(200, { url: "u" }))).toEqual([]);
     expect(await fetchDashboards(answer(503, {}))).toEqual([]);
     expect(await fetchDashboards((async () => { throw new Error("offline"); }) as unknown as typeof fetch)).toEqual([]);
+    expect(await fetchRoomActs(answer(200, { url: "u", roomActs: ["answer", "retry", 42] }))).toEqual(["answer", "retry"]);
+    expect(await fetchRoomActs(answer(503, {}))).toEqual([]);
   });
 });

@@ -120,8 +120,10 @@ export interface Summary {
   // question: a task the scoper bounced waits on its issue's author (scoper SC8); id is the issue
   // number, url the issue, author its author's GitHub login. approve: a merge need a maintainer's
   // approval settles (approveToMerge).
-  needsYou: { kind: "plan_confirmation" | "approval" | "question" | "merge" | "review" | "failed_check" | "recovery" | "hold";
-    id: string; what: string; deadline?: string; url: string; author?: string; approve?: boolean }[];
+  needsYou: { kind: "plan_confirmation" | "plan_review" | "approval" | "question" | "merge" | "review" | "failed_check" | "recovery" | "hold";
+    type?: string; act?: string;
+    id: string; what: string; deadline?: string; url: string; author?: string; approve?: boolean;
+    deeper?: { workflow: string; ceilingMicroUSD?: number } }[];
   // The one thing to do for the room and where: "pr" and "answer" are on GitHub, "approve" on this page.
   // approve: the pr step is an approval of the current commit, not a merge by hand.
   step?: { kind: "approve" | "pr" | "answer"; label: string; url?: string; approve?: boolean };
@@ -233,10 +235,19 @@ export function inlineCode(text: string): Node[] {
 export function needsItems(s: Summary): NeedItem[] {
   const out: NeedItem[] = [];
   for (const n of s.needsYou) {
-    const base = { kind: n.kind, id: n.id, what: n.what, url: n.url, ...(n.approve ? { approve: true } : {}) };
+    const base: NeedItem = {
+      kind: n.kind, id: n.id, what: n.what, url: n.url,
+      ...(n.type ? { type: n.type } : {}),
+      ...(n.act ? { act: n.act } : {}),
+      ...(n.approve ? { approve: true } : {}),
+      ...(n.deeper ? { deeper: n.deeper } : {}),
+    };
     // approve: under approveToMerge an approval of the current commit merges it (#308, #310).
     if (n.kind === "merge") out.push({ ...base, action: { kind: "merge", label: n.approve ? "approve the head on the pull request" : "open the pull request", url: n.url } });
     if (n.kind === "question") out.push({ ...base, action: { kind: "answer", label: "answer on the issue", url: n.url } });
+    if (n.kind === "plan_confirmation") out.push({ ...base, action: { kind: "comment", label: "comment on the issue", url: n.url } });
+    if (n.kind === "plan_review") out.push({ ...base, action: { kind: "plan", label: "review the plan on the issue", url: n.url } });
+    if (n.kind === "recovery") out.push({ ...base, action: { kind: "retry", label: "retry the task or close the room", url: n.url } });
     // The summary's hold is always the room's own: the page is where it is released.
     if (n.kind === "hold") out.push({ ...base, action: { kind: "release", label: "hand the driver back to the factory" } });
   }

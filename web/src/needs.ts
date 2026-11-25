@@ -22,17 +22,46 @@ import { inlineCode, needsItems, type Summary } from "./summary";
 // caller may read, so a burst of frames costs one read, not one each.
 const routeEvery = 5000;
 
+// The five closed inbox types in urgency order (phase G5), matching internal/summary.NeedType.
+export const NEED_TYPES = ["question", "plan", "review", "blocked", "failed"] as const;
+export type NeedType = (typeof NEED_TYPES)[number];
+
+export function needType(kind: string): NeedType | "" {
+  switch (kind) {
+    case "question": return "question";
+    case "plan_confirmation":
+    case "plan_review": return "plan";
+    case "merge":
+    case "review": return "review";
+    case "hold":
+    case "failed_check":
+    case "approval": return "blocked";
+    case "recovery": return "failed";
+    default: return "";
+  }
+}
+
+export function needTypeRank(t: string): number {
+  const i = NEED_TYPES.indexOf(t as NeedType);
+  return i >= 0 ? i : NEED_TYPES.length;
+}
+
 // NeedHands are the page's hands a need may take the reader to: the session's driver group or its
-// close button, and the coordination panel. The preview has none: a need then names where to go.
+// close button, the coordination panel, and the broker's enabled room acts (phase G2). The preview
+// has none: a need then names where to go.
 export interface NeedHands {
   openSession?(to: "driver" | "close"): void;
   focusCoordination?(): void;
   retry?(deeper: boolean): void;
+  answer?(text: string): void;
+  split?(decision: "accept" | "decline"): void;
+  plan?(decision: "approve" | "revise" | "split", note?: string): void;
 }
 
 // What each kind asks, in a heading's words; the item's own sentence follows it.
 const NEED_TITLE: Record<string, string> = {
   plan_confirmation: "Confirm the proposed plan",
+  plan_review: "Review the proposed plan",
   question: "Answer the scoper's question",
   merge: "Merge the pull request",
   review: "Review the pull request",
@@ -42,6 +71,7 @@ const NEED_TITLE: Record<string, string> = {
 };
 
 const isHttps = (url?: string) => { try { return !!url && new URL(url).protocol === "https:"; } catch { return false; } };
+const isGitHubUrl = (url?: string) => { try { const u = url ? new URL(url) : null; return !!u && u.protocol === "https:" && u.hostname === "github.com"; } catch { return false; } };
 const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 const primary = (b: HTMLButtonElement) => { b.classList.add("primary"); return b; };
 
@@ -55,9 +85,9 @@ function outLink(label: string, url: string): Node {
 }
 
 // needCard is one item the route lists, as a card that always ends in its one action: the control
-// on this page when the room has one (hand the driver back, close the room, the coordination panel),
-// else a link to where it is done, with a line saying where it happens. The route
-// ordered the items (CD21): this list never reorders them.
+// on this page when the room has one (an enabled room act, hand the driver back, close the room,
+// the coordination panel), else a link to where it is done, with a line saying where it happens.
+// The route ordered the items: this list never reorders them.
 // Where the action happens, one line per kind (D3); a merge that wants an approval says whose.
 const GITHUB_LINE: Record<string, string> = {
   merge: "Merging happens on GitHub.",
@@ -65,14 +95,31 @@ const GITHUB_LINE: Record<string, string> = {
   question: "Answer it on GitHub.",
   failed_check: "Fix it on GitHub.",
   plan_confirmation: "Confirm it on GitHub.",
+  plan_review: "Review the plan on GitHub.",
+  recovery: "Retry it on GitHub.",
 };
 const githubLine = (n: NeedItem) => n.kind === "merge" && n.approve
   ? "Approve the pull request on GitHub: the merge gate reads the approval there."
   : GITHUB_LINE[n.kind] ?? "This happens on GitHub.";
 
-export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void }): HTMLLIElement {
+// cardAct returns the broker room act kind this card accepts, or "" when handled elsewhere.
+function cardAct(n: NeedItem): string {
+  if (n.action?.kind === "decide" && n.action.url?.endsWith("#coordination")) return "";
+  if (n.act) return n.act;
+  switch (n.kind) {
+    case "question": return "answer";
+    case "plan_confirmation": return "split";
+    case "plan_review": return "plan";
+    case "recovery": return "retry";
+    default: return "";
+  }
+}
+
+export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => void; roomActs?: ReadonlySet<string> }): HTMLLIElement {
   const li = el("li", { className: "need" });
   li.dataset.kind = n.kind;
+  const type = n.type || needType(n.kind);
+  if (type) li.dataset.type = type;
   const title = n.kind === "merge" && n.approve ? "Approve the pull request" : NEED_TITLE[n.kind] ?? cap(n.kind.replace(/_/g, " "));
   const what = el("p", { className: "need-what" });
   what.append(...inlineCode(n.what));
@@ -82,6 +129,8 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
   const where = (text: string) => el("span", { className: "need-where", textContent: text });
   const a = n.action;
   const label = a?.label || n.what;
+  const actKind = cardAct(n);
+  const actEnabled = (k: string) => !ctx.roomActs || ctx.roomActs.has(k);
   if (a?.kind === "release") {
     // A hold the driver releases: one press here, when the viewer drives; else the Driver group.
     if (/wait for the other run/.test(label)) bar.append(where("Nothing to do here: the task starts when the other run in the room ends."));
@@ -91,8 +140,37 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
   } else if (a?.kind === "decide" && a.url?.endsWith("#coordination")) {
     const go = cap(label.replace(/ in the parent room$/, ""));
     bar.append(ctx.hands.focusCoordination ? primary(button(go, "need-coordination", () => ctx.hands.focusCoordination!())) : where(`${go}, in the coordination panel.`));
+  } else if (actKind === "answer" && ctx.hands.answer && actEnabled("answer")) {
+    const input = named(el("input", { type: "text", name: "answer", maxLength: 1024, placeholder: "One-line answer…" }), "Answer the scoper's question");
+    const submit = () => {
+      const text = input.value.replace(/[\r\n]+/g, " ").trim();
+      if (!text) { input.focus(); return; }
+      ctx.hands.answer!(text);
+    };
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); submit(); } };
+    bar.append(input, primary(button("Answer", "need-answer", submit)));
+  } else if (actKind === "split" && ctx.hands.split && actEnabled("split")) {
+    bar.append(
+      primary(button("Accept the split", "need-split-accept", () => ctx.hands.split!("accept"))),
+      button("Run it whole", "need-split-decline", () => ctx.hands.split!("decline")),
+      where("Accepting opens the parts one at a time and charges your daily budget."),
+    );
+  } else if (actKind === "plan" && ctx.hands.plan && actEnabled("plan")) {
+    const note = named(el("input", { type: "text", name: "planNote", maxLength: 1024, placeholder: "One-line revision note…" }), "Revision note for the plan");
+    const revise = () => {
+      const text = note.value.replace(/[\r\n]+/g, " ").trim();
+      if (!text) { note.focus(); return; }
+      ctx.hands.plan!("revise", text);
+    };
+    note.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); revise(); } };
+    bar.append(
+      primary(button("Approve", "need-plan-approve", () => ctx.hands.plan!("approve"))),
+      note,
+      button("Revise", "need-plan-revise", revise),
+      button("Split", "need-plan-split", () => ctx.hands.plan!("split")),
+    );
   } else if (n.kind === "recovery") {
-    if (ctx.hands.retry) {
+    if (ctx.hands.retry && actEnabled("retry")) {
       bar.append(confirmButton("Retry", "need-retry", () => ctx.hands.retry!(false)));
       if (n.deeper?.workflow) {
         const ceil = n.deeper.ceilingMicroUSD && n.deeper.ceilingMicroUSD > 0
@@ -100,9 +178,14 @@ export function needCard(n: NeedItem, ctx: { hands: NeedHands; release?: () => v
           : "";
         bar.append(confirmButton(`Run again deeper (${n.deeper.workflow}${ceil})`, "need-retry-deeper", () => ctx.hands.retry!(true)));
       }
+      if (ctx.hands.openSession) bar.append(button("Close the room…", "need-close", () => ctx.hands.openSession!("close")));
+    } else if (ctx.roomActs && !ctx.roomActs.has("retry") && isGitHubUrl(n.url)) {
+      bar.append(outLink(label, n.url!), where(githubLine(n)));
+    } else if (ctx.hands.openSession) {
+      bar.append(button("Close the room…", "need-close", () => ctx.hands.openSession!("close")));
+    } else {
+      bar.append(where("Only a maintainer can retry this task."));
     }
-    if (ctx.hands.openSession) bar.append(button("Close the room…", "need-close", () => ctx.hands.openSession!("close")));
-    else if (!ctx.hands.retry) bar.append(where("Only a maintainer can retry this task."));
   } else {
     const url = a?.url || n.url;
     bar.append(url ? outLink(label, url) : where(cap(label)));
@@ -126,7 +209,7 @@ function unreadLine(rooms: string[]): string {
 // room, and no reader leaves the summary's items as the list (the preview, which has no broker).
 export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   chat: { rowFor(callId: string): HTMLElement | undefined; reveal?(): void }, fourEyes: () => boolean | undefined = () => undefined,
-  opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands } = {}):
+  opts: { needs?: () => Promise<NeedsPage>; hands?: NeedHands; roomActs?: string[] | (() => Promise<string[]>) } = {}):
   { refresh(): Promise<void>; setSummary(s: Summary): void; count(): number; approvalCounts(): { total: number; mine: number }; focusFirst(): void } {
   root.classList.add("needs");
   root.setAttribute("aria-labelledby", "needs-title");
@@ -163,15 +246,33 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
   let stale = "";
   let reading: Promise<void> | undefined; // one read at a time
   let readAt = 0; // when the last read started, for routeEvery
+  // Enabled broker room acts (human.roomActs from GET /api/roomctl): when omitted, only retry is
+  // enabled by default for backwards compatibility with standalone callers; an explicit array or
+  // loader sets the exact allowed set.
+  let enabledActs = new Set<string>(Array.isArray(opts.roomActs) ? opts.roomActs : opts.roomActs ? [] : ["retry"]);
+  if (typeof opts.roomActs === "function") {
+    void opts.roomActs().then((acts) => { enabledActs = new Set(acts); render(); }).catch(() => {});
+  }
   // A hold's one press: the driver hands the token back to the factory, as Session › Driver's give does.
   const ctx = () => {
     const viewer = you();
-    const retry = opts.hands?.retry ?? (!state.sealed && (viewer?.role === "owner" || viewer?.role === "collaborator")
+    const canAct = !state.sealed && (viewer?.role === "owner" || viewer?.role === "collaborator");
+    const retry = opts.hands?.retry ?? (canAct && enabledActs.has("retry")
       ? (deeper: boolean) => { act(conn, state, deeper ? { kind: "retry", deeper: true } : { kind: "retry" }); }
       : undefined);
+    const answer = opts.hands?.answer ?? (canAct && enabledActs.has("answer")
+      ? (text: string) => { act(conn, state, { kind: "answer", text }); }
+      : undefined);
+    const split = opts.hands?.split ?? (canAct && enabledActs.has("split")
+      ? (decision: "accept" | "decline") => { act(conn, state, { kind: "split", decision }); }
+      : undefined);
+    const plan = opts.hands?.plan ?? (canAct && enabledActs.has("plan")
+      ? (decision: "approve" | "revise" | "split", note?: string) => { act(conn, state, note ? { kind: "plan", decision, note } : { kind: "plan", decision }); }
+      : undefined);
     return {
-      hands: { ...(opts.hands ?? {}), retry },
+      hands: { ...(opts.hands ?? {}), retry, answer, split, plan },
       release: viewer?.driver ? () => { act(conn, state, { kind: "driver_give", to: "system:factory" }); } : undefined,
+      roomActs: enabledActs,
     };
   };
   let listedItems: NeedItem[] | undefined;
@@ -260,8 +361,9 @@ export function mountNeeds(root: HTMLElement, conn: Sender, state: RoomState, yo
     // A card is rebuilt only when its item or the viewer's hands change: a frame a second would
     // otherwise drop the keyboard focus on its button.
     const c = ctx();
+    const actSig = [...enabledActs].sort().join(",");
     const items = (listedItems ?? summarisedItems).map((n) => {
-      const key = JSON.stringify([n, !!c.release]);
+      const key = JSON.stringify([n, !!c.release, !!c.hands.answer, !!c.hands.split, !!c.hands.plan, !!c.hands.retry, actSig]);
       let li = cards.get(key);
       if (!li) cards.set(key, li = needCard(n, c));
       return li;

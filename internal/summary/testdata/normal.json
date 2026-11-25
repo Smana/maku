@@ -66,6 +66,7 @@
     "needsYou": [
       {
         "kind": "approval",
+        "type": "blocked",
         "id": "01M4A",
         "what": "git push to agent/26zfnuxm",
         "deadline": "2026-10-07T19:45:00Z",

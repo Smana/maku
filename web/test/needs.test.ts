@@ -513,6 +513,138 @@ describe("a need's one action", () => {
   });
 });
 
+describe("room cards acting on the page (phase G2)", () => {
+  const mountWithActs = async (items: NeedItem[], roomActs: string[] | (() => Promise<string[]>)) => {
+    const root = document.createElement("section");
+    const sent: Record<string, any>[] = [];
+    const panel = mountNeeds(root, { send: (f) => { sent.push(f); return true; } }, new RoomState(), () => you,
+      { rowFor: () => undefined }, () => undefined,
+      { needs: async () => ({ apiVersion: "needs/v1", items }), roomActs });
+    await panel.refresh();
+    await Promise.resolve();
+    return { root, panel, sent, acts: () => sent.map((f) => f.action) };
+  };
+
+  it("renders a question card with a one-line text box and Answer button, and no GitHub link", async () => {
+    const { root, acts } = await mountWithActs([{
+      kind: "question", type: "question", act: "answer", id: "3",
+      what: "@alice answers the scoper's question on issue #3",
+      url: "https://github.com/o/r/issues/3",
+      action: { kind: "answer", label: "answer on issue #3", url: "https://github.com/o/r/issues/3" },
+    }], ["answer"]);
+    const card = root.querySelector<HTMLElement>('li.need[data-kind="question"]')!;
+    expect(card.dataset.type).toBe("question");
+    expect(card.querySelector("a.need-go")).toBeNull();
+    const input = card.querySelector<HTMLInputElement>('input[name="answer"]')!;
+    const btn = card.querySelector<HTMLButtonElement>('button[data-act="need-answer"]')!;
+    expect(input.getAttribute("aria-label")).toBeTruthy();
+    expect(btn.textContent).toBe("Answer");
+    btn.click(); // blank sends nothing
+    expect(acts()).toEqual([]);
+    input.value = "use PostgreSQL 16";
+    btn.click();
+    expect(acts()).toEqual([{ kind: "answer", text: "use PostgreSQL 16" }]);
+  });
+
+  it("renders a split (plan_confirmation) card with Accept the split and Run it whole, naming the charge, and no GitHub link", async () => {
+    const { root, acts } = await mountWithActs([{
+      kind: "plan_confirmation", type: "plan", act: "split", id: "2238",
+      what: "the scoper proposes splitting issue #2238",
+      url: "https://github.com/o/r/issues/2238",
+      action: { kind: "comment", label: "comment on the issue", url: "https://github.com/o/r/issues/2238" },
+    }], ["split"]);
+    const card = root.querySelector<HTMLElement>('li.need[data-kind="plan_confirmation"]')!;
+    expect(card.dataset.type).toBe("plan");
+    expect(card.querySelector("a.need-go")).toBeNull();
+    const accept = card.querySelector<HTMLButtonElement>('button[data-act="need-split-accept"]')!;
+    const decline = card.querySelector<HTMLButtonElement>('button[data-act="need-split-decline"]')!;
+    expect(accept.textContent).toBe("Accept the split");
+    expect(decline.textContent).toBe("Run it whole");
+    expect(card.querySelector(".need-where")?.textContent).toMatch(/daily budget/i);
+    accept.click();
+    decline.click();
+    expect(acts()).toEqual([{ kind: "split", decision: "accept" }, { kind: "split", decision: "decline" }]);
+  });
+
+  it("renders a plan_review card with Approve, Revise (with one-line note) and Split, and no GitHub link", async () => {
+    const { root, acts } = await mountWithActs([{
+      kind: "plan_review", type: "plan", act: "plan", id: "55",
+      what: "the author or a maintainer reviews the proposed plan on issue #55",
+      url: "https://github.com/o/r/issues/55",
+      action: { kind: "plan", label: "review the plan on the issue", url: "https://github.com/o/r/issues/55" },
+    }], ["plan"]);
+    const card = root.querySelector<HTMLElement>('li.need[data-kind="plan_review"]')!;
+    expect(card.dataset.type).toBe("plan");
+    expect(card.querySelector("a.need-go")).toBeNull();
+    const approve = card.querySelector<HTMLButtonElement>('button[data-act="need-plan-approve"]')!;
+    const note = card.querySelector<HTMLInputElement>('input[name="planNote"]')!;
+    const revise = card.querySelector<HTMLButtonElement>('button[data-act="need-plan-revise"]')!;
+    const split = card.querySelector<HTMLButtonElement>('button[data-act="need-plan-split"]')!;
+    expect([approve.textContent, revise.textContent, split.textContent]).toEqual(["Approve", "Revise", "Split"]);
+    expect(note.getAttribute("aria-label")).toBeTruthy();
+    approve.click();
+    revise.click(); // empty note sends nothing
+    note.value = "keep the API backwards-compatible";
+    revise.click();
+    split.click();
+    expect(acts()).toEqual([
+      { kind: "plan", decision: "approve" },
+      { kind: "plan", decision: "revise", note: "keep the API backwards-compatible" },
+      { kind: "plan", decision: "split" },
+    ]);
+  });
+
+  it("renders a recovery card with Retry and Run again deeper when retry is enabled, and no GitHub link", async () => {
+    const { root, acts } = await mountWithActs([{
+      kind: "recovery", type: "failed", act: "retry", id: "budget_reached", issue: 12,
+      what: "the run's budget was spent",
+      url: "https://github.com/o/r/issues/12",
+      deeper: { workflow: "careful", ceilingMicroUSD: 13_600_000 },
+      action: { kind: "retry", label: "retry the task or close the room", url: "https://rooms.example/r/3kq7x2ma" },
+    }], ["retry"]);
+    const card = root.querySelector<HTMLElement>('li.need[data-kind="recovery"]')!;
+    expect(card.dataset.type).toBe("failed");
+    expect(card.querySelector("a.need-go")).toBeNull();
+    const retry = card.querySelector<HTMLButtonElement>('button[data-act="need-retry"]')!;
+    const deeper = card.querySelector<HTMLButtonElement>('button[data-act="need-retry-deeper"]')!;
+    expect(retry.textContent).toBe("Retry");
+    expect(deeper.textContent).toBe("Run again deeper (careful, up to $13.60)");
+    retry.click(); retry.click();
+    deeper.click(); deeper.click();
+    expect(acts()).toEqual([{ kind: "retry" }, { kind: "retry", deeper: true }]);
+  });
+
+  it("a card whose act is not enabled keeps its link to GitHub, and merge/review always link to GitHub", async () => {
+    const items: NeedItem[] = [
+      { kind: "question", type: "question", act: "answer", id: "3", what: "answer #3", url: "https://github.com/o/r/issues/3",
+        action: { kind: "answer", label: "answer on issue #3", url: "https://github.com/o/r/issues/3" } },
+      { kind: "plan_confirmation", type: "plan", act: "split", id: "4", what: "confirm split #4", url: "https://github.com/o/r/issues/4",
+        action: { kind: "comment", label: "comment on the issue", url: "https://github.com/o/r/issues/4" } },
+      { kind: "plan_review", type: "plan", act: "plan", id: "5", what: "review plan #5", url: "https://github.com/o/r/issues/5",
+        action: { kind: "plan", label: "review the plan on the issue", url: "https://github.com/o/r/issues/5" } },
+      { kind: "recovery", type: "failed", act: "retry", id: "budget_reached", what: "retry #6", url: "https://github.com/o/r/issues/6",
+        action: { kind: "retry", label: "retry on issue #6", url: "https://rooms.example/r/3kq7x2ma" } },
+    ];
+    const disabled = await mountWithActs(items, []);
+    for (const card of disabled.root.querySelectorAll<HTMLElement>("li.need")) {
+      expect(card.querySelector("a.need-go")?.getAttribute("href"), card.dataset.kind).toMatch(/^https:\/\/github\.com\//);
+      expect(card.querySelector("button"), card.dataset.kind).toBeNull();
+    }
+
+    // merge and review always keep their GitHub link even when all roomActs are enabled.
+    const githubOnly = await mountWithActs([
+      { kind: "merge", type: "review", id: "7", what: "merge PR #7", url: "https://github.com/o/r/pull/7",
+        action: { kind: "merge", label: "open the pull request", url: "https://github.com/o/r/pull/7" } },
+      { kind: "review", type: "review", id: "8", what: "review PR #8", url: "https://github.com/o/r/pull/8",
+        action: { kind: "review", label: "review PR #8", url: "https://github.com/o/r/pull/8" } },
+    ], ["answer", "split", "plan", "retry", "stop"]);
+    for (const card of githubOnly.root.querySelectorAll<HTMLElement>("li.need")) {
+      expect(card.querySelector("a.need-go")?.getAttribute("href"), card.dataset.kind).toMatch(/^https:\/\/github\.com\//);
+      expect(card.querySelector("button"), card.dataset.kind).toBeNull();
+    }
+  });
+});
+
 describe("an expired approval", () => {
   afterEach(() => vi.useRealTimers());
   const due = new Date(2026, 10, 11, 16, 30, 0);

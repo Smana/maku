@@ -245,12 +245,14 @@ func TestCoordinationNeedsAreUnifiedAndDoNotDuplicateChildren(t *testing.T) {
 	w.writes = map[string][]string{"Smana/maku": {"alice"}, coordRepoB: {"alice"}}
 	e := setup(t, mcpOn, needsOn, coordOn(f, w))
 	want := []string{roomID + "/plan_confirmation/" + roomID + "/consumer/v1", roomID + "/recovery/" + roomID + "/retry_child/v1"}
+	// Phase G5: /api/needs and inbox keep one entry per task (its most urgent type: plan before failed).
+	wantInbox := want[:1]
 
-	if got := needKeys(mustNeeds(t, e, "", as("alice", false)).Items); !slices.Equal(got, want) {
-		t.Fatalf("/api/needs %v, want %v", got, want)
+	if got := needKeys(mustNeeds(t, e, "", as("alice", false)).Items); !slices.Equal(got, wantInbox) {
+		t.Fatalf("/api/needs %v, want %v", got, wantInbox)
 	}
-	if got := needKeysOf(t, call(t, e, viaRoomctl("alice"), "inbox", map[string]any{})); !slices.Equal(got, want) {
-		t.Fatalf("inbox %v, want %v", got, want)
+	if got := needKeysOf(t, call(t, e, viaRoomctl("alice"), "inbox", map[string]any{})); !slices.Equal(got, wantInbox) {
+		t.Fatalf("inbox %v, want %v", got, wantInbox)
 	}
 	_, body := get(t, e, "/api/rooms/"+roomID+"/summary", as("alice", false))
 	var s summary.Summary

@@ -3,7 +3,7 @@
 import type { Frame, Snapshot } from "./conn";
 import { icon } from "./icons";
 import type { RoomState } from "./room-state";
-import { safeLink, type Summary } from "./summary";
+import type { Summary } from "./summary";
 
 // Human copy for an ack's rejected reason (docs/reference/api.md, Actions).
 const rejections: Record<string, string> = {
@@ -32,6 +32,7 @@ const rejections: Record<string, string> = {
   no_deeper_workflow: "This task has no deeper workflow to step up to.",
   deeper_over_cap: "Stepping up exceeds this task's budget cap.",
   unknown_task: "The factory has no task for this room.",
+  act_not_enabled: "This action is not enabled on this broker.",
 };
 
 // The element id of an approval's card in the needs-you panel: the broker's
@@ -218,12 +219,69 @@ function group(cls: string, title: string): HTMLElement {
   return s;
 }
 
+// mountStop renders the room header's single Stop button behind a two-press confirm, with
+// "discard" as a checkbox inside that confirm (phase G2). Shown only while a task is live, the
+// room is open, and the viewer may stop (owner always via cancel; owner or collaborator when the
+// broker enables the stop room act).
+export function mountStop(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
+  useStopAct: () => boolean = () => false) {
+  const span = el("span", { className: "confirm stop-control", hidden: true });
+  span.setAttribute("aria-live", "polite");
+  const discard = named(el("input", { type: "checkbox", name: "stopDiscard" }),
+    "Discard PR, branch and issue (closes pull request, deletes agent branch and closes issue as not planned)");
+  const discardLabel = el("label", { className: "stop-discard" });
+  discardLabel.append(discard, " Discard PR, branch and issue");
+  const cancel = button("cancel", "stop_task-cancel", () => { reset(); main.focus(); });
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let taskLive = false;
+  const reset = () => {
+    const focused = document.activeElement === cancel || document.activeElement === discard;
+    clearTimeout(timer);
+    timer = undefined;
+    main.textContent = "Stop";
+    discard.checked = false;
+    discardLabel.remove();
+    cancel.remove();
+    if (focused) main.focus();
+  };
+  const main = button("Stop", "stop_task", () => {
+    if (timer === undefined) {
+      main.textContent = "confirm: Stop";
+      main.after(discardLabel, cancel);
+      timer = setTimeout(reset, confirmFor);
+      return;
+    }
+    const alsoDiscard = discard.checked;
+    reset();
+    const kind = useStopAct() ? "stop" : "cancel";
+    act(conn, state, alsoDiscard ? { kind, discard: true } : { kind });
+  });
+  main.classList.add("destructive");
+  span.append(main);
+  root.append(span);
+  const disarm = () => { if (timer !== undefined) reset(); };
+  const refresh = () => {
+    const viewer = you();
+    const canStop = !!viewer && !state.sealed && taskLive && (viewer.role === "owner" || (useStopAct() && viewer.role === "collaborator"));
+    span.hidden = !canStop;
+    if (span.hidden) disarm();
+  };
+  return {
+    refresh,
+    setSummary(sum?: Summary) {
+      const phase = sum?.status?.phase ?? "";
+      taskLive = phase !== "" && !endedPhases.has(phase);
+      refresh();
+    },
+    disarm,
+  };
+}
+
 // mountControls renders what a collaborator and up can do, in named groups: Run (start a
-// run as a role), Driver (the token, interrupt), the queue, and Room (members, invite, the
-// stop instruction, close), the last behind a toggle and for owners only. The composer
-// docks at the page's foot (mountComposer). Approvals are decided in the needs-you panel
-// (needs.ts). Room text goes in as text only (T10).
-// The buttons follow the policy (internal/policy); the broker still decides.
+// run as a role), Driver (the token, interrupt), the queue, and Room (members, invite, close),
+// the last behind a toggle and for owners only. The composer docks at the page's foot
+// (mountComposer). Approvals are decided in the needs-you panel (needs.ts). Room text goes in
+// as text only (T10). The buttons follow the policy (internal/policy); the broker still decides.
 // say sets the footer's notice.
 export function mountControls(root: HTMLElement, conn: Sender, state: RoomState, you: Snapshot["you"], say: (text: string) => void) {
   const send = (action: Record<string, unknown>) => act(conn, state, action);
@@ -330,19 +388,10 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
   };
   inviteForm.append(labelled("Invite", invitee), labelled("as", memberRole), approverLabel, button("invite", "invite", invite));
   inviteForm.onsubmit = (e) => { e.preventDefault(); invite(); };
-  const stopSlot = el("div");
-  // Cancel stops the task now, discard also closes its pull request, branch and issue (#644): the
-  // factory decides who may (the task's owner or a maintainer), even when its issue was deleted.
-  const taskBox = el("div", { className: "task-cancel", hidden: true });
-  const canceller = confirmButton("cancel task", "cancel_task", () => send({ kind: "cancel" }));
-  const discarder = confirmButton("discard task", "discard_task", () => send({ kind: "cancel", discard: true }));
-  taskBox.append(canceller, discarder,
-    el("p", { className: "hint", textContent: "Discard also closes the pull request, deletes its agent branch and closes the issue as not planned: a GitHub App cannot delete an issue." }));
-  let taskLive = false;
   // Closing seals the room for good: it asks first.
   const closer = confirmButton("close room", "close", () => send({ kind: "close" }));
-  room.append(memberList, inviteForm, stopSlot, taskBox, closer);
-  room.addEventListener("toggle", () => { if (!room.open) for (const c of [closer, canceller, discarder]) c.disarm(); }); // folded away is hidden too
+  room.append(memberList, inviteForm, closer);
+  room.addEventListener("toggle", () => { if (!room.open) closer.disarm(); }); // folded away is hidden too
 
   // Mounted once: refresh toggles hidden, never re-mounts (R10).
   root.replaceChildren(run, drv, queueBox, room);
@@ -362,7 +411,6 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
       queueBox.hidden = watcher || state.queue().length === 0;
       room.hidden = !isOwner();
       for (const e of [inviteForm, closer]) e.hidden = state.sealed;
-      taskBox.hidden = state.sealed || !taskLive;
       renderDriver();
       renderQueue();
       memberRows(state.members().map((m) => {
@@ -374,23 +422,11 @@ export function mountControls(root: HTMLElement, conn: Sender, state: RoomState,
         } };
       }));
       // A confirm armed and then hidden (by the token moving, a seal, a role change) asks again.
-      for (const c of [interrupt, take, closer, canceller, discarder, ...queue.querySelectorAll<Confirm>(".confirm")]) if (hiddenWithin(c, root)) c.disarm();
+      for (const c of [interrupt, take, closer, ...queue.querySelectorAll<Confirm>(".confirm")]) if (hiddenWithin(c, root)) c.disarm();
     },
     // result is a start_run ack's rendered AgentRun, before SP3 (ruling P14).
     showResult,
-    // setSummary takes each summary: with an issue, the Room group says how to stop the task.
-    setSummary(sum: Summary) {
-      // A task still running can be cancelled; one that ended, or a room with no task, cannot.
-      const phase = sum.status?.phase ?? "";
-      taskLive = phase !== "" && !endedPhases.has(phase);
-      taskBox.hidden = state.sealed || !taskLive;
-      if (taskBox.hidden) { canceller.disarm(); discarder.disarm(); }
-      const issue = sum.status?.issue;
-      if (!issue) return stopSlot.replaceChildren();
-      const p = el("p", { className: "stop" });
-      p.append("Stop the task: label the issue ", safeLink(`#${issue.number}`, issue.url), " ", el("code", { textContent: "factory/stop" }));
-      stopSlot.replaceChildren(p);
-    },
+    setSummary(_sum: Summary) {},
     // onAck takes every ack: an accepted one clears the invite it came from, if unedited
     // since, and shows a claim it carries.
     onAck(f: Frame) {

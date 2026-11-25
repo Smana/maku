@@ -8,7 +8,7 @@ import { api, confirmCoordination, fetchEvents, fetchNeeds, recoverCoordination 
 import { mountBrand } from "./brand";
 import { focusRow } from "./chat";
 import { RoomConnection, type Options, type Snapshot } from "./conn";
-import { hasControls, mountComposer, mountControls, rejection, shortPrincipal } from "./controls";
+import { hasControls, mountComposer, mountControls, mountStop, rejection, shortPrincipal } from "./controls";
 import { mountFork } from "./fork";
 import { mountNeeds } from "./needs";
 import { renderPolicy } from "./policy";
@@ -29,12 +29,14 @@ import { mountSettingsLink } from "./settingslink";
 // drive the page with no broker. dashboards loads the strip's link templates once (main
 // passes fetchDashboards); absent, the strip shows none.
 export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
-  o: Options & { get?: typeof fetch; dashboards?: () => Promise<Dashboard[]> } = {}) {
+  o: Options & { get?: typeof fetch; dashboards?: () => Promise<Dashboard[]>; roomActs?: string[] | (() => Promise<string[]>) } = {}) {
   const header = document.createElement("header");
   header.className = "page-header";
   mountBrand(header);
   const strip = mountStrip(header);
-  mountSettingsLink(header);
+  const headerActions = document.createElement("div");
+  headerActions.className = "header-actions";
+  header.append(headerActions);
   // Not live: why, and when the page retries. Hidden while live.
   const banner = document.createElement("div");
   banner.className = "banner";
@@ -143,10 +145,20 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       return sent;
     },
   };
+  let enabledActs = new Set<string>(Array.isArray(o.roomActs) ? o.roomActs : []);
+  const roomActsPromise = typeof o.roomActs === "function" ? o.roomActs().catch(() => [] as string[]) : undefined;
+  const stopControl = mountStop(headerActions, sender, state, () => snap?.you, () => enabledActs.has("stop"));
+  mountSettingsLink(headerActions);
+  if (roomActsPromise) {
+    void roomActsPromise.then((acts) => {
+      enabledActs = new Set(acts);
+      stopControl.refresh();
+    });
+  }
   const needsPanelView = mountNeeds(needsPanel, sender, state, () => snap?.you, { rowFor: views.rowFor, reveal: () => runView.leave() }, () => snap?.fourEyes,
     // The panel's list is this room's from the route the CLI and the tools read (CD21), through the
     // page's own fetch so a test drives it as it drives the summary.
-    { needs: () => fetchNeeds(id, undefined, o.get), hands: {
+    { needs: () => fetchNeeds(id, undefined, o.get), roomActs: roomActsPromise ? () => roomActsPromise : o.roomActs, hands: {
       // A need done in this room takes the reader to its control: the session opened at the group.
       openSession(to) {
         session.open = true;
@@ -246,6 +258,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         summary = sum; // first: a controls group mounted by a render below, or the next tick, reads it
         needsPanelView.setSummary(sum); // before the strip: its count reads it
         controls?.setSummary(sum);
+        stopControl.setSummary(sum);
         refreshStrip(sum); // a strip that throws leaves the notes as they were
         renderNotes(blocks, sum);
         renderPolicy(policyBlock, sum);
@@ -308,6 +321,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
         composer.setLive(connection === "live");
       }
       composer.refresh();
+      stopControl.refresh();
       showSession();
       skeleton.hidden = true;
       land();
@@ -324,6 +338,7 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       refreshStrip();
       controls?.refresh();
       composer?.refresh();
+      stopControl.refresh();
       showSession();
       skeleton.hidden = true;
       land();

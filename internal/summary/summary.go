@@ -53,7 +53,7 @@ func Hold(f *envelope.TaskFacts, sub policy.Subject, url string) (Need, bool) {
 	if f == nil || f.Phase != "Queued" || holds()[f.Reason] == "" || !policy.Allowed(sub, policy.StartRun) {
 		return Need{}, false
 	}
-	return Need{Kind: NeedHold, ID: f.Reason, What: holds()[f.Reason], URL: url}, true
+	return Need{Kind: NeedHold, Type: TypeBlocked, ID: f.Reason, What: holds()[f.Reason], URL: url}, true
 }
 
 // State is what Fold keeps of a log.
@@ -156,8 +156,14 @@ type QueuedNote struct {
 // id (Key), with the one action to take and the link where it happens. It carries no command: approving is
 // web-only (D4, ruling P18), and every other action happens on GitHub.
 type Need struct {
-	// Kind is one of the eight needs/v1 kinds, in the order they are listed.
-	Kind     string    `json:"kind"` // plan_confirmation | approval | question | merge | review | failed_check | recovery | hold
+	// Kind is one of the needs/v1 kinds (plan_confirmation, plan_review, approval, question, merge,
+	// review, failed_check, recovery, hold).
+	Kind string `json:"kind"`
+	// Type folds Kind into the five closed inbox types: question, plan, review, blocked, failed.
+	Type string `json:"type,omitempty"`
+	// Act is the broker room act kind this card accepts on the page (answer, split, plan, retry),
+	// empty when the need is handled on GitHub or by another control.
+	Act      string    `json:"act,omitempty"`
 	ID       string    `json:"id"`
 	What     string    `json:"what"`
 	Deadline time.Time `json:"deadline,omitzero"`

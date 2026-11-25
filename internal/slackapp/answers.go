@@ -232,9 +232,11 @@ func prAnswer(sum summary.Summary) string {
 	return capLines([]string{noPRLine})
 }
 
-// needsAnswer is one line per need with its one action's label and where it happens, or the one line a
-// room with nothing waiting gives. A need beyond the line cap is cut with …, as every answer is.
+// needsAnswer is one line per need in the unified five-type order (question, plan, review, blocked,
+// failed) with at most one entry per task (phase G5), or the one line a room with nothing waiting
+// gives. A need beyond the line cap is cut with …, as every answer is.
 func needsAnswer(needs []summary.Need) string {
+	needs = summary.Inbox(needs)
 	if len(needs) == 0 {
 		return capLines([]string{nothingNeeds})
 	}
@@ -247,7 +249,15 @@ func needsAnswer(needs []summary.Need) string {
 		if label == "" {
 			label = n.Kind
 		}
-		line := "- " + answerText(label)
+		t := n.Type
+		if t == "" {
+			t = summary.NeedType(n.Kind)
+		}
+		prefix := "- "
+		if t != "" {
+			prefix = "- " + answerText(t) + ": "
+		}
+		line := prefix + answerText(label)
 		if link := brokerLink(n.Action.URL, "open it"); link != "" {
 			line += ": " + link
 		}

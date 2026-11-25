@@ -54,7 +54,21 @@ func needsRooms(t *testing.T, approval *store.Approval) option {
 		merge := repoRoom(roomID, "Smana/a")
 		merge.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
 		if approval != nil {
-			merge.Status.PendingApprovals = 1 // the room projects it; the store below holds it
+			target := merge
+			if approval.RoomID == roomC {
+				c := repoRoom(roomC, "Smana/a")
+				c.Status.PendingApprovals = 1
+				s.Rooms = roomClient(t, split, merge, c)
+				v.approvals = []store.Approval{*approval}
+				s.PublicURL = "https://rooms.test"
+				v.evs = append(v.evs,
+					needsFacts(splitRoom, 1, envelope.TaskFacts{Phase: "Escalated", Reason: "split_proposed",
+						Issue: &envelope.IssueFact{Number: 2238, URL: "https://github.com/Smana/a/issues/2238"}}),
+					needsFacts(roomID, 11, envelope.TaskFacts{Phase: "AwaitingHuman",
+						PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}}))
+				return
+			}
+			target.Status.PendingApprovals = 1 // the room projects it; the store below holds it
 			v.approvals = []store.Approval{*approval}
 		}
 		s.Rooms = roomClient(t, split, merge, repoRoom(roomC, "Smana/a"))
@@ -217,17 +231,22 @@ func TestNeedsSaysWhenARoomsStateIsUnread(t *testing.T) {
 	}
 }
 
-// CD21: the one order spans rooms. A deadline sorts first, then the kind, then the room — so an approval
-// in a lexically later room sorts before an earlier room's plan confirmation, whatever order the rooms
-// were read in. Ordering each room's items alone would pass every single-room test and still disagree
-// with the tool and the panel.
+// Phase G5: the one inbox order spans rooms (question, plan, review, blocked, failed), and each
+// task appears at most once with its most urgent type.
 func TestNeedsOrderSpansRooms(t *testing.T) {
-	approval := &store.Approval{ID: "01J9A", RoomID: roomID, Class: "shell", State: "pending",
+	approval := &store.Approval{ID: "01J9A", RoomID: roomC, Class: "shell", State: "pending",
 		RequestedAt: time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC), ExpiresAt: time.Now().Add(time.Hour)}
 	e := setup(t, needsOn, needsWorld(t, approval))
-	want := []string{"3kq7x2ma/approval/01J9A", "26zfnuxm/plan_confirmation/2238", "3kq7x2ma/merge/2239"}
-	if keys := needKeys(mustNeeds(t, e, "", admin("dev")).Items); !slices.Equal(keys, want) {
-		t.Fatalf("%v, want %v: the deadline first, then the kind, then the room", keys, want)
+	want := []string{"26zfnuxm/plan_confirmation/2238", "3kq7x2ma/merge/2239", roomC + "/approval/01J9A"}
+	got := mustNeeds(t, e, "", admin("dev")).Items
+	if keys := needKeys(got); !slices.Equal(keys, want) {
+		t.Fatalf("%v, want %v: plan, then review, then blocked", keys, want)
+	}
+	wantTypes := []string{summary.TypePlan, summary.TypeReview, summary.TypeBlocked}
+	for i, n := range got {
+		if n.Type != wantTypes[i] {
+			t.Fatalf("item %d (%s) type = %q, want %q", i, n.Key(), n.Type, wantTypes[i])
+		}
 	}
 }
 
@@ -235,12 +254,12 @@ func TestNeedsOrderSpansRooms(t *testing.T) {
 // An item with no date is kept: a zero At is unknown, never old (Review Focus 3).
 func TestNeedsSinceFiltersByTheItemsOwnTime(t *testing.T) {
 	askedAt := time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC)
-	approval := &store.Approval{ID: "01J9A", RoomID: roomID, Class: "shell", State: "pending",
+	approval := &store.Approval{ID: "01J9A", RoomID: roomC, Class: "shell", State: "pending",
 		RequestedAt: askedAt, ExpiresAt: time.Now().Add(time.Hour)}
 	e := setup(t, needsOn, needsWorld(t, approval), factsDatedAt(askedAt))
-	asked, split, merge := roomID+"/approval/01J9A", splitRoom+"/plan_confirmation/2238", roomID+"/merge/2239"
-	// No cursor lists everything, in the one order: the approval's deadline first, then the kinds.
-	if keys := needKeys(mustNeeds(t, e, "", admin("dev")).Items); !slices.Equal(keys, []string{asked, split, merge}) {
+	split, merge, asked := splitRoom+"/plan_confirmation/2238", roomID+"/merge/2239", roomC+"/approval/01J9A"
+	// No cursor lists everything, in the five-type inbox order: plan, review, blocked.
+	if keys := needKeys(mustNeeds(t, e, "", admin("dev")).Items); !slices.Equal(keys, []string{split, merge, asked}) {
 		t.Fatalf("no cursor: %v", keys)
 	}
 	// The approval was asked at 19:00, so a cursor past it drops it; the items this broker cannot date
@@ -248,7 +267,7 @@ func TestNeedsSinceFiltersByTheItemsOwnTime(t *testing.T) {
 	if keys := needKeys(mustNeeds(t, e, "?since="+url.QueryEscape("2026-11-04T19:01:00Z"), admin("dev")).Items); !slices.Equal(keys, []string{split, merge}) {
 		t.Fatalf("since 19:01: %v", keys)
 	}
-	if keys := needKeys(mustNeeds(t, e, "?since="+url.QueryEscape("2026-11-04T18:59:00Z"), admin("dev")).Items); !slices.Equal(keys, []string{asked, split, merge}) {
+	if keys := needKeys(mustNeeds(t, e, "?since="+url.QueryEscape("2026-11-04T18:59:00Z"), admin("dev")).Items); !slices.Equal(keys, []string{split, merge, asked}) {
 		t.Fatalf("since 18:59: %v", keys)
 	}
 	// Read once, the split room's facts carry their own date (summary.State.FactsAt, 19:00 here), so the

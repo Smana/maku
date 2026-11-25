@@ -28,7 +28,7 @@ Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the sa
 
 The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before `New room`, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
 
-Three filters refetch from the API ([API](reference/api.md#8080--human-api)): **mine** (tasks whose issue you filed or labelled, or whose PR you authored or review), **needs me** (rows waiting for you), and a repository picker. **closed** (`closed=1`) lists rooms closed in the last 30 days (setting **mine** and **needs me** aside); `/r/<id>` opens any sealed room until retention purges its log.
+Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). **closed** (`closed=1`) lists rooms closed in the last 30 days (disabling **mine** and **needs me**); sealed rooms stay reachable at `/r/<id>` until retention purges the log. Empty results explain why (`No rooms match` or `No rooms you can read yet`).
 
 ### New task and New room
 
@@ -52,11 +52,11 @@ The `Use maku from your terminal` fold under the list gives copyable setup steps
 
 Work a room from top to bottom ([component reference](reference/web-ui-settings.md#room-page-components)):
 
-- **Read the title strip and workflow card**: Tier 1 shows the workflow chip, status line, active run's persona and age, and `Needs you · N`; Tier 2 shows spend, PR/issue links, last verdict, data class, driver and `Dashboards`, followed by `Next` and `Now`. Below the strip, the open **Workflow** card shows `Workflow`, `Will run`, `Cost` and any refused pin (`How it was chosen` holds raw details).
-- **Clear `Needs you`**: decide pending approvals in place, or follow direct links for GitHub merges, reviews and scoper questions.
+- **Read the title strip and workflow card**: Tier 1 shows the workflow chip, status line, active run's persona and age, and `Needs you · N`; Tier 2 shows spend, PR/issue links, last verdict, data class, driver and `Dashboards`, followed by `Next` and `Now`. The header has one **Stop** button (behind two-press confirm with a **Discard PR, branch and issue** checkbox) for whoever may stop a live task. Below the strip, **Workflow** shows `Workflow`, `Will run`, `Cost` and any refused pin (`How it was chosen` holds raw details).
+- **Clear `Needs you`**: decide approvals in place, and act on `question` (**Answer**), `plan_confirmation` (**Accept the split** / **Run it whole**), `plan_review` (**Approve** / **Revise** / **Split**) and `recovery` (**Retry** / **Run again deeper**) cards when enabled in `human.roomActs`; disabled acts, merges and reviews link to GitHub.
 - **Inspect runs and context**: expand `Notes`, `How it was chosen`, `Merge policy` and `Raw events` folds as needed, or click any run node on the right-hand **Rail** (`#run=<id>`) to filter events to that run.
 - **Steer, queue or run**: use **Controls** (`Run`, `Driver`, `Queued for the next run`, `Room`) according to [what each standing may do](reference/web-ui-settings.md#what-each-standing-may-do), or pick **fork here** on any message or handoff ([forks](reference/web-ui-settings.md#forks)).
-- **Send from the dock**: choose `Deliver to` (post to the room, queue for the next run's brief, or steer the running agent — driver only), toggle the [theme](reference/web-ui-settings.md#theme), and watch connection notices. Destructive acts (**interrupt**, **take**, **steer now**, **cancel task**, **discard task**, **close room**) require a second `confirm: …` click within 10 s.
+- **Send from the dock**: choose `Deliver to` (post to the room, queue for the next run's brief, or steer the running agent — driver only), toggle the [theme](reference/web-ui-settings.md#theme), and watch connection notices. Destructive acts (**Stop**, **interrupt**, **take**, **steer now**, **close room**) require a second `confirm: …` click within 10 s.
 
 Scrolling a finished factory room, from the strip down through its turns and tool calls:
 

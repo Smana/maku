@@ -983,4 +983,38 @@ describe("the room page", () => {
       expect(main.parentElement!.classList.contains("room-body")).toBe(true);
     });
   });
+
+  it("mounts one Stop button in the room header behind two-press confirm with discard checkbox", async () => {
+    const app = document.createElement("div");
+    const sockets: FakeSocket[] = [];
+    const sum = {
+      apiVersion: "summary/v1", room: "3kq7x2ma", url: "https://rooms.example/r/3kq7x2ma",
+      status: { phase: "Implementing", run: null, budget: null, pr: null, issue: { number: 74, url: "https://github.com/o/r/issues/74" }, lastVerdict: null },
+      needsYou: [], actions: [], notes: { untrusted: true, items: [] }, cursor: "seq:1",
+    };
+    const get = (async (url: string) => {
+      if (String(url).includes("/summary")) return new Response(JSON.stringify(sum), { status: 200 });
+      return new Response(JSON.stringify({ apiVersion: "needs/v1", items: [] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    mountRoom(app, "3kq7x2ma", theme, {
+      socket: (url) => { const s = new FakeSocket(url); sockets.push(s); return s; },
+      random: () => 0, get, roomActs: ["answer", "stop"],
+    });
+    sockets[0].open();
+    sockets[0].recv({ type: "state", throughSeq: 0, snapshot: snapshot({ role: "collaborator" }) });
+    sockets[0].recv({ type: "sync", fromSeq: 1, throughSeq: 0 });
+    await vi.advanceTimersByTimeAsync(0);
+    const header = app.querySelector("header.page-header")!;
+    const stop = header.querySelector<HTMLButtonElement>('button[data-act="stop_task"]')!;
+    expect(stop.closest("[hidden]")).toBeNull();
+    expect(stop.textContent).toBe("Stop");
+    stop.click();
+    const discard = header.querySelector<HTMLInputElement>('input[name="stopDiscard"]')!;
+    expect(discard).not.toBeNull();
+    discard.checked = true;
+    stop.click();
+    expect(sockets[0].sent.at(-1)).toMatchObject({ type: "act", action: { kind: "stop", discard: true } });
+    // Owner fold no longer shows factory/stop label instruction.
+    expect(app.querySelector(".group-room")?.textContent ?? "").not.toContain("factory/stop");
+  });
 });

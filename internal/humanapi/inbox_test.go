@@ -12,6 +12,8 @@ import (
 	"github.com/Smana/maku/api/v1alpha1"
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/fanout"
+	"github.com/Smana/maku/internal/store"
+	"github.com/Smana/maku/internal/summary"
 )
 
 func TestInboxFallsBackToMine(t *testing.T) {
@@ -98,4 +100,68 @@ func TestInboxFallsBackToMine(t *testing.T) {
 			t.Fatalf("sponsored keys = %v", keys)
 		}
 	})
+}
+
+// Phase G5: inbox and /api/needs expose `type`, enforce one entry per task (its most urgent type),
+// and drop stale needs for ended tasks.
+func TestInboxOneEntryPerTaskWithTypesAndDropsStale(t *testing.T) {
+	approval := &store.Approval{ID: "01J9A", RoomID: roomID, Class: "shell", State: "pending",
+		RequestedAt: time.Date(2026, 11, 4, 19, 0, 0, 0, time.UTC), ExpiresAt: time.Now().Add(time.Hour)}
+	doneApproval := &store.Approval{ID: "01OLD", RoomID: roomB, Class: "shell", State: "pending",
+		RequestedAt: time.Date(2026, 11, 4, 18, 0, 0, 0, time.UTC), ExpiresAt: time.Now().Add(time.Hour)}
+	w := world(nil)
+	w.set(func() { w.writes = map[string][]string{"Smana/a": {"dev"}} })
+	e := setup(t, mcpOn, needsOn, w.option(), func(s *Server, _ *fanout.Hub, v *hubView) {
+		// roomID has both a merge (type=review) and an approval (type=blocked): only review stays.
+		merge := repoRoom(roomID, "Smana/a")
+		merge.Status.PendingApprovals = 1
+		merge.Status.Task = &v1alpha1.TaskStatus{Phase: "AwaitingHuman", PR: 2239}
+		// splitRoom has a split_proposed (type=plan).
+		split := repoRoom(splitRoom, "Smana/a")
+		split.Status.Task = &v1alpha1.TaskStatus{Phase: "Escalated", Issue: 2238}
+		// roomB ended (Done) with a lingering approval: dropped completely.
+		done := repoRoom(roomB, "Smana/a")
+		done.Status.PendingApprovals = 1
+		done.Status.Task = &v1alpha1.TaskStatus{Phase: "Done", Issue: 99}
+		s.Rooms = roomClient(t, split, merge, done)
+		s.PublicURL = "https://rooms.test"
+		v.approvals = []store.Approval{*approval, *doneApproval}
+		v.evs = append(v.evs,
+			needsFacts(splitRoom, 1, envelope.TaskFacts{Phase: "Escalated", Reason: "split_proposed",
+				Issue: &envelope.IssueFact{Number: 2238, URL: "https://github.com/Smana/a/issues/2238"}}),
+			needsFacts(roomID, 11, envelope.TaskFacts{Phase: "AwaitingHuman",
+				PR: &envelope.PRFact{Number: 2239, URL: "https://github.com/Smana/a/pull/2239"}}),
+			needsFacts(roomB, 21, envelope.TaskFacts{Phase: "Done",
+				Issue: &envelope.IssueFact{Number: 99, URL: "https://github.com/Smana/a/issues/99"}}),
+		)
+	})
+
+	apiGot := mustNeeds(t, e, "", admin("dev"))
+	wantKeys := []string{splitRoom + "/plan_confirmation/2238", roomID + "/merge/2239"}
+	wantTypes := []string{summary.TypePlan, summary.TypeReview}
+	if keys := needKeys(apiGot.Items); !slices.Equal(keys, wantKeys) {
+		t.Fatalf("/api/needs keys = %v, want %v", keys, wantKeys)
+	}
+	for i, n := range apiGot.Items {
+		if n.Type != wantTypes[i] {
+			t.Fatalf("/api/needs item %d type = %q, want %q", i, n.Type, wantTypes[i])
+		}
+	}
+
+	toolGot := call(t, e, viaRoomctl("dev"), "inbox", map[string]any{})
+	if toolGot.isError {
+		t.Fatalf("inbox error: %s", toolGot.text)
+	}
+	var env needsBody
+	if err := json.Unmarshal(toolGot.structured, &env); err != nil {
+		t.Fatalf("unmarshal structured: %v", err)
+	}
+	if keys := needKeys(env.Items); !slices.Equal(keys, wantKeys) {
+		t.Fatalf("inbox keys = %v, want %v", keys, wantKeys)
+	}
+	for i, n := range env.Items {
+		if n.Type != wantTypes[i] {
+			t.Fatalf("inbox item %d type = %q, want %q", i, n.Type, wantTypes[i])
+		}
+	}
 }
