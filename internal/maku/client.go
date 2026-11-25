@@ -81,6 +81,11 @@ type Refusal struct {
 	Op     string
 	Code   int
 	Reason string // the broker's reason, when it names one maku explains
+	// Refused is the code a JSON refusal body names ({"error":"not_found"}), when it is a bounded code.
+	Refused string
+	// Repository is the repository the request asked about, and Broker the broker's URL: set, a
+	// not_found refusal names the repository and how to make it readable, never "no such room".
+	Repository, Broker string
 }
 
 // userInactive is the broker's 401 for a ZITADEL user no longer active (#126).
@@ -94,7 +99,20 @@ func refusal(op string, resp *http.Response) *Refusal {
 		if strings.TrimSpace(string(body)) == userInactive {
 			r.Reason = userInactive
 		}
+		var j struct {
+			Error string `json:"error"`
+		}
+		if json.Unmarshal(body, &j) == nil && coordCodeRE.MatchString(j.Error) {
+			r.Refused = j.Error
+		}
 	}
+	return r
+}
+
+// repoRefusal is resp as a Refusal of a request about repository, which a not_found explains.
+func (c Client) repoRefusal(op, repository string, resp *http.Response) *Refusal {
+	r := refusal(op, resp)
+	r.Repository, r.Broker = repository, c.URL
 	return r
 }
 
@@ -107,11 +125,21 @@ func (r *Refusal) Error() string {
 		why = "the token was refused: run maku login"
 	case r.Code == http.StatusForbidden:
 		why = "not in an agents group, or not allowed in this room"
+	case r.Repository != "" && r.Refused == "not_found":
+		why = "not_found: repository " + r.Repository + " not found, or not readable by your linked GitHub account: run maku doctor, or link GitHub at " +
+			strings.TrimRight(r.Broker, "/") + "/link/github"
+	case r.Repository != "" && r.Refused == reasonLinkUnverified:
+		why = reasonLinkUnverified + ": the factory could not check your GitHub link to " + r.Repository + ": run maku doctor, then retry"
+	case r.Refused != "":
+		why = r.Refused
 	case r.Code == http.StatusNotFound:
 		why = "no such room"
 	}
 	return fmt.Sprintf("%s: %d: %s", r.Op, r.Code, why)
 }
+
+// reasonLinkUnverified is the factory's 503 when it cannot check the caller's GitHub link.
+const reasonLinkUnverified = "link_unverified"
 
 // errToken is no access token to dial with: the token file is gone, or the
 // issuer refused its refresh. Dialling again cannot help.
@@ -741,7 +769,7 @@ func (c Client) Stages(ctx context.Context, repository, class string, last int) 
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return out, refusal("stages", resp)
+		return out, c.repoRefusal("stages", repository, resp)
 	}
 	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
@@ -1018,7 +1046,7 @@ func (c Client) WorkflowDryRun(ctx context.Context, in stages.DryRunRequest) (st
 	}
 	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
-		return out, refusal("workflow dry-run", resp)
+		return out, c.repoRefusal("workflow dry-run", in.Repository, resp)
 	}
 	raw, err := httpx.ReadBody(resp.Body, maxRoomsBody)
 	if err != nil {
