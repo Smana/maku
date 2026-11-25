@@ -121,7 +121,7 @@ type metrics interface {
 	HandoffToMerge(ctx context.Context, class, reason, how string, d time.Duration)
 	TaskTokens(ctx context.Context, tokens int64, tier, template, predictedClass string)
 	Intervention(ctx context.Context, kind, cohort, profile, recommended string)
-	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, outcome string, usd float64)
+	TaskOutcome(ctx context.Context, class, cohort, profile, source, recommended, harness, outcome string, usd float64)
 	StageCost(ctx context.Context, repository, class, stage string, usd float64)
 	StageEffect(ctx context.Context, repository, class, stage, effect, outcome string)
 	WorkflowChoice(ctx context.Context, repository, class, choice string)

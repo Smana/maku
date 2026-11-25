@@ -287,10 +287,12 @@ func markHandled(t *v1alpha1.Task, id int64) {
 // factory's reckoning still counts; one already acted on is in Status.Handled and never counts twice.
 const retrySkew = time.Minute
 
-// cmdRetry asks for a fresh run of an escalated task (§6.3); cmdRetryDeeper steps it up once (WR4).
+// cmdRetry asks for a fresh run of an escalated task (§6.3); cmdRetryDeeper steps it up once (WR4);
+// cmdRetryRescue explicitly rescues an escalated OpenCode task onto OpenHands in the rescue cohort.
 const (
 	cmdRetry       = "/factory retry"
 	cmdRetryDeeper = "/factory retry deeper"
+	cmdRetryRescue = "/factory retry harness=openhands"
 )
 
 // command is the newest maintainer comment carrying verb alone on a line, on the task's issue or
@@ -430,6 +432,41 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 		r.log().Warn("merge gate return unreadable", "task.id", t.Name, "reason", t.Status.Reason, "err", err)
 	} else if back {
 		return nil
+	}
+	// Explicit maintainer OpenHands rescue on an escalated OpenCode task: record the failed
+	// original attempt under its original cohort/harness, then move to the rescue cohort on
+	// OpenHands while preserving workflow, branch, and room.
+	if p := t.Status.Profile; p != nil && p.Harness == config.HarnessOpenCode {
+		if rc, okR, err := r.command(ctx, cfg, t, pr, cmdRetryRescue); err != nil {
+			return err
+		} else if okR {
+			if err := r.resolveRetried(ctx, cfg, t); err != nil {
+				return err
+			}
+			r.countRescueOriginalFailure(ctx, cfg, t)
+			p.Harness = config.HarnessOpenHands
+			p.HarnessSource = "rescue"
+			p.Cohort = "rescue"
+			p.Counted = false
+			markHandled(t, rc.ID)
+			r.leaveSplit(ctx, t, SplitDeclined)
+			if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {
+				r.leaveBounce(ctx, t, "retry")
+				t.Status.Scope.State = "assumed"
+			}
+			after := t.Status.Reason
+			t.Status.Retries++
+			t.Status.RetriedBy = v1alpha1.Person(rc.Author)
+			t.Status.NextTrigger = "retry"
+			r.intervention(ctx, cfg, t, "retry")
+			next := v1alpha1.PhaseQueued
+			if t.Status.RoomRef == "" {
+				next = v1alpha1.PhaseTriaged
+			}
+			r.to(t, next, "")
+			narrateLater(t, narrate.Retrying(t, rc.Author, after))
+			return nil
+		}
 	}
 	c, deeper, ok, err := r.retryCommand(ctx, cfg, t, pr)
 	if err != nil {

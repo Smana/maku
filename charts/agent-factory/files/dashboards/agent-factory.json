@@ -790,6 +790,36 @@
           "legendFormat": "{{role}}"
         }
       ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "Harness trial: cost per merged PR by cohort and harness",
+      "description": "USD spent per merged pull request across randomized trial cohorts (control and treatment only; rescue is excluded so rescued OpenCode tasks never inflate treatment acceptance or mix rescue spend into trial arms), grouped by cohort and harness.",
+      "gridPos": {
+        "x": 12,
+        "y": 73,
+        "w": 12,
+        "h": 8
+      },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "noValue": "0"
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (cohort, harness) (increase(maku_factory_task_usd_total{cohort=~\"control|treatment\"}[$__range])) / sum by (cohort, harness) (increase(maku_factory_task_outcomes_total{cohort=~\"control|treatment\",outcome=~\"accepted|merged_human\"}[$__range]))",
+          "legendFormat": "{{cohort}} / {{harness}}"
+        }
+      ]
     }
   ]
 }

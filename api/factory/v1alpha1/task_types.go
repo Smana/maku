@@ -553,6 +553,18 @@ type TaskStatus struct {
 	// the counter counts every ended task, profile or none (cache-costs review CP3).
 	// +optional
 	OutcomeCounted bool `json:"outcomeCounted,omitempty"`
+	// OutcomeCountedCohorts records each cohort already counted for this task's outcome metrics,
+	// preventing double-counting across crashes or an explicit OpenHands rescue transition.
+	// +listType=set
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Enum=labeled;control;treatment;rescue;none
+	// +optional
+	OutcomeCountedCohorts []string `json:"outcomeCountedCohorts,omitempty"`
+	// RescueBaselineMicroUSD is the spend already counted under the original failed cohort when an
+	// escalated OpenCode task is rescued onto OpenHands, so the rescue cohort counts only its own spend.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	RescueBaselineMicroUSD int64 `json:"rescueBaselineMicroUSD,omitempty"`
 	// What the task's runs read, by source kind and author trust, never by content (hardening
 	// UH7). Recorded only while the repository's hardening mode is audit or enforce.
 	// +optional

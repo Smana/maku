@@ -2124,6 +2124,21 @@ spec:
                   The once-mark of a task with no profile, set on the same write that counts its outcome:
                   the counter counts every ended task, profile or none (cache-costs review CP3).
                 type: boolean
+              outcomeCountedCohorts:
+                description: |-
+                  OutcomeCountedCohorts records each cohort already counted for this task's outcome metrics,
+                  preventing double-counting across crashes or an explicit OpenHands rescue transition.
+                items:
+                  enum:
+                  - labeled
+                  - control
+                  - treatment
+                  - rescue
+                  - none
+                  type: string
+                maxItems: 4
+                type: array
+                x-kubernetes-list-type: set
               overlap:
                 description: The bounded outcome-overlap evaluation, persisted before
                   implementation starts.
@@ -2594,6 +2609,13 @@ spec:
               reason:
                 maxLength: 1024
                 type: string
+              rescueBaselineMicroUSD:
+                description: |-
+                  RescueBaselineMicroUSD is the spend already counted under the original failed cohort when an
+                  escalated OpenCode task is rescued onto OpenHands, so the rescue cohort counts only its own spend.
+                format: int64
+                minimum: 0
+                type: integer
               result:
                 description: Result is an integration Task's outcome (MR10).
                 properties:
