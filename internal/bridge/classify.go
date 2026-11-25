@@ -108,7 +108,7 @@ func (c Classifier) Classify(tool string, action json.RawMessage, risk string) C
 		return MCPWrite
 	}
 	worst := Plain
-	if tool == "terminal" || tool == "execute_bash" {
+	if tool == "terminal" || tool == "execute_bash" || tool == "shell" || tool == "bash" {
 		var a struct {
 			Command string `json:"command"`
 		}

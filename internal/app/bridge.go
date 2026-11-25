@@ -47,6 +47,9 @@ type bridgeConfig struct {
 	roomID, runID, conversationID  string
 	brokerURL, brokerCA, tokenFile string
 	harness, harnessURL            string
+	opencodeSessionFile            string
+	opencodePasswordFile           string
+	opencodeTerminalFile           string
 	healthAddr                     string
 	flushGrace                     time.Duration // 0: the bridge's default
 	memLimitSet                    bool          // GOMEMLIMIT is in the environment
@@ -73,7 +76,11 @@ func loadBridgeConfig(getenv func(string) string) (bridgeConfig, error) {
 	c := bridgeConfig{roomID: getenv("ROOM_ID"), runID: getenv("RUN_ID"), conversationID: getenv("CONVERSATION_ID"),
 		brokerURL: getenv("BROKER_URL"), brokerCA: or("BROKER_CA_FILE", defaultBrokerCA),
 		tokenFile: getenv("ROOM_TOKEN_FILE"), harness: getenv("AGENT_HARNESS"),
-		harnessURL: or("HARNESS_URL", defaultHarnessURL), healthAddr: or("HEALTH_ADDR", defaultHealthAddr)}
+		harnessURL:           or("HARNESS_URL", defaultHarnessURL),
+		opencodeSessionFile:  or("OPENCODE_SESSION_ID_FILE", bridge.DefaultOpenCodeSessionFile),
+		opencodePasswordFile: or("OPENCODE_PASSWORD_FILE", bridge.DefaultOpenCodePasswordFile),
+		opencodeTerminalFile: or("OPENCODE_TERMINAL_FILE", bridge.DefaultOpenCodeTerminalFile),
+		healthAddr:           or("HEALTH_ADDR", defaultHealthAddr)}
 	c.memLimitSet = getenv("GOMEMLIMIT") != ""
 	c.suspendable = getenv("AGENT_SUSPENDABLE") == "true"
 	c.searchBuiltin = getenv("AGENT_SEARCH") == "1"
@@ -283,9 +290,14 @@ func RunBridge(ctx context.Context, log *slog.Logger, getenv func(string) string
 	if err != nil {
 		return fmt.Errorf("room-bridge: %w", err)
 	}
-	harness, err := bridge.NewHarnessForKind(cfg.harness, cfg.harnessURL, cfg.conversationID)
-	if err != nil {
-		return fmt.Errorf("room-bridge: %w", err)
+	var harness bridge.HarnessAPI
+	if cfg.harness == bridge.HarnessOpenCode {
+		harness = bridge.NewOpenCodeHarnessWithFiles(cfg.harnessURL, cfg.opencodeSessionFile, cfg.opencodePasswordFile, cfg.opencodeTerminalFile)
+	} else {
+		harness, err = bridge.NewHarnessForKind(cfg.harness, cfg.harnessURL, cfg.conversationID)
+		if err != nil {
+			return fmt.Errorf("room-bridge: %w", err)
+		}
 	}
 	broker, err := bridge.NewBroker(cfg.brokerURL, cfg.tokenFile, cfg.brokerCA)
 	if err != nil {

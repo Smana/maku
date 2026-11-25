@@ -1,0 +1,20 @@
+[
+  {
+    "id": "msg_01",
+    "type": "assistant",
+    "time": {"created": 1700000001},
+    "content": [
+      {"type": "reasoning", "text": "Checking git status first."},
+      {
+        "type": "tool",
+        "id": "call-1",
+        "name": "shell",
+        "state": {
+          "status": "completed",
+          "input": {"command": "git push origin agent/3kq7x2ma"},
+          "content": [{"type": "text", "text": "pushed"}]
+        }
+      }
+    ]
+  }
+]

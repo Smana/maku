@@ -97,8 +97,11 @@ func (e *StatusError) Error() string {
 	return fmt.Sprintf("agent-server %s %s: status %d", e.Method, e.Path, e.Code)
 }
 
-// HarnessOpenHands is the default harness name.
-const HarnessOpenHands = "openhands"
+// Harness names accepted by NewHarnessForKind and AGENT_HARNESS.
+const (
+	HarnessOpenHands = "openhands"
+	HarnessOpenCode  = "opencode"
+)
 
 // HarnessAPI is the loopback client interface the bridge, confirmer and
 // steering loop speak to a harness backend.
@@ -121,11 +124,13 @@ type HarnessAPI interface {
 var _ HarnessAPI = (*Harness)(nil)
 
 // NewHarnessForKind constructs the loopback adapter for kind ("" or
-// "openhands"). Unknown harness names fail closed.
+// "openhands", or "opencode"). Unknown harness names fail closed.
 func NewHarnessForKind(kind, base, conversationID string) (HarnessAPI, error) {
 	switch kind {
 	case "", HarnessOpenHands:
 		return NewHarness(base, conversationID), nil
+	case HarnessOpenCode:
+		return NewOpenCodeHarness(base, DefaultOpenCodeSessionFile), nil
 	default:
 		return nil, fmt.Errorf("unsupported harness %q", kind)
 	}
