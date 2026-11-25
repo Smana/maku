@@ -69,6 +69,7 @@ export const REASONS: Record<string, { short: string; long: string; next: string
   "foreign_trailer": { short: "its head commit comes from another task…", long: "its head commit comes from another task's run", next: "a maintainer reviews the task and chooses the next step" },
   "fork_pull_request": { short: "the pull request is from a fork", long: "it comes from a fork, which the factory never adopts", next: "a maintainer reviews the task and chooses the next step" },
   "gate_path": { short: "touches a gate path", long: "it touches a gate path, so an agent can never merge it", next: "a maintainer reviews the task and chooses the next step" },
+  "handoff_unconfirmed": { short: "the web start could not be confirmed", long: "the web start could not be confirmed with the broker; a maintainer can label the issue factory/ready", next: "a maintainer reviews the task and chooses the next step" },
   "head_moved": { short: "a new commit landed since the decision,…", long: "a new commit landed since the decision, so the merge was refused and it is decided again", next: "a maintainer reviews the task and chooses the next step" },
   "head_unreported": { short: "no run reported the head", long: "the task's implementer never reported its current head in the room: no handoff of its runs names that commit", next: "a maintainer reviews the task and chooses the next step" },
   "held": { short: "on hold (factory/hold)", long: "a maintainer put this pull request on hold (factory/hold)", next: "a maintainer reviews the task and chooses the next step" },

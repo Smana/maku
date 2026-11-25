@@ -420,6 +420,11 @@ func TestTriageResolvesThePin(t *testing.T) {
 		"an unknown workflow": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "workflow:nope"}},
 			want: Pin{Name: "nope", Refused: "profile_unknown"}, cohort: CohortControl},
 		"a profile: label is no pin": {labels: []forge.LabelEvent{{Actor: "Smana", Label: "profile:careful"}}, cohort: CohortControl},
+		// Broker-confirmed handoff: the App's pin is the confirmed maintainer's, never the App's own.
+		"the App's label on a confirmed handoff": {labels: []forge.LabelEvent{{Actor: "ogenki-agent-factory[bot]", Label: "workflow:careful"}},
+			intake: &v1alpha1.TaskIntake{Profile: "careful", Login: "Smana"}, want: Pin{Name: "careful"}, cohort: CohortLabeled},
+		"the App's label alone": {labels: []forge.LabelEvent{{Actor: "ogenki-agent-factory[bot]", Label: "workflow:careful"}},
+			want: Pin{Name: "careful", Refused: "not_maintainer"}, cohort: CohortControl},
 	} {
 		t.Run(name, func(t *testing.T) {
 			f := forgetest.NewFake()

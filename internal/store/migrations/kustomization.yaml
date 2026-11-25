@@ -27,6 +27,7 @@ configMapGenerator:
       - ./20261121120000_handoffs.sql
       - ./20261123120000_query_indexes.sql
       - ./20261124120000_policy_promotion_pull_requests.sql
+      - ./20261125120000_handoff_starts.sql
       - atlas.sum
     options:
       disableNameSuffixHash: true

@@ -125,8 +125,11 @@ type Server struct {
 	// SlackLinks serves GET /v1/links/slack, and GitHubLinks GET /v1/links/github with
 	// GitHubActiveWindow (human.githubLink.activeWindow) applied, to it alone; a store or LinkReader
 	// unset refuses the route.
-	LinkReader         string
-	SlackLinks         SlackLinks
+	LinkReader string
+	SlackLinks SlackLinks
+	// HandoffStarts serves GET /v1/handoff-starts to LinkReader alone: the broker's records of web
+	// New task starts (broker-confirmed handoff); unset refuses the route.
+	HandoffStarts      HandoffStarts
 	GitHubLinks        GitHubLinks
 	GitHubActiveWindow time.Duration
 	// Grants serves the grant routes (merge policy stage 5) to GrantClient alone (the factory,
@@ -182,6 +185,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /v1/rooms/{id}/queue/consume", s.bounded(maxConsumeBytes, s.queueRoute(s.consume)))
 	mux.HandleFunc("GET /v1/links/slack", s.bounded(0, s.slackLink))
 	mux.HandleFunc("GET /v1/links/github", s.bounded(0, s.githubLink))
+	mux.HandleFunc("GET /v1/handoff-starts", s.bounded(0, s.handoffStart))
 	mux.HandleFunc("POST /v1/grants/lookup", s.bounded(maxGrantBody, s.grantLookup))
 	mux.HandleFunc("POST /v1/grants/{id}/use", s.bounded(maxGrantBody, s.grantUse))
 	mux.HandleFunc("POST /v1/grants/{id}/disable", s.bounded(maxGrantBody, s.grantDisable))

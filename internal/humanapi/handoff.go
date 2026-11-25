@@ -926,6 +926,12 @@ type IssueStarter interface {
 	StartIssue(ctx context.Context, req StartIssueRequest) (StartIssueResult, error)
 }
 
+// HandoffStartRecorder records a web start, so the factory can confirm the App's factory/ready on the
+// issue it filed (broker-confirmed handoff). *store.Store implements it.
+type HandoffStartRecorder interface {
+	RecordHandoffStart(ctx context.Context, h store.HandoffStart) error
+}
+
 type handoffCreateResponse struct {
 	handoffResult
 	Repository string `json:"repository,omitempty"`
@@ -1112,6 +1118,7 @@ func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
 			linked = true
 		}
 	}
+	checked = webStartable(checked)
 	writeJSON(w, handoffCheckResponse{
 		handoffChecked: handoffChecked{
 			planChecked:     checked,
@@ -1130,8 +1137,24 @@ func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// notMaintainerStart is the web start's refusal for a caller who maintains no repository it starts on.
+const notMaintainerStart = "Only a maintainer of this repository can start a task. File the issue on GitHub and ask a maintainer to label it factory/ready."
+
+// webStartable holds the web Start to the factory's own rule: the factory starts a web start's task
+// only for a maintainer (broker-confirmed handoff), so a caller the catalogue names as no maintainer
+// is offered no Start, rather than an issue the factory publicly refuses. An unread catalogue (nil)
+// leaves the factory to decide.
+func webStartable(c planChecked) planChecked {
+	if c.CanStart && c.Maintainer != nil && !*c.Maintainer {
+		c.CanStart, c.CanStartWhy = false, startNotMaintainer
+	}
+	return c
+}
+
 // handoffStartRoute is POST /api/handoffs/{id}/start: files the checked handoff's issue on GitHub
-// through the viewer's linked GitHub identity and applies its workflow, outcome and factory/ready labels.
+// through the factory App for the viewer's linked GitHub identity, applies its workflow, outcome and
+// factory/ready labels, and records the start, which the factory's intake confirms the App's label
+// against (broker-confirmed handoff).
 func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
 	if !ok {
@@ -1179,6 +1202,7 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_plan", "the plan has no issue to file")
 		return
 	}
+	checked = webStartable(checked)
 	login, lerr := s.viewerGitHubLogin(ctx, p, draft.Repository)
 	if lerr != nil {
 		writeHandoffRefusal(w, http.StatusServiceUnavailable, startUnverified, "GitHub access could not be verified right now.")
@@ -1198,6 +1222,8 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 			writeHandoffRefusal(w, http.StatusForbidden, startNotOffered, "Starting tasks from here is not offered on this repository.")
 		case startAccessUnwired, startUnverified:
 			writeHandoffRefusal(w, http.StatusServiceUnavailable, checked.CanStartWhy, "GitHub access could not be verified right now.")
+		case startNotMaintainer:
+			writeHandoffRefusal(w, http.StatusForbidden, startNotMaintainer, notMaintainerStart)
 		default:
 			writeHandoffRefusal(w, http.StatusForbidden, checked.CanStartWhy, "Starting tasks from here is not allowed.")
 		}
@@ -1208,13 +1234,13 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 		s.writeHandoffError(w, err)
 		return
 	}
-	if s.IssueStarter == nil {
+	if s.IssueStarter == nil || s.HandoffStarts == nil {
 		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_unavailable", "Starting tasks from the web UI is not configured on this broker.")
 		return
 	}
 	is := checked.Plan.Issues[0]
 	var labels []string
-	if is.Profile != "" && (checked.Maintainer == nil || *checked.Maintainer) {
+	if is.Profile != "" {
 		labels = append(labels, "workflow:"+is.Profile)
 	}
 	if is.Outcome == intake.OutcomePlanFirst || is.Outcome == intake.OutcomeReport {
@@ -1232,6 +1258,17 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log().Warn("handoff start failed", "handoff", id, "repository", draft.Repository, "err", err)
 		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_failed", "Could not file the issue on GitHub right now.")
+		return
+	}
+	// The App applied factory/ready, so the factory's intake starts the task only against this record:
+	// who the broker filed the issue for, never a marker in the issue (broker-confirmed handoff).
+	now := s.handoffNow()
+	if err := s.HandoffStarts.RecordHandoffStart(ctx, store.HandoffStart{Repository: draft.Repository, Issue: filed.Number,
+		Handoff: id, Principal: p.ID, Sub: p.Sub, Login: login, Labels: labels, StartedAt: now,
+		ExpiresAt: now.Add(store.HandoffStartTTL)}); err != nil {
+		s.log().Error("handoff start not recorded", "handoff", id, "repository", draft.Repository, "issue", filed.Number, "err", err)
+		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_unrecorded",
+			"The issue was filed at "+filed.URL+", but its start could not be recorded: a maintainer can label it factory/ready.")
 		return
 	}
 	w.WriteHeader(http.StatusCreated)

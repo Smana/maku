@@ -40,6 +40,8 @@ Every label below is read once a minute (`poll.issues`). Labels applied by non-m
 | Schedule (`schedules[]`, 5-field UTC cron) | Starts one task per slot under an hour old (`probe: renovate-red` batches up to five red `renovate[bot]` PRs older than 24 h; `probe: dead-links` files confirmed Wayback-backed findings reported as 404/410/unresolved by the newest two `oracle.workflow` runs on `main`, up to `oracle.maxFindings`) | The factory |
 | `POST /intake/runlore` or `POST /v1/tasks` | Opens an `investigate` task (`factory/proposed` issue) from RunLore or a sponsored/internal task ([API](reference/api.md#the-factorys-api)) | RunLore or sponsored caller |
 
+A `factory/ready` applied by the factory App counts only on an issue the broker filed from a web **New task** start and recorded: the task is then the recorded maintainer's ([broker-confirmed handoff](security.md#authorization)). The label waits up to two minutes for the broker's record.
+
 Refused `factory/ready` labels are removed and answered once (`unauthorised_labeller`, `edited_after_label`, `task_active`, `unsanitisable`). The factory applies `factory/class:<class>`, `factory/stale` (closed after 14 quiet days), `factory/orphaned` (PR whose `Task` was lost, human-only thereafter), `factory/needs-author`, `factory/proposed`, `factory/split-proposed`, and `factory/child-of:#p`.
 
 ## A task's life

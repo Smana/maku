@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Web New task starts are broker-confirmed](#web-new-task-starts-are-broker-confirmed)
 - [Opt-in OpenCode harness](#opt-in-opencode-harness)
 - [Workflows as stage lists and custom roles](#workflows-as-stage-lists-and-custom-roles)
 - [Independent stage switches and `scoper.planTier`](#independent-stage-switches-and-scoperplantier)
@@ -44,6 +45,10 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Web New task starts are broker-confirmed
+
+Before this release, the factory refused every web **New task** start: the factory App filed the issue and applied `factory/ready`, and the App is not a maintainer (`unauthorised_labeller`). The App's `workflow:` pin was refused too (`not_maintainer`). Now the broker records each start in the new `handoff_starts` table (migration `20261125120000_handoff_starts.sql`). The factory reads that record over `GET /v1/handoff-starts` as `system:factory`, so the factory and the broker must run the same release. The factory accepts the App's label on that one issue for the recorded human, once their linked login maintains and writes on the repository ([broker-confirmed handoff](security.md#authorization)). That task records the human in `spec.intake`, so it behaves like other planned tasks in two ways. It offers an automatic step-up instead of applying one, because the web plan shows no step-up cost. And the ask stage takes the plan's `Done when` line as already answered (`asked_answered`) instead of asking the author. Only a maintainer gets **Start** now: anyone else is refused with `not_maintainer`, and nothing is filed, because the factory would refuse their start. A broker without a store for the records refuses **Start** with `start_unavailable`. If the broker does not serve the records to the factory (`403`, or an older broker without the route), the factory refuses the label after two minutes with `handoff_unconfirmed`. A broker that does not answer at all is waited on for up to 15 minutes, then refused the same way. No values change.
 
 ## Opt-in OpenCode harness
 

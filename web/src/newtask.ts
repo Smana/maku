@@ -175,6 +175,8 @@ function startRefusalCopy(why?: string): string {
       return "You do not have write access to this repository on GitHub.";
     case "repository_not_offered":
       return "Starting tasks from here is not offered on this repository.";
+    case "not_maintainer":
+      return "Only a maintainer of this repository can start a task. File the issue on GitHub and ask a maintainer to label it factory/ready.";
     case "access_unwired":
     case "unverified":
       return "GitHub access could not be verified right now. Retry.";

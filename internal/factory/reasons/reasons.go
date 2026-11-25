@@ -83,6 +83,7 @@ var table = map[string]Words{
 	"foreign_trailer":               {Short: "its head commit comes from another task's run", Long: "its head commit comes from another task's run", Next: ""},
 	"fork_pull_request":             {Short: "the pull request is from a fork", Long: "it comes from a fork, which the factory never adopts", Next: ""},
 	"gate_path":                     {Short: "touches a gate path", Long: "it touches a gate path, so an agent can never merge it", Next: ""},
+	"handoff_unconfirmed":           {Short: "the web start could not be confirmed", Long: "the web start could not be confirmed with the broker; a maintainer can label the issue factory/ready", Next: ""},
 	"head_moved":                    {Short: "a new commit landed since the decision,…", Long: "a new commit landed since the decision, so the merge was refused and it is decided again", Next: ""},
 	"head_unreported":               {Short: "no run reported the head", Long: "the task's implementer never reported its current head in the room: no handoff of its runs names that commit", Next: ""},
 	"held":                          {Short: "on hold (factory/hold)", Long: "a maintainer put this pull request on hold (factory/hold)", Next: ""},

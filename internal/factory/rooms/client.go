@@ -581,6 +581,50 @@ func (c *Client) GitHubLink(ctx context.Context, sub string) (GitHubLink, bool, 
 	return GitHubLink{GitHubID: out.GitHubID, Active: out.Active}, true, nil
 }
 
+const handoffStartRoute = "/v1/handoff-starts"
+
+// ErrHandoffStartsUnserved is a handoff start read the broker will not answer by retrying: 403 (it
+// does not serve the records to the factory) or a 404 without no_handoff_start (an older broker
+// without the route).
+var ErrHandoffStartsUnserved = errors.New("rooms: the broker serves no handoff starts to the factory")
+
+// HandoffStart is the broker's record of a web New task start (broker-confirmed handoff): the
+// handoff that filed Issue on Repository through the factory App, the ZITADEL sub it was started
+// for, the labels the App applied and when.
+type HandoffStart struct {
+	Handoff    string    `json:"handoff"`
+	Repository string    `json:"repository"`
+	Issue      int       `json:"issue"`
+	Sub        string    `json:"sub"`
+	Labels     []string  `json:"labels"`
+	StartedAt  time.Time `json:"startedAt"`
+}
+
+// HandoffStart reads the broker's record of the web start that filed issue on repository: found is
+// false when the broker filed none; any other refusal, or a record naming another issue or no sub,
+// is an error.
+func (c *Client) HandoffStart(ctx context.Context, repository string, issue int) (HandoffStart, bool, error) {
+	owner, name, ok := strings.Cut(repository, "/")
+	if !ok || owner == "" || name == "" || strings.ContainsAny(repository, "?&#% ") || len(repository) > 140 || issue <= 0 {
+		return HandoffStart{}, false, fmt.Errorf("rooms: %q#%d is not a repository issue", repository, issue)
+	}
+	var out HandoffStart
+	q := "?" + url.Values{"repository": {repository}, "issue": {strconv.Itoa(issue)}}.Encode()
+	err := c.do(ctx, http.MethodGet, handoffStartRoute, "", q, nil, maxReplyOverhead, &out)
+	var api *APIError
+	switch {
+	case errors.As(err, &api) && api.Status == http.StatusNotFound && api.Reason == wire.ReasonNoHandoffStart:
+		return HandoffStart{}, false, nil
+	case errors.As(err, &api) && (api.Status == http.StatusForbidden || api.Status == http.StatusNotFound):
+		return HandoffStart{}, false, fmt.Errorf("%w: %w", ErrHandoffStartsUnserved, err)
+	case err != nil:
+		return HandoffStart{}, false, err
+	case out.Sub == "" || out.Issue != issue || !strings.EqualFold(out.Repository, repository):
+		return HandoffStart{}, false, errors.New("rooms: the broker's handoff start names another issue or no account")
+	}
+	return out, true, nil
+}
+
 // spanReason bounds a refusal's reason, which the peer's reply body sets, to the system API's
 // vocabulary: anything else is "other" on a span.
 func spanReason(r string) string {
@@ -588,7 +632,8 @@ func spanReason(r string) string {
 	case wire.ReasonBadRoom, wire.ReasonBadMessage, wire.ReasonUnauthenticated, wire.ReasonNotPermitted,
 		wire.ReasonNoRoom, wire.ReasonSealed, wire.ReasonRateLimited, wire.ReasonLogUnavailable, wire.ReasonTimedOut,
 		wire.ReasonBadStream, wire.ReasonBadConsume, wire.ReasonNoQueue, wire.ReasonNotLinked, wire.ReasonBadSlackUser,
-		wire.ReasonBadGrant, wire.ReasonNoGrant, wire.ReasonGrantState, wire.ReasonBadSub:
+		wire.ReasonBadGrant, wire.ReasonNoGrant, wire.ReasonGrantState, wire.ReasonBadSub,
+		wire.ReasonBadHandoffStart, wire.ReasonNoHandoffStart:
 		return r
 	}
 	return "other"

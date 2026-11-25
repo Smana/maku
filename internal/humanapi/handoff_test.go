@@ -5,6 +5,7 @@ package humanapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"regexp"
@@ -486,6 +487,22 @@ type fakeIssueStarter struct {
 	reqs []StartIssueRequest
 }
 
+type fakeHandoffStarts struct {
+	mu   sync.Mutex
+	recs []store.HandoffStart
+	err  error
+}
+
+func (f *fakeHandoffStarts) RecordHandoffStart(_ context.Context, h store.HandoffStart) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.err != nil {
+		return f.err
+	}
+	f.recs = append(f.recs, h)
+	return nil
+}
+
 func (f *fakeIssueStarter) StartIssue(_ context.Context, req StartIssueRequest) (StartIssueResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -505,6 +522,7 @@ func TestTheHandoffRoutesNeedAMember(t *testing.T) {
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withHandoffs(st), func(s *Server, _ *fanout.Hub, _ *hubView) {
 		s.StartDefault = true
 		s.IssueStarter = starter
+		s.HandoffStarts = &fakeHandoffStarts{}
 	})
 	post := func(path string, h http.Header, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
@@ -558,6 +576,7 @@ func TestTheHandoffRoutesNeedAMember(t *testing.T) {
 func TestStartFromTheWebFilesAsTheViewer(t *testing.T) {
 	st := newMemHandoffStore()
 	starter := &fakeIssueStarter{}
+	starts := &fakeHandoffStarts{}
 	w := world(nil, "unlinked")
 	w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev", "own", "u2", "u3"}} })
 	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(carefulCatalogue{}), withHandoffs(st),
@@ -565,6 +584,7 @@ func TestStartFromTheWebFilesAsTheViewer(t *testing.T) {
 		func(s *Server, _ *fanout.Hub, _ *hubView) {
 			s.StartDefault = true
 			s.IssueStarter = starter
+			s.HandoffStarts = starts
 		})
 	post := func(path string, h http.Header, body string) *httptest.ResponseRecorder {
 		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
@@ -623,6 +643,16 @@ func TestStartFromTheWebFilesAsTheViewer(t *testing.T) {
 	if !slices.Equal(got.Labels, wantLabels) {
 		t.Fatalf("labels = %v, want %v", got.Labels, wantLabels)
 	}
+	// The start is recorded for the factory's intake (broker-confirmed handoff): the filed issue, the
+	// handoff, the signed-in principal and its sub, the linked login and the labels the App applied.
+	if len(starts.recs) != 1 {
+		t.Fatalf("recorded %d starts, want 1", len(starts.recs))
+	}
+	if r := starts.recs[0]; r.Issue != 101 || r.Handoff != created.ID || r.Principal != "human:dev" || r.Sub != "dev" ||
+		r.Login != "dev" || !strings.EqualFold(r.Repository, "smana/ai-native-ref") || !slices.Equal(r.Labels, wantLabels) ||
+		r.StartedAt.IsZero() || !r.ExpiresAt.Equal(r.StartedAt.Add(store.HandoffStartTTL)) {
+		t.Fatalf("recorded start = %+v", r)
+	}
 
 	// 4. An unlinked viewer is refused cleanly and files nothing.
 	unlinkedRow := store.Handoff{
@@ -650,6 +680,49 @@ func TestStartFromTheWebFilesAsTheViewer(t *testing.T) {
 	if len(starter.reqs) != 1 {
 		t.Fatalf("unlinked start filed an issue: %d", len(starter.reqs))
 	}
+
+	// 5. A start the broker cannot record is answered as such, naming the filed issue: the factory
+	// would not start it.
+	starts.err = errors.New("database down")
+	again := store.Handoff{ID: "unrecordedhandoffid1234567", Principal: "human:dev", Args: unlinkedRow.Args, Plan: unlinkedRow.Plan,
+		Hash: checked.Hash, CreatedAt: e.intake.clock(), ExpiresAt: e.intake.clock().Add(handoffTTL)}
+	if err := st.PutHandoff(t.Context(), again); err != nil {
+		t.Fatal(err)
+	}
+	unRec = post("/api/handoffs/"+again.ID+"/start", header("dev"), `{}`)
+	if unRec.Code != http.StatusServiceUnavailable || json.Unmarshal(unRec.Body.Bytes(), &refBody) != nil ||
+		refBody.Error != "start_unrecorded" || !strings.Contains(unRec.Body.String(), "/issues/") {
+		t.Fatalf("unrecorded start = %d %s", unRec.Code, unRec.Body.String())
+	}
+}
+
+// Without a start store the broker files nothing: the factory could not confirm the App's label.
+func TestStartWithoutAStartRecordFilesNothing(t *testing.T) {
+	st := newMemHandoffStore()
+	starter := &fakeIssueStarter{}
+	w := world(nil)
+	w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev"}} })
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(carefulCatalogue{}), withHandoffs(st),
+		w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.StartDefault = true
+			s.IssueStarter = starter
+		})
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		req.Header = header("dev").Clone()
+		rec := httptest.NewRecorder()
+		e.srv.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+	cRec := post("/api/handoffs", `{"text":"the install link in README.md is dead"}`)
+	var created handoffCreateResponse
+	if cRec.Code != http.StatusOK || json.Unmarshal(cRec.Body.Bytes(), &created) != nil || created.ID == "" {
+		t.Fatalf("create = %d %s", cRec.Code, cRec.Body.String())
+	}
+	rec := post("/api/handoffs/"+created.ID+"/start", `{}`)
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "start_unavailable") || len(starter.reqs) != 0 {
+		t.Fatalf("start = %d %s, filed %d", rec.Code, rec.Body.String(), len(starter.reqs))
+	}
 }
 
 func mustPlanJSON(t *testing.T, p intake.Plan) []byte {
@@ -659,4 +732,51 @@ func mustPlanJSON(t *testing.T, p intake.Plan) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+type strangerCatalogue struct{ carefulCatalogue }
+
+func (strangerCatalogue) Catalogue(_ context.Context, _, _, _ string) (catalogue.Catalogue, error) {
+	return aiNativeRef(false), nil
+}
+
+// A writer the catalogue names as no maintainer is offered no Start, and Start files nothing: the
+// factory would publicly refuse the App's factory/ready on that issue (broker-confirmed handoff).
+func TestANonMaintainerIsOfferedNoStart(t *testing.T) {
+	st := newMemHandoffStore()
+	starter := &fakeIssueStarter{}
+	starts := &fakeHandoffStarts{}
+	w := world(nil)
+	w.set(func() { w.writes = map[string][]string{"smana/ai-native-ref": {"dev"}} })
+	e := setup(t, mcpOn, withIntake(t, "session"), actorOn(&actLog{}), withCatalogue(strangerCatalogue{}), withHandoffs(st),
+		w.option(), func(s *Server, _ *fanout.Hub, _ *hubView) {
+			s.StartDefault = true
+			s.IssueStarter = starter
+			s.HandoffStarts = starts
+		})
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, path, strings.NewReader(body))
+		req.Header = header("dev").Clone()
+		rec := httptest.NewRecorder()
+		e.srv.Routes().ServeHTTP(rec, req)
+		return rec
+	}
+	cRec := post("/api/handoffs", `{"text":"the install link in README.md is dead"}`)
+	var created handoffCreateResponse
+	if cRec.Code != http.StatusOK || json.Unmarshal(cRec.Body.Bytes(), &created) != nil || created.ID == "" {
+		t.Fatalf("create = %d %s", cRec.Code, cRec.Body.String())
+	}
+	var checked handoffCheckResponse
+	chk := post("/api/handoffs/"+created.ID+"/check", `{}`)
+	if chk.Code != http.StatusOK || json.Unmarshal(chk.Body.Bytes(), &checked) != nil {
+		t.Fatalf("check = %d %s", chk.Code, chk.Body.String())
+	}
+	if checked.CanStart || checked.CanStartWhy != startNotMaintainer || !checked.Linked {
+		t.Fatalf("checked canStart=%v why=%q linked=%v", checked.CanStart, checked.CanStartWhy, checked.Linked)
+	}
+	rec := post("/api/handoffs/"+created.ID+"/start", `{}`)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), `"not_maintainer"`) ||
+		!strings.Contains(rec.Body.String(), "ask a maintainer") || len(starter.reqs) != 0 || len(starts.recs) != 0 {
+		t.Fatalf("start = %d %s, filed %d, recorded %d", rec.Code, rec.Body.String(), len(starter.reqs), len(starts.recs))
+	}
 }
