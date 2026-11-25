@@ -41,8 +41,11 @@ var ErrSplit = errors.New("split: why 1-500 bytes; children 2-5, in the order th
 func (s Split) Validate() error {
 	good := strings.TrimSpace(s.Why) != "" && len(s.Why) <= 500 && utf8.ValidString(s.Why) &&
 		!strings.ContainsFunc(s.Why, Control) && len(s.Children) >= MinChildren && len(s.Children) <= MaxChildren
-	for _, c := range s.Children {
+	for i, c := range s.Children {
 		good = good && c.State == ScopeReady && c.Validate() == nil
+		for _, d := range c.DependsOn {
+			good = good && d >= 1 && d < i+1
+		}
 	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)

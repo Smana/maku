@@ -28,6 +28,8 @@ type TaskRequest struct {
 	StepUpShown bool
 	// Outcome is the task outcome the confirmed plan carried (phase F); empty is change.
 	Outcome string
+	// DependsOn lists earlier issue numbers in the same repository that must merge first (phase H2).
+	DependsOn []int32
 }
 
 // TaskResult is the factory's answer: the task and its room (the same id), the issue filed (0
@@ -231,7 +233,8 @@ func (f Factory) CreateTask(ctx context.Context, r TaskRequest) (TaskResult, err
 		Profile     string  `json:"profile,omitempty"`
 		StepUpShown bool    `json:"stepUpShown,omitempty"`
 		Outcome     string  `json:"outcome,omitempty"`
-	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile, r.StepUpShown, r.Outcome})
+		DependsOn   []int32 `json:"dependsOn,omitempty"`
+	}{r.Repository, r.Title, r.Text, r.DataClass, r.MaxCostUSD, r.OnBehalfOf, r.Ref, r.Class, r.Suggested, r.Profile, r.StepUpShown, r.Outcome, r.DependsOn})
 	if err != nil {
 		return TaskResult{}, fmt.Errorf("runrequest: %w", err)
 	}

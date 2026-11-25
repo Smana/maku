@@ -1465,7 +1465,6 @@ func TestSessionStartRefused(t *testing.T) {
 		})
 	}
 }
-
 func TestLoadRoomActs(t *testing.T) {
 	c, err := Load(write(t, valid))
 	if err != nil {
@@ -1499,5 +1498,22 @@ func TestLoadRoomActs(t *testing.T) {
 				t.Fatalf("got %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+func TestIntakeWholePlansSwitch(t *testing.T) {
+	c, err := Load(write(t, valid))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.IntakeWholePlans() {
+		t.Fatal("human.intake.wholePlans must default to false")
+	}
+	on, err := Load(write(t, valid+"  intake:\n    wholePlans: true\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !on.IntakeWholePlans() {
+		t.Fatal("human.intake.wholePlans: true did not load")
 	}
 }

@@ -114,10 +114,19 @@ type WorkflowChoice struct {
 	Path             []string `json:"path,omitempty"`
 }
 
+type handoffIssue struct {
+	Index     int    `json:"index"`
+	Title     string `json:"title"`
+	Body      string `json:"body"`
+	DependsOn []int  `json:"dependsOn,omitempty"`
+}
+
 type handoffDraft struct {
 	Title           string           `json:"title"`
 	Body            string           `json:"body"`
 	Repository      string           `json:"repository"`
+	WholePlans      bool             `json:"wholePlans,omitempty"`
+	Issues          []handoffIssue   `json:"issues,omitempty"`
 	Workflows       []string         `json:"workflows,omitempty"`
 	WorkflowChoices []WorkflowChoice `json:"workflowChoices,omitempty"`
 	DefaultChoice   *WorkflowChoice  `json:"defaultChoice,omitempty"`
@@ -133,6 +142,12 @@ type handoffChecked struct {
 	Title           string           `json:"title"`
 	Body            string           `json:"body"`
 	Repository      string           `json:"repository"`
+	WholePlans      bool             `json:"wholePlans,omitempty"`
+	Issues          []handoffIssue   `json:"issues,omitempty"`
+}
+
+func (s *Server) wholePlans() bool {
+	return s.Intake != nil && s.Intake.WholePlans
 }
 
 type handoffCheckArgs struct {
@@ -720,6 +735,8 @@ func (s *Server) handoffCheckTool(ctx context.Context, p authn.Principal, args j
 			Title:           draft.Title,
 			Body:            draft.Body,
 			Repository:      draft.Repository,
+			WholePlans:      draft.WholePlans,
+			Issues:          draft.Issues,
 		},
 	}, nil
 }
@@ -860,6 +877,7 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	}
 	draft := handoffDraft{
 		Repository:      plan.Repository,
+		WholePlans:      s.wholePlans(),
 		Workflows:       workflows,
 		WorkflowChoices: workflowChoices,
 		DefaultChoice:   defaultChoice,
@@ -868,6 +886,21 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 	if len(plan.Issues) > 0 {
 		draft.Title = plan.Issues[0].Title
 		draft.Body = plan.Issues[0].Body
+	}
+	if draft.WholePlans && len(plan.Issues) > 0 {
+		draft.Issues = make([]handoffIssue, 0, len(plan.Issues))
+		for i, is := range plan.Issues {
+			idx := is.Index
+			if idx == 0 {
+				idx = i + 1
+			}
+			draft.Issues = append(draft.Issues, handoffIssue{
+				Index:     idx,
+				Title:     is.Title,
+				Body:      is.Body,
+				DependsOn: slices.Clone(is.DependsOn),
+			})
+		}
 	}
 	return checked, draft, nil
 }

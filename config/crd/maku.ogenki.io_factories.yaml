@@ -321,6 +321,14 @@ spec:
                             hold: 2 to 5, required.'
                           format: int32
                           type: integer
+                        parallel:
+                          description: |-
+                            Parallel is how many independent parts of a split may be open at once: 1 (default) or 2
+                            (MaxParallelParts, phase H3). Two parts run together only when their declared files do not
+                            overlap, each names at least one check, and neither depends on the other.
+                          maximum: 2
+                          minimum: 1
+                          type: integer
                       type: object
                     stallSteps:
                       description: 'StallSteps ends a run with no commit by this many

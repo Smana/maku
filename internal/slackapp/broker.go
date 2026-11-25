@@ -132,6 +132,15 @@ type RunCreate struct {
 	Key        string // the idempotency key
 }
 
+// FiledIssue is one filed issue of a whole-plan run_create answer (phase H2).
+type FiledIssue struct {
+	Task      string `json:"task"`
+	Room      string `json:"room"`
+	Issue     int    `json:"issue"`
+	Duplicate bool   `json:"duplicate"`
+	URL       string `json:"url"`
+}
+
 // RunResult is what run_create answered: Sponsor is the GitHub login the factory filed as, "" when
 // it did not say. Replanned is set, and nothing was filed, when the stored plan was a plan/v1: the
 // broker answered the plan/v2 to show and confirm instead (P14).
@@ -141,6 +150,7 @@ type RunResult struct {
 	Duplicate bool
 	Sponsor   string
 	Replanned *intake.Plan
+	Issues    []FiledIssue
 }
 
 // ErrUnknownTool is the broker without the tool asked: the self-serve link is off there.
@@ -298,13 +308,14 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 		return RunResult{}, err
 	}
 	var out struct {
-		Room      string      `json:"room"`
-		Issue     int         `json:"issue"`
-		Duplicate bool        `json:"duplicate"`
-		Sponsor   string      `json:"sponsor"`
-		Status    string      `json:"status"`
-		Plan      intake.Plan `json:"plan"`
-		Hash      string      `json:"hash"`
+		Room      string       `json:"room"`
+		Issue     int          `json:"issue"`
+		Duplicate bool         `json:"duplicate"`
+		Sponsor   string       `json:"sponsor"`
+		Status    string       `json:"status"`
+		Plan      intake.Plan  `json:"plan"`
+		Hash      string       `json:"hash"`
+		Issues    []FiledIssue `json:"issues"`
 	}
 	if err := json.Unmarshal(sc, &out); err != nil {
 		return RunResult{}, fmt.Errorf("slackapp: run_create result: %w", err)
@@ -318,7 +329,7 @@ func (b Broker) RunCreate(ctx context.Context, c RunCreate) (RunResult, error) {
 		plan.Hash = out.Hash
 		return RunResult{Replanned: &plan}, nil
 	}
-	return RunResult{Room: out.Room, Issue: out.Issue, Duplicate: out.Duplicate, Sponsor: out.Sponsor}, nil
+	return RunResult{Room: out.Room, Issue: out.Issue, Duplicate: out.Duplicate, Sponsor: out.Sponsor, Issues: out.Issues}, nil
 }
 
 // HandoffRequest is handoff's arguments, as the App has them (UX2). A mention begins one: the
@@ -395,6 +406,7 @@ type HandoffChecked struct {
 	ActiveChoice    *pinOption  `json:"activeChoice,omitempty"`
 	Repository      string      `json:"repository"`
 	Title           string      `json:"title"`
+	WholePlans      bool        `json:"wholePlans,omitempty"`
 }
 
 func (h HandoffChecked) pinOptions() []pinOption {

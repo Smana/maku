@@ -318,12 +318,14 @@ func scoperHandoff(split, profiles bool, nudgeAt int) string {
 	return s + ". Then finish.\n"
 }
 
-// splitHow is the scoper's second answer (splitter design SL1, "The split"), told only to a scoper
-// whose task was offered one.
+// splitHow is the scoper's second answer (splitter design SL1, "The split", phase H3), told only
+// to a scoper whose task was offered one.
 func splitHow(n int32) string {
 	return fmt.Sprintf("This task may be split. If it holds 2 to %d changes that can each be verified and merged "+
 		"alone, in order, hand off split {why, children} beside scope: why says what separates the parts; children lists "+
 		"each change as a scope in state ready, in the order they merge, each written as if the ones before it had merged; "+
+		"for each part, also declare files (path globs the part is allowed to touch), checks (the repository check names that verify the part), "+
+		"and dependsOn (1-based indices of earlier parts it depends on, if any); "+
 		"scope stays the whole task, in state ready. A part is worth its own pull request only when its acceptance checks "+
 		"pass without the parts after it. Otherwise do not split: one change across several files is one task, and a task "+
 		"you ask a question about is never split. A maintainer approves a split before any part starts.\n", n)

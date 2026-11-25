@@ -95,7 +95,7 @@ func TestBrokerRunCreate(t *testing.T) {
 	res, err := b.RunCreate(context.Background(), RunCreate{
 		Repo: "Smana/ai-native-ref", Title: "docs(agents): the link is dead", Body: body,
 		MaxCostUSD: 2, OnBehalfOf: "slack:T01ABC/U02DEF", Ref: ref, Key: "T01ABC/C03/1729.0002"})
-	if err != nil || res != (RunResult{Room: "r-1", Issue: 42, Duplicate: true}) {
+	if err != nil || !reflect.DeepEqual(res, RunResult{Room: "r-1", Issue: 42, Duplicate: true}) {
 		t.Fatalf("%+v %v", res, err)
 	}
 	want := map[string]any{"repo": "Smana/ai-native-ref", "title": "docs(agents): the link is dead",

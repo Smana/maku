@@ -12,6 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -301,6 +303,38 @@ func snapshot(i forge.Issue, clean func(string) (string, sanitize.Report)) (stri
 	return text, forge.SnapshotSHA256(i), rep
 }
 
+// MaxDependsOn is TaskSpec.DependsOn's CRD MaxItems bound (phase H2).
+const MaxDependsOn = 4
+
+var (
+	dependsOnMarkerRE = regexp.MustCompile(`(?i)<!--\s*maku\s+depends-on:\s*([^>]+?)\s*-->`)
+	dependsOnIssueRE  = regexp.MustCompile(`#([1-9][0-9]*)`)
+)
+
+// ParseDependsOn extracts issue dependencies from hidden `<!-- maku depends-on: #12, #13 -->`
+// markers in an issue body (phase H2). Positive integers other than selfIssue are kept in order,
+// deduplicated, and bounded to MaxDependsOn.
+func ParseDependsOn(body string, selfIssue int) []int32 {
+	var out []int32
+	for _, m := range dependsOnMarkerRE.FindAllStringSubmatch(body, -1) {
+		for _, num := range dependsOnIssueRE.FindAllStringSubmatch(m[1], -1) {
+			v, err := strconv.ParseInt(num[1], 10, 32)
+			if err != nil || v <= 0 || v > math.MaxInt32 || int(v) == selfIssue {
+				continue
+			}
+			n32 := int32(v)
+			if slices.Contains(out, n32) {
+				continue
+			}
+			out = append(out, n32)
+			if len(out) >= MaxDependsOn {
+				return out
+			}
+		}
+	}
+	return out
+}
+
 // issueTask is the Task of issue n's snapshot, requested by requestedBy.
 func (p *IssuePoller) issueTask(cfg *config.Config, n int, key, requestedBy string, iss forge.Issue, text, sum string) *v1alpha1.Task {
 	labels := map[string]string{v1alpha1.LabelIssue: strconv.Itoa(n)}
@@ -312,7 +346,7 @@ func (p *IssuePoller) issueTask(cfg *config.Config, n int, key, requestedBy stri
 		Spec: v1alpha1.TaskSpec{
 			Source: v1alpha1.Source{Kind: "issue", Ref: fmt.Sprintf("%s#%d", p.repo(cfg).Name, n), Key: key,
 				RequestedBy: requestedBy, Trust: "untrusted", ContentSHA256: sum},
-			Repository: p.repo(cfg).Name, Issue: n, IssueAuthor: iss.Author, Text: text, DataClass: cfg.Defaults.DataClass,
+			Repository: p.repo(cfg).Name, Issue: n, DependsOn: ParseDependsOn(iss.Body, n), IssueAuthor: iss.Author, Text: text, DataClass: cfg.Defaults.DataClass,
 		},
 	}
 }

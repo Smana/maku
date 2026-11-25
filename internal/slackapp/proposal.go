@@ -110,6 +110,7 @@ type ProposalPayload struct {
 	DefaultCeilingUSD  float64     `json:"defaultCeilingUSD,omitempty"`
 	Path               []string    `json:"path,omitempty"`
 	StepUpUSD          float64     `json:"stepUpUSD,omitempty"`
+	WholePlans         bool        `json:"wholePlans,omitempty"`
 	Plan               intake.Plan `json:"-"`
 }
 
@@ -481,6 +482,25 @@ func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSectio
 		case proposalKeyIssue:
 			if mergeSuffix != "" {
 				s.Body = strings.Replace(s.Body, mergeSuffix, "", 1)
+			}
+			if len(p.Plan.Issues) > 1 {
+				var extra strings.Builder
+				fmt.Fprintf(&extra, "\n\n_The plan holds %d issues; confirming files all %d, in order:_", len(p.Plan.Issues), len(p.Plan.Issues))
+				for i, is := range p.Plan.Issues {
+					idx := is.Index
+					if idx == 0 {
+						idx = i + 1
+					}
+					fmt.Fprintf(&extra, "\n%d. %s", idx, slackText(is.Title))
+					if len(is.DependsOn) > 0 {
+						deps := make([]string, len(is.DependsOn))
+						for j, d := range is.DependsOn {
+							deps[j] = fmt.Sprintf("#%d", d)
+						}
+						fmt.Fprintf(&extra, " (waits for %s)", strings.Join(deps, ", "))
+					}
+				}
+				s.Body += extra.String()
 			}
 			out = append(out, s)
 		case proposalKeyRoles:
@@ -899,6 +919,7 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 	prop.Workflow = res.Workflow
 	prop.DefaultDescription, prop.DefaultCeilingUSD = res.DefaultDescription, res.DefaultCeilingUSD
 	prop.Path, prop.StepUpUSD = res.Path, res.StepUpUSD
+	prop.WholePlans = res.WholePlans
 	if prev != nil {
 		// One proposal per thread: the live message becomes this revision in place, or is reposted and
 		// made inert when Slack refuses the edit. Nothing is posted beside it, so the thread never has
@@ -1164,9 +1185,9 @@ func (a *App) replan(ctx context.Context, ev slackEvent, ch Channel, thread stri
 	next.Workflow = res.Workflow
 	next.DefaultDescription, next.DefaultCeilingUSD = res.DefaultDescription, res.DefaultCeilingUSD
 	next.Path, next.StepUpUSD = res.Path, res.StepUpUSD
-	// Slack files one issue and a re-plan is never a trimmed plan (CD19): the reply path meets the
-	// same refusal the mention's post does, in the same words.
-	if n := len(next.Plan.Issues); n > 1 {
+	next.WholePlans = res.WholePlans
+	// Slack files one issue unless intake.wholePlans is enabled (CD19, phase H2).
+	if n := len(next.Plan.Issues); n > 1 && !next.WholePlans {
 		return a.refusedWith(ctx, ev.Channel, thread, notPostedIssueLine(n, a.RoomsURL), "multi_issue")
 	}
 	return a.updateProposal(ctx, ev.Channel, latest.TS, p, next, res.Question)
@@ -1230,6 +1251,7 @@ type planOutcome struct {
 	DefaultCeilingUSD  float64
 	Path               []string
 	StepUpUSD          float64
+	WholePlans         bool
 }
 
 // plan calls handoff followed by handoff_check and, when the planner has not answered within
@@ -1267,13 +1289,14 @@ func (a *App) plan(ctx context.Context, channel, thread string, st *planStatus, 
 			q = &intake.Question{Text: hres.Question.Text, Recommended: intake.Answer{Answer: hres.Question.Recommended}}
 		}
 		out := planOutcome{
-			ID:       hres.ID,
-			Plan:     checked.Plan,
-			Hash:     checked.Hash,
-			Question: q,
-			Degraded: strings.Contains(hres.Text, intake.TemplateLabel),
-			Pins:     checked.pinOptions(),
-			Workflow: hres.Workflow,
+			ID:         hres.ID,
+			Plan:       checked.Plan,
+			Hash:       checked.Hash,
+			Question:   q,
+			Degraded:   strings.Contains(hres.Text, intake.TemplateLabel),
+			Pins:       checked.pinOptions(),
+			Workflow:   hres.Workflow,
+			WholePlans: checked.WholePlans,
 		}
 		if checked.DefaultChoice != nil {
 			out.DefaultDescription, out.DefaultCeilingUSD = checked.DefaultChoice.Description, checked.DefaultChoice.CeilingUSD
@@ -1467,10 +1490,11 @@ func (a *App) postProposalIn(ctx context.Context, channel, thread string, st *pl
 	prop.Workflow = p.Workflow
 	prop.DefaultDescription, prop.DefaultCeilingUSD = p.DefaultDescription, p.DefaultCeilingUSD
 	prop.Path, prop.StepUpUSD = p.Path, p.StepUpUSD
+	prop.WholePlans = p.WholePlans
 	if p.Pinned != "" {
 		prop.Pinned = p.Pinned
 	}
-	if n := len(prop.Plan.Issues); n > 1 {
+	if n := len(prop.Plan.Issues); n > 1 && !prop.WholePlans {
 		if !say(notPostedIssueLine(n, a.RoomsURL)) {
 			return "error"
 		}
@@ -1533,6 +1557,7 @@ func (a *App) updateProposal(ctx context.Context, channel, ts string, prev, next
 	prop.Degraded, prop.Pins, prop.Workflow = next.Degraded, next.Pins, next.Workflow
 	prop.DefaultDescription, prop.DefaultCeilingUSD = next.DefaultDescription, next.DefaultCeilingUSD
 	prop.Path, prop.StepUpUSD = next.Path, next.StepUpUSD
+	prop.WholePlans = next.WholePlans
 	if next.Pinned != "" {
 		prop.Pinned = next.Pinned
 	}
@@ -1698,7 +1723,9 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	case !servesRepo(ch.Repositories, p.Repo):
 		return refuse("repository", fmt.Sprintf("Not filed: %s isn't served in this channel; ask an operator to add it to the channel's repositories.",
 			slackText(p.Repo)))
-	case p.Plan.APIVersion != "" && len(p.Plan.Issues) != 1: // Slack files one issue: a proposal was posted only if it had one
+	case p.Plan.APIVersion != "" && len(p.Plan.Issues) == 0:
+		return refuse("issue", "Not filed: this proposal carries no issue; mention me again to re-plan it.")
+	case p.Plan.APIVersion != "" && len(p.Plan.Issues) != 1 && !p.WholePlans: // Slack files one issue unless wholePlans is enabled
 		return refuse("issue", "Not filed: this proposal does not carry exactly one issue; mention me again to re-plan it.")
 	}
 
@@ -1798,6 +1825,13 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 	if err := a.Threads.Put(ctx, res.Room, Thread{Channel: channel, TS: thread, At: a.now(), Author: p.Author, Filer: user}); err != nil {
 		a.log().Warn("thread map put failed", "room", res.Room, "err", err)
 	}
+	for _, it := range res.Issues {
+		if it.Room != "" && it.Room != res.Room && roomRE.MatchString(it.Room) {
+			if err := a.Threads.Put(ctx, it.Room, Thread{Channel: channel, TS: thread, At: a.now()}); err != nil {
+				a.log().Warn("thread map put failed", "room", it.Room, "err", err)
+			}
+		}
+	}
 	// The Filed line replaces the proposal in place: one message from the mention to the room. An
 	// emptied block list, not none — chat.update leaves a message's blocks as they are when the key is
 	// absent, so nil would keep Confirm and Cancel live on the message that filed the plan (Review
@@ -1821,13 +1855,25 @@ func (a *App) fileProposal(ctx context.Context, channel, thread, itemTS, user st
 // here so the ✅ fallback and PR 6's Confirm say exactly what the draft path has always said. It is a
 // method because the room link comes from the App's own rooms URL.
 func (a *App) filedText(res RunResult, user string) string {
-	url := strings.TrimSuffix(a.RoomsURL, "/") + "/r/" + res.Room
+	root := strings.TrimSuffix(a.RoomsURL, "/")
+	url := root + "/r/" + res.Room
 	if res.Duplicate {
 		return "Already filed: " + url
 	}
 	by := ""
 	if githubLoginRE.MatchString(res.Sponsor) { // named so a wrong link is seen at its first use
 		by = ", sponsored by GitHub @" + res.Sponsor
+	}
+	if len(res.Issues) > 1 {
+		parts := make([]string, 0, len(res.Issues))
+		for _, it := range res.Issues {
+			roomURL := root + "/r/" + it.Room
+			if it.URL != "" {
+				roomURL = it.URL
+			}
+			parts = append(parts, fmt.Sprintf("#%d (%s)", it.Issue, roomURL))
+		}
+		return fmt.Sprintf("Filed %d issues for <@%s>%s: %s", len(res.Issues), user, by, strings.Join(parts, ", "))
 	}
 	return fmt.Sprintf("Filed #%d for <@%s>%s; the factory starts it. Room: %s", res.Issue, user, by, url)
 }

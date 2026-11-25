@@ -73,6 +73,9 @@ func (r *Reconciler) awaitingCI(ctx context.Context, cfg *config.Config, t *v1al
 		record(ctx, func(ctx context.Context) { r.Metrics.PROutcome(ctx, class, "closed") })
 		return r.end(ctx, cfg, t, v1alpha1.PhaseClosed, "pr_closed")
 	}
+	if escalated, err := r.checkDeclaredFiles(ctx, cfg, t); err != nil || escalated {
+		return err
+	}
 	r.countApproves(ctx, cfg, t, pr)
 	policy := r.gatePolicy(cfg, r.repo(cfg, t), t.Spec.Repository) // stage 4: one read for the pass
 	// An adopted pull request is Renovate's: a maintainer's veto is the gate's changes_requested

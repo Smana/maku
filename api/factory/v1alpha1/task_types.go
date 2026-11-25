@@ -97,6 +97,12 @@ type TaskSpec struct {
 	// +kubebuilder:validation:Minimum=0
 	// +optional
 	Issue int `json:"issue,omitempty"`
+	// DependsOn lists earlier GitHub issue numbers in the same repository that must merge before
+	// this task starts (phase H2). Empty for an independent task.
+	// +kubebuilder:validation:MaxItems=4
+	// +kubebuilder:validation:items:Minimum=1
+	// +optional
+	DependsOn []int32 `json:"dependsOn,omitempty"`
 	// The issue's author on GitHub, for the room list's "mine" filter.
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
@@ -267,6 +273,11 @@ type SplitSpec struct {
 	FamilyMicroUSD int64 `json:"familyMicroUSD"`
 	// +kubebuilder:validation:Enum=light;standard;frontier
 	ChildTier string `json:"childTier"`
+	// Parallel is how many independent parts may be open at once: 1 (default) or 2 (phase H3).
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2
+	// +optional
+	Parallel int32 `json:"parallel,omitempty"`
 }
 
 // Parent names a child's parent task and issue, and which part of how many it is (SL5).
@@ -329,6 +340,16 @@ type TaskScope struct {
 	// +kubebuilder:validation:MinItems=1
 	// +kubebuilder:validation:MaxItems=5
 	Acceptance []TaskAcceptance `json:"acceptance"`
+	// Files are the path globs this part is allowed to touch (phase H3).
+	// +kubebuilder:validation:MaxItems=20
+	// +kubebuilder:validation:items:MaxLength=200
+	// +optional
+	Files []string `json:"files,omitempty"`
+	// Checks are the repository check names that verify this part (phase H3).
+	// +kubebuilder:validation:MaxItems=20
+	// +kubebuilder:validation:items:MaxLength=200
+	// +optional
+	Checks []string `json:"checks,omitempty"`
 }
 
 // TaskAcceptance is one acceptance check of a part.
@@ -768,6 +789,10 @@ type SplitStatus struct {
 	// +kubebuilder:validation:MaxItems=5
 	// +optional
 	Children []SplitChild `json:"children,omitempty"`
+	// Serialised records that a part touched a file outside its declared files, returning the
+	// family to one part at a time for the remainder of the split (phase H3).
+	// +optional
+	Serialised bool `json:"serialised,omitempty"`
 }
 
 // SplitChild is one opened part.

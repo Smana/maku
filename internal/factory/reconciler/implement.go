@@ -1033,6 +1033,9 @@ func cause(t *v1alpha1.Task) string {
 // is verified like any revision: it moved the head, and the gate only arms on a verdict of the
 // head it decides (R03), so skipping the review would hand it off as verdict_stale (N1).
 func (r *Reconciler) afterWriter(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
+	if escalated, err := r.checkDeclaredFiles(ctx, cfg, t); err != nil || escalated {
+		return err
+	}
 	if cause(t) == "human" {
 		pr, err := r.readPR(ctx, t)
 		if err != nil {

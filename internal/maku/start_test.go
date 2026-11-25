@@ -3,6 +3,7 @@
 package maku
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -523,5 +524,113 @@ func TestStartsWorkflowArgumentPreselectsTheField(t *testing.T) {
 	sc := res["result"].(map[string]any)["structuredContent"].(map[string]any)
 	if sc["workflow_ignored"] != "nope is not offered here" {
 		t.Fatalf("structuredContent = %v", sc)
+	}
+}
+
+// Phase H2: with intake.wholePlans on, start shows "The plan holds N issues: this files all N, in
+// order.", files every issue in order with both the visible "Waits for #..." line and the hidden
+// `<!-- maku depends-on: #... -->` marker, and labels each filed issue when Start now is on.
+func TestStartFilesEveryIssueOfThePlan(t *testing.T) {
+	p := planFixture(t, "three")
+	hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+		res := handoffCheckedResult(t, p, true, []string{"standard"})
+		sc := res["structuredContent"].(map[string]any)
+		sc["wholePlans"] = true
+		return res
+	})
+	hb.rooms = []map[string]any{{"id": "3kq7x2ma", "repository": p.Repository, "issue": 101}}
+
+	var filedCalls []struct{ repo, title, body string }
+	nextNum := 101
+	fileFn := func(_ context.Context, repo, title, body string) (string, error) {
+		filedCalls = append(filedCalls, struct{ repo, title, body string }{repo, title, body})
+		url := fmt.Sprintf("https://github.com/%s/issues/%d", repo, nextNum)
+		nextNum++
+		return url, nil
+	}
+	l := &labeling{}
+	b := &mcpBroker{srv: hb.srv}
+	s := relayTo(t, b, tok, withFile(fileFn), func(r *Relay) {
+		r.Label = l.label
+		r.RoomWait = 50 * time.Millisecond
+		r.After = func(time.Duration) <-chan time.Time { return time.After(5 * time.Millisecond) }
+	})
+	s.request(t, 1, "initialize", map[string]any{"capabilities": map[string]any{"elicitation": map[string]any{}}})
+
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa"}}})
+	ask := s.next(t)
+	msg := ask["params"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "The plan holds 3 issues: this files all 3, in order.") {
+		t.Fatalf("form message missing whole-plan line:\n%s", msg)
+	}
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{
+		"action":  "accept",
+		"content": map[string]any{"file": true, "start": true},
+	}})
+	res := s.next(t)
+	if len(filedCalls) != 3 {
+		t.Fatalf("filed %d issues, want 3", len(filedCalls))
+	}
+	// Issue 1: no dependencies.
+	if filedCalls[0].title != p.Issues[0].Title || strings.Contains(filedCalls[0].body, "maku depends-on") {
+		t.Fatalf("issue 1 = %+v", filedCalls[0])
+	}
+	// Issue 2: waits for #101.
+	if filedCalls[1].title != p.Issues[1].Title ||
+		!strings.Contains(filedCalls[1].body, "Waits for #101") ||
+		!strings.Contains(filedCalls[1].body, "<!-- maku depends-on: #101 -->") {
+		t.Fatalf("issue 2 missing dependency lines:\n%s", filedCalls[1].body)
+	}
+	// Issue 3: waits for #101, #102.
+	if filedCalls[2].title != p.Issues[2].Title ||
+		!strings.Contains(filedCalls[2].body, "Waits for #101, #102") ||
+		!strings.Contains(filedCalls[2].body, "<!-- maku depends-on: #101, #102 -->") {
+		t.Fatalf("issue 3 missing dependency lines:\n%s", filedCalls[2].body)
+	}
+	wantLabels := []string{
+		p.Repository + "#101+factory/ready",
+		p.Repository + "#102+factory/ready",
+		p.Repository + "#103+factory/ready",
+	}
+	if !slices.Equal(l.calls, wantLabels) {
+		t.Fatalf("labels = %v, want %v", l.calls, wantLabels)
+	}
+	sc := res["result"].(map[string]any)["structuredContent"].(map[string]any)
+	urls, _ := sc["urls"].([]any)
+	if len(urls) != 3 {
+		t.Fatalf("structuredContent urls = %v, want 3", sc["urls"])
+	}
+}
+
+// Phase H2: with intake.wholePlans off (the default), start keeps the single-issue line and files
+// only the first issue of a multi-issue plan.
+func TestWholePlansOffFilesTheFirstOnly(t *testing.T) {
+	p := planFixture(t, "three")
+	hb := newHandoffBroker(t, func(_ int, _ map[string]any) map[string]any {
+		return handoffCheckedResult(t, p, true, []string{"standard"})
+	})
+	hb.rooms = []map[string]any{{"id": "3kq7x2ma", "repository": p.Repository, "issue": 7}}
+	f := &filing{url: "https://github.com/" + p.Repository + "/issues/7"}
+	l := &labeling{}
+	s := handoffSession(t, hb, true, f, l, nil)
+
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": mcpwire.Start, "arguments": map[string]any{"id": "aaaaaaaaaaaaaaaaaaaaaaaaaa"}}})
+	ask := s.next(t)
+	msg := ask["params"].(map[string]any)["message"].(string)
+	if !strings.Contains(msg, "The plan holds 3 issues: this files the first.") {
+		t.Fatalf("form message missing first-only line:\n%s", msg)
+	}
+	s.send(t, map[string]any{"jsonrpc": "2.0", "id": ask["id"], "result": map[string]any{
+		"action":  "accept",
+		"content": map[string]any{"file": true, "start": true},
+	}})
+	s.next(t)
+	if len(f.calls) != 1 || !strings.Contains(f.calls[0], p.Issues[0].Title) {
+		t.Fatalf("File calls = %v, want first issue only", f.calls)
+	}
+	if len(l.calls) != 1 {
+		t.Fatalf("Label calls = %v, want 1", l.calls)
 	}
 }

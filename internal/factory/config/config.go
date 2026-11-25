@@ -2649,6 +2649,23 @@ type SplitPolicy struct {
 	// AnyTier offers the split to every task of the class, whatever tier C7 rated it (SP1's
 	// option (b), an explicit opt-in); omitted, only a task C7 rated frontier is offered one.
 	AnyTier bool `json:"anyTier,omitempty"`
+	// Parallel is how many independent parts of a split may be open at once: 1 (default) or 2
+	// (MaxParallelParts, phase H3). Two parts run together only when their declared files do not
+	// overlap, each names at least one check, and neither depends on the other.
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=2
+	Parallel int `json:"parallel,omitempty"`
+}
+
+// MaxParallelParts is the most parts of one split that may be open at once (phase H1/H3).
+const MaxParallelParts = 2
+
+// ParallelOr returns the configured parallel part limit, defaulting to 1 when unset.
+func (s SplitPolicy) ParallelOr() int {
+	if s.Parallel > 0 {
+		return s.Parallel
+	}
+	return 1
 }
 
 // MaxFamilyUSD bounds familyUSD so its conversion to micro-dollars stays in range.
@@ -2816,6 +2833,8 @@ func (c *Config) validateLoops(bad func(string, ...any)) {
 				bad("loops.%s.split.familyUSD must be 0 (the default) or positive and at most %d", name, MaxFamilyUSD)
 			case s.FamilyUSD != 0 && s.FamilyUSD < c.Tiers[tier].TaskUSD:
 				bad("loops.%s.split.familyUSD %.2f is below the %s tier's taskUSD %.2f: no part would fit", name, s.FamilyUSD, tier, c.Tiers[tier].TaskUSD)
+			case s.Parallel < 0 || s.Parallel > MaxParallelParts:
+				bad("loops.%s.split.parallel must be 1..%d", name, MaxParallelParts)
 			}
 		}
 		// D5: the scoper and the loop policy run on the run-controller too, which enforces the
