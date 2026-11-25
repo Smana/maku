@@ -245,6 +245,13 @@ spec:
                     maxLength: 63
                     pattern: ^[a-z0-9][a-z0-9-]{0,62}$
                     type: string
+                  harness:
+                    description: Harness is an optional maintainer harness selection
+                      pinned at intake (openhands or opencode).
+                    enum:
+                    - openhands
+                    - opencode
+                    type: string
                   login:
                     maxLength: 64
                     type: string
@@ -2279,9 +2286,27 @@ spec:
                     - labeled
                     - control
                     - treatment
+                    - rescue
                     type: string
                   counted:
                     type: boolean
+                  harness:
+                    description: |-
+                      Harness is the task's frozen harness (openhands or opencode); set at triage and changed only
+                      by an explicit maintainer rescue command.
+                    enum:
+                    - openhands
+                    - opencode
+                    type: string
+                  harnessSource:
+                    description: 'HarnessSource records why Harness was chosen: labeled,
+                      treatment, default, or rescue.'
+                    enum:
+                    - labeled
+                    - treatment
+                    - default
+                    - rescue
+                    type: string
                   name:
                     maxLength: 63
                     type: string
@@ -2678,6 +2703,13 @@ spec:
                           description: The factory build that created the claim (version.Version),
                             from its CREATE-only annotation.
                           maxLength: 64
+                          type: string
+                        harness:
+                          description: Harness is the harness recorded on the run's
+                            AgentRun claim (openhands or opencode).
+                          enum:
+                          - openhands
+                          - opencode
                           type: string
                         harnessImage:
                           description: |-

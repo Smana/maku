@@ -172,6 +172,14 @@ spec:
                   dataClass:
                     maxLength: 253
                     type: string
+                  harness:
+                    description: |-
+                      Harness is the default harness for new tasks when no maintainer label or treatment arm overrides it.
+                      Empty defaults to openhands.
+                    enum:
+                    - openhands
+                    - opencode
+                    type: string
                   predictedClass:
                     maxLength: 253
                     type: string
@@ -191,6 +199,14 @@ spec:
                     type: string
                   treatment:
                     maxLength: 253
+                    type: string
+                  treatmentHarness:
+                    description: |-
+                      TreatmentHarness selects the harness for the treatment cohort without changing workflow,
+                      template, loop, checks, model, effort, or tier. Empty uses defaults.harness (openhands).
+                    enum:
+                    - openhands
+                    - opencode
                     type: string
                 type: object
               facts:

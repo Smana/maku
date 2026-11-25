@@ -24,15 +24,19 @@ type Decision struct {
 	Cohort           string
 	// Pin is the profile a person pinned and whether triage refused it (P6); zero without one.
 	Pin Pin
+	// HarnessPin is the harness a person pinned (harness:<name> label or intake.harness) and
+	// whether triage refused it; zero without one.
+	HarnessPin Pin
 	// Notes are sentences triage says once on the task, such as LegacyLabelNote.
 	Notes []string
 }
 
-// The evaluation cohorts a task is frozen in at triage.
+// The evaluation cohorts a task is frozen in at triage, plus rescue for an explicit OpenHands rescue.
 const (
 	CohortLabeled   = "labeled"
 	CohortControl   = "control"
 	CohortTreatment = "treatment"
+	CohortRescue    = "rescue"
 )
 
 // CohortOf is a task's evaluation group: a pinned profile is labeled, else percent % are control.

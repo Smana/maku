@@ -157,7 +157,7 @@ func (r *Reconciler) recordExisting(ctx context.Context, cfg *config.Config, t *
 	r.runWait(ctx, t, x.Role, started.Time)
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: x.ID, Role: x.Role, Persona: cmp.Or(x.Persona, personaOf(t, v1alpha1.RunRecord{Role: x.Role})), Trigger: trigger,
 		Round: t.Status.ReviewRounds, Phase: x.Phase, Tokens: x.Tokens, StartSeq: x.StartSeq, HeadSHA: x.Head,
-		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x)},
+		Started: &started, ChargedTo: x.ChargedTo, Provenance: v1alpha1.RunProvenance{ModelSource: r.modelSourceOf(cfg, t, x), Harness: x.Harness},
 		Audited: x.Canary != "" && r.auditsRun(cfg, t, x.Role)}) // the claim says whether it started under audit
 	if overlapPending(t) && x.Role == "triager" {
 		t.Status.Overlap.ScoperRun = x.ID
@@ -270,6 +270,18 @@ func traceparent(t *v1alpha1.Task) string {
 	return tracing.Traceparent(t.Status.Trace.TraceID, t.Status.Trace.SpanID)
 }
 
+// harnessFor returns the frozen harness for t's runs. Integration-only (no-model) runs are forced
+// to OpenHands; otherwise the task's frozen ProfileStatus.Harness applies (empty for legacy tasks).
+func harnessFor(t *v1alpha1.Task, s runs.Spec) string {
+	if t.Spec.Kind == "integration" || s.CoordinationManifest != "" {
+		return config.HarnessOpenHands
+	}
+	if p := t.Status.Profile; p != nil && p.Harness != "" {
+		return p.Harness
+	}
+	return ""
+}
+
 func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, s runs.Spec, trigger string) error {
 	// The room's lastSeq before the run: its handoff, verdict and end are read after it, never
 	// from the start of a long room (EventsSince stops at 10,000 events). It rides the claim
@@ -300,6 +312,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	} else if s.Effort == "" {
 		s.Effort = cfg.EffortFor(wf, s.Role)
 	}
+	s.Harness = harnessFor(t, s)
 	r.plantCanary(cfg, t, &s)     // hardening audit or enforce only (HR7)
 	r.markSafeOutputs(cfg, t, &s) // the repository's enforceOutputs only (HR14)
 	r.markForgeAPI(cfg, t, &s)    // mode enforce only (HR36)
@@ -338,7 +351,7 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 	r.runWait(ctx, t, s.Role, now.Time)
 	t.Status.Runs = append(t.Status.Runs, v1alpha1.RunRecord{ID: s.RunID, Role: s.Role, Persona: s.Persona, Trigger: trigger,
 		Round: t.Status.ReviewRounds, StartSeq: last, HeadSHA: s.Head, Started: &now, ChargedTo: s.ChargedTo,
-		Provenance: v1alpha1.RunProvenance{ModelSource: source}, Audited: r.auditsRun(cfg, t, s.Role)})
+		Provenance: v1alpha1.RunProvenance{ModelSource: source, Harness: s.Harness}, Audited: r.auditsRun(cfg, t, s.Role)})
 	t.Status.NextTrigger = ""
 	r.recordInputTrust(ctx, cfg, t, trigger) // hardening audit or enforce only (UH7)
 	r.to(t, phaseFor(s.Role), "")

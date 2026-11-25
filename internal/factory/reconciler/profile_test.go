@@ -93,10 +93,10 @@ func TestTriageFreezesTheFloor(t *testing.T) {
 		percent int
 		want    v1alpha1.ProfileStatus
 	}{
-		"unlabelled":              {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Checks: true}},
-		"labelled":                {"class:review", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Checks: true}},
-		"labelled, in the cohort": {"class:review", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
-		"in the cohort":           {"", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Checks: true}},
+		"unlabelled":              {"", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Harness: "openhands", HarnessSource: "default", Checks: true}},
+		"labelled":                {"class:review", 0, v1alpha1.ProfileStatus{Name: "review-floor", Source: "repository", Cohort: "treatment", Harness: "openhands", HarnessSource: "default", Checks: true}},
+		"labelled, in the cohort": {"class:review", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Harness: "openhands", HarnessSource: "default", Checks: true}},
+		"in the cohort":           {"", 100, v1alpha1.ProfileStatus{Name: "review-floor", Source: "control", Cohort: "control", Harness: "openhands", HarnessSource: "default", Checks: true}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			cf := profileCfg(true)

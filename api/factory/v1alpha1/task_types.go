@@ -440,8 +440,17 @@ type ProfileStatus struct {
 	// the class.
 	// +kubebuilder:validation:Enum=label;schedule;revert;oracle;repository;floor;control;treatment;scoper;escalation
 	Source string `json:"source"`
-	// +kubebuilder:validation:Enum=labeled;control;treatment
+	// +kubebuilder:validation:Enum=labeled;control;treatment;rescue
 	Cohort string `json:"cohort"`
+	// Harness is the task's frozen harness (openhands or opencode); set at triage and changed only
+	// by an explicit maintainer rescue command.
+	// +kubebuilder:validation:Enum=openhands;opencode
+	// +optional
+	Harness string `json:"harness,omitempty"`
+	// HarnessSource records why Harness was chosen: labeled, treatment, default, or rescue.
+	// +kubebuilder:validation:Enum=labeled;treatment;default;rescue
+	// +optional
+	HarnessSource string `json:"harnessSource,omitempty"`
 	// +kubebuilder:validation:MaxLength=32
 	// +optional
 	Reason string `json:"reason,omitempty"`
@@ -1005,6 +1014,10 @@ type RunProvenance struct {
 	// +kubebuilder:validation:Enum=tier;reviewerModel;classModels
 	// +optional
 	ModelSource string `json:"modelSource,omitempty"`
+	// Harness is the harness recorded on the run's AgentRun claim (openhands or opencode).
+	// +kubebuilder:validation:Enum=openhands;opencode
+	// +optional
+	Harness string `json:"harness,omitempty"`
 }
 
 // The sources of a run's model (RunProvenance.ModelSource).
@@ -1017,7 +1030,7 @@ const (
 // IsZero reports whether no fact the room shows is known yet: ModelSource is the factory's own
 // record, set at creation, and never makes a run's provenance a room fact on its own.
 func (p RunProvenance) IsZero() bool {
-	return p.FactoryVersion == "" && p.CompositionRevision == "" && p.HarnessImage == "" && len(p.ServedModels) == 0
+	return p.FactoryVersion == "" && p.CompositionRevision == "" && p.HarnessImage == "" && len(p.ServedModels) == 0 && p.Harness == ""
 }
 
 // MonitorStatus is one merge's watch. A signal is "" while open, then healthy, regression or
@@ -1268,4 +1281,8 @@ type TaskIntake struct {
 	// +kubebuilder:validation:MaxLength=16
 	// +optional
 	Outcome string `json:"outcome,omitempty"`
+	// Harness is an optional maintainer harness selection pinned at intake (openhands or opencode).
+	// +kubebuilder:validation:Enum=openhands;opencode
+	// +optional
+	Harness string `json:"harness,omitempty"`
 }

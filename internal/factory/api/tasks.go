@@ -63,6 +63,8 @@ type TaskRequest struct {
 	Outcome string `json:"outcome,omitempty"`
 	// DependsOn lists earlier issue numbers in the same repository that must merge first (phase H2).
 	DependsOn []int32 `json:"dependsOn,omitempty"`
+	// Harness is an optional maintainer harness pin (openhands or opencode).
+	Harness string `json:"harness,omitempty"`
 	// Incident is an internal principal's finding (RA3); a sponsored principal's request refuses it.
 	Incident *Incident `json:"incident,omitempty"`
 }
@@ -144,6 +146,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case in.Outcome != "" && !config.ValidOutcome(in.Outcome):
+		out(http.StatusBadRequest, "bad_json")
+		return
+	case in.Harness != "" && !config.ValidHarness(in.Harness):
 		out(http.StatusBadRequest, "bad_json")
 		return
 	case key == "" || len(key) > maxKeyLen:
@@ -446,8 +451,8 @@ func (s *Server) admitTask(ctx context.Context, cfg *config.Config, sp *config.S
 			Source: factoryv1.Source{Kind: "api", Ref: ref, Key: "api:" + sp.Name + ":" + key, RequestedBy: sp.Principal(),
 				Sponsor: factoryv1.Person(login), OnBehalfOf: in.OnBehalfOf, Trust: "untrusted", ContentSHA256: hex.EncodeToString(sum[:])},
 			Repository: in.Repository, DependsOn: deps, Text: clean, DataClass: in.DataClass, Outcome: in.Outcome, MaxMicroUSD: maxUSD, IssueAuthor: login}}
-	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown || in.Outcome != "" {
-		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown, Outcome: in.Outcome}
+	if in.Class != "" || in.Suggested != "" || in.Profile != "" || in.StepUpShown || in.Outcome != "" || in.Harness != "" {
+		t.Spec.Intake = &factoryv1.TaskIntake{Class: in.Class, Suggested: in.Suggested, Profile: in.Profile, Login: login, StepUpShown: in.StepUpShown, Outcome: in.Outcome, Harness: in.Harness}
 	}
 	if err := s.Rooms.Create(ctx, t); apierrors.IsAlreadyExists(err) {
 		reader := client.Reader(s.Rooms)

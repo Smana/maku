@@ -65,6 +65,7 @@ type RunRequest struct {
 	DataClass      string   `json:"dataClass"`
 	RoomRef        string   `json:"roomRef"`
 	Model          string   `json:"model"`
+	Harness        string   `json:"harness,omitempty"`
 	MaxTokens      int64    `json:"maxTokens"`
 	EgressProfiles []string `json:"egressProfiles"`
 	// R35: a stopped run's branch, to resume on. Never a task's or a live run's.
@@ -476,7 +477,7 @@ func (s *Server) createRun(w http.ResponseWriter, r *http.Request) {
 	}
 	spec := runs.Spec{RunID: id, Role: in.Role, Repository: in.Repository, BaseRef: in.BaseRef, Branch: branch,
 		TaskText: in.Task.Text, TaskURL: in.Task.URL, Principal: p.ID, ChargedTo: person, DataClass: in.DataClass, Model: in.Model,
-		RoomRef: in.RoomRef, MaxTokens: in.MaxTokens, MaxMinutes: 120,
+		Harness: in.Harness, RoomRef: in.RoomRef, MaxTokens: in.MaxTokens, MaxMinutes: 120,
 		EgressProfiles: in.EgressProfiles, RequestHash: hash, Suspendable: suspendable}
 	if err := s.Runs.Create(r.Context(), spec); err != nil {
 		// Without this the reservation would eat the principal's day (and room) forever:
@@ -564,6 +565,8 @@ func validate(in RunRequest) string {
 		return "a_room_already_names_its_branch"
 	case in.Model != "" && !slices.Contains(models, in.Model):
 		return "bad_model"
+	case in.Harness != "" && !config.ValidHarness(in.Harness):
+		return "bad_harness"
 	case in.DataClass == "internal" && config.PublicOnly(in.Model): // Moonshot processes in China, Mistral in the EU (F4)
 		return "provider_alias_is_public_only"
 	case in.MaxTokens < 0 || in.MaxTokens > config.RunTokenCeiling:
