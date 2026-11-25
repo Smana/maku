@@ -31,6 +31,10 @@ func group(reason string) string {
 
 func stepUpRoleMatches(reason, role string) bool {
 	switch reason {
+	case "budget-task":
+		// The task cap stops the next run before it starts, whichever role it is: the role of the
+		// run before it (a reviewer's, after a rescue retry) says nothing about the step.
+		return true
 	case "review_rounds_exhausted":
 		return role == "reviewer"
 	case "ci_red":
@@ -67,9 +71,11 @@ func targetCeilingMicroUSD(cfg *config.Config, t *v1alpha1.Task, v config.Harnes
 }
 
 // stepUp runs t once more under the workflow its own workflow's stepUp (or legacy escalation) names
-// for reason, instead of escalating it (WR4). When auto step-up is held back (pinned workflow,
-// capped below target ceiling, repository stepUp: ask, or a confirmed plan that did not show the
-// stepped-up figure), it records StepUp{Mode: "offered"} and lets the task escalate.
+// for reason, instead of escalating it (WR4). When auto step-up is held back (a run of a role the
+// reason does not step, a workflow-evaluation arm, pinned workflow, capped below target ceiling,
+// repository stepUp: ask, or a confirmed plan that did not show the stepped-up figure), it records
+// StepUp{Mode: "offered"} and lets the task escalate with the offer and its reason. Only a
+// repository's stepUp: off escalates without one.
 func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, reason string) (bool, error) {
 	p := t.Status.Profile
 	if p == nil || !p.Resolved || len(t.Status.Runs) == 0 {
@@ -80,15 +86,12 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 		r.stepped(t, d)
 		return true, nil
 	}
-	if !stepUpRoleMatches(reason, current(t).Role) {
-		return false, nil
-	}
 	g := group(reason)
 	if g == "" {
 		return false, nil
 	}
 	target := cfg.StepUpFor(p.Name, reason)
-	if target == "" || target == p.Name || alreadyStepped(p) || p.Source == "treatment" || p.Cohort == "control" {
+	if target == "" || target == p.Name || alreadyStepped(p) {
 		return false, nil // the same workflow again rarely converges: a maintainer decides (P10)
 	}
 	mode := r.repo(cfg, t).StepUpMode()
@@ -114,6 +117,13 @@ func (r *Reconciler) stepUp(ctx context.Context, cfg *config.Config, t *v1alpha1
 		r.noteStage(t, "step_up", stepUpEffect("offered", "left"))
 		narrateLater(t, narrate.StepUpOffered(t, p.Name, target, reason, ceiling, why))
 		return false, nil
+	}
+	// A step exists from here on: every path that does not take it offers it, saying why.
+	if !stepUpRoleMatches(reason, current(t).Role) {
+		return offer("role")
+	}
+	if p.Source == "treatment" || p.Cohort == "control" {
+		return offer("measured") // either arm of the workflow evaluation keeps what triage drew (WF8)
 	}
 	if !runFits(trial) || (t.Spec.MaxMicroUSD > 0 && ceiling > t.Spec.MaxMicroUSD) {
 		return offer("capped")
