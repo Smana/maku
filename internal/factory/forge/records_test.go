@@ -50,7 +50,7 @@ func TestRecordsPastTheirBoundAreRefused(t *testing.T) {
 	r.gh.records = func(string, any) string {
 		return `{"data":{"search":{"pageInfo":{"hasNextPage":false},"nodes":[{"number":1,"labels":{"nodes":[],"pageInfo":{"hasNextPage":true}}}]}}}`
 	}
-	if _, err := r.g.MergedRecords(t.Context(), ""); !errors.Is(err, ErrRecordsTruncated) {
+	if _, err := r.g.MergedRecords(t.Context(), ""); !errors.Is(err, ErrLabelsTruncated) || errors.Is(err, ErrRecordsTruncated) {
 		t.Fatalf("unread labels: %v", err)
 	}
 	r.gh.records = func(string, any) string {
@@ -58,6 +58,21 @@ func TestRecordsPastTheirBoundAreRefused(t *testing.T) {
 	}
 	if _, err := r.g.RevertRecords(t.Context()); !errors.Is(err, ErrRecordsTruncated) {
 		t.Fatalf("endless pages: %v", err)
+	}
+}
+
+// A search whose count is past the bound is refused on its first page, never read for ten pages
+// only to be refused; the refusal is the evidence's ErrTruncated, which it splits on.
+func TestASearchPastTheBoundIsRefusedOnItsFirstPage(t *testing.T) {
+	r := newRig(t)
+	pages := 0
+	r.gh.records = func(string, any) string {
+		pages++
+		return `{"data":{"search":{"issueCount":502,"pageInfo":{"hasNextPage":true,"endCursor":"c"},"nodes":[]}}}`
+	}
+	_, err := r.g.MergedRecords(t.Context(), "author:app/renovate merged:>=2026-05-29")
+	if !errors.Is(err, evidence.ErrTruncated) || pages != 1 {
+		t.Fatalf("%v after %d pages", err, pages)
 	}
 }
 

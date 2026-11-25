@@ -152,7 +152,7 @@ func TestServiceReportsAndProposes(t *testing.T) {
 		!strings.Contains(c.Proposal.File, "mode: live   # promoted") {
 		t.Fatalf("%+v", c)
 	}
-	if !slices.Contains(src.filters, "author:app/ogenki-agents merged:>=2026-05-12") ||
+	if !slices.Contains(src.filters, "author:app/ogenki-agents merged:>=2026-05-12 commenter:app/ogenki-agent-factory") ||
 		!slices.Contains(src.filters, `label:"factory/merged:docs-links" merged:>=2026-05-12`) {
 		t.Fatalf("%q", src.filters)
 	}
@@ -722,4 +722,71 @@ func (b *batchFollowUpSource) AnyMerged(_ context.Context, filter string) (bool,
 		}
 	}
 	return false, nil
+}
+
+// datedSource holds merged records by merge day and refuses, as the forge does, any search whose
+// range holds more than bound of them.
+type datedSource struct {
+	fakeSource
+	byDay   map[string]int // records merged each day, YYYY-MM-DD
+	bound   int
+	queries []string
+}
+
+func (d *datedSource) MergedRecords(_ context.Context, filter string) ([]PR, error) {
+	d.queries = append(d.queries, filter)
+	var rng string
+	for _, f := range strings.Fields(filter) {
+		if r, ok := strings.CutPrefix(f, "merged:"); ok {
+			rng = r
+		}
+	}
+	from, to, _ := strings.Cut(strings.TrimPrefix(rng, ">="), "..")
+	var out []PR
+	for day, n := range d.byDay {
+		if day < from || (to != "" && day > to) {
+			continue
+		}
+		at, _ := time.Parse(time.DateOnly, day)
+		for i := range n {
+			out = append(out, PR{Number: int(at.Unix()/86400)*1000 + i, MergedAt: at})
+		}
+	}
+	if len(out) > d.bound {
+		return nil, fmt.Errorf("evidence: x: %w", ErrTruncated)
+	}
+	return out, nil
+}
+
+// A busy author's 180 days past the forge's bound (cloud-native-ref: 502 Renovate merges) is read
+// whole, as disjoint day ranges: every record once, none dropped. One day past the bound is refused.
+func TestASearchPastTheBoundIsReadByDayRanges(t *testing.T) {
+	now := time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)
+	since := now.Add(-Lookback)
+	d := &datedSource{byDay: map[string]int{}, bound: 500}
+	want := 0
+	for day := since.Truncate(24 * time.Hour); !day.After(now); day = day.AddDate(0, 0, 1) {
+		d.byDay[day.Format(time.DateOnly)] = 3 // 543 records over 181 days
+		want += 3
+	}
+	d.byDay["2026-01-01"] = 7 // before since: never read
+	prs, err := mergedSince(t.Context(), d, func(m string) string { return "author:app/renovate merged:" + m }, since, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	seen := map[int]bool{}
+	for _, p := range prs {
+		if seen[p.Number] {
+			t.Fatalf("#%d read twice", p.Number)
+		}
+		seen[p.Number] = true
+	}
+	if len(prs) != want || d.queries[0] != "author:app/renovate merged:>=2026-05-29" {
+		t.Fatalf("read %d of %d records; queries %q", len(prs), want, d.queries)
+	}
+
+	d = &datedSource{byDay: map[string]int{"2026-11-20": 501}, bound: 500}
+	if _, err := mergedSince(t.Context(), d, func(m string) string { return "author:app/renovate merged:" + m }, since, now); !errors.Is(err, ErrTruncated) {
+		t.Fatalf("one day past the bound: %v", err)
+	}
 }

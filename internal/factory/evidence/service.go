@@ -168,6 +168,10 @@ var (
 	ErrUnknownPolicy = errors.New("evidence: no such MergePolicy is served")
 	// ErrInFlight is a refresh asked while one of the same repository runs.
 	ErrInFlight = errors.New("evidence: a read of the repository is running")
+	// ErrTruncated is a search holding more pull request records than one read takes: the records
+	// past the bound are unread, so the search is refused, never counted short. A Source returns it
+	// (wrapped or not); collect splits the search's merge dates until each part fits.
+	ErrTruncated = errors.New("forge: more pull request records than the evidence reads")
 )
 
 // The reasons a read failed, as logged and reported.
@@ -476,7 +480,7 @@ func (s *Service) collectAll(ctx context.Context, cfg *config.Config, rc *config
 	}
 	drilled := RepoDrilled(reverts, rc.Name)
 	l := Logins{Factory: cfg.FactoryLogin, Merger: rc.Merge.MergerLogin, Maintainers: append([]string{}, rc.Maintainers...)}
-	since := now.Add(-Lookback).UTC().Format("2006-01-02")
+	since := now.Add(-Lookback).UTC().Truncate(24 * time.Hour)
 	cs := s.classes(cfg, rc, file)
 	known := make(map[string]map[string]config.Class, len(cs))
 	s.mu.Lock()
@@ -869,10 +873,18 @@ func resolveFollowUps(ctx context.Context, src Source, nums []int, followed map[
 }
 
 // collect reads one class: the script's two modes, then MP7, with the repository's drill.
-func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since string, cache *followUpCache, known map[string]config.Class) (Evidence, error) {
+//
+// The judged search names the factory as a commenter when its login is known: shadow and strictness
+// count only a pull request carrying a factory comment, so the qualifier drops none they count and
+// keeps a busy author's (Renovate's) merges from overflowing the read.
+func collect(ctx context.Context, src Source, c class, reverts []Revert, repo string, drilled bool, l Logins, now time.Time, since time.Time, cache *followUpCache, known map[string]config.Class) (Evidence, error) {
+	var commenter string
+	if l.Factory != "" {
+		commenter = " commenter:" + SearchLogin(l.Factory)
+	}
 	var judged []PR
 	for _, a := range c.authors {
-		prs, err := src.MergedRecords(ctx, fmt.Sprintf("author:%s merged:>=%s", a, since))
+		prs, err := mergedSince(ctx, src, func(merged string) string { return "author:" + a + " merged:" + merged + commenter }, since, now)
 		if err != nil {
 			return Evidence{}, fmt.Errorf("evidence: %s: %w", c.name, err)
 		}
@@ -880,7 +892,7 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 	}
 	var merges []PR
 	for _, label := range []string{"factory/merged:", "factory/auto-merged:"} {
-		prs, err := src.MergedRecords(ctx, fmt.Sprintf(`label:"%s%s" merged:>=%s`, label, c.name, since))
+		prs, err := mergedSince(ctx, src, func(merged string) string { return fmt.Sprintf(`label:"%s%s" merged:%s`, label, c.name, merged) }, since, now)
 		if err != nil {
 			return Evidence{}, fmt.Errorf("evidence: %s: %w", c.name, err)
 		}
@@ -910,4 +922,37 @@ func collect(ctx context.Context, src Source, c class, reverts []Revert, repo st
 	sh := ShadowUnder(judged, reverts, c.name, repo, c.resolved, known, l)
 	out := Outcomes(merges, reverts, followed, repo, l, now, c.window)
 	return Evaluate(sh, out, reverts, repo, c.minimum, drilled), nil
+}
+
+// mergedSince is every record src holds merged on or after the day since, by the search
+// query(">=since"). A search past the read's bound (ErrTruncated) is read again as two searches of
+// disjoint, adjacent day ranges, since..mid and >=mid+1, each split again while it overflows: the
+// parts' union is exactly the first search's records, so none is dropped. A single day still
+// past the bound is refused with ErrTruncated.
+func mergedSince(ctx context.Context, src Source, query func(merged string) string, since, now time.Time) ([]PR, error) {
+	today := now.UTC().Truncate(24 * time.Hour)
+	var read func(from time.Time, to *time.Time) ([]PR, error)
+	read = func(from time.Time, to *time.Time) ([]PR, error) {
+		merged, last := ">="+from.Format(time.DateOnly), today
+		if to != nil {
+			merged, last = from.Format(time.DateOnly)+".."+to.Format(time.DateOnly), *to
+		}
+		prs, err := src.MergedRecords(ctx, query(merged))
+		days := int(last.Sub(from) / (24 * time.Hour))
+		if !errors.Is(err, ErrTruncated) || days < 1 {
+			return prs, err
+		}
+		mid := from.AddDate(0, 0, (days-1)/2)
+		lower, err := read(from, &mid)
+		if err != nil {
+			return nil, err
+		}
+		next := mid.AddDate(0, 0, 1)
+		upper, err := read(next, to)
+		if err != nil {
+			return nil, err
+		}
+		return append(lower, upper...), nil
+	}
+	return read(since.UTC().Truncate(24*time.Hour), nil)
 }
