@@ -675,7 +675,7 @@ type TaskStatus struct {
 	Facts *FactsLedger `json:"facts,omitempty"`
 	// The trigger of the next implementer run, set when the task goes back to Queued (Δ5) and
 	// cleared once that run exists.
-	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation
+	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation;plan_revise
 	// +optional
 	NextTrigger string `json:"nextTrigger,omitempty"`
 	// The scoper's outcome (scoper design SC12), set once when its run ends and kept when the task
@@ -909,7 +909,7 @@ type RunRecord struct {
 	// +optional
 	Persona string `json:"persona,omitempty"`
 	// Why the run exists.
-	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation
+	// +kubebuilder:validation:Enum=initial;review;human;ci;retry;resume;escalation;plan_revise
 	Trigger string `json:"trigger"`
 	// +optional
 	Round int32 `json:"round,omitempty"`
