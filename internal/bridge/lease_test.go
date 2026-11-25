@@ -186,6 +186,11 @@ func newLeaseRig(t *testing.T) *leaseRig {
 	eventually(ctx, t, "run A holds the room", func() bool {
 		return ll.read(func(l *leaseLog) int { return l.claims[leaseRunA] }) == 1 && f.searched() > 0
 	})
+	// The first step's flush (the run's opening status) may still be in flight: one that lands
+	// after a test moves the clock stamps the lease renewed at the new time, and the heartbeat a
+	// test waits for is then not due until the clock moves again. Let every step under way end
+	// before any test touches the clock or the lease.
+	r.quiet(t, 0)
 	return r
 }
 
