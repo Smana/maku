@@ -563,3 +563,36 @@ func TestNoPlannerFixedLine(t *testing.T) {
 		})
 	}
 }
+
+func TestSplitThreadSummaryLine(t *testing.T) {
+	var sum summary.Summary
+	sum.Room = "aaaaaaaa"
+	sum.Status.Phase = "Split"
+	sum.Status.Issue = &envelope.IssueFact{Number: 10, Title: "Big feature"}
+	sum.Flow = &summary.Flow{
+		Nodes: []summary.FlowNode{{Run: "s1", Persona: "scoper", Role: "triager", Outcome: envelope.OutcomeSucceeded}},
+		Split: &envelope.SplitFact{
+			Of: 3,
+			Parts: []envelope.PartFact{
+				{Index: 1, Issue: 11, Room: "bbbbbbbb", Outcome: "landed", State: "merged", CostMicroUSD: 420_000},
+				{Index: 2, Issue: 12, Room: "cccccccc", State: "working", CostMicroUSD: 180_000},
+				{Index: 3, Issue: 13, Room: "dddddddd", State: "waiting", DependsOn: []int{12}},
+			},
+		},
+	}
+	const wantLine = "3 parts: 1 merged · 1 working · 1 waiting for #12"
+	if got := splitSummaryLine(sum); got != wantLine {
+		t.Fatalf("splitSummaryLine = %q, want %q", got, wantLine)
+	}
+	if got := statusAnswer(sum, "<https://rooms.example/r/aaaaaaaa|the room page>"); !strings.Contains(got, wantLine) {
+		t.Fatalf("statusAnswer missing %q:\n%s", wantLine, got)
+	}
+	// Parent end line includes the split summary when the parent completes.
+	sum.Status.Phase = "Done"
+	sum.Flow.Split.Parts[1].Outcome, sum.Flow.Split.Parts[1].State = "landed", "merged"
+	sum.Flow.Split.Parts[2].Outcome, sum.Flow.Split.Parts[2].State, sum.Flow.Split.Parts[2].DependsOn = "landed", "merged", nil
+	gotEnd := endLine(webhook.Event{Type: "room.ended", Room: "aaaaaaaa", State: "done"}, sum)
+	if gotEnd != "Ended: done · 3 parts: 3 merged" {
+		t.Fatalf("endLine = %q, want %q", gotEnd, "Ended: done · 3 parts: 3 merged")
+	}
+}

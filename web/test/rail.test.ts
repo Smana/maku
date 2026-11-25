@@ -453,6 +453,51 @@ describe("split", () => {
     expect(rail.el.querySelector("li.rail-part a")).toBeNull();
   });
 
+  it("a split draws one lane per part", () => {
+    const { rail } = mount();
+    const tree: Flow = {
+      ...flow,
+      nodes: [scoper],
+      ghosts: [],
+      split: {
+        of: 3,
+        parts: [
+          {
+            index: 1, issue: 11, room: "aaaaaaaa", outcome: "landed", state: "merged", costMicroUSD: 420_000,
+            runs: [
+              { id: "p1r1", role: "implementer", persona: "implementer", outcome: "succeeded", microUSD: 300_000 },
+              { id: "p1r2", role: "reviewer", persona: "reviewer", outcome: "succeeded", verdict: "approve", microUSD: 120_000 },
+            ],
+          },
+          {
+            index: 2, issue: 12, room: "bbbbbbbb", state: "working", costMicroUSD: 180_000,
+            runs: [{ id: "p2r1", role: "implementer", persona: "implementer" }],
+          },
+          {
+            index: 3, issue: 13, room: "cccccccc", state: "waiting", dependsOn: [12],
+          },
+        ],
+      },
+    };
+    rail.set(tree, "Split", now);
+    const lanes = [...rail.el.querySelectorAll<HTMLElement>('li.rail-node[data-run="r-s"] > ol.rail-parts > li.rail-part-lane')];
+    expect(lanes).toHaveLength(3);
+    expect(lanes.map((l) => l.dataset.state)).toEqual(["done", "running", "waiting"]);
+    expect(lanes[0].querySelector(".rail-part-cost")!.textContent).toBe("$0.42");
+    const lane1Runs = [...lanes[0].querySelectorAll<HTMLElement>("ol.rail-part-runs > li.rail-part-run")];
+    expect(lane1Runs).toHaveLength(2);
+    expect(lane1Runs.map((r) => [r.dataset.run, r.dataset.tone, r.querySelector(".rail-chip")!.textContent])).toEqual([
+      ["p1r1", "writer", "✓"],
+      ["p1r2", "judge", "✓ approve"],
+    ]);
+    const lane2Runs = [...lanes[1].querySelectorAll<HTMLElement>("ol.rail-part-runs > li.rail-part-run")];
+    expect(lane2Runs).toHaveLength(1);
+    expect(lane2Runs[0].dataset.state).toBe("live");
+    expect(lane2Runs[0].querySelector(".rail-chip")!.textContent).toBe("running");
+    expect(lanes[2].querySelector(".rail-part-head")!.textContent).toBe("#13 waiting for #12");
+    expect(lanes[2].querySelector("ol.rail-part-runs")).toBeNull();
+  });
+
   it("the parent node", () => {
     const { rail } = mount();
     rail.set({ ...flow, parent: { room: "cccccccc", issue: 50, index: 2, of: 3 } }, "Implementing", now);

@@ -363,8 +363,32 @@ func flowView(st State) *Flow {
 	if f := st.Facts; f != nil {
 		fl.Plan, pr = slices.Clone(f.Plan), f.PR
 		if f.Split != nil {
-			s := *f.Split
-			s.Parts = slices.Clone(s.Parts)
+			s := envelope.SplitFact{Of: f.Split.Of}
+			if len(f.Split.Parts) > 0 {
+				s.Parts = make([]envelope.PartFact, len(f.Split.Parts))
+				for i, p := range f.Split.Parts {
+					cp := p
+					cp.Outcome = plainField(p.Outcome)
+					cp.State = plainField(p.State)
+					cp.Phase = plainField(p.Phase)
+					cp.Strip = plainBound(p.Strip, envelope.MaxPartStrip)
+					cp.DependsOn = slices.Clone(p.DependsOn)
+					if len(p.Runs) > 0 {
+						cp.Runs = make([]envelope.PartRunFact, len(p.Runs))
+						for j, pr := range p.Runs {
+							pr.ID = plainField(pr.ID)
+							pr.Role = plainField(pr.Role)
+							pr.Outcome = plainField(pr.Outcome)
+							pr.Verdict = plainField(pr.Verdict)
+							if pr.Persona != "" && !envelope.ValidPersona(pr.Persona) {
+								pr.Persona = "unknown"
+							}
+							cp.Runs[j] = pr
+						}
+					}
+					s.Parts[i] = cp
+				}
+			}
 			fl.Split = &s
 		}
 		if f.Parent != nil {
@@ -395,10 +419,10 @@ func flowView(st State) *Flow {
 }
 
 // Strip renders a flow as a one-line path strip: done (✓), running (●), failed/stopped (✗), and
-// planned (○), by persona. Multiple review rounds fold to the latest round. Empty when there is
-// neither a node nor a plan.
+// planned (○), by persona. Multiple review rounds fold to the latest round. A split parent's strip
+// appends a summary of its parts. Empty when there is neither a node, a plan, nor a split.
 func Strip(f *Flow) string {
-	if f == nil || (len(f.Nodes) == 0 && len(f.Ghosts) == 0 && len(f.Plan) == 0) {
+	if f == nil || (len(f.Nodes) == 0 && len(f.Ghosts) == 0 && len(f.Plan) == 0 && f.Split == nil) {
 		return ""
 	}
 	ghosts := f.Ghosts
@@ -431,6 +455,7 @@ func Strip(f *Flow) string {
 		}
 		return name + " " + mark
 	}
+	var parts []string
 	if maxRound > 1 {
 		var roundParts []string
 		for _, n := range f.Nodes {
@@ -438,20 +463,149 @@ func Strip(f *Flow) string {
 				roundParts = append(roundParts, nodeToken(n))
 			}
 		}
-		parts := []string{fmt.Sprintf("round %d", maxRound), strings.Join(roundParts, " → ")}
+		parts = append(parts, fmt.Sprintf("round %d", maxRound), strings.Join(roundParts, " → "))
 		for _, g := range ghosts {
 			parts = append(parts, g+" ○")
 		}
-		return strings.Join(parts, " · ")
+	} else {
+		for _, n := range f.Nodes {
+			parts = append(parts, nodeToken(n))
+		}
+		for _, g := range ghosts {
+			parts = append(parts, g+" ○")
+		}
 	}
-	var parts []string
-	for _, n := range f.Nodes {
-		parts = append(parts, nodeToken(n))
-	}
-	for _, g := range ghosts {
-		parts = append(parts, g+" ○")
+	if sp := SplitSummary(f.Split); sp != "" {
+		parts = append(parts, sp)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// PartState returns the closed display state of a split part: "merged", "working", "waiting"
+// (or "waiting for #N"), "queued", "escalated", "dropped", "reverted", "stopped", or "closed".
+// It reads only closed vocabulary words and positive integer dependency numbers.
+func PartState(p envelope.PartFact) string {
+	switch p.Outcome {
+	case "landed":
+		return "merged"
+	case "dropped":
+		return "dropped"
+	case "reverted":
+		return "reverted"
+	}
+	waitingLabel := func() string {
+		if len(p.DependsOn) > 0 {
+			refs := make([]string, 0, len(p.DependsOn))
+			for _, d := range p.DependsOn {
+				if d > 0 {
+					refs = append(refs, fmt.Sprintf("#%d", d))
+				}
+			}
+			if len(refs) > 0 {
+				return "waiting for " + strings.Join(refs, ", ")
+			}
+		}
+		return "waiting"
+	}
+	switch p.State {
+	case "merged", "done":
+		return "merged"
+	case "working", "running":
+		return "working"
+	case "waiting":
+		return waitingLabel()
+	case "queued":
+		if len(p.DependsOn) > 0 {
+			return waitingLabel()
+		}
+		return "queued"
+	case "escalated":
+		return "escalated"
+	case "dropped":
+		return "dropped"
+	case "reverted":
+		return "reverted"
+	case "stopped":
+		return "stopped"
+	case "closed":
+		return "closed"
+	}
+	switch p.Phase {
+	case "Done", "Merged":
+		return "merged"
+	case "Reverted":
+		return "reverted"
+	case "Escalated":
+		return "escalated"
+	case "Stopped":
+		return "stopped"
+	case "Closed":
+		return "closed"
+	case "AwaitingHuman":
+		return "waiting"
+	case "Received", "Triaged", "Queued":
+		if len(p.DependsOn) > 0 {
+			return waitingLabel()
+		}
+		return "queued"
+	case "Implementing", "Reviewing", "AwaitingCI", "AutoMerging", "Verifying":
+		return "working"
+	}
+	if len(p.DependsOn) > 0 {
+		return waitingLabel()
+	}
+	return "working"
+}
+
+// SplitSummary renders one summary line for a parent split task, e.g.
+// "3 parts: 1 merged · 1 working · 1 waiting for #12". Empty when s is nil or has no parts.
+func SplitSummary(s *envelope.SplitFact) string {
+	if s == nil {
+		return ""
+	}
+	total := max(s.Of, len(s.Parts))
+	if total <= 0 {
+		return ""
+	}
+	byIndex := make(map[int]envelope.PartFact, len(s.Parts))
+	for _, p := range s.Parts {
+		byIndex[p.Index] = p
+	}
+	counts := map[string]int{}
+	var waitLabels []string
+	for idx := 1; idx <= total; idx++ {
+		p, ok := byIndex[idx]
+		st := "queued"
+		if ok {
+			st = PartState(p)
+		}
+		if strings.HasPrefix(st, "waiting") && counts[st] == 0 {
+			waitLabels = append(waitLabels, st)
+		}
+		counts[st]++
+	}
+	var segs []string
+	add := func(label string) {
+		if n := counts[label]; n > 0 {
+			segs = append(segs, fmt.Sprintf("%d %s", n, label))
+		}
+	}
+	add("merged")
+	add("working")
+	for _, wl := range waitLabels {
+		add(wl)
+	}
+	add("queued")
+	add("escalated")
+	add("dropped")
+	add("reverted")
+	add("stopped")
+	add("closed")
+	noun := "parts"
+	if total == 1 {
+		noun = "part"
+	}
+	return fmt.Sprintf("%d %s: %s", total, noun, strings.Join(segs, " · "))
 }
 
 func flowStripEnded(f *Flow) bool {
@@ -585,9 +739,12 @@ func handoffLine(summary string) string {
 }
 
 // plainField is s as plainText, cut to maxFlowField bytes on a rune boundary.
-func plainField(s string) string {
+func plainField(s string) string { return plainBound(s, maxFlowField) }
+
+// plainBound is s as plainText, cut to limit bytes on a rune boundary.
+func plainBound(s string, limit int) string {
 	s = plainText(s)
-	for len(s) > maxFlowField {
+	for len(s) > limit {
 		_, size := utf8.DecodeLastRuneInString(s)
 		s = s[:len(s)-size]
 	}

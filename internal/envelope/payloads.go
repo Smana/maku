@@ -292,13 +292,37 @@ type SplitFact struct {
 	Parts []PartFact `json:"parts,omitempty"`
 }
 
-// PartFact is one part of a split: its place in the merge order (1-based), its issue and room, and
-// how it ended, empty while it has not. Outcome is landed, dropped or reverted.
+// MaxPartRuns bounds PartFact.Runs projected onto a split parent's facts.
+const MaxPartRuns = 8
+
+// MaxPartStrip bounds PartFact.Strip, in bytes.
+const MaxPartStrip = 256
+
+// PartRunFact is one run inside a split part, carried on the parent's facts so the parent room's
+// rail draws a lane of that part's runs.
+type PartRunFact struct {
+	ID       string `json:"id"`
+	Role     string `json:"role"`
+	Persona  string `json:"persona,omitempty"`
+	Outcome  string `json:"outcome,omitempty"`
+	Verdict  string `json:"verdict,omitempty"`
+	MicroUSD int64  `json:"microUSD,omitempty"`
+}
+
+// PartFact is one part of a split: its place in the merge order (1-based), its issue and room,
+// how it ended (Outcome: landed, dropped or reverted, empty while open), and its live summary
+// fields (state, phase, dependencies, cost, path strip and runs) projected from the child task.
 type PartFact struct {
-	Index   int    `json:"index"`
-	Issue   int    `json:"issue"`
-	Room    string `json:"room"`
-	Outcome string `json:"outcome,omitempty"`
+	Index        int           `json:"index"`
+	Issue        int           `json:"issue"`
+	Room         string        `json:"room"`
+	Outcome      string        `json:"outcome,omitempty"`
+	State        string        `json:"state,omitempty"`
+	Phase        string        `json:"phase,omitempty"`
+	DependsOn    []int         `json:"dependsOn,omitempty"`
+	CostMicroUSD int64         `json:"costMicroUSD,omitempty"`
+	Strip        string        `json:"strip,omitempty"`
+	Runs         []PartRunFact `json:"runs,omitempty"`
 }
 
 // ParentFact points a part's room back at the task it was split from, and says which part it is.
@@ -315,6 +339,27 @@ func validPartOutcome(o string) bool {
 		return true
 	}
 	return false
+}
+
+func plainPartText(s string, maxBytes int) bool {
+	return len(s) <= maxBytes && utf8.ValidString(s) &&
+		!strings.ContainsFunc(s, func(c rune) bool { return Control(c) || c == '\n' || c == '\t' })
+}
+
+func (r PartRunFact) validate() error {
+	switch {
+	case r.MicroUSD < 0 || r.MicroUSD > MaxMicroUSD:
+		return fmt.Errorf("microUSD is between 0 and %d", MaxMicroUSD)
+	case !validOutcome(r.Outcome):
+		return fmt.Errorf("outcome %q is not one of the run outcomes", r.Outcome)
+	case !plainPartText(r.Verdict, MaxVerdict):
+		return fmt.Errorf("verdict is at most %d bytes of plain text, with no control, bidi or zero-width characters", MaxVerdict)
+	case r.Persona != "" && !ValidPersona(r.Persona):
+		return errors.New("persona is a lowercase name of at most 32 characters")
+	case !plainPartText(r.Role, 32):
+		return errors.New("role is at most 32 bytes of plain text")
+	}
+	return nil
 }
 
 func (s SplitFact) validate() error {
@@ -334,6 +379,28 @@ func (s SplitFact) validate() error {
 			return fmt.Errorf("part[%d] room is a room id", i)
 		case !validPartOutcome(p.Outcome):
 			return fmt.Errorf("part[%d] outcome %q is not landed, dropped or reverted", i, p.Outcome)
+		case p.CostMicroUSD < 0 || p.CostMicroUSD > MaxMicroUSD:
+			return fmt.Errorf("part[%d] costMicroUSD is between 0 and %d", i, MaxMicroUSD)
+		case !plainPartText(p.State, 64):
+			return fmt.Errorf("part[%d] state is at most 64 bytes of plain text", i)
+		case !plainPartText(p.Phase, 32):
+			return fmt.Errorf("part[%d] phase is at most 32 bytes of plain text", i)
+		case !plainPartText(p.Strip, MaxPartStrip):
+			return fmt.Errorf("part[%d] strip is at most %d bytes of plain text", i, MaxPartStrip)
+		case len(p.DependsOn) > MaxChildren:
+			return fmt.Errorf("part[%d] dependsOn has at most %d entries", i, MaxChildren)
+		case len(p.Runs) > MaxRuns:
+			return fmt.Errorf("part[%d] runs are at most %d, got %d", i, MaxRuns, len(p.Runs))
+		}
+		for _, dep := range p.DependsOn {
+			if dep < 1 {
+				return fmt.Errorf("part[%d] dependsOn issue is at least 1", i)
+			}
+		}
+		for j, r := range p.Runs {
+			if err := r.validate(); err != nil {
+				return fmt.Errorf("part[%d] runs[%d]: %w", i, j, err)
+			}
 		}
 	}
 	return nil

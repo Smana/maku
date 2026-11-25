@@ -139,6 +139,7 @@ func Card(w io.Writer, s summary.Summary, o Options) error {
 	c.stateLine(s, needs)
 	c.step(s)
 	c.facts(s)
+	c.parts(s)
 	c.coordination(s)
 	c.needs(s)
 	c.runs(s)
@@ -326,6 +327,69 @@ func (c *card) facts(s summary.Summary) {
 	for _, r := range rows {
 		pad := max(width-utf8.RuneCountInString(r[0]), 1)
 		c.line(r[0] + strings.Repeat(" ", pad) + r[1])
+	}
+}
+
+// parts writes a split parent's parts summary and table after its facts (phase H5).
+func (c *card) parts(s summary.Summary) {
+	if s.Flow == nil || s.Flow.Split == nil || s.Flow.Split.Of <= 0 {
+		return
+	}
+	sp := s.Flow.Split
+	byIndex := make(map[int]envelope.PartFact, len(sp.Parts))
+	for _, p := range sp.Parts {
+		byIndex[p.Index] = p
+	}
+	c.line("")
+	head := c.head("Parts")
+	if sumLine := summary.SplitSummary(sp); sumLine != "" {
+		head += " · " + sumLine
+	}
+	c.line(head)
+	if c.md() {
+		c.line("")
+		c.line("| Part | Issue | Path | State | Cost |\n|---|---|---|---|---|")
+		for idx := 1; idx <= sp.Of; idx++ {
+			p, ok := byIndex[idx]
+			if !ok {
+				c.line("| " + strconv.Itoa(idx) + " | — | — | queued | — |")
+				continue
+			}
+			issue := "—"
+			if p.Issue > 0 {
+				issue = "#" + strconv.Itoa(p.Issue)
+			}
+			strip := "—"
+			if clean(p.Strip) != "" {
+				strip = c.text(p.Strip, true)
+			}
+			state := summary.PartState(p)
+			cost := "—"
+			if p.CostMicroUSD > 0 {
+				cost = dollars(p.CostMicroUSD)
+			}
+			c.line("| " + strconv.Itoa(idx) + " | " + issue + " | " + strip + " | " + state + " | " + cost + " |")
+		}
+		return
+	}
+	for idx := 1; idx <= sp.Of; idx++ {
+		p, ok := byIndex[idx]
+		if !ok {
+			c.line("- part " + strconv.Itoa(idx) + " · queued")
+			continue
+		}
+		segs := []string{"part " + strconv.Itoa(idx)}
+		if p.Issue > 0 {
+			segs = append(segs, "#"+strconv.Itoa(p.Issue))
+		}
+		segs = append(segs, summary.PartState(p))
+		if clean(p.Strip) != "" {
+			segs = append(segs, c.text(p.Strip, false))
+		}
+		if p.CostMicroUSD > 0 {
+			segs = append(segs, dollars(p.CostMicroUSD))
+		}
+		c.line("- " + strings.Join(segs, " · "))
 	}
 }
 

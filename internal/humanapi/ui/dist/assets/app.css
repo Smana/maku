@@ -1016,10 +1016,24 @@ table.rooms { width: calc(100% - 32px); margin: 0 16px; border-collapse: collaps
   width: 100%; min-height: var(--hit); padding: 6px 8px; text-align: left; font: inherit;
   color: var(--muted-foreground); background: transparent; border: 1px dashed var(--border); border-radius: 6px; cursor: pointer;
 }
-.rail-parts { list-style: none; margin: 4px 0 0; padding: 0 0 0 12px; display: grid; gap: 2px; font-size: var(--text-small); }
+.rail-parts { list-style: none; margin: 6px 0 0; padding: 0 0 0 12px; display: grid; gap: 6px; font-size: var(--text-small); }
 .rail-part, .rail-parent { color: var(--muted-foreground); }
 .rail-part a, .rail-parent a { color: var(--muted-foreground); }
-.rail-part[data-state="running"] { color: var(--foreground); }
+.rail-part-lane { border-left: 2px solid var(--border); padding: 4px 0 4px 8px; display: grid; gap: 4px; }
+.rail-part-head { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.rail-part-cost, .rail-part-run-cost { color: var(--muted-foreground); font-variant-numeric: tabular-nums; margin-left: auto; }
+.rail-part-runs { list-style: none; margin: 0; padding: 0; display: grid; gap: 3px; }
+.rail-part-run {
+  --lane: var(--flow-writer); display: flex; gap: 6px; align-items: center;
+  padding: 2px 6px; border: 1px solid var(--border); border-left: 3px solid var(--lane); border-radius: 4px; background: var(--card); color: var(--foreground);
+}
+.rail-part-run[data-tone="judge"] { --lane: var(--flow-judge); }
+.rail-part-run .glyph { flex: none; width: 16px; height: 16px; color: var(--lane); }
+.rail-part-strip { margin: 0; color: var(--muted-foreground); }
+.rail-part[data-state="running"] { color: var(--foreground); border-left-color: var(--flow-writer); }
+.rail-part[data-state="done"] { border-left-color: var(--success); }
+.rail-part[data-state="waiting"], .rail-part[data-state="escalated"] { border-left-color: var(--warning-border); }
+.rail-part[data-state="dropped"], .rail-part[data-state="reverted"] { border-left-color: var(--destructive); }
 .rail-part[data-state="queued"] { opacity: 0.6; }
 .rail-parent { padding: 0 0 6px 4px; font-size: var(--text-small); }
 .rail-milestones { display: grid; gap: 4px; margin-top: 8px; }

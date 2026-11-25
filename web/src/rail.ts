@@ -7,7 +7,7 @@
 import type { RoomEvent } from "./conn";
 import { actorName, idTail } from "./chat";
 import { el } from "./controls";
-import { chip, fillDetail, ghostMerge, isLive, modelsOf, parts, personaLabel, rows, tone, type Row } from "./flow";
+import { chip, fillDetail, ghostMerge, isLive, modelsOf, partRunChip, parts, personaLabel, rows, tone, type Row } from "./flow";
 import { glyph, glyphFor } from "./glyphs";
 import { timeEl } from "./duration";
 import type { Flow, FlowNode } from "./summary";
@@ -419,13 +419,42 @@ export function mountRail(h: RailHandlers): Rail {
     if (flow.split) {
       const ol = el("ol", { className: "rail-parts" });
       for (const p of parts(flow.split)) {
-        const li = el("li", { className: "rail-part" });
+        const li = el("li", { className: "rail-part rail-part-lane" });
         li.dataset.state = p.state;
-        li.append(roomLink(p.room, `#${p.issue ?? "?"} ${p.state}`));
+        li.dataset.part = String(p.index);
+        const head = el("div", { className: "rail-part-head" });
+        const stateText = p.label ?? p.state;
+        head.append(roomLink(p.room, `#${p.issue ?? "?"} ${stateText}`));
+        if (p.cost) head.append(el("span", { className: "rail-part-cost", textContent: p.cost }));
+        li.append(head);
+        if (p.runs?.length) {
+          const runsOl = el("ol", { className: "rail-part-runs" });
+          for (const r of p.runs) {
+            const rli = el("li", { className: "rail-part-run" });
+            rli.dataset.run = r.id;
+            rli.dataset.tone = tone(r.role);
+            rli.dataset.state = !r.outcome ? "live" : "done";
+            const c = partRunChip(r);
+            const name = personaLabel(r.persona || r.role);
+            const chipEl = el("span", { className: "rail-chip", textContent: c.text });
+            chipEl.dataset.kind = c.kind;
+            rli.append(glyph(glyphFor(r.persona || r.role, r.role)), el("span", { className: "rail-part-persona", textContent: name }), chipEl);
+            if (r.microUSD) rli.append(el("span", { className: "rail-part-run-cost", textContent: `$${(r.microUSD / 1e6).toFixed(2)}` }));
+            runsOl.append(rli);
+          }
+          li.append(runsOl);
+        } else if (p.strip) {
+          li.append(el("p", { className: "rail-part-strip", textContent: p.strip }));
+        }
         ol.append(li);
       }
       const scoper = items.find((li) => li.classList.contains("rail-node") && nodeOf(li.dataset.run!)?.persona === "scoper");
       if (scoper) scoper.append(ol);
+      else {
+        const wrap = el("li", { className: "rail-split-lanes" });
+        wrap.append(ol);
+        items.push(wrap);
+      }
     }
     if (flow.parent) {
       const li = el("li", { className: "rail-parent" });

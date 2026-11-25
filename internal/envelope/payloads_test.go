@@ -269,3 +269,66 @@ func TestTaskFactsMonitor(t *testing.T) {
 		t.Fatalf("an unknown verdict: %v", err)
 	}
 }
+
+func TestPartFactEnrichedFieldsValidateAndRoundTrip(t *testing.T) {
+	valid := TaskFacts{
+		Phase: "Split",
+		Split: &SplitFact{
+			Of: 3,
+			Parts: []PartFact{
+				{
+					Index: 1, Issue: 11, Room: "k2mqx7ba", Outcome: "landed",
+					State: "merged", Phase: "Done", CostMicroUSD: 420_000,
+					Strip: "implementer ✓ · reviewer ✓",
+					Runs: []PartRunFact{
+						{ID: "r1", Role: "implementer", Persona: "implementer", Outcome: OutcomeSucceeded, MicroUSD: 300_000},
+						{ID: "r2", Role: "reviewer", Persona: "reviewer", Outcome: OutcomeSucceeded, Verdict: "approve", MicroUSD: 120_000},
+					},
+				},
+				{
+					Index: 2, Issue: 12, Room: "k2mqx7bb", State: "working", Phase: "Implementing",
+					CostMicroUSD: 180_000, Strip: "implementer ● · reviewer ○",
+					Runs: []PartRunFact{{ID: "r3", Role: "implementer", Persona: "implementer"}},
+				},
+				{
+					Index: 3, Issue: 13, Room: "k2mqx7bc", State: "waiting", Phase: "Triaged",
+					DependsOn: []int{12},
+				},
+			},
+		},
+	}
+	if err := valid.Validate(); err != nil {
+		t.Fatalf("valid enriched split refused: %v", err)
+	}
+	b, err := json.Marshal(valid)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got TaskFacts
+	dec := json.NewDecoder(bytes.NewReader(b))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, valid) {
+		t.Fatalf("round trip mismatch:\n got %+v\nwant %+v", got, valid)
+	}
+	for name, bad := range map[string]PartFact{
+		"negative cost":     {Index: 1, Issue: 11, Room: "k2mqx7ba", CostMicroUSD: -1},
+		"over cap cost":     {Index: 1, Issue: 11, Room: "k2mqx7ba", CostMicroUSD: MaxMicroUSD + 1},
+		"zero dep":          {Index: 1, Issue: 11, Room: "k2mqx7ba", DependsOn: []int{0}},
+		"too many deps":     {Index: 1, Issue: 11, Room: "k2mqx7ba", DependsOn: []int{1, 2, 3, 4, 5, 6}},
+		"control in strip":  {Index: 1, Issue: 11, Room: "k2mqx7ba", Strip: "a\nb"},
+		"long strip":        {Index: 1, Issue: 11, Room: "k2mqx7ba", Strip: strings.Repeat("a", MaxPartStrip+1)},
+		"bad run outcome":   {Index: 1, Issue: 11, Room: "k2mqx7ba", Runs: []PartRunFact{{ID: "r", Role: "implementer", Outcome: "bogus"}}},
+		"bad run persona":   {Index: 1, Issue: 11, Room: "k2mqx7ba", Runs: []PartRunFact{{ID: "r", Role: "implementer", Persona: "Bad Persona"}}},
+		"negative run cost": {Index: 1, Issue: 11, Room: "k2mqx7ba", Runs: []PartRunFact{{ID: "r", Role: "implementer", MicroUSD: -1}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := TaskFacts{Phase: "Split", Split: &SplitFact{Of: 2, Parts: []PartFact{bad}}}
+			if err := f.Validate(); err == nil {
+				t.Fatalf("accepted invalid part %+v", bad)
+			}
+		})
+	}
+}

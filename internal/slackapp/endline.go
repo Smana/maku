@@ -210,11 +210,24 @@ func stepUpReasonWords(reason string) string {
 	}
 }
 
-// endLine renders the thread's one end line (UX7): outcome, spend against budget, duration from the
-// first run's start to the last run's end, and the merge gate's decision. Every event field is clipped
-// to the closed vocabulary first.
+// splitSummaryLine renders the thread's one summary line for a parent split task, e.g.
+// "3 parts: 1 merged · 1 working · 1 waiting for #12", or "" when the room is not a split parent.
+// summary.SplitSummary reads only closed state words and positive issue numbers, never free text.
+func splitSummaryLine(sum summary.Summary) string {
+	if sum.Flow == nil || sum.Flow.Split == nil {
+		return ""
+	}
+	return summary.SplitSummary(sum.Flow.Split)
+}
+
+// endLine renders the thread's one end line (UX7): outcome, split parts summary when present,
+// spend against budget, duration from the first run's start to the last run's end, and the merge
+// gate's decision. Every event field is clipped to the closed vocabulary first.
 func endLine(e webhook.Event, sum summary.Summary) string {
 	parts := []string{endOutcome(e, sum)}
+	if spLine := splitSummaryLine(sum); spLine != "" {
+		parts = append(parts, spLine)
+	}
 	if sp := sum.Status.Spend; sp != nil && (sp.UsedMicroUSD > 0 || sp.LimitMicroUSD > 0) {
 		s := slackDollars(sp.UsedMicroUSD)
 		if sp.LimitMicroUSD > 0 {

@@ -17,13 +17,14 @@ import (
 	summ "github.com/Smana/maku/internal/summary"
 )
 
-// StatusFacts carries the workflow summary and path strip shown on the pinned issue status comment.
+// StatusFacts carries the workflow summary, path strip and split parts shown on the pinned issue status comment.
 type StatusFacts struct {
 	Workflow        string
 	Reason          string
 	Strip           string
 	CeilingMicroUSD int64
 	PlanParkedHours int
+	Split           *envelope.SplitFact
 }
 
 const statusIssueMarker = "<!-- agent-factory issue-status -->"
@@ -103,8 +104,57 @@ func Status(t *v1alpha1.Task, roomsURL string, wf StatusFacts, mergeByApproval .
 			fmt.Fprintf(&b, "\nPR: [#%d](%s)", pr.Number, pr.URL)
 		}
 	}
+	if tbl := splitPartsTable(wf.Split); tbl != "" {
+		b.WriteString("\n\n")
+		b.WriteString(tbl)
+	}
 	fmt.Fprintf(&b, "\n\n%s\n%s", statusIssueMarker, statusOwnerMarker(t))
 	return b.String()
+}
+
+// splitPartsTable renders one markdown table of every part of a split parent for the pinned issue
+// status comment: columns Part, Issue, Path, State, Cost.
+func splitPartsTable(sp *envelope.SplitFact) string {
+	if sp == nil || sp.Of <= 0 {
+		return ""
+	}
+	byIndex := make(map[int]envelope.PartFact, len(sp.Parts))
+	for _, p := range sp.Parts {
+		byIndex[p.Index] = p
+	}
+	var b strings.Builder
+	b.WriteString("| Part | Issue | Path | State | Cost |\n")
+	b.WriteString("| --- | --- | --- | --- | --- |")
+	for idx := 1; idx <= sp.Of; idx++ {
+		p, ok := byIndex[idx]
+		if !ok {
+			fmt.Fprintf(&b, "\n| %d | — | — | queued | — |", idx)
+			continue
+		}
+		issue := "—"
+		if p.Issue > 0 {
+			issue = fmt.Sprintf("#%d", p.Issue)
+		}
+		strip := statusTableCell(p.Strip)
+		if strip == "" {
+			strip = "—"
+		}
+		state := summ.PartState(p)
+		cost := "—"
+		if p.CostMicroUSD > 0 {
+			cost = formatMicroUSD(p.CostMicroUSD)
+		}
+		fmt.Fprintf(&b, "\n| %d | %s | %s | %s | %s |", idx, issue, strip, state, cost)
+	}
+	return b.String()
+}
+
+func statusTableCell(s string) string {
+	s = strings.NewReplacer("\r", " ", "\n", " ", "\t", " ", "|", "\\|").Replace(strings.TrimSpace(s))
+	if r := []rune(s); len(r) > 120 {
+		s = string(r[:120]) + "…"
+	}
+	return s
 }
 
 func statusCount(n int, noun string) string {
