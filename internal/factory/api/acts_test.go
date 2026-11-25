@@ -498,6 +498,29 @@ func TestRetryDeeperAnswersItsOwnCodes(t *testing.T) {
 	}
 }
 
+// gcp-0, 2026-11-25: a list-form target (budget: frontier) is costed at its own tier, so a deeper
+// retry above the confirmed cost is refused, not run capped.
+func TestRetryDeeperCostsAListFormTargetAtItsBudget(t *testing.T) {
+	tk := makeActTask("3buqdlot", factoryv1.PhaseEscalated, "budget-run")
+	tk.Spec.MaxMicroUSD = 5_100_000
+	tk.Status.Profile = &factoryv1.ProfileStatus{Name: "standard", Source: "repository", Cohort: "treatment", Resolved: true}
+	env := newActEnv(t, tk)
+	cfg := env.srv.Cfg.Current()
+	if cfg.HarnessProfiles == nil {
+		cfg.HarnessProfiles = map[string]config.HarnessProfile{}
+	}
+	cfg.HarnessProfiles["standard"] = config.HarnessProfile{Template: "pair", StepUp: "careful"}
+	cfg.HarnessProfiles["careful"] = config.HarnessProfile{Budget: "frontier", Stages: []config.StageDef{{Role: "implementer"}, {Role: "reviewer"}}}
+	cfg.Tiers["standard"] = config.Tier{Model: "tier-standard", TaskUSD: 5.10, RunUSD: 1.70}
+	cfg.Tiers["frontier"] = config.Tier{Model: "tier-frontier", TaskUSD: 13.60, RunUSD: 6.80}
+	if got := actResult(t, postAct(t, env.srv, "slack", "/v1/tasks/3buqdlot/retries", `{"onBehalfOf":"slack:T01ABC/UMAINT","deeper":true}`)); got != api.ActDeeperOverCap {
+		t.Fatalf("deeper over the confirmed cost: got %q, want %q", got, api.ActDeeperOverCap)
+	}
+	if tk := getActTask(t, env.client, "3buqdlot"); tk.Annotations[factoryv1.AnnotationRetry] != "" {
+		t.Fatalf("a refused deeper retry annotated the task: %v", tk.Annotations)
+	}
+}
+
 func TestRetryMeansFactoryRetryComment(t *testing.T) {
 	// Drive a scoper task into Escalated(needs_author) with a first assumption, then retry through
 	// POST /v1/tasks/{task}/retries and verify it proceeds identically to a /factory retry comment.

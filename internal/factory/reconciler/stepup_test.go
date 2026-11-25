@@ -233,6 +233,36 @@ func TestACappedTaskAsksBeforeItStepsUp(t *testing.T) {
 	}
 }
 
+// gcp-0, 2026-11-25: the shipped careful is list-form (budget: frontier, no tier:). Costed at its
+// real ceiling, it does not fit a task confirmed at the standard ceiling: the step is offered, and the
+// offer says how to confirm the higher cost instead of naming a retry the cap would refuse.
+func TestAListFormTargetIsCostedAtItsBudgetTier(t *testing.T) {
+	cf := ladderCfg()
+	confirmed := int64(cf.Tiers["standard"].TaskUSD * 1e6)
+	g, tk := stepRig(t, cf, func(tk *v1alpha1.Task) {
+		tk.Status.Profile.Name = "standard"
+		tk.Spec.MaxMicroUSD = confirmed
+	})
+	if got := targetCeilingMicroUSD(cf, tk, cf.HarnessProfiles["careful"]); got != int64(cf.Tiers["frontier"].TaskUSD*1e6) {
+		t.Fatalf("careful's ceiling %d, want the frontier tier's", got)
+	}
+	got := g.fail(t, tk, "stalled")
+	wantEscalated(t, got, "stalled")
+	if s := got.Status.Profile.StepUp; got.Status.Profile.Name != "standard" || s == nil || s.Mode != "offered" || s.To != "careful" {
+		t.Fatalf("a step over the confirmed cost ran: %+v", got.Status.Profile)
+	}
+	var body string
+	for _, o := range got.Status.Outbox {
+		if strings.HasPrefix(o.Key, "step-up-offered") {
+			body = o.Body
+		}
+	}
+	if !strings.Contains(body, "costs more than the") || !strings.Contains(body, "confirm the higher cost") ||
+		!strings.Contains(body, "maku start --workflow careful") || strings.Contains(body, "/factory retry deeper") {
+		t.Fatalf("offer %q", body)
+	}
+}
+
 // A refused spec write leaves the status as it was: no step recorded, nothing narrated or queued.
 func TestARefusedStepWriteChangesNothing(t *testing.T) {
 	g, tk := stepRig(t, stepCfg(), nil)

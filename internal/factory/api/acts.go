@@ -595,8 +595,8 @@ func planDeeperRetry(cfg *config.Config, t *factoryv1.Task) (target string, ceil
 	if tier == "" {
 		tier = "standard"
 	}
-	if slices.Index(tiers, v.Tier) > slices.Index(tiers, tier) {
-		tier = v.Tier
+	if vt := v.EffectiveTier(); slices.Index(tiers, vt) > slices.Index(tiers, tier) {
+		tier = vt // a list-form workflow's budget: names its tier, not tier:
 	}
 	if usd := cfg.Tiers[tier].TaskUSD; usd > 0 {
 		ceiling = int64(usd * 1e6)
