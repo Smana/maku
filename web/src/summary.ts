@@ -20,7 +20,13 @@ export interface FlowNode {
   tools: { ok: number; failed: number }; steered?: number; chat?: number; edge?: string; startedBy?: string; reason?: string; handoff?: string;
 }
 export interface Milestone { phase: string; at: string; seq: number }
-export interface SplitPart { index: number; issue: number; room: string; outcome?: string }
+export interface PartRun {
+  id: string; role: string; persona?: string; outcome?: string; verdict?: string; microUSD?: number;
+}
+export interface SplitPart {
+  index: number; issue: number; room: string; outcome?: string;
+  state?: string; phase?: string; dependsOn?: number[]; costMicroUSD?: number; strip?: string; runs?: PartRun[];
+}
 // The task's path as the rail draws it (internal/summary Flow). Role is the log's text and may be
 // any string: key nothing on it without a fallback.
 export interface Flow {

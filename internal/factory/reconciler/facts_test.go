@@ -810,3 +810,77 @@ func TestFactsCarryAnOriginTasksVerdict(t *testing.T) {
 		t.Fatalf("empty verdict: %+v", f)
 	}
 }
+
+func TestFactsForParentProjectsSplitPartDetails(t *testing.T) {
+	parent := issueTask("3buqdlot", 7, "# Parent")
+	parent.Status.Phase = v1alpha1.PhaseSplit
+	parent.Status.Split = &v1alpha1.SplitStatus{
+		State: SplitApproved,
+		Of:    3,
+		Children: []v1alpha1.SplitChild{
+			{Index: 1, Issue: 11, Task: "k2mqx7ba", Outcome: ChildLanded},
+			{Index: 2, Issue: 12, Task: "p4zt6wce"},
+			{Index: 3, Issue: 13, Task: "m3pq6xzb"},
+		},
+	}
+	started := metav1.NewTime(now)
+	ended := metav1.NewTime(now.Add(5 * time.Minute))
+	child1 := issueTask("k2mqx7ba", 11, "# Part 1")
+	child1.Labels = map[string]string{v1alpha1.LabelParent: "3buqdlot"}
+	child1.Spec.Template = "pair"
+	child1.Spec.Parent = &v1alpha1.Parent{Task: "3buqdlot", Issue: 7, Index: 1, Of: 3}
+	child1.Status.Phase = v1alpha1.PhaseDone
+	child1.Status.Usage.CostMicroUSD = 420_000
+	child1.Status.Runs = []v1alpha1.RunRecord{
+		{ID: "r1", Role: "implementer", Trigger: "initial", Phase: "Succeeded", Started: &started, Finished: &ended, CostMicroUSD: 300_000},
+		{ID: "r2", Role: "reviewer", Trigger: "review", Phase: "Succeeded", Verdict: "approve", Started: &started, Finished: &ended, CostMicroUSD: 120_000},
+	}
+	child2 := issueTask("p4zt6wce", 12, "# Part 2")
+	child2.Labels = map[string]string{v1alpha1.LabelParent: "3buqdlot"}
+	child2.Spec.Template = "pair"
+	child2.Spec.Parent = &v1alpha1.Parent{Task: "3buqdlot", Issue: 7, Index: 2, Of: 3}
+	child2.Status.Phase = v1alpha1.PhaseImplementing
+	child2.Status.Usage.CostMicroUSD = 180_000
+	child2.Status.Runs = []v1alpha1.RunRecord{
+		{ID: "r3", Role: "implementer", Trigger: "initial", Started: &started, CostMicroUSD: 180_000},
+	}
+	child3 := issueTask("m3pq6xzb", 13, "# Part 3")
+	child3.Labels = map[string]string{v1alpha1.LabelParent: "3buqdlot"}
+	child3.Spec.Template = "pair"
+	child3.Spec.Parent = &v1alpha1.Parent{Task: "3buqdlot", Issue: 7, Index: 3, Of: 3}
+	child3.Spec.DependsOn = []int32{12}
+	child3.Status.Phase = v1alpha1.PhaseTriaged
+	child3.Status.Reason = ReasonWaitingDependency
+
+	g := newRig(t, parent, child1, child2, child3)
+	f := g.r.factsForCtx(t.Context(), g.r.Cfg.Current(), parent)
+	if err := f.Validate(); err != nil {
+		t.Fatalf("facts invalid: %v", err)
+	}
+	if f.Split == nil || len(f.Split.Parts) != 3 {
+		t.Fatalf("split = %+v", f.Split)
+	}
+	p1, p2, p3 := f.Split.Parts[0], f.Split.Parts[1], f.Split.Parts[2]
+	if p1.State != "merged" || p1.Phase != v1alpha1.PhaseDone || p1.CostMicroUSD != 420_000 ||
+		p1.Strip != "implementer ✓ · reviewer ✓" || len(p1.Runs) != 2 || p1.Runs[1].Verdict != "approve" {
+		t.Fatalf("part 1 = %+v", p1)
+	}
+	if p2.State != "working" || p2.Phase != v1alpha1.PhaseImplementing || p2.CostMicroUSD != 180_000 ||
+		p2.Strip != "implementer ● · reviewer ○" || len(p2.Runs) != 1 {
+		t.Fatalf("part 2 = %+v", p2)
+	}
+	if p3.State != "waiting" || p3.Phase != v1alpha1.PhaseTriaged || !slices.Equal(p3.DependsOn, []int{12}) {
+		t.Fatalf("part 3 = %+v", p3)
+	}
+	// A meter tick inside a $0.10 step on a running child does not move the parent's factsKey.
+	beforeKey := factsKey(f)
+	f.Split.Parts[1].CostMicroUSD = 190_000
+	f.Split.Parts[1].Runs[0].MicroUSD = 190_000
+	if factsKey(f) != beforeKey {
+		t.Fatal("a sub-$0.10 cost tick on a running part moved the parent's factsKey")
+	}
+	f.Split.Parts[1].CostMicroUSD = 210_000
+	if factsKey(f) == beforeKey {
+		t.Fatal("crossing a $0.10 cost step did not move the parent's factsKey")
+	}
+}

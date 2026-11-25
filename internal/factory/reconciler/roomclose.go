@@ -43,7 +43,7 @@ func (r *Reconciler) roomState(ctx context.Context, cfg *config.Config, t *v1alp
 		capLeft = max(s.Add(roomCloseCap).Sub(r.Now()), 0)
 	}
 	atCap := t.Status.PhaseSince != nil && capLeft == 0
-	if r.factsDue(cfg, t) {
+	if r.factsDueCtx(ctx, cfg, t) {
 		if !atCap {
 			return false, "", capLeft, nil // a post the broker waits on schedules no retry: the cap must wake the task
 		}

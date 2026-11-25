@@ -21,6 +21,7 @@ import (
 	"github.com/Smana/maku/internal/envelope"
 	"github.com/Smana/maku/internal/factory/rooms"
 	"github.com/Smana/maku/internal/factory/runs"
+	"github.com/Smana/maku/internal/summary"
 )
 
 // factsOf is what the room's summary shows of a task: phase, current run, budget, issue, PR.
@@ -237,6 +238,27 @@ func factsKey(f envelope.TaskFacts) string {
 			f.Runs[i].Persona, f.Runs[i].Provenance = "", nil
 		}
 	}
+	if f.Split != nil {
+		s := *f.Split
+		if len(s.Parts) > 0 {
+			s.Parts = slices.Clone(s.Parts)
+			for i := range s.Parts {
+				p := &s.Parts[i]
+				if p.CostMicroUSD > 0 {
+					p.CostMicroUSD /= 100_000
+				}
+				if len(p.Runs) > 0 {
+					p.Runs = slices.Clone(p.Runs)
+					for j := range p.Runs {
+						if p.Runs[j].Outcome == "" {
+							p.Runs[j].MicroUSD = 0
+						}
+					}
+				}
+			}
+		}
+		f.Split = &s
+	}
 	b, _ := json.Marshal(f) // strings, ints, a time and slices: Marshal cannot fail
 	sum := sha256.Sum256(b)
 	return hex.EncodeToString(sum[:8])
@@ -254,10 +276,15 @@ func settled(r *envelope.RunFact) *envelope.RunFact {
 
 // factsDue reports facts the room does not have yet.
 func (r *Reconciler) factsDue(cfg *config.Config, t *v1alpha1.Task) bool {
+	return r.factsDueCtx(context.Background(), cfg, t)
+}
+
+// factsDueCtx reports facts the room does not have yet, projecting live child facts for split parents.
+func (r *Reconciler) factsDueCtx(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) bool {
 	if t.Status.RoomRef == "" || r.Rooms == nil {
 		return false
 	}
-	return !r.factsPosted(t, r.factsFor(cfg, t))
+	return !r.factsPosted(t, r.factsForCtx(ctx, cfg, t))
 }
 
 // factsPosted: the room's ledger records exactly these facts, posted.
@@ -271,6 +298,10 @@ func (r *Reconciler) factsPosted(t *v1alpha1.Task, f envelope.TaskFacts) bool {
 // whether the task's dollars are final (CD23), which is what stops the key bucketing them, and the
 // merge policy that governs the task (policyOf).
 func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.TaskFacts {
+	return r.factsForCtx(context.Background(), cfg, t)
+}
+
+func (r *Reconciler) factsForCtx(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) envelope.TaskFacts {
 	f := factsOf(t)
 	f.Plan = r.planOf(cfg, t)
 	f.MergeByApproval = t.Status.Phase == v1alpha1.PhaseAwaitingHuman && r.approvalReturns(cfg, t, t.Status.Reason)
@@ -288,7 +319,120 @@ func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.Tas
 			}
 		}
 	}
+	if f.Split != nil {
+		r.enrichSplitParts(ctx, cfg, t, f.Split)
+	}
 	return f
+}
+
+// enrichSplitParts fills each opened part's live state, phase, dependencies, cost, path strip and
+// runs from its newest child Task so every surface (room rail, parent comment, Slack, CLI) shows
+// one consistent tree (phase H5).
+func (r *Reconciler) enrichSplitParts(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, sp *envelope.SplitFact) {
+	if sp == nil || len(sp.Parts) == 0 || r.Client == nil {
+		return
+	}
+	newest, _, err := r.family(ctx, t)
+	if err != nil {
+		return
+	}
+	byIndex := make(map[int]*v1alpha1.Task, len(newest))
+	for k, c := range newest {
+		byIndex[int(k)] = c
+	}
+	for i := range sp.Parts {
+		p := &sp.Parts[i]
+		c := byIndex[p.Index]
+		if c == nil {
+			continue
+		}
+		p.Phase = c.Status.Phase
+		p.State = partStateForChild(p.Outcome, c)
+		cost := c.Status.Usage.CostMicroUSD
+		if cost == 0 {
+			for _, rec := range c.Status.Runs {
+				cost += rec.CostMicroUSD
+			}
+		}
+		p.CostMicroUSD = dollars(cost)
+		if len(c.Spec.DependsOn) > 0 {
+			deps := make([]int, 0, len(c.Spec.DependsOn))
+			for _, d := range c.Spec.DependsOn {
+				if d > 0 {
+					deps = append(deps, int(d))
+				}
+			}
+			p.DependsOn = deps
+		}
+		cf := factsOf(c)
+		cf.Plan = r.planOf(cfg, c)
+		p.Strip = partStripOf(cf)
+		if len(cf.Runs) > 0 {
+			start := max(0, len(cf.Runs)-envelope.MaxPartRuns)
+			p.Runs = make([]envelope.PartRunFact, 0, len(cf.Runs)-start)
+			for _, rf := range cf.Runs[start:] {
+				p.Runs = append(p.Runs, envelope.PartRunFact{
+					ID:       rf.ID,
+					Role:     rf.Role,
+					Persona:  rf.Persona,
+					Outcome:  rf.Outcome,
+					Verdict:  rf.Verdict,
+					MicroUSD: rf.MicroUSD,
+				})
+			}
+		}
+	}
+}
+
+func partStateForChild(outcome string, c *v1alpha1.Task) string {
+	switch outcome {
+	case ChildLanded:
+		return "merged"
+	case ChildDropped:
+		return "dropped"
+	case ChildReverted:
+		return "reverted"
+	}
+	switch c.Status.Phase {
+	case v1alpha1.PhaseDone, v1alpha1.PhaseMerged:
+		return "merged"
+	case v1alpha1.PhaseReverted:
+		return "reverted"
+	case v1alpha1.PhaseEscalated:
+		return "escalated"
+	case v1alpha1.PhaseStopped:
+		return "stopped"
+	case v1alpha1.PhaseClosed:
+		return "closed"
+	case v1alpha1.PhaseAwaitingHuman:
+		return "waiting"
+	case v1alpha1.PhaseTriaged:
+		if c.Status.Reason == ReasonWaitingDependency || len(c.Spec.DependsOn) > 0 {
+			return "waiting"
+		}
+		return "queued"
+	case v1alpha1.PhaseReceived, v1alpha1.PhaseQueued:
+		if len(c.Spec.DependsOn) > 0 {
+			return "waiting"
+		}
+		return "queued"
+	default:
+		return "working"
+	}
+}
+
+func partStripOf(cf envelope.TaskFacts) string {
+	fl := &summary.Flow{Plan: cf.Plan, Nodes: make([]summary.FlowNode, 0, len(cf.Runs))}
+	for _, rf := range cf.Runs {
+		fl.Nodes = append(fl.Nodes, summary.FlowNode{
+			Run: rf.ID, Persona: rf.Persona, Role: rf.Role,
+			StartedAt: rf.StartedAt, EndedAt: rf.EndedAt, Outcome: rf.Outcome,
+		})
+	}
+	if v1alpha1.TerminalPhase(cf.Phase) || cf.Phase == v1alpha1.PhaseEscalated || cf.Phase == v1alpha1.PhaseVerifying {
+		fl.Ghosts = []string{}
+	}
+	return summary.Strip(fl)
 }
 
 // postFacts writes the task's facts into its room. New facts take roomSeq + 1, persisted before
@@ -298,10 +442,10 @@ func (r *Reconciler) factsFor(cfg *config.Config, t *v1alpha1.Task) envelope.Tas
 // room never takes them, so they are settled: waiting would post and log on every later reconcile,
 // and an error would hold the task in backoff instead of its poll.
 func (r *Reconciler) postFacts(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) error {
-	if !r.factsDue(cfg, t) {
+	if !r.factsDueCtx(ctx, cfg, t) {
 		return nil
 	}
-	f := r.factsFor(cfg, t)
+	f := r.factsForCtx(ctx, cfg, t)
 	h := factsKey(f)
 	if l := t.Status.Facts; l == nil || l.Hash != h {
 		prevSeq, prevLedger := t.Status.RoomSeq, t.Status.Facts

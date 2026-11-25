@@ -327,7 +327,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			return ctrl.Result{}, rerr
 		}
 	}
-	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDue(cfg, &t) && !r.spendFinalDue(cfg, &t) && !r.statusCommentDue(cfg, &t) && !closeDue {
+	if ended && !watchWait && len(t.Status.Outbox) == 0 && !r.spanDue(&t) && !r.settling(&t) && !r.factsDueCtx(ctx, cfg, &t) && !r.spendFinalDue(cfg, &t) && !r.statusCommentDueCtx(ctx, cfg, &t) && !closeDue {
 		left := closeWait
 		// CD23's one timed requeue: the instant a terminal task's dollars are final, never a poll.
 		// Only an instant still ahead is scheduled — past it the pass below owes the fact, and
@@ -381,12 +381,12 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// written end exports the task's span: a write that conflicts posts and exports nothing, and its
 	// replay may take another path. The second write records what was posted and exported. Facts
 	// are advisory: a failed post is returned for a retry, and no phase waits on it.
-	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDue(cfg, &t) || r.statusCommentDue(cfg, &t) {
+	if len(t.Status.Outbox) > 0 || r.spanDue(&t) || r.factsDueCtx(ctx, cfg, &t) || r.statusCommentDueCtx(ctx, cfg, &t) {
 		queued := t.Status.DeepCopy()
 		err = errors.Join(err, r.drain(ctx, cfg, &t))
 		perr := r.postFacts(ctx, cfg, &t)
 		err = errors.Join(err, perr)
-		if r.statusCommentDue(cfg, &t) {
+		if r.statusCommentDueCtx(ctx, cfg, &t) {
 			err = errors.Join(err, r.syncStatusComment(ctx, cfg, &t))
 		}
 		r.endTrace(ctx, &t)

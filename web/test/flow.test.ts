@@ -134,4 +134,19 @@ describe("parts", () => {
   it("a queued part has no issue or room yet", () => {
     expect(parts({ of: 2 })).toEqual([{ index: 1, state: "queued" }, { index: 2, state: "queued" }]);
   });
+  it("carries waiting dependencies, cost, strip and runs", () => {
+    const out = parts({
+      of: 3,
+      parts: [
+        { index: 1, issue: 11, room: "aaaaaaaa", outcome: "landed", costMicroUSD: 420_000, strip: "implementer ✓ · reviewer ✓", runs: [{ id: "r1", role: "implementer", outcome: "succeeded" }] },
+        { index: 2, issue: 12, room: "bbbbbbbb", state: "waiting", dependsOn: [11] },
+      ],
+    });
+    expect(out[0]).toEqual({
+      index: 1, issue: 11, room: "aaaaaaaa", state: "done", cost: "$0.42", strip: "implementer ✓ · reviewer ✓",
+      runs: [{ id: "r1", role: "implementer", outcome: "succeeded" }],
+    });
+    expect(out[1]).toEqual({ index: 2, issue: 12, room: "bbbbbbbb", state: "waiting", label: "waiting for #11" });
+    expect(out[2]).toEqual({ index: 3, state: "queued" });
+  });
 });

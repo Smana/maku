@@ -962,3 +962,58 @@ func TestEveryNarrationEventHasAClass(t *testing.T) {
 		t.Errorf("mention rules: needs_you=%v changed=%v done=%v", ClassNeedsYou.Mentions(), ClassChanged.Mentions(), ClassDone.Mentions())
 	}
 }
+
+func TestTheParentCommentListsEveryPart(t *testing.T) {
+	tk := task()
+	tk.Status.Phase = v1alpha1.PhaseSplit
+	sf := StatusFacts{
+		Workflow: "standard",
+		Strip:    "scoper ✓ · 3 parts: 1 merged · 1 working · 1 waiting for #12",
+		Split: &envelope.SplitFact{
+			Of: 3,
+			Parts: []envelope.PartFact{
+				{Index: 1, Issue: 11, Room: "aaaaaaaa", Outcome: "landed", State: "merged", CostMicroUSD: 420_000, Strip: "implementer ✓ · reviewer ✓"},
+				{Index: 2, Issue: 12, Room: "bbbbbbbb", State: "working", CostMicroUSD: 180_000, Strip: "implementer ● · reviewer ○"},
+				{Index: 3, Issue: 13, Room: "cccccccc", State: "waiting", DependsOn: []int{12}},
+			},
+		},
+	}
+	body := Status(tk, "https://rooms.example", sf)
+	for _, want := range []string{
+		"Path: scoper ✓ · 3 parts: 1 merged · 1 working · 1 waiting for #12",
+		"| Part | Issue | Path | State | Cost |",
+		"| 1 | #11 | implementer ✓ · reviewer ✓ | merged | $0.42 |",
+		"| 2 | #12 | implementer ● · reviewer ○ | working | $0.18 |",
+		"| 3 | #13 | — | waiting for #12 | — |",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("parent status comment missing %q:\n%s", want, body)
+		}
+	}
+	// SyncStatus keeps one pinned comment and edits it in place as parts progress.
+	f := &statusForge{Fake: forgetest.NewFake()}
+	n := Narrator{Forge: f, Login: bot}
+	if err := n.SyncStatus(t.Context(), tk, "https://rooms.example", sf); err != nil {
+		t.Fatal(err)
+	}
+	sf.Split.Parts[1].Outcome, sf.Split.Parts[1].State, sf.Split.Parts[1].Strip = "landed", "merged", "implementer ✓ · reviewer ✓"
+	sf.Split.Parts[2].State, sf.Split.Parts[2].DependsOn, sf.Split.Parts[2].Strip = "working", nil, "implementer ● · reviewer ○"
+	if err := n.SyncStatus(t.Context(), tk, "https://rooms.example", sf); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Comments(tk.Spec.Issue)) != 1 || f.count("create") != 1 || f.count("edit") != 1 {
+		t.Fatalf("expected one updated comment: %d comments, calls %q", len(f.Comments(tk.Spec.Issue)), f.calls)
+	}
+	updated := f.Comments(tk.Spec.Issue)[0]
+	if !strings.Contains(updated, "| 2 | #12 | implementer ✓ · reviewer ✓ | merged | $0.18 |") ||
+		!strings.Contains(updated, "| 3 | #13 | implementer ● · reviewer ○ | working | — |") {
+		t.Fatalf("updated comment did not reflect new part states:\n%s", updated)
+	}
+	// Unopened parts still appear as queued rows.
+	unopened := Status(tk, "https://rooms.example", StatusFacts{
+		Split: &envelope.SplitFact{Of: 2, Parts: []envelope.PartFact{{Index: 1, Issue: 11, Room: "aaaaaaaa", State: "working"}}},
+	})
+	if !strings.Contains(unopened, "| 2 | — | — | queued | — |") {
+		t.Fatalf("unopened part missing:\n%s", unopened)
+	}
+}

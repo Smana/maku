@@ -210,6 +210,57 @@ func TestStatusCommentUsesApproveToMergeConfig(t *testing.T) {
 	}
 }
 
+func TestStatusCommentParentListsPartsTable(t *testing.T) {
+	parent := issueTask("3buqdlot", 7, "# Parent")
+	parent.Status.Phase = v1alpha1.PhaseSplit
+	parent.Status.PhaseSince = &metav1.Time{Time: now}
+	parent.Status.Narrated = []string{"split-part-1"}
+	parent.Status.Split = &v1alpha1.SplitStatus{
+		State: SplitApproved,
+		Of:    2,
+		Children: []v1alpha1.SplitChild{
+			{Index: 1, Issue: 11, Task: "k2mqx7ba", Outcome: ChildLanded},
+			{Index: 2, Issue: 12, Task: "p4zt6wce"},
+		},
+	}
+	started := metav1.NewTime(now)
+	ended := metav1.NewTime(now.Add(5 * time.Minute))
+	child1 := issueTask("k2mqx7ba", 11, "# Part 1")
+	child1.Labels = map[string]string{v1alpha1.LabelParent: "3buqdlot"}
+	child1.Spec.Template = "pair"
+	child1.Spec.Parent = &v1alpha1.Parent{Task: "3buqdlot", Issue: 7, Index: 1, Of: 2}
+	child1.Status.Phase = v1alpha1.PhaseDone
+	child1.Status.Usage.CostMicroUSD = 350_000
+	child1.Status.Runs = []v1alpha1.RunRecord{
+		{ID: "r1", Role: "implementer", Trigger: "initial", Phase: "Succeeded", Started: &started, Finished: &ended, CostMicroUSD: 350_000},
+	}
+	child2 := issueTask("p4zt6wce", 12, "# Part 2")
+	child2.Labels = map[string]string{v1alpha1.LabelParent: "3buqdlot"}
+	child2.Spec.Template = "pair"
+	child2.Spec.Parent = &v1alpha1.Parent{Task: "3buqdlot", Issue: 7, Index: 2, Of: 2}
+	child2.Status.Phase = v1alpha1.PhaseImplementing
+	child2.Status.Usage.CostMicroUSD = 120_000
+	child2.Status.Runs = []v1alpha1.RunRecord{
+		{ID: "r2", Role: "implementer", Trigger: "initial", Started: &started, CostMicroUSD: 120_000},
+	}
+
+	g := newRig(t, parent, child1, child2)
+	g.reconcile(t, "3buqdlot", 1)
+	bodies := statusCommentBodies(g.f, 7)
+	if len(bodies) != 1 {
+		t.Fatalf("status comments = %d, want 1", len(bodies))
+	}
+	for _, want := range []string{
+		"| Part | Issue | Path | State | Cost |",
+		"| 1 | #11 | implementer ✓ | merged | $0.35 |",
+		"| 2 | #12 | implementer ● · reviewer ○ | working | $0.12 |",
+	} {
+		if !strings.Contains(bodies[0], want) {
+			t.Errorf("parent status comment missing %q:\n%s", want, bodies[0])
+		}
+	}
+}
+
 type reconcilerStatusForge struct {
 	*forgetest.Fake
 	calls             []string

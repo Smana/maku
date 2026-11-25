@@ -212,6 +212,9 @@ func statusAnswer(sum summary.Summary, page string) string {
 	if gp := gatePart(sum); gp != "" {
 		lines = append(lines, "Merge: "+gp)
 	}
+	if spLine := splitSummaryLine(sum); spLine != "" {
+		lines = append(lines, spLine)
+	}
 	lines = append(lines, "Room: "+page)
 	if strip := summary.Strip(sum.Flow); strip != "" {
 		lines = append(lines, "Path: "+answerText(strip))

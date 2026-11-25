@@ -865,3 +865,43 @@ func TestCardYouCanNamesCLICommands(t *testing.T) {
 		}
 	}
 }
+
+func TestCardRendersParentSplitParts(t *testing.T) {
+	s := summary.Summary{Room: "parent01", URL: rooms + "/r/parent01"}
+	s.Status.Phase = "Split"
+	s.Status.Issue = &envelope.IssueFact{Number: 10, URL: "https://github.com/Smana/a/issues/10", Title: "Big feature"}
+	s.Flow = &summary.Flow{
+		Nodes: []summary.FlowNode{{Run: "s1", Persona: "scoper", Role: "triager", Outcome: envelope.OutcomeSucceeded}},
+		Split: &envelope.SplitFact{
+			Of: 3,
+			Parts: []envelope.PartFact{
+				{Index: 1, Issue: 11, Room: "aaaaaaaa", Outcome: "landed", State: "merged", CostMicroUSD: 420_000, Strip: "implementer ✓ · reviewer ✓"},
+				{Index: 2, Issue: 12, Room: "bbbbbbbb", State: "working", CostMicroUSD: 180_000, Strip: "implementer ● · reviewer ○"},
+				{Index: 3, Issue: 13, Room: "cccccccc", State: "waiting", DependsOn: []int{12}},
+			},
+		},
+	}
+	md := card1(t, s, Options{Format: Markdown, Now: now, Rooms: rooms})
+	for _, want := range []string{
+		"**Parts** · 3 parts: 1 merged · 1 working · 1 waiting for #12",
+		"| Part | Issue | Path | State | Cost |",
+		"| 1 | #11 | implementer ✓ · reviewer ✓ | merged | $0.42 |",
+		"| 2 | #12 | implementer ● · reviewer ○ | working | $0.18 |",
+		"| 3 | #13 | — | waiting for #12 | — |",
+	} {
+		if !strings.Contains(md, want) {
+			t.Errorf("markdown card missing %q:\n%s", want, md)
+		}
+	}
+	txt := card1(t, s, textOpts(now))
+	for _, want := range []string{
+		"Parts · 3 parts: 1 merged · 1 working · 1 waiting for #12",
+		"- part 1 · #11 · merged · implementer ✓ · reviewer ✓ · $0.42",
+		"- part 2 · #12 · working · implementer ● · reviewer ○ · $0.18",
+		"- part 3 · #13 · waiting for #12",
+	} {
+		if !strings.Contains(txt, want) {
+			t.Errorf("text card missing %q:\n%s", want, txt)
+		}
+	}
+}

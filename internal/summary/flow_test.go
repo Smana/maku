@@ -449,3 +449,62 @@ func TestASealedRoomKeepsItsFlow(t *testing.T) {
 		t.Fatalf("flow = %+v", s.Flow)
 	}
 }
+
+func TestAParentsStripSummarisesItsParts(t *testing.T) {
+	split := &envelope.SplitFact{
+		Of: 3,
+		Parts: []envelope.PartFact{
+			{
+				Index: 1, Issue: 11, Room: "aaaaaaaa", Outcome: "landed",
+				State: "merged", Phase: "Done", CostMicroUSD: 420_000,
+				Strip: "implementer ✓ · reviewer ✓",
+				Runs: []envelope.PartRunFact{
+					{ID: "r1", Role: "implementer", Persona: "implementer", Outcome: envelope.OutcomeSucceeded, MicroUSD: 300_000},
+					{ID: "r2", Role: "reviewer", Persona: "reviewer", Outcome: envelope.OutcomeSucceeded, Verdict: "approve", MicroUSD: 120_000},
+				},
+			},
+			{
+				Index: 2, Issue: 12, Room: "bbbbbbbb",
+				State: "working", Phase: "Implementing", CostMicroUSD: 180_000,
+				Strip: "implementer ● · reviewer ○",
+				Runs:  []envelope.PartRunFact{{ID: "r3", Role: "implementer", Persona: "implementer"}},
+			},
+			{
+				Index: 3, Issue: 13, Room: "cccccccc",
+				State: "waiting", Phase: "Triaged", DependsOn: []int{12},
+			},
+		},
+	}
+	sc := frun("s1", "triager", "scoper", 0)
+	sc.Outcome = envelope.OutcomeSucceeded
+	evs := fruns(envelope.TaskFacts{Phase: "Split", Split: split}, sc)
+	s := View(Fold(evs), "parent01", "https://rooms.example/r/parent01", policy.Subject{Kind: envelope.ActorHuman}, GitHubStanding{}, 0, fat(100))
+	if s.Flow == nil || s.Flow.Split == nil || len(s.Flow.Split.Parts) != 3 {
+		t.Fatalf("flow = %+v", s.Flow)
+	}
+	if p0 := s.Flow.Split.Parts[0]; p0.State != "merged" || p0.CostMicroUSD != 420_000 || p0.Strip != "implementer ✓ · reviewer ✓" || len(p0.Runs) != 2 {
+		t.Fatalf("part 0 = %+v", p0)
+	}
+	if p2 := s.Flow.Split.Parts[2]; !slices.Equal(p2.DependsOn, []int{12}) {
+		t.Fatalf("part 2 = %+v", p2)
+	}
+	if got, want := SplitSummary(s.Flow.Split), "3 parts: 1 merged · 1 working · 1 waiting for #12"; got != want {
+		t.Fatalf("SplitSummary = %q, want %q", got, want)
+	}
+	if got, want := Strip(s.Flow), "scoper ✓ · 3 parts: 1 merged · 1 working · 1 waiting for #12"; got != want {
+		t.Fatalf("Strip = %q, want %q", got, want)
+	}
+	// Hostile fields in unvalidated room log events are scrubbed when folded into Flow.Split.
+	evil := &envelope.SplitFact{
+		Of: 2,
+		Parts: []envelope.PartFact{{
+			Index: 1, Issue: 11, Room: "aaaaaaaa",
+			State: "working\u202e\n", Strip: "impl \x1b[31m✓\nnext",
+			Runs: []envelope.PartRunFact{{ID: "r1", Role: "implementer", Persona: "Bad Persona"}},
+		}},
+	}
+	es := View(Fold([]envelope.Event{ffacts(1, envelope.TaskFacts{Phase: "Split", Split: evil})}), "r", "u", policy.Subject{Kind: envelope.ActorHuman}, GitHubStanding{}, 0, fat(100))
+	if got := es.Flow.Split.Parts[0]; strings.ContainsAny(got.Strip, "\x1b\n") || got.Runs[0].Persona != "unknown" {
+		t.Fatalf("unscrubbed part = %+v", got)
+	}
+}

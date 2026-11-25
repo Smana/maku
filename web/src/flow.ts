@@ -5,7 +5,7 @@
 // matched against a fixed table with a fallback, never rendered into a class name.
 
 import { span, timeEl } from "./duration";
-import type { Flow, FlowNode } from "./summary";
+import type { Flow, FlowNode, PartRun, SplitPart } from "./summary";
 
 export type Tone = "judge" | "writer";
 
@@ -129,18 +129,73 @@ export function ghostsAfter(plan: string[], nodes: FlowNode[]): string[] {
   return plan.slice(cursor);
 }
 
-export type PartState = "done" | "dropped" | "reverted" | "running" | "queued";
+export type PartState = "done" | "dropped" | "reverted" | "running" | "waiting" | "escalated" | "queued";
 
-// Parts open one at a time, so a part with no outcome is the one running; indices past the
-// opened ones are not opened yet.
-export function parts(split: NonNullable<Flow["split"]>): { index: number; issue?: number; room?: string; state: PartState }[] {
+export interface PartLane {
+  index: number;
+  issue?: number;
+  room?: string;
+  state: PartState;
+  label?: string;
+  cost?: string;
+  strip?: string;
+  runs?: PartRun[];
+}
+
+export function partRunChip(r: PartRun): { text: string; kind: ChipKind } {
+  if (r.verdict === "approve") return { text: "✓ approve", kind: "ok" };
+  if (r.verdict === "changes") return { text: "✗ changes", kind: "changes" };
+  switch (r.outcome) {
+    case "succeeded": return { text: "✓", kind: "ok" };
+    case "failed": case "lost": return { text: "failed", kind: "fail" };
+    case "revoked": case "budget_exhausted": return { text: "stopped", kind: "stop" };
+    case "": case undefined: return { text: "running", kind: "live" };
+  }
+  return { text: "ended", kind: "" };
+}
+
+function partStateOf(p: SplitPart): { state: PartState; label?: string } {
+  if (p.outcome === "landed") return { state: "done" };
+  if (p.outcome === "dropped") return { state: "dropped" };
+  if (p.outcome === "reverted") return { state: "reverted" };
+  const deps = (p.dependsOn ?? []).filter((d) => Number.isInteger(d) && d > 0);
+  const waitLabel = deps.length ? `waiting for ${deps.map((d) => `#${d}`).join(", ")}` : undefined;
+  switch (p.state) {
+    case "merged": case "done": return { state: "done" };
+    case "dropped": return { state: "dropped" };
+    case "reverted": return { state: "reverted" };
+    case "escalated": return { state: "escalated" };
+    case "waiting": return { state: "waiting", label: waitLabel };
+    case "queued": return waitLabel ? { state: "waiting", label: waitLabel } : { state: "queued" };
+    case "working": case "running": return { state: "running" };
+  }
+  switch (p.phase) {
+    case "Done": case "Merged": return { state: "done" };
+    case "Reverted": return { state: "reverted" };
+    case "Escalated": return { state: "escalated" };
+    case "AwaitingHuman": return { state: "waiting", label: waitLabel };
+    case "Received": case "Triaged": case "Queued":
+      return waitLabel ? { state: "waiting", label: waitLabel } : { state: "queued" };
+  }
+  if (waitLabel) return { state: "waiting", label: waitLabel };
+  return { state: "running" };
+}
+
+// Parts of a split in index order (1..of): each opened part carries its state, optional wait
+// label, cost, path strip and runs; indices not opened yet are queued.
+export function parts(split: NonNullable<Flow["split"]>): PartLane[] {
   const byIndex = new Map((split.parts ?? []).map((p) => [p.index, p]));
-  const out: { index: number; issue?: number; room?: string; state: PartState }[] = [];
+  const out: PartLane[] = [];
   for (let index = 1; index <= split.of; index++) {
     const p = byIndex.get(index);
     if (!p) { out.push({ index, state: "queued" }); continue; }
-    const state: PartState = p.outcome === "landed" ? "done" : p.outcome === "dropped" ? "dropped" : p.outcome === "reverted" ? "reverted" : "running";
-    out.push({ index, issue: p.issue, room: p.room, state });
+    const { state, label } = partStateOf(p);
+    const lane: PartLane = { index, issue: p.issue, room: p.room, state };
+    if (label) lane.label = label;
+    if (p.costMicroUSD && p.costMicroUSD > 0) lane.cost = `$${(p.costMicroUSD / 1e6).toFixed(2)}`;
+    if (p.strip) lane.strip = p.strip;
+    if (p.runs?.length) lane.runs = p.runs;
+    out.push(lane);
   }
   return out;
 }
