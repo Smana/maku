@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	v1alpha1 "github.com/Smana/maku/api/factory/v1alpha1"
 	"github.com/Smana/maku/internal/factory/config"
@@ -90,7 +91,7 @@ func Replay(ctx context.Context, cfg *config.Config, rc *config.Repository, rep 
 		latest[key] = true
 		records = append(records, replayRecord{pr: prs[d.PullRequest], decision: d})
 	}
-	cache := map[int]replayInput{}
+	cache := prefetch(ctx, records, cfg, rc, source)
 	for _, rec := range records {
 		d := rec.decision
 		out.Counts.Considered++
@@ -128,6 +129,41 @@ func recordedReason(reason string) string {
 		return ""
 	}
 	return reason
+}
+
+// replayParallel bounds the pull requests a backtest reads at once. Each costs about five GitHub
+// reads (the pull request, its checks, the compare and both sides of each file), some 2.5 s in
+// all: read one after another, ai-native-ref's 17 decided pull requests outlast the broker's 15 s
+// call to the factory.
+const replayParallel = 6
+
+// prefetch reads each record's pull request inputs, replayParallel at once; the first record of a
+// pull request, its newest decision, is the one read, as replayInputFor would.
+func prefetch(ctx context.Context, records []replayRecord, cfg *config.Config, rc *config.Repository, source BacktestSource) map[int]replayInput {
+	cache := map[int]replayInput{}
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, replayParallel)
+	seen := map[int]bool{}
+	for _, rec := range records {
+		n := rec.decision.PullRequest
+		if seen[n] {
+			continue
+		}
+		seen[n] = true
+		wg.Add(1)
+		sem <- struct{}{}
+		go func() {
+			defer func() { <-sem; wg.Done() }()
+			var got replayInput
+			got.err = buildReplayInput(ctx, rec, cfg, rc, source, &got.input)
+			mu.Lock()
+			cache[n] = got
+			mu.Unlock()
+		}()
+	}
+	wg.Wait()
+	return cache
 }
 
 type replayInput struct {
