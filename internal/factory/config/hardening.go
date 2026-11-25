@@ -491,7 +491,10 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	}
 	h.AgentGuard.validate(bad)
 	repos := c.Repos()
-	reserved := map[string]bool{}
+	reserved := map[string]bool{
+		OutcomePlanFirst: true,
+		OutcomeReport:    true,
+	}
 	maintainers := []string{}
 	for _, r := range repos {
 		reserved[r.TriggerLabel] = true
@@ -505,7 +508,7 @@ func (c *Config) validateHardening(bad func(string, ...any)) {
 	}
 	for _, l := range h.LabelAllowlist {
 		if strings.TrimSpace(l) == "" || strings.HasPrefix(l, "factory/") || reserved[l] {
-			bad("hardening.labelAllowlist: %q is empty, a factory/ label, a trigger label or a class: an agent must not choose its own class", l)
+			bad("hardening.labelAllowlist: %q is empty, a factory/ label, a trigger label, an outcome label or a class: an agent must not choose its own class or outcome", l)
 		}
 	}
 	for _, u := range h.BlockedUsers {

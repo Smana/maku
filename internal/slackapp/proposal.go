@@ -428,6 +428,9 @@ func adaptProposalSections(p ProposalPayload, sections []roomview.ProposalSectio
 		outcome, outcomeInferred, outcomeNote = is.Outcome, is.OutcomeInferred, is.OutcomeNote
 		if outcome == intake.OutcomeReview {
 			reviewPR = intake.ReviewPRNumber(is.Body)
+			if reviewPR == 0 {
+				reviewPR = intake.ReviewPRNumber(is.Title)
+			}
 		}
 		if is.Suggestion != nil {
 			mergeSuffix = " · " + slackText(roomview.MergeWords(is.Suggestion.Merge.Outcome))
@@ -853,8 +856,12 @@ func (a *App) propose(ctx context.Context, ev slackEvent, ch Channel, thread, te
 
 	st := &planStatus{}
 	defer a.settle(ctx, ev.Channel, st, planDoneLine)
+	planText := text
+	if _, _, isReview := reviewMention(text); isReview {
+		planText = unwrapSlackLinks(text)
+	}
 	res, err := a.plan(ctx, ev.Channel, thread, st, HandoffRequest{
-		Text:       text,
+		Text:       planText,
 		Candidates: ch.Repositories,
 		OnBehalfOf: "slack:" + a.TeamID + "/" + ev.User,
 		CeilingUSD: ch.MaxCostUSD,

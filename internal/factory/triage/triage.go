@@ -91,6 +91,15 @@ func (s Static) Triage(_ context.Context, cfg *config.Config, t *v1alpha1.Task) 
 		template = cfg.DefaultTemplate(cfg.RepositoryFor(t.Spec.Repository))
 	}
 	outcome, outcomeNote := ResolveOutcome(cfg, t)
+	if t.Spec.Source.Kind == "review" {
+		outcome, outcomeNote = config.OutcomeReview, ""
+	}
+	switch outcome {
+	case config.OutcomeReview:
+		template = "review"
+	case config.OutcomeReport:
+		template = "investigate"
+	}
 	var notes []string
 	if outcomeNote != "" {
 		notes = []string{outcomeNote}

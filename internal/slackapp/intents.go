@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -30,10 +31,24 @@ const (
 	intentTier       = "1"
 )
 
+var slackURLMarkupRE = regexp.MustCompile(`<((?:https?)://[^|>\s]+)(?:\|[^>]*)?>`)
+
 // slackDecode undoes the three entities Slack puts in a message's text, so the classifier is shown
 // what the person typed, not the transport's spelling of it.
 func slackDecode(s string) string {
 	return strings.NewReplacer("&lt;", "<", "&gt;", ">", "&amp;", "&").Replace(s)
+}
+
+// unwrapSlackLinks strips Slack's <url|label> link formatting into bare URLs while preserving the
+// surrounding text, so the planner and outcome inference read pull request URLs directly.
+func unwrapSlackLinks(s string) string {
+	return slackURLMarkupRE.ReplaceAllString(slackDecode(s), "$1")
+}
+
+// reviewMention reports whether a mention text carries a GitHub pull request URL and asks for a
+// review, returning the repository and pull request number (phase F4/F6).
+func reviewMention(text string) (repo string, pr int, ok bool) {
+	return intent.MentionReview(unwrapSlackLinks(text))
 }
 
 // tierOne classifies one unknown reply in shadow, after today's line is posted. It is a no-op in a

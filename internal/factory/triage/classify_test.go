@@ -449,3 +449,46 @@ func TestTriageResolvesThePin(t *testing.T) {
 		})
 	}
 }
+
+func TestAReportOnAPublicRepositoryKeepsItsDataClass(t *testing.T) {
+	cfg := testCfg()
+	cfg.Outcomes = []string{config.OutcomeChange, config.OutcomeReport}
+	tk := issueTask()
+	tk.Spec.DataClass = "public"
+	tk.Spec.Outcome = config.OutcomeReport
+	d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "standard", Classifier: "static", Fallback: "none"}},
+		Forge: forgetest.NewFake()}.Triage(t.Context(), cfg, tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Template != "investigate" {
+		t.Fatalf("expected template=investigate, got %q", d.Template)
+	}
+	if d.Outcome != config.OutcomeReport {
+		t.Fatalf("expected outcome=report, got %q", d.Outcome)
+	}
+	if d.DataClass != "public" {
+		t.Fatalf("public report must keep dataClass=public, got %q", d.DataClass)
+	}
+}
+
+func TestARunLoreFindingStaysInternal(t *testing.T) {
+	cfg := testCfg()
+	cfg.Outcomes = []string{config.OutcomeChange, config.OutcomeReport}
+	tk := &v1alpha1.Task{
+		ObjectMeta: metav1.ObjectMeta{Name: "3buqdlot"},
+		Spec: v1alpha1.TaskSpec{
+			Source:    v1alpha1.Source{Kind: "runlore", Ref: "runlore:alert/pod", RequestedBy: "system:runlore"},
+			DataClass: "public", // even if passed as public, RunLore forces internal
+			Text:      "Alert firing",
+		},
+	}
+	d, err := Classify{C: &fakeC7{resp: C7Response{Tier: "standard", Classifier: "static", Fallback: "none"}},
+		Forge: forgetest.NewFake()}.Triage(t.Context(), cfg, tk)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Template != "investigate" || d.DataClass != "internal" {
+		t.Fatalf("RunLore finding must run investigate at internal, got template=%q dataClass=%q", d.Template, d.DataClass)
+	}
+}

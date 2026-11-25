@@ -318,7 +318,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 	// leaving a terminal task alone (§6.4, MC7): the factory owes the revert its watch, a
 	// maintainer's factory/revert its action, and a monitored merge its verdict, even after the
 	// task itself has ended.
-	watchWait := r.revertable(cfg, &t) || r.revertPending(&t) || r.monitorDue(cfg, &t) || r.noopRetryable(&t)
+	watchWait := r.revertable(cfg, &t) || r.revertPending(&t) || r.monitorDue(cfg, &t) || r.noopRetryable(&t) || r.reportFixable(&t)
 	var closeDue bool
 	var closeWait time.Duration
 	if ended {
@@ -448,7 +448,7 @@ func (r *Reconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Resu
 			}
 		}
 		// The revert watch polls: a revert PR merges, closes or stalls on GitHub's clock, not ours.
-		if err == nil && (r.revertable(cfg, &t) || r.revertPending(&t)) {
+		if err == nil && (r.revertable(cfg, &t) || r.revertPending(&t) || r.reportFixable(&t)) {
 			return ctrl.Result{RequeueAfter: soonest(soonest(cfg.Poll.Tasks.Duration, spanWait), finalWait)}, nil
 		}
 		if err == nil && r.settling(&t) {
@@ -530,6 +530,9 @@ func (r *Reconciler) step(ctx context.Context, cfg *config.Config, t *v1alpha1.T
 	case v1alpha1.PhaseDone:
 		if r.revertable(cfg, t) {
 			return r.revert(ctx, cfg, t, "revert_requested")
+		}
+		if r.reportFixable(t) {
+			return r.reportFix(ctx, cfg, t)
 		}
 		return r.monitor(ctx, cfg, t) // reached only when monitorDue
 	}
@@ -1178,8 +1181,22 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 		t.Spec.Outcome = config.OutcomeChange
 	}
 	t.Spec.Budget = triage.Ceiling(d.Budget, t.Spec.MaxMicroUSD) // F4: a task without a ceiling keeps its class budget, byte for byte
+	if cfg.ReviewsOnly(d.Template) || d.Outcome == config.OutcomeReview {
+		n := reviewPRNumber(t)
+		if n <= 0 {
+			return r.end(ctx, cfg, t, v1alpha1.PhaseRejected, "review_ref_invalid")
+		}
+		pr, err := r.gh(ctx).PullRequest(ctx, n)
+		if err != nil {
+			return err
+		}
+		if pr.State != "" && pr.State != "OPEN" {
+			return r.end(ctx, cfg, t, v1alpha1.PhaseClosed, "pr_closed")
+		}
+		t.Status.PullRequest = &v1alpha1.PullRequestRef{Number: n, URL: pr.URL, NodeID: pr.NodeID, HeadSHA: pr.HeadSHA, Author: pr.Author}
+	}
 	var profile *v1alpha1.ProfileStatus
-	if !triage.Investigates(cfg, t) && !cfg.Investigates(d.Template) { // a task routed to investigate never takes part in the evaluation
+	if !triage.Investigates(cfg, t) && !cfg.Investigates(d.Template) && !cfg.ReviewsOnly(d.Template) { // investigate and review tasks never join workflow evaluation
 		profile = r.floorProfile(cfg, t, d)
 	}
 	var name string
@@ -1192,7 +1209,7 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	if err := r.applyClassRequires(ctx, cfg, t, profile, d.PredictedClass); err != nil {
 		return err
 	}
-	if t.Spec.Outcome == config.OutcomePlanFirst && !cfg.Investigates(t.Spec.Template) {
+	if t.Spec.Outcome == config.OutcomePlanFirst && !cfg.Investigates(t.Spec.Template) && !cfg.ReviewsOnly(t.Spec.Template) {
 		t.Spec.ScopeMode = string(config.ScopeScoper)
 	}
 	if err := r.scopeAtTriage(ctx, t); err != nil {
@@ -1232,8 +1249,10 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 // tier only when above t's, through the same ceiling as triage so a sponsored task's cap holds. An
 // empty name is default's row.
 func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name string, p config.HarnessProfile) {
-	if tmpl := cfg.TemplateForProfile(name, p); tmpl != "" {
-		t.Spec.Template = tmpl
+	if !cfg.Investigates(t.Spec.Template) && !cfg.ReviewsOnly(t.Spec.Template) {
+		if tmpl := cfg.TemplateForProfile(name, p); tmpl != "" {
+			t.Spec.Template = tmpl
+		}
 	}
 	row := cfg.RowFor(name, p)
 	t.Spec.Loop = nil
@@ -1246,8 +1265,10 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name stri
 	}
 	t.Spec.Search = cfg.SearchFor(row)
 	mode := cfg.ScopeFor(row)
-	if cfg.Investigates(t.Spec.Template) {
-		mode = config.ScopeOff // R38's investigate path is never scoped
+	if cfg.Investigates(t.Spec.Template) || cfg.ReviewsOnly(t.Spec.Template) {
+		mode = config.ScopeOff // investigate and review paths are never scoped
+		t.Spec.Loop = nil
+		t.Spec.Search = false
 	}
 	t.Spec.ScopeMode = string(mode)
 	if tier := p.EffectiveTier(); slices.Index(tiers, tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
@@ -1615,6 +1636,20 @@ func (r *Reconciler) queued(ctx context.Context, cfg *config.Config, t *v1alpha1
 	}
 	if t.Spec.Kind == v1alpha1.TaskKindIntegration { // MR10: its own spec, never a verifier's or implementerSpec
 		return r.startIntegration(ctx, cfg, t)
+	}
+	if isReviewOnly(cfg, t) {
+		if len(t.Status.Runs) > 0 {
+			// A review task never opens a second run.
+			return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "no_verdict")
+		}
+		pr, err := r.readPR(ctx, t)
+		if err != nil {
+			return err
+		}
+		if pr.State != "" && pr.State != "OPEN" {
+			return r.end(ctx, cfg, t, v1alpha1.PhaseClosed, "pr_closed")
+		}
+		return r.startReviewOnly(ctx, cfg, t, pr)
 	}
 	if late && t.Status.NextRole != "" {
 		return r.startVerifier(ctx, cfg, t, pr)

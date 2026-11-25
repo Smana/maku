@@ -211,6 +211,7 @@ var summaryReasonCodes = []string{
 	"contract_unread",
 	"contract_push_unrecorded",
 	"split_proposed",
+	"plan_review",
 	"budget-family",
 	"children_merged",
 	"child_dropped",

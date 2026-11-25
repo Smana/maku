@@ -1517,6 +1517,12 @@ func (c *Config) Investigates(template string) bool {
 	return len(roles) > 0 && roles[0] == "triager"
 }
 
+// ReviewsOnly reports whether template is a lone read-only reviewer (phase F4): it posts one
+// verdict comment on an existing pull request and never writes, pushes, or merges.
+func (c *Config) ReviewsOnly(template string) bool {
+	return slices.Equal(c.Templates[template].Roles, []string{"reviewer"})
+}
+
 // modelRE is a model name as meter.prices keys it: a C5 logical name or the model a gateway
 // backend pins (glm-5.3, claude-opus-5-5).
 var modelRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -1632,7 +1638,7 @@ func (c *Config) needsPrice(bad func(string, ...any), key, alias string) {
 func tiers() []string { return []string{"light", "standard", "frontier"} }
 
 // templates is the Task CRD's template enum (api/factory/v1alpha1).
-func templates() []string { return []string{"solo", "pair", "investigate"} }
+func templates() []string { return []string{"solo", "pair", "investigate", "review"} }
 
 // The task outcomes a factory may offer (phase F). Unset is change.
 const (
@@ -2116,7 +2122,7 @@ func (c *Config) Validate() error {
 	for name, t := range c.Templates {
 		// The reconciler creates Tasks from these names, and the Task CRD's enum refuses any other.
 		if !slices.Contains(templates(), name) {
-			bad("template %s is not one of solo, pair, investigate", name)
+			bad("template %s is not one of solo, pair, investigate, review", name)
 		}
 		if len(t.Roles) == 0 {
 			bad("template %s has no roles", name)
@@ -2133,9 +2139,11 @@ func (c *Config) Validate() error {
 		case !slices.Contains(models(), t.ReviewerModel):
 			bad("template %s: reviewerModel %q is not a C5 logical name", name, t.ReviewerModel)
 		}
-		// R38 (owner default, 2026-09-27): a lone triager only proposes; every other template writes.
-		if !slices.Contains(t.Roles, "implementer") && !slices.Equal(t.Roles, []string{"triager"}) {
-			bad("template %s: only an implementer writes, so every template but a lone triager has one", name)
+		// R38 (owner default, 2026-09-27): a lone triager only proposes, and template review's lone
+		// reviewer only posts a verdict (phase F4); every other template writes.
+		if !slices.Contains(t.Roles, "implementer") && !slices.Equal(t.Roles, []string{"triager"}) &&
+			(name != "review" || !slices.Equal(t.Roles, []string{"reviewer"})) {
+			bad("template %s: only an implementer writes, so every template but a lone triager or review's lone reviewer has one", name)
 		}
 	}
 	c.validateTriageTemplates(bad)
@@ -2837,11 +2845,21 @@ func (c *Config) validateTriageTemplates(bad func(string, ...any)) {
 			bad("templates.%s is missing: triage chooses it by class and tier", name)
 		}
 	}
-	if c.RunLore == (RunLore{}) && len(c.API.InternalPrincipals) == 0 {
+	if c.OffersOutcome(OutcomeReview) {
+		if roles := c.Templates["review"].Roles; !slices.Equal(roles, []string{"reviewer"}) {
+			bad("templates.review.roles must be [reviewer] while outcome review is offered: its tasks review read-only, got %v", roles)
+		}
+	}
+	internalInvestigate := c.RunLore != (RunLore{}) || len(c.API.InternalPrincipals) > 0
+	if !internalInvestigate && !c.OffersOutcome(OutcomeReport) {
 		return // no investigate task can arrive
 	}
 	if roles := c.Templates["investigate"].Roles; !slices.Equal(roles, []string{"triager"}) {
-		bad("templates.investigate.roles must be [triager] while runlore or api.internalPrincipals is set: its tasks read internal data and must not write (R38), got %v", roles)
+		if internalInvestigate {
+			bad("templates.investigate.roles must be [triager] while runlore or api.internalPrincipals is set: its tasks read internal data and must not write (R38), got %v", roles)
+		} else {
+			bad("templates.investigate.roles must be [triager] while outcome report is offered: its tasks must not write, got %v", roles)
+		}
 	}
 }
 

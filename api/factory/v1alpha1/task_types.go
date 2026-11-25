@@ -116,7 +116,7 @@ type TaskSpec struct {
 	// +kubebuilder:validation:MaxLength=64
 	// +optional
 	PredictedClass string `json:"predictedClass,omitempty"`
-	// +kubebuilder:validation:Enum=solo;pair;investigate
+	// +kubebuilder:validation:Enum=solo;pair;investigate;review
 	// +optional
 	Template string `json:"template,omitempty"`
 	// +optional
@@ -352,7 +352,8 @@ type TaskAcceptance struct {
 type Source struct {
 	// adopt: another author's pull request the factory decides (merge gate MC10).
 	// coordination: a coordination parent or integration Task (MR2); a child is an issue.
-	// +kubebuilder:validation:Enum=issue;runlore;schedule;api;adopt;coordination
+	// review: a pull request the factory did not write, reviewed read-only (phase F4).
+	// +kubebuilder:validation:Enum=issue;runlore;schedule;api;adopt;coordination;review
 	Kind string `json:"kind"`
 	// Smana/cloud-native-ref#2112 (owner/name#<n>), runlore:<alert>/<resource>, or the schedule name.
 	// +kubebuilder:validation:MaxLength=512

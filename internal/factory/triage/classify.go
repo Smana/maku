@@ -25,6 +25,8 @@ type ClassForge interface {
 // Matrix is §2's table: the predicted class and the tier choose the team, never trio (WF2).
 func Matrix(class, source, tier string) string {
 	switch {
+	case source == "review":
+		return "review"
 	case source == "runlore":
 		return "investigate"
 	case class == "docs-links" && tier != "frontier":
@@ -88,11 +90,19 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if dataClass == "" {
 		dataClass = cfg.Defaults.DataClass
 	}
-	class, declared := c.predictClass(cfg, t)
-	if Investigates(cfg, t) {
-		dataClass = "internal" // the investigate template forces it (§2)
+	outcome, outcomeNote := ResolveOutcome(cfg, t)
+	if t.Spec.Source.Kind == "review" {
+		outcome, outcomeNote = config.OutcomeReview, ""
 	}
-	pin, legacy, err := c.pin(ctx, cfg, t)
+	internalInvestigate := Investigates(cfg, t)
+	if internalInvestigate {
+		dataClass = "internal" // RunLore and internal API sources force internal (§2, RA4)
+	}
+	class, declared := c.predictClass(cfg, t)
+	if outcome == config.OutcomeReport || outcome == config.OutcomeReview {
+		class, declared = "review", false
+	}
+	pin, legacy, err := c.pin(ctx, cfg, t, outcome)
 	if err != nil {
 		return Decision{}, err
 	}
@@ -100,13 +110,18 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 	if legacy {
 		notes = append(notes, LegacyLabelNote)
 	}
-	outcome, outcomeNote := ResolveOutcome(cfg, t)
 	if outcomeNote != "" {
 		notes = append(notes, outcomeNote)
 	}
 	// Declared is no pin (P8): only an honoured profile pin is labeled.
 	cohort := CohortOf(t.Name, pin.Honoured(), cfg.Evaluation.ControlPercent)
-	if oracle(cfg, t, class) {
+	if outcome == config.OutcomeReview {
+		return Decision{Template: "review", PredictedClass: "review", DataClass: dataClass, Outcome: config.OutcomeReview,
+			Budget:         BudgetFor(cfg, "standard"),
+			Classification: v1alpha1.Classification{Tier: "standard", Classifier: "static", Fallback: "none"},
+			Cohort:         cohort, Notes: notes}, nil
+	}
+	if !internalInvestigate && outcome != config.OutcomeReport && oracle(cfg, t, class) {
 		// MC6: the findings are the task and the oracle its verifier: one implementer at tier light,
 		// no classifier call, so no control group either (OD-14 measures the classifier).
 		return Decision{Template: "solo", PredictedClass: class, DataClass: dataClass, Outcome: outcome, Budget: BudgetFor(cfg, "light"),
@@ -132,8 +147,8 @@ func (c Classify) Triage(ctx context.Context, cfg *config.Config, t *v1alpha1.Ta
 		cl.Control, tier = true, "frontier"
 	}
 	source := t.Spec.Source.Kind
-	if Investigates(cfg, t) {
-		source = "runlore" // Matrix keys on the source kind: both take investigate
+	if internalInvestigate || outcome == config.OutcomeReport {
+		source = "runlore" // Matrix keys on the source kind: investigate template ([triager])
 	}
 	return Decision{Template: Matrix(class, source, tier), PredictedClass: class, DataClass: dataClass, Outcome: outcome,
 		Budget: BudgetFor(cfg, tier), Classification: cl, Declared: declared, Pinned: pin.Honoured(), Pin: pin, Cohort: cohort, Notes: notes}, nil
@@ -150,8 +165,8 @@ const LegacyLabelNote = "the `class:` and `profile:` labels are no longer read; 
 // issue, with each one's last applier, and the intake's profile with the sponsor login the factory
 // resolved. legacy is whether the issue carries a class: or profile: label, read by nothing. A
 // RunLore or internal task, and a scheduled one, has none: no person pinned it.
-func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task) (pin Pin, legacy bool, err error) {
-	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" {
+func (c Classify) pin(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, outcome string) (pin Pin, legacy bool, err error) {
+	if Investigates(cfg, t) || t.Spec.Source.Kind == "schedule" || outcome == config.OutcomeReport || outcome == config.OutcomeReview {
 		return Pin{}, false, nil
 	}
 	var labels []LabelPin

@@ -71,6 +71,10 @@ func askStageOn(cfg *config.Config, rc *config.Repository, workflow, class strin
 // needs_author with factory/needs-author and no AgentRun started. Schedules (no issue) proceed as
 // assumed; tasks filed from a confirmed intake plan that settled acceptance proceed as answered.
 func (r *Reconciler) askAtIntake(ctx context.Context, cfg *config.Config, t *v1alpha1.Task, workflow string) (bool, error) {
+	if cfg.Investigates(t.Spec.Template) || cfg.ReviewsOnly(t.Spec.Template) ||
+		t.Spec.Outcome == config.OutcomeReport || t.Spec.Outcome == config.OutcomeReview {
+		return false, nil
+	}
 	if !askStageOn(cfg, r.repo(cfg, t), workflow, t.Spec.PredictedClass) || t.Spec.Parent != nil {
 		return false, nil
 	}
