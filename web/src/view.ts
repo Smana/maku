@@ -9,6 +9,7 @@ import { maxRows } from "./limits";
 import { ago } from "./summary";
 import { mountThemeButton, type ThemeController } from "./theme";
 import { mountSettingsLink } from "./settingslink";
+import { newTaskForm } from "./newtask";
 
 // A room's rows by seq, in seq order on the page. A resume the broker clamped can
 // resend a seq: its row is replaced in place, never doubled, and one no longer held
@@ -241,20 +242,35 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
   all.value = "";
   all.textContent = "all repositories";
   repo.append(all);
-  for (const name of [...new Set(first.map((r) => r.repository).filter((r): r is string => !!r))].sort()) {
+  const knownRepos = [...new Set(first.map((r) => r.repository).filter((r): r is string => !!r))].sort();
+  for (const name of knownRepos) {
     const o = document.createElement("option");
     o.value = o.textContent = name;
     repo.append(o);
   }
   repo.value = filters.repo ?? "";
+  const taskForm = newTaskForm(get, knownRepos);
+  taskForm.hidden = true;
   const form = newRoomForm(get);
   form.hidden = true;
+  const addTask = document.createElement("button");
+  addTask.type = "button";
+  addTask.className = "primary";
+  addTask.dataset.act = "new-task";
+  addTask.textContent = "New task";
+  addTask.onclick = () => {
+    form.hidden = true;
+    taskForm.hidden = !taskForm.hidden;
+  };
   const add = document.createElement("button");
   add.type = "button";
   add.className = "primary";
   add.dataset.act = "new-room";
   add.textContent = "New room";
-  add.onclick = () => { form.hidden = !form.hidden; };
+  add.onclick = () => {
+    taskForm.hidden = true;
+    form.hidden = !form.hidden;
+  };
   const tools = document.createElement("div");
   tools.className = "list-tools";
   const notice = document.createElement("span");
@@ -314,13 +330,13 @@ export async function listRooms(app: HTMLElement, get: typeof fetch = fetch, fil
     return !!rows;
   };
   mountAutoRefresh(tools, refetch, refresh);
-  tools.append(add);
+  tools.append(add, addTask);
   // click, not change: a checkbox's change event needs a connected element; click fires either way.
   for (const e of [mine.input, needsMe.input]) e.addEventListener("click", () => void refetch());
   closed.input.addEventListener("click", () => { setAside(); void refetch(); });
   repo.addEventListener("change", () => void refetch());
 
-  app.replaceChildren(header, tools, form, table, cliSetup(get));
+  app.replaceChildren(header, tools, taskForm, form, table, cliSetup(get));
 }
 
 export const roomId = /^[a-z2-7]{8}$/;

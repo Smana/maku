@@ -26,39 +26,23 @@ Rooms you can read appear in one table: rooms that need you first, then most rec
 
 Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the same broker function as the room page), `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)), and clicking anywhere on the row opens the room.
 
-The list refreshes on its own, every 10 s by default. The control before `New room` picks the
-interval (`Off`, `5 s`, `10 s`, `30 s`, `1 min`; remembered in the browser), pauses it, and says
-when the list was last read, or that the last refresh failed. A background tab slows to once a
-minute and its title counts the rooms that need you, `(2) Maku rooms`. A refresh that changes
-nothing leaves the table as it is, and one that does keeps the focus on the same room.
+The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before `New room`, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
 
-Above the table, three filters refetch the list from the API: **mine** (tasks whose issue you
-filed or labelled, or whose PR you authored or review, matched on your linked GitHub login),
-**needs me** (rows with something waiting for you) and a repository picker, filled from the
-repositories of the rooms the page first listed. They are the API's `mine`, `needs_me` and
-`repo=owner/name`, applied after the access check so none reveals an unreadable room
-([API](reference/api.md#8080--human-api)). An empty table says why: `No rooms match` under a filter,
-`No rooms you can read yet` without one.
+Three filters refetch from the API ([API](reference/api.md#8080--human-api)): **mine** (tasks whose issue you filed or labelled, or whose PR you authored or review), **needs me** (rows waiting for you), and a repository picker. **closed** (`closed=1`) lists rooms closed in the last 30 days (setting **mine** and **needs me** aside); `/r/<id>` opens any sealed room until retention purges its log.
 
-**closed** lists the rooms closed in the last 30 days instead: when a task ends the factory deletes
-its Room, so its sealed room leaves the default list, though `/r/<id>` still opens it until
-retention purges the log. Each row is a room its link would open for you (the same access and role
-checks); **mine** and **needs me** are set aside while it is on. It is the API's `closed=1`.
+### New task and New room
 
-### New room
+**New task** and **New room**, at the right end of the filters row, open forms above the list.
 
-**New room**, the primary button at the right end of the filters row, opens a form above the list that creates a room you own and
-drive, then opens it.
+- **New task** plans through `/api/handoffs`: enter what should change, pick a repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first** before clicking **Start** to file and label the issue through their linked GitHub account. Unlinked viewers see a `/link/github` link and no **Start** button.
+- **New room** creates a room you own and drive, then opens it.
 
 | Field | Rule |
 |---|---|
-| Data class | `internal` or `public`, no default. It cannot change once the room exists: it sets the model route, the tools and the egress its runs get. It does not change who can read the room |
-| Repository | `owner/name`, required. Anyone who can read it on GitHub can read the room. You must be able to read it yourself |
+| Data class | `internal` or `public`, no default; fixed once created. Sets model route, tools and egress, not read access |
+| Repository | `owner/name`, required. Readable by anyone who can read the repository on GitHub |
 
-A `Use maku from your terminal` fold under the list sets up [maku](cli.md) for this
-broker in numbered steps (install, point it at this broker, sign in), each command in its own
-block with a Copy button that copies it exactly as shown. On a local broker the steps configure
-by URL alone and end with `maku run` instead of a sign-in.
+The `Use maku from your terminal` fold under the list gives copyable setup steps for [maku](cli.md) (install, configure, sign in; or URL + `maku run` on a local broker).
 
 <img alt="The Use maku from your terminal fold: three numbered steps, install, point it at this broker and sign in, each in a code block with a Copy button" src="assets/web-ui/cli-setup-light.png" width="800">
 

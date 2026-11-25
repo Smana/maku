@@ -263,11 +263,14 @@ describe("the room list's layout", () => {
     expect(tds[2].className).toBe("repo");
     expect(tds[6].className).toBe("room-id");
   });
-  it("puts New room, the primary action, after the filters", async () => {
+  it("puts New room and New task, the primary actions, after the filters", async () => {
     const tools = (await mount()).querySelector(".list-tools")!;
-    const add = tools.lastElementChild as HTMLButtonElement;
-    expect(add.dataset.act).toBe("new-room");
-    expect(add.classList.contains("primary")).toBe(true);
+    const addRoom = tools.querySelector('button[data-act="new-room"]') as HTMLButtonElement;
+    const addTask = tools.lastElementChild as HTMLButtonElement;
+    expect(addRoom.classList.contains("primary")).toBe(true);
+    expect(addTask.dataset.act).toBe("new-task");
+    expect(addTask.classList.contains("primary")).toBe(true);
+    expect(addRoom.nextElementSibling).toBe(addTask);
   });
 });
 

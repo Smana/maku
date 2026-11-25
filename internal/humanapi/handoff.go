@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"slices"
 	"strconv"
 	"strings"
@@ -19,6 +21,7 @@ import (
 	"github.com/Smana/maku/internal/factory/sanitize"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/mcpwire"
+	"github.com/Smana/maku/internal/repoaccess"
 	"github.com/Smana/maku/internal/roomview"
 	"github.com/Smana/maku/internal/store"
 )
@@ -867,4 +870,343 @@ func (s *Server) handoffCheckFor(ctx context.Context, p authn.Principal, id stri
 		draft.Body = plan.Issues[0].Body
 	}
 	return checked, draft, nil
+}
+
+// StartIssueRequest is the issue POST /api/handoffs/{id}/start files on GitHub for a linked viewer.
+type StartIssueRequest struct {
+	Repository string
+	Title      string
+	Body       string
+	Labels     []string
+	Viewer     string
+	Principal  string
+}
+
+// StartIssueResult is the filed GitHub issue's number and URL.
+type StartIssueResult struct {
+	Number int    `json:"issue"`
+	URL    string `json:"url"`
+}
+
+// IssueStarter files a handoff's issue on GitHub and applies its labels for a linked viewer.
+type IssueStarter interface {
+	StartIssue(ctx context.Context, req StartIssueRequest) (StartIssueResult, error)
+}
+
+type handoffCreateResponse struct {
+	handoffResult
+	Repository string `json:"repository,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Body       string `json:"body,omitempty"`
+}
+
+type handoffCheckResponse struct {
+	handoffChecked
+	ID       string `json:"id"`
+	Workflow string `json:"workflow"`
+	Text     string `json:"text"`
+	Linked   bool   `json:"linked"`
+}
+
+type handoffStartResponse struct {
+	Repository string   `json:"repository"`
+	Issue      int      `json:"issue"`
+	URL        string   `json:"url"`
+	Labels     []string `json:"labels"`
+	Viewer     string   `json:"viewer"`
+}
+
+// writeHandoffRefusal writes a JSON refusal {"error": code, "message": message} for the HTTP handoff routes.
+func writeHandoffRefusal(w http.ResponseWriter, status int, code, message string) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(struct {
+		Error   string `json:"error"`
+		Message string `json:"message,omitempty"`
+	}{Error: code, Message: message})
+}
+
+func (s *Server) writeHandoffError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errHandoffExpired) {
+		writeHandoffRefusal(w, http.StatusNotFound, "handoff_expired", err.Error())
+		return
+	}
+	if ref, ok := asRefusal(err); ok {
+		status := http.StatusBadRequest
+		switch ref.Reason {
+		case intake.ReasonNotLinked, intake.ReasonNoWrite, intake.ReasonRepositoryNotAllowed,
+			intake.NotMaintainer, intake.ReasonPrivateRepository:
+			status = http.StatusForbidden
+		case intake.ReasonPlanChanged:
+			status = http.StatusConflict
+		case intake.ReasonDailyPlansReached:
+			status = http.StatusTooManyRequests
+		case intake.ReasonPlannerTimeout, intake.ReasonPlannerUnavailable,
+			intake.ReasonRepositoryUnverified, intake.CatalogueUnavailable:
+			status = http.StatusServiceUnavailable
+		}
+		writeHandoffRefusal(w, status, ref.Reason, ref.Sentence)
+		return
+	}
+	var te toolError
+	if errors.As(err, &te) {
+		msg := te.Error()
+		if msg == noPlannerLine {
+			writeHandoffRefusal(w, http.StatusServiceUnavailable, "planner_unavailable", msg)
+			return
+		}
+		code := "invalid_arguments"
+		if prefix, _, ok := strings.Cut(msg, ":"); ok && prefix != "" && !strings.ContainsAny(prefix, " \t\n") {
+			code = prefix
+		}
+		writeHandoffRefusal(w, http.StatusBadRequest, code, msg)
+		return
+	}
+	s.log().Warn("handoff route failed", "err", err)
+	writeHandoffRefusal(w, http.StatusInternalServerError, "unavailable", "Planning is unavailable right now.")
+}
+
+func (s *Server) viewerGitHubLogin(ctx context.Context, p authn.Principal, repository string) (string, error) {
+	if s.Identity == nil {
+		return "", nil
+	}
+	lctx, cancel := context.WithTimeout(ctx, accessWait)
+	defer cancel()
+	login, err := s.Identity.Login(lctx, p.Sub, repository)
+	if errors.Is(err, repoaccess.ErrNoRepository) {
+		return "", nil
+	}
+	return login, err
+}
+
+// handoffCreateRoute is POST /api/handoffs: member-authenticated planning over the handoff engine.
+func (s *Server) handoffCreateRoute(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.principal(w, r)
+	if !ok {
+		return
+	}
+	if !s.mcpAllow(p.ID) {
+		s.rejected(r.Context(), rejectRateLimited)
+		writeHandoffRefusal(w, http.StatusTooManyRequests, rejectRateLimited, "rate_limited: 10 requests a second, burst 20")
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mcpBody))
+	if err != nil {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: request body is unreadable or too large")
+		return
+	}
+	ctx, cancel := mcpContext(r)
+	defer cancel()
+	out, err := s.handoffTool(ctx, p, raw)
+	if err != nil {
+		s.writeHandoffError(w, err)
+		return
+	}
+	vr, ok := out.(viewResult)
+	if !ok {
+		s.writeHandoffError(w, errors.New("humanapi: unexpected handoff result"))
+		return
+	}
+	hr, ok := vr.data.(handoffResult)
+	if !ok {
+		s.writeHandoffError(w, errors.New("humanapi: unexpected handoff data"))
+		return
+	}
+	resp := handoffCreateResponse{handoffResult: hr}
+	if s.Handoffs != nil {
+		if row, gerr := s.Handoffs.GetHandoff(ctx, hr.ID, s.handoffNow()); gerr == nil {
+			var pl intake.Plan
+			if json.Unmarshal(row.Plan, &pl) == nil {
+				resp.Repository = pl.Repository
+				if len(pl.Issues) > 0 {
+					resp.Title = pl.Issues[0].Title
+					resp.Body = pl.Issues[0].Body
+				}
+			}
+		}
+	}
+	writeJSON(w, resp)
+}
+
+// handoffCheckRoute is POST /api/handoffs/{id}/check: re-validates a stored handoff with optional
+// workflow pin and outcome (plan-first / change).
+func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.principal(w, r)
+	if !ok {
+		return
+	}
+	if !s.mcpAllow(p.ID) {
+		s.rejected(r.Context(), rejectRateLimited)
+		writeHandoffRefusal(w, http.StatusTooManyRequests, rejectRateLimited, "rate_limited: 10 requests a second, burst 20")
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || len(id) > 128 {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: handoff id is required")
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<10))
+	if err != nil {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: request body is unreadable or too large")
+		return
+	}
+	var in struct {
+		Workflow *string `json:"workflow,omitempty"`
+		Outcome  *string `json:"outcome,omitempty"`
+	}
+	if len(strings.TrimSpace(string(raw))) > 0 {
+		if mcpwire.DecodeArgs(raw, &in) != nil {
+			writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: only {workflow, outcome} are taken")
+			return
+		}
+	}
+	ctx, cancel := mcpContext(r)
+	defer cancel()
+	checked, draft, err := s.handoffCheckFor(ctx, p, id, in.Workflow, in.Outcome, "")
+	if err != nil {
+		s.writeHandoffError(w, err)
+		return
+	}
+	wf := s.handoffWorkflowName(ctx, p, "", checked.Plan)
+	text, err := renderHandoffPlan(checked.Plan, wf, false, s.handoffNow())
+	if err != nil {
+		s.writeHandoffError(w, err)
+		return
+	}
+	linked := checked.CanStart
+	if !linked && checked.CanStartWhy != startNotLinked {
+		if login, lerr := s.viewerGitHubLogin(ctx, p, draft.Repository); lerr == nil && login != "" {
+			linked = true
+		}
+	}
+	writeJSON(w, handoffCheckResponse{
+		handoffChecked: handoffChecked{
+			planChecked:     checked,
+			Workflows:       draft.Workflows,
+			WorkflowChoices: draft.WorkflowChoices,
+			DefaultChoice:   draft.DefaultChoice,
+			ActiveChoice:    draft.ActiveChoice,
+			Title:           draft.Title,
+			Body:            draft.Body,
+			Repository:      draft.Repository,
+		},
+		ID:       id,
+		Workflow: wf,
+		Text:     text,
+		Linked:   linked,
+	})
+}
+
+// handoffStartRoute is POST /api/handoffs/{id}/start: files the checked handoff's issue on GitHub
+// through the viewer's linked GitHub identity and applies its workflow, outcome and factory/ready labels.
+func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
+	p, ok := s.principal(w, r)
+	if !ok {
+		return
+	}
+	if !s.mcpAllow(p.ID) {
+		s.rejected(r.Context(), rejectRateLimited)
+		writeHandoffRefusal(w, http.StatusTooManyRequests, rejectRateLimited, "rate_limited: 10 requests a second, burst 20")
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || len(id) > 128 {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: handoff id is required")
+		return
+	}
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<10))
+	if err != nil {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: request body is unreadable or too large")
+		return
+	}
+	var in struct {
+		Hash     string  `json:"hash,omitempty"`
+		Workflow *string `json:"workflow,omitempty"`
+		Outcome  *string `json:"outcome,omitempty"`
+	}
+	if len(strings.TrimSpace(string(raw))) > 0 {
+		if mcpwire.DecodeArgs(raw, &in) != nil {
+			writeHandoffRefusal(w, http.StatusBadRequest, "invalid_arguments", "invalid_arguments: only {hash, workflow, outcome} are taken")
+			return
+		}
+	}
+	ctx, cancel := mcpContext(r)
+	defer cancel()
+	checked, draft, err := s.handoffCheckFor(ctx, p, id, in.Workflow, in.Outcome, "")
+	if err != nil {
+		s.writeHandoffError(w, err)
+		return
+	}
+	if in.Hash != "" && in.Hash != checked.Hash {
+		ref := intake.ReasonRefusal(intake.ReasonPlanChanged)
+		writeHandoffRefusal(w, http.StatusConflict, ref.Reason, ref.Sentence)
+		return
+	}
+	if len(checked.Plan.Issues) == 0 {
+		writeHandoffRefusal(w, http.StatusBadRequest, "invalid_plan", "the plan has no issue to file")
+		return
+	}
+	login, lerr := s.viewerGitHubLogin(ctx, p, draft.Repository)
+	if lerr != nil {
+		writeHandoffRefusal(w, http.StatusServiceUnavailable, startUnverified, "GitHub access could not be verified right now.")
+		return
+	}
+	if login == "" {
+		writeHandoffRefusal(w, http.StatusForbidden, startNotLinked, "Link your GitHub account before starting a task.")
+		return
+	}
+	if !checked.CanStart {
+		switch checked.CanStartWhy {
+		case startNotLinked:
+			writeHandoffRefusal(w, http.StatusForbidden, startNotLinked, "Link your GitHub account before starting a task.")
+		case startNoWrite:
+			writeHandoffRefusal(w, http.StatusForbidden, startNoWrite, "You do not have write access to this repository on GitHub.")
+		case startNotOffered:
+			writeHandoffRefusal(w, http.StatusForbidden, startNotOffered, "Starting tasks from here is not offered on this repository.")
+		case startAccessUnwired, startUnverified:
+			writeHandoffRefusal(w, http.StatusServiceUnavailable, checked.CanStartWhy, "GitHub access could not be verified right now.")
+		default:
+			writeHandoffRefusal(w, http.StatusForbidden, checked.CanStartWhy, "Starting tasks from here is not allowed.")
+		}
+		return
+	}
+	d, err := s.checkFinalDraft(ctx, draft.Title, draft.Body)
+	if err != nil {
+		s.writeHandoffError(w, err)
+		return
+	}
+	if s.IssueStarter == nil {
+		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_unavailable", "Starting tasks from the web UI is not configured on this broker.")
+		return
+	}
+	is := checked.Plan.Issues[0]
+	var labels []string
+	if is.Profile != "" && (checked.Maintainer == nil || *checked.Maintainer) {
+		labels = append(labels, "workflow:"+is.Profile)
+	}
+	if is.Outcome == intake.OutcomePlanFirst || is.Outcome == intake.OutcomeReport {
+		labels = append(labels, is.Outcome)
+	}
+	labels = append(labels, "factory/ready")
+	filed, err := s.IssueStarter.StartIssue(ctx, StartIssueRequest{
+		Repository: draft.Repository,
+		Title:      d.Title,
+		Body:       d.Body,
+		Labels:     labels,
+		Viewer:     login,
+		Principal:  p.ID,
+	})
+	if err != nil {
+		s.log().Warn("handoff start failed", "handoff", id, "repository", draft.Repository, "err", err)
+		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_failed", "Could not file the issue on GitHub right now.")
+		return
+	}
+	w.WriteHeader(http.StatusCreated)
+	writeJSON(w, handoffStartResponse{
+		Repository: draft.Repository,
+		Issue:      filed.Number,
+		URL:        filed.URL,
+		Labels:     labels,
+		Viewer:     login,
+	})
 }

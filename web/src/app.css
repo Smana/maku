@@ -1318,3 +1318,21 @@ main.settings.approval-memory > h1:first-child { display: none; }
   .filter label { flex-basis: 100%; }
   .filter input { flex-basis: 100%; max-width: none; }
 }
+
+/* New task form (Task G4): beside New room above the room list. */
+.list-tools [data-act="new-task"] { padding: 0 14px; font-weight: 700; }
+.new-task { margin: 0 16px 12px; padding: 14px 16px; background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); display: grid; gap: 12px; }
+.new-task-form { display: grid; gap: 10px; }
+.new-task-text { display: grid; gap: 4px; }
+.new-task-text textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 8px 10px; border: 1px solid var(--input); border-radius: var(--radius-control); background: var(--background); color: var(--foreground); resize: vertical; }
+.new-task-row, .new-task-options, .new-task-actions, .new-task-q-actions { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.new-task .notice { margin: 0; color: var(--destructive-text); }
+.new-task .notice:empty { display: none; }
+.new-task-preview { display: grid; gap: 10px; border-top: 1px solid var(--border); padding-top: 12px; }
+.new-task-title { margin: 0; font-size: var(--text-body); font-weight: 700; }
+.new-task-body { margin: 4px 0 0; padding: 10px 12px; background: var(--muted); border-radius: var(--radius-control); white-space: pre-wrap; overflow-wrap: anywhere; font-size: var(--text-small); }
+.new-task-check { display: inline-flex; gap: 6px; align-items: center; }
+.new-task-question { display: grid; gap: 8px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--background); }
+.new-task-q-text { margin: 0; font-weight: 500; }
+.new-task-q-actions input { flex: 1 1 16em; min-width: 0; }
+.new-task-link-notice, .new-task-filed { margin: 0; }

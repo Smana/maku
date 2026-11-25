@@ -13,6 +13,7 @@ import (
 	"github.com/Smana/maku/internal/ghidentity"
 	"github.com/Smana/maku/internal/github"
 	"github.com/Smana/maku/internal/httpx"
+	"github.com/Smana/maku/internal/humanapi"
 	"github.com/Smana/maku/internal/intake"
 	"github.com/Smana/maku/internal/repoaccess"
 	"github.com/Smana/maku/internal/store"
@@ -56,6 +57,36 @@ func visibilityApp(dir string) gitHubVisibilities {
 		return a
 	}
 	return nil
+}
+
+// issueStarterApp files a web handoff's issue on GitHub through the factory App with an
+// issues: write token scoped to that single repository, recording the viewer's linked GitHub login.
+func issueStarterApp(dir string) humanapi.IssueStarter {
+	a := factoryApp(dir)
+	if a == nil {
+		return nil
+	}
+	return githubIssueStarter{app: a}
+}
+
+type githubIssueStarter struct {
+	app *github.App
+}
+
+func (g githubIssueStarter) StartIssue(ctx context.Context, req humanapi.StartIssueRequest) (humanapi.StartIssueResult, error) {
+	owner, repo, ok := strings.Cut(req.Repository, "/")
+	if !ok {
+		return humanapi.StartIssueResult{}, fmt.Errorf("invalid repository %q", req.Repository)
+	}
+	body := req.Body
+	if req.Viewer != "" {
+		body = strings.TrimRight(body, "\n") + "\n\n---\nFiled from Maku by @" + req.Viewer + "."
+	}
+	iss, err := g.app.CreateIssue(ctx, owner, repo, req.Title, body, req.Labels)
+	if err != nil {
+		return humanapi.StartIssueResult{}, err
+	}
+	return humanapi.StartIssueResult{Number: iss.Number, URL: iss.HTMLURL}, nil
 }
 
 // accessTTL is the window a GitHub answer is trusted: human.access's TTL, which config.Load defaults
