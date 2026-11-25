@@ -207,7 +207,7 @@ p, li { text-wrap: pretty; }
 /* The eyebrow: a label that names a column, a section or a fact, never a sentence or a heading's
    kicker. The rules below keep each one's colour. The settings dt keeps the body's leading, so it
    sits on its value's line. */
-.rooms th, .page-header .fact-label, .policy-header dt, .next-label, .now-lead, .brief-kind, .t-sec,
+.rooms th, .page-header .fact-label, .policy-header dt, .workflow-label, .next-label, .now-lead, .brief-kind, .t-sec,
 .controls h2, .controls .group-room > summary, .controls .group-label {
   font: 500 var(--text-eyebrow)/var(--leading-eyebrow) var(--font-mono); text-transform: uppercase; letter-spacing: 0.08em;
 }
@@ -1201,6 +1201,13 @@ main.settings.approval-memory > h1:first-child { display: none; }
 /* The repository's MergePolicy, said once above its classes: facts as a list of pairs, then each
    condition as a word on its tone. Tones pair a colour with the word, never the colour alone. */
 .policy-header { margin: 0 0 12px; border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); background: var(--card); }
+/* The Workflow card (room header and New task form): each fact a label column and a value column,
+   so "Outcome" never runs into "a plan to approve" (gcp-0, 2026-11-25). */
+.workflow-head { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; align-items: baseline; }
+.workflow-row { display: contents; }
+.workflow-label { color: var(--muted-foreground); line-height: var(--leading-body); }
+.workflow-value { min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.workflow-head > :not(.workflow-row) { grid-column: 1 / -1; margin: 0; }
 .policy-header dl { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 4px 16px; margin: 0; }
 .policy-header dt { color: var(--muted-foreground); line-height: var(--leading-body); }
 .policy-header dd { margin: 0; min-width: 0; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
