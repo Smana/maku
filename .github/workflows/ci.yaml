@@ -172,6 +172,13 @@ jobs:
           context: images/maku-harness
           target: test
           push: false
+      - if: steps.c.outputs.harness == 'true'
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: .
+          file: images/maku-opencode/Dockerfile
+          target: test
+          push: false
 
   # v3 feature 3, offline proof 4: the harness image under gVisor, behind a proxy allowing exactly a
   # check-enabled run's hosts, runs both repositories' declared checks on their main. Not required:
@@ -284,7 +291,7 @@ jobs:
     strategy:
       max-parallel: 2
       matrix:
-        image: [maku-broker, maku-bridge, maku-factory, maku-harness, maku-run-controller, maku-slack]
+        image: [maku-broker, maku-bridge, maku-factory, maku-harness, maku-opencode, maku-run-controller, maku-slack]
     uses: ./.github/workflows/image.yaml
     with:
       image: ${{ matrix.image }}
@@ -335,7 +342,7 @@ jobs:
           BUILDS: ${{ needs.prerelease.result }}
         run: >-
           bash hack/prerelease-publish.sh "$RUNNER_TEMP/digests" "$VERSION"
-          maku-broker maku-bridge maku-factory maku-harness maku-run-controller maku-slack
+          maku-broker maku-bridge maku-factory maku-harness maku-opencode maku-run-controller maku-slack
 
   # One signed chart per PR push, <next-patch>-pr<N>.g<sha8>, whose appVersion is the image
   # pre-release of the same push. The `g` keeps a digits-only sha a valid semver identifier

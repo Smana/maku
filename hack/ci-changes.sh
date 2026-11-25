@@ -39,7 +39,7 @@ harness=false deployable=false install=false charts=false
 while IFS= read -r f; do
   [[ -n $f ]] || continue
   case "$f" in
-    images/maku-harness/* | .github/workflows/ci.yaml | hack/ci-changes.sh) harness=true ;;
+    images/maku-harness/* | images/maku-opencode/* | .github/workflows/ci.yaml | hack/ci-changes.sh) harness=true ;;
   esac
   case "$f" in
     charts/* | internal/install/* | internal/preflight/* | hack/install-e2e/* | hack/e2e-stub/* | .github/workflows/demo-e2e.yaml | hack/ci-changes.sh) install=true ;;
