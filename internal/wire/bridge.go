@@ -102,6 +102,8 @@ const (
 	ReasonBadDrill        = "bad_drill"         // 400: a drill report or read that is not one: a bad id, version, hash, time or report
 	ReasonDrillExists     = "drill_exists"      // 409: a report for that drill id is already stored
 	ReasonNoDrill         = "no_drill"          // 404: no drill passed for that version and configuration hash
+	ReasonBadHandoffStart = "bad_handoff_start" // 400: a handoff start read without an owner/name repository and a positive issue
+	ReasonNoHandoffStart  = "no_handoff_start"  // 404: the broker filed no web start for that issue
 )
 
 // SSE event names, broker → bridge.

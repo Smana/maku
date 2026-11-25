@@ -121,7 +121,7 @@ func (p *IssuePoller) reviewOne(ctx context.Context, cfg *config.Config, n int) 
 		}
 	}
 	if !slices.ContainsFunc(open, func(t *v1alpha1.Task) bool { return t.Name == name }) {
-		if spent, err := p.personSpent(ctx, cfg, n, last); err != nil || spent {
+		if spent, err := p.personSpent(ctx, cfg, n, last.Actor, last); err != nil || spent {
 			return err
 		}
 	}

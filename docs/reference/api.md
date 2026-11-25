@@ -69,6 +69,7 @@ that ends, is revoked or is deleted has its streams cut on the watch event.
 | `GET /v1/rooms/{id}/queue` | System | Lists the messages still queued |
 | `POST /v1/rooms/{id}/queue/consume` | System | Marks queued messages consumed by a run |
 | `GET /v1/links/slack?team=&user=` | The factory | The `sub` a Slack user linked; `404 not_linked` |
+| `GET /v1/handoff-starts?repository=&issue=` | The factory | The broker's record of the web **New task** start that filed that issue ([broker-confirmed handoff](../security.md#authorization)): `{handoff, repository, issue, sub, labels, startedAt}`, kept 7 days. It names the account, never a login: the factory resolves that itself. `404 no_handoff_start` when the broker filed nothing for the issue, `400 bad_handoff_start` for a repository that is not `owner/name` or an issue that is not positive. Served when the broker can file issues (`ROOMS_GITHUB_APP_DIR`) |
 | `GET /v1/links/github?sub=` | The factory | A `sub`'s [GitHub account link](../github-link.md): `{githubId, lastSeenAt, active}`, `active` under the broker's `activeWindow`; `404 not_linked`, `400 bad_sub` for a sub outside 1 to 128 bytes |
 
 ### `POST /v1/bridge/hello`

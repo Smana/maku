@@ -196,6 +196,9 @@ type Server struct {
 	// IssueStarter files a handoff's issue on GitHub and applies its labels for POST /api/handoffs/{id}/start.
 	// Nil refuses web start as unavailable.
 	IssueStarter IssueStarter
+	// HandoffStarts records each web start (broker-confirmed handoff): the factory accepts the App's
+	// factory/ready on the filed issue only against that record. Nil refuses web start as unavailable.
+	HandoffStarts HandoffStartRecorder
 	// Intents is human.slackIntents: intent_classify, the Slack App's read-only classification of a
 	// thread reply (natural-language intents). Nil is the switch off: the tool is on no list.
 	Intents *IntentClassifier

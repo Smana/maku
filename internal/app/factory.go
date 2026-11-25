@@ -817,7 +817,8 @@ func runFactory(ctx context.Context, log *slog.Logger, getenv func(string) strin
 		}
 		return &intake.IssuePoller{Forge: c.gh, Client: mgr.GetClient(), Namespace: ns, Cfg: live,
 			Repository: name, Demo: cfg.Demo, Errors: m, Log: log.With("repository", name), Stopped: stopped, Owned: fenced.Owned, Ledger: ledgers,
-			CanWrite: func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
+			CanWrite:      func(ctx context.Context, login string) (bool, error) { return perms.CanWrite(ctx, name, login) },
+			HandoffStarts: handoffStarts(broker), Logins: logins,
 			Proposal: proposal, Redact: redactor}, true
 	}}
 	pollers.Sync(conns.names())
@@ -1410,4 +1411,17 @@ func stagesRefresher(cfg func() *config.Config, reader client.Reader, ns string,
 			}
 		}
 	})
+}
+
+// handoffStarts is the issue intake's read of the broker's web start records (broker-confirmed
+// handoff).
+func handoffStarts(broker *rooms.Client) intake.HandoffStarts {
+	return func(ctx context.Context, repository string, issue int) (intake.HandoffStart, bool, error) {
+		h, found, err := broker.HandoffStart(ctx, repository, issue)
+		if err != nil || !found {
+			return intake.HandoffStart{}, found, err
+		}
+		return intake.HandoffStart{Handoff: h.Handoff, Repository: h.Repository, Issue: h.Issue, Sub: h.Sub,
+			Labels: h.Labels, StartedAt: h.StartedAt}, true, nil
+	}
 }

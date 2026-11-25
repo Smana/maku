@@ -926,6 +926,12 @@ type IssueStarter interface {
 	StartIssue(ctx context.Context, req StartIssueRequest) (StartIssueResult, error)
 }
 
+// HandoffStartRecorder records a web start, so the factory can confirm the App's factory/ready on the
+// issue it filed (broker-confirmed handoff). *store.Store implements it.
+type HandoffStartRecorder interface {
+	RecordHandoffStart(ctx context.Context, h store.HandoffStart) error
+}
+
 type handoffCreateResponse struct {
 	handoffResult
 	Repository string `json:"repository,omitempty"`
@@ -1131,7 +1137,9 @@ func (s *Server) handoffCheckRoute(w http.ResponseWriter, r *http.Request) {
 }
 
 // handoffStartRoute is POST /api/handoffs/{id}/start: files the checked handoff's issue on GitHub
-// through the viewer's linked GitHub identity and applies its workflow, outcome and factory/ready labels.
+// through the factory App for the viewer's linked GitHub identity, applies its workflow, outcome and
+// factory/ready labels, and records the start, which the factory's intake confirms the App's label
+// against (broker-confirmed handoff).
 func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 	p, ok := s.principal(w, r)
 	if !ok {
@@ -1208,7 +1216,7 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 		s.writeHandoffError(w, err)
 		return
 	}
-	if s.IssueStarter == nil {
+	if s.IssueStarter == nil || s.HandoffStarts == nil {
 		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_unavailable", "Starting tasks from the web UI is not configured on this broker.")
 		return
 	}
@@ -1232,6 +1240,17 @@ func (s *Server) handoffStartRoute(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		s.log().Warn("handoff start failed", "handoff", id, "repository", draft.Repository, "err", err)
 		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_failed", "Could not file the issue on GitHub right now.")
+		return
+	}
+	// The App applied factory/ready, so the factory's intake starts the task only against this record:
+	// who the broker filed the issue for, never a marker in the issue (broker-confirmed handoff).
+	now := s.handoffNow()
+	if err := s.HandoffStarts.RecordHandoffStart(ctx, store.HandoffStart{Repository: draft.Repository, Issue: filed.Number,
+		Handoff: id, Principal: p.ID, Sub: p.Sub, Login: login, Labels: labels, StartedAt: now,
+		ExpiresAt: now.Add(store.HandoffStartTTL)}); err != nil {
+		s.log().Error("handoff start not recorded", "handoff", id, "repository", draft.Repository, "issue", filed.Number, "err", err)
+		writeHandoffRefusal(w, http.StatusServiceUnavailable, "start_unrecorded",
+			"The issue was filed at "+filed.URL+", but its start could not be recorded: a maintainer can label it factory/ready.")
 		return
 	}
 	w.WriteHeader(http.StatusCreated)

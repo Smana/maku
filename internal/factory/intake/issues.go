@@ -101,6 +101,12 @@ type IssuePoller struct {
 	// repository. A maintainers entry drifts from GitHub silently; this does not. nil starts
 	// nothing: a label is never trusted on the list alone.
 	CanWrite func(ctx context.Context, login string) (bool, error)
+	// HandoffStarts reads the broker's records of web New task starts, and Logins resolves a
+	// record's sub to its GitHub login (broker-confirmed handoff): the factory App's factory/ready on
+	// an issue the broker filed for a maintainer starts that maintainer's task. Either nil confirms
+	// nothing: the App's label is refused like any non-maintainer's.
+	HandoffStarts HandoffStarts
+	Logins        Logins
 	// Owned is v2 D7's fence: whether the repository's default branch names this factory. Not
 	// owned, the poller still honours stops and the control issue, and starts nothing; nil owns
 	// nothing.
@@ -358,14 +364,28 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 		return err
 	}
 	gen, last, ok := Generation(evs, p.repo(cfg).IsMaintainer)
-	if !ok {
-		return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
-	}
-	switch w, err := p.writer(ctx, last.Actor); {
-	case err != nil:
-		return err // no answer is no refusal: the label waits for the next poll
-	case !w:
-		return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
+	requester := last.Actor
+	var handoff *handoffConfirmation
+	if ok {
+		switch w, err := p.writer(ctx, last.Actor); {
+		case err != nil:
+			return err // no answer is no refusal: the label waits for the next poll
+		case !w:
+			return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
+		}
+	} else {
+		// Broker-confirmed handoff: the factory App's label on an issue the broker filed for a
+		// maintainer is that maintainer's; any other non-maintainer's label is refused.
+		c, wait, err := p.confirmedHandoff(ctx, cfg, n, gen, last)
+		switch {
+		case err != nil:
+			return err
+		case wait:
+			return nil
+		case c == nil:
+			return p.refuse(ctx, cfg, n, last, "unauthorised_labeller")
+		}
+		requester, handoff = c.Login, c
 	}
 	// The demo serves public repositories only; elsewhere private code needs its acknowledgement (v4
 	// D3, step 8 R9). No answer is no refusal: the label waits for the next poll (fail closed). A task
@@ -421,7 +441,7 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 		}
 	}
 	if !slices.ContainsFunc(open, func(t *v1alpha1.Task) bool { return t.Name == name }) { // a created Task is past the door
-		if spent, err := p.personSpent(ctx, cfg, n, last); err != nil || spent {
+		if spent, err := p.personSpent(ctx, cfg, n, requester, last); err != nil || spent {
 			return err
 		}
 	}
@@ -430,7 +450,12 @@ func (p *IssuePoller) one(ctx context.Context, cfg *config.Config, n int) error 
 			return err
 		}
 	}
-	t := p.issueTask(cfg, n, key, "github:"+last.Actor, iss, text, sum)
+	t := p.issueTask(cfg, n, key, "github:"+requester, iss, text, sum)
+	if handoff != nil {
+		// The intake record names the confirmed human, so the App's workflow pin is theirs: triage
+		// applies it only while they maintain the repository (P6), and attributes it to them.
+		t.Spec.Intake = &v1alpha1.TaskIntake{Profile: handoff.Workflow, Login: handoff.Login}
+	}
 	var outcomes []string
 	if slices.Contains(iss.Labels, LabelPlanFirst) {
 		outcomes = append(outcomes, config.OutcomePlanFirst)
@@ -505,11 +530,11 @@ func (p *IssuePoller) childOf(ctx context.Context, cfg *config.Config, n int, is
 	return nil, nil
 }
 
-// personSpent is D4 at intake: with per-person caps on and enforced, a labeller whose day is spent
-// gets a comment naming them, their cap and the reset, no Task, and the label removed, so
-// re-labelling tomorrow retries. Queued's reservation stays the exact check (D3): this one only
+// personSpent is D4 at intake: with per-person caps on and enforced, a requester whose day is spent
+// (login: the labeller, or a broker-confirmed handoff's human) gets a comment naming them, their
+// cap and the reset, no Task, and the label removed, so re-labelling tomorrow retries. Queued's reservation stays the exact check (D3): this one only
 // keeps an exhausted day from queueing work until midnight. In shadow it refuses nothing.
-func (p *IssuePoller) personSpent(ctx context.Context, cfg *config.Config, n int, last forge.LabelEvent) (bool, error) {
+func (p *IssuePoller) personSpent(ctx context.Context, cfg *config.Config, n int, login string, last forge.LabelEvent) (bool, error) {
 	b := cfg.Budgets
 	if !b.PerPerson.Enabled || p.Ledger == nil {
 		return false, nil
@@ -518,7 +543,7 @@ func (p *IssuePoller) personSpent(ctx context.Context, cfg *config.Config, n int
 	if p.Now != nil {
 		now = p.Now
 	}
-	person := v1alpha1.Person(last.Actor)
+	person := v1alpha1.Person(login)
 	used, err := ledger.DayUsed(ctx, p.Ledger, p.Namespace, person, now())
 	if err != nil {
 		return false, err // no answer is no refusal: the label waits for the next poll

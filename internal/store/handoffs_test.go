@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"slices"
 	"testing"
 	"time"
 )
@@ -126,5 +127,54 @@ func TestPruneHandoffs(t *testing.T) {
 	}
 	if _, err := s.GetHandoff(ctx, live.ID, now); err != nil {
 		t.Fatalf("live row missing after prune: %v", err)
+	}
+}
+
+// A web start's record is keyed by its issue, kept once, never rewritten by the broker, and pruned
+// by retention when it expires.
+func TestHandoffStartRecord(t *testing.T) {
+	ctx := t.Context()
+	s, broker, retention, _ := open(t)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	want := HandoffStart{Repository: "Smana/Maku", Issue: 512, Handoff: "abcdefghijklmnopqrstuvwx23", Principal: "human:alice",
+		Sub: "alice", Login: "Smana", Labels: []string{"workflow:careful", "factory/ready"}, StartedAt: now, ExpiresAt: now.Add(HandoffStartTTL)}
+	if err := s.RecordHandoffStart(ctx, want); err != nil {
+		t.Fatal(err)
+	}
+	got, found, err := s.GetHandoffStart(ctx, "smana/maku", 512, now)
+	if err != nil || !found || got.Repository != "smana/maku" || got.Issue != 512 || got.Handoff != want.Handoff ||
+		got.Sub != "alice" || got.Login != "Smana" || !slices.Equal(got.Labels, want.Labels) || !got.StartedAt.Equal(now) {
+		t.Fatalf("got %+v %v %v", got, found, err)
+	}
+	if _, found, err := s.GetHandoffStart(ctx, "Smana/Maku", 513, now); found || err != nil {
+		t.Fatalf("another issue has no record: %v %v", found, err)
+	}
+	if err := s.RecordHandoffStart(ctx, want); err == nil {
+		t.Fatal("a second record for the same issue was accepted")
+	}
+	if err := run(ctx, broker, `UPDATE handoff_starts SET sub = 'mallory'`); err == nil {
+		t.Fatal("the broker rewrote a start record")
+	}
+	old := want
+	old.Issue, old.ExpiresAt = 1, now.Add(-time.Minute)
+	if err := s.RecordHandoffStart(ctx, old); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, _ := s.GetHandoffStart(ctx, "Smana/Maku", 1, now); found {
+		t.Fatal("an expired record was answered")
+	}
+	if err := run(ctx, retention, `SELECT sub FROM handoff_starts`); err == nil {
+		t.Fatal("the retention role read a start record")
+	}
+	r, err := Open(ctx, retention, RoleRetention)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Close()
+	if n, err := r.PruneHandoffs(ctx, now); err != nil || n != 1 {
+		t.Fatalf("PruneHandoffs = %d, %v; want 1, nil", n, err)
+	}
+	if _, found, _ := s.GetHandoffStart(ctx, "Smana/Maku", 512, now); !found {
+		t.Fatal("the live record was pruned")
 	}
 }

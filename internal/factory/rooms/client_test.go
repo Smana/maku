@@ -189,6 +189,20 @@ func newBroker(t *testing.T, n int) (*broker, *httptest.Server) {
 			_ = json.NewEncoder(w).Encode(wire.Error{Reason: wire.ReasonNotLinked})
 		}
 	})
+	mux.HandleFunc("GET /v1/handoff-starts", func(w http.ResponseWriter, r *http.Request) {
+		if b.refuse(w, r) {
+			return
+		}
+		switch r.URL.Query().Get("repository") + "#" + r.URL.Query().Get("issue") {
+		case "Smana/maku#512":
+			_, _ = io.WriteString(w, `{"handoff":"h1","repository":"smana/maku","issue":512,"sub":"zsub1","labels":["factory/ready"],"startedAt":"2026-11-25T09:00:00Z"}`)
+		case "Smana/maku#600":
+			_, _ = io.WriteString(w, `{"handoff":"h1","repository":"smana/maku","issue":512,"sub":"zsub1"}`)
+		default:
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(wire.Error{Reason: wire.ReasonNoHandoffStart})
+		}
+	})
 	mux.HandleFunc("GET /v1/rooms/{id}/bundles/{digest}", func(w http.ResponseWriter, r *http.Request) {
 		if b.refuse(w, r) {
 			return
@@ -894,6 +908,36 @@ func TestSlackLink(t *testing.T) {
 	}
 	r.b.fail["/v1/links/slack"], r.b.reason = http.StatusForbidden, wire.ReasonNotPermitted
 	if _, _, err := r.c.SlackLink(t.Context(), "T01ABC", "U02DEF"); !errors.Is(err, ErrNotPermitted) {
+		t.Fatalf("not permitted: %v", err)
+	}
+}
+
+// The web start read: the broker's record of the issue it filed, an issue it filed nothing for as
+// not found, and a record naming another issue an error; a malformed issue never reaches the broker.
+func TestHandoffStart(t *testing.T) {
+	r := newRig(t, 1)
+	ctx := t.Context()
+	h, found, err := r.c.HandoffStart(ctx, "Smana/maku", 512)
+	if err != nil || !found || h.Sub != "zsub1" || h.Handoff != "h1" || h.Issue != 512 || len(h.Labels) != 1 ||
+		!h.StartedAt.Equal(time.Date(2026, 11, 25, 9, 0, 0, 0, time.UTC)) {
+		t.Fatalf("%+v %v %v", h, found, err)
+	}
+	if _, found, err := r.c.HandoffStart(ctx, "Smana/maku", 513); err != nil || found {
+		t.Fatalf("an issue the broker did not file: %v %v", found, err)
+	}
+	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 600); err == nil {
+		t.Fatal("a record of another issue was accepted")
+	}
+	for _, c := range []struct {
+		repo  string
+		issue int
+	}{{"maku", 1}, {"Smana/maku?x=1", 1}, {"Smana/maku", 0}} {
+		if _, _, err := r.c.HandoffStart(ctx, c.repo, c.issue); err == nil {
+			t.Fatalf("%q#%d reached the broker", c.repo, c.issue)
+		}
+	}
+	r.b.fail["/v1/handoff-starts"], r.b.reason = http.StatusForbidden, wire.ReasonNotPermitted
+	if _, _, err := r.c.HandoffStart(ctx, "Smana/maku", 512); !errors.Is(err, ErrNotPermitted) {
 		t.Fatalf("not permitted: %v", err)
 	}
 }
