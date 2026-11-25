@@ -158,10 +158,12 @@ func (r *Reconciler) startReviewOnly(ctx context.Context, cfg *config.Config, t 
 	if baseRef == "" {
 		baseRef = "main"
 	}
+	// The reviewer starts from the pull request's head (BaseRef) on the run's own agent/<task>
+	// branch, which implementerSpec set: a person's head (docs/x) is no agent branch, and the
+	// AgentRun schema admits agent/* only, the branch an agent may push. The reviewer pushes to none.
 	s.Role, s.Persona = "reviewer", "reviewer"
 	s.TaskURL = pr.URL
 	s.BaseRef = baseRef
-	s.Branch = baseRef
 	s.MaxTokens = runCapTokens(t, "reviewer")
 	r.withChecks(cfg, &s, t)
 	s.Tier = otherTier(t.Spec.Budget.Tier)

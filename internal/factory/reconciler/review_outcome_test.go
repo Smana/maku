@@ -186,3 +186,21 @@ func TestTheGateIgnoresAVerdictOnAForeignPullRequest(t *testing.T) {
 		t.Fatalf("review task armed or wrong refusal: %+v", d2)
 	}
 }
+
+// Live on gcp-0 (Maku v0.54.1): factory/review on a person's pull request, head
+// docs/runbook-workflow-comparison-32, escalated loop_unsupported with no run, because the reviewer's
+// claim named the head as spec.branch and the AgentRun schema admits agent/* only. The reviewer
+// starts from the head (baseRef) on its own agent/<task> branch, and the read-only token stays.
+func TestAReviewOfAPersonsBranchStartsTheReviewer(t *testing.T) {
+	pr := foreignPR()
+	pr.Author, pr.HeadRef = "Smana", "docs/runbook-workflow-comparison-32"
+	g, tk := reviewOutcomeRig(t, pr)
+	tk = g.reconcile(t, tk.Name, 3)
+	if tk.Status.Phase != v1alpha1.PhaseReviewing {
+		t.Fatalf("expected Reviewing, got %s/%s", tk.Status.Phase, tk.Status.Reason)
+	}
+	spec, ok := g.runs.specs[rid(0)]
+	if !ok || spec.Role != "reviewer" || spec.BaseRef != pr.HeadRef || spec.Branch != "agent/"+tk.Name || spec.Head != pr.HeadSHA {
+		t.Fatalf("unexpected reviewer spec: %+v", spec)
+	}
+}

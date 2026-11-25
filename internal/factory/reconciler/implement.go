@@ -330,11 +330,19 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 		// The deterministic id already has a claim: the run was created and its record lost
 		// (R48). Recorded, never re-created.
 		if !apierrors.IsAlreadyExists(err) {
-			// The cluster refused a claim carrying spec.loop, checks included (Strict validation: the host's XRD lacks it).
-			// Retrying cannot help; hand the task to a maintainer instead of backing off forever.
+			// The cluster refused the claim's shape: retrying cannot help, so hand the task to a
+			// maintainer instead of backing off forever. Only a refusal of spec.loop (checks and
+			// search included: Strict validation, the host's XRD lacks it) is loop_unsupported; any
+			// other refused field is run_refused, and the log names it.
 			if (s.Loop != nil || s.Checks || s.Search) && refusedSchema(err) {
-				r.log().Warn("loop, repository checks or search claim refused by the cluster", "task.id", t.Name, "err", err)
-				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "loop_unsupported")
+				fields := refusedFields(err)
+				if refusedLoop(err, fields) {
+					r.log().Warn("loop, repository checks or search claim refused by the cluster", "task.id", t.Name, "err", err)
+					return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "loop_unsupported")
+				}
+				r.log().Warn("run claim refused by the cluster", "task.id", t.Name, "run.id", s.RunID,
+					"role", s.Role, "fields", strings.Join(fields, ","), "err", err)
+				return r.end(ctx, cfg, t, v1alpha1.PhaseEscalated, "run_refused")
 			}
 			return err
 		}
@@ -364,6 +372,31 @@ func (r *Reconciler) startRun(ctx context.Context, cfg *config.Config, t *v1alph
 
 // refusedSchema: the cluster refused the claim's shape, which no retry of the same claim changes.
 func refusedSchema(err error) bool { return apierrors.IsInvalid(err) || apierrors.IsBadRequest(err) }
+
+// refusedFields are the claim fields a schema refusal names (spec.branch, spec.loop.checks, ...).
+func refusedFields(err error) []string {
+	var st apierrors.APIStatus
+	if !errors.As(err, &st) || st.Status().Details == nil {
+		return nil
+	}
+	var fields []string
+	for _, c := range st.Status().Details.Causes {
+		if c.Field != "" && !slices.Contains(fields, c.Field) {
+			fields = append(fields, c.Field)
+		}
+	}
+	return fields
+}
+
+// refusedLoop: the refusal concerns spec.loop (the loop policy, checks or search). A refusal that
+// names its fields is read from them; one that names none (Strict validation's unknown field, a
+// BadRequest) from its message.
+func refusedLoop(err error, fields []string) bool {
+	if len(fields) == 0 {
+		return strings.Contains(err.Error(), "spec.loop")
+	}
+	return slices.ContainsFunc(fields, func(f string) bool { return f == "spec.loop" || strings.HasPrefix(f, "spec.loop.") })
+}
 
 // The evidence a revision brief reads from GitHub (CD12, fast-follow 6).
 const (
