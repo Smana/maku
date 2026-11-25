@@ -136,7 +136,8 @@ type Profile struct {
 	// StepUp and StepUpCeilingUSD name the workflow and ceiling this workflow steps up to (phase C).
 	StepUp           string  `json:"stepUp,omitempty"`
 	StepUpCeilingUSD float64 `json:"stepUpCeilingUSD,omitempty"`
-	// Path is the roles in run order with CI and merge gate appended for PR workflows (WR3).
+	// Path is the roles in run order, custom read roles included, with CI and merge gate appended
+	// for PR workflows (WR3). Roles stays the template's, for pin and suggestion checks.
 	Path []string `json:"path,omitempty"`
 }
 
@@ -234,7 +235,7 @@ func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.
 		if st.Tests {
 			path = append(path, "tester")
 		}
-		for _, role := range t.Roles {
+		for _, role := range append(slices.Clone(t.Roles), st.ExtraRoles...) {
 			if !slices.Contains(path, role) {
 				path = append(path, role)
 			}

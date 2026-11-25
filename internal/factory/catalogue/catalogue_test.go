@@ -307,3 +307,29 @@ func TestAProfileCarriesItsCeilingAndPath(t *testing.T) {
 		t.Fatalf("quick = %+v", quick)
 	}
 }
+
+// A list-form workflow's path is its resolved stages: the scoper first, the tester on a testFirst
+// repository, then implementer, reviewer and every active custom read role (Maku #698, #704).
+func TestProfilePathListFormWithCustomRole(t *testing.T) {
+	cfg := live()
+	cfg.Roles = map[string]config.RoleDef{"security-reviewer": {Capability: config.CapabilityRead}}
+	cfg.HarnessProfiles["thorough"] = config.HarnessProfile{Description: "Tests first, then two reviews", Stages: []config.StageDef{
+		{Role: "scoper"},
+		{Role: "tester", When: config.TestWhenRepositoryTestFirst},
+		{Role: "implementer"},
+		{Role: "reviewer"},
+		{Role: "security-reviewer"},
+	}}
+	c, ok := Build(cfg, "Smana/cloud-native-ref", true)
+	if !ok {
+		t.Fatal("served repository: not built")
+	}
+	p := c.Profiles["thorough"]
+	want := []string{"scoper", "tester", "implementer", "reviewer", "security-reviewer", "CI", "merge gate"}
+	if !p.Offered || !slices.Equal(p.Path, want) {
+		t.Fatalf("thorough: offered %v path %v, want %v", p.Offered, p.Path, want)
+	}
+	if !slices.Equal(p.Roles, []string{"implementer", "reviewer"}) {
+		t.Fatalf("thorough: roles %v, want the template's", p.Roles)
+	}
+}

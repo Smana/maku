@@ -100,12 +100,21 @@ function lastDecisionWords(code: string): string {
   return `${what.replaceAll("_", " ")}${why ? ` (${why.replaceAll("_", " ")})` : ""}`;
 }
 
+// rolesOf is the roles a workflow runs, in run order: its resolved path (a scoper, a tester, custom
+// read roles included; Maku #698, #704) without CI and the merge gate, else its template's roles
+// from a broker that predates the path.
+function rolesOf(p: CatalogueProfile): string[] {
+  if (p.path?.length) return p.path.filter((r) => r !== "CI" && r !== "merge gate");
+  return p.roles ?? [];
+}
+
 // profileLine is one workflow in words: its roles, description, ceiling and tests-first flag (no tier).
 // The text is set as text, never as markup: a description is a maintainer's.
 function profileLine(cat: Catalogue, name: string): string {
   const p = cat.profiles[name];
   if (!p) return `${name}: not in the factory's list of workflows`;
-  const parts = [p.offered && p.roles?.length ? `roles ${p.roles.join(", ")}` : "roles chosen at triage"];
+  const roles = rolesOf(p);
+  const parts = [p.offered && roles.length ? `roles ${roles.join(" \u2192 ")}` : "roles chosen at triage"];
   if (p.description) parts.push(p.description);
   if (p.ceilingUSD && p.ceilingUSD > 0) parts.push(`up to $${p.ceilingUSD.toFixed(2)}`);
   if (p.testFirst) parts.push("tests first");
