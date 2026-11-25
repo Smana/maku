@@ -77,11 +77,15 @@ type FactorySpec struct {
 	Scoper    config.Scoper              `json:"scoper,omitzero"`
 	// +kubebuilder:validation:MaxProperties=32
 	Loops map[string]config.Loop `json:"loops,omitempty"`
-	// Workflows are the factory's workflows (WF1, WF2): quick, standard, careful and none are
+	// Workflows are the factory's workflows (WF1, WF2, WR11): quick, standard, careful and none are
 	// shipped, and an entry here replaces the shipped one of its name whole. harnessProfiles, its
 	// old name, was removed (WF9, WF13).
 	// +kubebuilder:validation:MaxProperties=16
 	Workflows map[string]config.HarnessProfile `json:"workflows,omitempty"`
+	// Roles are custom roles declared by the platform (WR11), each bound to a closed capability
+	// profile and a brief file under the factory's configuration directory.
+	// +kubebuilder:validation:MaxProperties=16
+	Roles map[string]config.RoleDef `json:"roles,omitempty"`
 	// Outcomes are the task outcomes this factory offers (phase F): change by default.
 	// An outcome not listed here falls back to change.
 	// +kubebuilder:validation:MaxItems=4

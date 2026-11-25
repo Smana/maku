@@ -28,6 +28,9 @@ type Options struct {
 	// longer resolves, so its class keeps serving while the factory runs (B9). None after a
 	// restart (D14).
 	LastResolved map[BindingKey]ResolvedClass
+	// ConfigDir is the directory containing the factory's config file, used to load custom role
+	// briefs (WR11). Empty skips reading brief files from disk.
+	ConfigDir string
 }
 
 // BindingOutcome is what Assemble made of one binding of a served Repository (B9, B10).

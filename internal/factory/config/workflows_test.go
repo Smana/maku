@@ -45,7 +45,7 @@ func TestShippedWorkflowsFillAnEmptyFactory(t *testing.T) {
 	if got := c.Templates["investigate"].Roles; !slices.Equal(got, []string{"triager"}) {
 		t.Fatalf("investigate roles = %v", got)
 	}
-	if p := c.HarnessProfiles["careful"]; p.Template != "pair" || p.Tier != "frontier" || p.Loop != "careful" || p.Description == "" {
+	if p := c.HarnessProfiles["careful"]; p.Budget != "frontier" || len(p.Stages) != 4 || p.Description == "" {
 		t.Fatalf("careful = %+v", p)
 	}
 	if p := c.HarnessProfiles["none"]; !reflect.DeepEqual(p, HarnessProfile{Template: TemplateNone}) {
@@ -89,15 +89,15 @@ func TestShippedCarefulRowFollowsTheProfile(t *testing.T) {
 	}
 }
 
-// The shipped careful row offers a split only where one can run: a split's family cap is in USD,
-// so it needs a meter with prices and runs that carry a gateway identity (validateLoops).
+// The shipped careful workflow offers a split only where one can run: a split's family cap is in
+// USD, so it needs a meter with prices and runs that carry a gateway identity.
 func TestShippedCarefulSplitNeedsAMeter(t *testing.T) {
-	if s := mustParse(t, noTemplates).Loops["careful"].Split; s != nil {
+	if s := mustParse(t, noTemplates).SplitFor("Smana/cloud-native-ref", "review", WorkflowCareful); s != nil {
 		t.Fatalf("a factory without prices or a gateway identity was shipped a split: %+v", s)
 	}
 	withPrices := strings.Replace(noTemplates, "  logsURL:",
 		"  prices: {agent-default: {input: 1.40, cacheRead: 0.26, output: 4.40}}\n  logsURL:", 1)
-	s := mustParse(t, withPrices+gatewayIdentity).Loops["careful"].Split
+	s := mustParse(t, withPrices+gatewayIdentity).SplitFor("Smana/cloud-native-ref", "review", WorkflowCareful)
 	if s == nil || s.MaxChildren != 4 || s.ChildTier != "standard" {
 		t.Fatalf("careful split = %+v", s)
 	}
@@ -244,8 +244,9 @@ func TestAPlatformsDefaultRowIsKeptWhole(t *testing.T) {
 }
 
 func TestTheShippedCarefulSplitNeedsNoClassifier(t *testing.T) {
-	_, _, loops := ShippedWorkflows()
-	if s := loops[WorkflowCareful].Split; s == nil || !s.AnyTier || s.MaxChildren != 4 {
+	profiles, _, _ := ShippedWorkflows()
+	c := &Config{HarnessProfiles: profiles}
+	if s := c.compiledSplit(profiles[WorkflowCareful]); s == nil || !s.AnyTier || s.MaxChildren != 4 {
 		t.Fatalf("split = %+v, want anyTier with four parts", s)
 	}
 }

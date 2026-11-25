@@ -54,18 +54,40 @@ func otherTier(tier string) string {
 }
 
 // verifierSpec: a read-only role starts from the task's branch with the pull request as its task (R25);
-// startVerifier adds a reviewer's brief (HR4), which needs the room.
+// startVerifier adds a reviewer's brief (HR4), which needs the room. A custom role declared under
+// cfg.Roles runs with its capability profile's run role (reviewer for read: read-only token) and
+// carries its declared name as Persona, along with its model, effort and brief (WR11).
 func (r *Reconciler) verifierSpec(cfg *config.Config, t *v1alpha1.Task, role string) runs.Spec {
 	s := r.implementerSpec(cfg, t, "")
-	s.Role, s.Persona, s.TaskText, s.TaskURL, s.BaseRef = role, role, "", t.Status.PullRequest.URL, "agent/"+t.Name
-	s.MaxTokens = runCapTokens(t, role) // #475: a reviewer admitted on a partial remainder is capped at it
+	runRole := role
+	customDef, isCustom := cfg.Roles[role]
+	if isCustom {
+		if capRole, ok := cfg.RoleRunRole(role); ok {
+			runRole = capRole
+		} else {
+			runRole = "reviewer"
+		}
+	}
+	s.Role, s.Persona, s.TaskText, s.TaskURL, s.BaseRef = runRole, role, "", t.Status.PullRequest.URL, "agent/"+t.Name
+	s.MaxTokens = runCapTokens(t, runRole) // #475: a reviewer admitted on a partial remainder is capped at it
 	r.withChecks(cfg, &s, t)
-	if role == "reviewer" { // "on a different tier from the implementer where possible" (§3); R47
+	if runRole == "reviewer" { // "on a different tier from the implementer where possible" (§3); R47
 		s.Tier = otherTier(t.Spec.Budget.Tier)
 		s.Model = cfg.Tiers[s.Tier].Model
-		if m := cfg.Templates[t.Spec.Template].ReviewerModel; m != "" {
-			s.Model = m
+		if !isCustom {
+			if m := cfg.Templates[t.Spec.Template].ReviewerModel; m != "" {
+				s.Model = m
+			}
 		}
+	}
+	if isCustom {
+		if customDef.Model != "" && (t.Spec.DataClass == "public" || !config.PublicOnly(customDef.Model)) {
+			s.Model = customDef.Model
+		}
+		if customDef.Effort != "" {
+			s.Effort = customDef.Effort
+		}
+		s.TaskText = cfg.RoleBrief(role)
 	}
 	return s
 }
@@ -115,10 +137,10 @@ func (r *Reconciler) ready(_ context.Context, t *v1alpha1.Task) error {
 	return nil
 }
 
-// maxRounds is the template's bound on review rounds: every revision a verdict asks for, and every
-// review run that has to start again, uses one.
+// maxRounds is the workflow's (or template's) bound on review rounds: every revision a verdict
+// asks for, and every review run that has to start again, uses one.
 func (r *Reconciler) maxRounds(cfg *config.Config, t *v1alpha1.Task) int32 {
-	return cfg.Templates[t.Spec.Template].MaxReviewRounds
+	return cfg.MaxReviewRoundsFor(r.workflow(cfg, t), t.Spec.Template)
 }
 
 // reviewing waits for the reviewer run to end, then acts on its own verdict: an approve

@@ -13,6 +13,9 @@ spec:
       labels: {{- include "agent-factory.labels" . | nindent 8 }}
       annotations:
         checksum/config: {{ toYaml .Values.config | sha256sum }}
+        {{- if .Values.roleBriefs }}
+        checksum/role-briefs: {{ toYaml .Values.roleBriefs | sha256sum }}
+        {{- end }}
     spec:
       serviceAccountName: agent-factory
       automountServiceAccountToken: true  # a controller: it watches Tasks and AgentRuns
@@ -91,7 +94,19 @@ spec:
             {{- end }}
       volumes:
         - name: config
+          {{- if .Values.roleBriefs }}
+          projected:
+            sources:
+              - configMap: {name: agent-factory-config}
+              - configMap:
+                  name: agent-factory-role-briefs
+                  items:
+                    {{- range $name := keys .Values.roleBriefs | sortAlpha }}
+                    - {key: {{ $name | quote }}, path: {{ printf "roles/%s" $name | quote }}}
+                    {{- end }}
+          {{- else }}
           configMap: {name: agent-factory-config}
+          {{- end }}
         - name: broker-ca
           secret: {secretName: {{ .Values.brokerCASecret }}, items: [{key: ca.crt, path: ca.crt}]}
         - name: github

@@ -196,25 +196,25 @@ func offered(name string, cl config.Class) bool {
 // runs at, else of the standard tier.
 func ceilingOf(cfg *config.Config, rc *config.Repository) float64 {
 	tier := "standard"
-	if p, ok := cfg.Workflow(rc.DefaultWorkflow()); ok && p.Tier != "" {
-		tier = p.Tier
+	if p, ok := cfg.Workflow(rc.DefaultWorkflow()); ok && p.EffectiveTier() != "" {
+		tier = p.EffectiveTier()
 	}
 	return cfg.Tiers[tier].TaskUSD
 }
 
 func profileOf(cfg *config.Config, rc *config.Repository, name string, p config.HarnessProfile) Profile {
 	tier := "standard"
-	if p.Tier == "frontier" {
+	if p.EffectiveTier() == "frontier" {
 		tier = "frontier"
 	}
 	tmplName := cfg.TemplateForProfile(name, p)
-	out := Profile{Template: tmplName, Tier: p.Tier, Checks: p.Checks, TestFirst: cfg.TestFirstIn(rc, name),
+	out := Profile{Template: tmplName, Tier: p.EffectiveTier(), Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(rc, name),
 		Loop: string(p.Loop), Description: p.Description, CeilingUSD: cfg.Tiers[tier].TaskUSD}
 	if p.StepUp != "" {
 		out.StepUp = p.StepUp
 		if target, ok := cfg.Workflow(p.StepUp); ok {
 			tTier := tier
-			if target.Tier == "frontier" {
+			if target.EffectiveTier() == "frontier" {
 				tTier = "frontier"
 			}
 			out.StepUpCeilingUSD = cfg.Tiers[tTier].TaskUSD

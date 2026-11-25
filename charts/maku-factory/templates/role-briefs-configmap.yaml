@@ -1,0 +1,12 @@
+{{- if .Values.roleBriefs }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: agent-factory-role-briefs
+  labels: {{- include "agent-factory.labels" . | nindent 4 }}
+data:
+{{- range $name := keys .Values.roleBriefs | sortAlpha }}
+  {{ $name }}: |
+    {{- index $.Values.roleBriefs $name | nindent 4 }}
+{{- end }}
+{{- end }}

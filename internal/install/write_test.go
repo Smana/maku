@@ -357,12 +357,13 @@ func renderedFactory(t *testing.T, name string) v1alpha1.Factory {
 	return f
 }
 
-// Task 6 (workflows): install writes the three workflows and none of the dead settings: no trio, no
-// defaults.template or defaults.tier, no per-class loops rows, and solo is a lone implementer.
+// WR11: install writes the three workflows in the readable list form and none of the legacy
+// bundles: no templates block, no loops block, no defaults.template or defaults.tier.
 func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 	for _, name := range goldens {
 		f := renderedFactory(t, name)
-		profiles, templates, loops := config.ShippedWorkflows()
+		in := inputs(t, name)
+		profiles, _, _ := config.FillShippedWorkflows(nil, nil, nil, len(in.Answers.List("models.prices")) > 0)
 		for n, want := range profiles {
 			if got, ok := f.Spec.Workflows[n]; !ok || !reflect.DeepEqual(got, want) {
 				t.Errorf("%s: workflow %s = %+v, want %+v", name, n, got, want)
@@ -371,17 +372,34 @@ func TestInstalledFactoryCarriesTheWorkflows(t *testing.T) {
 		if len(f.Spec.Workflows) != len(profiles) {
 			t.Errorf("%s: workflows %v", name, slices.Collect(maps.Keys(f.Spec.Workflows)))
 		}
-		if _, ok := f.Spec.Templates["trio"]; ok {
-			t.Errorf("%s: trio is written", name)
+		if len(f.Spec.Templates) != 0 {
+			t.Errorf("%s: templates should be omitted in the list form, got %v", name, slices.Collect(maps.Keys(f.Spec.Templates)))
 		}
-		if got := f.Spec.Templates["solo"].Roles; !slices.Equal(got, []string{"implementer"}) {
-			t.Errorf("%s: solo = %v", name, got)
+		if len(f.Spec.Loops) != 0 {
+			t.Errorf("%s: loops should be omitted in the list form, got %v", name, slices.Collect(maps.Keys(f.Spec.Loops)))
 		}
-		if len(f.Spec.Templates) != len(templates) {
-			t.Errorf("%s: templates %v", name, slices.Collect(maps.Keys(f.Spec.Templates)))
+	}
+}
+
+// TestTheInstallerWritesTheListForm verifies maku install --print emits quick, standard and
+// careful using budget + stages and omits legacy templates and loops blocks.
+func TestTheInstallerWritesTheListForm(t *testing.T) {
+	for _, name := range goldens {
+		f := renderedFactory(t, name)
+		for _, wf := range []string{config.WorkflowQuick, config.WorkflowStandard, config.WorkflowCareful} {
+			p, ok := f.Spec.Workflows[wf]
+			if !ok {
+				t.Fatalf("%s: missing workflow %s", name, wf)
+			}
+			if len(p.Stages) == 0 || p.Budget == "" {
+				t.Errorf("%s: workflow %s not in list form: %+v", name, wf, p)
+			}
+			if p.Template != "" || p.Tier != "" || p.Loop != "" {
+				t.Errorf("%s: workflow %s still carries legacy keys: %+v", name, wf, p)
+			}
 		}
-		if got := slices.Sorted(maps.Keys(f.Spec.Loops)); !slices.Equal(got, slices.Sorted(maps.Keys(loops))) {
-			t.Errorf("%s: loops rows %v, want default and careful only", name, got)
+		if len(f.Spec.Templates) != 0 || len(f.Spec.Loops) != 0 {
+			t.Errorf("%s: expected no templates or loops, got templates=%v loops=%v", name, f.Spec.Templates, f.Spec.Loops)
 		}
 	}
 }

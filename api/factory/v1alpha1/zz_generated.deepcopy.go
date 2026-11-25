@@ -612,6 +612,13 @@ func (in *FactorySpec) DeepCopyInto(out *FactorySpec) {
 			(*out)[key] = *val.DeepCopy()
 		}
 	}
+	if in.Roles != nil {
+		in, out := &in.Roles, &out.Roles
+		*out = make(map[string]config.RoleDef, len(*in))
+		for key, val := range *in {
+			(*out)[key] = val
+		}
+	}
 	if in.Outcomes != nil {
 		in, out := &in.Outcomes, &out.Outcomes
 		*out = make([]string, len(*in))

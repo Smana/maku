@@ -1250,8 +1250,8 @@ func (r *Reconciler) profileSpec(cfg *config.Config, t *v1alpha1.Task, name stri
 		mode = config.ScopeOff // R38's investigate path is never scoped
 	}
 	t.Spec.ScopeMode = string(mode)
-	if slices.Index(tiers, p.Tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
-		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(cfg, p.Tier), t.Spec.MaxMicroUSD)
+	if tier := p.EffectiveTier(); slices.Index(tiers, tier) > slices.Index(tiers, t.Spec.Budget.Tier) {
+		t.Spec.Budget = triage.Ceiling(triage.BudgetFor(cfg, tier), t.Spec.MaxMicroUSD)
 	}
 }
 
@@ -1283,7 +1283,7 @@ func (r *Reconciler) floorProfile(cfg *config.Config, t *v1alpha1.Task, d triage
 		cohort = triage.CohortTreatment
 	}
 	return &v1alpha1.ProfileStatus{Name: name, Source: source, Cohort: cohort,
-		Checks: p.Checks, TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
+		Checks: p.EffectiveChecks(), TestFirst: cfg.TestFirstIn(r.repo(cfg, t), name), Requested: d.Pin.Name, Refused: d.Pin.Refused}
 }
 
 // pinTestsPaths is the one pin check triage leaves to the reconciler, since it reads the repository:

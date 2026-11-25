@@ -26,15 +26,38 @@ const (
 	WorkflowCareful  = "careful"
 )
 
-// ShippedWorkflows are the three workflows, quick, standard and careful, with none for adopted pull
-// requests, as the templates, harness profiles and loops rows they are made of (WF2). Each call
-// returns fresh maps.
+// ShippedWorkflows are the three workflows, quick, standard and careful, in the list form (WR11),
+// with none for adopted pull requests, plus the built-in templates and default loop row for legacy
+// workflows. Each call returns fresh maps.
 func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[string]Template, loops map[string]Loop) {
 	profiles = map[string]HarnessProfile{
-		WorkflowQuick:    {Template: "solo", StepUp: WorkflowStandard, Description: "One implementer. For changes a check can verify."},
-		WorkflowStandard: {Template: "pair", StepUp: WorkflowCareful, Description: "An implementer and a reviewer. The default."},
-		WorkflowCareful: {Template: "pair", Tier: "frontier", Loop: WorkflowCareful,
-			Description: "Scoped first, judged before review. For wide or unclear tasks."},
+		WorkflowQuick: {
+			Description: "One implementer. For changes a check can verify.",
+			Budget:      "standard",
+			StepUp:      WorkflowStandard,
+			Stages: []StageDef{
+				{Role: "implementer", Stall: true},
+			},
+		},
+		WorkflowStandard: {
+			Description: "An implementer and a reviewer. The default.",
+			Budget:      "standard",
+			StepUp:      WorkflowCareful,
+			Stages: []StageDef{
+				{Role: "implementer", Stall: true},
+				{Role: "reviewer", MaxRounds: 2},
+			},
+		},
+		WorkflowCareful: {
+			Description: "Scoped first, judged before review. For wide or unclear tasks.",
+			Budget:      "frontier",
+			Stages: []StageDef{
+				{Role: "scoper", Split: &SplitDef{MaxParts: 4}, Gate: &GateDef{When: GateWhenPlanFirst}},
+				{Role: "tester", When: TestWhenRepositoryTestFirst},
+				{Role: "implementer", Search: true, Stall: true, Judge: JudgeEvidence},
+				{Role: "reviewer", MaxRounds: 2},
+			},
+		},
 		TemplateNone: {Template: TemplateNone},
 	}
 	templates = map[string]Template{
@@ -43,41 +66,60 @@ func ShippedWorkflows() (profiles map[string]HarnessProfile, templates map[strin
 		"investigate": {Roles: []string{"triager"}},
 	}
 	stall := int32(DefaultStallSteps)
-	askOn, planOn, reviewOn, reviewOff := true, true, true, false
+	askOn, reviewOn := true, true
 	loops = map[string]Loop{
-		"default":     {Ask: &askOn, Review: &reviewOn, StallSteps: &stall, Judge: NoJudge},
-		WorkflowQuick: {Ask: &askOn, Review: &reviewOff, StallSteps: &stall, Judge: NoJudge},
-		WorkflowCareful: {Ask: &askOn, Plan: &planOn, Tests: true, Search: true, Review: &reviewOn,
-			StallSteps: &stall, Judge: DefaultJudge,
-			Split: &SplitPolicy{MaxChildren: 4, ChildTier: DefaultChildTier, AnyTier: true}},
+		"default": {Ask: &askOn, Review: &reviewOn, StallSteps: &stall, Judge: NoJudge},
 	}
 	return profiles, templates, loops
 }
 
+// legacyShippedProfile returns the pre-WR11 workflow definition for name when a platform
+// customizes a shipped workflow through its legacy loops table without redefining workflows.<name>.
+func legacyShippedProfile(name string, hasOwnLoop bool) HarnessProfile {
+	switch name {
+	case WorkflowQuick:
+		return HarnessProfile{Template: "solo", StepUp: WorkflowStandard, Description: "One implementer. For changes a check can verify."}
+	case WorkflowStandard:
+		return HarnessProfile{Template: "pair", StepUp: WorkflowCareful, Description: "An implementer and a reviewer. The default."}
+	case WorkflowCareful:
+		p := HarnessProfile{Template: "pair", Tier: "frontier", Description: "Scoped first, judged before review. For wide or unclear tasks."}
+		if hasOwnLoop {
+			p.Loop = WorkflowCareful
+		}
+		return p
+	}
+	return HarnessProfile{}
+}
+
 // FillShippedWorkflows adds each shipped entry whose key the maps lack, and never touches an entry
-// they hold: a platform's own standard, or its own careful row, is kept whole (WF2). The careful
-// row is added only while careful's profile names it, since a row nothing names is refused, and
-// with its split only when split says the factory can run one.
+// they hold: a platform's own standard, or its own careful row, is kept whole (WF2, WR11). A
+// platform that customizes shipped workflows via loops.<name> or loops.default keeps the legacy
+// binding so its rows still govern. The shipped careful workflow carries split only when split
+// says the factory can run one.
 func FillShippedWorkflows(profiles map[string]HarnessProfile, templates map[string]Template,
 	loops map[string]Loop, split bool) (map[string]HarnessProfile, map[string]Template, map[string]Loop) {
 	sp, st, sl := ShippedWorkflows()
-	_, userHadQuick := profiles[WorkflowQuick]
+	if !split {
+		c := sp[WorkflowCareful]
+		stages := slices.Clone(c.Stages)
+		for i := range stages {
+			if stages[i].Role == "scoper" {
+				stages[i].Split = nil
+			}
+		}
+		c.Stages = stages
+		sp[WorkflowCareful] = c
+	}
 	_, userHadDefault := loops["default"]
+	for _, name := range []string{WorkflowQuick, WorkflowStandard, WorkflowCareful} {
+		_, hasProfile := profiles[name]
+		_, hasLoop := loops[name]
+		if !hasProfile && (hasLoop || userHadDefault) {
+			sp[name] = legacyShippedProfile(name, hasLoop)
+		}
+	}
 	profiles = fill(profiles, sp)
 	templates = fill(templates, st)
-	quickTmpl := templates[profiles[WorkflowQuick].Template]
-	if (userHadQuick && string(profiles[WorkflowQuick].Loop) != WorkflowQuick) ||
-		(userHadDefault && string(profiles[WorkflowQuick].Loop) != WorkflowQuick) ||
-		slices.Contains(quickTmpl.Roles, "reviewer") {
-		delete(sl, WorkflowQuick)
-	}
-	if string(profiles[WorkflowCareful].Loop) != WorkflowCareful {
-		delete(sl, WorkflowCareful)
-	} else if !split {
-		row := sl[WorkflowCareful]
-		row.Split = nil
-		sl[WorkflowCareful] = row
-	}
 	loops = fill(loops, sl)
 	return profiles, templates, loops
 }
@@ -244,7 +286,7 @@ func (c *Config) stepUpHasCycle(start string) bool {
 }
 
 func (c *Config) workflowTierIndex(p HarnessProfile) int {
-	t := p.Tier
+	t := p.EffectiveTier()
 	if t == "" {
 		t = "standard"
 	}
@@ -252,7 +294,7 @@ func (c *Config) workflowTierIndex(p HarnessProfile) int {
 }
 
 func (c *Config) workflowCeilingLower(from, to HarnessProfile) bool {
-	fromTier, toTier := from.Tier, to.Tier
+	fromTier, toTier := from.EffectiveTier(), to.EffectiveTier()
 	if fromTier == "" {
 		fromTier = "standard"
 	}
@@ -276,12 +318,29 @@ func (r *Repository) DefaultWorkflow() string {
 }
 
 // TestFirstIn is whether a public task of r running workflow starts with the tester: the
-// repository opts in, and the workflow's row sets tests. A repository not served (nil) runs none.
+// repository opts in (or the workflow declares an unconditional tester stage), and the workflow
+// includes a tester stage or its row sets tests. A repository not served (nil) runs none.
 func (c *Config) TestFirstIn(r *Repository, workflow string) bool {
-	if r == nil || !r.Workflow.TestFirst {
+	if r == nil {
 		return false
 	}
-	p, _ := c.Workflow(workflow)
+	p, ok := c.Workflow(workflow)
+	if !ok {
+		return false
+	}
+	if len(p.Stages) > 0 {
+		ts, has := stageByRole(p, "tester")
+		if !has {
+			return false
+		}
+		if ts.When == TestWhenRepositoryTestFirst {
+			return r.Workflow.TestFirst
+		}
+		return true
+	}
+	if !r.Workflow.TestFirst {
+		return false
+	}
 	return c.rowOf(c.RowFor(workflow, p)).Tests
 }
 
@@ -324,10 +383,11 @@ func (c *Config) validateWorkflow(r *Repository, bad func(string, ...any)) {
 // alias under an internal default is refused at load; under a public default, ModelFor still keeps
 // it off an internal run.
 func (c *Config) validateWorkflowTuning(bad func(string, ...any), name string, p HarnessProfile) {
+	allRoles := c.roles()
 	for _, role := range slices.Sorted(maps.Keys(p.Effort)) {
 		key := "workflows." + name + ".effort." + role
 		switch effort := string(p.Effort[role]); {
-		case !slices.Contains(roles(), role):
+		case !slices.Contains(allRoles, role):
 			bad("workflows.%s.effort: unknown role %q", name, role)
 		case role == "implementer":
 			bad("%s: the implementer's effort is not settable", key)
@@ -339,7 +399,7 @@ func (c *Config) validateWorkflowTuning(bad func(string, ...any), name string, p
 		alias, key := string(p.Models[role]), "workflows."+name+".models."+role
 		_, provider := providerModels()[alias]
 		switch {
-		case !slices.Contains(roles(), role):
+		case !slices.Contains(allRoles, role):
 			bad("workflows.%s.models: unknown role %q", name, role)
 			continue
 		case role == "implementer":
@@ -406,8 +466,8 @@ func refuseRemoved(top map[string]json.RawMessage) []error {
 // DefaultTemplate is the template of r's default workflow (WF3), pair when it names none or r is
 // not served: what a task runs when nothing else names its roles.
 func (c *Config) DefaultTemplate(r *Repository) string {
-	if p, ok := c.Workflow(r.DefaultWorkflow()); ok && p.Template != "" {
-		return p.Template
+	if tmpl := c.TemplateFor(r.DefaultWorkflow()); tmpl != "" {
+		return tmpl
 	}
 	return "pair"
 }

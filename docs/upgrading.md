@@ -8,6 +8,7 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 
 ## Contents
 
+- [Workflows as stage lists and custom roles](#workflows-as-stage-lists-and-custom-roles)
 - [Independent stage switches and `scoper.planTier`](#independent-stage-switches-and-scoperplantier)
 - [A task steps up once](#a-task-steps-up-once)
 - [The six-tool MCP surface, and the names it replaced (v0.5x, six-tool surface)](#the-six-tool-mcp-surface-and-the-names-it-replaced-v05x-six-tool-surface)
@@ -42,6 +43,14 @@ such change has a section here. From v4.0.0, a breaking value change happens onl
 - [Per-run tokens (v0.46.0)](#per-run-tokens-v0460)
 - [The run path (v0.46.0)](#the-run-path-v0460)
 - [The chart contract (v0.46.0)](#the-chart-contract-v0460)
+
+## Workflows as stage lists and custom roles
+
+Each workflow in `Factory.spec.workflows` can now be written as one readable definition with `budget` (`light`, `standard`, or `frontier`) and an ordered `stages` list (`scoper`, `tester`, `implementer`, `reviewer`). The shipped `quick`, `standard`, and `careful` presets and `maku install --print` now use this list form directly, without requiring separate `templates` or `loops` rows.
+
+Existing workflows written with `template`, `tier`, `checks`, and `loops` rows keep loading unchanged; setting `stages` alongside legacy keys (`template`, `tier`, `loop`, `checks`) on the same workflow is refused. Setting a top-level `templates` block emits a deprecation warning in this release and will be refused in the next minor; migrate custom template definitions (such as a two-role `solo`) into `workflows.<name>.stages`.
+
+`Factory.spec.roles` accepts up to 16 custom read-only roles (`capability: read`), each pointing to a relative brief file (at most 16 KiB) under the factory's configuration directory. Custom roles execute with the `reviewer` run role (read-only GitHub token) and record their declared name in `agents.ogenki.io/persona`. The `maku-factory` chart exposes `roleBriefs` to project brief files under `/etc/agent-factory/config/roles/`.
 
 ## Independent stage switches and `scoper.planTier`
 

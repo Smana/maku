@@ -548,6 +548,44 @@ spec:
                       escalates as before. Defaulted when omitted.
                     type: integer
                 type: object
+              roles:
+                additionalProperties:
+                  description: RoleDef declares one custom role in Factory.spec.roles
+                    (WR11).
+                  properties:
+                    brief:
+                      description: Brief is a relative path under the factory's configuration
+                        directory, read at load (≤ 16 KiB).
+                      maxLength: 512
+                      type: string
+                    capability:
+                      description: Capability is the closed capability profile the
+                        role binds (read in this release).
+                      enum:
+                      - read
+                      - tests
+                      - write
+                      maxLength: 16
+                      type: string
+                    effort:
+                      description: Effort is low, medium or high; unset keeps the
+                        harness's default.
+                      enum:
+                      - low
+                      - medium
+                      - high
+                      maxLength: 6
+                      type: string
+                    model:
+                      description: Model is an optional model alias for the role.
+                      maxLength: 253
+                      type: string
+                  type: object
+                description: |-
+                  Roles are custom roles declared by the platform (WR11), each bound to a closed capability
+                  profile and a brief file under the factory's configuration directory.
+                maxProperties: 16
+                type: object
               scoper:
                 description: |-
                   Scoper bounds a scoping run's exploration (harness roles HR2): the harness nudges the scoper to
@@ -630,10 +668,19 @@ spec:
               workflows:
                 additionalProperties:
                   description: |-
-                    HarnessProfile is one workflow (WF1, WF7): the template it runs, the tier it raises a task to,
-                    whether its runs run the repository's checks, its loops row, and where a failed run steps to.
-                    Empty keeps what the factory selects today. A Factory spells the map workflows.
+                    HarnessProfile is one workflow (WF1, WF7, WR11): either the readable list form (budget and
+                    stages) or the legacy bundle (template, tier, checks and loop), plus description, step-up and
+                    per-role tuning. A Factory spells the map workflows.
                   properties:
+                    budget:
+                      description: 'Budget is the tier under the name a person reads
+                        (WR11): light, standard or frontier.'
+                      enum:
+                      - light
+                      - standard
+                      - frontier
+                      maxLength: 8
+                      type: string
                     checks:
                       type: boolean
                     description:
@@ -682,6 +729,64 @@ spec:
                         tier-light, tier-standard and tier-frontier aliases; provider aliases are public only.
                       maxProperties: 4
                       type: object
+                    stages:
+                      description: 'Stages is the workflow''s ordered stage list (WR11):
+                        mutually exclusive with template, tier and loop.'
+                      items:
+                        description: StageDef is one stage in a workflow's ordered
+                          list (WR11).
+                        properties:
+                          checks:
+                            type: boolean
+                          gate:
+                            description: GateDef configures an approval gate on a
+                              stage (WR11).
+                            properties:
+                              when:
+                                description: When is plan-first or always.
+                                enum:
+                                - plan-first
+                                - always
+                                maxLength: 16
+                                type: string
+                            type: object
+                          judge:
+                            description: Judge is evidence (the default completion
+                              judge) or a model alias.
+                            maxLength: 253
+                            type: string
+                          maxRounds:
+                            description: MaxRounds is the stage's one bounded loop.
+                            format: int32
+                            minimum: 0
+                            type: integer
+                          role:
+                            maxLength: 63
+                            type: string
+                          search:
+                            type: boolean
+                          split:
+                            description: SplitDef configures task splitting on a scoper
+                              stage (WR11).
+                            properties:
+                              maxParts:
+                                description: 'MaxParts is the most parts a split may
+                                  hold: 2 to 5.'
+                                format: int32
+                                maximum: 5
+                                minimum: 2
+                                type: integer
+                            type: object
+                          stall:
+                            type: boolean
+                          when:
+                            description: When is an optional condition on the stage
+                              (e.g. repository.testFirst).
+                            maxLength: 63
+                            type: string
+                        type: object
+                      maxItems: 8
+                      type: array
                     stepUp:
                       description: |-
                         StepUp is the workflow a task runs once more under when a run fails in a way a deeper
@@ -697,7 +802,7 @@ spec:
                       type: string
                   type: object
                 description: |-
-                  Workflows are the factory's workflows (WF1, WF2): quick, standard, careful and none are
+                  Workflows are the factory's workflows (WF1, WF2, WR11): quick, standard, careful and none are
                   shipped, and an entry here replaces the shipped one of its name whole. harnessProfiles, its
                   old name, was removed (WF9, WF13).
                 maxProperties: 16
