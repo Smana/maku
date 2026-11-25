@@ -54,6 +54,10 @@ func TestPolicyReadsForwardTheCallersToken(t *testing.T) {
 		seen[len(seen)-1] != "GET /v1/policy/decisions?pr=12&repository=Smana%2Fcloud-native-ref Bearer tok" {
 		t.Fatalf("%+v %v %q", tl, err, seen)
 	}
+	if recent, err := f.PolicyRecentDecisions(t.Context(), "tok", "Smana/cloud-native-ref", "2026-11-01"); err != nil || len(recent.Decisions) != 0 ||
+		seen[len(seen)-1] != "GET /v1/policy/decisions?repository=Smana%2Fcloud-native-ref&since=2026-11-01 Bearer tok" {
+		t.Fatalf("%+v %v %q", recent, err, seen)
+	}
 }
 
 // v4 D3: the factory's banner codes, read with the caller's own token, never without one.

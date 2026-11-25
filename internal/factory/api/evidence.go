@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	factoryv1 "github.com/Smana/maku/api/factory/v1alpha1"
 
@@ -137,6 +138,7 @@ type PolicyEditor interface {
 	PreviewBindings(ctx context.Context, repository string, bindings []config.Binding) (any, error)
 	PreviewPolicy(ctx context.Context, name string, spec config.PolicySpec, readable func(repository string) bool) (any, error)
 	Timeline(ctx context.Context, repository string, pr int) (any, error)
+	Recent(ctx context.Context, repository, since string) (any, error)
 }
 
 // PolicySource is the class-shape MergePolicies the factory serves (B16); *evidence.Service
@@ -327,21 +329,40 @@ func (s *Server) policyPreview(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, pv)
 }
 
-// policyDecisions is GET /v1/policy/decisions?repository=owner/name&pr=N: the pull request's
-// decision timeline, for a reader of the repository.
+// policyDecisions is GET /v1/policy/decisions?repository=owner/name&pr=N for one pull request, or
+// with since=<date> and no pr for a repository's recent per-policy decisions.
 func (s *Server) policyDecisions(w http.ResponseWriter, r *http.Request) {
 	cfg := s.Cfg.Current()
 	p, ok := s.policyReader(w, r)
 	if !ok {
 		return
 	}
+	repo := s.readable(cfg, w, r, p, r.URL.Query().Get("repository"))
+	if repo == "" {
+		return
+	}
+	if r.URL.Query().Get("pr") == "" {
+		since := r.URL.Query().Get("since")
+		if since == "" {
+			since = s.Now().AddDate(0, 0, -30).UTC().Format(time.DateOnly)
+		}
+		if _, err := time.Parse(time.RFC3339, since); err != nil {
+			if _, dateErr := time.Parse(time.DateOnly, since); dateErr != nil {
+				refuse(w, http.StatusBadRequest, "since_invalid")
+				return
+			}
+		}
+		recent, err := s.Editor.Recent(r.Context(), repo, since)
+		if err != nil {
+			refuse(w, http.StatusServiceUnavailable, "decisions_unavailable")
+			return
+		}
+		reply(w, http.StatusOK, recent)
+		return
+	}
 	pr, err := strconv.Atoi(r.URL.Query().Get("pr"))
 	if err != nil || pr < 1 {
 		refuse(w, http.StatusBadRequest, "pr_required")
-		return
-	}
-	repo := s.readable(cfg, w, r, p, r.URL.Query().Get("repository"))
-	if repo == "" {
 		return
 	}
 	tl, err := s.Editor.Timeline(r.Context(), repo, pr)

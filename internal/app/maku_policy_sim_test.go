@@ -33,8 +33,8 @@ func policyManagementArgs(t *testing.T, pm string) []string {
 // exportedPolicy is the bound repository's file as `policy export` writes it (B16).
 func exportedPolicy(t *testing.T, args []string) string {
 	t.Helper()
-	var out bytes.Buffer
-	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &out}).run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
+	var out, errOut bytes.Buffer
+	if err := (Maku{Dir: t.TempDir(), Out: &out, Err: &errOut}).run(t.Context(), append([]string{"policy", "export"}, args...)); err != nil {
 		t.Fatalf("%v\n%s", err, out.String())
 	}
 	p := filepath.Join(t.TempDir(), "agent-factory.yaml")

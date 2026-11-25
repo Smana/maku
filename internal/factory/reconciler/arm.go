@@ -111,6 +111,8 @@ type ArmDecision struct {
 	Verdict string
 	Reason  string
 	Matched string
+	// Detail is the operator's short reason for a repository pause, empty otherwise.
+	Detail string
 	// Approver is the maintainer whose approval armed row 3 (AM1); "" otherwise.
 	Approver string
 	// Paused and Capped say what a shadow decision would have met as a live one (AM4).
@@ -290,6 +292,9 @@ func front(in ArmInputs, cfg *config.Config, rc *config.Repository, cl config.Cl
 				return human("maintainer_approved", "review") // success came from a human: a human merges
 			}
 		}
+	}
+	if rc.Merge.Paused != nil {
+		return ArmDecision{Verdict: "human", Reason: "paused", Matched: class, Detail: rc.Merge.Paused.Reason}, true
 	}
 	// An agents pull request answers a veto with a revision run (watch.go). An adopted one has no
 	// run, so the veto is the gate's: nothing merges, or is counted as would-merge, over it.

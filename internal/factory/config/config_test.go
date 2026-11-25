@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -906,5 +907,21 @@ func TestAnUnknownTemplateNamesTheThreeThatExist(t *testing.T) {
 	_, err := Parse([]byte(strings.Replace(good, "  solo: {roles: [implementer]}", "  duo: {roles: [implementer]}\n  solo: {roles: [implementer]}", 1)))
 	if err == nil || strings.Contains(err.Error(), "trio") || !strings.Contains(err.Error(), "solo, pair, investigate") {
 		t.Fatalf("got %v", err)
+	}
+}
+
+func TestMergePause(t *testing.T) {
+	raw := strings.Replace(good, "      breaker:", "      paused: {reason: 'Freeze merges for the incident'}\n      breaker:", 1)
+	c, err := Parse([]byte(raw))
+	if err != nil || c.Repositories[0].Merge.Paused == nil || c.Repositories[0].Merge.Paused.Reason != "Freeze merges for the incident" {
+		t.Fatalf("%+v %v", c.Repositories[0].Merge.Paused, err)
+	}
+	for name, reason := range map[string]string{"empty": "", "newline": "first\nsecond"} {
+		t.Run(name, func(t *testing.T) {
+			raw := strings.Replace(good, "      breaker:", "      paused: {reason: "+strconv.Quote(reason)+"}\n      breaker:", 1)
+			if _, err := Parse([]byte(raw)); err == nil || !strings.Contains(err.Error(), "merge.paused.reason") {
+				t.Fatalf("%v", err)
+			}
+		})
 	}
 }

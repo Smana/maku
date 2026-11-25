@@ -27,11 +27,17 @@ import (
 // config is `maku config`: offline, it splits a factory config file into the Factory, Repository
 // and MergePolicy manifests (migrate) and checks manifests against a config file the way the
 // factory would (validate).
-func (r Maku) config(args []string) error {
+func (r Maku) config(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return fmt.Errorf("config migrate or validate\n%s", makuUsage)
 	}
 	verb, args := args[0], args[1:]
+	if verb == "export" || verb == "check" {
+		return r.policy(ctx, append([]string{verb}, args...))
+	}
+	if verb == "migrate" && len(args) > 0 && (args[0] == "export" || args[0] == "check") {
+		return r.policy(ctx, args)
+	}
 	fs := flag.NewFlagSet("config "+verb, flag.ContinueOnError)
 	switch verb {
 	case "migrate":

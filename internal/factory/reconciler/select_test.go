@@ -133,3 +133,19 @@ func TestApproveToMergeStillFirst(t *testing.T) {
 		t.Fatalf("%+v, want arm maintainer_approved", d)
 	}
 }
+
+func TestPauseStopsPoliciesButApproveToMergeStillWorks(t *testing.T) {
+	in := selectInputs()
+	in.Cfg.Current().Repositories[0].Merge.Paused = &config.MergePause{Reason: "Incident freeze"}
+	in.Cfg.Current().Repositories[0].Classes = map[string]config.Class{"docs-links": {Shadow: true}}
+	d := DecideArm(in)
+	if d.Verdict != "human" || d.Reason != "paused" || d.Detail != "Incident freeze" {
+		t.Fatalf("%+v, want paused", d)
+	}
+	in.Cfg.Current().Repositories[0].Merge.ApproveToMerge = true
+	in.HeadPushedAt = pushedAt
+	in.PR.Reviews = []forge.Review{{ID: 1, Author: "Smana", State: "APPROVED", Commit: head, At: now.Add(time.Minute)}}
+	if d := DecideArm(in); d.Verdict != "arm" || d.Reason != "maintainer_approved" {
+		t.Fatalf("%+v, want approve-to-merge to take precedence", d)
+	}
+}
