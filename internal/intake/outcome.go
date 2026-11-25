@@ -4,6 +4,7 @@ package intake
 
 import (
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strconv"
@@ -37,9 +38,7 @@ func NormalizeOutcome(s string) string {
 }
 
 var (
-	// githubPRURLRE matches a GitHub pull request URL and captures its PR number.
-	githubPRURLRE = regexp.MustCompile(`(?i)https?://github\.com/[A-Za-z0-9-]+/[A-Za-z0-9._-]+/pull/([0-9]+)`)
-	reviewWordRE  = regexp.MustCompile(`(?i)\breview(?:ing|ed|s)?\b`)
+	reviewWordRE = regexp.MustCompile(`(?i)\breview(?:ing|ed|s)?\b`)
 
 	// planFirstRE matches explicit requests to see or approve a plan before coding.
 	planFirstRE = regexp.MustCompile(`(?i)\b(?:plan\s+first|show(?:\s+me)?\s+the\s+plan|share\s+the\s+plan|propose\s+a\s+plan|plan\s+before\s+(?:implementing|coding|changing|making|editing)|approve\s+the\s+plan)\b`)
@@ -54,15 +53,29 @@ var (
 
 // ReviewPRNumber returns the pull request number from the first GitHub pull request URL in text, or 0.
 func ReviewPRNumber(text string) int {
-	m := githubPRURLRE.FindStringSubmatch(text)
-	if len(m) < 2 {
-		return 0
+	for tok := range strings.FieldsSeq(text) {
+		tok = strings.Trim(tok, "<>()[]{}.,;:!?\"'")
+		if before, _, ok := strings.Cut(tok, "|"); ok {
+			tok = before
+		}
+		lower := strings.ToLower(tok)
+		if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+			continue
+		}
+		u, err := url.Parse(tok)
+		if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+			continue
+		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) < 4 || parts[0] == "" || parts[1] == "" || parts[2] != "pull" {
+			continue
+		}
+		n, err := strconv.Atoi(parts[3])
+		if err == nil && n >= 1 {
+			return n
+		}
 	}
-	n, err := strconv.Atoi(m[1])
-	if err != nil || n < 1 {
-		return 0
-	}
-	return n
+	return 0
 }
 
 // InferOutcome deterministically infers a non-default outcome from the request text, or returns ""
@@ -77,7 +90,7 @@ func InferOutcome(text string) string {
 	if s == "" {
 		return ""
 	}
-	if githubPRURLRE.MatchString(s) && reviewWordRE.MatchString(s) {
+	if ReviewPRNumber(s) > 0 && reviewWordRE.MatchString(s) {
 		return OutcomeReview
 	}
 	if planFirstRE.MatchString(s) {

@@ -232,7 +232,7 @@ func (a *App) pinProposal(ctx context.Context, in interaction, thread string, p 
 func (a *App) pinInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload, profile string) (code, line string) {
 	msgs, err := a.Slack.Thread(ctx, in.Channel, thread)
 	if err != nil {
-		a.log().Warn("slack thread fetch failed", "channel", in.Channel, "err", err)
+		a.log().Warn("slack thread fetch failed", "err", err)
 		return "error", proposalUnreadableLine
 	}
 	if code, line := a.threadPress(in, msgs); code != "" {
@@ -315,7 +315,7 @@ func (a *App) planFirstProposal(ctx context.Context, in interaction, thread stri
 func (a *App) planFirstInPlace(ctx context.Context, in interaction, thread string, p ProposalPayload) (code, line string) {
 	msgs, err := a.Slack.Thread(ctx, in.Channel, thread)
 	if err != nil {
-		a.log().Warn("slack thread fetch failed", "channel", in.Channel, "err", err)
+		a.log().Warn("slack thread fetch failed", "err", err)
 		return "error", proposalUnreadableLine
 	}
 	if code, line := a.threadPress(in, msgs); code != "" {
@@ -347,7 +347,7 @@ func (a *App) planFirstInPlace(ctx context.Context, in interaction, thread strin
 	}
 	next, err := newProposal(checked.Plan, checked.Hash, p.Author, p.Rev+1)
 	if err != nil {
-		a.log().Warn("plan-first proposal not built", "channel", in.Channel, "err", err)
+		a.log().Warn("plan-first proposal not built", "err", err)
 		return "error", planFirstUnavailableLine
 	}
 	next.ID = p.ID
