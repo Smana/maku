@@ -1127,3 +1127,30 @@ func TestARefusedReviewerClaimStillEscalates(t *testing.T) {
 		}
 	}
 }
+
+func TestAnApprovalWithNoCommentIsAVerdict(t *testing.T) {
+	head := strings.Repeat("a", 40)
+	g := newRig(t, issueTask("3buqdlot", 7, "# Fix it\n\n## Acceptance check\npass"))
+	g.r.Triage = triage.Static{Template: "pair"}
+	g.reconcile(t, "3buqdlot", 3) // Received -> Triaged -> Queued -> Implementing
+	g.f.SetBranch("agent/3buqdlot", 12)
+	g.f.SetPR(forge.PR{Number: 12, URL: "https://github.com/Smana/cloud-native-ref/pull/12", State: "OPEN", HeadSHA: head})
+	g.runs.set(rid(0), "Succeeded")
+	g.log.end(rid(0), "Succeeded", "agent_finished")
+	g.reconcile(t, "3buqdlot", 2) // Implementing -> Queued -> Reviewing (reviewer rid(1))
+
+	g.log.evs = append(g.log.evs, envelope.Event{
+		Seq: int64(len(g.log.evs) + 1), RunID: rid(1), Origin: envelope.OriginClient, Type: envelope.Message,
+		Actor: envelope.Actor{Kind: envelope.ActorAgent, ID: "agent:" + rid(1), Role: "reviewer"},
+		Payload: envelope.Must(envelope.MessagePayload{
+			Kind: envelope.KindReviewVerdict, Verdict: "approve", Text: "", Commit: head,
+		}),
+	})
+	g.runs.set(rid(1), "Succeeded")
+	g.log.end(rid(1), "Succeeded", "agent_finished")
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseAwaitingCI || tk.Status.Verdict != "approve" {
+		t.Fatalf("empty-comment approve should be accepted: phase=%s reason=%q verdict=%q",
+			tk.Status.Phase, tk.Status.Reason, tk.Status.Verdict)
+	}
+}

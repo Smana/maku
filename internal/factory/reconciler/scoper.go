@@ -5,7 +5,6 @@ package reconciler
 import (
 	"context"
 	"encoding/json"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -88,15 +87,6 @@ func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1
 	if t.Spec.Split != nil && split == nil && sc != nil && sc.State == envelope.ScopeReady && mentionsSplit(summary) {
 		r.unstatedSplit(ctx, t)
 	}
-	if sc != nil && sc.State == envelope.ScopeReady && t.Spec.Issue > 0 && t.Spec.Parent == nil {
-		if !statesAcceptance(t.Spec.Text) {
-			// The owner's rule (2026-10-27, drill B): the scoper asks when the issue states no
-			// acceptance check, and never infers one. The model's own ready is not trusted for it.
-			sc = askForAcceptance(sc)
-		} else {
-			r.noteStage(t, "ask", "not_needed")
-		}
-	}
 	if split != nil && sc != nil && sc.State != envelope.ScopeReady {
 		r.ignoreSplit(ctx, t, seq) // a question bounces alone (splitter design SL2)
 		split = nil
@@ -115,60 +105,6 @@ func (r *Reconciler) scoped(ctx context.Context, cfg *config.Config, t *v1alpha1
 		return r.scopeEnd(ctx, cfg, t, assumed(*sc), "assumed", seq)
 	}
 	return r.bounce(ctx, cfg, t, sc, seq)
-}
-
-// The acceptance the issue states, read as the judge reads it (loop_policy.acceptance, HR3): a heading
-// starting with "acceptance", its body running to the next heading or fence line; else a paragraph whose
-// first line starts "Acceptance:", running to the next blank line or fence line. The two readers share
-// images/maku-harness/tests/acceptance.
-var (
-	acceptanceHeading = regexp.MustCompile(`(?im)^#{1,6}[ \t]*acceptance\b[^\n]*$`)
-	sectionEnd        = regexp.MustCompile(`(?m)^(?:#{1,6}[ \t]|TASK-DATA-)`)
-	inlineAcceptance  = regexp.MustCompile(`(?im)^[ \t]*acceptance:[ \t]*(\S.*)$`)
-	paragraphEnd      = regexp.MustCompile(`(?m)\n[ \t]*\n|^TASK-DATA-\S+$`)
-)
-
-// acceptanceText is the acceptance the issue states: the heading's section when non-empty, else the
-// inline paragraph, else "". Pure text matching: nothing in the issue is followed or run.
-func acceptanceText(text string) string {
-	if m := acceptanceHeading.FindStringIndex(text); m != nil {
-		rest := text[m[1]:]
-		if n := sectionEnd.FindStringIndex(rest); n != nil {
-			rest = rest[:n[0]]
-		}
-		if s := strings.TrimSpace(rest); s != "" {
-			return s
-		}
-	}
-	if m := inlineAcceptance.FindStringSubmatchIndex(text); m != nil {
-		rest := text[m[2]:]
-		if n := paragraphEnd.FindStringIndex(rest); n != nil {
-			rest = rest[:n[0]]
-		}
-		return strings.TrimSpace(rest)
-	}
-	return ""
-}
-
-// statesAcceptance: the issue text carries a non-empty acceptance section or an inline Acceptance:
-// paragraph (HR3).
-func statesAcceptance(text string) bool { return acceptanceText(text) != "" }
-
-// askForAcceptance turns a ready scope of an issue that states no acceptance into the question the
-// author answers. What the scoper proposed becomes the assumption a maintainer may proceed on.
-func askForAcceptance(sc *envelope.Scope) *envelope.Scope {
-	q := *sc
-	q.State = envelope.ScopeQuestion
-	q.Question = "The issue states no acceptance check: which command or observation proves it is done?"
-	guess := "No acceptance stated; proceed on the scoper's own: " + sc.Acceptance[0].Check
-	if len(guess) > 300 {
-		guess = guess[:300]
-	}
-	q.Assumptions = append([]string{guess}, sc.Assumptions...)
-	if len(q.Assumptions) > 5 {
-		q.Assumptions = q.Assumptions[:5]
-	}
-	return &q
 }
 
 // lastScope is the scoper run's scope and split: the last handoff of the current run that carries

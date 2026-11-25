@@ -453,9 +453,11 @@ func (r *Reconciler) escalated(ctx context.Context, cfg *config.Config, t *v1alp
 	}
 	markHandled(t, c.ID)
 	r.leaveSplit(ctx, t, SplitDeclined) // SL4 (b): the task runs whole on its scope
-	if t.Status.Reason == ReasonNeedsAuthor && t.Status.Scope != nil {
+	if t.Status.Reason == ReasonNeedsAuthor {
 		r.leaveBounce(ctx, t, "retry")
-		t.Status.Scope.State = "assumed" // SC8 (b): no second scoper run
+		if t.Status.Scope != nil {
+			t.Status.Scope.State = "assumed" // SC8 (b): no second scoper run
+		}
 	}
 	after := t.Status.Reason
 	t.Status.Retries++

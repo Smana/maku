@@ -1193,6 +1193,13 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 	t.Status.Classification = &d.Classification
 	t.Status.Profile = profile
 	r.notePin(ctx, cfg, t, d)
+	for i, n := range d.Notes {
+		narrateLater(t, narrate.TriageNote(i, n))
+	}
+	recordConfig(cfg, t)
+	if bounced, err := r.askAtIntake(ctx, cfg, t, name); err != nil || bounced {
+		return err
+	}
 	if profile != nil {
 		f := r.factsFor(cfg, t)
 		card := roomview.CardOf(&f, "")
@@ -1202,10 +1209,6 @@ func (r *Reconciler) received(ctx context.Context, cfg *config.Config, t *v1alph
 			narrateLater(t, narrate.TaskCard(t, b.String()))
 		}
 	}
-	for i, n := range d.Notes {
-		narrateLater(t, narrate.TriageNote(i, n))
-	}
-	recordConfig(cfg, t)
 	r.to(t, v1alpha1.PhaseTriaged, "")
 	return nil
 }

@@ -24,24 +24,23 @@ func scoperOn(t *testing.T, text string) *rig {
 	return scoperRigOf(t, func(tk *v1alpha1.Task) { tk.Spec.Text = text })
 }
 
-// The owner's rule: the scoper asks when the issue states no acceptance check, whatever it says.
+// The owner's rule (moved to intake in WR6/E3): an issue without an acceptance check bounces at
+// intake before any run starts.
 func TestAnIssueWithoutAcceptanceBouncesEvenWhenTheScoperSaysReady(t *testing.T) {
 	for name, text := range map[string]string{"drill B": drillB, "drill A": drillA,
 		"an empty section": "t\n\n## Acceptance check\n\n## Notes\nx"} {
 		t.Run(name, func(t *testing.T) {
 			g := scoperOn(t, text)
-			before := len(g.f.Comments(7))
-			scopeHandoff(g, 0, readyScope())
-			tk := endScoper(t, g, "Succeeded", "agent_finished")
-			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "needs_author" || tk.Status.Scope.State != "question" {
+			tk := g.reconcile(t, "3buqdlot", 1)
+			if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "needs_author" {
 				t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Scope)
 			}
-			c := g.f.Comments(7)[before:]
+			c := eventCommentBodies(g.f, 7)
 			if len(c) != 1 || !strings.Contains(c[0], "acceptance check") || !strings.Contains(c[0], "Assumption:") {
 				t.Fatalf("comments %q", c)
 			}
-			if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || len(g.runs.specs) != 1 {
-				t.Fatalf("labels %v, %d runs: no implementer may start", g.f.Added(7), len(g.runs.specs))
+			if !slices.Equal(g.f.Added(7), []string{"factory/needs-author"}) || len(g.runs.specs) != 0 {
+				t.Fatalf("labels %v, %d runs: no run may start before acceptance", g.f.Added(7), len(g.runs.specs))
 			}
 		})
 	}
@@ -50,14 +49,12 @@ func TestAnIssueWithoutAcceptanceBouncesEvenWhenTheScoperSaysReady(t *testing.T)
 // A Decision is settled scope, not the operative Acceptance section the deterministic guard requires.
 func TestAcceptanceStillRequiresOperativeSection(t *testing.T) {
 	g := scoperOn(t, "docs: update the runbook\n\n## Decisions\nD1: run task check\n\n## Acceptance check\n\n## Notes\nNo operative check.")
-	before := len(g.f.Comments(7))
-	scopeHandoff(g, 0, readyScope())
-	tk := endScoper(t, g, "Succeeded", "agent_finished")
-	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "needs_author" || tk.Status.Scope.State != "question" {
+	tk := g.reconcile(t, "3buqdlot", 1)
+	if tk.Status.Phase != v1alpha1.PhaseEscalated || tk.Status.Reason != "needs_author" {
 		t.Fatalf("%s %s %+v", tk.Status.Phase, tk.Status.Reason, tk.Status.Scope)
 	}
-	comments := g.f.Comments(7)[before:]
-	if len(comments) != 1 || !strings.Contains(comments[0], "The issue states no acceptance check: which command or observation proves it is done?") ||
+	comments := eventCommentBodies(g.f, 7)
+	if len(comments) != 1 || !strings.Contains(comments[0], "Which command or observation proves it is done?") ||
 		!strings.Contains(comments[0], "Assumption:") {
 		t.Fatalf("comments %q", comments)
 	}
@@ -81,16 +78,21 @@ func TestAScheduleNeedsNoAcceptance(t *testing.T) {
 	}
 }
 
-// SC8 (b): after a bounce for a missing acceptance, /factory retry proceeds on the assumption.
+// SC8 (b): after a bounce for a missing acceptance, /factory retry proceeds as assumed and the
+// scoper's ready handoff is not bounced again.
 func TestARetryAfterTheAcceptanceBounceProceedsAssumed(t *testing.T) {
 	g := scoperOn(t, drillB)
-	scopeHandoff(g, 0, readyScope())
-	endScoper(t, g, "Succeeded", "agent_finished")
 	g.r.Now = func() time.Time { return now.Add(time.Hour) }
 	g.f.SetComments(7, retryBy(77, "smana", -30*time.Minute))
-	tk := g.reconcile(t, "3buqdlot", 2)
+	tk := g.reconcile(t, "3buqdlot", 3) // Escalated -> Triaged -> Queued -> Implementing (scoper)
+	if tk.Status.Phase != v1alpha1.PhaseImplementing || g.runs.specs[rid(0)].Role != "triager" {
+		t.Fatalf("expected scoper after retry: %s %+v", tk.Status.Phase, g.runs.specs)
+	}
+	scopeHandoff(g, 0, readyScope())
+	endScoper(t, g, "Succeeded", "agent_finished")
+	tk = g.reconcile(t, "3buqdlot", 1)
 	s := g.runs.specs[rid(1)]
-	if tk.Status.Scope.State != "assumed" || s.Role != "implementer" || !strings.Contains(s.TaskText, "first assumption") {
-		t.Fatalf("%+v %+v", tk.Status.Scope, s)
+	if tk.Status.Scope.State != "ready" || s.Role != "implementer" || stageEffectOf(tk, "ask") != "asked_assumed" {
+		t.Fatalf("%+v %+v ask=%q", tk.Status.Scope, s, stageEffectOf(tk, "ask"))
 	}
 }

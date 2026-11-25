@@ -448,12 +448,10 @@ func (l *flakyLog) EventsSince(ctx context.Context, room string, after int64, ke
 	return l.fakeLog.EventsSince(ctx, room, after, keep)
 }
 
-// A ready scope's recommendation bounced for want of an acceptance check runs assumed, on the floor.
+// A question scope bounced for an answer runs assumed on retry, on the floor.
 func TestAnAssumedRetryAppliesNoRecommendation(t *testing.T) {
-	g := harnessedScoper(t, func(tk *v1alpha1.Task) { tk.Spec.Text = "fix it" })
-	sc := readyScope()
-	sc.Profile, sc.ProfileWhy = "review-wide", "two pages"
-	scopeHandoff(g, 0, sc)
+	g := harnessedScoper(t, nil)
+	scopeHandoff(g, 0, questionScope())
 	if tk := endScoper(t, g, "Succeeded", "agent_finished"); tk.Status.Reason != ReasonNeedsAuthor {
 		t.Fatalf("%s %q", tk.Status.Phase, tk.Status.Reason)
 	}

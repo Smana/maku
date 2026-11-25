@@ -841,13 +841,14 @@ func ReviewerBrief(t *v1alpha1.Task, nonce string, sc *Scoped) string {
 	return fit(head, reviewerChecks(t, nonce, sc)+steeringBlock(t, nonce), snapshotBlock(t, "TASK-DATA-"+nonce), t)
 }
 
-// reviewerRules is the reviewer's charge (HR4).
-const reviewerRules = "Review the diff of the pull request against the acceptance checks. Report only the gaps that affect " +
-	"correctness: a check that would fail, a behaviour the task did not ask for, a file outside the scope's touches. Skip style. " +
-	"When you find no such gap, approve: an approval with 'no gaps found' is a complete review. For every claim, cite the " +
-	"command you ran and its output, or the check run you read. Do not read or quote the implementer's handoff: judge the diff, " +
-	"not the story.\nEnd with one room_verdict call: verdict approve or changes, a summary that names the checks you read, and " +
-	"the commit you reviewed (git rev-parse HEAD).\n"
+// reviewerRules is the reviewer's charge (HR4, WR6).
+const reviewerRules = "Review the diff of the pull request against the acceptance checks. Report only defects that affect " +
+	"correctness: a check that would fail, broken behaviour, or a file outside the scope's touches. Style, naming, and scope " +
+	"the task did not ask for are not findings. When you find no defect, approve: an approval with no comment is a complete " +
+	"answer. For every finding, cite the command you ran and its output, or the check run you read. Do not read or quote the " +
+	"implementer's handoff: judge the diff, not the story.\nEnd with one room_verdict call: verdict approve or changes, an " +
+	"optional summary (empty is complete on approve; list defects and the checks you read on changes), and the commit you " +
+	"reviewed (git rev-parse HEAD).\n"
 
 // acceptanceQuoteMax bounds the issue's acceptance a reviewer's brief quotes: the harness's judge
 // reads at most as much (loop_policy.ACCEPTANCE_MAX).

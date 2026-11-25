@@ -26,9 +26,9 @@ func TestTheReviewerBriefJudgesTheDiffNotTheStory(t *testing.T) {
 	for _, want := range []string{
 		"You are the reviewer for agent factory task 3buqdlot in Smana/cloud-native-ref",
 		"https://github.com/Smana/cloud-native-ref/pull/12",
-		"Report only the gaps that affect correctness",
-		"Skip style",
-		"an approval with 'no gaps found' is a complete review",
+		"Report only defects that affect correctness",
+		"Style, naming, and scope the task did not ask for are not findings.",
+		"an approval with no comment is a complete answer",
 		"cite the command you ran and its output",
 		"Do not read or quote the implementer's handoff: judge the diff, not the story.",
 		"TASK-DATA-n0nce234",

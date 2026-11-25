@@ -731,3 +731,21 @@ func TestProfileChoices(t *testing.T) {
 		})
 	}
 }
+
+func TestTheReviewersBriefAsksForCorrectnessOnly(t *testing.T) {
+	tk := reviewTask("# Fix links\n\n## Acceptance check\n`task docs` passes.")
+	got := ReviewerBrief(tk, "n0nce234", nil)
+	for _, want := range []string{
+		"Report only defects that affect correctness",
+		"Style, naming, and scope the task did not ask for are not findings.",
+		"an approval with no comment is a complete answer",
+		"`task docs` passes.",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("missing %q in:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "report style") || strings.Contains(got, "report naming") {
+		t.Fatalf("brief must not ask to report style or naming:\n%s", got)
+	}
+}

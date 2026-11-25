@@ -55,6 +55,28 @@ func DoneWhen(request string) string {
 	return "Done when " + clause + "."
 }
 
+// AcceptanceAnswered reports whether the plan or request has settled its acceptance check so the
+// factory's intake ask guard marks the task answered rather than asking again (WR6).
+func AcceptanceAnswered(p Plan, request string) bool {
+	if DoneWhen(request) != "" {
+		return true
+	}
+	for _, g := range p.Gaps {
+		if g.Section == "acceptance-check" {
+			return false
+		}
+	}
+	if len(p.Issues) == 0 {
+		return false
+	}
+	for _, is := range p.Issues {
+		if strings.TrimSpace(sectionBody(is.Body, "## Acceptance check")) == "" {
+			return false
+		}
+	}
+	return true
+}
+
 // PathsIn is the repository paths text names, in order and without duplicates; a URL's path is not
 // one, since a link names a page, not a file in a served repository.
 func PathsIn(text string) []string {
