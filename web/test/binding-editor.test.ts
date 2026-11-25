@@ -38,6 +38,11 @@ describe("the binding editor (B4, B16)", () => {
     expect(shown).toBe(MANIFEST);
     expect(shown).toContain("mergePolicies:");
   });
+  it("gives each binding's row the anchor its class card's pill links to", () => {
+    const p = boundPage();
+    const box = bindingEditor(p.report, {}, true, fetch);
+    expect(box.querySelector("fieldset#binding-docs-links")?.getAttribute("data-binding")).toBe("docs-links");
+  });
 });
 
 describe("routing (PR15)", () => {

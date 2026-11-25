@@ -1187,6 +1187,8 @@ main.settings.approval-memory { margin: 0 16px; padding: 0; max-width: none; }
 main.settings.approval-memory > h1:first-child { display: none; }
 .settings { margin: 0 16px; }
 .settings .settings-table { width: 100%; margin: 0; }
+/* A policy's repositories: the name stays on one line, and the other columns take the rest. */
+.settings .consumers td:first-child, .settings .impact td:first-child { white-space: nowrap; }
 
 /* Settings home: one card per section, the whole card the link. */
 .settings-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 8px 0 24px; }
@@ -1251,6 +1253,10 @@ main.settings.approval-memory > h1:first-child { display: none; }
 .class-card:target { border-color: var(--primary); }
 .class-card-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline; justify-content: space-between; }
 .mode-badge { padding: 2px 10px; border-radius: 999px; font-size: var(--text-small); border: 1px solid var(--border); }
+/* A bound class's pill links to its row in the Bindings editor: it reads as the pill, underlined on hover. */
+a.mode-badge { text-decoration: none; color: inherit; }
+a.mode-badge:hover { text-decoration: underline; }
+.binding-form:target { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
 .mode-badge[data-mode="live"] { border-color: var(--success); color: var(--success-text); }
 .mode-badge[data-mode="shadow"] { border-color: var(--primary); color: var(--link); }
 .mode-badge[data-mode="off"], .mode-badge[data-mode="disabled"] { color: var(--muted-foreground); }
@@ -1301,22 +1307,22 @@ main.settings.approval-memory > h1:first-child { display: none; }
 @media (max-width: 720px) {
   .settings .editor-field { grid-template-columns: minmax(0, 1fr); }
   .settings .settings-table { display: block; overflow-x: auto; }
-  .settings .repo-table, .settings .decisions-table, .settings .backtest-table { overflow-x: visible; }
-  .settings .repo-table thead, .settings .decisions-table thead, .settings .backtest-table thead {
+  .settings .repo-table, .settings .decisions-table, .settings .backtest-table, .settings .evidence-table { overflow-x: visible; }
+  .settings .repo-table thead, .settings .decisions-table thead, .settings .backtest-table thead, .settings .evidence-table thead {
     position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .settings .repo-table tbody, .settings .repo-table tr, .settings .decisions-table tbody, .settings .decisions-table tr,
-  .settings .backtest-table tbody, .settings .backtest-table tr { display: block; }
+  .settings .backtest-table tbody, .settings .backtest-table tr, .settings .evidence-table tbody, .settings .evidence-table tr { display: block; }
   .settings .repo-table tr { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 2px 12px; padding: 10px 12px; }
-  .settings .decisions-table tr, .settings .backtest-table tr { padding: 10px 12px; }
-  .settings .repo-table tr + tr, .settings .decisions-table tr + tr, .settings .backtest-table tr + tr { border-top: 1px solid var(--border); }
-  .settings .repo-table td, .settings .decisions-table td, .settings .backtest-table td { padding: 0; border: 0; overflow-wrap: anywhere; }
+  .settings .decisions-table tr, .settings .backtest-table tr, .settings .evidence-table tr { padding: 10px 12px; }
+  .settings .repo-table tr + tr, .settings .decisions-table tr + tr, .settings .backtest-table tr + tr, .settings .evidence-table tr + tr { border-top: 1px solid var(--border); }
+  .settings .repo-table td, .settings .decisions-table td, .settings .backtest-table td, .settings .evidence-table td { padding: 0; border: 0; overflow-wrap: anywhere; }
   .settings .repo-table td { display: block; }
   .settings .repo-table td:first-child { grid-column: 1 / -1; }
   .settings .repo-table td:nth-child(n + 2) { font-size: var(--text-small); color: var(--muted-foreground); }
   .settings .repo-table td:nth-child(n + 2)[data-label]::before { content: attr(data-label) ": "; }
-  .settings .decisions-table td, .settings .backtest-table td { display: grid; grid-template-columns: minmax(7em, auto) minmax(0, 1fr); gap: 8px; font-size: var(--text-small); }
-  .settings .decisions-table td[data-label]::before, .settings .backtest-table td[data-label]::before { content: attr(data-label); color: var(--muted-foreground); }
-  .settings .decisions-table td:first-child, .settings .backtest-table td:first-child { font-size: var(--text-body); }
+  .settings .decisions-table td, .settings .backtest-table td, .settings .evidence-table td { display: grid; grid-template-columns: minmax(7em, auto) minmax(0, 1fr); gap: 8px; font-size: var(--text-small); }
+  .settings .decisions-table td[data-label]::before, .settings .backtest-table td[data-label]::before, .settings .evidence-table td[data-label]::before { content: attr(data-label); color: var(--muted-foreground); }
+  .settings .decisions-table td:first-child, .settings .backtest-table td:first-child, .settings .evidence-table td:first-child { font-size: var(--text-body); }
 }
 .settings .proposal { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius-md); padding: var(--space-4); margin-bottom: 16px; }
 .settings .proposal-file { overflow-x: auto; max-height: 24em; font-size: var(--text-small); }

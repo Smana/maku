@@ -247,6 +247,19 @@ describe("the index and evidence pages", () => {
     expect(css).not.toMatch(/(^|\n)\.policy-conditions\s*\{/);
   });
 
+  it("stacks the evidence table into labelled rows on a phone, Blocks promotion included (gcp-0, 2026-11-25)", async () => {
+    const app = document.createElement("div");
+    await mountSettings(app, "/settings/evidence", two());
+    const t = app.querySelector("table.evidence-table")!;
+    expect([...t.querySelectorAll("tbody tr")[0].children].map((td) => td.getAttribute("data-label")))
+      .toEqual(["Repository", "Class", "Mode", "Track record", "Blocks promotion"]);
+    const css = readFileSync(join(__dirname, "../src/app.css"), "utf8");
+    const phone = css.slice(css.indexOf("@media (max-width: 720px) {\n  .settings .editor-field"));
+    expect(phone).toMatch(/\.settings \.evidence-table td\[data-label\]::before/);
+    expect(phone).toMatch(/\.settings \.evidence-table thead/);
+    expect(phone).toMatch(/\.settings \.evidence-table \{ overflow-x: visible; \}|\.settings \.evidence-table \{/);
+  });
+
   it("uses dashes for decisions an older factory cannot provide", async () => {
     const bare = page();
     bare.report.repositoryStatus = { namespace: "agent-system", generation: 1, status: { conditions: [{ type: "RepositoryFileValid", status: "True" }] } };

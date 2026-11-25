@@ -6,6 +6,7 @@
 // Runtime values come from settings-api.ts; settings.ts is imported for its types only, as it
 // imports this module.
 
+import { bindingAnchor } from "./binding-editor";
 import { modeMeaning } from "./policy-describe";
 import { patternDetails, policyWords } from "./policy-words";
 import { blockerActions, explain, LADDER_LEGEND, policyState, post, timeText, trackRecord } from "./settings-api";
@@ -155,13 +156,19 @@ export function classCard(c: ClassReport, ctx: CardContext): HTMLElement {
   const head = el("header", undefined, "class-card-head");
   const m = modeMeaning(c.mode);
   // The badge is the word; what it means is the page's legend, and this tooltip.
-  const badge = el("span", m.label, "mode-badge");
+  const r = ctx.page.report;
+  // A class bound in the page's Bindings editor: its pill is the way to change its mode there.
+  const editable = policyState(r) === "central" && !!r.bindings?.some((x) => x.name === c.class);
+  const badge = editable ? el("a", m.label, "mode-badge") : el("span", m.label, "mode-badge");
+  if (badge instanceof HTMLAnchorElement) {
+    badge.href = `#${bindingAnchor(c.class)}`;
+    badge.setAttribute("aria-label", `${m.label}: change ${c.class}'s mode in the Bindings editor`);
+  }
   badge.dataset.mode = c.mode;
-  badge.title = m.meaning;
+  badge.title = editable ? `${m.meaning} Change it in the Bindings editor.` : m.meaning;
   head.append(el("h3", c.class), badge);
   card.append(head);
 
-  const r = ctx.page.report;
   const binding = r.bindings?.find((x) => x.name === c.class)?.parameters;
   const spec = ctx.page.policySpecs?.[c.class] ?? {};
   card.append(el("p", policyWords(spec, binding), "policy-sentence"));
