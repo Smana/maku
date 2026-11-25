@@ -5,7 +5,7 @@
 # fetched from a bundle (fetch.fsckObjects).
 # The build stage runs on the runner's own arch and cross-compiles: compiling under QEMU
 # arm64 emulation outran the prerelease job's 30 minute timeout.
-FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:eb61c3873c97416fff0116553fff65d67a3549f72e11d9758849a689cdd8b523 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 WORKDIR /src
 COPY go.mod go.sum* ./
 RUN go mod download
@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -ldflags="-s -w -X github.com/Smana/maku/internal/version.Version=${VERSION}" \
       -o /out/maku-factory ./cmd/maku-factory
 
-FROM cgr.dev/chainguard/git:latest@sha256:caa7647e036b43c39a0d47a8fe6730bc0f75627841eff3df2ba60a1fc6357341
+FROM cgr.dev/chainguard/git:latest@sha256:d9376ea3e8c0924060384f85119bcc50ebb7347fe44d0d9f123c74d0d2342a64
 COPY --from=build /out/maku-factory /maku-factory
 USER 65532:65532
 ENTRYPOINT ["/maku-factory"]
