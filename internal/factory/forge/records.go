@@ -13,8 +13,13 @@ import (
 )
 
 // ErrRecordsTruncated is a promotion-evidence read past its bound: records past it are unread, so
-// the evidence would be short and is refused instead (stage 6).
-var ErrRecordsTruncated = errors.New("forge: more pull request records than the evidence reads")
+// the evidence would be short and is refused instead (stage 6). It is evidence.ErrTruncated, which
+// the evidence reads by splitting the search's merge dates.
+var ErrRecordsTruncated = evidence.ErrTruncated
+
+// ErrLabelsTruncated is a pull request with more labels than one record reads: splitting the
+// search's dates cannot shorten it, so it is its own refusal.
+var ErrLabelsTruncated = errors.New("forge: a pull request has more labels than the evidence reads")
 
 // recordPages bounds the record reads: shadow-merge-tally.sh's --limit 500, in pages of 50 small
 // enough that the newest 50 comments of each stay a bounded answer. The newest comment decides every count, so
@@ -52,8 +57,9 @@ func (g *GitHub) search(ctx context.Context, q string) ([]recordNode, error) {
 	for range recordPages {
 		var r struct {
 			Search struct {
-				Nodes    []recordNode
-				PageInfo struct {
+				IssueCount int
+				Nodes      []recordNode
+				PageInfo   struct {
 					HasNextPage bool
 					EndCursor   githubv4.String
 				}
@@ -64,9 +70,12 @@ func (g *GitHub) search(ctx context.Context, q string) ([]recordNode, error) {
 		if err != nil {
 			return nil, wrap("search pull request records", err)
 		}
+		if r.Search.IssueCount > recordPages*50 { // known on the first page: the rest is never read
+			return nil, ErrRecordsTruncated
+		}
 		for _, n := range r.Search.Nodes {
 			if n.PullRequest.Labels.PageInfo.HasNextPage {
-				return nil, ErrRecordsTruncated
+				return nil, ErrLabelsTruncated
 			}
 		}
 		out = append(out, r.Search.Nodes...)
