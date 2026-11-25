@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"regexp"
 	"strconv"
@@ -238,22 +239,38 @@ func decodeReply(body []byte) ([]byte, Usage, error) {
 }
 
 var (
-	slackLinkRE    = regexp.MustCompile(`<((?:https?)://[^|>\s]+)(?:\|[^>]*)?>`)
-	mentionPRURLRE = regexp.MustCompile(`(?i)https?://github\.com/([A-Za-z0-9-]+/[A-Za-z0-9._-]+)/pull/([1-9][0-9]*)`)
-	mentionRevRE   = regexp.MustCompile(`(?i)\breview(?:ing|ed|s)?\b`)
+	mentionRepoOwnerRE = regexp.MustCompile(`^[A-Za-z0-9-]+$`)
+	mentionRepoNameRE  = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+	mentionRevRE       = regexp.MustCompile(`(?i)\breview(?:ing|ed|s)?\b`)
 )
 
 // MentionReview reports whether a mention carries a GitHub pull request URL (raw or Slack-wrapped)
 // and asks for a review, returning the repository and pull request number (phase F4/F6).
 func MentionReview(text string) (repo string, pr int, ok bool) {
-	unwrapped := slackLinkRE.ReplaceAllString(text, "$1")
-	m := mentionPRURLRE.FindStringSubmatch(unwrapped)
-	if len(m) < 3 || !mentionRevRE.MatchString(unwrapped) {
+	if !mentionRevRE.MatchString(text) {
 		return "", 0, false
 	}
-	n, err := strconv.Atoi(m[2])
-	if err != nil || n < 1 {
-		return "", 0, false
+	for tok := range strings.FieldsSeq(text) {
+		tok = strings.Trim(tok, "<>()[]{}.,;:!?\"'")
+		if before, _, cut := strings.Cut(tok, "|"); cut {
+			tok = before
+		}
+		lower := strings.ToLower(tok)
+		if !strings.HasPrefix(lower, "http://") && !strings.HasPrefix(lower, "https://") {
+			continue
+		}
+		u, err := url.Parse(tok)
+		if err != nil || !strings.EqualFold(u.Hostname(), "github.com") {
+			continue
+		}
+		parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+		if len(parts) < 4 || parts[2] != "pull" || !mentionRepoOwnerRE.MatchString(parts[0]) || !mentionRepoNameRE.MatchString(parts[1]) {
+			continue
+		}
+		n, err := strconv.Atoi(parts[3])
+		if err == nil && n >= 1 {
+			return parts[0] + "/" + parts[1], n, true
+		}
 	}
-	return m[1], n, true
+	return "", 0, false
 }
