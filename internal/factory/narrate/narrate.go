@@ -403,7 +403,7 @@ func PlanProposed(t *v1alpha1.Task, sc *envelope.Scope, sp *envelope.Split, room
 		"- `/factory plan revise <comment>` — run the scoper once more with your note\n"+
 		"- `/factory plan split` — approve the proposed split into parts\n\n"+
 		"Room: [the room](%s).", room)
-	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-proposed-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // PlanParked is the one needs-you notification posted when a plan waits past planGateHours.
@@ -425,7 +425,7 @@ func PlanParked(t *v1alpha1.Task, hours int, maintainers []string, roomsURL stri
 	if len(mentions) > 0 {
 		b.WriteString("\n\n" + strings.Join(mentions, " ") + ": this plan needs you.")
 	}
-	return Event{Key: fmt.Sprintf("plan-parked-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-parked-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // PlanRevisionLimit narrates that a second /factory plan revise escalated the task to a maintainer.
@@ -437,7 +437,7 @@ func PlanRevisionLimit(t *v1alpha1.Task, actor string, maintainers []string, roo
 	if len(maintainers) > 0 {
 		b.WriteString("\n\n@" + strings.Join(maintainers, " @") + ": this plan waits on a maintainer.")
 	}
-	return Event{Key: fmt.Sprintf("plan-revision-limit-%d", len(t.Status.Runs)), Body: b.String()}
+	return Event{Key: fmt.Sprintf("plan-revision-limit-%d", len(t.Status.Runs)), Class: ClassNeedsYou, Body: b.String()}
 }
 
 // Revising says a maintainer's review sent the task back for another run (Δ5), once per round.
