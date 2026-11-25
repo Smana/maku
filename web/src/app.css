@@ -761,6 +761,12 @@ a.need-go {
 a.need-go:hover { box-shadow: var(--shadow-border-hover); text-decoration: underline; }
 @media (prefers-reduced-motion: no-preference) { a.need-go:active { scale: .96; } }
 .need-where { color: var(--muted-foreground); font-size: var(--text-small); }
+.need-ack { margin: 4px 0 0; display: grid; gap: 2px; font-weight: 500; }
+.need-ack:empty { display: none; }
+.need[data-ack="refused"] .need-ack, .need-ack-stalled { color: var(--destructive-text); }
+.need-ack:focus { outline: none; }
+.stop-ack { font-size: var(--text-small); color: var(--muted-foreground); }
+.stop-ack:empty { display: none; }
 /* A card is scrolled to (the pill, a hash) clear of the sticky dock, buttons included. */
 .approval, .needs-other li.need { scroll-margin-bottom: calc(var(--dock-h, 0px) + 8px); }
 .approval-decide { scroll-margin-bottom: calc(var(--dock-h, 0px) + 8px); }
@@ -879,7 +885,7 @@ button.deny:hover { background: color-mix(in srgb, var(--destructive) 10%, trans
 .list-tools .notice { color: var(--destructive-text); }
 .list-tools .notice:empty { display: none; }
 .list-tools label, .list-tools select, .list-tools button { min-height: var(--hit); }
-.list-tools [data-act="new-room"] { margin-left: auto; padding: 0 14px; font-weight: 700; }
+.list-tools [data-act="new-room"] { margin-left: auto; padding: 0 14px; font-weight: 400; }
 /* The auto-refresh: when it last read the list, the interval and the pause, before New room. */
 .list-tools .refresh { display: inline-flex; gap: 8px; align-items: center; margin-left: auto; }
 .list-tools .refresh + [data-act="new-room"] { margin-left: 0; }

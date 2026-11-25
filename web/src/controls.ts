@@ -223,6 +223,10 @@ function group(cls: string, title: string): HTMLElement {
 // "discard" as a checkbox inside that confirm (phase G2). Shown only while a task is live, the
 // room is open, and the viewer may stop (owner always via cancel; owner or collaborator when the
 // broker enables the stop room act).
+// How long a stop the broker took may leave the task running before the control says so.
+export const stopStallAfter = 30_000;
+const stopStalledText = "Sent, but the task has not moved yet — see the room log.";
+
 export function mountStop(root: HTMLElement, conn: Sender, state: RoomState, you: () => Snapshot["you"] | undefined,
   useStopAct: () => boolean = () => false) {
   const span = el("span", { className: "confirm stop-control", hidden: true });
@@ -254,10 +258,21 @@ export function mountStop(root: HTMLElement, conn: Sender, state: RoomState, you
     const alsoDiscard = discard.checked;
     reset();
     const kind = useStopAct() ? "stop" : "cancel";
-    act(conn, state, alsoDiscard ? { kind, discard: true } : { kind });
+    sent = act(conn, state, alsoDiscard ? { kind, discard: true } : { kind });
+    clearTimeout(stall);
+    if (!sent) { say("Not connected: the stop was not sent. Retry once the room is live."); return; }
+    main.disabled = true; // one stop at a time, until the broker answers
+    say("Sending stop…");
+    stall = setTimeout(() => { if (sent) { sent = 0; main.disabled = false; say(stopStalledText); } }, stopStallAfter);
   });
   main.classList.add("destructive");
-  span.append(main);
+  // What the broker answered the stop, in place beside it.
+  const status = el("span", { className: "stop-ack" });
+  status.setAttribute("role", "status");
+  const say = (text: string) => { status.textContent = text; };
+  let sent = 0; // the clientSeq of the stop awaiting its ack
+  let stall: ReturnType<typeof setTimeout> | undefined;
+  span.append(main, status);
   root.append(span);
   const disarm = () => { if (timer !== undefined) reset(); };
   const refresh = () => {
@@ -268,6 +283,15 @@ export function mountStop(root: HTMLElement, conn: Sender, state: RoomState, you
   };
   return {
     refresh,
+    // onAck takes every ack and answers only the stop's: accepted, it says so and the button waits
+    // for the task to end; refused, it says why and gives the button back.
+    onAck(f: Frame) {
+      if (!sent || f.clientSeq !== sent) return;
+      clearTimeout(stall);
+      if (f.rejected) { sent = 0; main.disabled = false; say(rejection(f.rejected)); return; }
+      say("Stop requested — the task is stopping.");
+      stall = setTimeout(() => { sent = 0; main.disabled = false; say(stopStalledText); }, stopStallAfter);
+    },
     setSummary(sum?: Summary) {
       const phase = sum?.status?.phase ?? "";
       taskLive = phase !== "" && !endedPhases.has(phase);

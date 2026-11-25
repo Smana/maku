@@ -352,6 +352,8 @@ export function mountRoom(app: HTMLElement, id: string, theme: ThemeController,
       controls?.onAck(f);
       composer?.onAck(f);
       fork.onAck(f);
+      stopControl.onAck(f);
+      needsPanelView.onAck(f);
       needsPanelView.refresh();
     },
     // Refused before it opened: an expired session (a 401 from the list signs in

@@ -26,16 +26,16 @@ Rooms you can read appear in one table: rooms that need you first, then most rec
 
 Each row shows `Needs you`, `Task`, `Repository`, `Status` (computed with the same broker function as the room page), `PR`, `Last activity` and `Room` ([room list columns](reference/web-ui-settings.md#room-list-columns)), and clicking anywhere on the row opens the room.
 
-The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before `New room`, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
+The list refreshes every 10 s by default (`Off`, `5 s`, `10 s`, `30 s`, `1 min` before **Open a live session**, remembered in the browser), slows to once a minute in a background tab with `(N) Maku rooms` in the title, and keeps focus across updates.
 
 Above the table, filters refetch the list from the API: **mine** (issues you filed or labelled, or PRs you authored or review), **needs me** (waiting on you, sorted and filterable by `question`, `plan`, `review`, `blocked`, `failed`), and a repository picker ([API](reference/api.md#8080--human-api)). **closed** (`closed=1`) lists rooms closed in the last 30 days (disabling **mine** and **needs me**); sealed rooms stay reachable at `/r/<id>` until retention purges the log. Empty results explain why (`No rooms match` or `No rooms you can read yet`).
 
-### New task and New room
+### New task and Open a live session
 
-**New task** and **New room**, at the right end of the filters row, open forms above the list.
+**New task** (primary) and **Open a live session**, at the right end of the filters row, open forms above the list.
 
 - **New task** plans through `/api/handoffs`: enter what should change, pick a repository (or leave it on Auto), and click **Plan**. It shows the workflow card (`Outcome`, `Workflow`, `Will run`, `Cost`), the planner's question if any, and the drafted issue. Maintainers can pick a described workflow, and any member can toggle **Plan first** before clicking **Start** to file and label the issue through their linked GitHub account. Unlinked viewers see a `/link/github` link and no **Start** button.
-- **New room** creates a room you own and drive, then opens it.
+- **Open a live session** creates a room you own and drive, tied to no issue, then opens it.
 
 | Field | Rule |
 |---|---|
@@ -53,7 +53,7 @@ The `Use maku from your terminal` fold under the list gives copyable setup steps
 Work a room from top to bottom ([component reference](reference/web-ui-settings.md#room-page-components)):
 
 - **Read the title strip and workflow card**: Tier 1 shows the workflow chip, status line, active run's persona and age, and `Needs you · N`; Tier 2 shows spend, PR/issue links, last verdict, data class, driver and `Dashboards`, followed by `Next` and `Now`. The header has one **Stop** button (behind two-press confirm with a **Discard PR, branch and issue** checkbox) for whoever may stop a live task. Below the strip, **Workflow** shows `Workflow`, `Will run`, `Cost` and any refused pin (`How it was chosen` holds raw details).
-- **Clear `Needs you`**: decide approvals in place, and act on `question` (**Answer**), `plan_confirmation` (**Accept the split** / **Run it whole**), `plan_review` (**Approve** / **Revise** / **Split**) and `recovery` (**Retry** / **Run again deeper**) cards when enabled in `human.roomActs`; disabled acts, merges and reviews link to GitHub.
+- **Clear `Needs you`**: decide approvals in place, and act on `question` (**Answer**), `plan_confirmation` (**Accept the split** / **Run it whole**), `plan_review` (**Approve** / **Revise** / **Split**) and `recovery` (**Retry** / **Run again deeper**) cards when enabled in `human.roomActs`; disabled acts, merges and reviews link to GitHub. An accepted act replaces the buttons with a status (`✓ Approved by you — the implementer starts next.`); a refusal shows its reason; a card unchanged 30 s later warns `Sent, but the task has not moved yet — see the room log.` **Stop** reports the same way.
 - **Inspect runs and context**: expand `Notes`, `How it was chosen`, `Merge policy` and `Raw events` folds as needed, or click any run node on the right-hand **Rail** (`#run=<id>`) to filter events to that run.
 - **Steer, queue or run**: use **Controls** (`Run`, `Driver`, `Queued for the next run`, `Room`) according to [what each standing may do](reference/web-ui-settings.md#what-each-standing-may-do), or pick **fork here** on any message or handoff ([forks](reference/web-ui-settings.md#forks)).
 - **Send from the dock**: choose `Deliver to` (post to the room, queue for the next run's brief, or steer the running agent — driver only), toggle the [theme](reference/web-ui-settings.md#theme), and watch connection notices. Destructive acts (**Stop**, **interrupt**, **take**, **steer now**, **close room**) require a second `confirm: …` click within 10 s.
